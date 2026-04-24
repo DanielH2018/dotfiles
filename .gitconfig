@@ -6,6 +6,8 @@
 	format = ssh
 [gpg "ssh"]
 	program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
+[core]
+	excludesFile = ~/.gitignore_global
 [commit]
 	gpgsign = true
 [init]

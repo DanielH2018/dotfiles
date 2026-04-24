@@ -13,6 +13,7 @@
 # Git config
 !.gitconfig
 !.gitignore
+!.gitignore_global
 
 # Claude Code — un-ignore directory, then re-ignore contents, then un-ignore tracked items
 !.claude/
