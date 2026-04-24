@@ -8,6 +8,20 @@
 	program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
 [core]
 	excludesFile = ~/.gitignore_global
+[pull]
+	rebase = true
+[push]
+	autoSetupRemote = true
+[fetch]
+	prune = true
+[rerere]
+	enabled = true
+[diff]
+	colorMoved = zebra
+[branch]
+	sort = -committerdate
+[merge]
+	conflictstyle = zdiff3
 [commit]
 	gpgsign = true
 [init]
