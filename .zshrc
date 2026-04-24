@@ -1,0 +1,306 @@
+# =============================================================================
+# INTERACTIVE SHELL CHECK (exit early for non-interactive)
+# =============================================================================
+[[ -o interactive ]] || return
+
+# =============================================================================
+# BREW PREFIX (Homebrew init itself lives in .zprofile)
+# =============================================================================
+BREW_PREFIX="${HOMEBREW_PREFIX:-/opt/homebrew}"
+export HOMEBREW_NO_ENV_HINTS=1
+
+# =============================================================================
+# ENVIRONMENT VARIABLES
+# =============================================================================
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
+export EDITOR='vim'
+export VISUAL="$EDITOR"
+
+# Compilation flags
+export ARCHFLAGS="-arch $(uname -m)"
+
+# =============================================================================
+# HISTORY CONFIGURATION
+# =============================================================================
+export HISTFILE="$HOME/.zsh_history"
+export HISTSIZE=200000
+export SAVEHIST=200000
+# SHARE_HISTORY implies INC_APPEND, so we don't set both.
+setopt SHARE_HISTORY HIST_IGNORE_ALL_DUPS HIST_FIND_NO_DUPS \
+       HIST_REDUCE_BLANKS HIST_SAVE_NO_DUPS HIST_IGNORE_SPACE HIST_VERIFY \
+       EXTENDED_HISTORY HIST_EXPIRE_DUPS_FIRST
+
+# =============================================================================
+# ZSH OPTIONS
+# =============================================================================
+setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
+
+# =============================================================================
+# PATH CONFIGURATION
+# =============================================================================
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
+if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
+  export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+fi
+
+# =============================================================================
+# FNM (Fast Node Manager)
+# =============================================================================
+if command -v fnm >/dev/null 2>&1; then
+  eval "$(fnm env --use-on-cd --shell zsh)"
+fi
+
+# =============================================================================
+# COMPLETION SYSTEM
+# =============================================================================
+# fpath must be set BEFORE compinit so Homebrew completions are picked up.
+fpath=("$BREW_PREFIX/share/zsh/site-functions" $fpath)
+
+autoload -Uz compinit
+ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
+mkdir -p "${ZCOMPDUMP:h}"
+
+# Run security checks once per day, otherwise skip for performance
+if [[ -n "$ZCOMPDUMP"(#qN.mh+24) ]]; then
+  compinit -d "$ZCOMPDUMP"
+else
+  compinit -C -d "$ZCOMPDUMP"
+fi
+
+zmodload zsh/complist
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}' 'r:|[._-]=**'
+zstyle ':completion:*' menu select
+zstyle ':completion:*:cd:*' tag-order 'directories'
+zstyle ':completion:*' completer _extensions _complete _approximate
+zstyle ':completion:*' list-dirs-first yes
+zstyle ':completion:*' special-dirs true
+zstyle ':completion:*' file-sort name
+zstyle ':completion:*' squeeze-slashes true
+
+# Enable completion caching for better performance
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcache"
+
+# =============================================================================
+# PROMPT (Starship)
+# =============================================================================
+if command -v starship >/dev/null 2>&1; then
+  eval "$(starship init zsh)"
+fi
+
+# =============================================================================
+# ZOXIDE
+# =============================================================================
+if command -v zoxide >/dev/null 2>&1; then
+  eval "$(zoxide init zsh --cmd cd)"
+  alias zi='zoxide query -i'
+  # Escape hatch to use the real cd when zoxide's override gets in the way
+  cdreal() { builtin cd "$@"; }
+  zz() {
+    command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
+    local dir
+    dir="$(zoxide query -ls | sed 's/^[^ ]* //' | fzf --tac --prompt="zoxide> ")" || return
+    cd "$dir"
+  }
+fi
+
+# =============================================================================
+# FZF
+# =============================================================================
+if command -v fzf >/dev/null 2>&1; then
+  if command -v rg >/dev/null 2>&1; then
+    export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git"'
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+    export FZF_ALT_C_COMMAND='fd -t d --hidden --follow --exclude .git'
+  elif command -v fd >/dev/null 2>&1; then
+    export FZF_DEFAULT_COMMAND='fd --hidden --follow --exclude .git'
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+    export FZF_ALT_C_COMMAND='fd -t d --hidden --follow --exclude .git'
+  fi
+
+  if command -v eza >/dev/null 2>&1; then
+    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "[ -d {} ] && eza -la --icons --group-directories-first {} || head -n 200 {}"'
+    export FZF_ALT_C_OPTS='--preview "eza -la --icons --group-directories-first {}"'
+  else
+    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "if [ -d {} ]; then ls -la {}; else head -n 200 {}; fi"'
+    export FZF_ALT_C_OPTS='--preview "ls -la {}"'
+  fi
+
+  export FZF_COMPLETION_TRIGGER='**'
+  [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
+  [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"
+  [[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
+fi
+
+# =============================================================================
+# ALIASES - listing
+# =============================================================================
+if command -v eza >/dev/null 2>&1; then
+  alias ls="eza --icons --group-directories-first --git --color=auto"
+  alias ll="eza -la --icons --git --time-style=relative"
+  alias la="eza -la --icons --git --group-directories-first --time-style=relative"
+  alias lt="eza --tree --level=2 --icons -a"
+  alias lg="eza -l --git --icons"
+else
+  alias ls='ls -G'
+  alias ll='ls -lGA'
+  alias la='ls -lGA'
+fi
+
+# =============================================================================
+# FD helper
+# =============================================================================
+if command -v fd >/dev/null 2>&1; then
+  ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
+fi
+
+# =============================================================================
+# QUALITY OF LIFE ALIASES & FUNCTIONS
+# =============================================================================
+alias zshconfig="$EDITOR ~/.zshrc"
+alias configterminal="$EDITOR ~/.zshrc ~/.config/ghostty/config ~/.config/starship.toml"
+alias c="clear"
+alias ..='cd ..'
+alias ...='cd ../..'
+alias duu='ncdu .'
+alias sysinfo='fastfetch'
+
+mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
+
+psgrep() { ps aux | grep -i "$1" | grep -v grep; }
+
+# HTTP helpers via curlie (prefixed to avoid collisions with system `delete` etc.)
+if command -v curlie >/dev/null 2>&1; then
+  hget()    { curlie GET "$@"; }
+  hpost()   { curlie POST "$@"; }
+  hput()    { curlie PUT "$@"; }
+  hdelete() { curlie DELETE "$@"; }
+fi
+
+# =============================================================================
+# DOTFILES
+# =============================================================================
+alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
+
+# =============================================================================
+# KEYBINDINGS (history search & word nav)
+# =============================================================================
+bindkey -e
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+bindkey '^[[1;5C' forward-word
+bindkey '^[[1;5D' backward-word
+
+# Wrap fastfetch to pick the best image protocol per terminal
+fastfetch() {
+  if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
+    command fastfetch --logo-type kitty-direct "$@"
+  elif [[ "$TERMINAL_EMULATOR" == "JetBrains-JediTerm" ]]; then
+    command fastfetch --logo-type small "$@"
+  else
+    command fastfetch "$@"
+  fi
+}
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+
+aws-sso-cleanup() {
+    for f in ~/.aws/sso/cache/*.json; do
+      expires=$(cat "$f" | jq -r '.expiresAt // empty')
+      if [[ -n "$expires" && "$expires" < "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ]]; then
+        rm "$f"
+      fi
+    done
+  }
+
+  # Run cleanup before every sso login
+  aws() {
+    if [[ "$1" == "sso" && "$2" == "login" ]]; then
+      aws-sso-cleanup
+    fi
+    command aws "$@"
+  }
+
+# =============================================================================
+# FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
+# =============================================================================
+if [[ -o login ]] && command -v fastfetch >/dev/null 2>&1; then
+  fastfetch
+fi
+
+# =============================================================================
+# START IN CLAUDE WORKSPACE (only if shell started in $HOME)
+# =============================================================================
+[[ $PWD == $HOME && -d "$HOME/Documents/claude" ]] && cd "$HOME/Documents/claude"
+
+# =============================================================================
+# PLUGINS (autosuggestions, then syntax-highlighting LAST)
+# =============================================================================
+if [[ -r "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
+  source "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+fi
+
+# zsh-syntax-highlighting MUST be sourced after all ZLE widgets are defined.
+if [[ -r "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
+  source "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
+
+# =============================================================================
+# 1Password CLI — keys cached in macOS login keychain after first fetch.
+# Touch ID fires only on the first load (cache miss) or after op-refresh-keys.
+# The login keychain is unlocked automatically at login, so cache reads are
+# instant with no prompt on every subsequent tab/session.
+# =============================================================================
+_op_load_keys() {
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && return 0
+
+  # Fast path: read from macOS login keychain (no Touch ID once cached)
+  local cached
+  cached=$(security find-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w 2>/dev/null)
+  if [[ -n "$cached" ]]; then
+    export ANTHROPIC_ADMIN_API_KEY="$cached"
+    return 0
+  fi
+
+  # Cache miss: fetch from 1Password (Touch ID fires once here)
+  local key
+  key=$(op read 'op://Employee/timixml3drbaydnetm4mpjmvqa/password' 2>/dev/null)
+  [[ -z "$key" ]] && return 1
+
+  export ANTHROPIC_ADMIN_API_KEY="$key"
+
+  # Persist to keychain so future sessions skip the Touch ID prompt
+  if ! security add-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w "$key" 2>/dev/null; then
+    security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
+    security add-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w "$key" 2>/dev/null
+  fi
+}
+
+# Run when keys rotate in 1Password — clears cache and re-fetches (Touch ID once)
+op-refresh-keys() {
+  security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
+  unset ANTHROPIC_ADMIN_API_KEY
+  _op_load_keys && echo "Keys refreshed."
+}
+
+# Load on first prompt draw; unregister once populated
+_op_lazy_precmd() {
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
+  _op_load_keys
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && add-zsh-hook -d precmd _op_lazy_precmd
+}
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd _op_lazy_precmd
+
+
+#THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
