@@ -4,7 +4,11 @@
 # Shell config
 !.zshrc
 !.zshenv
+!.zprofile
 !.bash_profile
+
+# Package manifest
+!Brewfile
 
 # Git config
 !.gitconfig

@@ -41,7 +41,13 @@ setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 # PATH CONFIGURATION
 # =============================================================================
 [[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
-export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
+
+# Ensure Homebrew bin precedes /usr/bin in non-login shells (.zprofile handles login shells).
+# The check avoids adding a duplicate entry when .zprofile already ran.
+[[ ":$PATH:" != *":$BREW_PREFIX/bin:"* ]] && \
+  export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
+
+export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
 if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
