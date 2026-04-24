@@ -1,0 +1,24 @@
+# Ignore everything in ~ by default — dotfiles repo only tracks explicit files
+*
+
+# Shell config
+!.zshrc
+!.zshenv
+!.bash_profile
+
+# Git config
+!.gitconfig
+!.gitignore
+
+# Claude Code — un-ignore directory, then re-ignore contents, then un-ignore tracked items
+!.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/*
+!.claude/projects/
+.claude/projects/*
+!.claude/projects/-Users-daniel/
+.claude/projects/-Users-daniel/*
+!.claude/projects/-Users-daniel/memory/
+!.claude/projects/-Users-daniel/memory/**
