@@ -47,7 +47,7 @@ setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 [[ ":$PATH:" != *":$BREW_PREFIX/bin:"* ]] && \
   export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 
-export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$HOME/.cargo/bin:$HOME/go/bin:$PATH"
+export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$HOME/go/bin:$PATH"
 if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
