@@ -18,6 +18,7 @@
 # Claude Code — un-ignore directory, then re-ignore contents, then un-ignore tracked items
 !.claude/
 .claude/*
+!.claude/CLAUDE.md
 !.claude/settings.json
 !.claude/hooks/
 !.claude/hooks/*
