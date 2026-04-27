@@ -1,0 +1,145 @@
+# =============================================================================
+# GHOSTTY CONFIGURATION
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# FONT CONFIGURATION
+# -----------------------------------------------------------------------------
+font-family = "IosevkaTerm Nerd Font Mono Bold"
+font-size = 12
+font-thicken = true
+font-thicken-strength = 50
+font-feature = +liga,+kern,+calt,+ss01,+ss02
+
+# -----------------------------------------------------------------------------
+# WINDOW APPEARANCE & BEHAVIOR
+# -----------------------------------------------------------------------------
+# Window properties
+window-width = 120
+window-height = 24
+window-vsync = true
+window-step-resize = true
+window-inherit-working-directory = true
+tab-inherit-working-directory = true
+split-inherit-working-directory = true
+window-inherit-font-size = true
+window-decoration = true
+#window-theme = auto
+window-colorspace = display-p3
+window-new-tab-position = end
+link-previews = true
+theme = "Catppuccin Mocha"
+
+# Window padding
+window-padding-x = 20
+window-padding-y = 20
+window-padding-balance = true
+window-padding-color = extend
+
+# Background effects
+background-opacity = 1.0
+background-blur = false
+background-image-opacity = 0.2
+background-image-position = center-center
+background-image-fit = stretch
+
+# Split window styling
+unfocused-split-opacity = 0.6
+
+# Cell adjustments
+adjust-cell-height = 1
+adjust-cell-width = 0
+
+# -----------------------------------------------------------------------------
+# MACOS SPECIFIC SETTINGS
+# -----------------------------------------------------------------------------
+macos-titlebar-style = tabs
+macos-titlebar-proxy-icon = visible
+macos-option-as-alt = true
+macos-secure-input-indication = true
+macos-icon = holographic
+macos-icon-frame = chrome
+macos-icon-ghost-color = crimson
+
+
+# -----------------------------------------------------------------------------
+# CURSOR CONFIGURATION
+# -----------------------------------------------------------------------------
+cursor-color = #fabd2f
+cursor-style = block
+cursor-style-blink = true
+cursor-click-to-move = true
+
+# -----------------------------------------------------------------------------
+# SELECTION STYLING
+# -----------------------------------------------------------------------------
+#selection-background = #1e1e2e
+#selection-foreground = #f8f8f2
+
+# -----------------------------------------------------------------------------
+# MOUSE BEHAVIOR
+# -----------------------------------------------------------------------------
+mouse-hide-while-typing = true
+
+
+# -----------------------------------------------------------------------------
+# SHELL INTEGRATION
+# -----------------------------------------------------------------------------
+shell-integration = zsh
+#shell-integration-features = true
+
+# Set TERM for better Vim compatibility
+term = xterm-ghostty
+
+
+# -----------------------------------------------------------------------------
+# NOTIFICATIONS
+# -----------------------------------------------------------------------------
+notify-on-command-finish = unfocused
+notify-on-command-finish-action = notify
+notify-on-command-finish-after = 10s
+
+# -----------------------------------------------------------------------------
+# TERMINAL BEHAVIOR
+# -----------------------------------------------------------------------------
+scrollback-limit = 100000
+confirm-close-surface = false
+quit-after-last-window-closed = false
+clipboard-trim-trailing-spaces = true
+bell-features = system,attention,title
+
+# -----------------------------------------------------------------------------
+# CUSTOM EFFECTS
+# -----------------------------------------------------------------------------
+#custom-shader-animation = true
+#custom-shader = ~/.config/ghostty/shaders/cursor_smear_rainbow.glsl
+# -----------------------------------------------------------------------------
+# KEY BINDINGS
+# -----------------------------------------------------------------------------
+# Configuration management
+keybind = cmd+shift+r=reload_config
+
+# Clipboard operations
+keybind = cmd+shift+c=copy_to_clipboard
+keybind = cmd+shift+v=paste_from_clipboard
+
+# Tab management
+keybind = cmd+t=new_tab
+
+# Window management
+keybind = cmd+w=close_surface
+keybind = cmd+shift+t=new_window
+keybind = cmd+shift+w=close_all_windows
+
+# Split management
+keybind = cmd+d=new_split:right
+keybind = cmd+shift+d=new_split:down
+keybind = cmd+[=goto_split:previous
+keybind = cmd+]=goto_split:next
+keybind = cmd+shift+[=resize_split:left,10
+keybind = cmd+shift+]=resize_split:right,10
+
+# Terminal operations
+keybind = shift+enter=text:\n
+#keybind = global:cmd+shift+period=toggle_quick_terminal
+

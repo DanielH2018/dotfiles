@@ -15,10 +15,23 @@
 !.gitignore
 !.gitignore_global
 
-# Starship prompt config
+# .config — un-ignore directory, re-ignore contents, then selectively allow
 !.config/
 .config/*
+
 !.config/starship.toml
+
+!.config/ghostty/
+.config/ghostty/*
+!.config/ghostty/config
+!.config/ghostty/shaders/
+!.config/ghostty/shaders/**
+
+!.config/fastfetch/
+.config/fastfetch/*
+!.config/fastfetch/config.jsonc
+!.config/fastfetch/logos/
+!.config/fastfetch/logos/**
 
 # Claude Code — un-ignore directory, then re-ignore contents, then un-ignore tracked items
 !.claude/
