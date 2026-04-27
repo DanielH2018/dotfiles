@@ -15,6 +15,11 @@
 !.gitignore
 !.gitignore_global
 
+# Starship prompt config
+!.config/
+.config/*
+!.config/starship.toml
+
 # Claude Code — un-ignore directory, then re-ignore contents, then un-ignore tracked items
 !.claude/
 .claude/*

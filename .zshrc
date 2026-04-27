@@ -187,7 +187,7 @@ if command -v curlie >/dev/null 2>&1; then
 fi
 
 # =============================================================================
-# DOTFILES
+# DOTFILES Git Alias
 # =============================================================================
 alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
 
@@ -227,13 +227,55 @@ aws-sso-cleanup() {
     done
   }
 
-  # Run cleanup before every sso login
-  aws() {
-    if [[ "$1" == "sso" && "$2" == "login" ]]; then
-      aws-sso-cleanup
-    fi
-    command aws "$@"
-  }
+# Run cleanup before every sso login
+aws() {
+  if [[ "$1" == "sso" && "$2" == "login" ]]; then
+    aws-sso-cleanup
+  fi
+  command aws "$@"
+}
+
+# Login to SSO and switch profile in one shot
+awslogin() {
+  aws sso login --sso-session "${1:-lithic}"
+}
+
+# Show current identity (useful sanity-check before destructive ops)
+awswho() {
+  aws sts get-caller-identity --query '[Account, Arn]' --output text
+}
+
+# fzf-based profile switcher (requires fzf)
+awsp() {
+  local profile
+  profile=$(aws configure list-profiles | fzf --height 40% --prompt "AWS profile: ")
+  [[ -n "$profile" ]] && export AWS_PROFILE="$profile" && echo "Switched to $profile"
+}
+
+# Tail CloudWatch log group (picks most recent stream)
+awslogs() {
+  local group="$1"
+  local stream
+  stream=$(aws logs describe-log-streams \
+    --log-group-name "$group" \
+    --order-by LastEventTime --descending \
+    --max-items 1 \
+    --query 'logStreams[0].logStreamName' --output text)
+  aws logs get-log-events \
+    --log-group-name "$group" \
+    --log-stream-name "$stream" \
+    --query 'events[*].message' --output text
+}
+
+# AWS CLI tab completion
+autoload bashcompinit && bashcompinit
+complete -C "$(command -v aws_completer)" aws
+
+# Aliases
+alias awsls='aws s3 ls'
+alias ec2ls='aws ec2 describe-instances \
+  --query "Reservations[*].Instances[*].[InstanceId,State.Name,PrivateIpAddress,Tags[?Key==\`Name\`].Value|[0]]" \
+  --output table'
 
 # =============================================================================
 # FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
