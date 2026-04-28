@@ -175,7 +175,7 @@ alias ..='cd ..'
 alias ...='cd ../..'
 alias duu='ncdu .'
 alias sysinfo='fastfetch'
-alias vault='cd "$HOME/Documents/My Vault"'
+alias vault='cd "$HOME/Documents/My_Vault"'
 
 mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
 
@@ -290,7 +290,7 @@ fi
 # =============================================================================
 # START IN CLAUDE WORKSPACE (only if shell started in $HOME)
 # =============================================================================
-#[[ $PWD == $HOME && -d "$HOME/Documents/My Vault" ]] && cd "$HOME/Documents/My Vault"
+[[ $PWD == $HOME && -d "$HOME/Documents/My_Vault" ]] && cd "$HOME/Documents/My_Vault"
 
 # =============================================================================
 # PLUGINS (autosuggestions, then syntax-highlighting LAST)
