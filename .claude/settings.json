@@ -72,6 +72,7 @@
       "Bash(cp:*)",
       "Bash(mv:*)",
       "Bash(ln:*)",
+      "Bash(git add:*)",
       "Bash(git status)",
       "Bash(git status:*)",
       "Bash(git log:*)",
@@ -326,21 +327,6 @@
             "type": "command",
             "if": "Bash(wget *)",
             "command": "~/.claude/hooks/block-dangerous-bash.sh"
-          },
-          {
-            "type": "command",
-            "if": "Bash(git add *)",
-            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}' || true"
-          },
-          {
-            "type": "command",
-            "if": "Bash(git commit *)",
-            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}' || true"
-          },
-          {
-            "type": "command",
-            "if": "Bash(git push *)",
-            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"allow\"}}' || true"
           }
         ]
       },
@@ -388,10 +374,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh"
-          },
-          {
-            "type": "command",
-            "command": "rm -f /tmp/.claude-gcp-active"
           }
         ]
       }
