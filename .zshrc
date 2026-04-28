@@ -290,7 +290,7 @@ fi
 # =============================================================================
 # START IN CLAUDE WORKSPACE (only if shell started in $HOME)
 # =============================================================================
-[[ $PWD == $HOME && -d "$HOME/Documents/My_Vault" ]] && cd "$HOME/Documents/My_Vault"
+#[[ $PWD == $HOME && -d "$HOME/Documents/My_Vault" ]] && cd "$HOME/Documents/My_Vault"
 
 # =============================================================================
 # PLUGINS (autosuggestions, then syntax-highlighting LAST)
