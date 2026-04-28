@@ -373,6 +373,42 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh"
+          },
+          {
+            "type": "command",
+            "command": "rm -f /tmp/.claude-gcp-active"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.prompt // \"\"' | grep -q 'git-commit-and-push' && touch /tmp/.claude-gcp-active; exit 0"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git add *)",
+            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"permissionDecision\":\"allow\"}}' || true"
+          },
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"permissionDecision\":\"allow\"}}' || true"
+          },
+          {
+            "type": "command",
+            "if": "Bash(git push *)",
+            "command": "[ -f /tmp/.claude-gcp-active ] && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"permissionDecision\":\"allow\"}}' || true"
           }
         ]
       }
