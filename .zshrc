@@ -15,6 +15,8 @@ export HOMEBREW_NO_ENV_HINTS=1
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 
+export GRAFANA_URL="https://lithic.grafana.net"
+
 export EDITOR='vim'
 export VISUAL="$EDITOR"
 
@@ -309,42 +311,50 @@ fi
 # instant with no prompt on every subsequent tab/session.
 # =============================================================================
 _op_load_keys() {
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && return 0
+  local all_set=1
+  [[ -z "$ANTHROPIC_ADMIN_API_KEY" ]] && all_set=0
+  [[ -z "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && all_set=0
+  [[ $all_set -eq 1 ]] && return 0
 
-  # Fast path: read from macOS login keychain (no Touch ID once cached)
-  local cached
-  cached=$(security find-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w 2>/dev/null)
-  if [[ -n "$cached" ]]; then
-    export ANTHROPIC_ADMIN_API_KEY="$cached"
-    return 0
-  fi
+  _op_load_one() {
+    local env_var="$1" keychain_service="$2" op_path="$3"
+    [[ -n "${(P)env_var}" ]] && return 0
 
-  # Cache miss: fetch from 1Password (Touch ID fires once here)
-  local key
-  key=$(op read 'op://Employee/timixml3drbaydnetm4mpjmvqa/password' 2>/dev/null)
-  [[ -z "$key" ]] && return 1
+    local cached
+    cached=$(security find-generic-password -a "$USER" -s "$keychain_service" -w 2>/dev/null)
+    if [[ -n "$cached" ]]; then
+      export "$env_var"="$cached"
+      return 0
+    fi
 
-  export ANTHROPIC_ADMIN_API_KEY="$key"
+    local key
+    key=$(op read "$op_path" 2>/dev/null)
+    [[ -z "$key" ]] && return 1
 
-  # Persist to keychain so future sessions skip the Touch ID prompt
-  if ! security add-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w "$key" 2>/dev/null; then
-    security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
-    security add-generic-password -a "$USER" -s "op.anthropic-admin-api-key" -w "$key" 2>/dev/null
-  fi
+    export "$env_var"="$key"
+    if ! security add-generic-password -a "$USER" -s "$keychain_service" -w "$key" 2>/dev/null; then
+      security delete-generic-password -a "$USER" -s "$keychain_service" 2>/dev/null
+      security add-generic-password -a "$USER" -s "$keychain_service" -w "$key" 2>/dev/null
+    fi
+  }
+
+  _op_load_one ANTHROPIC_ADMIN_API_KEY       "op.anthropic-admin-api-key"          "op://Employee/timixml3drbaydnetm4mpjmvqa/password"
+  _op_load_one GRAFANA_SERVICE_ACCOUNT_TOKEN "op.grafana-service-account-token"    "op://Payments/g33riaf35ijgq4vul2ncysgbue/credential"
 }
 
 # Run when keys rotate in 1Password — clears cache and re-fetches (Touch ID once)
 op-refresh-keys() {
   security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
-  unset ANTHROPIC_ADMIN_API_KEY
+  security delete-generic-password -a "$USER" -s "op.grafana-service-account-token" 2>/dev/null
+  unset ANTHROPIC_ADMIN_API_KEY GRAFANA_SERVICE_ACCOUNT_TOKEN
   _op_load_keys && echo "Keys refreshed."
 }
 
 # Load on first prompt draw; unregister once populated
 _op_lazy_precmd() {
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
   _op_load_keys
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" ]] && add-zsh-hook -d precmd _op_lazy_precmd
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && add-zsh-hook -d precmd _op_lazy_precmd
 }
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _op_lazy_precmd
