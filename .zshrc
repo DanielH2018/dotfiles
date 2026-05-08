@@ -288,9 +288,12 @@ if [[ -o login ]] && command -v fastfetch >/dev/null 2>&1; then
 fi
 
 # =============================================================================
-# START IN CLAUDE WORKSPACE (only if shell started in $HOME)
+# Claude
 # =============================================================================
+# START IN CLAUDE WORKSPACE (only if shell started in $HOME)
 #[[ $PWD == $HOME && -d "$HOME/Documents/My_Vault" ]] && cd "$HOME/Documents/My_Vault"
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+
 
 # =============================================================================
 # PLUGINS (autosuggestions, then syntax-highlighting LAST)
@@ -366,3 +369,8 @@ export SDKMAN_DIR="$HOME/.sdkman"
 
 # added by Snowflake SnowflakeCLI installer v1.0
 export PATH=/Applications/SnowflakeCLI.app/Contents/MacOS/:$PATH
+# The following lines have been added by Docker Desktop to enable Docker CLI completions.
+fpath=(/Users/daniel/.docker/completions $fpath)
+autoload -Uz compinit
+compinit
+# End of Docker CLI completions
