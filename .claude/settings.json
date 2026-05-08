@@ -1,26 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "model": "claude-sonnet-4-6",
-  "effortLevel": "high",
-  "autoUpdatesChannel": "stable",
-  "editorMode": "normal",
-  "tui": "fullscreen",
-  "awaySummaryEnabled": true,
-  "showTurnDuration": true,
-  "autoConnectIde": true,
-  "autoInstallIdeExtension": true,
   "cleanupPeriodDays": 30,
-  "attribution": {
-    "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
-    "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
-  },
   "env": {
     "EDITOR": "vim",
     "PAGER": "less -R",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0"
   },
+  "attribution": {
+    "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+    "pr": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  },
   "permissions": {
-    "defaultMode": "default",
     "allow": [
       "Read(**)",
       "Glob",
@@ -197,6 +187,14 @@
       "mcp__claude_ai_Notion__notion-get-*",
       "mcp__claude_ai_Notion__notion-query-*",
       "mcp__claude_ai_Notion__notion-search",
+      "mcp__grafana__get_*",
+      "mcp__grafana__list_*",
+      "mcp__grafana__query_*",
+      "mcp__grafana__search_*",
+      "mcp__grafana__find_*",
+      "mcp__grafana__tempo_*",
+      "mcp__grafana__generate_deeplink",
+      "mcp__grafana__get_panel_image",
       "mcp__claude_ai_Lithic_API_Docs__fetch",
       "mcp__claude_ai_Lithic_API_Docs__get-*",
       "mcp__claude_ai_Lithic_API_Docs__list-*",
@@ -212,47 +210,6 @@
       "mcp__claude_ai_Sentry__*",
       "mcp__claude_ai_Tropic__*",
       "mcp__claude_ai_Webflow__*"
-    ],
-    "ask": [
-      "Bash(rm:*)",
-      "Bash(rmdir:*)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
-      "Bash(git reset --hard:*)",
-      "Bash(git clean:*)",
-      "Bash(git rebase:*)",
-      "Bash(git merge:*)",
-      "Bash(git cherry-pick:*)",
-      "Bash(gh pr create:*)",
-      "Bash(gh pr merge:*)",
-      "Bash(gh issue create:*)",
-      "Bash(npm install:*)",
-      "Bash(npm uninstall:*)",
-      "Bash(npm publish:*)",
-      "Bash(pnpm install:*)",
-      "Bash(pnpm add:*)",
-      "Bash(yarn add:*)",
-      "Bash(pip install:*)",
-      "Bash(uv add:*)",
-      "Bash(poetry add:*)",
-      "Bash(cargo install:*)",
-      "Bash(cargo publish:*)",
-      "Bash(docker run:*)",
-      "Bash(docker rm:*)",
-      "Bash(docker rmi:*)",
-      "Bash(curl:*)",
-      "Bash(wget:*)",
-      "Bash(ssh:*)",
-      "Bash(scp:*)",
-      "Bash(rsync:*)",
-      "Bash(snow stage put:*)",
-      "Bash(snow stage copy:*)",
-      "Bash(snow streamlit:*)",
-      "Bash(snow app:*)",
-      "Bash(snow git:*)",
-      "Bash(snow notebook:*)",
-      "Bash(snow snowpark:*)",
-      "Bash(snow cortex:*)"
     ],
     "deny": [
       "Read(**/.env)",
@@ -301,8 +258,51 @@
       "Bash(curl * | bash)",
       "Bash(wget * | sh)",
       "Bash(wget * | bash)"
-    ]
+    ],
+    "ask": [
+      "Bash(rm:*)",
+      "Bash(rmdir:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh issue create:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm publish:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)",
+      "Bash(yarn add:*)",
+      "Bash(pip install:*)",
+      "Bash(uv add:*)",
+      "Bash(poetry add:*)",
+      "Bash(cargo install:*)",
+      "Bash(cargo publish:*)",
+      "Bash(docker run:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker rmi:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(rsync:*)",
+      "Bash(snow stage put:*)",
+      "Bash(snow stage copy:*)",
+      "Bash(snow streamlit:*)",
+      "Bash(snow app:*)",
+      "Bash(snow git:*)",
+      "Bash(snow notebook:*)",
+      "Bash(snow snowpark:*)",
+      "Bash(snow cortex:*)"
+    ],
+    "defaultMode": "default"
   },
+  "model": "claude-sonnet-4-6",
   "hooks": {
     "PermissionRequest": [
       {
@@ -337,23 +337,23 @@
           },
           {
             "type": "command",
-            "if": "Bash(rm *)",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "if": "Bash(rm *)"
           },
           {
             "type": "command",
-            "if": "Bash(git push *)",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "if": "Bash(git push *)"
           },
           {
             "type": "command",
-            "if": "Bash(curl *)",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "if": "Bash(curl *)"
           },
           {
             "type": "command",
-            "if": "Bash(wget *)",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "if": "Bash(wget *)"
           }
         ]
       },
@@ -395,6 +395,16 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/pre-compact.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -405,5 +415,28 @@
         ]
       }
     ]
-  }
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "lpt-pr-curator@processing-llm": true
+  },
+  "extraKnownMarketplaces": {
+    "processing-llm": {
+      "source": {
+        "source": "github",
+        "repo": "privacy-com/processing-llm"
+      }
+    }
+  },
+  "effortLevel": "high",
+  "awaySummaryEnabled": true,
+  "autoUpdatesChannel": "stable",
+  "editorMode": "normal",
+  "tui": "fullscreen",
+  "showTurnDuration": true,
+  "autoConnectIde": true,
+  "autoInstallIdeExtension": true
 }

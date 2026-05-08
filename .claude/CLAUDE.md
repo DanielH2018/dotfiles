@@ -17,7 +17,13 @@ I work across backend services, internal tooling, and occasionally frontend.
 - Commits are GPG-signed via 1Password SSH agent — never pass `--no-verify`, `--no-gpg-sign`, or any flag that bypasses signing.
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
-- Write commit messages that explain *why*, not just what changed.
+- Write commit messages that explain *why*, not just what changed. Example:
+  ```
+  Fix race condition in settlement processor on concurrent retries
+
+  The previous implementation didn't hold the lock across the
+  DB read + write, allowing duplicate settlements under load.
+  ```
 
 ## Environment
 
@@ -28,13 +34,15 @@ I work across backend services, internal tooling, and occasionally frontend.
 
 ## Integrations — when to reach for them
 
-- **Lithic API Docs MCP**: Use proactively when I ask about Lithic API endpoints, request shapes, or behavior.
-- **Jira / Confluence (Atlassian MCP)**: Use for ticket context, sprint state, or team documentation lookups.
-- **PagerDuty MCP**: Use for on-call schedules, incident history, or service ownership.
-- **Sentry MCP**: Use for error details, stack traces, or issue history when debugging.
-- **Slack MCP**: Read-only lookups only unless I explicitly ask you to send something.
-- **Notion MCP**: Use proactively to get context about work, projects, and documentation.
-- Other MCPs (Gmail, Calendar, Drive, Ramp, etc.): Use when relevant and appropriate — don't wait for me to ask explicitly.
+| MCP | Reach for it when |
+|-----|-------------------|
+| Lithic API Docs | Asked about endpoints, request shapes, or API behavior |
+| Jira / Confluence | Need ticket context, sprint state, or team docs |
+| PagerDuty | On-call schedules, incident history, or service ownership |
+| Sentry | Debugging — need stack traces or issue history |
+| Slack | Read-only context lookups; ask before sending anything |
+| Notion | Context on work, projects, or internal documentation |
+| Gmail / Calendar / Drive / Ramp | When contextually relevant — don't wait to be asked |
 
 ## Domain context
 
