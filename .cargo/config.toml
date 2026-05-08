@@ -6,9 +6,10 @@ global-credential-providers = ["cargo:token"]
 
 [registries.lithic]
 index = "ssh://git@ssh.shipyard.rs/lithic/crate-index.git"
+token = "${CARGO_REGISTRIES_LITHIC_TOKEN}"
 
 [http]
-user-agent = "shipyard"
+user-agent = "shipyard ${CARGO_REGISTRIES_LITHIC_TOKEN}"
 
 [net]
 git-fetch-with-cli = true
