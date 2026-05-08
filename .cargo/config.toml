@@ -1,0 +1,19 @@
+[unstable]
+registry-auth = true
+
+[registry]
+global-credential-providers = ["cargo:token"]
+
+[registries.lithic]
+index = "ssh://git@ssh.shipyard.rs/lithic/crate-index.git"
+
+[http]
+user-agent = "shipyard"
+
+[net]
+git-fetch-with-cli = true
+
+[alias]
+t = "test --workspace --lib"
+ti = "test --workspace"     # includes integration tests
+c = "clippy --workspace --all-targets"

@@ -10,6 +10,11 @@
 # Package manifest
 !Brewfile
 
+# Cargo
+!.cargo/
+.cargo/*
+!.cargo/config.toml
+
 # Git config
 !.gitconfig
 !.gitignore
