@@ -317,6 +317,7 @@ _op_load_keys() {
   local all_set=1
   [[ -z "$ANTHROPIC_ADMIN_API_KEY" ]] && all_set=0
   [[ -z "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && all_set=0
+  [[ -z "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && all_set=0
   [[ $all_set -eq 1 ]] && return 0
 
   _op_load_one() {
@@ -343,24 +344,29 @@ _op_load_keys() {
 
   _op_load_one ANTHROPIC_ADMIN_API_KEY       "op.anthropic-admin-api-key"          "op://Employee/timixml3drbaydnetm4mpjmvqa/password"
   _op_load_one GRAFANA_SERVICE_ACCOUNT_TOKEN "op.grafana-service-account-token"    "op://Payments/g33riaf35ijgq4vul2ncysgbue/credential"
+  _op_load_one CARGO_REGISTRIES_LITHIC_TOKEN "op.cargo-registries-lithic-token"    "op://Employee/cihwsjc43kyuvunhqbtgshggsu/credential"
 }
 
 # Run when keys rotate in 1Password — clears cache and re-fetches (Touch ID once)
 op-refresh-keys() {
   security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
   security delete-generic-password -a "$USER" -s "op.grafana-service-account-token" 2>/dev/null
-  unset ANTHROPIC_ADMIN_API_KEY GRAFANA_SERVICE_ACCOUNT_TOKEN
+  security delete-generic-password -a "$USER" -s "op.cargo-registries-lithic-token" 2>/dev/null
+  unset ANTHROPIC_ADMIN_API_KEY GRAFANA_SERVICE_ACCOUNT_TOKEN CARGO_REGISTRIES_LITHIC_TOKEN
   _op_load_keys && echo "Keys refreshed."
 }
 
 # Load on first prompt draw; unregister once populated
 _op_lazy_precmd() {
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" && -n "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
   _op_load_keys
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && add-zsh-hook -d precmd _op_lazy_precmd
+  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" && -n "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && add-zsh-hook -d precmd _op_lazy_precmd
 }
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _op_lazy_precmd
+
+# Add 1Password SSH agent socket to environment for SSH key use with Docker
+export SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
 
 
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
