@@ -5,7 +5,7 @@
     "EDITOR": "vim",
     "PAGER": "less -R",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true"
   },
   "attribution": {
@@ -399,6 +399,7 @@
     ],
     "PreCompact": [
       {
+        "matcher": "auto",
         "hooks": [
           {
             "type": "command",
