@@ -43,4 +43,10 @@ if echo "$COMMAND" | grep -qE '\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b'; then
   deny "Blocked: low-level disk operation."
 fi
 
+# Reading secret files via bash commands (bypasses Read deny rules)
+SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem|\.key|\.p12|\.pfx)'
+if echo "$COMMAND" | grep -qE "\b(cat|head|tail|less|more|bat|strings|xxd|hexdump)\b.*$SECRET_PATHS"; then
+  deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
+fi
+
 exit 0

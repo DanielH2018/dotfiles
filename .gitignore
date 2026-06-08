@@ -39,6 +39,8 @@
 .claude/*
 !.claude/CLAUDE.md
 !.claude/settings.json
+!.claude/keybindings.json
+!.claude/statusline-command.sh
 !.claude/commands/
 !.claude/commands/*
 !.claude/hooks/

@@ -32,8 +32,23 @@ case "$FILE_PATH" in
   *.sh|*.bash)
     run_if_installed shfmt -w "$FILE_PATH" >/dev/null
     ;;
+  *.sql)
+    run_if_installed sqlfluff fix --dialect ansi "$FILE_PATH" >/dev/null
+    ;;
+  *.java)
+    run_if_installed google-java-format --replace "$FILE_PATH" >/dev/null
+    ;;
+  *.kt|*.kts)
+    run_if_installed ktfmt "$FILE_PATH" >/dev/null
+    ;;
+  *.xml)
+    run_if_installed xmllint --format --output "$FILE_PATH" "$FILE_PATH" >/dev/null
+    ;;
   *.tf|*.tfvars)
     run_if_installed terraform fmt "$FILE_PATH" >/dev/null
+    ;;
+  *.toml)
+    run_if_installed taplo fmt "$FILE_PATH" >/dev/null
     ;;
 esac
 

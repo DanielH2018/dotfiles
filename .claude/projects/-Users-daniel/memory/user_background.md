@@ -1,7 +1,7 @@
 ---
 name: User background
-description: Daniel's programming background and language experience
+description: Daniel's programming background and language experience — Java/Kotlin at Lithic Processing team
 type: user
-originSessionId: 21f5fc97-b2ed-4e43-a598-eaf099155325
+originSessionId: 578bda03-d91c-4063-b2ed-8c3baa5144ac
 ---
-Learned to code with Java (college). Strong Java foundation. As of April 2026, transitioning to using Java and Kotlin in an enterprise/production setting at Lithic (Processing team, backend services).
+Learned to code with Java (college). Strong Java foundation. Works with Java and Kotlin in production at Lithic (Processing team, backend services). Comfortable across the JVM stack — Gradle builds, Spring/Kotlin services, card-issuing infrastructure.

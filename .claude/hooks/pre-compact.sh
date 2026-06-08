@@ -1,9 +1,8 @@
 #!/bin/bash
 # PreCompact hook: fires on auto-compact only (not manual /compact).
-# Blocks auto-compaction with a reminder to run /capture-session first.
-# Override: just run /compact manually.
+# Allows compaction but injects a reminder to capture session insights.
 
 jq -n '{
-  "continue": false,
-  "systemMessage": "Auto-compact blocked — run /capture-session first, then /compact to proceed manually."
+  "continue": true,
+  "systemMessage": "Auto-compact proceeding. If this session contains important decisions, patterns, or feedback, run /capture-session after compaction to preserve them in memory."
 }'

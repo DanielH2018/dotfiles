@@ -2,7 +2,7 @@
 name: Lucid diagram style preferences
 description: How Daniel wants Lucid architecture diagrams styled — high-level, no port numbers, semantic labels
 type: feedback
-originSessionId: a63e04f5-973a-43c9-9142-9cda70c965fe
+originSessionId: 578bda03-d91c-4063-b2ed-8c3baa5144ac
 ---
 Keep Lucid diagrams high-level and readable:
 - **No port numbers** on shapes or connection labels (remove `:5432`, `:443`, `:9096`, etc.)

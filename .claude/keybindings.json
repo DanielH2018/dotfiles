@@ -1,0 +1,19 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "$docs": "https://code.claude.com/docs/en/keybindings",
+  "bindings": [
+    {
+      "context": "Global",
+      "bindings": {
+        "ctrl+k ctrl+t": "app:toggleTodos",
+        "ctrl+k ctrl+s": "app:globalSearch"
+      }
+    },
+    {
+      "context": "Chat",
+      "bindings": {
+        "ctrl+k ctrl+k": "chat:killAgents"
+      }
+    }
+  ]
+}

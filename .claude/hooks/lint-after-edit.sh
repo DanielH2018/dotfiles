@@ -25,22 +25,53 @@ case "$FILE_PATH" in
     command -v ruff >/dev/null && run_check ruff check "$FILE_PATH"
     ;;
   *.ts|*.tsx)
-    # Project-local tsc is usually what you want; falls back silently if absent.
-    if [ -f "tsconfig.json" ] && command -v npx >/dev/null; then
-      run_check npx --no-install tsc --noEmit -p .
+    # Per-file syntax check only — full tsc --noEmit -p . is too slow for a per-edit hook.
+    # Relies on build/test cycle for full type checking.
+    if command -v npx >/dev/null 2>&1; then
+      run_check npx --no-install tsc --noEmit --isolatedModules "$FILE_PATH" 2>/dev/null
     fi
     ;;
   *.rs)
-    # cargo check is slow for large crates; skip if no Cargo.toml in CWD.
-    if [ -f "Cargo.toml" ] && command -v cargo >/dev/null; then
-      run_check cargo check --quiet
-    fi
+    # Walk up to find Cargo.toml from the file's location, not CWD.
+    DIR=$(dirname "$FILE_PATH")
+    while [ "$DIR" != "/" ]; do
+      if [ -f "$DIR/Cargo.toml" ] && command -v cargo >/dev/null; then
+        run_check cargo check --quiet --manifest-path "$DIR/Cargo.toml"
+        break
+      fi
+      DIR=$(dirname "$DIR")
+    done
     ;;
   *.go)
-    command -v go >/dev/null && run_check go vet "./$(dirname "$FILE_PATH")/..."
+    # Use the file's directory directly — FILE_PATH is absolute.
+    command -v go >/dev/null && run_check go vet "$(dirname "$FILE_PATH")/..."
+    ;;
+  *.java)
+    # Find gradlew by walking up from the file; compileJava is fast if classes are cached.
+    DIR=$(dirname "$FILE_PATH")
+    while [ "$DIR" != "/" ]; do
+      if [ -x "$DIR/gradlew" ]; then
+        run_check "$DIR/gradlew" -p "$DIR" compileJava --quiet 2>/dev/null
+        break
+      fi
+      DIR=$(dirname "$DIR")
+    done
+    ;;
+  *.kt|*.kts)
+    DIR=$(dirname "$FILE_PATH")
+    while [ "$DIR" != "/" ]; do
+      if [ -x "$DIR/gradlew" ]; then
+        run_check "$DIR/gradlew" -p "$DIR" compileKotlin --quiet 2>/dev/null
+        break
+      fi
+      DIR=$(dirname "$DIR")
+    done
     ;;
   *.sh|*.bash)
     command -v shellcheck >/dev/null && run_check shellcheck "$FILE_PATH"
+    ;;
+  */Dockerfile|*/Dockerfile.*)
+    command -v hadolint >/dev/null && run_check hadolint "$FILE_PATH"
     ;;
 esac
 

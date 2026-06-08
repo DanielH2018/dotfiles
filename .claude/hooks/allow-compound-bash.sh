@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # allow-compound-bash.sh
 #
 # PermissionRequest hook for Bash.

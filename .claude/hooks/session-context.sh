@@ -12,9 +12,21 @@ SOURCE=$(jq -r '.source // "startup"')
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
 echo "=== Repo context ==="
-echo "Branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+echo "Branch: $BRANCH"
 echo "Last commit: $(git log -1 --pretty=format:'%h %s (%cr)' 2>/dev/null)"
+
+# Ahead/behind upstream, if tracking branch exists.
+UPSTREAM=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null)
+if [ -n "$UPSTREAM" ]; then
+  AHEAD=$(git rev-list --count '@{upstream}..HEAD' 2>/dev/null)
+  BEHIND=$(git rev-list --count 'HEAD..@{upstream}' 2>/dev/null)
+  if [ "$AHEAD" -gt 0 ] || [ "$BEHIND" -gt 0 ]; then
+    echo "Upstream: $UPSTREAM (ahead $AHEAD, behind $BEHIND)"
+  fi
+fi
 
 # Uncommitted changes, if any.
 DIRTY=$(git status --porcelain 2>/dev/null | head -20)
@@ -22,6 +34,13 @@ if [ -n "$DIRTY" ]; then
   echo ""
   echo "Uncommitted changes:"
   echo "$DIRTY"
+fi
+
+# Stash count, if any.
+STASH_COUNT=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+if [ "$STASH_COUNT" -gt 0 ]; then
+  echo ""
+  echo "Stashes: $STASH_COUNT"
 fi
 
 # Recent commits for context on what the user has been working on.

@@ -2,7 +2,7 @@
 
 ## About me
 
-I'm a software engineer at Lithic (card-issuing infrastructure / fintech).
+I'm a software engineer on the **Processing team** at Lithic (card-issuing infrastructure / fintech).
 I work across backend services, internal tooling, and occasionally frontend.
 
 ## Communication style
@@ -37,8 +37,10 @@ I work across backend services, internal tooling, and occasionally frontend.
 | MCP | Reach for it when |
 |-----|-------------------|
 | Lithic API Docs | Asked about endpoints, request shapes, or API behavior |
-| Jira / Confluence | Need ticket context, sprint state, or team docs |
+| Jira | Need ticket context, sprint state, or team docs |
+| Confluence | **Suspended/inactive — do not attempt** |
 | PagerDuty | On-call schedules, incident history, or service ownership |
+| Grafana | Dashboards, metrics (Prometheus/Loki), incidents, on-call |
 | Sentry | Debugging — need stack traces or issue history |
 | Slack | Read-only context lookups; ask before sending anything |
 | Notion | Context on work, projects, or internal documentation |
