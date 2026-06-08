@@ -1,0 +1,21 @@
+{
+  "numStartups": 1,
+  "theme": "dark",
+  "bypassPermissionsModeAccepted": true,
+  "customApiKeyResponses": {
+    "approved": [
+      "PLACEHOLDER",
+      "D9YFbfGMhPQ-W8f05wAA"
+    ],
+    "rejected": []
+  },
+  "projects": {
+    "/workspace": {
+      "hasTrustDialogAccepted": true,
+      "hasCompletedProjectOnboarding": true
+    }
+  },
+  "installMethod": "npm",
+  "autoUpdates": false,
+  "hasCompletedOnboarding": true
+}

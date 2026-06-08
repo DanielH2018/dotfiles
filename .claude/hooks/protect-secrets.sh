@@ -39,6 +39,9 @@ case "$FILE_PATH" in
   *.pem|*.key|*.p12|*.pfx)
     deny "Blocked: looks like a private key or certificate."
     ;;
+  */secrets/*)
+    deny "Blocked: files under a secrets/ directory."
+    ;;
 esac
 
 exit 0

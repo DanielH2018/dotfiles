@@ -4,7 +4,8 @@
 
 set -u
 
-COMMAND=$(jq -r '.tool_input.command // empty')
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
 deny() {
@@ -36,6 +37,16 @@ fi
 # Writing to protected files
 if echo "$COMMAND" | grep -qE '>\s*(\.env|~?/\.ssh/|~?/\.aws/credentials)'; then
   deny "Blocked: writing to a secrets file. Ask the user to do this manually."
+fi
+
+# Fork bomb
+if echo "$COMMAND" | grep -qE ':\(\)\{.*\};:'; then
+  deny "Blocked: fork bomb detected."
+fi
+
+# Generic pipe-to-shell (belt-and-suspenders with permissions.deny)
+if echo "$COMMAND" | grep -qE '\|\s*(sh|bash|zsh|dash|fish)\b'; then
+  deny "Blocked: piping output to a shell interpreter. Download, inspect, then run."
 fi
 
 # Disk-wipe commands

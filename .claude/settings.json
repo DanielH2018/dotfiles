@@ -73,6 +73,8 @@
       "Bash(mv:*)",
       "Bash(ln:*)",
       "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
       "Bash(git status)",
       "Bash(git status:*)",
       "Bash(git log)",
@@ -344,6 +346,8 @@
       "Write(~/.netrc)",
       "Write(~/.pypirc)",
       "Write(~/.npmrc)",
+      "Write(**/id_rsa)",
+      "Write(**/id_ed25519)",
       "Write(**/secrets/**)",
       "Bash(sudo:*)",
       "Bash(su:*)",
@@ -363,13 +367,19 @@
       "Bash(curl * | sh)",
       "Bash(curl * | bash)",
       "Bash(wget * | sh)",
-      "Bash(wget * | bash)"
+      "Bash(wget * | bash)",
+      "Bash(* | sh)",
+      "Bash(* | bash)",
+      "Bash(* | zsh)",
+      "Write(.git/**)",
+      "Write(./.git/**)",
+      "Edit(.git/**)",
+      "Edit(./.git/**)",
+      "Read(~/.config/gcloud/**)"
     ],
     "ask": [
       "Bash(rm:*)",
       "Bash(rmdir:*)",
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
       "Bash(git rebase:*)",
@@ -427,7 +437,8 @@
       "Bash(snow snowpark:*)",
       "Bash(snow cortex:*)"
     ],
-    "defaultMode": "default"
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable"
   },
   "model": "opus[1m]",
   "hooks": {
@@ -496,6 +507,15 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/audit-all-tools.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -506,7 +526,7 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/lint-after-edit.sh",
-            "timeout": 120
+            "timeout": 300
           }
         ]
       }
@@ -574,6 +594,67 @@
         "repo": "privacy-com/claude-skills"
       }
     }
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "enableWeakerNetworkIsolation": false,
+    "filesystem": {
+      "allowWrite": [
+        "~/.gradle",
+        "~/.m2",
+        "~/.npm",
+        "~/.cache",
+        "~/.sdkman",
+        "~/.local/share/fnm",
+        "/tmp"
+      ],
+      "denyRead": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/gcloud",
+        "~/.netrc",
+        "~/.pypirc"
+      ],
+      "denyWrite": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/gcloud",
+        "/etc",
+        "/System"
+      ]
+    },
+    "network": {
+      "allowLocalBinding": true,
+      "allowUnixSockets": [
+        "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+      ],
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "registry.npmjs.org",
+        "repo1.maven.org",
+        "plugins.gradle.org",
+        "services.gradle.org",
+        "downloads.gradle.org",
+        "central.sonatype.com",
+        "dl.google.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "crates.io",
+        "static.crates.io",
+        "ssh.shipyard.rs",
+        "jpos.org",
+        "clojars.org",
+        "ghcr.io"
+      ]
+    },
+    "excludedCommands": [
+      "docker",
+      "docker-compose"
+    ]
   },
   "effortLevel": "high",
   "awaySummaryEnabled": true,

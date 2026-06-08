@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# claude-sandbox: Launch Claude Code in a Docker-based Pattern C sandbox.
+# Usage: claude-sandbox [--rebuild|--generate] <repo-path>
+
+SANDBOX_DIR="$HOME/.claude/sandbox"
+AUDIT_BASE="$SANDBOX_DIR/audit"
+OP_SOCKET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+
+usage() {
+  echo "Usage: claude-sandbox [--rebuild|--generate] <repo-path>"
+  echo ""
+  echo "  --rebuild    Force rebuild the Docker image"
+  echo "  --generate   Regenerate Dockerfile.claudebot only (don't build or run)"
+  exit 1
+}
+
+# --- Parse args ---
+REBUILD=false
+GENERATE_ONLY=false
+REPO_PATH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rebuild) REBUILD=true; shift ;;
+    --generate) GENERATE_ONLY=true; shift ;;
+    -h|--help) usage ;;
+    -*) echo "Unknown option: $1"; usage ;;
+    *) REPO_PATH="$1"; shift ;;
+  esac
+done
+
+[[ -z "$REPO_PATH" ]] && usage
+REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+REPO_NAME="$(basename "$REPO_PATH")"
+IMAGE_TAG="claudebot:$REPO_NAME"
+DOCKERFILE="$REPO_PATH/Dockerfile.claudebot"
+
+# --- Validate prerequisites ---
+if [[ "$GENERATE_ONLY" == false ]]; then
+  # Support ANTHROPIC_ADMIN_API_KEY as an alias to avoid collisions with host claude
+  if [[ -n "${ANTHROPIC_ADMIN_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    export ANTHROPIC_API_KEY="$ANTHROPIC_ADMIN_API_KEY"
+  fi
+
+  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo "Error: ANTHROPIC_API_KEY (or ANTHROPIC_ADMIN_API_KEY) is not set." >&2
+    exit 1
+  fi
+
+  if ! command -v docker &>/dev/null; then
+    echo "Error: docker is not installed." >&2
+    exit 1
+  fi
+
+  if ! docker info &>/dev/null 2>&1; then
+    echo "Error: Docker daemon is not running." >&2
+    exit 1
+  fi
+fi
+
+# --- Input validation ---
+validate_version() {
+  local label="$1" value="$2"
+  if [[ ! "$value" =~ ^[0-9a-zA-Z._+\-]+$ ]]; then
+    echo "Error: unsafe $label version string: '$value'" >&2
+    exit 1
+  fi
+}
+
+# --- Detect toolchains and generate Dockerfile ---
+generate_dockerfile() {
+  local layers=""
+
+  # Java / Kotlin via sdkman
+  if [[ -f "$REPO_PATH/.sdkmanrc" ]]; then
+    local java_version
+    java_version=$(grep -E '^java=' "$REPO_PATH/.sdkmanrc" | cut -d= -f2 | tr -d '[:space:]')
+    [[ -n "$java_version" ]] && validate_version "java" "$java_version"
+    if [[ -n "$java_version" ]]; then
+      layers+="
+# --- Java via sdkman (.sdkmanrc) ---
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends zip unzip findutils && rm -rf /var/lib/apt/lists/*
+USER claudebot
+ENV SDKMAN_DIR=/home/claudebot/.sdkman
+RUN curl -s \"https://get.sdkman.io\" | bash
+RUN bash -c \"source \$SDKMAN_DIR/bin/sdkman-init.sh && sdk install java $java_version && sdk flush tmp\"
+ENV JAVA_HOME=/home/claudebot/.sdkman/candidates/java/current
+ENV PATH=\"\$JAVA_HOME/bin:\$PATH\"
+"
+    fi
+  fi
+
+  # Node via fnm
+  local node_version=""
+  if [[ -f "$REPO_PATH/.nvmrc" ]]; then
+    node_version=$(cat "$REPO_PATH/.nvmrc" | tr -d '[:space:]' | sed 's/^v//')
+  elif [[ -f "$REPO_PATH/.node-version" ]]; then
+    node_version=$(cat "$REPO_PATH/.node-version" | tr -d '[:space:]' | sed 's/^v//')
+  elif [[ -f "$REPO_PATH/package.json" ]]; then
+    node_version="--lts"
+  fi
+  if [[ -n "$node_version" && "$node_version" != "--lts" ]]; then
+    validate_version "node" "$node_version"
+  fi
+  if [[ -n "$node_version" ]]; then
+    layers+="
+# --- Node via fnm ---
+ENV FNM_DIR=/home/claudebot/.fnm
+RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir \"\$FNM_DIR\" --skip-shell
+ENV PATH=\"/home/claudebot/.fnm:\$PATH\"
+RUN eval \"\$(fnm env)\" && fnm install $node_version && fnm default $node_version
+ENV PATH=\"/home/claudebot/.fnm/aliases/default/bin:\$PATH\"
+"
+  fi
+
+  # Rust via rustup
+  if [[ -f "$REPO_PATH/Cargo.toml" ]]; then
+    layers+="
+# --- Rust via rustup ---
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH=\"/home/claudebot/.cargo/bin:\$PATH\"
+"
+  fi
+
+  # Go
+  if [[ -f "$REPO_PATH/go.mod" ]]; then
+    local go_version
+    go_version=$(grep -E '^go ' "$REPO_PATH/go.mod" | awk '{print $2}' | head -1)
+    [[ -z "$go_version" ]] && go_version="1.22.4"
+    validate_version "go" "$go_version"
+    layers+="
+# --- Go ---
+USER root
+RUN ARCH=\$(dpkg --print-architecture) && \\
+    curl -fsSL \"https://go.dev/dl/go${go_version}.linux-\${ARCH}.tar.gz\" | tar -C /usr/local -xz
+USER claudebot
+ENV PATH=\"/usr/local/go/bin:/home/claudebot/go/bin:\$PATH\"
+"
+  fi
+
+  # Python
+  if [[ -f "$REPO_PATH/pyproject.toml" || -f "$REPO_PATH/requirements.txt" ]]; then
+    layers+="
+# --- Python ---
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*
+USER claudebot
+"
+  fi
+
+  # Write Dockerfile
+  cat > "$DOCKERFILE" <<DOCKEREOF
+FROM claudebot:base
+$layers
+WORKDIR /workspace
+DOCKEREOF
+
+  echo "Generated $DOCKERFILE"
+  if [[ -n "$layers" ]]; then
+    echo "Detected toolchains:"
+    grep '# ---' "$DOCKERFILE" | sed 's/# --- //;s/ ---.*//' | sed 's/^/  - /'
+  else
+    echo "  No toolchains detected (lightweight image)"
+  fi
+}
+
+# --- Generate Dockerfile if needed ---
+if [[ ! -f "$DOCKERFILE" ]] || [[ "$REBUILD" == true ]]; then
+  generate_dockerfile
+elif [[ "$GENERATE_ONLY" == true ]]; then
+  generate_dockerfile
+fi
+
+[[ "$GENERATE_ONLY" == true ]] && exit 0
+
+# --- Build image ---
+echo ""
+echo "Building $IMAGE_TAG..."
+docker build \
+  -f "$DOCKERFILE" \
+  -t "$IMAGE_TAG" \
+  "$SANDBOX_DIR"
+
+# --- Run container ---
+AUDIT_DIR="$AUDIT_BASE/$REPO_NAME"
+mkdir -p "$AUDIT_DIR"
+
+echo ""
+echo "Starting Claude Code in Pattern C sandbox for $REPO_NAME..."
+echo "  Repo: $REPO_PATH -> /workspace"
+echo "  Audit: $AUDIT_DIR -> /audit"
+echo ""
+
+# Fix 1Password socket permissions before launching.
+# Docker Desktop macOS mounts sockets as root:root 0660.
+# chown to claudebot (UID 1000) so only that user can access it.
+if ! docker run --rm --user root \
+  -v "$OP_SOCKET:/run/1password/agent.sock" \
+  "$IMAGE_TAG" chown 1000:1000 /run/1password/agent.sock 2>/dev/null; then
+  echo "Warning: could not fix 1Password socket permissions. Git signing may fail." >&2
+fi
+
+docker run --rm -it \
+  --name "claudebot-$REPO_NAME" \
+  --cap-drop all \
+  --security-opt no-new-privileges \
+  -v "$REPO_PATH:/workspace" \
+  -v "$AUDIT_DIR:/audit" \
+  -v "$OP_SOCKET:/run/1password/agent.sock" \
+  -e ANTHROPIC_API_KEY \
+  -e SSH_AUTH_SOCK=/run/1password/agent.sock \
+  "$IMAGE_TAG"

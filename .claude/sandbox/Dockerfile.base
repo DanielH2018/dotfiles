@@ -1,0 +1,57 @@
+FROM debian:stable-slim
+
+ARG NODE_VERSION=22
+ARG CLAUDE_CODE_VERSION="latest"
+
+# System packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates git jq tini openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js (needed for Claude Code npm install)
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude Code
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && npm cache clean --force
+
+# Non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1000 claudebot
+USER claudebot
+WORKDIR /workspace
+
+# Claude Code settings (Pattern C)
+RUN mkdir -p /home/claudebot/.claude/hooks
+COPY --chown=claudebot:claudebot settings.json /home/claudebot/.claude/settings.json
+COPY --chown=claudebot:claudebot audit.sh /home/claudebot/.claude/hooks/audit.sh
+
+# Seed .claude.json so first-run prompts are skipped
+COPY --chown=claudebot:claudebot claude.json /home/claudebot/.claude.json
+
+# Git config for signed commits
+RUN git config --global user.name "Daniel Hunter" \
+    && git config --global user.email "danielh.2018@gmail.com" \
+    && git config --global gpg.format ssh \
+    && git config --global user.signingkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou" \
+    && git config --global commit.gpgsign true \
+    && git config --global gpg.ssh.allowedSignersFile /home/claudebot/.ssh/allowed_signers
+
+# Allowed signers (so git can verify its own commits)
+RUN mkdir -p /home/claudebot/.ssh \
+    && echo "danielh.2018@gmail.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou" \
+    > /home/claudebot/.ssh/allowed_signers
+
+# Audit mount point (created as root before final USER switch)
+USER root
+RUN mkdir -p /audit && chown claudebot:claudebot /audit
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Run as claudebot
+USER claudebot
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--", "entrypoint.sh"]
+CMD ["claude", "--dangerously-skip-permissions"]

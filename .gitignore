@@ -45,6 +45,8 @@
 !.claude/commands/*
 !.claude/hooks/
 !.claude/hooks/*
+!.claude/sandbox/
+!.claude/sandbox/**
 !.claude/projects/
 .claude/projects/*
 !.claude/projects/-Users-daniel/

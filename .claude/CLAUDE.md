@@ -62,3 +62,13 @@ Write tests for any new code I create. Match the style and framework already use
 - Don't refactor or "clean up" code beyond what the task requires.
 - Don't add error handling for scenarios that can't happen.
 - Don't create new files when editing an existing one would do.
+
+## Enforcement
+
+The rules above are advisory. Hard limits are enforced at three layers:
+
+- **Permissions** (`~/.claude/settings.json`): deny/ask/allow rules for file access, bash commands, MCP tools, and WebFetch domains. Deny rules block before the tool runs.
+- **Hooks** (`~/.claude/hooks/`): PreToolUse hooks (`block-dangerous-bash.sh`, `protect-secrets.sh`) deny dangerous patterns with clear error messages. PostToolUse hooks auto-format, lint, and audit. The Stop hook prevents leaving staged changes on protected branches.
+- **Sandbox** (`sandbox` in settings.json): macOS `sandbox-exec` restricts what Bash commands can actually touch at the OS level. Filesystem deny rules prevent reading `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`. Network is domain-allowlisted. Docker is excluded from sandboxing. 1Password SSH agent socket is explicitly allowed for git signing.
+
+If a CLAUDE.md rule and a permission/hook/sandbox conflict, the enforcement layer wins.

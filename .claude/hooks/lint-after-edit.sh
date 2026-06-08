@@ -51,7 +51,7 @@ case "$FILE_PATH" in
     DIR=$(dirname "$FILE_PATH")
     while [ "$DIR" != "/" ]; do
       if [ -x "$DIR/gradlew" ]; then
-        run_check "$DIR/gradlew" -p "$DIR" compileJava --quiet 2>/dev/null
+        run_check "$DIR/gradlew" -p "$DIR" compileJava --no-daemon --quiet 2>/dev/null
         break
       fi
       DIR=$(dirname "$DIR")
@@ -61,7 +61,7 @@ case "$FILE_PATH" in
     DIR=$(dirname "$FILE_PATH")
     while [ "$DIR" != "/" ]; do
       if [ -x "$DIR/gradlew" ]; then
-        run_check "$DIR/gradlew" -p "$DIR" compileKotlin --quiet 2>/dev/null
+        run_check "$DIR/gradlew" -p "$DIR" compileKotlin --no-daemon --quiet 2>/dev/null
         break
       fi
       DIR=$(dirname "$DIR")

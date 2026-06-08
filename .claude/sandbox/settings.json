@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "tui": "fullscreen",
+  "editorMode": "normal",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/audit.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "cleanupPeriodDays": 7
+}
