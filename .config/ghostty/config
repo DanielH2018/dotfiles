@@ -6,7 +6,7 @@
 # FONT CONFIGURATION
 # -----------------------------------------------------------------------------
 font-family = "IosevkaTerm Nerd Font Mono Bold"
-font-size = 12
+font-size = 16
 font-thicken = true
 font-thicken-strength = 50
 font-feature = +liga,+kern,+calt,+ss01,+ss02

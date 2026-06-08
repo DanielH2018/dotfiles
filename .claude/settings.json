@@ -202,6 +202,7 @@
       "mcp__claude_ai_Lithic_API_Docs__list-*",
       "mcp__claude_ai_Lithic_API_Docs__search*",
       "mcp__claude_ai_Privacy_-_Chargebee_-_Knowledge_Agent__*",
+      "Bash(\"/Users/daniel/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "mcp__claude_ai_Mermaid_Chart__*",
       "mcp__claude_ai_Customer_io__*",
       "mcp__claude_ai_HubSpot__*",
@@ -304,7 +305,7 @@
     ],
     "defaultMode": "default"
   },
-  "model": "claude-sonnet-4-6",
+  "model": "opus[1m]",
   "hooks": {
     "PermissionRequest": [
       {
@@ -424,13 +425,36 @@
     "command": "bash ~/.claude/statusline-command.sh"
   },
   "enabledPlugins": {
-    "lpt-pr-curator@processing-llm": true
+    "lpt-pr-curator@processing-llm": true,
+    "lpt-dependabot-reviewer@processing-llm": true,
+    "lpt-network-specs@processing-llm": true,
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "playground@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true,
+    "atomic-agents@claude-plugins-official": true,
+    "privacy-eng-tools@privacy-skills": true,
+    "ralph-loop@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "processing-llm": {
       "source": {
         "source": "github",
         "repo": "privacy-com/processing-llm"
+      }
+    },
+    "privacy-skills": {
+      "source": {
+        "source": "github",
+        "repo": "privacy-com/claude-skills"
       }
     }
   },
