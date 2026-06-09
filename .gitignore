@@ -7,6 +7,9 @@
 !.zprofile
 !.bash_profile
 
+# tmux
+!.tmux.conf
+
 # Package manifest
 !Brewfile
 
@@ -47,6 +50,8 @@
 !.claude/hooks/*
 !.claude/sandbox/
 !.claude/sandbox/**
+# Re-ignore runtime audit logs that the sandbox writes under sandbox/audit/
+.claude/sandbox/audit/
 !.claude/projects/
 .claude/projects/*
 !.claude/projects/-Users-daniel/
