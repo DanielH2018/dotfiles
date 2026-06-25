@@ -69,7 +69,7 @@ printf '\033[38;5;136m %s \033[0m' "$short_cwd"
 # Segment: git branch (aqua) + dirty indicator + ahead/behind
 # Cache git status for 3 seconds to avoid repeated forks on rapid redraws
 if [[ -n "$git_branch" ]]; then
-  _git_cache="${TMPDIR:-/tmp}/.claude-statusline-git-$$"
+  _git_cache="${TMPDIR:-/tmp}/.claude-statusline-git-${cwd//\//_}"
   _cache_age=999
   [[ -f "$_git_cache" ]] && _cache_age=$(( $(date +%s) - $(stat -f%m "$_git_cache" 2>/dev/null || stat -c%Y "$_git_cache" 2>/dev/null || echo 0) ))
   if [[ $_cache_age -gt 3 ]]; then
