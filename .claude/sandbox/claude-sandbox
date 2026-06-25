@@ -2,40 +2,135 @@
 set -euo pipefail
 
 # claude-sandbox: Launch Claude Code in a Docker-based Pattern C sandbox.
-# Usage: claude-sandbox [--rebuild|--generate] <repo-path>
+# Usage: claude-sandbox [--rebuild|--rebuild-base|--generate|--worktree NAME] <repo-path>
 
 SANDBOX_DIR="$HOME/.claude/sandbox"
 AUDIT_BASE="$SANDBOX_DIR/audit"
+SESSIONS_BASE="$SANDBOX_DIR/sessions"
+STATE_DIR="$SANDBOX_DIR/state"
 OP_SOCKET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+# TODO: pin to a specific digest once you've pulled a known-good version:
+#   docker inspect lscr.io/linuxserver/socket-proxy:latest --format '{{index .RepoDigests 0}}'
+# Then replace :latest with the sha256 digest to avoid supply-chain risk.
+PROXY_IMAGE="lscr.io/linuxserver/socket-proxy:latest"
 
 usage() {
-  echo "Usage: claude-sandbox [--rebuild|--generate] <repo-path>"
+  echo "Usage: claude-sandbox [OPTIONS] <repo-path>"
   echo ""
-  echo "  --rebuild    Force rebuild the Docker image"
-  echo "  --generate   Regenerate Dockerfile.claudebot only (don't build or run)"
+  echo "Options:"
+  echo "  --rebuild          Force rebuild the per-repo Docker image"
+  echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base)"
+  echo "  --generate         Regenerate Dockerfile.claudebot only (don't build or run)"
+  echo "  --worktree [NAME]  Run in an isolated git worktree on branch claude/<NAME>."
+  echo "                     Reuses existing worktree if branch already exists."
+  echo "                     If NAME is omitted, generates a short random suffix."
+  echo "                     Worktree is kept on exit if it has changes; removed if clean."
   exit 1
 }
 
 # --- Parse args ---
 REBUILD=false
+REBUILD_BASE=false
 GENERATE_ONLY=false
+USE_WORKTREE=false
+WT_NAME=""
 REPO_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rebuild) REBUILD=true; shift ;;
+    --rebuild-base) REBUILD_BASE=true; shift ;;
     --generate) GENERATE_ONLY=true; shift ;;
+    --worktree)
+      USE_WORKTREE=true
+      shift
+      # Consume the next arg as worktree name if it doesn't look like a flag or path
+      if [[ $# -gt 0 && "$1" != -* && "$1" != /* && "$1" != .* ]]; then
+        WT_NAME="$1"
+        shift
+      fi
+      ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
   esac
 done
 
+# --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
+if [[ ("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true ]]; then
+  if ! command -v docker &>/dev/null; then
+    echo "Error: docker is not installed." >&2
+    exit 1
+  fi
+  if ! docker info &>/dev/null 2>&1; then
+    echo "Error: Docker daemon is not running." >&2
+    exit 1
+  fi
+fi
+
+# --- Rebuild base image if requested ---
+if [[ "$REBUILD_BASE" == true ]]; then
+  echo "Building claudebot:base..."
+  docker build -t claudebot:base -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
+  [[ -z "$REPO_PATH" ]] && exit 0
+  # Base changed — force per-repo rebuild too
+  REBUILD=true
+fi
+
 [[ -z "$REPO_PATH" ]] && usage
+
+# Resolve short repo names: "airflow" -> ~/Repositories/airflow
+if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+  REPO_PATH="$HOME/Repositories/$REPO_PATH"
+fi
+
 REPO_PATH="$(cd "$REPO_PATH" && pwd)"
-REPO_NAME="$(basename "$REPO_PATH")"
-IMAGE_TAG="claudebot:$REPO_NAME"
-DOCKERFILE="$REPO_PATH/Dockerfile.claudebot"
+# Sanitize repo name for use in Docker tags (must match [a-zA-Z0-9._-])
+REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+if [[ -z "$REPO_NAME" ]]; then
+  echo "Error: could not derive a valid repo name from path: $REPO_PATH" >&2
+  exit 1
+fi
+
+# Validate repo is a git repository (.git can be a file in worktrees)
+if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
+  echo "Error: not a git repository: $REPO_PATH" >&2
+  exit 1
+fi
+
+# Generate worktree name if needed
+if [[ "$USE_WORKTREE" == true && -z "$WT_NAME" ]]; then
+  WT_NAME="$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
+fi
+
+# Validate worktree name (alphanumeric, hyphens, underscores only)
+if [[ -n "$WT_NAME" ]] && [[ ! "$WT_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+  echo "Error: worktree name must be alphanumeric (hyphens/underscores allowed): '$WT_NAME'" >&2
+  exit 1
+fi
+
+# Use a short hash of the full path to avoid collisions when two repos
+# share the same basename (e.g., ~/work/api vs ~/personal/api).
+REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+
+# INSTANCE_ID distinguishes parallel runs of the same repo.
+# Includes REPO_HASH so same-named repos don't collide on container/proxy/network names.
+if [[ "$USE_WORKTREE" == true ]]; then
+  INSTANCE_ID="${REPO_NAME}-${REPO_HASH}-${WT_NAME}"
+else
+  INSTANCE_ID="${REPO_NAME}-${REPO_HASH}"
+fi
+IMAGE_TAG="claudebot:${REPO_NAME}-${REPO_HASH}"
+DOCKERFILE="$SANDBOX_DIR/dockerfiles/Dockerfile.${REPO_NAME}-${REPO_HASH}"
+PROXY_NAME="claudebot-proxy-$INSTANCE_ID"
+NETWORK_NAME="claudebot-net-$INSTANCE_ID"
+
+# WORK_PATH is what gets mounted into the container.
+# Defaults to REPO_PATH; overridden to the worktree path below.
+WORK_PATH="$REPO_PATH"
+WT_BRANCH=""
+WT_PATH=""
+WT_CREATED=false
 
 # --- Validate prerequisites ---
 if [[ "$GENERATE_ONLY" == false ]]; then
@@ -44,19 +139,8 @@ if [[ "$GENERATE_ONLY" == false ]]; then
     export ANTHROPIC_API_KEY="$ANTHROPIC_ADMIN_API_KEY"
   fi
 
-  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    echo "Error: ANTHROPIC_API_KEY (or ANTHROPIC_ADMIN_API_KEY) is not set." >&2
-    exit 1
-  fi
-
-  if ! command -v docker &>/dev/null; then
-    echo "Error: docker is not installed." >&2
-    exit 1
-  fi
-
-  if ! docker info &>/dev/null 2>&1; then
-    echo "Error: Docker daemon is not running." >&2
-    exit 1
+  if [[ -z "${ANTHROPIC_API_KEY:-}" && ! -f "$STATE_DIR/.auth-configured" ]]; then
+    echo "Note: No API key or OAuth session found — will prompt for OAuth login." >&2
   fi
 fi
 
@@ -67,6 +151,36 @@ validate_version() {
     echo "Error: unsafe $label version string: '$value'" >&2
     exit 1
   fi
+}
+
+# --- Feature detection flags ---
+NEEDS_DOCKER=false
+
+detect_docker_need() {
+  # Check for docker-compose files (depth 2 catches monorepo layouts)
+  local compose_files
+  compose_files=$(find "$REPO_PATH" -maxdepth 2 \( -name "docker-compose*.yml" -o -name "docker-compose*.yaml" -o -name "compose*.yml" -o -name "compose*.yaml" \) 2>/dev/null | head -1)
+  if [[ -n "$compose_files" ]]; then
+    NEEDS_DOCKER=true
+  fi
+  # Also check Makefile for docker compose references
+  if [[ -f "$REPO_PATH/Makefile" ]] && grep -q 'docker compose\|docker-compose' "$REPO_PATH/Makefile" 2>/dev/null; then
+    NEEDS_DOCKER=true
+  fi
+}
+
+detect_uv_need() {
+  # Check for uv.lock, or uv references in CLAUDE.md / Makefile / pyproject.toml
+  if [[ -f "$REPO_PATH/uv.lock" ]]; then
+    return 0
+  fi
+  if [[ -f "$REPO_PATH/CLAUDE.md" ]] && grep -q '\buv \|uv run\|uv sync\|uv pip\|uv add' "$REPO_PATH/CLAUDE.md" 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f "$REPO_PATH/Makefile" ]] && grep -q '\buv \|uv run\|uv sync\|uv pip' "$REPO_PATH/Makefile" 2>/dev/null; then
+    return 0
+  fi
+  return 1
 }
 
 # --- Detect toolchains and generate Dockerfile ---
@@ -82,7 +196,9 @@ generate_dockerfile() {
       layers+="
 # --- Java via sdkman (.sdkmanrc) ---
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends zip unzip findutils && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \\
+    apt-get update && apt-get install -y --no-install-recommends zip unzip findutils
 USER claudebot
 ENV SDKMAN_DIR=/home/claudebot/.sdkman
 RUN curl -s \"https://get.sdkman.io\" | bash
@@ -100,12 +216,13 @@ ENV PATH=\"\$JAVA_HOME/bin:\$PATH\"
   elif [[ -f "$REPO_PATH/.node-version" ]]; then
     node_version=$(cat "$REPO_PATH/.node-version" | tr -d '[:space:]' | sed 's/^v//')
   elif [[ -f "$REPO_PATH/package.json" ]]; then
-    node_version="--lts"
-  fi
-  if [[ -n "$node_version" && "$node_version" != "--lts" ]]; then
-    validate_version "node" "$node_version"
+    # No version file — base image already has Node 22 (current LTS).
+    # Skip fnm to avoid a ~200MB duplicate install. If the repo needs
+    # a specific version, add an .nvmrc or .node-version file.
+    :
   fi
   if [[ -n "$node_version" ]]; then
+    validate_version "node" "$node_version"
     layers+="
 # --- Node via fnm ---
 ENV FNM_DIR=/home/claudebot/.fnm
@@ -130,6 +247,10 @@ ENV PATH=\"/home/claudebot/.cargo/bin:\$PATH\"
     local go_version
     go_version=$(grep -E '^go ' "$REPO_PATH/go.mod" | awk '{print $2}' | head -1)
     [[ -z "$go_version" ]] && go_version="1.22.4"
+    # Go downloads require three-part versions (1.22.0, not 1.22)
+    if [[ "$go_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+      go_version="${go_version}.0"
+    fi
     validate_version "go" "$go_version"
     layers+="
 # --- Go ---
@@ -143,16 +264,33 @@ ENV PATH=\"/usr/local/go/bin:/home/claudebot/go/bin:\$PATH\"
 
   # Python
   if [[ -f "$REPO_PATH/pyproject.toml" || -f "$REPO_PATH/requirements.txt" ]]; then
+    local python_build_deps="python3 python3-pip python3-venv python-is-python3"
+    # C extension build deps — always included since most non-trivial
+    # dependency trees include at least one compiled extension
+    local extra_deps="gcc python3-dev libpq-dev libffi-dev"
+
+    local uv_layer=""
+    if detect_uv_need; then
+      uv_layer="
+# uv package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH=\"/home/claudebot/.local/bin:\$PATH\"
+"
+    fi
+
     layers+="
 # --- Python ---
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \\
+    apt-get update && apt-get install -y --no-install-recommends $python_build_deps $extra_deps
 USER claudebot
-"
+$uv_layer"
   fi
 
   # Write Dockerfile
   cat > "$DOCKERFILE" <<DOCKEREOF
+# syntax=docker/dockerfile:1
 FROM claudebot:base
 $layers
 WORKDIR /workspace
@@ -162,54 +300,367 @@ DOCKEREOF
   if [[ -n "$layers" ]]; then
     echo "Detected toolchains:"
     grep '# ---' "$DOCKERFILE" | sed 's/# --- //;s/ ---.*//' | sed 's/^/  - /'
+    if grep -q 'uv/install' "$DOCKERFILE"; then
+      echo "  - uv (Python package manager)"
+    fi
   else
     echo "  No toolchains detected (lightweight image)"
   fi
 }
 
+# --- Docker socket proxy management ---
+start_proxy() {
+  # Clean up any stale proxy/network from a previous run
+  docker rm -f "$PROXY_NAME" 2>/dev/null || true
+  docker network rm "$NETWORK_NAME" 2>/dev/null || true
+
+  # Create isolated network for proxy <-> sandbox communication
+  docker network create "$NETWORK_NAME" >/dev/null
+
+  # Proxy scope: containers/networks/volumes/images are enabled for compose
+  # workflows. POST is required for container create/start. exec/build/commit
+  # are blocked to prevent sandbox escape.
+  echo "Starting Docker socket proxy ($PROXY_NAME)..."
+  docker run -d --rm \
+    --name "$PROXY_NAME" \
+    --network "$NETWORK_NAME" \
+    --cap-drop all \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -e LOG_LEVEL=info \
+    -e CONTAINERS=1 \
+    -e NETWORKS=1 \
+    -e VOLUMES=1 \
+    -e IMAGES=1 \
+    -e POST=1 \
+    -e ALLOW_START=1 \
+    -e ALLOW_STOP=1 \
+    -e ALLOW_RESTARTS=1 \
+    -e EVENTS=1 \
+    -e VERSION=1 \
+    -e PING=1 \
+    -e EXEC=0 \
+    -e AUTH=0 \
+    -e SECRETS=0 \
+    -e SWARM=0 \
+    -e BUILD=0 \
+    -e COMMIT=0 \
+    -e CONFIGS=0 \
+    -e DISTRIBUTION=0 \
+    -e NODES=0 \
+    -e PLUGINS=0 \
+    -e SYSTEM=0 \
+    -e SERVICES=0 \
+    -e TASKS=0 \
+    "$PROXY_IMAGE" >/dev/null
+
+  # Wait for proxy container to be running
+  local retries=0
+  while [[ "$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME" 2>/dev/null)" != "true" ]]; do
+    retries=$((retries + 1))
+    if [[ $retries -ge 15 ]]; then
+      echo "Error: socket proxy failed to start after 15 attempts" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+
+  echo "  Allowed: containers, networks, volumes, images (read), start/stop/restart"
+  echo "  Blocked: exec, build, commit, system, secrets, auth, swarm, plugins"
+}
+
+stop_proxy() {
+  docker rm -f "$PROXY_NAME" 2>/dev/null || true
+  docker network rm "$NETWORK_NAME" 2>/dev/null || true
+}
+
+# --- Git worktree management ---
+setup_worktree() {
+  WT_BRANCH="claude/$WT_NAME"
+  WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$WT_NAME"
+
+  # Check if this worktree already exists
+  if git -C "$REPO_PATH" worktree list --porcelain | grep -q "^worktree $(cd "$WT_PATH" 2>/dev/null && pwd)$" 2>/dev/null; then
+    echo "Reusing existing worktree: $WT_PATH (branch: $WT_BRANCH)"
+    WORK_PATH="$(cd "$WT_PATH" && pwd)"
+    return
+  fi
+
+  # Check if branch exists (local or remote)
+  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$WT_BRANCH" 2>/dev/null; then
+    # Branch exists locally — create worktree from it
+    echo "Creating worktree from existing branch: $WT_BRANCH"
+    git -C "$REPO_PATH" worktree add "$WT_PATH" "$WT_BRANCH"
+  else
+    # New branch — fork from current HEAD
+    echo "Creating worktree with new branch: $WT_BRANCH"
+    git -C "$REPO_PATH" worktree add -b "$WT_BRANCH" "$WT_PATH"
+  fi
+
+  WT_CREATED=true
+  WORK_PATH="$(cd "$WT_PATH" && pwd)"
+  echo "  Worktree: $WORK_PATH"
+  echo "  Branch:   $WT_BRANCH"
+}
+
+cleanup_worktree() {
+  # Only consider cleanup for worktrees we created this session
+  if [[ "$WT_CREATED" != true ]]; then
+    return
+  fi
+  if [[ -z "$WT_PATH" || ! -d "$WT_PATH" ]]; then
+    return
+  fi
+
+  local has_changes=false
+
+  # Check for uncommitted changes (staged, unstaged, or untracked)
+  if [[ -n "$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" ]]; then
+    has_changes=true
+  fi
+
+  # Check for unpushed commits vs the parent branch
+  local commit_count
+  commit_count=$(git -C "$WT_PATH" rev-list --count HEAD --not --remotes 2>/dev/null || echo "0")
+  if [[ "$commit_count" -gt 0 ]]; then
+    has_changes=true
+  fi
+
+  if [[ "$has_changes" == true ]]; then
+    echo ""
+    echo "Worktree kept (has changes):"
+    echo "  Path:   $WT_PATH"
+    echo "  Branch: $WT_BRANCH"
+    echo ""
+    echo "To push and create a PR:"
+    echo "  cd $WT_PATH"
+    echo "  git push -u origin $WT_BRANCH"
+    echo "  gh pr create --draft"
+    echo ""
+    echo "To remove when done:"
+    echo "  git -C $REPO_PATH worktree remove $WT_PATH"
+    echo "  git -C $REPO_PATH branch -d $WT_BRANCH"
+  else
+    echo "Worktree clean — removing: $WT_PATH"
+    git -C "$REPO_PATH" worktree remove "$WT_PATH" 2>/dev/null || true
+    git -C "$REPO_PATH" branch -d "$WT_BRANCH" 2>/dev/null || true
+  fi
+}
+
+# --- Run detection ---
+detect_docker_need
+
+# --- Set up worktree if requested ---
+if [[ "$USE_WORKTREE" == true && "$GENERATE_ONLY" == false ]]; then
+  setup_worktree
+fi
+
 # --- Generate Dockerfile if needed ---
-if [[ ! -f "$DOCKERFILE" ]] || [[ "$REBUILD" == true ]]; then
-  generate_dockerfile
-elif [[ "$GENERATE_ONLY" == true ]]; then
+mkdir -p "$SANDBOX_DIR/dockerfiles"
+if [[ ! -f "$DOCKERFILE" || "$REBUILD" == true || "$GENERATE_ONLY" == true ]]; then
   generate_dockerfile
 fi
 
 [[ "$GENERATE_ONLY" == true ]] && exit 0
 
-# --- Build image ---
-echo ""
-echo "Building $IMAGE_TAG..."
-docker build \
-  -f "$DOCKERFILE" \
-  -t "$IMAGE_TAG" \
-  "$SANDBOX_DIR"
-
-# --- Run container ---
-AUDIT_DIR="$AUDIT_BASE/$REPO_NAME"
-mkdir -p "$AUDIT_DIR"
-
-echo ""
-echo "Starting Claude Code in Pattern C sandbox for $REPO_NAME..."
-echo "  Repo: $REPO_PATH -> /workspace"
-echo "  Audit: $AUDIT_DIR -> /audit"
-echo ""
-
-# Fix 1Password socket permissions before launching.
-# Docker Desktop macOS mounts sockets as root:root 0660.
-# chown to claudebot (UID 1000) so only that user can access it.
-if ! docker run --rm --user root \
-  -v "$OP_SOCKET:/run/1password/agent.sock" \
-  "$IMAGE_TAG" chown 1000:1000 /run/1password/agent.sock 2>/dev/null; then
-  echo "Warning: could not fix 1Password socket permissions. Git signing may fail." >&2
+# --- Ensure base image exists ---
+if ! docker image inspect claudebot:base &>/dev/null; then
+  echo "Base image claudebot:base not found — building it now..."
+  docker build -t claudebot:base -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
+  # Base just built — force per-repo rebuild
+  REBUILD=true
 fi
 
-docker run --rm -it \
-  --name "claudebot-$REPO_NAME" \
-  --cap-drop all \
-  --security-opt no-new-privileges \
-  -v "$REPO_PATH:/workspace" \
-  -v "$AUDIT_DIR:/audit" \
-  -v "$OP_SOCKET:/run/1password/agent.sock" \
-  -e ANTHROPIC_API_KEY \
-  -e SSH_AUTH_SOCK=/run/1password/agent.sock \
-  "$IMAGE_TAG"
+# --- Build image (skip if already exists and no rebuild requested) ---
+if [[ "$REBUILD" == true ]] || ! docker image inspect "$IMAGE_TAG" &>/dev/null; then
+  echo ""
+  echo "Building $IMAGE_TAG..."
+  docker build \
+    -f "$DOCKERFILE" \
+    -t "$IMAGE_TAG" \
+    "$SANDBOX_DIR"
+else
+  echo ""
+  echo "Using cached $IMAGE_TAG (use --rebuild to force)"
+fi
+
+# --- Run container ---
+AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
+SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
+mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$STATE_DIR"
+
+AUTH_MARKER="$STATE_DIR/.auth-configured"
+
+echo ""
+echo "Starting Claude Code in Pattern C sandbox for $INSTANCE_ID..."
+echo "  Workspace: $WORK_PATH -> /workspace"
+if [[ "$USE_WORKTREE" == true ]]; then
+  echo "  Branch: $WT_BRANCH"
+fi
+echo "  Audit: $AUDIT_DIR -> /audit"
+echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
+echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
+echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
+if [[ -f "$AUTH_MARKER" ]]; then
+  echo "  Cloud MCPs: authenticated (read-only, write ops denied)"
+else
+  echo "  Cloud MCPs: not yet authenticated (login will be prompted)"
+fi
+
+# Detect installed toolchains from the generated Dockerfile
+TOOLCHAIN_LIST=""
+if [[ -f "$DOCKERFILE" ]]; then
+  TOOLCHAIN_LIST=$(grep '# ---' "$DOCKERFILE" 2>/dev/null | sed 's/# --- //;s/ ---.*//' | paste -sd ', ' - || true)
+  if grep -q 'uv/install' "$DOCKERFILE" 2>/dev/null; then
+    TOOLCHAIN_LIST="${TOOLCHAIN_LIST:+$TOOLCHAIN_LIST, }uv"
+  fi
+fi
+
+# Build docker run args
+DOCKER_ARGS=(
+  --rm -it
+  --name "claudebot-$INSTANCE_ID"
+  --cap-drop all
+  --security-opt no-new-privileges
+  --group-add 0
+  --memory 8g
+  --cpus 4
+  --pids-limit 512
+  -v "$WORK_PATH:/workspace"
+  -v "$AUDIT_DIR:/audit"
+  -v "$STATE_DIR:/home/claudebot/.claude"
+  -v "$SESSIONS_DIR:/home/claudebot/.claude/projects"
+  -v "$OP_SOCKET:/run/1password/agent.sock"
+  -v "$HOME/.claude/plugins:/home/claudebot/.claude/plugins:ro"
+  -v "$HOME/.claude/plugins:$HOME/.claude/plugins:ro"
+  # Config files — bind-mounted (not baked into image) so edits don't
+  # bust the Docker layer cache for toolchain installs.
+  -v "$SANDBOX_DIR/settings.json:/home/claudebot/.claude-defaults/settings.json:ro"
+  -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
+  -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
+  -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
+  -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"
+  -e SSH_AUTH_SOCK=/run/1password/agent.sock
+  -e SANDBOX_REPO_NAME="$REPO_NAME"
+  -e SANDBOX_TOOLCHAINS="$TOOLCHAIN_LIST"
+)
+
+# Forward API key only when OAuth is not configured (they conflict)
+if [[ -n "${ANTHROPIC_API_KEY:-}" && ! -f "$AUTH_MARKER" ]]; then
+  DOCKER_ARGS+=(-e ANTHROPIC_API_KEY)
+fi
+
+# Forward worktree branch if applicable
+if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
+  DOCKER_ARGS+=(-e SANDBOX_BRANCH="$WT_BRANCH")
+fi
+
+# GitHub CLI authentication (read-only access)
+# Token is delivered via gh config file mounted read-only, NOT as an
+# environment variable. This prevents Python/Node subprocesses from
+# reading it via os.environ and bypassing the gh deny rules.
+GH_AUTH_METHOD=""
+GH_HOSTS_TMPFILE=""
+GH_TOKEN=""
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  GH_TOKEN="$GITHUB_TOKEN"
+  GH_AUTH_METHOD="GITHUB_TOKEN"
+elif command -v gh &>/dev/null; then
+  GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+  [[ -n "$GH_TOKEN" ]] && GH_AUTH_METHOD="host-keyring"
+fi
+
+if [[ -n "$GH_TOKEN" ]]; then
+  GH_HOSTS_TMPFILE="$(mktemp "${TMPDIR:-/tmp}/gh-hosts-XXXXXX")"
+  chmod 600 "$GH_HOSTS_TMPFILE"
+  cat > "$GH_HOSTS_TMPFILE" <<GHEOF
+github.com:
+    oauth_token: ${GH_TOKEN}
+    git_protocol: https
+GHEOF
+  unset GH_TOKEN
+  DOCKER_ARGS+=(
+    -v "$GH_HOSTS_TMPFILE:/home/claudebot/.gh-staging/hosts.yml:ro"
+  )
+  echo "  GitHub: authenticated via $GH_AUTH_METHOD (token in gh config, not env — write ops blocked)"
+else
+  unset GH_TOKEN
+  echo "  GitHub: no auth found — run 'gh auth login' on the host or set GITHUB_TOKEN"
+fi
+
+# Start Docker socket proxy if needed
+if [[ "$NEEDS_DOCKER" == true ]]; then
+  start_proxy
+  DOCKER_ARGS+=(
+    --network "$NETWORK_NAME"
+    -e DOCKER_HOST="tcp://$PROXY_NAME:2375"
+    -e HOST_REPO_PATH="$WORK_PATH"
+  )
+  echo "  Docker: via socket proxy (exec/build/commit/system blocked)"
+else
+  echo "  Docker: not needed (no compose files detected)"
+fi
+
+echo ""
+
+# --- OAuth authentication for cloud MCPs ---
+# Run as a separate short-lived container so it gets its own proper TTY.
+# The auth state persists in STATE_DIR (mounted at ~/.claude/).
+# Re-authenticate if the marker is missing or older than 30 days
+AUTH_NEEDED=false
+if [[ ! -f "$AUTH_MARKER" ]]; then
+  AUTH_NEEDED=true
+elif find "$AUTH_MARKER" -mtime +30 -print -quit 2>/dev/null | grep -q .; then
+  AUTH_NEEDED=true
+  echo "OAuth session is >30 days old — re-authenticating."
+fi
+
+if [[ "$AUTH_NEEDED" == true ]]; then
+  echo "================================================"
+  echo "  Cloud MCP authentication (one-time setup)"
+  echo "================================================"
+  echo ""
+  echo "Cloud MCPs (Jira, Slack, Notion, Gmail, etc.) require"
+  echo "an OAuth login with your Anthropic account."
+  echo ""
+  if docker run --rm -it \
+    --init \
+    --entrypoint "" \
+    --cap-drop all \
+    --security-opt no-new-privileges \
+    -v "$STATE_DIR:/home/claudebot/.claude" \
+    -v "$SANDBOX_DIR/settings.json:/home/claudebot/.claude/settings.json:ro" \
+    "$IMAGE_TAG" claude auth login; then
+    touch "$AUTH_MARKER"
+    echo ""
+    echo "Authentication saved. Future launches will skip this step."
+    echo "To re-authenticate: rm $AUTH_MARKER"
+  else
+    echo ""
+    echo "Authentication skipped. Cloud MCPs won't be available this session."
+  fi
+  echo ""
+fi
+
+# Remove stale container from a previous run (--rm only cleans up on normal exit)
+if docker inspect "claudebot-$INSTANCE_ID" &>/dev/null; then
+  echo "Stopping existing sandbox for $INSTANCE_ID..."
+  docker rm -f "claudebot-$INSTANCE_ID" >/dev/null
+fi
+
+# --- Cleanup on exit ---
+cleanup() {
+  # Remove temporary gh config file (contains token)
+  if [[ -n "${GH_HOSTS_TMPFILE:-}" && -f "$GH_HOSTS_TMPFILE" ]]; then
+    rm -f "$GH_HOSTS_TMPFILE"
+  fi
+  if [[ "$NEEDS_DOCKER" == true ]]; then
+    stop_proxy
+  fi
+  if [[ "$USE_WORKTREE" == true ]]; then
+    cleanup_worktree
+  fi
+}
+trap cleanup EXIT
+
+docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG"

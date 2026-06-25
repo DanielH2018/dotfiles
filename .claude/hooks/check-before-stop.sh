@@ -15,8 +15,8 @@ ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Skip for the dotfiles repo — committing directly to main is expected there.
-GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
-[ "$GIT_DIR" = "$HOME/.dotfiles" ] && exit 0
+TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null)
+[ "$TOPLEVEL" = "$HOME/.dotfiles" ] && exit 0
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 

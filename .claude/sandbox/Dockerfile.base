@@ -1,19 +1,46 @@
+# syntax=docker/dockerfile:1
 FROM debian:stable-slim
 
-ARG NODE_VERSION=22
-ARG CLAUDE_CODE_VERSION="latest"
-
-# System packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl ca-certificates git jq tini openssh-client \
+# --- All system packages in a single layer ---
+# Bootstrap curl → add gh/docker repos → install everything in one pass.
+# Cache mounts speed up rebuilds by reusing downloaded .deb files.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && mkdir -p -m 755 /etc/apt/keyrings \
+    # GitHub CLI repo
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] \
+       https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    # Docker CLI repo
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+       https://download.docker.com/linux/debian \
+       $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    # Single install pass
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       git jq tini openssh-client make \
+       gh docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js (needed for Claude Code npm install)
-RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+ARG NODE_VERSION=22
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code
+ARG CLAUDE_CODE_VERSION="latest"
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 
@@ -22,21 +49,27 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 claudebot
 USER claudebot
 WORKDIR /workspace
 
-# Claude Code settings (Pattern C)
-RUN mkdir -p /home/claudebot/.claude/hooks
-COPY --chown=claudebot:claudebot settings.json /home/claudebot/.claude/settings.json
-COPY --chown=claudebot:claudebot audit.sh /home/claudebot/.claude/hooks/audit.sh
+# Config mount point — settings, hooks, and CLAUDE.md are bind-mounted into
+# .claude-defaults/ at runtime (not baked into the image) so config edits
+# don't bust the Docker layer cache. Entrypoint syncs them into the
+# persistent .claude/ volume on each launch.
+RUN mkdir -p /home/claudebot/.claude-defaults/hooks \
+             /home/claudebot/.claude/hooks
 
 # Seed .claude.json so first-run prompts are skipped
 COPY --chown=claudebot:claudebot claude.json /home/claudebot/.claude.json
 
-# Git config for signed commits
+# Git config for signed commits + HTTPS credential routing.
+# SSH URLs are rewritten to HTTPS; credentials are supplied by gh, which reads
+# from ~/.config/gh/hosts.yml (mounted read-only at runtime).
 RUN git config --global user.name "Daniel Hunter" \
     && git config --global user.email "danielh.2018@gmail.com" \
     && git config --global gpg.format ssh \
     && git config --global user.signingkey "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou" \
     && git config --global commit.gpgsign true \
-    && git config --global gpg.ssh.allowedSignersFile /home/claudebot/.ssh/allowed_signers
+    && git config --global gpg.ssh.allowedSignersFile /home/claudebot/.ssh/allowed_signers \
+    && git config --global url."https://github.com/".insteadOf "git@github.com:" \
+    && git config --global credential."https://github.com".helper '!/usr/bin/gh auth git-credential'
 
 # Allowed signers (so git can verify its own commits)
 RUN mkdir -p /home/claudebot/.ssh \
@@ -53,5 +86,5 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Run as claudebot
 USER claudebot
 WORKDIR /workspace
-ENTRYPOINT ["/usr/bin/tini", "--", "entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["claude", "--dangerously-skip-permissions"]

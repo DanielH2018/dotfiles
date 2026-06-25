@@ -6,7 +6,8 @@
 set -u
 
 # Only inject for new sessions, not resumes (which already have context).
-SOURCE=$(jq -r '.source // "startup"')
+INPUT=$(cat)
+SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 [ "$SOURCE" != "startup" ] && exit 0
 
 # Only bother if we're in a git repo.

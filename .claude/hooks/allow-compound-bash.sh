@@ -25,9 +25,12 @@ extract_bash_prefixes() {
     "$SETTINGS" 2>/dev/null
 }
 
-mapfile -t ALLOW < <(extract_bash_prefixes "allow")
-mapfile -t DENY  < <(extract_bash_prefixes "deny")
-mapfile -t ASK   < <(extract_bash_prefixes "ask")
+ALLOW=()
+while IFS= read -r line; do [[ -n "$line" ]] && ALLOW+=("$line"); done < <(extract_bash_prefixes "allow")
+DENY=()
+while IFS= read -r line; do [[ -n "$line" ]] && DENY+=("$line"); done < <(extract_bash_prefixes "deny")
+ASK=()
+while IFS= read -r line; do [[ -n "$line" ]] && ASK+=("$line"); done < <(extract_bash_prefixes "ask")
 
 trim() {
   local s="$1"
@@ -45,7 +48,8 @@ matches_any() {
   return 1
 }
 
-mapfile -t PARTS < <(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/;/\n/g')
+PARTS=()
+while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/;/\n/g')
 
 for part in "${PARTS[@]}"; do
   part=$(trim "$part")

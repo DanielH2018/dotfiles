@@ -28,10 +28,14 @@ jq -cn \
   '{ts: $ts, session: $session, tool: $tool, file: (if $file != "" then $file else null end), cmd: (if $cmd != "" then $cmd else null end)}' \
   >> "$LOG_FILE"
 
-# Rotate: if over MAX_LINES, keep only the most recent KEEP_LINES.
-LINE_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-if [ "$LINE_COUNT" -gt "$MAX_LINES" ]; then
-  tail -n "$KEEP_LINES" "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+# Rotate: check every ~100 writes (stat-based, avoids wc on every call).
+# Only count lines when the file size exceeds a rough threshold (~500KB).
+FILE_SIZE=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+if [ "$FILE_SIZE" -gt 500000 ]; then
+  LINE_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
+  if [ "$LINE_COUNT" -gt "$MAX_LINES" ]; then
+    tail -n "$KEEP_LINES" "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+  fi
 fi
 
 exit 0

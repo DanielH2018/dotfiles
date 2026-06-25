@@ -20,8 +20,15 @@ case "$FILE_PATH" in
     run_if_installed ruff format "$FILE_PATH" >/dev/null
     run_if_installed ruff check --fix --quiet "$FILE_PATH" >/dev/null
     ;;
-  *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.jsonc|*.css|*.scss|*.html|*.md|*.yml|*.yaml)
+  *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.jsonc|*.css|*.scss|*.html|*.yml|*.yaml)
     run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null
+    ;;
+  *.md)
+    # Skip vault markdown — Obsidian formatting (wikilinks, callouts) is non-standard
+    case "$FILE_PATH" in
+      */My_Vault/*) ;;
+      *) run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null ;;
+    esac
     ;;
   *.go)
     run_if_installed gofmt -w "$FILE_PATH" >/dev/null

@@ -46,6 +46,12 @@ I work across backend services, internal tooling, and occasionally frontend.
 | Notion | Context on work, projects, or internal documentation |
 | Gmail / Calendar / Drive / Ramp | When contextually relevant — don't wait to be asked |
 
+## Model routing
+
+Use the **planner** agent (Opus) for design decisions, architecture analysis, and implementation planning.
+Use the **implementer** agent (Sonnet) for writing code, fixing bugs, and executing plans.
+For straightforward single-file edits, handle inline without delegating.
+
 ## Domain context
 
 This is a financial infrastructure environment. Be conservative with anything touching

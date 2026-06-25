@@ -4,9 +4,10 @@
   "env": {
     "EDITOR": "vim",
     "PAGER": "less -R",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
-    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true"
+    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
+    "DOCKER": "true"
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
@@ -364,10 +365,6 @@
       "Bash(git push origin master --force*)",
       "Bash(snow object drop:*)",
       "Bash(snow stage remove:*)",
-      "Bash(curl * | sh)",
-      "Bash(curl * | bash)",
-      "Bash(wget * | sh)",
-      "Bash(wget * | bash)",
       "Bash(* | sh)",
       "Bash(* | bash)",
       "Bash(* | zsh)",
@@ -444,6 +441,15 @@
   "hooks": {
     "PermissionRequest": [
       {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/log-permission.js",
+            "async": true
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -463,16 +469,32 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "docker network connect workspace_default $(hostname) 2>/dev/null || true",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "^(Bash|Write|Edit|WebFetch|WebSearch|Task|Agent|Skill|mcp__.*)$",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/audit-bash.sh"
-          },
+            "command": "node ~/.claude/hooks/log-permission.js",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
           {
             "type": "command",
             "command": "~/.claude/hooks/block-dangerous-bash.sh",
@@ -532,6 +554,15 @@
       }
     ],
     "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/log-permission.js",
+            "async": true
+          }
+        ]
+      },
       {
         "matcher": "permission_prompt|idle_prompt|task_complete",
         "hooks": [
