@@ -497,23 +497,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh",
-            "if": "Bash(rm *)"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh",
-            "if": "Bash(git push *)"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh",
-            "if": "Bash(curl *)"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh",
-            "if": "Bash(wget *)"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh"
           }
         ]
       },
