@@ -679,6 +679,249 @@ cleanup_worktree() {
   fi
 }
 
+# --- Session compaction ---
+compact_session() {
+  # Usage: compact_session <instance-id> <repo-name> <worktree-name>
+  local instance_id="$1"
+  local repo_name="$2"
+  local wt_name="$3"
+  local session_dir="$SESSIONS_BASE/$instance_id"
+  local vault_dir="$HOME/Documents/My_Vault/Work/Sessions/$repo_name"
+  local today
+  today="$(date -u +%Y-%m-%d)"
+
+  if [[ ! -d "$session_dir" ]]; then
+    echo "  No session data for $instance_id — skipping compaction."
+    return 0
+  fi
+
+  echo "  Compacting session $instance_id..."
+
+  # Stage 1: Mechanical extraction
+  local extract_json
+  extract_json="$(mktemp "${TMPDIR:-/tmp}/compact-XXXXXX.json")"
+  if ! python3 "$SANDBOX_DIR/compact-session.py" extract "$session_dir" \
+      --repo-path="$REPO_PATH" --branch="claude/$wt_name" > "$extract_json" 2>/dev/null; then
+    echo "  Warning: extraction failed for $instance_id — skipping compaction."
+    rm -f "$extract_json"
+    return 0
+  fi
+
+  # Check if extraction returned an error
+  if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if 'error' not in d else 1)" "$extract_json" 2>/dev/null; then
+    : # no error
+  else
+    echo "  Warning: no session data found for $instance_id — skipping compaction."
+    rm -f "$extract_json"
+    return 0
+  fi
+
+  # Stage 2: API summarization (conditional)
+  local user_count
+  user_count="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('user_count',0))" "$extract_json")"
+
+  local api_key="${ANTHROPIC_API_KEY:-${ANTHROPIC_ADMIN_API_KEY:-}}"
+  local final_json="$extract_json"
+
+  if [[ "$user_count" -gt 50 && -n "$api_key" ]]; then
+    echo "  Large session ($user_count messages) — generating API summary..."
+    local summarized_json
+    summarized_json="$(mktemp "${TMPDIR:-/tmp}/compact-summary-XXXXXX.json")"
+    if python3 "$SANDBOX_DIR/compact-session.py" summarize "$extract_json" \
+        --api-key="$api_key" > "$summarized_json" 2>/dev/null; then
+      final_json="$summarized_json"
+    else
+      echo "  Warning: API summarization failed — using mechanical summary."
+    fi
+  elif [[ "$user_count" -gt 50 && -z "$api_key" ]]; then
+    echo "  No API key — using mechanical summary."
+  fi
+
+  # Generate vault markdown
+  mkdir -p "$vault_dir"
+  local vault_file="$vault_dir/${wt_name}_${today}.md"
+
+  # Handle duplicate filenames
+  if [[ -f "$vault_file" ]]; then
+    local counter=2
+    while [[ -f "${vault_dir}/${wt_name}_${today}_${counter}.md" ]]; do
+      counter=$((counter + 1))
+    done
+    vault_file="${vault_dir}/${wt_name}_${today}_${counter}.md"
+  fi
+
+  python3 - "$final_json" "$repo_name" "$wt_name" "$vault_file" <<'PYEOF'
+import json, sys, re
+from datetime import datetime
+
+json_file, repo_name, wt_name, vault_file = sys.argv[1:5]
+
+with open(json_file) as f:
+    data = json.load(f)
+
+titles = data.get("titles", [])
+user_count = data.get("user_count", 0)
+assistant_count = data.get("assistant_count", 0)
+pr_links = data.get("pr_links", [])
+first_ts = data.get("first_timestamp", "")
+last_ts = data.get("last_timestamp", "")
+commits = data.get("commits")
+files_changed = data.get("files_changed")
+api_summary = data.get("api_summary")
+user_messages = data.get("user_messages", [])
+
+def ts_to_date(ts):
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d")
+    except (ValueError, AttributeError):
+        return "unknown"
+
+first_date = ts_to_date(first_ts)
+last_date = ts_to_date(last_ts)
+
+if api_summary:
+    summary_paragraph = api_summary
+    key_decisions = ""
+    problems = ""
+    parts = re.split(r'\n(?=\d\.\s|#{1,3}\s|Key [Dd]ecisions|Problems [Ee]ncountered)', api_summary)
+    if len(parts) >= 1:
+        summary_paragraph = parts[0].strip()
+    for part in parts[1:]:
+        if re.match(r'(?:#{1,3}\s*)?Key [Dd]ecisions', part, re.IGNORECASE):
+            key_decisions = re.sub(r'^(?:#{1,3}\s*)?Key [Dd]ecisions[:\s]*\n?', '', part, flags=re.IGNORECASE).strip()
+        elif re.match(r'(?:#{1,3}\s*)?Problems', part, re.IGNORECASE):
+            problems = re.sub(r'^(?:#{1,3}\s*)?Problems [Ee]ncountered[:\s]*\n?', '', part, flags=re.IGNORECASE).strip()
+else:
+    parts = []
+    if titles:
+        parts.append("Session topics: " + ", ".join(titles) + ".")
+    if commits:
+        commit_lines = commits.strip().split("\n")
+        parts.append(f"{len(commit_lines)} commit(s) on branch claude/{wt_name}.")
+    summary_paragraph = " ".join(parts) if parts else "No summary available."
+    key_decisions = ""
+    problems = ""
+
+one_line = titles[0] if titles else f"Claude session on {repo_name}/claude/{wt_name}"
+pr_formatted = ", ".join(f"[PR]({url})" for url in pr_links) if pr_links else "none"
+
+lines = []
+lines.append("---")
+lines.append(f'title: "{repo_name} / {wt_name}"')
+lines.append(f"summary: {one_line}")
+lines.append(f"tags: [sessions, {repo_name}, archived]")
+lines.append(f"created: {first_date}")
+lines.append(f"updated: {last_date}")
+lines.append("---")
+lines.append("")
+lines.append(f"- **Repo:** {repo_name}")
+lines.append(f"- **Branch:** claude/{wt_name}")
+lines.append(f"- **Dates:** {first_date} to {last_date}")
+lines.append(f"- **Messages:** {user_count} user / {assistant_count} assistant")
+lines.append(f"- **PRs:** {pr_formatted}")
+lines.append("")
+lines.append("### Summary")
+lines.append(summary_paragraph)
+
+if key_decisions:
+    lines.append("")
+    lines.append("### Key Decisions")
+    lines.append(key_decisions)
+
+if problems:
+    lines.append("")
+    lines.append("### Problems Encountered")
+    lines.append(problems)
+
+lines.append("")
+lines.append("### Files Changed")
+lines.append(files_changed if files_changed else "Branch no longer available.")
+
+lines.append("")
+lines.append("### Commits")
+lines.append(commits if commits else "Branch no longer available.")
+lines.append("")
+
+with open(vault_file, "w") as f:
+    f.write("\n".join(lines))
+
+print(vault_file)
+PYEOF
+
+  # Update sessions index
+  local index_file="$vault_dir/_Index.md"
+  if [[ ! -f "$index_file" ]]; then
+    cat > "$index_file" <<IDXEOF
+---
+title: "Sessions — $repo_name"
+summary: Index of archived Claude Code sessions for $repo_name
+tags: [sessions, $repo_name, index]
+created: $today
+updated: $today
+---
+
+| Date | Worktree | Summary | Link |
+|------|----------|---------|------|
+IDXEOF
+  fi
+
+  # Get one-line summary for index
+  local one_line
+  one_line="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); t=d.get('titles',[]); print(t[0] if t else 'Session on claude/$wt_name')" "$final_json")"
+
+  local file_basename
+  file_basename="$(basename "$vault_file" .md)"
+
+  # Append row to index (insert after the header row)
+  sed -i '' "/^|------|/a\\
+| $today | $wt_name | $one_line | [[$file_basename]] |
+" "$index_file"
+
+  # Update the updated date in index frontmatter
+  sed -i '' "s/^updated: .*/updated: $today/" "$index_file"
+
+  echo "  Archived to $(basename "$vault_file")"
+
+  # Clean up temp files
+  rm -f "$extract_json"
+  [[ "$final_json" != "$extract_json" ]] && rm -f "$final_json"
+}
+
+# --- Delete a single worktree and its data ---
+delete_worktree() {
+  # Usage: delete_worktree <wt-name> <instance-id>
+  local wt_name="$1"
+  local instance_id="$2"
+  local wt_path="$REPO_PATH/../$REPO_NAME-wt-$wt_name"
+  local wt_branch="claude/$wt_name"
+
+  # Compact session before deletion
+  compact_session "$instance_id" "$REPO_NAME" "$wt_name"
+
+  # Remove worktree if it exists
+  if [[ -d "$wt_path" ]] || git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "^worktree .*$wt_name"; then
+    echo "  Removing worktree: $wt_path"
+    git -C "$REPO_PATH" worktree remove "$wt_path" 2>/dev/null || true
+  fi
+
+  # Delete local branch
+  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$wt_branch" 2>/dev/null; then
+    echo "  Deleting branch: $wt_branch"
+    git -C "$REPO_PATH" branch -D "$wt_branch" 2>/dev/null || true
+  fi
+
+  # Remove session and audit data
+  if [[ -d "$SESSIONS_BASE/$instance_id" ]]; then
+    rm -rf "$SESSIONS_BASE/$instance_id"
+    echo "  Removed session data: $instance_id"
+  fi
+  if [[ -d "$AUDIT_BASE/$instance_id" ]]; then
+    rm -rf "$AUDIT_BASE/$instance_id"
+    echo "  Removed audit data: $instance_id"
+  fi
+}
+
 # --- Run detection ---
 detect_docker_need
 
