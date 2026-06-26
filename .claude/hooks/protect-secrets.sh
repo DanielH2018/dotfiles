@@ -21,7 +21,7 @@ deny() {
 }
 
 case "$FILE_PATH" in
-  */.env|*/.env.*|*/.env.local|*/.env.production)
+  .env|*/.env|.env.*|*/.env.*)
     deny "Blocked: .env files may contain secrets. Ask the user to share the specific value needed."
     ;;
   */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)

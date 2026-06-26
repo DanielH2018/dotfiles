@@ -6,8 +6,7 @@
     "PAGER": "less -R",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
-    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
-    "DOCKER": "true"
+    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true"
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
@@ -21,6 +20,11 @@
       "Bash(ls)",
       "Bash(ls:*)",
       "Bash(pwd)",
+      "Bash(cd:*)",
+      "Bash(test:*)",
+      "Bash([:*)",
+      "Bash(command -v:*)",
+      "Bash(command -V:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
@@ -207,7 +211,6 @@
       "Bash(docker compose config:*)",
       "Bash(docker compose ls:*)",
       "Bash(docker compose top:*)",
-      "Bash(snow sql:*)",
       "Bash(snow connection:*)",
       "Bash(snow object list:*)",
       "Bash(snow object describe:*)",
@@ -277,6 +280,10 @@
       "mcp__context7__resolve-library-id",
       "mcp__context7__query-docs",
       "mcp__claude_ai_Privacy_-_Chargebee_-_Knowledge_Agent__*",
+      "Edit(/Users/daniel/.claude/**)",
+      "Write(/Users/daniel/.claude/**)",
+      "Edit(/Users/daniel/.local/bin/*)",
+      "Edit(/Users/daniel/.gitignore)",
       "Bash(\"/Users/daniel/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "mcp__claude_ai_Mermaid_Chart__*",
       "mcp__claude_ai_Customer_io__*",
@@ -300,11 +307,8 @@
       "Read(**/id_rsa)",
       "Read(**/id_ed25519)",
       "Read(**/.ssh/**)",
-      "Read(~/.ssh/**)",
       "Read(**/.aws/credentials)",
       "Read(**/.aws/config)",
-      "Read(~/.aws/credentials)",
-      "Read(~/.aws/config)",
       "Read(~/.gnupg/**)",
       "Read(~/.netrc)",
       "Read(~/.pypirc)",
@@ -320,11 +324,8 @@
       "Edit(**/id_rsa)",
       "Edit(**/id_ed25519)",
       "Edit(**/.ssh/**)",
-      "Edit(~/.ssh/**)",
       "Edit(**/.aws/credentials)",
       "Edit(**/.aws/config)",
-      "Edit(~/.aws/credentials)",
-      "Edit(~/.aws/config)",
       "Edit(~/.gnupg/**)",
       "Edit(~/.netrc)",
       "Edit(~/.pypirc)",
@@ -338,11 +339,8 @@
       "Write(**/*.pfx)",
       "Write(**/*.secret)",
       "Write(**/.ssh/**)",
-      "Write(~/.ssh/**)",
       "Write(**/.aws/credentials)",
-      "Write(~/.aws/config)",
-      "Write(~/.aws/credentials)",
-      "Write(~/.aws/config)",
+      "Write(**/.aws/config)",
       "Write(~/.gnupg/**)",
       "Write(~/.netrc)",
       "Write(~/.pypirc)",
@@ -358,20 +356,19 @@
       "Bash(dd:*)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf ~*)",
-      "Bash(rm -rf $HOME*)",
+      "Bash(git config --global:*)",
+      "Bash(git config user.*:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git push origin main --force*)",
       "Bash(git push origin master --force*)",
       "Bash(snow object drop:*)",
       "Bash(snow stage remove:*)",
-      "Bash(* | sh)",
-      "Bash(* | bash)",
-      "Bash(* | zsh)",
+      "Bash(* | sh*)",
+      "Bash(* | bash*)",
+      "Bash(* | zsh*)",
       "Write(.git/**)",
-      "Write(./.git/**)",
       "Edit(.git/**)",
-      "Edit(./.git/**)",
       "Read(~/.config/gcloud/**)"
     ],
     "ask": [
@@ -426,6 +423,7 @@
       "Bash(ssh:*)",
       "Bash(scp:*)",
       "Bash(rsync:*)",
+      "Bash(snow sql:*)",
       "Bash(snow stage put:*)",
       "Bash(snow stage copy:*)",
       "Bash(snow streamlit:*)",
@@ -435,10 +433,16 @@
       "Bash(snow snowpark:*)",
       "Bash(snow cortex:*)"
     ],
-    "defaultMode": "default",
+    "defaultMode": "auto",
     "disableBypassPermissionsMode": "disable"
   },
   "model": "opus[1m]",
+  "advisorModel": "opus",
+  "fallbackModel": [
+    "claude-sonnet-4-6"
+  ],
+  "alwaysThinkingEnabled": true,
+  "includeGitInstructions": false,
   "hooks": {
     "PermissionRequest": [
       {
@@ -446,7 +450,8 @@
           {
             "type": "command",
             "command": "node ~/.claude/hooks/log-permission.js",
-            "async": true
+            "async": true,
+            "timeout": 10
           }
         ]
       },
@@ -455,7 +460,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/allow-compound-bash.sh"
+            "command": "~/.claude/hooks/allow-compound-bash.sh",
+            "timeout": 10
           }
         ]
       }
@@ -480,6 +486,26 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/watch-paths.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/check-update.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -487,7 +513,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/worktree-context.sh"
+            "command": "~/.claude/hooks/worktree-context.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/context-budget.sh",
+            "timeout": 5
           }
         ]
       }
@@ -499,7 +531,8 @@
           {
             "type": "command",
             "command": "node ~/.claude/hooks/log-permission.js",
-            "async": true
+            "async": true,
+            "timeout": 10
           }
         ]
       },
@@ -508,7 +541,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh"
+            "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "timeout": 10
           }
         ]
       },
@@ -517,7 +551,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/protect-secrets.sh"
+            "command": "~/.claude/hooks/protect-secrets.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "^(Bash|Write|Edit|WebFetch|WebSearch|Task|Agent|Skill|mcp__.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/log-permission.js",
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -529,12 +577,24 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/auto-format.sh",
-            "timeout": 30
+            "timeout": 30,
+            "statusMessage": "Formatting..."
           },
           {
             "type": "command",
             "command": "~/.claude/hooks/lint-after-edit.sh",
-            "timeout": 300
+            "timeout": 300,
+            "statusMessage": "Running lint checks..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/redact-pan.sh",
+            "timeout": 10
           }
         ]
       }
@@ -545,7 +605,8 @@
           {
             "type": "command",
             "command": "node ~/.claude/hooks/log-permission.js",
-            "async": true
+            "async": true,
+            "timeout": 10
           }
         ]
       },
@@ -554,7 +615,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/notify.sh"
+            "command": "~/.claude/hooks/notify.sh",
+            "timeout": 5
           }
         ]
       }
@@ -565,7 +627,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/pre-compact.sh"
+            "command": "~/.claude/hooks/pre-compact.sh",
+            "timeout": 5
           }
         ]
       }
@@ -575,7 +638,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/post-compact.sh"
+            "command": "~/.claude/hooks/post-compact.sh",
+            "timeout": 5
           }
         ]
       }
@@ -585,7 +649,56 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/check-before-stop.sh"
+            "command": "~/.claude/hooks/check-before-stop.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/stop-failure.sh",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-end.sh",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/instructions-loaded.sh",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/subagent-stop.sh",
+            "async": true,
+            "timeout": 5
           }
         ]
       }
@@ -628,6 +741,8 @@
     "enableWeakerNetworkIsolation": false,
     "filesystem": {
       "allowWrite": [
+        "~/.dotfiles",
+        "~/.claude",
         "~/.gradle",
         "~/.m2",
         "~/.npm",
@@ -642,13 +757,17 @@
         "~/.gnupg",
         "~/.config/gcloud",
         "~/.netrc",
-        "~/.pypirc"
+        "~/.pypirc",
+        "~/.npmrc"
       ],
       "denyWrite": [
         "~/.ssh",
         "~/.aws",
         "~/.gnupg",
         "~/.config/gcloud",
+        "~/.netrc",
+        "~/.pypirc",
+        "~/.npmrc",
         "/etc",
         "/System"
       ]
@@ -681,7 +800,19 @@
     "excludedCommands": [
       "docker",
       "docker-compose"
-    ]
+    ],
+    "credentials": {
+      "files": [
+        { "path": "~/.aws/credentials", "mode": "deny" },
+        { "path": "~/.ssh", "mode": "deny" },
+        { "path": "~/.gnupg", "mode": "deny" },
+        { "path": "~/.netrc", "mode": "deny" }
+      ],
+      "envVars": [
+        { "name": "GITHUB_TOKEN", "mode": "deny" },
+        { "name": "NPM_TOKEN", "mode": "deny" }
+      ]
+    }
   },
   "fileCheckpointingEnabled": true,
   "autoCompactEnabled": true,
@@ -695,12 +826,16 @@
       "url": "https://lithichq.atlassian.net/browse/{key}"
     }
   ],
-  "effortLevel": "high",
+  "effortLevel": "max",
   "awaySummaryEnabled": true,
-  "autoUpdatesChannel": "stable",
+  "autoUpdatesChannel": "latest",
   "editorMode": "normal",
   "tui": "fullscreen",
   "showTurnDuration": true,
   "autoConnectIde": true,
-  "autoInstallIdeExtension": true
+  "autoInstallIdeExtension": true,
+  "worktree": {
+    "baseRef": "head"
+  },
+  "maxSkillDescriptionChars": 800
 }

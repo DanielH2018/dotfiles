@@ -25,16 +25,16 @@ eval "$(cat | jq -r '[
 
 # Shorten model name to a compact label
 case "$model_id" in
-  *opus*4*6*)    model_label="opus4.6" ;;
-  *opus*4*5*)    model_label="opus4.5" ;;
-  *opus*4*)      model_label="opus4" ;;
-  *opus*)        model_label="opus" ;;
-  *sonnet*4*6*)  model_label="sonnet4.6" ;;
-  *sonnet*4*5*)  model_label="sonnet4.5" ;;
-  *sonnet*4*)    model_label="sonnet4" ;;
-  *sonnet*)      model_label="sonnet" ;;
-  *haiku*)       model_label="haiku" ;;
-  *)             model_label="$model_name" ;;
+  *opus*-4-6*|*opus*-4.6*)    model_label="opus4.6" ;;
+  *opus*-4-5*|*opus*-4.5*)    model_label="opus4.5" ;;
+  *opus*-4*)                  model_label="opus4" ;;
+  *opus*)                     model_label="opus" ;;
+  *sonnet*-4-6*|*sonnet*-4.6*)  model_label="sonnet4.6" ;;
+  *sonnet*-4-5*|*sonnet*-4.5*)  model_label="sonnet4.5" ;;
+  *sonnet*-4*)                model_label="sonnet4" ;;
+  *sonnet*)                   model_label="sonnet" ;;
+  *haiku*)                    model_label="haiku" ;;
+  *)                          model_label="$model_name" ;;
 esac
 
 # Shorten path: replace $HOME with ~, then truncate to last 3 segments
@@ -78,8 +78,7 @@ if [[ -n "$git_branch" ]]; then
     ab=$(git -C "$cwd" rev-list --left-right --count HEAD...@{upstream} 2>/dev/null)
     ahead=0 behind=0
     if [[ -n "$ab" ]]; then
-      ahead=$(echo "$ab" | awk '{print $1}')
-      behind=$(echo "$ab" | awk '{print $2}')
+      read -r ahead behind <<< "$ab"
     fi
     printf '%s %s %s' "$dirty_count" "$ahead" "$behind" > "$_git_cache"
   else
@@ -112,17 +111,17 @@ rate_out=""
 if [[ -n "$five_pct" ]]; then
   five_int=$(printf '%.0f' "$five_pct")
   if (( five_int >= 80 )); then
-    rate_out="${rate_out}\033[38;5;167m5h:${five_int}%%\033[0m "
+    rate_out="${rate_out}\033[38;5;167m5h:${five_int}%\033[0m "
   else
-    rate_out="${rate_out}\033[38;5;136m5h:${five_int}%%\033[0m "
+    rate_out="${rate_out}\033[38;5;136m5h:${five_int}%\033[0m "
   fi
 fi
 if [[ -n "$week_pct" ]]; then
   week_int=$(printf '%.0f' "$week_pct")
   if (( week_int >= 80 )); then
-    rate_out="${rate_out}\033[38;5;167m7d:${week_int}%%\033[0m "
+    rate_out="${rate_out}\033[38;5;167m7d:${week_int}%\033[0m "
   else
-    rate_out="${rate_out}\033[38;5;136m7d:${week_int}%%\033[0m "
+    rate_out="${rate_out}\033[38;5;136m7d:${week_int}%\033[0m "
   fi
 fi
 [[ -n "$rate_out" ]] && printf '%b' "$rate_out"

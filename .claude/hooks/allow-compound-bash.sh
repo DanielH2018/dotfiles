@@ -43,13 +43,23 @@ matches_any() {
   local cmd="$1"; shift
   local patterns=("$@")
   for p in "${patterns[@]}"; do
-    [[ "$cmd" == "$p"* ]] && return 0
+    # Exact match, or prefix followed by a space (prevents "git" matching "git-lfs")
+    [[ "$cmd" == "$p" || "$cmd" == "$p "* || "$cmd" == "$p"/* ]] && return 0
   done
   return 1
 }
 
+# Bail out if delimiters appear inside quotes — naive splitting would mangle them.
+# This check catches: echo "hello && world" && git status
+# The failure mode without this guard is "unnecessary prompt" (safe), but fixing it
+# lets more legitimate compound commands auto-approve.
+if printf '%s' "$COMMAND" | grep -qE "(['\"])[^'\"]*[&;|][^'\"]*\1"; then
+  exit 0
+fi
+
+# Use awk for splitting — BSD sed (macOS) doesn't interpret \n in replacements.
 PARTS=()
-while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/;/\n/g; s/|/\n/g')
+while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | awk '{gsub(/&&|\|\||;|\|/, "\n"); print}')
 
 for part in "${PARTS[@]}"; do
   part=$(trim "$part")

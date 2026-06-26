@@ -37,6 +37,23 @@ if [ -n "$DIRTY" ]; then
   echo "$DIRTY"
 fi
 
+# In-progress rebase or merge — surface prominently.
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+if [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
+  echo ""
+  echo "WARNING: Rebase in progress — complete or abort before other work."
+fi
+if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
+  CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | head -5)
+  echo ""
+  if [ -n "$CONFLICTS" ]; then
+    echo "WARNING: Merge in progress with unresolved conflicts:"
+    echo "$CONFLICTS"
+  else
+    echo "WARNING: Merge in progress — commit or abort."
+  fi
+fi
+
 # Stash count, if any.
 STASH_COUNT=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
 if [ "$STASH_COUNT" -gt 0 ]; then

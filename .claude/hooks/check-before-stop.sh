@@ -15,6 +15,7 @@ ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Skip repos that commit directly to main by convention.
+# Check both toplevel path and remote URL to handle worktrees at different paths.
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null)
 case "$TOPLEVEL" in
   "$HOME/.dotfiles"|"$HOME/Documents/My_Vault") exit 0 ;;
@@ -26,7 +27,40 @@ case "$GIT_DIR_VAL" in
   "$HOME/.dotfiles"|"$HOME/.dotfiles/"*) exit 0 ;;
 esac
 
+# Skip worktrees of repos that commit directly to main (remote URL fallback).
+REMOTE_URL=$(git remote get-url origin 2>/dev/null)
+case "$REMOTE_URL" in
+  *My_Vault*|*dotfiles*) exit 0 ;;
+esac
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
+
+# Check for in-progress rebase — leaving mid-rebase breaks the repo
+if [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
+  jq -n '{
+    decision: "block",
+    reason: "A rebase is in progress. Complete it with `git rebase --continue` or abort with `git rebase --abort` before stopping."
+  }'
+  exit 0
+fi
+
+# Check for in-progress merge
+if [ -f "$GIT_DIR/MERGE_HEAD" ]; then
+  CONFLICTS=$(git diff --name-only --diff-filter=U 2>/dev/null | head -5)
+  if [ -n "$CONFLICTS" ]; then
+    jq -n --arg files "$CONFLICTS" '{
+      decision: "block",
+      reason: ("Merge in progress with unresolved conflicts:\n\($files)\n\nResolve conflicts and commit, or abort with `git merge --abort`.")
+    }'
+  else
+    jq -n '{
+      decision: "block",
+      reason: "A merge is in progress. Commit the merge result or abort with `git merge --abort` before stopping."
+    }'
+  fi
+  exit 0
+fi
 
 # Check for unstaged modifications (more common than staged-only)
 UNSTAGED=$(git diff --name-only 2>/dev/null | head -5)

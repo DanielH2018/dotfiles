@@ -61,7 +61,7 @@ Repeat until all planned commits are done.
 
 ---
 
-STEP 7 — Push
+STEP 5 — Push
 
 Check whether the current branch has a remote tracking branch:
 ```

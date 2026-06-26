@@ -45,8 +45,8 @@ case "$FILE_PATH" in
     done
     ;;
   *.go)
-    # Use the file's directory directly — FILE_PATH is absolute.
-    command -v go >/dev/null && run_check go vet "$(dirname "$FILE_PATH")/..."
+    # Vet only the immediate package (not recursive) to keep per-edit latency low.
+    command -v go >/dev/null && run_check go vet "$(dirname "$FILE_PATH")"
     ;;
   *.java)
     # Find gradlew by walking up from the file; compileJava is fast if classes are cached.

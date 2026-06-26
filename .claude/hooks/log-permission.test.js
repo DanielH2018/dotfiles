@@ -210,6 +210,37 @@ test("applyEvent still counts a standalone unattributed prompt", () => {
   assert.strictEqual(store.entries["Bash" + m.SEP + "(unattributed)"].asks, 1);
 });
 
+test("classify maps PostToolUseFailure to a fail", () => {
+  assert.deepStrictEqual(
+    m.classify({ hook_event_name: "PostToolUseFailure", tool_name: "Bash", tool_input: { command: "cargo build" } }),
+    { kind: "fail", tool: "Bash", sum: "cargo build", session: null });
+  assert.strictEqual(
+    m.classify({ hook_event_name: "PostToolUseFailure", tool_name: "Read", tool_input: { file_path: "/x" } }), null);
+});
+
+test("applyEvent increments fails counter", () => {
+  const store = { version: 1, updated: null, entries: {} };
+  m.applyEvent(store, { kind: "call", tool: "Bash", sum: "cargo build", session: "s1" }, "2026-06-17T10:00:00.000Z");
+  m.applyEvent(store, { kind: "fail", tool: "Bash", sum: "cargo build", session: "s1" }, "2026-06-17T10:00:05.000Z");
+  m.applyEvent(store, { kind: "fail", tool: "Bash", sum: "cargo build", session: "s1" }, "2026-06-17T10:01:00.000Z");
+  const e = store.entries["Bash" + m.SEP + "cargo build"];
+  assert.strictEqual(e.calls, 1);
+  assert.strictEqual(e.fails, 2);
+  assert.strictEqual(e.last, "2026-06-17T10:01:00.000Z");
+});
+
+test("end-to-end: PostToolUseFailure creates a fails entry in the store", () => {
+  const tmp = path.join(os.tmpdir(), "permlog-test-fail-" + process.pid + ".json");
+  try { fs.unlinkSync(tmp); } catch (_) {}
+  runHook(tmp, { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "tsc --noEmit" } });
+  runHook(tmp, { hook_event_name: "PostToolUseFailure", tool_name: "Bash", tool_input: { command: "tsc --noEmit" } });
+  const store = JSON.parse(fs.readFileSync(tmp, "utf8"));
+  const e = store.entries["Bash" + m.SEP + "tsc --noEmit"];
+  assert.strictEqual(e.calls, 1);
+  assert.strictEqual(e.fails, 1);
+  fs.unlinkSync(tmp);
+});
+
 test("applyEvent counts distinct attributed prompts even seconds apart (no per-tool over-dedup)", () => {
   const store = { version: 1, updated: null, entries: {} };
   // two different real commands prompted ~1s apart (e.g. parallel tool calls) must both count

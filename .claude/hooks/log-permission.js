@@ -72,6 +72,10 @@ function classify(d) {
     if (!inScope(tool)) return null;
     return { kind: "ask", tool: tool, sum: summarize(tool, d.tool_input), session: session };
   }
+  if (evt === "PostToolUseFailure") {
+    if (!inScope(tool)) return null;
+    return { kind: "fail", tool: tool, sum: summarize(tool, d.tool_input), session: session };
+  }
   if (evt === "Notification" && d.notification_type === "permission_prompt") {
     // If tool_name is absent, inScope(undefined) is false and we drop the event.
     // The "(unattributed)" fallback only applies when the tool is known but tool_input is missing.
@@ -102,6 +106,14 @@ function applyEvent(store, e, nowIso) {
   }
   if (e.kind === "call") {
     ent.calls++;
+    ent.last = nowIso;
+    if (e.session) ent.lastSession = e.session;
+    store.updated = nowIso;
+    return true;
+  }
+  if (e.kind === "fail") {
+    if (!ent.fails) ent.fails = 0;
+    ent.fails++;
     ent.last = nowIso;
     if (e.session) ent.lastSession = e.session;
     store.updated = nowIso;
@@ -146,7 +158,7 @@ function acquireLock() {
     try {
       return fs.openSync(LOCK_PATH, "wx");
     } catch (err) {
-      if (err.code !== "EEXIST") return null;
+      if (err.code !== "EEXIST") { console.error("permlog: lock error:", err.code); return null; }
       try {
         // Best-effort stale-lock recovery: if a previous holder died leaving its lock,
         // reclaim it after LOCK_STALE_MS. There is a tiny TOCTOU window between stat and

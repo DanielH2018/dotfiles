@@ -14,7 +14,7 @@ I work across backend services, internal tooling, and occasionally frontend.
 
 ## Git conventions
 
-- Commits are GPG-signed via 1Password SSH agent — never pass `--no-verify`, `--no-gpg-sign`, or any flag that bypasses signing.
+- Commits are signed via 1Password SSH agent — never pass `--no-verify` or any flag that bypasses signing.
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
 - Write commit messages that explain *why*, not just what changed. Example:
@@ -32,19 +32,7 @@ I work across backend services, internal tooling, and occasionally frontend.
 - Java managed via sdkman — don't suggest `brew install java`
 - SSH keys managed through 1Password
 
-## Integrations — when to reach for them
-
-| MCP | Reach for it when |
-|-----|-------------------|
-| Lithic API Docs | Asked about endpoints, request shapes, or API behavior |
-| Jira | Need ticket context, sprint state, or team docs |
-| Confluence | **Suspended/inactive — do not attempt** |
-| PagerDuty | On-call schedules, incident history, or service ownership |
-| Grafana | Dashboards, metrics (Prometheus/Loki), incidents, on-call |
-| Sentry | Debugging — need stack traces or issue history |
-| Slack | Read-only context lookups; ask before sending anything |
-| Notion | Context on work, projects, or internal documentation |
-| Gmail / Calendar / Drive / Ramp | When contextually relevant — don't wait to be asked |
+@~/.claude/docs/integrations.md
 
 ## Model routing
 
@@ -69,12 +57,13 @@ Write tests for any new code I create. Match the style and framework already use
 - Don't add error handling for scenarios that can't happen.
 - Don't create new files when editing an existing one would do.
 
-## Enforcement
+## Compaction policy
 
-The rules above are advisory. Hard limits are enforced at three layers:
+When compacting, always preserve:
+- The full list of files modified in this session
+- All test commands run and their pass/fail results
+- Any user corrections or architectural decisions
+- Current task state and next steps
+- Active branch name and whether changes are pushed
 
-- **Permissions** (`~/.claude/settings.json`): deny/ask/allow rules for file access, bash commands, MCP tools, and WebFetch domains. Deny rules block before the tool runs.
-- **Hooks** (`~/.claude/hooks/`): PreToolUse hooks (`block-dangerous-bash.sh`, `protect-secrets.sh`) deny dangerous patterns with clear error messages. PostToolUse hooks auto-format, lint, and audit. The Stop hook prevents leaving staged changes on protected branches.
-- **Sandbox** (`sandbox` in settings.json): macOS `sandbox-exec` restricts what Bash commands can actually touch at the OS level. Filesystem deny rules prevent reading `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`. Network is domain-allowlisted. Docker is excluded from sandboxing. 1Password SSH agent socket is explicitly allowed for git signing.
-
-If a CLAUDE.md rule and a permission/hook/sandbox conflict, the enforcement layer wins.
+@~/.claude/docs/enforcement.md
