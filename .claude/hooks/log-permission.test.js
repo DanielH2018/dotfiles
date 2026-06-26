@@ -49,7 +49,7 @@ test("keyFor joins tool and sum with a space separator", () => {
 test("classify maps PreToolUse to a call, out-of-scope to null", () => {
   assert.deepStrictEqual(
     m.classify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } }),
-    { kind: "call", tool: "Bash", sum: "ls" });
+    { kind: "call", tool: "Bash", sum: "ls", session: null });
   assert.strictEqual(
     m.classify({ hook_event_name: "PreToolUse", tool_name: "Read", tool_input: { file_path: "/x" } }), null);
 });
@@ -57,23 +57,29 @@ test("classify maps PreToolUse to a call, out-of-scope to null", () => {
 test("classify maps PermissionRequest and Notification(permission_prompt) to asks", () => {
   assert.deepStrictEqual(
     m.classify({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command: "npm i" } }),
-    { kind: "ask", tool: "Bash", sum: "npm i" });
+    { kind: "ask", tool: "Bash", sum: "npm i", session: null });
   assert.deepStrictEqual(
     m.classify({ hook_event_name: "Notification", notification_type: "permission_prompt", tool_name: "Bash" }),
-    { kind: "ask", tool: "Bash", sum: "(unattributed)" });
+    { kind: "ask", tool: "Bash", sum: "(unattributed)", session: null });
   assert.strictEqual(
     m.classify({ hook_event_name: "Notification", notification_type: "idle_prompt", tool_name: "Bash" }), null);
 });
 
-test("applyEvent increments calls and sets first/last", () => {
+test("classify passes session_id through when present", () => {
+  const e = m.classify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, session_id: "abc-123" });
+  assert.strictEqual(e.session, "abc-123");
+});
+
+test("applyEvent increments calls, sets first/last, and tracks lastSession", () => {
   const store = { version: 1, updated: null, entries: {} };
-  m.applyEvent(store, { kind: "call", tool: "Bash", sum: "ls" }, "2026-06-17T10:00:00.000Z");
-  m.applyEvent(store, { kind: "call", tool: "Bash", sum: "ls" }, "2026-06-17T10:01:00.000Z");
+  m.applyEvent(store, { kind: "call", tool: "Bash", sum: "ls", session: "s1" }, "2026-06-17T10:00:00.000Z");
+  m.applyEvent(store, { kind: "call", tool: "Bash", sum: "ls", session: "s2" }, "2026-06-17T10:01:00.000Z");
   const e = store.entries["Bash" + m.SEP + "ls"];
   assert.strictEqual(e.calls, 2);
   assert.strictEqual(e.asks, 0);
   assert.strictEqual(e.first, "2026-06-17T10:00:00.000Z");
   assert.strictEqual(e.last, "2026-06-17T10:01:00.000Z");
+  assert.strictEqual(e.lastSession, "s2");
 });
 
 test("applyEvent dedups asks within the window and reports change", () => {

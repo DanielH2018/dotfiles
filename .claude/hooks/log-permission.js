@@ -63,20 +63,21 @@ function keyFor(tool, sum) { return tool + SEP + sum; }
 function classify(d) {
   const evt = d.hook_event_name;
   const tool = d.tool_name;
+  const session = d.session_id || null;
   if (evt === "PreToolUse") {
     if (!inScope(tool)) return null;
-    return { kind: "call", tool: tool, sum: summarize(tool, d.tool_input) };
+    return { kind: "call", tool: tool, sum: summarize(tool, d.tool_input), session: session };
   }
   if (evt === "PermissionRequest") {
     if (!inScope(tool)) return null;
-    return { kind: "ask", tool: tool, sum: summarize(tool, d.tool_input) };
+    return { kind: "ask", tool: tool, sum: summarize(tool, d.tool_input), session: session };
   }
   if (evt === "Notification" && d.notification_type === "permission_prompt") {
     // If tool_name is absent, inScope(undefined) is false and we drop the event.
     // The "(unattributed)" fallback only applies when the tool is known but tool_input is missing.
     if (!inScope(tool)) return null;
     const sum = d.tool_input ? summarize(tool, d.tool_input) : "(unattributed)";
-    return { kind: "ask", tool: tool, sum: sum };
+    return { kind: "ask", tool: tool, sum: sum, session: session };
   }
   return null;
 }
@@ -102,6 +103,7 @@ function applyEvent(store, e, nowIso) {
   if (e.kind === "call") {
     ent.calls++;
     ent.last = nowIso;
+    if (e.session) ent.lastSession = e.session;
     store.updated = nowIso;
     return true;
   }
@@ -110,6 +112,7 @@ function applyEvent(store, e, nowIso) {
     ent.asks++;
     ent.lastAsk = nowIso;
     ent.last = nowIso;
+    if (e.session) ent.lastSession = e.session;
     store.lastAskByTool[e.tool] = nowIso;
     store.updated = nowIso;
     return true;
