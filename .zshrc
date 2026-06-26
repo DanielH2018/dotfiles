@@ -65,7 +65,7 @@ fi
 # COMPLETION SYSTEM
 # =============================================================================
 # fpath must be set BEFORE compinit so Homebrew completions are picked up.
-fpath=("$HOME/.claude/sandbox" "$BREW_PREFIX/share/zsh/site-functions" $fpath)
+fpath=("$HOME/.claude/sandbox" "$HOME/.claude/sandbox/completions" "$BREW_PREFIX/share/zsh/site-functions" $fpath)
 
 autoload -Uz compinit
 ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
