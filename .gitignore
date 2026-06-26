@@ -54,6 +54,7 @@
 !.claude/sandbox/audit.sh
 !.claude/sandbox/claude-sandbox
 !.claude/sandbox/claude.json
+!.claude/sandbox/compact-session.py
 !.claude/sandbox/entrypoint.sh
 !.claude/sandbox/settings.json
 !.claude/projects/
