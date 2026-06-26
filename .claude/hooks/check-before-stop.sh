@@ -20,6 +20,12 @@ case "$TOPLEVEL" in
   "$HOME/.dotfiles"|"$HOME/Documents/My_Vault") exit 0 ;;
 esac
 
+# Skip bare dotfiles repo (GIT_DIR=~/.dotfiles) — commits directly to main by convention.
+GIT_DIR_VAL=$(git rev-parse --git-dir 2>/dev/null)
+case "$GIT_DIR_VAL" in
+  "$HOME/.dotfiles"|"$HOME/.dotfiles/"*) exit 0 ;;
+esac
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 # Check for unstaged modifications (more common than staged-only)

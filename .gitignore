@@ -52,6 +52,8 @@
 !.claude/commands/*
 !.claude/hooks/
 !.claude/hooks/*
+!.claude/rules/
+!.claude/rules/*
 !.claude/sandbox/
 .claude/sandbox/*
 !.claude/sandbox/Dockerfile.base

@@ -19,7 +19,8 @@ eval "$(cat | jq -r '[
   "vim_mode=\(.vim.mode // "" | @sh)",
   "worktree_name=\(.worktree.name // .workspace.git_worktree // "" | @sh)",
   "five_pct=\(.rate_limits.five_hour.used_percentage // "" | @sh)",
-  "week_pct=\(.rate_limits.seven_day.used_percentage // "" | @sh)"
+  "week_pct=\(.rate_limits.seven_day.used_percentage // "" | @sh)",
+  "total_cost=\(.cost.total // "" | @sh)"
 ] | .[]')"
 
 # Shorten model name to a compact label
@@ -125,4 +126,17 @@ if [[ -n "$week_pct" ]]; then
   fi
 fi
 [[ -n "$rate_out" ]] && printf '%b' "$rate_out"
+
+# Segment: session cost (grey, yellow >$5, red >$15)
+if [[ -n "$total_cost" ]]; then
+  cost_fmt=$(printf '$%.2f' "$total_cost")
+  cost_cents=$(printf '%.0f' "$(echo "$total_cost * 100" | bc 2>/dev/null || echo 0)")
+  if (( cost_cents >= 1500 )); then
+    printf '\033[38;5;167m%s \033[0m' "$cost_fmt"
+  elif (( cost_cents >= 500 )); then
+    printf '\033[38;5;136m%s \033[0m' "$cost_fmt"
+  else
+    printf '\033[38;5;237m%s \033[0m' "$cost_fmt"
+  fi
+fi
 exit 0

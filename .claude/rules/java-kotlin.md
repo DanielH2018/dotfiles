@@ -1,0 +1,12 @@
+---
+paths:
+  - "**/*.java"
+  - "**/*.kt"
+  - "**/*.kts"
+---
+- Use the project's Gradle wrapper (`./gradlew`), never bare `gradle`
+- Tests use JUnit 5 + AssertJ; colocated in `src/test/`
+- Follow Google Java Style; ktfmt for Kotlin
+- Prefer `val` over `var` in Kotlin; use data classes for DTOs
+- Never catch `Exception` or `Throwable` without rethrowing — catch specific types
+- Database operations use transactions explicitly; no autocommit assumptions

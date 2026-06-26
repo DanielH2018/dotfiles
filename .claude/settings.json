@@ -390,6 +390,7 @@
       "Bash(git stash drop:*)",
       "Bash(git stash clear)",
       "Bash(git stash save:*)",
+      "Bash(git restore:*)",
       "Bash(git branch -d:*)",
       "Bash(git branch -D:*)",
       "Bash(git branch -m:*)",
@@ -481,6 +482,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/worktree-context.sh"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "^(Bash|Write|Edit|WebFetch|WebSearch|Task|Agent|Skill|mcp__.*)$",
@@ -555,6 +566,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/pre-compact.sh"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/post-compact.sh"
           }
         ]
       }
@@ -662,6 +683,18 @@
       "docker-compose"
     ]
   },
+  "fileCheckpointingEnabled": true,
+  "autoCompactEnabled": true,
+  "footerLinksRegexes": [
+    {
+      "pattern": "\\b(?<key>PROC-\\d+)\\b",
+      "url": "https://lithichq.atlassian.net/browse/{key}"
+    },
+    {
+      "pattern": "\\b(?<key>IT-\\d+)\\b",
+      "url": "https://lithichq.atlassian.net/browse/{key}"
+    }
+  ],
   "effortLevel": "high",
   "awaySummaryEnabled": true,
   "autoUpdatesChannel": "stable",

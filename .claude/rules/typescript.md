@@ -1,0 +1,11 @@
+---
+paths:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
+---
+- Use strict TypeScript; avoid `any` — prefer `unknown` with type guards
+- Prefer `const` over `let`; never use `var`
+- Use prettier for formatting (auto-format hook handles this)
+- Match existing test framework in the project (jest, vitest, or node:test)
