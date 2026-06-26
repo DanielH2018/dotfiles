@@ -100,7 +100,7 @@ fi
 
 # Generate worktree name if needed
 if [[ "$USE_WORKTREE" == true && -z "$WT_NAME" ]]; then
-  WT_NAME="$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)"
+  WT_NAME="$(openssl rand -hex 3)"
 fi
 
 # Validate worktree name (alphanumeric, hyphens, underscores only)
@@ -113,17 +113,20 @@ fi
 # share the same basename (e.g., ~/work/api vs ~/personal/api).
 REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
 
-# INSTANCE_ID distinguishes parallel runs of the same repo.
-# Includes REPO_HASH so same-named repos don't collide on container/proxy/network names.
+# INSTANCE_ID is deterministic per repo (or per worktree) — used for storage
+# paths (sessions, audit) so Claude can resume previous conversations.
+# RUN_ID adds a random suffix for Docker resources (container, proxy, network)
+# that must be unique across parallel launches of the same repo.
 if [[ "$USE_WORKTREE" == true ]]; then
   INSTANCE_ID="${REPO_NAME}-${REPO_HASH}-${WT_NAME}"
 else
   INSTANCE_ID="${REPO_NAME}-${REPO_HASH}"
 fi
+RUN_ID="${INSTANCE_ID}-$(openssl rand -hex 3)"
 IMAGE_TAG="claudebot:${REPO_NAME}-${REPO_HASH}"
 DOCKERFILE="$SANDBOX_DIR/dockerfiles/Dockerfile.${REPO_NAME}-${REPO_HASH}"
-PROXY_NAME="claudebot-proxy-$INSTANCE_ID"
-NETWORK_NAME="claudebot-net-$INSTANCE_ID"
+PROXY_NAME="claudebot-proxy-$RUN_ID"
+NETWORK_NAME="claudebot-net-$RUN_ID"
 
 # WORK_PATH is what gets mounted into the container.
 # Defaults to REPO_PATH; overridden to the worktree path below.
@@ -518,7 +521,7 @@ fi
 # Build docker run args
 DOCKER_ARGS=(
   --rm -it
-  --name "claudebot-$INSTANCE_ID"
+  --name "claudebot-$RUN_ID"
   --cap-drop all
   --security-opt no-new-privileges
   --group-add 0
@@ -643,9 +646,9 @@ if [[ "$AUTH_NEEDED" == true ]]; then
 fi
 
 # Remove stale container from a previous run (--rm only cleans up on normal exit)
-if docker inspect "claudebot-$INSTANCE_ID" &>/dev/null; then
-  echo "Stopping existing sandbox for $INSTANCE_ID..."
-  docker rm -f "claudebot-$INSTANCE_ID" >/dev/null
+if docker inspect "claudebot-$RUN_ID" &>/dev/null; then
+  echo "Stopping existing sandbox for $RUN_ID..."
+  docker rm -f "claudebot-$RUN_ID" >/dev/null
 fi
 
 # --- Cleanup on exit ---
