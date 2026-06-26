@@ -36,6 +36,8 @@ case "$FILE_PATH" in
     DIR=$(dirname "$FILE_PATH")
     while [ "$DIR" != "/" ]; do
       if [ -f "$DIR/Cargo.toml" ] && command -v cargo >/dev/null; then
+        # Skip on cold cache — first build is too slow for a per-edit hook
+        [ -d "$DIR/target" ] || break
         run_check cargo check --quiet --manifest-path "$DIR/Cargo.toml"
         break
       fi
@@ -51,6 +53,8 @@ case "$FILE_PATH" in
     DIR=$(dirname "$FILE_PATH")
     while [ "$DIR" != "/" ]; do
       if [ -x "$DIR/gradlew" ]; then
+        # Skip on cold cache — first Gradle build is too slow for a per-edit hook
+        [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ] || break
         run_check "$DIR/gradlew" -p "$DIR" compileJava --no-daemon --quiet 2>/dev/null
         break
       fi
@@ -61,6 +65,7 @@ case "$FILE_PATH" in
     DIR=$(dirname "$FILE_PATH")
     while [ "$DIR" != "/" ]; do
       if [ -x "$DIR/gradlew" ]; then
+        [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ] || break
         run_check "$DIR/gradlew" -p "$DIR" compileKotlin --no-daemon --quiet 2>/dev/null
         break
       fi

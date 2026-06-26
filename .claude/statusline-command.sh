@@ -124,5 +124,5 @@ if [[ -n "$week_pct" ]]; then
     rate_out="${rate_out}\033[38;5;136m7d:${week_int}%%\033[0m "
   fi
 fi
-[[ -n "$rate_out" ]] && printf "$rate_out"
+[[ -n "$rate_out" ]] && printf '%b' "$rate_out"
 exit 0

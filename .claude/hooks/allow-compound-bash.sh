@@ -11,8 +11,8 @@ SETTINGS="$HOME/.claude/settings.json"
 INPUT=$(cat)
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
-# Only act on compound commands
-if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* ]]; then
+# Only act on compound commands (chains or pipes)
+if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* && "$COMMAND" != *"|"* ]]; then
   exit 0
 fi
 
@@ -49,7 +49,7 @@ matches_any() {
 }
 
 PARTS=()
-while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/;/\n/g')
+while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | sed 's/&&/\n/g; s/;/\n/g; s/|/\n/g')
 
 for part in "${PARTS[@]}"; do
   part=$(trim "$part")
