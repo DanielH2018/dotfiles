@@ -28,6 +28,7 @@ usage() {
   echo "  --list             List all sandbox sessions (worktrees + main) for a repo."
   echo "                     Shows branch, path, running status, and resume command."
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
+  echo "  --prune            Interactively select and delete worktrees (fzf picker)."
   exit 1
 }
 
@@ -37,6 +38,7 @@ REBUILD_BASE=false
 GENERATE_ONLY=false
 LIST_SESSIONS=false
 COMPLETE_WORKTREES=false
+PRUNE_WORKTREES=false
 RENAME_WORKTREE=false
 RENAME_OLD=""
 RENAME_NEW=""
@@ -51,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --generate) GENERATE_ONLY=true; shift ;;
     --list) LIST_SESSIONS=true; shift ;;
     --complete-worktrees) COMPLETE_WORKTREES=true; shift ;;
+    --prune) PRUNE_WORKTREES=true; shift ;;
+    --_preview) shift; fzf_preview_worktree "$@"; exit 0 ;;
     --rename)
       RENAME_WORKTREE=true
       shift
@@ -77,7 +81,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$PRUNE_WORKTREES" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -295,6 +299,21 @@ if [[ "$COMPLETE_WORKTREES" == true ]]; then
     echo "$suffix"
   done
 
+  exit 0
+fi
+
+# --- Prune worktrees ---
+if [[ "$PRUNE_WORKTREES" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && usage
+
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+
+  prune_worktrees
   exit 0
 fi
 
@@ -920,6 +939,194 @@ delete_worktree() {
     rm -rf "$AUDIT_BASE/$instance_id"
     echo "  Removed audit data: $instance_id"
   fi
+}
+
+# --- fzf preview for worktree details ---
+fzf_preview_worktree() {
+  local wt_name="$1"
+  local repo_path="$2"
+  local repo_name="$3"
+  local repo_hash="$4"
+  local instance_id="${repo_name}-${repo_hash}-${wt_name}"
+  local wt_branch="claude/$wt_name"
+  local wt_path="$repo_path/../$repo_name-wt-$wt_name"
+
+  echo "=== $wt_name ==="
+  echo ""
+  echo "Branch:   $wt_branch"
+
+  if [[ -d "$wt_path" ]]; then
+    wt_path="$(cd "$wt_path" && pwd)"
+    echo "Path:     $wt_path"
+
+    local last_commit
+    last_commit="$(git -C "$wt_path" log -1 --format='%h %ar — %s' 2>/dev/null || echo "no commits")"
+    echo "Last:     $last_commit"
+
+    local staged unstaged untracked
+    staged="$(git -C "$wt_path" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')"
+    unstaged="$(git -C "$wt_path" diff --numstat 2>/dev/null | wc -l | tr -d ' ')"
+    untracked="$(git -C "$wt_path" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')"
+    echo "Changes:  $staged staged, $unstaged unstaged, $untracked untracked"
+
+    local unpushed
+    unpushed="$(git -C "$wt_path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")"
+    echo "Unpushed: $unpushed commit(s)"
+  else
+    echo "Path:     (no worktree — orphaned session)"
+  fi
+
+  local session_dir="$HOME/.claude/sandbox/sessions/$instance_id"
+  if [[ -d "$session_dir" ]]; then
+    local session_size
+    session_size="$(du -sh "$session_dir" 2>/dev/null | cut -f1)"
+    echo "Session:  $session_size"
+  else
+    echo "Session:  no data"
+  fi
+
+  if command -v gh &>/dev/null; then
+    local pr_status
+    pr_status="$(gh pr list --repo "$(git -C "$repo_path" remote get-url origin 2>/dev/null)" --head "$wt_branch" --state all --json state,number,title --jq '.[0] | "\(.state) — #\(.number) \(.title)"' 2>/dev/null || true)"
+    if [[ -n "$pr_status" ]]; then
+      echo "PR:       $pr_status"
+    else
+      echo "PR:       none found"
+    fi
+  fi
+}
+
+# --- Interactive worktree pruning ---
+prune_worktrees() {
+  local repo_hash repo_name_safe base_instance
+  repo_name_safe="$REPO_NAME"
+  repo_hash="$REPO_HASH"
+  base_instance="${repo_name_safe}-${repo_hash}"
+
+  local -a entries=()
+  local -a entry_names=()
+
+  while IFS= read -r line; do
+    if [[ "$line" == "branch refs/heads/claude/"* ]]; then
+      local name="${line#branch refs/heads/claude/}"
+      local wt_path="$REPO_PATH/../$REPO_NAME-wt-$name"
+      local status="clean"
+      if [[ -d "$wt_path" ]]; then
+        if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+          status="has changes"
+        fi
+        local unpushed
+        unpushed="$(git -C "$wt_path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "0")"
+        if [[ "$unpushed" -gt 0 ]]; then
+          status="has unpushed commits"
+        fi
+        local last_date
+        last_date="$(git -C "$wt_path" log -1 --format='%as' 2>/dev/null || echo "unknown")"
+        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "claude/$name" "$last_date" "$status")")
+      else
+        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "claude/$name" "n/a" "no worktree dir")")
+      fi
+      entry_names+=("$name")
+    fi
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+
+  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
+    [[ -d "$session_dir" ]] || continue
+    local session_name
+    session_name="$(basename "$session_dir")"
+    [[ "$session_name" == "$base_instance" ]] && continue
+    local suffix="${session_name#${base_instance}-}"
+    local already_listed=false
+    for en in "${entry_names[@]}"; do
+      [[ "$en" == "$suffix" ]] && { already_listed=true; break; }
+    done
+    [[ "$already_listed" == true ]] && continue
+    entries+=("$(printf '%-16s %-28s %-12s %s' "$suffix" "claude/$suffix" "n/a" "orphaned")")
+    entry_names+=("$suffix")
+  done
+
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    echo "No worktrees found for $REPO_NAME."
+    exit 0
+  fi
+
+  local -a selected_names=()
+
+  if command -v fzf &>/dev/null; then
+    export REPO_PATH REPO_NAME REPO_HASH SESSIONS_BASE SANDBOX_DIR
+    export -f fzf_preview_worktree 2>/dev/null || true
+
+    local header
+    header="$(printf '%-16s %-28s %-12s %s' "NAME" "BRANCH" "LAST COMMIT" "STATUS")"
+
+    local selected
+    selected="$(printf '%s\n' "${entries[@]}" | \
+      fzf --multi \
+          --header="$header" \
+          --preview="bash -c 'source $SANDBOX_DIR/claude-sandbox --_preview {1} \"$REPO_PATH\" \"$REPO_NAME\" \"$REPO_HASH\"'" \
+          --preview-window=right:50%:wrap \
+          --prompt="Select worktrees to delete (TAB to multi-select): " || true)"
+
+    if [[ -z "$selected" ]]; then
+      echo "No worktrees selected."
+      exit 0
+    fi
+
+    while IFS= read -r line; do
+      local name
+      name="$(echo "$line" | awk '{print $1}')"
+      selected_names+=("$name")
+    done <<< "$selected"
+  else
+    echo "Worktrees for $REPO_NAME:"
+    echo ""
+    printf '  %-4s %-16s %-28s %-12s %s\n' "#" "NAME" "BRANCH" "LAST COMMIT" "STATUS"
+    printf '  %-4s %-16s %-28s %-12s %s\n' "---" "----" "------" "-----------" "------"
+    local idx=1
+    for entry in "${entries[@]}"; do
+      printf '  %-4s %s\n' "$idx)" "$entry"
+      idx=$((idx + 1))
+    done
+    echo ""
+    echo -n "Enter numbers to delete (comma-separated, e.g. 1,3,5): "
+    read -r selection
+    [[ -z "$selection" ]] && { echo "No selection."; exit 0; }
+    IFS=',' read -ra indices <<< "$selection"
+    for i in "${indices[@]}"; do
+      i="$(echo "$i" | tr -d ' ')"
+      if [[ "$i" =~ ^[0-9]+$ ]] && [[ "$i" -ge 1 ]] && [[ "$i" -le ${#entry_names[@]} ]]; then
+        selected_names+=("${entry_names[$((i-1))]}")
+      fi
+    done
+  fi
+
+  if [[ ${#selected_names[@]} -eq 0 ]]; then
+    echo "No valid worktrees selected."
+    exit 0
+  fi
+
+  echo ""
+  echo "Will delete ${#selected_names[@]} worktree(s):"
+  for name in "${selected_names[@]}"; do
+    echo "  - $name (claude/$name)"
+  done
+  echo ""
+  echo -n "Proceed? (y/n): "
+  read -r confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Cancelled."
+    exit 0
+  fi
+
+  echo ""
+  for name in "${selected_names[@]}"; do
+    local instance="${base_instance}-${name}"
+    echo "Deleting $name..."
+    delete_worktree "$name" "$instance"
+    echo ""
+  done
+
+  echo "Done. ${#selected_names[@]} worktree(s) cleaned up."
 }
 
 # --- Run detection ---
