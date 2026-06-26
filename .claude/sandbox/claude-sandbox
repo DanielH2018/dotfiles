@@ -21,10 +21,13 @@ usage() {
   echo "  --rebuild          Force rebuild the per-repo Docker image"
   echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base)"
   echo "  --generate         Regenerate Dockerfile.claudebot only (don't build or run)"
-  echo "  --worktree [NAME]  Run in an isolated git worktree on branch claude/<NAME>."
+  echo "  --worktree, -w [NAME]  Run in an isolated git worktree on branch claude/<NAME>."
   echo "                     Reuses existing worktree if branch already exists."
   echo "                     If NAME is omitted, generates a short random suffix."
   echo "                     Worktree is kept on exit if it has changes; removed if clean."
+  echo "  --list             List all sandbox sessions (worktrees + main) for a repo."
+  echo "                     Shows branch, path, running status, and resume command."
+  echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
   exit 1
 }
 
@@ -32,6 +35,11 @@ usage() {
 REBUILD=false
 REBUILD_BASE=false
 GENERATE_ONLY=false
+LIST_SESSIONS=false
+COMPLETE_WORKTREES=false
+RENAME_WORKTREE=false
+RENAME_OLD=""
+RENAME_NEW=""
 USE_WORKTREE=false
 WT_NAME=""
 REPO_PATH=""
@@ -41,7 +49,19 @@ while [[ $# -gt 0 ]]; do
     --rebuild) REBUILD=true; shift ;;
     --rebuild-base) REBUILD_BASE=true; shift ;;
     --generate) GENERATE_ONLY=true; shift ;;
-    --worktree)
+    --list) LIST_SESSIONS=true; shift ;;
+    --complete-worktrees) COMPLETE_WORKTREES=true; shift ;;
+    --rename)
+      RENAME_WORKTREE=true
+      shift
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --rename requires OLD and NEW names" >&2
+        exit 1
+      fi
+      RENAME_OLD="$1"; shift
+      RENAME_NEW="$1"; shift
+      ;;
+    --worktree|-w)
       USE_WORKTREE=true
       shift
       # Consume the next arg as worktree name if it doesn't look like a flag or path
@@ -57,7 +77,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ ("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -155,6 +175,216 @@ validate_version() {
     exit 1
   fi
 }
+
+# --- List sessions ---
+list_sessions() {
+  local repo_hash repo_name_safe
+  repo_name_safe="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  repo_hash="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+  local base_instance="${repo_name_safe}-${repo_hash}"
+
+  echo "Sandbox sessions for $repo_name_safe ($REPO_PATH)"
+  echo ""
+
+  # Collect running container names for quick lookup
+  local running_containers
+  running_containers="$(docker ps --filter "name=claudebot-${base_instance}" --format '{{.Names}}' 2>/dev/null || true)"
+
+  # Main repo session (no worktree)
+  local main_status="stopped"
+  if echo "$running_containers" | grep -q "claudebot-${base_instance}-[0-9a-f]"; then
+    main_status="running"
+  fi
+  local main_sessions="$SESSIONS_BASE/$base_instance"
+  local main_has_data="no sessions"
+  if [[ -d "$main_sessions" ]] && [[ -n "$(ls -A "$main_sessions" 2>/dev/null)" ]]; then
+    main_has_data="has sessions"
+  fi
+
+  printf "  %-12s %-30s %-10s %s\n" "NAME" "BRANCH" "STATUS" "RESUME"
+  printf "  %-12s %-30s %-10s %s\n" "----" "------" "------" "------"
+
+  # Get current branch of main repo
+  local main_branch
+  main_branch="$(git -C "$REPO_PATH" branch --show-current 2>/dev/null || echo "detached")"
+  printf "  %-12s %-30s %-10s %s\n" "(main)" "$main_branch" "$main_status" "claude-sandbox $REPO_PATH"
+
+  # Worktree sessions — scan git worktrees for claude/* branches
+  local wt_path wt_branch wt_name wt_status wt_instance
+  while IFS= read -r line; do
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+    elif [[ "$line" == "branch "* ]]; then
+      wt_branch="${line#branch refs/heads/}"
+      if [[ "$wt_branch" == claude/* ]]; then
+        wt_name="${wt_branch#claude/}"
+        wt_instance="${base_instance}-${wt_name}"
+        wt_status="stopped"
+        if echo "$running_containers" | grep -q "claudebot-${wt_instance}-[0-9a-f]"; then
+          wt_status="running"
+        fi
+        printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "$wt_status" "claude-sandbox --worktree $wt_name $REPO_PATH"
+      fi
+      wt_path=""
+      wt_branch=""
+    fi
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+
+  # Check for orphaned sessions (session dir exists but worktree is gone)
+  local session_dir
+  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
+    [[ -d "$session_dir" ]] || continue
+    local session_name
+    session_name="$(basename "$session_dir")"
+    # Skip the base instance (already shown as main)
+    [[ "$session_name" == "$base_instance" ]] && continue
+    # Extract the worktree name suffix
+    local suffix="${session_name#${base_instance}-}"
+    # Skip if we already listed this worktree above
+    if git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/claude/$suffix"; then
+      continue
+    fi
+    printf "  %-12s %-30s %-10s %s\n" "$suffix" "claude/$suffix (orphaned)" "no worktree" "--worktree $suffix recreates it"
+  done
+
+  echo ""
+}
+
+if [[ "$LIST_SESSIONS" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && usage
+
+  # Resolve short repo names
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+
+  list_sessions
+  exit 0
+fi
+
+# --- Worktree name completion (called by zsh/bash completion) ---
+if [[ "$COMPLETE_WORKTREES" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && exit 0
+
+  # Resolve short repo names
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
+
+  repo_hash="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+  repo_name_safe="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  base_instance="${repo_name_safe}-${repo_hash}"
+
+  # Worktree names from git (claude/* branches)
+  while IFS= read -r line; do
+    if [[ "$line" == "branch refs/heads/claude/"* ]]; then
+      echo "${line#branch refs/heads/claude/}"
+    fi
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+
+  # Orphaned session names (worktree gone but session data remains)
+  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
+    [[ -d "$session_dir" ]] || continue
+    suffix="$(basename "$session_dir")"
+    suffix="${suffix#${base_instance}-}"
+    # Skip if already listed from git worktrees
+    git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null \
+      | grep -q "branch refs/heads/claude/$suffix" && continue
+    echo "$suffix"
+  done
+
+  exit 0
+fi
+
+# --- Rename worktree ---
+if [[ "$RENAME_WORKTREE" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && usage
+
+  # Resolve short repo names
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+
+  # Validate new name
+  if [[ ! "$RENAME_NEW" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: new name must be alphanumeric (hyphens/underscores allowed): '$RENAME_NEW'" >&2
+    exit 1
+  fi
+
+  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+
+  OLD_BRANCH="claude/$RENAME_OLD"
+  NEW_BRANCH="claude/$RENAME_NEW"
+  OLD_WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$RENAME_OLD"
+  NEW_WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$RENAME_NEW"
+  OLD_INSTANCE="${REPO_NAME}-${REPO_HASH}-${RENAME_OLD}"
+  NEW_INSTANCE="${REPO_NAME}-${REPO_HASH}-${RENAME_NEW}"
+
+  # Determine if the worktree/branch actually exist (vs orphaned session data)
+  OLD_WT_PATH_ABS="$(cd "$OLD_WT_PATH" 2>/dev/null && pwd)" || true
+  HAS_WORKTREE=false
+  HAS_BRANCH=false
+  [[ -n "$OLD_WT_PATH_ABS" ]] && HAS_WORKTREE=true
+  git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$OLD_BRANCH" 2>/dev/null && HAS_BRANCH=true
+
+  # Must have at least a worktree, branch, or session data
+  if [[ "$HAS_WORKTREE" == false && "$HAS_BRANCH" == false \
+        && ! -d "$SESSIONS_BASE/$OLD_INSTANCE" && ! -d "$AUDIT_BASE/$OLD_INSTANCE" ]]; then
+    echo "Error: nothing found for '$RENAME_OLD' (no worktree, branch, or session data)" >&2
+    exit 1
+  fi
+
+  # Check new name isn't already taken
+  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$NEW_BRANCH" 2>/dev/null; then
+    echo "Error: branch '$NEW_BRANCH' already exists" >&2
+    exit 1
+  fi
+  if [[ -d "$NEW_WT_PATH" ]]; then
+    echo "Error: worktree path already exists: $NEW_WT_PATH" >&2
+    exit 1
+  fi
+
+  # Check no running container for this worktree
+  if docker ps --filter "name=claudebot-${OLD_INSTANCE}-" --format '{{.Names}}' 2>/dev/null | grep -q .; then
+    echo "Error: a sandbox session is running for '$RENAME_OLD' — stop it first" >&2
+    exit 1
+  fi
+
+  echo "Renaming worktree: $RENAME_OLD -> $RENAME_NEW"
+
+  # 1. Rename branch (skip if none)
+  if [[ "$HAS_BRANCH" == true ]]; then
+    echo "  Branch: $OLD_BRANCH -> $NEW_BRANCH"
+    git -C "$REPO_PATH" branch -m "$OLD_BRANCH" "$NEW_BRANCH"
+  fi
+
+  # 2. Move worktree directory (skip if none)
+  if [[ "$HAS_WORKTREE" == true ]]; then
+    echo "  Path: $OLD_WT_PATH_ABS -> $NEW_WT_PATH"
+    git -C "$REPO_PATH" worktree move "$OLD_WT_PATH_ABS" "$NEW_WT_PATH"
+  fi
+
+  # 3. Move session data
+  if [[ -d "$SESSIONS_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Sessions: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$SESSIONS_BASE/$OLD_INSTANCE" "$SESSIONS_BASE/$NEW_INSTANCE"
+  fi
+
+  # 4. Move audit data
+  if [[ -d "$AUDIT_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Audit: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$AUDIT_BASE/$OLD_INSTANCE" "$AUDIT_BASE/$NEW_INSTANCE"
+  fi
+
+  echo ""
+  echo "Done. Resume with:"
+  echo "  claude-sandbox -w $RENAME_NEW $REPO_PATH"
+  exit 0
+fi
 
 # --- Feature detection flags ---
 NEEDS_DOCKER=false
