@@ -41,6 +41,8 @@ LIST_SESSIONS=false
 COMPLETE_WORKTREES=false
 PRUNE_WORKTREES=false
 GC_WORKTREES=false
+PREVIEW_MODE=false
+PREVIEW_ARGS=()
 RENAME_WORKTREE=false
 RENAME_OLD=""
 RENAME_NEW=""
@@ -57,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     --complete-worktrees) COMPLETE_WORKTREES=true; shift ;;
     --prune) PRUNE_WORKTREES=true; shift ;;
     --gc) GC_WORKTREES=true; shift ;;
-    --_preview) shift; fzf_preview_worktree "$@"; exit 0 ;;
+    --_preview) PREVIEW_MODE=true; shift; PREVIEW_ARGS=("$@"); break ;;
     --rename)
       RENAME_WORKTREE=true
       shift
@@ -84,7 +86,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -305,35 +307,6 @@ if [[ "$COMPLETE_WORKTREES" == true ]]; then
   exit 0
 fi
 
-# --- Prune worktrees ---
-if [[ "$PRUNE_WORKTREES" == true ]]; then
-  [[ -z "$REPO_PATH" ]] && usage
-
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
-  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
-  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
-
-  prune_worktrees
-  exit 0
-fi
-
-# --- GC worktrees ---
-if [[ "$GC_WORKTREES" == true ]]; then
-  [[ -z "$REPO_PATH" ]] && usage
-
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
-  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
-  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
-
-  gc_worktrees
-  exit 0
-fi
 
 # --- Rename worktree ---
 if [[ "$RENAME_WORKTREE" == true ]]; then
@@ -422,9 +395,6 @@ if [[ "$RENAME_WORKTREE" == true ]]; then
   echo "  claude-sandbox -w $RENAME_NEW $REPO_PATH"
   exit 0
 fi
-
-# --- GC nudge on normal launch ---
-check_gc_nudge
 
 # --- Feature detection flags ---
 NEEDS_DOCKER=false
@@ -1242,6 +1212,45 @@ check_gc_nudge() {
     echo "Note: $gone_count worktree(s) have deleted remote branches -- run 'claude-sandbox --gc $REPO_PATH' to clean up."
   fi
 }
+
+# --- Preview mode (called by fzf) ---
+if [[ "$PREVIEW_MODE" == true ]]; then
+  fzf_preview_worktree "${PREVIEW_ARGS[@]}"
+  exit 0
+fi
+
+# --- Prune worktrees (early exit) ---
+if [[ "$PRUNE_WORKTREES" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && usage
+
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+
+  prune_worktrees
+  exit 0
+fi
+
+# --- GC worktrees (early exit) ---
+if [[ "$GC_WORKTREES" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && usage
+
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+
+  gc_worktrees
+  exit 0
+fi
+
+# --- GC nudge on normal launch ---
+check_gc_nudge
 
 # --- Run detection ---
 detect_docker_need
