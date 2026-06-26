@@ -49,9 +49,13 @@
 !.claude/hooks/
 !.claude/hooks/*
 !.claude/sandbox/
-!.claude/sandbox/**
-# Re-ignore runtime audit logs that the sandbox writes under sandbox/audit/
-.claude/sandbox/audit/
+.claude/sandbox/*
+!.claude/sandbox/Dockerfile.base
+!.claude/sandbox/audit.sh
+!.claude/sandbox/claude-sandbox
+!.claude/sandbox/claude.json
+!.claude/sandbox/entrypoint.sh
+!.claude/sandbox/settings.json
 !.claude/projects/
 .claude/projects/*
 !.claude/projects/-Users-daniel/
