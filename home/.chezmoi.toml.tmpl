@@ -1,3 +1,7 @@
 {{- $work := promptBoolOnce . "work" "Is this a work machine" false -}}
+# Pin umask so target file modes are deterministic regardless of the login shell's
+# umask (this server runs umask 0007, which would otherwise make chezmoi want 0660).
+umask = 0o022
+
 [data]
     work = {{ $work }}

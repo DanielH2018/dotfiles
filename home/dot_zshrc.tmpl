@@ -164,7 +164,13 @@ if command -v eza >/dev/null 2>&1; then
   alias la="eza -la --icons --git --group-directories-first --time-style=relative"
   alias lt="eza --tree --level=2 --icons -a"
   alias lg="eza -l --git --icons"
+elif ls --color=auto -d . >/dev/null 2>&1; then
+  # GNU coreutils (Linux): -G means "no group" here, so use --color instead.
+  alias ls='ls --color=auto --group-directories-first'
+  alias ll='ls -lA --color=auto --group-directories-first'
+  alias la='ls -lA --color=auto --group-directories-first'
 else
+  # BSD/macOS ls
   alias ls='ls -G'
   alias ll='ls -lGA'
   alias la='ls -lGA'
