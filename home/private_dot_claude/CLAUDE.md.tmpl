@@ -1,9 +1,11 @@
 # Claude Code — User-level instructions
+{{- if .work }}
 
 ## About me
 
 I'm a software engineer on the **Processing team** at Lithic (card-issuing infrastructure / fintech).
 I work across backend services, internal tooling, and occasionally frontend.
+{{- end }}
 
 ## Communication style
 
@@ -13,17 +15,14 @@ I work across backend services, internal tooling, and occasionally frontend.
 - If something is ambiguous, ask one focused question rather than listing all possibilities.
 
 ## Git conventions
+{{- if eq .chezmoi.os "darwin" }}
 
 - Commits are signed via 1Password SSH agent — never pass `--no-verify` or any flag that bypasses signing.
+{{- end }}
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
-- Write commit messages that explain *why*, not just what changed. Example:
-  ```
-  Fix race condition in settlement processor on concurrent retries
-
-  The previous implementation didn't hold the lock across the
-  DB read + write, allowing duplicate settlements under load.
-  ```
+- Write commit messages that explain *why*, not just what changed.
+{{- if .work }}
 
 ## Environment
 
@@ -45,6 +44,7 @@ For straightforward single-file edits, handle inline without delegating.
 This is a financial infrastructure environment. Be conservative with anything touching
 auth, secrets, cryptography, or data access. Flag suggestions that could be relevant to
 PCI-DSS or SOC 2 compliance rather than assuming they're fine.
+{{- end }}
 
 ## Testing
 
@@ -65,5 +65,7 @@ When compacting, always preserve:
 - Any user corrections or architectural decisions
 - Current task state and next steps
 - Active branch name and whether changes are pushed
+{{- if .work }}
 
 @~/.claude/docs/enforcement.md
+{{- end }}
