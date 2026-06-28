@@ -34,7 +34,24 @@
       "~/.viminfo",
       "~/.python_history",
       "~/.node_repl_history",
-      "~/.lesshst"
+      "~/.lesshst",
+      "~/.DS_Store",
+      "~/**/.DS_Store",
+      "~/.CFUserTextEncoding",
+      "~/.claude.json",
+      "~/.claude.json.backup",
+      "~/.claude/settings.local.json",
+      "~/.claude/remote-settings.json",
+      "~/.claude/policy-limits.json",
+      "~/.claude/mcp-needs-auth-cache.json",
+      "~/.claude/history.jsonl",
+      "~/.claude/*.log",
+      "~/.claude/.last-cleanup",
+      "~/.claude/sessions/**",
+      "~/.config/cagent/**",
+      "~/.config/jgit/**",
+      "~/.testcontainers.properties",
+      "~/.tcshrc"
     ]
   }
 }
