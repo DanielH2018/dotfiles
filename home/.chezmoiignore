@@ -1,0 +1,6 @@
+{{ if ne .chezmoi.os "darwin" }}
+Brewfile
+.config/ghostty
+.claude/hooks
+.claude/sandbox
+{{ end }}
