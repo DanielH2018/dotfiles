@@ -14,14 +14,18 @@ export HOMEBREW_NO_ENV_HINTS=1
 # =============================================================================
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
+{{- if .work }}
 
 export GRAFANA_URL="https://lithic.grafana.net"
+{{- end }}
 
 export EDITOR='vim'
 export VISUAL="$EDITOR"
+{{- if eq .chezmoi.os "darwin" }}
 
 # Compilation flags
 export ARCHFLAGS="-arch $(uname -m)"
+{{- end }}
 
 # =============================================================================
 # HISTORY CONFIGURATION
@@ -43,16 +47,19 @@ setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 # PATH CONFIGURATION
 # =============================================================================
 [[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+[[ -d "$HOME/go/bin" ]] && export PATH="$HOME/go/bin:$PATH"
+{{- if eq .chezmoi.os "darwin" }}
 
 # Ensure Homebrew bin precedes /usr/bin in non-login shells (.zprofile handles login shells).
 # The check avoids adding a duplicate entry when .zprofile already ran.
 [[ ":$PATH:" != *":$BREW_PREFIX/bin:"* ]] && \
   export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 
-export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$HOME/go/bin:$PATH"
+export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$PATH"
 if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
+{{- end }}
 
 # =============================================================================
 # FNM (Fast Node Manager)
@@ -65,7 +72,9 @@ fi
 # COMPLETION SYSTEM
 # =============================================================================
 # fpath must be set BEFORE compinit so Homebrew completions are picked up.
+{{- if eq .chezmoi.os "darwin" }}
 fpath=("$HOME/.claude/sandbox" "$BREW_PREFIX/share/zsh/site-functions" $fpath)
+{{- end }}
 
 autoload -Uz compinit
 ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
@@ -140,6 +149,9 @@ if command -v fzf >/dev/null 2>&1; then
   export FZF_COMPLETION_TRIGGER='**'
   [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
   [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"
+  # Linux (Debian/Ubuntu fzf package) ships shell integration here:
+  [[ -r /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
+  [[ -r /usr/share/doc/fzf/examples/completion.zsh ]] && source /usr/share/doc/fzf/examples/completion.zsh
   [[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
 fi
 
@@ -169,13 +181,19 @@ fi
 # QUALITY OF LIFE ALIASES & FUNCTIONS
 # =============================================================================
 alias zshconfig="$EDITOR ~/.zshrc"
+{{- if eq .chezmoi.os "darwin" }}
 alias configterminal="$EDITOR ~/.zshrc ~/.config/ghostty/config ~/.config/starship.toml"
+{{- else }}
+alias configterminal="$EDITOR ~/.zshrc ~/.config/starship.toml"
+{{- end }}
 alias c="clear"
 alias ..='cd ..'
 alias ...='cd ../..'
 alias duu='ncdu .'
 alias sysinfo='fastfetch'
+{{- if .work }}
 alias vault='cd "$HOME/Documents/My_Vault"'
+{{- end }}
 
 mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
 
@@ -188,11 +206,6 @@ if command -v curlie >/dev/null 2>&1; then
   hput()    { curlie PUT "$@"; }
   hdelete() { curlie DELETE "$@"; }
 fi
-
-# =============================================================================
-# DOTFILES Git Alias
-# =============================================================================
-alias dotfiles='git --git-dir=$HOME/.dotfiles --work-tree=$HOME'
 
 # =============================================================================
 # KEYBINDINGS (history search & word nav)
@@ -216,6 +229,7 @@ fastfetch() {
     command fastfetch "$@"
   fi
 }
+{{- if .work }}
 
 # =============================================================================
 # AWS Configuration
@@ -279,6 +293,7 @@ alias awsls='aws s3 ls'
 alias ec2ls='aws ec2 describe-instances \
   --query "Reservations[*].Instances[*].[InstanceId,State.Name,PrivateIpAddress,Tags[?Key==\`Name\`].Value|[0]]" \
   --output table'
+{{- end }}
 
 # =============================================================================
 # FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
@@ -290,22 +305,27 @@ fi
 # =============================================================================
 # Claude
 # =============================================================================
-# START IN CLAUDE WORKSPACE (only if shell started in $HOME)
-#[[ $PWD == $HOME && -d "$HOME/Documents/My_Vault" ]] && cd "$HOME/Documents/My_Vault"
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 
 
 # =============================================================================
 # PLUGINS (autosuggestions, then syntax-highlighting LAST)
 # =============================================================================
-if [[ -r "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-  source "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
-fi
+# Source from Homebrew (macOS) or the system package dir (Linux), whichever exists.
+for _zp in \
+  "$BREW_PREFIX/share/zsh-autosuggestions/zsh-autosuggestions.zsh" \
+  /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh; do
+  [[ -r "$_zp" ]] && { source "$_zp"; break; }
+done
 
 # zsh-syntax-highlighting MUST be sourced after all ZLE widgets are defined.
-if [[ -r "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
-  source "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
+for _zp in \
+  "$BREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
+  /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh; do
+  [[ -r "$_zp" ]] && { source "$_zp"; break; }
+done
+unset _zp
+{{- if .work }}
 
 # =============================================================================
 # 1Password CLI — keys cached in macOS login keychain after first fetch.
@@ -367,11 +387,13 @@ add-zsh-hook precmd _op_lazy_precmd
 
 # Add 1Password SSH agent socket to environment for SSH key use with Docker
 export SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
+{{- end }}
 
 
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+{{- if eq .chezmoi.os "darwin" }}
 
 # added by Snowflake SnowflakeCLI installer v1.0
 export PATH=/Applications/SnowflakeCLI.app/Contents/MacOS/:$PATH
@@ -380,3 +402,4 @@ fpath=(/Users/daniel/.docker/completions $fpath)
 autoload -Uz compinit
 compinit
 # End of Docker CLI completions
+{{- end }}
