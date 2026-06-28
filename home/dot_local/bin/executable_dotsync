@@ -66,7 +66,7 @@ function deriveTargets(repo, home, runner) {
   const errors = [];
   let targets = [];
   if (repo.type === 'chezmoi') {
-    const r = runner('chezmoi', ['managed', '--include=files']);
+    const r = runner('chezmoi', ['managed', '--include=files', '--source', repo.path]);
     if (r.code !== 0) { errors.push(`chezmoi managed failed: ${r.stderr.trim()}`); return { targets, errors }; }
     targets = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean).map((rel) => path.join(home, rel));
   } else if (repo.type === 'git-symlink') {
@@ -188,7 +188,7 @@ function cmdStatus({ home, manifestDir, runner }) {
     const sb = runner('git', ['-C', repo.path, 'status', '-sb']);
     process.stdout.write(sb.stdout);
     if (repo.type === 'chezmoi') {
-      const diff = runner('chezmoi', ['diff', '--no-pager']);
+      const diff = runner('chezmoi', ['diff', '--no-pager', '--source', repo.path]);
       console.log(diff.stdout.trim() ? 'chezmoi diff: changes pending' : 'chezmoi diff: clean');
     }
   }
@@ -219,16 +219,24 @@ function cmdSync({ home, manifestDir, runner, force, dryRun }) {
     if (dryRun) continue;
     const repo = repos.find((r) => r.name === action.repo);
     if (repo.type === 'chezmoi') {
-      runner('chezmoi', ['re-add']);
+      runner('chezmoi', ['re-add', '--source', repo.path]);
       runner('git', ['-C', repo.path, 'add', '-A']);
       const c = runner('git', ['-C', repo.path, 'commit', '-m', 'dotsync: capture config changes']);
       if (c.code !== 0 && !/nothing to commit/.test(c.stdout + c.stderr)) { console.error(c.stderr || c.stdout); return 1; }
-      runner('git', ['-C', repo.path, 'push']);
+      const pu = runner('git', ['-C', repo.path, 'push']);
+      if (pu.code !== 0 && !/Everything up-to-date|up to date/i.test(pu.stdout + pu.stderr)) {
+        console.error(`push failed for ${repo.name}:\n${pu.stderr || pu.stdout}`);
+        return 1;
+      }
     } else {
       runner('git', ['-C', repo.path, 'add', '-A']);
       const c = runner('git', ['-C', repo.path, 'commit', '-m', 'dotsync: capture config changes']);
       if (c.code !== 0 && !/nothing to commit/.test(c.stdout + c.stderr)) { console.error(c.stderr || c.stdout); return 1; }
-      runner('git', ['-C', repo.path, 'push']);
+      const pu = runner('git', ['-C', repo.path, 'push']);
+      if (pu.code !== 0 && !/Everything up-to-date|up to date/i.test(pu.stdout + pu.stderr)) {
+        console.error(`push failed for ${repo.name}:\n${pu.stderr || pu.stdout}`);
+        return 1;
+      }
     }
   }
   return 0;

@@ -64,4 +64,47 @@ const oe = console.error; console.error = () => {};
 assert.strictEqual(main(['node', 'dotsync', 'bogus'], { HOME }, () => ({ code: 0, stdout: '', stderr: '' })), 2);
 console.error = oe;
 
+// --- FIX A: push failure surfaces as non-zero exit ---
+// Setup: fresh home with no orphans (everything ignored via ~/**)
+const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync2-'));
+const MAN2 = path.join(HOME2, '.config', 'dotsync', 'manifest.d');
+fs.mkdirSync(MAN2, { recursive: true });
+fs.writeFileSync(path.join(MAN2, '00-general.json'), JSON.stringify({
+  repo: { name: 'general', type: 'chezmoi', path: path.join(HOME2, 'cz'), remote: 'r' },
+  ignore: { globs: ['~/**'] },
+}));
+
+// push returns fatal auth failure -> cmdSync must return 1
+const pushFailRunner = (cmd, args) => {
+  if (cmd === 'chezmoi' && args[0] === 'managed') return { code: 0, stdout: '', stderr: '' };
+  if (cmd === 'chezmoi' && args[0] === 're-add') return { code: 0, stdout: '', stderr: '' };
+  if (cmd === 'git' && args.includes('push')) return { code: 1, stdout: '', stderr: 'fatal: Authentication failed' };
+  if (cmd === 'find') return { code: 0, stdout: '', stderr: '' };
+  return { code: 0, stdout: '', stderr: '' };
+};
+const oeB = console.error; console.error = () => {}; console.log = () => {};
+const pushFailRc = cmdSync({ home: HOME2, manifestDir: MAN2, runner: pushFailRunner, force: false, dryRun: false });
+console.log = origLog; console.error = oeB;
+assert.strictEqual(pushFailRc, 1, 'push failure (auth error) must surface as exit 1');
+
+// push returns "Everything up-to-date" with code 1 -> treated as success
+const pushUpToDateRunner = (cmd, args) => {
+  if (cmd === 'chezmoi' && args[0] === 'managed') return { code: 0, stdout: '', stderr: '' };
+  if (cmd === 'chezmoi' && args[0] === 're-add') return { code: 0, stdout: '', stderr: '' };
+  if (cmd === 'git' && args.includes('push')) return { code: 1, stdout: 'Everything up-to-date', stderr: '' };
+  if (cmd === 'find') return { code: 0, stdout: '', stderr: '' };
+  return { code: 0, stdout: '', stderr: '' };
+};
+const oeC = console.error; console.error = () => {}; console.log = () => {};
+const HOME3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync3-'));
+const MAN3 = path.join(HOME3, '.config', 'dotsync', 'manifest.d');
+fs.mkdirSync(MAN3, { recursive: true });
+fs.writeFileSync(path.join(MAN3, '00-general.json'), JSON.stringify({
+  repo: { name: 'general', type: 'chezmoi', path: path.join(HOME3, 'cz'), remote: 'r' },
+  ignore: { globs: ['~/**'] },
+}));
+const pushUpToDateRc = cmdSync({ home: HOME3, manifestDir: MAN3, runner: pushUpToDateRunner, force: false, dryRun: false });
+console.log = origLog; console.error = oeC;
+assert.strictEqual(pushUpToDateRc, 0, 'push "Everything up-to-date" must be treated as success (exit 0)');
+
 console.log('ALL PASS');
