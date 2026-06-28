@@ -33,3 +33,21 @@ VS Code after the first apply.
 - `.chezmoi.os` (auto) gates macOS-only config (Homebrew, ghostty, 1Password signing) and the
   Windows-only Nerd Font installer.
 - `work` (prompted) gates work-only config (AWS/SSO, Snowflake, Lithic Grafana, 1Password keys).
+
+## dotsync — config preservation
+
+`dotsync` (deployed to `~/.local/bin/dotsync`) is a manifest-driven tool that prevents
+config from falling through the cracks between the general (chezmoi) repo and the private
+work repo. It derives each repo's tracked targets (`chezmoi managed` / `git ls-files`),
+so the ownership map never drifts.
+
+- `dotsync check` — orphans (untracked, non-ignored), conflicts (claimed by 2 repos), and
+  missing declared targets. Non-zero exit on any.
+- `dotsync status` — `git status -sb` per repo (+ `chezmoi diff` indicator for the chezmoi repo).
+- `dotsync sync [--force] [--dry-run]` — runs `check` (needs `--force` past orphans),
+  regenerates `INVENTORY.md`, then per repo: chezmoi → `re-add` + commit + push;
+  git-symlink → `add -A` + commit + push. `--dry-run` prints the plan and mutates nothing.
+- `dotsync inventory` — regenerate `~/.config/dotsync/INVENTORY.md` (path → owning repo).
+
+Manifest fragments live in `~/.config/dotsync/manifest.d/*.json` (merged in lexical order).
+See `docs/RESTORE.md` for the bare-metal bootstrap.

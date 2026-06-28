@@ -1,0 +1,19 @@
+{
+  "repo": {
+    "name": "general",
+    "type": "chezmoi",
+    "path": "~/.local/share/chezmoi",
+    "remote": "git@github.com:DanielH2018/dotfiles.git"
+  },
+  "ignore": {
+    "globs": [
+      "~/.claude/settings.json",
+      "~/.claude/projects/**",
+      "~/.config/gh/hosts.yml",
+      "~/.cache/**",
+      "~/.local/state/**",
+      "~/.config/op/**",
+      "~/.config/dotsync/INVENTORY.md"
+    ]
+  }
+}
