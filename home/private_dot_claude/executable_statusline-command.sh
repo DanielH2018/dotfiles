@@ -25,6 +25,8 @@ eval "$(cat | jq -r '[
 
 # Shorten model name to a compact label
 case "$model_id" in
+  *opus*-4-8*|*opus*-4.8*)    model_label="opus4.8" ;;
+  *opus*-4-7*|*opus*-4.7*)    model_label="opus4.7" ;;
   *opus*-4-6*|*opus*-4.6*)    model_label="opus4.6" ;;
   *opus*-4-5*|*opus*-4.5*)    model_label="opus4.5" ;;
   *opus*-4*)                  model_label="opus4" ;;

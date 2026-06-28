@@ -1,6 +1,7 @@
 {{ if ne .chezmoi.os "darwin" }}
 Brewfile
 .config/ghostty
+.config/git
 .claude/hooks
 .claude/sandbox
 {{ end }}

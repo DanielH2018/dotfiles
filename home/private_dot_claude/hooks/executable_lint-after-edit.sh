@@ -26,10 +26,18 @@ case "$FILE_PATH" in
     ;;
   *.ts|*.tsx)
     # Per-file syntax check only — full tsc --noEmit -p . is too slow for a per-edit hook.
-    # Relies on build/test cycle for full type checking.
-    if command -v npx >/dev/null 2>&1; then
-      run_check npx --no-install tsc --noEmit --isolatedModules "$FILE_PATH" 2>/dev/null
-    fi
+    # Relies on build/test cycle for full type checking. Use the project-local tsc if
+    # present; skip silently if absent so a missing compiler can't block the edit.
+    # (`npx --no-install tsc` exits non-zero when typescript isn't installed, which the
+    # old code mis-read as a lint failure and blocked every TS edit in such projects.)
+    DIR=$(dirname "$FILE_PATH")
+    while [ "$DIR" != "/" ]; do
+      if [ -x "$DIR/node_modules/.bin/tsc" ]; then
+        run_check "$DIR/node_modules/.bin/tsc" --noEmit --isolatedModules "$FILE_PATH"
+        break
+      fi
+      DIR=$(dirname "$DIR")
+    done
     ;;
   *.rs)
     # Walk up to find Cargo.toml from the file's location, not CWD.

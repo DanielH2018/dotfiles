@@ -21,7 +21,13 @@ I work across backend services, internal tooling, and occasionally frontend.
 {{- end }}
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
-- Write commit messages that explain *why*, not just what changed.
+- Write commit messages that explain *why*, not just what changed. Example:
+  ```
+  Fix race condition in settlement processor on concurrent retries
+
+  The previous implementation didn't hold the lock across the
+  DB read + write, allowing duplicate settlements under load.
+  ```
 {{- if .work }}
 
 ## Environment

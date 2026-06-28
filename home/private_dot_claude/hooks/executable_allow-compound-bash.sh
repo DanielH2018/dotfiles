@@ -76,4 +76,4 @@ for part in "${PARTS[@]}"; do
   fi
 done
 
-printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","permissionDecision":"allow","permissionDecisionReason":"All sub-commands match the allow list"}}\n'
+printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
