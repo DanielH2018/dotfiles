@@ -61,4 +61,31 @@ rc = cmdCheck({ home: HOME, manifestDir: MAN, runner });
 console.log = origLog2; console.error = origErr;
 assert.strictEqual(rc, 1, 'unowned, non-ignored file -> non-zero exit');
 
+// --- cmdCheck: declared target OUTSIDE scan roots that EXISTS on disk must NOT be reported missing ---
+// .local/bin/dotsync is managed by chezmoi but is not under ~/.config or ~/.claude, so scanRoots
+// never includes it. The real existsFn (lstatSync) must find it and suppress the false-positive.
+const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsinv2-'));
+const MAN2 = path.join(HOME2, '.config', 'dotsync', 'manifest.d');
+fs.mkdirSync(MAN2, { recursive: true });
+fs.writeFileSync(path.join(MAN2, '00-general.json'), JSON.stringify({
+  repo: { name: 'general', type: 'chezmoi', path: path.join(HOME2, 'cz'), remote: 'r' },
+  ignore: { globs: ['~/.cache/**', '~/.config/dotsync/INVENTORY.md'] },
+}));
+// chezmoi reports .local/bin/dotsync as managed — outside scan roots
+seed(path.join(HOME2, '.local', 'bin', 'dotsync'), '#!/usr/bin/env node');
+// also seed a file that IS in scan roots and is owned
+seed(path.join(HOME2, '.zshrc'));
+const runner2 = (cmd, args) => {
+  if (cmd === 'chezmoi' && args[0] === 'managed') return { code: 0, stdout: '.zshrc\n.local/bin/dotsync\n.config/dotsync/manifest.d/00-general.json\n', stderr: '' };
+  if (cmd === 'find') {
+    const out = require('node:child_process').execFileSync('find', args, { encoding: 'utf8' });
+    return { code: 0, stdout: out, stderr: '' };
+  }
+  return { code: 1, stdout: '', stderr: '' };
+};
+console.error = () => {}; console.log = () => {};
+const rc2 = cmdCheck({ home: HOME2, manifestDir: MAN2, runner: runner2 });
+console.log = origLog2; console.error = origErr;
+assert.strictEqual(rc2, 0, 'declared target outside scan roots that exists on disk must not be reported missing');
+
 console.log('ALL PASS');

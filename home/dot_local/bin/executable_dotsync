@@ -99,7 +99,8 @@ function buildOwnership(repos, home, runner) {
   return { ownerByPath, targetsByRepo, errorsByRepo };
 }
 
-function computeCheck({ ownership, existing, ignoreGlobs, home }) {
+function computeCheck({ ownership, existing, ignoreGlobs, home, existsFn }) {
+  const resolvedExistsFn = existsFn || ((p) => new Set(existing).has(p));
   const owned = ownership.ownerByPath;
   const orphans = existing
     .filter((p) => !owned.has(p) && !matchesAnyGlob(p, ignoreGlobs, home))
@@ -109,10 +110,9 @@ function computeCheck({ ownership, existing, ignoreGlobs, home }) {
     if (repos.length >= 2) conflicts.push({ path: p, repos: [...repos].sort() });
   }
   conflicts.sort((a, b) => a.path.localeCompare(b.path));
-  const existingSet = new Set(existing);
   const missing = [];
   for (const [name, targets] of ownership.targetsByRepo) {
-    for (const t of targets) if (!existingSet.has(t)) missing.push({ path: t, repo: name });
+    for (const t of targets) if (!resolvedExistsFn(t)) missing.push({ path: t, repo: name });
   }
   missing.sort((a, b) => a.path.localeCompare(b.path));
   return { orphans, conflicts, missing };
@@ -171,7 +171,8 @@ function cmdCheck({ home, manifestDir, runner }) {
   const { repos, ignoreGlobs } = loadManifest(manifestDir, home);
   const ownership = buildOwnership(repos, home, runner);
   const existing = scanRoots(home, runner);
-  const { orphans, conflicts, missing } = computeCheck({ ownership, existing, ignoreGlobs, home });
+  const existsFn = (p) => { try { fs.lstatSync(p); return true; } catch { return false; } };
+  const { orphans, conflicts, missing } = computeCheck({ ownership, existing, ignoreGlobs, home, existsFn });
   for (const [name, errs] of ownership.errorsByRepo) for (const e of errs) console.error(`error[${name}]: ${e}`);
   if (orphans.length) { console.log(`orphans (${orphans.length}) — not in any repo, not ignored:`); for (const p of orphans) console.log(`  ${p.replace(home, '~')}`); }
   if (conflicts.length) { console.log(`conflicts (${conflicts.length}) — claimed by >=2 repos:`); for (const c of conflicts) console.log(`  ${c.path.replace(home, '~')} -> ${c.repos.join(', ')}`); }

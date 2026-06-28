@@ -13,7 +13,28 @@
       "~/.cache/**",
       "~/.local/state/**",
       "~/.config/op/**",
-      "~/.config/dotsync/INVENTORY.md"
+      "~/.config/dotsync/INVENTORY.md",
+      "~/.claude/plugins/**",
+      "~/.claude/file-history/**",
+      "~/.claude/shell-snapshots/**",
+      "~/.claude/tasks/**",
+      "~/.claude/plans/**",
+      "~/.claude/backups/**",
+      "~/.claude/paste-cache/**",
+      "~/.claude/logs/**",
+      "~/.claude/cache/**",
+      "~/.claude/todos/**",
+      "~/.claude/statsig/**",
+      "~/.claude/sandbox/**",
+      "~/.config/chezmoi/**",
+      "~/.zsh_sessions/**",
+      "~/.zsh_history",
+      "~/.bash_history",
+      "~/.zcompdump*",
+      "~/.viminfo",
+      "~/.python_history",
+      "~/.node_repl_history",
+      "~/.lesshst"
     ]
   }
 }
