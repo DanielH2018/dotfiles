@@ -1,0 +1,82 @@
+[user]
+	name = {{ if .work }}Daniel Hunter{{ else }}DanielH2018{{ end }}
+	email = danielh.2018@gmail.com
+{{- if eq .chezmoi.os "darwin" }}
+	signingkey = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
+[commit]
+	gpgsign = true
+[core]
+	excludesfile = ~/.gitignore_global
+	autocrlf = input
+{{- else }}
+[credential]
+	helper = store
+[core]
+	excludesfile = ~/.gitignore_global
+	pager = less
+{{- end }}
+[pull]
+	rebase = true
+[push]
+	autoSetupRemote = true
+{{- if ne .chezmoi.os "darwin" }}
+	default = simple
+	followTags = true
+{{- end }}
+[fetch]
+	prune = true
+{{- if ne .chezmoi.os "darwin" }}
+	pruneTags = true
+	all = true
+{{- end }}
+[branch]
+	sort = -committerdate
+[rerere]
+	enabled = true
+{{- if ne .chezmoi.os "darwin" }}
+	autoupdate = true
+{{- end }}
+[diff]
+	colorMoved = {{ if eq .chezmoi.os "darwin" }}zebra{{ else }}plain{{ end }}
+{{- if ne .chezmoi.os "darwin" }}
+	algorithm = histogram
+	mnemonicPrefix = true
+	renames = true
+	submodule = log
+{{- end }}
+[merge]
+	conflictstyle = {{ if eq .chezmoi.os "darwin" }}zdiff3{{ else }}diff3{{ end }}
+[init]
+	defaultBranch = main
+{{- if ne .chezmoi.os "darwin" }}
+[commit]
+	verbose = true
+[tag]
+	sort = version:refname
+[rebase]
+	autoSquash = true
+	autoStash = true
+	updateRefs = true
+[column]
+	ui = auto
+[status]
+	submoduleSummary = true
+[submodule]
+	recurse = true
+[log]
+	decorate = true
+	abbrevCommit = true
+[help]
+	autocorrect = prompt
+[alias]
+	lg = log --oneline --graph --decorate --all
+	lga = log --oneline --graph --decorate --all --date=relative
+	lgb = log --oneline --graph --decorate --all --date=relative --branches
+	lgc = log --oneline --graph --decorate --all --date=relative --branches --tags
+[color]
+	ui = auto
+{{- end }}
