@@ -14,10 +14,6 @@ export HOMEBREW_NO_ENV_HINTS=1
 # =============================================================================
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
-{{- if .work }}
-
-export GRAFANA_URL="https://lithic.grafana.net"
-{{- end }}
 
 export EDITOR='vim'
 export VISUAL="$EDITOR"
@@ -197,9 +193,6 @@ alias ..='cd ..'
 alias ...='cd ../..'
 alias duu='ncdu .'
 alias sysinfo='fastfetch'
-{{- if .work }}
-alias vault='cd "$HOME/Documents/My_Vault"'
-{{- end }}
 
 mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
 
@@ -235,71 +228,6 @@ fastfetch() {
     command fastfetch "$@"
   fi
 }
-{{- if .work }}
-
-# =============================================================================
-# AWS Configuration
-# =============================================================================
-
-aws-sso-cleanup() {
-    for f in ~/.aws/sso/cache/*.json; do
-      expires=$(cat "$f" | jq -r '.expiresAt // empty')
-      if [[ -n "$expires" && "$expires" < "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ]]; then
-        rm "$f"
-      fi
-    done
-  }
-
-# Run cleanup before every sso login
-aws() {
-  if [[ "$1" == "sso" && "$2" == "login" ]]; then
-    aws-sso-cleanup
-  fi
-  command aws "$@"
-}
-
-# Login to SSO and switch profile in one shot
-awslogin() {
-  aws sso login --sso-session "${1:-lithic}"
-}
-
-# Show current identity (useful sanity-check before destructive ops)
-awswho() {
-  aws sts get-caller-identity --query '[Account, Arn]' --output text
-}
-
-# fzf-based profile switcher (requires fzf)
-awsp() {
-  local profile
-  profile=$(aws configure list-profiles | fzf --height 40% --prompt "AWS profile: ")
-  [[ -n "$profile" ]] && export AWS_PROFILE="$profile" && echo "Switched to $profile"
-}
-
-# Tail CloudWatch log group (picks most recent stream)
-awslogs() {
-  local group="$1"
-  local stream
-  stream=$(aws logs describe-log-streams \
-    --log-group-name "$group" \
-    --order-by LastEventTime --descending \
-    --max-items 1 \
-    --query 'logStreams[0].logStreamName' --output text)
-  aws logs get-log-events \
-    --log-group-name "$group" \
-    --log-stream-name "$stream" \
-    --query 'events[*].message' --output text
-}
-
-# AWS CLI tab completion
-autoload bashcompinit && bashcompinit
-complete -C "$(command -v aws_completer)" aws
-
-# Aliases
-alias awsls='aws s3 ls'
-alias ec2ls='aws ec2 describe-instances \
-  --query "Reservations[*].Instances[*].[InstanceId,State.Name,PrivateIpAddress,Tags[?Key==\`Name\`].Value|[0]]" \
-  --output table'
-{{- end }}
 
 # =============================================================================
 # FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
@@ -331,78 +259,15 @@ for _zp in \
   [[ -r "$_zp" ]] && { source "$_zp"; break; }
 done
 unset _zp
-{{- if .work }}
 
-# =============================================================================
-# 1Password CLI — keys cached in macOS login keychain after first fetch.
-# Touch ID fires only on the first load (cache miss) or after op-refresh-keys.
-# The login keychain is unlocked automatically at login, so cache reads are
-# instant with no prompt on every subsequent tab/session.
-# =============================================================================
-_op_load_keys() {
-  local all_set=1
-  [[ -z "$ANTHROPIC_ADMIN_API_KEY" ]] && all_set=0
-  [[ -z "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]] && all_set=0
-  [[ -z "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && all_set=0
-  [[ $all_set -eq 1 ]] && return 0
-
-  _op_load_one() {
-    local env_var="$1" keychain_service="$2" op_path="$3"
-    [[ -n "${(P)env_var}" ]] && return 0
-
-    local cached
-    cached=$(security find-generic-password -a "$USER" -s "$keychain_service" -w 2>/dev/null)
-    if [[ -n "$cached" ]]; then
-      export "$env_var"="$cached"
-      return 0
-    fi
-
-    local key
-    key=$(op read "$op_path" 2>/dev/null)
-    [[ -z "$key" ]] && return 1
-
-    export "$env_var"="$key"
-    if ! security add-generic-password -a "$USER" -s "$keychain_service" -w "$key" 2>/dev/null; then
-      security delete-generic-password -a "$USER" -s "$keychain_service" 2>/dev/null
-      security add-generic-password -a "$USER" -s "$keychain_service" -w "$key" 2>/dev/null
-    fi
-  }
-
-  _op_load_one ANTHROPIC_ADMIN_API_KEY       "op.anthropic-admin-api-key"          "op://Employee/timixml3drbaydnetm4mpjmvqa/password"
-  _op_load_one GRAFANA_SERVICE_ACCOUNT_TOKEN "op.grafana-service-account-token"    "op://Payments/g33riaf35ijgq4vul2ncysgbue/credential"
-  _op_load_one CARGO_REGISTRIES_LITHIC_TOKEN "op.cargo-registries-lithic-token"    "op://Employee/cihwsjc43kyuvunhqbtgshggsu/credential"
-}
-
-# Run when keys rotate in 1Password — clears cache and re-fetches (Touch ID once)
-op-refresh-keys() {
-  security delete-generic-password -a "$USER" -s "op.anthropic-admin-api-key" 2>/dev/null
-  security delete-generic-password -a "$USER" -s "op.grafana-service-account-token" 2>/dev/null
-  security delete-generic-password -a "$USER" -s "op.cargo-registries-lithic-token" 2>/dev/null
-  unset ANTHROPIC_ADMIN_API_KEY GRAFANA_SERVICE_ACCOUNT_TOKEN CARGO_REGISTRIES_LITHIC_TOKEN
-  _op_load_keys && echo "Keys refreshed."
-}
-
-# Load on first prompt draw; unregister once populated
-_op_lazy_precmd() {
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" && -n "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && { add-zsh-hook -d precmd _op_lazy_precmd; return; }
-  _op_load_keys
-  [[ -n "$ANTHROPIC_ADMIN_API_KEY" && -n "$GRAFANA_SERVICE_ACCOUNT_TOKEN" && -n "$CARGO_REGISTRIES_LITHIC_TOKEN" ]] && add-zsh-hook -d precmd _op_lazy_precmd
-}
-autoload -Uz add-zsh-hook
-add-zsh-hook precmd _op_lazy_precmd
-
-# Add 1Password SSH agent socket to environment for SSH key use with Docker
-export SSH_AUTH_SOCK="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
-{{- end }}
-
+# Machine-local shell config (provided per-machine; absent on portable machines)
+[[ -r "$HOME/.config/zsh/local.zsh" ]] && source "$HOME/.config/zsh/local.zsh"
 
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
 {{- if eq .chezmoi.os "darwin" }}
 
-# added by Snowflake SnowflakeCLI installer v1.0
-export PATH=/Applications/SnowflakeCLI.app/Contents/MacOS/:$PATH
 # The following lines have been added by Docker Desktop to enable Docker CLI completions.
 fpath=(/Users/daniel/.docker/completions $fpath)
 autoload -Uz compinit

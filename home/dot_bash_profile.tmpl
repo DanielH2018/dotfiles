@@ -6,8 +6,3 @@ export SDKMAN_DIR="$HOME/.sdkman"
 if command -v fnm >/dev/null 2>&1; then
   eval "$(fnm env --use-on-cd --shell bash)"
 fi
-{{- if eq .chezmoi.os "darwin" }}
-
-# added by Snowflake SnowflakeCLI installer v1.0
-export PATH=/Applications/SnowflakeCLI.app/Contents/MacOS/:$PATH
-{{- end }}
