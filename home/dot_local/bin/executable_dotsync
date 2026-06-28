@@ -158,6 +158,8 @@ function scanRoots(home, runner) {
   }
   for (const dir of [path.join(home, '.config'), path.join(home, '.claude')]) {
     // -type l as well as -type f: the work repo deploys via symlink.
+    // Skip directories that don't exist to avoid runner errors on non-existent paths.
+    if (!fs.existsSync(dir)) continue;
     const r = runner('find', [dir, '(', '-type', 'f', '-o', '-type', 'l', ')']);
     if (r.code === 0) for (const p of r.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) found.add(p);
   }
