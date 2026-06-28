@@ -44,18 +44,23 @@ function loadManifest(dir, home) {
 
 function globToRegExp(glob) {
   // ** -> any chars (incl. /); * -> one path segment (no /). Other regex chars escaped.
+  // A trailing `/**` also matches the bare directory itself (a dir symlink), not just
+  // its contents — otherwise `~/foo/**` would flag the `~/foo` symlink as an orphan.
+  let g = glob;
+  let tail = '$';
+  if (g.endsWith('/**')) { g = g.slice(0, -3); tail = '(?:/.*)?$'; }
   let re = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
     if (c === '*') {
-      if (glob[i + 1] === '*') { re += '.*'; i++; } else { re += '[^/]*'; }
+      if (g[i + 1] === '*') { re += '.*'; i++; } else { re += '[^/]*'; }
     } else if ('.+?^${}()|[]\\'.includes(c)) {
       re += '\\' + c;
     } else {
       re += c;
     }
   }
-  return new RegExp('^' + re + '$');
+  return new RegExp('^' + re + tail);
 }
 
 function matchesAnyGlob(absPath, globs, home) {

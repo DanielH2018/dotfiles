@@ -88,4 +88,5 @@ const rc2 = cmdCheck({ home: HOME2, manifestDir: MAN2, runner: runner2 });
 console.log = origLog2; console.error = origErr;
 assert.strictEqual(rc2, 0, 'declared target outside scan roots that exists on disk must not be reported missing');
 
+for (const d of [HOME, HOME2]) fs.rmSync(d, { recursive: true, force: true });
 console.log('ALL PASS');

@@ -152,4 +152,5 @@ assert.strictEqual(rc5, 1, 'pull --rebase failure surfaces as exit 1');
 assert.ok(seq5.some((s) => /rebase --abort$/.test(s)), 'failed pull aborts the rebase');
 assert.ok(!seq5.some((s) => /\spush$/.test(s)), 'no push attempted after pull failure');
 
+for (const d of [HOME, HOME2, HOME3, HOME4, HOME5]) fs.rmSync(d, { recursive: true, force: true });
 console.log('ALL PASS');

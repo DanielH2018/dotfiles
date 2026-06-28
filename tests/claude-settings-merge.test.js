@@ -34,4 +34,16 @@ const onceFile = w('once.json', JSON.parse(once));
 const twice = execFileSync('node', [BIN, onceFile, over], { encoding: 'utf8' });
 assert.strictEqual(once, twice);
 
+// 6. No arguments -> usage error on stderr, exit 2.
+const noArgs = (() => { try { execFileSync('node', [BIN], { encoding: 'utf8', stdio: 'pipe' }); return { status: 0 }; } catch (e) { return e; } })();
+assert.strictEqual(noArgs.status, 2, 'no args must exit 2');
+assert.match(noArgs.stderr, /usage:/);
+
+// 7. Unparseable JSON -> error on stderr naming the file, exit 1.
+const bad = path.join(tmp, 'bad.json'); fs.writeFileSync(bad, '{not json');
+const parseErr = (() => { try { execFileSync('node', [BIN, bad], { encoding: 'utf8', stdio: 'pipe' }); return { status: 0 }; } catch (e) { return e; } })();
+assert.strictEqual(parseErr.status, 1, 'parse failure must exit 1');
+assert.match(parseErr.stderr, /cannot parse .*bad\.json/);
+
+fs.rmSync(tmp, { recursive: true, force: true });
 console.log('ALL PASS');

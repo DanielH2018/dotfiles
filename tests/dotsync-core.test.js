@@ -36,6 +36,14 @@ assert.ok(globToRegExp('~/.cache/**'.replace('~', HOME)).test(path.join(HOME, '.
 assert.ok(!globToRegExp('~/.cache/*'.replace('~', HOME)).test(path.join(HOME, '.cache/a/b'))); // * is one segment
 assert.ok(matchesAnyGlob(path.join(HOME, '.cache/x'), ['~/.cache/**'], HOME));
 assert.ok(!matchesAnyGlob(path.join(HOME, '.zshrc'), ['~/.cache/**'], HOME));
+// trailing /** also matches the bare directory itself (e.g. a dir symlink), not just contents
+assert.ok(globToRegExp(path.join(HOME, '.cache') + '/**').test(path.join(HOME, '.cache')));
+assert.ok(matchesAnyGlob(path.join(HOME, '.cache'), ['~/.cache/**'], HOME));
+// regex metacharacters in a glob are matched literally, only * is a wildcard
+assert.ok(globToRegExp(path.join(HOME, '.claude/*.log')).test(path.join(HOME, '.claude/run.log')));
+assert.ok(!globToRegExp(path.join(HOME, '.claude/*.log')).test(path.join(HOME, '.claude/run.logX')));
+assert.ok(globToRegExp(path.join(HOME, '.config/a+b(c).conf')).test(path.join(HOME, '.config/a+b(c).conf')));
+assert.ok(!globToRegExp(path.join(HOME, '.zcompdump.x')).test(path.join(HOME, '.zcompdumpZx'))); // '.' is literal
 
 // --- deriveTargets: chezmoi (paths relative to $HOME -> absolute) ---
 const fakeRunner = (cmd, args) => {
@@ -80,4 +88,5 @@ const dupOwn = buildOwnership(m.repos, HOME, dupRunner);
 const chk3 = computeCheck({ ownership: dupOwn, existing: [path.join(HOME, '.config/zsh/local.zsh')], ignoreGlobs: [], home: HOME });
 assert.deepStrictEqual(chk3.conflicts, [{ path: path.join(HOME, '.config/zsh/local.zsh'), repos: ['general', 'work'] }]);
 
+fs.rmSync(HOME, { recursive: true, force: true });
 console.log('ALL PASS');
