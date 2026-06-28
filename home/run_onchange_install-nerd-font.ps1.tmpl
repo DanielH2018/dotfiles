@@ -7,7 +7,10 @@
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$family  = 'IosevkaTerm Nerd Font Mono'
+$family       = 'IosevkaTerm Nerd Font Mono'                  # display name (install messages)
+# VS Code value: Windows nerd-fonts register the family as the abbreviated "NFM"
+# (Nerd Font Mono), not the full name; full name kept as a fallback for other OSes.
+$vscodeFamily = 'IosevkaTerm NFM, IosevkaTerm Nerd Font Mono'
 $zipUrl  = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip'
 $fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
 $regPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
@@ -48,17 +51,17 @@ if (-not [string]::IsNullOrWhiteSpace($raw)) {
     try {
         $json = $raw | ConvertFrom-Json -ErrorAction Stop
     } catch {
-        Write-Warning "VS Code settings.json isn't plain JSON (comments?). Add this line yourself: `"terminal.integrated.fontFamily`": `"$family`""
+        Write-Warning "VS Code settings.json isn't plain JSON (comments?). Add this line yourself: `"terminal.integrated.fontFamily`": `"$vscodeFamily`""
         $json = $null
     }
-    if ($null -ne $json -and $json.'terminal.integrated.fontFamily' -ne $family) {
-        $json | Add-Member -NotePropertyName 'terminal.integrated.fontFamily' -NotePropertyValue $family -Force
+    if ($null -ne $json -and $json.'terminal.integrated.fontFamily' -ne $vscodeFamily) {
+        $json | Add-Member -NotePropertyName 'terminal.integrated.fontFamily' -NotePropertyValue $vscodeFamily -Force
         ($json | ConvertTo-Json -Depth 100) | Set-Content -Path $settings -Encoding UTF8
-        Write-Host "Set VS Code terminal font to $family."
+        Write-Host "Set VS Code terminal font to $vscodeFamily."
     }
 } else {
     New-Item -ItemType Directory -Force -Path (Split-Path $settings) | Out-Null
-    "{`n  `"terminal.integrated.fontFamily`": `"$family`"`n}" | Set-Content -Path $settings -Encoding UTF8
-    Write-Host "Created VS Code settings.json with terminal font $family."
+    "{`n  `"terminal.integrated.fontFamily`": `"$vscodeFamily`"`n}" | Set-Content -Path $settings -Encoding UTF8
+    Write-Host "Created VS Code settings.json with terminal font $vscodeFamily."
 }
 {{- end -}}
