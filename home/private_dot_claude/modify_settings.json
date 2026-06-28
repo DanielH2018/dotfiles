@@ -1,0 +1,15 @@
+#!/bin/sh
+# chezmoi modify_ script: merge the permission-audit plugin into ~/.claude/settings.json
+# WITHOUT disturbing any other key. The current file content arrives on stdin (empty if
+# the file does not exist yet); the new content is written to stdout. If the input is not
+# valid JSON it is emitted unchanged, so a hand-broken file is never destroyed.
+#
+# Implemented in /bin/sh (not node) so the trailing ".json" in the script name — which is
+# part of the target filename and unavoidable for a modify_ script — doesn't make the
+# interpreter treat the script as JSON data.
+input="$(cat)"
+[ -z "$input" ] && input='{}'
+printf '%s' "$input" | jq '
+  .extraKnownMarketplaces["daniel-tools"] //= {source: {source: "github", repo: "DanielH2018/claude-permission-audit"}}
+  | .enabledPlugins["claude-permission-audit@daniel-tools"] = true
+' 2>/dev/null || printf '%s' "$input"
