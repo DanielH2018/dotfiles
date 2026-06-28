@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+// Deep-merge JSON fragments left→right. Objects merge by key; arrays concat + de-dupe
+// by JSON value; scalars: the later (overlay) value wins; a missing file is treated as {}.
+const fs = require('node:fs');
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+const dedupe = (arr) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of arr) {
+    const k = JSON.stringify(item);
+    if (!seen.has(k)) { seen.add(k); out.push(item); }
+  }
+  return out;
+};
+
+const merge = (a, b) => {
+  if (Array.isArray(a) && Array.isArray(b)) return dedupe([...a, ...b]);
+  if (isObj(a) && isObj(b)) {
+    const out = { ...a };
+    for (const k of Object.keys(b)) out[k] = k in a ? merge(a[k], b[k]) : b[k];
+    return out;
+  }
+  return b;
+};
+
+const files = process.argv.slice(2);
+if (files.length === 0) {
+  process.stderr.write('usage: claude-settings-merge FILE [FILE...]\n');
+  process.exit(2);
+}
+let acc = {};
+for (const f of files) {
+  if (!fs.existsSync(f)) continue;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(f, 'utf8'));
+  } catch (e) {
+    process.stderr.write(`claude-settings-merge: cannot parse ${f}: ${e.message}\n`);
+    process.exit(1);
+  }
+  acc = merge(acc, data);
+}
+process.stdout.write(JSON.stringify(acc, null, 2) + '\n');
