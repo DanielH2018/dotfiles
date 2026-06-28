@@ -135,12 +135,32 @@ function renderInventory(ownership, home) {
   return lines.join('\n');
 }
 
+// Commit any staged changes, rebase onto the remote (so a push from another machine
+// doesn't reject this one), then push. Returns 0 on success, 1 on a failure the user
+// must resolve. Caller stages changes (chezmoi re-add + git add -u, or git add -A) first.
+function commitPullPush(repo, runner) {
+  const c = runner('git', ['-C', repo.path, 'commit', '-m', 'dotsync: capture config changes']);
+  if (c.code !== 0 && !/nothing to commit/.test(c.stdout + c.stderr)) { console.error(c.stderr || c.stdout); return 1; }
+  const pl = runner('git', ['-C', repo.path, 'pull', '--rebase']);
+  if (pl.code !== 0) {
+    runner('git', ['-C', repo.path, 'rebase', '--abort']);
+    console.error(`pull --rebase failed for ${repo.name} (resolve manually, then re-run):\n${pl.stderr || pl.stdout}`);
+    return 1;
+  }
+  const pu = runner('git', ['-C', repo.path, 'push']);
+  if (pu.code !== 0 && !/Everything up-to-date|up to date/i.test(pu.stdout + pu.stderr)) {
+    console.error(`push failed for ${repo.name}:\n${pu.stderr || pu.stdout}`);
+    return 1;
+  }
+  return 0;
+}
+
 function buildSyncPlan(repos, { force, hasOrphans }) {
   const blocked = hasOrphans && !force;
   const actions = repos.map((repo) => {
     const steps = repo.type === 'chezmoi'
-      ? ['chezmoi re-add', 'git commit (if changes)', 'git push']
-      : ['git add -A', 'git commit (if changes)', 'git push'];
+      ? ['chezmoi re-add', 'git add -u', 'git commit (if changes)', 'git pull --rebase', 'git push']
+      : ['git add -A', 'git commit (if changes)', 'git pull --rebase', 'git push'];
     return { repo: repo.name, type: repo.type, steps };
   });
   return { blocked, actions };
@@ -219,25 +239,15 @@ function cmdSync({ home, manifestDir, runner, force, dryRun }) {
     if (dryRun) continue;
     const repo = repos.find((r) => r.name === action.repo);
     if (repo.type === 'chezmoi') {
+      // re-add updates the source state of already-managed files; -u stages those
+      // (tracked) edits without sweeping stray untracked files into the commit.
       runner('chezmoi', ['re-add', '--source', repo.path]);
-      runner('git', ['-C', repo.path, 'add', '-A']);
-      const c = runner('git', ['-C', repo.path, 'commit', '-m', 'dotsync: capture config changes']);
-      if (c.code !== 0 && !/nothing to commit/.test(c.stdout + c.stderr)) { console.error(c.stderr || c.stdout); return 1; }
-      const pu = runner('git', ['-C', repo.path, 'push']);
-      if (pu.code !== 0 && !/Everything up-to-date|up to date/i.test(pu.stdout + pu.stderr)) {
-        console.error(`push failed for ${repo.name}:\n${pu.stderr || pu.stdout}`);
-        return 1;
-      }
+      runner('git', ['-C', repo.path, 'add', '-u']);
     } else {
       runner('git', ['-C', repo.path, 'add', '-A']);
-      const c = runner('git', ['-C', repo.path, 'commit', '-m', 'dotsync: capture config changes']);
-      if (c.code !== 0 && !/nothing to commit/.test(c.stdout + c.stderr)) { console.error(c.stderr || c.stdout); return 1; }
-      const pu = runner('git', ['-C', repo.path, 'push']);
-      if (pu.code !== 0 && !/Everything up-to-date|up to date/i.test(pu.stdout + pu.stderr)) {
-        console.error(`push failed for ${repo.name}:\n${pu.stderr || pu.stdout}`);
-        return 1;
-      }
     }
+    const rc = commitPullPush(repo, runner);
+    if (rc !== 0) return rc;
   }
   return 0;
 }
@@ -263,7 +273,7 @@ function main(argv, env, runner) {
 module.exports = {
   makeRealRunner, expandTilde, loadManifest, globToRegExp, matchesAnyGlob,
   deriveTargets, buildOwnership, computeCheck, renderInventory, buildSyncPlan,
-  scanRoots, cmdCheck, cmdStatus, cmdInventory, cmdSync, main,
+  commitPullPush, scanRoots, cmdCheck, cmdStatus, cmdInventory, cmdSync, main,
 };
 
 if (require.main === module) {

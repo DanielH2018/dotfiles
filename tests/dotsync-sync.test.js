@@ -13,8 +13,8 @@ const repos = [
 ];
 let plan = buildSyncPlan(repos, { force: false, hasOrphans: false });
 assert.strictEqual(plan.blocked, false);
-assert.deepStrictEqual(plan.actions[0], { repo: 'general', type: 'chezmoi', steps: ['chezmoi re-add', 'git commit (if changes)', 'git push'] });
-assert.deepStrictEqual(plan.actions[1], { repo: 'work', type: 'git-symlink', steps: ['git add -A', 'git commit (if changes)', 'git push'] });
+assert.deepStrictEqual(plan.actions[0], { repo: 'general', type: 'chezmoi', steps: ['chezmoi re-add', 'git add -u', 'git commit (if changes)', 'git pull --rebase', 'git push'] });
+assert.deepStrictEqual(plan.actions[1], { repo: 'work', type: 'git-symlink', steps: ['git add -A', 'git commit (if changes)', 'git pull --rebase', 'git push'] });
 
 // --- orphan gate: blocked without --force, allowed with --force ---
 assert.strictEqual(buildSyncPlan(repos, { force: false, hasOrphans: true }).blocked, true);
@@ -106,5 +106,50 @@ fs.writeFileSync(path.join(MAN3, '00-general.json'), JSON.stringify({
 const pushUpToDateRc = cmdSync({ home: HOME3, manifestDir: MAN3, runner: pushUpToDateRunner, force: false, dryRun: false });
 console.log = origLog; console.error = oeC;
 assert.strictEqual(pushUpToDateRc, 0, 'push "Everything up-to-date" must be treated as success (exit 0)');
+
+// --- chezmoi repo stages with `git add -u` (not -A), and sync pulls --rebase before push ---
+const HOME4 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync4-'));
+const MAN4 = path.join(HOME4, '.config', 'dotsync', 'manifest.d');
+fs.mkdirSync(MAN4, { recursive: true });
+fs.writeFileSync(path.join(MAN4, '00-general.json'), JSON.stringify({
+  repo: { name: 'general', type: 'chezmoi', path: path.join(HOME4, 'cz'), remote: 'r' },
+  ignore: { globs: ['~/**'] },
+}));
+const seq4 = [];
+const okRunner = (cmd, args) => {
+  seq4.push([cmd, ...args].join(' '));
+  if (cmd === 'chezmoi' && args[0] === 'managed') return { code: 0, stdout: '', stderr: '' };
+  return { code: 0, stdout: '', stderr: '' };
+};
+const oe4 = console.error; console.error = () => {}; console.log = () => {};
+const rc4 = cmdSync({ home: HOME4, manifestDir: MAN4, runner: okRunner, force: false, dryRun: false });
+console.log = origLog; console.error = oe4;
+assert.strictEqual(rc4, 0);
+assert.ok(seq4.includes(`git -C ${path.join(HOME4, 'cz')} add -u`), 'chezmoi repo stages with git add -u');
+assert.ok(!seq4.some((s) => /cz add -A$/.test(s)), 'chezmoi repo never uses git add -A');
+const pullIdx = seq4.findIndex((s) => /pull --rebase$/.test(s));
+const pushIdx = seq4.findIndex((s) => /push$/.test(s));
+assert.ok(pullIdx !== -1 && pushIdx !== -1 && pullIdx < pushIdx, 'pull --rebase runs before push');
+
+// --- pull --rebase failure aborts the rebase and surfaces exit 1 (does not push) ---
+const HOME5 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync5-'));
+const MAN5 = path.join(HOME5, '.config', 'dotsync', 'manifest.d');
+fs.mkdirSync(MAN5, { recursive: true });
+fs.writeFileSync(path.join(MAN5, '00-general.json'), JSON.stringify({
+  repo: { name: 'general', type: 'chezmoi', path: path.join(HOME5, 'cz'), remote: 'r' },
+  ignore: { globs: ['~/**'] },
+}));
+const seq5 = [];
+const pullFailRunner = (cmd, args) => {
+  seq5.push([cmd, ...args].join(' '));
+  if (cmd === 'git' && args.includes('pull')) return { code: 1, stdout: '', stderr: 'CONFLICT' };
+  return { code: 0, stdout: '', stderr: '' };
+};
+const oe5 = console.error; console.error = () => {}; console.log = () => {};
+const rc5 = cmdSync({ home: HOME5, manifestDir: MAN5, runner: pullFailRunner, force: false, dryRun: false });
+console.log = origLog; console.error = oe5;
+assert.strictEqual(rc5, 1, 'pull --rebase failure surfaces as exit 1');
+assert.ok(seq5.some((s) => /rebase --abort$/.test(s)), 'failed pull aborts the rebase');
+assert.ok(!seq5.some((s) => /\spush$/.test(s)), 'no push attempted after pull failure');
 
 console.log('ALL PASS');
