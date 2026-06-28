@@ -1,0 +1,15 @@
+#!/bin/sh
+# chezmoi modify_ script (templated): regenerate ~/.claude/settings.json as
+#   merge(general base, work overlay-if-present).
+# stdin (current target content) is intentionally ignored — the file is fully derived.
+set -eu
+
+BASE="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-base.XXXXXX")"
+trap 'rm -f "$BASE"' EXIT
+cat > "$BASE" <<'CHEZMOI_BASE_EOF'
+{{ includeTemplate "settings.base.json" }}
+CHEZMOI_BASE_EOF
+
+OVERLAY="$HOME/.config/claude/settings.work.json"   # absent on non-work machines
+
+node "{{ .chezmoi.sourceDir }}/dot_local/bin/executable_claude-settings-merge" "$BASE" "$OVERLAY"
