@@ -1,5 +1,5 @@
 [user]
-	name = {{ if .work }}Daniel Hunter{{ else }}DanielH2018{{ end }}
+	name = DanielH2018
 	email = danielh.2018@gmail.com
 {{- if eq .chezmoi.os "darwin" }}
 	signingkey = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou
@@ -81,3 +81,5 @@
 [color]
 	ui = auto
 {{- end }}
+[include]
+	path = ~/.config/git/local.config
