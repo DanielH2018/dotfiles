@@ -14,7 +14,7 @@
 	autocrlf = input
 {{- else }}
 [credential]
-	helper = store
+	helper = {{ if eq .chezmoi.os "windows" }}manager{{ else }}store{{ end }}
 [core]
 	excludesfile = ~/.gitignore_global
 	pager = less

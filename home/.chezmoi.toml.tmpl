@@ -5,3 +5,10 @@ umask = 0o022
 
 [data]
     work = {{ $work }}
+{{- if eq .chezmoi.os "windows" }}
+
+# Windows has no shebang support, so chezmoi would otherwise try to exec the /bin/sh
+# modify_settings.json script (target ext .json) directly and fail. Run it via Git Bash.
+[interpreters.json]
+    command = "bash"
+{{- end }}

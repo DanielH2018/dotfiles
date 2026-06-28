@@ -1,6 +1,11 @@
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# FNM (Fast Node Manager) — node version manager, used on all machines
+if command -v fnm >/dev/null 2>&1; then
+  eval "$(fnm env --use-on-cd --shell bash)"
+fi
 {{- if eq .chezmoi.os "darwin" }}
 
 # added by Snowflake SnowflakeCLI installer v1.0
