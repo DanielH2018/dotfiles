@@ -230,3 +230,27 @@ Deviations from the original design (all behavior-preserving):
   the prior `ls -G` is BSD/macOS syntax. macOS keeps the BSD branch.
 - **`eza`/`fastfetch`** aren't in Ubuntu 24.04 apt; left uninstalled (configs degrade
   gracefully). Optional no-sudo `~/.local/bin` binaries can be added later.
+
+## Windows Nerd Font (2026-06-28)
+
+The starship prompt (`dot_config/starship.toml`, the Gruvbox-Rainbow preset) renders Nerd
+Font glyphs — the `$os` Ubuntu logo (U+F0548) before `$username`, powerline separators, etc.
+macOS already has these (Brewfile installs four Nerd Font casks; ghostty selects
+`IosevkaTerm Nerd Font Mono Bold`). Windows had nothing, so SSHing in showed tofu
+(box-with-`?`). Over **VS Code Remote-SSH the integrated terminal renders locally**, so the
+fix lives on the Windows client, not the server.
+
+- **`home/run_onchange_install-nerd-font.ps1.tmpl`** — Windows-only (the whole body is wrapped
+  in `{{ if eq .chezmoi.os "windows" }}`, so it renders empty and chezmoi skips it on
+  macOS/Linux — no `.chezmoiignore` entry needed). On Windows `chezmoi apply` runs it via the
+  default `.ps1` interpreter (`powershell`). It (1) installs **IosevkaTerm Nerd Font** per-user
+  (no admin) from the ryanoasis/nerd-fonts `latest` release into
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` + HKCU registry, idempotent; (2) sets
+  `terminal.integrated.fontFamily` to `IosevkaTerm Nerd Font Mono` in the **local** VS Code
+  `%APPDATA%\Code\User\settings.json`, merging (only when the file is plain JSON — if it has
+  JSONC comments it prints the one line to add and leaves the file untouched).
+- Same font as the Mac → identical prompt across machines.
+- Test: `tests/install-nerd-font.test.js` asserts the script renders empty on non-Windows
+  (real `chezmoi execute-template`) and that the Windows branch still carries the install + VS
+  Code wiring. PowerShell itself is validated on Windows at bootstrap (mirrors the Mac
+  validate-before-merge flow).

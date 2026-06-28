@@ -1,0 +1,64 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Managed by chezmoi (run_onchange). Installs IosevkaTerm Nerd Font (per-user, no admin)
+# and points VS Code's integrated terminal at it, so the starship prompt's Nerd Font
+# glyphs render instead of tofu. Re-runs only when this file changes.
+# bump-to-reinstall: iosevkaterm-mono v1
+
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$family  = 'IosevkaTerm Nerd Font Mono'
+$zipUrl  = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip'
+$fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+$regPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+
+# --- 1. Install the font (per-user, idempotent) -----------------------------
+$installed = Get-ChildItem -Path $fontDir -Filter 'IosevkaTerm*NerdFontMono*.ttf' -ErrorAction SilentlyContinue
+if (-not $installed) {
+    Write-Host "Installing $family ..."
+    New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
+    if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+    $work = Join-Path $env:TEMP ('iosevkaterm-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    try {
+        $zip = Join-Path $work 'IosevkaTerm.zip'
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $work -Force
+        $ttfs = Get-ChildItem -Path $work -Recurse -Filter '*.ttf' | Where-Object { $_.Name -like '*Mono*' }
+        if (-not $ttfs) { throw "No 'Mono' .ttf files found in archive from $zipUrl" }
+        foreach ($ttf in $ttfs) {
+            $dest = Join-Path $fontDir $ttf.Name
+            Copy-Item -Path $ttf.FullName -Destination $dest -Force
+            New-ItemProperty -Path $regPath -Name ($ttf.BaseName + ' (TrueType)') -Value $dest -PropertyType String -Force | Out-Null
+        }
+        Write-Host "Installed $($ttfs.Count) font file(s). Restart VS Code to pick them up."
+    } finally {
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+} else {
+    Write-Host "$family already installed."
+}
+
+# --- 2. Point VS Code's integrated terminal at it (local user settings) ------
+# Remote-SSH renders the terminal locally, so this setting must live in the
+# Windows-local settings.json, not the remote machine settings.
+$settings = Join-Path $env:APPDATA 'Code\User\settings.json'
+$raw = if (Test-Path $settings) { Get-Content -Raw -Path $settings } else { '' }
+if (-not [string]::IsNullOrWhiteSpace($raw)) {
+    try {
+        $json = $raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Write-Warning "VS Code settings.json isn't plain JSON (comments?). Add this line yourself: `"terminal.integrated.fontFamily`": `"$family`""
+        $json = $null
+    }
+    if ($null -ne $json -and $json.'terminal.integrated.fontFamily' -ne $family) {
+        $json | Add-Member -NotePropertyName 'terminal.integrated.fontFamily' -NotePropertyValue $family -Force
+        ($json | ConvertTo-Json -Depth 100) | Set-Content -Path $settings -Encoding UTF8
+        Write-Host "Set VS Code terminal font to $family."
+    }
+} else {
+    New-Item -ItemType Directory -Force -Path (Split-Path $settings) | Out-Null
+    "{`n  `"terminal.integrated.fontFamily`": `"$family`"`n}" | Set-Content -Path $settings -Encoding UTF8
+    Write-Host "Created VS Code settings.json with terminal font $family."
+}
+{{- end -}}
