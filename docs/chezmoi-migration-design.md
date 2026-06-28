@@ -203,3 +203,30 @@ Improvements folded in (must stay behavior-preserving on Mac):
 - Project-scope `enabledPlugins: false` actually disables a user-enabled plugin.
 - Private-repo plugin/marketplace fetch works with the server's existing GitHub auth.
 - `en_US.UTF-8` locale availability on the server (for `LANG`/`LC_ALL`); generate if absent.
+
+## Implementation notes & resolutions (2026-06-28)
+
+Implemented on branch `feat/chezmoi`; applied and verified on the Linux server.
+
+Open items — all resolved:
+- **Project-scope disable works.** Verified in isolation: a throwaway project with
+  `enabledPlugins: { "claude-permission-audit@daniel-tools": false }` produced no plugin
+  log on a tool call, while an un-gated project did. The homelab repo uses this to keep
+  the plugin off and avoid double-logging to its Python `permissions.json`.
+- **Private-repo fetch works.** Claude Code registered the `daniel-tools` marketplace and
+  installed the plugin from the private `DanielH2018/claude-permission-audit` via the
+  existing GitHub auth (`known_marketplaces.json` / `installed_plugins.json`).
+- **Locale present.** `en_US.utf8` already exists on the server; no `locale-gen` needed.
+
+Deviations from the original design (all behavior-preserving):
+- **`.chezmoiroot` → `home/`.** Source lives under `home/`; `docs/`, `tests/`, `README.md`
+  stay out of the deployed set.
+- **modify-script is `/bin/sh` + `jq`, not node.** A modify-script's name must end in the
+  target's `.json`, and `node file.json` parses the script itself as JSON; `sh` ignores the
+  extension. (Windows still needs an interpreter mapping — unchanged caveat.)
+- **`umask = 0o022` pinned** in `.chezmoi.toml.tmpl` so target modes are deterministic
+  regardless of the login shell (this server runs umask 0007 → would otherwise yield 0660).
+- **GNU-aware `ls` fallback** when `eza` is absent (`--color=auto --group-directories-first`);
+  the prior `ls -G` is BSD/macOS syntax. macOS keeps the BSD branch.
+- **`eza`/`fastfetch`** aren't in Ubuntu 24.04 apt; left uninstalled (configs degrade
+  gracefully). Optional no-sudo `~/.local/bin` binaries can be added later.
