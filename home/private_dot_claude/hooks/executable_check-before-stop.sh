@@ -17,7 +17,8 @@ ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
 # Skip repos that commit directly to main by convention.
-# Check both toplevel path and remote URL to handle worktrees at different paths.
+# The configured vault (if any) is matched by toplevel path; the dotfiles repo
+# is matched by remote URL below to also cover worktrees at different paths.
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -n "${CLAUDE_VAULT_DIR:-}" ] && [ "$TOPLEVEL" = "$CLAUDE_VAULT_DIR" ]; then
   exit 0
