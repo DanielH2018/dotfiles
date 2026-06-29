@@ -1,25 +1,27 @@
 {{ if and (eq .chezmoi.os "linux") (eq .chezmoi.hostname "daniel-server") -}}
 #!/bin/sh
 # Installs the shell-experience CLI tools on daniel-server (Ubuntu noble, amd64), mirroring the
-# macOS Brewfile for Linux. apt for repo packages + release binaries for the gaps. run_once_:
-# re-runs only when this script's contents change. Bump the marker to force a refresh.
-# tools-bump: v1
+# macOS Brewfile for Linux. apt for repo packages + release binaries for the gaps.
+# run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
+# (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
+# deployment. Bump the marker to force a refresh.
+# tools-bump: v2
 set -u
 
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-# 1. apt packages (only if any are missing; needs sudo).
+# 1. apt packages (only if any are missing; needs sudo, which prompts in an interactive terminal).
 APT_PKGS="btop chafa bat fd-find zsh-autosuggestions zsh-syntax-highlighting"
 missing=""
 for p in $APT_PKGS; do
   dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
 done
 if [ -n "$missing" ]; then
-  if sudo -v 2>/dev/null; then
+  if sudo -v; then
     sudo apt-get update -qq && sudo apt-get install -y $missing
   else
-    echo "install-cli-tools: sudo unavailable; skipping apt packages:$missing" >&2
+    echo "install-cli-tools: sudo unavailable; deferring apt packages:$missing" >&2
   fi
 fi
 
@@ -58,4 +60,16 @@ install_release fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/l
 # versioned asset names → resolve the tag first
 ct="$(latest_tag rs/curlie)";  [ -n "$ct" ] && install_release curlie "https://github.com/rs/curlie/releases/download/$ct/curlie_${ct#v}_linux_amd64.tar.gz"
 st="$(latest_tag chmln/sd)";   [ -n "$st" ] && install_release sd     "https://github.com/chmln/sd/releases/download/$st/sd-${st}-x86_64-unknown-linux-gnu.tar.gz"
+
+# Fail loudly (and retry next apply) if any apt package is still missing — e.g. a sudo-less run.
+# As a run_once_after_ script this does NOT block dotfile deployment.
+still=""
+for p in $APT_PKGS; do
+  dpkg -s "$p" >/dev/null 2>&1 || still="$still $p"
+done
+if [ -n "$still" ]; then
+  echo "install-cli-tools: apt packages still missing:$still" >&2
+  echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
+  exit 1
+fi
 {{ end -}}
