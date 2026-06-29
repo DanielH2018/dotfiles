@@ -5,7 +5,7 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v2
+# tools-bump: v3
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -22,6 +22,29 @@ if [ -n "$missing" ]; then
     sudo apt-get update -qq && sudo apt-get install -y $missing
   else
     echo "install-cli-tools: sudo unavailable; deferring apt packages:$missing" >&2
+  fi
+fi
+
+# 1b. GitHub CLI from its own apt repo. Ubuntu's package is frozen at 2.45, which throws on a
+#     deprecated Projects-classic GraphQL query (breaks `gh pr edit`/`gh pr merge`); cli.github.com
+#     tracks current releases. Adds the repo + keyring once, then `apt upgrade` keeps gh current.
+GH_LIST="/etc/apt/sources.list.d/github-cli.list"
+GH_KEYRING="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+if [ ! -f "$GH_LIST" ]; then
+  if sudo -v; then
+    sudo mkdir -p -m 755 /etc/apt/keyrings
+    tmpk="$(mktemp)"
+    if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$tmpk"; then
+      sudo install -m 0644 "$tmpk" "$GH_KEYRING"
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=$GH_KEYRING] https://cli.github.com/packages stable main" \
+        | sudo tee "$GH_LIST" >/dev/null
+      sudo apt-get update -qq && sudo apt-get install -y gh && echo "install-cli-tools: GitHub CLI repo added + gh updated"
+    else
+      echo "install-cli-tools: failed to fetch GitHub CLI keyring" >&2
+    fi
+    rm -f "$tmpk"
+  else
+    echo "install-cli-tools: sudo unavailable; deferring GitHub CLI repo setup" >&2
   fi
 fi
 
@@ -67,8 +90,9 @@ still=""
 for p in $APT_PKGS; do
   dpkg -s "$p" >/dev/null 2>&1 || still="$still $p"
 done
-if [ -n "$still" ]; then
-  echo "install-cli-tools: apt packages still missing:$still" >&2
+if [ -n "$still" ] || [ ! -f "$GH_LIST" ]; then
+  [ -n "$still" ] && echo "install-cli-tools: apt packages still missing:$still" >&2
+  [ ! -f "$GH_LIST" ] && echo "install-cli-tools: GitHub CLI apt repo not configured yet" >&2
   echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
   exit 1
 fi
