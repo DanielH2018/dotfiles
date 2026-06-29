@@ -238,8 +238,6 @@
       "mcp__claude_ai_Google_Drive__read_*",
       "mcp__claude_ai_Google_Drive__search_*",
       "mcp__claude_ai_Google_Drive__download_*",
-      "mcp__claude_ai_Pagerduty__get_*",
-      "mcp__claude_ai_Pagerduty__list_*",
       "mcp__claude_ai_Slack__slack_read_*",
       "mcp__claude_ai_Slack__slack_search_*",
       "mcp__claude_ai_Ramp__get_current_user",
