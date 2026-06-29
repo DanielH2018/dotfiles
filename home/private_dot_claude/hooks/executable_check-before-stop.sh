@@ -5,6 +5,8 @@
 
 set -u
 
+[ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
+
 INPUT=$(cat)
 
 # Avoid loops - if we already forced Claude to continue once, let it stop now.
@@ -17,20 +19,14 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 # Skip repos that commit directly to main by convention.
 # Check both toplevel path and remote URL to handle worktrees at different paths.
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null)
-case "$TOPLEVEL" in
-  "$HOME/.dotfiles"|"$HOME/Documents/My_Vault") exit 0 ;;
-esac
-
-# Skip bare dotfiles repo (GIT_DIR=~/.dotfiles) — commits directly to main by convention.
-GIT_DIR_VAL=$(git rev-parse --git-dir 2>/dev/null)
-case "$GIT_DIR_VAL" in
-  "$HOME/.dotfiles"|"$HOME/.dotfiles/"*) exit 0 ;;
-esac
+if [ -n "${CLAUDE_VAULT_DIR:-}" ] && [ "$TOPLEVEL" = "$CLAUDE_VAULT_DIR" ]; then
+  exit 0
+fi
 
 # Skip worktrees of repos that commit directly to main (remote URL fallback).
 REMOTE_URL=$(git remote get-url origin 2>/dev/null)
 case "$REMOTE_URL" in
-  *My_Vault*|*dotfiles*) exit 0 ;;
+  *dotfiles*) exit 0 ;;
 esac
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)

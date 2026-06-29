@@ -5,6 +5,8 @@
 
 set -u
 
+[ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
+
 FILE_PATH=$(jq -r '.tool_input.file_path // empty')
 
 # Skip if no file path (some edit variants don't include it) or file doesn't exist.
@@ -24,11 +26,18 @@ case "$FILE_PATH" in
     run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null
     ;;
   *.md)
-    # Skip vault markdown — Obsidian formatting (wikilinks, callouts) is non-standard
-    case "$FILE_PATH" in
-      */My_Vault/*) ;;
-      *) run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null ;;
-    esac
+    # Skip vault markdown — Obsidian formatting (wikilinks, callouts) is non-standard.
+    # The vault location is machine-specific; CLAUDE_VAULT_DIR (from local.env) supplies
+    # it when present. With no vault configured, all markdown is formatted normally.
+    _skip_md=false
+    if [ -n "${CLAUDE_VAULT_DIR:-}" ]; then
+      case "$FILE_PATH" in
+        "$CLAUDE_VAULT_DIR"/*) _skip_md=true ;;
+      esac
+    fi
+    if [ "$_skip_md" = false ]; then
+      run_if_installed prettier --write --log-level=silent "$FILE_PATH" >/dev/null
+    fi
     ;;
   *.go)
     run_if_installed gofmt -w "$FILE_PATH" >/dev/null

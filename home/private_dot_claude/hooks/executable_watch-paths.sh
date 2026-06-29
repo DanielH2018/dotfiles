@@ -4,15 +4,19 @@
 
 set -u
 
+[ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
+
 INPUT=$(cat)
 SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 [ "$SOURCE" != "startup" ] && exit 0
 
 PATHS='[]'
 
-# Watch the vault raw/ directory for new ingest material
-RAW_DIR="$HOME/Documents/My_Vault/raw"
-[ -d "$RAW_DIR" ] && PATHS=$(jq -n --arg p "$RAW_DIR" '[$p]')
+# Watch the vault raw/ directory for new ingest material (only when a vault is configured)
+if [ -n "${CLAUDE_VAULT_DIR:-}" ]; then
+  RAW_DIR="$CLAUDE_VAULT_DIR/raw"
+  [ -d "$RAW_DIR" ] && PATHS=$(jq -n --arg p "$RAW_DIR" '[$p]')
+fi
 
 # Watch the global rules directory for rule changes
 RULES_DIR="$HOME/.claude/rules"
