@@ -48,6 +48,11 @@
 	mnemonicPrefix = true
 	renames = true
 	submodule = log
+[diff "sops"]
+	# Renders SOPS-encrypted files (e.g. the homelab's ansible/vars/secrets.yml,
+	# tagged `diff=sops` in its .gitattributes) as their decrypted plaintext in
+	# `git diff`. Needs a local age key; safe no-op on files git can't decrypt.
+	textconv = sops decrypt
 {{- end }}
 [merge]
 	conflictstyle = {{ if eq .chezmoi.os "darwin" }}zdiff3{{ else }}diff3{{ end }}
