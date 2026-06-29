@@ -241,7 +241,9 @@ fastfetch() {
 # =============================================================================
 # FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
 # =============================================================================
-if [[ -o login ]] && command -v fastfetch >/dev/null 2>&1; then
+# `command -v` would match the fastfetch() wrapper function above (always true); $+commands
+# tests zsh's external-command table, so the banner runs only when the binary is installed.
+if [[ -o login ]] && (( $+commands[fastfetch] )); then
   fastfetch
 fi
 
