@@ -1,0 +1,40 @@
+{{ if ne .chezmoi.os "windows" -}}
+#!/bin/sh
+# Installs fnm (Fast Node Manager) + a default LTS node, mirroring the macOS Brewfile's
+# `brew "fnm"` so a fresh Linux machine has node for the modify_settings.json merge and
+# other node tooling. run_once_before_: runs before file targets and only re-runs when
+# this script's contents change. Bump the marker below to force a refresh.
+# fnm-bump: v1
+set -eu
+
+BIN_DIR="$HOME/.local/bin"                       # already on PATH via dot_zshrc.tmpl
+FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
+
+# 1. Install the fnm binary if missing — Linux only (macOS gets it from the Brewfile).
+if ! command -v fnm >/dev/null 2>&1 && [ ! -x "$BIN_DIR/fnm" ] && [ "$(uname -s)" = "Linux" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64)  asset="fnm-linux" ;;
+    aarch64|arm64) asset="fnm-arm64" ;;
+    armv7l)        asset="fnm-arm32" ;;
+    *) echo "install-fnm: unsupported arch $(uname -m); install fnm manually" >&2; exit 1 ;;
+  esac
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  url="https://github.com/Schniz/fnm/releases/latest/download/${asset}.zip"
+  echo "install-fnm: downloading $asset ..." >&2
+  curl -fsSL "$url" -o "$tmp/fnm.zip"
+  unzip -q "$tmp/fnm.zip" -d "$tmp"
+  mkdir -p "$BIN_DIR"
+  install -m 0755 "$tmp/fnm" "$BIN_DIR/fnm"
+fi
+
+# 2. Ensure a default LTS node exists (idempotent; any non-Windows OS).
+FNM="$(command -v fnm 2>/dev/null || echo "$BIN_DIR/fnm")"
+if [ -x "$FNM" ] || command -v fnm >/dev/null 2>&1; then
+  if [ ! -e "$FNM_DIR/aliases/default" ]; then
+    echo "install-fnm: installing latest LTS node ..." >&2
+    "$FNM" install --lts
+    "$FNM" default lts-latest
+  fi
+fi
+{{ end -}}
