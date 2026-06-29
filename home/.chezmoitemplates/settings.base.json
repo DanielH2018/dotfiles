@@ -407,16 +407,6 @@
   "hooks": {
     "PermissionRequest": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/hooks/log-permission.js",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -482,17 +472,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(Bash|Write|Edit|WebFetch|WebSearch|Task|Agent|Skill|mcp__.*)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/hooks/log-permission.js",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -509,19 +488,6 @@
             "type": "command",
             "command": "~/.claude/hooks/protect-secrets.sh",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "^(Bash|Write|Edit|WebFetch|WebSearch|Task|Agent|Skill|mcp__.*)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/hooks/log-permission.js",
-            "timeout": 10,
-            "async": true
           }
         ]
       }
@@ -546,16 +512,6 @@
       }
     ],
     "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/hooks/log-permission.js",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      },
       {
         "matcher": "permission_prompt|idle_prompt|task_complete",
         "hooks": [

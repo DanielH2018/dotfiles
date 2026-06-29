@@ -59,5 +59,11 @@ assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base 
 fs.rmSync(fnmHome, { recursive: true, force: true });
 fs.rmSync(toolbin, { recursive: true, force: true });
 
+// 5. log-permission.js is fully removed (superseded by the permission-audit plugin). The
+//    hooks block remains, but no merged setting references the retired script.
+const base = JSON.parse(run(''));
+assert.ok(base.hooks && typeof base.hooks === 'object', 'hooks block is present');
+assert.ok(!JSON.stringify(base).includes('log-permission'), 'no log-permission.js reference remains');
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('ALL PASS');
