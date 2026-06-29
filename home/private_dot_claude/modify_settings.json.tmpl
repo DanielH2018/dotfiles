@@ -14,7 +14,14 @@ OVERLAY="$HOME/.config/claude/settings.work.json"   # absent on non-work machine
 
 NODE="$(command -v node 2>/dev/null || true)"
 if [ -z "$NODE" ]; then
-  for c in /opt/homebrew/bin/node /usr/local/bin/node "$HOME"/.local/state/fnm_multishells/*/bin/node; do
+  # fnm's default alias resolves a node without an interactive `fnm env`, so this works
+  # during a headless `chezmoi apply`. fnm_multishells/* only exists inside an
+  # fnm-activated shell and is kept as a last-resort fallback.
+  for c in \
+    "${FNM_DIR:-$HOME/.local/share/fnm}/aliases/default/bin/node" \
+    "$HOME/.fnm/aliases/default/bin/node" \
+    /opt/homebrew/bin/node /usr/local/bin/node \
+    "$HOME"/.local/state/fnm_multishells/*/bin/node; do
     [ -x "$c" ] && NODE="$c" && break
   done
 fi

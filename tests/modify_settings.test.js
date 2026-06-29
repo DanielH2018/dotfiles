@@ -34,5 +34,30 @@ assert.ok(!withJunk.includes('__stdin_only_key__'), 'stdin content is not merged
 const once = run('');
 assert.strictEqual(run(once), once, 'modify script is idempotent');
 
+// 4. fnm fallback: with node NOT on PATH but an fnm default-alias node present,
+//    the script resolves it (the headless-apply path) and still emits valid merged JSON.
+const fnmHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fnmhome-'));
+const fnmDefaultBin = path.join(fnmHome, '.local', 'share', 'fnm', 'aliases', 'default', 'bin');
+fs.mkdirSync(fnmDefaultBin, { recursive: true });
+fs.writeFileSync(
+  path.join(fnmDefaultBin, 'node'),
+  `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
+  { mode: 0o755 },
+);
+// Minimal PATH: the coreutils the script needs, but deliberately no `node`.
+const toolbin = fs.mkdtempSync(path.join(os.tmpdir(), 'toolbin-'));
+for (const tool of ['cat', 'mktemp', 'rm']) {
+  const p = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim();
+  if (p) fs.symlinkSync(p, path.join(toolbin, tool));
+}
+const outFnm = execFileSync(script, [], {
+  input: '',
+  encoding: 'utf8',
+  env: { HOME: fnmHome, PATH: toolbin },
+});
+assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base permissions');
+fs.rmSync(fnmHome, { recursive: true, force: true });
+fs.rmSync(toolbin, { recursive: true, force: true });
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log('ALL PASS');
