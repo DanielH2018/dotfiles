@@ -20,6 +20,13 @@ INPUT=$(cat)
 FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
 [ -n "$FILE" ] || exit 0
 
+# Windows: Claude Code passes paths as C:/Users/... but $HOME is the MSYS form
+# /c/Users/... ; normalize so the $HOME-prefixed matching below works. cygpath is
+# absent on macOS/Linux, so this is a no-op there and native paths are untouched.
+if command -v cygpath >/dev/null 2>&1; then
+  FILE=$(cygpath -u "$FILE" 2>/dev/null || printf '%s' "$FILE")
+fi
+
 # chezmoi targets live under $HOME; skip everything else cheaply.
 case "$FILE" in
   "$HOME"/*) ;;

@@ -416,7 +416,7 @@
   "fallbackModel": [
     "claude-sonnet-4-6"
   ],
-  "hooks": {{ if ne .chezmoi.os "windows" }}{
+  "hooks": {{/* Git Bash runs these on Windows too; notify.sh just no-ops there */}}{
     "PermissionRequest": [
       {
         "matcher": "Bash",
@@ -440,7 +440,7 @@
           }
         ]
       },
-      {
+      {{/* dev-container network glue (Linux/macOS); skip on Windows */}}{{ if ne .chezmoi.os "windows" }}{
         "matcher": "startup",
         "hooks": [
           {
@@ -449,7 +449,7 @@
             "timeout": 10
           }
         ]
-      },
+      },{{ end }}
       {
         "matcher": "startup",
         "hooks": [
@@ -633,7 +633,7 @@
         ]
       }
     ]
-  }{{ else }}{}{{ end }},
+  },
   "worktree": {
     "baseRef": "head"
   },
