@@ -1,0 +1,6 @@
+# Files here are deployed by chezmoi to Unix shells — including Git Bash on Windows,
+# where chezmoi copies bytes verbatim. A CRLF .bashrc, hook, or modify_ script breaks
+# under bash, so normalize all text to LF on every platform (overrides core.autocrlf).
+# Binary content is auto-detected; mark images explicitly so Git never rewrites them.
+* text=auto eol=lf
+*.png binary
