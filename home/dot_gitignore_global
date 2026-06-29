@@ -101,3 +101,8 @@ coverage/
 # Claude Code Pattern C sandbox
 # =============================================================================
 Dockerfile.claudebot
+
+# =============================================================================
+# Claude Code per-project local settings (machine-specific, never committed)
+# =============================================================================
+**/.claude/settings.local.json
