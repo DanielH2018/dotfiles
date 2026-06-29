@@ -157,29 +157,11 @@
       "mcp__claude_ai_Google_Drive__create_*",
       "mcp__claude_ai_Google_Drive__copy_*",
 
-      "mcp__claude_ai_Pagerduty__create_*",
-      "mcp__claude_ai_Pagerduty__update_*",
-      "mcp__claude_ai_Pagerduty__manage_*",
-      "mcp__claude_ai_Pagerduty__add_*",
-      "mcp__claude_ai_Pagerduty__remove_*",
-      "mcp__claude_ai_Pagerduty__delete_*",
-      "mcp__claude_ai_Pagerduty__start_*",
-      "mcp__claude_ai_Pagerduty__append_*",
-
-      "mcp__claude_ai_Lithic_API_Docs__execute-request",
-      "mcp__claude_ai_Lithic_-_Stainless_-_Beta__execute",
-
       "mcp__claude_ai_Sentry__authenticate",
       "mcp__claude_ai_Sentry__complete_authentication",
 
       "mcp__claude_ai_Privacy_MCP__authenticate",
-      "mcp__claude_ai_Privacy_MCP__complete_authentication",
-
-      "mcp__grafana__create_*",
-      "mcp__grafana__update_*",
-      "mcp__grafana__alerting_manage_*",
-      "mcp__grafana__add_*",
-      "mcp__grafana__install_*"
+      "mcp__claude_ai_Privacy_MCP__complete_authentication"
     ]
   },
   "tui": "fullscreen",

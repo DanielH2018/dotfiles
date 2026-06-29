@@ -8,6 +8,12 @@ SANDBOX_DIR="$HOME/.claude/sandbox"
 AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 STATE_DIR="$SANDBOX_DIR/state"
+# Machine/work-specific values (e.g. CLAUDE_VAULT_DIR) for an optional work overlay.
+if [ -f "$HOME/.config/claude/local.env" ]; then
+  . "$HOME/.config/claude/local.env"
+fi
+# Resolve the settings file to mount: base, or base+work-overlay merged at launch.
+SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json")"
 OP_SOCKET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
 # TODO: pin to a specific digest once you've pulled a known-good version:
 #   docker inspect lscr.io/linuxserver/socket-proxy:latest --format '{{index .RepoDigests 0}}'
@@ -696,7 +702,12 @@ compact_session() {
   local repo_name="$2"
   local wt_name="$3"
   local session_dir="$SESSIONS_BASE/$instance_id"
-  local vault_dir="$HOME/Documents/My_Vault/Work/Sessions/$repo_name"
+  local vault_dir
+  if [ -n "${CLAUDE_VAULT_DIR:-}" ]; then
+    vault_dir="$CLAUDE_VAULT_DIR/Work/Sessions/$repo_name"
+  else
+    vault_dir="$HOME/.claude/sandbox-sessions/$repo_name"
+  fi
   local today
   today="$(date -u +%Y-%m-%d)"
 
@@ -1340,7 +1351,7 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/plugins:$HOME/.claude/plugins:ro"
   # Config files — bind-mounted (not baked into image) so edits don't
   # bust the Docker layer cache for toolchain installs.
-  -v "$SANDBOX_DIR/settings.json:/home/claudebot/.claude-defaults/settings.json:ro"
+  -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
   -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
@@ -1435,7 +1446,7 @@ if [[ "$AUTH_NEEDED" == true ]]; then
     --cap-drop all \
     --security-opt no-new-privileges \
     -v "$STATE_DIR:/home/claudebot/.claude" \
-    -v "$SANDBOX_DIR/settings.json:/home/claudebot/.claude/settings.json:ro" \
+    -v "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro" \
     "$IMAGE_TAG" claude auth login; then
     touch "$AUTH_MARKER"
     echo ""
