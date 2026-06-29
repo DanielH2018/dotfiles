@@ -178,8 +178,8 @@ test("summarize collapses macOS /var/folders temp paths (cross-platform)", () =>
     "node <tmp>");
 });
 
-test("summarize leaves non-temp vault paths untouched", () => {
-  const cmd = 'node "C:/Users/daniel/My_Vault/.claude/scripts/check-links.js"';
+test("summarize leaves non-temp paths untouched", () => {
+  const cmd = 'node "C:/Users/daniel/notes/.claude/scripts/check-links.js"';
   assert.strictEqual(m.summarize("Bash", { command: cmd }), cmd);
 });
 

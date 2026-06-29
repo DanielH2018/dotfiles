@@ -101,7 +101,7 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
   fi
 
   # Cloud MCPs
-  echo "- **Cloud MCPs**: write operations denied (Atlassian, Slack, Notion, Gmail, Drive, Calendar, PagerDuty, Lithic, Grafana). Read-only access only if authenticated."
+  echo "- **Cloud MCPs**: write operations denied (Atlassian, Slack, Notion, Gmail, Drive, Calendar, and any configured org MCPs). Read-only access only if authenticated."
 
 } >> "$CLAUDE_MD"
 
