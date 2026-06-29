@@ -7,7 +7,7 @@ set -eu
 BASE="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-base.XXXXXX")"
 trap 'rm -f "$BASE"' EXIT
 cat > "$BASE" <<'CHEZMOI_BASE_EOF'
-{{ includeTemplate "settings.base.json" }}
+{{ includeTemplate "settings.base.json" . }}
 CHEZMOI_BASE_EOF
 
 OVERLAY="$HOME/.config/claude/settings.work.json"   # absent on non-work machines

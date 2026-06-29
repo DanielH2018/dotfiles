@@ -4,12 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-// modify_settings.json.tmpl is a chezmoi modify_ script written as a template. Render it
+// modify_settings.json.sh.tmpl is a chezmoi modify_ script written as a template. Render it
 // with `chezmoi execute-template` (resolves `includeTemplate "settings.base.json"` and
 // `.chezmoi.sourceDir`), then exec the rendered /bin/sh script. The script regenerates
 // ~/.claude/settings.json as merge(general base, work overlay-if-present), FULLY DERIVED —
 // stdin (the current target content) is intentionally ignored.
-const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modify_settings.json.tmpl');
+const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
 const rendered = execFileSync('chezmoi', ['execute-template'], {
   input: fs.readFileSync(TEMPLATE, 'utf8'),
   encoding: 'utf8',

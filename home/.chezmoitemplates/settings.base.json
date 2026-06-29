@@ -404,7 +404,7 @@
   "fallbackModel": [
     "claude-sonnet-4-6"
   ],
-  "hooks": {
+  "hooks": {{ if ne .chezmoi.os "windows" }}{
     "PermissionRequest": [
       {
         "matcher": "Bash",
@@ -605,7 +605,7 @@
         ]
       }
     ]
-  },
+  }{{ else }}{}{{ end }},
   "worktree": {
     "baseRef": "head"
   },
@@ -632,7 +632,7 @@
       }
     }
   },
-  "sandbox": {
+  "sandbox": {{ if ne .chezmoi.os "windows" }}{
     "enabled": true,
     "autoAllowBashIfSandboxed": true,
     "network": {
@@ -728,7 +728,7 @@
       "docker",
       "docker-compose"
     ]
-  },
+  }{{ else }}{ "enabled": false }{{ end }},
   "alwaysThinkingEnabled": true,
   "advisorModel": "opus",
   "awaySummaryEnabled": true,
