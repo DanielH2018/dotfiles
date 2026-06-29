@@ -1,50 +1,52 @@
 {{- if eq .chezmoi.os "windows" -}}
-# Managed by chezmoi (run_onchange). Installs IosevkaTerm Nerd Font (per-user, no admin)
-# and points VS Code's integrated terminal at it, so the starship prompt's Nerd Font
-# glyphs render instead of tofu. Re-runs only when this file changes.
-# bump-to-reinstall: iosevkaterm-mono v1
+# Managed by chezmoi (run_onchange). Installs IosevkaTerm Nerd Font SYSTEM-WIDE so the
+# starship Nerd Font glyphs render in VS Code's integrated terminal and SURVIVE reboots
+# (per-user / no-admin installs don't reliably auto-load on login). Elevates once (UAC)
+# only when the font is missing. Also points VS Code's terminal at it.
+# Re-runs only when this file changes.
+# bump-to-reinstall: iosevkaterm-mono v2-systemwide
 
 $ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$family       = 'IosevkaTerm Nerd Font Mono'                  # display name (install messages)
-# VS Code value: Windows nerd-fonts register the family as the abbreviated "NFM"
-# (Nerd Font Mono), not the full name; full name kept as a fallback for other OSes.
+# Windows nerd-fonts register the Mono family as the abbreviated "IosevkaTerm NFM"
+# (not the full "Nerd Font Mono"); keep the full name as a cross-OS fallback.
 $vscodeFamily = 'IosevkaTerm NFM, IosevkaTerm Nerd Font Mono'
-$zipUrl  = 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip'
-$fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-$regPath = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+$sysDir = Join-Path $env:WINDIR 'Fonts'
 
-# --- 1. Install the font (per-user, idempotent) -----------------------------
-$installed = Get-ChildItem -Path $fontDir -Filter 'IosevkaTerm*NerdFontMono*.ttf' -ErrorAction SilentlyContinue
-if (-not $installed) {
-    Write-Host "Installing $family ..."
-    New-Item -ItemType Directory -Force -Path $fontDir | Out-Null
-    if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
-    $work = Join-Path $env:TEMP ('iosevkaterm-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Force -Path $work | Out-Null
-    try {
-        $zip = Join-Path $work 'IosevkaTerm.zip'
-        Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
-        Expand-Archive -Path $zip -DestinationPath $work -Force
-        $ttfs = Get-ChildItem -Path $work -Recurse -Filter '*.ttf' | Where-Object { $_.Name -like '*Mono*' }
-        if (-not $ttfs) { throw "No 'Mono' .ttf files found in archive from $zipUrl" }
-        foreach ($ttf in $ttfs) {
-            $dest = Join-Path $fontDir $ttf.Name
-            Copy-Item -Path $ttf.FullName -Destination $dest -Force
-            New-ItemProperty -Path $regPath -Name ($ttf.BaseName + ' (TrueType)') -Value $dest -PropertyType String -Force | Out-Null
-        }
-        Write-Host "Installed $($ttfs.Count) font file(s). Restart VS Code to pick them up."
-    } finally {
-        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+# --- 1. Install the font system-wide (idempotent; one UAC only when missing) ----
+if (-not (Get-ChildItem -Path $sysDir -Filter 'IosevkaTerm*NerdFontMono*.ttf' -ErrorAction SilentlyContinue)) {
+    # Self-contained elevated installer. Single-quoted here-string => no escaping needed.
+    $elevContent = @'
+$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$sysDir = Join-Path $env:WINDIR 'Fonts'
+$reg    = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'
+$work   = Join-Path $env:TEMP ('iosevka-elev-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+try {
+    Invoke-WebRequest -Uri 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip' -OutFile (Join-Path $work 'f.zip') -UseBasicParsing
+    Expand-Archive -Path (Join-Path $work 'f.zip') -DestinationPath $work -Force
+    $ttfs = Get-ChildItem -Path $work -Recurse -Filter '*Mono*.ttf'
+    if (-not $ttfs) { throw 'No Mono .ttf files in the IosevkaTerm archive' }
+    foreach ($ttf in $ttfs) {
+        Copy-Item -Path $ttf.FullName -Destination (Join-Path $sysDir $ttf.Name) -Force
+        New-ItemProperty -Path $reg -Name ($ttf.BaseName + ' (TrueType)') -Value $ttf.Name -PropertyType String -Force | Out-Null
     }
+} finally { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
+'@
+    $elev = Join-Path $env:TEMP ('install-iosevka-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    Set-Content -Path $elev -Value $elevContent -Encoding ASCII
+    try {
+        Write-Host "Installing IosevkaTerm Nerd Font system-wide (approve the UAC prompt)..."
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$elev
+        Write-Host "Installed system-wide. Restart VS Code to pick it up."
+    } finally { Remove-Item -Force $elev -ErrorAction SilentlyContinue }
 } else {
-    Write-Host "$family already installed."
+    Write-Host "IosevkaTerm Nerd Font already installed system-wide."
 }
 
-# --- 2. Point VS Code's integrated terminal at it (local user settings) ------
-# Remote-SSH renders the terminal locally, so this setting must live in the
-# Windows-local settings.json, not the remote machine settings.
+# --- 2. Point VS Code's integrated terminal at it (per-user; no admin) ----------
+# Remote-SSH renders the terminal locally, so this must live in the Windows-local settings.
 $settings = Join-Path $env:APPDATA 'Code\User\settings.json'
 $raw = if (Test-Path $settings) { Get-Content -Raw -Path $settings } else { '' }
 if (-not [string]::IsNullOrWhiteSpace($raw)) {
