@@ -5,10 +5,9 @@ umask = 0o022
 
 [data]
     work = {{ $work }}
-{{- if eq .chezmoi.os "windows" }}
-
-# Windows has no shebang support, so chezmoi would otherwise try to exec the /bin/sh
-# modify_settings.json script (target ext .json) directly and fail. Run it via Git Bash.
-[interpreters.json]
+# Run the /bin/sh modify_ script through bash on every OS. The source is named
+# modify_settings.json.sh.tmpl so chezmoi strips the .sh extension (the target
+# stays settings.json) and runs it via this interpreter. Windows has no shebang
+# support; on macOS/Linux bash runs the /bin/sh script identically.
+[interpreters.sh]
     command = "bash"
-{{- end }}
