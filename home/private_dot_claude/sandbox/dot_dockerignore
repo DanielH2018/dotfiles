@@ -1,0 +1,13 @@
+# Exclude persistent data and non-build files from build context.
+# Only claude.json and entrypoint.sh are referenced by COPY/bind-mount
+# during build. Everything else is runtime-only (bind-mounted by claude-sandbox).
+state/
+audit/
+sessions/
+dockerfiles/
+claude-sandbox
+_claude-sandbox
+settings.json
+statusline-command.sh
+audit.sh
+*.md

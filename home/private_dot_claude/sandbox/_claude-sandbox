@@ -1,0 +1,94 @@
+#compdef claude-sandbox
+
+# Zsh completion for claude-sandbox
+# Source: ~/.claude/sandbox/_claude-sandbox
+# Setup: ensure ~/.claude/sandbox is in fpath (before compinit)
+
+_claude-sandbox_repo_path() {
+  # Find the repo path from the command line args
+  local repo_path=""
+  local -a words_copy=("${words[@]}")
+  for ((i = 2; i <= ${#words_copy}; i++)); do
+    local w="${words_copy[$i]}"
+    [[ "$w" == -* ]] && continue
+    [[ "$w" == "$words[$CURRENT]" ]] && continue
+    local prev="${words_copy[$((i-1))]}"
+    [[ "$prev" == "-w" || "$prev" == "--worktree" || "$prev" == "-b" || "$prev" == "--branch" || "$prev" == "--rename" ]] && continue
+    # Skip the second arg after --rename (it's the NEW name, not a repo)
+    if [[ $i -ge 3 ]]; then
+      local prevprev="${words_copy[$((i-2))]}"
+      [[ "$prevprev" == "--rename" ]] && continue
+    fi
+    repo_path="$w"
+  done
+  [[ -z "$repo_path" ]] && repo_path="."
+  echo "$repo_path"
+}
+
+_claude-sandbox_worktree_names() {
+  local repo_path="$1"
+  local -a wt_names
+  wt_names=(${(f)"$(claude-sandbox --complete-worktrees "$repo_path" 2>/dev/null)"})
+  if [[ ${#wt_names} -gt 0 ]]; then
+    _describe 'worktree name' wt_names
+  else
+    _message 'worktree name (new or existing)'
+  fi
+}
+
+_claude-sandbox_branch_names() {
+  local repo_path="$1"
+  local -a br
+  br=(${(f)"$(claude-sandbox --complete-branches "$repo_path" 2>/dev/null)"})
+  if [[ ${#br} -gt 0 ]]; then
+    _describe 'branch' br
+  else
+    _message 'existing branch name'
+  fi
+}
+
+_claude-sandbox() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  _arguments -C \
+    '--rebuild[Force rebuild the per-repo Docker image]' \
+    '--rebuild-base[Rebuild the claudebot\:base image]' \
+    '--generate[Regenerate Dockerfile only]' \
+    '--list[List all sandbox sessions for a repo]' \
+    '--prune[Interactively select and delete worktrees]' \
+    '--gc[Clean up worktrees with deleted remote branches]' \
+    '(-w --worktree -b --branch)'{-w,--worktree}'[Run in an isolated git worktree]:worktree name:->worktree' \
+    '(-b --branch -w --worktree)'{-b,--branch}'[Run in a worktree on an existing branch]:branch:->branch' \
+    '--rename[Rename a worktree]:old name:->rename_old:new name:->rename_new' \
+    '(-h --help)'{-h,--help}'[Show usage]' \
+    '*:repo path:->repo' \
+    && return
+
+  case "$state" in
+    worktree|rename_old)
+      _claude-sandbox_worktree_names "$(_claude-sandbox_repo_path)"
+      ;;
+    branch)
+      _claude-sandbox_branch_names "$(_claude-sandbox_repo_path)"
+      ;;
+    rename_new)
+      _message 'new worktree name'
+      ;;
+    repo)
+      local -a repos
+      if [[ -d "$HOME/Repositories" ]]; then
+        repos=(${(f)"$(ls -1 "$HOME/Repositories" 2>/dev/null)"})
+      fi
+      if [[ ${#repos} -gt 0 ]]; then
+        _alternative \
+          "repos:repository:compadd -a repos" \
+          "files:path:_files -/"
+      else
+        _files -/
+      fi
+      ;;
+  esac
+}
+
+_claude-sandbox "$@"
