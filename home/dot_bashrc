@@ -1,0 +1,81 @@
+# ~/.bashrc — interactive Bash config. Primary use is Git Bash on Windows; the zsh
+# config in ~/.zshrc covers macOS/Linux. Sourced from ~/.bash_profile for login
+# shells (Git Bash doesn't read ~/.bashrc on its own). Every tool integration is
+# guarded by `command -v`, so this is a clean no-op wherever a tool isn't installed.
+
+# Interactive shells only.
+case $- in
+  *i*) ;;
+  *) return ;;
+esac
+
+export EDITOR='vim'
+export VISUAL="$EDITOR"
+
+# --- History (bash equivalents of the zsh HIST_* options) ---
+HISTSIZE=200000
+HISTFILESIZE=200000
+HISTCONTROL=ignoreboth:erasedups
+shopt -s histappend
+# Flush each command to the history file so concurrent shells share it.
+PROMPT_COMMAND="history -a; ${PROMPT_COMMAND:-}"
+
+# --- PATH ---
+if [ -d "$HOME/.local/bin" ]; then
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+fi
+
+# --- Prompt (Starship) ---
+command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+
+# --- Zoxide (smart cd) ---
+if command -v zoxide >/dev/null 2>&1; then
+  eval "$(zoxide init bash --cmd cd)"
+  alias zi='zoxide query -i'
+fi
+
+# --- fzf ---
+if command -v fzf >/dev/null 2>&1; then
+  if command -v rg >/dev/null 2>&1; then
+    export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git"'
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+  fi
+  # fzf >=0.48 ships its bash key-bindings + completion via `fzf --bash`.
+  eval "$(fzf --bash 2>/dev/null)" 2>/dev/null || true
+fi
+
+# --- Listing aliases (eza if present, else GNU ls) ---
+if command -v eza >/dev/null 2>&1; then
+  alias ls="eza --icons --group-directories-first --git --color=auto"
+  alias ll="eza -la --icons --git --time-style=relative"
+  alias la="eza -la --icons --git --group-directories-first --time-style=relative"
+  alias lt="eza --tree --level=2 --icons -a"
+  alias lg="eza -l --git --icons"
+else
+  alias ls='ls --color=auto'
+  alias ll='ls -lA --color=auto'
+  alias la='ls -lA --color=auto'
+fi
+
+# --- fd helper ---
+command -v fd >/dev/null 2>&1 && ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
+
+# --- Quality-of-life aliases & functions (mirrors ~/.zshrc) ---
+alias c="clear"
+alias ..='cd ..'
+alias ...='cd ../..'
+command -v fastfetch >/dev/null 2>&1 && alias sysinfo='fastfetch'
+mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
+psgrep() { ps aux | grep -i "$1" | grep -v grep; }
+
+# --- Readline: prefix history search on Up/Down ---
+bind '"\e[A": history-search-backward' 2>/dev/null
+bind '"\e[B": history-search-forward' 2>/dev/null
+
+# --- fastfetch banner on login shells only ---
+if shopt -q login_shell && command -v fastfetch >/dev/null 2>&1; then
+  fastfetch
+fi
+
+# Machine-local bash config (per-machine; absent on portable machines).
+[ -r "$HOME/.config/bash/local.bash" ] && . "$HOME/.config/bash/local.bash"

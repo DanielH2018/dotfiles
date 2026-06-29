@@ -1,0 +1,53 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Managed by chezmoi (run_onchange). Installs the modern CLI toolchain via winget so
+# Git Bash gets the same experience as the macOS/Linux zsh setup (see dot_bashrc):
+# starship prompt, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch. Also installs fnm —
+# the Windows counterpart to run_once_before_install-fnm.sh.tmpl, which skips Windows.
+# Idempotent: skips anything already on PATH or already reported installed by winget.
+# Re-runs only when this file changes.
+# bump-to-reinstall: cli-tools v1
+
+$ErrorActionPreference = 'Stop'
+# PS 7.3+ makes native non-zero exits throw under Stop; disable so a single winget
+# failure (or "already installed") doesn't abort the loop. Harmless no-op on 5.1.
+$PSNativeCommandUseErrorActionPreference = $false
+
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    Write-Warning "winget not found — install 'App Installer' from the Microsoft Store, then re-run 'chezmoi apply'."
+    return
+}
+
+# id = exact winget package id; cmd = the binary it puts on PATH (used to skip).
+$packages = @(
+    @{ id = 'Starship.Starship';       cmd = 'starship'  },
+    @{ id = 'ajeetdsouza.zoxide';      cmd = 'zoxide'    },
+    @{ id = 'junegunn.fzf';            cmd = 'fzf'       },
+    @{ id = 'eza-community.eza';       cmd = 'eza'       },
+    @{ id = 'sharkdp.fd';              cmd = 'fd'        },
+    @{ id = 'BurntSushi.ripgrep.MSVC'; cmd = 'rg'        },
+    @{ id = 'sharkdp.bat';             cmd = 'bat'       },
+    @{ id = 'Fastfetch-cli.Fastfetch'; cmd = 'fastfetch' },
+    @{ id = 'Schniz.fnm';              cmd = 'fnm'       }
+)
+
+foreach ($p in $packages) {
+    if (Get-Command $p.cmd -ErrorAction SilentlyContinue) {
+        Write-Host "[skip] $($p.cmd) already on PATH."
+        continue
+    }
+    # `winget list` exits 0 when the package is present, non-zero otherwise.
+    winget list --exact --id $p.id --accept-source-agreements 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[skip] $($p.id) already installed (open a new shell to pick up PATH)."
+        continue
+    }
+    Write-Host "[install] $($p.id) ..."
+    winget install --exact --id $p.id --source winget `
+        --accept-package-agreements --accept-source-agreements --disable-interactivity
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "winget install $($p.id) exited $LASTEXITCODE (continuing)."
+    }
+}
+
+Write-Host "CLI tools done. Open a new Git Bash shell so the updated PATH and ~/.bashrc take effect."
+{{- end -}}
