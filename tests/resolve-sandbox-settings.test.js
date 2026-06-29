@@ -1,4 +1,4 @@
-const { execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -13,12 +13,8 @@ function run(args, { home, pathDirs } = {}) {
   const env = { ...process.env };
   if (home) env.HOME = home;
   if (pathDirs) env.PATH = pathDirs.join(':');
-  try {
-    const stdout = execFileSync('bash', [HELPER, ...args], { env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { stdout: stdout.trim(), stderr: '', status: 0 };
-  } catch (e) {
-    return { stdout: (e.stdout || '').trim(), stderr: e.stderr || '', status: e.status };
-  }
+  const r = spawnSync('bash', [HELPER, ...args], { env, encoding: 'utf8' });
+  return { stdout: (r.stdout || '').trim(), stderr: r.stderr || '', status: r.status };
 }
 
 const d = tmp('rss-');
@@ -36,7 +32,7 @@ assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'absent 
 
 // 2. overlay present + tool available -> merged temp path with both denies
 {
-  const r = run([base, overlay], { pathDirs: [okBin, '/usr/bin', '/bin'] });
+  const r = run([base, overlay], { pathDirs: [okBin, ...process.env.PATH.split(':')] });
   assert.notStrictEqual(r.stdout, base, 'merged path differs from base');
   assert.ok(fs.existsSync(r.stdout), 'merged file exists');
   const merged = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
