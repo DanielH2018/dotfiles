@@ -31,6 +31,9 @@ usage() {
   echo "                     Reuses existing worktree if branch already exists."
   echo "                     If NAME is omitted, generates a short random suffix."
   echo "                     Worktree is kept on exit if it has changes; removed if clean."
+  echo "  --branch, -b BRANCH    Run in a worktree on BRANCH, keeping its name. Uses it"
+  echo "                     if it exists (local or origin), else creates it from HEAD."
+  echo "                     E.g. -b proc-3685-foo. Cannot combine with -w."
   echo "  --list             List all sandbox sessions (worktrees + main) for a repo."
   echo "                     Shows branch, path, running status, and resume command."
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
@@ -53,6 +56,9 @@ RENAME_WORKTREE=false
 RENAME_OLD=""
 RENAME_NEW=""
 USE_WORKTREE=false
+BRANCH_MODE=false
+EXISTING_BRANCH=""
+COMPLETE_BRANCHES=false
 WT_NAME=""
 REPO_PATH=""
 
@@ -63,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --generate) GENERATE_ONLY=true; shift ;;
     --list) LIST_SESSIONS=true; shift ;;
     --complete-worktrees) COMPLETE_WORKTREES=true; shift ;;
+    --complete-branches) COMPLETE_BRANCHES=true; shift ;;
     --prune) PRUNE_WORKTREES=true; shift ;;
     --gc) GC_WORKTREES=true; shift ;;
     --_preview) PREVIEW_MODE=true; shift; PREVIEW_ARGS=("$@"); break ;;
@@ -85,6 +92,16 @@ while [[ $# -gt 0 ]]; do
         shift
       fi
       ;;
+    -b|--branch)
+      BRANCH_MODE=true
+      USE_WORKTREE=true
+      shift
+      if [[ $# -gt 0 && "$1" != -* ]]; then
+        EXISTING_BRANCH="$1"; shift
+      else
+        echo "Error: -b/--branch requires an existing branch name" >&2; exit 1
+      fi
+      ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
@@ -92,7 +109,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_BRANCHES" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -133,6 +150,19 @@ if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
   exit 1
 fi
 
+# Branch mode: derive a filesystem-safe worktree name from the branch name.
+if [[ "$BRANCH_MODE" == true ]]; then
+  if [[ -n "$WT_NAME" ]]; then
+    echo "Error: -b/--branch cannot be combined with -w/--worktree" >&2
+    exit 1
+  fi
+  WT_NAME="$(printf '%s' "$EXISTING_BRANCH" | tr -c 'a-zA-Z0-9_-' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+  if [[ -z "$WT_NAME" ]]; then
+    echo "Error: could not derive a worktree name from branch: '$EXISTING_BRANCH'" >&2
+    exit 1
+  fi
+fi
+
 # Generate worktree name if needed
 if [[ "$USE_WORKTREE" == true && -z "$WT_NAME" ]]; then
   WT_NAME="$(openssl rand -hex 3)"
@@ -169,6 +199,7 @@ WORK_PATH="$REPO_PATH"
 WT_BRANCH=""
 WT_PATH=""
 WT_CREATED=false
+WT_BRANCH_CREATED=false
 
 # --- Validate prerequisites ---
 if [[ "$GENERATE_ONLY" == false ]]; then
@@ -224,21 +255,28 @@ list_sessions() {
   main_branch="$(git -C "$REPO_PATH" branch --show-current 2>/dev/null || echo "detached")"
   printf "  %-12s %-30s %-10s %s\n" "(main)" "$main_branch" "$main_status" "claude-sandbox $REPO_PATH"
 
-  # Worktree sessions — scan git worktrees for claude/* branches
-  local wt_path wt_branch wt_name wt_status wt_instance
+  # Worktree sessions — scan tool-created worktrees (path: <repo>-wt-<name>),
+  # regardless of branch name (claude/* or an existing branch via -b).
+  local wt_path wt_branch wt_name wt_status wt_instance wt_resume wt_base
   while IFS= read -r line; do
     if [[ "$line" == "worktree "* ]]; then
       wt_path="${line#worktree }"
     elif [[ "$line" == "branch "* ]]; then
       wt_branch="${line#branch refs/heads/}"
-      if [[ "$wt_branch" == claude/* ]]; then
-        wt_name="${wt_branch#claude/}"
+      wt_base="$(basename "$wt_path")"
+      if [[ "$wt_base" == "${repo_name_safe}-wt-"* ]]; then
+        wt_name="${wt_base#${repo_name_safe}-wt-}"
         wt_instance="${base_instance}-${wt_name}"
         wt_status="stopped"
         if echo "$running_containers" | grep -q "claudebot-${wt_instance}-[0-9a-f]"; then
           wt_status="running"
         fi
-        printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "$wt_status" "claude-sandbox --worktree $wt_name $REPO_PATH"
+        if [[ "$wt_branch" == claude/* ]]; then
+          wt_resume="claude-sandbox --worktree ${wt_branch#claude/} $REPO_PATH"
+        else
+          wt_resume="claude-sandbox --branch $wt_branch $REPO_PATH"
+        fi
+        printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "$wt_status" "$wt_resume"
       fi
       wt_path=""
       wt_branch=""
@@ -256,7 +294,7 @@ list_sessions() {
     # Extract the worktree name suffix
     local suffix="${session_name#${base_instance}-}"
     # Skip if we already listed this worktree above
-    if git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/claude/$suffix"; then
+    if git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "/${repo_name_safe}-wt-$suffix$"; then
       continue
     fi
     printf "  %-12s %-30s %-10s %s\n" "$suffix" "claude/$suffix (orphaned)" "no worktree" "--worktree $suffix recreates it"
@@ -306,13 +344,29 @@ if [[ "$COMPLETE_WORKTREES" == true ]]; then
     suffix="${suffix#${base_instance}-}"
     # Skip if already listed from git worktrees
     git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null \
-      | grep -q "branch refs/heads/claude/$suffix" && continue
+      | grep -q "/${repo_name_safe}-wt-$suffix$" && continue
     echo "$suffix"
   done
 
   exit 0
 fi
 
+
+# --- Branch name completion (called by zsh/bash completion) ---
+if [[ "$COMPLETE_BRANCHES" == true ]]; then
+  [[ -z "$REPO_PATH" ]] && exit 0
+
+  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+    REPO_PATH="$HOME/Repositories/$REPO_PATH"
+  fi
+  REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
+
+  # Local branches only (refs/heads). -b still accepts a remote-only branch
+  # name typed manually; this just keeps completion to a manageable subset.
+  git -C "$REPO_PATH" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sort -u
+
+  exit 0
+fi
 
 # --- Rename worktree ---
 if [[ "$RENAME_WORKTREE" == true ]]; then
@@ -624,7 +678,11 @@ stop_proxy() {
 
 # --- Git worktree management ---
 setup_worktree() {
-  WT_BRANCH="claude/$WT_NAME"
+  if [[ "$BRANCH_MODE" == true ]]; then
+    WT_BRANCH="$EXISTING_BRANCH"
+  else
+    WT_BRANCH="claude/$WT_NAME"
+  fi
   WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$WT_NAME"
 
   # Check if this worktree already exists
@@ -634,8 +692,38 @@ setup_worktree() {
     return
   fi
 
-  # Check if branch exists (local or remote)
-  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$WT_BRANCH" 2>/dev/null; then
+  # If the branch is already checked out in another worktree, git refuses to
+  # add a second one. Reuse a tool worktree; refuse (with guidance) for main.
+  local existing_wt
+  existing_wt="$(git -C "$REPO_PATH" worktree list --porcelain | awk -v b="refs/heads/$WT_BRANCH" '
+    /^worktree /{p=substr($0,10)} $0=="branch "b{print p; exit}')"
+  if [[ -n "$existing_wt" ]]; then
+    if [[ "$existing_wt" == "$REPO_PATH" ]]; then
+      echo "Error: branch '$WT_BRANCH' is checked out in your main checkout:" >&2
+      echo "  $REPO_PATH" >&2
+      echo "Run 'claude-sandbox $REPO_PATH' to sandbox it there, or move the main" >&2
+      echo "checkout off it first:  git -C $REPO_PATH switch <other-branch>" >&2
+      exit 1
+    fi
+    echo "Branch '$WT_BRANCH' already checked out — reusing worktree: $existing_wt"
+    WORK_PATH="$existing_wt"
+    return
+  fi
+
+  if [[ "$BRANCH_MODE" == true ]]; then
+    # Use the branch if it exists (local, or origin via git DWIM tracking);
+    # otherwise create it from HEAD. A branch created here is removed on a
+    # clean exit (see cleanup_worktree); pre-existing branches are always kept.
+    if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$WT_BRANCH" 2>/dev/null \
+       || git -C "$REPO_PATH" show-ref --verify --quiet "refs/remotes/origin/$WT_BRANCH" 2>/dev/null; then
+      echo "Creating worktree from branch: $WT_BRANCH"
+      git -C "$REPO_PATH" worktree add "$WT_PATH" "$WT_BRANCH"
+    else
+      echo "Creating worktree with new branch (forked from HEAD): $WT_BRANCH"
+      git -C "$REPO_PATH" worktree add -b "$WT_BRANCH" "$WT_PATH"
+      WT_BRANCH_CREATED=true
+    fi
+  elif git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$WT_BRANCH" 2>/dev/null; then
     # Branch exists locally — create worktree from it
     echo "Creating worktree from existing branch: $WT_BRANCH"
     git -C "$REPO_PATH" worktree add "$WT_PATH" "$WT_BRANCH"
@@ -691,7 +779,11 @@ cleanup_worktree() {
   else
     echo "Worktree clean — removing: $WT_PATH"
     git -C "$REPO_PATH" worktree remove "$WT_PATH" 2>/dev/null || true
-    git -C "$REPO_PATH" branch -d "$WT_BRANCH" 2>/dev/null || true
+    if [[ "$BRANCH_MODE" == true && "$WT_BRANCH_CREATED" != true ]]; then
+      echo "  Keeping pre-existing branch: $WT_BRANCH"
+    else
+      git -C "$REPO_PATH" branch -d "$WT_BRANCH" 2>/dev/null || true
+    fi
   fi
 }
 
@@ -918,7 +1010,8 @@ delete_worktree() {
   local wt_branch="claude/$wt_name"
 
   # Compact session before deletion
-  compact_session "$instance_id" "$REPO_NAME" "$wt_name"
+  # Non-fatal: compaction failures must not abort prune before deletion (set -e)
+  compact_session "$instance_id" "$REPO_NAME" "$wt_name" || true
 
   # Remove worktree if it exists
   if [[ -d "$wt_path" ]] || git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "^worktree .*$wt_name"; then
@@ -1317,6 +1410,7 @@ echo "  Audit: $AUDIT_DIR -> /audit"
 echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
 echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
 echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
+echo "  Commands/Agents: ~/.claude/{commands,agents} -> /home/claudebot/.claude/{commands,agents} (read-only)"
 if [[ -f "$AUTH_MARKER" ]]; then
   echo "  Cloud MCPs: authenticated (read-only, write ops denied)"
 else
@@ -1349,6 +1443,11 @@ DOCKER_ARGS=(
   -v "$OP_SOCKET:/run/1password/agent.sock"
   -v "$HOME/.claude/plugins:/home/claudebot/.claude/plugins:ro"
   -v "$HOME/.claude/plugins:$HOME/.claude/plugins:ro"
+  # User-level commands and agents (read-only). Nested mounts inside the
+  # state volume, like plugins above. Makes personal slash commands (e.g.
+  # /review-loop) and subagents (e.g. implementer) available in every repo.
+  -v "$HOME/.claude/commands:/home/claudebot/.claude/commands:ro"
+  -v "$HOME/.claude/agents:/home/claudebot/.claude/agents:ro"
   # Config files — bind-mounted (not baked into image) so edits don't
   # bust the Docker layer cache for toolchain installs.
   -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
@@ -1369,6 +1468,9 @@ fi
 # Forward worktree branch if applicable
 if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
   DOCKER_ARGS+=(-e SANDBOX_BRANCH="$WT_BRANCH")
+  # Worktree .git points into the main repo; mount it so in-container git
+  # resolves the gitdir + shared object store (read-write enables commits).
+  DOCKER_ARGS+=(-v "$REPO_PATH/.git:$REPO_PATH/.git")
 fi
 
 # GitHub CLI authentication (read-only access)
