@@ -65,6 +65,15 @@ if command -v fnm >/dev/null 2>&1; then
 fi
 
 # =============================================================================
+# CHEZMOI
+# =============================================================================
+# chezmoi applies its `umask` config to file modes but creates directories subject
+# to the process umask, so on this host's 0007 login umask new dirs land at 0750 and
+# never match chezmoi's 0755 target (perpetual "MM"/overwrite prompt). Run chezmoi in
+# a subshell pinned to 0022 for deterministic dir modes, without leaking into the shell.
+chezmoi() { ( umask 0022; command chezmoi "$@" ); }
+
+# =============================================================================
 # COMPLETION SYSTEM
 # =============================================================================
 # fpath must be set BEFORE compinit so Homebrew completions are picked up.

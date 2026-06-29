@@ -6,3 +6,7 @@ export SDKMAN_DIR="$HOME/.sdkman"
 if command -v fnm >/dev/null 2>&1; then
   eval "$(fnm env --use-on-cd --shell bash)"
 fi
+
+# chezmoi creates dirs under the process umask, so pin 0022 in a subshell for
+# deterministic dir modes on hosts with a 0007 login umask (see dot_zshrc.tmpl).
+chezmoi() { ( umask 0022; command chezmoi "$@" ); }
