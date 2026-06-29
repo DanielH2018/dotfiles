@@ -507,6 +507,12 @@
             "command": "~/.claude/hooks/lint-after-edit.sh",
             "timeout": 300,
             "statusMessage": "Running lint checks..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/chezmoi-guard.sh",
+            "timeout": 15,
+            "statusMessage": "Syncing chezmoi source..."
           }
         ]
       }
