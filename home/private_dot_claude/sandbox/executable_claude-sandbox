@@ -191,6 +191,10 @@ RUN_ID="${INSTANCE_ID}-$(openssl rand -hex 3)"
 IMAGE_TAG="claudebot:${REPO_NAME}-${REPO_HASH}"
 DOCKERFILE="$SANDBOX_DIR/dockerfiles/Dockerfile.${REPO_NAME}-${REPO_HASH}"
 PROXY_NAME="claudebot-proxy-$RUN_ID"
+# Short, DNS-resolvable alias for the proxy. $PROXY_NAME can exceed the 63-char
+# DNS label limit, which Docker's embedded resolver silently won't serve; the
+# network is isolated per run, so a fixed alias is safe from collisions.
+PROXY_ALIAS="claudebot-proxy"
 NETWORK_NAME="claudebot-net-$RUN_ID"
 
 # WORK_PATH is what gets mounted into the container.
@@ -624,9 +628,14 @@ start_proxy() {
   # workflows. POST is required for container create/start. exec/build/commit
   # are blocked to prevent sandbox escape.
   echo "Starting Docker socket proxy ($PROXY_NAME)..."
+  # $PROXY_NAME can exceed the 63-char DNS label limit (RFC 1035), in which
+  # case Docker's embedded resolver (127.0.0.11) never registers it and the
+  # sandbox can't reach DOCKER_HOST by name. Attach a short, stable alias on
+  # the isolated per-run network and point DOCKER_HOST at that instead.
   docker run -d --rm \
     --name "$PROXY_NAME" \
     --network "$NETWORK_NAME" \
+    --network-alias "$PROXY_ALIAS" \
     --cap-drop all \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
     -e LOG_LEVEL=info \
@@ -1512,7 +1521,7 @@ if [[ "$NEEDS_DOCKER" == true ]]; then
   start_proxy
   DOCKER_ARGS+=(
     --network "$NETWORK_NAME"
-    -e DOCKER_HOST="tcp://$PROXY_NAME:2375"
+    -e DOCKER_HOST="tcp://$PROXY_ALIAS:2375"
     -e HOST_REPO_PATH="$WORK_PATH"
   )
   echo "  Docker: via socket proxy (exec/build/commit/system blocked)"
