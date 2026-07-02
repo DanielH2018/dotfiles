@@ -18,6 +18,7 @@ eval "$(cat | jq -r '[
   "session_name=\(.session_name // "" | @sh)",
   "vim_mode=\(.vim.mode // "" | @sh)",
   "worktree_name=\(.worktree.name // .workspace.git_worktree // "" | @sh)",
+  "effort_level=\(.effort.level // "" | @sh)",
   "five_pct=\(.rate_limits.five_hour.used_percentage // "" | @sh)",
   "week_pct=\(.rate_limits.seven_day.used_percentage // "" | @sh)",
   "total_cost=\(.cost.total // "" | @sh)"
@@ -95,6 +96,9 @@ fi
 
 # Segment: model (blue) — compact label
 printf '\033[38;5;66m %s \033[0m' "$model_label"
+
+# Segment: effort level (dim grey) — only shown when set and non-default (medium)
+[[ -n "$effort_level" && "$effort_level" != "medium" ]] && printf '\033[38;5;237m %s \033[0m' "$effort_level"
 
 # Segment: context usage
 if [[ -n "$used_pct" ]]; then
