@@ -415,7 +415,7 @@
   "model": "fable",
   "effortLevel": "xhigh",
   "fallbackModel": [
-    "claude-sonnet-4-6"
+    "claude-sonnet-5"
   ],
   "hooks": {{/* Git Bash runs these on Windows too; notify.sh just no-ops there */}}{
     "PermissionRequest": [
