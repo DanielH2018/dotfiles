@@ -36,6 +36,11 @@ Spawn two review agents **in parallel** using the Agent tool:
 1. **code-reviewer** (`subagent_type: "pr-review-toolkit:code-reviewer"`)
 2. **silent-failure-hunter** (`subagent_type: "pr-review-toolkit:silent-failure-hunter"`)
 
+If the `pr-review-toolkit` agents are not in the available-agents list on this machine,
+substitute: `feature-dev:code-reviewer` for the code-reviewer, and a `general-purpose`
+agent prompted to hunt silent failures (swallowed exceptions, empty catch blocks,
+errors logged-and-ignored, missing propagation) for the silent-failure-hunter.
+
 Each agent's prompt MUST include:
 1. The list of changed files to review
 2. The exclusion list from Setup (if any), with this instruction: "Do not raise any finding that matches an item in the PREVIOUSLY TRIAGED list below. Match by file path and description similarity, not line numbers. These have already been triaged in a previous iteration."
