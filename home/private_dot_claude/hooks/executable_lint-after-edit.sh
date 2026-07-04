@@ -36,7 +36,10 @@ case "$FILE_PATH" in
         run_check "$DIR/node_modules/.bin/tsc" --noEmit --isolatedModules "$FILE_PATH"
         break
       fi
-      DIR=$(dirname "$DIR")
+      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
+      PARENT=$(dirname "$DIR")
+      [ "$PARENT" = "$DIR" ] && break
+      DIR=$PARENT
     done
     ;;
   *.rs)
@@ -49,7 +52,10 @@ case "$FILE_PATH" in
         run_check cargo check --quiet --manifest-path "$DIR/Cargo.toml"
         break
       fi
-      DIR=$(dirname "$DIR")
+      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
+      PARENT=$(dirname "$DIR")
+      [ "$PARENT" = "$DIR" ] && break
+      DIR=$PARENT
     done
     ;;
   *.go)
@@ -66,7 +72,10 @@ case "$FILE_PATH" in
         run_check "$DIR/gradlew" -p "$DIR" compileJava --no-daemon --quiet 2>/dev/null
         break
       fi
-      DIR=$(dirname "$DIR")
+      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
+      PARENT=$(dirname "$DIR")
+      [ "$PARENT" = "$DIR" ] && break
+      DIR=$PARENT
     done
     ;;
   *.kt|*.kts)
@@ -77,7 +86,10 @@ case "$FILE_PATH" in
         run_check "$DIR/gradlew" -p "$DIR" compileKotlin --no-daemon --quiet 2>/dev/null
         break
       fi
-      DIR=$(dirname "$DIR")
+      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
+      PARENT=$(dirname "$DIR")
+      [ "$PARENT" = "$DIR" ] && break
+      DIR=$PARENT
     done
     ;;
   *.sh|*.bash)

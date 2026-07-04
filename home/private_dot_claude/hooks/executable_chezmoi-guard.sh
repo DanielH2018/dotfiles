@@ -56,6 +56,12 @@ case "$(basename "$SRC")" in
 esac
 
 if chezmoi add "$FILE" >/dev/null 2>&1; then
+  # Windows has no exec bit, so `chezmoi add` re-adds the file without the
+  # executable_ attribute the source had — restore it or a later apply on
+  # macOS/Linux strips the exec bit and the hook/script stops running.
+  case "$(basename "$SRC")" in
+    executable_*|*_executable_*) chezmoi chattr +executable "$FILE" >/dev/null 2>&1 ;;
+  esac
   emit "chezmoi: re-synced source for managed file $FILE. Commit it in ~/.local/share/chezmoi when ready."
 else
   emit "chezmoi: could not re-sync source for managed file $FILE — check \`chezmoi status\`."

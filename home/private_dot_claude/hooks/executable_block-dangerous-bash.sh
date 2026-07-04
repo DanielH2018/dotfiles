@@ -40,7 +40,7 @@ fi
 
 # Force-push to other branches — upgrade to --force-with-lease and surface a message
 # BSD sed (macOS) doesn't support \b, so use space/EOL anchoring instead
-if echo "$COMMAND" | grep -qE 'git\s+push\s.*(--force([ ]|$)|-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
+if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
   UPGRADED=$(echo "$COMMAND" | sed -E 's/--force([ ]|$)/--force-with-lease\1/g; s/([ ])-f([ ]|$)/\1--force-with-lease\2/g')
   jq -n --arg cmd "$UPGRADED" '{
     hookSpecificOutput: {

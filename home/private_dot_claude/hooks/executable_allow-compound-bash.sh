@@ -2,12 +2,20 @@
 # allow-compound-bash.sh
 #
 # PermissionRequest hook for Bash.
-# Reads allow/deny/ask patterns directly from ~/.claude/settings.json so there
+# Reads allow/deny/ask patterns directly from the settings files (user-level
+# plus the current project's settings.json / settings.local.json) so there
 # is one source of truth. For compound commands (&&, ;), if every sub-command
 # matches the allow list and none match the deny or ask lists, grants permission
 # automatically — no prompt needed for chaining individually-allowed commands.
 
-SETTINGS="$HOME/.claude/settings.json"
+set -u
+
+SETTINGS_FILES=("$HOME/.claude/settings.json")
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  for f in "$CLAUDE_PROJECT_DIR/.claude/settings.json" "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"; do
+    [ -f "$f" ] && SETTINGS_FILES+=("$f")
+  done
+fi
 INPUT=$(cat)
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
@@ -19,10 +27,12 @@ fi
 # Extract Bash(...) entries from a permissions list and normalize to plain
 # command prefixes by stripping Bash(...) wrapper and trailing :*, *, etc.
 extract_bash_prefixes() {
-  local field="$1"
-  jq -r --arg f "$field" \
-    '.permissions[$f][]? | select(startswith("Bash(")) | ltrimstr("Bash(") | rtrimstr(")") | gsub(":\\*$";"") | gsub(" \\*$";"") | gsub("\\*$";"")' \
-    "$SETTINGS" 2>/dev/null
+  local field="$1" s
+  for s in "${SETTINGS_FILES[@]}"; do
+    jq -r --arg f "$field" \
+      '.permissions[$f][]? | select(startswith("Bash(")) | ltrimstr("Bash(") | rtrimstr(")") | gsub(":\\*$";"") | gsub(" \\*$";"") | gsub("\\*$";"")' \
+      "$s" 2>/dev/null
+  done
 }
 
 ALLOW=()
