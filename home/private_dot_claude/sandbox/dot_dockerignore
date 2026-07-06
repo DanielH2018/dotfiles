@@ -4,6 +4,7 @@
 state/
 audit/
 sessions/
+artifacts/
 dockerfiles/
 claude-sandbox
 _claude-sandbox

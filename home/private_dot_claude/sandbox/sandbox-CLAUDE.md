@@ -10,6 +10,7 @@ You are running inside a **Docker container** (Pattern C sandbox), not on the ho
 - **Security**: `--cap-drop all`, `--security-opt no-new-privileges`
 - **Workspace**: The repository is bind-mounted at `/workspace`
 - **Audit**: Every tool use is logged by a PostToolUse hook to `/audit/`
+- **Artifacts**: `/artifacts` is bind-mounted to a host directory outside the repo/worktree
 
 ## Git signing
 
@@ -58,6 +59,14 @@ perspective. To reach compose services from inside the sandbox:
    ```
 2. Now use compose **service names** (e.g., `postgres`, `kafka`) as hostnames instead of `localhost`.
 3. If tests hardcode `localhost`, override connection config to point at the service name.
+
+## Artifacts
+
+Write generated output that isn't meant to go into the git history — reports, exported
+files, generated images, ad-hoc scripts you want to keep, etc. — to `/artifacts` instead
+of `/workspace`. It's bind-mounted to a host directory (`~/.claude/sandbox/artifacts/<instance>`
+on the host, printed at container startup and again on exit) so it's visible without
+digging through the worktree or git branch. Files written there don't show up in `git status`.
 
 ## Plugins
 

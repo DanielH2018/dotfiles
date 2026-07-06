@@ -103,6 +103,9 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
   # Cloud MCPs
   echo "- **Cloud MCPs**: write operations denied (Atlassian, Slack, Notion, Gmail, Drive, Calendar, and any configured org MCPs). Read-only access only if authenticated."
 
+  # Artifacts
+  echo "- **Artifacts**: write non-git output (reports, exports, generated files) to \`/artifacts\` — bind-mounted to a host directory outside the repo, printed in the launcher's startup/exit banner."
+
 } >> "$CLAUDE_MD"
 
 exec "$@"

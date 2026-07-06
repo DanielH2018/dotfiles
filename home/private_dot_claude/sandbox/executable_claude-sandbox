@@ -7,6 +7,7 @@ set -euo pipefail
 SANDBOX_DIR="$HOME/.claude/sandbox"
 AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
+ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
 # Machine/work-specific values (e.g. CLAUDE_VAULT_DIR) for an optional work overlay.
 if [ -f "$HOME/.config/claude/local.env" ]; then
@@ -407,7 +408,8 @@ if [[ "$RENAME_WORKTREE" == true ]]; then
 
   # Must have at least a worktree, branch, or session data
   if [[ "$HAS_WORKTREE" == false && "$HAS_BRANCH" == false \
-        && ! -d "$SESSIONS_BASE/$OLD_INSTANCE" && ! -d "$AUDIT_BASE/$OLD_INSTANCE" ]]; then
+        && ! -d "$SESSIONS_BASE/$OLD_INSTANCE" && ! -d "$AUDIT_BASE/$OLD_INSTANCE" \
+        && ! -d "$ARTIFACTS_BASE/$OLD_INSTANCE" ]]; then
     echo "Error: nothing found for '$RENAME_OLD' (no worktree, branch, or session data)" >&2
     exit 1
   fi
@@ -452,6 +454,12 @@ if [[ "$RENAME_WORKTREE" == true ]]; then
   if [[ -d "$AUDIT_BASE/$OLD_INSTANCE" ]]; then
     echo "  Audit: $OLD_INSTANCE -> $NEW_INSTANCE"
     mv "$AUDIT_BASE/$OLD_INSTANCE" "$AUDIT_BASE/$NEW_INSTANCE"
+  fi
+
+  # 5. Move artifacts data
+  if [[ -d "$ARTIFACTS_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Artifacts: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$ARTIFACTS_BASE/$OLD_INSTANCE" "$ARTIFACTS_BASE/$NEW_INSTANCE"
   fi
 
   echo ""
@@ -1043,6 +1051,10 @@ delete_worktree() {
     rm -rf "$AUDIT_BASE/$instance_id"
     echo "  Removed audit data: $instance_id"
   fi
+  if [[ -d "$ARTIFACTS_BASE/$instance_id" ]]; then
+    rm -rf "$ARTIFACTS_BASE/$instance_id"
+    echo "  Removed artifacts data: $instance_id"
+  fi
 }
 
 # --- fzf preview for worktree details ---
@@ -1405,7 +1417,8 @@ fi
 # --- Run container ---
 AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
 SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
-mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$STATE_DIR"
+ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
+mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR"
 
 AUTH_MARKER="$STATE_DIR/.auth-configured"
 
@@ -1416,6 +1429,7 @@ if [[ "$USE_WORKTREE" == true ]]; then
   echo "  Branch: $WT_BRANCH"
 fi
 echo "  Audit: $AUDIT_DIR -> /audit"
+echo "  Artifacts: $ARTIFACTS_DIR -> /artifacts"
 echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
 echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
 echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
@@ -1447,6 +1461,7 @@ DOCKER_ARGS=(
   --pids-limit 512
   -v "$WORK_PATH:/workspace"
   -v "$AUDIT_DIR:/audit"
+  -v "$ARTIFACTS_DIR:/artifacts"
   -v "$STATE_DIR:/home/claudebot/.claude"
   -v "$SESSIONS_DIR:/home/claudebot/.claude/projects"
   -v "$OP_SOCKET:/run/1password/agent.sock"
@@ -1584,6 +1599,10 @@ cleanup() {
   fi
   if [[ "$NEEDS_DOCKER" == true ]]; then
     stop_proxy
+  fi
+  if [[ -n "${ARTIFACTS_DIR:-}" && -d "$ARTIFACTS_DIR" && -n "$(ls -A "$ARTIFACTS_DIR" 2>/dev/null)" ]]; then
+    echo ""
+    echo "Artifacts written to: $ARTIFACTS_DIR"
   fi
   if [[ "$USE_WORKTREE" == true ]]; then
     cleanup_worktree
