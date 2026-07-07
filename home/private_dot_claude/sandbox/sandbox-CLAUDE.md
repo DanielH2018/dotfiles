@@ -75,13 +75,13 @@ Plugin installation must happen on the host. A second read-only mount at the hos
 macOS path (`/Users/<user>/.claude/plugins/`) resolves absolute paths in `installed_plugins.json`.
 
 Available plugins: superpowers, code-review, feature-dev, commit-commands, pr-review-toolkit,
-claude-md-management, ralph-loop, processing-llm (lpt-pr-curator, lpt-dependabot-reviewer,
-lpt-network-specs), and privacy-eng-tools.
+claude-md-management, and ralph-loop, plus any additional plugins enabled by a machine-local
+settings overlay.
 
 ## MCP servers
 
 - **context7**: Available (runs via `npx` from the plugin's `.mcp.json`). May take a moment on first use to download the package.
-- **Cloud MCPs** (Atlassian, Slack, Notion, Gmail, Google Drive, Google Calendar, PagerDuty, Lithic API Docs, Grafana):
+- **Cloud MCPs** (Atlassian, Slack, Notion, Gmail, Google Drive, Google Calendar, and any others enabled by a machine-local overlay):
   All write operations are **denied** by settings.json deny rules. Only read/search/list/get operations are permitted.
   On first launch, the launcher runs `claude auth login` in a separate container to establish an
   OAuth session with your Anthropic account. This session is stored in the persistent state volume

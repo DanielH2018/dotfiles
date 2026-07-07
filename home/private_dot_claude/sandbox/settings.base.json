@@ -187,25 +187,7 @@
     "commit-commands@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": true,
-    "lpt-pr-curator@processing-llm": true,
-    "lpt-dependabot-reviewer@processing-llm": true,
-    "lpt-network-specs@processing-llm": true,
-    "privacy-eng-tools@privacy-skills": true
-  },
-  "extraKnownMarketplaces": {
-    "processing-llm": {
-      "source": {
-        "source": "github",
-        "repo": "privacy-com/processing-llm"
-      }
-    },
-    "privacy-skills": {
-      "source": {
-        "source": "github",
-        "repo": "privacy-com/claude-skills"
-      }
-    }
+    "ralph-loop@claude-plugins-official": true
   },
   "statusLine": {
     "type": "command",
