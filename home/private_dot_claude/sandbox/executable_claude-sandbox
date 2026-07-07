@@ -62,6 +62,7 @@ EXISTING_BRANCH=""
 COMPLETE_BRANCHES=false
 WT_NAME=""
 REPO_PATH=""
+NO_VAULT=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -103,6 +104,7 @@ while [[ $# -gt 0 ]]; do
         echo "Error: -b/--branch requires an existing branch name" >&2; exit 1
       fi
       ;;
+    --no-vault) NO_VAULT=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
@@ -1484,6 +1486,44 @@ DOCKER_ARGS=(
   -e SANDBOX_TOOLCHAINS="$TOOLCHAIN_LIST"
 )
 
+# --- Knowledge vault (read-only, curated subset) ---
+# Mount an allowlisted subset of the vault at its real host path so the agent
+# can consult standing/task context on demand. Nothing is auto-loaded — only a
+# pointer is added to CLAUDE.md by the entrypoint (gated on SANDBOX_VAULT_DIR).
+VAULT_INDEX_TMP=""
+VAULT_ALLOWLIST="$SANDBOX_DIR/vault-allowlist.txt"
+vault_eligible=false
+if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && -f "$VAULT_ALLOWLIST" ]]; then
+  case "$WORK_PATH/" in
+    "$CLAUDE_VAULT_DIR"/*) : ;;   # sandboxing the vault itself — skip
+    *) vault_eligible=true ;;
+  esac
+fi
+
+if [[ "$vault_eligible" == true ]]; then
+  vault_mounted=false
+  while IFS= read -r line; do
+    entry="${line%%#*}"           # strip inline comments
+    read -r entry <<< "$entry"    # trim surrounding whitespace (paths have no spaces)
+    [[ -z "$entry" ]] && continue
+    base="$(basename "$entry")"
+    [[ "$base" == "CLAUDE.md" || "$base" == "index.md" ]] && continue
+    if [[ -e "$CLAUDE_VAULT_DIR/$entry" ]]; then
+      DOCKER_ARGS+=(-v "$CLAUDE_VAULT_DIR/$entry:$CLAUDE_VAULT_DIR/$entry:ro")
+      vault_mounted=true
+    fi
+  done < "$VAULT_ALLOWLIST"
+
+  if [[ "$vault_mounted" == true ]]; then
+    VAULT_INDEX_TMP="$(mktemp "${TMPDIR:-/tmp}/vault-index-XXXXXX")"
+    if python3 "$SANDBOX_DIR/gen-vault-index.py" "$CLAUDE_VAULT_DIR" "$VAULT_ALLOWLIST" "$VAULT_INDEX_TMP" 2>/dev/null; then
+      DOCKER_ARGS+=(-v "$VAULT_INDEX_TMP:$CLAUDE_VAULT_DIR/index.md:ro")
+    fi
+    DOCKER_ARGS+=(-e SANDBOX_VAULT_DIR="$CLAUDE_VAULT_DIR")
+    echo "  Vault: curated read-only subset mounted at $CLAUDE_VAULT_DIR (--no-vault to disable)"
+  fi
+fi
+
 # Forward API key only when OAuth is not configured (they conflict)
 if [[ -n "${ANTHROPIC_API_KEY:-}" && ! -f "$AUTH_MARKER" ]]; then
   DOCKER_ARGS+=(-e ANTHROPIC_API_KEY)
@@ -1596,6 +1636,9 @@ cleanup() {
   # Remove temporary gh config file (contains token)
   if [[ -n "${GH_HOSTS_TMPFILE:-}" && -f "$GH_HOSTS_TMPFILE" ]]; then
     rm -f "$GH_HOSTS_TMPFILE"
+  fi
+  if [[ -n "${VAULT_INDEX_TMP:-}" && -f "$VAULT_INDEX_TMP" ]]; then
+    rm -f "$VAULT_INDEX_TMP"
   fi
   if [[ "$NEEDS_DOCKER" == true ]]; then
     stop_proxy

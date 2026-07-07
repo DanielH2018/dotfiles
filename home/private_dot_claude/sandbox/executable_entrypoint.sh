@@ -106,6 +106,11 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
   # Artifacts
   echo "- **Artifacts**: write non-git output (reports, exports, generated files) to \`/artifacts\` — bind-mounted to a host directory outside the repo, printed in the launcher's startup/exit banner."
 
+  # Knowledge vault (curated, read-only) — pointer only; content is on-demand
+  if [[ -n "${SANDBOX_VAULT_DIR:-}" ]]; then
+    echo "- **Knowledge vault**: a read-only, curated subset of the Lithic vault is mounted at \`${SANDBOX_VAULT_DIR}\`. It is a reference to pull from **on demand — not preloaded**. Start at \`${SANDBOX_VAULT_DIR}/index.md\` (one line per page: service/repo maps, glossary, network releases, runbooks) and read only the pages your task needs. It is read-only and **partial** — only cleared pages exist, so don't assume a referenced page is present. Your branch name usually encodes a PROC ticket — a good first filter."
+  fi
+
 } >> "$CLAUDE_MD"
 
 exec "$@"
