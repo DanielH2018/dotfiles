@@ -336,6 +336,7 @@
       "Bash(git config user.*:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
       "Bash(git push origin main --force*)",
       "Bash(git push origin master --force*)",
       "Bash(snow object drop:*)",
@@ -708,6 +709,7 @@
         "~/.aws",
         "~/.gnupg",
         "~/.config/gcloud",
+        "~/.config/gh",
         "~/.netrc",
         "~/.pypirc",
         "~/.npmrc",
@@ -719,6 +721,7 @@
         "~/.aws",
         "~/.gnupg",
         "~/.config/gcloud",
+        "~/.config/gh",
         "~/.netrc",
         "~/.pypirc",
         "~/.npmrc"
