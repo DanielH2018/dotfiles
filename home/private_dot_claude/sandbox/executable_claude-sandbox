@@ -831,7 +831,7 @@ compact_session() {
 
   # Stage 1: Mechanical extraction
   local extract_json
-  extract_json="$(mktemp "${TMPDIR:-/tmp}/compact-XXXXXX.json")"
+  extract_json="$(mktemp "${TMPDIR:-/tmp}/compact-XXXXXX")"
   if ! python3 "$SANDBOX_DIR/compact-session.py" extract "$session_dir" \
       --repo-path="$REPO_PATH" --branch="claude/$wt_name" > "$extract_json" 2>/dev/null; then
     echo "  Warning: extraction failed for $instance_id — skipping compaction."
@@ -858,7 +858,7 @@ compact_session() {
   if [[ "$user_count" -gt 50 && -n "$api_key" ]]; then
     echo "  Large session ($user_count messages) — generating API summary..."
     local summarized_json
-    summarized_json="$(mktemp "${TMPDIR:-/tmp}/compact-summary-XXXXXX.json")"
+    summarized_json="$(mktemp "${TMPDIR:-/tmp}/compact-summary-XXXXXX")"
     if python3 "$SANDBOX_DIR/compact-session.py" summarize "$extract_json" \
         --api-key="$api_key" > "$summarized_json" 2>/dev/null; then
       final_json="$summarized_json"
