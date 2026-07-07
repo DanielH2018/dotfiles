@@ -1,0 +1,18 @@
+# Curated vault subset exposed read-only to claude-sandbox containers.
+# Each line is a path under $CLAUDE_VAULT_DIR (file or dir). Keep sensitive
+# material OUT: Team/, Ops/Production_Incidents*, Ops/Incidents_*, Ops/On_Call.md
+# (AWS account IDs), Work/Meetings/, Work/Work_History.md, anything Ramp/expense.
+# NEVER list CLAUDE.md (auto-loads into every session's context) or index.md
+# (it is generated). Everything else here is read by the agent on demand.
+# A DIRECTORY entry bind-mounts ALL its contents read-only — including any
+# nested CLAUDE.md/index.md (the generated index omits them, but the mount
+# still exposes them). Only allowlist dirs you've confirmed contain neither.
+Lithic/About_Lithic.md
+Work/Codebase.md
+Work/Glossary.md
+Work/Network_Releases.md
+Work/Systems_and_Tools.md
+Work/processing_llm.md
+Work/Active_Epics.md
+Ops/Runbooks.md
+Ops/Recurring_Alert_Patterns.md
