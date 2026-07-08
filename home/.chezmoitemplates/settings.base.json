@@ -648,6 +648,8 @@
     "superpowers@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
 {{- if ne .chezmoi.os "windows" }}
     "feature-dev@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": true,
@@ -661,7 +663,8 @@
       "source": {
         "source": "github",
         "repo": "DanielH2018/claude-permission-audit"
-      }
+      },
+      "autoUpdate": true
     }
   },
   "sandbox": {{ if ne .chezmoi.os "windows" }}{
