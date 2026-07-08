@@ -413,7 +413,7 @@
     "defaultMode": "auto",
     "disableBypassPermissionsMode": "disable"
   },
-  "model": "fable",
+  "model": "opus[1m]",
   "effortLevel": "xhigh",
   "fallbackModel": [
     "claude-sonnet-5"
