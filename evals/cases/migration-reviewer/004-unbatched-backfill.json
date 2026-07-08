@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/004-unbatched-backfill",
+  "agent": "migration-reviewer",
+  "description": "A single-transaction backfill across all rows must be flagged for long-running lock/txn",
+  "input": "Review this data migration:\n```sql\nUPDATE transactions SET normalized_mcc = lookup_mcc(raw_mcc);\n```\nThis runs against the full transactions table (hundreds of millions of rows) in one statement.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review flags that a single unbatched UPDATE over the whole table holds a long transaction / bloats WAL / risks locks, and recommends batching the backfill into chunks.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

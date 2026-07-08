@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/006-no-down-migration",
+  "agent": "migration-reviewer",
+  "description": "A reversible change shipped without a down migration must be flagged for missing rollback",
+  "input": "Review this migration. There is an up migration but no down migration provided:\n```sql\n-- up.sql\nALTER TABLE accounts ADD COLUMN nickname VARCHAR(64);\n```\nNo down.sql exists in the change.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review notes the absence of a down/rollback migration and recommends adding one (the change is trivially reversible, so it should say so). It must not incorrectly claim the change is irreversible.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

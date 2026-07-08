@@ -1,0 +1,10 @@
+{
+  "id": "planner/005-proportionate",
+  "agent": "planner",
+  "description": "A trivial task should get a proportionate plan, not over-engineering",
+  "input": "Plan how to change the default page size of our accounts list endpoint from 25 to 50.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the plan is proportionate to a trivial one-line config/constant change — it should not invent a large multi-phase project, new abstractions, or unnecessary infrastructure. Noting a test and a changelog entry is fine.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

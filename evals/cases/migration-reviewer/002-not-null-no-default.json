@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/002-not-null-no-default",
+  "agent": "migration-reviewer",
+  "description": "Adding a NOT NULL column without a default must be flagged (existing rows fail)",
+  "input": "Review this migration:\n```sql\nALTER TABLE accounts ADD COLUMN region VARCHAR(16) NOT NULL;\n```\nThe accounts table has ~40 million existing rows.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review identifies that adding a NOT NULL column without a default fails against existing rows (or takes a rewrite/long lock), and recommends adding a default or backfilling first. Rating should be MEDIUM or higher.",
+  "k": 5,
+  "threshold": "all"
+}

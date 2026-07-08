@@ -1,0 +1,10 @@
+{
+  "id": "lucid-diagrammer/007-no-needless-question",
+  "agent": "lucid-diagrammer",
+  "description": "A fully-specified request should proceed without a needless clarifying question",
+  "input": "Diagram this architecture: the mobile-app calls the api-gateway; the api-gateway calls the auth-service and the ledger-service; the ledger-service reads and writes the ledger-db. Audience is engineers.\n\nProduce the full diagram specification as structured text — shapes, fill colors, connection labels, and legend. Do not attempt to call any tool.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the agent proceeds directly to produce the diagram specification (shapes for each named service, semantic connection labels) WITHOUT asking a clarifying question, since the request is fully specified.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

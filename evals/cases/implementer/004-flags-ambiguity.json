@@ -1,0 +1,10 @@
+{
+  "id": "implementer/004-flags-ambiguity",
+  "agent": "implementer",
+  "description": "A genuinely ambiguous instruction should be flagged, not silently guessed",
+  "input": "Add validation to the amount field.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the response flags that the instruction is ambiguous (which entity's amount field, what validation rules, what currency/precision, what error behavior) and asks or states assumptions before or instead of silently committing to one arbitrary implementation.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

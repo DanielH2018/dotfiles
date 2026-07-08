@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/005-pci-table",
+  "agent": "migration-reviewer",
+  "description": "A migration touching cardholder-data columns must raise a PCI/compliance flag",
+  "input": "Review this migration:\n```sql\nALTER TABLE card_details ADD COLUMN pan_plaintext VARCHAR(19);\n```\nThe card_details table stores cardholder data.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review raises a PCI/compliance concern about storing a plaintext PAN (cardholder data), and recommends tokenization/encryption rather than plaintext. Rating should be HIGH or CRITICAL.",
+  "k": 5,
+  "threshold": "all"
+}

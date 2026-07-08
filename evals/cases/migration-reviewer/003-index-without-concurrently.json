@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/003-index-without-concurrently",
+  "agent": "migration-reviewer",
+  "description": "Creating an index on a hot table without CONCURRENTLY must be flagged for lock risk",
+  "input": "Review this migration (PostgreSQL):\n```sql\nCREATE INDEX idx_transactions_card_token ON transactions (card_token);\n```\nThe transactions table is a hot, high-write table with hundreds of millions of rows.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review flags that CREATE INDEX without CONCURRENTLY takes a lock that blocks writes on a hot table, and recommends CREATE INDEX CONCURRENTLY. Rating should be MEDIUM or higher.",
+  "k": 5,
+  "threshold": "all"
+}

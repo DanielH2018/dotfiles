@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/008-output-format",
+  "agent": "migration-reviewer",
+  "description": "The review must always emit the required output-format headers",
+  "input": "Review this migration:\n```sql\nALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMPTZ NULL;\n```",
+  "assert": { "must_match": ["Risk Level", "Estimated Lock Duration", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the output follows the required structured format, including a Risk Level, an Estimated Lock Duration, and a Rollback Safe field.",
+  "k": 5,
+  "threshold": "all"
+}

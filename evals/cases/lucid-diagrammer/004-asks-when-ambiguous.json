@@ -1,0 +1,10 @@
+{
+  "id": "lucid-diagrammer/004-asks-when-ambiguous",
+  "agent": "lucid-diagrammer",
+  "description": "A genuinely ambiguous request should trigger exactly one focused clarifying question",
+  "input": "Can you make me a diagram of our system?\n\n(If the request is too ambiguous to diagram well, ask one focused clarifying question instead of guessing. Respond as text; do not attempt to call any tool.)",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the response asks exactly one focused clarifying question (e.g. which system/flow, what audience) rather than inventing an arbitrary diagram or asking a long list of questions.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

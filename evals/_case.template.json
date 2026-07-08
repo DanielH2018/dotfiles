@@ -1,0 +1,10 @@
+{
+  "id": "<agent>/<nnn-slug>",
+  "agent": "<agent>",
+  "description": "<one line: the behavior this case checks>",
+  "input": "<the exact prompt handed to the agent>",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if <all conditions, written so an honest run passes every time>.",
+  "k": 5,
+  "threshold": "all | rate>=X/Y"
+}

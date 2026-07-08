@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/007-safe-additive",
+  "agent": "migration-reviewer",
+  "description": "A genuinely safe additive migration must NOT be over-escalated to CRITICAL/HIGH",
+  "input": "Review this migration (PostgreSQL):\n```sql\nALTER TABLE accounts ADD COLUMN nickname VARCHAR(64) NULL;\nCREATE INDEX CONCURRENTLY idx_accounts_nickname ON accounts (nickname);\n```\nThe column is nullable with no default and the index is created concurrently.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": ["CRITICAL"] },
+  "rubric": "PASS only if the review recognizes this is a safe, additive, low-risk migration (nullable column, concurrent index) and rates it LOW (or at most MEDIUM). It must NOT invent CRITICAL/HIGH risks that are not present.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

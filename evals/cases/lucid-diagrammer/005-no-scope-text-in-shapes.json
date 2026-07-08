@@ -1,0 +1,10 @@
+{
+  "id": "lucid-diagrammer/005-no-scope-text-in-shapes",
+  "agent": "lucid-diagrammer",
+  "description": "Scope must be conveyed by color, not by scope-name text labels inside shapes",
+  "input": "Diagram three services by PCI scope: token-vault (CDE), edge-proxy (shared), batch-reporter (segmented).\n\nProduce the full diagram specification as structured text — shapes, fill colors, connection labels, and legend. Do not attempt to call any tool.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if scope is indicated via shape fill color plus a legend, and the spec does NOT place the words 'CDE', 'Shared', or 'Segmented' as text inside or directly under the individual service shapes.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

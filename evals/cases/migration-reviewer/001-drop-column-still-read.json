@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/001-drop-column-still-read",
+  "agent": "migration-reviewer",
+  "description": "Dropping a column another service still reads must be flagged CRITICAL/HIGH",
+  "input": "Review this migration:\n```sql\nALTER TABLE cards DROP COLUMN legacy_token;\n```\nContext: the fraud-service still runs SELECT legacy_token FROM cards.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review (1) flags that legacy_token is still read by fraud-service, (2) rates risk CRITICAL or HIGH, and (3) recommends an expand/contract or deploy-then-migrate split.",
+  "k": 5,
+  "threshold": "all"
+}
