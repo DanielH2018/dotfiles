@@ -124,7 +124,6 @@
       "Bash(bash <(wget *)",
       "Bash(sh <(curl *)",
       "Bash(sh <(wget *)",
-
       "mcp__claude_ai_Atlassian_-_Streamable__create*",
       "mcp__claude_ai_Atlassian_-_Streamable__edit*",
       "mcp__claude_ai_Atlassian_-_Streamable__update*",
@@ -132,36 +131,34 @@
       "mcp__claude_ai_Atlassian_-_Streamable__addWorklog*",
       "mcp__claude_ai_Atlassian_-_Streamable__transitionJiraIssue",
       "mcp__claude_ai_Atlassian_-_Streamable__createIssueLink",
-
       "mcp__claude_ai_Slack__slack_send_*",
       "mcp__claude_ai_Slack__slack_schedule_*",
       "mcp__claude_ai_Slack__slack_create_*",
       "mcp__claude_ai_Slack__slack_update_*",
-
       "mcp__claude_ai_Notion__notion-create-*",
       "mcp__claude_ai_Notion__notion-update-*",
       "mcp__claude_ai_Notion__notion-duplicate-*",
       "mcp__claude_ai_Notion__notion-move-*",
-
       "mcp__claude_ai_Gmail__create_*",
       "mcp__claude_ai_Gmail__delete_*",
       "mcp__claude_ai_Gmail__label_*",
       "mcp__claude_ai_Gmail__unlabel_*",
       "mcp__claude_ai_Gmail__update_*",
-
       "mcp__claude_ai_Google_Calendar__create_*",
       "mcp__claude_ai_Google_Calendar__delete_*",
       "mcp__claude_ai_Google_Calendar__update_*",
       "mcp__claude_ai_Google_Calendar__respond_*",
-
       "mcp__claude_ai_Google_Drive__create_*",
       "mcp__claude_ai_Google_Drive__copy_*",
-
       "mcp__claude_ai_Sentry__authenticate",
       "mcp__claude_ai_Sentry__complete_authentication",
-
       "mcp__claude_ai_Privacy_MCP__authenticate",
-      "mcp__claude_ai_Privacy_MCP__complete_authentication"
+      "mcp__claude_ai_Privacy_MCP__complete_authentication",
+      "Bash(chezmoi apply*)",
+      "Bash(chezmoi update*)",
+      "Bash(chezmoi init*)",
+      "Bash(chezmoi destroy*)",
+      "Bash(chezmoi purge*)"
     ]
   },
   "tui": "fullscreen",
