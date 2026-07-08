@@ -26,7 +26,9 @@ usage() {
   echo ""
   echo "Options:"
   echo "  --rebuild          Force rebuild the per-repo Docker image"
-  echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base)"
+  echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base);"
+  echo "                     always re-pulls Claude Code @latest. Note: normal runs auto-refresh"
+  echo "                     Claude Code once per day."
   echo "  --generate         Regenerate Dockerfile.claudebot only (don't build or run)"
   echo "  --worktree, -w [NAME]  Run in an isolated git worktree on branch claude/<NAME>."
   echo "                     Reuses existing worktree if branch already exists."
@@ -123,10 +125,41 @@ if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_
   fi
 fi
 
+# --- Base image build helper ---
+# Builds claudebot:base, passing a cache-bust token so the Claude Code layer
+# re-resolves @latest. "force" (explicit --rebuild-base) always busts; the
+# default is date-scoped so the daily auto-refresh is a no-op within a day.
+build_base() {
+  local refresh
+  if [[ "${1:-}" == "force" ]]; then
+    refresh="$(date -u +%Y%m%d%H%M%S)"
+  else
+    refresh="$(date -u +%Y%m%d)"
+  fi
+  echo "Building claudebot:base..."
+  docker build -t claudebot:base \
+    --build-arg CLAUDE_CODE_REFRESH="$refresh" \
+    -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
+  mkdir -p "$STATE_DIR"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/.last-claude-update"
+}
+
+# Re-resolve @latest at most once per day when the base already exists.
+# First-time builds get latest anyway, so this only guards the existing image.
+refresh_claude_if_stale() {
+  docker image inspect claudebot:base &>/dev/null || return 0
+  local marker="$STATE_DIR/.last-claude-update"
+  if [[ -f "$marker" ]] && [[ -z "$(find "$marker" -mtime +0 -print -quit 2>/dev/null)" ]]; then
+    return 0
+  fi
+  echo "Refreshing Claude Code (daily @latest check)..."
+  build_base
+  REBUILD=true
+}
+
 # --- Rebuild base image if requested ---
 if [[ "$REBUILD_BASE" == true ]]; then
-  echo "Building claudebot:base..."
-  docker build -t claudebot:base -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
+  build_base force
   [[ -z "$REPO_PATH" ]] && exit 0
   # Base changed — force per-repo rebuild too
   REBUILD=true
@@ -1395,12 +1428,14 @@ fi
 
 [[ "$GENERATE_ONLY" == true ]] && exit 0
 
-# --- Ensure base image exists ---
+# --- Ensure base image exists, else refresh Claude Code once per day ---
 if ! docker image inspect claudebot:base &>/dev/null; then
   echo "Base image claudebot:base not found — building it now..."
-  docker build -t claudebot:base -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
+  build_base
   # Base just built — force per-repo rebuild
   REBUILD=true
+else
+  refresh_claude_if_stale
 fi
 
 # --- Build image (skip if already exists and no rebuild requested) ---

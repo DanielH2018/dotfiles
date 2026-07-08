@@ -40,8 +40,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code
+# CLAUDE_CODE_REFRESH is a cache-busting token the launcher sets to the current
+# date so a new day re-resolves @latest, without a full --no-cache rebuild.
+# It sits directly above the install so the apt/node layers stay cached.
 ARG CLAUDE_CODE_VERSION="latest"
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ARG CLAUDE_CODE_REFRESH="0"
+RUN echo "claude-code refresh token: ${CLAUDE_CODE_REFRESH}" \
+    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 
 # Non-root user
