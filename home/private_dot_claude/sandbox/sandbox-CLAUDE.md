@@ -68,6 +68,14 @@ of `/workspace`. It's bind-mounted to a host directory (`~/.claude/sandbox/artif
 on the host, printed at container startup and again on exit) so it's visible without
 digging through the worktree or git branch. Files written there don't show up in `git status`.
 
+### Specs & implementation plans
+
+When you produce an implementation plan or a spec for review — in plan mode or in normal
+chat — also render it as an HTML artifact for readability, in addition to the written plan.
+Load the `artifact-design` skill first, then write a self-contained HTML file to `/artifacts`
+and report the path. Keep it **local**: do NOT publish to claude.ai or call the Artifact tool
+unless explicitly asked to send it there. Skip only when the plan is trivial or you're told not to.
+
 ## Plugins
 
 The host's `~/.claude/plugins/` directory is bind-mounted **read-only** into the container.

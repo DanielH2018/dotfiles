@@ -1516,6 +1516,7 @@ DOCKER_ARGS=(
   # bust the Docker layer cache for toolchain installs.
   -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
   -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
+  -v "$SANDBOX_DIR/suggest-artifact.sh:/home/claudebot/.claude-defaults/hooks/suggest-artifact.sh:ro"
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
   -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"

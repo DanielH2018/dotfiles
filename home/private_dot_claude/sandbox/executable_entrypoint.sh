@@ -23,9 +23,14 @@ if [[ -d "$DEFAULTS_DIR" ]]; then
   if [[ -f "$DEFAULTS_DIR/CLAUDE.md" ]]; then
     cp -f "$DEFAULTS_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
   fi
-  if [[ -f "$DEFAULTS_DIR/hooks/audit.sh" ]]; then
-    cp -f "$DEFAULTS_DIR/hooks/audit.sh" "$CLAUDE_DIR/hooks/audit.sh"
-    chmod +x "$CLAUDE_DIR/hooks/audit.sh"
+  # Copy every bind-mounted hook script into the live hooks dir (audit.sh,
+  # suggest-artifact.sh, and any future ones) so edits take effect on restart.
+  if [[ -d "$DEFAULTS_DIR/hooks" ]]; then
+    for _hook in "$DEFAULTS_DIR"/hooks/*.sh; do
+      [[ -f "$_hook" ]] || continue
+      cp -f "$_hook" "$CLAUDE_DIR/hooks/$(basename "$_hook")"
+      chmod +x "$CLAUDE_DIR/hooks/$(basename "$_hook")"
+    done
   fi
   if [[ -f "$DEFAULTS_DIR/statusline-command.sh" ]]; then
     cp -f "$DEFAULTS_DIR/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh"

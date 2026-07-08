@@ -173,6 +173,16 @@
             "command": "/home/claudebot/.claude/hooks/audit.sh"
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/suggest-artifact.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },
