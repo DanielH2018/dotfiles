@@ -1577,6 +1577,52 @@ if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" 
   esac
 fi
 
+# --- Vault-self hardening: protect sensitive subpaths, expose skills ---
+# Sandboxing the vault mounts everything RW at /workspace, which would expose
+# the exact material vault-allowlist.txt keeps out of other sandboxes. When the
+# workspace IS the vault: overlay read-only binds on the sensitive set (wiki
+# stays editable, but Team/incident/PII content can't be tampered with), and
+# mount user skills read-only so vault-lookup/service-context work in-session.
+if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
+  case "$REPO_PATH/" in
+    "$CLAUDE_VAULT_DIR"/*)
+      VAULT_SENSITIVE="$SANDBOX_DIR/vault-sensitive.txt"
+      if [[ -f "$VAULT_SENSITIVE" ]]; then
+        sensitive_ro=false
+        while IFS= read -r line; do
+          entry="${line%%#*}"           # strip inline comments
+          read -r entry <<< "$entry"    # trim whitespace (paths have no spaces)
+          [[ -z "$entry" ]] && continue
+          for match in "$WORK_PATH"/$entry; do
+            [[ -e "$match" ]] || continue
+            DOCKER_ARGS+=(-v "$match:/workspace/${match#"$WORK_PATH"/}:ro")
+            sensitive_ro=true
+          done
+        done < "$VAULT_SENSITIVE"
+        [[ "$sensitive_ro" == true ]] && \
+          echo "  Vault: sensitive subpaths mounted read-only (vault-sensitive.txt)"
+      fi
+      if [[ -d "$HOME/.claude/skills" ]]; then
+        DOCKER_ARGS+=(-v "$HOME/.claude/skills:/home/claudebot/.claude/skills:ro")
+        echo "  Skills: user skills mounted read-only (vault session)"
+      fi
+      ;;
+  esac
+fi
+
+# --- Warn if the workspace looks like the vault but its features are OFF ---
+# The vault mount, chezmoi mount, and read-only overlays all key off
+# CLAUDE_VAULT_DIR; if it is unset or doesn't match, they silently no-op.
+if [[ -f "$REPO_PATH/index.md" && -f "$REPO_PATH/log.md" && -d "$REPO_PATH/raw" ]]; then
+  vault_features_on=false
+  if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
+    case "$REPO_PATH/" in "$CLAUDE_VAULT_DIR"/*) vault_features_on=true ;; esac
+  fi
+  if [[ "$vault_features_on" == false ]]; then
+    echo "  Note: workspace looks like the vault but CLAUDE_VAULT_DIR${CLAUDE_VAULT_DIR:+=$CLAUDE_VAULT_DIR} does not match it — vault-context, chezmoi, and read-only overlays are OFF this run." >&2
+  fi
+fi
+
 # Forward API key only when OAuth is not configured (they conflict)
 if [[ -n "${ANTHROPIC_API_KEY:-}" && ! -f "$AUTH_MARKER" ]]; then
   DOCKER_ARGS+=(-e ANTHROPIC_API_KEY)

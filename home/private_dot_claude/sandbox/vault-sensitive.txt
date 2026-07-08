@@ -1,0 +1,13 @@
+# Vault subpaths mounted READ-ONLY when the vault itself is the sandbox
+# workspace. Sandboxing the vault mounts everything RW at /workspace; these
+# overlays keep the material vault-allowlist.txt excludes from being TAMPERED
+# with in-session (wiki pages stay editable). Container path is /workspace/<entry>.
+# One path per line; globs allowed (expanded at launch). Keep in sync with the
+# exclusions documented in vault-allowlist.txt.
+Team
+Work/Meetings
+Work/Work_History.md
+Ops/On_Call.md
+Ops/Production_Incidents.md
+Ops/Incidents_*.md
+Ops/Majority_Migration.md
