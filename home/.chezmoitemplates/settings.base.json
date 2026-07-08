@@ -753,7 +753,7 @@
       "autoUpdate": true
     }
   },
-  "sandbox": {{ if ne .chezmoi.os "windows" }}{
+  "sandbox": {{/* macOS-only: the block below is macOS-tuned (1Password agent socket, /System, allowUnixSockets) and Linux lacks bwrap/socat, so an enabled sandbox there just runs unsandboxed and warns about glob Read/Edit rules it can't enforce */}}{{ if eq .chezmoi.os "darwin" }}{
     "enabled": true,
     "autoAllowBashIfSandboxed": true,
     "network": {
