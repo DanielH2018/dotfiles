@@ -39,6 +39,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# chezmoi
+# Dotfiles manager. The vault sandbox bind-mounts the chezmoi SOURCE read-write;
+# this binary lets the agent preview/manage it (cat/diff/managed/source-path/
+# execute-template). Pinned + checksum-verified (no curl|sh). apply/update/add
+# target the CONTAINER home (not the host) and are denied in settings.base.json;
+# run those on the host. Pinned to match the host version.
+ARG CHEZMOI_VERSION=2.70.5
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    base="https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}"; \
+    file="chezmoi_${CHEZMOI_VERSION}_linux_${arch}.tar.gz"; \
+    cd /tmp; \
+    curl -fsSL -O "${base}/${file}"; \
+    curl -fsSL -O "${base}/chezmoi_${CHEZMOI_VERSION}_checksums.txt"; \
+    grep " ${file}$" "chezmoi_${CHEZMOI_VERSION}_checksums.txt" | sha256sum -c -; \
+    tar -xzf "${file}" chezmoi; \
+    install -m 0755 chezmoi /usr/local/bin/chezmoi; \
+    rm -f "${file}" "chezmoi_${CHEZMOI_VERSION}_checksums.txt" chezmoi; \
+    chezmoi --version
+
 # Claude Code
 # CLAUDE_CODE_REFRESH is a cache-busting token the launcher sets to the current
 # date so a new day re-resolves @latest, without a full --no-cache rebuild.
@@ -60,6 +80,32 @@ WORKDIR /workspace
 # persistent .claude/ volume on each launch.
 RUN mkdir -p /home/claudebot/.claude-defaults/hooks \
              /home/claudebot/.claude/hooks
+
+# --- vault-index semantic search tooling (shared layer) ---
+# Used when a sandbox mounts a curated read-only vault subset: the host builds a
+# DuckDB index over ONLY the allowlisted pages and mounts it read-only; the
+# container queries it offline via this venv. bge-small + the DuckDB fts
+# extension are prefetched here so query needs no network. The model layer is
+# content-addressed and shared across all per-repo images (FROM claudebot:base),
+# not duplicated on disk.
+USER root
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/vault-index && chown claudebot:claudebot /opt/vault-index
+COPY vault-search /usr/local/bin/vault-search
+RUN chmod +x /usr/local/bin/vault-search
+USER claudebot
+ENV VAULT_INDEX_VENV=/opt/vault-index/venv
+ENV VAULT_INDEX_MODEL_CACHE=/opt/vault-index/models
+ARG VAULT_INDEX_MODEL="BAAI/bge-small-en-v1.5"
+RUN python3 -m venv "$VAULT_INDEX_VENV" \
+    && "$VAULT_INDEX_VENV/bin/pip" install --no-cache-dir fastembed duckdb \
+    && mkdir -p "$VAULT_INDEX_MODEL_CACHE" \
+    && HF_HUB_OFFLINE=0 "$VAULT_INDEX_VENV/bin/python" -c "import os; from fastembed import TextEmbedding; TextEmbedding('$VAULT_INDEX_MODEL', cache_dir=os.environ['VAULT_INDEX_MODEL_CACHE'])" \
+    && "$VAULT_INDEX_VENV/bin/python" -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL fts'); c.close()"
 
 # Seed .claude.json so first-run prompts are skipped
 COPY --chown=claudebot:claudebot claude.json /home/claudebot/.claude.json

@@ -1529,6 +1529,7 @@ DOCKER_ARGS=(
 # can consult standing/task context on demand. Nothing is auto-loaded — only a
 # pointer is added to CLAUDE.md by the entrypoint (gated on SANDBOX_VAULT_DIR).
 VAULT_INDEX_TMP=""
+VAULT_DB_TMPDIR=""
 VAULT_ALLOWLIST="$SANDBOX_DIR/vault-allowlist.txt"
 vault_eligible=false
 if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && -f "$VAULT_ALLOWLIST" ]]; then
@@ -1559,6 +1560,27 @@ if [[ "$vault_eligible" == true ]]; then
     fi
     DOCKER_ARGS+=(-e SANDBOX_VAULT_DIR="$CLAUDE_VAULT_DIR")
     echo "  Vault: curated read-only subset mounted at $CLAUDE_VAULT_DIR (--no-vault to disable)"
+
+    # Semantic search over the curated subset: build a DuckDB index host-side over
+    # ONLY the allowlisted pages (--paths-from enforces the boundary) and mount it
+    # read-only. The container queries it offline via the baked venv (vault-search).
+    # Best-effort — falls back to the markdown index above if tooling is missing.
+    VAULT_INDEX_DIR="$CLAUDE_VAULT_DIR/vault-index"
+    if command -v uv &>/dev/null && [[ -f "$VAULT_INDEX_DIR/pyproject.toml" ]]; then
+      VAULT_DB_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/vault-db-XXXXXX")"
+      if (cd "$VAULT_INDEX_DIR" && uv run --quiet vault-index build \
+            --root "$CLAUDE_VAULT_DIR" --paths-from "$VAULT_ALLOWLIST" \
+            --db "$VAULT_DB_TMPDIR/vault.duckdb") >/dev/null 2>&1; then
+        DOCKER_ARGS+=(-v "$VAULT_DB_TMPDIR/vault.duckdb:/home/claudebot/.vault-index/vault.duckdb:ro")
+        DOCKER_ARGS+=(-v "$VAULT_INDEX_DIR:/opt/vault-index/code:ro")
+        DOCKER_ARGS+=(-e SANDBOX_VAULT_DB="/home/claudebot/.vault-index/vault.duckdb")
+        echo "  Vault: semantic search available (run 'vault-search') over the curated subset"
+      else
+        rm -rf "$VAULT_DB_TMPDIR"
+        VAULT_DB_TMPDIR=""
+        echo "  Vault: semantic index build skipped (markdown index.md still available)" >&2
+      fi
+    fi
   fi
 fi
 
@@ -1572,6 +1594,10 @@ if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" 
   case "$REPO_PATH/" in
     "$CLAUDE_VAULT_DIR"/*)
       DOCKER_ARGS+=(-v "$CHEZMOI_SRC:$CHEZMOI_SRC")
+      # Point the in-container chezmoi binary at the mounted source so
+      # cat/diff/managed/source-path/execute-template work. apply/add are denied
+      # (settings.base.json) — their dest is the container home, not the host.
+      DOCKER_ARGS+=(-e CHEZMOI_SOURCE_DIR="$CHEZMOI_SRC")
       echo "  chezmoi: source mounted READ-WRITE at $CHEZMOI_SRC (apply on host; --no-chezmoi to disable)"
       ;;
   esac
@@ -1738,6 +1764,9 @@ cleanup() {
   fi
   if [[ -n "${VAULT_INDEX_TMP:-}" && -f "$VAULT_INDEX_TMP" ]]; then
     rm -f "$VAULT_INDEX_TMP"
+  fi
+  if [[ -n "${VAULT_DB_TMPDIR:-}" && -d "$VAULT_DB_TMPDIR" ]]; then
+    rm -rf "$VAULT_DB_TMPDIR"
   fi
   if [[ "$NEEDS_DOCKER" == true ]]; then
     stop_proxy
