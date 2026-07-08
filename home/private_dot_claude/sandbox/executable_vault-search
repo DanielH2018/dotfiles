@@ -1,0 +1,23 @@
+#!/bin/bash
+# vault-search: query the curated, read-only vault index mounted into this sandbox.
+#
+# The launcher builds a DuckDB index over ONLY the allowlisted vault pages
+# (vault-allowlist.txt), mounts it read-only at $SANDBOX_VAULT_DB, and mounts the
+# vault-index package at /opt/vault-index/code. The embedding model + fts
+# extension are baked into the image, so this runs fully offline.
+#
+# Usage: vault-search "<natural-language query>" [-k N] [--json]
+set -euo pipefail
+
+if [[ -z "${SANDBOX_VAULT_DB:-}" || ! -f "${SANDBOX_VAULT_DB}" ]]; then
+  echo "vault-search: no vault index in this sandbox (SANDBOX_VAULT_DB unset)." >&2
+  echo "The curated vault subset may not be mounted, or the index build was skipped." >&2
+  exit 1
+fi
+
+exec env \
+  HF_HUB_OFFLINE=1 \
+  VAULT_INDEX_MODEL_CACHE="${VAULT_INDEX_MODEL_CACHE:-/opt/vault-index/models}" \
+  PYTHONPATH="/opt/vault-index/code" \
+  "${VAULT_INDEX_VENV:-/opt/vault-index/venv}/bin/python" -m vault_index.cli \
+    query --db "$SANDBOX_VAULT_DB" "$@"
