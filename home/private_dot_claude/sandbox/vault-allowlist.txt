@@ -14,6 +14,8 @@ Work/Network_Releases.md
 Work/Systems_and_Tools.md
 Work/processing_llm.md
 Work/Active_Epics.md
-Work/Claude_Code_Setup.md
+# Work/Claude_Code_Setup.md intentionally NOT listed — setup-meta context that
+# isn't needed in ~/Repositories sandboxes (it stays available when the vault
+# itself is the workspace, where the whole tree is mounted). Don't re-add.
 Ops/Runbooks.md
 Ops/Recurring_Alert_Patterns.md
