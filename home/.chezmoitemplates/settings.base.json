@@ -539,6 +539,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/suggest-artifact.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Notification": [
