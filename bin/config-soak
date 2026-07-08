@@ -1,0 +1,158 @@
+#!/usr/bin/env node
+'use strict';
+// config-soak — deterministic review + soak gate for behavior-affecting config.
+//
+// Treats ~/.claude config (settings.base.json, hooks, agents, skills, CLAUDE.md)
+// like code: a change must be consciously acknowledged (`land`) before it is
+// considered reviewed, and is only flagged `stable` after an observation window.
+// This is the deterministic, mechanical complement to the agent-driven
+// `review-setup` skill: no LLM, no judgement, just a fingerprint ledger.
+//
+// Usage:
+//   config-soak status [--json]     report + exit non-zero if unreviewed changes exist
+//   config-soak land [PATH...]      record current config as reviewed (starts soak clock)
+//   config-soak list                print the tracked path set and exit
+//   config-soak --help
+//
+// The ledger lives at <repo>/config-soak.json and is committed. Fingerprints are
+// taken over the chezmoi SOURCE files (executable_*, *.tmpl) — the reviewable
+// source of truth — not the deployed/rendered output.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const lib = require('./config-soak-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const MANIFEST_PATH = path.join(REPO_ROOT, 'config-soak.json');
+
+// Behavior-affecting config surface. `file` = a single path; `dir` = recurse.
+// Paths are repo-relative and use forward slashes in the ledger.
+const TRACKED = [
+  { type: 'file', path: 'home/.chezmoitemplates/settings.base.json' },
+  { type: 'file', path: 'home/private_dot_claude/CLAUDE.md.tmpl' },
+  { type: 'dir', path: 'home/private_dot_claude/hooks' },
+  { type: 'dir', path: 'home/private_dot_claude/agents' },
+  { type: 'dir', path: 'home/private_dot_claude/skills' },
+];
+
+function walk(absDir, acc) {
+  for (const ent of fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const abs = path.join(absDir, ent.name);
+    if (ent.isDirectory()) walk(abs, acc);
+    else if (ent.isFile()) acc.push(abs);
+  }
+  return acc;
+}
+
+// Scan the tracked surface into { repoRelPath: sha256 }. Missing roots are skipped.
+function scanTracked() {
+  const files = [];
+  for (const spec of TRACKED) {
+    const abs = path.join(REPO_ROOT, spec.path);
+    if (!fs.existsSync(abs)) continue;
+    if (spec.type === 'dir') walk(abs, files);
+    else files.push(abs);
+  }
+  const tracked = {};
+  for (const abs of files) {
+    const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
+    tracked[rel] = lib.fingerprint(fs.readFileSync(abs));
+  }
+  return tracked;
+}
+
+function readManifest() {
+  if (!fs.existsSync(MANIFEST_PATH)) return { windowDays: lib.DEFAULT_WINDOW_DAYS, entries: [] };
+  try {
+    const m = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
+    m.entries = m.entries || [];
+    return m;
+  } catch (e) {
+    process.stderr.write(`config-soak: cannot parse ${MANIFEST_PATH}: ${e.message}\n`);
+    process.exit(2);
+  }
+}
+
+function writeManifest(m) {
+  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(m, null, 2) + '\n');
+}
+
+function pluralLine(label, items, render) {
+  if (!items.length) return '';
+  return `\n${label} (${items.length}):\n` + items.map((i) => '  ' + render(i)).join('\n') + '\n';
+}
+
+function cmdStatus(argv) {
+  const json = argv.includes('--json');
+  const tracked = scanTracked();
+  const manifest = readManifest();
+  const now = new Date().toISOString();
+  const report = lib.buildReport({ tracked, manifest, now });
+  const failures = lib.gateFailures(report);
+
+  if (json) {
+    process.stdout.write(JSON.stringify({ ...report, failures, ok: failures === 0 }, null, 2) + '\n');
+    return failures === 0 ? 0 : 1;
+  }
+
+  const d1 = (n) => n.toFixed(1);
+  let out = `config soak status  (window: ${report.windowDays}d)\n`;
+  out += pluralLine('UNREVIEWED — new config, run `config-soak land`', report.unrecorded, (i) => i.path);
+  out += pluralLine('CHANGED — content differs from ledger, re-review then `land`', report.changed, (i) => i.path);
+  out += pluralLine('REMOVED — deleted since last land, `land` to acknowledge', report.removed, (i) => i.path);
+  out += pluralLine('SOAKING — reviewed, not yet stable', report.soaking, (i) => `${i.path}  (${d1(i.daysRemaining)}d remaining)`);
+  out += pluralLine('STABLE — soaked past the window', report.stable, (i) => `${i.path}  (${d1(i.ageDays)}d)`);
+  out += failures === 0
+    ? '\nGATE PASS — all behavior-affecting config is acknowledged.\n'
+    : `\nGATE FAIL — ${failures} unreviewed change(s). Review the diff, then \`config-soak land\`.\n`;
+  process.stdout.write(out);
+  return failures === 0 ? 0 : 1;
+}
+
+function cmdLand(argv) {
+  const paths = argv.filter((a) => !a.startsWith('-'));
+  const tracked = scanTracked();
+  const manifest = readManifest();
+  const now = new Date().toISOString();
+  const before = lib.buildReport({ tracked, manifest, now });
+  const next = lib.land({ tracked, manifest, now, paths });
+  writeManifest(next);
+  const after = lib.buildReport({ tracked, manifest: next, now });
+  const acknowledged = lib.gateFailures(before) - lib.gateFailures(after);
+  process.stdout.write(
+    `config-soak: landed ${acknowledged} change(s); ${after.soaking.length} soaking, ${after.stable.length} stable.\n` +
+    `Ledger written to ${path.relative(REPO_ROOT, MANIFEST_PATH)}. Commit it to persist the soak clock.\n`
+  );
+  return 0;
+}
+
+function cmdList() {
+  const tracked = scanTracked();
+  process.stdout.write(Object.keys(tracked).sort().join('\n') + '\n');
+  return 0;
+}
+
+const HELP = `config-soak — deterministic review + soak gate for behavior-affecting config
+
+  config-soak status [--json]   report; exit 1 if any unreviewed change exists
+  config-soak land [PATH...]    record current config as reviewed (start soak clock)
+  config-soak list              print the tracked config paths
+  config-soak --help
+`;
+
+function main() {
+  const [cmd, ...rest] = process.argv.slice(2);
+  switch (cmd) {
+    case undefined:
+    case 'status': return cmdStatus(rest);
+    case 'land': return cmdLand(rest);
+    case 'list': return cmdList();
+    case '-h':
+    case '--help': process.stdout.write(HELP); return 0;
+    default:
+      process.stderr.write(`config-soak: unknown command '${cmd}'\n\n${HELP}`);
+      return 2;
+  }
+}
+
+process.exit(main());
