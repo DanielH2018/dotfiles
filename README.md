@@ -51,3 +51,19 @@ so the ownership map never drifts.
 
 Manifest fragments live in `~/.config/dotsync/manifest.d/*.json` (merged in lexical order).
 See `docs/RESTORE.md` for the bare-metal bootstrap.
+
+## config-soak — review + soak gate for behavior-affecting config
+
+`bin/config-soak` (repo tooling, not deployed) treats behavior-affecting Claude Code config —
+`settings.base.json`, hooks, agents, skills, `CLAUDE.md` — like code: a change must be consciously
+acknowledged before it counts as reviewed, and is only flagged stable after a soak window.
+
+- `config-soak status [--json]` — fingerprint the tracked config, diff against the committed
+  ledger (`config-soak.json`), and report `unrecorded`/`changed`/`removed`/`soaking`/`stable`.
+  Exits non-zero if any unreviewed change exists (the gate).
+- `config-soak land [PATH...]` — record the current config as reviewed; stamps `landed=now` for
+  new/changed files, preserves the clock for unchanged ones. Commit the ledger to persist it.
+- `config-soak list` — print the tracked paths.
+
+It is the deterministic complement to the LLM-driven `/review-setup` skill. See
+`docs/superpowers/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
