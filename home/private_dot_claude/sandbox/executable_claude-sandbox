@@ -42,6 +42,7 @@ usage() {
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
   echo "  --prune            Interactively select and delete worktrees (fzf picker)."
   echo "  --gc               Clean up worktrees whose remote branches were deleted."
+  echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
   exit 1
 }
 
@@ -65,6 +66,7 @@ COMPLETE_BRANCHES=false
 WT_NAME=""
 REPO_PATH=""
 NO_VAULT=false
+NO_CHEZMOI=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -107,6 +109,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --no-vault) NO_VAULT=true; shift ;;
+    --no-chezmoi) NO_CHEZMOI=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
@@ -1557,6 +1560,21 @@ if [[ "$vault_eligible" == true ]]; then
     DOCKER_ARGS+=(-e SANDBOX_VAULT_DIR="$CLAUDE_VAULT_DIR")
     echo "  Vault: curated read-only subset mounted at $CLAUDE_VAULT_DIR (--no-vault to disable)"
   fi
+fi
+
+# --- chezmoi dotfiles source (read-write) when the workspace is the vault ---
+# The vault is the primary sandbox; expose the chezmoi source tree so config
+# edits happen in-session. Mounted RW at its real host path so in-container git
+# (commit/diff) resolves. NOTE: `chezmoi apply` runs on the HOST — that apply is
+# the trust boundary; edits here don't affect the host until you apply them.
+CHEZMOI_SRC="${CHEZMOI_SRC_DIR:-$HOME/.local/share/chezmoi}"
+if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" ]]; then
+  case "$REPO_PATH/" in
+    "$CLAUDE_VAULT_DIR"/*)
+      DOCKER_ARGS+=(-v "$CHEZMOI_SRC:$CHEZMOI_SRC")
+      echo "  chezmoi: source mounted READ-WRITE at $CHEZMOI_SRC (apply on host; --no-chezmoi to disable)"
+      ;;
+  esac
 fi
 
 # Forward API key only when OAuth is not configured (they conflict)
