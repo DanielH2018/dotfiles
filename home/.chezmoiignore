@@ -4,3 +4,11 @@ Brewfile
 .config/git
 .claude/sandbox
 {{ end }}
+
+# Machine-local overrides must never enter this (public) repo. Blocks `chezmoi add`
+# on any *.local.* file so a permission/secret override can't be swept upstream.
+**/*.local.json
+**/*.local.md
+**/*.local.zsh
+**/*.local.env
+**/local.config

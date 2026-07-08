@@ -3,3 +3,10 @@
 *.swp
 *.swo
 .superpowers/
+
+# Second layer: even if a *.local.* file lands in the source tree, never commit it.
+**/*.local.json
+**/*.local.md
+**/*.local.zsh
+**/*.local.env
+**/local.config
