@@ -723,7 +723,7 @@
     },
     "filesystem": {
       "allowWrite": [
-        "~/.dotfiles",
+        "~/.local/share/chezmoi",
         "~/.claude",
         "~/.gradle",
         "~/.m2",
