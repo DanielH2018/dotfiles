@@ -33,6 +33,7 @@ const TRACKED = [
   { type: 'dir', path: 'home/private_dot_claude/hooks' },
   { type: 'dir', path: 'home/private_dot_claude/agents' },
   { type: 'dir', path: 'home/private_dot_claude/skills' },
+  { type: 'dir', path: 'home/private_dot_claude/rules' },
 ];
 
 function walk(absDir, acc) {

@@ -8,8 +8,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "1dbcf0f40034e1c2c5088e62ce30a13af3718dc624ed9c30d6e42aaba5873236",
-      "landed": "2026-07-09T19:36:44.639Z"
+      "hash": "b515ccf9ebb5317497e3bc709fdccdbba0cae089d53f7eb9fdeaac6ce211afed",
+      "landed": "2026-07-09T20:54:31.575Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -127,6 +127,46 @@
       "landed": "2026-07-08T20:17:05.073Z"
     },
     {
+      "path": "home/private_dot_claude/rules/anti-slop.md",
+      "hash": "7e50dfde354d18417e9665959a6c566a33001ae3213b7eb962cf3bdb0b244fd0",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/go.md",
+      "hash": "bc0bd77220f8a2cc7e16bc099ac22019e3020a0666db542bd5bc0aaf47fd3be8",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/java-kotlin.md",
+      "hash": "1197b9bb6a9072aee8cc013a17972ad047b78e550c7f4d1a520f02f501e7af94",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/python.md",
+      "hash": "fca9a5dd5cddb4c74d2a20ba7844aca9f5e441f8a12c17feb5024dee28a4f5c1",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/rust.md",
+      "hash": "6b3c245b8832b3a75fdc29c0d00b964a32dfbdd07322b2ad27a16ef7ad50dcbd",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/shell.md",
+      "hash": "de4f880534d29031027538502f38e66944b890fad9922b57e6ce3c4d563decc1",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/sql.md",
+      "hash": "9c02cab1f5daba494774c6e6a040d8cfed383b313e2433b5a17978d82e5470bd",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/typescript.md",
+      "hash": "408e0861c708a2cad91924a136c4793e1bba50ea2fd3aa05d05cd1c2616343ea",
+      "landed": "2026-07-09T20:54:31.575Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
       "hash": "7c264c555652da3ab15417181b1de0103fb337e025561893d9fcc100be206ef0",
       "landed": "2026-07-09T16:03:38.807Z"
@@ -138,8 +178,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.js",
-      "hash": "212e0548ea11435f9cc6bda39d73b400e3c4ecd5dc71c748269ba92215bab85e",
-      "landed": "2026-07-09T19:36:44.639Z"
+      "hash": "89ae4bb8f236786498f074e354bcd0496c2f4d5e71fe1f4cd1cb63420f88e99b",
+      "landed": "2026-07-09T20:54:31.575Z"
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.test.js",
@@ -153,8 +193,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/distill-scan/SKILL.md",
-      "hash": "5560b511f9b541d5d973a7bc451ba9be8a20e440e6c5fb98a9d8d9287ef8046d",
-      "landed": "2026-07-09T19:58:55.683Z"
+      "hash": "66be1d83628452b2cb4f98b06a64cc32d720289de85ad6d2d66a671948e0aefa",
+      "landed": "2026-07-09T20:54:31.575Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",

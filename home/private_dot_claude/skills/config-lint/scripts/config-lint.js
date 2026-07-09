@@ -54,7 +54,7 @@ function extractHookCommands(settings) {
 
 function extractPaths(cmd, home) {
     const paths = [], unresolved = [];
-    const re = /"([^"]+\.(?:js|sh|mjs|cjs))"|'([^']+\.(?:js|sh|mjs|cjs))'|(\S+\.(?:js|sh|mjs|cjs))/g;
+    const re = /"([^"]{1,400}\.(?:js|sh|mjs|cjs))"|'([^']{1,400}\.(?:js|sh|mjs|cjs))'|(\S{1,400}\.(?:js|sh|mjs|cjs))/g;
     let match;
     while ((match = re.exec(cmd)) !== null) {
         let tok = match[1] || match[2] || match[3];

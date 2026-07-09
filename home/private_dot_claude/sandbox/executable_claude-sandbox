@@ -1784,12 +1784,19 @@ if [[ "$NO_WORK_CONFIG" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$WORK_CONF
   esac
 fi
 
-# --- Vault-self hardening: protect sensitive subpaths, expose skills ---
+# --- User skills — mounted read-only in EVERY session so general-purpose skills
+# (prep, artifact-design, gh-stack, config-lint, …) work in any sandbox, not just
+# vault ones. Skills that need the vault (vault-lookup/service-context) simply
+# no-op where it isn't mounted.
+if [[ -d "$HOME/.claude/skills" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.claude/skills:/home/claudebot/.claude/skills:ro")
+fi
+
+# --- Vault-self hardening: protect sensitive subpaths ---
 # Sandboxing the vault mounts everything RW at /workspace, which would expose
 # the exact material vault-allowlist.txt keeps out of other sandboxes. When the
 # workspace IS the vault: overlay read-only binds on the sensitive set (wiki
-# stays editable, but Team/incident/PII content can't be tampered with), and
-# mount user skills read-only so vault-lookup/service-context work in-session.
+# stays editable, but Team/incident/PII content can't be tampered with).
 if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
   case "$REPO_PATH/" in
     "$CLAUDE_VAULT_DIR"/*)
@@ -1808,10 +1815,6 @@ if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
         done < "$VAULT_SENSITIVE"
         [[ "$sensitive_ro" == true ]] && \
           echo "  Vault: sensitive subpaths mounted read-only (vault-sensitive.txt)"
-      fi
-      if [[ -d "$HOME/.claude/skills" ]]; then
-        DOCKER_ARGS+=(-v "$HOME/.claude/skills:/home/claudebot/.claude/skills:ro")
-        echo "  Skills: user skills mounted read-only (vault session)"
       fi
       ;;
   esac

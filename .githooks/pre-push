@@ -59,6 +59,7 @@ run "config-soak (review ledger)" node bin/config-soak status
 QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-45}"
 QFILES=$(ls home/private_dot_claude/agents/*.md \
             home/private_dot_claude/skills/*/SKILL.md \
+            home/private_dot_claude/rules/*.md \
             home/private_dot_claude/CLAUDE.md.tmpl 2>/dev/null)
 if [ -n "$QFILES" ]; then
   # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
