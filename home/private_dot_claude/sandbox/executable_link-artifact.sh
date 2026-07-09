@@ -42,10 +42,11 @@ case "$path" in
     exit 0 ;;
 esac
 
-jq -n --arg url "file://$host" '{
+msg="An artifact was written. Include this link verbatim in your reply, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
+jq -n --arg url "file://$host" --arg msg "$msg" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ("An artifact was written. Include this link verbatim in your reply, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches the Ghostty link handler. Link: " + $url)
+    additionalContext: ($msg + $url)
   }
 }'
 exit 0
