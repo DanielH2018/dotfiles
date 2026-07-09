@@ -44,6 +44,8 @@ usage() {
   echo "  --gc               Clean up worktrees whose remote branches were deleted."
   echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
   echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
+  echo "  --fresh, --new     Start a new conversation even if this instance has a prior"
+  echo "                     session. By default an existing session auto-resumes (--continue)."
   exit 1
 }
 
@@ -69,6 +71,7 @@ REPO_PATH=""
 NO_VAULT=false
 NO_CHEZMOI=false
 NO_WORK_CONFIG=false
+FRESH_SESSION=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -113,6 +116,7 @@ while [[ $# -gt 0 ]]; do
     --no-vault) NO_VAULT=true; shift ;;
     --no-chezmoi) NO_CHEZMOI=true; shift ;;
     --no-work-config) NO_WORK_CONFIG=true; shift ;;
+    --fresh|--new) FRESH_SESSION=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
@@ -1518,6 +1522,19 @@ SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
 ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
 mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR"
 
+# --- Auto-resume: continue the most recent conversation for this instance ---
+# The container cwd is always /workspace, which Claude escapes to the "-workspace"
+# project dir; its top-level *.jsonl are prior conversations. If any exist (and
+# --fresh wasn't passed), append --continue so a re-launch of the same instance
+# picks up where it left off instead of starting cold. Only replays a transcript
+# already persisted on the host — not boundary-affecting.
+RESUME_SESSION=false
+if [[ "$FRESH_SESSION" == false ]]; then
+  if [[ -n "$(find "$SESSIONS_DIR/-workspace" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
+    RESUME_SESSION=true
+  fi
+fi
+
 AUTH_MARKER="$STATE_DIR/.auth-configured"
 
 echo ""
@@ -1530,6 +1547,9 @@ echo "  Audit: $AUDIT_DIR -> /audit"
 echo "  Artifacts: $ARTIFACTS_DIR -> /artifacts"
 echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
 echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
+if [[ "$RESUME_SESSION" == true ]]; then
+  echo "  Session: resuming most recent conversation (--continue) — pass --fresh to start clean"
+fi
 echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
 echo "  Commands/Agents: ~/.claude/{commands,agents} -> /home/claudebot/.claude/{commands,agents} (read-only)"
 if [[ -f "$AUTH_MARKER" ]]; then
@@ -1873,4 +1893,9 @@ if [[ -S "$OP_SOCKET" && -x "$OP_ENSURE" ]]; then
     || echo "  Warning: signing key not confirmed — commits inside the sandbox may fail to sign until you unlock 1Password." >&2
 fi
 
-docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG"
+# Command mirrors the image default CMD (Dockerfile.base) so overriding it to
+# append --continue keeps the same base invocation. entrypoint.sh's `exec "$@"`
+# runs it as-is.
+CLAUDE_ARGS=(claude --dangerously-skip-permissions)
+[[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"
