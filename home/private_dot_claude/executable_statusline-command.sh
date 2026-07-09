@@ -21,7 +21,12 @@ eval "$(cat | jq -r '[
   "effort_level=\(.effort.level // "" | @sh)",
   "five_pct=\(.rate_limits.five_hour.used_percentage // "" | @sh)",
   "week_pct=\(.rate_limits.seven_day.used_percentage // "" | @sh)",
-  "total_cost=\(.cost.total // "" | @sh)"
+  "total_cost=\(.cost.total_cost_usd // .cost.total // "" | @sh)",
+  "transcript_path=\(.transcript_path // "" | @sh)",
+  "session_id=\(.session_id // "" | @sh)",
+  "lines_added=\(.cost.total_lines_added // "" | @sh)",
+  "lines_removed=\(.cost.total_lines_removed // "" | @sh)",
+  "dur_ms=\(.cost.total_duration_ms // "" | @sh)"
 ] | .[]')"
 
 # Shorten model name to a compact label
@@ -112,6 +117,41 @@ if [[ -n "$used_pct" ]]; then
   fi
 fi
 
+# Segment: prompt-cache expiry countdown — TTL tier auto-detected from the transcript
+# (ephemeral_1h vs ephemeral_5m cache_creation buckets). Hidden once the cache is cold.
+tp="$transcript_path"
+if [[ -z "$tp" && -n "$session_id" ]]; then
+  tp=$(ls -1 "$HOME"/.claude/projects/*/"$session_id".jsonl 2>/dev/null | head -1)
+fi
+if [[ -n "$tp" && -r "$tp" ]]; then
+  # tail-read a bounded window (≤320KB) and drop the possibly-partial first line
+  cache_meta=$(tail -c 320000 "$tp" 2>/dev/null | tail -n +2 | jq -rs '
+    [ .[] | select(.type == "assistant") ] as $a
+    | if ($a | length) == 0 then empty
+      else
+        ($a[-1].timestamp) as $ts
+        | ([ $a[] | .message.usage.cache_creation // {} ]) as $ccs
+        | (if   any($ccs[]; (.ephemeral_1h_input_tokens // 0) > 0) then 3600
+           elif any($ccs[]; (.ephemeral_5m_input_tokens // 0) > 0) then 300
+           else 0 end) as $ttl
+        | if $ttl == 0 then empty else "\($ts)|\($ttl)" end
+      end' 2>/dev/null)
+  if [[ -n "$cache_meta" ]]; then
+    ts="${cache_meta%|*}"; ttl="${cache_meta#*|}"
+    ts_epoch=$(date -d "$ts" +%s 2>/dev/null)
+    if [[ -n "$ts_epoch" ]]; then
+      now=$(date +%s)
+      remain=$(( ttl - (now - ts_epoch) ))
+      if (( remain > 0 )); then
+        if (( remain >= 60 )); then cstr=$(printf '%dm%ds' $((remain/60)) $((remain%60)))
+        else cstr=$(printf '%ds' "$remain"); fi
+        (( remain < 60 )) && ccol=136 || ccol=71
+        printf '\033[38;5;%dm cache %s \033[0m' "$ccol" "$cstr"
+      fi
+    fi
+  fi
+fi
+
 # Segment: rate limits (yellow/red) — only shown when populated (Claude.ai subscription)
 rate_out=""
 if [[ -n "$five_pct" ]]; then
@@ -143,5 +183,20 @@ if [[ -n "$total_cost" ]]; then
   else
     printf '\033[38;5;237m%s \033[0m' "$cost_fmt"
   fi
+fi
+
+# Segment: lines changed (+added aqua / -removed red) — only when non-zero
+la=${lines_added:-0}; lr=${lines_removed:-0}
+if (( la > 0 || lr > 0 )); then
+  printf '\033[38;5;71m+%d\033[0m/\033[38;5;167m-%d\033[0m ' "$la" "$lr"
+fi
+
+# Segment: session duration (dim grey)
+if [[ -n "$dur_ms" ]]; then
+  dur_s=$(( ${dur_ms%.*} / 1000 ))
+  if   (( dur_s >= 3600 )); then dstr=$(printf '%dh%dm' $((dur_s/3600)) $(((dur_s%3600)/60)))
+  elif (( dur_s >= 60 ));   then dstr=$(printf '%dm' $((dur_s/60)))
+  else dstr=$(printf '%ds' "$dur_s"); fi
+  printf '\033[38;5;237m%s \033[0m' "$dstr"
 fi
 exit 0
