@@ -98,6 +98,16 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
     echo "- **GitHub**: not authenticated — \`gh\` CLI will not work"
   fi
 
+  # Commit signing (1Password key via the forwarded agent socket)
+  if command -v ssh-add >/dev/null && [[ -S "${SSH_AUTH_SOCK:-}" ]]; then
+    _sign_key="$(git config --get user.signingkey 2>/dev/null | awk '{print $2}')"
+    if [[ -n "$_sign_key" ]] && ssh-add -L 2>/dev/null | grep -qF "$_sign_key"; then
+      echo "- **Commit signing**: 1Password key reachable via the forwarded agent — commits will sign."
+    else
+      echo "- **Commit signing**: signing key NOT reachable — \`commit.gpgsign\` is on, so \`git commit\` will fail. Unlock 1Password on the host (approve the prompt, or run \`op-ssh-ensure\` there)."
+    fi
+  fi
+
   # Plugins
   if [[ -d /home/claudebot/.claude/plugins/marketplaces ]]; then
     echo "- **Plugins**: mounted read-only from host."

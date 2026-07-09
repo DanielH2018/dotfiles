@@ -1802,4 +1802,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Front-load the 1Password unlock/authorize prompt so the container (which can't
+# pop a GUI prompt) starts with a signing-capable agent. No-op off-work: the
+# helper ships only via work-laptop-config. Absolute path — leaner PATH here.
+OP_ENSURE="$HOME/.local/bin/op-ssh-ensure"
+if [[ -S "$OP_SOCKET" && -x "$OP_ENSURE" ]]; then
+  echo "Ensuring 1Password signing key is available (approve any prompt)…"
+  SSH_AUTH_SOCK="$OP_SOCKET" "$OP_ENSURE" --timeout 20 \
+    || echo "  Warning: signing key not confirmed — commits inside the sandbox may fail to sign until you unlock 1Password." >&2
+fi
+
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG"
