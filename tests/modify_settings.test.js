@@ -10,6 +10,12 @@ const path = require('node:path');
 // ~/.claude/settings.json as merge(general base, work overlay-if-present), FULLY DERIVED —
 // stdin (the current target content) is intentionally ignored.
 const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
+
+// This test renders a chezmoi template; skip cleanly where the binary isn't installed
+// (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
+try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); }
+catch { console.log('SKIP: chezmoi not on PATH'); process.exit(0); }
+
 const rendered = execFileSync('chezmoi', ['execute-template'], {
   input: fs.readFileSync(TEMPLATE, 'utf8'),
   encoding: 'utf8',

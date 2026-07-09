@@ -18,10 +18,8 @@ My dotfiles and Claude config are managed across **two repos** — edit the *sou
 Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-laptop-config` respectively.
 
 ## Git conventions
-{{- if eq .chezmoi.os "darwin" }}
 
 - Commits are signed via 1Password SSH agent — never pass `--no-verify` or any flag that bypasses signing.
-{{- end }}
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
 - Write commit messages that explain *why*, not just what changed. Example:

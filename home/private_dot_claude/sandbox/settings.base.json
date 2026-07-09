@@ -168,13 +168,36 @@
   "tui": "fullscreen",
   "editorMode": "normal",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/block-dangerous-bash.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/protect-secrets.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "/home/claudebot/.claude/hooks/audit.sh"
+            "command": "/home/claudebot/.claude/hooks/audit.sh",
+            "timeout": 10
           }
         ]
       },
@@ -194,6 +217,16 @@
           {
             "type": "command",
             "command": "/home/claudebot/.claude/hooks/link-artifact.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/screen-injection.sh",
             "timeout": 10
           }
         ]

@@ -5,6 +5,10 @@
 # stays LOCAL by default (a file on disk); it is NOT published to claude.ai unless
 # I explicitly ask. Injects guidance only; never blocks. Claude applies judgment
 # (skips trivial or rejected plans).
+#
+# INTENTIONAL TWIN of sandbox/executable_suggest-artifact.sh — the two differ ONLY in
+# artifact path (host: ~/.claude/artifacts; sandbox: /artifacts bind-mount). Keep the
+# logic in sync when editing either; they are deliberately not a single file.
 
 set -u
 

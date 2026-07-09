@@ -5,6 +5,7 @@
 set -u
 
 LOG_DIR="${LOG_DIR:-/audit}"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/$(date -u +%Y-%m-%d).jsonl"
 MAX_LINES=5000
 KEEP_LINES=3000

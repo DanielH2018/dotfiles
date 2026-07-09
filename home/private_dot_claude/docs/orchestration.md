@@ -30,9 +30,9 @@ to use (for internal questions, prefer internal MCP sources over the web); the e
 and a budget — roughly <5 tool calls (simple) / 5 / ~10 (hard) / up to 15, hard stop ~20. If every
 brief is followed, their union must fully answer the question.
 
-**Verify, don't trust.** Integrating subagent/tool output, separate established fact from speculation,
-prediction, or marketing spin; prefer original sources over aggregators; on conflicts favor recency +
-consistency and flag the discrepancy rather than silently picking.
+**Verify, don't trust.** When integrating subagent/tool output, apply the **Source quality & epistemic
+honesty** rules from CLAUDE.md (fact vs. speculation; prefer primary sources; on conflicts favor
+recency + consistency and flag it).
 
 **Disagreement is signal.** When you fan out several reviewers or verifiers over the same artifact and
 they *disagree*, don't average the verdicts or take a majority vote — the disagreement pinpoints the

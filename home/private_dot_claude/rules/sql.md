@@ -1,0 +1,13 @@
+---
+paths:
+  - "**/*.sql"
+  - "**/migrations/**"
+  - "**/migration/**"
+  - "**/db/migrate/**"
+---
+- Every migration must be reversible: provide a down migration, or split destructive changes (drop / rename / type change) into expand → migrate → contract deploys.
+- Keep each migration idempotent; wrap DDL in an explicit transaction where the runner allows it.
+- Create indexes with `CREATE INDEX CONCURRENTLY` (runs outside a transaction) so writes aren't blocked.
+- Never add `NOT NULL` or a new foreign key to a populated table without a default/backfill first — it takes a lock and can fail existing rows.
+- Batch large backfills; avoid long-running transactions and exclusive locks on hot tables.
+- Before merging, run the `migration-reviewer` agent for the full locking / rollback / PCI review — don't restate that checklist here.

@@ -18,7 +18,7 @@
 - Judge output shape is enforced with `--json-schema`; the judge pins opus via its own `--agents` entry.
 - Threshold values: `"all"` (all healthy runs pass) or `"rate>=X/Y"` (pass rate ≥ X/Y). `k` precedence: `--smoke` > `--k` > case `k` field.
 - Agent source-of-truth files: `home/private_dot_claude/agents/{implementer,planner,lucid-diagrammer,migration-reviewer}.md`.
-- Node ESM tests run via `node --test tests/`. Commit after each task with a signed commit (`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`).
+- Node ESM tests run via `node --test`. Commit after each task with a signed commit (`Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`).
 
 ---
 
@@ -1086,7 +1086,7 @@ git commit -m "test(evals): planner and implementer eval cases"
 
 - [ ] **Step 4: Run the full unit-test suite** (no API):
 
-Run: `node --test tests/`
+Run: `node --test`
 Expected: PASS — all existing tests plus the new `evals-*` tests.
 
 - [ ] **Step 5: Live smoke run — one case per readable agent, k=1.** This is the end-to-end proof (Tasks 5 & 6 have no live unit test).

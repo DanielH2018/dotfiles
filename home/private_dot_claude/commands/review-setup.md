@@ -2,7 +2,7 @@
 description: "Audit and fix Claude Code config (hooks, settings, CLAUDE.md, commands). Use with /review-setup-loop for iterative refinement."
 ---
 
-This skill runs one iteration of the setup review pipeline. It is invoked by `/review-setup-loop` via Ralph Loop, or standalone for a single pass. The autonomy mode is passed as `$ARGUMENTS` (one of: `auto`, `confirm`, `default`).
+This command runs one iteration of the setup review pipeline. It is invoked by `/review-setup-loop` via Ralph Loop, or standalone for a single pass. The autonomy mode is passed as `$ARGUMENTS` (one of: `auto`, `confirm`, `default`).
 
 Parse the autonomy mode from `$ARGUMENTS`. Default to `default` if not provided or not recognized.
 

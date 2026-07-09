@@ -97,6 +97,18 @@ settings overlay.
 
   To force re-authentication, delete `~/.claude/sandbox/state/.auth-configured` on the host.
 
+## Config sources & what runs here
+
+Config in this container is assembled from three sources: generic config from the chezmoi
+dotfiles repo, Lithic-domain agents/skills/commands from `work-laptop-config`, and the vault
+repo's own `.claude/` project commands.
+
+The sandbox intentionally ships a **slimmed** config relative to the host: only 3 hooks run
+here (audit, suggest-artifact, link-artifact). `rules/`, `workflows/`, keybindings, and the
+~18 host hooks do NOT run in-container. Enforcement of those omitted safety hooks is instead
+via the settings deny-list plus container isolation (`--cap-drop all`, `--security-opt
+no-new-privileges`), not via the hooks themselves.
+
 ## Dynamic environment
 
 Details specific to this launch are appended below by the entrypoint.

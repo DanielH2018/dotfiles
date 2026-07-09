@@ -1,5 +1,6 @@
 ---
 description: "Arbiter classification logic for review-and-fix. Not invoked directly."
+disable-model-invocation: true
 ---
 
 ## Arbiter Classification

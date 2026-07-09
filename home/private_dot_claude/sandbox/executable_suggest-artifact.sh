@@ -4,6 +4,10 @@
 # artifact stays LOCAL — written to /artifacts (bind-mounted to the host artifacts
 # dir) — and is NOT published to claude.ai unless the user explicitly asks. Injects
 # guidance only; never blocks. Claude applies judgment (skips trivial/rejected plans).
+#
+# INTENTIONAL TWIN of hooks/executable_suggest-artifact.sh — the two differ ONLY in
+# artifact path (host: ~/.claude/artifacts; sandbox: /artifacts bind-mount). Keep the
+# logic in sync when editing either; they are deliberately not a single file.
 
 set -u
 

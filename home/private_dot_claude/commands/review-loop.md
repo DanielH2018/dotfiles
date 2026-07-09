@@ -1,5 +1,6 @@
 ---
 description: "Iterative PR review and fix loop. Usage: /review-loop [max-iterations] [--auto|--confirm]"
+disable-model-invocation: true
 ---
 
 Parse the arguments from `$ARGUMENTS`:

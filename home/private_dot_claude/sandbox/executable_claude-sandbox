@@ -1668,7 +1668,15 @@ DOCKER_ARGS=(
   -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
   -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
   -v "$SANDBOX_DIR/suggest-artifact.sh:/home/claudebot/.claude-defaults/hooks/suggest-artifact.sh:ro"
-  -v "$SANDBOX_DIR/link-artifact.sh:/home/claudebot/.claude-defaults/hooks/link-artifact.sh:ro"
+  # These hooks have no sandbox-specific variant — mount the single canonical host
+  # copy (one source of truth, no drift-prone parallel copy). screen-injection,
+  # block-dangerous-bash and protect-secrets add in-container defense-in-depth
+  # (injection screening; deny secret reads/writes, disk wipes, fork bombs,
+  # pipe-to-shell) beyond what the settings deny-list alone covers.
+  -v "$HOME/.claude/hooks/link-artifact.sh:/home/claudebot/.claude-defaults/hooks/link-artifact.sh:ro"
+  -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude-defaults/hooks/screen-injection.sh:ro"
+  -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude-defaults/hooks/block-dangerous-bash.sh:ro"
+  -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude-defaults/hooks/protect-secrets.sh:ro"
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
   -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"

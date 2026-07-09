@@ -18,7 +18,7 @@ Install the interactive tools the shell expects (configs degrade gracefully with
 
 - `home/` — chezmoi source (dot_ files, templates)
 - `docs/` — design + implementation docs (not deployed)
-- `tests/` — unit tests (not deployed)
+- `tests/` — unit tests (not deployed); run the full suite with `node --test`
 
 ### Windows notes
 

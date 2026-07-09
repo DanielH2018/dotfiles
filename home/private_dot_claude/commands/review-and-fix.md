@@ -2,7 +2,7 @@
 description: "Run full PR review, then triage and fix agreed-upon issues. Use with ralph-loop for iterative refinement."
 ---
 
-This skill runs one iteration of the review-fix pipeline. It is invoked by `/review-loop` via Ralph Loop. The autonomy mode is passed as `$ARGUMENTS` (one of: `auto`, `confirm`, `default`).
+This command runs one iteration of the review-fix pipeline. It is invoked by `/review-loop` via Ralph Loop. The autonomy mode is passed as `$ARGUMENTS` (one of: `auto`, `confirm`, `default`).
 
 Parse the autonomy mode from `$ARGUMENTS`. Default to `default` if not provided or not recognized.
 
@@ -58,20 +58,9 @@ If a finding from Phase 1 still matches a previously-triaged entry despite the e
 
 ### Classification
 
-You are the arbiter. Follow the classification logic from the `review-arbiter` skill:
+You are the arbiter. For each finding from Phase 1, first **verify** it yourself: read the actual code at the cited file:line. If the finding is stale or already fixed, classify as SKIP without further steps.
 
-For each finding from Phase 1:
-
-1. **Verify:** Read the actual code at the cited file:line. If the finding is stale or already fixed, classify as SKIP.
-2. **Classify** as one of:
-   - `SKIP` — false positive, stylistic nit, adds unnecessary complexity, or already fixed
-   - `HAIKU-FIX` — single-line mechanical fix (null check, typo, simple rename, obvious one-liner)
-   - `SONNET-FIX` — multi-line logic change, cross-file edit, behavioral reasoning required
-   - When in doubt, choose SONNET-FIX.
-3. **Apply autonomy mode** (from `$ARGUMENTS`):
-   - `auto`: proceed with all non-SKIP findings immediately
-   - `default`: auto-proceed on bugs/security; present subjective/architectural findings and ask the user (numbered list for quick response)
-   - `confirm`: present full classification table, wait for user approval
+For everything else, read `review-arbiter.md` (in this same commands/ directory) and apply the classification logic it defines in full — it is the single source of truth for the SKIP/HAIKU-FIX/SONNET-FIX taxonomy and for how each autonomy mode (from `$ARGUMENTS`) should be applied. Do not re-derive the taxonomy here.
 
 Produce the approved fixes list and skipped list before proceeding.
 

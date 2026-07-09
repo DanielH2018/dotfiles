@@ -6,6 +6,11 @@ const path = require('node:path');
 const SRC = path.join(__dirname, '..', 'home', 'run_onchange_install-nerd-font.ps1.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
+// This test renders a chezmoi template; skip cleanly where the binary isn't installed
+// (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
+try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); }
+catch { console.log('SKIP: chezmoi not on PATH'); process.exit(0); }
+
 // 1. The whole script is gated to Windows: on this (non-Windows) host chezmoi renders it
 //    to nothing, so `chezmoi apply` never executes PowerShell off Windows.
 const rendered = execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
