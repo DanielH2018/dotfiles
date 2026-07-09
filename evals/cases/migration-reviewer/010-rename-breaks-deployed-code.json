@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/010-rename-breaks-deployed-code",
+  "agent": "migration-reviewer",
+  "description": "An in-place column rename that breaks currently-deployed code must be flagged",
+  "input": "Review this migration:\n```sql\nALTER TABLE users RENAME COLUMN email TO email_address;\n```\nContext: the currently-deployed application code still selects and writes `email`.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review flags that renaming the column breaks the currently-deployed code (which still references `email`) and recommends an expand/contract approach (add new column, backfill / dual-write, migrate readers, drop later) instead of an in-place rename.",
+  "k": 5,
+  "threshold": "all"
+}

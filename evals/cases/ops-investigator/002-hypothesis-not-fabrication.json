@@ -1,0 +1,10 @@
+{
+  "id": "ops-investigator/002-hypothesis-not-fabrication",
+  "agent": "ops-investigator",
+  "description": "With thin evidence, label root cause as a hypothesis rather than asserting a definitive cause",
+  "input": "Triage this alert (respond as text; do not attempt to call any tool — reason only from what's given, and note what you'd check):\n\nPagerDuty P3: intermittent timeouts on `settlement-api`. No recent deploys noted. No logs or dashboards attached.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the response treats the root cause as a HYPOTHESIS or explicitly states it cannot determine the cause from the given information, and lists what to check next (dashboards, logs, dependencies) — rather than asserting a single definitive root cause as fact.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseAgent, buildAgentsFlag } from '../evals/lib/load-agent.mjs';
+import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo } from '../evals/lib/load-agent.mjs';
 
 const MD = `---
 name: migration-reviewer
@@ -50,4 +50,20 @@ test('buildAgentsFlag allows overrides (used by judge)', () => {
   assert.deepStrictEqual(Object.keys(flag), ['judge']);
   assert.strictEqual(flag['judge'].model, 'opus');
   assert.strictEqual(flag['judge'].prompt, 'JUDGE PROMPT');
+});
+
+test('agentSearchDirs puts the repo agents dir first, then extra dirs', () => {
+  const dirs = agentSearchDirs('/repo', ['/work/.claude/agents']);
+  assert.deepStrictEqual(dirs, ['/repo/home/private_dot_claude/agents', '/work/.claude/agents']);
+});
+
+test('agentSearchDirs with no extra dirs is just the repo dir (hermetic default)', () => {
+  assert.deepStrictEqual(agentSearchDirs('/repo', []), ['/repo/home/private_dot_claude/agents']);
+});
+
+test('loadAgentFromRepo throws a helpful error naming the dirs searched', () => {
+  assert.throws(
+    () => loadAgentFromRepo('nonexistent-agent', '/no/such/repo', ['/also/missing']),
+    /not found in:.*EVAL_AGENT_DIRS/s
+  );
 });

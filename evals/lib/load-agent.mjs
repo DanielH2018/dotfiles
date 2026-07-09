@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const FM = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
@@ -33,7 +33,27 @@ export function buildAgentsFlag(parsed, over = {}) {
   return JSON.stringify({ [name]: entry });
 }
 
-export function loadAgentFromRepo(name, repoRoot) {
-  const p = join(repoRoot, 'home', 'private_dot_claude', 'agents', `${name}.md`);
-  return parseAgent(readFileSync(p, 'utf8'));
+// Extra agent source dirs, colon-separated, from EVAL_AGENT_DIRS. Empty by default so
+// the hermetic/CI path is unchanged; set it to resolve agents whose definitions live
+// outside this repo (e.g. the work-laptop-config overlay's `.claude/agents`).
+export function envAgentDirs() {
+  const raw = process.env.EVAL_AGENT_DIRS;
+  return raw ? raw.split(':').filter(Boolean) : [];
+}
+
+// Ordered search path: this repo's agents dir first, then any extra dirs.
+export function agentSearchDirs(repoRoot, extraDirs = envAgentDirs()) {
+  return [join(repoRoot, 'home', 'private_dot_claude', 'agents'), ...extraDirs];
+}
+
+export function loadAgentFromRepo(name, repoRoot, extraDirs = envAgentDirs()) {
+  const dirs = agentSearchDirs(repoRoot, extraDirs);
+  for (const dir of dirs) {
+    const p = join(dir, `${name}.md`);
+    if (existsSync(p)) return parseAgent(readFileSync(p, 'utf8'));
+  }
+  throw new Error(
+    `agent "${name}" not found in: ${dirs.join(', ')}. ` +
+    `If it lives in the work overlay, set EVAL_AGENT_DIRS (e.g. ~/work-laptop-config/.claude/agents).`
+  );
 }

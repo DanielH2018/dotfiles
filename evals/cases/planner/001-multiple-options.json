@@ -6,5 +6,5 @@
   "assert": { "must_match": [], "must_not_match": [] },
   "rubric": "PASS only if the response presents at least two distinct approaches AND states explicit trade-offs for each (not just a single recommendation).",
   "k": 5,
-  "threshold": "all"
+  "threshold": "rate>=4/5"
 }

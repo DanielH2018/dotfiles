@@ -183,6 +183,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/link-artifact.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

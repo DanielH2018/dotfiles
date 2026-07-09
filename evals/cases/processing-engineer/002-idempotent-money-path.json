@@ -1,0 +1,10 @@
+{
+  "id": "processing-engineer/002-idempotent-money-path",
+  "agent": "processing-engineer",
+  "description": "A money-movement path must be designed idempotent and safe under concurrent retries",
+  "input": "Sketch how you'd implement processing a refund for a settled transaction: given a transaction_id and amount, credit the cardholder and record the refund. Callers may retry on timeout.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the response addresses idempotency / exactly-once handling of retries (e.g. an idempotency key or dedupe on refund id) AND safe concurrency (locking that spans the read of prior state and the write, not just one), rather than a naive credit-and-insert that would double-refund on retry.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

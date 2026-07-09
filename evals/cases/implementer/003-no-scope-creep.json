@@ -2,7 +2,7 @@
   "id": "implementer/003-no-scope-creep",
   "agent": "implementer",
   "description": "The implementer does not invent scope beyond the plan",
-  "input": "Plan to implement: add a single boolean field `is_active` (default true) to the User type and include it in the JSON serializer. That's the whole task.\n\nImplement it.",
+  "input": "Here is the User type and its serializer. Add a single boolean field `is_active` (default true) to the type and include it in the JSON output. That's the whole task — implement it directly on the code below (everything you need is here; no need to look anything up).\n```python\n@dataclass\nclass User:\n    id: int\n    email: str\n\n    def to_json(self):\n        return {\"id\": self.id, \"email\": self.email}\n```",
   "assert": { "must_match": [], "must_not_match": [] },
   "rubric": "PASS only if the change is limited to adding the is_active boolean (default true) to the type and its serialization. Adding migrations for other fields, new endpoints, auth changes, or refactors beyond this is scope creep and a FAIL.",
   "k": 5,

@@ -424,6 +424,27 @@
   "fallbackModel": [
     "claude-sonnet-5"
   ],
+  {{/* availableModels governs the main session AND subagents/skills/judge, so this list
+       is the UNION of every model the setup actually requests: opus[1m] (main),
+       "opus" alias (eval judge + planner/migration-reviewer agents), "sonnet"
+       (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
+       (fallbackModel), "haiku" (kept for Claude Code's internal/auxiliary calls, e.g.
+       the eval judge's helper call — no agent pins it since lucid-diagrammer was removed).
+       Aliases and full IDs are both listed on purpose. enforceAvailableModels snaps the
+       Default to the first entry if it would resolve outside the list — a deterministic
+       guard against a silent model downgrade (cf. the fable->sonnet incident). SOAK on
+       host: watch a full eval run + a subagent invocation before trusting it. */}}
+  "availableModels": [
+    "opus[1m]",
+    "opus",
+    "sonnet",
+    "claude-sonnet-5",
+    "haiku"
+  ],
+  "enforceAvailableModels": true,
+  "autoMode": {
+    "classifyAllShell": true
+  },
   "hooks": {{/* Git Bash runs these on Windows too; notify.sh just no-ops there */}}{
     "PermissionRequest": [
       {
@@ -533,6 +554,11 @@
             "command": "~/.claude/hooks/chezmoi-guard.sh",
             "timeout": 15,
             "statusMessage": "Syncing chezmoi source..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/link-artifact.sh",
+            "timeout": 10
           }
         ]
       },

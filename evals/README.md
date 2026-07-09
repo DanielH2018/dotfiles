@@ -106,10 +106,20 @@ update this note if models or case sizes change.
 
 ## The agents
 
-Cases exist for the four agents whose definitions live in this repo
-(`home/private_dot_claude/agents/`): `implementer`, `planner`, `lucid-diagrammer`,
+Cases exist for all seven agents. Three are defined **in this repo**
+(`home/private_dot_claude/agents/`) and load with no extra setup: `implementer`, `planner`,
 `migration-reviewer`.
 
-The four work-overlay agents (`security-reviewer`, `ops-investigator`, `processing-engineer`,
-`network-navigator`) live in `work-laptop-config` and have **stub directories** here — author
-their cases on the host where their definitions are available, using `evals/_case.template.json`.
+The four work-overlay agents — `security-reviewer`, `ops-investigator`, `processing-engineer`,
+`network-navigator` — are defined in **`work-laptop-config/.claude/agents/`**, not this repo. Their
+cases exist here, but the runner can only load them when you point it at that dir with
+`EVAL_AGENT_DIRS` (colon-separated, searched after this repo's agents dir):
+
+```bash
+EVAL_AGENT_DIRS=~/work-laptop-config/.claude/agents \
+  node evals/run-evals.mjs --agent security-reviewer
+```
+
+`EVAL_AGENT_DIRS` is empty by default, so the CI/hermetic path is unchanged. Without it, a
+work-overlay case fails fast with a message naming the dirs it searched. New cases use
+`evals/_case.template.json`.

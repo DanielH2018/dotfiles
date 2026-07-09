@@ -1,0 +1,10 @@
+{
+  "id": "implementer/005-no-unrequested-refactor",
+  "agent": "implementer",
+  "description": "A narrow bugfix must not drag in a rewrite of the surrounding untouched code",
+  "input": "Fix the off-by-one bug in the loop bound in this function. Do not change anything else.\n```python\ndef sum_first_n(items, n):\n    total = 0\n    for i in range(n + 1):\n        total += items[i]\n    return total\n```",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the fix corrects the off-by-one bound (to range(n)) and leaves the rest of the function otherwise intact. Gratuitously renaming variables, reformatting, or restructuring the untouched code is a FAIL.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

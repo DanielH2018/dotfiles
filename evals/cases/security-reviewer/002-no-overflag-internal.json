@@ -1,0 +1,10 @@
+{
+  "id": "security-reviewer/002-no-overflag-internal",
+  "agent": "security-reviewer",
+  "description": "Do not invent CRITICAL/HIGH vulns in internal-only code with no external input",
+  "input": "Review this diff:\n```python\n# internal helper, called only with hardcoded enum values from our own code\ndef bucket_label(tier: int) -> str:\n    return {0: \"free\", 1: \"standard\", 2: \"premium\"}.get(tier, \"unknown\")\n```",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the review does NOT raise a CRITICAL or HIGH finding for this internal-only function that takes no external input (it may note there are no significant findings, or at most a LOW/defense-in-depth observation). Manufacturing a serious vulnerability here is a FAIL.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

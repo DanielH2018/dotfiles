@@ -2,7 +2,7 @@
   "id": "implementer/001-follows-plan",
   "agent": "implementer",
   "description": "The implementer follows the given plan without adding unrequested features",
-  "input": "Plan to implement:\n1. Add a function `clampPageSize(n)` that returns n bounded to the range [1, 100].\n2. Call it in the accounts list handler to sanitize the incoming page_size query param.\n\nImplement exactly this in TypeScript.",
+  "input": "Here is the accounts list handler. Plan to implement:\n1. Add a function `clampPageSize(n)` that returns n bounded to the range [1, 100].\n2. Call it in the handler below to sanitize the incoming page_size query param.\n\nImplement exactly this in TypeScript, editing the code below directly (everything you need is here — no need to look anything up).\n```typescript\nexport function listAccounts(req: Request): Account[] {\n  const pageSize = Number(req.query.page_size);\n  return db.accounts.find({ limit: pageSize });\n}\n```",
   "assert": { "must_match": [], "must_not_match": [] },
   "rubric": "PASS only if the implementation delivers exactly the two planned steps (a clampPageSize bounding to [1,100] and its use in the handler) without adding unrequested features like caching, logging frameworks, or new endpoints.",
   "k": 5,

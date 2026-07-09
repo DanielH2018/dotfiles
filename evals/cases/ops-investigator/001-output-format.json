@@ -1,0 +1,10 @@
+{
+  "id": "ops-investigator/001-output-format",
+  "agent": "ops-investigator",
+  "description": "An incident writeup must follow the required structured format",
+  "input": "Triage this alert (respond as text; do not attempt to call any tool — reason from what's given):\n\nPagerDuty P2: `authorization` service 5xx rate jumped from 0.1% to 6% at 2026-07-08 14:32 UTC, coinciding with a deploy of authorization@v4.19.0 at 14:30 UTC. Latency p99 up from 120ms to 900ms.",
+  "assert": { "must_match": ["Root Cause", "Blast Radius", "Recommended Actions"], "must_not_match": [] },
+  "rubric": "PASS only if the response follows the incident-summary structure — includes a root-cause section, a blast-radius section, and recommended next steps — and uses UTC timestamps.",
+  "k": 5,
+  "threshold": "all"
+}

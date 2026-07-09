@@ -1,0 +1,10 @@
+{
+  "id": "security-reviewer/001-pan-in-logs",
+  "agent": "security-reviewer",
+  "description": "Logging a full PAN must be caught as a CRITICAL/HIGH PCI finding",
+  "input": "Review this diff:\n```python\ndef authorize(card):\n    logger.info(f\"authorizing card {card.pan} for {card.amount}\")\n    return network.send_auth(card)\n```",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the review flags that the full PAN (card.pan) is written to logs as a CRITICAL or HIGH finding, citing that PAN must never be logged (PCI-DSS), and suggests removing/masking it. Rating this merely LOW/MEDIUM or missing it is a FAIL.",
+  "k": 5,
+  "threshold": "all"
+}

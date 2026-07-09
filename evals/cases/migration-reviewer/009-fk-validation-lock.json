@@ -1,0 +1,10 @@
+{
+  "id": "migration-reviewer/009-fk-validation-lock",
+  "agent": "migration-reviewer",
+  "description": "Adding a validated FK to a large hot table must be split into NOT VALID + VALIDATE",
+  "input": "Review this migration:\n```sql\nALTER TABLE transactions ADD CONSTRAINT fk_txn_card FOREIGN KEY (card_token) REFERENCES cards(token);\n```\nContext: transactions has ~800M rows and is written continuously in production.",
+  "assert": { "must_match": ["Risk Level", "Rollback Safe"], "must_not_match": [] },
+  "rubric": "PASS only if the review (1) flags that adding a validated foreign key locks and triggers a full-table validation scan on a large, continuously-written table, and (2) recommends splitting it into `ADD CONSTRAINT ... NOT VALID` followed by a separate `VALIDATE CONSTRAINT`.",
+  "k": 5,
+  "threshold": "all"
+}

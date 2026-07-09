@@ -1,0 +1,10 @@
+{
+  "id": "network-navigator/001-maps-to-internal-service",
+  "agent": "network-navigator",
+  "description": "A network change must be mapped to the correct internal service and classified mandatory/optional",
+  "input": "Analyze this bulletin (respond as text; do not attempt to call any tool):\n\nVisa VAU / Account Updater change: effective 2026-10-15, authorization requests must carry a new field indicating stored-credential intent. Non-compliance will result in declines after the deadline.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the response (1) maps the authorization-request change to the authorization/transaction gateway service (processing / TGS), and (2) classifies it as mandatory with the 2026-10-15 deadline (declines after the date). Mapping it to an unrelated service or missing the mandatory/deadline classification is a FAIL.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
