@@ -1,0 +1,38 @@
+# Authoritative git identity for the claudebot sandbox.
+#
+# This file is bind-mounted READ-ONLY over /home/claudebot/.gitconfig by
+# claude-sandbox (see the DOCKER_ARGS block in the launcher). A read-only bind
+# mount is what makes the agent's own git boundary tamper-proof: the file can be
+# read but not written, and — because it is a mount point — it cannot be removed
+# and recreated either (a plain `chmod 0444` would not stop that, since $HOME is
+# agent-writable). This closes the credential-helper / core.hooksPath /
+# url.insteadOf rewrite paths a compromised session could otherwise use to
+# exfiltrate the gh token or gain RCE on the next git operation.
+#
+# Keep in sync with the baked defaults in Dockerfile.base (used only if this
+# mount is ever absent). Nothing writes ~/.gitconfig at runtime (see
+# entrypoint.sh); safe.directory below pre-empts the one legitimate write
+# (git's dubious-ownership check on the bind-mounted /workspace).
+
+[user]
+	name = Daniel Hunter
+	email = danielh.2018@gmail.com
+	signingkey = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDA7LulgtoUwepzoMDD4UgAS1OD09qi4WvvJnDOUNkou
+
+[gpg]
+	format = ssh
+
+[gpg "ssh"]
+	allowedSignersFile = /home/claudebot/.ssh/allowed_signers
+
+[commit]
+	gpgsign = true
+
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+
+[credential "https://github.com"]
+	helper = !/usr/bin/gh auth git-credential
+
+[safe]
+	directory = *

@@ -664,6 +664,61 @@ DOCKEREOF
   fi
 }
 
+# --- Untrusted-repo preflight scan ---
+# The repo is untrusted input. Before granting Docker access, scan repo-owned
+# compose files and Dockerfile.project for directives that would let a spawned
+# container punch through the sandbox (privileged, added caps/devices, relaxed
+# security_opt, host net/pid/ipc, or a mounted docker socket). Warn and require
+# confirmation. Deliberately noisy — a false positive costs one keypress; a
+# miss costs the boundary. Silence with CLAUDE_SANDBOX_NO_OVERRIDE_SCAN=1.
+scan_untrusted_compose() {
+  [[ "${CLAUDE_SANDBOX_NO_OVERRIDE_SCAN:-}" == "1" ]] && return 0
+
+  local scan_files=()
+  while IFS= read -r _f; do
+    [[ -n "$_f" ]] && scan_files+=("$_f")
+  done < <(find "$REPO_PATH" -maxdepth 2 \
+    \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \
+       -o -name 'compose*.yml' -o -name 'compose*.yaml' \
+       -o -name 'Dockerfile.project' \) 2>/dev/null)
+
+  [[ ${#scan_files[@]} -eq 0 ]] && return 0
+
+  local pattern='privileged:[[:space:]]*true|cap_add:|devices:|security_opt:|network_mode:[[:space:]]*.?host|pid:[[:space:]]*.?host|ipc:[[:space:]]*.?host|docker\.sock'
+  local findings="" _f _m
+  for _f in "${scan_files[@]}"; do
+    _m="$(grep -nEi "$pattern" "$_f" 2>/dev/null || true)"
+    if [[ -n "$_m" ]]; then
+      findings+=$'\n'"  ${_f#"$REPO_PATH"/}:"$'\n'"$(printf '%s\n' "$_m" | sed 's/^/    /')"
+    fi
+  done
+
+  [[ -z "$findings" ]] && return 0
+
+  {
+    echo ""
+    echo "⚠  Untrusted-repo scan flagged sandbox-boundary directives in this repo's"
+    echo "   Docker config. If a container is started with these, it can weaken or"
+    echo "   escape the sandbox:"
+    echo "$findings"
+    echo ""
+    echo "   (Silence this check for trusted repos with CLAUDE_SANDBOX_NO_OVERRIDE_SCAN=1)"
+  } >&2
+
+  if [[ ! -t 0 ]]; then
+    echo "   Non-interactive session — refusing Docker access. Re-run in a terminal" >&2
+    echo "   to confirm, or set the silence flag if you trust this repo." >&2
+    exit 1
+  fi
+
+  local reply
+  read -r -p "   Grant Docker access anyway? [y/N] " reply
+  if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+    echo "   Aborted — Docker access not granted." >&2
+    exit 1
+  fi
+}
+
 # --- Docker socket proxy management ---
 start_proxy() {
   # Clean up any stale proxy/network from a previous run
@@ -1525,6 +1580,11 @@ DOCKER_ARGS=(
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
   -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"
+  # Read-only git identity (see sandbox/gitconfig). Mounted :ro so a compromised
+  # session can neither rewrite credential.helper/core.hooksPath/url.insteadOf
+  # nor delete-and-recreate the file — a mount point survives what a chmod'd
+  # file in the agent-writable $HOME would not.
+  -v "$SANDBOX_DIR/gitconfig:/home/claudebot/.gitconfig:ro"
   -e SSH_AUTH_SOCK=/run/1password/agent.sock
   -e SANDBOX_REPO_NAME="$REPO_NAME"
   -e SANDBOX_TOOLCHAINS="$TOOLCHAIN_LIST"
@@ -1719,6 +1779,7 @@ fi
 
 # Start Docker socket proxy if needed
 if [[ "$NEEDS_DOCKER" == true ]]; then
+  scan_untrusted_compose
   start_proxy
   DOCKER_ARGS+=(
     --network "$NETWORK_NAME"

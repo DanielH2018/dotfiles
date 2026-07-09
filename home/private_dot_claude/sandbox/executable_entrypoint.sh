@@ -6,6 +6,17 @@ set -euo pipefail
 # Syncs managed files from image defaults, appends dynamic environment
 # context to CLAUDE.md, then launches Claude Code.
 
+# --- npm supply-chain hardening (runtime, in-session installs) ---
+# ignore-scripts blocks install-time lifecycle scripts (postinstall is the most
+# common malicious-package RCE vector); fund silences the funding nag. These
+# apply to `npm install` the agent runs in /workspace — the image's own trusted
+# global installs already ran at build time. Override per-need with
+# `npm install --ignore-scripts=false`. Note: npm has no rolling
+# "minimum release age" knob (that is a pnpm feature), so we rely on
+# ignore-scripts here plus `audit` (already enabled in settings.base.json).
+export NPM_CONFIG_IGNORE_SCRIPTS=true
+export NPM_CONFIG_FUND=false
+
 # --- Sync managed files into persistent state volume ---
 # The persistent volume at ~/.claude/ starts empty. Managed files (settings,
 # hooks, CLAUDE.md) are bind-mounted into ~/.claude-defaults/ at runtime and
