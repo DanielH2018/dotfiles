@@ -1118,26 +1118,63 @@ IDXEOF
   [[ "$final_json" != "$extract_json" ]] && rm -f "$final_json"
 }
 
+# --- Resolve the real branch a tool worktree is on ---
+# Tool worktrees live at <repo>-wt-<name>. Worktrees made with -w are on
+# claude/<name>; those made with -b are on an arbitrary branch. Read the actual
+# branch from git for a live worktree; for an orphaned one (worktree gone, only
+# session data left) probe claude/<name> then <name>. Echoes the branch, or
+# nothing if none can be determined.
+resolve_worktree_branch() {
+  # Usage: resolve_worktree_branch <name> <repo-path> <repo-name>
+  local name="$1" repo_path="$2" repo_name="$3"
+  local wt_path abs branch
+  wt_path="$repo_path/../$repo_name-wt-$name"
+  abs="$(cd "$wt_path" 2>/dev/null && pwd)" || abs=""
+  if [[ -n "$abs" ]]; then
+    branch="$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v p="$abs" '
+      /^worktree /{cur=substr($0,10)}
+      /^branch /{if(cur==p){print substr($0,8); exit}}')"
+    if [[ -n "$branch" ]]; then
+      echo "${branch#refs/heads/}"
+      return
+    fi
+  fi
+  if git -C "$repo_path" show-ref --verify --quiet "refs/heads/claude/$name" 2>/dev/null; then
+    echo "claude/$name"
+  elif git -C "$repo_path" show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
+    echo "$name"
+  fi
+}
+
 # --- Delete a single worktree and its data ---
 delete_worktree() {
   # Usage: delete_worktree <wt-name> <instance-id>
   local wt_name="$1"
   local instance_id="$2"
   local wt_path="$REPO_PATH/../$REPO_NAME-wt-$wt_name"
-  local wt_branch="claude/$wt_name"
+  # Resolve the branch BEFORE removing the worktree (removal detaches the ref).
+  local wt_branch
+  wt_branch="$(resolve_worktree_branch "$wt_name" "$REPO_PATH" "$REPO_NAME")"
 
   # Compact session before deletion
   # Non-fatal: compaction failures must not abort prune before deletion (set -e)
   compact_session "$instance_id" "$REPO_NAME" "$wt_name" || true
 
-  # Remove worktree if it exists
-  if [[ -d "$wt_path" ]] || git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "^worktree .*$wt_name"; then
+  # Remove worktree if it exists. A dirty worktree (uncommitted or untracked
+  # files) makes a plain remove fail; since the user explicitly selected and
+  # confirmed deletion — and compaction archived a summary above — fall back to
+  # --force so the worktree (and hence its branch) can actually be removed.
+  if [[ -d "$wt_path" ]] || git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "/$REPO_NAME-wt-$wt_name$"; then
     echo "  Removing worktree: $wt_path"
-    git -C "$REPO_PATH" worktree remove "$wt_path" 2>/dev/null || true
+    git -C "$REPO_PATH" worktree remove "$wt_path" 2>/dev/null \
+      || git -C "$REPO_PATH" worktree remove --force "$wt_path" 2>/dev/null \
+      || true
   fi
 
-  # Delete local branch
-  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$wt_branch" 2>/dev/null; then
+  # Delete the branch the worktree was actually on (claude/<name> for -w, an
+  # arbitrary name for -b). branch -D cannot remove a branch still checked out
+  # in a worktree, so this must run after the removal above.
+  if [[ -n "$wt_branch" ]] && git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$wt_branch" 2>/dev/null; then
     echo "  Deleting branch: $wt_branch"
     git -C "$REPO_PATH" branch -D "$wt_branch" 2>/dev/null || true
   fi
@@ -1164,8 +1201,10 @@ fzf_preview_worktree() {
   local repo_name="$3"
   local repo_hash="$4"
   local instance_id="${repo_name}-${repo_hash}-${wt_name}"
-  local wt_branch="claude/$wt_name"
   local wt_path="$repo_path/../$repo_name-wt-$wt_name"
+  local wt_branch
+  wt_branch="$(resolve_worktree_branch "$wt_name" "$repo_path" "$repo_name")"
+  [[ -z "$wt_branch" ]] && wt_branch="(unknown)"
 
   echo "=== $wt_name ==="
   echo ""
@@ -1222,12 +1261,16 @@ prune_worktrees() {
   local -a entries=()
   local -a entry_names=()
 
+  local wt_path wt_branch wt_base name
   while IFS= read -r line; do
-    if [[ "$line" == "branch refs/heads/claude/"* ]]; then
-      local name="${line#branch refs/heads/claude/}"
-      local wt_path="$REPO_PATH/../$REPO_NAME-wt-$name"
-      local status="clean"
-      if [[ -d "$wt_path" ]]; then
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+    elif [[ "$line" == "branch "* ]]; then
+      wt_branch="${line#branch refs/heads/}"
+      wt_base="$(basename "$wt_path")"
+      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
+        name="${wt_base#${REPO_NAME}-wt-}"
+        local status="clean"
         if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
           status="has changes"
         fi
@@ -1238,11 +1281,11 @@ prune_worktrees() {
         fi
         local last_date
         last_date="$(git -C "$wt_path" log -1 --format='%as' 2>/dev/null || echo "unknown")"
-        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "claude/$name" "$last_date" "$status")")
-      else
-        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "claude/$name" "n/a" "no worktree dir")")
+        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "$wt_branch" "$last_date" "$status")")
+        entry_names+=("$name")
       fi
-      entry_names+=("$name")
+      wt_path=""
+      wt_branch=""
     fi
   done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
 
@@ -1257,7 +1300,10 @@ prune_worktrees() {
       [[ "$en" == "$suffix" ]] && { already_listed=true; break; }
     done
     [[ "$already_listed" == true ]] && continue
-    entries+=("$(printf '%-16s %-28s %-12s %s' "$suffix" "claude/$suffix" "n/a" "orphaned")")
+    local orphan_branch
+    orphan_branch="$(resolve_worktree_branch "$suffix" "$REPO_PATH" "$REPO_NAME")"
+    [[ -z "$orphan_branch" ]] && orphan_branch="(branch gone)"
+    entries+=("$(printf '%-16s %-28s %-12s %s' "$suffix" "$orphan_branch" "n/a" "orphaned")")
     entry_names+=("$suffix")
   done
 
@@ -1324,7 +1370,10 @@ prune_worktrees() {
   echo ""
   echo "Will delete ${#selected_names[@]} worktree(s):"
   for name in "${selected_names[@]}"; do
-    echo "  - $name (claude/$name)"
+    local sel_branch
+    sel_branch="$(resolve_worktree_branch "$name" "$REPO_PATH" "$REPO_NAME")"
+    [[ -z "$sel_branch" ]] && sel_branch="(branch gone)"
+    echo "  - $name ($sel_branch)"
   done
   echo ""
   echo -n "Proceed? (y/n): "
@@ -1355,15 +1404,28 @@ gc_worktrees() {
   echo "Fetching remote state..."
   git -C "$REPO_PATH" fetch --prune 2>/dev/null || true
 
+  # Scan tool worktrees (dir <repo>-wt-*, any branch) whose upstream is gone.
   local -a gone_names=()
+  local -a gone_branches=()
+  local wt_path wt_branch wt_base name track
   while IFS= read -r line; do
-    local branch_name track
-    branch_name="$(echo "$line" | awk '{print $1}')"
-    track="$(echo "$line" | awk '{print $2}')"
-    if [[ "$branch_name" == claude/* && "$track" == "[gone]" ]]; then
-      gone_names+=("${branch_name#claude/}")
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+    elif [[ "$line" == "branch "* ]]; then
+      wt_branch="${line#branch refs/heads/}"
+      wt_base="$(basename "$wt_path")"
+      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
+        name="${wt_base#${REPO_NAME}-wt-}"
+        track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
+        if [[ "$track" == "[gone]" ]]; then
+          gone_names+=("$name")
+          gone_branches+=("$wt_branch")
+        fi
+      fi
+      wt_path=""
+      wt_branch=""
     fi
-  done < <(git -C "$REPO_PATH" for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads/claude/ 2>/dev/null)
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
 
   if [[ ${#gone_names[@]} -eq 0 ]]; then
     echo "No worktrees with deleted remote branches found."
@@ -1375,18 +1437,21 @@ gc_worktrees() {
   printf '  %-16s %-28s %-12s %s\n' "WORKTREE" "BRANCH" "PR STATUS" "ACTION"
   printf '  %-16s %-28s %-12s %s\n' "--------" "------" "---------" "------"
 
-  for name in "${gone_names[@]}"; do
+  local i
+  for i in "${!gone_names[@]}"; do
+    name="${gone_names[$i]}"
+    local branch="${gone_branches[$i]}"
     local pr_status="unknown"
     if command -v gh &>/dev/null; then
       local pr_state
-      pr_state="$(gh pr list --repo "$(git -C "$REPO_PATH" remote get-url origin 2>/dev/null)" --head "claude/$name" --state all --json state --jq '.[0].state' 2>/dev/null || true)"
+      pr_state="$(gh pr list --repo "$(git -C "$REPO_PATH" remote get-url origin 2>/dev/null)" --head "$branch" --state all --json state --jq '.[0].state' 2>/dev/null || true)"
       if [[ -n "$pr_state" ]]; then
         pr_status="$(echo "$pr_state" | tr '[:upper:]' '[:lower:]')"
       else
         pr_status="none found"
       fi
     fi
-    printf '  %-16s %-28s %-12s %s\n' "$name" "claude/$name" "$pr_status" "compact + delete"
+    printf '  %-16s %-28s %-12s %s\n' "$name" "$branch" "$pr_status" "compact + delete"
   done
 
   echo ""
@@ -1424,14 +1489,21 @@ check_gc_nudge() {
   [[ "$needs_check" == false ]] && return
 
   local gone_count=0
+  local wt_path wt_branch wt_base track
   while IFS= read -r line; do
-    local branch_name track
-    branch_name="$(echo "$line" | awk '{print $1}')"
-    track="$(echo "$line" | awk '{print $2}')"
-    if [[ "$branch_name" == claude/* && "$track" == "[gone]" ]]; then
-      gone_count=$((gone_count + 1))
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+    elif [[ "$line" == "branch "* ]]; then
+      wt_branch="${line#branch refs/heads/}"
+      wt_base="$(basename "$wt_path")"
+      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
+        track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
+        [[ "$track" == "[gone]" ]] && gone_count=$((gone_count + 1))
+      fi
+      wt_path=""
+      wt_branch=""
     fi
-  done < <(git -C "$REPO_PATH" for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads/claude/ 2>/dev/null)
+  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
 
   if [[ "$gone_count" -gt 0 ]]; then
     echo "Note: $gone_count worktree(s) have deleted remote branches -- run 'claude-sandbox --gc $REPO_PATH' to clean up."
