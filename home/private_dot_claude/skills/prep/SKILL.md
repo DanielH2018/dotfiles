@@ -38,3 +38,5 @@ global rule, also render an HTML artifact to ~/.claude/artifacts/.
 ## Hand off
 Intake produces understanding + a verification check; it does not implement.
 Route to the normal flow (planner/implementer/superpowers).
+When the hand-off fans out to subagents, size it per `~/.claude/docs/orchestration.md` — scale count to
+complexity, keep synthesis on the orchestrator, and brief each agent with objective + tools + budget.
