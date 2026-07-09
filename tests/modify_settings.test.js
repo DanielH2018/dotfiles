@@ -11,10 +11,18 @@ const path = require('node:path');
 // stdin (the current target content) is intentionally ignored.
 const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
 
-// This test renders a chezmoi template; skip cleanly where the binary isn't installed
-// (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); }
-catch { console.log('SKIP: chezmoi not on PATH'); process.exit(0); }
+// This test renders a chezmoi template via `includeTemplate`; skip cleanly where
+// chezmoi can't render THIS repo — the binary is absent, or its configured source
+// dir isn't this repo (e.g. a sandbox pointing at an empty default source dir).
+function chezmoiCanRenderRepo() {
+  try {
+    const srcDir = execFileSync('chezmoi', ['execute-template'], {
+      input: '{{ .chezmoi.sourceDir }}', encoding: 'utf8',
+    }).trim();
+    return !!srcDir && fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'));
+  } catch { return false; }
+}
+if (!chezmoiCanRenderRepo()) { console.log('SKIP: chezmoi cannot render this repo\'s templates'); process.exit(0); }
 
 const rendered = execFileSync('chezmoi', ['execute-template'], {
   input: fs.readFileSync(TEMPLATE, 'utf8'),
