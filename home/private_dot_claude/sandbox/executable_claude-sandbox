@@ -1678,7 +1678,10 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude-defaults/hooks/block-dangerous-bash.sh:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude-defaults/hooks/protect-secrets.sh:ro"
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
-  -v "$SANDBOX_DIR/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
+  # No sandbox-specific variant — mount the single canonical host copy (one source
+  # of truth, no drift-prone parallel copy). The host script is a superset and
+  # degrades gracefully in-container (bc/stat/date fallbacks all guarded).
+  -v "$HOME/.claude/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
   -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"
   # Read-only git identity (see sandbox/gitconfig). Mounted :ro so a compromised
   # session can neither rewrite credential.helper/core.hooksPath/url.insteadOf

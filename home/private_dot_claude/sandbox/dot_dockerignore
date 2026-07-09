@@ -9,6 +9,5 @@ dockerfiles/
 claude-sandbox
 _claude-sandbox
 settings.json
-statusline-command.sh
 audit.sh
 *.md
