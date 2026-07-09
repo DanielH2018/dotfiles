@@ -167,6 +167,11 @@
       "landed": "2026-07-09T16:04:31.305Z"
     },
     {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_render.sh",
+      "hash": "c0e45cb1965dc252bb902e63ddeca3335e5a95596f4250bbc82f7735fc291c84",
+      "landed": "2026-07-09T16:10:57.488Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/comment_only.json",
       "hash": "6b7395df6f31bf039bc90e3d554072c354dba1a08370b71420e14b506cd47ae8",
       "landed": "2026-07-09T16:04:31.305Z"
