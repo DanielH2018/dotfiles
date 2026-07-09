@@ -528,7 +528,18 @@
             "timeout": 5
           }
         ]
-      }
+      }{{ if eq .chezmoi.os "linux" }},
+      {{/* Linux only: serve ~/.claude/artifacts on localhost:8181 so artifact links are click-to-render from a VS Code Remote-SSH TUI (file:// can't cross the remote boundary) */}}
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/serve-artifacts.sh",
+            "timeout": 5
+          }
+        ]
+      }{{ end }}
     ],
     "UserPromptSubmit": [
       {
