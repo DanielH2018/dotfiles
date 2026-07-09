@@ -43,6 +43,7 @@ usage() {
   echo "  --prune            Interactively select and delete worktrees (fzf picker)."
   echo "  --gc               Clean up worktrees whose remote branches were deleted."
   echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
+  echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
   exit 1
 }
 
@@ -67,6 +68,7 @@ WT_NAME=""
 REPO_PATH=""
 NO_VAULT=false
 NO_CHEZMOI=false
+NO_WORK_CONFIG=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -110,6 +112,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-vault) NO_VAULT=true; shift ;;
     --no-chezmoi) NO_CHEZMOI=true; shift ;;
+    --no-work-config) NO_WORK_CONFIG=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
@@ -1602,6 +1605,21 @@ if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" 
       # (settings.base.json) — their dest is the container home, not the host.
       DOCKER_ARGS+=(-e CHEZMOI_SOURCE_DIR="$CHEZMOI_SRC")
       echo "  chezmoi: source mounted READ-WRITE at $CHEZMOI_SRC (apply on host; --no-chezmoi to disable)"
+      ;;
+  esac
+fi
+
+# --- work-laptop-config source (read-write) when the workspace is the vault ---
+# Second config repo (work-machine dotfiles, deployed via install.sh on the
+# HOST). Mounted RW at its real host path so in-container git (commit/diff)
+# resolves. NOTE: install.sh runs on the HOST — that install is the trust
+# boundary; edits here don't affect the host until you run it there.
+WORK_CONFIG_SRC="${WORK_LAPTOP_CONFIG_DIR:-$HOME/work-laptop-config}"
+if [[ "$NO_WORK_CONFIG" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$WORK_CONFIG_SRC" ]]; then
+  case "$REPO_PATH/" in
+    "$CLAUDE_VAULT_DIR"/*)
+      DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC:$WORK_CONFIG_SRC")
+      echo "  work-laptop-config: source mounted READ-WRITE at $WORK_CONFIG_SRC (install on host; --no-work-config to disable)"
       ;;
   esac
 fi
