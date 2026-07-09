@@ -7,6 +7,11 @@ Distilled from Anthropic's *Building Effective Agents* and the multi-agent resea
 heavy reading/searching to subagents. Never delegate the synthesis or the final write-up — coordinate,
 integrate, and write the answer yourself.
 
+**Model tier.** Default the gather/read/search subagents to a cheaper tier (`model: 'sonnet'`) and keep
+the top tier (Opus/Fable) for your own synthesis — bulk context-reading doesn't need the top model, and
+delegating down conserves the All-Models quota. Bump a single subagent up only when its subtask genuinely
+needs the stronger reasoning.
+
 **How many subagents** — scale to complexity, don't reflex-fan-out:
 - Simple / single-fact → 1 (always ≥1, so sourcing is delegated rather than skipped)
 - Standard → 2–3 (default 3)
@@ -28,6 +33,12 @@ brief is followed, their union must fully answer the question.
 **Verify, don't trust.** Integrating subagent/tool output, separate established fact from speculation,
 prediction, or marketing spin; prefer original sources over aggregators; on conflicts favor recency +
 consistency and flag the discrepancy rather than silently picking.
+
+**Disagreement is signal.** When you fan out several reviewers or verifiers over the same artifact and
+they *disagree*, don't average the verdicts or take a majority vote — the disagreement pinpoints the
+exact spot nobody has actually pinned down. Resolve it by testing the contested claim against ground
+truth (run the code, read the primary source, reproduce the case), then fold in only the settled
+result. Treat a conflict as a prompt to gather one more piece of evidence, not to pick a side.
 
 **Stop at diminishing returns.** Once the answer is good enough, stop spawning and write it — don't
 chase marginal coverage.
