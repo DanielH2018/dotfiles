@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "e407672bc6b4c15c5fbce5eb10cafee2f112afdec331e1243d68af58f0b3e96c",
-      "landed": "2026-07-09T14:34:23.361Z"
+      "hash": "1b6fe9f11cee4b74a02e448dfbff02f820cf52a5f07cbe240d56df6ec2816e3c",
+      "landed": "2026-07-09T16:03:38.807Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -28,8 +28,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "eb4e6cea870929ab6db298cab91282065e0f30e72a522dd82158a083e62e779b",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "d6eeaffce820edc52622b8b4a662b510fc882229048ddc1babac17805624ad60",
+      "landed": "2026-07-09T16:03:38.807Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
@@ -38,8 +38,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "23be5d17c84bcdb3a43405e2c204a26a86a11008d01bb91b5756f7e79b09c445",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "efb24efb977fd0afff70f78022d14d995f830e6238c9610aa7ef61dd187c02ed",
+      "landed": "2026-07-09T16:03:38.807Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -130,6 +130,11 @@
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
       "hash": "73eaccf3d3d6a2d2adbd66d4fc867d25b38ce56257284f5947264a883524781b",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
+      "hash": "7c264c555652da3ab15417181b1de0103fb337e025561893d9fcc100be206ef0",
+      "landed": "2026-07-09T16:03:38.807Z"
     },
     {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",

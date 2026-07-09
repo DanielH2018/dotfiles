@@ -67,6 +67,13 @@ if printf '%s' "$COMMAND" | grep -qE "(['\"])[^'\"]*[&;|][^'\"]*\1"; then
   exit 0
 fi
 
+# Command substitution / process substitution can smuggle a gated or unlisted
+# command inside an otherwise-allowed segment; the split below won't see it
+# (e.g. `echo $(curl …) && ls` would auto-approve the curl). Defer to normal handling.
+if printf '%s' "$COMMAND" | grep -qE '\$\(|`|<\(|>\('; then
+  exit 0
+fi
+
 # Use awk for splitting — BSD sed (macOS) doesn't interpret \n in replacements.
 PARTS=()
 while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | awk '{gsub(/&&|\|\||;|\|/, "\n"); print}')

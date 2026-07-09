@@ -30,7 +30,7 @@ fi
 # Force-push to main / master (flag syntax and +refspec syntax) — always blocked
 # Exclude --force-with-lease which is the safe variant
 if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
-  if echo "$COMMAND" | grep -qE '\b(main|master)\b'; then
+  if echo "$COMMAND" | grep -qE '(^|[[:space:]]|:)(main|master)([[:space:]]|:|$)'; then
     deny "Blocked: force-push to main/master. Use a feature branch."
   fi
 fi
