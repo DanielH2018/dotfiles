@@ -1,0 +1,72 @@
+{
+  "data": { "search": { "nodes": [
+    {
+      "number": 10, "title": "Fix settlement race",
+      "url": "https://github.com/privacy-com/authorizer/pull/10",
+      "isDraft": false, "updatedAt": "2026-07-09T13:00:00Z",
+      "headRefName": "fix-settlement-race", "reviewDecision": "CHANGES_REQUESTED",
+      "repository": { "nameWithOwner": "privacy-com/authorizer" },
+      "reviews": { "nodes": [
+        { "author": { "login": "alice" }, "state": "COMMENTED", "submittedAt": "2026-07-09T09:00:00Z" },
+        { "author": { "login": "bob" }, "state": "COMMENTED", "submittedAt": "2026-07-09T10:00:00Z" },
+        { "author": { "login": "alice" }, "state": "CHANGES_REQUESTED", "submittedAt": "2026-07-09T11:00:00Z" }
+      ] },
+      "reviewThreads": { "nodes": [
+        { "isResolved": true, "isOutdated": false, "path": "src/a.py", "line": 5,
+          "comments": { "nodes": [ { "author": { "login": "alice" }, "body": "old", "url": "https://github.com/privacy-com/authorizer/pull/10#r1", "createdAt": "2026-07-09T09:00:00Z" } ] } },
+        { "isResolved": false, "isOutdated": false, "path": "src/settlement.py", "line": 42,
+          "comments": { "nodes": [ { "author": { "login": "alice" }, "body": "this can NPE if the retry fires twice", "url": "https://github.com/privacy-com/authorizer/pull/10#r2", "createdAt": "2026-07-09T11:00:00Z" } ] } }
+      ] },
+      "comments": { "nodes": [
+        { "author": { "login": "bob" }, "body": "can you rebase onto main?", "url": "https://github.com/privacy-com/authorizer/pull/10#c1", "createdAt": "2026-07-09T10:30:00Z" }
+      ] },
+      "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+        "state": "FAILURE",
+        "contexts": { "nodes": [
+          { "__typename": "CheckRun", "name": "ci/unit-tests", "conclusion": "FAILURE", "status": "COMPLETED", "detailsUrl": "https://github.com/privacy-com/authorizer/runs/1" },
+          { "__typename": "CheckRun", "name": "ci/lint", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://github.com/privacy-com/authorizer/runs/2" }
+        ] }
+      } } } ] }
+    },
+    {
+      "number": 20, "title": "Add ledger reconciliation job",
+      "url": "https://github.com/privacy-com/ledger/pull/20",
+      "isDraft": false, "updatedAt": "2026-07-08T10:00:00Z",
+      "headRefName": "ledger-recon", "reviewDecision": "REVIEW_REQUIRED",
+      "repository": { "nameWithOwner": "privacy-com/ledger" },
+      "reviews": { "nodes": [] },
+      "reviewThreads": { "nodes": [
+        { "isResolved": false, "isOutdated": true, "path": "job/recon.py", "line": 88,
+          "comments": { "nodes": [ { "author": { "login": "carol" }, "body": "extract this into a helper", "url": "https://github.com/privacy-com/ledger/pull/20#r9", "createdAt": "2026-07-08T09:00:00Z" } ] } }
+      ] },
+      "comments": { "nodes": [] },
+      "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+        "state": "SUCCESS",
+        "contexts": { "nodes": [
+          { "__typename": "CheckRun", "name": "ci/unit-tests", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://github.com/privacy-com/ledger/runs/9" }
+        ] }
+      } } } ] }
+    },
+    {
+      "number": 30, "title": "Docs: card lifecycle diagram",
+      "url": "https://github.com/privacy-com/tools/pull/30",
+      "isDraft": false, "updatedAt": "2026-07-07T10:00:00Z",
+      "headRefName": "docs-card-lifecycle", "reviewDecision": "APPROVED",
+      "repository": { "nameWithOwner": "privacy-com/tools" },
+      "reviews": { "nodes": [
+        { "author": { "login": "alice" }, "state": "APPROVED", "submittedAt": "2026-07-07T09:00:00Z" }
+      ] },
+      "reviewThreads": { "nodes": [
+        { "isResolved": true, "isOutdated": false, "path": "README.md", "line": 1,
+          "comments": { "nodes": [ { "author": { "login": "alice" }, "body": "nit fixed", "url": "https://github.com/privacy-com/tools/pull/30#r5", "createdAt": "2026-07-07T08:00:00Z" } ] } }
+      ] },
+      "comments": { "nodes": [] },
+      "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+        "state": "SUCCESS",
+        "contexts": { "nodes": [
+          { "__typename": "CheckRun", "name": "ci/docs", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://github.com/privacy-com/tools/runs/5" }
+        ] }
+      } } } ] }
+    }
+  ] } }
+}

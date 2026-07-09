@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR feedback</title>
+<style>
+  :root { --bg:#fbfbfa; --fg:#1c1c1c; --muted:#6b6b6b; --line:#e3e3e0; --card:#fff;
+    --code-bg:#f3f2ef; --note:#0550ae; --t1:#b42318; --t2:#9a6700; --t3:#1a7f37; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#191919; --fg:#e6e6e6; --muted:#9a9a9a; --line:#333330; --card:#212121;
+      --code-bg:#2a2a28; --note:#6cb6ff; --t1:#f87171; --t2:#d4a72c; --t3:#4ac26b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:2.5rem 1.25rem 5rem; }
+  h1 { font-size:1.5rem; margin:0 0 .35rem; letter-spacing:-.01em; }
+  .meta { color:var(--muted); font-size:.85rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:1rem 1.25rem; margin:1rem 0; }
+  .card.t1 { border-left:4px solid var(--t1); } .card.t2 { border-left:4px solid var(--t2); }
+  .card.t3 { border-left:4px solid var(--t3); }
+  .titlerow { display:flex; flex-wrap:wrap; gap:.5rem; align-items:baseline; }
+  .titlerow a { color:var(--fg); text-decoration:none; font-weight:600; }
+  .titlerow a:hover { text-decoration:underline; }
+  .repo { color:var(--muted); font-size:.85rem; font-family:ui-monospace,Menlo,monospace; }
+  .badge { font-size:.7rem; font-weight:700; padding:.1rem .45rem; border-radius:6px;
+    border:1px solid currentColor; }
+  .badge.t1 { color:var(--t1); } .badge.t2 { color:var(--t2); } .badge.t3 { color:var(--t3); }
+  .sub { color:var(--muted); font-size:.82rem; margin:.25rem 0 .6rem; }
+  .row { font-size:.9rem; margin:.3rem 0; }
+  .k { color:var(--muted); display:inline-block; min-width:5.5rem; }
+  .fail { color:var(--t1); font-weight:600; }
+  details { margin:.3rem 0; }
+  summary { cursor:pointer; color:var(--note); font-size:.9rem; }
+  .thread, .comment { border-left:2px solid var(--line); padding:.15rem .7rem; margin:.4rem 0; }
+  .loc { font-family:ui-monospace,Menlo,monospace; font-size:.8rem; color:var(--muted); }
+  .who { font-weight:600; }
+  .body { white-space:pre-wrap; }
+  a { color:var(--note); }
+  .empty { color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Open PRs awaiting you</h1>
+  <div class="meta" id="meta"></div>
+  <div id="list"></div>
+</div>
+<script>
+const DATA = /*__PR_FEEDBACK_DATA__*/null;
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function ago(iso){ const d=(Date.now()-new Date(iso).getTime())/3.6e6;
+  if(d<1) return Math.round(d*60)+"m ago"; if(d<24) return Math.round(d)+"h ago"; return Math.round(d/24)+"d ago"; }
+function render(){
+  const meta=document.getElementById("meta"), list=document.getElementById("list");
+  if(!DATA){ meta.textContent="No data."; return; }
+  meta.textContent=`${DATA.org} — ${DATA.counts.total} total, ${DATA.counts.attention} need attention · generated ${DATA.generated_at}`;
+  if(!DATA.prs.length){ list.innerHTML='<p class="empty">No open PRs.</p>'; return; }
+  list.innerHTML=DATA.prs.map(pr=>{
+    const reviews=pr.reviews.map(r=>`${esc(r.author)} ${r.state.toLowerCase().replace("_","-")}`).join(" · ")||"—";
+    const checks=pr.checks.length
+      ? pr.checks.map(c=>`<span class="fail">${esc(c.name)}</span> <a href="${esc(c.url)}">${esc(c.state)}</a>`).join(" · ")
+      : "—";
+    const threads=pr.threads.length
+      ? `<details open><summary>${pr.threads.length} unresolved thread(s)</summary>`+
+        pr.threads.map(t=>`<div class="thread"><span class="loc">${esc(t.path)}:${esc(t.line)}</span>${t.isOutdated?' <span class="loc">(outdated)</span>':''}<br><span class="who">${esc(t.author)}</span>: <span class="body">${esc(t.body)}</span> <a href="${esc(t.url)}">link</a></div>`).join("")+
+        `</details>`
+      : "";
+    const comments=pr.comments.length
+      ? `<details><summary>${pr.comments.length} comment(s)</summary>`+
+        pr.comments.map(c=>`<div class="comment"><span class="who">${esc(c.author)}</span>: <span class="body">${esc(c.body)}</span> <a href="${esc(c.url)}">link</a></div>`).join("")+
+        `</details>`
+      : "";
+    return `<div class="card t${pr.tier}">
+      <div class="titlerow"><span class="badge t${pr.tier}">T${pr.tier}</span>
+        <a href="${esc(pr.url)}">${esc(pr.title)}</a>
+        <span class="repo">${esc(pr.repo)}#${pr.number}</span></div>
+      <div class="sub">${esc(pr.branch)} · updated ${ago(pr.updatedAt)} · ${esc(pr.reviewDecision||"")}${pr.isDraft?" · draft":""}</div>
+      <div class="row"><span class="k">Reviews</span>${reviews}</div>
+      <div class="row"><span class="k">Checks</span>${checks}</div>
+      ${threads}${comments}
+    </div>`;
+  }).join("");
+}
+render();
+</script>
+</body>
+</html>
