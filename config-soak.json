@@ -147,6 +147,66 @@
       "landed": "2026-07-08T20:17:05.073Z"
     },
     {
+      "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
+      "hash": "e5eed7917f717023eb10aa3bcfeacc04a73f591f51ee4b734394e7188742aaa7",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_fetch.sh",
+      "hash": "d2163b2eadc4f381e5a685d95a1f7f8b48ec5aa8ca26c175bb7c7dda68ba0076",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_render.sh",
+      "hash": "f253edcdf7a30463d9075652e4ec62c42249bcd84f4cd80d38218719183cb6d9",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_fetch.sh",
+      "hash": "ae543f1c0ef1ec5345e368999555b7b3c13e2de12232dce97858d7e415942ac9",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/comment_only.json",
+      "hash": "6b7395df6f31bf039bc90e3d554072c354dba1a08370b71420e14b506cd47ae8",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/empty.json",
+      "hash": "659a36837102bb3419543e7dc11a96e86900da638f9b23f18e2d75bb12085ecc",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/failing.json",
+      "hash": "410da54352aa529f29819d41ce9542c6fd3c3be0080fca7f461fa757c033e4cf",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/mixed.json",
+      "hash": "0691f69046ae7e18bb279ff90e6f15882889f2ac8e904374c08f2d484af5add8",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/noise.json",
+      "hash": "b9df751a0f0dc7e575cf1c335f5e8d3a76d65ae19b5fe0a6a3919a6810ed3591",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/rollup_fail.json",
+      "hash": "3f07ccae0d666efb1496360d21076557b858365e25c5db323d53258280336e0b",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/scripts/transform.jq",
+      "hash": "2ee167e55c07abf5d34a04c06ac2ccd0249af8d1a669a06524bee3c97e8180d2",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-feedback/templates/report.html",
+      "hash": "b781f46ab003546a1e52d9a21875ea7b1c3580d0eda78582ab7e21cb2257da63",
+      "landed": "2026-07-09T16:04:31.305Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
       "hash": "226e1046aa282dd918f1783d6ced01c103f87e55f55551a098b60b89db1707b5",
       "landed": "2026-07-09T15:00:33.451Z"
