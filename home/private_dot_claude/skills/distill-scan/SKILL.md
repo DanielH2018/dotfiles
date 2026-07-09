@@ -7,8 +7,9 @@ description: Use after a security-sweep or code-review to distill its findings i
 
 A frontier-model security review is expensive and one-shot. Distill its findings
 into a deterministic ruleset that a pre-commit hook re-runs for free. This skill
-produces validated patterns for the external-pattern loader in `secrets-check.js`
-(the vault's pre-commit hook), whose contract is documented below.
+produces validated patterns for the external-pattern loader in `.githooks/secrets-check.js`,
+which the vault's bash pre-commit hook invokes on top of its built-in patterns. Its
+contract is documented below.
 
 ## Input
 
@@ -40,7 +41,7 @@ specific instance.
 - `.claude/scan-patterns.json` is an array of `{ "name": string, "re": string,
   "severity"?: string }`. `re` is a JavaScript regex **source string** (no
   slashes, no flags).
-- Loaded patterns are added on top of the built-ins, marked `external`, and
+- Loaded patterns run in addition to the bash hook's built-in patterns, and are
   tested only against the first `EXTERNAL_MAX_LINE` (2000) chars of each line —
   the guard that stops a pathological pattern from hanging a commit.
 - The hook already skips malformed entries, unsafe regexes, and ones that don't
