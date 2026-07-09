@@ -14,6 +14,10 @@
 #
 # Host-path resolution: prefer the launcher-exported CLAUDE_ARTIFACTS_HOST_DIR; else
 # derive the bind-mount source from /proc/self/mountinfo; else fall back to the path.
+# In the sandbox, ~/.claude is itself a bind-mount of the host state dir, so an
+# artifact written under ~/.claude/artifacts (e.g. by a skill that hardcodes that
+# path) is on the host at $CLAUDE_STATE_HOST_DIR/artifacts — translate it too, or the
+# emitted file:// URI would point at the unreachable in-container /home/... path.
 
 set -u
 
@@ -37,7 +41,13 @@ case "$path" in
     base=$(resolve_artifacts_host)
     if [ -n "$base" ]; then host="${base%/}/${path#/artifacts/}"; else host="$path"; fi ;;
   */.claude/artifacts/*)
-    host="$path" ;;
+    # In-container: ~/.claude/artifacts is the state bind-mount; map to its host source.
+    # On the host (env unset): the path is already a real host path — emit verbatim.
+    if [ -n "${CLAUDE_STATE_HOST_DIR:-}" ]; then
+      host="${CLAUDE_STATE_HOST_DIR%/}/artifacts/${path#*/.claude/artifacts/}"
+    else
+      host="$path"
+    fi ;;
   *)
     exit 0 ;;
 esac

@@ -1659,6 +1659,9 @@ DOCKER_ARGS=(
   # host-backed bind-mount instead of its ~/.claude/artifacts default.
   -e "ARTIFACT_DIR=/artifacts"
   -v "$STATE_DIR:/home/claudebot/.claude"
+  # Host source of the ~/.claude bind-mount, so link-artifact.sh can turn an artifact
+  # written under ~/.claude/artifacts into a clickable host file:// link (not /home/...).
+  -e "CLAUDE_STATE_HOST_DIR=$STATE_DIR"
   -v "$SESSIONS_DIR:/home/claudebot/.claude/projects"
   -v "$OP_SOCKET:/run/1password/agent.sock"
   -v "$HOME/.claude/plugins:/home/claudebot/.claude/plugins:ro"
