@@ -38,6 +38,18 @@ const DENY = [
   ':(){ :|:& };:',
   'dd if=/dev/zero of=/dev/sda',
   'echo pwned > .env',
+  // secret reads via non-cat readers, editors, interpreters, and copy/exfil tools
+  'grep SECRET .env',
+  'awk "{print}" config/.env',
+  'sed -n 1p ~/.ssh/id_rsa',
+  'rg TOKEN .env',
+  'vim .env',
+  'strings app/secrets/token',
+  'base64 authorizer/.env',
+  'python3 -c "print(open(\'.env\').read())"',
+  'node -e "require(\'fs\').readFileSync(\'.env\')"',
+  'scp server:/home/u/.ssh/id_rsa .',
+  'cp .env.example .env',
 ];
 
 const ALLOW = [
@@ -46,6 +58,14 @@ const ALLOW = [
   'git push --force-with-lease origin main',
   'cat README.md',
   'git commit -m "wip"',
+  // readers/interpreters WITHOUT a secret path, and jq filters after a pipe
+  'grep -r TODO src/',
+  'grep TODO src/app.js',
+  'python manage.py runserver',
+  'node server.js',
+  'sed -n 1p CHANGELOG.md',
+  'echo "{}" | jq ".key"',
+  'cat data.json | jq ".pem"',
 ];
 
 test('dangerous commands are denied', { skip }, () => {

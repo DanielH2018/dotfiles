@@ -78,12 +78,21 @@ if echo "$COMMAND" | grep -qE '\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b'; then
   deny "Blocked: low-level disk operation."
 fi
 
-# Reading secret files via bash commands (bypasses Read deny rules)
-# Only check arguments before the first pipe — jq expressions like '.key' are not file paths.
-SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem|\.key|\.p12|\.pfx)'
+# Reading secret files via bash commands (bypasses Read deny rules).
+# Args before the first pipe only, so a trailing jq/grep filter like '.key' isn't
+# misread as a path. Best-effort: catches common readers, not obfuscated invocations.
+SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem|\.key|\.p12|\.pfx)'
+# Content dumpers, searchers (grep/awk/sed), pagers, editors, hashers, and
+# copy/exfil tools — any of these reading a secret path is a leak vector.
+READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar)'
 CMD_ARGS="${COMMAND%%|*}"
-if echo "$CMD_ARGS" | grep -qE "\b(cat|head|tail|less|more|bat|strings|xxd|hexdump|base64|od|gpg|openssl)\b.*$SECRET_PATHS"; then
+if echo "$CMD_ARGS" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
   deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
+fi
+# Interpreters that can slurp a file (python -c 'open(".env")', node -e, perl, ...).
+# Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
+if echo "$COMMAND" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
+  deny "Blocked: reading a secrets file via an interpreter. Ask the user to share the specific value needed."
 fi
 
 # Writing to secret paths via pipe (tee) or redirection — check the full command
