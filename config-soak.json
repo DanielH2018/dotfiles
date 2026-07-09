@@ -93,8 +93,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
-      "hash": "478ee24cf21845361ca8a7346a6236ce621e5d265d8b25652a2c0f1b49ccecb7",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "d6d3c88c3b647235f98c5eb44ed27293845cfe0af3e90b9bebf1f1c8e5dbe6ab",
+      "landed": "2026-07-09T16:47:44.162Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
