@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "6aa47932b4e32f8a93c091ddb7cbf0883cca8da69936f52b6213286055d8c74b",
-      "landed": "2026-07-09T13:48:37.116Z"
+      "hash": "e407672bc6b4c15c5fbce5eb10cafee2f112afdec331e1243d68af58f0b3e96c",
+      "landed": "2026-07-09T14:34:23.361Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "33c7fffca37b4c0c724a5a50a6e0baf60d5b3e13183012d22d36d6ec9cf0ba00",
-      "landed": "2026-07-09T13:48:37.116Z"
+      "hash": "a81fce774f6d59a2352760a20e767a064ca3efb181aef68e20aae06eb2c93ca2",
+      "landed": "2026-07-09T14:34:23.361Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
