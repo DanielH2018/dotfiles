@@ -712,17 +712,21 @@
   "footerLinksRegexes": [],
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
-    "code-review@claude-plugins-official": true,
+    "code-review@claude-plugins-official": false,
     "claude-md-management@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": false,
     "remember@claude-plugins-official": true,
 {{- if ne .chezmoi.os "windows" }}
     "feature-dev@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true,
-    "pr-review-toolkit@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": false,
+    "pr-review-toolkit@claude-plugins-official": false,
 {{- end }}
     "ralph-loop@claude-plugins-official": true,
     "claude-permission-audit@daniel-tools": true
+  },
+  "skillOverrides": {
+    "incident-response": "off",
+    "git-commit-and-push": "off"
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
