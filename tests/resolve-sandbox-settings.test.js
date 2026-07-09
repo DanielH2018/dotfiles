@@ -58,5 +58,67 @@ assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'absent 
   assert.match(r.stderr, /merge failed/, 'warns when merge fails');
 }
 
+// --- host-safe fold (step 1) ---
+// A richer base with its own allow, deny, and hooks; and a host with the safe
+// keys plus keys that must NOT propagate (permissions.allow, hooks).
+const hbase = path.join(d, 'hbase.json');
+fs.writeFileSync(hbase, JSON.stringify({
+  permissions: { allow: ['Bash(sandbox_only)'], deny: ['Bash(base_deny)'] },
+  hooks: { PreToolUse: [{ matcher: 'X', hooks: [{ type: 'command', command: 'sandbox-hook' }] }] },
+}));
+const host = path.join(d, 'host.json');
+fs.writeFileSync(host, JSON.stringify({
+  outputStyle: 'Fintech Terse',
+  model: 'opus[1m]',
+  enabledPlugins: { 'superpowers@x': true },
+  permissions: { allow: ['Bash(host_allow_must_not_cross)'], deny: ['Bash(host_deny)'] },
+  hooks: { PreToolUse: [{ matcher: 'Y', hooks: [{ type: 'command', command: 'host-hook-must-not-cross' }] }] },
+}));
+
+// 5. host fold, no overlay -> host-safe keys folded into base, allow/hooks untouched
+{
+  const r = run([hbase, path.join(d, 'nope.json'), host]);
+  assert.notStrictEqual(r.stdout, hbase, 'host fold produces a new file');
+  assert.ok(fs.existsSync(r.stdout), 'host-folded file exists');
+  const m = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
+  assert.ok(m.permissions.deny.includes('Bash(base_deny)'), 'keeps base deny');
+  assert.ok(m.permissions.deny.includes('Bash(host_deny)'), 'unions host deny');
+  assert.strictEqual(m.outputStyle, 'Fintech Terse', 'takes host outputStyle');
+  assert.strictEqual(m.model, 'opus[1m]', 'takes host model');
+  assert.deepStrictEqual(m.enabledPlugins, { 'superpowers@x': true }, 'takes host enabledPlugins');
+  assert.deepStrictEqual(m.permissions.allow, ['Bash(sandbox_only)'], 'keeps sandbox allow, does NOT import host allow');
+  assert.ok(!JSON.stringify(m.permissions.allow).includes('host_allow'), 'host allow never crosses');
+  assert.deepStrictEqual(m.hooks, hbaseHooks(), 'keeps sandbox hooks, does NOT import host hooks');
+  cleanups.push(r.stdout);
+}
+
+// 6. host fold + overlay -> deny is union(base, host, overlay)
+{
+  const r = run([hbase, overlay, host], { pathDirs: [okBin, ...process.env.PATH.split(':')] });
+  const m = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
+  for (const dny of ['Bash(base_deny)', 'Bash(host_deny)', 'mcp__work__only']) {
+    assert.ok(m.permissions.deny.includes(dny), `union deny includes ${dny}`);
+  }
+  assert.strictEqual(m.model, 'opus[1m]', 'host model survives overlay merge');
+  cleanups.push(r.stdout);
+}
+
+// 7. host arg absent -> unchanged legacy behavior (base path, no fold)
+assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'no host arg -> legacy base');
+
+// 8. broken host json -> falls back, base deny preserved (no partial import)
+{
+  const badhost = path.join(d, 'bad.json');
+  fs.writeFileSync(badhost, '{ not json');
+  const r = run([hbase, path.join(d, 'nope.json'), badhost]);
+  // fold fails -> CUR stays hbase (the raw base path)
+  assert.strictEqual(r.stdout, hbase, 'broken host json -> base path');
+  assert.match(r.stderr, /host-safe fold failed/, 'warns on broken host json');
+}
+
+function hbaseHooks() {
+  return { PreToolUse: [{ matcher: 'X', hooks: [{ type: 'command', command: 'sandbox-hook' }] }] };
+}
+
 for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
 console.log('ALL PASS');

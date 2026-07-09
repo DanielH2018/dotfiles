@@ -13,8 +13,10 @@ STATE_DIR="$SANDBOX_DIR/state"
 if [ -f "$HOME/.config/claude/local.env" ]; then
   . "$HOME/.config/claude/local.env"
 fi
-# Resolve the settings file to mount: base, or base+work-overlay merged at launch.
-SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json")"
+# Resolve the settings file to mount: sandbox base, with a safe subset of the host
+# settings folded in (permissions.deny union + outputStyle/model/enabledPlugins),
+# then the optional work overlay merged on top — all at launch.
+SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json" "$HOME/.claude/settings.json")"
 OP_SOCKET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
 # TODO: pin to a specific digest once you've pulled a known-good version:
 #   docker inspect lscr.io/linuxserver/socket-proxy:latest --format '{{index .RepoDigests 0}}'
