@@ -8,8 +8,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "919b2f7c5070021d8db077355152571f3edf91b6aa5d1f3fea1e92aa5c1b88b5",
-      "landed": "2026-07-09T19:21:48.262Z"
+      "hash": "1dbcf0f40034e1c2c5088e62ce30a13af3718dc624ed9c30d6e42aaba5873236",
+      "landed": "2026-07-09T19:36:44.639Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -132,9 +132,29 @@
       "landed": "2026-07-09T16:03:38.807Z"
     },
     {
+      "path": "home/private_dot_claude/skills/config-lint/SKILL.md",
+      "hash": "0666f3e76111a63c10621607954292e3b2f24e52d8dc0008311dcacd5a5d823b",
+      "landed": "2026-07-09T19:36:44.639Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.js",
+      "hash": "212e0548ea11435f9cc6bda39d73b400e3c4ecd5dc71c748269ba92215bab85e",
+      "landed": "2026-07-09T19:36:44.639Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.test.js",
+      "hash": "5c2b129804ca4a3955a14094f2b04f30eb0e13b175a2d7108b47a3614d21eb5b",
+      "landed": "2026-07-09T19:36:44.639Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",
       "hash": "86d93a94e9889f624421d12e2edba60809cbb5acfb1142a9c21e22be8c603ac6",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/distill-scan/SKILL.md",
+      "hash": "14e2f414e33bf4b433b4a64bfd322e9465e08ece28c3a94f4e3830ed8e494fa7",
+      "landed": "2026-07-09T19:36:44.639Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
@@ -210,6 +230,11 @@
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
       "hash": "a47d394907341f92e607b4dc321b930e27f5a6c3dd3b0393db13a8922f87b013",
       "landed": "2026-07-09T19:21:48.262Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/reprime/SKILL.md",
+      "hash": "b75cdb5741f0982fba40d48bf931dbb00e40bdd3b59c9f50d9f8796237997988",
+      "landed": "2026-07-09T19:36:44.639Z"
     }
   ]
 }
