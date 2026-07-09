@@ -212,7 +212,6 @@
       "WebSearch",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:code.claude.com)",
-      "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:developer.mozilla.org)",
       "WebFetch(domain:stackoverflow.com)",
@@ -270,6 +269,7 @@
       "Skill(keybindings-help)"
     ],
     "deny": [
+      "WebFetch(domain:github.com)",
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(**/*.pem)",

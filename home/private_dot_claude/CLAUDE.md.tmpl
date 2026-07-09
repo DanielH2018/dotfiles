@@ -7,6 +7,15 @@
 - When referencing code, include `file:line` so I can jump to it.
 - If something is ambiguous, ask one focused question rather than listing all possibilities.
 
+## Config & dotfiles management (chezmoi)
+
+My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. A hand-edit to a deployed file is reverted on the next `chezmoi apply` (templated sources) or silently drifts. Run `chezmoi source-path <file>` before editing any config under `~`; a `.tmpl` source means the deployed file is generated and hand-edits there are pointless.
+
+- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/hooks/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
+- **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
+
+Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-laptop-config` respectively.
+
 ## Git conventions
 {{- if eq .chezmoi.os "darwin" }}
 
@@ -21,6 +30,10 @@
   The previous implementation didn't hold the lock across the
   DB read + write, allowing duplicate settlements under load.
   ```
+
+## GitHub
+
+- For anything on `github.com` — PRs, issues, diffs, Actions runs/logs, repo files, releases — use the `gh` CLI (`gh pr view`, `gh issue view`, `gh api`, `gh run view --log`), not WebFetch. `gh` is authenticated, sees private repos, and returns structured data. `WebFetch(domain:github.com)` is denied in settings, so fetching it will fail — reach for `gh` first. (`raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.)
 
 ## Testing
 
