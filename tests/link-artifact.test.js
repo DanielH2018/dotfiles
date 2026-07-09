@@ -50,4 +50,28 @@ assert.strictEqual(run('/artifacts/data.json', { CLAUDE_ARTIFACTS_HOST_DIR: '/Us
 // 5. write outside any artifacts dir -> no-op
 assert.strictEqual(run('/workspace/src/index.html'), '', 'non-artifact write is a no-op');
 
+// 6. symlink resolution is gated to in-container (mirrors ~/.claude/artifacts -> /artifacts).
+//    A symlinked ~/.claude/artifacts dir: on the host (env unset) the path is emitted
+//    verbatim; in-container (CLAUDE_STATE_HOST_DIR set) readlink -f collapses it to the
+//    real target first, so it no longer matches an artifacts branch here (in a real
+//    container it would resolve to /artifacts and hit case 1's translation).
+{
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));
+  fs.writeFileSync(path.join(real, 'report.html'), '<html>');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-home-'));
+  fs.mkdirSync(path.join(home, '.claude'));
+  fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
+  const linked = path.join(home, '.claude', 'artifacts', 'report.html');
+
+  assert.ok(run(linked).includes(`file://${linked}`),
+    'host mode emits the ~/.claude/artifacts path verbatim (no resolution)');
+  assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
+    'container mode resolves the symlink before matching');
+
+  fs.rmSync(real, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+}
+
 console.log('ALL PASS');

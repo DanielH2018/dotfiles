@@ -25,6 +25,14 @@ INPUT=$(cat)
 path=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_response.filePath // empty' 2>/dev/null)
 [ -z "$path" ] && exit 0
 
+# In the sandbox, ~/.claude/artifacts is a symlink to the /artifacts bind-mount, so
+# resolve symlinks first — that collapses a ~/.claude/artifacts write onto the real
+# /artifacts path and routes it through the per-instance host translation below.
+# Gated to in-container (CLAUDE_STATE_HOST_DIR set) so host path emission is untouched.
+if [ -n "${CLAUDE_STATE_HOST_DIR:-}" ]; then
+  rp=$(readlink -f "$path" 2>/dev/null) && [ -n "$rp" ] && path="$rp"
+fi
+
 case "$path" in
   *.html|*.htm|*.pdf|*.svg|*.png|*.jpg|*.jpeg|*.gif|*.md) ;;
   *) exit 0 ;;

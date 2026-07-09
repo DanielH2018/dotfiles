@@ -48,6 +48,27 @@ if [[ -d "$DEFAULTS_DIR" ]]; then
   fi
 fi
 
+# --- Consolidate artifacts onto the /artifacts bind-mount ---
+# Some skills (artifact-design, review flows) hardcode ~/.claude/artifacts. In the
+# container that's the shared state volume, not the per-instance /artifacts mount the
+# launcher tracks and gc-manages. Symlink it so those writes land in /artifacts
+# (host-visible, instance-scoped, clickable via link-artifact.sh's symlink resolve).
+# Loss-safe: migrate with mv -n; only replace the dir with a symlink once it's empty;
+# if any file can't move, leave the real dir (link-artifact still resolves it).
+if [[ -d /artifacts ]]; then
+  if [[ -L "$CLAUDE_DIR/artifacts" ]]; then
+    ln -sfn /artifacts "$CLAUDE_DIR/artifacts"
+  elif [[ -d "$CLAUDE_DIR/artifacts" ]]; then
+    ( shopt -s dotglob nullglob
+      for _f in "$CLAUDE_DIR"/artifacts/*; do mv -n "$_f" /artifacts/ 2>/dev/null || true; done ) || true
+    if rmdir "$CLAUDE_DIR/artifacts" 2>/dev/null; then
+      ln -sfn /artifacts "$CLAUDE_DIR/artifacts"
+    fi
+  else
+    ln -sfn /artifacts "$CLAUDE_DIR/artifacts"
+  fi
+fi
+
 # --- Plugins ---
 # Host plugins are bind-mounted read-only at ~/.claude/plugins/ (nested
 # mount inside the state volume). Plugin installation must happen on the host.
