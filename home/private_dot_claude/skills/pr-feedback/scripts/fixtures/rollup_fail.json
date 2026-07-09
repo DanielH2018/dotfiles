@@ -1,0 +1,22 @@
+{
+  "data": {
+    "viewer": { "login": "daniel" },
+    "search": { "nodes": [
+    {
+      "number": 70, "title": "Wire up new clearing pipeline",
+      "url": "https://github.com/privacy-com/settlement/pull/70",
+      "isDraft": false, "updatedAt": "2026-07-09T06:00:00Z",
+      "headRefName": "clearing-pipeline", "reviewDecision": "REVIEW_REQUIRED",
+      "repository": { "nameWithOwner": "privacy-com/settlement" },
+      "reviews": { "nodes": [] },
+      "reviewThreads": { "nodes": [] },
+      "comments": { "nodes": [] },
+      "commits": { "nodes": [ { "commit": { "statusCheckRollup": {
+        "state": "FAILURE",
+        "contexts": { "nodes": [
+          { "__typename": "CheckRun", "name": "ci/unit-tests", "conclusion": "SUCCESS", "status": "COMPLETED", "detailsUrl": "https://github.com/privacy-com/settlement/runs/70" }
+        ] }
+      } } } ] }
+    }
+  ] } }
+}

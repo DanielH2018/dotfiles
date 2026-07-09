@@ -1,5 +1,7 @@
 {
-  "data": { "search": { "nodes": [
+  "data": {
+    "viewer": { "login": "daniel" },
+    "search": { "nodes": [
     {
       "number": 40, "title": "Rotate KMS data key",
       "url": "https://github.com/privacy-com/crypto/pull/40",

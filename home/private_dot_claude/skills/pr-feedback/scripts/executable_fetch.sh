@@ -7,6 +7,7 @@ NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 read -r -d '' QUERY <<'GQL' || true
 query($q: String!) {
+  viewer { login }
   search(query: $q, type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
@@ -25,10 +26,10 @@ query($q: String!) {
             isOutdated
             path
             line
-            comments(first: 1) { nodes { author { login } body url createdAt } }
+            comments(last: 1) { nodes { author { login __typename } body url createdAt } }
           }
         }
-        comments(first: 50) { nodes { author { login } body url createdAt } }
+        comments(first: 50) { nodes { author { login __typename } body url createdAt } }
         commits(last: 1) {
           nodes {
             commit {

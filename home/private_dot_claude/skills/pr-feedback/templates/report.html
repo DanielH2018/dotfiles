@@ -58,10 +58,10 @@ function render(){
   meta.textContent=`${DATA.org} — ${DATA.counts.total} total, ${DATA.counts.attention} need attention · generated ${DATA.generated_at}`;
   if(!DATA.prs.length){ list.innerHTML='<p class="empty">No open PRs.</p>'; return; }
   list.innerHTML=DATA.prs.map(pr=>{
-    const reviews=pr.reviews.map(r=>`${esc(r.author)} ${r.state.toLowerCase().replace("_","-")}`).join(" · ")||"—";
+    const reviews=pr.reviews.map(r=>`${esc(r.author)} ${r.state.toLowerCase().replace(/_/g,"-")}`).join(" · ")||"—";
     const checks=pr.checks.length
       ? pr.checks.map(c=>`<span class="fail">${esc(c.name)}</span> <a href="${esc(c.url)}">${esc(c.state)}</a>`).join(" · ")
-      : "—";
+      : (pr.checksFailing?'<span class="fail">checks failing — see PR</span>':"—");
     const threads=pr.threads.length
       ? `<details open><summary>${pr.threads.length} unresolved thread(s)</summary>`+
         pr.threads.map(t=>`<div class="thread"><span class="loc">${esc(t.path)}:${esc(t.line)}</span>${t.isOutdated?' <span class="loc">(outdated)</span>':''}<br><span class="who">${esc(t.author)}</span>: <span class="body">${esc(t.body)}</span> <a href="${esc(t.url)}">link</a></div>`).join("")+

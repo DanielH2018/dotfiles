@@ -9,6 +9,10 @@ import sys, json
 template_path, out_path = sys.argv[1], sys.argv[2]
 data = sys.stdin.read()
 json.loads(data)  # fail loudly if not valid JSON
+# Escape HTML-significant chars so PR content cannot break out of the <script>
+# block or inject markup. These are valid inside JSON string literals and
+# decode back to the original characters at JSON.parse time.
+data = data.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 with open(template_path) as f:
     html = f.read()
 marker = "/*__PR_FEEDBACK_DATA__*/null"

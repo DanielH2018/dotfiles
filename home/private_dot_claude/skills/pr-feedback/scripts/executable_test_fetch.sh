@@ -14,10 +14,13 @@ assert_eq "mixed total"            "3"        "$(jq -r '.counts.total' <<<"$out"
 assert_eq "mixed attention"        "2"        "$(jq -r '.counts.attention' <<<"$out")"
 assert_eq "mixed sort order"       "10 20 30" "$(jq -r '[.prs[].number] | join(" ")' <<<"$out")"
 assert_eq "mixed tiers"            "1 2 3"    "$(jq -r '[.prs[].tier] | join(" ")' <<<"$out")"
+assert_eq "mixed viewer"           "daniel"   "$(jq -r '.viewer' <<<"$out")"
 assert_eq "pr10 unresolved only"   "1"        "$(jq -r '.prs[]|select(.number==10)|.threads|length' <<<"$out")"
+assert_eq "pr10 thread shows other" "alice"   "$(jq -r '.prs[]|select(.number==10)|.threads[0].author' <<<"$out")"
 assert_eq "pr10 latest per author" "2"        "$(jq -r '.prs[]|select(.number==10)|.reviews|length' <<<"$out")"
 assert_eq "pr10 alice latest"      "CHANGES_REQUESTED" "$(jq -r '.prs[]|select(.number==10)|.reviews[]|select(.author=="alice")|.state' <<<"$out")"
 assert_eq "pr10 non-passing checks" "1"       "$(jq -r '.prs[]|select(.number==10)|.checks|length' <<<"$out")"
+assert_eq "pr10 comment kept"      "1"        "$(jq -r '.prs[]|select(.number==10)|.comments|length' <<<"$out")"
 
 out="$(run failing.json)"
 assert_eq "failing tier"            "1"       "$(jq -r '.prs[0].tier' <<<"$out")"
@@ -25,6 +28,28 @@ assert_eq "failing drops success"   "2"       "$(jq -r '.prs[0].checks|length' <
 
 out="$(run empty.json)"
 assert_eq "empty total"             "0"       "$(jq -r '.counts.total' <<<"$out")"
+
+# T2 via a top-level comment alone (no unresolved threads, checks green)
+out="$(run comment_only.json)"
+assert_eq "comment-only tier"       "2"       "$(jq -r '.prs[0].tier' <<<"$out")"
+assert_eq "comment-only comments"   "1"       "$(jq -r '.prs[0].comments|length' <<<"$out")"
+assert_eq "comment-only threads"    "0"       "$(jq -r '.prs[0].threads|length' <<<"$out")"
+
+# Bot comments, self-authored top-level comments, and self-last / bot-last
+# threads are all excluded -> nothing waiting on me -> T3, not counted.
+out="$(run noise.json)"
+assert_eq "noise tier"              "3"       "$(jq -r '.prs[0].tier' <<<"$out")"
+assert_eq "noise comments filtered" "0"       "$(jq -r '.prs[0].comments|length' <<<"$out")"
+assert_eq "noise threads filtered"  "0"       "$(jq -r '.prs[0].threads|length' <<<"$out")"
+assert_eq "noise attention"         "0"       "$(jq -r '.counts.attention' <<<"$out")"
+
+# Rollup reports FAILURE even though the (truncated) context list looks clean
+# -> tier must still be T1 (a red PR must never show as green).
+out="$(run rollup_fail.json)"
+assert_eq "rollup-fail tier"        "1"       "$(jq -r '.prs[0].tier' <<<"$out")"
+assert_eq "rollup-fail checksFailing" "true"  "$(jq -r '.prs[0].checksFailing' <<<"$out")"
+assert_eq "rollup-fail no listed checks" "0"  "$(jq -r '.prs[0].checks|length' <<<"$out")"
+assert_eq "rollup-fail state"       "FAILURE" "$(jq -r '.prs[0].checksState' <<<"$out")"
 
 echo "---"; echo "pass=$pass fail=$fail"
 [[ $fail -eq 0 ]]
