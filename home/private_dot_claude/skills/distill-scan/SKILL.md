@@ -12,6 +12,15 @@ pre-commit already scans — an external pattern file loaded by a hook, or an in
 pattern list in a bash hook. Inspect the repo's hook first — see "Where the
 patterns go" below.
 
+## When to use
+
+Reach for this after a security-sweep or code-review finishes, or whenever
+the user says "turn these findings into a scan rule" or "make this a
+pre-commit check." Don't invoke it before you have concrete findings — it
+distills existing findings, it doesn't hunt for new ones. Use it only when
+a finding generalizes to a recurring pattern; skip one-off findings that
+won't recur.
+
 ## Input
 
 Findings from `/security-sweep`, `/code-review`, or a described vulnerability
@@ -21,20 +30,32 @@ specific instance.
 
 ## Procedure
 
-1. **Derive** a line-oriented regex for each finding — it must match the class
+1. Derive a line-oriented regex for each finding. It must match the class
    on a single line (the loader tests line by line).
-2. **Validate** every candidate before proposing it. Reject any that fail:
+2. Validate every candidate before proposing it; never present one that
+   fails these checks:
    - compiles under `new RegExp(src)`;
    - passes a safe-regex pre-filter — no nested quantifier shapes (`(a+)+`,
      `(.*)*`, `(ab+)*`), no absurd bounded repeats (`{1000,}`) — the classic
      ReDoS shapes;
-   - on a quick timed run, **matches a positive sample, does NOT match a benign
-     sample, and returns fast** on a long input. Example check:
-     `node -e 'const re=new RegExp(process.argv[1]); const t=Date.now(); re.test("x".repeat(50000)); if(Date.now()-t>100) throw new Error("slow regex")' "<pattern>"`
-3. **Present** the surviving candidates as `{ name, re, severity }` entries with
-   their positive/benign samples. Wait for approval.
-4. **Write** only approved entries into the repo's pre-commit scan (see below).
-   Never write an unvalidated or unsafe pattern, and never write without approval.
+   - matches a positive sample, does not match a benign sample, and returns
+     fast on a long input. Run a timed check like:
+
+     ```bash
+     node -e 'const re=new RegExp(process.argv[1]); const t=Date.now();
+     re.test("x".repeat(50000));
+     if (Date.now()-t>100) throw new Error("slow regex")' "<pattern>"
+     ```
+3. Present the surviving candidates as entries in this shape, with their
+   positive/benign samples, then wait for approval — do not skip this step
+   even if every candidate passed validation:
+
+   ```json
+   { "name": "hardcoded-internal-host", "re": "internal\\.example\\.com", "severity": "high" }
+   ```
+4. Write only approved entries into the repo's pre-commit scan (see below).
+   Never write an unvalidated or unsafe pattern, and never write without
+   approval — that's the user's call, not yours to make unilaterally.
 
 ## Where the patterns go
 
@@ -53,4 +74,6 @@ Either way patterns are line-oriented — keep them anchored/bounded so a
 pathological input can't hang a commit, and don't duplicate a built-in the hook
 already covers.
 
-Report-only until the user approves the pattern set.
+Report-only until the user approves the pattern set. See also the
+security-sweep and code-review skills, which produce the findings this
+skill consumes — delegate to them first if there's nothing to distill yet.

@@ -10,6 +10,15 @@ advisory placement review (judgment — clearly labelled as suggestions). This
 skill is **report-only**: it never edits config. Present findings and proposed
 fixes for approval.
 
+## When to use
+
+Use this skill when auditing `~/.claude` or a project `.claude/` for drift, or
+before you hand-edit a hook `command` path, a permission rule, or a CLAUDE.md
+`@`-include and want to know whether it still resolves. Reach for it any time
+a skill or hook silently stops firing — that's frequently a dead plugin toggle
+or an orphaned script path this catches. It only reports; hand off to the
+review-setup skill when you also want the fixes applied for you.
+
 ## 1 — Deterministic drift scan
 
 Run the script and report its output verbatim, then explain each finding:
@@ -20,13 +29,23 @@ node ~/.claude/skills/config-lint/scripts/config-lint.js
 
 - Add a path argument to audit a project's config instead of `~/.claude`, e.g.
   `node ~/.claude/skills/config-lint/scripts/config-lint.js "$PWD/.claude"`.
-- `--strict` exits non-zero when there are SHOULD-FIX findings (for CI/hooks).
-- `--json` for machine-readable output.
+- Use `--strict` before wiring this into a pre-commit or CI hook — it exits
+  non-zero when there are SHOULD-FIX findings.
+- Use `--json` for machine-readable output.
 
 What it checks: `enabledPlugins` vs `installed_plugins.json` (dead = enabled but
 not installed; dormant = installed but not enabled), hook `command` script paths
 that don't exist, `@`-include targets absent on disk, skill-name collisions
 across user + plugin skills, and CLAUDE.md size vs a soft bloat cap.
+
+**Limitations** (verified against `scripts/config-lint.js`):
+- Hook-path detection only matches commands ending in `.js`/`.sh`/`.mjs`/`.cjs`
+  — a hook that shells out to a bare binary or an extensionless script won't
+  be checked, so a clean run isn't proof every hook path is valid.
+- A hook path with an unresolved env var (anything but `$HOME`/`~`) is reported
+  as info, not verified against disk — check those by hand.
+- Duplicate skill names and absent `@`-includes are always `info`, never
+  `should-fix`, so `--strict` won't fail CI on either.
 
 ## 2 — Advisory placement review (judgment)
 
