@@ -82,7 +82,7 @@ fi
 # Only check arguments before the first pipe — jq expressions like '.key' are not file paths.
 SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem|\.key|\.p12|\.pfx)'
 CMD_ARGS="${COMMAND%%|*}"
-if echo "$CMD_ARGS" | grep -qE "\b(cat|head|tail|less|more|bat|strings|xxd|hexdump)\b.*$SECRET_PATHS"; then
+if echo "$CMD_ARGS" | grep -qE "\b(cat|head|tail|less|more|bat|strings|xxd|hexdump|base64|od|gpg|openssl)\b.*$SECRET_PATHS"; then
   deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
 fi
 

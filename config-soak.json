@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "1b6fe9f11cee4b74a02e448dfbff02f820cf52a5f07cbe240d56df6ec2816e3c",
-      "landed": "2026-07-09T16:03:38.807Z"
+      "hash": "ac7a46984890b78900e1c0ef52c0d55b9a5771701e5ab2e6a3e6ad7770e9360e",
+      "landed": "2026-07-09T16:24:12.841Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -28,8 +28,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "d6eeaffce820edc52622b8b4a662b510fc882229048ddc1babac17805624ad60",
-      "landed": "2026-07-09T16:03:38.807Z"
+      "hash": "06d6e78cdf09de5eb592e9dfa07e4b25e6da783a70c8ab432c58055add71ee19",
+      "landed": "2026-07-09T16:24:12.841Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
@@ -38,8 +38,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "efb24efb977fd0afff70f78022d14d995f830e6238c9610aa7ef61dd187c02ed",
-      "landed": "2026-07-09T16:03:38.807Z"
+      "hash": "b4eb5c6ce04c651fbed19b8b4d0ef9601edc7d3d2e6341db827c0bb52c33ca5e",
+      "landed": "2026-07-09T16:24:12.841Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",

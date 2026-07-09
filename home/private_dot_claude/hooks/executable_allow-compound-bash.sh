@@ -52,7 +52,7 @@ trim() {
 matches_any() {
   local cmd="$1"; shift
   local patterns=("$@")
-  for p in "${patterns[@]}"; do
+  for p in ${patterns[@]+"${patterns[@]}"}; do
     # Exact match, or prefix followed by a space (prevents "git" matching "git-lfs")
     [[ "$cmd" == "$p" || "$cmd" == "$p "* || "$cmd" == "$p"/* ]] && return 0
   done
