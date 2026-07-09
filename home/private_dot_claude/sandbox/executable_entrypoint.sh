@@ -163,6 +163,15 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
     echo "- **Vault search**: the curated subset is indexed for semantic search. Run \`vault-search \"<natural-language query>\"\` (add \`-k N\` for more hits) to rank the most relevant pages by meaning + keyword — faster and better than grepping \`index.md\`. Results are \`path › heading\` snippets; open the cited page for full context. The index covers only the curated pages, so absence from results is not proof the vault lacks it."
   fi
 
+  # Sibling repos (read-only) — pointer only; content is on-demand
+  if [[ -n "${SANDBOX_REPOS_DIR:-}" ]]; then
+    if [[ -n "${SANDBOX_REPOS_LIVE:-}" ]]; then
+      echo "- **Sibling repos**: other local repos are mounted read-only under \`${SANDBOX_REPOS_DIR}/<name>\` at their **live working tree** (current branch — may include uncommitted or unmerged changes). Read them on demand for cross-repo context (interfaces, call sites, shared contracts); nothing here is preloaded."
+    else
+      echo "- **Sibling repos**: other local repos are mounted read-only under \`${SANDBOX_REPOS_DIR}/<name>\` at their **\`main\`/\`master\`** state — tracked files only, so no local edits, build artifacts, or unmerged feature branches. Read them on demand for cross-repo context (interfaces, call sites, shared contracts); nothing here is preloaded. The snapshot reflects the last local fetch, so it can trail the true remote main."
+    fi
+  fi
+
   # chezmoi (dotfiles) — source is bind-mounted; in-container is preview/manage only
   if [[ -n "${CHEZMOI_SOURCE_DIR:-}" ]]; then
     echo "- **chezmoi**: the dotfiles SOURCE is bind-mounted read-write at \`${CHEZMOI_SOURCE_DIR}\`, and \`chezmoi\` is pointed at it. Inspect/preview/edit the source freely — \`chezmoi cat <target>\`, \`chezmoi diff\`, \`chezmoi managed\`, \`chezmoi source-path <file>\`, \`chezmoi execute-template\`, or edit source files directly (all git-tracked, so revertible). Do NOT run \`apply\`/\`update\`/\`init\` (they overwrite THIS container's home — a shared volume, not your host) or \`destroy\`/\`purge\` (they delete, and via the mount can reach your host source). Run \`chezmoi apply\` on the host after reviewing the diff."

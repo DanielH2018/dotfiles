@@ -5,6 +5,7 @@ state/
 audit/
 sessions/
 artifacts/
+repo-snapshots/
 dockerfiles/
 claude-sandbox
 _claude-sandbox

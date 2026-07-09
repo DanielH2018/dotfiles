@@ -46,6 +46,8 @@ usage() {
   echo "  --gc               Clean up worktrees whose remote branches were deleted."
   echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
   echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
+  echo "  --no-repos         Don't mount sibling repos from ~/Repositories."
+  echo "  --repos-live       Mount siblings' live working trees instead of clean main/master snapshots."
   echo "  --fresh, --new     Start a new conversation even if this instance has a prior"
   echo "                     session. By default an existing session auto-resumes (--continue)."
   exit 1
@@ -73,6 +75,8 @@ REPO_PATH=""
 NO_VAULT=false
 NO_CHEZMOI=false
 NO_WORK_CONFIG=false
+NO_REPOS=false
+REPOS_LIVE=false
 FRESH_SESSION=false
 
 while [[ $# -gt 0 ]]; do
@@ -118,6 +122,8 @@ while [[ $# -gt 0 ]]; do
     --no-vault) NO_VAULT=true; shift ;;
     --no-chezmoi) NO_CHEZMOI=true; shift ;;
     --no-work-config) NO_WORK_CONFIG=true; shift ;;
+    --no-repos) NO_REPOS=true; shift ;;
+    --repos-live) REPOS_LIVE=true; shift ;;
     --fresh|--new) FRESH_SESSION=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
@@ -1802,6 +1808,116 @@ fi
 # no-op where it isn't mounted.
 if [[ -d "$HOME/.claude/skills" ]]; then
   DOCKER_ARGS+=(-v "$HOME/.claude/skills:/home/claudebot/.claude/skills:ro")
+fi
+
+# --- Sibling repos (read-only, on demand) ---
+# Expose OTHER local repos under ~/Repositories so the agent can read cross-repo
+# context (interfaces, call sites, shared contracts) without them being named in
+# advance. Default: a clean snapshot of each repo's main/master (tracked files
+# only), which strips dirty working trees, build artifacts, and unmerged
+# feature-branch changes. Snapshots are cached by commit SHA, so only repos whose
+# main advanced since the last launch are re-archived. Nothing is preloaded — the
+# entrypoint adds a one-line CLAUDE.md pointer. --repos-live binds live working
+# trees as-is; --no-repos disables. Bind mounts add nothing to the image.
+REPOS_ROOT="$HOME/Repositories"
+REPO_SNAPSHOT_ROOT="$SANDBOX_DIR/repo-snapshots"
+
+# Resolve the ref to snapshot: prefer origin/HEAD, else origin/{main,master},
+# else local main/master, else HEAD. Prints the ref, or nothing on failure.
+resolve_main_ref() {
+  local repo="$1" ref c
+  ref="$(git -C "$repo" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  if [[ -n "$ref" ]] && git -C "$repo" rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1; then
+    printf '%s\n' "$ref"; return 0
+  fi
+  for c in origin/main origin/master main master HEAD; do
+    if git -C "$repo" rev-parse -q --verify "$c^{commit}" >/dev/null 2>&1; then
+      printf '%s\n' "$c"; return 0
+    fi
+  done
+  return 1
+}
+
+# Archive one repo's main ref (tracked files only) into the SHA cache. Idempotent
+# (no-op when the snapshot already exists). Atomic via temp dir + rename so a
+# concurrent launch never sees a half-extracted tree. Exported for xargs; runs
+# under a fresh `bash -c` (no set -e), so internal failures don't abort a launch.
+build_repo_snapshot() {
+  local repo="$1" name="$2" ref="$3" sha="$4"
+  local dest="$REPO_SNAPSHOT_ROOT/$name/$sha" tmp
+  [[ -f "$dest/.ok" ]] && return 0
+  mkdir -p "$REPO_SNAPSHOT_ROOT/$name" || return 0
+  tmp="$(mktemp -d "$REPO_SNAPSHOT_ROOT/$name/.tmp-XXXXXX" 2>/dev/null)" || return 0
+  if git -C "$repo" archive --format=tar "$ref" 2>/dev/null | tar -x -C "$tmp" 2>/dev/null; then
+    : > "$tmp/.ok"
+    rm -rf "$dest" 2>/dev/null || true          # clear a stale partial, if any
+    mv "$tmp" "$dest" 2>/dev/null || rm -rf "$tmp"   # dest now absent -> atomic rename
+  else
+    rm -rf "$tmp"
+  fi
+  return 0
+}
+
+if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
+  repo_mounts=()          # "name<TAB>sha" — snapshot mode
+  live_mounts=()          # "name" — --repos-live
+  build_specs=()          # "repo|name|ref|sha" — repos needing archival
+  for repo_dir in "$REPOS_ROOT"/*/; do
+    repo_dir="${repo_dir%/}"
+    [[ -d "$repo_dir" ]] || continue
+    r_name="$(basename "$repo_dir")"
+    case "$r_name" in *-wt-*) continue ;; esac        # skip worktrees (noise)
+    [[ -e "$repo_dir/.git" ]] || continue             # git repos only
+    [[ "$repo_dir" == "$REPO_PATH" ]] && continue     # skip the workspace repo itself
+    if [[ "$REPOS_LIVE" == true ]]; then
+      live_mounts+=("$r_name")
+      continue
+    fi
+    r_ref="$(resolve_main_ref "$repo_dir" || true)"
+    [[ -n "$r_ref" ]] || continue
+    r_sha="$(git -C "$repo_dir" rev-parse -q --verify "$r_ref^{commit}" 2>/dev/null || true)"
+    [[ -n "$r_sha" ]] || continue
+    repo_mounts+=("$r_name"$'\t'"$r_sha")
+    [[ -f "$REPO_SNAPSHOT_ROOT/$r_name/$r_sha/.ok" ]] || build_specs+=("$repo_dir|$r_name|$r_ref|$r_sha")
+  done
+
+  if [[ "$REPOS_LIVE" == true ]]; then
+    if [[ ${#live_mounts[@]} -gt 0 ]]; then
+      for r_name in "${live_mounts[@]}"; do
+        DOCKER_ARGS+=(-v "$REPOS_ROOT/$r_name:$REPOS_ROOT/$r_name:ro")
+      done
+      DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT" -e SANDBOX_REPOS_LIVE=1)
+      echo "  Repos: ${#live_mounts[@]} sibling repo(s) mounted read-only at their LIVE working tree (--repos-live)"
+    fi
+  else
+    # Archive any missing snapshots in parallel (bounded). build_repo_snapshot is
+    # idempotent, so this is cheap when everything is already cached.
+    if [[ ${#build_specs[@]} -gt 0 ]]; then
+      echo "  Repos: snapshotting ${#build_specs[@]} repo(s) at main/master (first run or main moved)..."
+      export REPO_SNAPSHOT_ROOT
+      export -f build_repo_snapshot
+      printf '%s\0' "${build_specs[@]}" | xargs -0 -P4 -I{} bash -c \
+        'IFS="|" read -r _repo _name _ref _sha <<<"$1"; build_repo_snapshot "$_repo" "$_name" "$_ref" "$_sha"' _ {} \
+        2>/dev/null || true
+    fi
+    # Mount every snapshot that exists; prune older SHAs (keep newest 2 per repo).
+    repos_mounted=0
+    for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
+      r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
+      dest="$REPO_SNAPSHOT_ROOT/$r_name/$r_sha"
+      [[ -f "$dest/.ok" ]] || continue
+      DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
+      repos_mounted=$((repos_mounted + 1))
+      touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
+      while IFS= read -r old; do
+        [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
+      done < <(ls -1dt "$REPO_SNAPSHOT_ROOT/$r_name"/*/ 2>/dev/null | tail -n +3)
+    done
+    if [[ "$repos_mounted" -gt 0 ]]; then
+      DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT")
+      echo "  Repos: $repos_mounted sibling repo(s) mounted read-only at main/master snapshot (--no-repos to disable, --repos-live for live trees)"
+    fi
+  fi
 fi
 
 # --- Vault-self hardening: protect sensitive subpaths ---
