@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# pre-push — fast, offline, deterministic gate for behavior-affecting config.
+#
+# Runs three INSTANT checks: no network, no LLM, no token spend. The slow,
+# non-deterministic LLM eval suite is deliberately NOT here — run it by hand
+# when you actually change an agent definition:
+#
+#     node evals/run-evals.mjs --agent <name>      # scoped
+#     node evals/run-evals.mjs                      # full k=5 soak
+#
+# Bypass once (rarely, e.g. WIP push): git push --no-verify
+#
+# Checks:
+#   1. config-soak status   — every behavior-affecting config change must be
+#                             reviewed and `config-soak land`ed before push.
+#   2. instruction quality  — security dimension is a hard gate (>=70) on the
+#                             agent / skill / CLAUDE instruction files; the
+#                             composite floor is a soft ratchet (QUALITY_MIN_SCORE,
+#                             default 45 — raise it as the files improve).
+#   3. screen-injection     — red-team regression guard on the injection hook.
+#
+# Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
+
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+# Colors only when stdout is a terminal.
+if [ -t 1 ]; then
+  B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; Z=$'\033[0m'
+else
+  B=''; G=''; R=''; Z=''
+fi
+
+fail=0
+run() { # run "<label>" <cmd...>
+  label="$1"; shift
+  printf '\n%s▶ %s%s\n' "$B" "$label" "$Z"
+  if "$@"; then
+    printf '%s✓ %s%s\n' "$G" "$label" "$Z"
+  else
+    rc=$?
+    printf '%s✗ %s (exit %d)%s\n' "$R" "$label" "$rc" "$Z"
+    fail=1
+  fi
+}
+
+# 1. Deterministic review/soak ledger — no LLM, no judgement.
+run "config-soak (review ledger)" node bin/config-soak status
+
+# 2. Instruction-file quality. Security gate (>=70) is always enforced by
+#    `verify`; the composite floor is opt-in and starts low so it never blocks
+#    on today's baseline (implementer.md == 49). Raise via QUALITY_MIN_SCORE.
+QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-45}"
+QFILES=$(ls home/private_dot_claude/agents/*.md \
+            home/private_dot_claude/skills/*/SKILL.md \
+            CLAUDE.md 2>/dev/null)
+if [ -n "$QFILES" ]; then
+  # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
+  run "instruction quality (security>=70; composite>=${QUALITY_MIN_SCORE})" \
+    python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
+fi
+
+# 3. Injection-hook red-team regression guard.
+run "screen-injection red-team" node tests/screen-injection.test.js
+
+if [ "$fail" -ne 0 ]; then
+  printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2
+  exit 1
+fi
+printf '\n%spre-push checks passed.%s\n' "$G" "$Z"
+exit 0

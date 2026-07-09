@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "66c0d3514e9143bc4c563bde59a32a5a2cade9b210c81d11d37407d330e5a975",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "6aa47932b4e32f8a93c091ddb7cbf0883cca8da69936f52b6213286055d8c74b",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "e775a7d25a8fb61526ef0ad03c8cbd59307845c1211505d2f820c51c5c8ba5ef",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "33c7fffca37b4c0c724a5a50a6e0baf60d5b3e13183012d22d36d6ec9cf0ba00",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -18,13 +18,13 @@
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "51ba76d4bd4b02730467c178c36da4dddc923269b7b0bf19e7f068ae2f47a7c4",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "0213233d517cccb95653e07b8d6aaafab46c7ca053471d029600f9caf759369c",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/agents/planner.md",
-      "hash": "5ef05403ee653adf5bda0a0ce7ad5d451fa293f2b91812e09ed61437b40eeaad",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "523f1374c9ae47c0ef442e87226b4a299402fb0adbbf29f36281f89b9a25ce1c",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
@@ -60,6 +60,11 @@
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
       "hash": "7d68bc791c1d85b6bab3f5caf3e1a7b37e2098544837cdcc83d746164e34512c",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
+      "hash": "04659b8aeb0d70291a5ba1be73f486d97453bea6e1f5b41a35f154985ab6e7bf",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -110,6 +115,11 @@
       "path": "home/private_dot_claude/hooks/executable_subagent-stop.sh",
       "hash": "9e2e04e82175c0618376aa3efa4768a9ae2420fc48cef86bb154c0b2f9a78dc1",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_suggest-artifact.sh",
+      "hash": "7f45d5432cd7caaf352e4c9dbd617ff81728eb75c9ee7c896bf2021912ae2176",
+      "landed": "2026-07-09T13:48:37.116Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
