@@ -49,8 +49,10 @@ export function agentSearchDirs(repoRoot, extraDirs = envAgentDirs()) {
 export function loadAgentFromRepo(name, repoRoot, extraDirs = envAgentDirs()) {
   const dirs = agentSearchDirs(repoRoot, extraDirs);
   for (const dir of dirs) {
-    const p = join(dir, `${name}.md`);
-    if (existsSync(p)) return parseAgent(readFileSync(p, 'utf8'));
+    const flat = join(dir, `${name}.md`);
+    if (existsSync(flat)) return parseAgent(readFileSync(flat, 'utf8'));
+    const skill = join(dir, name, 'SKILL.md');   // skill dir: <name>/SKILL.md
+    if (existsSync(skill)) return parseAgent(readFileSync(skill, 'utf8'));
   }
   throw new Error(
     `agent "${name}" not found in: ${dirs.join(', ')}. ` +

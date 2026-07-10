@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo } from '../evals/lib/load-agent.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as pjoin } from 'node:path';
 
 const MD = `---
 name: migration-reviewer
@@ -66,4 +69,22 @@ test('loadAgentFromRepo throws a helpful error naming the dirs searched', () => 
     () => loadAgentFromRepo('nonexistent-agent', '/no/such/repo', ['/also/missing']),
     /not found in:.*EVAL_AGENT_DIRS/s
   );
+});
+
+test('loadAgentFromRepo resolves a skill via <name>/SKILL.md and tolerates allowed-tools frontmatter', () => {
+  const extra = mkdtempSync(pjoin(tmpdir(), 'skilldir-'));
+  const sdir = pjoin(extra, 'homelab-review');
+  mkdirSync(sdir, { recursive: true });
+  writeFileSync(pjoin(sdir, 'SKILL.md'),
+    '---\nname: homelab-review\ndescription: Multi-agent review.\nallowed-tools: Read, Grep, Glob, Bash, Agent\n---\n\nRun a review and STOP.');
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));  // no chezmoi agent shadows the name
+  try {
+    const a = loadAgentFromRepo('homelab-review', fakeRepo, [extra]);
+    assert.strictEqual(a.name, 'homelab-review');
+    assert.strictEqual(a.description, 'Multi-agent review.');
+    assert.match(a.systemPrompt, /Run a review and STOP\./);
+  } finally {
+    rmSync(extra, { recursive: true, force: true });
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
 });
