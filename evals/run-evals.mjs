@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs, effectiveK } from './lib/args.mjs';
 import { loadAgentFromRepo, buildAgentsFlag } from './lib/load-agent.mjs';
+import { loadCases, envCaseDirs } from './lib/load-cases.mjs';
 import { invokeAgent } from './lib/invoke-agent.mjs';
 import { checkAssertions } from './lib/assertions.mjs';
 import { judge } from './lib/judge.mjs';
@@ -14,20 +15,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
 const CASES_DIR = join(HERE, 'cases');
 const CONCURRENCY = 3;
-
-function loadCases(opts) {
-  const cases = [];
-  for (const agent of readdirSync(CASES_DIR, { withFileTypes: true }).filter(d => d.isDirectory())) {
-    if (opts.agent && agent.name !== opts.agent) continue;
-    const dir = join(CASES_DIR, agent.name);
-    for (const f of readdirSync(dir).filter(f => f.endsWith('.json'))) {
-      const c = JSON.parse(readFileSync(join(dir, f), 'utf8'));
-      if (opts.case && c.id !== opts.case) continue;
-      cases.push(c);
-    }
-  }
-  return cases;
-}
 
 async function gradeRun(caseDef, agentsFlagCache) {
   if (!agentsFlagCache[caseDef.agent]) {
@@ -53,7 +40,7 @@ async function pool(items, n, fn) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const cases = loadCases(opts);
+  const cases = loadCases(opts, [CASES_DIR, ...envCaseDirs()]);
   if (!cases.length) { console.error('no cases matched'); process.exit(2); }
   const agentsFlagCache = {};
   const reports = [];
