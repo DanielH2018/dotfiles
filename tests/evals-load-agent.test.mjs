@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo } from '../evals/lib/load-agent.mjs';
+import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError } from '../evals/lib/load-agent.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
@@ -83,6 +83,34 @@ test('loadAgentFromRepo resolves a skill via <name>/SKILL.md and tolerates allow
     assert.strictEqual(a.name, 'homelab-review');
     assert.strictEqual(a.description, 'Multi-agent review.');
     assert.match(a.systemPrompt, /Run a review and STOP\./);
+  } finally {
+    rmSync(extra, { recursive: true, force: true });
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadAgentFlagOrError returns an error (no flag) for a bogus agent name', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));  // no agents dir contents
+  try {
+    const r = loadAgentFlagOrError('nonexistent-agent', fakeRepo, []);
+    assert.ok(r.error);
+    assert.ok(!('flag' in r));
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadAgentFlagOrError returns a flag (no error) for a resolvable agent', () => {
+  const extra = mkdtempSync(pjoin(tmpdir(), 'agentdir-'));
+  writeFileSync(pjoin(extra, 'greeter.md'),
+    '---\nname: greeter\ndescription: Says hello.\n---\n\nSay hello.');
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  try {
+    const r = loadAgentFlagOrError('greeter', fakeRepo, [extra]);
+    assert.ok(!r.error);
+    assert.strictEqual(typeof r.flag, 'string');
+    const parsed = JSON.parse(r.flag);
+    assert.deepStrictEqual(Object.keys(parsed), ['greeter']);
   } finally {
     rmSync(extra, { recursive: true, force: true });
     rmSync(fakeRepo, { recursive: true, force: true });

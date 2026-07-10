@@ -59,3 +59,15 @@ export function loadAgentFromRepo(name, repoRoot, extraDirs = envAgentDirs()) {
     `If it lives in the work overlay, set EVAL_AGENT_DIRS (e.g. ~/work-laptop-config/.claude/agents).`
   );
 }
+
+// Non-throwing wrapper around loadAgentFromRepo + buildAgentsFlag: resolves the
+// --agents flag JSON, or reports the failure instead of throwing. Lets callers
+// (e.g. the eval sweep's concurrency pool) turn an unresolvable agent into a
+// per-case infra error rather than an unhandled rejection that kills the sweep.
+export function loadAgentFlagOrError(name, repoRoot, extraDirs = envAgentDirs()) {
+  try {
+    return { flag: buildAgentsFlag(loadAgentFromRepo(name, repoRoot, extraDirs)) };
+  } catch (e) {
+    return { error: `agent load failed: ${e.message}` };
+  }
+}

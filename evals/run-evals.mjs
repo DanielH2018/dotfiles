@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs, effectiveK } from './lib/args.mjs';
-import { loadAgentFromRepo, buildAgentsFlag } from './lib/load-agent.mjs';
+import { loadAgentFlagOrError } from './lib/load-agent.mjs';
 import { loadCases, envCaseDirs } from './lib/load-cases.mjs';
 import { invokeAgent } from './lib/invoke-agent.mjs';
 import { checkAssertions } from './lib/assertions.mjs';
@@ -18,8 +18,9 @@ const CONCURRENCY = 3;
 
 async function gradeRun(caseDef, agentsFlagCache) {
   if (!agentsFlagCache[caseDef.agent]) {
-    const parsed = loadAgentFromRepo(caseDef.agent, REPO_ROOT);
-    agentsFlagCache[caseDef.agent] = buildAgentsFlag(parsed);
+    const r = loadAgentFlagOrError(caseDef.agent, REPO_ROOT);
+    if (r.error) return gradeFromParts({ invocation: { status: 'infra_error', reason: r.error } });
+    agentsFlagCache[caseDef.agent] = r.flag;
   }
   const invocation = await invokeAgent({ agentsFlag: agentsFlagCache[caseDef.agent], name: caseDef.agent, input: caseDef.input });
   if (invocation.status !== 'ok') return gradeFromParts({ invocation });
