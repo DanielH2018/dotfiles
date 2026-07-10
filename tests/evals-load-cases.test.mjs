@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { envCaseDirs, loadCases } from '../evals/lib/load-cases.mjs';
+import { envCaseDirs, loadCases, readCaseFiles } from '../evals/lib/load-cases.mjs';
 
 function fixtureRoot() {
   const root = mkdtempSync(join(tmpdir(), 'evalcases-'));
@@ -31,6 +31,17 @@ test('loadCases discovers cases, skips live, honors filters, ignores missing dir
     assert.strictEqual(loadCases({ agent: 'nope' }, [root]).length, 0);
     assert.strictEqual(loadCases({ case: 'security-review/001' }, [root]).length, 1);
     assert.strictEqual(loadCases({ case: 'security-review/002' }, [root]).length, 0); // live filtered before match
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readCaseFiles returns every case incl. live, and skips missing dirs', () => {
+  const root = fixtureRoot();
+  try {
+    const all = readCaseFiles([root, '/does/not/exist']);
+    assert.strictEqual(all.length, 2);                       // no filtering: 001 + 002-live
+    assert.ok(all.some(c => c.mode === 'live'));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

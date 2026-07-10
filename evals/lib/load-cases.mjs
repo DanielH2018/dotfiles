@@ -9,20 +9,30 @@ export function envCaseDirs() {
   return raw ? raw.split(':').filter(Boolean) : [];
 }
 
-export function loadCases(opts, caseDirs) {
+// Parse every case JSON under each <root>/<agent>/*.json, across all roots, with no
+// filtering — callers pick what they want (loadCases skips live + applies the CLI
+// filters; the live runner keeps only mode:"live"). Missing roots are skipped.
+export function readCaseFiles(caseDirs) {
   const cases = [];
   for (const root of caseDirs) {
     if (!existsSync(root)) continue;
     for (const agent of readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory())) {
-      if (opts.agent && agent.name !== opts.agent) continue;
       const dir = join(root, agent.name);
       for (const f of readdirSync(dir).filter(f => f.endsWith('.json'))) {
-        const c = JSON.parse(readFileSync(join(dir, f), 'utf8'));
-        if (opts.case && c.id !== opts.case) continue;
-        if (c.mode === 'live') continue;   // live cases run via run-live.mjs, not the hermetic runner
-        cases.push(c);
+        cases.push(JSON.parse(readFileSync(join(dir, f), 'utf8')));
       }
     }
+  }
+  return cases;
+}
+
+export function loadCases(opts, caseDirs) {
+  const cases = [];
+  for (const c of readCaseFiles(caseDirs)) {
+    if (opts.agent && c.agent !== opts.agent) continue;
+    if (opts.case && c.id !== opts.case) continue;
+    if (c.mode === 'live') continue;   // live cases run via run-live.mjs, not the hermetic runner
+    cases.push(c);
   }
   return cases;
 }
