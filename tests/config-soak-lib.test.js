@@ -21,6 +21,16 @@ test('fingerprint is deterministic and content-sensitive', () => {
   );
 });
 
+test('fingerprint is EOL-agnostic (CRLF == LF), so Windows checkouts do not false-flag', () => {
+  // A Windows checkout (autocrlf) yields CRLF on disk; it must hash identically to
+  // the LF ledger, or the gate reports every unchanged file as `changed`.
+  assert.strictEqual(lib.fingerprint('a\r\nb\r\nc'), lib.fingerprint('a\nb\nc'));
+  // Works on Buffers too — that's what the CLI feeds from fs.readFileSync.
+  assert.strictEqual(lib.fingerprint(Buffer.from('x\r\ny')), lib.fingerprint(Buffer.from('x\ny')));
+  // Only CRLF collapses; a lone CR is not a Windows EOL and is left intact.
+  assert.notStrictEqual(lib.fingerprint('a\rb'), lib.fingerprint('ab'));
+});
+
 test('buildReport classifies every state', () => {
   const tracked = {
     'a.sh': 'h_a',       // recorded, unchanged, old  -> stable

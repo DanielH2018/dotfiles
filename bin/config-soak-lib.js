@@ -19,9 +19,15 @@ const crypto = require('node:crypto');
 const DEFAULT_WINDOW_DAYS = 7;
 const DAY_MS = 86400000;
 
-// sha256 of file content, hex. Deterministic across platforms (bytes in -> hash out).
+// sha256 of file content, hex. EOL-agnostic: CRLF is collapsed to LF before
+// hashing, so a file checked out with Windows line endings (autocrlf) fingerprints
+// identically to the LF ledger written on macOS/Linux — otherwise every CRLF
+// checkout false-flags as `changed`. The tracked surface is all text config;
+// latin1 is a byte-exact round-trip, so nothing but literal CRLF pairs is touched.
 function fingerprint(content) {
-  return crypto.createHash('sha256').update(content).digest('hex');
+  const buf = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  const lf = Buffer.from(buf.toString('latin1').replace(/\r\n/g, '\n'), 'latin1');
+  return crypto.createHash('sha256').update(lf).digest('hex');
 }
 
 function toMs(t) {
