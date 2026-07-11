@@ -55,7 +55,8 @@ assert.strictEqual(run('/workspace/src/index.html'), '', 'non-artifact write is 
 //    verbatim; in-container (CLAUDE_STATE_HOST_DIR set) readlink -f collapses it to the
 //    real target first, so it no longer matches an artifacts branch here (in a real
 //    container it would resolve to /artifacts and hit case 1's translation).
-{
+// Creating a symlink needs privilege on Windows (EPERM), so this Unix-host case is skipped there.
+if (process.platform !== 'win32') {
   const fs = require('node:fs');
   const os = require('node:os');
   const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));

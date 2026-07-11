@@ -32,7 +32,8 @@ const rendered = execFileSync('chezmoi', ['execute-template'], {
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'modset-'));
 const script = path.join(tmp, 'modify_settings.sh');
 fs.writeFileSync(script, rendered, { mode: 0o755 });
-const run = (input) => execFileSync(script, [], { input, encoding: 'utf8' });
+// Run via bash (not the .sh directly): Windows can't exec a .sh (EFTYPE); bash handles both.
+const run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8' });
 
 // 1. Output is valid JSON carrying the base structure (the base always defines permissions).
 const out = JSON.parse(run(''));
@@ -48,8 +49,9 @@ assert.ok(!withJunk.includes('__stdin_only_key__'), 'stdin content is not merged
 const once = run('');
 assert.strictEqual(run(once), once, 'modify script is idempotent');
 
-// 4. fnm fallback: with node NOT on PATH but an fnm default-alias node present,
-//    the script resolves it (the headless-apply path) and still emits valid merged JSON.
+// 4. fnm fallback (Unix-only: hardcoded ~/.local/share/fnm alias path, a /bin/sh node shim,
+//    and a POSIX ':'-joined restricted PATH). Skipped on Windows.
+if (process.platform !== 'win32') {
 const fnmHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fnmhome-'));
 const fnmDefaultBin = path.join(fnmHome, '.local', 'share', 'fnm', 'aliases', 'default', 'bin');
 fs.mkdirSync(fnmDefaultBin, { recursive: true });
@@ -72,6 +74,7 @@ const outFnm = execFileSync(script, [], {
 assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base permissions');
 fs.rmSync(fnmHome, { recursive: true, force: true });
 fs.rmSync(toolbin, { recursive: true, force: true });
+}
 
 // 5. log-permission.js is fully removed (superseded by the permission-audit plugin). The
 //    hooks block remains, but no merged setting references the retired script.

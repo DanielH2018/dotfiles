@@ -6,6 +6,11 @@ const path = require('node:path');
 const mod = require('../home/dot_local/bin/executable_dotsync');
 const { expandTilde, loadManifest, globToRegExp, matchesAnyGlob, deriveTargets, buildOwnership, computeCheck } = mod;
 
+// dotsync is Unix-only tooling (POSIX path/glob handling + symlink farms; deployed to
+// ~/.local/bin and used in the Unix restore/sync flow). It isn't run on Windows, where
+// path.join yields backslashes that its forward-slash logic isn't meant to take. Skip there.
+if (process.platform === 'win32') { console.log('SKIP: dotsync is Unix-only'); process.exit(0); }
+
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dshome-'));
 const MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
 fs.mkdirSync(MAN, { recursive: true });

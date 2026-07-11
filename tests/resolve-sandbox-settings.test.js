@@ -7,6 +7,10 @@ const path = require('node:path');
 const HELPER = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_resolve-sandbox-settings.sh');
 const MERGE_SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
 
+// The sandbox settings resolver is Unix-only (the sandbox doesn't run on Windows) and this
+// test relies on POSIX ':'-joined PATHs and /usr/bin,/bin. Skip cleanly on Windows.
+if (process.platform === 'win32') { console.log('SKIP: sandbox resolver is Unix-only'); process.exit(0); }
+
 const cleanups = [];
 function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
 function run(args, { home, pathDirs } = {}) {

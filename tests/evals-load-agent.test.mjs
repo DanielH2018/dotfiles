@@ -57,11 +57,11 @@ test('buildAgentsFlag allows overrides (used by judge)', () => {
 
 test('agentSearchDirs puts the repo agents dir first, then extra dirs', () => {
   const dirs = agentSearchDirs('/repo', ['/work/.claude/agents']);
-  assert.deepStrictEqual(dirs, ['/repo/home/private_dot_claude/agents', '/work/.claude/agents']);
+  assert.deepStrictEqual(dirs, [pjoin('/repo', 'home', 'private_dot_claude', 'agents'), '/work/.claude/agents']);
 });
 
 test('agentSearchDirs with no extra dirs is just the repo dir (hermetic default)', () => {
-  assert.deepStrictEqual(agentSearchDirs('/repo', []), ['/repo/home/private_dot_claude/agents']);
+  assert.deepStrictEqual(agentSearchDirs('/repo', []), [pjoin('/repo', 'home', 'private_dot_claude', 'agents')]);
 });
 
 test('loadAgentFromRepo throws a helpful error naming the dirs searched', () => {

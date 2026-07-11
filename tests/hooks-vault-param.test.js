@@ -9,15 +9,20 @@ const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
 const WATCH = path.join(HOOKS, 'executable_watch-paths.sh');
 
+// Claude passes file paths and CLAUDE_VAULT_DIR to hooks with forward slashes, even on
+// Windows (Git Bash). Feed the hooks forward-slash paths so the tests mirror reality and
+// the hooks' `"$CLAUDE_VAULT_DIR"/*` globs match; on macOS/Linux this is a no-op.
+const fwd = (p) => p.replace(/\\/g, '/');
+
 const cleanups = [];
 function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
 function writeLocalEnv(home, vaultDir) {
   const dir = path.join(home, '.config', 'claude');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'local.env'), `CLAUDE_VAULT_DIR=${JSON.stringify(vaultDir)}\n`);
+  fs.writeFileSync(path.join(dir, 'local.env'), `CLAUDE_VAULT_DIR=${JSON.stringify(fwd(vaultDir))}\n`);
 }
 function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
-  const env = { ...process.env, HOME: home };
+  const env = { ...process.env, HOME: fwd(home) };
   if (extraPath) env.PATH = extraPath + ':' + process.env.PATH;
   try {
     const stdout = execFileSync('bash', [hook], { input, env, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -35,16 +40,16 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   writeLocalEnv(home, vault);
   const bin = tmp('bin-');
   const marker = path.join(bin, 'called.log');
-  fs.writeFileSync(path.join(bin, 'prettier'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'prettier'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(fwd(marker))}\n`, { mode: 0o755 });
 
   const vfile = path.join(vault, 'note.md');
   fs.writeFileSync(vfile, '# x');
-  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: vfile } }), home, extraPath: bin });
+  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: fwd(vfile) } }), home, extraPath: bin });
   assert.ok(!fs.existsSync(marker), 'vault markdown must NOT be formatted');
 
   const ofile = path.join(home, 'other.md');
   fs.writeFileSync(ofile, '# y');
-  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: ofile } }), home, extraPath: bin });
+  runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: fwd(ofile) } }), home, extraPath: bin });
   assert.ok(fs.existsSync(marker), 'non-vault markdown must be formatted');
 }
 
@@ -81,14 +86,14 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   writeLocalEnv(home, vault);
   const r1 = runHook(WATCH, { input: JSON.stringify({ source: 'startup' }), home });
   const w1 = JSON.parse(r1.stdout).hookSpecificOutput.watchPaths;
-  assert.ok(w1.includes(path.join(vault, 'raw')), 'vault raw/ watched when configured');
-  assert.ok(w1.includes(path.join(home, '.claude', 'rules')), 'rules dir always watched');
+  assert.ok(w1.includes(fwd(path.join(vault, 'raw'))), 'vault raw/ watched when configured');
+  assert.ok(w1.includes(fwd(path.join(home, '.claude', 'rules'))), 'rules dir always watched');
 
   const home2 = tmp('hookhome-');
   fs.mkdirSync(path.join(home2, '.claude', 'rules'), { recursive: true });
   const r2 = runHook(WATCH, { input: JSON.stringify({ source: 'startup' }), home: home2 });
   const w2 = JSON.parse(r2.stdout).hookSpecificOutput.watchPaths;
-  assert.deepStrictEqual(w2, [path.join(home2, '.claude', 'rules')], 'no vault -> only rules dir');
+  assert.deepStrictEqual(w2, [fwd(path.join(home2, '.claude', 'rules'))], 'no vault -> only rules dir');
 
   const r3 = runHook(WATCH, { input: JSON.stringify({ source: 'resume' }), home });
   assert.strictEqual(r3.stdout.trim(), '', 'non-startup source produces no output');

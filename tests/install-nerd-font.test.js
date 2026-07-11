@@ -11,10 +11,14 @@ const body = fs.readFileSync(SRC, 'utf8');
 try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); }
 catch { console.log('SKIP: chezmoi not on PATH'); process.exit(0); }
 
-// 1. The whole script is gated to Windows: on this (non-Windows) host chezmoi renders it
-//    to nothing, so `chezmoi apply` never executes PowerShell off Windows.
+// 1. The whole script is gated to Windows: off Windows chezmoi renders it to nothing (so
+//    `chezmoi apply` never runs PowerShell there); on Windows it renders the installer.
 const rendered = execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
-assert.strictEqual(rendered.trim(), '', 'script must render empty on non-Windows');
+if (process.platform === 'win32') {
+  assert.match(rendered, /IosevkaTerm Nerd Font Mono/, 'on Windows the guard renders the installer');
+} else {
+  assert.strictEqual(rendered.trim(), '', 'script must render empty on non-Windows');
+}
 
 // 2. The Windows branch still carries the install + VS Code wiring (the guard didn't swallow it).
 assert.match(body, /if eq \.chezmoi\.os "windows"/);
