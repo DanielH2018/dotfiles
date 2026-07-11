@@ -1,10 +1,14 @@
 {{- $work := promptBoolOnce . "work" "Is this a work machine" false -}}
+{{- $profile := promptStringOnce . "profile" "Machine profile (workstation/server/minimal)" "workstation" -}}
 # Pin umask so target file modes are deterministic regardless of the login shell's
 # umask (this server runs umask 0007, which would otherwise make chezmoi want 0660).
 umask = 0o022
 
 [data]
     work = {{ $work }}
+    # workstation|server = full tooling; minimal = resource-constrained host (e.g. the Pi),
+    # opts out of the heavy Linux CLI-tool install. Any value other than "minimal" gets tools.
+    profile = {{ $profile | quote }}
 # Run the /bin/sh modify_ script through bash on every OS. The source is named
 # modify_settings.json.sh.tmpl so chezmoi strips the .sh extension (the target
 # stays settings.json) and runs it via this interpreter. Windows has no shebang

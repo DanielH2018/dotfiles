@@ -1,11 +1,13 @@
-{{ if and (eq .chezmoi.os "linux") (eq .chezmoi.hostname "daniel-server") -}}
+{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
 #!/bin/sh
-# Installs the shell-experience CLI tools on daniel-server (Ubuntu noble, amd64), mirroring the
-# macOS Brewfile for Linux. apt for repo packages + release binaries for the gaps.
+# Installs the shell-experience CLI tools on a Linux workstation/server (Debian/Ubuntu, amd64 or
+# arm64), mirroring the macOS Brewfile for Linux. apt for repo packages + release binaries for
+# the gaps. Gated to non-minimal profiles so a resource-constrained host (profile=minimal, e.g.
+# the Pi) opts out of the heavy apt install.
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v3
+# tools-bump: v4
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -55,7 +57,7 @@ for pair in "bat:batcat" "fd:fdfind"; do
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
 done
 
-# 3. Release binaries for the apt gaps (no sudo). amd64 (gated to daniel-server).
+# 3. Release binaries for the apt gaps (no sudo). Arch-aware: amd64 + arm64.
 latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (no API/ratelimit)
   curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
     | sed 's#.*/tag/##; s#[[:space:]]*$##'
@@ -77,12 +79,22 @@ install_release() { # $1=binname  $2=asset_url
   rm -rf "$tmp"
 }
 
-# version-less asset names → latest/download works directly
-install_release eza       "https://github.com/eza-community/eza/releases/latest/download/eza_x86_64-unknown-linux-gnu.tar.gz"
-install_release fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-amd64.tar.gz"
-# versioned asset names → resolve the tag first
-ct="$(latest_tag rs/curlie)";  [ -n "$ct" ] && install_release curlie "https://github.com/rs/curlie/releases/download/$ct/curlie_${ct#v}_linux_amd64.tar.gz"
-st="$(latest_tag chmln/sd)";   [ -n "$st" ] && install_release sd     "https://github.com/chmln/sd/releases/download/$st/sd-${st}-x86_64-unknown-linux-gnu.tar.gz"
+# Per-tool arch naming differs: Rust target triple (eza/sd) vs fastfetch's -aarch64 vs
+# goreleaser's arm64 (curlie). Downloading the wrong arch would tar-extract cleanly but
+# Exec-format-error at first use, so skip release binaries outright on an arch we lack names for.
+case "$(uname -m)" in
+  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64 ;;
+  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64 ;;
+  *) rust_arch=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd" >&2 ;;
+esac
+if [ -n "$rust_arch" ]; then
+  # version-less asset names → latest/download works directly
+  install_release eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"
+  # versioned asset names → resolve the tag first
+  ct="$(latest_tag rs/curlie)"; [ -n "$ct" ] && install_release curlie "https://github.com/rs/curlie/releases/download/$ct/curlie_${ct#v}_linux_${go_arch}.tar.gz"
+  st="$(latest_tag chmln/sd)";  [ -n "$st" ] && install_release sd     "https://github.com/chmln/sd/releases/download/$st/sd-${st}-${rust_arch}-unknown-linux-gnu.tar.gz"
+fi
 
 # Fail loudly (and retry next apply) if any apt package is still missing — e.g. a sudo-less run.
 # As a run_once_after_ script this does NOT block dotfile deployment.
