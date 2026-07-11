@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "c9c8d1c34f933c37f1ef814bb2d04d1bab8d1249cb59d74959f9f07f5cbb95cb",
-      "landed": "2026-07-09T20:33:25.737Z"
+      "hash": "4ea945ce1cc673e2d6f774c20c1dbdc248b9c1b0cc660429825658e082f453bf",
+      "landed": "2026-07-11T19:00:28.364Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -58,8 +58,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "889f77e0ed852fedd45fb62d7ef60bd1b7571dc5ff82ddc3ea93a496eab5d3a6",
-      "landed": "2026-07-09T21:54:53.834Z"
+      "hash": "f1e60badcc58679c6357c1b12427a01d1952860025bfd786ac4d41b8094c6ae8",
+      "landed": "2026-07-11T19:00:28.364Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -90,6 +90,11 @@
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
       "hash": "d6d3c88c3b647235f98c5eb44ed27293845cfe0af3e90b9bebf1f1c8e5dbe6ab",
       "landed": "2026-07-09T16:47:44.162Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_serve-artifacts.sh",
+      "hash": "5ddd397ba54c8eef26adf5852c0cc1c7f134266341c7d7fdefc99d737ddff5af",
+      "landed": "2026-07-11T19:00:28.364Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
