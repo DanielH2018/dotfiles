@@ -12,8 +12,13 @@ export HOMEBREW_NO_ENV_HINTS=1
 # =============================================================================
 # ENVIRONMENT VARIABLES
 # =============================================================================
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
+# Prefer en_US.UTF-8 but fall back to C.UTF-8 on a minimal host that hasn't generated it
+# (a bare Pi/Debian), so locale-aware tools don't spam "Cannot set LC_ALL".
+if locale -a 2>/dev/null | command grep -qiE '^en_US\.utf-?8$'; then
+  export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+else
+  export LANG=C.UTF-8 LC_ALL=C.UTF-8
+fi
 
 export EDITOR='vim'
 export VISUAL="$EDITOR"

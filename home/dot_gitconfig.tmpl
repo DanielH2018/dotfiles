@@ -17,6 +17,7 @@
 [credential]
 	helper = {{ if eq .chezmoi.os "windows" }}manager{{ else }}store{{ end }}
 [core]
+	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
 	excludesfile = ~/.gitignore_global
 	pager = less
 {{- end }}
@@ -48,11 +49,14 @@
 	mnemonicPrefix = true
 	renames = true
 	submodule = log
+{{- if lookPath "sops" }}
 [diff "sops"]
 	# Renders SOPS-encrypted files (e.g. the homelab's ansible/vars/secrets.yml,
 	# tagged `diff=sops` in its .gitattributes) as their decrypted plaintext in
-	# `git diff`. Needs a local age key; safe no-op on files git can't decrypt.
+	# `git diff`. Needs a local age key; safe no-op on files git can't decrypt. Gated on
+	# `sops` being installed so a machine without it doesn't error on every diff=sops diff.
 	textconv = sops decrypt
+{{- end }}
 {{- end }}
 [merge]
 	conflictstyle = {{ if eq .chezmoi.os "darwin" }}zdiff3{{ else }}diff3{{ end }}

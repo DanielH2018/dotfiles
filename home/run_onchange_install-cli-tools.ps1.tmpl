@@ -49,5 +49,18 @@ foreach ($p in $packages) {
     }
 }
 
+# fnm installs only the version manager, not a Node runtime. dotsync and
+# claude-settings-merge are both '#!/usr/bin/env node' scripts, so install a default LTS
+# Node here (mirrors step 2 of run_once_before_install-fnm.sh.tmpl). Idempotent: fnm skips
+# an already-installed version.
+$fnm = Get-Command fnm -ErrorAction SilentlyContinue
+if ($fnm) {
+    Write-Host "[install] default LTS node via fnm ..."
+    & $fnm.Source install --lts
+    & $fnm.Source default lts-latest
+} else {
+    Write-Warning "fnm not on PATH yet — open a new shell and re-run 'chezmoi apply' to install a default Node."
+}
+
 Write-Host "CLI tools done. Open a new Git Bash shell so the updated PATH and ~/.bashrc take effect."
 {{- end -}}

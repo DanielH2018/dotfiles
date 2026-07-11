@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 HOME = Path.home()
@@ -11,7 +12,18 @@ CLAUDE_DIR = HOME / ".claude"
 CHEZMOI_ROOT = HOME / ".local/share/chezmoi/home/private_dot_claude"
 WORK_CONFIG_ROOT = HOME / "work-laptop-config"
 WORK_CLAUDE_DIR = WORK_CONFIG_ROOT / ".claude"
-MANAGED_SETTINGS = Path("/Library/Application Support/ClaudeCode/managed-settings.json")
+if sys.platform == "darwin":
+    MANAGED_SETTINGS = Path(
+        "/Library/Application Support/ClaudeCode/managed-settings.json"
+    )
+elif sys.platform == "win32":
+    MANAGED_SETTINGS = (
+        Path(os.environ.get("ProgramData", r"C:\ProgramData"))
+        / "ClaudeCode"
+        / "managed-settings.json"
+    )
+else:
+    MANAGED_SETTINGS = Path("/etc/claude-code/managed-settings.json")
 
 # Not read directly here (see SPEC.md §8) — scan.py reads it and extracts only
 # mcpServers keys, never values. Kept as a constant so the literal path lives

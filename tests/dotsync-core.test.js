@@ -36,6 +36,9 @@ assert.ok(globToRegExp('~/.cache/**'.replace('~', HOME)).test(path.join(HOME, '.
 assert.ok(!globToRegExp('~/.cache/*'.replace('~', HOME)).test(path.join(HOME, '.cache/a/b'))); // * is one segment
 assert.ok(matchesAnyGlob(path.join(HOME, '.cache/x'), ['~/.cache/**'], HOME));
 assert.ok(!matchesAnyGlob(path.join(HOME, '.zshrc'), ['~/.cache/**'], HOME));
+// Windows: native-node path.sep is '\' but globs use '/' — both sides normalize to '/'.
+assert.ok(matchesAnyGlob('C:\\Users\\d\\.cache\\x', ['~/.cache/**'], 'C:\\Users\\d'));
+assert.ok(!matchesAnyGlob('C:\\Users\\d\\.zshrc', ['~/.cache/**'], 'C:\\Users\\d'));
 // trailing /** also matches the bare directory itself (e.g. a dir symlink), not just contents
 assert.ok(globToRegExp(path.join(HOME, '.cache') + '/**').test(path.join(HOME, '.cache')));
 assert.ok(matchesAnyGlob(path.join(HOME, '.cache'), ['~/.cache/**'], HOME));
