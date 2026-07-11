@@ -38,7 +38,7 @@ usage() {
   echo "                     Worktree is kept on exit if it has changes; removed if clean."
   echo "  --branch, -b BRANCH    Run in a worktree on BRANCH, keeping its name. Uses it"
   echo "                     if it exists (local or origin), else creates it from HEAD."
-  echo "                     E.g. -b proc-3685-foo. Cannot combine with -w."
+  echo "                     E.g. -b feature-xyz. Cannot combine with -w."
   echo "  --list             List all sandbox sessions (worktrees + main) for a repo."
   echo "                     Shows branch, path, running status, and resume command."
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."

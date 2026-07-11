@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# machine-specific run state (semantic hash of the deploying machine's config);
+# regenerated on first run per machine — not shared config.
+.semantic_hash

@@ -34,6 +34,11 @@ def _parse_paths_file(path: str) -> list[str]:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     config = Config.load(args.root)
+    if not config.root.is_dir():
+        # Vault-optional: never materialize a phantom vault / empty index on a
+        # machine that has no vault (or CLAUDE_VAULT_DIR unset). Mirrors config-map.
+        print(f"no vault at {config.root} — skipping index build")
+        return 0
     if args.db:
         config.index_path = Path(args.db)
     if args.paths_from:
@@ -51,6 +56,11 @@ def _cmd_query(args: argparse.Namespace) -> int:
     config = Config.load(args.root)
     if args.db:
         config.index_path = Path(args.db)
+    if not config.index_path.exists():
+        # Clean message (matching `status`) instead of an uncaught duckdb.IOException
+        # when querying before the first build.
+        print(f"no index at {config.index_path} — run `vault-index build`")
+        return 0
     results = search(config, args.text, k=args.k)
     if args.json:
         print(json.dumps([r.__dict__ for r in results], indent=2))
