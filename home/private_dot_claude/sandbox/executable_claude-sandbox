@@ -1749,7 +1749,10 @@ if [[ "$vault_eligible" == true ]]; then
     # ONLY the allowlisted pages (--paths-from enforces the boundary) and mount it
     # read-only. The container queries it offline via the baked venv (vault-search).
     # Best-effort — falls back to the markdown index above if tooling is missing.
-    VAULT_INDEX_DIR="$CLAUDE_VAULT_DIR/vault-index"
+    # vault-index's canonical home is this chezmoi checkout (home/private_dot_claude/
+    # vault-tooling/vault-index), NOT the vault itself — the vault only supplies
+    # --root (content to index), never the code. Override with $VAULT_INDEX_PKG_DIR.
+    VAULT_INDEX_DIR="${VAULT_INDEX_PKG_DIR:-$HOME/.claude/vault-tooling/vault-index}"
     if command -v uv &>/dev/null && [[ -f "$VAULT_INDEX_DIR/pyproject.toml" ]]; then
       VAULT_DB_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/vault-db-XXXXXX")"
       if (cd "$VAULT_INDEX_DIR" && uv run --quiet vault-index build \

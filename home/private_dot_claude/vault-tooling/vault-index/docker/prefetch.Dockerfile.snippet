@@ -1,0 +1,21 @@
+# vault-index model prefetch — drop-in layer for the claude-sandbox base image.
+#
+# Add these lines to the claude-sandbox image build (Dockerfile.base or wherever
+# the vault tooling is installed) so the embedding model + DuckDB fts extension
+# are baked into the image. Scheduled/sandboxed `vault-index build` runs then need
+# NO network — no Hugging Face at 8 AM, no unauthenticated-HF rate-limit risk.
+#
+# Prereqs already in the base image: uv, python3.
+# Run this layer as the SAME user whose HOME is used at runtime, so the caches
+# (~/.cache/fastembed, ~/.duckdb/extensions) resolve to the same paths.
+
+COPY vault-index /opt/vault-index
+WORKDIR /opt/vault-index
+RUN uv sync \
+ && uv run python scripts/prefetch.py
+
+# Caches now live in the image at:
+#   $HOME/.cache/fastembed        (embedding model)
+#   $HOME/.duckdb/extensions      (fts extension)
+# Keep WORKDIR/HOME consistent between build and run, or set FASTEMBED_CACHE_PATH
+# to a fixed absolute path in both.

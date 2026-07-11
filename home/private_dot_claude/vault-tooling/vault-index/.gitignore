@@ -1,0 +1,17 @@
+# index is a rebuildable cache — a second at-rest copy of vault text; never commit it.
+# Lives at <vault_root>/.vault-index/ by default (outside this package's own dir,
+# since the package no longer lives inside the vault), but ignore the legacy/local
+# name too in case a build is pointed at this checkout directly.
+.vault-index/
+.index/
+*.duckdb
+*.duckdb.wal
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# fastembed local model cache (if placed here)
+.fastembed_cache/

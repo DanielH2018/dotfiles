@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Vault pre-commit secret scan — blocks staged credential-shaped strings
+# (runs for /healthcheck auto-commits too). Scans only ADDED lines and skips
+# .githooks/ (which contains these very patterns). AWS *account IDs* (12-digit,
+# which the vault legitimately holds) are intentionally NOT matched.
+set -uo pipefail
+
+added="$(git diff --cached --unified=0 --diff-filter=AM -- . ':!.githooks' \
+         | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
+[[ -z "$added" ]] && exit 0
+
+patterns='AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]{10,}|gh[pousr]_[0-9A-Za-z]{20,}|github_pat_[0-9A-Za-z_]{20,}|(aws_secret_access_key|secret[_-]?key|api[_-]?key|client_secret|password|access[_-]?token)[[:space:]]*[:=][[:space:]]*[0-9A-Za-z/+_-]{20,}'
+
+if match="$(printf '%s\n' "$added" | grep -nEi "$patterns" || true)" && [[ -n "$match" ]]; then
+  echo "pre-commit: staged content looks like it contains a secret:" >&2
+  printf '%s\n' "$match" | sed 's/^/    /' >&2
+  if [[ "${VAULT_ALLOW_SECRET:-}" == "1" ]]; then
+    echo "VAULT_ALLOW_SECRET=1 set — overriding." >&2
+    exit 0
+  fi
+  echo "Blocked. Remove it, or set VAULT_ALLOW_SECRET=1 if it is a false positive." >&2
+  exit 1
+fi
+
+# External patterns (distill-scan → .claude/scan-patterns.json), layered on top of the
+# built-ins above. Skipped when node is unavailable — the built-in scan still runs.
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v node >/dev/null 2>&1 && [[ -f "$HOOK_DIR/secrets-check.js" ]]; then
+  node "$HOOK_DIR/secrets-check.js" || exit 1
+fi
+exit 0

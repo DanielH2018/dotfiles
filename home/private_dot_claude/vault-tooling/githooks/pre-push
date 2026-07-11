@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# The vault is local-only: it may hold private notes and secret-shaped data.
+# Refuse to push so none of it leaves the machine by accident.
+# Override deliberately with VAULT_ALLOW_PUSH=1 (no --no-verify needed).
+if [[ "${VAULT_ALLOW_PUSH:-}" != "1" ]]; then
+  echo "pre-push blocked: vault is local-only (may contain private data)." >&2
+  echo "Set VAULT_ALLOW_PUSH=1 to override intentionally." >&2
+  exit 1
+fi
+exit 0
