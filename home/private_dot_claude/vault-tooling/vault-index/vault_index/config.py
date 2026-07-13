@@ -31,6 +31,7 @@ DEFAULT_EXCLUDE_DIRS = (
     "docs",
     "claude-audit-portable",
     "raw",
+    "superpowers",
     ".vault-index",
     ".git",
     ".claude",
