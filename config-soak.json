@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "2681160e827819393a4153cbfee2ae352c4ff6be358ca3a1c95720ad976f4f96",
-      "landed": "2026-07-13T13:03:42.273Z"
+      "hash": "e03d6a83458bd92fdf5d3dbcab78595c3095226834c36ca79c4be7617cbcbb6f",
+      "landed": "2026-07-13T15:12:09.103Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -85,6 +85,11 @@
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
       "hash": "74e261ef897638dceed675b653c0f1b5da52b14048867f077ef0d43ca0fe9d7e",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_reprime-nudge.sh",
+      "hash": "fed91b610d93a25f2ce59397a05efd3598a643c7fef69ebb4d16c18492d80806",
+      "landed": "2026-07-13T15:12:09.103Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
