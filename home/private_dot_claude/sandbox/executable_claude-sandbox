@@ -48,6 +48,9 @@ usage() {
   echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
   echo "  --no-repos         Don't mount sibling repos from ~/Repositories."
   echo "  --repos-live       Mount siblings' live working trees instead of clean main/master snapshots."
+  echo "  --shell            Open an interactive bash shell instead of Claude. If a session for"
+  echo "                     this repo/worktree is already running, exec into that live container;"
+  echo "                     otherwise launch a standalone hardened shell. Unaudited (see warning)."
   echo "  --fresh, --new     Start a new conversation even if this instance has a prior"
   echo "                     session. By default an existing session auto-resumes (--continue)."
   exit 1
@@ -78,6 +81,7 @@ NO_WORK_CONFIG=false
 NO_REPOS=false
 REPOS_LIVE=false
 FRESH_SESSION=false
+SHELL_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,6 +128,7 @@ while [[ $# -gt 0 ]]; do
     --no-work-config) NO_WORK_CONFIG=true; shift ;;
     --no-repos) NO_REPOS=true; shift ;;
     --repos-live) REPOS_LIVE=true; shift ;;
+    --shell) SHELL_MODE=true; shift ;;
     --fresh|--new) FRESH_SESSION=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
@@ -250,6 +255,25 @@ PROXY_NAME="claudebot-proxy-$RUN_ID"
 # network is isolated per run, so a fixed alias is safe from collisions.
 PROXY_ALIAS="claudebot-proxy"
 NETWORK_NAME="claudebot-net-$RUN_ID"
+
+# --- Shell mode: exec into a live session if one is running ---
+# INSTANCE_ID is deterministic per repo/worktree, while the container name adds a
+# random RUN_ID suffix. If a session for this instance is already up, drop a second
+# interactive shell into that same container (shared mounts/network/state) rather
+# than booting a new one. If none is running, fall through to the normal launch
+# path below with the final command swapped to bash (a standalone hardened shell).
+if [[ "$SHELL_MODE" == true ]]; then
+  LIVE_CONTAINER="$(docker ps --filter "name=claudebot-${INSTANCE_ID}-" --format '{{.Names}}' 2>/dev/null \
+    | grep -E "^claudebot-${INSTANCE_ID}-[0-9a-f]+$" | head -1 || true)"
+  if [[ -n "$LIVE_CONTAINER" ]]; then
+    echo "Attaching a shell to the running session: $LIVE_CONTAINER"
+    echo "Warning: this shell is UNAUDITED — commands run here are not logged to /audit" >&2
+    echo "         (only Claude's tool calls are). Same container, same mounts as the live session." >&2
+    # Default user (claudebot) and no added caps — inherits the container's hardening.
+    exec docker exec -it "$LIVE_CONTAINER" bash -l
+  fi
+  echo "No running session for ${INSTANCE_ID} — launching a standalone hardened shell."
+fi
 
 # WORK_PATH is what gets mounted into the container.
 # Defaults to REPO_PATH; overridden to the worktree path below.
@@ -2039,6 +2063,9 @@ elif find "$AUTH_MARKER" -mtime +30 -print -quit 2>/dev/null | grep -q .; then
   echo "OAuth session is >30 days old — re-authenticating."
 fi
 
+# A standalone bash shell doesn't need cloud MCP auth — don't force the OAuth prompt.
+[[ "$SHELL_MODE" == true ]] && AUTH_NEEDED=false
+
 if [[ "$AUTH_NEEDED" == true ]]; then
   echo "================================================"
   echo "  Cloud MCP authentication (one-time setup)"
@@ -2107,9 +2134,17 @@ if [[ -S "$OP_SOCKET" && -x "$OP_ENSURE" ]]; then
     || echo "  Warning: signing key not confirmed — commits inside the sandbox may fail to sign until you unlock 1Password." >&2
 fi
 
-# Command mirrors the image default CMD (Dockerfile.base) so overriding it to
-# append --continue keeps the same base invocation. entrypoint.sh's `exec "$@"`
-# runs it as-is.
-CLAUDE_ARGS=(claude --dangerously-skip-permissions)
-[[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+if [[ "$SHELL_MODE" == true ]]; then
+  # Standalone hardened shell: same container/mounts as a Claude session, but bash
+  # instead of claude. entrypoint.sh's `exec "$@"` runs it after the usual setup.
+  echo "Warning: this shell is UNAUDITED — commands run here are not logged to /audit" >&2
+  echo "         (only Claude's tool calls are)." >&2
+  CLAUDE_ARGS=(bash -l)
+else
+  # Command mirrors the image default CMD (Dockerfile.base) so overriding it to
+  # append --continue keeps the same base invocation. entrypoint.sh's `exec "$@"`
+  # runs it as-is.
+  CLAUDE_ARGS=(claude --dangerously-skip-permissions)
+  [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+fi
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"

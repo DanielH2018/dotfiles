@@ -58,6 +58,7 @@ _claude-sandbox() {
     '--list[List all sandbox sessions for a repo]' \
     '--prune[Interactively select and delete worktrees]' \
     '--gc[Clean up worktrees with deleted remote branches]' \
+    '--shell[Open a bash shell instead of Claude (exec into live session if running)]' \
     '(-w --worktree -b --branch)'{-w,--worktree}'[Run in an isolated git worktree]:worktree name:->worktree' \
     '(-b --branch -w --worktree)'{-b,--branch}'[Run in a worktree on an existing branch]:branch:->branch' \
     '--rename[Rename a worktree]:old name:->rename_old:new name:->rename_new' \
