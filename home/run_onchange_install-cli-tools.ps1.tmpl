@@ -1,7 +1,7 @@
 {{- if eq .chezmoi.os "windows" -}}
 # Managed by chezmoi (run_onchange). Installs the modern CLI toolchain via winget so
 # Git Bash gets the same experience as the macOS/Linux zsh setup (see dot_bashrc):
-# starship prompt, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch. Also installs fnm —
+# starship prompt, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, uv. Also installs fnm —
 # the Windows counterpart to run_once_before_install-fnm.sh.tmpl, which skips Windows.
 # Idempotent: skips anything already on PATH or already reported installed by winget.
 # Re-runs only when this file changes.
@@ -27,7 +27,8 @@ $packages = @(
     @{ id = 'BurntSushi.ripgrep.MSVC'; cmd = 'rg'        },
     @{ id = 'sharkdp.bat';             cmd = 'bat'       },
     @{ id = 'Fastfetch-cli.Fastfetch'; cmd = 'fastfetch' },
-    @{ id = 'Schniz.fnm';              cmd = 'fnm'       }
+    @{ id = 'Schniz.fnm';              cmd = 'fnm'       },
+    @{ id = 'astral-sh.uv';            cmd = 'uv'        }
 )
 
 foreach ($p in $packages) {
@@ -60,6 +61,20 @@ if ($fnm) {
     & $fnm.Source default lts-latest
 } else {
     Write-Warning "fnm not on PATH yet — open a new shell and re-run 'chezmoi apply' to install a default Node."
+}
+
+# uv manages its own CPython, so provision a default interpreter here (mirrors the fnm
+# node step above). The vault-tooling under ~/.claude/vault-tooling (config-map,
+# vault-index) targets Python >=3.11; 3.12 has the widest wheel coverage for
+# vault-index's fastembed/duckdb deps (the system 'python' may be newer). Idempotent:
+# uv skips an already-installed version. The "minor version link" warning on Windows
+# without Developer Mode is benign — `uv run --python 3.12` still resolves the interpreter.
+$uv = Get-Command uv -ErrorAction SilentlyContinue
+if ($uv) {
+    Write-Host "[install] managed CPython 3.12 via uv ..."
+    & $uv.Source python install 3.12
+} else {
+    Write-Warning "uv not on PATH yet — open a new shell and re-run 'chezmoi apply' to provision a managed Python."
 }
 
 Write-Host "CLI tools done. Open a new Git Bash shell so the updated PATH and ~/.bashrc take effect."
