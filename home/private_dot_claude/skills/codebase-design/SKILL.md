@@ -48,9 +48,10 @@ moves freely. Prefer the highest seam possible; the fewer seams across a codebas
 
 ## Vault-wired
 
-Read `~/Documents/My_Vault/Work/Codebase.md` for a service's existing architecture and
-seams before designing. A durable seam map or design note you produce goes back there,
-following the vault's conventions (see its `CLAUDE.md`). The vocabulary itself stays here —
+Pull a service's existing architecture and seams via the `vault-lookup` skill (it routes
+to `Work/Codebase.md`) before designing. A durable seam map or design note you produce goes
+back to `Work/Codebase.md`, following `~/Documents/My_Vault/docs/wiki-write.md`. The
+vocabulary itself stays here —
 this is a reference, not a workflow.
 
 ## Where it fits

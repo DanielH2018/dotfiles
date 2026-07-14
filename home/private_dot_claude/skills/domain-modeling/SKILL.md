@@ -19,8 +19,9 @@ consequential decision.
 ## The vault is the store of record
 
 Durable, cross-repo knowledge lives in the vault (`~/Documents/My_Vault`), not in a
-fresh repo file. Follow the vault's own conventions — see its `CLAUDE.md` (frontmatter
-with `updated:`, `[[wikilinks]]`, newest-first `log.md` prepend).
+fresh repo file. Follow the shared write conventions in
+`~/Documents/My_Vault/docs/wiki-write.md` (frontmatter schema, `updated:` bump,
+`[[wikilinks]]`, newest-first `log.md` prepend).
 
 - **Terms → `Work/Glossary.md`.** This is the canonical ubiquitous-language store and
   it already grows as terms come up. **Read it first** before coining anything — the
@@ -42,8 +43,8 @@ said partial reversal is possible — which is right?"
 
 ## Write mode: small direct, large staged
 
-- **Small** (a term, one ADR): write the vault page directly — correct frontmatter
-  (`updated:` bumped), `[[wikilinks]]`, a prepended `log.md` entry. State that you're
+- **Small** (a term, one ADR): write the vault page directly per `docs/wiki-write.md`
+  (frontmatter, `updated:` bump, `[[wikilinks]]`, `log.md` prepend). State that you're
   writing directly.
 - **Large** (a whole service write-up, a multi-term batch): stage a note to
   `~/Documents/My_Vault/raw/` and flag that `/ingest` should integrate it on the wiki's
