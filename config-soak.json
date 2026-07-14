@@ -182,6 +182,11 @@
       "landed": "2026-07-09T21:18:00.291Z"
     },
     {
+      "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
+      "hash": "012f158dbf657fc9c2d98de0e40d8aa8e0b40ebde98f68673b2602dab3ba0c8d",
+      "landed": "2026-07-14T15:33:28.076Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/config-lint/SKILL.md",
       "hash": "b53b6f50fab7132d425dc795665aa2b0679d4d4f1e7a8e219fea6c118e8b3033",
       "landed": "2026-07-09T21:18:00.291Z"
@@ -207,9 +212,19 @@
       "landed": "2026-07-09T21:18:00.291Z"
     },
     {
+      "path": "home/private_dot_claude/skills/domain-modeling/SKILL.md",
+      "hash": "a3f04c6e4aa85cf8114db8681c97f0dfbd4bd01f1202fe17aa1fdc954901cf2c",
+      "landed": "2026-07-14T15:33:28.076Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
       "hash": "088d8e9895adacc507ec99ff535c5595e388bd01cd6a3180a4c7cc7944cadc98",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/grilling/SKILL.md",
+      "hash": "53a35757a2b8f3788aed346db8c5abc084ed7f8ab188fcf5f07af0bd67f35e45",
+      "landed": "2026-07-14T15:33:28.076Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
@@ -278,13 +293,23 @@
     },
     {
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
-      "hash": "5d24bed89fd6652de08263fc3d783cc089b66de1c361ea3bc270b9a09ecc23e8",
-      "landed": "2026-07-09T21:18:00.291Z"
+      "hash": "b117399c23f36699b128a14e76e7f0bcdb05e59a29239bcaaaec160e5d922509",
+      "landed": "2026-07-14T15:33:28.076Z"
     },
     {
       "path": "home/private_dot_claude/skills/reprime/SKILL.md",
       "hash": "17d650b1076cde5f03ce4b24bbfd834fd1a0a3e1ccff2f24cadb493c4241d8f8",
       "landed": "2026-07-09T21:18:00.291Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/skill-router/SKILL.md",
+      "hash": "04f803ac01f8c4f3458671f8293f1b6eb7595e17dbd5557328fccbddc5a7b0f0",
+      "landed": "2026-07-14T15:33:28.076Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
+      "hash": "4d25b9f978c4d76125448553fb1b596bf76a240bd229ac242a2cab616de3c959",
+      "landed": "2026-07-14T15:33:28.076Z"
     }
   ]
 }
