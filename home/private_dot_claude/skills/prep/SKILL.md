@@ -47,9 +47,12 @@ Prompt gaps: <what was thin>
 Proceed only on `go` or after questions are answered.
 
 ## Large gear — spec
-Interview to completion, then write a self-contained SPEC.md (files/interfaces,
-out-of-scope, end-to-end verification step). Suggest a fresh session. Per user
-global rule, also render an HTML artifact to ~/.claude/artifacts/.
+Interview to completion using the `grilling` primitive — one question at a
+time, in decision-tree order, each carrying your recommended answer, facts
+looked up rather than asked. Then write a self-contained SPEC.md
+(files/interfaces, out-of-scope, end-to-end verification step). Suggest a fresh
+session. Per user global rule, also render an HTML artifact to
+~/.claude/artifacts/.
 
 ## Hand off
 Intake produces understanding + a verification check; it does not implement.
