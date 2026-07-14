@@ -1,0 +1,59 @@
+---
+name: writing-great-skills
+description: Reference for writing and editing skills well — the vocabulary and principles that make a skill behave the same way every run. Invoke as /writing-great-skills when authoring or diagnosing a skill.
+disable-model-invocation: true
+metadata:
+    author: daniel
+    version: 0.1.0
+---
+
+# Writing Great Skills
+
+A skill exists to wrangle **determinism** out of a stochastic system. The goal is not
+the same *output* every run — it's the same *process*. **Predictability** is the root
+virtue; judge every choice against it, not against how clever or exhaustive the skill
+reads. (This is the principles reference; `superpowers:writing-skills` is the procedural
+how-to for authoring one step by step. Reach for whichever the moment needs.)
+
+## The two loads
+
+Every skill spends one of two budgets — and most authoring decisions are the same trade
+made in different places:
+
+- **Model-invoked** — keeps a `description` in the window every turn, so the agent can
+  fire it autonomously and other skills can reach it. Costs **context load**. Mechanics:
+  omit `disable-model-invocation`; write a rich, trigger-heavy description.
+- **User-invoked** — strips the description from the agent's reach; only you, typing its
+  name, invoke it. Zero context load, but spends **cognitive load** — *you* are the index
+  that must remember it exists. Mechanics: `disable-model-invocation: true`; the
+  description becomes a one-line human-facing summary.
+
+Pick model-invocation only when the agent (or another skill) must reach it on its own.
+When user-invoked skills pile past what you can hold in your head, the cure is a **router**
+(`/skill-router`) — one skill that names the others and when to reach for each.
+
+## The other levers
+
+- **Leading words** — a compact concept already in the model's pretraining (*tight*,
+  *tracer bullet*, *seam*) that anchors execution and invocation in the fewest tokens.
+  Front-load the skill's leading word in the description; retire restatements a single
+  word can carry.
+- **Information hierarchy** — the ladder: (1) in-skill step, (2) in-skill reference,
+  (3) external reference behind a **context pointer**. **Progressive disclosure** is moving
+  material down the ladder so the top stays legible. Push too little down and the top
+  bloats; push too much and you hide what the agent needs.
+- **Completion criteria** — end each step on a *checkable* condition ("every modified model
+  accounted for", not "produce a list"). A vague criterion invites premature completion.
+- **Pruning** — single source of truth, relevance, the no-op test, sentence by sentence.
+
+## Failure modes to diagnose against
+
+**Premature completion** (vague criterion lets the agent stop early) · **duplication**
+(one branch written twice) · **sediment** (stale instructions never removed) · **sprawl**
+(too many near-duplicate skills) · **no-op** (a sentence that changes nothing if deleted).
+
+## Where it fits
+
+The meta-skill you consult while building the rest of the set — not a step in a chain. Its
+natural neighbour is any router, the direct cure for the cognitive load user-invoked skills
+pile up. When unsure which skill fits, `/skill-router`.
