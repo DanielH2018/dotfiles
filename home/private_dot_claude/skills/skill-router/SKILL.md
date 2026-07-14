@@ -21,10 +21,9 @@ It does no work itself; it orients, then hands off to the skill that does the jo
 1. **Sharpen** — `superpowers:brainstorming` (no plan yet, generate one) or **`grilling`**
    (a plan exists, stress-test it). `/prep` is the intake gate for non-trivial work and
    delegates its questioning to `grilling`.
-2. **Write it up** — **`to-spec`** *(Phase 2 — not yet installed)* turns the thread into a
-   spec on Jira PROC; `superpowers:writing-plans` for a local plan not headed to the tracker.
-3. **Slice it** — **`to-tickets`** *(Phase 2)* breaks a spec into tracer-bullet tickets with
-   blocking edges.
+2. **Write it up** — **`to-spec`** turns the thread into a spec on Jira PROC;
+   `superpowers:writing-plans` for a local plan not headed to the tracker.
+3. **Slice it** — **`to-tickets`** breaks a spec into tracer-bullet tickets with blocking edges.
 4. **Build** — the `implementer` agent, `superpowers:executing-plans`, or
    `superpowers:test-driven-development` for a single behaviour test-first.
 5. **Check** — `/code-review` (working diff) or `/review` (a PR); `/security-review` +
@@ -33,7 +32,7 @@ It does no work itself; it orients, then hands off to the skill that does the jo
 
 ## On-ramps (work that arrives, then merges onto the main flow)
 
-- **Raw bugs / requests piling up** → **`triage`** *(Phase 2)*. Only for issues you didn't
+- **Raw bugs / requests piling up** → **`triage`** (PROC/IT). Only for issues you didn't
   create; `to-tickets` output is already agent-ready.
 - **Feedback waiting on your PRs** → `/pr-feedback`. Stacked PRs → `gh-stack`.
 - **On-call / incident** → `incident-response`, or the `ops-investigator` agent (Grafana /
