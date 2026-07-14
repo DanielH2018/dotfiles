@@ -24,10 +24,12 @@ if [ -n "${CLAUDE_VAULT_DIR:-}" ] && [ "$TOPLEVEL" = "$CLAUDE_VAULT_DIR" ]; then
   exit 0
 fi
 
-# Skip worktrees of repos that commit directly to main (remote URL fallback).
+# Skip worktrees of repos that commit directly to main by convention
+# (remote URL match — covers worktrees at arbitrary paths).
 REMOTE_URL=$(git remote get-url origin 2>/dev/null)
 case "$REMOTE_URL" in
   *dotfiles*) exit 0 ;;
+  *DanielH2018/server.git|*DanielH2018/server) exit 0 ;;  # homelab: commits go straight to master
 esac
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
