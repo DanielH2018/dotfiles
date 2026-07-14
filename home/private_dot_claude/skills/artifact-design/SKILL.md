@@ -34,3 +34,16 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 - Use `code` styling for file paths, commands, and identifiers.
 - Keep it skimmable: headers, tables, and severity/priority cues where relevant.
 - Avoid emojis unless Daniel asks for them.
+- Set an intentional type scale — deliberate sizes and weights for headers vs. body vs. captions — even within the system font stack. The font is fixed; the hierarchy still has to be designed.
+- Let structure encode information, not decorate it. Don't add `01 / 02 / 03` numbering or step markers unless the content is genuinely a sequence where order carries meaning.
+
+## CSS gotcha
+
+- Watch selector specificity when hand-authoring inline CSS. A type-based selector (`.section`) and an element-based one (`.cta`) can silently cancel each other's padding/margins, most often on spacing between sections. Keep spacing rules on one consistent selector layer.
+
+## Writing
+
+The prose in the artifact is design material, not filler — apply the same care as the layout:
+- Active voice; name things by what the reader controls or recognizes, not by how the system is built.
+- Sentence case, plain verbs, no filler; each element does one job (a label labels, a caption demonstrates).
+- Be specific over clever — a precise summary line beats a punchy one.
