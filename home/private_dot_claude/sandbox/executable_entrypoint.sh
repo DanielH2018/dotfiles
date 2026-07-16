@@ -177,6 +177,15 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
     echo "- **chezmoi**: the dotfiles SOURCE is bind-mounted read-write at \`${CHEZMOI_SOURCE_DIR}\`, and \`chezmoi\` is pointed at it. Inspect/preview/edit the source freely — \`chezmoi cat <target>\`, \`chezmoi diff\`, \`chezmoi managed\`, \`chezmoi source-path <file>\`, \`chezmoi execute-template\`, or edit source files directly (all git-tracked, so revertible). Do NOT run \`apply\`/\`update\`/\`init\` (they overwrite THIS container's home — a shared volume, not your host) or \`destroy\`/\`purge\` (they delete, and via the mount can reach your host source). Run \`chezmoi apply\` on the host after reviewing the diff."
   fi
 
+  # Terraform / IaC — capabilities + handoff (only when terraform is installed)
+  if [[ "${SANDBOX_TOOLCHAINS:-}" == *[Tt]erraform* ]]; then
+    echo "- **Terraform (IaC)**: \`terraform\` (v1.5.7) is installed, but this container has **no AWS credentials — by design, not a misconfiguration**. Do not try to obtain, mount, export, or ask for AWS creds; authenticating to AWS from inside the sandbox is out of scope."
+    echo "  - **You CAN (no creds needed):** edit \`.tf\` files; run \`terraform fmt\`; install providers without the backend via \`terraform init -backend=false\` then \`terraform validate\`; read \`.terraform.lock.hcl\` + provider docs and reason about the change."
+    echo "  - **You CANNOT:** \`terraform plan\`/\`apply\`/\`destroy\`/\`import\`, or \`terraform init\` against the real S3 backend — all need AWS creds and will fail here. Independently, apply/destroy/import/state-mutation and any \`-auto-approve\` are HARD-BLOCKED by a deny hook even if creds were present. Don't try to work around either."
+    echo "  - **Hand off to Daniel for anything needing AWS (plan/apply).** When your \`.tf\` edits are ready, stop and give him a copy-pasteable block to run **on the host** (he has terraform + SSO there). State the stack dir, the env/profile, and the exact command."
+    echo "  - **Host commands to hand him:** \`tfcd\` (fzf-pick the stack) then \`tfplan\` for staging or \`tfplan prod\` for prod — refreshes SSO if stale, runs \`init\`, then \`plan\`. Raw equivalent: \`cd ~/Repositories/tf-processing/live/<stack>/<env> && awslogin && AWS_PROFILE=processing-staging terraform init && terraform plan\`. Add any \`-target\`/\`-var\` flags he needs."
+  fi
+
 } >> "$CLAUDE_MD"
 
 exec "$@"
