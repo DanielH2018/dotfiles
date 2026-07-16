@@ -183,7 +183,7 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
     echo "  - **You CAN (no creds needed):** edit \`.tf\` files; run \`terraform fmt\`; install providers without the backend via \`terraform init -backend=false\` then \`terraform validate\`; read \`.terraform.lock.hcl\` + provider docs and reason about the change."
     echo "  - **You CANNOT:** \`terraform plan\`/\`apply\`/\`destroy\`/\`import\`, or \`terraform init\` against the real S3 backend — all need AWS creds and will fail here. Independently, apply/destroy/import/state-mutation and any \`-auto-approve\` are HARD-BLOCKED by a deny hook even if creds were present. Don't try to work around either."
     echo "  - **Hand off to Daniel for anything needing AWS (plan/apply).** When your \`.tf\` edits are ready, stop and give him a copy-pasteable block to run **on the host** (he has terraform + SSO there). State the stack dir, the env/profile, and the exact command."
-    echo "  - **Host commands to hand him:** \`tfcd\` (fzf-pick the stack) then \`tfplan\` for staging or \`tfplan prod\` for prod — refreshes SSO if stale, runs \`init\`, then \`plan\`. Raw equivalent: \`cd ~/Repositories/tf-processing/live/<stack>/<env> && awslogin && AWS_PROFILE=processing-staging terraform init && terraform plan\`. Add any \`-target\`/\`-var\` flags he needs."
+    echo "  - **Host commands to hand him:** \`tfcd\` (fzf-pick the stack) then \`tfplan\` for staging or \`tfplan prod\` for prod — refreshes SSO if stale, then runs \`init\` + \`plan\`. Add any \`-target\`/\`-var\` flags he needs. (Don't hand him a bare \`AWS_PROFILE=… terraform …\` — the pinned provider's old SDK can't parse the SSO config; \`tfplan\` handles that.)"
   fi
 
 } >> "$CLAUDE_MD"
