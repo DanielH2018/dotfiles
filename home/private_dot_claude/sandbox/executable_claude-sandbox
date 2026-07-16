@@ -680,6 +680,38 @@ USER claudebot
 $uv_layer"
   fi
 
+  # Terraform (detect .tf files or .terraform-version). Pinned to match the
+  # host tfenv default (1.5.7 — last MPL/pre-BUSL release); a repo can override
+  # via .terraform-version. Downloaded + SHA256-verified against the published
+  # sums. Read-only/plan work only: the destructive-terraform deny in
+  # block-dangerous-bash.sh (RO-mounted, registered PreToolUse) still blocks
+  # apply/destroy/import/state-mutation in-container.
+  if [[ -f "$REPO_PATH/.terraform-version" ]] || find "$REPO_PATH" -maxdepth 8 -name '*.tf' -print -quit 2>/dev/null | grep -q .; then
+    local tf_version="1.5.7"
+    if [[ -f "$REPO_PATH/.terraform-version" ]]; then
+      tf_version=$(tr -d '[:space:]' < "$REPO_PATH/.terraform-version")
+    fi
+    # Untrusted repo input flows into a build URL + shell — hard-require semver.
+    [[ "$tf_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || tf_version="1.5.7"
+    layers+="
+# --- Terraform ---
+USER root
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \\
+    apt-get update && apt-get install -y --no-install-recommends unzip
+RUN cd /tmp \\
+    && ARCH=\$(dpkg --print-architecture) \\
+    && curl -fsSLO \"https://releases.hashicorp.com/terraform/${tf_version}/terraform_${tf_version}_linux_\${ARCH}.zip\" \\
+    && curl -fsSL \"https://releases.hashicorp.com/terraform/${tf_version}/terraform_${tf_version}_SHA256SUMS\" -o SHA256SUMS \\
+    && grep -F \"terraform_${tf_version}_linux_\${ARCH}.zip\" SHA256SUMS | sha256sum -c - \\
+    && unzip -o \"terraform_${tf_version}_linux_\${ARCH}.zip\" -d /usr/local/bin terraform \\
+    && chmod 755 /usr/local/bin/terraform \\
+    && rm -f \"terraform_${tf_version}_linux_\${ARCH}.zip\" SHA256SUMS \\
+    && terraform version
+USER claudebot
+"
+  fi
+
   # Write Dockerfile
   cat > "$DOCKERFILE" <<DOCKEREOF
 # syntax=docker/dockerfile:1
