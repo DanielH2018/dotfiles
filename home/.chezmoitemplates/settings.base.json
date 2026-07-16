@@ -405,17 +405,21 @@
        "opus" alias (eval judge + planner/migration-reviewer agents), "sonnet"
        (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
        (fallbackModel), "haiku" (kept for Claude Code's internal/auxiliary calls, e.g.
-       the eval judge's helper call — no agent pins it).
+       the eval judge's helper call — no agent pins it), and "fable"/claude-fable-5
+       (Fable 5, opted in for manual `/model fable` selection).
        Aliases and full IDs are both listed on purpose. enforceAvailableModels snaps the
        Default to the first entry if it would resolve outside the list — a deterministic
-       guard against a silent model downgrade (cf. the fable->sonnet incident). SOAK on
-       host: watch a full eval run + a subagent invocation before trusting it. */}}
+       guard against a silent model downgrade (cf. the fable->sonnet incident, which is
+       why fable is listed last, never first). SOAK on host: watch a full eval run + a
+       subagent invocation before trusting it. */}}
   "availableModels": [
     "opus[1m]",
     "opus",
     "sonnet",
     "claude-sonnet-5",
-    "haiku"
+    "haiku",
+    "fable",
+    "claude-fable-5"
   ],
   "enforceAvailableModels": true,
   "autoMode": {
