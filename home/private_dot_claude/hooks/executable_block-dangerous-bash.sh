@@ -100,4 +100,38 @@ if echo "$COMMAND" | grep -qE "(>|tee\s+)\s*~?/?$SECRET_PATHS"; then
   deny "Blocked: writing to a secrets file via pipe/redirect. Ask the user to do this manually."
 fi
 
+# Terraform / OpenTofu / Terragrunt — deny state-mutating & destructive ops.
+# Scan a NORMALIZED copy of the whole command: collapse newline/tab/backslash
+# (defeats `\`-continuation splitting the binary from its verb across lines)
+# and strip quote chars (defeats `"terraform" apply` / `terraform" "apply`),
+# then grep. Catches compound/prefixed forms too (`cd x && terraform destroy`,
+# `AWS_PROFILE=p tofu apply`). NOTE: static string-scanning cannot catch
+# indirection (xargs/eval/$VAR) or write-a-script-then-run — see review notes.
+# Read-only ops stay allowed: plan, validate, fmt, show, output, providers,
+# graph, init, get, state list/show, workspace list/select.
+TF_BIN='(terraform|tofu|terragrunt)'
+TF_SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+# Destructive verb as the first token after the binary (optional global flags
+# like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
+# since the verb still appears as a whole word.
+if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+  deny "Blocked: state-mutating/destructive terraform command (apply/destroy/import/taint/force-unlock). Use plan to preview; a human applies infra changes."
+fi
+# Terragrunt run-all / run [--all] <verb> (verb sits after run-all/run + flags)
+if echo "$TF_SCAN" | grep -qiE "\bterragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b"; then
+  deny "Blocked: destructive terragrunt run-all/run command. Use plan to preview; a human applies infra changes."
+fi
+# state subcommands that rewrite or drop state (state list/show stay allowed)
+if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"; then
+  deny "Blocked: terraform state mutation (state rm/mv/push/replace-provider). state list/show are fine; mutations must be done by a human."
+fi
+# workspace deletion drops that workspace's state
+if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*\bworkspace[[:space:]]+delete\b"; then
+  deny "Blocked: terraform/tofu workspace delete drops its state."
+fi
+# any -auto-approve — never allow non-interactive apply/destroy
+if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
+  deny "Blocked: terraform -auto-approve. Non-interactive apply/destroy is not permitted."
+fi
+
 exit 0
