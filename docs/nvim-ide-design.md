@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-17
 - **Author:** Daniel Hunter (with Claude Code)
-- **Status:** Approved (design) — pending spec review → implementation plan
+- **Status:** Implemented 2026-07-17 (plan: `docs/nvim-ide-plan.md`; see git log)
 - **Context:** Extends the yazi edit-opener nvim built earlier (catppuccin + treesitter + QoL) into a tiered IDE-adjacent editor, used in one Ghostty pane alongside yazi.
 
 ## Goal
