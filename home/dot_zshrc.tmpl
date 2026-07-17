@@ -194,6 +194,22 @@ if command -v fd >/dev/null 2>&1; then
 fi
 
 # =============================================================================
+# YAZI (terminal file manager)
+# =============================================================================
+# `y` wraps yazi so quitting cds the shell to the last-browsed dir. Uses
+# `builtin cd` to bypass the zoxide `cd` override above.
+if command -v yazi >/dev/null 2>&1; then
+  y() {
+    local tmp cwd
+    tmp="$(mktemp -t yazi-cwd.XXXXXX)"
+    yazi "$@" --cwd-file="$tmp"
+    IFS= read -r -d '' cwd < "$tmp"
+    [[ -n "$cwd" && "$cwd" != "$PWD" ]] && builtin cd -- "$cwd"
+    rm -f -- "$tmp"
+  }
+fi
+
+# =============================================================================
 # QUALITY OF LIFE ALIASES & FUNCTIONS
 # =============================================================================
 alias zshconfig="$EDITOR ~/.zshrc"
