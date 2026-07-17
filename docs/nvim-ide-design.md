@@ -28,7 +28,7 @@ Give nvim IDE-grade capability **without leaving the terminal pane**, tiered by 
 | Tool provenance | **Hybrid** | System-managed `jdtls` (sdkman JDK) + node servers (fnm); mason for leaf tools/formatters/debugpy. |
 | Completion | **blink.cmp** | Fast, low-config; Rust matcher has a pure-Lua fallback to avoid the prebuilt binary. |
 | Finder | **fzf-lua** | Reuses existing fzf + rg; muscle memory carries over; nothing to compile. |
-| Formatting | **conform.nvim** — on-save (safe subset) **and** `<leader>cf` on-demand | On-save for Python/TS/Terraform/Lua/Bash via project formatter; JVM excluded from on-save; on-demand for anything. |
+| Formatting | **conform.nvim** — on-save (safe subset) **and** `<leader>cf` on-demand | On-save for Python/TS/JSON/Terraform/Lua/Bash via project formatter; JVM excluded from on-save; on-demand for anything. |
 
 ## File layout
 
