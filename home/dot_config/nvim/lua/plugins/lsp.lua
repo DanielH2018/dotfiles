@@ -50,8 +50,15 @@ return {
 			})
 
 			-- System-managed node servers (on PATH via fnm) — enable explicitly since
-			-- mason doesn't track them.
+			-- mason doesn't track them. enable() only hooks future FileType events, so
+			-- re-fire it on already-loaded buffers; otherwise the first file of a
+			-- session (the one that lazy-loaded this config) never attaches.
 			vim.lsp.enable({ "vtsls", "bashls", "yamlls", "jsonls" })
+			for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+				if vim.api.nvim_buf_is_loaded(buf) then
+					vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
+				end
+			end
 
 			vim.diagnostic.config({
 				severity_sort = true,
