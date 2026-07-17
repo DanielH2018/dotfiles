@@ -7,6 +7,14 @@ vim.opt.termguicolors = true
 vim.opt.number = true
 vim.opt.mouse = "a"
 
+-- QoL editor options (no plugins).
+vim.opt.clipboard = "unnamedplus" -- share the macOS system clipboard
+vim.opt.ignorecase = true
+vim.opt.smartcase = true          -- case-sensitive only when the query has caps
+vim.opt.undofile = true           -- persist undo history across sessions
+vim.opt.scrolloff = 5             -- keep context above/below the cursor
+vim.opt.signcolumn = "yes"        -- reserve the sign column so text doesn't jump
+
 -- Bootstrap lazy.nvim (self-installs on first launch).
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then
@@ -39,6 +47,7 @@ require("lazy").setup({
 			require("nvim-treesitter.configs").setup({
 				auto_install = true,
 				highlight = { enable = true },
+				indent = { enable = true },
 			})
 		end,
 	},
