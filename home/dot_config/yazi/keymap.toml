@@ -45,3 +45,36 @@ desc = "Edit in $EDITOR"
 on = "T"
 run = "plugin toggle-pane min-preview"
 desc = "Show or hide the preview pane"
+
+# smart-filter: continuous filter-as-you-type, auto-enter unique dirs.
+[[mgr.prepend_keymap]]
+on = "F"
+run = "plugin smart-filter"
+desc = "Smart filter"
+
+# bookmarks (vi-style marks): m set, ' jump, bd/bD delete.
+[[mgr.prepend_keymap]]
+on = ["m"]
+run = "plugin bookmarks save"
+desc = "Save the current directory as a bookmark"
+
+[[mgr.prepend_keymap]]
+on = ["'"]
+run = "plugin bookmarks jump"
+desc = "Jump to a bookmark"
+
+[[mgr.prepend_keymap]]
+on = ["b", "d"]
+run = "plugin bookmarks delete"
+desc = "Delete a bookmark"
+
+[[mgr.prepend_keymap]]
+on = ["b", "D"]
+run = "plugin bookmarks delete_all"
+desc = "Delete all bookmarks"
+
+# Cycle the listing detail (local plugin): size → mtime → permissions → none.
+[[mgr.prepend_keymap]]
+on = "M"
+run = "plugin linemode-cycle"
+desc = "Cycle linemode"

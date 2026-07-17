@@ -32,6 +32,28 @@ group = "git"
 url = "*.md"
 run = 'piper -- CLICOLOR_FORCE=1 glow -w=$w -s=dark "$1"'
 
+# piper + bat: line-numbered, syntax-highlighted previews for structured/tabular
+# files. The `ansi` theme inherits Ghostty's Mocha palette; width tracks the pane.
+[[plugin.prepend_previewers]]
+url = "*.csv"
+run = 'piper -- bat --color=always --style=numbers --theme=ansi --terminal-width=$w "$1"'
+
+[[plugin.prepend_previewers]]
+url = "*.tsv"
+run = 'piper -- bat --color=always --style=numbers --theme=ansi --terminal-width=$w "$1"'
+
+[[plugin.prepend_previewers]]
+url = "*.json"
+run = 'piper -- bat --color=always --style=numbers --theme=ansi --terminal-width=$w "$1"'
+
+[[plugin.prepend_previewers]]
+url = "*.jsonl"
+run = 'piper -- bat --color=always --style=numbers --theme=ansi --terminal-width=$w "$1"'
+
+[[plugin.prepend_previewers]]
+url = "*.log"
+run = 'piper -- bat --color=always --style=numbers --theme=ansi --terminal-width=$w "$1"'
+
 # Openers. Text→$EDITOR and non-text→macOS `open` are already yazi defaults;
 # only markdown is overridden to a full-screen glow "reading mode" (edit still
 # available via the `e` bind / the open menu).

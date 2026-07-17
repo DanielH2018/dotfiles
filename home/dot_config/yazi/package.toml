@@ -28,6 +28,21 @@ use = "yazi-rs/plugins:toggle-pane"
 rev = "bb758e2"
 hash = "15e5b67a241172cbb86b8fbf9e63692"
 
+[[plugin.deps]]
+use = "yazi-rs/plugins:smart-filter"
+rev = "bb758e2"
+hash = "d6f7351ea25a43c9b5f4315fa1e23935"
+
+[[plugin.deps]]
+use = "Rolv-Apneseth/starship"
+rev = "159eaba"
+hash = "7de446280b1ba8c49ffd86dbc24bbbe6"
+
+[[plugin.deps]]
+use = "dedukun/bookmarks"
+rev = "9ef1254"
+hash = "92fbb5483657fa7976cdf4e0104e18e0"
+
 [[flavor.deps]]
 use = "yazi-rs/flavors:catppuccin-mocha"
 rev = "4770a34"

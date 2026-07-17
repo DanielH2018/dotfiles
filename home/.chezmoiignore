@@ -6,8 +6,10 @@ Brewfile
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
-# package.toml, so don't manage the fetched dirs in this repo.
-.config/yazi/plugins
+# package.toml, so don't manage the fetched dirs — except the hand-written
+# linemode-cycle plugin, which IS tracked here.
+.config/yazi/plugins/*
+!.config/yazi/plugins/linemode-cycle.yazi
 .config/yazi/flavors
 
 # Machine-local overrides must never enter this (public) repo. Blocks `chezmoi add`
