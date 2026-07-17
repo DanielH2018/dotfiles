@@ -6,7 +6,7 @@ local idx = 1
 
 local function entry()
 	idx = idx % #MODES + 1
-	ya.mgr_emit("linemode", { MODES[idx] })
+	ya.emit("linemode", { MODES[idx] })
 end
 
 return { entry = entry }
