@@ -54,10 +54,11 @@ run = 'piper -- bat --color=always --style=numbers --theme="Catppuccin Mocha" --
 url = "*.log"
 run = 'piper -- bat --color=always --style=numbers --theme="Catppuccin Mocha" --terminal-width=$w "$1"'
 
-# Openers. Text→$EDITOR and non-text→macOS `open` are already yazi defaults;
-# only markdown is overridden to a full-screen glow "reading mode" (edit still
-# available via the `e` bind / the open menu).
+# Openers. `edit` (Enter/l on text) → helix, in-terminal; non-text → macOS
+# `open` (yazi default); markdown → a full-screen glow reader. `$EDITOR` and the
+# `e` bind stay vim for actual editing.
 [opener]
+edit = [{ run = "hx %s", block = true, desc = "Helix", for = "unix" }]
 reader = [
   { run = "glow -p %s", block = true, desc = "Read (glow)", for = "unix" },
 ]
