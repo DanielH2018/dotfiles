@@ -22,4 +22,5 @@ vim.opt.rtp:prepend(lazypath)
 -- Plugins live in lua/plugins/*.lua (one file per concern).
 require("lazy").setup("plugins", {
 	change_detection = { notify = false },
+	rocks = { enabled = false }, -- no plugin here needs luarocks; skip the hererocks bootstrap
 })
