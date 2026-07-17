@@ -1,7 +1,0 @@
-# Helix — yazi's edit opener (opened in-terminal, blocking, returns to yazi on
-# quit). Tree-sitter highlighting; theme matches the Ghostty/bat/yazi Catppuccin
-# Mocha. `$EDITOR`/the `e` bind stay vim.
-theme = "catppuccin_mocha"
-
-[editor]
-true-color = true
