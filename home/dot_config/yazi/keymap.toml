@@ -8,3 +8,40 @@ desc = "Enter the directory, or open the file"
 on = "<Enter>"
 run = "plugin smart-enter"
 desc = "Enter the directory, or open the file"
+
+# zoxide / fzf — remapped so `z` matches the shell `z` (zoxide). yazi's default
+# has these swapped (z=fzf, Z=zoxide).
+[[mgr.prepend_keymap]]
+on = "z"
+run = "plugin zoxide"
+desc = "Jump to a directory via zoxide"
+
+[[mgr.prepend_keymap]]
+on = "Z"
+run = "plugin fzf"
+desc = "Jump to a file/directory via fzf"
+
+# chmod on the selection (c then m).
+[[mgr.prepend_keymap]]
+on = ["c", "m"]
+run = "plugin chmod"
+desc = "Chmod on the selected files"
+
+# Open an interactive shell in the current directory; returns to yazi on exit.
+[[mgr.prepend_keymap]]
+on = "!"
+run = "shell '${SHELL:-zsh}' --block"
+desc = "Open a shell here"
+
+# Edit the hovered file in $EDITOR (also the way to edit markdown, since Enter
+# opens it in glow's reader).
+[[mgr.prepend_keymap]]
+on = "e"
+run = "shell '${EDITOR:-vim} \"%h\"' --block"
+desc = "Edit in $EDITOR"
+
+# Show / hide the preview pane.
+[[mgr.prepend_keymap]]
+on = "T"
+run = "plugin toggle-pane min-preview"
+desc = "Show or hide the preview pane"
