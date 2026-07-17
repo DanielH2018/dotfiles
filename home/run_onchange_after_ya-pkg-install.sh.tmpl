@@ -1,0 +1,7 @@
+#!/bin/sh
+# Restore yazi's vendored plugins/flavors from the tracked lockfile whenever it
+# changes, so a fresh machine gets them without a manual `ya pkg install`. The
+# hash makes chezmoi re-run this only when package.toml content changes.
+# lockfile hash: {{ include "dot_config/yazi/package.toml" | sha256sum }}
+command -v ya >/dev/null 2>&1 || exit 0
+ya pkg install >/dev/null
