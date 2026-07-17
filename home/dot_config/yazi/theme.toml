@@ -1,0 +1,21 @@
+# Match the Ghostty Catppuccin Mocha theme. Flavor vendored via `ya pkg`.
+[flavor]
+dark = "catppuccin-mocha"
+light = "catppuccin-mocha"
+
+# git.yazi status signs, colored from the Mocha palette so the linemode is
+# visible regardless of the flavor's own defaults.
+[git]
+modified = { fg = "#f9e2af" }
+added = { fg = "#a6e3a1" }
+untracked = { fg = "#89b4fa" }
+ignored = { fg = "#6c7086" }
+deleted = { fg = "#f38ba8", bold = true }
+updated = { fg = "#f9e2af" }
+
+modified_sign = "M"
+added_sign = "A"
+untracked_sign = "?"
+ignored_sign = ""
+deleted_sign = "D"
+updated_sign = "U"

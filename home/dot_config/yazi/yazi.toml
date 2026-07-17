@@ -1,0 +1,28 @@
+# yazi main config — managed by chezmoi.
+# Plugins & flavor are vendored via `ya pkg install` (see package.toml);
+# their wiring lives in init.lua and theme.toml.
+
+[mgr]
+ratio = [1, 4, 3]      # parent : current : preview
+show_hidden = true     # toggle at runtime with `.`
+sort_by = "natural"
+sort_sensitive = false
+sort_dir_first = true
+show_symlink = true
+linemode = "size"
+
+[preview]
+max_width = 1200
+max_height = 1200
+
+# git.yazi: run the git fetcher over files and directories so the plugin can
+# render per-file status as a linemode. `id` is omitted (yazi > v26.1.22).
+[[plugin.prepend_fetchers]]
+url = "*"
+run = "git"
+group = "git"
+
+[[plugin.prepend_fetchers]]
+url = "*/"
+run = "git"
+group = "git"

@@ -5,6 +5,11 @@ Brewfile
 .claude/sandbox
 {{ end }}
 
+# yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
+# package.toml, so don't manage the fetched dirs in this repo.
+.config/yazi/plugins
+.config/yazi/flavors
+
 # Machine-local overrides must never enter this (public) repo. Blocks `chezmoi add`
 # on any *.local.* file so a permission/secret override can't be swept upstream.
 **/*.local.json
