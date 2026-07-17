@@ -12,6 +12,9 @@ Brewfile
 !.config/yazi/plugins/linemode-cycle.yazi
 .config/yazi/flavors
 
+# nvim: lazy's lockfile is machine-local (stable branches, no pinning).
+.config/nvim/lazy-lock.json
+
 # Machine-local overrides must never enter this (public) repo. Blocks `chezmoi add`
 # on any *.local.* file so a permission/secret override can't be swept upstream.
 **/*.local.json

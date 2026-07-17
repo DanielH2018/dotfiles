@@ -25,6 +25,15 @@ local root = vim.fs.root(0, {
 local project = vim.fn.fnamemodify(root or vim.fn.getcwd(), ":p:h:t")
 local workspace = vim.fn.stdpath("cache") .. "/jdtls/" .. project
 
+-- jdtls ships per-OS/arch launcher configs; pick the right one (Apple Silicon
+-- needs config_mac_arm, not config_mac).
+local uname = vim.uv.os_uname()
+local arm = uname.machine == "arm64" or uname.machine:match("aarch64") ~= nil
+local config_dir = ({
+	Darwin = arm and "config_mac_arm" or "config_mac",
+	Linux = arm and "config_linux_arm" or "config_linux",
+})[uname.sysname] or "config_win"
+
 local config = {
 	cmd = {
 		vim.fn.exepath("java"), -- sdkman-managed JDK (must be 17+)
@@ -42,7 +51,7 @@ local config = {
 		"-jar",
 		launcher,
 		"-configuration",
-		mason .. "/config_mac",
+		mason .. "/" .. config_dir,
 		"-data",
 		workspace,
 	},
