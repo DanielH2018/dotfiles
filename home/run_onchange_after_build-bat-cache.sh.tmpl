@@ -1,0 +1,7 @@
+#!/bin/sh
+# Rebuild bat's theme cache when the vendored Catppuccin Mocha theme changes, so
+# yazi's `--theme="Catppuccin Mocha"` bat previews resolve on any machine. The
+# hash below makes chezmoi re-run this only when the theme file content changes.
+# theme hash: {{ include "dot_config/bat/themes/Catppuccin Mocha.tmTheme" | sha256sum }}
+command -v bat >/dev/null 2>&1 || exit 0
+bat cache --build >/dev/null
