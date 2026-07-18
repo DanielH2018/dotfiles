@@ -1,0 +1,14 @@
+#!/bin/sh
+# Install the node-based LSP servers the nvim config enables (vtsls/bashls/yamlls/
+# jsonls come from system fnm node, not mason — see dot_config/nvim/lua/plugins/lsp.lua).
+# chezmoi runs .sh scripts through the bash interpreter on Windows too, so this one
+# file covers macOS/Linux/Windows. Re-runs when the package list below changes.
+# node-lsps-bump: v1
+command -v fnm >/dev/null 2>&1 || { echo "install-node-lsps: fnm not on PATH; skipping (re-run 'chezmoi apply' once fnm is installed)" >&2; exit 0; }
+eval "$(fnm env --shell bash)" 2>/dev/null || true
+command -v npm >/dev/null 2>&1 || { echo "install-node-lsps: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
+npm install -g \
+  @vtsls/language-server \
+  bash-language-server \
+  yaml-language-server \
+  vscode-langservers-extracted

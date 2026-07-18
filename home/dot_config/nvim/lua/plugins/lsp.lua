@@ -53,6 +53,24 @@ return {
 			-- mason doesn't track them. enable() only hooks future FileType events, so
 			-- re-fire it on already-loaded buffers; otherwise the first file of a
 			-- session (the one that lazy-loaded this config) never attaches.
+			-- Windows: npm installs these as `.cmd` shims and nvim can't spawn the
+			-- extensionless name the shipped configs use; point each at the resolved
+			-- executable (exepath finds the .CMD) so they actually launch.
+			if vim.fn.has("win32") == 1 then
+				local node_servers = {
+					vtsls = { "vtsls", "--stdio" },
+					bashls = { "bash-language-server", "start" },
+					yamlls = { "yaml-language-server", "--stdio" },
+					jsonls = { "vscode-json-language-server", "--stdio" },
+				}
+				for name, cmd in pairs(node_servers) do
+					local exe = vim.fn.exepath(cmd[1])
+					if exe ~= "" then
+						cmd[1] = exe
+						vim.lsp.config(name, { cmd = cmd })
+					end
+				end
+			end
 			vim.lsp.enable({ "vtsls", "bashls", "yamlls", "jsonls" })
 			for _, buf in ipairs(vim.api.nvim_list_bufs()) do
 				if vim.api.nvim_buf_is_loaded(buf) then
