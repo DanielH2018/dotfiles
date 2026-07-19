@@ -45,7 +45,11 @@ config.window_background_opacity = 1.0
 config.window_close_confirmation = "NeverPrompt"
 config.scrollback_lines = 100000
 config.hide_mouse_cursor_when_typing = true
-config.audible_bell = "SystemBeep"
+-- Bell OFF: the readline boundary bell (e.g. arrow past end-of-line) otherwise fires
+-- Windows MessageBeep, which flashes the window when "visual notifications for sounds"
+-- accessibility is on. Disable audible + zero-duration visual so nothing beeps or flashes.
+config.audible_bell = "Disabled"
+config.visual_bell = { fade_in_duration_ms = 0, fade_out_duration_ms = 0 }
 -- Kitty graphics protocol is OFF by default in WezTerm; enable it so fastfetch's
 -- kitty-direct image logo (and other kitty-graphics tools) render.
 config.enable_kitty_graphics = true

@@ -71,6 +71,12 @@ psgrep() { ps aux | grep -i "$1" | grep -v grep; }
 # --- Readline: prefix history search on Up/Down ---
 bind '"\e[A": history-search-backward' 2>/dev/null
 bind '"\e[B": history-search-forward' 2>/dev/null
+# Keep bracketed paste (multiline safety) but drop the active-region highlight: its
+# reverse-video (\e[7m) renders pasted text bg-on-bg (invisible) until the next keypress.
+bind 'set enable-active-region off' 2>/dev/null
+# No bell at the source: readline otherwise emits \a on boundaries (e.g. arrow past
+# end-of-line), which WezTerm/Windows render as a full-window flash.
+bind 'set bell-style none' 2>/dev/null
 
 # --- fastfetch banner on login shells only ---
 if shopt -q login_shell && command -v fastfetch >/dev/null 2>&1; then
