@@ -1,0 +1,118 @@
+# Core CLI toolchain shared across platforms — the single source of truth for the tools
+# installed on more than one OS. Each installer consumes the field(s) for its own package
+# manager and ignores the rest:
+#   - winget = winget package id      -> run_onchange_install-cli-tools.ps1.tmpl  (Windows)
+#   - brew   = Homebrew formula       -> Brewfile.tmpl                             (macOS)
+#   - apt    = Debian/Ubuntu package  -> run_once_after_install-cli-tools.sh.tmpl  (Linux)
+#   - cmd    = binary name on PATH    -> used by the winget installer to skip-if-present
+# An empty field means that installer doesn't handle this tool (it's absent there, or
+# installed by another mechanism — e.g. eza/fastfetch come from GitHub release binaries on
+# Linux, handled bespoke in the .sh script, so their apt field is empty here).
+#
+# OS-UNIQUE tools stay in their own installer, NOT here: winget's nvim/yazi/zig/wezterm/uv,
+# and the Brewfile's casks / mas / vscode / brew-only (bash, chezmoi, gh, tmux, wget, ...).
+
+[[tools]]
+name = "bat"
+cmd = "bat"
+winget = "sharkdp.bat"
+brew = "bat"
+apt = "bat"
+
+[[tools]]
+name = "eza"
+cmd = "eza"
+winget = "eza-community.eza"
+brew = "eza"
+apt = ""
+
+[[tools]]
+name = "fd"
+cmd = "fd"
+winget = "sharkdp.fd"
+brew = "fd"
+apt = "fd-find"
+
+[[tools]]
+name = "fzf"
+cmd = "fzf"
+winget = "junegunn.fzf"
+brew = "fzf"
+apt = ""
+
+[[tools]]
+name = "ripgrep"
+cmd = "rg"
+winget = "BurntSushi.ripgrep.MSVC"
+brew = "ripgrep"
+apt = ""
+
+[[tools]]
+name = "starship"
+cmd = "starship"
+winget = "Starship.Starship"
+brew = "starship"
+apt = ""
+
+[[tools]]
+name = "zoxide"
+cmd = "zoxide"
+winget = "ajeetdsouza.zoxide"
+brew = "zoxide"
+apt = ""
+
+[[tools]]
+name = "fnm"
+cmd = "fnm"
+winget = "Schniz.fnm"
+brew = "fnm"
+apt = ""
+
+[[tools]]
+name = "fastfetch"
+cmd = "fastfetch"
+winget = "Fastfetch-cli.Fastfetch"
+brew = "fastfetch"
+apt = ""
+
+[[tools]]
+name = "btop"
+cmd = "btop"
+winget = ""
+brew = "btop"
+apt = "btop"
+
+[[tools]]
+name = "chafa"
+cmd = "chafa"
+winget = ""
+brew = "chafa"
+apt = "chafa"
+
+[[tools]]
+name = "curlie"
+cmd = "curlie"
+winget = ""
+brew = "curlie"
+apt = ""
+
+[[tools]]
+name = "sd"
+cmd = "sd"
+winget = ""
+brew = "sd"
+apt = ""
+
+[[tools]]
+name = "zsh-autosuggestions"
+cmd = ""
+winget = ""
+brew = "zsh-autosuggestions"
+apt = "zsh-autosuggestions"
+
+[[tools]]
+name = "zsh-syntax-highlighting"
+cmd = ""
+winget = ""
+brew = "zsh-syntax-highlighting"
+apt = "zsh-syntax-highlighting"

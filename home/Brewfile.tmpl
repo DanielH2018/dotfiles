@@ -1,28 +1,20 @@
 tap "pulumi/tap", trusted: true
+# Brew-only formulae (not in the shared core toolchain).
 brew "bash"
-brew "bat"
-brew "btop"
-brew "chafa"
 brew "chezmoi"
-brew "curlie"
-brew "eza"
-brew "fastfetch"
-brew "fd"
-brew "fnm"
-brew "fzf"
 brew "gh"
 brew "mas"
 brew "pipx"
 brew "pre-commit"
-brew "ripgrep"
-brew "sd"
-brew "starship"
 brew "tmux"
 brew "wget"
-brew "zoxide"
-brew "zsh-autosuggestions"
-brew "zsh-syntax-highlighting"
 brew "pulumi/tap/pulumi"
+
+# Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of truth
+# with the winget + Linux installers). Only tools with a brew formula appear here.
+{{- range .tools }}{{ if .brew }}
+brew "{{ .brew }}"
+{{- end }}{{- end }}
 cask "1password"
 cask "1password-cli"
 cask "firefox"

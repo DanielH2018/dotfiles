@@ -13,8 +13,11 @@ set -u
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-# 1. apt packages (only if any are missing; needs sudo, which prompts in an interactive terminal).
-APT_PKGS="btop chafa bat fd-find zsh-autosuggestions zsh-syntax-highlighting"
+# 1. apt packages (only if any are missing; needs sudo, which prompts in an interactive
+#    terminal). The list comes from .chezmoidata/tools.toml (tools with an apt package) —
+#    the shared source of truth with the winget + Brewfile installers. Release-binary tools
+#    (eza/fastfetch/curlie/sd) have no apt field and stay in the bespoke section below.
+APT_PKGS="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}"
 missing=""
 for p in $APT_PKGS; do
   dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"

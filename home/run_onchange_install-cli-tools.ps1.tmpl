@@ -19,23 +19,19 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 
 # id = exact winget package id; cmd = the binary it puts on PATH (used to skip).
 $packages = @(
-    @{ id = 'Starship.Starship';       cmd = 'starship'  },
-    @{ id = 'ajeetdsouza.zoxide';      cmd = 'zoxide'    },
-    @{ id = 'junegunn.fzf';            cmd = 'fzf'       },
-    @{ id = 'eza-community.eza';       cmd = 'eza'       },
-    @{ id = 'sharkdp.fd';              cmd = 'fd'        },
-    @{ id = 'BurntSushi.ripgrep.MSVC'; cmd = 'rg'        },
-    @{ id = 'sharkdp.bat';             cmd = 'bat'       },
-    @{ id = 'Fastfetch-cli.Fastfetch'; cmd = 'fastfetch' },
-    @{ id = 'Schniz.fnm';              cmd = 'fnm'       },
-    @{ id = 'astral-sh.uv';            cmd = 'uv'        },
-    # Editor + file manager (configured under ~/.config/{nvim,yazi}). zig is the C
-    # compiler nvim-treesitter needs to build parsers on Windows (no cc/clang here).
-    @{ id = 'Neovim.Neovim';           cmd = 'nvim'      },
-    @{ id = 'sxyazi.yazi';             cmd = 'ya'        },
-    @{ id = 'zig.zig';                 cmd = 'zig'       },
-    # Terminal emulator (Windows-only; mirrors the Ghostty setup on macOS/Linux).
-    @{ id = 'wez.wezterm';             cmd = 'wezterm'   }
+    # Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of
+    # truth with the Brewfile + Linux installer). Only tools with a winget id appear here.
+{{- range .tools }}{{ if .winget }}
+    @{ id = '{{ .winget }}'; cmd = '{{ .cmd }}' },
+{{- end }}{{- end }}
+    # Windows-only additions (not in the shared core): Python (uv), the editor + file
+    # manager (configured under ~/.config/{nvim,yazi}), zig (the C compiler nvim-treesitter
+    # needs on Windows), and the terminal emulator (mirrors Ghostty on macOS/Linux).
+    @{ id = 'astral-sh.uv';  cmd = 'uv'      },
+    @{ id = 'Neovim.Neovim'; cmd = 'nvim'    },
+    @{ id = 'sxyazi.yazi';   cmd = 'ya'      },
+    @{ id = 'zig.zig';       cmd = 'zig'     },
+    @{ id = 'wez.wezterm';   cmd = 'wezterm' }
 )
 
 foreach ($p in $packages) {
