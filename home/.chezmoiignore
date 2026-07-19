@@ -6,6 +6,7 @@ Brewfile
 
 {{ if ne .chezmoi.os "windows" }}
 .config/wezterm
+.config/fastfetch/logos-trimmed
 .config/windows-provisioning
 bin/TaskbarAutoHideFix.cs
 bin/TaskbarAutoHideFix.exe

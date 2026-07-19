@@ -46,6 +46,9 @@ config.window_close_confirmation = "NeverPrompt"
 config.scrollback_lines = 100000
 config.hide_mouse_cursor_when_typing = true
 config.audible_bell = "SystemBeep"
+-- Kitty graphics protocol is OFF by default in WezTerm; enable it so fastfetch's
+-- kitty-direct image logo (and other kitty-graphics tools) render.
+config.enable_kitty_graphics = true
 
 -- ---------------------------------------------------------------------------
 -- SHELL  — launch Git Bash (login + interactive), matching the Git-Bash-centric setup.

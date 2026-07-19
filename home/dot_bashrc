@@ -74,7 +74,18 @@ bind '"\e[B": history-search-forward' 2>/dev/null
 
 # --- fastfetch banner on login shells only ---
 if shopt -q login_shell && command -v fastfetch >/dev/null 2>&1; then
-  fastfetch
+  # Windows: fastfetch's iterm logo can't glob for a random image, so pick a
+  # random trimmed shape here. The trimmed dir only exists on Windows (it's
+  # chezmoiignore'd elsewhere), so on macOS/Linux _logo is empty and fastfetch
+  # falls back to its own globbed kitty logo from the config.
+  # Bash glob (not `ls`, which is aliased to eza above) so we get a clean path.
+  _logos=("$HOME"/.config/fastfetch/logos-trimmed/*.png)
+  if [ -e "${_logos[0]}" ]; then
+    fastfetch --logo-type iterm --logo "${_logos[RANDOM % ${#_logos[@]}]}" --logo-width 20 --logo-height 12 --logo-preserve-aspect-ratio --logo-padding-right 1
+  else
+    fastfetch
+  fi
+  unset _logos
 fi
 
 # Machine-local bash config (per-machine; absent on portable machines).
