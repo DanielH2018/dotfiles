@@ -1,0 +1,42 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Run ONCE from an ELEVATED PowerShell after 'chezmoi apply':
+#   pwsh -File $HOME\.config\windows-provisioning\elevated-setup.ps1
+#
+# chezmoi's own run_ scripts execute unelevated, so the admin-only provisioning steps
+# (power scheme, scheduled tasks) live here for you to invoke by hand. Idempotent.
+#Requires -RunAsAdministrator
+
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+
+# --- Power: never sleep on AC (Elgato 4K60 Pro breaks on S3 sleep), hibernate after 30 min ---
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 30
+Write-Host '[power] AC standby=never, hibernate=30min'
+
+# --- TaskbarAutoHideFix: continuous watcher + 3-min poll that re-heals the ExplorerPatcher
+#     taskbar after resume/unlock/display transitions. Registered from the stored XMLs
+#     (they reference ~/bin/TaskbarAutoHideFix.exe, deployed by chezmoi). ---
+$tdir = Join-Path $env:USERPROFILE '.config\windows-provisioning\scheduled-tasks'
+foreach ($t in @('TaskbarAutoHideFix','TaskbarAutoHideFix-Poll')) {
+    $xml = Join-Path $tdir "$t.xml"
+    if (Test-Path $xml) {
+        Register-ScheduledTask -TaskName $t -Xml (Get-Content $xml -Raw) -User $env:USERNAME -Force | Out-Null
+        Write-Host "[task] registered $t"
+    } else {
+        Write-Warning "missing $xml"
+    }
+}
+Start-ScheduledTask -TaskName 'TaskbarAutoHideFix' -ErrorAction SilentlyContinue
+
+# --- StreamDeck Watcher: restarts Elgato Stream Deck when the device re-appears
+#     (KVM switch / hibernate / boot). Its own installer registers + starts the task. ---
+$sd = Join-Path $env:USERPROFILE 'Scripts\streamdeck-watcher\install.ps1'
+if (Test-Path $sd) {
+    & $sd
+} else {
+    Write-Warning "missing $sd"
+}
+
+Write-Host 'Elevated setup done. Restart File Explorer to finish applying ExplorerPatcher.'
+{{- end -}}

@@ -6,6 +6,10 @@ Brewfile
 
 {{ if ne .chezmoi.os "windows" }}
 .config/wezterm
+.config/windows-provisioning
+bin/TaskbarAutoHideFix.cs
+bin/TaskbarAutoHideFix.exe
+Scripts/streamdeck-watcher
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked

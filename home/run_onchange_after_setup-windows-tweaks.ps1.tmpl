@@ -1,0 +1,28 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Managed by chezmoi (run_onchange). Re-applies stored Windows customization after the
+# app installer (name sorts after install-apps / install-node-lsps). Idempotent; re-runs
+# only when this file or the referenced exports change.
+#
+# ExplorerPatcher: all HKCU, no elevation. Import re-applies the exported settings.
+# Winaero Tweaker: no CLI import exists, so this only reminds you to import it in the GUI.
+# bump-to-reinstall: win-tweaks v1
+
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+
+$dir = Join-Path $env:USERPROFILE '.config\windows-provisioning'
+$ep  = Join-Path $dir 'explorerpatcher.reg'
+
+if (Get-Command reg.exe -ErrorAction SilentlyContinue) {
+    if ((Test-Path $ep) -and (Test-Path 'HKCU:\Software\ExplorerPatcher')) {
+        Write-Host "[apply] ExplorerPatcher settings <- explorerpatcher.reg"
+        reg.exe import $ep 2>&1 | Out-Null
+        Write-Host "        (restart File Explorer for changes to take full effect)"
+    } elseif (Test-Path $ep) {
+        Write-Host "[skip] ExplorerPatcher not installed yet; re-run 'chezmoi apply' after it installs."
+    }
+}
+
+Write-Host "[manual] Winaero Tweaker has no CLI import. Open Winaero -> Tools -> Import and"
+Write-Host "         select $dir\winaero-tweaker.ini"
+{{- end -}}

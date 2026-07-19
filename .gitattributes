@@ -4,3 +4,5 @@
 # Binary content is auto-detected; mark images explicitly so Git never rewrites them.
 * text=auto eol=lf
 *.png binary
+*.exe binary
+*.reg binary
