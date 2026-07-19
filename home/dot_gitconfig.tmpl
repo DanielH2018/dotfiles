@@ -20,6 +20,16 @@
 	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
 	excludesfile = ~/.gitignore_global
 	pager = less
+{{- if stat (printf "%s/.ssh/id_ed25519" .chezmoi.homeDir) }}
+[user]
+	signingkey = ~/.ssh/id_ed25519.pub
+[gpg]
+	format = ssh
+[gpg "ssh"]
+	allowedSignersFile = {{ .chezmoi.homeDir }}/.config/git/allowed_signers
+[commit]
+	gpgsign = true
+{{- end }}
 {{- end }}
 [pull]
 	rebase = true
