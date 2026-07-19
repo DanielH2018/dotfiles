@@ -4,6 +4,10 @@ Brewfile
 .claude/sandbox
 {{ end }}
 
+{{ if ne .chezmoi.os "windows" }}
+.config/wezterm
+{{ end }}
+
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
 # package.toml, so don't manage the fetched dirs — except the hand-written
 # linemode-cycle plugin, which IS tracked here.

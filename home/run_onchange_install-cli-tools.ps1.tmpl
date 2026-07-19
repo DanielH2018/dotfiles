@@ -33,7 +33,9 @@ $packages = @(
     # compiler nvim-treesitter needs to build parsers on Windows (no cc/clang here).
     @{ id = 'Neovim.Neovim';           cmd = 'nvim'      },
     @{ id = 'sxyazi.yazi';             cmd = 'ya'        },
-    @{ id = 'zig.zig';                 cmd = 'zig'       }
+    @{ id = 'zig.zig';                 cmd = 'zig'       },
+    # Terminal emulator (Windows-only; mirrors the Ghostty setup on macOS/Linux).
+    @{ id = 'wez.wezterm';             cmd = 'wezterm'   }
 )
 
 foreach ($p in $packages) {
