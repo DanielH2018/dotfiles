@@ -14,6 +14,12 @@ case $- in
   *) return ;;
 esac
 
+# Git Bash / Cygwin doesn't set $USER or $HOSTNAME (Windows uses $USERNAME), which trips
+# ble.sh's environment sanity check ("insane environment: $USER is empty"). Set them before
+# sourcing ble.sh below. No-op where they're already set (macOS/Linux).
+[ -n "${USER:-}" ] || export USER="$(id -un 2>/dev/null)"
+[ -n "${HOSTNAME:-}" ] || export HOSTNAME="$(hostname 2>/dev/null)"
+
 # --- ble.sh (Bash Line Editor): fish-style autosuggestions + syntax highlighting, the bash
 #     analog of zsh-autosuggestions + zsh-syntax-highlighting. Source with --noattach here
 #     and `ble-attach` at the very end so it wraps the whole interactive session. Installed
@@ -25,8 +31,16 @@ HISTSIZE=200000
 HISTFILESIZE=200000
 HISTCONTROL=ignoreboth:erasedups
 shopt -s histappend
-# Flush each command to the history file so concurrent shells share it.
-PROMPT_COMMAND="history -a; ${PROMPT_COMMAND:-}"
+if [[ ${BLE_VERSION-} ]]; then
+  # ble.sh manages the line editor + history; use its concurrent-shell sharing rather than
+  # injecting `history -a` into PROMPT_COMMAND (which ble.sh parses into array elements — a
+  # trailing empty element there collides with zoxide's hook and produces a `;;` syntax error).
+  bleopt history_share=1 2>/dev/null
+else
+  # Flush each command to the history file so concurrent shells share it. The :+ form avoids
+  # a trailing empty command when PROMPT_COMMAND is unset.
+  PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+fi
 
 # --- Shell options (bash analogs of the zsh setopt line: AUTO_CD, NO_CASE_GLOB, EXTENDED_GLOB) ---
 shopt -s autocd nocaseglob globstar cdspell dirspell 2>/dev/null
