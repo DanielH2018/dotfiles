@@ -1,0 +1,21 @@
+# Shared terminal identity — the single source of truth for the visual settings that
+# Ghostty (macOS/Linux) and WezTerm (Windows) each encode in their own format. Consumed by
+# dot_config/ghostty/config.tmpl and dot_config/wezterm/wezterm.lua.tmpl. Change a value
+# here and both terminals update on the next `chezmoi apply`.
+#
+# Only genuinely shared settings live here. Terminal-specific config (Ghostty shaders /
+# macos-* / notifications; WezTerm keybinds / default_prog / bell / kitty-graphics) stays
+# in each terminal's own file.
+[terminal]
+font_family = "IosevkaTerm Nerd Font Mono"
+font_weight = "Bold"
+font_size = 16
+# Base OpenType feature tags; each template formats them (+tag for Ghostty, tag=1 for WezTerm).
+font_features = ["liga", "kern", "calt", "ss01", "ss02"]
+theme = "Catppuccin Mocha"
+cursor_color = "#fabd2f"
+cursor_fg = "#1e1e2e"
+padding = 20
+scrollback = 100000
+cols = 120
+rows = 24

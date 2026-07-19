@@ -8,21 +8,21 @@ local act = wezterm.action
 local config = wezterm.config_builder()
 
 -- ---------------------------------------------------------------------------
--- FONT  (Ghostty: IosevkaTerm Nerd Font Mono Bold @ 16, +liga +kern +calt +ss01 +ss02)
--- Installed system-wide via chezmoi; Windows registers the Mono family as "IosevkaTerm
--- NFM", so list the full name first and the abbreviation as a fallback.
+-- FONT  (shared values from .chezmoidata/terminal.toml — keeps Ghostty + WezTerm in sync).
+-- Windows registers the Mono family as "IosevkaTerm NFM", so list the full name first and
+-- the abbreviation as a fallback.
 -- ---------------------------------------------------------------------------
 config.font = wezterm.font_with_fallback({
-	{ family = "IosevkaTerm Nerd Font Mono", weight = "Bold" },
-	{ family = "IosevkaTerm NFM", weight = "Bold" },
+	{ family = "{{ .terminal.font_family }}", weight = "{{ .terminal.font_weight }}" },
+	{ family = "IosevkaTerm NFM", weight = "{{ .terminal.font_weight }}" },
 })
-config.font_size = 16.0
-config.harfbuzz_features = { "liga", "kern", "calt", "ss01=1", "ss02=1" }
+config.font_size = {{ .terminal.font_size }}.0
+config.harfbuzz_features = { {{ range $i, $f := .terminal.font_features }}{{ if $i }}, {{ end }}"{{ $f }}=1"{{ end }} }
 
 -- ---------------------------------------------------------------------------
 -- THEME  (Ghostty: theme = "Catppuccin Mocha") — built into WezTerm.
 -- ---------------------------------------------------------------------------
-config.color_scheme = "Catppuccin Mocha"
+config.color_scheme = "{{ .terminal.theme }}"
 
 -- ---------------------------------------------------------------------------
 -- CURSOR  (Ghostty: block, blink, cursor-color #fabd2f) — colors merge over the scheme.
@@ -30,20 +30,20 @@ config.color_scheme = "Catppuccin Mocha"
 config.default_cursor_style = "BlinkingBlock"
 config.cursor_blink_rate = 500
 config.colors = {
-	cursor_bg = "#fabd2f",
-	cursor_border = "#fabd2f",
-	cursor_fg = "#1e1e2e",
+	cursor_bg = "{{ .terminal.cursor_color }}",
+	cursor_border = "{{ .terminal.cursor_color }}",
+	cursor_fg = "{{ .terminal.cursor_fg }}",
 }
 
 -- ---------------------------------------------------------------------------
 -- WINDOW / BEHAVIOR  (Ghostty: 120x24, padding 20, scrollback 100000, no close confirm)
 -- ---------------------------------------------------------------------------
-config.initial_cols = 120
-config.initial_rows = 24
-config.window_padding = { left = 20, right = 20, top = 20, bottom = 20 }
+config.initial_cols = {{ .terminal.cols }}
+config.initial_rows = {{ .terminal.rows }}
+config.window_padding = { left = {{ .terminal.padding }}, right = {{ .terminal.padding }}, top = {{ .terminal.padding }}, bottom = {{ .terminal.padding }} }
 config.window_background_opacity = 1.0
 config.window_close_confirmation = "NeverPrompt"
-config.scrollback_lines = 100000
+config.scrollback_lines = {{ .terminal.scrollback }}
 config.hide_mouse_cursor_when_typing = true
 -- Bell OFF: the readline boundary bell (e.g. arrow past end-of-line) otherwise fires
 -- Windows MessageBeep, which flashes the window when "visual notifications for sounds"

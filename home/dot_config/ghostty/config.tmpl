@@ -5,18 +5,18 @@
 # -----------------------------------------------------------------------------
 # FONT CONFIGURATION
 # -----------------------------------------------------------------------------
-font-family = "IosevkaTerm Nerd Font Mono Bold"
-font-size = 16
+font-family = "{{ .terminal.font_family }} {{ .terminal.font_weight }}"
+font-size = {{ .terminal.font_size }}
 font-thicken = true
 font-thicken-strength = 50
-font-feature = +liga,+kern,+calt,+ss01,+ss02
+font-feature = {{ range $i, $f := .terminal.font_features }}{{ if $i }},{{ end }}+{{ $f }}{{ end }}
 
 # -----------------------------------------------------------------------------
 # WINDOW APPEARANCE & BEHAVIOR
 # -----------------------------------------------------------------------------
 # Window properties
-window-width = 120
-window-height = 24
+window-width = {{ .terminal.cols }}
+window-height = {{ .terminal.rows }}
 window-vsync = true
 window-step-resize = true
 window-inherit-working-directory = true
@@ -28,11 +28,11 @@ window-decoration = true
 window-colorspace = display-p3
 window-new-tab-position = end
 link-previews = true
-theme = "Catppuccin Mocha"
+theme = "{{ .terminal.theme }}"
 
 # Window padding
-window-padding-x = 20
-window-padding-y = 20
+window-padding-x = {{ .terminal.padding }}
+window-padding-y = {{ .terminal.padding }}
 window-padding-balance = true
 window-padding-color = extend
 
@@ -65,7 +65,7 @@ macos-icon-ghost-color = crimson
 # -----------------------------------------------------------------------------
 # CURSOR CONFIGURATION
 # -----------------------------------------------------------------------------
-cursor-color = #fabd2f
+cursor-color = {{ .terminal.cursor_color }}
 cursor-style = block
 cursor-style-blink = true
 cursor-click-to-move = true
@@ -102,7 +102,7 @@ notify-on-command-finish-after = 10s
 # -----------------------------------------------------------------------------
 # TERMINAL BEHAVIOR
 # -----------------------------------------------------------------------------
-scrollback-limit = 100000
+scrollback-limit = {{ .terminal.scrollback }}
 confirm-close-surface = false
 quit-after-last-window-closed = false
 clipboard-trim-trailing-spaces = true
