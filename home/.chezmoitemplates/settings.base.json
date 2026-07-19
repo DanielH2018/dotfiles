@@ -518,6 +518,16 @@
             "timeout": 5
           }
         ]
+      },
+      {{/* wezview: mark this session "working" when a prompt is submitted */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/wezterm-state.sh working",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -612,6 +622,28 @@
             "timeout": 5
           }
         ]
+      },
+      {{/* wezview: needs-input on permission/idle prompts */}}
+      {
+        "matcher": "permission_prompt|idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/wezterm-state.sh needs-input",
+            "timeout": 5
+          }
+        ]
+      },
+      {{/* wezview: completed on task-complete notification */}}
+      {
+        "matcher": "task_complete",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/wezterm-state.sh completed",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -646,6 +678,16 @@
             "timeout": 10
           }
         ]
+      },
+      {{/* wezview: mark completed when the turn stops */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/wezterm-state.sh completed",
+            "timeout": 5
+          }
+        ]
       }{{ if eq .chezmoi.os "linux" }},
       {
         "hooks": [
@@ -678,6 +720,16 @@
             "command": "~/.claude/hooks/session-end.sh",
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {{/* wezview: remove this session's state file on end */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/wezterm-state.sh end",
+            "timeout": 5
           }
         ]
       }
