@@ -1,0 +1,69 @@
+# Curated winget package list for full-machine provisioning.
+# Consumed by run_onchange_after_install-apps.ps1.tmpl (skip-if-present install loop).
+#
+# Scope rules:
+#   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch,
+#     fnm, uv, neovim, yazi, zig, wezterm) is installed by
+#     run_onchange_install-cli-tools.ps1.tmpl. Do NOT duplicate those here.
+#   - Games themselves are NOT listed — winget installs the launchers; libraries
+#     re-download from Steam/Epic/EA/Riot after sign-in.
+#   - Apps winget can't provide (Office license, GPU/chipset drivers, Ryzen Master,
+#     Samsung Magician, NVIDIA App, Elgato Game Capture, Pokemon TCG Live, Xbox
+#     Accessories msstore) live in the manual checklist, not here.
+#
+# IDs verified 2026-07-19 against `winget export` on daniel-pc (Mullvad split-tunnel).
+
+[apps]
+
+# GUI apps + utilities.
+base = [
+  "7zip.7zip",
+  "Mozilla.Firefox",              # installed outside winget on this box; id is valid
+  "Google.Chrome",
+  "Obsidian.Obsidian",
+  "Anthropic.Claude",
+  "Spotify.Spotify",
+  "Bitwarden.Bitwarden",
+  "REALiX.HWiNFO",
+  "AntibodySoftware.WizTree",
+  "Notepad++.Notepad++",
+  "AutoHotkey.AutoHotkey",
+  "WireGuard.WireGuard",
+  "MullvadVPN.MullvadVPN",         # installed outside winget on this box; id is valid
+  "Google.GoogleDrive",
+  "OBSProject.OBSStudio",
+  "Elgato.StreamDeck",
+  "Corsair.iCUE.5",
+  "SteelSeries.GG",
+  "Logitech.GHUB",
+  "Logitech.OptionsPlus",
+  "Microsoft.PowerToys",
+  "flux.flux",
+  "Microsoft.Sysinternals.Autoruns",
+  "VideoLAN.VLC",
+  "winaero.tweaker",
+  "valinet.ExplorerPatcher",
+  "Romanitho.Winget-AutoUpdate",   # scheduled-task auto-updater for winget packages
+]
+
+# Dev tooling not covered by the CLI-tools installer.
+coding = [
+  "Git.Git",
+  "GitHub.cli",
+  "Microsoft.VisualStudioCode",
+  "Microsoft.WindowsTerminal",
+  "FiloSottile.age",
+  "ImageMagick.ImageMagick",
+  "Genymobile.scrcpy",
+]
+
+# Game launchers only (never individual games).
+gaming = [
+  "Valve.Steam",
+  "EpicGames.EpicGamesLauncher",
+  "Discord.Discord",
+  "PrismLauncher.PrismLauncher",
+  "EclipseAdoptium.Temurin.25.JDK",   # Java runtime Prism needs for Minecraft
+  "ElectronicArts.EADesktop",         # verify: not winget-sourced on this box
+  "RiotGames.LeagueOfLegends.NA",     # verify: Riot bootstrapper, region-specific, may need re-run
+]
