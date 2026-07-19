@@ -53,7 +53,6 @@ coding = [
   "Microsoft.VisualStudioCode",
   "Microsoft.WindowsTerminal",
   "FiloSottile.age",
-  "ImageMagick.ImageMagick",
   "Genymobile.scrcpy",
   "Bitwarden.CLI",                # `bw` — pulls the WireGuard config at provision time
 ]
