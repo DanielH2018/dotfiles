@@ -1,7 +1,12 @@
-# ~/.bashrc — interactive Bash config. Primary use is Git Bash on Windows; the zsh
-# config in ~/.zshrc covers macOS/Linux. Sourced from ~/.bash_profile for login
-# shells (Git Bash doesn't read ~/.bashrc on its own). Every tool integration is
-# guarded by `command -v`, so this is a clean no-op wherever a tool isn't installed.
+# ~/.bashrc — interactive Bash config. Primary use is Git Bash on Windows; the zsh config
+# in ~/.zshrc covers macOS/Linux. Sourced from ~/.bash_profile for login shells (Git Bash
+# doesn't read ~/.bashrc on its own).
+#
+# Config shared with zsh (env, PATH, aliases, functions, tool init) lives in
+# ~/.config/shell/common.sh — the single source of truth. This file holds ONLY the
+# bash-specific pieces: history, shell options, completion, readline, ble.sh, and the
+# fastfetch login banner. Every integration is guarded, so it's a clean no-op when a tool
+# is absent.
 
 # Interactive shells only.
 case $- in
@@ -9,8 +14,11 @@ case $- in
   *) return ;;
 esac
 
-export EDITOR='vim'
-export VISUAL="$EDITOR"
+# --- ble.sh (Bash Line Editor): fish-style autosuggestions + syntax highlighting, the bash
+#     analog of zsh-autosuggestions + zsh-syntax-highlighting. Source with --noattach here
+#     and `ble-attach` at the very end so it wraps the whole interactive session. Installed
+#     by run_onchange_after_install-blesh.sh.tmpl; a clean no-op when absent.
+[ -f "$HOME/.local/share/blesh/ble.sh" ] && source "$HOME/.local/share/blesh/ble.sh" --noattach
 
 # --- History (bash equivalents of the zsh HIST_* options) ---
 HISTSIZE=200000
@@ -20,57 +28,29 @@ shopt -s histappend
 # Flush each command to the history file so concurrent shells share it.
 PROMPT_COMMAND="history -a; ${PROMPT_COMMAND:-}"
 
-# --- PATH ---
-if [ -d "$HOME/.local/bin" ]; then
-  case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+# --- Shell options (bash analogs of the zsh setopt line: AUTO_CD, NO_CASE_GLOB, EXTENDED_GLOB) ---
+shopt -s autocd nocaseglob globstar cdspell dirspell 2>/dev/null
+
+# --- Shared config: env, PATH, aliases, functions, tool init (one source of truth with zsh) ---
+[ -r "$HOME/.config/shell/common.sh" ] && . "$HOME/.config/shell/common.sh"
+
+# --- fzf key bindings + completion (bash integration; the FZF_* env is set in common.sh) ---
+# fzf >=0.48 ships its bash key-bindings + completion via `fzf --bash`.
+command -v fzf >/dev/null 2>&1 && { eval "$(fzf --bash 2>/dev/null)" 2>/dev/null || true; }
+
+# --- bash-completion (the bash counterpart to zsh's compinit) ---
+if ! shopt -oq posix; then
+  for _bc in /usr/share/bash-completion/bash_completion /etc/bash_completion; do
+    [ -r "$_bc" ] && { . "$_bc"; break; }
+  done
+  unset _bc
 fi
 
-# --- Prompt (Starship) ---
-command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
-
-# --- Zoxide (smart cd) ---
-if command -v zoxide >/dev/null 2>&1; then
-  eval "$(zoxide init bash --cmd cd)"
-  alias zi='zoxide query -i'
-fi
-
-# --- fzf ---
-if command -v fzf >/dev/null 2>&1; then
-  if command -v rg >/dev/null 2>&1; then
-    export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git"'
-    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
-  fi
-  # fzf >=0.48 ships its bash key-bindings + completion via `fzf --bash`.
-  eval "$(fzf --bash 2>/dev/null)" 2>/dev/null || true
-fi
-
-# --- Listing aliases (eza if present, else GNU ls) ---
-if command -v eza >/dev/null 2>&1; then
-  alias ls="eza --icons --group-directories-first --git --color=auto"
-  alias ll="eza -la --icons --git --time-style=relative"
-  alias la="eza -la --icons --git --group-directories-first --time-style=relative"
-  alias lt="eza --tree --level=2 --icons -a"
-  alias lg="eza -l --git --icons"
-else
-  alias ls='ls --color=auto'
-  alias ll='ls -lA --color=auto'
-  alias la='ls -lA --color=auto'
-fi
-
-# --- fd helper ---
-command -v fd >/dev/null 2>&1 && ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
-
-# --- Quality-of-life aliases & functions (mirrors ~/.zshrc) ---
-alias c="clear"
-alias ..='cd ..'
-alias ...='cd ../..'
-command -v fastfetch >/dev/null 2>&1 && alias sysinfo='fastfetch'
-mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
-psgrep() { ps aux | grep -i "$1" | grep -v grep; }
-
-# --- Readline: prefix history search on Up/Down ---
+# --- Readline: prefix history search on Up/Down + Ctrl+arrow word nav ---
 bind '"\e[A": history-search-backward' 2>/dev/null
 bind '"\e[B": history-search-forward' 2>/dev/null
+bind '"\e[1;5C": forward-word' 2>/dev/null
+bind '"\e[1;5D": backward-word' 2>/dev/null
 # Keep bracketed paste (multiline safety) but drop the active-region highlight: its
 # reverse-video (\e[7m) renders pasted text bg-on-bg (invisible) until the next keypress.
 bind 'set enable-active-region off' 2>/dev/null
@@ -80,11 +60,10 @@ bind 'set bell-style none' 2>/dev/null
 
 # --- fastfetch banner on login shells only ---
 if shopt -q login_shell && command -v fastfetch >/dev/null 2>&1; then
-  # Windows: fastfetch's iterm logo can't glob for a random image, so pick a
-  # random trimmed shape here. The trimmed dir only exists on Windows (it's
-  # chezmoiignore'd elsewhere), so on macOS/Linux _logo is empty and fastfetch
-  # falls back to its own globbed kitty logo from the config.
-  # Bash glob (not `ls`, which is aliased to eza above) so we get a clean path.
+  # Windows: fastfetch's iterm logo can't glob for a random image, so pick a random
+  # trimmed shape here. The trimmed dir only exists on Windows (chezmoiignore'd elsewhere),
+  # so on macOS/Linux _logos is empty and fastfetch falls back to its own globbed logo.
+  # Bash glob (not `ls`, which is aliased to eza in common.sh) so we get a clean path.
   _logos=("$HOME"/.config/fastfetch/logos-trimmed/*.png)
   if [ -e "${_logos[0]}" ]; then
     fastfetch --logo-type iterm --logo "${_logos[RANDOM % ${#_logos[@]}]}" --logo-width 24 --logo-height 12 --logo-preserve-aspect-ratio --logo-padding-right 1
@@ -96,3 +75,6 @@ fi
 
 # Machine-local bash config (per-machine; absent on portable machines).
 [ -r "$HOME/.config/bash/local.bash" ] && . "$HOME/.config/bash/local.bash"
+
+# --- ble.sh attach: MUST be the last line (mirrors sourcing zsh-syntax-highlighting last) ---
+[[ ${BLE_VERSION-} ]] && ble-attach

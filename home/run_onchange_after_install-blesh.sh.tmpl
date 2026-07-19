@@ -1,0 +1,33 @@
+{{ if eq .chezmoi.os "windows" -}}
+#!/usr/bin/env bash
+# Installs ble.sh (Bash Line Editor) for Git Bash on Windows — the bash counterpart to
+# zsh-autosuggestions + zsh-syntax-highlighting (Homebrew on macOS, apt on Linux). Git Bash
+# has no `make`, so use the prebuilt nightly tarball (.tar.xz; xz ships with Git for Windows)
+# instead of a source build. dot_bashrc sources ~/.local/share/blesh/ble.sh when present.
+# Idempotent: skips if already installed. Re-runs only when this file changes.
+# blesh-bump: v1
+set -u
+
+DEST="$HOME/.local/share/blesh"
+if [ -f "$DEST/ble.sh" ]; then
+  echo "[skip] ble.sh already installed at $DEST."
+  exit 0
+fi
+
+url="https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz"
+tmp="$(mktemp -d)"
+echo "[install] ble.sh from $url ..."
+if curl -fsSL "$url" -o "$tmp/ble.tar.xz" && tar xJf "$tmp/ble.tar.xz" -C "$tmp"; then
+  src="$(find "$tmp" -maxdepth 1 -type d -name 'ble-nightly*' | head -1)"
+  if [ -n "$src" ] && [ -f "$src/ble.sh" ]; then
+    mkdir -p "$DEST"
+    cp -a "$src/." "$DEST/"
+    echo "ble.sh installed to $DEST. Open a new Git Bash shell to activate."
+  else
+    echo "ble.sh: ble.sh not found in the extracted archive" >&2
+  fi
+else
+  echo "ble.sh: download or extract failed (needs curl + xz on PATH)" >&2
+fi
+rm -rf "$tmp"
+{{ end -}}

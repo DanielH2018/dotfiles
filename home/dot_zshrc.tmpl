@@ -3,6 +3,11 @@
 # =============================================================================
 [[ -o interactive ]] || return
 
+# Config shared with bash (env, PATH, aliases, functions, tool init) lives in
+# ~/.config/shell/common.sh — the single source of truth, sourced below. This file holds
+# only the zsh-specific pieces: history/options, the completion system, keybindings,
+# the fastfetch wrapper, and the autosuggestions/syntax-highlighting plugins.
+
 # =============================================================================
 # BREW PREFIX (Homebrew init itself lives in .zprofile)
 # =============================================================================
@@ -19,9 +24,6 @@ if locale -a 2>/dev/null | command grep -qiE '^en_US\.utf-?8$'; then
 else
   export LANG=C.UTF-8 LC_ALL=C.UTF-8
 fi
-
-export EDITOR='vim'
-export VISUAL="$EDITOR"
 {{- if eq .chezmoi.os "darwin" }}
 
 # Compilation flags
@@ -45,10 +47,8 @@ setopt SHARE_HISTORY HIST_IGNORE_ALL_DUPS HIST_FIND_NO_DUPS \
 setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 
 # =============================================================================
-# PATH CONFIGURATION
+# PATH CONFIGURATION (brew/python/coreutils are macOS-only; generic paths in common.sh)
 # =============================================================================
-[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
-[[ -d "$HOME/go/bin" ]] && export PATH="$HOME/go/bin:$PATH"
 {{- if eq .chezmoi.os "darwin" }}
 
 # Ensure Homebrew bin precedes /usr/bin in non-login shells (.zprofile handles login shells).
@@ -61,22 +61,6 @@ if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
 {{- end }}
-
-# =============================================================================
-# FNM (Fast Node Manager)
-# =============================================================================
-if command -v fnm >/dev/null 2>&1; then
-  eval "$(fnm env --use-on-cd --shell zsh)"
-fi
-
-# =============================================================================
-# CHEZMOI
-# =============================================================================
-# chezmoi applies its `umask` config to file modes but creates directories subject
-# to the process umask, so on this host's 0007 login umask new dirs land at 0750 and
-# never match chezmoi's 0755 target (perpetual "MM"/overwrite prompt). Run chezmoi in
-# a subshell pinned to 0022 for deterministic dir modes, without leaking into the shell.
-chezmoi() { ( umask 0022; command chezmoi "$@" ); }
 
 # =============================================================================
 # COMPLETION SYSTEM
@@ -112,51 +96,17 @@ zstyle ':completion:*' use-cache on
 zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcache"
 
 # =============================================================================
-# PROMPT (Starship)
+# SHARED CONFIG (env, PATH, aliases, functions, tool init — one source of truth with bash)
 # =============================================================================
-if command -v starship >/dev/null 2>&1; then
-  eval "$(starship init zsh)"
-fi
+# Sourced after PATH + completion setup so tool detection sees Homebrew, and starship's/
+# zoxide's hooks register alongside compinit. Sets EDITOR, CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+# the eza/qol aliases, the y/ff/mkcd/zz/curlie functions, fnm, and the FZF_* env.
+[[ -r "$HOME/.config/shell/common.sh" ]] && source "$HOME/.config/shell/common.sh"
 
 # =============================================================================
-# ZOXIDE
-# =============================================================================
-if command -v zoxide >/dev/null 2>&1; then
-  eval "$(zoxide init zsh --cmd cd)"
-  alias zi='zoxide query -i'
-  # Escape hatch to use the real cd when zoxide's override gets in the way
-  cdreal() { builtin cd "$@"; }
-  zz() {
-    command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
-    local dir
-    dir="$(zoxide query -ls | sed 's/^[^ ]* //' | fzf --tac --prompt="zoxide> ")" || return
-    cd "$dir"
-  }
-fi
-
-# =============================================================================
-# FZF
+# FZF KEY BINDINGS + COMPLETION (zsh integration; the FZF_* env is set in common.sh)
 # =============================================================================
 if command -v fzf >/dev/null 2>&1; then
-  if command -v rg >/dev/null 2>&1; then
-    export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git"'
-    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
-    export FZF_ALT_C_COMMAND='fd -t d --hidden --follow --exclude .git'
-  elif command -v fd >/dev/null 2>&1; then
-    export FZF_DEFAULT_COMMAND='fd --hidden --follow --exclude .git'
-    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
-    export FZF_ALT_C_COMMAND='fd -t d --hidden --follow --exclude .git'
-  fi
-
-  if command -v eza >/dev/null 2>&1; then
-    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "[ -d {} ] && eza -la --icons --group-directories-first {} || head -n 200 {}"'
-    export FZF_ALT_C_OPTS='--preview "eza -la --icons --group-directories-first {}"'
-  else
-    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "if [ -d {} ]; then ls -la {}; else head -n 200 {}; fi"'
-    export FZF_ALT_C_OPTS='--preview "ls -la {}"'
-  fi
-
-  export FZF_COMPLETION_TRIGGER='**'
   [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
   [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"
   # Linux (Debian/Ubuntu fzf package) ships shell integration here:
@@ -166,51 +116,7 @@ if command -v fzf >/dev/null 2>&1; then
 fi
 
 # =============================================================================
-# ALIASES - listing
-# =============================================================================
-if command -v eza >/dev/null 2>&1; then
-  alias ls="eza --icons --group-directories-first --git --color=auto"
-  alias ll="eza -la --icons --git --time-style=relative"
-  alias la="eza -la --icons --git --group-directories-first --time-style=relative"
-  alias lt="eza --tree --level=2 --icons -a"
-  alias lg="eza -l --git --icons"
-elif ls --color=auto -d . >/dev/null 2>&1; then
-  # GNU coreutils (Linux): -G means "no group" here, so use --color instead.
-  alias ls='ls --color=auto --group-directories-first'
-  alias ll='ls -lA --color=auto --group-directories-first'
-  alias la='ls -lA --color=auto --group-directories-first'
-else
-  # BSD/macOS ls
-  alias ls='ls -G'
-  alias ll='ls -lGA'
-  alias la='ls -lGA'
-fi
-
-# =============================================================================
-# FD helper
-# =============================================================================
-if command -v fd >/dev/null 2>&1; then
-  ff() { fd "$1" "${2:-.}" --hidden --follow --exclude .git; }
-fi
-
-# =============================================================================
-# YAZI (terminal file manager)
-# =============================================================================
-# `y` wraps yazi so quitting cds the shell to the last-browsed dir. Uses
-# `builtin cd` to bypass the zoxide `cd` override above.
-if command -v yazi >/dev/null 2>&1; then
-  y() {
-    local tmp cwd
-    tmp="$(mktemp -t yazi-cwd.XXXXXX)"
-    yazi "$@" --cwd-file="$tmp"
-    IFS= read -r -d '' cwd < "$tmp"
-    [[ -n "$cwd" && "$cwd" != "$PWD" ]] && builtin cd -- "$cwd"
-    rm -f -- "$tmp"
-  }
-fi
-
-# =============================================================================
-# QUALITY OF LIFE ALIASES & FUNCTIONS
+# QUALITY OF LIFE (zsh-specific config aliases; generic ones live in common.sh)
 # =============================================================================
 alias zshconfig="$EDITOR ~/.zshrc"
 {{- if eq .chezmoi.os "darwin" }}
@@ -218,23 +124,6 @@ alias configterminal="$EDITOR ~/.zshrc ~/.config/ghostty/config ~/.config/starsh
 {{- else }}
 alias configterminal="$EDITOR ~/.zshrc ~/.config/starship.toml"
 {{- end }}
-alias c="clear"
-alias ..='cd ..'
-alias ...='cd ../..'
-alias duu='ncdu .'
-alias sysinfo='fastfetch'
-
-mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
-
-psgrep() { ps aux | grep -i "$1" | grep -v grep; }
-
-# HTTP helpers via curlie (prefixed to avoid collisions with system `delete` etc.)
-if command -v curlie >/dev/null 2>&1; then
-  hget()    { curlie GET "$@"; }
-  hpost()   { curlie POST "$@"; }
-  hput()    { curlie PUT "$@"; }
-  hdelete() { curlie DELETE "$@"; }
-fi
 
 # =============================================================================
 # KEYBINDINGS (history search & word nav)
@@ -248,7 +137,10 @@ bindkey '^[[B' down-line-or-beginning-search
 bindkey '^[[1;5C' forward-word
 bindkey '^[[1;5D' backward-word
 
-# Wrap fastfetch to pick the best image protocol per terminal
+# =============================================================================
+# FASTFETCH (wrapper picks the best image protocol per terminal; banner on login)
+# =============================================================================
+# Wrap fastfetch to pick the best image protocol per terminal.
 fastfetch() {
   if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
     command fastfetch --logo-type kitty-direct "$@"
@@ -259,20 +151,12 @@ fastfetch() {
   fi
 }
 
-# =============================================================================
-# FASTFETCH ON LOGIN (login shells only, to avoid slowing every new tab)
-# =============================================================================
-# `command -v` would match the fastfetch() wrapper function above (always true); $+commands
-# tests zsh's external-command table, so the banner runs only when the binary is installed.
+# Login shells only, to avoid slowing every new tab. `command -v` would match the
+# fastfetch() wrapper above (always true); $+commands tests zsh's external-command table,
+# so the banner runs only when the binary is installed.
 if [[ -o login ]] && (( $+commands[fastfetch] )); then
   fastfetch
 fi
-
-# =============================================================================
-# Claude
-# =============================================================================
-export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
-
 
 # =============================================================================
 # PLUGINS (autosuggestions, then syntax-highlighting LAST)
