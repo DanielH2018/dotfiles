@@ -13,7 +13,7 @@
       "right": 1
     }
 {{- else }}
-    "type": "kitty",
+    "type": "chafa",
     "source": "~/.config/fastfetch/logos/*.png",
     "preserveAspectRatio": true,
     "padding": {
@@ -27,10 +27,16 @@
     "separator",
     "host",
     "os",
+{{- if eq .chezmoi.os "windows" }}
     "kernel",
     "uptime",
     "cpu",
     "terminal",
+{{- else }}
+    "uptime",
+    "terminal",
+    "terminalfont",
+{{- end }}
     "memory",
     "localip",
     "battery",

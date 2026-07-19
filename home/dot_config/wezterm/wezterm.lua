@@ -50,8 +50,9 @@ config.hide_mouse_cursor_when_typing = true
 -- accessibility is on. Disable audible + zero-duration visual so nothing beeps or flashes.
 config.audible_bell = "Disabled"
 config.visual_bell = { fade_in_duration_ms = 0, fade_out_duration_ms = 0 }
--- Kitty graphics protocol is OFF by default in WezTerm; enable it so fastfetch's
--- kitty-direct image logo (and other kitty-graphics tools) render.
+-- Kitty graphics protocol is OFF by default in WezTerm; enable it for any
+-- kitty-graphics tools. (The fastfetch banner itself uses the iterm2 protocol,
+-- which WezTerm supports natively — see the fastfetch config.)
 config.enable_kitty_graphics = true
 
 -- ---------------------------------------------------------------------------
