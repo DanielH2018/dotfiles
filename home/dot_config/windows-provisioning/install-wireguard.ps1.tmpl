@@ -1,0 +1,50 @@
+{{- if eq .chezmoi.os "windows" -}}
+# Run from an ELEVATED PowerShell (installs a WireGuard tunnel *service*):
+#   pwsh -File $HOME\.config\windows-provisioning\install-wireguard.ps1
+#
+# Pulls the full 'daniel-pc' config from a Bitwarden secure note at runtime and installs
+# it as a tunnel. Nothing about the homelab (keys, endpoint, IPs) is stored in this public
+# repo; the rendered config lives in a temp file only long enough to install, then is
+# deleted. Idempotent: re-running replaces the existing tunnel service.
+#
+# Prereqs: WireGuard.WireGuard + Bitwarden.CLI installed (both in packages.toml), and a
+# Bitwarden secure note named '$ITEM' whose Notes field is the complete WireGuard .conf.
+#Requires -RunAsAdministrator
+
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+
+$ITEM   = 'wireguard-daniel-pc'   # Bitwarden secure note holding the full .conf text
+$TUNNEL = 'daniel-pc'
+
+$wg = Join-Path $env:ProgramFiles 'WireGuard\wireguard.exe'
+if (-not (Test-Path $wg)) { throw "wireguard.exe not found ($wg). Install WireGuard.WireGuard first." }
+
+$bw = Get-Command bw -ErrorAction SilentlyContinue
+if (-not $bw) { throw "Bitwarden CLI 'bw' not found. Install Bitwarden.CLI, then open a new shell." }
+
+# Require a logged-in, unlocked vault. bw prompts for the master password on unlock.
+& $bw.Source login --check *> $null
+if ($LASTEXITCODE -ne 0) { throw "Not logged into Bitwarden. Run 'bw login' first." }
+if (-not $env:BW_SESSION) {
+    Write-Host 'Unlocking Bitwarden...'
+    $env:BW_SESSION = (& $bw.Source unlock --raw)
+    if (-not $env:BW_SESSION) { throw 'Bitwarden unlock failed.' }
+}
+
+& $bw.Source sync *> $null
+$conf = & $bw.Source get notes $ITEM --session $env:BW_SESSION
+if ([string]::IsNullOrWhiteSpace($conf)) { throw "Bitwarden note '$ITEM' is empty or missing." }
+
+$tmp = Join-Path $env:TEMP "$TUNNEL.conf"
+try {
+    Set-Content -LiteralPath $tmp -Value $conf -Encoding ascii
+    & $wg /uninstalltunnelservice $TUNNEL *> $null   # no-op if not present
+    Start-Sleep -Seconds 1
+    & $wg /installtunnelservice $tmp
+    if ($LASTEXITCODE -ne 0) { throw "installtunnelservice exited $LASTEXITCODE" }
+    Write-Host "[wireguard] tunnel '$TUNNEL' installed and started."
+} finally {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+}
+{{- end -}}

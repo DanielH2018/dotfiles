@@ -52,6 +52,18 @@ homelab hosts entries from there (`*.daniel-hunter.com` / `*.local.daniel-hunter
 ## 7. Sign-ins & game libraries
 
 - Sign in: Bitwarden, Google Drive, Spotify, Discord, Mullvad, Steam / Epic / EA / Riot
-- WireGuard `daniel-pc` config — import manually for now (Bitwarden-templated config is a
-  planned follow-up; the private key must not enter this public repo)
 - Re-download game libraries from each launcher; re-apply Stream Deck / iCUE profiles
+
+## 8. WireGuard homelab tunnel
+
+One-time: create a Bitwarden **secure note** named `wireguard-daniel-pc` whose Notes field
+is the complete `daniel-pc` WireGuard `.conf` (copy it from the WireGuard app → the tunnel →
+Edit). Keys and homelab topology stay in Bitwarden, never in this public repo.
+
+Then, from an **elevated** shell (`bw login` first if needed):
+
+```powershell
+pwsh -File $HOME\.config\windows-provisioning\install-wireguard.ps1
+```
+
+Pulls the note, installs the tunnel service, deletes the temp file. Re-running replaces it.
