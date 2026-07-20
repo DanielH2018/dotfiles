@@ -127,9 +127,13 @@ config.keys = {
 	-- Agent View switcher (wezview): full-color fzf picker in a local tab. Dismiss with
 	-- ESC (clean exit) — it also closes itself after a jump. NOTE: CTRL+W force-close
 	-- hangs while the homelab mux is connected (a WezTerm mux limitation, not wezview).
+	-- `--noprofile --norc`: skip the login-shell profile (~400ms of ble.sh/tool
+	-- inits wezview doesn't need). bash.exe auto-adds /usr/bin + /mingw64/bin, and
+	-- jq/wezterm/fzf/wezview all live on the Windows PATH — so bare bash still finds
+	-- every tool. Halves the picker's bring-up time.
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
 		domain = { DomainName = "local" },
-		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-lc", "wezview" },
+		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "--noprofile", "--norc", "-c", "wezview" },
 	}) },
 	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
 	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "daniel-server" }) },
