@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# WezTerm Agent View — grouped, switchable list of Claude Code sessions across machines.
+# Modes:
+#   wezview             full-color fzf picker; on <enter> it jumps to the session itself.
+#                       CTRL+SHIFT+S spawns this in a throwaway tab (see wezterm.lua).
+#   wezview --resolve KEY   print the CLIENT-side pane id to jump to (or nothing)
+#   wezview --jump KEY  resolve + activate via wezterm cli (used by the picker)
+# KEY fields are separated by US (0x1f). Local sessions use their stored pane id (== client id);
+# remote (mux) sessions store the SERVER-side id, so they're correlated to the client pane by cwd
+# (+ non-shell title) via `wezterm cli --prefer-mux list` (which sees both local and homelab panes).
+set -u
+mode="${1:-fzf}"
+statedir="$HOME/.claude/wez-state"
+now=$(date +%s 2>/dev/null || echo 0)
+selfhost=$(hostname 2>/dev/null)
+US=$'\037'
+
+resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or nothing)
+  # Resolve by cwd match for BOTH local and remote: the stored pane id is only
+  # valid in the mux where it was recorded, so it can't be trusted across the
+  # local vs. homelab windows. `norm` makes Windows and Unix cwds comparable.
+  local key="$1" scwd list target
+  scwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  [ -z "$scwd" ] && return
+  list=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+  [ -z "$list" ] && return
+  target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
+    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
+    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
+      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w)))
+      | select((.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not)
+      | .pane_id ] | first // empty' 2>/dev/null)
+  [ -z "$target" ] && target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
+    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
+    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
+      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w))) | .pane_id ] | first // empty' 2>/dev/null)
+  [ -n "$target" ] && printf '%s' "$target"
+}
+
+PANELIST=""
+title_for_cwd() {  # $1 = cwd -> the Claude pane title at that cwd (or nothing)
+  # Same cwd-match + non-shell filter as resolve_key, but returns the pane title
+  # (what Claude set the pane to — its task summary) instead of the pane id.
+  local scwd="$1"
+  [ -z "$scwd" ] && return
+  [ -z "$PANELIST" ] && return
+  printf '%s' "$PANELIST" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
+    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
+    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
+      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w)))
+      | select((.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not)
+      | .title ] | first // empty' 2>/dev/null
+}
+
+do_jump() {  # $1 = KEY -> activate the target pane, robust against the picker
+  # tab's close-refocus. Immediate activate for responsiveness + a detached,
+  # SIGHUP-immune re-activate 0.25s later so closing this picker pane can't
+  # steal focus back over the jump.
+  local t; t=$(resolve_key "$1"); [ -z "$t" ] && return 1
+  wezterm cli --prefer-mux activate-pane --pane-id "$t" 2>/dev/null
+  nohup bash -c "sleep 0.25; wezterm cli --prefer-mux activate-pane --pane-id '$t'" \
+    >/dev/null 2>&1 </dev/null &
+  return 0
+}
+
+if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
+if [ "$mode" = "--jump" ]; then do_jump "${2:-}"; exit 0; fi
+
+if [ "$mode" = "--card" ]; then
+  # Render the fzf preview card from a base64 blob (host|cwd|state|ts|title|pane).
+  # Self-contained (own colors, inline age) so it runs BEFORE any state-load/SSH —
+  # fzf calls this on every keystroke, so it must be instant with no network.
+  raw=$(printf '%s' "${2:-}" | base64 -d 2>/dev/null) || exit 0
+  [ -z "$raw" ] && exit 0
+  IFS=$'\037' read -r k_host k_cwd k_state k_ts k_title k_pane <<< "$raw"
+  e=$'\033'; z="$e[0m"
+  dim="$e[38;2;127;132;156m"; lab="$e[38;2;147;153;178m"; val="$e[38;2;205;214;244m"
+  case "$k_state" in
+    needs-input) sc="$e[38;2;249;226;175m"; sn="needs input";;
+    working)     sc="$e[38;2;166;227;161m"; sn="working";;
+    completed)   sc="$e[38;2;108;112;134m"; sn="completed";;
+    *)           sc="$e[38;2;108;112;134m"; sn="idle";;
+  esac
+  if [ "$k_host" = "$selfhost" ]; then mn="PC · $k_host"
+  else case "$k_host" in daniel-server) mn="homelab · $k_host";; *) mn="$k_host";; esac; fi
+  age=""
+  case "$k_ts" in ''|*[!0-9]*) :;; *)
+    if [ "$k_ts" -gt 0 ]; then d=$(( now - k_ts )); [ "$d" -lt 0 ] && d=0
+      if   [ "$d" -lt 60 ];    then age="${d}s ago"
+      elif [ "$d" -lt 3600 ];  then age="$((d/60))m ago"
+      elif [ "$d" -lt 86400 ]; then age="$((d/3600))h ago"
+      else age="$((d/86400))d ago"; fi
+    fi;;
+  esac
+  name=$(basename "${k_cwd//\\//}" 2>/dev/null)
+  printf '\n  %s✳%s  %sclaude · %s%s%s\n\n' "$sc" "$z" "$dim" "$val" "$name" "$z"
+  printf '  %s%-9s%s%s%s ●%s\n' "$lab" "State" "$sc" "$sn" "$sc" "$z"
+  printf '  %s%-9s%s%s%s\n'     "$lab" "Machine" "$val" "$mn" "$z"
+  printf '  %s%-9s%s%s%s\n'     "$lab" "Folder" "$val" "$name" "$z"
+  printf '  %s%-9s%s%s%s\n'     "$lab" "Path" "$dim" "$k_cwd" "$z"
+  [ -n "$k_title" ] && printf '  %s%-9s%s%s%s\n' "$lab" "Task" "$val" "$k_title" "$z"
+  [ -n "$age" ]     && printf '  %s%-9s%s%s%s\n' "$lab" "Updated" "$dim" "$age" "$z"
+  exit 0
+fi
+
+rows=""
+add_rows() {
+  local line st pane cwd host ts
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    st=$(printf '%s' "$line" | jq -r '.state // "idle"' 2>/dev/null)
+    pane=$(printf '%s' "$line" | jq -r '.pane // ""' 2>/dev/null)
+    cwd=$(printf '%s' "$line" | jq -r '.cwd // ""' 2>/dev/null)
+    host=$(printf '%s' "$line" | jq -r '.host // "?"' 2>/dev/null)
+    ts=$(printf '%s' "$line" | jq -r '.ts // 0' 2>/dev/null)
+    case "$ts" in ''|*[!0-9]*) ts=0;; esac
+    [ "$ts" -gt 0 ] && [ $(( now - ts )) -gt 86400 ] && continue
+    rows+="$st	$host	$cwd	$pane	$ts"$'\n'
+  done
+}
+add_rows < <(for f in "$statedir"/*.json; do [ -e "$f" ] || continue; cat "$f"; echo; done)
+ctl_dir="$HOME/.ssh/cm"; mkdir -p "$ctl_dir" 2>/dev/null
+remote=$(ssh -o ConnectTimeout=3 -o BatchMode=yes -o ControlMaster=auto \
+  -o ControlPath="$ctl_dir/%r@%h:%p" -o ControlPersist=10m \
+  daniel-server 'cat ~/.claude/wez-state/*.json 2>/dev/null' < /dev/null 2>/dev/null || true)
+[ -n "$remote" ] && add_rows <<< "$remote"
+
+# one mux snapshot for the whole render — used to look up each session's Claude
+# pane title (its task name) by cwd.
+PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+
+# ---- palette (Catppuccin Mocha, truecolor) ----
+E=$'\033'; Z="$E[0m"
+C_NEED="$E[38;2;249;226;175m"          # yellow  — needs input
+C_WORK="$E[38;2;166;227;161m"          # green   — working
+C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
+C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
+C_NAME="$E[1m$E[38;2;205;214;244m"     # text, bold — session name
+C_HDR="$E[1m$E[38;2;180;190;254m"      # lavender, bold — group label
+BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
+LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
+PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
+declare -A GN=( [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
+
+fmt_age() {  # $1 = epoch -> compact "12m"/"3h"/"2d"; empty for unknown/zero ts
+  local t=${1:-0} d
+  case "$t" in ''|*[!0-9]*) echo ""; return;; esac
+  [ "$t" -le 0 ] && { echo ""; return; }
+  d=$(( now - t )); [ "$d" -lt 0 ] && d=0
+  if   [ "$d" -lt 60 ];    then echo "${d}s"
+  elif [ "$d" -lt 3600 ];  then echo "$((d/60))m"
+  elif [ "$d" -lt 86400 ]; then echo "$((d/3600))h"
+  else echo "$((d/86400))d"; fi
+}
+
+badge_name() {  # $1 = host -> friendly machine tag
+  if [ "$1" = "$selfhost" ]; then echo "PC"
+  else case "$1" in daniel-server) echo "homelab";; *) echo "${1#daniel-}";; esac; fi
+}
+
+build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, grouped
+  local W=72 BADGEW=11 grp st host cwd pane ts name title bn scol stext cnt key age b64
+  local bcell left_p left_c pad sp maxs bpad bfg icon first=1
+  for grp in needs-input working completed idle; do
+    cnt=$(printf '%s' "$rows" | awk -F'\t' -v g="$grp" '$1==g{n++} END{print n+0}')
+    [ "$cnt" -eq 0 ] && continue
+    case "$grp" in needs-input) scol="$C_NEED";; working) scol="$C_WORK";; *) scol="$C_DONE";; esac
+    [ "$first" -eq 0 ] && printf '\t\t\n'   # blank spacer between groups
+    first=0
+    printf '\t\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    while IFS=$'\t' read -r st host cwd pane ts; do
+      [ -z "$st" ] && continue
+      name=$(basename "${cwd//\\//}" 2>/dev/null); [ -z "$name" ] && name="$cwd"
+      title=$(title_for_cwd "$cwd")
+      bn=$(badge_name "$host")
+      case "$bn" in
+        PC)      bfg="$E[38;2;137;180;250m"; icon=$'';;   # blue  — desktop
+        homelab) bfg="$E[38;2;203;166;247m"; icon=$'';;   # mauve — server
+        *)       bfg="$E[38;2;205;214;244m"; icon=$'';;   # text  — cloud
+      esac
+      # fixed-width badge cell " <icon> <name> " so the "claude ·" column lines up
+      bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
+      printf -v bcell '%*s' "$BADGEW" ''
+      left_p="  ${bcell}  claude · ${name}"
+      printf -v left_c '  %s%s %s %s %s%*s  %sclaude · %s%s%s%s' \
+        "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$Z" "$C_NAME" "$name" "$Z"
+      case "$grp" in
+        needs-input) scol="$C_NEED"; stext="${title:-needs input}";;
+        working)     scol="$C_WORK"; stext="${title:-working}";;
+        completed)   scol="$C_DONE"; age=$(fmt_age "$ts"); [ -n "$age" ] && stext="✓ idle $age" || stext="✓ completed";;
+        *)           scol="$C_DONE"; age=$(fmt_age "$ts"); [ -n "$age" ] && stext="· idle $age" || stext="· idle";;
+      esac
+      maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
+      [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
+      pad=$(( W - ${#left_p} - ${#stext} )); [ "$pad" -lt 1 ] && pad=1
+      printf -v sp '%*s' "$pad" ''
+      key=$(printf '%s%s%s%s%s' "$host" "$US" "$cwd" "$US" "${pane:-none}")
+      b64=$(printf '%s\037%s\037%s\037%s\037%s\037%s' "$host" "$cwd" "$grp" "$ts" "$title" "$pane" | base64 -w0)
+      printf '%s\t%s\t%s%s%s%s%s\n' "$key" "$b64" "$left_c" "$sp" "$scol" "$stext" "$Z"
+    done < <(printf '%s' "$rows" | awk -F'\t' -v g="$grp" '$1==g' | sort -t"$(printf '\t')" -k5,5nr)
+  done
+}
+
+# header line (right-aligned totals) for the fzf box
+total=$(printf '%s' "$rows" | grep -c .)
+machines=$(printf '%s' "$rows" | awk -F'\t' 'NF{print $2}' | sort -u | grep -c .)
+sfx() { [ "$1" = 1 ] || echo s; }
+htext="${total} session$(sfx "$total") · ${machines} machine$(sfx "$machines")"
+printf -v hdrline '%*s' 72 "$htext"
+
+body=$(build_pretty)
+[ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+
+SELF="$HOME/.local/bin/wezview"
+sel=$(printf '%s\n' "$body" | fzf \
+  --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=3.. \
+  --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
+  --border=rounded --border-label="$LABEL" --border-label-pos=3 \
+  --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
+  --info=hidden --no-scrollbar \
+  --header="$hdrline" --header-first \
+  --footer='  ↑↓ move · ↵ switch · ? details · esc cancel     state from Claude Code hooks' \
+  --preview="'$SELF' --card {2}" \
+  --preview-window='right,46%,border-left,hidden,wrap' \
+  --preview-label=' session ' \
+  --bind='?:toggle-preview' \
+  --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
+
+[ -z "$sel" ] && exit 0
+key=$(printf '%s' "$sel" | cut -f1)
+[ -z "$key" ] && exit 0
+do_jump "$key"

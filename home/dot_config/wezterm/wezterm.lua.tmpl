@@ -18,6 +18,9 @@ config.font = wezterm.font_with_fallback({
 })
 config.font_size = {{ .terminal.font_size }}.0
 config.harfbuzz_features = { {{ range $i, $f := .terminal.font_features }}{{ if $i }}, {{ end }}"{{ $f }}=1"{{ end }} }
+-- Don't pop a toast when a glyph falls back to another font (Nerd Font symbols,
+-- Claude's spinner braille, the wezview status icons). Fallback renders fine.
+config.warn_about_missing_glyphs = false
 
 -- ---------------------------------------------------------------------------
 -- THEME  (Ghostty: theme = "Catppuccin Mocha") — built into WezTerm.
@@ -89,6 +92,37 @@ config.keys = {
 	{ key = "RightArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
 	{ key = "UpArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Up", 10 }) },
 	{ key = "DownArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Down", 10 }) },
+	-- Agent View switcher (wezview): spawn the full-color fzf picker in a throwaway
+	-- tab. `domain="DefaultDomain"` (the LOCAL domain) is required — wezview is a
+	-- Windows tool (git-bash + fzf); CurrentPaneDomain would try to run bash.exe on
+	-- the homelab (Linux) mux when invoked from that window and fail. wezview renders
+	-- the grouped picker, does the jump itself on <enter> (detached re-activate beats
+	-- the tab's close-refocus), then exits so the tab closes. Needs a real TTY for
+	-- fzf's color/badges — hence a pane, not an InputSelector overlay.
+	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
+		domain = "DefaultDomain",
+		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-lc", "wezview" },
+	}) },
+	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
+	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "daniel-server" }) },
+}
+
+-- ---------------------------------------------------------------------------
+-- MULTIPLEXING — homelab (daniel-server) as a persistent WezTerm mux domain.
+-- Remote panes appear in this window and survive disconnect. Requires wezterm
+-- installed on the server. remote_address is the ~/.ssh/config Host alias so
+-- WezTerm inherits HostName/User/IdentityFile from it (key: ~/.ssh/daniel-server).
+-- CTRL+SHIFT+H spawns a homelab tab. If auth fails on reload, the ssh_option
+-- identityfile line below is the fallback.
+-- ---------------------------------------------------------------------------
+config.ssh_domains = {
+	{
+		name = "daniel-server",
+		remote_address = "daniel-server",
+		username = "ubuntu",
+		multiplexing = "WezTerm",
+		-- ssh_option = { identityfile = "C:/Users/daniel/.ssh/daniel-server" },
+	},
 }
 
 return config

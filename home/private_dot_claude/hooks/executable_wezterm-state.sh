@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Record Claude Code session state for the WezTerm Agent-View TUI (wezview).
 # Keyed by session id (stable), caching the last-known WEZTERM_PANE since some
-# hook events may fire without it. JSON is built with jq so paths are escaped
-# correctly. Emits NOTHING on stdout.
+# hook events on Windows fire without it. JSON is built with jq so Windows paths
+# (backslashes) are escaped correctly. Emits NOTHING on stdout.
 # Usage: wezterm-state.sh <working|needs-input|completed|idle|end>
 state="${1:-idle}"
 dir="$HOME/.claude/wez-state"
@@ -11,11 +11,13 @@ input=$(cat 2>/dev/null)
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 [ -z "$sid" ] && sid="nosession"
 file="$dir/$sid.json"
+
 if [ "$state" = "end" ]; then rm -f "$file" 2>/dev/null; exit 0; fi
+
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$cwd" ] && cwd="$PWD"
 pane="${WEZTERM_PANE:-}"
-if [ -z "$pane" ] && [ -f "$file" ]; then
+if [ -z "$pane" ] && [ -f "$file" ]; then                 # keep last-known pane
   pane=$(jq -r '.pane // ""' "$file" 2>/dev/null)
 fi
 ts=$(date +%s 2>/dev/null || echo 0)
