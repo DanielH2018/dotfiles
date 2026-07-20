@@ -121,6 +121,10 @@ config.keys = {
 	}) },
 	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
 	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "daniel-server" }) },
+	-- Local Git Bash tab. Needed now that default_domain is the homelab: CTRL+T
+	-- (CurrentPaneDomain) spawns a remote tab from a homelab pane, so this pins the
+	-- built-in `local` domain (its default_prog is Git Bash) for a Windows shell.
+	{ key = "B", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "local" }) },
 }
 
 -- Jump straight to tab 1-9 (CTRL+<n>). No Ghostty equivalent — standard terminal
