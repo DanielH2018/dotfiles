@@ -6,7 +6,8 @@
     "PAGER": "less -R",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
-    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true"
+    "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
+    "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1"
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
