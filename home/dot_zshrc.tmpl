@@ -107,12 +107,18 @@ zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcach
 # FZF KEY BINDINGS + COMPLETION (zsh integration; the FZF_* env is set in common.sh)
 # =============================================================================
 if command -v fzf >/dev/null 2>&1; then
-  [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
-  [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"
-  # Linux (Debian/Ubuntu fzf package) ships shell integration here:
-  [[ -r /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
-  [[ -r /usr/share/doc/fzf/examples/completion.zsh ]] && source /usr/share/doc/fzf/examples/completion.zsh
-  [[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
+  # fzf >= 0.48 emits keybindings + completion directly. Preferred: our Linux fzf lives in
+  # ~/.local/bin with no apt package, so /usr/share/doc/fzf integration files won't exist.
+  if fzf --zsh >/dev/null 2>&1; then
+    source <(fzf --zsh)
+  else
+    [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
+    [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"
+    # Linux (Debian/Ubuntu fzf package) ships shell integration here:
+    [[ -r /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
+    [[ -r /usr/share/doc/fzf/examples/completion.zsh ]] && source /usr/share/doc/fzf/examples/completion.zsh
+    [[ -f ~/.fzf.zsh ]] && source ~/.fzf.zsh
+  fi
 fi
 
 # =============================================================================

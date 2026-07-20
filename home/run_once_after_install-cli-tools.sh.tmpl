@@ -7,16 +7,19 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v6
+# tools-bump: v7
 set -u
 
 BIN_DIR="$HOME/.local/bin"
-mkdir -p "$BIN_DIR"
+VER_DIR="$BIN_DIR/.versions"   # release tag last installed per tool, so a re-apply upgrades a
+                               # stale binary in place instead of skipping it (install-once).
+mkdir -p "$BIN_DIR" "$VER_DIR"
 
 # 1. apt packages (only if any are missing; needs sudo, which prompts in an interactive
 #    terminal). The list comes from .chezmoidata/tools.toml (tools with an apt package) —
 #    the shared source of truth with the winget + Brewfile installers. Release-binary tools
-#    (eza/fastfetch/curlie/sd) have no apt field and stay in the bespoke section below.
+#    (eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep) have no apt field and stay in the bespoke
+#    section below.
 APT_PKGS="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}"
 missing=""
 for p in $APT_PKGS; do
@@ -89,14 +92,29 @@ latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (n
   curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
     | sed 's#.*/tag/##; s#[[:space:]]*$##'
 }
-install_release() { # $1=binname  $2=asset_url
-  bin="$1"; url="$2"
-  command -v "$bin" >/dev/null 2>&1 && return 0
+recorded_tag() { cat "$VER_DIR/$1" 2>/dev/null; } # tag last installed for $1 ("" if never)
+# Version-aware release install. $1=binname  $2=owner/repo  $3=asset-URL template, where {tag} is
+# the full tag (e.g. v1.1.0) and {ver} is the tag without a leading v. Resolves the latest tag and
+# only downloads when the binary is missing or the recorded tag differs — so `chezmoi apply`
+# upgrades a stale tool in place instead of skipping anything already on PATH. We record the tag we
+# installed rather than parsing `--version`, which is unreliable per-tool (eza prints multiple
+# lines, curlie reports curl's version).
+install_release() {
+  bin="$1"; repo="$2"; tmpl="$3"
+  tag="$(latest_tag "$repo")"
+  if [ -z "$tag" ]; then echo "install-cli-tools: could not resolve latest tag for $repo" >&2; return 0; fi
+  [ -x "$BIN_DIR/$bin" ] && [ "$(recorded_tag "$bin")" = "$tag" ] && return 0
+  ver="${tag#v}"
+  url="$(printf '%s' "$tmpl" | sed "s#{tag}#$tag#g; s#{ver}#$ver#g")"
+  old="$(recorded_tag "$bin")"
   tmp="$(mktemp -d)"
   if curl -fsSL "$url" -o "$tmp/a.tgz" 2>/dev/null && tar xzf "$tmp/a.tgz" -C "$tmp" 2>/dev/null; then
     found="$(find "$tmp" -type f -name "$bin" 2>/dev/null | head -1)"
     if [ -n "$found" ]; then
-      install -m 0755 "$found" "$BIN_DIR/$bin" && echo "install-cli-tools: installed $bin"
+      if install -m 0755 "$found" "$BIN_DIR/$bin"; then
+        printf '%s' "$tag" > "$VER_DIR/$bin"
+        echo "install-cli-tools: installed $bin ${old:+$old -> }$tag"
+      fi
     else
       echo "install-cli-tools: $bin not found in archive ($url)" >&2
     fi
@@ -110,33 +128,43 @@ install_release() { # $1=binname  $2=asset_url
 # goreleaser's arm64 (curlie). Downloading the wrong arch would tar-extract cleanly but
 # Exec-format-error at first use, so skip release binaries outright on an arch we lack names for.
 case "$(uname -m)" in
-  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64 ;;
-  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64  ;;
-  *) rust_arch=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/nvim/yazi" >&2 ;;
+  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64; rg_target=x86_64-unknown-linux-musl ;;
+  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64;  rg_target=aarch64-unknown-linux-gnu ;;
+  *) rust_arch=""; rg_target=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/nvim/yazi" >&2 ;;
 esac
 if [ -n "$rust_arch" ]; then
-  # version-less asset names → latest/download works directly
-  install_release eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
-  install_release fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"
-  # versioned asset names → resolve the tag first
-  ct="$(latest_tag rs/curlie)"; [ -n "$ct" ] && install_release curlie "https://github.com/rs/curlie/releases/download/$ct/curlie_${ct#v}_linux_${go_arch}.tar.gz"
-  st="$(latest_tag chmln/sd)";  [ -n "$st" ] && install_release sd     "https://github.com/chmln/sd/releases/download/$st/sd-${st}-${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release eza       eza-community/eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release fastfetch fastfetch-cli/fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"
+  install_release curlie    rs/curlie               "https://github.com/rs/curlie/releases/download/{tag}/curlie_{ver}_linux_${go_arch}.tar.gz"
+  install_release sd        chmln/sd                "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
+  # fzf/zoxide/ripgrep back the shell init (fzf keybindings, zoxide `cd`, rg as FZF_DEFAULT_COMMAND)
+  # but have no apt field here, so install the current release binaries rather than relying on the
+  # stale copies baked into the base image. ripgrep ships only musl on x86_64 and gnu on aarch64.
+  install_release fzf       junegunn/fzf            "https://github.com/junegunn/fzf/releases/download/{tag}/fzf-{ver}-linux_${go_arch}.tar.gz"
+  install_release zoxide    ajeetdsouza/zoxide      "https://github.com/ajeetdsouza/zoxide/releases/download/{tag}/zoxide-{ver}-${rust_arch}-unknown-linux-musl.tar.gz"
+  install_release rg        BurntSushi/ripgrep      "https://github.com/BurntSushi/ripgrep/releases/download/{tag}/ripgrep-{ver}-${rg_target}.tar.gz"
 fi
 
 # 4. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
 #    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
 #    runtime tree, yazi ships a second binary (`ya`). No sudo; both use the version-less
-#    latest/download asset form. Re-fetch only when the command is absent.
+#    latest/download asset form. Re-fetch when missing or the recorded tag is stale (same
+#    version-aware policy as install_release).
 if [ -n "$rust_arch" ]; then
   # Neovim: official static release. The tarball is bin/ + its runtime under one prefix; merge it
   # into ~/.local so bin/nvim resolves ../share/nvim/runtime. nvim config self-bootstraps lazy.nvim.
-  if ! command -v nvim >/dev/null 2>&1; then
+  nvim_tag="$(latest_tag neovim/neovim)"
+  if [ -n "$nvim_tag" ] && { [ ! -x "$BIN_DIR/nvim" ] || [ "$(recorded_tag nvim)" != "$nvim_tag" ]; }; then
     tmp="$(mktemp -d)"
     if curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-${nvim_arch}.tar.gz" -o "$tmp/nvim.tgz" 2>/dev/null \
        && tar xzf "$tmp/nvim.tgz" -C "$tmp" 2>/dev/null; then
       src="$(find "$tmp" -maxdepth 1 -type d -name 'nvim-linux-*' | head -1)"
       if [ -n "$src" ]; then
-        mkdir -p "$HOME/.local" && cp -a "$src/." "$HOME/.local/" && echo "install-cli-tools: installed nvim"
+        old="$(recorded_tag nvim)"
+        if mkdir -p "$HOME/.local" && cp -a "$src/." "$HOME/.local/"; then
+          printf '%s' "$nvim_tag" > "$VER_DIR/nvim"
+          echo "install-cli-tools: installed nvim ${old:+$old -> }$nvim_tag"
+        fi
       else
         echo "install-cli-tools: nvim payload not found in archive" >&2
       fi
@@ -147,13 +175,18 @@ if [ -n "$rust_arch" ]; then
   fi
   # Yazi: release zip carrying both `yazi` and its `ya` plugin manager (ya pkg install is driven
   # by run_onchange_after_ya-pkg-install). Extract both to bin.
-  if ! command -v yazi >/dev/null 2>&1; then
+  yazi_tag="$(latest_tag sxyazi/yazi)"
+  if [ -n "$yazi_tag" ] && { [ ! -x "$BIN_DIR/yazi" ] || [ "$(recorded_tag yazi)" != "$yazi_tag" ]; }; then
     tmp="$(mktemp -d)"
     if curl -fsSL "https://github.com/sxyazi/yazi/releases/latest/download/yazi-${rust_arch}-unknown-linux-gnu.zip" -o "$tmp/yazi.zip" 2>/dev/null \
        && unzip -q "$tmp/yazi.zip" -d "$tmp" 2>/dev/null; then
       d="$(find "$tmp" -maxdepth 1 -type d -name 'yazi-*' | head -1)"
       for b in yazi ya; do [ -f "$d/$b" ] && install -m 0755 "$d/$b" "$BIN_DIR/$b"; done
-      command -v yazi >/dev/null 2>&1 && echo "install-cli-tools: installed yazi"
+      if [ -x "$BIN_DIR/yazi" ]; then
+        old="$(recorded_tag yazi)"
+        printf '%s' "$yazi_tag" > "$VER_DIR/yazi"
+        echo "install-cli-tools: installed yazi ${old:+$old -> }$yazi_tag"
+      fi
     else
       echo "install-cli-tools: failed to fetch yazi" >&2
     fi
