@@ -90,7 +90,21 @@ config.keys = {
 	-- accepted tradeoff. Lowercase `key`: an uppercase letter implies Shift and would
 	-- only fire on the ctrl+shift chord.
 	{ key = "t", mods = "CTRL",       action = act.SpawnTab("CurrentPaneDomain") },
-	{ key = "w", mods = "CTRL",       action = act.CloseCurrentPane({ confirm = false }) },
+	-- Smart close: in an fzf pane (the wezview picker) send ESC so fzf aborts and the
+	-- tab tears down via a normal process exit — a CloseCurrentPane force-close hangs
+	-- while the homelab mux is connected (it round-trips to the remote mux). Everywhere
+	-- else, close the pane as usual.
+	{ key = "w", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
+		local proc = pane:get_foreground_process_name() or ""
+		-- wezview stamps its pane with a `wezview` user var (OSC 1337); prefer that
+		-- since Windows doesn't reliably report the fzf process name. Fall back to it.
+		local is_picker = pane:get_user_vars()["wezview"] ~= nil or proc:lower():find("fzf")
+		if is_picker then
+			window:perform_action(act.SendKey({ key = "Escape" }), pane)
+		else
+			window:perform_action(act.CloseCurrentPane({ confirm = false }), pane)
+		end
+	end) },
 	{ key = "T", mods = "CTRL|SHIFT", action = act.SpawnWindow },
 	{ key = "W", mods = "CTRL|SHIFT", action = act.QuitApplication },
 
@@ -110,20 +124,16 @@ config.keys = {
 	{ key = "phys:RightBracket", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
 
 	-- --- WezTerm extras (no Ghostty equivalent) ---
-	-- Agent View switcher (wezview): spawn the full-color fzf picker in a throwaway
-	-- tab. Pin it to the built-in `local` domain — wezview is a Windows tool (git-bash
-	-- + fzf), and now that default_domain is the homelab (see DEFAULT DOMAIN below),
-	-- both DefaultDomain and CurrentPaneDomain would try to run bash.exe on the Linux
-	-- mux and fail. wezview does the jump itself on <enter>, then exits so the tab closes.
+	-- Agent View switcher (wezview): full-color fzf picker in a local tab. Dismiss with
+	-- ESC (clean exit) — it also closes itself after a jump. NOTE: CTRL+W force-close
+	-- hangs while the homelab mux is connected (a WezTerm mux limitation, not wezview).
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
 		domain = { DomainName = "local" },
 		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-lc", "wezview" },
 	}) },
 	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
 	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "daniel-server" }) },
-	-- Local Git Bash tab. Needed now that default_domain is the homelab: CTRL+T
-	-- (CurrentPaneDomain) spawns a remote tab from a homelab pane, so this pins the
-	-- built-in `local` domain (its default_prog is Git Bash) for a Windows shell.
+	-- Local Git Bash tab (pins the built-in local domain for a Windows shell).
 	{ key = "B", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "local" }) },
 }
 
@@ -164,40 +174,16 @@ for _, node in ipairs(server_nodes) do
 end
 
 -- ---------------------------------------------------------------------------
--- DEFAULT DOMAIN — connect to the homelab by default, but fall back to the local
--- shell (with a warning toast) when no node answers — e.g. the WireGuard tunnel
--- is down or the server is offline. Probe each node in order with a short,
--- non-interactive ssh (BatchMode never prompts; ConnectTimeout caps the wait)
--- and take the first that responds. This runs on every config eval (startup and
--- reloads), so the timeout stays low. `startup_warning` is surfaced by the
--- gui-startup handler below; if default_domain stays unset it remains "local".
+-- DEFAULT DOMAIN — deliberately LEFT LOCAL. Making a remote WezTerm mux domain the
+-- default made WezTerm's pane close (CTRL+W / CloseCurrentPane) hang the entire GUI
+-- until force-quit: closing a pane in a mux-backed window round-trips to the mux
+-- server synchronously, and over the WireGuard link that blocks the GUI thread. It
+-- hit EVERY local tab in the homelab-default window, not just the wezview picker.
+-- So we boot into a local shell and reach the homelab on demand via CTRL+SHIFT+H
+-- (it opens as its own mux window). The CTRL+SHIFT+S picker still aggregates PC +
+-- homelab sessions, so nothing is lost but the auto-connect. The ssh_domains above
+-- stay defined so CTRL+SHIFT+H / the picker's remote jump keep working.
 -- ---------------------------------------------------------------------------
-local startup_warning = nil
-local function node_reachable(node)
-	local ok = wezterm.run_child_process({
-		"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
-		"-o", "StrictHostKeyChecking=accept-new",
-		node.remote_address, "true",
-	})
-	return ok
-end
-
-for _, node in ipairs(server_nodes) do
-	if node_reachable(node) then
-		config.default_domain = node.name
-		break
-	end
-end
-
-if not config.default_domain then
-	local names = {}
-	for _, node in ipairs(server_nodes) do
-		table.insert(names, node.name)
-	end
-	startup_warning = "Homelab unreachable ("
-		.. table.concat(names, ", ")
-		.. ") — starting local shell. Check the WireGuard tunnel / server, then CTRL+SHIFT+R to retry."
-end
 
 -- ---------------------------------------------------------------------------
 -- RELOAD FEEDBACK — WezTerm reloads config silently (on CTRL+SHIFT+R and on save
@@ -206,23 +192,6 @@ end
 -- ---------------------------------------------------------------------------
 wezterm.on("window-config-reloaded", function(window)
 	window:toast_notification("WezTerm", "Configuration reloaded ✳", nil, 1500)
-end)
-
--- ---------------------------------------------------------------------------
--- STARTUP — spawn the first window on the resolved default domain (the homelab
--- when reachable). If we fell back to local because no node answered, toast the
--- reason so the fallback is never silent.
--- ---------------------------------------------------------------------------
-wezterm.on("gui-startup", function(cmd)
-	local _, _, window = wezterm.mux.spawn_window(cmd or {})
-	if startup_warning then
-		local ok, gui = pcall(function()
-			return window:gui_window()
-		end)
-		if ok and gui then
-			gui:toast_notification("WezTerm", startup_warning, nil, 6000)
-		end
-	end
 end)
 
 return config
