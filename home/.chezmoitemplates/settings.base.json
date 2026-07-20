@@ -519,7 +519,7 @@
             "timeout": 5
           }
         ]
-      },
+      }{{ if eq .chezmoi.os "windows" }},
       {{/* wezview: mark this session "working" when a prompt is submitted */}}
       {
         "hooks": [
@@ -529,7 +529,7 @@
             "timeout": 5
           }
         ]
-      }
+      }{{ end }}
     ],
     "PreToolUse": [
       {
@@ -623,7 +623,7 @@
             "timeout": 5
           }
         ]
-      },
+      }{{ if eq .chezmoi.os "windows" }},
       {{/* wezview: needs-input on permission/idle prompts */}}
       {
         "matcher": "permission_prompt|idle_prompt",
@@ -645,7 +645,7 @@
             "timeout": 5
           }
         ]
-      }
+      }{{ end }}
     ],
     "PreCompact": [
       {
@@ -679,7 +679,7 @@
             "timeout": 10
           }
         ]
-      },
+      }{{ if eq .chezmoi.os "windows" }},
       {{/* wezview: mark completed when the turn stops */}}
       {
         "hooks": [
@@ -689,7 +689,7 @@
             "timeout": 5
           }
         ]
-      }{{ if eq .chezmoi.os "linux" }},
+      }{{ end }}{{ if eq .chezmoi.os "linux" }},
       {
         "hooks": [
           {
@@ -723,7 +723,7 @@
             "async": true
           }
         ]
-      },
+      }{{ if eq .chezmoi.os "windows" }},
       {{/* wezview: remove this session's state file on end */}}
       {
         "hooks": [
@@ -733,7 +733,7 @@
             "timeout": 5
           }
         ]
-      }
+      }{{ end }}
     ],
     "InstructionsLoaded": [
       {

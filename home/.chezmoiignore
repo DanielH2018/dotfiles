@@ -10,6 +10,7 @@ Brewfile
 .config/windows-provisioning
 bin
 Scripts
+.claude/hooks/wezterm-state.sh
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
