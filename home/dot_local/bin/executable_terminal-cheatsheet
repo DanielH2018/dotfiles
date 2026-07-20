@@ -1,0 +1,332 @@
+#!/usr/bin/env node
+'use strict';
+// terminal-cheatsheet — regenerate a single-page HTML cheatsheet of the WezTerm,
+// Neovim, and Yazi keybinds + key settings, parsed from the DEPLOYED config files
+// under ~/.config (so it reflects what's actually running, template-rendered).
+//
+// chezmoi's run_after_terminal-cheatsheet.sh regenerates this on every `chezmoi
+// apply`; run it by hand anytime:  terminal-cheatsheet [output.html]
+//
+// Dependency-free (regex parsing). The parsers are format-driven, not entry-driven,
+// so new keybinds/settings flow through automatically on the next run.
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const HOME = os.homedir();
+const CFG = path.join(HOME, '.config');
+const OUT = process.argv[2] || process.env.TERMINAL_CHEATSHEET_OUT ||
+  path.join(HOME, '.local', 'share', 'terminal-cheatsheet.html');
+
+const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---------------------------------------------------------------- WezTerm ----
+function weztCombo(mods, key) {
+  const names = { CTRL: 'Ctrl', SHIFT: 'Shift', ALT: 'Alt', SUPER: 'Super' };
+  const parts = (mods || '').split('|').filter(Boolean).map((m) => names[m] || m);
+  let k = key.replace(/^phys:/, '');
+  k = ({ LeftBracket: '[', RightBracket: ']' })[k] || k;
+  parts.push(k.length === 1 ? k.toUpperCase() : k);
+  return parts.join('+');
+}
+
+function weztLabel(action, line) {
+  if (/wezview/.test(line)) return 'Agent View — cross-machine session switcher';
+  if (/daniel-server/.test(line)) return 'New homelab tab (daniel-server)';
+  if (action === 'SendString') return 'Insert newline (Claude Code multiline)';
+  if (action === 'ActivatePaneDirection') return /Prev/.test(line) ? 'Focus previous split' : 'Focus next split';
+  if (action === 'AdjustPaneSize') return /Left/.test(line) ? 'Resize split left' : 'Resize split right';
+  return ({
+    ReloadConfiguration: 'Reload config',
+    CopyTo: 'Copy to clipboard',
+    PasteFrom: 'Paste from clipboard',
+    SpawnTab: 'New tab',
+    SpawnWindow: 'New window',
+    CloseCurrentPane: 'Close tab / pane',
+    QuitApplication: 'Quit — close all windows',
+    SplitHorizontal: 'Split right',
+    SplitVertical: 'Split down',
+  })[action] || action;
+}
+
+function parseWezterm() {
+  const src = read(path.join(CFG, 'wezterm', 'wezterm.lua'));
+  const binds = [];
+  const block = (src.match(/config\.keys\s*=\s*\{([\s\S]*?)\n\}/) || [, ''])[1];
+  for (const line of block.split('\n')) {
+    if (!/key\s*=/.test(line) || !/action\s*=/.test(line)) continue;
+    const key = (line.match(/key\s*=\s*"([^"]+)"/) || [])[1];
+    const mods = (line.match(/mods\s*=\s*"([^"]+)"/) || [, ''])[1];
+    const action = (line.match(/action\s*=\s*act\.(\w+)/) || [])[1];
+    if (!key || !action) continue;
+    binds.push({ combo: weztCombo(mods, key), desc: weztLabel(action, line) });
+  }
+  const loop = src.match(/for\s+i\s*=\s*1\s*,\s*(\d+)[\s\S]*?ActivateTab\(i\s*-\s*1\)/);
+  if (loop) binds.push({ combo: `Ctrl+1…${loop[1]}`, desc: `Jump straight to tab 1…${loop[1]}` });
+
+  const g = (re) => (src.match(re) || [, ''])[1];
+  const shell = g(/default_prog\s*=\s*\{\s*"([^"]+)"/).replace(/\\\\/g, '\\').split(/[\\/]/).pop();
+  const scroll = g(/scrollback_lines\s*=\s*(\d+)/);
+  const settings = [
+    ['Font', [g(/family\s*=\s*"([^"]+)"/), g(/family = "[^"]+", weight = "([^"]+)"/)].filter(Boolean).join(' ')],
+    ['Size', g(/font_size\s*=\s*([\d.]+)/) + ' pt'],
+    ['Theme', g(/color_scheme\s*=\s*"([^"]+)"/)],
+    ['Cursor', g(/default_cursor_style\s*=\s*"([^"]+)"/)],
+    ['Padding', g(/window_padding\s*=\s*\{\s*left\s*=\s*(\d+)/) + ' px'],
+    ['Scrollback', scroll ? Number(scroll).toLocaleString() + ' lines' : ''],
+    ['Shell', shell],
+  ].filter((s) => s[1] && s[1] !== ' pt' && s[1] !== ' px');
+  return { binds, settings };
+}
+
+// ----------------------------------------------------------------- Neovim ----
+const NVIM_LABEL = { Lsp: 'LSP', Dap: 'Debug (DAP)' };
+const pretty = (base) => base.replace(/\.lua$/, '').replace(/(^|[-_])(\w)/g, (_, s, c) => (s ? ' ' : '') + c.toUpperCase());
+const nvimMode = (m) => (m ? m.replace(/[{}"'\s]/g, '').split(',').join(' ') : 'n') || 'n';
+
+// Collect the top-level string literals of a call, starting at the index of its
+// opening '('. Used for data-driven `m(lhs, rhs, desc)` helper maps where rhs may
+// be a multiline function: the first string is the lhs, the last is the desc.
+function callStrings(src, open) {
+  let depth = 0, inStr = false, q = '', cur = '';
+  const out = [];
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === q) { inStr = false; out.push(cur); cur = ''; } else cur += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inStr = true; q = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')' && --depth === 0) break;
+  }
+  return out;
+}
+
+function parseNvim() {
+  const root = path.join(CFG, 'nvim', 'lua');
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.lua')) files.push(p);
+    }
+  };
+  try { walk(root); } catch { return {}; }
+
+  const groups = {};
+  const seen = new Set();
+  const add = (group, keys, mode, desc) => {
+    const sig = group + '|' + mode + '|' + keys;
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    (groups[group] = groups[group] || []).push({ keys, mode, desc: desc || '—' });
+  };
+
+  for (const f of files.sort()) {
+    const src = read(f);
+    const inPlugins = /[\\/]plugins[\\/]/.test(f);
+    const group = inPlugins ? (NVIM_LABEL[pretty(path.basename(f))] || pretty(path.basename(f))) : 'General';
+
+    // lazy.nvim `keys = { { "<lhs>", <rhs>, desc = "…", mode = … }, … }`
+    const kb = src.match(/keys\s*=\s*\{([\s\S]*?)\n\t*\},?\n/);
+    if (kb) {
+      for (const line of kb[1].split('\n')) {
+        const lhs = (line.match(/\{\s*"([^"]+)"/) || [])[1];
+        if (!lhs) continue;
+        const desc = (line.match(/desc\s*=\s*"([^"]*)"/) || [, ''])[1];
+        const mode = nvimMode((line.match(/mode\s*=\s*("[^"]*"|\{[^}]*\})/) || [])[1]);
+        add(group, lhs, mode, desc);
+      }
+    }
+    // explicit map()/vim.keymap.set() calls carrying an inline desc
+    const re = /(?:vim\.keymap\.set|[^.\w]map)\(\s*("[^"]*"|\{[^}]*\})\s*,\s*"([^"]+)"[\s\S]{0,220}?desc\s*=\s*"([^"]*)"/g;
+    let m;
+    while ((m = re.exec(src))) add(group, m[2], nvimMode(m[1]), m[3]);
+
+    // data-driven helper: `local function <h>(lhs, rhs, desc)` then <h>("gd", …, "…")
+    const helpers = [...src.matchAll(/local\s+(?:function\s+)?(\w+)\s*=?\s*(?:function\s*)?\(\s*lhs\s*,\s*rhs\s*,\s*desc\s*\)/g)]
+      .map((h) => h[1]);
+    for (const h of new Set(helpers)) {
+      const call = new RegExp('[^.\\w]' + h + '\\s*\\(', 'g');
+      let c;
+      while ((c = call.exec(src))) {
+        const strs = callStrings(src, call.lastIndex - 1);
+        if (strs.length >= 2 && strs[0] !== strs[strs.length - 1]) {
+          add(group, strs[0], 'n', strs[strs.length - 1]);
+        }
+      }
+    }
+  }
+
+  const o = read(path.join(CFG, 'nvim', 'lua', 'config', 'options.lua'));
+  const og = (re) => (o.match(re) || [, ''])[1];
+  const lead = og(/mapleader\s*=\s*"([^"]*)"/);
+  const settings = [
+    ['Leader', lead === ' ' ? 'Space' : lead],
+    ['Clipboard', og(/clipboard\s*=\s*"([^"]*)"/)],
+    ['Line numbers', og(/\bnumber\s*=\s*(\w+)/)],
+  ].filter((s) => s[1]);
+  return { groups, settings };
+}
+
+// ------------------------------------------------------------------- Yazi ----
+function parseYazi() {
+  const km = read(path.join(CFG, 'yazi', 'keymap.toml'));
+  const binds = [];
+  for (const chunk of km.split(/\[\[mgr\.[a-z_]*keymap\]\]/).slice(1)) {
+    const onRaw = (chunk.match(/on\s*=\s*(\[[^\]]*\]|"[^"]*")/) || [])[1];
+    if (!onRaw) continue;
+    const on = onRaw.startsWith('[')
+      ? [...onRaw.matchAll(/"([^"]*)"/g)].map((x) => x[1]).join(' ')
+      : onRaw.replace(/"/g, '');
+    const run = (chunk.match(/run\s*=\s*"([^"]*)"/) || chunk.match(/run\s*=\s*'([^']*)'/) || [])[1];
+    const desc = (chunk.match(/desc\s*=\s*"([^"]*)"/) || [])[1];
+    binds.push({ keys: on, desc: desc || run || '—' });
+  }
+  const yc = read(path.join(CFG, 'yazi', 'yazi.toml'));
+  const yg = (re) => (yc.match(re) || [, ''])[1];
+  const settings = [
+    ['Ratio', yg(/ratio\s*=\s*(\[[^\]]*\])/)],
+    ['Sort', yg(/sort_by\s*=\s*"([^"]*)"/)],
+    ['Show hidden', yg(/show_hidden\s*=\s*(\w+)/)],
+    ['Linemode', yg(/linemode\s*=\s*"([^"]*)"/)],
+  ].filter((s) => s[1]);
+  return { binds, settings };
+}
+
+// ------------------------------------------------------------------ render ---
+const kbdCombo = (combo) => combo.split('+').map((k) => `<kbd>${esc(k)}</kbd>`).join('<span class="plus">+</span>');
+const kbdKey = (k) => `<kbd class="seq">${esc(k)}</kbd>`;
+const chips = (settings) => settings.map(([k, v]) => `<span class="chip"><b>${esc(k)}</b>${esc(v)}</span>`).join('');
+
+function table(rows) {
+  const body = rows.map((r) => `<tr class="bind"><td class="k">${r.k}</td><td class="d">${esc(r.desc)}</td></tr>`).join('');
+  return `<table><tbody>${body}</tbody></table>`;
+}
+
+function nvimBody(groups) {
+  const order = ['General', 'LSP', 'Finder', 'Editor', 'Git', 'Debug (DAP)'];
+  const names = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  return names.map((name) => {
+    const rows = groups[name].map((b) => ({
+      k: `${kbdKey(b.keys)}${b.mode && b.mode !== 'n' ? `<span class="mode">${esc(b.mode)}</span>` : ''}`,
+      desc: b.desc,
+    }));
+    return `<div class="grp"><h3>${esc(name)}</h3>${table(rows)}</div>`;
+  }).join('');
+}
+
+function build() {
+  const w = parseWezterm();
+  const n = parseNvim();
+  const y = parseYazi();
+  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const total = w.binds.length + Object.values(n.groups).reduce((a, g) => a + g.length, 0) + y.binds.length;
+
+  const card = (id, accent, title, sub, settings, inner) => `
+  <section class="card" data-tool="${id}" style="--accent:${accent}">
+    <div class="card-head">
+      <h2>${esc(title)}</h2><span class="src">${esc(sub)}</span>
+    </div>
+    <div class="chips">${chips(settings)}</div>
+    ${inner}
+  </section>`;
+
+  const wezBody = table(w.binds.map((b) => ({ k: kbdCombo(b.combo), desc: b.desc })));
+  const yaziBody = table(y.binds.map((b) => ({ k: kbdKey(b.keys), desc: b.desc })));
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal Cheatsheet</title>
+<style>
+:root{
+  --base:#1e1e2e;--mantle:#181825;--crust:#11111b;--surface0:#313244;--surface1:#45475a;
+  --text:#cdd6f4;--subtext:#a6adc8;--overlay:#6c7086;--mauve:#cba6f7;--blue:#89b4fa;
+  --green:#a6e3a1;--peach:#fab387;--lavender:#b4befe;--red:#f38ba8;--yellow:#f9e2af;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#232338,var(--base));color:var(--text);
+  font:15px/1.5 -apple-system,"Segoe UI",Roboto,system-ui,sans-serif;padding:0 0 4rem}
+kbd{font-family:"IosevkaTerm Nerd Font Mono",ui-monospace,"Cascadia Code",monospace;font-size:.82em;
+  background:var(--surface0);border:1px solid var(--surface1);border-bottom-width:2px;border-radius:6px;
+  padding:.1em .45em;color:var(--text);white-space:nowrap}
+kbd.seq{background:#26263a}
+.plus{color:var(--overlay);margin:0 .25em;font-size:.8em}
+header{position:sticky;top:0;z-index:5;backdrop-filter:blur(10px);background:rgba(17,17,27,.82);
+  border-bottom:1px solid var(--surface0);padding:1rem clamp(1rem,4vw,3rem)}
+.bar{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;max-width:1400px;margin:0 auto}
+h1{margin:0;font-size:1.35rem;letter-spacing:.3px}
+h1 .star{color:var(--mauve)}
+.meta{color:var(--overlay);font-size:.82rem}
+#q{margin-left:auto;flex:1;min-width:200px;max-width:420px;background:var(--surface0);color:var(--text);
+  border:1px solid var(--surface1);border-radius:9px;padding:.5rem .8rem;font-size:.9rem;outline:none}
+#q:focus{border-color:var(--mauve)}
+main{max-width:1400px;margin:1.5rem auto 0;padding:0 clamp(1rem,4vw,3rem);
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:1.25rem;align-items:start}
+.card{background:linear-gradient(180deg,rgba(49,50,68,.35),rgba(24,24,37,.35));
+  border:1px solid var(--surface0);border-top:3px solid var(--accent);border-radius:14px;
+  padding:1rem 1.1rem 1.1rem;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+.card-head{display:flex;align-items:baseline;gap:.6rem;margin-bottom:.6rem}
+.card-head h2{margin:0;font-size:1.05rem;color:var(--accent)}
+.src{color:var(--overlay);font-size:.72rem;font-family:ui-monospace,monospace}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.8rem}
+.chip{background:var(--mantle);border:1px solid var(--surface0);border-radius:20px;
+  padding:.2em .7em;font-size:.74rem;color:var(--subtext)}
+.chip b{color:var(--text);margin-right:.4em;font-weight:600}
+.grp h3{margin:1rem 0 .35rem;font-size:.78rem;text-transform:uppercase;letter-spacing:1px;color:var(--lavender)}
+table{width:100%;border-collapse:collapse}
+tr.bind{border-top:1px solid rgba(69,71,90,.4)}
+tr.bind:first-child{border-top:0}
+td{padding:.32rem .2rem;vertical-align:top}
+td.k{white-space:nowrap;width:1%;padding-right:1rem}
+td.d{color:var(--subtext)}
+.mode{margin-left:.4em;font-size:.66rem;color:var(--peach);border:1px solid var(--surface1);
+  border-radius:5px;padding:.03em .3em;font-family:ui-monospace,monospace}
+.empty td{color:var(--overlay);font-style:italic;padding:.5rem .2rem}
+footer{max-width:1400px;margin:2rem auto 0;padding:0 clamp(1rem,4vw,3rem);color:var(--overlay);font-size:.78rem}
+mark{background:var(--yellow);color:#000;border-radius:3px}
+</style></head><body>
+<header><div class="bar">
+  <h1><span class="star">✳</span> Terminal Cheatsheet</h1>
+  <span class="meta" id="count">${total} keybinds</span>
+  <input id="q" type="search" placeholder="Filter keys or actions…" autofocus>
+</div></header>
+<main>
+  ${card('wezterm', 'var(--blue)', 'WezTerm', '~/.config/wezterm/wezterm.lua', w.settings, wezBody)}
+  ${card('nvim', 'var(--green)', 'Neovim', '~/.config/nvim/', n.settings, nvimBody(n.groups))}
+  ${card('yazi', 'var(--mauve)', 'Yazi', '~/.config/yazi/keymap.toml', y.settings, yaziBody)}
+</main>
+<footer>Auto-generated ${stamp} by <code>terminal-cheatsheet</code> — do not edit by hand; it is
+  regenerated from the deployed configs on every <code>chezmoi apply</code>. Neovim leader is
+  <kbd>Space</kbd>; sequences like <kbd class="seq">c m</kbd> mean press the keys in order.</footer>
+<script>
+const q=document.getElementById('q'),count=document.getElementById('count');
+const rows=[...document.querySelectorAll('tr.bind')];
+const grps=[...document.querySelectorAll('.grp')];
+const cards=[...document.querySelectorAll('.card')];
+function unmark(el){el.querySelectorAll('mark').forEach(m=>m.replaceWith(document.createTextNode(m.textContent)));}
+q.addEventListener('input',()=>{
+  const t=q.value.trim().toLowerCase();let n=0;
+  for(const r of rows){
+    const hit=!t||r.textContent.toLowerCase().includes(t);
+    r.style.display=hit?'':'none';if(hit)n++;
+  }
+  for(const g of grps){g.style.display=[...g.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none')?'':'none';}
+  for(const c of cards){c.style.display=[...c.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none')?'':'none';}
+  count.textContent=t?n+' matches':rows.length+' keybinds';
+});
+</script>
+</body></html>`;
+}
+
+fs.mkdirSync(path.dirname(OUT), { recursive: true });
+fs.writeFileSync(OUT, build());
+console.log('terminal-cheatsheet: wrote ' + OUT);
