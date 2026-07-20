@@ -64,41 +64,56 @@ config.enable_kitty_graphics = true
 config.default_prog = { "C:\\Program Files\\Git\\bin\\bash.exe", "-l", "-i" }
 
 -- ---------------------------------------------------------------------------
--- KEYBINDINGS  — mirror the Ghostty binds, mapping macOS cmd -> Windows CTRL+SHIFT.
--- The critical one (identical to Ghostty) is shift+enter -> newline for Claude Code.
+-- KEYBINDINGS  — mirror ~/.config/ghostty/config. On macOS `cmd` is free of the
+-- terminal's Ctrl codes; on Windows it isn't, so `cmd` -> CTRL+SHIFT, and a
+-- Ghostty `cmd+shift` chord adds ALT (SHIFT is already spent standing in for
+-- cmd). Copy / paste / reload keep the bare CTRL+SHIFT chord — that's the
+-- Windows-terminal standard and matches the Ghostty letter anyway. Bracket keys
+-- use `phys:` so holding Shift doesn't remap "[" to "{". Exceptions: split (cmd+d)
+-- and close (cmd+w) map to BARE ctrl+d / ctrl+w so they match Ghostty's muscle
+-- memory exactly — these override the shell's EOF / delete-word. Keep in sync with Ghostty.
 -- ---------------------------------------------------------------------------
 config.keys = {
-	-- Claude Code multiline (Ghostty: shift+enter=text:\n)
+	-- Claude Code multiline (ghostty: shift+enter=text:\n)
 	{ key = "Enter", mods = "SHIFT", action = act.SendString("\n") },
-	-- Reload config (Ghostty: cmd+shift+r)
+
+	-- Config management (ghostty: cmd+shift+r)
 	{ key = "R", mods = "CTRL|SHIFT", action = act.ReloadConfiguration },
-	-- Clipboard (Ghostty: cmd+shift+c / cmd+shift+v)
+
+	-- Clipboard (ghostty: cmd+shift+c / cmd+shift+v)
 	{ key = "C", mods = "CTRL|SHIFT", action = act.CopyTo("Clipboard") },
 	{ key = "V", mods = "CTRL|SHIFT", action = act.PasteFrom("Clipboard") },
-	-- Tabs / panes (Ghostty: cmd+t new tab, cmd+w close, cmd+shift+t new window)
-	{ key = "T", mods = "CTRL|SHIFT", action = act.SpawnTab("CurrentPaneDomain") },
-	{ key = "W", mods = "CTRL|SHIFT", action = act.CloseCurrentPane({ confirm = false }) },
-	{ key = "N", mods = "CTRL|SHIFT", action = act.SpawnWindow },
-	-- Splits (Ghostty: cmd+d right, cmd+shift+d down)
-	{ key = "D", mods = "CTRL|SHIFT", action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
-	{ key = "E", mods = "CTRL|SHIFT", action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
-	-- Navigate splits (Ghostty: cmd+[ / cmd+])
-	{ key = "LeftArrow", mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Left") },
-	{ key = "RightArrow", mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Right") },
-	{ key = "UpArrow", mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Up") },
-	{ key = "DownArrow", mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Down") },
-	-- Resize splits (Ghostty: cmd+shift+[ / cmd+shift+])
-	{ key = "LeftArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Left", 10 }) },
-	{ key = "RightArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
-	{ key = "UpArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Up", 10 }) },
-	{ key = "DownArrow", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Down", 10 }) },
+
+	-- Tabs & windows (ghostty: cmd+t / cmd+w / cmd+shift+t / cmd+shift+w)
+	-- cmd+w (close) maps to a BARE ctrl+w to match Ghostty muscle memory. That eats
+	-- readline's unix-werase (delete-previous-word) — accepted tradeoff. `key="w"` must
+	-- be lowercase: an uppercase `key="W"` implies Shift and would only fire on ctrl+shift+w.
+	{ key = "T", mods = "CTRL|SHIFT",     action = act.SpawnTab("CurrentPaneDomain") },
+	{ key = "w", mods = "CTRL",           action = act.CloseCurrentPane({ confirm = false }) },
+	{ key = "T", mods = "CTRL|SHIFT|ALT", action = act.SpawnWindow },
+	{ key = "W", mods = "CTRL|SHIFT",     action = act.QuitApplication },
+
+	-- Splits (ghostty: cmd+d right / cmd+shift+d down). cmd+d maps to a BARE ctrl+d to
+	-- match Ghostty. That eats the shell's EOF (exit) on ctrl+d — IGNOREEOF in
+	-- ~/.config/shell/common.sh guards accidental exits in panes WezTerm doesn't intercept.
+	-- Lowercase `key="d"` for the bare chord; `key="D"` (implies Shift) for the down-split.
+	{ key = "d", mods = "CTRL",           action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
+	{ key = "D", mods = "CTRL|SHIFT",     action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
+
+	-- Navigate splits (ghostty: cmd+[ previous / cmd+] next)
+	{ key = "phys:LeftBracket",  mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Prev") },
+	{ key = "phys:RightBracket", mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Next") },
+
+	-- Resize splits (ghostty: cmd+shift+[ left / cmd+shift+] right)
+	{ key = "phys:LeftBracket",  mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Left", 10 }) },
+	{ key = "phys:RightBracket", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
+
+	-- --- WezTerm extras (no Ghostty equivalent) ---
 	-- Agent View switcher (wezview): spawn the full-color fzf picker in a throwaway
 	-- tab. `domain="DefaultDomain"` (the LOCAL domain) is required — wezview is a
 	-- Windows tool (git-bash + fzf); CurrentPaneDomain would try to run bash.exe on
-	-- the homelab (Linux) mux when invoked from that window and fail. wezview renders
-	-- the grouped picker, does the jump itself on <enter> (detached re-activate beats
-	-- the tab's close-refocus), then exits so the tab closes. Needs a real TTY for
-	-- fzf's color/badges — hence a pane, not an InputSelector overlay.
+	-- the homelab (Linux) mux when invoked from that window and fail. wezview does
+	-- the jump itself on <enter>, then exits so the tab closes.
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
 		domain = "DefaultDomain",
 		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-lc", "wezview" },
@@ -124,5 +139,14 @@ config.ssh_domains = {
 		-- ssh_option = { identityfile = "C:/Users/daniel/.ssh/daniel-server" },
 	},
 }
+
+-- ---------------------------------------------------------------------------
+-- RELOAD FEEDBACK — WezTerm reloads config silently (on CTRL+SHIFT+R and on save
+-- via automatic_reload). With no confirmation the reload key feels like a no-op,
+-- so surface a short toast on every reload. Fires for auto-reloads too.
+-- ---------------------------------------------------------------------------
+wezterm.on("window-config-reloaded", function(window)
+	window:toast_notification("WezTerm", "Configuration reloaded ✳", nil, 1500)
+end)
 
 return config

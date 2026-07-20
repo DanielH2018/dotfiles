@@ -15,6 +15,12 @@ elif [ -n "$BASH_VERSION" ]; then _CUR_SHELL=bash
 else _CUR_SHELL=sh
 fi
 
+# --- Guard against accidental Ctrl+D exit (EOF) ---
+# A stray Ctrl+D at an empty prompt otherwise closes the shell (and the WezTerm pane).
+# bash: require this many consecutive EOFs before exit; zsh: ignore bare EOF entirely.
+export IGNOREEOF=2
+[ -n "$ZSH_VERSION" ] && setopt ignore_eof 2>/dev/null
+
 # --- Editor ---
 export EDITOR='vim'
 export VISUAL="$EDITOR"
