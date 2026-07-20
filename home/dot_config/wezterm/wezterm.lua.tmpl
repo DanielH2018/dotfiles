@@ -111,12 +111,12 @@ config.keys = {
 
 	-- --- WezTerm extras (no Ghostty equivalent) ---
 	-- Agent View switcher (wezview): spawn the full-color fzf picker in a throwaway
-	-- tab. `domain="DefaultDomain"` (the LOCAL domain) is required — wezview is a
-	-- Windows tool (git-bash + fzf); CurrentPaneDomain would try to run bash.exe on
-	-- the homelab (Linux) mux when invoked from that window and fail. wezview does
-	-- the jump itself on <enter>, then exits so the tab closes.
+	-- tab. Pin it to the built-in `local` domain — wezview is a Windows tool (git-bash
+	-- + fzf), and now that default_domain is the homelab (see DEFAULT DOMAIN below),
+	-- both DefaultDomain and CurrentPaneDomain would try to run bash.exe on the Linux
+	-- mux and fail. wezview does the jump itself on <enter>, then exits so the tab closes.
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
-		domain = "DefaultDomain",
+		domain = { DomainName = "local" },
 		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-lc", "wezview" },
 	}) },
 	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
@@ -130,22 +130,70 @@ for i = 1, 9 do
 end
 
 -- ---------------------------------------------------------------------------
--- MULTIPLEXING — homelab (daniel-server) as a persistent WezTerm mux domain.
--- Remote panes appear in this window and survive disconnect. Requires wezterm
--- installed on the server. remote_address is the ~/.ssh/config Host alias so
--- WezTerm inherits HostName/User/IdentityFile from it (key: ~/.ssh/daniel-server).
--- CTRL+SHIFT+H spawns a homelab tab. If auth fails on reload, the ssh_option
--- identityfile line below is the fallback.
+-- SERVER NODES — remote homelab machines to expose as persistent WezTerm mux
+-- domains, in preference order. WezTerm connects to the first reachable one as
+-- the default domain (see DEFAULT DOMAIN below). Add a node by appending here —
+-- its mux domain, reachability probe, and default selection are all derived from
+-- this table. remote_address = a Host alias in ~/.ssh/config (WezTerm inherits
+-- HostName/User/IdentityFile from it, key: ~/.ssh/daniel-server); username = the
+-- remote login user.
 -- ---------------------------------------------------------------------------
-config.ssh_domains = {
-	{
-		name = "daniel-server",
-		remote_address = "daniel-server",
-		username = "ubuntu",
-		multiplexing = "WezTerm",
-		-- ssh_option = { identityfile = "C:/Users/daniel/.ssh/daniel-server" },
-	},
+local server_nodes = {
+	{ name = "daniel-server", remote_address = "daniel-server", username = "ubuntu" },
+	-- { name = "node2", remote_address = "node2", username = "ubuntu" },
 }
+
+-- ---------------------------------------------------------------------------
+-- MULTIPLEXING — each node becomes a persistent WezTerm mux domain.
+-- multiplexing="WezTerm" runs a wezterm-mux-server on the node, so remote tabs
+-- survive the GUI client quitting and are restored on reconnect. Requires
+-- wezterm installed on the node. CTRL+SHIFT+H spawns a daniel-server tab.
+-- ---------------------------------------------------------------------------
+config.ssh_domains = {}
+for _, node in ipairs(server_nodes) do
+	table.insert(config.ssh_domains, {
+		name = node.name,
+		remote_address = node.remote_address,
+		username = node.username,
+		multiplexing = "WezTerm",
+	})
+end
+
+-- ---------------------------------------------------------------------------
+-- DEFAULT DOMAIN — connect to the homelab by default, but fall back to the local
+-- shell (with a warning toast) when no node answers — e.g. the WireGuard tunnel
+-- is down or the server is offline. Probe each node in order with a short,
+-- non-interactive ssh (BatchMode never prompts; ConnectTimeout caps the wait)
+-- and take the first that responds. This runs on every config eval (startup and
+-- reloads), so the timeout stays low. `startup_warning` is surfaced by the
+-- gui-startup handler below; if default_domain stays unset it remains "local".
+-- ---------------------------------------------------------------------------
+local startup_warning = nil
+local function node_reachable(node)
+	local ok = wezterm.run_child_process({
+		"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=2",
+		"-o", "StrictHostKeyChecking=accept-new",
+		node.remote_address, "true",
+	})
+	return ok
+end
+
+for _, node in ipairs(server_nodes) do
+	if node_reachable(node) then
+		config.default_domain = node.name
+		break
+	end
+end
+
+if not config.default_domain then
+	local names = {}
+	for _, node in ipairs(server_nodes) do
+		table.insert(names, node.name)
+	end
+	startup_warning = "Homelab unreachable ("
+		.. table.concat(names, ", ")
+		.. ") — starting local shell. Check the WireGuard tunnel / server, then CTRL+SHIFT+R to retry."
+end
 
 -- ---------------------------------------------------------------------------
 -- RELOAD FEEDBACK — WezTerm reloads config silently (on CTRL+SHIFT+R and on save
@@ -154,6 +202,23 @@ config.ssh_domains = {
 -- ---------------------------------------------------------------------------
 wezterm.on("window-config-reloaded", function(window)
 	window:toast_notification("WezTerm", "Configuration reloaded ✳", nil, 1500)
+end)
+
+-- ---------------------------------------------------------------------------
+-- STARTUP — spawn the first window on the resolved default domain (the homelab
+-- when reachable). If we fell back to local because no node answered, toast the
+-- reason so the fallback is never silent.
+-- ---------------------------------------------------------------------------
+wezterm.on("gui-startup", function(cmd)
+	local _, _, window = wezterm.mux.spawn_window(cmd or {})
+	if startup_warning then
+		local ok, gui = pcall(function()
+			return window:gui_window()
+		end)
+		if ok and gui then
+			gui:toast_notification("WezTerm", startup_warning, nil, 6000)
+		end
+	end
 end)
 
 return config
