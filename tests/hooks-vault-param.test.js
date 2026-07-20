@@ -4,6 +4,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// When these tests run inside a git hook (e.g. the repo's pre-push), git exports GIT_DIR,
+// GIT_WORK_TREE, GIT_INDEX_FILE, etc. into the environment. The temp-repo `git -C <dir>` calls
+// and the hooks invoked below would then act on the outer repo instead of each test's fixture
+// (e.g. `git add a.txt` fails: "pathspec 'a.txt' did not match any files"). Strip them so every
+// git subprocess discovers its own repository.
+for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY', 'GIT_PREFIX', 'GIT_NAMESPACE']) {
+  delete process.env[v];
+}
+
 const HOOKS = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
