@@ -7,7 +7,7 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v5
+# tools-bump: v6
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -110,9 +110,9 @@ install_release() { # $1=binname  $2=asset_url
 # goreleaser's arm64 (curlie). Downloading the wrong arch would tar-extract cleanly but
 # Exec-format-error at first use, so skip release binaries outright on an arch we lack names for.
 case "$(uname -m)" in
-  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64 ;;
-  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64 ;;
-  *) rust_arch=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd" >&2 ;;
+  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64 ;;
+  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64  ;;
+  *) rust_arch=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/nvim/yazi" >&2 ;;
 esac
 if [ -n "$rust_arch" ]; then
   # version-less asset names → latest/download works directly
@@ -121,6 +121,44 @@ if [ -n "$rust_arch" ]; then
   # versioned asset names → resolve the tag first
   ct="$(latest_tag rs/curlie)"; [ -n "$ct" ] && install_release curlie "https://github.com/rs/curlie/releases/download/$ct/curlie_${ct#v}_linux_${go_arch}.tar.gz"
   st="$(latest_tag chmln/sd)";  [ -n "$st" ] && install_release sd     "https://github.com/chmln/sd/releases/download/$st/sd-${st}-${rust_arch}-unknown-linux-gnu.tar.gz"
+fi
+
+# 4. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
+#    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
+#    runtime tree, yazi ships a second binary (`ya`). No sudo; both use the version-less
+#    latest/download asset form. Re-fetch only when the command is absent.
+if [ -n "$rust_arch" ]; then
+  # Neovim: official static release. The tarball is bin/ + its runtime under one prefix; merge it
+  # into ~/.local so bin/nvim resolves ../share/nvim/runtime. nvim config self-bootstraps lazy.nvim.
+  if ! command -v nvim >/dev/null 2>&1; then
+    tmp="$(mktemp -d)"
+    if curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-${nvim_arch}.tar.gz" -o "$tmp/nvim.tgz" 2>/dev/null \
+       && tar xzf "$tmp/nvim.tgz" -C "$tmp" 2>/dev/null; then
+      src="$(find "$tmp" -maxdepth 1 -type d -name 'nvim-linux-*' | head -1)"
+      if [ -n "$src" ]; then
+        mkdir -p "$HOME/.local" && cp -a "$src/." "$HOME/.local/" && echo "install-cli-tools: installed nvim"
+      else
+        echo "install-cli-tools: nvim payload not found in archive" >&2
+      fi
+    else
+      echo "install-cli-tools: failed to fetch nvim" >&2
+    fi
+    rm -rf "$tmp"
+  fi
+  # Yazi: release zip carrying both `yazi` and its `ya` plugin manager (ya pkg install is driven
+  # by run_onchange_after_ya-pkg-install). Extract both to bin.
+  if ! command -v yazi >/dev/null 2>&1; then
+    tmp="$(mktemp -d)"
+    if curl -fsSL "https://github.com/sxyazi/yazi/releases/latest/download/yazi-${rust_arch}-unknown-linux-gnu.zip" -o "$tmp/yazi.zip" 2>/dev/null \
+       && unzip -q "$tmp/yazi.zip" -d "$tmp" 2>/dev/null; then
+      d="$(find "$tmp" -maxdepth 1 -type d -name 'yazi-*' | head -1)"
+      for b in yazi ya; do [ -f "$d/$b" ] && install -m 0755 "$d/$b" "$BIN_DIR/$b"; done
+      command -v yazi >/dev/null 2>&1 && echo "install-cli-tools: installed yazi"
+    else
+      echo "install-cli-tools: failed to fetch yazi" >&2
+    fi
+    rm -rf "$tmp"
+  fi
 fi
 
 # Fail loudly (and retry next apply) if any apt package is still missing — e.g. a sudo-less run.
