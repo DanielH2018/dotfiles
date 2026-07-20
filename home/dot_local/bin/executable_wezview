@@ -97,12 +97,12 @@ if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
 if [ "$mode" = "--jump" ]; then do_jump "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
-  # Render the fzf preview card from a base64 blob (host|cwd|state|ts|title|pane).
+  # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
+  # pane) — fzf passes it as {1}, single-quoted/escaped, so it's safe as one argument.
   # Self-contained (own colors, inline age) so it runs BEFORE any state-load/SSH —
   # fzf calls this on every keystroke, so it must be instant with no network.
-  raw=$(printf '%s' "${2:-}" | base64 -d 2>/dev/null) || exit 0
-  [ -z "$raw" ] && exit 0
-  IFS=$'\037' read -r k_host k_cwd k_state k_ts k_title k_pane <<< "$raw"
+  [ -z "${2:-}" ] && exit 0
+  IFS=$'\037' read -r k_host k_cwd k_state k_ts k_title k_pane <<< "${2:-}"
   e=$'\033'; z="$e[0m"
   dim="$e[38;2;127;132;156m"; lab="$e[38;2;147;153;178m"; val="$e[38;2;205;214;244m"
   case "$k_state" in
@@ -235,8 +235,8 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
   else case "$1" in daniel-server) _bn="homelab";; *) _bn="${1#daniel-}";; esac; fi
 }
 
-build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, grouped
-  local W=72 BADGEW=11 grp st host cwd pane ts name title bn scol stext cnt key b64 L
+build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
+  local W=72 BADGEW=11 grp st host cwd pane ts name title bn scol stext cnt key L
   local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
@@ -248,14 +248,14 @@ build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, groupe
     cnt=${GCNT[$grp]:-0}
     [ "$cnt" -eq 0 ] && continue
     case "$grp" in needs-input) scol="$C_NEED";; working) scol="$C_WORK";; *) scol="$C_DONE";; esac
-    [ "$first" -eq 0 ] && printf '\t\t\n'   # blank spacer between groups
+    [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
-    printf '\t\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    printf '\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     for L in "${sorted[@]}"; do
       IFS=$'\t' read -r st host cwd pane ts <<< "$L"
       [ "$st" = "$grp" ] || continue
       fwd="${cwd//\\//}"; name="${fwd%/}"; name="${name##*/}"; [ -z "$name" ] && name="$cwd"
-      title_for_cwd "$cwd"; title="$_title"
+      title_for_cwd "$cwd"; title="${_title//$'\t'/ }"   # tabs would split the row's columns
       badge_name "$host"; bn="$_bn"
       case "$bn" in
         PC)      bfg="$E[38;2;137;180;250m"; icon=$'';;   # blue  — desktop
@@ -278,9 +278,12 @@ build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, groupe
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
       pad=$(( W - ${#left_p} - ${#stext} )); [ "$pad" -lt 1 ] && pad=1
       printf -v sp '%*s' "$pad" ''
-      printf -v key '%s%s%s%s%s' "$host" "$US" "$cwd" "$US" "${pane:-none}"
-      b64=$(printf '%s\037%s\037%s\037%s\037%s\037%s' "$host" "$cwd" "$grp" "$ts" "$title" "$pane" | base64 -w0)
-      printf '%s\t%s\t%s%s%s%s%s\n' "$key" "$b64" "$left_c" "$sp" "$scol" "$stext" "$Z"
+      # KEY *is* the card blob (host|cwd|state|ts|title|pane, US-delimited): the jump
+      # path reads field 2 (cwd) and the preview reads the whole thing via {1}, so no
+      # per-row base64 fork is needed. field 2 stays cwd for resolve_key.
+      printf -v key '%s%s%s%s%s%s%s%s%s%s%s' \
+        "$host" "$US" "$cwd" "$US" "$grp" "$US" "$ts" "$US" "$title" "$US" "${pane:-none}"
+      printf '%s\t%s%s%s%s%s\n' "$key" "$left_c" "$sp" "$scol" "$stext" "$Z"
     done
   done
 }
@@ -292,7 +295,7 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
   PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
   load_titles
   body=$(build_pretty)
-  [ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+  [ -z "$body" ] && body=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 }
 
 # --body: emit JUST the fzf list — used for the initial render AND the live reload the
@@ -350,14 +353,14 @@ poster_pid=$!
 trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
 sel=$(printf '%s\n' "$body" | fzf \
-  --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=3.. \
+  --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
   --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar \
   --header="$hdrline" --header-first \
   --footer='  ↑↓ move · ↵ switch · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
-  --preview="'$SELF' --card {2}" \
+  --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \

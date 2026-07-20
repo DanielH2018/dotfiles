@@ -4,7 +4,7 @@
 // mux, no network, no TTY. Real jq/coreutils are used. Skips without bash/jq.
 //
 // Modes exercised without a TTY:
-//   --card <b64>   deterministic preview render
+//   --card KEY     deterministic preview render (KEY = US-delimited card fields)
 //   --resolve KEY  cwd-correlation to a client pane id
 //   (default)      builds the grouped body, pipes it to `fzf` (stubbed to capture)
 const { test } = require('node:test');
@@ -35,7 +35,8 @@ const BASH = findBash();
 const HOST = 'daniel-desktop';                       // what the `hostname` stub reports
 const nowSec = () => Math.floor(Date.now() / 1000);
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;:]*m/g, '');
-const b64 = (fields) => Buffer.from(fields.join(US), 'utf8').toString('base64');
+// The row KEY (and the --card arg) is just the card fields joined by US — no base64.
+const cardKey = (fields) => fields.join(US);
 
 const dirs = [];
 function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
@@ -102,7 +103,7 @@ const pane = (id, cwd, title) => ({ pane_id: id, cwd, title, window_id: 0, tab_i
 test('--card renders a local session card with PC machine label', { skip }, () => {
   const { env } = makeEnv();
   const ts = nowSec() - 300; // 5 minutes ago
-  const blob = b64([HOST, 'C:\\Users\\daniel\\My_Vault', 'working', String(ts), 'fixing the parser', '7']);
+  const blob = cardKey([HOST, 'C:\\Users\\daniel\\My_Vault', 'working', String(ts), 'fixing the parser', '7']);
   const txt = stripAnsi(run(env, ['--card', blob]).out);
   assert.match(txt, /claude · My_Vault/);
   assert.match(txt, /State\s+working/);
@@ -114,7 +115,7 @@ test('--card renders a local session card with PC machine label', { skip }, () =
 
 test('--card labels a daniel-server session as homelab', { skip }, () => {
   const { env } = makeEnv();
-  const blob = b64(['daniel-server', '/home/ubuntu/proj', 'needs-input', '0', '', '1']);
+  const blob = cardKey(['daniel-server', '/home/ubuntu/proj', 'needs-input', '0', '', '1']);
   const txt = stripAnsi(run(env, ['--card', blob]).out);
   assert.match(txt, /Machine\s+homelab · daniel-server/);
   assert.match(txt, /State\s+needs input/);
@@ -183,7 +184,8 @@ test('--body prints the grouped list (local + cache) to stdout for the live relo
 test('selecting a row activates the correlated client pane', { skip }, () => {
   const list = JSON.stringify([pane(7, 'file:///C:/Users/daniel/My_Vault', 'Claude — task')]);
   const { env, activateLog } = makeEnv({ list });
-  const pick = [[HOST, 'C:\\Users\\daniel\\My_Vault', '7'].join(US), 'b64', 'display'].join('\t');
+  // A row is KEY<TAB>DISPLAY now; the KEY carries the 6 card fields (field 2 = cwd).
+  const pick = [cardKey([HOST, 'C:\\Users\\daniel\\My_Vault', 'working', '0', 'task', '7']), 'display'].join('\t');
   run(env, [], { FZF_PICK: pick });
   assert.match(fs.readFileSync(activateLog, 'utf8'), /^7$/m, 'activate-pane called with the resolved id');
 });
