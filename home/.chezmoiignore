@@ -8,9 +8,8 @@ Brewfile
 .config/wezterm
 .config/fastfetch/logos-trimmed
 .config/windows-provisioning
-bin/TaskbarAutoHideFix.cs
-bin/TaskbarAutoHideFix.exe
-Scripts/streamdeck-watcher
+bin
+Scripts
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
