@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# LF shim for the winget/official Windows jq. That build opens stdout in text mode, so
+# every '\n' becomes '\r\n' and the trailing '\r' corrupts values in bash pipelines —
+# wezview's @tsv rows split wrong, the Claude hooks' `x=$(jq -r ...)` captures keep a
+# stray CR. `-b` opens jq's streams in binary mode (LF). This script is named `jq`
+# (no extension) and lives earlier on PATH than the winget `jq.exe`, so it shadows it;
+# `exec jq.exe` re-resolves to the real binary (this file is `jq`, not `jq.exe`, so no
+# recursion) — no extra fork, exit codes/streaming/binary output preserved. Windows
+# only (gated in .chezmoiignore); native jq on macOS/Linux already emits LF.
+exec jq.exe -b "$@"

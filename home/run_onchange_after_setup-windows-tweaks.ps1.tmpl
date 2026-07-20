@@ -25,4 +25,22 @@ if (Get-Command reg.exe -ErrorAction SilentlyContinue) {
 
 Write-Host "[manual] Winaero Tweaker has no CLI import. Open Winaero -> Tools -> Import and"
 Write-Host "         select $dir\winaero-tweaker.ini"
+
+# Put ~/.local/bin and ~/bin on the *User* PATH so name-resolution works in ANY
+# Windows-spawned process, not just login shells that source the profile. This matters
+# because the WezTerm CTRL+SHIFT+S keybind launches `bash --noprofile --norc -c wezview`
+# (no profile, for speed): it only finds `wezview` + the `jq` LF-shim (both in
+# ~/.local/bin) and TaskbarAutoHideFix.exe (~/bin) if these dirs are on the Windows PATH.
+# Idempotent (append-if-missing); User scope = no elevation.
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+foreach ($sub in '.local\bin', 'bin') {
+    $d = Join-Path $env:USERPROFILE $sub
+    if (($userPath -split ';') -notcontains $d) {
+        $userPath = $userPath.TrimEnd(';') + ';' + $d
+        [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
+        Write-Host "[apply] added $d to the User PATH (open a new shell to pick it up)"
+    } else {
+        Write-Host "[skip] $d already on the User PATH"
+    }
+}
 {{- end -}}

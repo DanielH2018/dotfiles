@@ -41,6 +41,13 @@ brew = "fzf"
 apt = ""
 
 [[tools]]
+name = "jq"
+cmd = "jq"
+winget = "jqlang.jq"
+brew = "jq"
+apt = "jq"
+
+[[tools]]
 name = "ripgrep"
 cmd = "rg"
 winget = "BurntSushi.ripgrep.MSVC"

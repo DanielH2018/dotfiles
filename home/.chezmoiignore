@@ -11,6 +11,7 @@ Brewfile
 bin
 Scripts
 .claude/hooks/wezterm-state.sh
+.local/bin/jq
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
