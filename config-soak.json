@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "67421e059ee3f6e89c987a4175b626372c7b8e24be7f12bbaa1f53d19f0e89d5",
-      "landed": "2026-07-16T18:01:25.708Z"
+      "hash": "7574de88294975924a5709d16577125bd74868c57c1afa37e4e80776531a2961",
+      "landed": "2026-07-20T14:44:51.590Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -130,6 +130,11 @@
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
       "hash": "98e1bb8465c5588149b9fa4c137597e0a3fb9db85a989afbb81417904617c096",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_wezterm-state.sh",
+      "hash": "fc470b05c011381737e656a5e1cbf07e82c5e749f09e07d57284e6fc6fb93acc",
+      "landed": "2026-07-20T14:44:51.590Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
