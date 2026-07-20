@@ -142,60 +142,69 @@ done
 # ~/.wezview-profile.log so a slow open can be traced to the responsible phase. No-op
 # (and no cost) when the var is unset.
 prof() { [ -n "${WEZVIEW_PROFILE:-}" ] && printf '%s\t%s\n' "${EPOCHREALTIME:-0}" "$1" >> "$HOME/.wezview-profile.log"; return 0; }
-prof start
-
-# Stamp this pane so WezTerm's CTRL+W keybind can recognize the picker and dismiss it
-# with ESC (a clean fzf exit) instead of a force-close, which hangs while the homelab
-# mux is connected. OSC 1337 SetUserVar; value is base64("1") = "MQ==". Written to the
-# controlling tty (fzf captures stdout, so stdout may be a pipe). User vars persist for
-# the pane's life and survive fzf.
-printf '\033]1337;SetUserVar=wezview=MQ==\a' > /dev/tty 2>/dev/null
-
+# ---- shared row/prune jq fragments + homelab cache ----
 # Row = state<TAB>host<TAB>cwd<TAB>pane<TAB>ts. `PRUNE` (7d) drops the file; between
 # 1 and 7 days a session is hidden from the list but its file is kept.
 JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts] | @tsv'
 JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
 PRUNE=$(( 7 * 86400 ))
+# Homelab snapshot cache: the picker renders from THIS file instantly (no network on
+# open); a background job refreshes it over ssh and live-reloads fzf. Kept OUT of the
+# state dir and without a .json suffix so the local glob never mistakes it for a
+# local session file.
+remote_cache="$HOME/.wezview-remote-cache"
 rows=""
 
-# Local sessions: one jq per file. Pruning needs the filename, so this stays a
-# per-file loop (vs. the old 5-jq-per-file parse) — the state dir holds only a
-# handful of files.
-for f in "$statedir"/*.json; do
-  [ -e "$f" ] || continue
-  out=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" "
-    $JQ_TS |
-    if \$ts > 0 and \$age > \$prune then \"PRUNE\"
-    elif \$ts > 0 and \$age > 86400 then empty
-    else $JQ_ROW end" "$f" 2>/dev/null)
-  case "$out" in
-    '')    : ;;
-    PRUNE) rm -f "$f" 2>/dev/null ;;
-    *)     rows+="$out"$'\n' ;;
-  esac
-done
-prof gather_local
+gather_local_rows() {  # append local session rows to global `rows`, prune >7d
+  local local_files jqout jqlines i l
+  # ONE jq over the whole state dir (process spawns dominate on Windows at ~55ms each,
+  # so a per-file loop was pure overhead). Command substitution — NOT `< <(...)` — so
+  # jq FULLY exits, releasing its read handles, before we prune: on Windows an open
+  # handle blocks the rm. jq emits exactly one tagged line per file IN ARGUMENT ORDER
+  # (P=prune>7d / H=hide 1–7d / R<TAB>row) so lines align 1:1 with local_files and we
+  # prune via the bash glob path (rm-able on MSYS; jq's own input_filename comes back
+  # in a drive form rm rejects). On a count mismatch (a corrupt file made jq drop a
+  # record) we skip ALL pruning that run rather than risk rm-ing the wrong file.
+  shopt -s nullglob; local_files=( "$statedir"/*.json ); shopt -u nullglob
+  [ "${#local_files[@]}" -gt 0 ] || return
+  jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" "
+      $JQ_TS |
+      if   \$ts > 0 and \$age > \$prune then \"P\"
+      elif \$ts > 0 and \$age > 86400  then \"H\"
+      else \"R\t\" + ($JQ_ROW) end" "${local_files[@]}" 2>/dev/null)
+  jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
+  if [ "${#jqlines[@]}" -eq "${#local_files[@]}" ]; then
+    for i in "${!local_files[@]}"; do
+      case "${jqlines[$i]}" in
+        P)  rm -f "${local_files[$i]}" 2>/dev/null ;;
+        R*) rows+="${jqlines[$i]#R$'\t'}"$'\n' ;;
+      esac
+    done
+  else
+    for l in "${jqlines[@]}"; do case "$l" in R*) rows+="${l#R$'\t'}"$'\n';; esac; done
+  fi
+}
 
-# Remote (homelab) sessions: a plain one-shot ssh, display-filtered, never pruned
-# (not ours to delete). NO ControlMaster/ControlPersist — over the WireGuard LAN a
-# cold connect is ~0.9s vs ~0.7s multiplexed (a ~0.2s saving), and the persistent
-# master it leaves behind is a detached process that keeps the picker's ConPTY from
-# tearing down, hanging WezTerm on CTRL+W. Not worth 0.2s.
-remote=$(ssh -o ConnectTimeout=3 -o BatchMode=yes \
-  daniel-server 'cat ~/.claude/wez-state/*.json 2>/dev/null' < /dev/null 2>/dev/null || true)
-if [ -n "$remote" ]; then
-  rrows=$(printf '%s' "$remote" | MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
-    $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" 2>/dev/null)
+gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered, never pruned)
+  local rrows
+  [ -s "$remote_cache" ] || return
+  # Read via stdin, not a path arg, so native jq.exe isn't handed an MSYS path it
+  # can't open. MSYS_NO_PATHCONV guards the (unused-here but consistent) arg handling.
+  rrows=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
+    $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" < "$remote_cache" 2>/dev/null)
   [ -n "$rrows" ] && rows+="$rrows"$'\n'
-fi
-prof ssh_remote
+}
 
-# one mux snapshot for the whole render — used to look up each session's Claude
-# pane title (its task name) by cwd.
-PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
-prof wezterm_list
-load_titles
-prof load_titles
+refresh_remote() {  # pull homelab state over ssh, atomically replace the cache
+  local out rc tmp="$remote_cache.tmp.$$"
+  # One-shot ssh (NO ControlMaster) bounded by ConnectTimeout. `|| true` on the remote
+  # side so a live-but-empty homelab returns rc 0 — we KEEP the old snapshot only when
+  # ssh itself can't connect (rc 255), not when there simply are no remote sessions.
+  out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server \
+        'cat ~/.claude/wez-state/*.json 2>/dev/null || true' < /dev/null 2>/dev/null); rc=$?
+  [ "$rc" -eq 255 ] && return
+  printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+}
 
 # ---- palette (Catppuccin Mocha, truecolor) ----
 E=$'\033'; Z="$E[0m"
@@ -276,18 +285,70 @@ build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, groupe
   done
 }
 
-# header line (right-aligned totals) for the fzf box
-total=$(printf '%s' "$rows" | grep -c .)
-machines=$(printf '%s' "$rows" | awk -F'\t' 'NF{print $2}' | sort -u | grep -c .)
-sfx() { [ "$1" = 1 ] || echo s; }
-htext="${total} session$(sfx "$total") · ${machines} machine$(sfx "$machines")"
+render_body() {  # sets global `body` from local + cached-remote rows (the fzf list)
+  rows=""
+  gather_local_rows
+  gather_remote_rows
+  PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+  load_titles
+  body=$(build_pretty)
+  [ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+}
+
+# --body: emit JUST the fzf list — used for the initial render AND the live reload the
+# background ssh pushes in. No pane stamp / no profiling: it runs as fzf's own child.
+if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
+
+# ---- interactive picker ----
+prof start
+# Stamp this pane so WezTerm's CTRL+W keybind recognizes the picker and dismisses it
+# with ESC (a clean fzf exit) instead of a force-close, which hangs while the homelab
+# mux is connected. OSC 1337 SetUserVar; "MQ==" = base64("1"). Written to the tty
+# because fzf captures stdout. Persists for the pane's life and survives fzf.
+printf '\033]1337;SetUserVar=wezview=MQ==\a' > /dev/tty 2>/dev/null
+
+rows=""
+gather_local_rows;  prof gather_local
+gather_remote_rows                       # cached homelab snapshot — instant, no network
+PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null); prof wezterm_list
+load_titles;        prof load_titles
+
+# header line (right-aligned totals). Counted in pure bash — the old grep|awk|sort|grep
+# chain was 4 process spawns, and spawns dominate render time on Windows.
+total=0; declare -A _mh=()
+while IFS=$'\t' read -r _st _host _rest; do
+  [ -z "$_st" ] && continue
+  total=$(( total + 1 )); [ -n "$_host" ] && _mh["$_host"]=1
+done <<< "$rows"
+machines=${#_mh[@]}
+[ "$total" = 1 ]    && ts_s="" || ts_s="s"
+[ "$machines" = 1 ] && ms_s="" || ms_s="s"
+htext="${total} session${ts_s} · ${machines} machine${ms_s}"
 printf -v hdrline '%*s' 72 "$htext"
 
-body=$(build_pretty)
-prof build_pretty
+body=$(build_pretty); prof build_pretty
 [ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 
 SELF="$HOME/.local/bin/wezview"
+# Live reload: open instantly on the cached snapshot above, then in the BACKGROUND
+# refresh the homelab cache over ssh and POST a `reload` into this fzf via its
+# --listen server, so fresh remote rows swap in without ever blocking the open. The
+# ssh is ConnectTimeout-bounded and the EXIT trap kills this job before the script
+# returns — nothing lingers to keep the picker's ConPTY alive (which is what hung
+# CTRL+W). If curl/ssh are missing or the pull fails, the picker just keeps showing
+# the cached snapshot — no error path. CTRL+R forces a manual refresh.
+portfile="$HOME/.wezview-fzfport.$$"
+rm -f "$portfile" 2>/dev/null
+(
+  refresh_remote
+  for _ in $(seq 1 40); do [ -s "$portfile" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
+  p=$(cat "$portfile" 2>/dev/null)
+  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
+      --data "reload('$SELF' --body)+refresh-preview" >/dev/null 2>&1
+) >/dev/null 2>&1 &   # detach stdio so the job never holds the picker's pipes open
+poster_pid=$!
+trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
+
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=3.. \
   --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
@@ -295,10 +356,13 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar \
   --header="$hdrline" --header-first \
-  --footer='  ↑↓ move · ↵ switch · ? details · esc cancel     state from Claude Code hooks' \
+  --footer='  ↑↓ move · ↵ switch · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
   --preview="'$SELF' --card {2}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
+  --listen=0 \
+  --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
+  --bind='ctrl-r:reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='?:toggle-preview' \
   --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
 

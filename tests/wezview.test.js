@@ -47,6 +47,10 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   fs.mkdirSync(path.join(home, '.claude', 'wez-state'), { recursive: true });
   const listFile = path.join(bin, 'list.json'); fs.writeFileSync(listFile, list);
   const remoteFile = path.join(bin, 'remote.json'); fs.writeFileSync(remoteFile, remote);
+  // The picker now reads homelab sessions from the cache file (the background ssh
+  // refreshes it + live-reloads fzf); seed it directly so the initial render sees them.
+  const cacheFile = path.join(home, '.wezview-remote-cache');
+  if (remote) fs.writeFileSync(cacheFile, remote);
   const activateLog = path.join(bin, 'activate.log'); fs.writeFileSync(activateLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
 
@@ -67,6 +71,10 @@ exit \${FZF_RC:-0}
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo "${HOST}"
+`, { mode: 0o755 });
+  // no-op curl: the background live-reload poster fires one; keep it off the network.
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash
+exit 0
 `, { mode: 0o755 });
 
   const env = {
@@ -147,7 +155,7 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   assert.doesNotMatch(body, /staleone/, 'session older than a day must be hidden');
 });
 
-test('body merges remote (homelab) sessions pulled over ssh', { skip }, () => {
+test('body merges remote (homelab) sessions from the cache snapshot', { skip }, () => {
   const now = nowSec();
   const remote = JSON.stringify({ pane: '1', state: 'working', cwd: '/home/ubuntu/remoteproj', session: 'r', host: 'daniel-server', ts: now - 5 });
   const { env, home, capture } = makeEnv({ remote });
@@ -155,7 +163,21 @@ test('body merges remote (homelab) sessions pulled over ssh', { skip }, () => {
   run(env, []);
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /localproj/);
-  assert.match(body, /remoteproj/, 'remote session pulled over ssh must appear');
+  assert.match(body, /remoteproj/, 'remote session from the cache must appear');
+});
+
+test('--body prints the grouped list (local + cache) to stdout for the live reload', { skip }, () => {
+  const now = nowSec();
+  const remote = JSON.stringify({ pane: '1', state: 'needs-input', cwd: '/home/ubuntu/remotebody', session: 'r', host: 'daniel-server', ts: now - 5 });
+  const { env, home } = makeEnv({ remote });
+  stateFile(home, 'local', { pane: '1', state: 'working', cwd: 'C:\\x\\localbody', session: 'local', host: HOST, ts: now - 5 });
+  const r = run(env, ['--body']);
+  const out = stripAnsi(r.out);
+  assert.strictEqual(r.code, 0);
+  assert.match(out, /WORKING/);
+  assert.match(out, /NEEDS INPUT/);
+  assert.match(out, /localbody/, 'local session must render in --body');
+  assert.match(out, /remotebody/, 'cached homelab session must render in --body');
 });
 
 test('selecting a row activates the correlated client pane', { skip }, () => {
