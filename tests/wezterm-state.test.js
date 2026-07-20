@@ -1,0 +1,90 @@
+// Characterization + regression guard for executable_wezterm-state.sh
+// (the Claude Code hook that records session state for the wezview picker).
+// Drives the ACTUAL hook with a temp $HOME so it's hermetic. Real jq is used
+// (the hook builds JSON with jq); skips without bash/jq.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_wezterm-state.sh');
+
+let toolsOk = true;
+try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
+const skip = toolsOk ? false : 'bash/jq unavailable';
+
+// Run the hook: `state` arg, JSON stdin, optional WEZTERM_PANE. Returns {out, home}.
+function run(state, input, { pane, home } = {}) {
+  home = home || fs.mkdtempSync(path.join(os.tmpdir(), 'wez-home-'));
+  const env = { ...process.env, HOME: home };
+  if (pane !== undefined) env.WEZTERM_PANE = pane; else delete env.WEZTERM_PANE;
+  const out = execFileSync('bash', [HOOK, state], {
+    input: typeof input === 'string' ? input : JSON.stringify(input),
+    encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env,
+  });
+  return { out, home };
+}
+const stateFile = (home, sid) => path.join(home, '.claude', 'wez-state', `${sid}.json`);
+const readState = (home, sid) => JSON.parse(fs.readFileSync(stateFile(home, sid), 'utf8'));
+
+const homes = [];
+function freshHome() { const h = fs.mkdtempSync(path.join(os.tmpdir(), 'wez-home-')); homes.push(h); return h; }
+
+test('writes <session_id>.json with fields from stdin + WEZTERM_PANE', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'abc123', cwd: 'C:/Users/daniel/My_Vault' }, { pane: '7', home });
+  const s = readState(home, 'abc123');
+  assert.strictEqual(s.state, 'working');
+  assert.strictEqual(s.pane, '7');
+  assert.strictEqual(s.session, 'abc123');
+  assert.strictEqual(s.cwd, 'C:/Users/daniel/My_Vault');
+  assert.strictEqual(typeof s.host, 'string');
+  assert.ok(Number.isInteger(s.ts) && s.ts > 0, 'ts is an epoch integer');
+});
+
+test('preserves a POSIX-style cwd without MSYS path mangling', { skip }, () => {
+  // The identical hook runs on the Linux homelab where cwds look like /home/ubuntu.
+  // On Windows a native jq.exe would let Git-Bash rewrite the leading-slash --arg;
+  // MSYS_NO_PATHCONV must keep the value intact (no-op on Linux).
+  const home = freshHome();
+  run('working', { session_id: 'posix', cwd: '/home/ubuntu/project' }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'posix').cwd, '/home/ubuntu/project');
+});
+
+test('missing session_id falls back to nosession.json', { skip }, () => {
+  const home = freshHome();
+  run('working', { cwd: '/tmp' }, { pane: '1', home });
+  assert.ok(fs.existsSync(stateFile(home, 'nosession')));
+});
+
+test('caches last-known pane when WEZTERM_PANE is absent', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'sid', cwd: '/tmp' }, { pane: '9', home });     // seeds pane 9
+  run('needs-input', { session_id: 'sid', cwd: '/tmp' }, { home });            // no pane this event
+  assert.strictEqual(readState(home, 'sid').pane, '9');
+});
+
+test('escapes Windows backslash cwd into valid JSON', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'winsid', cwd: 'C:\\Users\\daniel\\My_Vault' }, { pane: '2', home });
+  const s = readState(home, 'winsid'); // JSON.parse throwing would already fail the test
+  assert.strictEqual(s.cwd, 'C:\\Users\\daniel\\My_Vault');
+});
+
+test('`end` removes the session state file', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'gone', cwd: '/tmp' }, { pane: '1', home });
+  assert.ok(fs.existsSync(stateFile(home, 'gone')));
+  run('end', { session_id: 'gone' }, { home });
+  assert.ok(!fs.existsSync(stateFile(home, 'gone')));
+});
+
+test('emits nothing on stdout (safe for UserPromptSubmit)', { skip }, () => {
+  const home = freshHome();
+  const { out } = run('working', { session_id: 'quiet', cwd: '/tmp' }, { pane: '1', home });
+  assert.strictEqual(out, '');
+});
+
+process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });

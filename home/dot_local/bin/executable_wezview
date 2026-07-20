@@ -15,41 +15,71 @@ now=$(date +%s 2>/dev/null || echo 0)
 selfhost=$(hostname 2>/dev/null)
 US=$'\037'
 
+# Shared jq fragments (were copy-pasted three times). `norm` makes Windows and Unix
+# cwds comparable; JQ_NONSHELL keeps only panes whose title isn't a bare shell/mux
+# name (i.e. the pane Claude retitled with its task). MSYS_NO_PATHCONV guards the
+# `--arg cwd` from Git-Bash rewriting a leading-slash POSIX cwd on Windows.
+JQ_NORM='def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;'
+JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not'
+
 resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or nothing)
   # Resolve by cwd match for BOTH local and remote: the stored pane id is only
   # valid in the mux where it was recorded, so it can't be trusted across the
-  # local vs. homelab windows. `norm` makes Windows and Unix cwds comparable.
+  # local vs. homelab windows.
   local key="$1" scwd list target
   scwd=$(printf '%s' "$key" | cut -d"$US" -f2)
   [ -z "$scwd" ] && return
-  list=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+  # Reuse the render's mux snapshot when we're jumping in-process; only the
+  # standalone --resolve/--jump invocations need their own `list` call.
+  list="${PANELIST:-}"
+  [ -z "$list" ] && list=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
   [ -z "$list" ] && return
-  target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
-    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
-    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
-      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w)))
-      | select((.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not)
-      | .pane_id ] | first // empty' 2>/dev/null)
-  [ -z "$target" ] && target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
-    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
-    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
-      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w))) | .pane_id ] | first // empty' 2>/dev/null)
+  # Prefer a cwd match whose pane is non-shell (Claude's pane); fall back to any
+  # cwd match if every candidate at that cwd is a plain shell.
+  target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" "
+    $JQ_NORM
+    (\$cwd|norm) as \$w | [ .[] | (.cwd|norm) as \$c
+      | select(\$c==\$w or (\$w|startswith(\$c)) or (\$c|startswith(\$w)))
+      | select($JQ_NONSHELL)
+      | .pane_id ] | first // empty" 2>/dev/null)
+  [ -z "$target" ] && target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" "
+    $JQ_NORM
+    (\$cwd|norm) as \$w | [ .[] | (.cwd|norm) as \$c
+      | select(\$c==\$w or (\$w|startswith(\$c)) or (\$c|startswith(\$w))) | .pane_id ] | first // empty" 2>/dev/null)
   [ -n "$target" ] && printf '%s' "$target"
 }
 
 PANELIST=""
-title_for_cwd() {  # $1 = cwd -> the Claude pane title at that cwd (or nothing)
-  # Same cwd-match + non-shell filter as resolve_key, but returns the pane title
-  # (what Claude set the pane to — its task summary) instead of the pane id.
-  local scwd="$1"
-  [ -z "$scwd" ] && return
-  [ -z "$PANELIST" ] && return
-  printf '%s' "$PANELIST" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" '
-    def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;
-    ($cwd|norm) as $w | [ .[] | (.cwd|norm) as $c
-      | select($c==$w or ($w|startswith($c)) or ($c|startswith($w)))
-      | select((.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not)
-      | .title ] | first // empty' 2>/dev/null
+# Pure-bash cwd normalizer mirroring the jq `norm` above (strip file://, \->/,
+# drop the leading slash before a drive letter, trim trailing /, downcase). Lets
+# title lookups run without a jq process per row.
+norm_bash() {  # sets _norm (no $() subshell per call — forks are slow on Windows)
+  local s="${1#file://}"; s="${s//\\//}"
+  case "$s" in /[A-Za-z]:*) s="${s#/}";; esac
+  s="${s%/}"; _norm="${s,,}"
+}
+# Build the cwd->title map ONCE from the mux snapshot (one jq call for the whole
+# render) instead of one jq per row. Non-shell panes only, as normalized-cwd<TAB>title.
+TCWDS=(); TTITLES=()
+load_titles() {
+  local c t
+  while IFS=$'\t' read -r c t; do
+    [ -z "$c" ] && continue; TCWDS+=("$c"); TTITLES+=("$t")
+  done < <(printf '%s' "$PANELIST" | MSYS_NO_PATHCONV=1 jq -r "
+      $JQ_NORM
+      .[] | select($JQ_NONSHELL) | [(.cwd|norm), .title] | @tsv" 2>/dev/null)
+}
+title_for_cwd() {  # $1 = cwd -> sets _title to the Claude pane title at that cwd (or "")
+  # Same cwd-match + non-shell filter as resolve_key, resolved against the prebuilt
+  # map — no jq and no subshell per call.
+  _title=""; norm_bash "$1"; local w="$_norm"; [ -z "$w" ] && return
+  local i c
+  for i in "${!TCWDS[@]}"; do
+    c="${TCWDS[$i]}"
+    if [ "$c" = "$w" ] || [[ "$w" == "$c"* ]] || [[ "$c" == "$w"* ]]; then
+      _title="${TTITLES[$i]}"; return
+    fi
+  done
 }
 
 do_jump() {  # $1 = KEY -> activate the target pane, robust against the picker
@@ -103,31 +133,69 @@ if [ "$mode" = "--card" ]; then
   exit 0
 fi
 
+# Required tools: fail loudly instead of rendering a silently-empty picker.
+for t in jq wezterm fzf; do
+  command -v "$t" >/dev/null 2>&1 || { printf 'wezview: %s not found on PATH\n' "$t" >&2; exit 1; }
+done
+
+# Opt-in phase profiling: `WEZVIEW_PROFILE=1 wezview` appends per-phase timestamps to
+# ~/.wezview-profile.log so a slow open can be traced to the responsible phase. No-op
+# (and no cost) when the var is unset.
+prof() { [ -n "${WEZVIEW_PROFILE:-}" ] && printf '%s\t%s\n' "${EPOCHREALTIME:-0}" "$1" >> "$HOME/.wezview-profile.log"; return 0; }
+prof start
+
+# Stamp this pane so WezTerm's CTRL+W keybind can recognize the picker and dismiss it
+# with ESC (a clean fzf exit) instead of a force-close, which hangs while the homelab
+# mux is connected. OSC 1337 SetUserVar; value is base64("1") = "MQ==". Written to the
+# controlling tty (fzf captures stdout, so stdout may be a pipe). User vars persist for
+# the pane's life and survive fzf.
+printf '\033]1337;SetUserVar=wezview=MQ==\a' > /dev/tty 2>/dev/null
+
+# Row = state<TAB>host<TAB>cwd<TAB>pane<TAB>ts. `PRUNE` (7d) drops the file; between
+# 1 and 7 days a session is hidden from the list but its file is kept.
+JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts] | @tsv'
+JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
+PRUNE=$(( 7 * 86400 ))
 rows=""
-add_rows() {
-  local line st pane cwd host ts
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    st=$(printf '%s' "$line" | jq -r '.state // "idle"' 2>/dev/null)
-    pane=$(printf '%s' "$line" | jq -r '.pane // ""' 2>/dev/null)
-    cwd=$(printf '%s' "$line" | jq -r '.cwd // ""' 2>/dev/null)
-    host=$(printf '%s' "$line" | jq -r '.host // "?"' 2>/dev/null)
-    ts=$(printf '%s' "$line" | jq -r '.ts // 0' 2>/dev/null)
-    case "$ts" in ''|*[!0-9]*) ts=0;; esac
-    [ "$ts" -gt 0 ] && [ $(( now - ts )) -gt 86400 ] && continue
-    rows+="$st	$host	$cwd	$pane	$ts"$'\n'
-  done
-}
-add_rows < <(for f in "$statedir"/*.json; do [ -e "$f" ] || continue; cat "$f"; echo; done)
-ctl_dir="$HOME/.ssh/cm"; mkdir -p "$ctl_dir" 2>/dev/null
-remote=$(ssh -o ConnectTimeout=3 -o BatchMode=yes -o ControlMaster=auto \
-  -o ControlPath="$ctl_dir/%r@%h:%p" -o ControlPersist=10m \
+
+# Local sessions: one jq per file. Pruning needs the filename, so this stays a
+# per-file loop (vs. the old 5-jq-per-file parse) — the state dir holds only a
+# handful of files.
+for f in "$statedir"/*.json; do
+  [ -e "$f" ] || continue
+  out=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" "
+    $JQ_TS |
+    if \$ts > 0 and \$age > \$prune then \"PRUNE\"
+    elif \$ts > 0 and \$age > 86400 then empty
+    else $JQ_ROW end" "$f" 2>/dev/null)
+  case "$out" in
+    '')    : ;;
+    PRUNE) rm -f "$f" 2>/dev/null ;;
+    *)     rows+="$out"$'\n' ;;
+  esac
+done
+prof gather_local
+
+# Remote (homelab) sessions: a plain one-shot ssh, display-filtered, never pruned
+# (not ours to delete). NO ControlMaster/ControlPersist — over the WireGuard LAN a
+# cold connect is ~0.9s vs ~0.7s multiplexed (a ~0.2s saving), and the persistent
+# master it leaves behind is a detached process that keeps the picker's ConPTY from
+# tearing down, hanging WezTerm on CTRL+W. Not worth 0.2s.
+remote=$(ssh -o ConnectTimeout=3 -o BatchMode=yes \
   daniel-server 'cat ~/.claude/wez-state/*.json 2>/dev/null' < /dev/null 2>/dev/null || true)
-[ -n "$remote" ] && add_rows <<< "$remote"
+if [ -n "$remote" ]; then
+  rrows=$(printf '%s' "$remote" | MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
+    $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" 2>/dev/null)
+  [ -n "$rrows" ] && rows+="$rrows"$'\n'
+fi
+prof ssh_remote
 
 # one mux snapshot for the whole render — used to look up each session's Claude
 # pane title (its task name) by cwd.
 PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+prof wezterm_list
+load_titles
+prof load_titles
 
 # ---- palette (Catppuccin Mocha, truecolor) ----
 E=$'\033'; Z="$E[0m"
@@ -142,37 +210,44 @@ LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
 
-fmt_age() {  # $1 = epoch -> compact "12m"/"3h"/"2d"; empty for unknown/zero ts
-  local t=${1:-0} d
-  case "$t" in ''|*[!0-9]*) echo ""; return;; esac
-  [ "$t" -le 0 ] && { echo ""; return; }
+fmt_age() {  # $1 = epoch -> sets _age: compact "12m"/"3h"/"2d"; empty for unknown/zero ts
+  local t=${1:-0} d; _age=""
+  case "$t" in ''|*[!0-9]*) return;; esac
+  [ "$t" -le 0 ] && return
   d=$(( now - t )); [ "$d" -lt 0 ] && d=0
-  if   [ "$d" -lt 60 ];    then echo "${d}s"
-  elif [ "$d" -lt 3600 ];  then echo "$((d/60))m"
-  elif [ "$d" -lt 86400 ]; then echo "$((d/3600))h"
-  else echo "$((d/86400))d"; fi
+  if   [ "$d" -lt 60 ];    then _age="${d}s"
+  elif [ "$d" -lt 3600 ];  then _age="$((d/60))m"
+  elif [ "$d" -lt 86400 ]; then _age="$((d/3600))h"
+  else _age="$((d/86400))d"; fi
 }
 
-badge_name() {  # $1 = host -> friendly machine tag
-  if [ "$1" = "$selfhost" ]; then echo "PC"
-  else case "$1" in daniel-server) echo "homelab";; *) echo "${1#daniel-}";; esac; fi
+badge_name() {  # $1 = host -> sets _bn: friendly machine tag
+  if [ "$1" = "$selfhost" ]; then _bn="PC"
+  else case "$1" in daniel-server) _bn="homelab";; *) _bn="${1#daniel-}";; esac; fi
 }
 
 build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, grouped
-  local W=72 BADGEW=11 grp st host cwd pane ts name title bn scol stext cnt key age b64
-  local bcell left_p left_c pad sp maxs bpad bfg icon first=1
+  local W=72 BADGEW=11 grp st host cwd pane ts name title bn scol stext cnt key b64 L
+  local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd
+  # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
+  # group loop needs no per-group awk/sort — each of those was a process spawn, and
+  # spawns dominate render time on Windows.
+  local -a sorted; local -A GCNT=()
+  mapfile -t sorted < <(printf '%s' "$rows" | sort -t$'\t' -k5,5nr)
+  for L in "${sorted[@]}"; do st="${L%%$'\t'*}"; [ -n "$st" ] && GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); done
   for grp in needs-input working completed idle; do
-    cnt=$(printf '%s' "$rows" | awk -F'\t' -v g="$grp" '$1==g{n++} END{print n+0}')
+    cnt=${GCNT[$grp]:-0}
     [ "$cnt" -eq 0 ] && continue
     case "$grp" in needs-input) scol="$C_NEED";; working) scol="$C_WORK";; *) scol="$C_DONE";; esac
     [ "$first" -eq 0 ] && printf '\t\t\n'   # blank spacer between groups
     first=0
     printf '\t\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
-    while IFS=$'\t' read -r st host cwd pane ts; do
-      [ -z "$st" ] && continue
-      name=$(basename "${cwd//\\//}" 2>/dev/null); [ -z "$name" ] && name="$cwd"
-      title=$(title_for_cwd "$cwd")
-      bn=$(badge_name "$host")
+    for L in "${sorted[@]}"; do
+      IFS=$'\t' read -r st host cwd pane ts <<< "$L"
+      [ "$st" = "$grp" ] || continue
+      fwd="${cwd//\\//}"; name="${fwd%/}"; name="${name##*/}"; [ -z "$name" ] && name="$cwd"
+      title_for_cwd "$cwd"; title="$_title"
+      badge_name "$host"; bn="$_bn"
       case "$bn" in
         PC)      bfg="$E[38;2;137;180;250m"; icon=$'';;   # blue  — desktop
         homelab) bfg="$E[38;2;203;166;247m"; icon=$'';;   # mauve — server
@@ -187,17 +262,17 @@ build_pretty() {  # prints "KEY<TAB>B64DATA<TAB>COLORED-DISPLAY" per row, groupe
       case "$grp" in
         needs-input) scol="$C_NEED"; stext="${title:-needs input}";;
         working)     scol="$C_WORK"; stext="${title:-working}";;
-        completed)   scol="$C_DONE"; age=$(fmt_age "$ts"); [ -n "$age" ] && stext="✓ idle $age" || stext="✓ completed";;
-        *)           scol="$C_DONE"; age=$(fmt_age "$ts"); [ -n "$age" ] && stext="· idle $age" || stext="· idle";;
+        completed)   scol="$C_DONE"; fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
+        *)           scol="$C_DONE"; fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac
       maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
       pad=$(( W - ${#left_p} - ${#stext} )); [ "$pad" -lt 1 ] && pad=1
       printf -v sp '%*s' "$pad" ''
-      key=$(printf '%s%s%s%s%s' "$host" "$US" "$cwd" "$US" "${pane:-none}")
+      printf -v key '%s%s%s%s%s' "$host" "$US" "$cwd" "$US" "${pane:-none}"
       b64=$(printf '%s\037%s\037%s\037%s\037%s\037%s' "$host" "$cwd" "$grp" "$ts" "$title" "$pane" | base64 -w0)
       printf '%s\t%s\t%s%s%s%s%s\n' "$key" "$b64" "$left_c" "$sp" "$scol" "$stext" "$Z"
-    done < <(printf '%s' "$rows" | awk -F'\t' -v g="$grp" '$1==g' | sort -t"$(printf '\t')" -k5,5nr)
+    done
   done
 }
 
@@ -209,6 +284,7 @@ htext="${total} session$(sfx "$total") · ${machines} machine$(sfx "$machines")"
 printf -v hdrline '%*s' 72 "$htext"
 
 body=$(build_pretty)
+prof build_pretty
 [ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 
 SELF="$HOME/.local/bin/wezview"

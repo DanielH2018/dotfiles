@@ -22,8 +22,17 @@ if [ -z "$pane" ] && [ -f "$file" ]; then                 # keep last-known pane
 fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)
-jq -nc --arg pane "$pane" --arg state "$state" --arg cwd "$cwd" \
+# MSYS_NO_PATHCONV: on Windows a native jq.exe lets Git-Bash rewrite a leading-slash
+# --arg (a POSIX cwd like /home/ubuntu) into a drive path before jq sees it; disable
+# it (no-op on Linux, where this same hook also runs). Write via temp + mv so a
+# concurrent hook event on the same session can never observe a half-written file.
+tmp="$file.tmp.$$"
+if MSYS_NO_PATHCONV=1 jq -nc --arg pane "$pane" --arg state "$state" --arg cwd "$cwd" \
        --arg session "$sid" --arg host "$host" --argjson ts "${ts:-0}" \
        '{pane:$pane,state:$state,cwd:$cwd,session:$session,host:$host,ts:$ts}' \
-       > "$file" 2>/dev/null
+       > "$tmp" 2>/dev/null; then
+  mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+else
+  rm -f "$tmp" 2>/dev/null
+fi
 exit 0
