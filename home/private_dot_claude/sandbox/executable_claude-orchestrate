@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# claude-orchestrate: start a READ-ONLY host orchestrator session (appears in Agent View).
+#
+# The orchestrator plans and reviews on the host but cannot mutate files directly (Edit /
+# Write / NotebookEdit are denied). All implementation happens inside claude-sandbox, one
+# step at a time, via `sandbox-dispatch`. Flags mirror the relevant subset of claude-sandbox
+# and set the target the dispatched implementers work on.
+#
+# With -w/-b, the orchestrator runs *in the branch's worktree* (created via claude-sandbox
+# if absent), so its own session history is scoped per branch and auto-resumes — matching
+# how `claude-sandbox -b <branch>` resumes your implementer sessions.
+#
+# Usage: claude-orchestrate [-w|--worktree NAME] [-b|--branch BRANCH] [--fresh] [<repo-path>]
+set -euo pipefail
+
+SB="$HOME/.claude/sandbox"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: claude-orchestrate [-w|--worktree NAME] [-b|--branch BRANCH] [--fresh|--new] [<repo-path>]
+
+  -w, --worktree NAME  Orchestrate + dispatch in worktree claude/NAME (created if absent).
+  -b, --branch BRANCH  Orchestrate + dispatch on existing BRANCH. Cannot combine with -w.
+      --fresh, --new   Start a new orchestrator session (default: resume the last one).
+      --bg, --background  Dispatch as a background agent (no terminal; shows in Agent View)
+                       instead of an interactive session.
+  -m, --message TEXT   Seed the (--bg) orchestrator with an initial task. Optional.
+  -h, --help           Show this help.
+  <repo-path>          Repo to orchestrate. A bare name resolves under ~/Repositories/.
+                       Defaults to the current directory.
+EOF
+  exit "${1:-1}"
+}
+
+USE_WORKTREE=false
+BRANCH_MODE=false
+WT_NAME=""
+BRANCH=""
+FRESH=false
+REPO_PATH=""
+BG=false
+MESSAGE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -w|--worktree)
+      USE_WORKTREE=true; shift
+      if [[ $# -gt 0 && "$1" != -* && "$1" != /* && "$1" != .* ]]; then WT_NAME="$1"; shift; fi
+      ;;
+    -b|--branch)
+      BRANCH_MODE=true; shift
+      [[ $# -gt 0 && "$1" != -* ]] || { echo "Error: -b/--branch requires a branch name" >&2; exit 1; }
+      BRANCH="$1"; shift
+      ;;
+    --fresh|--new) FRESH=true; shift ;;
+    --bg|--background) BG=true; shift ;;
+    -m|--message)
+      shift; [[ $# -gt 0 ]] || { echo "Error: -m/--message requires text" >&2; exit 1; }
+      MESSAGE="$1"; shift ;;
+    -h|--help) usage 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage ;;
+    *) REPO_PATH="$1"; shift ;;
+  esac
+done
+
+[[ "$USE_WORKTREE" == true && "$BRANCH_MODE" == true ]] && { echo "Error: -w and -b are mutually exclusive" >&2; exit 1; }
+# A stable worktree name is required for per-branch session continuity.
+[[ "$USE_WORKTREE" == true && -z "$WT_NAME" ]] && { echo "Error: -w/--worktree requires a NAME" >&2; exit 1; }
+
+REPO_PATH="${REPO_PATH:-$PWD}"
+# Bare name -> ~/Repositories/<name>, mirroring claude-sandbox.
+if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
+  REPO_PATH="$HOME/Repositories/$REPO_PATH"
+fi
+[[ -d "$REPO_PATH/.git" || -f "$REPO_PATH/.git" ]] || { echo "claude-orchestrate: not a git repository: $REPO_PATH" >&2; exit 1; }
+REPO_ABS="$(cd "$REPO_PATH" && pwd)"
+
+# Resolve the working directory. With -w/-b, reuse claude-sandbox's worktree logic so the
+# path/branch match exactly what a dispatched implementer will reuse (created if absent).
+WORK_DIR="$REPO_ABS"
+if [[ "$BRANCH_MODE" == true || "$USE_WORKTREE" == true ]]; then
+  if [[ "$BRANCH_MODE" == true ]]; then
+    SBX_ARGS=(--setup-worktree -b "$BRANCH" "$REPO_ABS")
+    DISPATCH_HINT="sandbox-dispatch -b $BRANCH \"$REPO_ABS\" \"<task>\""
+    TARGET_DESC="existing branch '$BRANCH'"
+  else
+    SBX_ARGS=(--setup-worktree -w "$WT_NAME" "$REPO_ABS")
+    DISPATCH_HINT="sandbox-dispatch \"$REPO_ABS\" $WT_NAME \"<task>\""
+    TARGET_DESC="worktree 'claude/$WT_NAME'"
+  fi
+  if ! WORK_DIR="$(claude-sandbox "${SBX_ARGS[@]}")"; then
+    echo "claude-orchestrate: failed to set up the worktree" >&2
+    exit 1
+  fi
+else
+  DISPATCH_HINT="sandbox-dispatch \"$REPO_ABS\" <worktree-name> \"<task>\"   (pick one stable <worktree-name> for this feature)"
+  TARGET_DESC="a worktree you name"
+fi
+
+SESSION_CONTEXT="For this session, orchestrate repo: $REPO_ABS
+Dispatch implementers to $TARGET_DESC using exactly this command shape:
+  $DISPATCH_HINT"
+
+# (B) Point at existing claude-sandbox (implementer) sessions for this branch — those are
+# separate, full-permission container sessions, resumed via claude-sandbox, not here.
+if [[ "$BRANCH_MODE" == true ]]; then
+  echo "Your claude-sandbox sessions for '$BRANCH': claude-sandbox -b $BRANCH $REPO_ABS  (all: claude-sandbox --list $REPO_ABS)" >&2
+elif [[ "$USE_WORKTREE" == true ]]; then
+  echo "Your claude-sandbox sessions for '$WT_NAME': claude-sandbox -w $WT_NAME $REPO_ABS  (all: claude-sandbox --list $REPO_ABS)" >&2
+fi
+
+# Resume this orchestrator's prior session for the working dir unless --fresh (fail-safe:
+# start cold rather than error on --continue if no transcript exists yet).
+PROJECTS_DIR="$HOME/.claude/projects/${WORK_DIR//\//-}"
+RESUME=false
+if [[ "$FRESH" == false && -n "$(find "$PROJECTS_DIR" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
+  RESUME=true
+fi
+
+CLAUDE_ARGS=(
+  --settings "$SB/orchestrator-settings.json"
+  --append-system-prompt "$(cat "$SB/orchestrator-role.md")
+
+$SESSION_CONTEXT"
+)
+[[ "$RESUME" == true ]] && CLAUDE_ARGS+=(--continue)
+
+cd "$WORK_DIR"
+if [[ "$BG" == true ]]; then
+  # Background agent: no TTY needed, shows in Agent View. The read-only deny
+  # (Edit/Write/NotebookEdit) is enforced by --settings; --disallowedTools is not a
+  # --bg-supported flag, and the settings deny alone has been verified to block writes.
+  BG_ARGS=(--bg "${CLAUDE_ARGS[@]}")
+  [[ -n "$MESSAGE" ]] && BG_ARGS+=("$MESSAGE")
+  echo "Dispatching background orchestrator (appears in Agent View)…" >&2
+  exec claude "${BG_ARGS[@]}"
+fi
+# Interactive session (requires a TTY); --disallowedTools adds belt-and-suspenders on
+# top of the --settings deny.
+exec claude --disallowedTools Edit Write NotebookEdit "${CLAUDE_ARGS[@]}"

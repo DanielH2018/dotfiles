@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "deny": ["Edit", "Write", "NotebookEdit"],
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Task",
+      "TodoWrite",
+      "Bash(sandbox-dispatch:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(rg:*)",
+      "Bash(fd:*)"
+    ]
+  }
+}

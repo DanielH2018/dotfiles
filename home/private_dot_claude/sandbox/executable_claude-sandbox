@@ -51,6 +51,10 @@ usage() {
   echo "  --shell            Open an interactive bash shell instead of Claude. If a session for"
   echo "                     this repo/worktree is already running, exec into that live container;"
   echo "                     otherwise launch a standalone hardened shell. Unaudited (see warning)."
+  echo "  --exec, -x PROMPT  Headless: run one non-interactive implementer (claude -p PROMPT) in"
+  echo "                     the container. Readable progress -> stderr, final result -> stdout"
+  echo "                     (between <<<EXEC_RESULT>>> markers), full stream-json -> /audit."
+  echo "                     For orchestrator-dispatched work. Cannot combine with --shell."
   echo "  --fresh, --new     Start a new conversation even if this instance has a prior"
   echo "                     session. By default an existing session auto-resumes (--continue)."
   exit 1
@@ -82,6 +86,9 @@ NO_REPOS=false
 REPOS_LIVE=false
 FRESH_SESSION=false
 SHELL_MODE=false
+EXEC_MODE=false
+EXEC_PROMPT=""
+SETUP_WORKTREE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --list) LIST_SESSIONS=true; shift ;;
     --complete-worktrees) COMPLETE_WORKTREES=true; shift ;;
     --complete-branches) COMPLETE_BRANCHES=true; shift ;;
+    --setup-worktree) SETUP_WORKTREE=true; shift ;;
     --prune) PRUNE_WORKTREES=true; shift ;;
     --gc) GC_WORKTREES=true; shift ;;
     --_preview) PREVIEW_MODE=true; shift; PREVIEW_ARGS=("$@"); break ;;
@@ -129,6 +137,15 @@ while [[ $# -gt 0 ]]; do
     --no-repos) NO_REPOS=true; shift ;;
     --repos-live) REPOS_LIVE=true; shift ;;
     --shell) SHELL_MODE=true; shift ;;
+    --exec|-x)
+      EXEC_MODE=true
+      shift
+      if [[ $# -gt 0 && "$1" != -* ]]; then
+        EXEC_PROMPT="$1"; shift
+      else
+        echo "Error: --exec/-x requires a prompt string" >&2; exit 1
+      fi
+      ;;
     --fresh|--new) FRESH_SESSION=true; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
@@ -136,8 +153,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$EXEC_MODE" == true ]]; then
+  [[ "$SHELL_MODE" == true ]] && { echo "Error: --exec cannot combine with --shell" >&2; exit 1; }
+  [[ -z "$EXEC_PROMPT" ]] && { echo "Error: --exec requires a non-empty prompt" >&2; exit 1; }
+  [[ -z "$REPO_PATH" ]] && { echo "Error: --exec requires a <repo-path>" >&2; exit 1; }
+fi
+
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_BRANCHES" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_BRANCHES" == false && "$SETUP_WORKTREE" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -1610,6 +1633,18 @@ if [[ "$GC_WORKTREES" == true ]]; then
   exit 0
 fi
 
+# --- Ensure a worktree exists and print its path, then exit (early exit) ---
+# Reuses setup_worktree() so callers (e.g. claude-orchestrate) get the exact same
+# path/branch and creation behaviour without duplicating it. Info -> stderr; the
+# resolved worktree path is the only thing on stdout. No Docker, no cleanup trap.
+if [[ "$SETUP_WORKTREE" == true ]]; then
+  [[ "$USE_WORKTREE" == true || "$BRANCH_MODE" == true ]] \
+    || { echo "Error: --setup-worktree requires -w NAME or -b BRANCH" >&2; exit 1; }
+  setup_worktree >&2
+  printf '%s\n' "$WORK_PATH"
+  exit 0
+fi
+
 # --- GC nudge on normal launch ---
 check_gc_nudge
 
@@ -1704,8 +1739,11 @@ if [[ -f "$DOCKERFILE" ]]; then
 fi
 
 # Build docker run args
+# Headless --exec pipes container stdout to a filter, so no TTY (-t); -i keeps stdin open.
+TTY_FLAGS=(-it)
+[[ "$EXEC_MODE" == true ]] && TTY_FLAGS=(-i)
 DOCKER_ARGS=(
-  --rm -it
+  --rm "${TTY_FLAGS[@]}"
   --name "claudebot-$RUN_ID"
   --cap-drop all
   --security-opt no-new-privileges
@@ -2097,6 +2135,9 @@ fi
 
 # A standalone bash shell doesn't need cloud MCP auth — don't force the OAuth prompt.
 [[ "$SHELL_MODE" == true ]] && AUTH_NEEDED=false
+# Headless --exec can't complete an interactive OAuth flow; skip it (base auth comes from
+# the mounted .credentials.json — cloud MCPs are simply unavailable to the implementer).
+[[ "$EXEC_MODE" == true ]] && AUTH_NEEDED=false
 
 if [[ "$AUTH_NEEDED" == true ]]; then
   echo "================================================"
@@ -2172,6 +2213,23 @@ if [[ "$SHELL_MODE" == true ]]; then
   echo "Warning: this shell is UNAUDITED — commands run here are not logged to /audit" >&2
   echo "         (only Claude's tool calls are)." >&2
   CLAUDE_ARGS=(bash -l)
+elif [[ "$EXEC_MODE" == true ]]; then
+  # Headless implementer for orchestrator-dispatched work. The full stream-json trace is
+  # tee'd to /audit; exec-stream.py renders readable progress to stderr and the clean final
+  # result to stdout between <<<EXEC_RESULT>>> markers. entrypoint.sh's `exec "$@"` runs it.
+  CLAUDE_ARGS=(claude -p "$EXEC_PROMPT" --dangerously-skip-permissions --output-format stream-json --verbose)
+  [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+  EXEC_LOG="$AUDIT_DIR/exec-$RUN_ID.jsonl"
+  echo "Dispatching headless implementer (trace: $EXEC_LOG)…" >&2
+  if docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}" \
+       | tee "$EXEC_LOG" \
+       | python3 "$SANDBOX_DIR/exec-stream.py"; then
+    EXEC_RC=0
+  else
+    EXEC_RC=$?
+  fi
+  echo "Full trace: $EXEC_LOG" >&2
+  exit "$EXEC_RC"
 else
   # Command mirrors the image default CMD (Dockerfile.base) so overriding it to
   # append --continue keeps the same base invocation. entrypoint.sh's `exec "$@"`
