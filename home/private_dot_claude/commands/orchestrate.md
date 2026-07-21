@@ -1,28 +1,30 @@
 ---
-description: "Launch a read-only background orchestrator for a repo/branch (appears in Agent View)."
-argument-hint: "[repo] [-w NAME | -b BRANCH] [--fresh] [-m TASK]"
+description: "Launch a read-only background orchestrator for a repo + worktree/branch (appears in Agent View)."
+argument-hint: "[repo] (-w NAME | -b BRANCH) [--fresh]"
 ---
 
-Launch a background orchestrator for the given target. It plans and dispatches
-sandboxed implementers via `sandbox-dispatch`, but cannot edit files itself — all
-implementation happens inside `claude-sandbox`.
+Launch a background orchestrator for a repo and a worktree/branch. It plans and
+dispatches sandboxed implementers via `sandbox-dispatch`, but cannot edit files itself —
+all implementation happens inside `claude-sandbox`.
 
-The TUI can't tab-complete argument values, so surface the choices when the target is
-underspecified (same sources the shell completion uses); otherwise skip straight to launch:
-- No repo in `$ARGUMENTS` → list options with `ls -1 ~/Repositories`.
-- Repo given but the worktree/branch is unclear or the user asks → run
-  `claude-sandbox --complete-worktrees <repo>` and `claude-sandbox --complete-branches <repo>`
-  and present the results to pick from.
+A repository AND a worktree/branch are BOTH required before spawning. Resolve them in
+this order, asking the user and listing valid options for whatever is missing:
 
-Once the target is clear, run exactly this, passing the user's arguments through verbatim:
+1. **Repository (ask first).** If `$ARGUMENTS` has no repo, list the options with
+   `ls -1 ~/Repositories` and ask the user to pick one. Do not proceed to step 2 until
+   the repo is known.
+2. **Worktree or branch.** Once the repo is known, if `$ARGUMENTS` has neither `-w` nor
+   `-b`, list the options with `claude-sandbox --complete-worktrees <repo>` and
+   `claude-sandbox --complete-branches <repo>`, and ask the user to choose an existing
+   worktree/branch or give a new worktree name.
+
+Only once you have BOTH a repo and a `-w NAME`/`-b BRANCH`, run exactly:
 
 ```
-claude-orchestrate --bg $ARGUMENTS
+claude-orchestrate --bg <repo> <-w NAME | -b BRANCH>
 ```
 
-`$ARGUMENTS` is a repo (a bare name resolves under `~/Repositories`) plus optional
-`-w NAME` / `-b BRANCH` / `--fresh`, e.g. `airflow -b my-feature`.
-Append `-m "<task>"` to seed the orchestrator with an initial task.
-
-Then report the background agent that was dispatched and note that it appears in the
-Agent View. Do not perform the implementation work yourself.
+Pass `--fresh` if the user wants a new session, and `-m "<task>"` to seed an initial task.
+Then report the background agent that was dispatched and note it appears in the Agent
+View. Do not perform the implementation work yourself, and do not spawn without both a
+repo and a worktree/branch.

@@ -80,6 +80,7 @@ _claude-sandbox() {
       local -a repos
       if [[ -d "$HOME/Repositories" ]]; then
         repos=(${(f)"$(ls -1 "$HOME/Repositories" 2>/dev/null)"})
+        repos=(${repos:#*-wt-*})   # drop worktree dirs (<repo>-wt-<name>)
       fi
       if [[ ${#repos} -gt 0 ]]; then
         _alternative \
