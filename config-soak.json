@@ -133,8 +133,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_wezterm-state.sh",
-      "hash": "fc470b05c011381737e656a5e1cbf07e82c5e749f09e07d57284e6fc6fb93acc",
-      "landed": "2026-07-20T14:44:51.590Z"
+      "hash": "87017217b063ab199f4a8bd4c84f30319faa99283bd35c0690ca2df34cd85b91",
+      "landed": "2026-07-21T17:10:24.947Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
