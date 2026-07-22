@@ -144,24 +144,12 @@ bindkey '^[[1;5C' forward-word
 bindkey '^[[1;5D' backward-word
 
 # =============================================================================
-# FASTFETCH (wrapper picks the best image protocol per terminal; banner on login)
+# FASTFETCH (banner on login; per-terminal logo logic is _ff_banner in common.sh)
 # =============================================================================
-# Wrap fastfetch to pick the best image protocol per terminal.
-fastfetch() {
-  if [[ "$TERM_PROGRAM" == "ghostty" ]]; then
-    command fastfetch --logo-type kitty-direct "$@"
-  elif [[ "$TERMINAL_EMULATOR" == "JetBrains-JediTerm" ]]; then
-    command fastfetch --logo-type small "$@"
-  else
-    command fastfetch "$@"
-  fi
-}
-
-# Login shells only, to avoid slowing every new tab. `command -v` would match the
-# fastfetch() wrapper above (always true); $+commands tests zsh's external-command table,
-# so the banner runs only when the binary is installed.
+# Login shells only, to avoid slowing every new tab. $+commands tests zsh's
+# external-command table, so the banner runs only when the binary is installed.
 if [[ -o login ]] && (( $+commands[fastfetch] )); then
-  fastfetch
+  _ff_banner
 fi
 
 # =============================================================================

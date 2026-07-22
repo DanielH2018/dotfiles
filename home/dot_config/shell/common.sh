@@ -111,12 +111,39 @@ if command -v yazi >/dev/null 2>&1; then
   }
 fi
 
+# --- fastfetch: system-info banner with the best logo/image protocol per terminal ---
+# One implementation for both shells (bash and zsh diverged here before): each rc calls it
+# in its login-only block, and `sysinfo` runs it on demand. Windows ships a trimmed-logo
+# dir (chezmoiignore'd elsewhere) for a random iterm image; other terminals pick their
+# native protocol; everything else falls back to fastfetch's own globbed logo.
+if command -v fastfetch >/dev/null 2>&1; then
+  _ff_banner() {
+    local dir="$HOME/.config/fastfetch/logos-trimmed" logo=""
+    if [ -d "$dir" ]; then
+      # `command ls` bypasses the eza alias above; list+grep (no glob) stays nomatch-safe
+      # in zsh. sort -R makes the pick random.
+      logo="$(command ls "$dir" 2>/dev/null | grep -i '\.png$' | sort -R | head -n1)"
+      [ -n "$logo" ] && logo="$dir/$logo"
+    fi
+    if [ -n "$logo" ]; then
+      command fastfetch --logo-type iterm --logo "$logo" --logo-width 24 --logo-height 12 \
+        --logo-preserve-aspect-ratio --logo-padding-right 1
+    elif [ "$TERM_PROGRAM" = "ghostty" ]; then
+      command fastfetch --logo-type kitty-direct
+    elif [ "$TERMINAL_EMULATOR" = "JetBrains-JediTerm" ]; then
+      command fastfetch --logo-type small
+    else
+      command fastfetch
+    fi
+  }
+  alias sysinfo='_ff_banner'
+fi
+
 # --- Quality-of-life aliases & functions ---
 alias c="clear"
 alias ..='cd ..'
 alias ...='cd ../..'
 command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
-command -v fastfetch >/dev/null 2>&1 && alias sysinfo='fastfetch'
 mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
 psgrep() { ps aux | grep -i "$1" | grep -v grep; }
 

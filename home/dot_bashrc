@@ -72,19 +72,9 @@ bind 'set enable-active-region off' 2>/dev/null
 # end-of-line), which WezTerm/Windows render as a full-window flash.
 bind 'set bell-style none' 2>/dev/null
 
-# --- fastfetch banner on login shells only ---
-if shopt -q login_shell && command -v fastfetch >/dev/null 2>&1; then
-  # Windows: fastfetch's iterm logo can't glob for a random image, so pick a random
-  # trimmed shape here. The trimmed dir only exists on Windows (chezmoiignore'd elsewhere),
-  # so on macOS/Linux _logos is empty and fastfetch falls back to its own globbed logo.
-  # Bash glob (not `ls`, which is aliased to eza in common.sh) so we get a clean path.
-  _logos=("$HOME"/.config/fastfetch/logos-trimmed/*.png)
-  if [ -e "${_logos[0]}" ]; then
-    fastfetch --logo-type iterm --logo "${_logos[RANDOM % ${#_logos[@]}]}" --logo-width 24 --logo-height 12 --logo-preserve-aspect-ratio --logo-padding-right 1
-  else
-    fastfetch
-  fi
-  unset _logos
+# --- fastfetch banner on login shells only (per-terminal logo logic: _ff_banner in common.sh) ---
+if shopt -q login_shell && command -v _ff_banner >/dev/null 2>&1; then
+  _ff_banner
 fi
 
 # Machine-local bash config (per-machine; absent on portable machines).
