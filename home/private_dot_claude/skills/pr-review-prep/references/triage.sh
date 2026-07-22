@@ -25,6 +25,10 @@ metrics() {
   local groups="${1:-1}"
   local def base
   def="$(default_branch)"
+  if ! git rev-parse -q --verify "origin/${def}" >/dev/null 2>&1; then
+    echo "Cannot compute metrics: origin/${def} not found — run 'git fetch origin' first." >&2
+    return 3
+  fi
   base="$(git merge-base "origin/$def" HEAD)"
 
   # NOTE: awk's END block must emit a trailing newline -- under `set -e`,

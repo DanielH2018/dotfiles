@@ -9,16 +9,28 @@ Make a feature branch review-ready. Repo-agnostic; degrades gracefully when
 `gh`, `gh-stack`, or `pr-curator` are absent.
 
 All deterministic git math and safety checks live in `references/triage.sh`
-in this skill's directory. Run its subcommands from the skill directory, e.g.
-`bash references/triage.sh <cmd>` (or resolve the skill directory at runtime
-and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
+in this skill's directory. `triage.sh` uses the ambient working directory for
+every git call it makes (it never passes `git -C`), so it MUST be invoked
+with the current working directory set to the TARGET repository's root — the
+repo whose PR you're preparing, not this skill's directory. Resolve the
+skill's absolute path once and invoke it by absolute path from within the
+target repo, e.g. `bash /abs/path/to/skills/pr-review-prep/references/triage.sh <cmd>`.
+Running it with the cwd set to anywhere other than the target repo root
+(including this skill's own directory) would inspect the wrong repo entirely
+and silently produce bogus `metrics` output and a defeated `guard-branch`
+check.
 
 ## Preconditions (run first, in order)
 
-1. `bash references/triage.sh guard-branch` — if it exits non-zero, STOP and
-   report; never proceed on a protected branch.
-2. Confirm a clean working tree (`git status --porcelain` empty). If dirty,
+1. Confirm the current working directory is the target repo's root (the repo
+   whose PR you're preparing) — not the skill directory, not some other repo.
+   All `triage.sh` invocations below assume this.
+2. `bash <abs-skill-dir>/references/triage.sh guard-branch` — if it exits
+   non-zero, STOP and report; never proceed on a protected branch.
+3. Confirm a clean working tree (`git status --porcelain` empty). If dirty,
    STOP and ask the user to commit or stash.
+4. `git fetch origin` — ensure `origin/<default>` is current before any
+   merge-base math or rebase below relies on it.
 
 ## Step 1 — Reviewability triage (always)
 
@@ -26,7 +38,7 @@ and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
    in `merge-base(origin/<default>, HEAD)..HEAD` by top-level module/dir,
    mapping test files back to the module they cover; count groups that share
    no edited files and don't reference each other's changed symbols.
-2. Run `bash references/triage.sh metrics <group-count>`.
+2. Run `bash <abs-skill-dir>/references/triage.sh metrics <group-count>`.
 3. Present the review-cost readout to the user, e.g.:
    `Review cost: <files> files · +<add>/−<del> · <commits> real commits (+<merges> merge, +<fixups> fixup) · <groups> separable concerns`
    followed by the recommendation implied by `needs_history_cleanup` and
@@ -36,17 +48,31 @@ and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
 
 ## Step 2 — Clean up history (only if needs_history_cleanup and user confirms)
 
-1. `REF="$(bash references/triage.sh backup)"` — create the backup ref. Tell
-   the user: "Backed up to `<REF>`; restore with `git reset --hard <REF>`."
-2. `git rebase origin/<default>` (use `bash references/triage.sh
-   default-branch` for `<default>`) to linearize and drop merge commits. If
-   conflicts arise, resolve or hand back to the user; never `--skip` silently.
-3. Propose a regrouping plan IN PROSE before the reorder/squash: the target
+1. `REF="$(bash <abs-skill-dir>/references/triage.sh backup)"` — create the
+   backup ref. This is the RESTORE POINT for the whole operation (pre-rebase,
+   pre-everything). Tell the user: "Backed up to `<REF>`; restore with
+   `git reset --hard <REF>`."
+2. `git fetch origin` (if not already done in Preconditions) then
+   `git rebase origin/<default>` (use `bash <abs-skill-dir>/references/triage.sh
+   default-branch` for `<default>`) to linearize and drop merge commits, and to
+   legitimately integrate any upstream changes to origin/<default> into HEAD.
+   If conflicts arise, resolve or hand back to the user; never `--skip`
+   silently.
+3. `CHECKPOINT="$(bash <abs-skill-dir>/references/triage.sh backup)"` — capture
+   a second backup ref at the post-rebase HEAD. This checkpoint's content
+   (including whatever upstream changes the rebase just integrated) is what
+   the reorder/squash below must preserve exactly — it is a DIFFERENT ref from
+   `$REF` (HEAD has a new sha after the rebase), and it is what the tree-equal
+   gate in step 6 checks against, NOT `$REF`. Checking against `$REF` here
+   would be wrong: it would compare post-squash content against the
+   pre-rebase tree, and any branch that was behind origin/<default> would
+   fail the gate purely because of legitimately-integrated upstream changes.
+4. Propose a regrouping plan IN PROSE before the reorder/squash: the target
    semantic commits, which current commits fold into each, and a why-focused
    message per target (explain WHY, not just what — per the user's git
    convention). Fold any commit that reverses an earlier approach on the branch
    into the commit it corrects, so the reviewer never reads an undone approach.
-4. On confirmation, execute the reorder/squash non-interactively:
+5. On confirmation, execute the reorder/squash non-interactively:
    - Generate the rebase todo and drive it via
      `GIT_SEQUENCE_EDITOR='cp <todo-file>' git rebase -i <base>`, using `pick`
      for the commit leading each semantic group and `fixup` (NOT `squash`)
@@ -60,10 +86,13 @@ and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
    - Explicitly set a non-interactive editor as defense in depth (e.g.
      `GIT_EDITOR=true`) so no step can block waiting on an editor.
    - On conflict, resolve or hand back to the user; never `git rebase --skip`
-     silently — the backup ref from step 1 remains the restore point.
-5. `bash references/triage.sh assert-tree-equal "$REF"` — if it exits
-   non-zero, STOP, do NOT push, show the user the reported diff and the
-   restore command. This is a hard gate.
+     silently — the backup ref from step 1 (`$REF`) remains the restore point.
+6. `bash <abs-skill-dir>/references/triage.sh assert-tree-equal "$CHECKPOINT"`
+   — if it exits non-zero, STOP, do NOT push, show the user the reported diff
+   and the restore command `git reset --hard $REF`. This is a hard gate, and
+   it validates only that the reorder/squash preserved content relative to
+   the post-rebase checkpoint — not that the branch was already up to date
+   with origin/<default>.
 
 Safety constraints throughout: never a plain `git push --force` (a later step
 uses `--force-with-lease`), never `--no-verify`, never bypass commit signing.

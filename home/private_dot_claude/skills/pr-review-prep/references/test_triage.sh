@@ -223,6 +223,79 @@ test_backup_sanitizes_slash_branch() {
 }
 test_backup_sanitizes_slash_branch
 
+# feature branch: 2 clean commits, no merges, no fixup-like subjects, few
+# commits (<=6). Discriminates the negative case of needs_history_cleanup:
+# if any disjunct in `[ merges>0 ] || [ fixups>0 ] || [ commits>6 ]` were
+# wrongly tripped by ordinary commits, this would flip to true.
+mk_clean_small_branch() {
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/clean
+  echo a > "$d/a.txt"; git -C "$d" add a.txt
+  git -C "$d" commit -q -m "Add a"
+  echo b > "$d/b.txt"; git -C "$d" add b.txt
+  git -C "$d" commit -q -m "Add b"
+  echo "$d"
+}
+
+test_metrics_clean_small_branch_no_cleanup() {
+  local d; d="$(mk_clean_small_branch)"
+  local out; out="$(cd "$d" && bash "$TRIAGE" metrics 1)"
+  echo "$out" | grep -qx "needs_history_cleanup=false" \
+    && pass "needs_history_cleanup=false on clean small branch" \
+    || fail "needs_history_cleanup on clean small branch: $out"
+  echo "$out" | grep -qx "merges=0" && pass "clean branch has no merges" || fail "merges: $out"
+  echo "$out" | grep -qx "fixups=0" && pass "clean branch has no fixups" || fail "fixups: $out"
+}
+test_metrics_clean_small_branch_no_cleanup
+
+# feature branch: a single commit whose diff exceeds 400 changed lines, but
+# with few files (<=10) and few commits (<=6) -- isolates the `net>400`
+# disjunct of split_worthy's size check from the `files>10` and `commits>6`
+# disjuncts, which are both false here.
+mk_large_diff_branch() {
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/largediff
+  seq 1 500 > "$d/big.txt"
+  git -C "$d" add big.txt
+  git -C "$d" commit -q -m "Add large file"
+  echo "$d"
+}
+
+test_metrics_split_worthy_net_over_400() {
+  local d; d="$(mk_large_diff_branch)"
+  local out2; out2="$(cd "$d" && bash "$TRIAGE" metrics 2)"
+  echo "$out2" | grep -qx "files=1" && pass "large-diff branch has 1 file" || fail "files: $out2"
+  echo "$out2" | grep -qx "commits=1" && pass "large-diff branch has 1 commit" || fail "commits: $out2"
+  echo "$out2" | grep -qx "net=500" && pass "large-diff branch net=500" || fail "net: $out2"
+  echo "$out2" | grep -qx "split_worthy=true" \
+    && pass "split_worthy true via net>400 disjunct when groups>=2" \
+    || fail "split_worthy(net>400,groups=2): $out2"
+
+  local out1; out1="$(cd "$d" && bash "$TRIAGE" metrics 1)"
+  echo "$out1" | grep -qx "split_worthy=false" \
+    && pass "split_worthy false when groups=1 despite net>400" \
+    || fail "split_worthy(net>400,groups=1): $out1"
+}
+test_metrics_split_worthy_net_over_400
+
+# No 'origin' remote at all, so origin/<default> can never resolve -- metrics
+# must degrade gracefully with a clear stderr message and a distinct exit
+# code, not a raw `git merge-base` fatal error under `set -e`.
+test_metrics_missing_origin_default_guard() {
+  local d; d="$(new_tmpdir)"
+  git -C "$d" init -q -b main
+  git -C "$d" config user.email t@t.co; git -C "$d" config user.name t
+  git -C "$d" commit -q --allow-empty -m init
+  local out rc
+  out="$(cd "$d" && bash "$TRIAGE" metrics 1 2>&1)" && rc=0 || rc=$?
+  [ "$rc" -eq 3 ] && pass "metrics exits 3 when origin/<default> missing" \
+    || fail "metrics missing-origin exit code: got $rc"
+  echo "$out" | grep -q "run 'git fetch origin' first" \
+    && pass "metrics missing-origin prints guard message" \
+    || fail "metrics missing-origin message: $out"
+}
+test_metrics_missing_origin_default_guard
+
 test_assert_tree_equal_missing_ref() {
   local d; d="$(mk_repo)"
   local out rc
