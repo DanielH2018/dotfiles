@@ -135,8 +135,14 @@ config.keys = {
 		domain = { DomainName = "local" },
 		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "--noprofile", "--norc", "-c", "agentview" },
 	}) },
-	-- Spawn a tab on the homelab (daniel-server) via the persistent mux domain
-	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "daniel-server" }) },
+	-- Homelab entry: a local tab that ssh's in and attaches (or creates) a `main`
+	-- tmux session. tmux is the multiplexer now (not WezTerm-mux), so this is a plain
+	-- local tab running ssh -t — no mux domain round-trip.
+	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
+		domain = { DomainName = "local" },
+		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-l", "-c",
+			"ssh -t daniel-server 'tmux new-session -A -s main'" },
+	}) },
 	-- Local Git Bash tab (pins the built-in local domain for a Windows shell).
 	{ key = "B", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "local" }) },
 }
@@ -148,46 +154,14 @@ for i = 1, 9 do
 end
 
 -- ---------------------------------------------------------------------------
--- SERVER NODES — remote homelab machines to expose as persistent WezTerm mux
--- domains, in preference order. WezTerm connects to the first reachable one as
--- the default domain (see DEFAULT DOMAIN below). Add a node by appending here —
--- its mux domain, reachability probe, and default selection are all derived from
--- this table. remote_address = a Host alias in ~/.ssh/config (WezTerm inherits
--- HostName/User/IdentityFile from it, key: ~/.ssh/daniel-server); username = the
--- remote login user.
--- ---------------------------------------------------------------------------
-local server_nodes = {
-	{ name = "daniel-server", remote_address = "daniel-server", username = "ubuntu" },
-	-- { name = "node2", remote_address = "node2", username = "ubuntu" },
-}
-
--- ---------------------------------------------------------------------------
--- MULTIPLEXING — each node becomes a persistent WezTerm mux domain.
--- multiplexing="WezTerm" runs a wezterm-mux-server on the node, so remote tabs
--- survive the GUI client quitting and are restored on reconnect. Requires
--- wezterm installed on the node. CTRL+SHIFT+H spawns a daniel-server tab.
+-- REMOTE ACCESS — the homelab is reached via ssh + tmux (CTRL+SHIFT+H), NOT a
+-- WezTerm mux domain. tmux is the portable multiplexer across machines; retiring the
+-- mux domain also removes the CTRL+W GUI-hang class (which was the mux round-trip over
+-- WireGuard). The agentview picker (CTRL+SHIFT+S) still aggregates PC + homelab
+-- sessions and attaches to remote ones by spawning an ssh+tmux tab. Default domain
+-- stays local; nothing to configure.
 -- ---------------------------------------------------------------------------
 config.ssh_domains = {}
-for _, node in ipairs(server_nodes) do
-	table.insert(config.ssh_domains, {
-		name = node.name,
-		remote_address = node.remote_address,
-		username = node.username,
-		multiplexing = "WezTerm",
-	})
-end
-
--- ---------------------------------------------------------------------------
--- DEFAULT DOMAIN — deliberately LEFT LOCAL. Making a remote WezTerm mux domain the
--- default made WezTerm's pane close (CTRL+W / CloseCurrentPane) hang the entire GUI
--- until force-quit: closing a pane in a mux-backed window round-trips to the mux
--- server synchronously, and over the WireGuard link that blocks the GUI thread. It
--- hit EVERY local tab in the homelab-default window, not just the agentview picker.
--- So we boot into a local shell and reach the homelab on demand via CTRL+SHIFT+H
--- (it opens as its own mux window). The CTRL+SHIFT+S picker still aggregates PC +
--- homelab sessions, so nothing is lost but the auto-connect. The ssh_domains above
--- stay defined so CTRL+SHIFT+H / the picker's remote jump keep working.
--- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
 -- RELOAD FEEDBACK — WezTerm reloads config silently (on CTRL+SHIFT+R and on save
