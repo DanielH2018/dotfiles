@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# ct — launch Claude Code in its OWN named tmux session (one session per Claude), so
+# the Agent View picker can attach to it from another machine via `tmux attach -t <name>`.
+# Usage: ct [dir]   (dir defaults to $PWD; session name = sanitized basename)
+# `new-session -A` attaches to an existing session of that name instead of duplicating,
+# matching the "auto-resume per target" model.
+set -u
+dir="${1:-$PWD}"
+case "$dir" in
+  -h|--help) echo "usage: ct [dir]  (launch claude in a named tmux session)"; exit 0 ;;
+esac
+command -v tmux >/dev/null 2>&1 || { printf 'ct: tmux not found on PATH\n' >&2; exit 1; }
+name="$(basename "$dir")"
+name="$(printf '%s' "$name" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+[ -n "$name" ] || name="claude"
+exec tmux new-session -A -s "$name" -c "$dir" claude
