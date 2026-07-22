@@ -86,5 +86,25 @@ test_default_branch_no_remote() {
 }
 test_default_branch_no_remote
 
+test_guard_refuses_main() {
+  local d; d="$(mk_repo)"
+  if (cd "$d" && bash "$TRIAGE" guard-branch) 2>/dev/null; then
+    fail "guard-branch should refuse on main"
+  else
+    pass "guard-branch refuses main"
+  fi
+}
+test_guard_allows_feature() {
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/x
+  if (cd "$d" && bash "$TRIAGE" guard-branch) 2>/dev/null; then
+    pass "guard-branch allows feature branch"
+  else
+    fail "guard-branch should allow feature/x"
+  fi
+}
+test_guard_refuses_main
+test_guard_allows_feature
+
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"

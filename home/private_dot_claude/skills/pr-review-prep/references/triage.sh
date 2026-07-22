@@ -11,8 +11,19 @@ default_branch() {
   echo main
 }
 
+guard_branch() {
+  local cur; cur="$(git rev-parse --abbrev-ref HEAD)"
+  local def; def="$(default_branch)"
+  if [ "$cur" = "main" ] || [ "$cur" = "master" ] || [ "$cur" = "$def" ]; then
+    echo "Refusing to run on protected branch '$cur'. Check out your feature branch first." >&2
+    return 1
+  fi
+  return 0
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   default-branch) default_branch "$@" ;;
+  guard-branch) guard_branch "$@" ;;
   *) echo "unknown subcommand: $cmd" >&2; exit 2 ;;
 esac
