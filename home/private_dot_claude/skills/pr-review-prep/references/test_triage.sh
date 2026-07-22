@@ -128,5 +128,32 @@ test_guard_refuses_resolved_default() {
 }
 test_guard_refuses_resolved_default
 
+mk_noisy_branch() {
+  # feature branch: 3 clean commits + 1 fixup + 1 merge commit off main
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/noisy
+  for n in 1 2 3; do
+    echo "$n" > "$d/f$n.txt"; git -C "$d" add "f$n.txt"
+    git -C "$d" commit -q -m "Add feature part $n"
+  done
+  echo x >> "$d/f1.txt"; git -C "$d" add f1.txt
+  git -C "$d" commit -q -m "fixup: address review comments"
+  # create a divergent main commit and merge it, producing a merge commit
+  git -C "$d" checkout -q main; echo m > "$d/m.txt"; git -C "$d" add m.txt
+  git -C "$d" commit -q -m "main moves"
+  git -C "$d" checkout -q feature/noisy
+  git -C "$d" merge -q --no-ff -m "Merge branch 'main' into feature/noisy" main
+  echo "$d"
+}
+
+test_metrics_flags() {
+  local d; d="$(mk_noisy_branch)"
+  local out; out="$(cd "$d" && bash "$TRIAGE" metrics 1)"
+  echo "$out" | grep -q "merges=1" && pass "metrics counts merge" || fail "merges: $out"
+  echo "$out" | grep -q "fixups=1" && pass "metrics counts fixup" || fail "fixups: $out"
+  echo "$out" | grep -q "needs_history_cleanup=true" && pass "flags cleanup" || fail "cleanup: $out"
+}
+test_metrics_flags
+
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"
