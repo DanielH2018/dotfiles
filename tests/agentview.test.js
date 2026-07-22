@@ -227,9 +227,10 @@ test('selecting a row with a wezterm locator activates it directly (no list)', {
   assert.match(fs.readFileSync(activateLog, 'utf8'), /^9$/m, 'activate-pane called directly with the locator id');
 });
 
-test('selecting a row with a tmux locator dispatches to tmux select-pane', { skip }, () => {
+test('a LOCAL row with a 4-field tmux locator dispatches select-pane', { skip }, () => {
   const { env, tmuxLog } = makeEnv({ list: '[]' });
-  const pick = [cardKey([HOST, '/home/ubuntu/proj', 'working', '0', 'proj', '%3', 'sandbox', 'tmux:/tmp/tmux-1000/default:%3']), 'display'].join('\t');
+  // host == HOST (selfhost) -> local activation path; locator has socket:session:pane.
+  const pick = [cardKey([HOST, '/home/ubuntu/proj', 'working', '0', 'proj', '%3', 'sandbox', 'tmux:/tmp/tmux-1000/default:sess:%3']), 'display'].join('\t');
   run(env, [], { FZF_PICK: pick });
   const log = fs.readFileSync(tmuxLog, 'utf8');
   assert.match(log, /select-pane -t %3/, 'tmux backend focuses the captured pane');

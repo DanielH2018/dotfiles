@@ -29,7 +29,7 @@ JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|
 
 # ---- backend focus (the ONLY terminal-specific code) --------------------------
 av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, else 1
-  local loc="$1" backend rest sock tp
+  local loc="$1" backend rest sock tp pane_id _r
   backend="${loc%%:*}"; rest="${loc#*:}"
   case "$backend" in
     wezterm)
@@ -43,12 +43,13 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
       return 0 ;;
     tmux)
       command -v tmux >/dev/null 2>&1 || return 1
-      # rest = <socket_path>:<pane_id>; socket paths carry no ':' so the split is safe.
-      sock="${rest%:*}"; tp="${rest##*:}"
+      # rest = <socket>:<session>:<pane_id>; socket + sanitized session carry no ':'.
+      pane_id="${rest##*:}"; _r="${rest%:*}"
+      sock="${_r%:*}"                         # drops the trailing :<session>
+      tp="$pane_id"
       [ -z "$tp" ] && return 1
       # Focus within the tmux server: window then pane, and switch a detached client.
-      # tmux has no window-manager control, so it can't raise the OS window hosting the
-      # client — reliable when all sessions share one visible tmux server (documented).
+      # tmux can't raise the OS window hosting the client (documented limitation).
       tmux -S "$sock" select-window -t "$tp" 2>/dev/null
       tmux -S "$sock" select-pane -t "$tp" 2>/dev/null
       tmux -S "$sock" switch-client -t "$tp" 2>/dev/null
