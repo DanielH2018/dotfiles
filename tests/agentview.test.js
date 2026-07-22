@@ -55,12 +55,14 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   if (remote) fs.writeFileSync(cacheFile, remote);
   const activateLog = path.join(bin, 'activate.log'); fs.writeFileSync(activateLog, '');
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
+  const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
 
   fs.writeFileSync(path.join(bin, 'wezterm'), `#!/bin/bash
 case "$*" in
   *list*) cat "$WEZ_LIST_FILE" 2>/dev/null ;;
   *activate-pane*) prev=""; for a in "$@"; do [ "$prev" = "--pane-id" ] && echo "$a" >> "$WEZ_ACTIVATE_LOG"; prev="$a"; done ;;
+  *spawn*) echo "$*" >> "$WEZ_SPAWN_LOG" ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -87,10 +89,10 @@ exit 0
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile,
-    WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, FZF_CAPTURE: capture,
+    WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
   };
   delete env.TMUX; // never let the test host's tmux socket leak into detection
-  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, capture };
+  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, capture };
 }
 
 function stateFile(home, sid, obj) {
@@ -234,6 +236,26 @@ test('a LOCAL row with a 4-field tmux locator dispatches select-pane', { skip },
   run(env, [], { FZF_PICK: pick });
   const log = fs.readFileSync(tmuxLog, 'utf8');
   assert.match(log, /select-pane -t %3/, 'tmux backend focuses the captured pane');
+});
+
+test('selecting a REMOTE tmux row spawns a local ssh-attach tab', { skip }, () => {
+  const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  // host != selfhost (daniel-server) -> remote attach, NOT local activation.
+  const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  const spawned = fs.readFileSync(spawnLog, 'utf8');
+  assert.match(spawned, /spawn -- ssh -t daniel-server/, 'spawns a local tab ssh-ing to the remote');
+  assert.match(spawned, /attach -t 'airflow'/, 'attaches the target tmux session');
+  assert.match(spawned, /select-pane -t '%3'/, 'lands on the captured pane');
+  assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'must NOT activate a remote pane locally');
+});
+
+test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
+  const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  const pick = [cardKey(['daniel-server', '/x', 'working', '0', 't', '1', 'host', 'none:']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no spawn for a non-tmux remote');
+  assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'no local activation of a remote pane');
 });
 
 // ---- reliability --------------------------------------------------------

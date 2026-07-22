@@ -119,10 +119,38 @@ title_for_cwd() {  # $1 = cwd -> sets _title to the Claude pane title at that cw
   done
 }
 
-do_jump() {  # $1 = KEY -> focus the target pane. Locator-direct when present (one
-  # backend command, no discovery); otherwise legacy cwd-correlation via wezterm.
-  local key="$1" locator t
+remote_alias() {  # $1 = row host -> ssh alias. Single known remote today; extensible.
+  case "$1" in
+    daniel-server) printf 'daniel-server' ;;
+    *)             printf 'daniel-server' ;;   # only one remote; map new hosts here
+  esac
+}
+
+remote_attach() {  # $1=host $2=locator -> spawn a local tab ssh-attached at the pane
+  local host="$1" loc="$2" backend rest session pane alias
+  backend="${loc%%:*}"; rest="${loc#*:}"
+  [ "$backend" = "tmux" ] || return 1        # only tmux remotes attach; others list-only
+  # rest = <socket>:<session>:<pane>
+  pane="${rest##*:}"; rest="${rest%:*}"; session="${rest##*:}"
+  [ -n "$session" ] && [ -n "$pane" ] || return 1
+  command -v wezterm >/dev/null 2>&1 || return 1
+  alias=$(remote_alias "$host")
+  # Fresh local tab: select the pane server-side, then attach the client to the session.
+  # \; reaches tmux as its command separator (protected from the remote shell). Errors
+  # (host down, session gone) surface IN the spawned tab, never a silent no-op.
+  wezterm cli spawn -- ssh -t "$alias" \
+    "tmux select-pane -t '$pane' \\; attach -t '$session'" >/dev/null 2>&1
+  return 0
+}
+
+do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
+  # local rows activate in-process (locator-direct, else legacy cwd-correlation).
+  local key="$1" host locator t
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+    remote_attach "$host" "$locator"; return $?     # remote: never touch a local pane
+  fi
   if [ -n "$locator" ] && [ "${locator%%:*}" != "none" ]; then
     av_activate_locator "$locator" && return 0
   fi
