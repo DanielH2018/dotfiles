@@ -519,7 +519,7 @@
             "timeout": 5
           }
         ]
-      }{{ if eq .chezmoi.os "windows" }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
       {{/* agentview: mark this session "working" when a prompt is submitted */}}
       {
         "hooks": [
@@ -623,7 +623,7 @@
             "timeout": 5
           }
         ]
-      }{{ if eq .chezmoi.os "windows" }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
       {{/* agentview: needs-input on permission/idle prompts */}}
       {
         "matcher": "permission_prompt|idle_prompt",
@@ -679,7 +679,7 @@
             "timeout": 10
           }
         ]
-      }{{ if eq .chezmoi.os "windows" }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
       {{/* agentview: mark completed when the turn stops */}}
       {
         "hooks": [
@@ -723,7 +723,7 @@
             "async": true
           }
         ]
-      }{{ if eq .chezmoi.os "windows" }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
       {{/* agentview: remove this session's state file on end */}}
       {
         "hooks": [

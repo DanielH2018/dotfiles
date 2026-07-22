@@ -4,13 +4,16 @@ Brewfile
 .claude/sandbox
 {{ end }}
 
+{{ if eq .chezmoi.os "windows" }}
+.local/bin/ct
+{{ end }}
+
 {{ if ne .chezmoi.os "windows" }}
 .config/wezterm
 .config/fastfetch/logos-trimmed
 .config/windows-provisioning
 bin
 Scripts
-.claude/hooks/agent-view-state.sh
 .local/bin/jq
 {{ end }}
 
