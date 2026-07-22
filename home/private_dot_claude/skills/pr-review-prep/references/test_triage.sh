@@ -39,8 +39,10 @@ test_default_branch() {
 }
 test_default_branch
 
-# origin/main exists but there is NO symbolic origin/HEAD -> falls back to
-# the `show-ref origin/main` check.
+# Both origin/main and origin/master exist, no symbolic origin/HEAD -> only
+# the `show-ref origin/main` check (ordered first) can produce "main"; if it
+# were removed or reordered after the origin/master check, this would
+# instead resolve to "master", failing the assertion below.
 test_default_branch_main_fallback() {
   local d; d="$(new_tmpdir)"
   git -C "$d" init -q -b main
@@ -50,7 +52,8 @@ test_default_branch_main_fallback() {
   git -C "$o" init -q --bare
   git -C "$d" remote add origin "$o"
   git -C "$d" push -q origin main
-  git -C "$d" symbolic-ref -d refs/remotes/origin/HEAD >/dev/null 2>&1 || true
+  git -C "$d" branch master main
+  git -C "$d" push -q origin master
   local got; got="$(cd "$d" && bash "$TRIAGE" default-branch)"
   [ "$got" = "main" ] && pass "default-branch main-fallback=main" || fail "default-branch main-fallback got '$got'"
 }
@@ -67,7 +70,6 @@ test_default_branch_master_fallback() {
   git -C "$o" init -q --bare
   git -C "$d" remote add origin "$o"
   git -C "$d" push -q origin master
-  git -C "$d" symbolic-ref -d refs/remotes/origin/HEAD >/dev/null 2>&1 || true
   local got; got="$(cd "$d" && bash "$TRIAGE" default-branch)"
   [ "$got" = "master" ] && pass "default-branch master-fallback=master" || fail "default-branch master-fallback got '$got'"
 }
