@@ -182,5 +182,29 @@ test_metrics_split_worthy() {
 }
 test_metrics_split_worthy
 
+test_backup_and_tree_equal() {
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/te
+  echo a > "$d/a.txt"; git -C "$d" add a.txt; git -C "$d" commit -q -m "a"
+  echo b > "$d/b.txt"; git -C "$d" add b.txt; git -C "$d" commit -q -m "b"
+  local ref; ref="$(cd "$d" && bash "$TRIAGE" backup)"
+  echo "$ref" | grep -q "^backup/feature/te-" && pass "backup ref named" || fail "backup: $ref"
+  # squash the two commits: tree unchanged -> assert passes
+  git -C "$d" reset -q --soft HEAD~2; git -C "$d" commit -q -m "a+b squashed"
+  if (cd "$d" && bash "$TRIAGE" assert-tree-equal "$ref") 2>/dev/null; then
+    pass "tree-equal after squash"
+  else
+    fail "tree-equal should hold after squash"
+  fi
+  # now change the tree -> assert fails
+  echo c > "$d/c.txt"; git -C "$d" add c.txt; git -C "$d" commit -q -m "c"
+  if (cd "$d" && bash "$TRIAGE" assert-tree-equal "$ref") 2>/dev/null; then
+    fail "tree-equal should fail after real change"
+  else
+    pass "tree-equal detects real change"
+  fi
+}
+test_backup_and_tree_equal
+
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"

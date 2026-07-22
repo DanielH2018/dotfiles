@@ -66,10 +66,31 @@ metrics() {
     "$files" "$add" "$del" "$net" "$commits" "$merges" "$fixups" "$groups" "$cleanup" "$split"
 }
 
+backup() {
+  local branch short ref
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  short="$(git rev-parse --short HEAD)"
+  ref="backup/${branch}-${short}"
+  git update-ref "refs/heads/${ref}" HEAD
+  echo "$ref"
+}
+
+assert_tree_equal() {
+  local ref="${1:?ref required}"
+  if git diff --quiet "$ref" HEAD; then
+    return 0
+  fi
+  echo "Tree changed vs $ref — history rewrite altered content. Aborting." >&2
+  git diff --stat "$ref" HEAD >&2
+  return 1
+}
+
 cmd="${1:-}"; shift || true
 case "$cmd" in
   default-branch) default_branch "$@" ;;
   guard-branch) guard_branch "$@" ;;
   metrics) metrics "$@" ;;
+  backup) backup "$@" ;;
+  assert-tree-equal) assert_tree_equal "$@" ;;
   *) echo "unknown subcommand: $cmd" >&2; exit 2 ;;
 esac
