@@ -67,3 +67,62 @@ and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
 
 Safety constraints throughout: never a plain `git push --force` (a later step
 uses `--force-with-lease`), never `--no-verify`, never bypass commit signing.
+
+## Step 3 — Split into a stack (only if `split_worthy` and user opts in)
+
+The primary path is plain git + core `gh` — no extension required, since both
+are already load-bearing for this skill. Native stacking support is an
+optional enhancement layered on top, not a dependency.
+
+1. Take the independent file-groups identified in Step 1 and order them by
+   dependency: leaf concerns first, the integration/glue group last. Present
+   the proposed group→branch mapping and ASK before creating any
+   branches or PRs.
+2. On confirmation, build the stack with plain git + `gh`:
+   - For each group in dependency order, create a branch off the *previous*
+     group's branch (the first group branches off the default branch), move
+     that group's changes onto it, and commit.
+   - Open each PR with `gh pr create --base <previous-branch> --draft`, so
+     the PR's own base ref encodes its position in the chain.
+   - Write a small stack table into each PR's body (position/order plus
+     links to the other PRs in the stack) so reviewers can see the full
+     chain from any one PR — this linkage lives in the PR body itself,
+     independent of any hosted stacking feature.
+3. Optional enhancement — native/official stacking: if a `gh-stack`
+   extension is installed (`gh extension list` shows `gh stack`) and it is
+   enabled for this repo, the skill MAY use it instead to create/link the
+   stack. As of mid-2026, GitHub's official `github/gh-stack` tooling and the
+   `PullRequestStack` API are private-preview / SKU-gated with no public
+   creation mutation, so treat this path as best-effort only — it must
+   degrade to the base-chaining approach above whenever the extension is
+   absent, disabled, or its mutation is unavailable.
+4. If `gh` is unavailable, or the user declines the split, skip Step 3
+   cleanly and proceed with the single PR to Step 4.
+
+## Step 4 — Curate (always)
+
+1. Detect a `pr-curator` agent or skill. If absent, note it and skip
+   curation.
+2. Invoke `pr-curator` to refresh the PR description and post numbered
+   reading-order review comments.
+3. Ensure the PR is in draft mode (`gh pr ready --undo` if needed, or create
+   with `--draft`).
+
+## Push
+
+- Push rewritten history with `git push --force-with-lease` — NEVER plain
+  `--force`, NEVER `--no-verify`, never bypass commit signing. Confirm with
+  the user first.
+- After pushing, restate the backup ref and the exact restore command
+  (`git reset --hard <REF>`).
+
+## Degradation summary
+
+- No `gh` auth → skip PR-side actions (curate/push); report the local result
+  only.
+- No stacking capability, or the user declines → fall back to the
+  base-chaining approach in Step 3, or skip Step 3 entirely; the single PR
+  proceeds.
+- No `pr-curator` → skip Step 4's curation.
+- Large generated-file diffs detected → mention a `.gitattributes`
+  `linguist-generated` recommendation; do not modify `.gitattributes`.
