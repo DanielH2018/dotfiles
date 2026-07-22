@@ -73,6 +73,9 @@ bind 'set enable-active-region off' 2>/dev/null
 bind 'set bell-style none' 2>/dev/null
 
 # --- fastfetch banner on login shells only (per-terminal logo logic: _ff_banner in common.sh) ---
+# MUST run BEFORE ble-attach (below): once ble.sh drives the terminal, its query handling
+# collides with fastfetch's image-capability probe and the logo drops to ASCII. Running here
+# (pre-attach) keeps the terminal I/O clean so the image renders. Don't move past ble-attach.
 if shopt -q login_shell && command -v _ff_banner >/dev/null 2>&1; then
   _ff_banner
 fi

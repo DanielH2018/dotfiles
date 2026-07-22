@@ -136,7 +136,17 @@ if command -v fastfetch >/dev/null 2>&1; then
       command fastfetch
     fi
   }
-  alias sysinfo='_ff_banner'
+  # `sysinfo` runs the banner on demand. Under bash+ble.sh the image probe collides with
+  # ble.sh's terminal-query handling and fastfetch falls back to the ASCII logo, so re-run
+  # _ff_banner in a clean --norc subshell (no ble.sh = clean terminal I/O, image renders).
+  # zsh's line-editor plugins don't interfere, so it calls _ff_banner directly.
+  sysinfo() {
+    if [ -n "$BASH_VERSION" ] && [ -n "${BLE_VERSION-}" ]; then
+      command bash --norc --noprofile -c "$(declare -f _ff_banner); _ff_banner"
+    else
+      _ff_banner
+    fi
+  }
 fi
 
 # --- Quality-of-life aliases & functions ---
