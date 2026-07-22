@@ -28,8 +28,8 @@ Write-Host "         select $dir\winaero-tweaker.ini"
 
 # Put ~/.local/bin and ~/bin on the *User* PATH so name-resolution works in ANY
 # Windows-spawned process, not just login shells that source the profile. This matters
-# because the WezTerm CTRL+SHIFT+S keybind launches `bash --noprofile --norc -c wezview`
-# (no profile, for speed): it only finds `wezview` + the `jq` LF-shim (both in
+# because the WezTerm CTRL+SHIFT+S keybind launches `bash --noprofile --norc -c agentview`
+# (no profile, for speed): it only finds `agentview` + the `jq` LF-shim (both in
 # ~/.local/bin) and TaskbarAutoHideFix.exe (~/bin) if these dirs are on the Windows PATH.
 # Idempotent (append-if-missing); User scope = no elevation.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

@@ -520,12 +520,12 @@
           }
         ]
       }{{ if eq .chezmoi.os "windows" }},
-      {{/* wezview: mark this session "working" when a prompt is submitted */}}
+      {{/* agentview: mark this session "working" when a prompt is submitted */}}
       {
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/wezterm-state.sh working",
+            "command": "~/.claude/hooks/agent-view-state.sh working",
             "timeout": 5
           }
         ]
@@ -624,24 +624,24 @@
           }
         ]
       }{{ if eq .chezmoi.os "windows" }},
-      {{/* wezview: needs-input on permission/idle prompts */}}
+      {{/* agentview: needs-input on permission/idle prompts */}}
       {
         "matcher": "permission_prompt|idle_prompt",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/wezterm-state.sh needs-input",
+            "command": "~/.claude/hooks/agent-view-state.sh needs-input",
             "timeout": 5
           }
         ]
       },
-      {{/* wezview: completed on task-complete notification */}}
+      {{/* agentview: completed on task-complete notification */}}
       {
         "matcher": "task_complete",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/wezterm-state.sh completed",
+            "command": "~/.claude/hooks/agent-view-state.sh completed",
             "timeout": 5
           }
         ]
@@ -680,12 +680,12 @@
           }
         ]
       }{{ if eq .chezmoi.os "windows" }},
-      {{/* wezview: mark completed when the turn stops */}}
+      {{/* agentview: mark completed when the turn stops */}}
       {
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/wezterm-state.sh completed",
+            "command": "~/.claude/hooks/agent-view-state.sh completed",
             "timeout": 5
           }
         ]
@@ -724,12 +724,12 @@
           }
         ]
       }{{ if eq .chezmoi.os "windows" }},
-      {{/* wezview: remove this session's state file on end */}}
+      {{/* agentview: remove this session's state file on end */}}
       {
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/wezterm-state.sh end",
+            "command": "~/.claude/hooks/agent-view-state.sh end",
             "timeout": 5
           }
         ]

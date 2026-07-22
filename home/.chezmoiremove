@@ -1,0 +1,5 @@
+# Targets removed after the wezview -> agentview de-brand (2026-07-22). chezmoi does
+# not delete a target when its source is renamed, so list the stale deployed copies
+# here; `chezmoi apply` removes them (a no-op where they never existed).
+.local/bin/wezview
+.claude/hooks/wezterm-state.sh

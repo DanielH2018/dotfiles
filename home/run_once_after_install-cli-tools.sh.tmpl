@@ -57,7 +57,7 @@ if [ ! -f "$GH_LIST" ]; then
 fi
 
 # 1c. WezTerm from the upstream fury.io apt repo — the mux-server + `wezterm cli` back this
-#     machine's leg of the cross-machine Claude Code session switcher (wezview) on Daniel's PC.
+#     machine's leg of the cross-machine Claude Code session switcher (agentview) on Daniel's PC.
 #     Ubuntu ships no wezterm package; fury.io tracks releases. Adds repo + keyring once, then
 #     `apt upgrade` keeps it current. Only the headless mux-server/CLI are used (no DISPLAY).
 WEZ_LIST="/etc/apt/sources.list.d/wezterm.list"

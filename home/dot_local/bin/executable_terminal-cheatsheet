@@ -42,7 +42,7 @@ function weztCombo(mods, key) {
 }
 
 function weztLabel(action, line) {
-  if (/wezview/.test(line)) return 'Agent View — cross-machine session switcher';
+  if (/agentview/.test(line)) return 'Agent View — cross-machine session switcher';
   if (/daniel-server/.test(line)) return 'New homelab tab (daniel-server)';
   if (action === 'SendString') return 'Insert newline (Claude Code multiline)';
   if (action === 'ActivatePaneDirection') return /Prev/.test(line) ? 'Focus previous split' : 'Focus next split';
