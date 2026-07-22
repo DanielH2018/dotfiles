@@ -41,15 +41,26 @@ and invoke `bash <skill-dir>/references/triage.sh <cmd>` from elsewhere).
 2. `git rebase origin/<default>` (use `bash references/triage.sh
    default-branch` for `<default>`) to linearize and drop merge commits. If
    conflicts arise, resolve or hand back to the user; never `--skip` silently.
-3. Propose a regrouping plan IN PROSE before touching anything: the target
+3. Propose a regrouping plan IN PROSE before the reorder/squash: the target
    semantic commits, which current commits fold into each, and a why-focused
    message per target (explain WHY, not just what — per the user's git
    convention). Fold any commit that reverses an earlier approach on the branch
    into the commit it corrects, so the reviewer never reads an undone approach.
-4. On confirmation, execute the reorder/squash non-interactively: write the
-   rebase todo to a temp file and drive `git rebase -i` via
-   `GIT_SEQUENCE_EDITOR='cp <todo-file>' git rebase -i <base>`, supplying
-   pre-written messages with `-c core.editor=...` or `git commit --amend`.
+4. On confirmation, execute the reorder/squash non-interactively:
+   - Generate the rebase todo and drive it via
+     `GIT_SEQUENCE_EDITOR='cp <todo-file>' git rebase -i <base>`, using `pick`
+     for the commit leading each semantic group and `fixup` (NOT `squash`)
+     for every commit folded into it — `fixup` discards the folded commit's
+     message and never opens an editor, so the rebase can't pause for
+     interactive input.
+   - To set each resulting commit's final message, interleave an
+     `exec git commit --amend -m "<message>"` line in the generated todo
+     immediately after each group's picks/fixups. This sets messages
+     deterministically with no editor involved.
+   - Explicitly set a non-interactive editor as defense in depth (e.g.
+     `GIT_EDITOR=true`) so no step can block waiting on an editor.
+   - On conflict, resolve or hand back to the user; never `git rebase --skip`
+     silently — the backup ref from step 1 remains the restore point.
 5. `bash references/triage.sh assert-tree-equal "$REF"` — if it exits
    non-zero, STOP, do NOT push, show the user the reported diff and the
    restore command. This is a hard gate.
