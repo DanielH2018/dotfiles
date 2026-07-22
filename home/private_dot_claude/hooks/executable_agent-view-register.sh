@@ -6,9 +6,9 @@
 # caller sourcing this must not inherit failure-on-error.
 #
 # Backends (terminal-specific focus target), captured once at session start:
-#   tmux:<socket_path>:<pane_id>   $TMUX set — portable across any outer terminal
-#   wezterm:<pane_id>              $WEZTERM_PANE set, no tmux
-#   none:                          neither — list-only (no programmatic focus)
+#   tmux:<socket_path>:<session>:<pane_id>   $TMUX set — portable across any outer terminal
+#   wezterm:<pane_id>                        $WEZTERM_PANE set, no tmux
+#   none:                                    neither — list-only (no programmatic focus)
 # The `locator` is opaque to the picker's core; only the matching backend's
 # activate interprets it. `backend` is stored redundantly (locator's prefix) so a
 # reader can group/filter without parsing.
@@ -17,10 +17,13 @@ av_dir() { printf '%s' "${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"; }
 
 av_capture_locator() {  # echo "backend:locator" for the CURRENT pane
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    local sock pane
-    sock=$(tmux display -p '#{socket_path}' 2>/dev/null)
-    pane=$(tmux display -p '#{pane_id}' 2>/dev/null)
-    printf 'tmux:%s:%s' "$sock" "$pane"
+    local sock sess pane
+    # One call: socket disambiguates multiple servers; session is the attach target;
+    # pane is the focus target. TSV-parsed so the ':'-joined locator stays unambiguous
+    # (socket paths and sanitized session names carry no ':').
+    IFS=$'\t' read -r sock sess pane \
+      < <(tmux display -p '#{socket_path}\t#{session_name}\t#{pane_id}' 2>/dev/null)
+    printf 'tmux:%s:%s:%s' "$sock" "$sess" "$pane"
   elif [ -n "${WEZTERM_PANE:-}" ]; then
     printf 'wezterm:%s' "$WEZTERM_PANE"
   else

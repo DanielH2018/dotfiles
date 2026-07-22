@@ -101,4 +101,17 @@ test('av_guarded_remove with empty run deletes unconditionally (host hook)', { s
   assert.ok(!fs.existsSync(path.join(dir, 'sid.json')));
 });
 
+test('av_capture_locator: tmux:<socket>:<session>:<pane> from a tmux pane', { skip }, () => {
+  const bin = scratch();
+  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
+# stub: respond to \`tmux display -p '#{socket_path}\\t#{session_name}\\t#{pane_id}'\`
+printf '%s\\t%s\\t%s' /tmp/tmux-1000/default airflow '%3'
+`, { mode: 0o755 });
+  const out = execFileSync('bash', ['-c', `source "${HELPER}"; av_capture_locator`], {
+    encoding: 'utf8',
+    env: { ...process.env, TMUX: 'fake', PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.strictEqual(out, 'tmux:/tmp/tmux-1000/default:airflow:%3');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
