@@ -149,11 +149,38 @@ mk_noisy_branch() {
 test_metrics_flags() {
   local d; d="$(mk_noisy_branch)"
   local out; out="$(cd "$d" && bash "$TRIAGE" metrics 1)"
-  echo "$out" | grep -q "merges=1" && pass "metrics counts merge" || fail "merges: $out"
-  echo "$out" | grep -q "fixups=1" && pass "metrics counts fixup" || fail "fixups: $out"
-  echo "$out" | grep -q "needs_history_cleanup=true" && pass "flags cleanup" || fail "cleanup: $out"
+  echo "$out" | grep -qx "merges=1" && pass "metrics counts merge" || fail "merges: $out"
+  echo "$out" | grep -qx "fixups=1" && pass "metrics counts fixup" || fail "fixups: $out"
+  echo "$out" | grep -qx "needs_history_cleanup=true" && pass "flags cleanup" || fail "cleanup: $out"
 }
 test_metrics_flags
+
+# feature branch: 11 commits, each adding one new file (11 changed files vs
+# merge-base with main), no merges, no fixup-like subjects. This exceeds the
+# files>10 AND commits>6 thresholds simultaneously so we can isolate the
+# `groups>=2` conjunct by only varying the `groups` argument between calls.
+mk_big_branch() {
+  local d; d="$(mk_repo)"
+  git -C "$d" checkout -q -b feature/big
+  local n
+  for n in $(seq 1 11); do
+    echo "$n" > "$d/big$n.txt"; git -C "$d" add "big$n.txt"
+    git -C "$d" commit -q -m "Add big file $n"
+  done
+  echo "$d"
+}
+
+test_metrics_split_worthy() {
+  local d; d="$(mk_big_branch)"
+  local out2; out2="$(cd "$d" && bash "$TRIAGE" metrics 2)"
+  echo "$out2" | grep -qx "split_worthy=true" && pass "split_worthy true when size exceeded and groups>=2" || fail "split_worthy(groups=2): $out2"
+
+  local out1; out1="$(cd "$d" && bash "$TRIAGE" metrics 1)"
+  echo "$out1" | grep -qx "split_worthy=false" && pass "split_worthy false when groups=1 (same branch)" || fail "split_worthy(groups=1): $out1"
+  echo "$out1" | grep -qx "files=11" && pass "metrics counts files" || fail "files: $out1"
+  echo "$out1" | grep -qx "commits=11" && pass "metrics counts commits" || fail "commits: $out1"
+}
+test_metrics_split_worthy
 
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"
