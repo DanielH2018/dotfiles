@@ -4,7 +4,7 @@
 # `brew "fnm"` so a fresh Linux machine has node for the modify_settings.json merge and
 # other node tooling. run_once_before_: runs before file targets and only re-runs when
 # this script's contents change. Bump the marker below to force a refresh.
-# fnm-bump: v1
+# fnm-bump: v2
 set -eu
 
 BIN_DIR="$HOME/.local/bin"                       # already on PATH via dot_zshrc.tmpl
@@ -23,7 +23,16 @@ if ! command -v fnm >/dev/null 2>&1 && [ ! -x "$BIN_DIR/fnm" ] && [ "$(uname -s)
   url="https://github.com/Schniz/fnm/releases/latest/download/${asset}.zip"
   echo "install-fnm: downloading $asset ..." >&2
   curl -fsSL "$url" -o "$tmp/fnm.zip"
-  unzip -q "$tmp/fnm.zip" -d "$tmp"
+  # Extract without assuming unzip: a bare distro (fresh WSL Ubuntu) has neither unzip nor
+  # a populated apt cache, but does ship python3 — use it to avoid a sudo apt round-trip.
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q "$tmp/fnm.zip" -d "$tmp"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$tmp/fnm.zip" "$tmp"
+  else
+    echo "install-fnm: need unzip or python3 to extract fnm; installing unzip via apt" >&2
+    sudo apt-get update -qq && sudo apt-get install -y unzip && unzip -q "$tmp/fnm.zip" -d "$tmp"
+  fi
   mkdir -p "$BIN_DIR"
   install -m 0755 "$tmp/fnm" "$BIN_DIR/fnm"
 fi
