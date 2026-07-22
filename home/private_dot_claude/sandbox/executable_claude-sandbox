@@ -1775,6 +1775,9 @@ DOCKER_ARGS=(
   # bust the Docker layer cache for toolchain installs.
   -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
   -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
+  # Sandbox-only: scopes gh pr create/edit/comment/ready to $SANDBOX_BRANCH. Never
+  # mounted on the host, so host gh pr behavior is unaffected.
+  -v "$SANDBOX_DIR/gh-pr-guard.sh:/home/claudebot/.claude-defaults/hooks/gh-pr-guard.sh:ro"
   # These hooks have no sandbox-specific variant — mount the single canonical host
   # copy (one source of truth, no drift-prone parallel copy). suggest-artifact is
   # parameterized by ARTIFACT_DIR (set to /artifacts above) so the one file works

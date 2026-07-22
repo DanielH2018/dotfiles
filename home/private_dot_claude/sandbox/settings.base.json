@@ -3,13 +3,9 @@
   "permissions": {
     "defaultMode": "bypassPermissions",
     "deny": [
-      "Bash(gh pr create*)",
       "Bash(gh pr merge*)",
       "Bash(gh pr close*)",
       "Bash(gh pr reopen*)",
-      "Bash(gh pr comment*)",
-      "Bash(gh pr edit*)",
-      "Bash(gh pr ready*)",
       "Bash(gh pr review*)",
       "Bash(gh pr lock*)",
       "Bash(gh pr unlock*)",
@@ -178,6 +174,11 @@
           {
             "type": "command",
             "command": "/home/claudebot/.claude/hooks/block-dangerous-bash.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/home/claudebot/.claude/hooks/gh-pr-guard.sh",
             "timeout": 10
           }
         ]
