@@ -106,5 +106,27 @@ test_guard_allows_feature() {
 test_guard_refuses_main
 test_guard_allows_feature
 
+# Resolved default branch is 'trunk' (neither literal 'main' nor 'master').
+# Discriminates the `[ "$cur" = "$def" ]` disjunct in guard_branch: if it were
+# dropped, guard-branch would exit 0 (allow) on trunk since trunk matches
+# neither literal check, failing this assertion.
+test_guard_refuses_resolved_default() {
+  local d; d="$(new_tmpdir)"
+  git -C "$d" init -q -b trunk
+  git -C "$d" config user.email t@t.co; git -C "$d" config user.name t
+  git -C "$d" commit -q --allow-empty -m init
+  local o; o="$(new_tmpdir)"
+  git -C "$o" init -q --bare
+  git -C "$d" remote add origin "$o"
+  git -C "$d" push -q origin trunk
+  git -C "$d" remote set-head origin trunk
+  if (cd "$d" && bash "$TRIAGE" guard-branch) 2>/dev/null; then
+    fail "guard-branch should refuse on resolved default branch 'trunk'"
+  else
+    pass "guard-branch refuses resolved default branch 'trunk'"
+  fi
+}
+test_guard_refuses_resolved_default
+
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"
