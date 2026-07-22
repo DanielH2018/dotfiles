@@ -21,8 +21,10 @@ av_capture_locator() {  # echo "backend:locator" for the CURRENT pane
     # One call: socket disambiguates multiple servers; session is the attach target;
     # pane is the focus target. TSV-parsed so the ':'-joined locator stays unambiguous
     # (socket paths and sanitized session names carry no ':').
+    # $'…' so bash inserts REAL tab chars into the format — tmux does NOT expand a
+    # literal '\t' in a -p format, so single quotes would emit one unsplit field.
     IFS=$'\t' read -r sock sess pane \
-      < <(tmux display -p '#{socket_path}\t#{session_name}\t#{pane_id}' 2>/dev/null)
+      < <(tmux display -p $'#{socket_path}\t#{session_name}\t#{pane_id}' 2>/dev/null)
     printf 'tmux:%s:%s:%s' "$sock" "$sess" "$pane"
   elif [ -n "${WEZTERM_PANE:-}" ]; then
     printf 'wezterm:%s' "$WEZTERM_PANE"

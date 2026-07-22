@@ -103,9 +103,15 @@ test('av_guarded_remove with empty run deletes unconditionally (host hook)', { s
 
 test('av_capture_locator: tmux:<socket>:<session>:<pane> from a tmux pane', { skip }, () => {
   const bin = scratch();
+  // Faithful stub: substitute the known fields into the actual '-p <fmt>' arg ($3) and
+  // print it VERBATIM, preserving the caller's separator. So a buggy literal-'\\t' format
+  // (which real tmux does not expand) is reproduced as one unsplit field and fails here.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
-# stub: respond to \`tmux display -p '#{socket_path}\\t#{session_name}\\t#{pane_id}'\`
-printf '%s\\t%s\\t%s' /tmp/tmux-1000/default airflow '%3'
+fmt="\$3"
+out="\${fmt//'#{socket_path}'//tmp/tmux-1000/default}"
+out="\${out//'#{session_name}'/airflow}"
+out="\${out//'#{pane_id}'/%3}"
+printf '%s' "\$out"
 `, { mode: 0o755 });
   const out = execFileSync('bash', ['-c', `source "${HELPER}"; av_capture_locator`], {
     encoding: 'utf8',
