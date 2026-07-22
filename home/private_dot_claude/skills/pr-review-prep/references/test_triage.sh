@@ -188,7 +188,7 @@ test_backup_and_tree_equal() {
   echo a > "$d/a.txt"; git -C "$d" add a.txt; git -C "$d" commit -q -m "a"
   echo b > "$d/b.txt"; git -C "$d" add b.txt; git -C "$d" commit -q -m "b"
   local ref; ref="$(cd "$d" && bash "$TRIAGE" backup)"
-  echo "$ref" | grep -q "^backup/feature/te-" && pass "backup ref named" || fail "backup: $ref"
+  echo "$ref" | grep -q "^backup/feature-te-" && pass "backup ref named" || fail "backup: $ref"
   # squash the two commits: tree unchanged -> assert passes
   git -C "$d" reset -q --soft HEAD~2; git -C "$d" commit -q -m "a+b squashed"
   if (cd "$d" && bash "$TRIAGE" assert-tree-equal "$ref") 2>/dev/null; then
@@ -205,6 +205,36 @@ test_backup_and_tree_equal() {
   fi
 }
 test_backup_and_tree_equal
+
+test_backup_sanitizes_slash_branch() {
+  local d; d="$(mk_repo)"
+  # Occupy the 'backup/feature' namespace as a plain branch, so that an
+  # unsanitized ref path (refs/heads/backup/feature/x-<sha>) would nest under
+  # it and git update-ref would fail hard with exit 128.
+  git -C "$d" branch backup/feature main
+  git -C "$d" checkout -q -b feature/x
+  echo z > "$d/z.txt"; git -C "$d" add z.txt; git -C "$d" commit -q -m "z"
+  local ref rc
+  ref="$(cd "$d" && bash "$TRIAGE" backup)" && rc=0 || rc=$?
+  [ "$rc" -eq 0 ] && pass "backup succeeds despite backup/feature collision" \
+    || fail "backup should succeed (exit 0), got exit $rc"
+  echo "$ref" | grep -q "^backup/feature-x-" && pass "backup ref sanitized for slash branch" \
+    || fail "backup sanitized ref: $ref"
+}
+test_backup_sanitizes_slash_branch
+
+test_assert_tree_equal_missing_ref() {
+  local d; d="$(mk_repo)"
+  local out rc
+  out="$(cd "$d" && bash "$TRIAGE" assert-tree-equal nonexistent-ref-xyz 2>&1)" && rc=0 || rc=$?
+  [ "$rc" -eq 1 ] && pass "assert-tree-equal missing ref exits 1" \
+    || fail "assert-tree-equal missing ref should exit 1, got exit $rc"
+  echo "$out" | grep -q "not found" && pass "assert-tree-equal missing ref message accurate" \
+    || fail "assert-tree-equal missing ref message: $out"
+  echo "$out" | grep -q "altered content" && fail "assert-tree-equal missing ref should not print misleading 'altered content' message" \
+    || pass "assert-tree-equal missing ref does not print misleading message"
+}
+test_assert_tree_equal_missing_ref
 
 [ "$FAILS" -eq 0 ] || { echo "$FAILS test(s) failed"; exit 1; }
 echo "all passed"
