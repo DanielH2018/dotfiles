@@ -2197,6 +2197,11 @@ cleanup() {
   if [[ "$USE_WORKTREE" == true ]]; then
     cleanup_worktree
   fi
+  # Deregister this session's Agent View row. RUN_ID-guarded: if a newer session ever
+  # reused the deterministic INSTANCE_ID key, this exit can't delete the newer row.
+  if [[ "${AV_REGISTERED:-false}" == true ]] && declare -f av_guarded_remove >/dev/null 2>&1; then
+    av_guarded_remove "$INSTANCE_ID" "$RUN_ID" || true
+  fi
 }
 trap cleanup EXIT
 
@@ -2240,4 +2245,25 @@ else
   CLAUDE_ARGS=(claude --dangerously-skip-permissions)
   [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
 fi
+
+# --- Agent View registration (interactive Claude sessions only) ---
+# Surface this sandbox session in the agentview picker so it can be seen/attached
+# alongside host sessions. The launcher runs in the user's pane, so it captures that
+# pane's backend/locator directly — no later cwd-correlation needed. Headless (--exec)
+# has no pane and already exited above; the standalone shell (--shell) isn't a Claude
+# session, so neither registers. cleanup() removes the row on exit (RUN_ID-guarded).
+# Every step is guarded so a registry hiccup can never abort the launch (set -e).
+if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/agent-view-register.sh" ]]; then
+  source "$HOME/.claude/hooks/agent-view-register.sh"
+  if declare -f av_write_full >/dev/null 2>&1; then
+    av_title="$REPO_NAME"
+    if [[ -n "$WT_BRANCH" ]]; then av_title="$REPO_NAME · $WT_BRANCH"; fi
+    av_title="$av_title (sandbox)"
+    av_locator="$(av_capture_locator || true)"
+    av_write_full "$INSTANCE_ID" "working" "$WORK_PATH" "$(hostname 2>/dev/null || echo '?')" \
+      "$(date +%s 2>/dev/null || echo 0)" "sandbox" "$av_title" "$av_locator" "" "$RUN_ID" || true
+    AV_REGISTERED=true
+  fi
+fi
+
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"
