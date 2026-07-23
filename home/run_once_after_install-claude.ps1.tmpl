@@ -1,0 +1,14 @@
+{{ if and (eq .chezmoi.os "windows") (ne .profile "minimal") -}}
+# Install Claude Code via the official native installer (standalone claude.exe -> %USERPROFILE%\.local\bin).
+# Claude self-updates after install, so chezmoi only bootstraps it once; idempotent skip-if-present.
+# The Unix installer (install.sh) refuses Windows, so Windows uses install.ps1 here; the non-Windows
+# platforms are handled by run_once_after_install-claude.sh. Bump the marker to force a reinstall.
+# claude-bump: v1
+$ErrorActionPreference = 'Stop'
+
+if (Get-Command claude -ErrorAction SilentlyContinue) { exit 0 }
+if (Test-Path "$HOME\.local\bin\claude.exe") { exit 0 }
+
+Write-Host "install-claude: installing Claude Code (native installer)"
+Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
+{{ end -}}

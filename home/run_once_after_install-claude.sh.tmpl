@@ -1,0 +1,29 @@
+{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") -}}
+#!/bin/sh
+# Install Claude Code via the official native installer (standalone binary -> ~/.local/bin/claude).
+# Runs on macOS, Linux, and WSL. Claude self-updates after install, so chezmoi only bootstraps it
+# once; idempotent skip-if-present. The installer stages under ~/.claude/downloads and refuses to
+# run under sudo (everything lands in $HOME), so this runs as the normal user — no elevation, no
+# tty needed. Windows is handled separately by run_once_after_install-claude.ps1 (install.sh
+# refuses MINGW/MSYS). Bump the marker to force a reinstall.
+# claude-bump: v1
+set -u
+
+if command -v claude >/dev/null 2>&1 || [ -x "$HOME/.local/bin/claude" ]; then
+  exit 0  # already installed — it updates itself from here
+fi
+
+echo "install-claude: installing Claude Code (native installer -> ~/.local/bin)"
+tmp="$(mktemp)" || exit 1
+trap 'rm -f "$tmp"' EXIT
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL https://claude.ai/install.sh -o "$tmp" || { echo "install-claude: download failed" >&2; exit 1; }
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$tmp" https://claude.ai/install.sh || { echo "install-claude: download failed" >&2; exit 1; }
+else
+  echo "install-claude: need curl or wget" >&2
+  exit 1
+fi
+# The installer's shebang is bash and it uses bashisms; run it with bash explicitly.
+bash "$tmp"
+{{ end -}}
