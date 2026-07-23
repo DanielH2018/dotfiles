@@ -30,7 +30,8 @@
 # kind is host|sandbox|bg. Local host rows are cross-checked against Claude's own
 # per-process registry (~/.claude/sessions/<pid>.json): its live status overrides a
 # stale hook state, hookless busy/waiting sessions are synthesized, and daemon
-# background jobs get kind=bg — no pane exists, so <enter> opens `claude agents`.
+# background jobs get kind=bg with locator bg:<sid> — no pane exists, so <enter>
+# runs `claude attach <sid>` in a new backend pane (roster fallback without a sid).
 set -u
 mode="${1:-fzf}"
 statedir="$HOME/.claude/agent-view"
@@ -201,17 +202,26 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   exec ssh -t "$sshalias" "$rcmd"
 }
 
-av_open_agents_ui() {  # a daemon-hosted bg session has no pane anywhere to focus —
-  # open Claude's own agents UI instead, in a new pane of the active backend, or in
-  # place (the picker is already gone) from a bare shell.
+av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a new pane of the
+  # active backend, or in place (the picker is already gone) from a bare shell.
   command -v claude >/dev/null 2>&1 || return 1
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux new-window -n agents 'claude agents'; return 0
+    tmux new-window -n agents "claude $1"; return 0
   fi
   if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli spawn -- bash -lc 'claude agents' >/dev/null 2>&1; return 0
+    wezterm cli spawn -- bash -lc "claude $1" >/dev/null 2>&1; return 0
   fi
-  exec claude agents
+  # shellcheck disable=SC2086 — intentional word split of the subcommand
+  exec claude $1
+}
+
+av_jump_bg() {  # $1=locator -> a daemon-hosted bg session has no pane anywhere to
+  # focus; `claude attach <sid>` (verified: the session keeps running when the attach
+  # client exits) opens THE session. A bg row without a sid falls back to the roster.
+  local sid=""
+  case "$1" in bg:*) sid="${1#bg:}";; esac
+  if [ -n "$sid" ]; then av_open_claude_cmd "attach $sid"
+  else av_open_claude_cmd "agents"; fi
 }
 
 do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
@@ -224,7 +234,7 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
     remote_attach "$host" "$locator"; return $?     # remote: never touch a local pane
   fi
-  if [ "$kind" = "bg" ]; then av_open_agents_ui; return $?; fi
+  if [ "$kind" = "bg" ]; then av_jump_bg "$locator"; return $?; fi
   if [ -n "$locator" ] && [ "${locator%%:*}" != "none" ]; then
     av_activate_locator "$locator" && return 0
   fi
@@ -593,12 +603,18 @@ merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state f
   m="${m#*$'\t'}"                                   # skip registry cwd; hook cwd wins
   SMAP_USED[$sid]=1
   [ -z "$title" ] && title="$m"                     # registry name fills an empty title
-  [ "$lkind" = "bg" ] && kind="bg"
+  if [ "$lkind" = "bg" ]; then
+    kind="bg"
+    # No pane exists for a daemon session — carry the sid as the focus target so the
+    # jump can `claude attach` it. A real pane locator (bg launched from a terminal
+    # that captured one) would point at the spawning pane, not the session: replace it.
+    locator="bg:$sid"
+  fi
   _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"
 }
 
 synth_session_rows() {  # rows for live busy/waiting sessions the hook registry never saw
-  local sid m st ts kind cwd name
+  local sid m st ts kind cwd name locator
   for sid in "${!SMAP[@]}"; do
     [ -n "${SMAP_USED[$sid]:-}" ] && continue
     m="${SMAP[$sid]}"
@@ -607,7 +623,8 @@ synth_session_rows() {  # rows for live busy/waiting sessions the hook registry 
     kind="${m%%$'\t'*}"; m="${m#*$'\t'}"
     cwd="${m%%$'\t'*}"; name="${m#*$'\t'}"
     [ "$st" = "completed" ] && continue              # idle = maybe a spare — a hookless
-    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"none:"$'\t'"$name"$'\n'
+    if [ "$kind" = "bg" ]; then locator="bg:$sid"; else locator="none:"; fi
+    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"$locator"$'\t'"$name"$'\n'
   done                                               # session shows once it works/waits
 }
 

@@ -95,7 +95,8 @@ test('hookless busy bg session renders as a WORKING row with its name, kind=bg',
   assert.ok(row, 'a KEY-carrying row is rendered');
   const k = row.split('\t')[0].split(US);
   assert.strictEqual(k[6], 'bg', 'KEY kind field marks the daemon session');
-  assert.strictEqual(k[7], 'none:', 'no pane locator exists for a bg session');
+  assert.strictEqual(k[7], 'bg:aaaa1111-0000-0000-0000-000000000001',
+    'locator carries the sid so <enter> can claude-attach it');
 });
 
 test('hookless waiting bg session lands in NEEDS INPUT', { skip }, () => {
@@ -161,6 +162,7 @@ test('stale needs-input hook row is overridden to WORKING by a live busy status'
   const row = raw.split('\n').find((l) => l.includes(US));
   const k = row.split('\t')[0].split(US);
   assert.strictEqual(k[6], 'bg', 'merged daemon row flips kind to bg');
+  assert.strictEqual(k[7], `bg:${sid}`, 'merged daemon row swaps the locator for the sid');
 });
 
 test('merge keeps hook locator and a /rename custom title', { skip }, () => {
@@ -201,21 +203,31 @@ test('sandbox rows are not touched by the registry merge', { skip }, () => {
 
 // ---- jump: bg rows open the agents UI ---------------------------------------
 
-const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', 'none:']);
+const BG_SID = 'dddd4444-0000-0000-0000-000000000001';
+const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', `bg:${BG_SID}`]);
 
-test('--jump on a bg row inside tmux opens `claude agents` in a new window', { skip }, () => {
+test('--jump on a bg row inside tmux runs `claude attach <sid>` in a new window', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey], { TMUX: '/tmp/tmux-1000/default,1,0' });
   assert.strictEqual(r.code, 0);
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n agents claude agents/);
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'),
+    new RegExp(`new-window -n agents claude attach ${BG_SID}`));
 });
 
-test('--jump on a bg row from a bare shell execs `claude agents` in place', { skip }, () => {
+test('--jump on a bg row from a bare shell execs `claude attach <sid>` in place', { skip }, () => {
   const { env, claudeLog, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey]);
   assert.strictEqual(r.code, 0);
-  assert.match(fs.readFileSync(claudeLog, 'utf8'), /^agents$/m);
+  assert.match(fs.readFileSync(claudeLog, 'utf8'), new RegExp(`^attach ${BG_SID}$`, 'm'));
   assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no tmux involvement outside tmux');
+});
+
+test('--jump on a sid-less bg row (legacy KEY) falls back to the agents roster', { skip }, () => {
+  const { env, claudeLog } = makeEnv();
+  const legacy = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', 'none:']);
+  const r = run(env, ['--jump', legacy]);
+  assert.strictEqual(r.code, 0);
+  assert.match(fs.readFileSync(claudeLog, 'utf8'), /^agents$/m);
 });
 
 test('--card labels a bg row as background', { skip }, () => {
