@@ -1,5 +1,6 @@
 # Repo housekeeping (chezmoi state lives in ~/.config/chezmoi, not here)
 .DS_Store
+.claude/
 *.swp
 *.swo
 .superpowers/
