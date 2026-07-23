@@ -256,6 +256,23 @@ test('a LOCAL tmux row, INSIDE tmux -> switches the existing client (no attach)'
   assert.doesNotMatch(log, /attach-session/, 'never spawn a nested attach from inside tmux');
 });
 
+// Round-trip through the REAL renderer (build_pretty), which the stubbed-fzf tests skip.
+// Sandbox rows have an empty pane; a tab-collapsing read would shift locator out of the
+// KEY's 8th field and the jump would silently fall through.
+test('a sandbox row with an EMPTY pane keeps the locator at KEY field 8 (no tab-collapse)', { skip }, () => {
+  const { env, home } = makeEnv({ list: '[]' });
+  const loc = 'tmux:/tmp/tmux-1000/default:sb-proj-1:%0';
+  stateFile(home, 'sb-proj-1', {
+    key: 'sb-proj-1', kind: 'sandbox', cwd: '/home/ubuntu/proj', title: 'proj (sandbox)',
+    state: 'working', host: HOST, ts: nowSec(), backend: 'tmux', locator: loc, pane: '', run: 'sb-proj-1-x',
+  });
+  const { out } = run(env, ['--body']);
+  const line = out.split('\n').find((l) => l.includes('proj (sandbox)'));
+  assert.ok(line, `the sandbox row rendered (body=${JSON.stringify(out)})`);
+  const fields = line.split('\t')[0].split(US);
+  assert.strictEqual(fields[7], loc, `locator must land in KEY field 8; got ${JSON.stringify(fields)}`);
+});
+
 test('REMOTE tmux row, no local tmux -> WezTerm spawns an ssh-attach tab', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
   // host != selfhost (daniel-server) -> remote attach, NOT local activation. makeEnv

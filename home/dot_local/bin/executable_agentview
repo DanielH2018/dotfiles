@@ -399,7 +399,7 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W=72 BADGEW=11 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L
+  local W=72 BADGEW=11 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd clabel
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
@@ -415,7 +415,17 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     first=0
     printf '\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     for L in "${sorted[@]}"; do
-      IFS=$'\t' read -r st host cwd pane ts kind locator title_reg <<< "$L"
+      # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
+      # empty pane, and `IFS=$'\t' read` folds that empty field, shifting locator/title
+      # out of place so do_jump reads the wrong KEY field. Parameter expansion keeps
+      # empties. (@tsv already escaped any literal tabs in the values.)
+      st="${L%%$'\t'*}"; _rest="${L#*$'\t'}"
+      host="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      cwd="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      pane="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      ts="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      locator="${_rest%%$'\t'*}"; title_reg="${_rest#*$'\t'}"
       [ "$st" = "$grp" ] || continue
       fwd="${cwd//\\//}"; name="${fwd%/}"; name="${name##*/}"; [ -z "$name" ] && name="$cwd"
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
