@@ -217,6 +217,30 @@ config.keys = {
 		domain = { DomainName = "local" },
 		args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
 	}) },
+	-- CTRL+Left: back to Agent View from inside a session pane (claude, sandbox docker,
+	-- ssh attach). Fires only when the foreground process is NOT a shell — at a prompt
+	-- the key passes through and stays word-left (zsh binds ^[[1;5D backward-word). WSL
+	-- panes pass through too: WezTerm only sees wsl.exe there, and the tmux inside
+	-- carries its own C-Left bind. pcall-guarded like CTRL+W; on any probe error the
+	-- key passes through — never steal it on a bad read.
+	{ key = "LeftArrow", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
+		local ok, proc = pcall(function()
+			return (pane:get_foreground_process_name() or ""):lower()
+		end)
+		local base = ((ok and proc or ""):match("([^/\\]+)$") or ""):gsub("%.exe$", "")
+		local shells = {
+			zsh = true, bash = true, fish = true, sh = true, login = true, pwsh = true,
+			powershell = true, cmd = true, ubuntu = true, wsl = true, wslhost = true,
+		}
+		if base == "" or shells[base] then
+			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
+		else
+			window:perform_action(act.SpawnCommandInNewTab({
+				domain = { DomainName = "local" },
+				args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
+			}), pane)
+		end
+	end) },
 	-- CTRL+SHIFT+N: start a NEW claude-sandbox session (pick repo + branch) without the
 	-- picker. agentview --spawn runs its fzf pickers in this tab, then wezterm cli spawn
 	-- opens the launched session in a fresh tab (the wezterm backend, no tmux here).
