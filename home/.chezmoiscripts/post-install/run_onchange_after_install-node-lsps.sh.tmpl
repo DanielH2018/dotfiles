@@ -7,7 +7,11 @@
 command -v fnm >/dev/null 2>&1 || { echo "install-node-lsps: fnm not on PATH; skipping (re-run 'chezmoi apply' once fnm is installed)" >&2; exit 0; }
 eval "$(fnm env --shell bash)" 2>/dev/null || true
 command -v npm >/dev/null 2>&1 || { echo "install-node-lsps: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
-npm install -g \
+# --allow-scripts=core-js: vscode-langservers-extracted pulls in core-js, whose
+# postinstall (a "thank you" donation banner) trips npm 11.16+'s unreviewed-scripts
+# warning on global installs, where `npm approve-scripts` can't help (EGLOBAL).
+# Pre-approving it keeps `chezmoi apply` output clean and travels to every machine.
+npm install -g --allow-scripts=core-js \
   @vtsls/language-server \
   bash-language-server \
   yaml-language-server \
