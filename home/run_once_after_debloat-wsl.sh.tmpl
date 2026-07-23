@@ -1,0 +1,87 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: strip Ubuntu Server bloat that has no purpose on a personal dev WSL, make
+# Docker socket-activated instead of always-on, and drop a swappiness tunable.
+#
+#  1. Mask snapd (0 snaps installed here), landscape-client (Canonical fleet mgmt) and
+#     wsl-pro (Ubuntu Pro bridge) + silence the Pro/ESM/news MOTD ads printed on every
+#     interactive login. Removes ~4 idle daemons and the login-time nags.
+#  2. Disable docker.service but keep docker.socket -> dockerd lazy-starts on the first
+#     `docker` command instead of at every boot (it's the largest boot-blame entry, ~3s).
+#  3. vm.swappiness=10 via /etc/sysctl.d (20GB RAM; no reason to page to the VHD swap).
+#
+# chezmoi manages $HOME only, so the /etc + systemctl changes need sudo here.
+# run_once_after_: a sudo-less run fails loud (exit 1 -> retries next apply) without
+# blocking deployment. Live changes apply now; disabled boot services take effect on the
+# next `wsl --shutdown`. Bump the marker to re-run after edits.
+# debloat-bump: v1
+set -u
+
+sysctl_file=/etc/sysctl.d/99-wsl-tuning.conf
+journald_file=/etc/systemd/journald.conf.d/99-wsl-cap.conf
+
+# Converged? snapd masked + both drop-ins present. The rest is idempotent on re-run.
+if [ "$(systemctl is-enabled snapd.service 2>/dev/null)" = masked ] \
+   && [ -f "$sysctl_file" ] && [ -f "$journald_file" ]; then
+  exit 0
+fi
+
+if ! sudo -v; then
+  echo "debloat-wsl: sudo unavailable; deferring debloat (retries next apply)" >&2
+  exit 1
+fi
+
+# 1a. Mask unused daemons. --now stops them immediately; mask blocks any re-enable.
+#     Guard on `systemctl cat` so we never mask a phantom unit, and on is-enabled so
+#     the echo only fires on an actual change.
+for unit in snapd.service snapd.socket snapd.seeded.service \
+            landscape-client.service wsl-pro.service motd-news.timer; do
+  if systemctl cat "$unit" >/dev/null 2>&1 \
+     && [ "$(systemctl is-enabled "$unit" 2>/dev/null)" != masked ]; then
+    sudo systemctl mask --now "$unit" >/dev/null 2>&1 \
+      && echo "debloat-wsl: masked $unit"
+  fi
+done
+
+# 1b. Silence Pro/ESM/news + landscape MOTD noise on interactive login (idempotent).
+for m in 50-motd-news 91-contract-ua-esm-status 88-esm-announce 50-landscape-sysinfo; do
+  if [ -x "/etc/update-motd.d/$m" ]; then
+    sudo chmod -x "/etc/update-motd.d/$m" && echo "debloat-wsl: disabled MOTD script $m"
+  fi
+done
+if [ -f /etc/default/motd-news ] && grep -q '^ENABLED=1' /etc/default/motd-news; then
+  sudo sed -i 's/^ENABLED=1/ENABLED=0/' /etc/default/motd-news
+fi
+command -v pro >/dev/null 2>&1 && sudo pro config set apt_news=false >/dev/null 2>&1 || true
+
+# 2. Socket-activate Docker: drop the boot-time dockerd, keep on-demand start. Only if
+#    docker.socket exists (else disabling the service would leave docker unstartable).
+#    Does not stop a currently-running dockerd -- takes effect on the next boot.
+if systemctl cat docker.socket >/dev/null 2>&1; then
+  sudo systemctl enable docker.socket >/dev/null 2>&1 || true
+  if [ "$(systemctl is-enabled docker.service 2>/dev/null)" != disabled ]; then
+    sudo systemctl disable docker.service >/dev/null 2>&1 \
+      && echo "debloat-wsl: docker.service disabled (now socket-activated via docker.socket)"
+  fi
+else
+  echo "debloat-wsl: docker.socket absent; leaving docker.service enabled" >&2
+fi
+
+# 3. Keep pages in RAM (20GB) instead of paging to the VHD swap file.
+if [ ! -f "$sysctl_file" ]; then
+  printf 'vm.swappiness=10\n' | sudo tee "$sysctl_file" >/dev/null \
+    && sudo sysctl -q -w vm.swappiness=10 \
+    && echo "debloat-wsl: vm.swappiness=10 ($sysctl_file)"
+fi
+
+# 4. Cap the systemd journal (Ubuntu leaves it unbounded -> logs bloat the sparse VHD;
+#    was ~800M). Drop-in, then restart journald so the cap + vacuum apply live.
+if [ ! -f "$journald_file" ]; then
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  printf '[Journal]\nSystemMaxUse=200M\n' | sudo tee "$journald_file" >/dev/null \
+    && sudo systemctl restart systemd-journald >/dev/null 2>&1 \
+    && echo "debloat-wsl: journal capped at 200M ($journald_file)"
+fi
+{{ end -}}
+{{ end -}}
