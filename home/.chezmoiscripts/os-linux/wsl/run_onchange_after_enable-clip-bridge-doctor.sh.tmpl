@@ -1,0 +1,16 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: (re-)enable the wsl-clip-bridge self-heal timer whenever its units change.
+# The daemon's autostart guard (common.sh) only runs on interactive shell start; the
+# timer covers the gaps — leaked listeners and mutex-collision orphans get repaired
+# within 5 minutes instead of persisting until a paste visibly fails.
+# unit-hash: {{ include "dot_config/systemd/user/wsl-clip-bridge-doctor.service" | sha256sum }}
+# timer-hash: {{ include "dot_config/systemd/user/wsl-clip-bridge-doctor.timer" | sha256sum }}
+set -u
+[ -d /run/systemd/system ] || exit 0
+systemctl --user daemon-reload
+systemctl --user enable --now wsl-clip-bridge-doctor.timer >/dev/null 2>&1 \
+  && echo "clip-bridge-doctor: self-heal timer enabled (every 5min)"
+{{ end -}}
+{{ end -}}

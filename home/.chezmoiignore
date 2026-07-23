@@ -23,10 +23,14 @@ Scripts
 
 # tasklist.exe / taskkill.exe symlinks are used only by wsl-clip-bridge (--status/--stop/
 # --doctor) and point into /mnt/c, so deploy them only on WSL (a linux kernel reporting
-# "microsoft"). Elsewhere they'd be dangling symlinks.
+# "microsoft"). Elsewhere they'd be dangling symlinks. Same for the bridge wrapper itself
+# and its self-heal timer units — the daemon only exists under WSLg.
 {{ if not (and (eq .chezmoi.os "linux") (contains "microsoft" (lower .chezmoi.kernel.osrelease))) }}
 .local/bin/tasklist.exe
 .local/bin/taskkill.exe
+.local/bin/wsl-clip-bridge
+.config/systemd/user/wsl-clip-bridge-doctor.service
+.config/systemd/user/wsl-clip-bridge-doctor.timer
 {{ end }}
 
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked

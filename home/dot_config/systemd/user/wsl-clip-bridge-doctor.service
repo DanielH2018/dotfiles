@@ -1,0 +1,10 @@
+[Unit]
+Description=wsl-clip-bridge self-heal (--doctor)
+ConditionPathExists=%h/.local/bin/wsl-clip-bridge
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/wsl-clip-bridge --doctor
+# A repair respawns the bridge daemon from inside this unit; the default
+# control-group cleanup would kill it the moment the oneshot finishes.
+KillMode=process

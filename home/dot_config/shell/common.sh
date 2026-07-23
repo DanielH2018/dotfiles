@@ -287,7 +287,17 @@ if [ -n "$WAYLAND_DISPLAY" ] && command -v wsl-clip-bridge >/dev/null 2>&1; then
   # `tail ~/.cache/wsl-clip-bridge/bridge.log`.
   (
     flock -w 2 9 || exit 0
-    pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1 || { nohup wsl-clip-bridge >/dev/null 2>&1 & disown; }
+    if ! pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1; then
+      if pgrep -f 'clip-listener\.exe.*--win-out' >/dev/null 2>&1; then
+        # A listener outlived its wrapper (pane closed, wrapper died with it): nothing
+        # pipes to wl-copy anymore, and the orphan holds the Win32 single-instance mutex
+        # so a plain relaunch would lose to it. --doctor kills the orphan and starts a
+        # fresh pair; detached, so the (rare) tasklist.exe call never blocks the prompt.
+        nohup wsl-clip-bridge --doctor >/dev/null 2>&1 & disown
+      else
+        nohup wsl-clip-bridge >/dev/null 2>&1 & disown
+      fi
+    fi
   ) 9>"${XDG_RUNTIME_DIR:-/tmp}/wsl-clip-bridge.autostart.lock" 2>/dev/null
 fi
 
