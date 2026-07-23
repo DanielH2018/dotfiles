@@ -11,7 +11,7 @@
 # chezmoi only manages $HOME, so the /etc/wsl.conf edit needs sudo here. run_once_after_:
 # a sudo-less run fails loud (exit 1 -> retries next apply) without blocking deployment.
 # Takes effect after a one-time `wsl --shutdown` from Windows. Bump the marker to refresh.
-# wslcfg-bump: v1
+# wslcfg-bump: v2
 set -u
 
 if ! sudo -v; then
@@ -34,6 +34,13 @@ if [ -f /etc/wsl.conf ] && ! grep -qi 'appendWindowsPath' /etc/wsl.conf; then
     printf '\n[interop]\nappendWindowsPath=false\n' | sudo tee -a /etc/wsl.conf >/dev/null \
       && echo "configure-wsl: added [interop] appendWindowsPath=false — run 'wsl --shutdown' to apply"
   fi
+fi
+
+# 3. Distinct WSL hostname (default borrows the Windows host name) — clearer prompt / SSH /
+#    cross-machine session id. Hardcoded for this box; template per-machine if you add more.
+if [ -f /etc/wsl.conf ] && ! grep -qi 'hostname' /etc/wsl.conf; then
+  printf '\n[network]\nhostname=daniel-wsl\n' | sudo tee -a /etc/wsl.conf >/dev/null \
+    && echo "configure-wsl: set hostname=daniel-wsl — run 'wsl --shutdown' to apply"
 fi
 {{ end -}}
 {{ end -}}
