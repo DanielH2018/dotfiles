@@ -1,0 +1,39 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: isolate the shell from the Windows PATH, keeping a native clipboard.
+#  1. Install wl-clipboard so nvim's `unnamedplus` clipboard works through WSLg's Wayland
+#     (which bridges to the Windows clipboard) instead of win32yank.exe on the Windows PATH.
+#     nvim prefers wl-clipboard over win32yank automatically once it's present.
+#  2. Set [interop] appendWindowsPath=false in /etc/wsl.conf so WSL stops appending the ~60
+#     Windows PATH entries — snappier lookups/tab-completion. File access via /mnt is
+#     unaffected and interop stays enabled (Windows .exe still run by full path).
+# chezmoi only manages $HOME, so the /etc/wsl.conf edit needs sudo here. run_once_after_:
+# a sudo-less run fails loud (exit 1 -> retries next apply) without blocking deployment.
+# Takes effect after a one-time `wsl --shutdown` from Windows. Bump the marker to refresh.
+# wslcfg-bump: v1
+set -u
+
+if ! sudo -v; then
+  echo "configure-wsl: sudo unavailable; deferring wl-clipboard + wsl.conf interop (retries next apply)" >&2
+  exit 1
+fi
+
+# 1. Native Wayland clipboard (idempotent; WSLg bridges wl-copy/wl-paste to Windows).
+if ! command -v wl-copy >/dev/null 2>&1; then
+  sudo apt-get update -qq && sudo apt-get install -y wl-clipboard \
+    && echo "configure-wsl: installed wl-clipboard (nvim clipboard via WSLg Wayland)"
+fi
+
+# 2. Strip the Windows PATH from WSL. Idempotent; never duplicate the key.
+if [ -f /etc/wsl.conf ] && ! grep -qi 'appendWindowsPath' /etc/wsl.conf; then
+  if grep -qi '^\[interop\]' /etc/wsl.conf; then
+    sudo sed -i '/^\[interop\]/a appendWindowsPath=false' /etc/wsl.conf \
+      && echo "configure-wsl: appendWindowsPath=false added under existing [interop]"
+  else
+    printf '\n[interop]\nappendWindowsPath=false\n' | sudo tee -a /etc/wsl.conf >/dev/null \
+      && echo "configure-wsl: added [interop] appendWindowsPath=false — run 'wsl --shutdown' to apply"
+  fi
+fi
+{{ end -}}
+{{ end -}}
