@@ -8,7 +8,8 @@
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
-    "CTS_REMOTE_ROOTS": "~/server",
+    "CTS_REMOTE_ROOTS": "~/server"{{ if eq .chezmoi.hostname "daniel-wsl" }},
+    {{/* OTEL export targets the local claude-otel stack — only this machine runs the collector on :4317 */}}
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
@@ -16,7 +17,7 @@
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_METRIC_EXPORT_INTERVAL": "10000",
     "OTEL_LOGS_EXPORT_INTERVAL": "5000",
-    "OTEL_METRICS_INCLUDE_SESSION_ID": "false"
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "false"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
@@ -414,12 +415,16 @@
       "Bash(wget:*)",
       "Bash(ssh:*)",
       "Bash(scp:*)",
-      "Bash(rsync:*)"
+      "Bash(rsync:*)",
+      {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
+      "Edit(~/.claude/hooks/**)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.claude/settings.local.json)"
     ],
     "defaultMode": "auto",
     "disableBypassPermissionsMode": "disable"
   },
-  "model": "opus[1m]",
+  "model": "Fable",
   "effortLevel": "xhigh",
   "fallbackModel": [
     "claude-sonnet-5"
