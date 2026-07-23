@@ -32,7 +32,7 @@ JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|
 
 # ---- backend focus (the ONLY terminal-specific code) --------------------------
 av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, else 1
-  local loc="$1" backend rest sock tp pane_id _r
+  local loc="$1" backend rest sock tp pane_id _r session
   backend="${loc%%:*}"; rest="${loc#*:}"
   case "$backend" in
     wezterm)
@@ -48,14 +48,23 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
       command -v tmux >/dev/null 2>&1 || return 1
       # rest = <socket>:<session>:<pane_id>; socket + sanitized session carry no ':'.
       pane_id="${rest##*:}"; _r="${rest%:*}"
-      sock="${_r%:*}"                         # drops the trailing :<session>
+      session="${_r##*:}"                      # the attach target when we're not a client
+      sock="${_r%:*}"                          # drops the trailing :<session>
       tp="$pane_id"
       [ -z "$tp" ] && return 1
-      # Focus within the tmux server: window then pane, and switch a detached client.
-      # tmux can't raise the OS window hosting the client (documented limitation).
+      # Focus the target pane server-side, then bring a client onto it.
       tmux -S "$sock" select-window -t "$tp" 2>/dev/null
       tmux -S "$sock" select-pane -t "$tp" 2>/dev/null
-      tmux -S "$sock" switch-client -t "$tp" 2>/dev/null
+      if [ -n "${TMUX:-}" ]; then
+        # Already a tmux client (e.g. the prefix+g popup): move it to the pane. tmux
+        # can't raise the OS window hosting the client (documented limitation).
+        tmux -S "$sock" switch-client -t "$tp" 2>/dev/null
+      else
+        # Bare shell: switch-client has no client to move ("no current client"), so
+        # attach THIS terminal to the session — the select-pane above lands us on it.
+        [ -n "$session" ] || return 1
+        tmux -S "$sock" attach-session -t "$session"
+      fi
       return 0 ;;
     *) return 1 ;;   # none / unknown -> caller falls back to cwd-correlation
   esac

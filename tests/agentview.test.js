@@ -238,6 +238,24 @@ test('a LOCAL row with a 4-field tmux locator dispatches select-pane', { skip },
   assert.match(log, /select-pane -t %3/, 'tmux backend focuses the captured pane');
 });
 
+test('a LOCAL tmux row, NOT inside tmux -> attaches the session (switch-client cannot)', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });   // makeEnv deletes TMUX -> a bare shell
+  const pick = [cardKey([HOST, '/home/ubuntu/proj', 'working', '0', 'proj', '%3', 'sandbox', 'tmux:/tmp/tmux-1000/default:sess:%3']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /attach-session -t sess/, 'a bare shell has no client to switch, so it attaches');
+  assert.doesNotMatch(log, /switch-client/, 'switch-client would fail with "no current client"');
+});
+
+test('a LOCAL tmux row, INSIDE tmux -> switches the existing client (no attach)', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });
+  const pick = [cardKey([HOST, '/home/ubuntu/proj', 'working', '0', 'proj', '%3', 'sandbox', 'tmux:/tmp/tmux-1000/default:sess:%3']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' });
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /switch-client -t %3/, 'inside tmux, move the current client to the pane');
+  assert.doesNotMatch(log, /attach-session/, 'never spawn a nested attach from inside tmux');
+});
+
 test('REMOTE tmux row, no local tmux -> WezTerm spawns an ssh-attach tab', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
   // host != selfhost (daniel-server) -> remote attach, NOT local activation. makeEnv
