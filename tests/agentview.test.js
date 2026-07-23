@@ -461,6 +461,8 @@ test('machine source badges render as rounded pills (boxed)', { skip }, () => {
   assert.match(raw, /\ue0b6/, 'left rounded cap present');
   assert.match(raw, /\ue0b4/, 'right rounded cap present');
   assert.match(raw, /\ue0b6[^\n]*?PC[^\n]*?\ue0b4/, 'the pill encloses the PC source label');
+  // Tight body: the pill is a snug " PC " (single-space padding, no icon glyph).
+  assert.match(raw, /\x1b\[38;2;137;180;250m PC \x1b\[0m/, 'PC pill hugs the label with no icon');
 });
 
 // ---- per-group left accent rule (\u258e, state-colored) ----------------------
@@ -475,6 +477,14 @@ test('each group carries a state-colored left accent rule', { skip }, () => {
   assert.match(raw, new RegExp(`\\x1b\\[${SC.need}m\u258e`), 'needs-input rows carry a yellow accent rule');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.work}m\u258e`), 'working rows carry a green accent rule');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.done}m\u258e`), 'completed rows carry a grey accent rule');
+});
+
+// ---- fit narrow windows: slim margins + trimmed footer ------------------
+test('picker slims margins and trims the footer to fit narrow windows', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  assert.match(src, /--margin=1,2%/, 'side margins are slimmed to reclaim width');
+  assert.doesNotMatch(src, /state from Claude Code hooks/, 'the long footer tagline is dropped');
+  assert.match(src, /⌃x remove/, 'the key hints stay in the trimmed footer');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

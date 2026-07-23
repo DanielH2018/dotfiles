@@ -453,8 +453,8 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W=72 BADGEW=11 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
-  local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd clabel
+  local W=72 BADGEW=9 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
+  local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
   # spawns dominate render time on Windows.
@@ -489,19 +489,19 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       [ "$kind" = "sandbox" ] && clabel="sandbox" || clabel="claude"
       badge_name "$host"; bn="$_bn"
       case "$bn" in
-        PC)      bfg="$E[38;2;137;180;250m"; icon=$'';;   # blue  — desktop
-        homelab) bfg="$E[38;2;203;166;247m"; icon=$'';;   # mauve — server
-        *)       bfg="$E[38;2;205;214;244m"; icon=$'';;   # text  — cloud
+        PC)      bfg="$E[38;2;137;180;250m";;   # blue  — desktop
+        homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
+        *)       bfg="$E[38;2;205;214;244m";;   # text  — cloud
       esac
-      # fixed-width badge cell " <icon> <name> " + the 2 rounded pill caps, so the
+      # badge cell = the rounded pill (caps + " <name> ") plus trailing pad, so the
       # "claude ·" column lines up whatever the machine name's length.
-      bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
+      bpad=$(( BADGEW - ${#bn} - 2 )); [ "$bpad" -lt 0 ] && bpad=0
       printf -v bcell '%*s' "$((BADGEW + 2))" ''
       left_p="  ${bcell}  ${clabel} · ${name}"
       # Machine source as a rounded pill: caps (fill-colored) hug a surface-filled body with
       # the machine-colored icon + name; trailing bpad right-pads to the shared column.
-      printf -v left_c '%s%s%s %s%s%s%s %s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
-        "$scol" "$GBAR" "$Z" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
+      printf -v left_c '%s%s%s %s%s%s%s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+        "$scol" "$GBAR" "$Z" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
         "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       state_color "$grp"; scol="$_scol"
       case "$grp" in
@@ -592,12 +592,12 @@ trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
-  --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
+  --height='~90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↑↓ move · ↵ switch · ⌃n new · ⌃x remove · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
+  --footer='  ↵ switch · ⌃n new · ⌃x remove · ? details · ⌃r refresh · esc cancel' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
