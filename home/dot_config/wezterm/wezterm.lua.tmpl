@@ -109,10 +109,9 @@ config.keys = {
 	-- accepted tradeoff. Lowercase `key`: an uppercase letter implies Shift and would
 	-- only fire on the ctrl+shift chord.
 	{ key = "t", mods = "CTRL",       action = act.SpawnTab("CurrentPaneDomain") },
-	-- Smart close: in an fzf pane (the agentview picker) send ESC so fzf aborts and the
-	-- tab tears down via a normal process exit — a CloseCurrentPane force-close hangs
-	-- while the homelab mux is connected (it round-trips to the remote mux). Everywhere
-	-- else, close the pane as usual.
+	-- Smart close: in the agentview picker (an fzf pane) send ESC so fzf aborts and the
+	-- tab tears down via a clean process exit — nicer than a pane force-close, and it lets
+	-- the picker run its own teardown. Everywhere else, close the pane as usual.
 	{ key = "w", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
 		local proc = pane:get_foreground_process_name() or ""
 		-- agentview stamps its pane with a `agentview` user var (OSC 1337); prefer that
@@ -144,8 +143,7 @@ config.keys = {
 
 	-- --- WezTerm extras (no Ghostty equivalent) ---
 	-- Agent View switcher (agentview): full-color fzf picker in a local tab. Dismiss with
-	-- ESC (clean exit) — it also closes itself after a jump. NOTE: CTRL+W force-close
-	-- hangs while the homelab mux is connected (a WezTerm mux limitation, not agentview).
+	-- ESC (clean exit) — it also closes itself after a jump.
 	-- `--noprofile --norc`: skip the login-shell profile (~400ms of ble.sh/tool
 	-- inits agentview doesn't need). bash.exe auto-adds /usr/bin + /mingw64/bin, and
 	-- jq/wezterm/fzf/agentview all live on the Windows PATH — so bare bash still finds
@@ -184,10 +182,16 @@ config.ssh_domains = {}
 
 -- ---------------------------------------------------------------------------
 -- RELOAD FEEDBACK — WezTerm reloads config silently (on CTRL+SHIFT+R and on save
--- via automatic_reload). With no confirmation the reload key feels like a no-op,
--- so surface a short toast on every reload. Fires for auto-reloads too.
+-- via automatic_reload). With no confirmation the reload key feels like a no-op, so
+-- surface a short toast on every reload. But `window-config-reloaded` ALSO fires once
+-- at startup, which pops an unwanted toast on launch — suppress that first fire via
+-- wezterm.GLOBAL (persists across reloads, resets only on a full GUI restart).
 -- ---------------------------------------------------------------------------
 wezterm.on("window-config-reloaded", function(window)
+	if not wezterm.GLOBAL.startup_toast_shown then
+		wezterm.GLOBAL.startup_toast_shown = true
+		return
+	end
 	window:toast_notification("WezTerm", "Configuration reloaded ✳", nil, 1500)
 end)
 
