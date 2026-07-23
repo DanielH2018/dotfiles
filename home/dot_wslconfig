@@ -17,5 +17,5 @@ nestedVirtualization=false
 # Return page-cache RAM to Windows immediately (vs 'gradual'); the 2.7 default, pinned.
 autoMemoryReclaim=dropCache
 # Auto-shrink the ext4 VHD as docker-ce images churn. New VHDs only — convert the
-# existing disk once: `wsl --manage Ubuntu-26.04 --set-sparse true` then `sudo fstrim -v /`.
+# existing disk once: `wsl --manage Ubuntu --set-sparse true` then `sudo fstrim -v /`.
 sparseVhd=true
