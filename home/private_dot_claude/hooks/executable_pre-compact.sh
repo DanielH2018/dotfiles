@@ -28,7 +28,7 @@ fi
 
 MSG="$MSG
 
-If this session contains important decisions or feedback, run /capture-session to preserve them."
+If this session contains important decisions or feedback, use the remember skill to preserve them."
 
 jq -n --arg msg "$MSG" '{
   "continue": true,

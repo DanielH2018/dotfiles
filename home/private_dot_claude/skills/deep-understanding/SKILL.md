@@ -72,6 +72,6 @@ offline, say), flag it as open rather than assuming success.
 
 ## After
 
-Offer to capture what was learned into the vault — see also the
-capture-session skill — as a new/updated page or a service-context note, so
+Offer to capture what was learned into the vault as a new/updated page or a
+service-context note, so
 the understanding is durable and isn't lost when the session clears.

@@ -30,6 +30,23 @@ command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 
+# --- ssh-agent: one shared agent across all shells/panes ---
+# When nothing else already provides an agent (macOS launchd / 1Password set SSH_AUTH_SOCK, so
+# we skip there), bind one to a fixed socket so every new shell and WezTerm pane reuses the same
+# unlocked keys — unlock a key once, not once per pane. Keys aren't auto-added; the first
+# ssh/git that needs one loads it on demand.
+if command -v ssh-agent >/dev/null 2>&1 && [ -z "${SSH_AUTH_SOCK:-}" ]; then
+  _ssh_sock="${XDG_RUNTIME_DIR:-$HOME}/.ssh-agent.sock"
+  export SSH_AUTH_SOCK="$_ssh_sock"
+  # ssh-add -l exit codes: 0=agent has keys, 1=agent up but empty, 2=can't reach agent.
+  ssh-add -l >/dev/null 2>&1
+  if [ "$?" -eq 2 ]; then
+    rm -f "$_ssh_sock"
+    (umask 077; ssh-agent -a "$_ssh_sock" >/dev/null 2>&1)
+  fi
+  unset _ssh_sock
+fi
+
 # --- PATH (idempotent prepends; brew/python/coreutils paths are macOS-only, set in .zshrc) ---
 for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
   [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac

@@ -47,7 +47,7 @@ It does no work itself; it orients, then hands off to the skill that does the jo
 ## Vault (LLM Wiki)
 
 `vault-lookup` to pull team/service/ops/people context · `/ingest` raw material ·
-`/capture-session` before `/clear` · `/lint` `/rebuild` maintenance · `service-context`
+`remember` before `/clear` · `/lint` `/rebuild` maintenance · `service-context`
 maps a Processing service → repo/dashboards/runbooks.
 
 ## Config / meta
