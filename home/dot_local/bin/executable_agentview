@@ -6,13 +6,15 @@
 #   agentview             full-color fzf picker; on <enter> it jumps to the session.
 #                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. Picker keys:
 #                         ALT+1..9 jump to the Nth session · CTRL+R rename · CTRL+T pin to
-#                         top · CTRL+N new claude-sandbox · CTRL+X remove · CTRL+F refresh.
+#                         top · CTRL+N new claude-sandbox · CTRL+X remove · CTRL+F refresh ·
+#                         CTRL+O session details · ? shortcut cheatsheet.
 #   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
 #                         new pane of the active backend (tmux new-window / wezterm spawn)
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
 #   agentview --jump-nth N  jump to the Nth session in render order (ALT+N target)
 #   agentview --card KEY  render the fzf preview card
+#   agentview --keys      render the keyboard-shortcut cheatsheet (shown on `?`)
 #   agentview --remove KEY  drop KEY from the view (CTRL+X): delete its local registry
 #                         file, or (remote row) filter it from the ssh-snapshot cache. A
 #                         still-live session reappears on its next hook / cache refresh.
@@ -344,6 +346,29 @@ if [ "$mode" = "--card" ]; then
   printf '  %s%-9s%s%s%s\n'     "$lab" "Path" "$dim" "$k_cwd" "$z"
   [ -n "$k_title" ] && printf '  %s%-9s%s%s%s\n' "$lab" "Task" "$val" "$k_title" "$z"
   [ -n "$age" ]     && printf '  %s%-9s%s%s%s\n' "$lab" "Updated" "$dim" "$age" "$z"
+  exit 0
+fi
+
+if [ "$mode" = "--keys" ]; then
+  # The shortcut cheatsheet shown in the preview pane when the user presses `?`. Self-
+  # contained (own colors, no state load) so it renders instantly like --card.
+  e=$'\033'; z="$e[0m"
+  ttl="$e[1m$e[38;2;180;190;254m"; sec="$e[38;2;203;166;247m"; k="$e[38;2;166;227;161m"; dsc="$e[38;2;205;214;244m"
+  printf '\n  %s✳ agent view · shortcuts%s\n' "$ttl" "$z"
+  printf '\n  %sNavigate%s\n' "$sec" "$z"
+  printf '    %s↑ ↓%s      %smove%s\n'                 "$k" "$z" "$dsc" "$z"
+  printf '    %s⌥1 … ⌥9%s  %sjump to that session%s\n' "$k" "$z" "$dsc" "$z"
+  printf '    %s↵%s        %sswitch to selected%s\n'   "$k" "$z" "$dsc" "$z"
+  printf '\n  %sManage%s\n' "$sec" "$z"
+  printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃t%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃x%s       %sremove from list%s\n'     "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃n%s       %snew sandbox session%s\n'  "$k" "$z" "$dsc" "$z"
+  printf '\n  %sView%s\n' "$sec" "$z"
+  printf '    %s⌃o%s       %ssession details%s\n'      "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃f%s       %srefresh now%s\n'          "$k" "$z" "$dsc" "$z"
+  printf '    %s?%s        %sthis help%s\n'            "$k" "$z" "$dsc" "$z"
+  printf '    %sesc%s      %sclose%s\n'                "$k" "$z" "$dsc" "$z"
   exit 0
 fi
 
@@ -710,7 +735,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃t pin · ⌃n new · ⌃x remove · ⌃f refresh · ? details · esc' \
+  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃t pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
@@ -730,7 +755,8 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='alt-7:become('"'$SELF'"' --jump-nth 7)' \
   --bind='alt-8:become('"'$SELF'"' --jump-nth 8)' \
   --bind='alt-9:become('"'$SELF'"' --jump-nth 9)' \
-  --bind='?:toggle-preview' \
+  --bind='ctrl-o:toggle-preview' \
+  --bind='?:show-preview+preview('"'$SELF'"' --keys)' \
   --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
 
 [ -z "$sel" ] && exit 0

@@ -191,6 +191,17 @@ test('--jump-nth counts a pinned session as #1', { skip }, () => {
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %2/, 'the pinned session is jump target #1');
 });
 
+// ---- --keys (the ? shortcut cheatsheet) ---------------------------------
+test('--keys renders every shortcut in the cheatsheet', { skip }, () => {
+  const { env } = makeEnv();
+  const txt = stripAnsi(run(env, ['--keys']).out);
+  for (const s of ['shortcuts', 'Navigate', 'Manage', 'View',
+    '⌥1 … ⌥9', 'switch to selected', '⌃r', 'rename label', '⌃t', 'pin / unpin',
+    '⌃x', '⌃n', '⌃o', 'session details', '⌃f', '? ', 'this help', 'esc']) {
+    assert.ok(txt.includes(s), `cheatsheet lists "${s}"`);
+  }
+});
+
 // ---- picker binds + footer ----------------------------------------------
 test('picker binds the new hotkeys and hints them in the footer', () => {
   const src = fs.readFileSync(VIEW, 'utf8');
@@ -199,10 +210,13 @@ test('picker binds the new hotkeys and hints them in the footer', () => {
   assert.match(src, /ctrl-f:reload\(/, 'ctrl-f is the manual refresh (moved off ctrl-r)');
   assert.match(src, /alt-1:become\([^)]*--jump-nth 1\)/, 'alt-1 jumps to session #1');
   assert.match(src, /alt-9:become\([^)]*--jump-nth 9\)/, 'alt-9 jumps to session #9');
+  assert.match(src, /'\?:show-preview\+preview\([^)]*--keys\)'/, '? shows the shortcut cheatsheet');
+  assert.match(src, /ctrl-o:toggle-preview/, 'ctrl-o toggles the session details card');
   assert.match(src, /⌃r rename/, 'footer advertises rename');
   assert.match(src, /⌃t pin/, 'footer advertises pin');
   assert.match(src, /alt-# jump/, 'footer advertises the alt jump');
   assert.match(src, /⌃f refresh/, 'footer advertises the moved refresh');
+  assert.match(src, /\? keys/, 'footer advertises the shortcut help');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
