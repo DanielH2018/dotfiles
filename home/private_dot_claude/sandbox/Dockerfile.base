@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Single install pass
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-       git jq tini openssh-client make \
+       git jq tini openssh-client make wl-clipboard \
        gh docker-ce-cli docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 

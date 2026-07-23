@@ -46,6 +46,9 @@ if [[ -d "$DEFAULTS_DIR" ]]; then
   if [[ -f "$DEFAULTS_DIR/statusline-command.sh" ]]; then
     cp -f "$DEFAULTS_DIR/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh"
   fi
+  if [[ -f "$DEFAULTS_DIR/keybindings.json" ]]; then
+    cp -f "$DEFAULTS_DIR/keybindings.json" "$CLAUDE_DIR/keybindings.json"
+  fi
 fi
 
 # --- Consolidate artifacts onto the /artifacts bind-mount ---
