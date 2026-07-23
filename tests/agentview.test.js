@@ -71,6 +71,7 @@ echo "$*" >> "$TMUX_LOG"
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
+echo "$*" >> "$SSH_LOG"
 cat "$SSH_REMOTE_FILE" 2>/dev/null; exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
@@ -86,13 +87,15 @@ echo "${HOST}"
 exit 0
 `, { mode: 0o755 });
 
+  const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
-    WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile,
+    WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
   };
-  delete env.TMUX; // never let the test host's tmux socket leak into detection
-  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, capture };
+  delete env.TMUX;          // never let the test host's tmux socket leak into detection
+  delete env.WEZTERM_PANE;  // nor its WezTerm pane id — remote-attach branches on it
+  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture };
 }
 
 function stateFile(home, sid, obj) {
@@ -273,17 +276,31 @@ test('a sandbox row with an EMPTY pane keeps the locator at KEY field 8 (no tab-
   assert.strictEqual(fields[7], loc, `locator must land in KEY field 8; got ${JSON.stringify(fields)}`);
 });
 
-test('REMOTE tmux row, no local tmux -> WezTerm spawns an ssh-attach tab', { skip }, () => {
+test('REMOTE tmux row, WEZTERM_PANE set -> WezTerm spawns an ssh-attach tab', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
-  // host != selfhost (daniel-server) -> remote attach, NOT local activation. makeEnv
-  // deletes TMUX, so the picker isn't inside tmux -> the wezterm-spawn branch.
+  // host != selfhost (daniel-server) -> remote attach, NOT local activation. Not inside
+  // tmux, but WEZTERM_PANE is set so `wezterm cli spawn` can target a pane -> a GUI tab.
   const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
-  run(env, [], { FZF_PICK: pick });
+  run(env, [], { FZF_PICK: pick, WEZTERM_PANE: '0' });
   const spawned = fs.readFileSync(spawnLog, 'utf8');
   assert.match(spawned, /spawn -- ssh -t daniel-server/, 'spawns a local tab ssh-ing to the remote');
   assert.match(spawned, /attach -t 'airflow'/, 'attaches the target tmux session');
   assert.match(spawned, /select-pane -t '%3'/, 'lands on the captured pane');
   assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'must NOT activate a remote pane locally');
+});
+
+test('REMOTE tmux row, no tmux and no WEZTERM_PANE -> exec ssh -t attach in place', { skip }, () => {
+  const { env, sshLog, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  // Bare WSL shell: no $TMUX, and `wezterm cli spawn` can't work without $WEZTERM_PANE, so
+  // the attach must run in the CURRENT terminal (exec ssh) rather than silently no-op.
+  const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  const ssh = fs.readFileSync(sshLog, 'utf8');
+  assert.match(ssh, /-t daniel-server/, 'ssh -t to the remote host');
+  assert.match(ssh, /attach -t 'airflow'/, 'attaches the target session in place');
+  assert.match(ssh, /select-pane -t '%3'/, 'lands on the captured pane');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn without WEZTERM_PANE');
+  assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'no local activation of a remote pane');
 });
 
 test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', { skip }, () => {

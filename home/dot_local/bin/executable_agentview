@@ -164,12 +164,18 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
     tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
     return 0
   fi
-  if command -v wezterm >/dev/null 2>&1; then
-    # Windows-native WezTerm (no local tmux): spawn a fresh GUI tab.
+  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
+    # Native WezTerm: spawn a fresh GUI tab. `wezterm cli spawn` derives its target from
+    # $WEZTERM_PANE, which is unset when WSL doesn't inherit WezTerm's env — gate on it, or
+    # spawn fails and (with output swallowed) this branch silently no-ops.
     wezterm cli spawn -- ssh -t "$sshalias" "$rcmd" >/dev/null 2>&1
     return 0
   fi
-  return 1
+  # Bare shell (no local tmux, no usable wezterm — e.g. a plain WSL shell): attach in THIS
+  # terminal. exec replaces the picker with the ssh-attach, mirroring the local bare-shell
+  # path. Errors (host down, session gone) surface here instead of a silent no-op.
+  command -v ssh >/dev/null 2>&1 || return 1
+  exec ssh -t "$sshalias" "$rcmd"
 }
 
 do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
