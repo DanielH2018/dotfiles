@@ -694,7 +694,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "printf '\\a' > /dev/tty 2>/dev/null",
+            "command": "~/.claude/hooks/play-sound.sh done",
             "async": true,
             "timeout": 5
           }

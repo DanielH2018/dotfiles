@@ -19,6 +19,9 @@ if command -v osascript >/dev/null 2>&1; then
   osascript -e 'on run argv
     display notification (item 2 of argv) with title (item 1 of argv)
   end run' -- "$TITLE" "$MESSAGE"
+elif grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+  # WSL — notify-send has no daemon here, so play an audible Windows cue instead.
+  "$HOME/.claude/hooks/play-sound.sh" input
 elif command -v notify-send >/dev/null 2>&1; then
   # Linux (requires libnotify-bin)
   notify-send "$TITLE" "$MESSAGE"
