@@ -1,0 +1,45 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: arm the weekly fstrim so freed ext4 blocks are discarded back to Windows,
+# shrinking the sparse VHD (dot_wslconfig sets sparseVhd=true). Ubuntu ships fstrim.timer
+# enabled, but its stock unit carries ConditionVirtualization=!container and WSL2 reports
+# as a container (systemd-detect-virt = wsl), so the timer skips itself every boot and the
+# VHD only ever grows. A drop-in that clears the condition re-arms it. Without this, docker
+# image churn balloons the VHD with no automatic reclaim.
+#
+# chezmoi manages $HOME only, so the /etc drop-in needs sudo here. run_once_after_: a
+# sudo-less run fails loud (exit 1 -> retries next apply) without blocking deployment.
+# Takes effect immediately (daemon-reload + enable --now). Bump the marker to refresh.
+# fstrim-bump: v1
+set -u
+
+override=/etc/systemd/system/fstrim.timer.d/wsl-override.conf
+
+# Already armed and the drop-in exists -> converged.
+if [ -f "$override" ] && systemctl is-active --quiet fstrim.timer 2>/dev/null; then
+  exit 0
+fi
+
+if ! sudo -v; then
+  echo "enable-fstrim: sudo unavailable; deferring fstrim.timer arm (retries next apply)" >&2
+  exit 1
+fi
+
+sudo mkdir -p /etc/systemd/system/fstrim.timer.d
+sudo tee "$override" >/dev/null <<'EOF'
+[Unit]
+# WSL2 reports ConditionVirtualization=wsl (a container), so the stock fstrim.timer skips
+# itself. With sparseVhd=true an fstrim propagates to shrink the ext4 VHD, so we want it to
+# run. Clearing the condition re-arms the weekly timer. (chezmoi: run_once_after_enable-fstrim)
+ConditionVirtualization=
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now fstrim.timer \
+  && echo "enable-fstrim: fstrim.timer armed (weekly ext4 discard -> sparse VHD shrink)"
+
+# Reclaim current slack immediately so the first shrink doesn't wait a week.
+sudo fstrim / 2>/dev/null || true
+{{ end -}}
+{{ end -}}

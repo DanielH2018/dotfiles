@@ -12,10 +12,24 @@ swap=8GB
 guiApplications=true
 # Not running VMs inside WSL; trims hypervisor surface (does NOT affect Vanguard/Hyper-V).
 nestedVirtualization=false
+# Share the Windows network stack instead of NAT'ing behind a virtual switch. WSL then
+# rides the host's routing table directly — so the Mullvad split-tunnel + WireGuard routes
+# apply to WSL traffic too, and the homelab (10.0.0.161, *.local.daniel-hunter.com) is
+# reachable from inside WSL exactly as from Windows (NAT'd WSL bypassed those routes).
+# Also gives bidirectional localhost and IPv6. Needs `wsl --shutdown` to take effect.
+networkingMode=mirrored
 
 [experimental]
 # Return page-cache RAM to Windows immediately (vs 'gradual'); the 2.7 default, pinned.
 autoMemoryReclaim=dropCache
 # Auto-shrink the ext4 VHD as docker-ce images churn. New VHDs only — convert the
 # existing disk once: `wsl --manage Ubuntu --set-sparse true` then `sudo fstrim -v /`.
+# run_once_after_enable-fstrim arms the weekly fstrim that feeds this shrink.
 sparseVhd=true
+# Companions to mirrored mode: resolve DNS through the Windows resolver (fixes name
+# resolution under Mullvad/WireGuard — the nslookup-times-out quirk) and inherit the
+# Windows proxy config. hostAddressLoopback lets WSL<->Windows reach each other on the
+# host IP over loopback.
+dnsTunneling=true
+autoProxy=true
+hostAddressLoopback=true
