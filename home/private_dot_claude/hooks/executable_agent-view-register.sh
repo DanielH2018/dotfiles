@@ -33,21 +33,22 @@ av_capture_locator() {  # echo "backend:locator" for the CURRENT pane
   fi
 }
 
-# av_write_full KEY STATE CWD HOST TS KIND TITLE LOCATOR PANE RUN
+# av_write_full KEY STATE CWD HOST TS KIND TITLE LOCATOR PANE RUN [PID]
 # Full record write (atomic temp+mv). MSYS_NO_PATHCONV keeps a leading-slash POSIX
 # cwd intact when a native jq.exe would otherwise let Git-Bash rewrite it. Writes via
-# redirect (not a jq path arg) so jq never has to open a Windows path.
+# redirect (not a jq path arg) so jq never has to open a Windows path. PID (the session's
+# CLAUDE_PID) lets the picker prune leaked local rows whose process is no longer alive.
 av_write_full() {
   local key="$1" state="$2" cwd="$3" host="$4" ts="$5" kind="$6" title="$7" \
-        locator="$8" pane="$9" run="${10}"
+        locator="$8" pane="$9" run="${10}" pid="${11:-}"
   local dir; dir=$(av_dir); mkdir -p "$dir" 2>/dev/null
   local file="$dir/$key.json" tmp="$dir/$key.json.tmp.$$"
   if MSYS_NO_PATHCONV=1 jq -nc \
        --arg key "$key" --arg run "$run" --arg kind "$kind" --arg cwd "$cwd" \
        --arg title "$title" --arg state "$state" --arg host "$host" \
        --arg backend "${locator%%:*}" --arg locator "$locator" \
-       --arg pane "$pane" --arg session "$key" --argjson ts "${ts:-0}" \
-       '{key:$key,run:$run,kind:$kind,cwd:$cwd,title:$title,state:$state,host:$host,ts:$ts,backend:$backend,locator:$locator,pane:$pane,session:$session}' \
+       --arg pane "$pane" --arg session "$key" --arg pid "$pid" --argjson ts "${ts:-0}" \
+       '{key:$key,run:$run,kind:$kind,cwd:$cwd,title:$title,state:$state,host:$host,ts:$ts,backend:$backend,locator:$locator,pane:$pane,session:$session,pid:$pid}' \
        > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
   else

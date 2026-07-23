@@ -21,10 +21,14 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 pane="${WEZTERM_PANE:-}"
 locator=$(av_capture_locator)
 title=""
+# CLAUDE_PID = this session's process; recorded so the picker can prune a leaked local row
+# whose process has since died (a session killed without firing the SessionEnd `end` hook).
+pid="${CLAUDE_PID:-}"
 if [ -f "$file" ]; then                                   # carry last-known fields forward
   [ -z "$pane" ] && pane=$(jq -r '.pane // ""' < "$file" 2>/dev/null)
   case "$locator" in none:|none|'') locator=$(jq -r '.locator // ""' < "$file" 2>/dev/null);; esac
   title=$(jq -r '.title // ""' < "$file" 2>/dev/null)
+  [ -z "$pid" ] && pid=$(jq -r '.pid // ""' < "$file" 2>/dev/null)
 fi
 # Name the row with Claude's OWN generated session title — the `ai-title` entries in the
 # transcript (`.aiTitle`), the same string the built-in Agent View shows (e.g. "cts ssh
@@ -38,5 +42,5 @@ if [ -n "$tpath" ] && [ -f "$tpath" ]; then
 fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)
-av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" ""
+av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" "" "$pid"
 exit 0
