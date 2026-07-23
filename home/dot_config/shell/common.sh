@@ -30,6 +30,33 @@ command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 
+# Bare-terminal claude runs inside a status-less tmux session so the C-Left
+# back-to-Agent-View bind (dot_tmux.conf) works there too — a bare PTY has no layer to
+# catch the key, and Claude Code's own keybindings can't run external commands. Only
+# interactive TUI starts wrap (no args / continue / resume / attach / agents, on a real
+# TTY); everything else — scripts, -p pipes, --version, the daemon — hits the real
+# binary untouched. Inside tmux/WezTerm the outer layer already owns the key, so those
+# pass through. Detaching (C-b d) keeps the session alive and visible in agentview.
+# CLAUDE_WRAP_TTY=1 is a test seam that stands in for the TTY check.
+claude() {
+  case "${1:-}" in
+    ''|-c|--continue|-r|--resume|attach|agents) ;;
+    *) command claude "$@"; return $? ;;
+  esac
+  if [ -n "${TMUX:-}" ] || [ -n "${WEZTERM_PANE:-}" ] || ! command -v tmux >/dev/null 2>&1 \
+    || { [ -z "${CLAUDE_WRAP_TTY:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; }; then
+    command claude "$@"; return $?
+  fi
+  local _n="claude-$$" _cmd="claude" _a
+  for _a in "$@"; do _cmd="$_cmd $(printf '%q' "$_a")"; done
+  # Create detached so `status off` lands before the attach draws anything. If the name
+  # already exists (a prior detach from this same shell), the failed create is silent
+  # and the attach reconnects to it — the -A semantics, split so the set can run between.
+  tmux new-session -d -s "$_n" "$_cmd" 2>/dev/null
+  tmux set-option -t "$_n" status off 2>/dev/null
+  tmux attach-session -t "$_n"
+}
+
 # --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
 # The vault lives on the Windows side under WSL; other machines don't have it. Export the var
 # only when a candidate path exists, so this is a clean no-op elsewhere (the vault skills skip
