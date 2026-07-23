@@ -356,6 +356,31 @@ test('--remove of a remote (non-self host) row leaves local files untouched', { 
   assert.ok(fs.existsSync(avFile(home, 'localkeep')), 'a remote row has no local file — nothing is deleted here');
 });
 
+test('--remove of a remote row filters it out of the ssh-snapshot cache, keeping others', { skip }, () => {
+  const now = nowSec();
+  const gone = JSON.stringify({ kind: 'host', cwd: '/r/rgone', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rgone:%2' });
+  const keep = JSON.stringify({ kind: 'host', cwd: '/r/rkeep', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rkeep:%1' });
+  const { env, home } = makeEnv({ remote: `${gone}\n${keep}` });
+  const cache = path.join(home, '.agentview-remote-cache');
+  const key = cardKey(['daniel-server', '/r/rgone', 'working', String(now), 'rgone', '%2', 'host', 'tmux:/s:rgone:%2']);
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  const after = fs.readFileSync(cache, 'utf8');
+  assert.doesNotMatch(after, /rgone/, 'the removed remote session is filtered from the cache');
+  assert.match(after, /rkeep/, 'other remote sessions stay in the cache');
+});
+
+test('after removing a remote row, --body no longer renders it', { skip }, () => {
+  const now = nowSec();
+  const gone = JSON.stringify({ kind: 'host', cwd: '/home/ubuntu/rgonebody', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:gb:%2' });
+  const keep = JSON.stringify({ kind: 'host', cwd: '/home/ubuntu/rkeepbody', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:kb:%1' });
+  const { env } = makeEnv({ remote: `${gone}\n${keep}` });
+  const key = cardKey(['daniel-server', '/home/ubuntu/rgonebody', 'working', String(now), 'rgonebody', '%2', 'host', 'tmux:/s:gb:%2']);
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  const out = stripAnsi(run(env, ['--body']).out);
+  assert.doesNotMatch(out, /rgonebody/, 'the removed remote row is gone from the rendered body');
+  assert.match(out, /rkeepbody/, 'the other remote row still renders');
+});
+
 test('--remove with an empty KEY (group header / spacer row) deletes nothing', { skip }, () => {
   const { env, home } = makeEnv();
   stateFile(home, 'safe', { kind: 'sandbox', cwd: '/r/safe', state: 'working', host: HOST, ts: nowSec(), locator: 'tmux:/s:safe:%1' });

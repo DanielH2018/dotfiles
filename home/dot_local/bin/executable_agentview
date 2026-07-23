@@ -11,9 +11,9 @@
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
 #   agentview --card KEY  render the fzf preview card
-#   agentview --remove KEY  delete KEY's local registry file — drops it from the view
-#                         (CTRL+X in the picker; a still-live session reappears on its
-#                         next hook event, a finished one stays gone). Remote rows no-op.
+#   agentview --remove KEY  drop KEY from the view (CTRL+X): delete its local registry
+#                         file, or (remote row) filter it from the ssh-snapshot cache. A
+#                         still-live session reappears on its next hook / cache refresh.
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
@@ -22,6 +22,11 @@
 set -u
 mode="${1:-fzf}"
 statedir="$HOME/.claude/agent-view"
+# Homelab snapshot cache: the picker renders from THIS file instantly (no network on
+# open); a background job refreshes it over ssh and live-reloads fzf. Kept OUT of the
+# state dir and without a .json suffix so the local glob never mistakes it for a local
+# session file. Defined here (above do_remove) so Ctrl+X on a remote row can filter it.
+remote_cache="$HOME/.agentview-remote-cache"
 now=$(date +%s 2>/dev/null || echo 0)
 selfhost=$(hostname 2>/dev/null)
 US=$'\037'
@@ -186,16 +191,27 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   return 0
 }
 
-do_remove() {  # $1 = KEY -> drop this row from the view by deleting its LOCAL registry
-  # file (remove-from-view, NOT kill: a still-live session reappears on its next hook
-  # event; a finished one stays gone). Remote rows live in the ssh cache, not a local
-  # file, so there's nothing to delete here — left untouched.
-  local key="$1" host cwd kind locator f m
+do_remove() {  # $1 = KEY -> drop this row from the view. A LOCAL row's registry file is
+  # deleted; a REMOTE row is filtered out of the ssh-snapshot cache (it has no local
+  # file). Either way it's remove-from-view, NOT kill: a still-live session reappears on
+  # its next hook event / next cache refresh; a finished one stays gone.
+  local key="$1" host cwd kind locator f m tmp="$remote_cache.tmp.$$"
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
   kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
-  [ -n "$host" ] && [ "$host" != "$selfhost" ] && return 0   # remote row: no local file
+  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+    # Remote row: no local file. Drop it from the ssh-snapshot cache so it leaves THIS
+    # view on the reload; the next background refresh re-adds it if it's still live on the
+    # remote — same "reappears if live" behavior as local. Read via stdin (native jq.exe
+    # can't open an MSYS path); on any jq error keep the old cache rather than clobber it.
+    [ -s "$remote_cache" ] || return 0
+    MSYS_NO_PATHCONV=1 jq -c --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
+      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
+      select( (($loc != "" and $l == $loc) or ($loc == "" and $c == $cwd and $h == $host and $k == $kind)) | not )
+    ' < "$remote_cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    return 0
+  fi
   shopt -s nullglob
   for f in "$statedir"/*.json; do
     # Match on the unique locator (captured pane id) when present; else fall back to
@@ -336,11 +352,7 @@ prof() { [ -n "${AGENTVIEW_PROFILE:-}" ] && printf '%s\t%s\n' "${EPOCHREALTIME:-
 JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts, (.kind // "host"), (.locator // ""), (.title // "")] | @tsv'
 JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
 PRUNE=$(( 7 * 86400 ))
-# Homelab snapshot cache: the picker renders from THIS file instantly (no network on
-# open); a background job refreshes it over ssh and live-reloads fzf. Kept OUT of the
-# state dir and without a .json suffix so the local glob never mistakes it for a
-# local session file.
-remote_cache="$HOME/.agentview-remote-cache"
+# remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
 
 gather_local_rows() {  # append local session rows to global `rows`, prune >7d
