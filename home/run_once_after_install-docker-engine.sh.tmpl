@@ -1,0 +1,74 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if and (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (ne .profile "minimal") -}}
+#!/bin/sh
+# Installs Docker Engine (docker-ce) from Docker's official apt repo — WSL2 only.
+# Gated to WSL: a native Linux host (the Pi/server) manages Docker separately or not at all,
+# macOS uses Docker Desktop, and Windows gets nothing (the .sh guard renders empty there, so
+# chezmoi skips it). Mirrors the GitHub-CLI apt-repo block in install-cli-tools — add keyring
+# -> add apt source -> apt install — all idempotent and sudo-aware.
+# run_once_after_: runs AFTER file targets so a sudo-less run fails loud (exit 1 -> retries next
+# apply) without blocking dotfile deployment. Bump the marker to force a refresh.
+# docker-bump: v1
+set -u
+
+DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
+DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
+
+# 1. Add Docker's official apt repo + keyring once, then install the engine + compose plugin.
+if ! command -v docker >/dev/null 2>&1 || [ ! -f "$DOCKER_LIST" ]; then
+  if sudo -v; then
+    sudo install -m 0755 -d /etc/apt/keyrings
+    if [ ! -f "$DOCKER_KEYRING" ]; then
+      tmpk="$(mktemp)"
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$tmpk"
+      sudo install -m 0644 "$tmpk" "$DOCKER_KEYRING"
+      rm -f "$tmpk"
+    fi
+    if [ ! -f "$DOCKER_LIST" ]; then
+      . /etc/os-release
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+        | sudo tee "$DOCKER_LIST" >/dev/null
+    fi
+    sudo apt-get update -qq
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+      && echo "install-docker: Docker Engine installed"
+  else
+    echo "install-docker: sudo unavailable; deferring Docker Engine install" >&2
+  fi
+fi
+
+# 2. Let the current user run docker without sudo (takes effect next login / 'newgrp docker').
+if command -v docker >/dev/null 2>&1 && ! id -nG "$USER" | grep -qw docker; then
+  sudo usermod -aG docker "$USER" \
+    && echo "install-docker: added $USER to the docker group (re-login or 'newgrp docker' to apply)"
+fi
+
+# 3. Enable systemd in WSL so dockerd auto-starts on launch. chezmoi only manages $HOME, so
+#    write /etc/wsl.conf with sudo — but never clobber a config that already touches systemd.
+if command -v docker >/dev/null 2>&1; then
+  if [ ! -f /etc/wsl.conf ]; then
+    printf '[boot]\nsystemd=true\n' | sudo tee /etc/wsl.conf >/dev/null \
+      && echo "install-docker: enabled systemd in /etc/wsl.conf"
+  elif ! grep -qi systemd /etc/wsl.conf; then
+    echo "install-docker: /etc/wsl.conf exists without a systemd setting; add a '[boot]' section with 'systemd=true' manually" >&2
+  fi
+
+  # 4. apt's postinst already enables docker.service (via deb-systemd-helper, even with systemd
+  #    not yet running), so it auto-starts once systemd boots. If systemd IS live now, start it
+  #    immediately; otherwise a one-time 'wsl --shutdown' from Windows is all that's left.
+  if [ -d /run/systemd/system ]; then
+    sudo systemctl enable --now docker >/dev/null 2>&1 \
+      && echo "install-docker: docker service enabled + started"
+  else
+    echo "install-docker: systemd not active yet — run 'wsl --shutdown' from Windows and reopen this distro; dockerd will auto-start." >&2
+  fi
+fi
+
+# Fail loudly (retry next apply) if the engine still isn't installed — e.g. a sudo-less run.
+# As a run_once_after_ script this does NOT block dotfile deployment.
+if ! command -v docker >/dev/null 2>&1; then
+  echo "install-docker: Docker Engine not installed yet; re-run 'chezmoi apply' where sudo can prompt." >&2
+  exit 1
+fi
+{{ end -}}
+{{ end -}}
