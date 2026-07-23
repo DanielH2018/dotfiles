@@ -1,11 +1,11 @@
 {{ if ne .chezmoi.os "darwin" }}
 Brewfile
 .config/ghostty
-.claude/sandbox
 {{ end }}
 
 {{ if eq .chezmoi.os "windows" }}
 .local/bin/ct
+.claude/sandbox
 {{ end }}
 
 {{ if ne .chezmoi.os "windows" }}
