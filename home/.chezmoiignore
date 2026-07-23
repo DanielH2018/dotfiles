@@ -28,6 +28,13 @@ Scripts
 # nvim: lazy's lockfile is machine-local (stable branches, no pinning).
 .config/nvim/lazy-lock.json
 
+# claude artifacts: ~/.claude/artifacts is local scratch for plan/spec renders.
+# Don't manage the dir by default — blocks `chezmoi add` on ad-hoc artifacts so
+# scratch can't be swept upstream. Track only the specific plan files kept here.
+.claude/artifacts/*
+!.claude/artifacts/homelab-mcp-health-sweep_2026-07-23.html
+!.claude/artifacts/homelab-mcp-health-sweep_2026-07-23.md
+
 # Machine-local overrides must never enter this (public) repo. Blocks `chezmoi add`
 # on any *.local.* file so a permission/secret override can't be swept upstream.
 **/*.local.json
