@@ -324,4 +324,50 @@ test('prunes long-dead local state files from disk', { skip }, () => {
   assert.ok(!fs.existsSync(dead), 'a state file untouched for >7 days should be removed');
 });
 
+// ---- --remove (Ctrl+X: drop a session from the view) --------------------
+const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
+
+test('--remove deletes the local file matching the row locator, leaving others', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'keep', { kind: 'sandbox', cwd: '/r/keep', state: 'working', host: HOST, ts: now, locator: 'tmux:/s:sess-keep:%1' });
+  stateFile(home, 'gone', { kind: 'sandbox', cwd: '/r/gone', state: 'working', host: HOST, ts: now, locator: 'tmux:/s:sess-gone:%2' });
+  const key = cardKey([HOST, '/r/gone', 'working', String(now), 'gone', '%2', 'sandbox', 'tmux:/s:sess-gone:%2']);
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  assert.ok(!fs.existsSync(avFile(home, 'gone')), 'the selected session file is removed');
+  assert.ok(fs.existsSync(avFile(home, 'keep')), 'a different session (different locator) is untouched');
+});
+
+test('--remove matches a legacy row (no locator) by host+cwd+kind', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'legacy', { kind: 'host', cwd: '/r/legacy', state: 'working', host: HOST, ts: now, locator: '' });
+  const key = cardKey([HOST, '/r/legacy', 'working', String(now), 't', '1', 'host', '']); // empty locator field
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  assert.ok(!fs.existsSync(avFile(home, 'legacy')), 'a locator-less legacy row falls back to cwd/host/kind match');
+});
+
+test('--remove of a remote (non-self host) row leaves local files untouched', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'localkeep', { kind: 'host', cwd: '/r/localkeep', state: 'working', host: HOST, ts: now, locator: 'tmux:/s:x:%1' });
+  const key = cardKey(['daniel-server', '/home/ubuntu/remote', 'working', String(now), 't', '1', 'host', 'tmux:/s:remote:%9']);
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  assert.ok(fs.existsSync(avFile(home, 'localkeep')), 'a remote row has no local file — nothing is deleted here');
+});
+
+test('--remove with an empty KEY (group header / spacer row) deletes nothing', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'safe', { kind: 'sandbox', cwd: '/r/safe', state: 'working', host: HOST, ts: nowSec(), locator: 'tmux:/s:safe:%1' });
+  assert.strictEqual(run(env, ['--remove', '']).code, 0);
+  assert.ok(fs.existsSync(avFile(home, 'safe')), 'an empty KEY must never match a real session');
+});
+
+test('picker binds ctrl-x to --remove and hints it in the footer', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  assert.match(src, /ctrl-x:execute-silent\([^)]*--remove {1}/, 'ctrl-x runs agentview --remove on the selected KEY');
+  assert.match(src, /reload\(/, 'removal reloads the body so the row disappears');
+  assert.match(src, /⌃x remove/, 'footer advertises the remove action');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

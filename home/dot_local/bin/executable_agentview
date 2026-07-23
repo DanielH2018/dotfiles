@@ -11,6 +11,9 @@
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
 #   agentview --card KEY  render the fzf preview card
+#   agentview --remove KEY  delete KEY's local registry file — drops it from the view
+#                         (CTRL+X in the picker; a still-live session reappears on its
+#                         next hook event, a finished one stays gone). Remote rows no-op.
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
@@ -183,8 +186,37 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   return 0
 }
 
+do_remove() {  # $1 = KEY -> drop this row from the view by deleting its LOCAL registry
+  # file (remove-from-view, NOT kill: a still-live session reappears on its next hook
+  # event; a finished one stays gone). Remote rows live in the ssh cache, not a local
+  # file, so there's nothing to delete here — left untouched.
+  local key="$1" host cwd kind locator f m
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$host" ] && [ "$host" != "$selfhost" ] && return 0   # remote row: no local file
+  shopt -s nullglob
+  for f in "$statedir"/*.json; do
+    # Match on the unique locator (captured pane id) when present; else fall back to
+    # host+cwd+kind for legacy rows that predate the locator field. Per-file jq is fine
+    # here — this is a one-shot, user-initiated action, not the hot render path — so it
+    # sidesteps the glob/jq index-alignment the prune path has to do. An empty KEY (a
+    # group header / spacer row) has empty cwd+host, so it can never match a real file.
+    m=$(jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
+      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
+      if   ($loc != "" and $l == $loc)                                 then "M"
+      elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
+      else "N" end' "$f" 2>/dev/null)
+    [ "$m" = "M" ] && rm -f "$f" 2>/dev/null
+  done
+  shopt -u nullglob
+  return 0
+}
+
 if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
 if [ "$mode" = "--jump" ]; then do_jump "${2:-}"; exit 0; fi
+if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
@@ -541,7 +573,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar \
   --header="$hdrline" --header-first \
-  --footer='  ↑↓ move · ↵ switch · ⌃n new · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
+  --footer='  ↑↓ move · ↵ switch · ⌃n new · ⌃x remove · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
@@ -549,6 +581,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='ctrl-r:reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-x:execute-silent('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='?:toggle-preview' \
   --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
 
