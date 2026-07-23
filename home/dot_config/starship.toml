@@ -1,6 +1,7 @@
 "$schema" = 'https://starship.rs/config-schema.json'
 
 command_timeout = 2000 # Value in milliseconds
+scan_timeout = 50 # ms; default 30 trips on WSL2 cold-start I/O spikes
 
 format = """
 [](color_orange)\
