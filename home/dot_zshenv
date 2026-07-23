@@ -1,1 +1,7 @@
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# Read by `ctw` when this host is the target of `cts --ssh` — it lists git repos directly
+# under these roots (colon-separated). Must live in .zshenv, not .zshrc: a non-interactive
+# `ssh host ctw …` sources only .zshenv. $HOME because repos (e.g. ~/server) sit right under
+# home; the tool's own default is ~/Repositories.
+export CTS_REMOTE_ROOTS="$HOME"
