@@ -34,6 +34,8 @@ function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [] } = {}) {
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const repoListFile = path.join(bin, 'repo-list.txt'); fs.writeFileSync(repoListFile, '');
+  const sandboxLog = path.join(bin, 'sandbox.log'); fs.writeFileSync(sandboxLog, '');
+  const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
 
   // fzf answers by prompt: repo> -> $FZF_REPO, branch> -> $FZF_BRANCH. The repo> list is
   // captured to $REPO_CAPTURE so a test can assert exactly which repos were offered.
@@ -58,7 +60,12 @@ case "$*" in *spawn*) echo "$*" >> "$WEZ_SPAWN_LOG" ;; esac
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude-sandbox'), `#!/bin/bash
+echo "$*" >> "$SANDBOX_LOG"
 case "$*" in *--complete-branches*) printf 'main\\nfeature-x\\n' ;; esac
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash
+echo "run $*" >> "$CLAUDE_LOG"
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
@@ -70,9 +77,11 @@ echo host
     SANDBOX_REPOS_ROOT: reposRoot,
     CLAUDE_SANDBOX_BIN: path.join(bin, 'claude-sandbox'),
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
+    SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
-  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxBin: path.join(bin, 'claude-sandbox') };
+  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog,
+    sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 function run(env, extraEnv = {}) {
   try {
@@ -155,12 +164,21 @@ test('cancelling the repo pick is a clean no-op (no spawn)', { skip }, () => {
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
-test('no tmux/wezterm backend -> prints the command to run manually, non-zero', { skip }, () => {
-  const { env } = makeEnv();
+test('no tmux/wezterm backend -> runs the launcher in place', { skip }, () => {
+  const { env, sandboxLog, reposRoot } = makeEnv();
   const r = run(env, { FZF_REPO: 'airflow', FZF_BRANCH: 'main' });   // neither TMUX nor WEZTERM_PANE
-  assert.notStrictEqual(r.code, 0, 'exits non-zero with no backend');
-  assert.match(r.err, /run manually/i);
-  assert.match(r.err, /airflow -b main/, 'shows the exact launcher command');
+  assert.strictEqual(r.code, 0, `in-place spawn exits clean; stderr: ${r.err}`);
+  assert.ok(fs.readFileSync(sandboxLog, 'utf8').includes(`${path.join(reposRoot, 'airflow')} -b main`),
+    'the launcher itself ran (exec\'d in place, not printed as advice)');
+});
+
+test('no backend + the no-repo row -> plain claude runs in place', { skip }, () => {
+  const { env, claudeLog, tmuxLog, spawnLog } = makeEnv();
+  const r = run(env, { FZF_REPO: HOST_ROW });
+  assert.strictEqual(r.code, 0, `in-place spawn exits clean; stderr: ${r.err}`);
+  assert.match(fs.readFileSync(claudeLog, 'utf8'), /run/, 'host claude ran in place');
+  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no tmux involved');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm involved');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

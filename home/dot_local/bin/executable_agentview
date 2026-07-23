@@ -9,7 +9,8 @@
 #                         top · CTRL+N new session · CTRL+X remove · CTRL+F refresh ·
 #                         CTRL+O session details · ? shortcut cheatsheet.
 #   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
-#                         new pane of the active backend (tmux new-window / wezterm spawn).
+#                         new pane of the active backend (tmux new-window / wezterm spawn),
+#                         or in place when neither backend is usable (bare WSL shell).
 #                         Picking the "no repo" entry launches a plain HOST claude at $HOME
 #                         instead (no sandbox, no branch pick).
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
@@ -528,8 +529,11 @@ spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pa
   if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
     wezterm cli spawn -- bash -lc "$cmd" >/dev/null 2>&1; return 0
   fi
-  printf 'agentview: no tmux/wezterm backend to spawn into — run manually:\n  %s\n' "$cmd" >&2
-  return 1
+  # Bare shell (e.g. WSL WezTerm: no tmux server, WEZTERM_PANE not propagated): no mux to
+  # open a pane in, so run it in place — mirroring <enter>'s bare-shell attach. Under the
+  # picker's ctrl+n execute() the session owns the tty until it exits, then fzf reloads.
+  # The old "run manually" error was cleared by fzf before it could be read.
+  exec bash -c "$cmd"
 }
 
 do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the active backend
