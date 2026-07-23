@@ -66,6 +66,42 @@ Produce the approved fixes list and skipped list before proceeding.
 
 ---
 
+## Phase 2.5 — Freeze acceptance checks (optional, preferred)
+
+Before dispatching any fix agent, turn the approved findings into deterministic
+acceptance checks where possible, then **freeze** them by committing to git. This ports
+the "frozen checks" pattern: the fix agents never see a mutable grading target, and the
+fixes are graded by a script in Phase 4 — not by a model self-assessing its own work.
+
+For each approved finding that can be expressed as a falsifiable shell check, add a line
+to `.claude/checks/review-loop.checks`:
+
+```
+- RUN: `grep -c "TODO" src/x.ts` -> match:"0"
+- RUN: `npm run typecheck` -> exit:0
+- RUN: `npm test -- x.test.ts` -> exit:0
+```
+
+Grammar: `- RUN: \`command\` -> exit:N` and/or `match:"literal substring"` (both on one
+line are ANDed). `match:` is a **literal substring** against combined stdout+stderr,
+never a regex.
+
+Findings that are subjective or structural (e.g. "this abstraction leaks") usually can't
+be expressed as a shell check — skip those; they stay covered by the Phase 2 arbiter
+verification and the Phase 3 file re-read. Authoring zero checks is fine; this phase is
+purely additive.
+
+Then freeze before dispatch:
+
+```
+git add .claude/checks/review-loop.checks
+git commit -m "review-loop: freeze acceptance checks (iteration M)"
+```
+
+On later iterations, append new checks and re-commit (re-freeze) before dispatching again.
+
+---
+
 ## Phase 3 — Fix (parallel agents)
 
 ### Grouping
@@ -112,9 +148,24 @@ Check for a test command (first match wins):
 5. `Makefile` exists with a `test` target → run `make test`
 6. Nothing found → skip tests, log: "No test suite detected, skipping tests."
 
-### On test pass
+### Frozen acceptance checks
 
-Stage all modified files and commit with this message format:
+If `.claude/checks/review-loop.checks` exists (from Phase 2.5), grade it deterministically:
+
+```
+node ~/.claude/scripts/check-runner.mjs .claude/checks/review-loop.checks --frozen
+```
+
+Exit codes: `0` all passed · `1` a check failed · `2` the checks file was modified since
+it was frozen (drift — a fix agent must never edit checks; treat as failure and
+investigate) · `3` parse error. Capture the runner's output for the summary. If the file
+doesn't exist, skip this step.
+
+### On green
+
+Commit only if BOTH gates are green: the test suite passed (or none was detected) AND the
+frozen checks returned exit `0` (or none exist). Stage all modified files and commit with
+this message format:
 
 ```
 Review-loop: fix N issues (iteration M)
@@ -131,9 +182,11 @@ SKIPPED:
 
 Stage specific files by name (not `git add -A`).
 
-### On test fail
+### On red
 
-Do NOT commit. Do NOT revert. Log the test failure output. The next iteration will see the dirty working tree and the failure context.
+If the test suite failed OR the frozen checks returned non-zero, do NOT commit and do NOT
+revert. Log the failing output (suite and/or check-runner). The next iteration will see
+the dirty working tree and the failure context.
 
 ---
 

@@ -39,12 +39,14 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 Write tests for any new code I create. Match the style and framework already used in the project.
 
-## What I don't want
+## Scope discipline
 
-- Don't add docstrings, comments, or type annotations to code you didn't change.
-- Don't refactor or "clean up" code beyond what the task requires.
-- Don't add error handling for scenarios that can't happen.
-- Don't create new files when editing an existing one would do.
+Touch only what the task requires and match the surrounding code. Each rule pairs a "don't" with what to do instead:
+
+- Don't add docstrings, comments, or type annotations to code you didn't change — annotate only the lines you're already editing, matching the file's existing density.
+- Don't refactor or "clean up" beyond what the task requires — if you spot an unrelated improvement, note it in your summary and leave the code alone.
+- Don't add error handling for scenarios that can't happen — guard only failure modes actually reachable from the real call sites.
+- Don't create a new file when editing an existing one would do — reach for a new file only when the change genuinely doesn't belong in any current one.
 
 ## Source quality & epistemic honesty
 
