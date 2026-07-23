@@ -421,6 +421,7 @@ C_WORK="$E[38;2;166;227;161m"          # green   — working
 C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
+GBAR=$'▎'                         # ▎ left accent rule — state-colored, runs down each group
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's rounded end-caps
 PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
@@ -466,7 +467,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     state_color "$grp"; scol="$_scol"
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
-    printf '\t%s●%s %s%s%s%s %s%s%s\n' "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
       # empty pane, and `IFS=$'\t' read` folds that empty field, shifting locator/title
@@ -499,8 +500,8 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       left_p="  ${bcell}  ${clabel} · ${name}"
       # Machine source as a rounded pill: caps (fill-colored) hug a surface-filled body with
       # the machine-colored icon + name; trailing bpad right-pads to the shared column.
-      printf -v left_c '  %s%s%s%s %s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
-        "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
+      printf -v left_c '%s%s%s %s%s%s%s %s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+        "$scol" "$GBAR" "$Z" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
         "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       state_color "$grp"; scol="$_scol"
       case "$grp" in

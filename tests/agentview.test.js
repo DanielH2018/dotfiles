@@ -463,4 +463,18 @@ test('machine source badges render as rounded pills (boxed)', { skip }, () => {
   assert.match(raw, /\ue0b6[^\n]*?PC[^\n]*?\ue0b4/, 'the pill encloses the PC source label');
 });
 
+// ---- per-group left accent rule (\u258e, state-colored) ----------------------
+test('each group carries a state-colored left accent rule', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'n', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\nbar', host: HOST, ts: now - 5 });
+  stateFile(home, 'w', { pane: '2', state: 'working',     cwd: 'C:\\a\\wbar', host: HOST, ts: now - 6 });
+  stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\a\\cbar', host: HOST, ts: now - 3600 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.need}m\u258e`), 'needs-input rows carry a yellow accent rule');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.work}m\u258e`), 'working rows carry a green accent rule');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.done}m\u258e`), 'completed rows carry a grey accent rule');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
