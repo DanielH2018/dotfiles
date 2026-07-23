@@ -48,6 +48,10 @@ function run(filePath, env = {}) {
   const ctx = run('/Users/d/.claude/artifacts/local.html');
   assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
     `host path emitted as the platform's clickable link; got: ${ctx}`);
+  if (process.platform === 'linux') {
+    // WezTerm/Ghostty need Shift to bypass the TUI's mouse capture; Ctrl is VS Code-only.
+    assert.match(ctx, /Shift\+click/, `linux message names the Shift+click gesture; got: ${ctx}`);
+  }
 }
 
 // 4. non-openable extension -> no-op

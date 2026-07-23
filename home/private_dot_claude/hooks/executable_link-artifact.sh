@@ -64,18 +64,22 @@ esac
 url="file://$host"
 msg="An artifact was written. Include this link verbatim in your reply, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
 
-# Linux host (e.g. VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
+# Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
 # which lacks the remote path, so it errors. Emit an http://localhost link served by
-# serve-artifacts.sh instead — VS Code forwards the localhost port over SSH, so it IS
-# click-to-render from the TUI. Gated to the non-sandbox host (CLAUDE_STATE_HOST_DIR
-# unset) and to ~/.claude/artifacts writes; macOS and the sandbox keep file://.
+# serve-artifacts.sh instead — WSL2 mirrored networking shares localhost with Windows,
+# and VS Code forwards the port over SSH, so it renders from either. Gated to the
+# non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to ~/.claude/artifacts writes;
+# macOS and the sandbox keep file://.
 if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   case "$path" in
     */.claude/artifacts/*)
       PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
       rel="${path#*/.claude/artifacts/}"
       url="http://localhost:${PORT}/${rel}"
-      msg="An artifact was written. Include this link verbatim in your reply and tell the user to Ctrl+click it — it opens rendered in the browser (VS Code forwards the localhost port over SSH). Link: "
+      # The TUI captures the mouse (alt screen since v2.1.89), so a plain click goes to
+      # the app; a modifier lets the terminal's own link handler fire. WezTerm/Ghostty
+      # use Shift (the xterm bypass-mouse-reporting modifier); VS Code's terminal uses Ctrl.
+      msg="An artifact was written. Include this link verbatim in your reply and tell the user to Shift+click it (Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
       ;;
   esac
 fi
