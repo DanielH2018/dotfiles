@@ -19,6 +19,16 @@ function have(cmd) {
 const skip = process.platform !== 'win32' ? 'windows-only config'
   : !have('chezmoi') ? 'chezmoi unavailable' : false;
 
+// Locate a parse-only Lua checker. DEVCOM.Lua (provisioned by the winget installer) drops
+// luac.exe under %LOCALAPPDATA%\Programs\Lua\bin and does NOT add it to PATH, so probe that
+// dir before falling back to a bare `luac` on PATH. Returns the command, or '' if absent.
+function findLuac() {
+  const local = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Lua', 'bin', 'luac.exe');
+  if (fs.existsSync(local)) return local;
+  try { execFileSync('luac', ['-v'], { stdio: 'ignore' }); return 'luac'; } catch { return ''; }
+}
+const luac = findLuac();
+
 let rendered;
 function render() {
   if (rendered === undefined) {
@@ -56,22 +66,14 @@ test('required config keys survive rendering', { skip }, () => {
   }
 });
 
-test('rendered Lua is syntactically valid', { skip: skip || (!have('luacheck') && !have('luac')) && 'no lua linter' }, () => {
+test('rendered Lua parses cleanly (luac -p)', { skip: skip || (!luac && 'luac not installed') }, () => {
   const out = render();
   const tmp = path.join(os.tmpdir(), `wezterm-render-${process.pid}.lua`);
   fs.writeFileSync(tmp, out);
   try {
-    if (have('luac')) {
-      // Parse-only: exits non-zero solely on a syntax error (never runs require).
-      execFileSync('luac', ['-p', tmp], { stdio: 'pipe' });
-    } else {
-      // luacheck lumps style warnings into its exit code, so grep its report for a
-      // real syntax error instead of trusting the code — `wezterm` is an undefined global.
-      let report = '';
-      try { execFileSync('luacheck', ['--globals', 'wezterm', tmp], { stdio: 'pipe' }); }
-      catch (e) { report = `${e.stdout || ''}${e.stderr || ''}`; }
-      assert.doesNotMatch(report, /syntax error/i, 'no Lua syntax error in rendered config');
-    }
+    // Parse-only: exits non-zero solely on a syntax error (never runs require), so this
+    // catches an unexpanded `{{ ... }}` directive or malformed render, not just style.
+    execFileSync(luac, ['-p', tmp], { stdio: 'pipe' });
   } finally {
     fs.rmSync(tmp, { force: true });
   }
