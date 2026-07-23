@@ -395,4 +395,42 @@ test('picker binds ctrl-x to --remove and hints it in the footer', () => {
   assert.match(src, /⌃x remove/, 'footer advertises the remove action');
 });
 
+// ---- state coloring (yellow=needs-input, green=working, grey=completed) --
+// The group-header label and each session name are tinted by state; fzf preserves
+// per-token ANSI on the current line, so --highlight-line makes the hovered row show
+// that color. These assert on the RAW capture — the ANSI codes ARE the thing under test.
+const SC = { need: '38;2;249;226;175', work: '38;2;166;227;161', done: '38;2;108;112;134' };
+
+test('group-header labels are tinted by their state color (bold)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
+  stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\nproj', host: HOST, ts: now - 6 });
+  stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.work}mWORKING`), 'WORKING header is bold green');
+  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.need}mNEEDS INPUT`), 'NEEDS INPUT header is bold yellow');
+  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.done}mCOMPLETED`), 'COMPLETED header is bold grey');
+  assert.doesNotMatch(raw, /38;2;180;190;254/, 'header no longer uses the old lavender');
+});
+
+test('session names are tinted by their state color', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\greenname',  host: HOST, ts: now - 5 });
+  stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\yellowname', host: HOST, ts: now - 6 });
+  stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\greyname',   host: HOST, ts: now - 7 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.work}mgreenname`), 'working session name is green');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.need}myellowname`), 'needs-input session name is yellow');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.done}mgreyname`), 'completed session name is grey');
+});
+
+test('picker highlights the whole current line so the state color reads on hover', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  assert.match(src, /--highlight-line/, 'the current row gets a full-width highlight bar');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -414,8 +414,7 @@ C_NEED="$E[38;2;249;226;175m"          # yellow  — needs input
 C_WORK="$E[38;2;166;227;161m"          # green   — working
 C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
-C_NAME="$E[1m$E[38;2;205;214;244m"     # text, bold — session name
-C_HDR="$E[1m$E[38;2;180;190;254m"      # lavender, bold — group label
+C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 # Single-source the state→accent map and the empty-state row so the two render paths
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
@@ -459,7 +458,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     state_color "$grp"; scol="$_scol"
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
-    printf '\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    printf '\t%s●%s %s%s%s%s %s%s%s\n' "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
       # empty pane, and `IFS=$'\t' read` folds that empty field, shifting locator/title
@@ -489,8 +488,8 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
       printf -v bcell '%*s' "$BADGEW" ''
       left_p="  ${bcell}  ${clabel} · ${name}"
-      printf -v left_c '  %s%s %s %s %s%*s  %s%s · %s%s%s%s' \
-        "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_NAME" "$name" "$Z"
+      printf -v left_c '  %s%s %s %s %s%*s  %s%s · %s%s%s%s%s' \
+        "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       state_color "$grp"; scol="$_scol"
       case "$grp" in
         needs-input) stext="${title:-needs input}";;
@@ -583,7 +582,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
-  --info=hidden --no-scrollbar \
+  --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
   --footer='  ↑↓ move · ↵ switch · ⌃n new · ⌃x remove · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
   --preview="'$SELF' --card {1}" \
