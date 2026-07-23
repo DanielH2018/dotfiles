@@ -12,9 +12,46 @@ set -u
 
 case "${1:-}" in
   -h|--help)
-    echo "usage: cts [dir] [claude-sandbox args…]  (run claude-sandbox in a named tmux session)"
+    echo "usage: cts [dir] [claude-sandbox args…]   run claude-sandbox in a named tmux session (local)"
+    echo "       cts --ssh[=HOST] [remote-dir]       start a native claude tmux session on HOST over ssh"
+    echo "                                           HOST defaults to daniel-server (\$CTS_REMOTE_HOST); also -H/--host HOST"
     exit 0 ;;
 esac
+
+# ---- remote (SSH) mode -------------------------------------------------------
+# `cts --ssh [dir]` starts a NATIVE `claude` session inside a named tmux session on a
+# remote host by invoking the deployed `ct` launcher over `ssh -t`, attaching to it now.
+# `ct` uses `tmux new-session -A`, so re-running resumes rather than duplicates; the
+# remote's Agent View state hook registers a tmux locator for it, so the session also
+# shows up in `agentview` and can be re-entered later. Host defaults to daniel-server —
+# the single homelab the picker aggregates — overridable with --ssh=HOST, -H/--host HOST,
+# or $CTS_REMOTE_HOST. Only tmux/claude + the ct launcher are needed on the remote (no
+# Docker/claude-sandbox). Note: an unquoted leading ~ in remote-dir is expanded by YOUR
+# shell — quote it ('~/repo') or pass a plain path to expand on the remote; a remote path
+# with spaces isn't supported.
+_remote=0
+for _a in "$@"; do case "$_a" in --ssh|--ssh=*|-H|--host) _remote=1; break ;; esac; done
+if [ "$_remote" -eq 1 ]; then
+  host="${CTS_REMOTE_HOST:-daniel-server}"
+  rdir=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --ssh)     shift ;;
+      --ssh=*)   host="${1#--ssh=}"; shift ;;
+      -H|--host) host="${2:?cts: --host requires a HOST value}"; shift 2 ;;
+      -*)        printf 'cts: unknown flag in --ssh mode: %s\n' "$1" >&2; exit 2 ;;
+      *)         if [ -z "$rdir" ]; then rdir="$1"; shift
+                 else printf 'cts: --ssh mode takes at most one remote-dir (extra: %s)\n' "$1" >&2; exit 2; fi ;;
+    esac
+  done
+  [ -n "$host" ] || { printf 'cts: no remote host (set --host or $CTS_REMOTE_HOST)\n' >&2; exit 1; }
+  command -v ssh >/dev/null 2>&1 || { printf 'cts: ssh not found on PATH\n' >&2; exit 1; }
+  # ct is deployed to ~/.local/bin/ct; reference it explicitly since a non-login ssh shell
+  # may not have ~/.local/bin on PATH. $HOME is expanded on the remote, not here.
+  remote_ct="${CTS_REMOTE_CT:-\$HOME/.local/bin/ct}"
+  if [ -n "$rdir" ]; then exec ssh -t "$host" "$remote_ct $rdir"; fi
+  exec ssh -t "$host" "$remote_ct"
+fi
 
 command -v tmux >/dev/null 2>&1 || { printf 'cts: tmux not found on PATH\n' >&2; exit 1; }
 

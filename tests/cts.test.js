@@ -146,4 +146,88 @@ test('real tmux accepts cts new-session and launches the command (skip-unless-tm
   }
 });
 
+// ---- remote (SSH) mode: `cts --ssh` starts a native claude tmux session on a host ----
+// Stub `ssh` to log its args (and a no-op `tmux` so nothing else can fail the run), then
+// assert cts drives `ssh -t <host> <remote-ct> [dir]` rather than the local sandbox path.
+function runCtsSsh(args, extraEnv = {}) {
+  const bin = scratch();
+  const log = path.join(bin, 'ssh.log');
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
+echo "$*" >> ${JSON.stringify(log)}
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  delete env.TMUX; delete env.CTS_REMOTE_HOST; delete env.CTS_REMOTE_CT;
+  Object.assign(env, extraEnv);
+  execFileSync('bash', [CTS, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  return fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+}
+
+test('cts --ssh: attaches to the default homelab and runs the remote ct launcher', { skip }, () => {
+  const out = runCtsSsh(['--ssh']);
+  assert.match(out, /(^|\s)-t\s+daniel-server\b/, 'ssh -t to the default host');
+  assert.match(out, /\$HOME\/\.local\/bin\/ct\b/, 'invokes the deployed ct launcher on the remote');
+});
+
+test('cts --ssh DIR: forwards the remote directory to ct', { skip }, () => {
+  const out = runCtsSsh(['--ssh', '~/airflow']);
+  assert.match(out, /ct ~\/airflow\b/, 'remote dir passed through for remote-side expansion');
+});
+
+test('cts --ssh=HOST overrides the remote host', { skip }, () => {
+  const out = runCtsSsh(['--ssh=box2', 'proj']);
+  assert.match(out, /-t\s+box2\b/);
+  assert.match(out, /ct proj\b/);
+});
+
+test('cts -H HOST enables remote mode and sets the host', { skip }, () => {
+  const out = runCtsSsh(['-H', 'box3', 'proj']);
+  assert.match(out, /-t\s+box3\b/);
+  assert.match(out, /ct proj\b/);
+});
+
+test('CTS_REMOTE_HOST sets the default remote host', { skip }, () => {
+  const out = runCtsSsh(['--ssh'], { CTS_REMOTE_HOST: 'box4' });
+  assert.match(out, /-t\s+box4\b/);
+});
+
+test('CTS_REMOTE_CT overrides the remote launcher path', { skip }, () => {
+  const out = runCtsSsh(['--ssh', 'proj'], { CTS_REMOTE_CT: '/opt/ct' });
+  assert.match(out, /\/opt\/ct proj\b/);
+});
+
+test('cts --ssh does not fall through to the local sandbox path', { skip }, () => {
+  const out = runCtsSsh(['--ssh', 'proj']);
+  assert.doesNotMatch(out, /new-session/, 'never runs the local tmux launcher in ssh mode');
+  assert.doesNotMatch(out, /claude-sandbox/, '--ssh is not forwarded to claude-sandbox');
+});
+
+test('cts --ssh errors when ssh is missing', { skip }, () => {
+  const empty = scratch();                         // a PATH with neither ssh nor tmux
+  let err;
+  try {
+    execFileSync(BASH, [CTS, '--ssh'], { env: { ...process.env, PATH: empty, TMUX: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { err = e; }
+  assert.ok(err, 'exited non-zero');
+  assert.strictEqual(err.status, 1);
+  assert.match(String(err.stderr), /ssh not found/);
+});
+
+test('cts --host with no value errors', { skip }, () => {
+  const bin = scratch();
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
+  let err;
+  try {
+    execFileSync('bash', [CTS, '--host'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { err = e; }
+  assert.ok(err, 'exited non-zero when --host has no HOST');
+});
+
+test('-h documents --ssh remote mode', { skip }, () => {
+  const out = execFileSync('bash', [CTS, '-h'], { encoding: 'utf8' });
+  assert.match(out, /^usage: cts /, 'still prints the local usage first');
+  assert.match(out, /--ssh/, 'documents the ssh remote mode');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
