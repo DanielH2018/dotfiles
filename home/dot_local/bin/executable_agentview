@@ -5,7 +5,7 @@
 # Modes:
 #   agentview             full-color fzf picker; on <enter> it jumps to the session.
 #                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. Picker keys:
-#                         ALT+1..9 jump to the Nth session · CTRL+R rename · CTRL+T pin to
+#                         ALT+1..9 jump to the Nth session · CTRL+R rename · CTRL+P pin to
 #                         top · CTRL+N new claude-sandbox · CTRL+X remove · CTRL+F refresh ·
 #                         CTRL+O session details · ? shortcut cheatsheet.
 #   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
@@ -18,7 +18,7 @@
 #   agentview --remove KEY  drop KEY from the view (CTRL+X): delete its local registry
 #                         file, or (remote row) filter it from the ssh-snapshot cache. A
 #                         still-live session reappears on its next hook / cache refresh.
-#   agentview --pin KEY   toggle this row's pin (CTRL+T); pins live in ~/.claude/agent-view-pins
+#   agentview --pin KEY   toggle this row's pin (CTRL+P); pins live in ~/.claude/agent-view-pins
 #   agentview --rename KEY  prompt for a new label, write it as the row's .title (CTRL+R)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
@@ -33,7 +33,7 @@ statedir="$HOME/.claude/agent-view"
 # state dir and without a .json suffix so the local glob never mistakes it for a local
 # session file. Defined here (above do_remove) so Ctrl+X on a remote row can filter it.
 remote_cache="$HOME/.agentview-remote-cache"
-# Pin sidecar: newline-delimited row identities the user pinned with CTRL+T. Kept OUT of
+# Pin sidecar: newline-delimited row identities the user pinned with CTRL+P. Kept OUT of
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
 pinfile="$HOME/.claude/agent-view-pins"
@@ -253,7 +253,7 @@ do_remove() {  # $1 = KEY -> drop this row from the view. A LOCAL row's registry
   return 0
 }
 
-do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+T). Works for local AND
+do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works for local AND
   # remote rows — the pin is keyed by identity, not by a local file. A header/spacer row
   # (empty KEY) is a no-op.
   local key="$1" host cwd kind locator tmp="$pinfile.tmp.$$" _pid
@@ -367,7 +367,7 @@ if [ "$mode" = "--keys" ]; then
   printf '    %s↵%s        %sswitch to selected%s\n'   "$k" "$z" "$dsc" "$z"
   printf '\n  %sManage%s\n' "$sec" "$z"
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
-  printf '    %s⌃t%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
   printf '    %s⌃x%s       %sremove from list%s\n'     "$k" "$z" "$dsc" "$z"
   printf '    %s⌃n%s       %snew sandbox session%s\n'  "$k" "$z" "$dsc" "$z"
   printf '\n  %sView%s\n' "$sec" "$z"
@@ -753,14 +753,14 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃t pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-t:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-x:execute-silent('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \

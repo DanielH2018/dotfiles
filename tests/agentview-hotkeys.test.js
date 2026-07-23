@@ -1,5 +1,5 @@
 // Regression guard for the Agent View picker hotkeys added on top of the fzf picker:
-//   CTRL+T pin-to-top    -> `agentview --pin KEY`   (toggles a local sidecar)
+//   CTRL+P pin-to-top    -> `agentview --pin KEY`   (toggles a local sidecar)
 //   CTRL+R rename        -> `agentview --rename KEY` (writes .title on the local file)
 //   ALT+1..9 quick-jump  -> `agentview --jump-nth N` (focus the Nth rendered session)
 // Drives the ACTUAL script with stub hostname/tmux/fzf on PATH and a temp $HOME, so it's
@@ -197,7 +197,7 @@ test('--keys renders every shortcut in the cheatsheet', { skip }, () => {
   const { env } = makeEnv();
   const txt = stripAnsi(run(env, ['--keys']).out);
   for (const s of ['shortcuts', 'Navigate', 'Manage', 'View',
-    '⌥1 … ⌥9', 'switch to selected', '⌃r', 'rename label', '⌃t', 'pin / unpin',
+    '⌥1 … ⌥9', 'switch to selected', '⌃r', 'rename label', '⌃p', 'pin / unpin',
     '⌃x', '⌃n', '⌃o', 'session details', '⌃f', '? ', 'this help', 'esc']) {
     assert.ok(txt.includes(s), `cheatsheet lists "${s}"`);
   }
@@ -207,14 +207,14 @@ test('--keys renders every shortcut in the cheatsheet', { skip }, () => {
 test('picker binds the new hotkeys and hints them in the footer', () => {
   const src = fs.readFileSync(VIEW, 'utf8');
   assert.match(src, /ctrl-r:execute\([^)]*--rename {1}/, 'ctrl-r renames the selected row');
-  assert.match(src, /ctrl-t:execute-silent\([^)]*--pin {1}/, 'ctrl-t pins the selected row');
+  assert.match(src, /ctrl-p:execute-silent\([^)]*--pin {1}/, 'ctrl-p pins the selected row');
   assert.match(src, /ctrl-f:reload\(/, 'ctrl-f is the manual refresh (moved off ctrl-r)');
   assert.match(src, /alt-1:become\([^)]*--jump-nth 1\)/, 'alt-1 jumps to session #1');
   assert.match(src, /alt-9:become\([^)]*--jump-nth 9\)/, 'alt-9 jumps to session #9');
   assert.match(src, /'\?:show-preview\+preview\([^)]*--keys\)'/, '? shows the shortcut cheatsheet');
   assert.match(src, /ctrl-o:toggle-preview/, 'ctrl-o toggles the session details card');
   assert.match(src, /⌃r rename/, 'footer advertises rename');
-  assert.match(src, /⌃t pin/, 'footer advertises pin');
+  assert.match(src, /⌃p pin/, 'footer advertises pin');
   assert.match(src, /alt-# jump/, 'footer advertises the alt jump');
   assert.match(src, /⌃f refresh/, 'footer advertises the moved refresh');
   assert.match(src, /\? keys/, 'footer advertises the shortcut help');
