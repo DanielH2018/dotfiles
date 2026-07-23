@@ -30,8 +30,8 @@
 # kind is host|sandbox|bg. Local host rows are cross-checked against Claude's own
 # per-process registry (~/.claude/sessions/<pid>.json): its live status overrides a
 # stale hook state, hookless busy/waiting sessions are synthesized, and daemon
-# background jobs get kind=bg with locator bg:<sid> — no pane exists, so <enter>
-# runs `claude attach <sid>` in a new backend pane (roster fallback without a sid).
+# background jobs get kind=bg with locator bg:<jobId> — no pane exists, so <enter>
+# runs `claude attach <jobId>` in a new backend pane (roster fallback without one).
 set -u
 mode="${1:-fzf}"
 statedir="$HOME/.claude/agent-view"
@@ -553,8 +553,8 @@ rows=""
 # pre-warmed spare processes register as idle sessions and would render as phantoms.
 sessionsdir="$HOME/.claude/sessions"
 declare -A SMAP=() SMAP_UPD=() SMAP_USED=()
-load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>cwd<TAB>name (live pids only)
-  local sf jqout pid sid st ts upd kind cwd name
+load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>job<TAB>cwd<TAB>name (live pids only)
+  local sf jqout pid sid st ts upd kind job cwd name
   SMAP=(); SMAP_UPD=(); SMAP_USED=()
   shopt -s nullglob; sf=( "$sessionsdir"/*.json ); shopt -u nullglob
   [ "${#sf[@]}" -gt 0 ] || return 0
@@ -562,7 +562,9 @@ load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>cwd<TAB>name (live
   # session ids (a resume under a new pid leaves the old file behind) filter in bash:
   # kill -0 is a builtin, and the newest updatedAt wins. Files without a status are
   # transient sdk/spare processes — skipped in jq. Timestamps there are ms; ts is
-  # emitted in seconds for the row, updatedAt kept raw for the dedupe.
+  # emitted in seconds for the row, updatedAt kept raw for the dedupe. US-joined, NOT
+  # @tsv: tab is IFS whitespace, so read would collapse an empty field (e.g. no jobId)
+  # and shift every later column.
   jqout=$(jq -r '
     select(((.status // "") != "") and ((.sessionId // "") != "")) |
     [ (.pid // 0 | tostring), .sessionId,
@@ -570,14 +572,14 @@ load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>cwd<TAB>name (live
       (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
       ((.updatedAt // .startedAt // 0) | tostring),
       (if (.kind // "") == "bg" then "bg" else "host" end),
-      (.cwd // ""), (.name // "") ] | @tsv' "${sf[@]}" 2>/dev/null)
+      (.jobId // ""), (.cwd // ""), (.name // "") ] | join("\u001f")' "${sf[@]}" 2>/dev/null)
   [ -n "$jqout" ] || return 0
-  while IFS=$'\t' read -r pid sid st ts upd kind cwd name; do
+  while IFS="$US" read -r pid sid st ts upd kind job cwd name; do
     [ -n "$pid" ] && [ -n "$sid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue
     if [ -n "${SMAP_UPD[$sid]:-}" ] && [ "${SMAP_UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
     SMAP_UPD[$sid]="$upd"
-    SMAP[$sid]="$st"$'\t'"$ts"$'\t'"$kind"$'\t'"$cwd"$'\t'"$name"
+    SMAP[$sid]="$st"$'\t'"$ts"$'\t'"$kind"$'\t'"$job"$'\t'"$cwd"$'\t'"$name"
   done <<< "$jqout"
 }
 
@@ -585,7 +587,7 @@ merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state f
   # Hook fields the registry can't know (locator/pane/cwd, a /rename'd title) survive;
   # state+ts come from the registry, and a bg session's kind flips to "bg" so the jump
   # path knows there is no pane. Non-host kinds (sandbox) keep their own lifecycle.
-  local row="$1" sid="$2" m st host cwd pane ts kind locator title lst lts lkind
+  local row="$1" sid="$2" m st host cwd pane ts kind locator title lst lts lkind ljob
   _mrow="$1"
   [ -n "$sid" ] || return 0
   m="${SMAP[$sid]:-}"; [ -n "$m" ] || return 0
@@ -600,30 +602,33 @@ merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state f
   lst="${m%%$'\t'*}"; m="${m#*$'\t'}"
   lts="${m%%$'\t'*}"; m="${m#*$'\t'}"
   lkind="${m%%$'\t'*}"; m="${m#*$'\t'}"
+  ljob="${m%%$'\t'*}"; m="${m#*$'\t'}"
   m="${m#*$'\t'}"                                   # skip registry cwd; hook cwd wins
   SMAP_USED[$sid]=1
   [ -z "$title" ] && title="$m"                     # registry name fills an empty title
   if [ "$lkind" = "bg" ]; then
     kind="bg"
-    # No pane exists for a daemon session — carry the sid as the focus target so the
-    # jump can `claude attach` it. A real pane locator (bg launched from a terminal
-    # that captured one) would point at the spawning pane, not the session: replace it.
-    locator="bg:$sid"
+    # No pane exists for a daemon session — carry the JOB id as the focus target so
+    # the jump can `claude attach` it (attach matches jobId, NOT the session uuid).
+    # A real pane locator (bg launched from a terminal that captured one) would point
+    # at the spawning pane, not the session: replace it. No jobId -> roster fallback.
+    locator="bg:$ljob"
   fi
   _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"
 }
 
 synth_session_rows() {  # rows for live busy/waiting sessions the hook registry never saw
-  local sid m st ts kind cwd name locator
+  local sid m st ts kind job cwd name locator
   for sid in "${!SMAP[@]}"; do
     [ -n "${SMAP_USED[$sid]:-}" ] && continue
     m="${SMAP[$sid]}"
     st="${m%%$'\t'*}"; m="${m#*$'\t'}"
     ts="${m%%$'\t'*}"; m="${m#*$'\t'}"
     kind="${m%%$'\t'*}"; m="${m#*$'\t'}"
+    job="${m%%$'\t'*}"; m="${m#*$'\t'}"
     cwd="${m%%$'\t'*}"; name="${m#*$'\t'}"
     [ "$st" = "completed" ] && continue              # idle = maybe a spare — a hookless
-    if [ "$kind" = "bg" ]; then locator="bg:$sid"; else locator="none:"; fi
+    if [ "$kind" = "bg" ]; then locator="bg:$job"; else locator="none:"; fi
     rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"$locator"$'\t'"$name"$'\n'
   done                                               # session shows once it works/waits
 }

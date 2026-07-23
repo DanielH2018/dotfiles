@@ -84,7 +84,7 @@ function body(env, capture) {
 test('hookless busy bg session renders as a WORKING row with its name, kind=bg', { skip }, () => {
   const { env, home, capture } = makeEnv();
   sessFile(home, ALIVE_PID, {
-    sessionId: 'aaaa1111-0000-0000-0000-000000000001', kind: 'bg', status: 'busy',
+    sessionId: 'aaaa1111-0000-0000-0000-000000000001', kind: 'bg', status: 'busy', jobId: 'aaaa1111',
     name: 'Dev Environment Functionality Review', cwd: '/home/daniel', statusUpdatedAt: nowMs() - 60_000,
   });
   const raw = body(env, capture);
@@ -95,8 +95,20 @@ test('hookless busy bg session renders as a WORKING row with its name, kind=bg',
   assert.ok(row, 'a KEY-carrying row is rendered');
   const k = row.split('\t')[0].split(US);
   assert.strictEqual(k[6], 'bg', 'KEY kind field marks the daemon session');
-  assert.strictEqual(k[7], 'bg:aaaa1111-0000-0000-0000-000000000001',
-    'locator carries the sid so <enter> can claude-attach it');
+  assert.strictEqual(k[7], 'bg:aaaa1111',
+    'locator carries the JOB id (attach matches jobId, not the session uuid)');
+});
+
+test('a bg registry entry without a jobId gets a bare bg: locator (roster fallback)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  sessFile(home, ALIVE_PID, {
+    sessionId: 'aaaa1111-0000-0000-0000-000000000006', kind: 'bg', status: 'busy',
+    name: 'Jobless', cwd: '/home/daniel', statusUpdatedAt: nowMs(),
+  });
+  const raw = body(env, capture);
+  const row = raw.split('\n').find((l) => l.includes(US));
+  const k = row.split('\t')[0].split(US);
+  assert.strictEqual(k[7], 'bg:');
 });
 
 test('hookless waiting bg session lands in NEEDS INPUT', { skip }, () => {
@@ -151,7 +163,7 @@ test('stale needs-input hook row is overridden to WORKING by a live busy status'
     pane: '', pid: String(ALIVE_PID),
   });
   sessFile(home, ALIVE_PID, {
-    sessionId: sid, kind: 'bg', status: 'busy',
+    sessionId: sid, kind: 'bg', status: 'busy', jobId: 'bbbb2222',
     name: 'SSH Readonly Allow Guardrail', cwd: '/home/daniel', statusUpdatedAt: nowMs() - 5_000,
   });
   const raw = body(env, capture);
@@ -162,7 +174,7 @@ test('stale needs-input hook row is overridden to WORKING by a live busy status'
   const row = raw.split('\n').find((l) => l.includes(US));
   const k = row.split('\t')[0].split(US);
   assert.strictEqual(k[6], 'bg', 'merged daemon row flips kind to bg');
-  assert.strictEqual(k[7], `bg:${sid}`, 'merged daemon row swaps the locator for the sid');
+  assert.strictEqual(k[7], 'bg:bbbb2222', 'merged daemon row swaps the locator for the job id');
 });
 
 test('merge keeps hook locator and a /rename custom title', { skip }, () => {
@@ -203,22 +215,22 @@ test('sandbox rows are not touched by the registry merge', { skip }, () => {
 
 // ---- jump: bg rows open the agents UI ---------------------------------------
 
-const BG_SID = 'dddd4444-0000-0000-0000-000000000001';
-const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', `bg:${BG_SID}`]);
+const BG_JOB = 'dddd4444';
+const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', `bg:${BG_JOB}`]);
 
-test('--jump on a bg row inside tmux runs `claude attach <sid>` in a new window', { skip }, () => {
+test('--jump on a bg row inside tmux runs `claude attach <jobId>` in a new window', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey], { TMUX: '/tmp/tmux-1000/default,1,0' });
   assert.strictEqual(r.code, 0);
   assert.match(fs.readFileSync(tmuxLog, 'utf8'),
-    new RegExp(`new-window -n agents claude attach ${BG_SID}`));
+    new RegExp(`new-window -n agents claude attach ${BG_JOB}`));
 });
 
-test('--jump on a bg row from a bare shell execs `claude attach <sid>` in place', { skip }, () => {
+test('--jump on a bg row from a bare shell execs `claude attach <jobId>` in place', { skip }, () => {
   const { env, claudeLog, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey]);
   assert.strictEqual(r.code, 0);
-  assert.match(fs.readFileSync(claudeLog, 'utf8'), new RegExp(`^attach ${BG_SID}$`, 'm'));
+  assert.match(fs.readFileSync(claudeLog, 'utf8'), new RegExp(`^attach ${BG_JOB}$`, 'm'));
   assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no tmux involvement outside tmux');
 });
 
