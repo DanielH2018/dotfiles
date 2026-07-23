@@ -19,4 +19,15 @@ base="$(printf '%s' "$base" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
 # macOS); take the last 6 digits of its CRC.
 h="$(printf '%s' "$dir" | cksum | cut -d' ' -f1)"
 name="${base}-${h: -6}"
-exec tmux new-session -A -s "$name" -c "$dir" claude
+
+# Resolve the claude binary to an absolute path: tmux runs the pane command against the
+# tmux server's PATH, which under a non-login ssh shell can lack ~/.local/bin (where the
+# Claude installer symlinks the binary), so a bare `claude` would fail to launch. Prefer
+# an explicit override, then PATH, then the installer's ~/.local/bin/claude.
+claude_bin="${CT_CLAUDE_BIN:-}"
+if [ -z "$claude_bin" ]; then
+  claude_bin="$(command -v claude 2>/dev/null || true)"
+  [ -n "$claude_bin" ] || { [ -x "$HOME/.local/bin/claude" ] && claude_bin="$HOME/.local/bin/claude"; }
+  [ -n "$claude_bin" ] || claude_bin="claude"
+fi
+exec tmux new-session -A -s "$name" -c "$dir" "$claude_bin"
