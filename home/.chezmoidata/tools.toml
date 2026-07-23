@@ -55,6 +55,13 @@ brew = "ripgrep"
 apt = ""
 
 [[tools]]
+name = "shellcheck"
+cmd = "shellcheck"
+winget = "koalaman.shellcheck"
+brew = "shellcheck"
+apt = "shellcheck"
+
+[[tools]]
 name = "starship"
 cmd = "starship"
 winget = "Starship.Starship"

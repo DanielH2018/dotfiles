@@ -12,7 +12,9 @@
     {
       "context": "Chat",
       "bindings": {
-        "ctrl+k ctrl+k": "chat:killAgents"
+        "ctrl+k ctrl+k": "chat:killAgents",
+        "alt+v": "chat:imagePaste",
+        "ctrl+alt+v": "chat:imagePaste"
       }
     }
   ]

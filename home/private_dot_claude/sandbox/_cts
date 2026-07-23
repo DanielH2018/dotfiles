@@ -1,0 +1,92 @@
+#compdef cts
+
+# Zsh completion for cts.
+# Source: ~/.claude/sandbox/_cts
+# Setup: ~/.claude/sandbox is already on fpath (before compinit) — see dot_zshrc.
+#
+# In --ssh mode this offers the repos and branches that actually exist on the remote host,
+# fetched (and cached ~45s) via `cts --complete-repos` / `cts --complete-branches`, which
+# query `ctw --list-*` over ssh. All the ssh/cache logic lives in cts itself, so this file
+# is thin glue. Local (non-ssh) completion just offers directories.
+
+# Host chosen on the line: --ssh=HOST, or -H/--host HOST. Empty -> cts uses its default.
+_cts_remote_host() {
+  local -a w=("${words[@]}")
+  local i host=""
+  for ((i = 2; i <= ${#w}; i++)); do
+    case "${w[$i]}" in
+      --ssh=*)   host="${w[$i]#--ssh=}" ;;
+      -H|--host) host="${w[$((i + 1))]}" ;;
+    esac
+  done
+  print -r -- "$host"
+}
+
+# True when the line is in remote (--ssh) mode.
+_cts_is_remote() {
+  local x
+  for x in "${words[@]}"; do
+    case "$x" in --ssh|--ssh=*|-H|--host) return 0 ;; esac
+  done
+  return 1
+}
+
+# The REPO already chosen: first non-flag positional (skipping flag VALUES and the word
+# under the cursor).
+_cts_remote_repo() {
+  local -a w=("${words[@]}")
+  local i repo="" prev
+  for ((i = 2; i <= ${#w}; i++)); do
+    [[ "${w[$i]}" == "${words[$CURRENT]}" ]] && continue
+    [[ "${w[$i]}" == -* ]] && continue
+    prev="${w[$((i - 1))]}"
+    [[ "$prev" == "-H" || "$prev" == "--host" || "$prev" == "-b" || "$prev" == "--branch" ]] && continue
+    repo="${w[$i]}"
+    break
+  done
+  print -r -- "$repo"
+}
+
+_cts() {
+  local curcontext="$curcontext" state line
+  typeset -A opt_args
+
+  _arguments -C \
+    '(-H --host)'{-H,--host}'[remote host]:host:_hosts' \
+    '--ssh=-[run a native claude session on a remote host over ssh]::host:_hosts' \
+    '(-b --branch)'{-b,--branch}'[remote branch — runs in a per-branch git worktree]:branch:->rbranch' \
+    '*:target:->target' \
+    && return
+
+  case "$state" in
+    rbranch)
+      local host repo
+      host="$(_cts_remote_host)"
+      repo="$(_cts_remote_repo)"
+      local -a br
+      br=(${(f)"$(cts --complete-branches "$host" "$repo" 2>/dev/null)"})
+      if (( ${#br} )); then
+        _describe 'remote branch' br
+      else
+        _message 'branch (existing or new)'
+      fi
+      ;;
+    target)
+      if _cts_is_remote; then
+        local host
+        host="$(_cts_remote_host)"
+        local -a repos
+        repos=(${(f)"$(cts --complete-repos "$host" 2>/dev/null)"})
+        if (( ${#repos} )); then
+          _describe 'remote repo' repos
+        else
+          _message 'remote repo (or path)'
+        fi
+      else
+        _files -/
+      fi
+      ;;
+  esac
+}
+
+_cts "$@"

@@ -71,6 +71,7 @@ echo "$*" >> "$TMUX_LOG"
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
+echo "$*" >> "$SSH_LOG"
 cat "$SSH_REMOTE_FILE" 2>/dev/null; exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
@@ -86,13 +87,15 @@ echo "${HOST}"
 exit 0
 `, { mode: 0o755 });
 
+  const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
-    WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile,
+    WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
   };
-  delete env.TMUX; // never let the test host's tmux socket leak into detection
-  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, capture };
+  delete env.TMUX;          // never let the test host's tmux socket leak into detection
+  delete env.WEZTERM_PANE;  // nor its WezTerm pane id — remote-attach branches on it
+  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture };
 }
 
 function stateFile(home, sid, obj) {
@@ -171,18 +174,6 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   assert.match(body, /COMPLETED/);
   assert.match(body, /alpha/); assert.match(body, /bravo/); assert.match(body, /charlie/);
   assert.doesNotMatch(body, /staleone/, 'session older than a day must be hidden');
-});
-
-test('a completed/idle row shows its session name (title) next to the idle age', { skip }, () => {
-  const { env, home, capture } = makeEnv();
-  const now = nowSec();
-  // Two sessions in the SAME folder — only the title tells them apart.
-  stateFile(home, 'done', { pane: '1', state: 'completed', cwd: 'C:\\r\\chezmoi', session: 'done', host: HOST, ts: now - 3600, title: 'Agent View Setup' });
-  stateFile(home, 'work', { pane: '2', state: 'working',   cwd: 'C:\\r\\chezmoi', session: 'work', host: HOST, ts: now - 30,   title: 'Agent View Shortcuts' });
-  run(env, []);
-  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
-  assert.match(body, /Agent View Shortcuts/, 'the working row shows its name');
-  assert.match(body, /Agent View Setup · idle 1h/, 'the completed row shows its name and idle age');
 });
 
 test('body labels a sandbox row as "sandbox ·"', { skip }, () => {
@@ -285,17 +276,31 @@ test('a sandbox row with an EMPTY pane keeps the locator at KEY field 8 (no tab-
   assert.strictEqual(fields[7], loc, `locator must land in KEY field 8; got ${JSON.stringify(fields)}`);
 });
 
-test('REMOTE tmux row, no local tmux -> WezTerm spawns an ssh-attach tab', { skip }, () => {
+test('REMOTE tmux row, WEZTERM_PANE set -> WezTerm spawns an ssh-attach tab', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
-  // host != selfhost (daniel-server) -> remote attach, NOT local activation. makeEnv
-  // deletes TMUX, so the picker isn't inside tmux -> the wezterm-spawn branch.
+  // host != selfhost (daniel-server) -> remote attach, NOT local activation. Not inside
+  // tmux, but WEZTERM_PANE is set so `wezterm cli spawn` can target a pane -> a GUI tab.
   const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
-  run(env, [], { FZF_PICK: pick });
+  run(env, [], { FZF_PICK: pick, WEZTERM_PANE: '0' });
   const spawned = fs.readFileSync(spawnLog, 'utf8');
   assert.match(spawned, /spawn -- ssh -t daniel-server/, 'spawns a local tab ssh-ing to the remote');
   assert.match(spawned, /attach -t 'airflow'/, 'attaches the target tmux session');
   assert.match(spawned, /select-pane -t '%3'/, 'lands on the captured pane');
   assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'must NOT activate a remote pane locally');
+});
+
+test('REMOTE tmux row, no tmux and no WEZTERM_PANE -> exec ssh -t attach in place', { skip }, () => {
+  const { env, sshLog, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  // Bare WSL shell: no $TMUX, and `wezterm cli spawn` can't work without $WEZTERM_PANE, so
+  // the attach must run in the CURRENT terminal (exec ssh) rather than silently no-op.
+  const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  const ssh = fs.readFileSync(sshLog, 'utf8');
+  assert.match(ssh, /-t daniel-server/, 'ssh -t to the remote host');
+  assert.match(ssh, /attach -t 'airflow'/, 'attaches the target session in place');
+  assert.match(ssh, /select-pane -t '%3'/, 'lands on the captured pane');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn without WEZTERM_PANE');
+  assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'no local activation of a remote pane');
 });
 
 test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', { skip }, () => {
@@ -443,6 +448,57 @@ test('session names are tinted by their state color', { skip }, () => {
 test('picker highlights the whole current line so the state color reads on hover', () => {
   const src = fs.readFileSync(VIEW, 'utf8');
   assert.match(src, /--highlight-line/, 'the current row gets a full-width highlight bar');
+});
+
+// ---- source badges rendered as rounded pills (boxes) --------------------
+// The machine source (PC / homelab) is wrapped in powerline half-circle caps
+// (U+E0B6  … U+E0B4 ) so it reads as a rounded box. Assert the caps enclose the label.
+test('machine source badges render as rounded pills (boxed)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\vaultproj', host: HOST, ts: nowSec() - 5 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, /\ue0b6/, 'left rounded cap present');
+  assert.match(raw, /\ue0b4/, 'right rounded cap present');
+  assert.match(raw, /\ue0b6[^\n]*?PC[^\n]*?\ue0b4/, 'the pill encloses the PC source label');
+  // Tight body: caps hug the label directly — no icon, no inner padding.
+  assert.match(raw, /\x1b\[38;2;137;180;250mPC\x1b\[0m/, 'PC pill hugs the label tight');
+});
+
+// ---- per-group left accent rule (\u258e, state-colored) ----------------------
+test('each group carries a state-colored left accent rule', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'n', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\nbar', host: HOST, ts: now - 5 });
+  stateFile(home, 'w', { pane: '2', state: 'working',     cwd: 'C:\\a\\wbar', host: HOST, ts: now - 6 });
+  stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\a\\cbar', host: HOST, ts: now - 3600 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.need}m\u258e`), 'needs-input rows carry a yellow accent rule');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.work}m\u258e`), 'working rows carry a green accent rule');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.done}m\u258e`), 'completed rows carry a grey accent rule');
+});
+
+// ---- fit narrow windows: slim margins + trimmed footer ------------------
+test('picker slims margins and trims the footer to fit narrow windows', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  assert.match(src, /--margin=1,2%/, 'side margins are slimmed to reclaim width');
+  assert.doesNotMatch(src, /state from Claude Code hooks/, 'the long footer tagline is dropped');
+  assert.match(src, /⌃x remove/, 'the key hints stay in the trimmed footer');
+});
+
+// ---- right column: task title, else age (never the redundant state word) --
+test('the right column shows the task title, or the age — never the state word', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'titled', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\proj1', host: HOST, ts: now - 120, title: 'Fixing the parser' });
+  stateFile(home, 'bare',   { pane: '2', state: 'working',     cwd: 'C:\\a\\proj2', host: HOST, ts: now - 300 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /Fixing the parser/, 'a captured title shows in the right column');
+  assert.match(body, /5m/, 'a title-less row shows its age instead of the state word');
+  assert.doesNotMatch(body, /needs input/, 'no redundant lowercase "needs input" in a row');
+  assert.doesNotMatch(body, /·\s+working\b/, 'no redundant "working" in a row');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

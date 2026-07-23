@@ -106,49 +106,31 @@ test('emits nothing on stdout (safe for UserPromptSubmit)', { skip }, () => {
   assert.strictEqual(out, '');
 });
 
-// ---- session name from the transcript (no wezterm to correlate a pane title) --------
-const jsonl = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n') + '\n';
-
-test('names the row from the transcript custom-title', { skip }, () => {
+// ---- title from the transcript's ai-title (matches the built-in Agent View) ----
+test('names the row with the latest ai-title from the transcript', { skip }, () => {
   const home = freshHome();
-  const tp = path.join(home, 'ct.jsonl');
-  fs.writeFileSync(tp, jsonl(
-    { type: 'user', message: { content: 'hi' } },
-    { type: 'agent-name', agentName: 'ignored when a custom-title exists' },
-    { type: 'custom-title', customTitle: 'Cool Session' },
-  ));
-  run('working', { session_id: 'ct', cwd: '/tmp', transcript_path: tp }, { home });
-  assert.strictEqual(readState(home, 'ct').title, 'Cool Session');
+  const tpath = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(tpath,
+    '{"type":"user","message":{"content":"hi"}}\n' +
+    '{"type":"ai-title","aiTitle":"Old title","sessionId":"s"}\n' +
+    '{"type":"assistant","message":{}}\n' +
+    '{"type":"ai-title","aiTitle":"Fix the parser race","sessionId":"s"}\n');
+  run('working', { session_id: 'titled', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'titled').title, 'Fix the parser race', 'the latest ai-title wins');
 });
 
-test('falls back to the agent name when there is no custom-title', { skip }, () => {
+test('no ai-title in the transcript -> empty title (picker falls back to age)', { skip }, () => {
   const home = freshHome();
-  const tp = path.join(home, 'an.jsonl');
-  fs.writeFileSync(tp, jsonl({ type: 'agent-name', agentName: 'Some Agent' }));
-  run('working', { session_id: 'an', cwd: '/tmp', transcript_path: tp }, { home });
-  assert.strictEqual(readState(home, 'an').title, 'Some Agent');
+  const tpath = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(tpath, '{"type":"user","message":{"content":"hello"}}\n');
+  run('working', { session_id: 'untitled', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'untitled').title, '', 'no ai-title yields an empty title');
 });
 
-test('finds the transcript by session id when the path is not passed', { skip }, () => {
+test('a missing/unreadable transcript_path is harmless (no title, no error)', { skip }, () => {
   const home = freshHome();
-  // A project dir whose slug does NOT match the cwd (mimics a cwd that drifted mid-session):
-  // the hook must still locate <sid>.jsonl by globbing, not by rebuilding the slug.
-  const proj = path.join(home, '.claude', 'projects', '-some-other-dir');
-  fs.mkdirSync(proj, { recursive: true });
-  fs.writeFileSync(path.join(proj, 'rc.jsonl'), jsonl({ type: 'custom-title', customTitle: 'Found By Id' }));
-  run('working', { session_id: 'rc', cwd: '/home/daniel' }, { home }); // note: no transcript_path
-  assert.strictEqual(readState(home, 'rc').title, 'Found By Id');
-});
-
-test('does not overwrite an existing title (a CTRL+R rename survives events)', { skip }, () => {
-  const home = freshHome();
-  const tp = path.join(home, 'stick.jsonl');
-  fs.writeFileSync(tp, jsonl({ type: 'custom-title', customTitle: 'First' }));
-  run('working', { session_id: 'stick', cwd: '/tmp', transcript_path: tp }, { home });
-  assert.strictEqual(readState(home, 'stick').title, 'First');
-  fs.writeFileSync(tp, jsonl({ type: 'custom-title', customTitle: 'Second' })); // renamed in Claude
-  run('needs-input', { session_id: 'stick', cwd: '/tmp', transcript_path: tp }, { home });
-  assert.strictEqual(readState(home, 'stick').title, 'First', 'once set, the title sticks (rename-safe)');
+  run('working', { session_id: 'notrans', cwd: '/tmp', transcript_path: '/no/such/file.jsonl' }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'notrans').title, '', 'a bad transcript path just leaves the title empty');
 });
 
 process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });

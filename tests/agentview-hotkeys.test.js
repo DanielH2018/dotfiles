@@ -135,7 +135,8 @@ test('the number gutter labels the first session row 1', { skip }, () => {
   const line = body.split('\n').find((l) => l.includes('alpha') && l.split('\t')[0] !== '');
   assert.ok(line, 'the session row rendered');
   const display = line.split('\t').slice(1).join('\t');
-  assert.match(display, /^1 /, 'the first session shows the "1" jump gutter');
+  // Display is "<accent-bar> <N> <pill> …"; the first session's gutter number is 1.
+  assert.match(display, /^▎ 1 /, 'the first session shows the "1" jump gutter after the accent bar');
 });
 
 // ---- --rename (CTRL+R) --------------------------------------------------

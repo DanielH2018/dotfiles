@@ -26,24 +26,15 @@ if [ -f "$file" ]; then                                   # carry last-known fie
   case "$locator" in none:|none|'') locator=$(jq -r '.locator // ""' < "$file" 2>/dev/null);; esac
   title=$(jq -r '.title // ""' < "$file" 2>/dev/null)
 fi
-# Name the row from the session's own transcript when we have no title yet. On tmux/Ghostty
-# there's no wezterm pane title for the picker to correlate, so without this a host row shows
-# only its folder — indistinguishable when several sessions share a directory. The latest
-# custom-title (the name shown in Claude Code) wins; fall back to the agent name. Skipped
-# once a title exists, so a picker CTRL+R rename isn't overwritten on the next event.
-if [ -z "$title" ]; then
-  tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
-  if [ -z "$tpath" ]; then
-    # No path in the input: find it by session id. A transcript is <sid>.jsonl under some
-    # ~/.claude/projects/<cwd-slug>/ dir; globbing by sid is drift-proof (the cwd, and thus
-    # the slug, can change mid-session) where rebuilding the slug from the current cwd isn't.
-    tpath=$(ls -t "$HOME"/.claude/projects/*/"$sid".jsonl 2>/dev/null | head -1)
-  fi
-  if [ -f "$tpath" ]; then
-    line=$(grep -a '"type":"custom-title"' "$tpath" 2>/dev/null | tail -1)
-    [ -z "$line" ] && line=$(grep -a '"type":"agent-name"' "$tpath" 2>/dev/null | tail -1)
-    [ -n "$line" ] && title=$(printf '%s' "$line" | jq -r '.customTitle // .agentName // ""' 2>/dev/null)
-  fi
+# Name the row with Claude's OWN generated session title — the `ai-title` entries in the
+# transcript (`.aiTitle`), the same string the built-in Agent View shows (e.g. "cts ssh
+# flag handling"). grep the ai-title lines first (cheap even on a multi-MB JSONL), then jq
+# only those and take the latest. Falls back to the carried title (a sandbox repo·branch,
+# or empty -> the picker shows the age until Claude generates one).
+tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+if [ -n "$tpath" ] && [ -f "$tpath" ]; then
+  at=$(grep -aF '"ai-title"' "$tpath" 2>/dev/null | jq -r 'select(.type=="ai-title") | .aiTitle // empty' 2>/dev/null | tail -1)
+  [ -n "$at" ] && title="$at"
 fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)

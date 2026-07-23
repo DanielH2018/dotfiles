@@ -181,12 +181,18 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
     tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
     return 0
   fi
-  if command -v wezterm >/dev/null 2>&1; then
-    # Windows-native WezTerm (no local tmux): spawn a fresh GUI tab.
+  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
+    # Native WezTerm: spawn a fresh GUI tab. `wezterm cli spawn` derives its target from
+    # $WEZTERM_PANE, which is unset when WSL doesn't inherit WezTerm's env — gate on it, or
+    # spawn fails and (with output swallowed) this branch silently no-ops.
     wezterm cli spawn -- ssh -t "$sshalias" "$rcmd" >/dev/null 2>&1
     return 0
   fi
-  return 1
+  # Bare shell (no local tmux, no usable wezterm — e.g. a plain WSL shell): attach in THIS
+  # terminal. exec replaces the picker with the ssh-attach, mirroring the local bare-shell
+  # path. Errors (host down, session gone) surface here instead of a silent no-op.
+  command -v ssh >/dev/null 2>&1 || return 1
+  exec ssh -t "$sshalias" "$rcmd"
 }
 
 do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
@@ -515,7 +521,10 @@ C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
+GBAR=$'▎'                         # ▎ left accent rule — state-colored, runs down each group
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
+BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's rounded end-caps
+PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
 # Single-source the state→accent map and the empty-state row so the two render paths
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
 # tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
@@ -550,9 +559,9 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W=72 BADGEW=11 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
-  local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd clabel
-  local PINCNT=0 idx=0 gut gutc _pinned _hp
+  local W=72 BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
+  local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
+  local PINCNT=0 idx=0 g1 gutc _pinned _hp
   # Pinned rows collect into a PINNED group at the very top. Load the sidecar once into a
   # set, then in the tally below count pinned rows separately so a state group's header
   # count reflects only what still renders under it.
@@ -582,10 +591,10 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
     if [ "$grp" = pinned ]; then
-      printf '\t%s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     else
       state_color "$grp"; scol="$_scol"
-      printf '\t%s●%s %s%s%s%s %s%s%s\n' "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     fi
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
@@ -615,32 +624,32 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       [ "$kind" = "sandbox" ] && clabel="sandbox" || clabel="claude"
       badge_name "$host"; bn="$_bn"
       case "$bn" in
-        PC)      bfg="$E[38;2;137;180;250m"; icon=$'';;   # blue  — desktop
-        homelab) bfg="$E[38;2;203;166;247m"; icon=$'';;   # mauve — server
-        *)       bfg="$E[38;2;205;214;244m"; icon=$'';;   # text  — cloud
+        PC)      bfg="$E[38;2;137;180;250m";;   # blue  — desktop
+        homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
+        *)       bfg="$E[38;2;205;214;244m";;   # text  — cloud
       esac
-      # fixed-width badge cell " <icon> <name> " so the "claude ·" column lines up
-      bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
-      printf -v bcell '%*s' "$BADGEW" ''
-      state_color "$st"; scol="$_scol"     # colour by the row's real state, even under PINNED
-      # Number gutter (2 cols, replacing the old leading pad) so ALT+1..9 can jump straight
-      # to the Nth session; --jump-nth counts the same non-empty-KEY rows in this order.
+      # badge cell = the rounded pill (caps hugging <name>, no inner padding) + trailing pad,
+      # so the "claude ·" column lines up whatever the machine name's length.
+      bpad=$(( BADGEW - ${#bn} )); [ "$bpad" -lt 0 ] && bpad=0
+      printf -v bcell '%*s' "$((BADGEW + 2))" ''
+      state_color "$st"; scol="$_scol"     # colour the bar/name by the row's real state, even under PINNED
+      # Number gutter sits just after the accent bar — where the header's ● bullet is — so
+      # the ▎ rule stays column-aligned down the group while ALT+1..9 jumps to the Nth row.
+      # --jump-nth counts the same non-empty-KEY rows in this order.
       idx=$(( idx + 1 ))
-      if [ "$idx" -le 9 ]; then gut="$idx "; gutc="${C_DIM}${idx}${Z} "; else gut="  "; gutc="  "; fi
-      left_p="${gut}${bcell}  ${clabel} · ${name}"
-      printf -v left_c '%s%s%s %s %s %s%*s  %s%s · %s%s%s%s%s' \
-        "$gutc" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
+      if [ "$idx" -le 9 ]; then g1="$idx"; gutc="${C_DIM}${idx}${Z}"; else g1=" "; gutc=" "; fi
+      left_p="  ${g1} ${bcell}  ${clabel} · ${name}"
+      # Machine source as a rounded pill: fill-colored caps hug the machine-colored name with
+      # no inner padding (tight); trailing bpad right-pads to the shared column.
+      printf -v left_c '%s%s%s %s %s%s%s%s%s%s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+        "$scol" "$GBAR" "$Z" "$gutc" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
+        "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       case "$st" in
-        needs-input) stext="${title:-needs input}";;
-        working)     stext="${title:-working}";;
-        completed)   fmt_age "$ts"
-                     if   [ -n "$title" ]; then stext="$title${_age:+ · idle $_age}"
-                     elif [ -n "$_age" ];  then stext="✓ idle $_age"
-                     else stext="✓ completed"; fi;;
-        *)           fmt_age "$ts"
-                     if   [ -n "$title" ]; then stext="$title${_age:+ · idle $_age}"
-                     elif [ -n "$_age" ];  then stext="· idle $_age"
-                     else stext="· idle"; fi;;
+        # Right column = the session's task title (its "name"). When none was captured, fall
+        # back to the age — never the state word, which just echoes the group header.
+        needs-input|working) if [ -n "$title" ]; then stext="$title"; else fmt_age "$ts"; stext="$_age"; fi;;
+        completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
+        *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac
       maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
@@ -739,7 +748,7 @@ trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
-  --height='~90%' --min-height=12 --margin=1,12% --padding=1 \
+  --height='~90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
