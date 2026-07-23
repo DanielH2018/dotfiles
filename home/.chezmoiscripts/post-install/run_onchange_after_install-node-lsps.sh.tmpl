@@ -4,6 +4,9 @@
 # chezmoi runs .sh scripts through the bash interpreter on Windows too, so this one
 # file covers macOS/Linux/Windows. Re-runs when the package list below changes.
 # node-lsps-bump: v1
+# chezmoi runs this non-interactively; ~/.local/bin (where fnm lives) is only added to PATH
+# by the interactive shell rc, so prepend it here before probing for fnm.
+PATH="$HOME/.local/bin:$PATH"
 command -v fnm >/dev/null 2>&1 || { echo "install-node-lsps: fnm not on PATH; skipping (re-run 'chezmoi apply' once fnm is installed)" >&2; exit 0; }
 eval "$(fnm env --shell bash)" 2>/dev/null || true
 command -v npm >/dev/null 2>&1 || { echo "install-node-lsps: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
