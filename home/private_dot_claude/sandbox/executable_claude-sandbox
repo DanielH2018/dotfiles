@@ -1819,6 +1819,25 @@ if [[ -S "$OP_SOCKET" ]]; then
   )
 fi
 
+# Personal keybindings so alt+v -> chat:imagePaste works in-container too (entrypoint copies it
+# into ~/.claude). Guarded so a missing file doesn't bind-mount a junk dir at the target path.
+if [[ -f "$HOME/.claude/keybindings.json" ]]; then
+  DOCKER_ARGS+=(-v "$HOME/.claude/keybindings.json:/home/claudebot/.claude-defaults/keybindings.json:ro")
+fi
+
+# WSL image paste: share the host WSLg Wayland clipboard so alt+v in-container reads the
+# image/png the host wsl-clip-bridge daemon puts there (the Windows clipboard is BMP-only and
+# the container has no Windows interop to convert it). Gated on the socket, so it's a no-op off
+# WSLg. The socket is world-accessible (0777) and the container uid matches the host (1000), so
+# no permission setup is needed. WAYLAND_DISPLAY is the absolute socket path, which avoids having
+# to set XDG_RUNTIME_DIR (that would point other tools at a root-owned mount point).
+if [[ -S /mnt/wslg/runtime-dir/wayland-0 ]]; then
+  DOCKER_ARGS+=(
+    -v /mnt/wslg/runtime-dir/wayland-0:/tmp/wl-clip.sock
+    -e WAYLAND_DISPLAY=/tmp/wl-clip.sock
+  )
+fi
+
 # --- Knowledge vault (read-only, curated subset) ---
 # Mount an allowlisted subset of the vault at its real host path so the agent
 # can consult standing/task context on demand. Nothing is auto-loaded — only a
