@@ -1,0 +1,49 @@
+{{ if ne .chezmoi.os "windows" -}}
+#!/bin/sh
+# Make zsh the default login shell on every non-Windows machine (macOS, Linux, WSL).
+# The zsh config is chezmoi-managed (~/.zshrc, ~/.zshenv) and shares ~/.config/shell/common.sh
+# with bash, so the interactive experience is identical either way — this just flips the login
+# shell so new sessions (terminal tabs, ssh, the WezTerm WSL domain) start in zsh without any
+# per-emulator override. macOS already defaults to zsh, so this no-ops there.
+#
+# chsh authenticates via PAM and needs a tty, so it only completes during an INTERACTIVE
+# `chezmoi apply` (one password prompt). A headless/CI apply defers with exit 1 so run_once
+# retries on the next interactive apply (same pattern as configure-wsl's sudo guard). Once the
+# login shell is already zsh it exits 0 and is recorded done. Bump the marker to re-run.
+# zsh-default-bump: v1
+set -u
+
+zsh_path="$(command -v zsh 2>/dev/null || true)"
+if [ -z "$zsh_path" ]; then
+  echo "set-default-shell: zsh not installed yet; skipping (install-cli-tools provisions it first)" >&2
+  exit 0
+fi
+
+# Authoritative current login shell — getent on Linux/WSL; dscl on macOS (no getent there).
+current_shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+[ -n "$current_shell" ] || current_shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')"
+if [ "$current_shell" = "$zsh_path" ]; then
+  exit 0  # already zsh — converged
+fi
+
+if [ ! -t 0 ]; then
+  echo "set-default-shell: no tty (headless apply) — deferring. Re-run 'chezmoi apply' from a" >&2
+  echo "                   terminal, or run 'chsh -s $zsh_path' directly." >&2
+  exit 1  # non-zero so run_once retries on the next interactive apply
+fi
+
+# chsh rejects a shell that isn't listed in /etc/shells; register it if a package hasn't.
+if ! grep -qxF "$zsh_path" /etc/shells 2>/dev/null; then
+  printf '%s\n' "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+fi
+
+# Prefer sudo (root sets the shell directly -> one sudo prompt, no separate PAM prompt);
+# fall back to plain chsh with your own password where sudo isn't available.
+if sudo -n true 2>/dev/null || sudo -v 2>/dev/null; then
+  sudo chsh -s "$zsh_path" "$(id -un)" \
+    && echo "set-default-shell: login shell -> zsh (open a new session to use it)"
+else
+  chsh -s "$zsh_path" \
+    && echo "set-default-shell: login shell -> zsh (open a new session to use it)"
+fi
+{{ end -}}

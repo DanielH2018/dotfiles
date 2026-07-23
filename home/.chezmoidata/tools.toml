@@ -111,6 +111,16 @@ brew = "sd"
 apt = ""
 
 [[tools]]
+name = "zsh"
+cmd = "zsh"
+winget = ""
+# macOS ships zsh (the .zshrc targets the system /bin/zsh); brew's parallel zsh would
+# only fork the login-shell path. Linux/WSL need it from apt. run_once_after_set-default-shell
+# then chsh's to it.
+brew = ""
+apt = "zsh"
+
+[[tools]]
 name = "zsh-autosuggestions"
 cmd = ""
 winget = ""
