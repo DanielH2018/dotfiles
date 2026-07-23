@@ -129,13 +129,15 @@ test('falls back to the agent name when there is no custom-title', { skip }, () 
   assert.strictEqual(readState(home, 'an').title, 'Some Agent');
 });
 
-test('reconstructs the transcript path from cwd+session_id when not passed', { skip }, () => {
+test('finds the transcript by session id when the path is not passed', { skip }, () => {
   const home = freshHome();
-  const proj = path.join(home, '.claude', 'projects', '-home-daniel'); // /home/daniel -> -home-daniel
+  // A project dir whose slug does NOT match the cwd (mimics a cwd that drifted mid-session):
+  // the hook must still locate <sid>.jsonl by globbing, not by rebuilding the slug.
+  const proj = path.join(home, '.claude', 'projects', '-some-other-dir');
   fs.mkdirSync(proj, { recursive: true });
-  fs.writeFileSync(path.join(proj, 'rc.jsonl'), jsonl({ type: 'custom-title', customTitle: 'Reconstructed' }));
+  fs.writeFileSync(path.join(proj, 'rc.jsonl'), jsonl({ type: 'custom-title', customTitle: 'Found By Id' }));
   run('working', { session_id: 'rc', cwd: '/home/daniel' }, { home }); // note: no transcript_path
-  assert.strictEqual(readState(home, 'rc').title, 'Reconstructed');
+  assert.strictEqual(readState(home, 'rc').title, 'Found By Id');
 });
 
 test('does not overwrite an existing title (a CTRL+R rename survives events)', { skip }, () => {

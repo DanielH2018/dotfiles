@@ -34,7 +34,10 @@ fi
 if [ -z "$title" ]; then
   tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
   if [ -z "$tpath" ]; then
-    tpath="$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's#[/.]#-#g')/$sid.jsonl"
+    # No path in the input: find it by session id. A transcript is <sid>.jsonl under some
+    # ~/.claude/projects/<cwd-slug>/ dir; globbing by sid is drift-proof (the cwd, and thus
+    # the slug, can change mid-session) where rebuilding the slug from the current cwd isn't.
+    tpath=$(ls -t "$HOME"/.claude/projects/*/"$sid".jsonl 2>/dev/null | head -1)
   fi
   if [ -f "$tpath" ]; then
     line=$(grep -a '"type":"custom-title"' "$tpath" 2>/dev/null | tail -1)
