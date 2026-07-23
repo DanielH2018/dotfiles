@@ -511,33 +511,44 @@ PRUNE=$(( 7 * 86400 ))
 # remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
 
-gather_local_rows() {  # append local session rows to global `rows`, prune >7d
-  local local_files jqout jqlines i l
+gather_local_rows() {  # append local session rows to global `rows`, prune >7d + dead-pid leaks
+  local local_files jqout jqlines i l _lr _lpid
   # ONE jq over the whole state dir (process spawns dominate on Windows at ~55ms each,
   # so a per-file loop was pure overhead). Command substitution — NOT `< <(...)` — so
   # jq FULLY exits, releasing its read handles, before we prune: on Windows an open
   # handle blocks the rm. jq emits exactly one tagged line per file IN ARGUMENT ORDER
-  # (P=prune>7d / H=hide 1–7d / R<TAB>row) so lines align 1:1 with local_files and we
+  # (P=prune>7d / H=hide 1–7d / L<TAB>pid<TAB>row=local host, prune if the pid is dead /
+  # R<TAB>row) so lines align 1:1 with local_files and we
   # prune via the bash glob path (rm-able on MSYS; jq's own input_filename comes back
   # in a drive form rm rejects). On a count mismatch (a corrupt file made jq drop a
   # record) we skip ALL pruning that run rather than risk rm-ing the wrong file.
   shopt -s nullglob; local_files=( "$statedir"/*.json ); shopt -u nullglob
   [ "${#local_files[@]}" -gt 0 ] || return
-  jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" "
-      $JQ_TS |
+  jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" --arg self "$selfhost" "
+      $JQ_TS | (.pid // \"\" | tostring) as \$pid |
       if   \$ts > 0 and \$age > \$prune then \"P\"
       elif \$ts > 0 and \$age > 86400  then \"H\"
+      elif (.kind // \"host\") == \"host\" and (.host // \"\") == \$self and \$pid != \"\"
+           then \"L\t\" + \$pid + \"\t\" + ($JQ_ROW)
       else \"R\t\" + ($JQ_ROW) end" "${local_files[@]}" 2>/dev/null)
   jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
   if [ "${#jqlines[@]}" -eq "${#local_files[@]}" ]; then
     for i in "${!local_files[@]}"; do
       case "${jqlines[$i]}" in
         P)  rm -f "${local_files[$i]}" 2>/dev/null ;;
+        L*) _lr="${jqlines[$i]#L$'\t'}"; _lpid="${_lr%%$'\t'*}"       # L<TAB>pid<TAB>row
+            if kill -0 "$_lpid" 2>/dev/null; then rows+="${_lr#*$'\t'}"$'\n'
+            else rm -f "${local_files[$i]}" 2>/dev/null; fi ;;        # process gone -> leaked, prune
         R*) rows+="${jqlines[$i]#R$'\t'}"$'\n' ;;
       esac
     done
   else
-    for l in "${jqlines[@]}"; do case "$l" in R*) rows+="${l#R$'\t'}"$'\n';; esac; done
+    for l in "${jqlines[@]}"; do
+      case "$l" in
+        L*) _lr="${l#L$'\t'}"; rows+="${_lr#*$'\t'}"$'\n' ;;          # count mismatch: render, never rm
+        R*) rows+="${l#R$'\t'}"$'\n' ;;
+      esac
+    done
   fi
 }
 

@@ -501,4 +501,35 @@ test('the right column shows the task title, or the age — never the state word
   assert.doesNotMatch(body, /·\s+working\b/, 'no redundant "working" in a row');
 });
 
+// ---- leaked-session cleanup: prune local rows whose recorded pid is dead ----
+test('prunes a local host row whose recorded pid is dead (leaked session)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'dead', { state: 'working', cwd: 'C:\\a\\deadproj', host: HOST, kind: 'host', ts: now - 60, pid: '2147483647', locator: 'none:' });
+  stateFile(home, 'live', { state: 'working', cwd: 'C:\\a\\liveproj', host: HOST, kind: 'host', ts: now - 60, pid: String(process.pid), locator: 'none:' });
+  run(env, []);
+  assert.ok(!fs.existsSync(avFile(home, 'dead')), 'dead-pid local session file is pruned');
+  assert.ok(fs.existsSync(avFile(home, 'live')), 'live-pid local session file is kept');
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.doesNotMatch(body, /deadproj/, 'a dead session is not rendered');
+  assert.match(body, /liveproj/, 'a live session still renders');
+});
+
+test('keeps a local row with no recorded pid (legacy entry — no liveness signal)', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'legacy', { state: 'working', cwd: 'C:\\a\\legacyproj', host: HOST, kind: 'host', ts: nowSec() - 60, locator: 'none:' }); // no pid
+  run(env, []);
+  assert.ok(fs.existsSync(avFile(home, 'legacy')), 'a pid-less legacy row is left alone');
+});
+
+test('never pid-prunes a non-self host or a sandbox row (pid is not locally checkable)', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'remoteish', { state: 'working', cwd: '/x', host: 'other-host', kind: 'host', ts: now - 60, pid: '2147483647', locator: 'none:' });
+  stateFile(home, 'sb', { state: 'working', cwd: '/y', host: HOST, kind: 'sandbox', ts: now - 60, pid: '2147483647', locator: 'wezterm:5' });
+  run(env, []);
+  assert.ok(fs.existsSync(avFile(home, 'remoteish')), 'a non-self host row is never pid-pruned locally');
+  assert.ok(fs.existsSync(avFile(home, 'sb')), 'a sandbox row (container pid) is never pid-pruned');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

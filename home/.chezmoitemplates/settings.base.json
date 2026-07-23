@@ -619,8 +619,11 @@
       }
     ],
     "Notification": [
+      {{/* audible cue only when a session genuinely needs you; task_complete
+           (fires on every turn end, incl. unfocused background sessions) is
+           intentionally excluded so working sessions stay silent */}}
       {
-        "matcher": "permission_prompt|idle_prompt|task_complete",
+        "matcher": "permission_prompt|idle_prompt",
         "hooks": [
           {
             "type": "command",
@@ -691,16 +694,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/agent-view-state.sh completed",
-            "timeout": 5
-          }
-        ]
-      }{{ end }}{{ if eq .chezmoi.os "linux" }},
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/play-sound.sh done",
-            "async": true,
             "timeout": 5
           }
         ]

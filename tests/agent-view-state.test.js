@@ -30,10 +30,11 @@ function freshHome() {
 }
 
 // Run the hook: `state` arg, JSON stdin, optional WEZTERM_PANE. Returns {out, home}.
-function run(state, input, { pane, home } = {}) {
+function run(state, input, { pane, home, pid } = {}) {
   home = home || freshHome();
   const env = { ...process.env, HOME: home };
   if (pane !== undefined) env.WEZTERM_PANE = pane; else delete env.WEZTERM_PANE;
+  if (pid !== undefined) env.CLAUDE_PID = pid; else delete env.CLAUDE_PID;
   delete env.TMUX; // force the wezterm/none backend, never the test host's tmux
   const out = execFileSync('bash', [HOOK, state], {
     input: typeof input === 'string' ? input : JSON.stringify(input),
@@ -141,6 +142,20 @@ test('a custom-title (from /rename) overrides the ai-title', { skip }, () => {
     '{"type":"custom-title","customTitle":"My Chosen Name","sessionId":"s"}\n');
   run('working', { session_id: 'ct', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
   assert.strictEqual(readState(home, 'ct').title, 'My Chosen Name', 'a /rename custom-title wins over the auto ai-title');
+});
+
+// ---- pid liveness handle (lets the picker prune leaked, killed sessions) ----
+test('records CLAUDE_PID as the row pid', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'pidsess', cwd: '/tmp' }, { pane: '1', home, pid: '424242' });
+  assert.strictEqual(String(readState(home, 'pidsess').pid), '424242');
+});
+
+test('carries the pid forward when a later event lacks CLAUDE_PID', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'sid', cwd: '/tmp' }, { pane: '1', home, pid: '4242' }); // seed
+  run('needs-input', { session_id: 'sid', cwd: '/tmp' }, { home });                      // no CLAUDE_PID
+  assert.strictEqual(String(readState(home, 'sid').pid), '4242', 'pid persists across events');
 });
 
 process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });
