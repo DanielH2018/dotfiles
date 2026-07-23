@@ -109,6 +109,23 @@ test('Claude card: grouped by context, readable labels, two-step chords', () => 
   assert.match(html, /<span class="then">then<\/span>/);
 });
 
+test('Each card is a collapsible <details> with a clickable summary header', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  writeKeybindings(home, SAMPLE_BINDINGS);
+  writeWezterm(xdg, WEZTERM_FIXTURE);
+  const html = runGen({ home, xdg });
+
+  // No card is a bare <section> anymore; every card renders as an open <details>.
+  assert.ok(!html.includes('<section class="card"'), 'cards must not be <section> elements');
+  const details = html.match(/<details class="card"[^>]*>/g) || [];
+  assert.strictEqual(details.length, 2, 'one <details> per rendered card (WezTerm + Claude in this fixture)');
+  for (const tag of details) assert.match(tag, /\bopen\b/, 'cards start expanded');
+  // Header is the <summary> click target and carries the rotating chevron.
+  const summaries = html.match(/<summary class="card-head">/g) || [];
+  assert.strictEqual(summaries.length, details.length, 'each card has a summary header');
+  assert.ok(html.includes('<span class="chev">'), 'chevron affordance present');
+});
+
 test('Claude labels: unknown action id falls back to a de-camel-cased phrase', () => {
   const home = tmpdir(), xdg = tmpdir();
   writeKeybindings(home, { bindings: [{ context: 'Chat', bindings: { 'ctrl+g': 'chat:someNewThing' } }] });
@@ -135,7 +152,7 @@ test('WezTerm: action_callback and multiline spawn binds are parsed and labeled'
   const home = tmpdir(), xdg = tmpdir();
   writeWezterm(xdg, WEZTERM_FIXTURE);
   const html = runGen({ home, xdg });
-  const wez = html.split('data-tool="wezterm"')[1].split('</section>')[0];
+  const wez = html.split('data-tool="wezterm"')[1].split('</details>')[0];
 
   assert.match(html, /<h2>WezTerm<\/h2>/);
   // Callback binds the old parser dropped entirely.

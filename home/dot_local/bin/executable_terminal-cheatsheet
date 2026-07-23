@@ -435,13 +435,16 @@ function claudeBody(groups) {
   }).join('');
 }
 
+// Each card is a <details> so its header collapses the section. Starts open; the click
+// target is the whole <summary>. A CSS chevron rotates with [open]; the search filter
+// (below) force-opens a card whenever it holds a match so collapsed sections still surface.
 function cardHtml(id, data, inner) {
   return `
-  <section class="card" data-tool="${id}" style="--accent:${data.accent}">
-    <div class="card-head"><h2>${esc(data.title)}</h2><span class="src">${esc(data.sub)}</span></div>
+  <details class="card" data-tool="${id}" style="--accent:${data.accent}" open>
+    <summary class="card-head"><span class="chev">▸</span><h2>${esc(data.title)}</h2><span class="src">${esc(data.sub)}</span></summary>
     <div class="chips">${chips(data.settings)}</div>
     ${inner}
-  </section>`;
+  </details>`;
 }
 
 function build() {
@@ -498,7 +501,12 @@ main{max-width:1400px;margin:1.5rem auto 0;padding:0 clamp(1rem,4vw,3rem);
 .card{background:linear-gradient(180deg,rgba(49,50,68,.35),rgba(24,24,37,.35));
   border:1px solid var(--surface0);border-top:3px solid var(--accent);border-radius:14px;
   padding:1rem 1.1rem 1.1rem;box-shadow:0 8px 30px rgba(0,0,0,.25)}
-.card-head{display:flex;align-items:baseline;gap:.6rem;margin-bottom:.6rem}
+.card-head{display:flex;align-items:baseline;gap:.6rem;cursor:pointer;list-style:none;user-select:none}
+.card-head::-webkit-details-marker{display:none}
+.card-head:hover h2{filter:brightness(1.12)}
+details.card[open]>.card-head{margin-bottom:.6rem}
+.chev{color:var(--overlay);font-size:.75em;line-height:1;flex:0 0 auto;transition:transform .18s ease;transform-origin:50% 50%}
+details.card[open]>.card-head .chev{transform:rotate(90deg)}
 .card-head h2{margin:0;font-size:1.05rem;color:var(--accent)}
 .src{color:var(--overlay);font-size:.72rem;font-family:ui-monospace,monospace}
 .chips{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.8rem}
@@ -535,7 +543,7 @@ q&&q.addEventListener('input',()=>{
   const t=q.value.trim().toLowerCase();let n=0;
   for(const r of rows){const hit=!t||r.textContent.toLowerCase().includes(t);r.style.display=hit?'':'none';if(hit)n++;}
   for(const g of grps){g.style.display=[...g.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none')?'':'none';}
-  for(const c of cards){c.style.display=[...c.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none')?'':'none';}
+  for(const c of cards){const vis=[...c.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none');c.style.display=vis?'':'none';c.open=t?vis:true;}
   count.textContent=t?n+' matches':rows.length+' keybinds';
 });
 </script>
