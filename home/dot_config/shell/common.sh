@@ -279,13 +279,16 @@ fi
 # The "already running?" check is a cheap Linux-side pgrep, not the tool's tasklist.exe-based
 # --status — running a Windows process on every shell start would add real prompt latency.
 if [ -n "$WAYLAND_DISPLAY" ] && command -v wsl-clip-bridge >/dev/null 2>&1; then
-  # Match the daemon's executable path, not a bare "wsl-clip-bridge" — otherwise the check
-  # false-positives on a `tail ~/.cache/wsl-clip-bridge/bridge.log` or any command mentioning
-  # the tool, and skips the launch.
-  if ! pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1; then
-    nohup wsl-clip-bridge >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-  fi
+  # Serialize with other shells via flock: opening several panes at once otherwise races —
+  # each passes the check, several wrappers launch, their listeners collide on the Win32
+  # single-instance mutex, and the losers orphan (leaving no listener at all). One shell wins
+  # the lock and launches; the rest recheck inside it and no-op. Match the daemon's exe path
+  # ('bin/wsl-clip-bridge'), not a bare name, so the check can't false-positive on a
+  # `tail ~/.cache/wsl-clip-bridge/bridge.log`.
+  (
+    flock -w 2 9 || exit 0
+    pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1 || { nohup wsl-clip-bridge >/dev/null 2>&1 & disown; }
+  ) 9>"${XDG_RUNTIME_DIR:-/tmp}/wsl-clip-bridge.autostart.lock" 2>/dev/null
 fi
 
 # --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
