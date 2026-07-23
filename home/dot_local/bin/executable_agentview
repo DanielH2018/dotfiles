@@ -484,11 +484,9 @@ if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
 
 # ---- interactive picker ----
 prof start
-# Stamp this pane so WezTerm's CTRL+W keybind recognizes the picker and dismisses it
-# with ESC (a clean fzf exit) instead of a force-close, which hangs while the homelab
-# mux is connected. OSC 1337 SetUserVar; "MQ==" = base64("1"). Written to the tty
-# because fzf captures stdout. Persists for the pane's life and survives fzf.
-printf '\033]1337;SetUserVar=agentview=MQ==\a' > /dev/tty 2>/dev/null
+# (No pane stamp: WezTerm's CTRL+W dismisses the picker by detecting fzf as the live
+# foreground process, not a user var. The old OSC 1337 SetUserVar was sticky — it
+# survived fzf's exit and left CTRL+W a no-op in any pane that had ever run the picker.)
 
 rows=""
 gather_local_rows;  prof gather_local

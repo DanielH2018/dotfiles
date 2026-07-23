@@ -163,15 +163,20 @@ config.keys = {
 	-- accepted tradeoff. Lowercase `key`: an uppercase letter implies Shift and would
 	-- only fire on the ctrl+shift chord.
 	{ key = "t", mods = "CTRL",       action = act.SpawnTab("CurrentPaneDomain") },
-	-- Smart close: in the agentview picker (an fzf pane) send ESC so fzf aborts and the
-	-- tab tears down via a clean process exit — nicer than a pane force-close, and it lets
-	-- the picker run its own teardown. Everywhere else, close the pane as usual.
+	-- Close the pane, always. The one exception: when fzf is the LIVE foreground process
+	-- (the agentview picker), send ESC so fzf aborts cleanly. That branch is a nicety, not
+	-- a requirement — the mux round-trip and lingering-ConPTY hangs that once made a
+	-- force-close dangerous are gone (mux retired; agentview's reload job dies with its EXIT
+	-- trap), so falling through to CloseCurrentPane is always safe. Detection is a live
+	-- process check ONLY: the old code also honored a sticky `agentview` user var, but that
+	-- var survives the picker's exit, so a pane where you once ran the picker kept reporting
+	-- it forever and CTRL+W silently sent ESC (a no-op) instead of closing. pcall-guarded so
+	-- a nil/throwing probe can never swallow the keypress — on any error we still close.
 	{ key = "w", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
-		local proc = pane:get_foreground_process_name() or ""
-		-- agentview stamps its pane with a `agentview` user var (OSC 1337); prefer that
-		-- since Windows doesn't reliably report the fzf process name. Fall back to it.
-		local is_picker = pane:get_user_vars()["agentview"] ~= nil or proc:lower():find("fzf")
-		if is_picker then
+		local ok, proc = pcall(function()
+			return (pane:get_foreground_process_name() or ""):lower()
+		end)
+		if ok and proc:find("fzf") then
 			window:perform_action(act.SendKey({ key = "Escape" }), pane)
 		else
 			window:perform_action(act.CloseCurrentPane({ confirm = false }), pane)
