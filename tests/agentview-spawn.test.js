@@ -11,6 +11,7 @@ const path = require('node:path');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const SRC = fs.readFileSync(VIEW, 'utf8');
+const HOST_ROW = '[no repo · plain claude]';   // first repo-pick row -> plain host session
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -109,7 +110,34 @@ test('the repo picker offers real repos but hides linked worktrees', { skip }, (
   const { env, repoListFile } = makeEnv({ repos: ['airflow'], worktrees: ['airflow-wt-feature'] });
   run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: '' });
   const offered = fs.readFileSync(repoListFile, 'utf8').split('\n').filter(Boolean);
-  assert.deepStrictEqual(offered, ['airflow'], `only the real checkout is offered, not the worktree; got ${JSON.stringify(offered)}`);
+  assert.deepStrictEqual(offered, [HOST_ROW, 'airflow'],
+    `host row + the real checkout, not the worktree; got ${JSON.stringify(offered)}`);
+});
+
+// ---- no-repo host session ----
+test('picking the no-repo row spawns plain host claude in a tmux window, no sandbox', { skip }, () => {
+  const { env, tmuxLog, sandboxBin } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: HOST_ROW, FZF_BRANCH: 'ignored' });
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /new-window -n claude/, 'opens a window titled claude');
+  assert.ok(log.includes('cd && claude'), `runs host claude from $HOME; got: ${log}`);
+  assert.ok(!log.includes(sandboxBin), 'claude-sandbox is not involved');
+});
+
+test('picking the no-repo row under wezterm spawns host claude in a new tab', { skip }, () => {
+  const { env, spawnLog } = makeEnv();
+  run(env, { WEZTERM_PANE: '3', FZF_REPO: HOST_ROW });
+  const log = fs.readFileSync(spawnLog, 'utf8');
+  assert.match(log, /spawn --/, 'uses wezterm cli spawn');
+  assert.ok(log.includes('cd && claude'), `runs host claude; got: ${log}`);
+});
+
+test('the no-repo row is offered even when the repos root is empty', { skip }, () => {
+  const { env, repoListFile, tmuxLog } = makeEnv({ repos: [] });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: HOST_ROW });
+  const offered = fs.readFileSync(repoListFile, 'utf8').split('\n').filter(Boolean);
+  assert.deepStrictEqual(offered, [HOST_ROW], 'the host row alone is offered');
+  assert.ok(fs.readFileSync(tmuxLog, 'utf8').includes('cd && claude'), 'and it still spawns');
 });
 
 test('under wezterm (no tmux), spawns a new tab running the launcher', { skip }, () => {

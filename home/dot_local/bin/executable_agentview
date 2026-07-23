@@ -6,10 +6,12 @@
 #   agentview             full-color fzf picker; on <enter> it jumps to the session.
 #                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. Picker keys:
 #                         ALT+1..9 jump to the Nth session · CTRL+R rename · CTRL+P pin to
-#                         top · CTRL+N new claude-sandbox · CTRL+X remove · CTRL+F refresh ·
+#                         top · CTRL+N new session · CTRL+X remove · CTRL+F refresh ·
 #                         CTRL+O session details · ? shortcut cheatsheet.
 #   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
-#                         new pane of the active backend (tmux new-window / wezterm spawn)
+#                         new pane of the active backend (tmux new-window / wezterm spawn).
+#                         Picking the "no repo" entry launches a plain HOST claude at $HOME
+#                         instead (no sandbox, no branch pick).
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
 #   agentview --jump-nth N  jump to the Nth session in render order (ALT+N target)
@@ -450,7 +452,7 @@ if [ "$mode" = "--keys" ]; then
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
   printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
   printf '    %s⌃x%s       %sremove from list%s\n'     "$k" "$z" "$dsc" "$z"
-  printf '    %s⌃n%s       %snew sandbox session%s\n'  "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃n%s       %snew session (sandbox or host)%s\n'  "$k" "$z" "$dsc" "$z"
   printf '\n  %sView%s\n' "$sec" "$z"
   printf '    %s⌃o%s       %ssession details%s\n'      "$k" "$z" "$dsc" "$z"
   printf '    %s⌃f%s       %srefresh now%s\n'          "$k" "$z" "$dsc" "$z"
@@ -477,7 +479,10 @@ if [ -z "$sandbox_bin" ]; then
   else sandbox_bin="$HOME/.claude/sandbox/claude-sandbox"; fi
 fi
 
-spawn_pick_repo() {  # echo the chosen repo path (empty if cancelled)
+# First row of the repo pick: no repo at all -> a plain HOST claude session (no sandbox).
+host_row='[no repo · plain claude]'
+
+spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row (empty if cancelled)
   local names sel d
   names=$(for d in "$repos_root"/*/; do
     [ -d "$d/.git" ] || continue                # .git dir = a real checkout; a .git FILE is a
@@ -485,10 +490,11 @@ spawn_pick_repo() {  # echo the chosen repo path (empty if cancelled)
                                                 # land in repos_root) -> skip, not a spawn target
     printf '%s\n' "$(basename "${d%/}")"
   done | sort)
-  [ -n "$names" ] || { printf 'agentview: no git repos under %s\n' "$repos_root" >&2; return 1; }
-  sel=$(printf '%s\n' "$names" | fzf --prompt 'repo> ' --height='~70%' --layout=reverse \
-    --border=rounded --info=hidden --header 'new claude-sandbox session · pick a repo · esc cancels')
-  [ -n "$sel" ] && printf '%s' "$repos_root/$sel"
+  sel=$({ printf '%s\n' "$host_row"; [ -n "$names" ] && printf '%s\n' "$names"; } \
+    | fzf --prompt 'repo> ' --height='~70%' --layout=reverse \
+    --border=rounded --info=hidden --header 'new session · repo = claude-sandbox · no repo = host claude · esc cancels')
+  [ -n "$sel" ] || return 0
+  if [ "$sel" = "$host_row" ]; then printf '@host'; else printf '%s' "$repos_root/$sel"; fi
 }
 
 spawn_pick_branch() {  # $1 = repo path -> echo branch (empty = main repo, no worktree)
@@ -522,6 +528,10 @@ do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the act
   local repo branch cmd
   repo=$(spawn_pick_repo) || return 1
   [ -n "$repo" ] || return 0                       # cancelled at the repo pick
+  if [ "$repo" = "@host" ]; then                   # no repo -> plain host claude; `cd` = $HOME,
+    spawn_in_backend 'cd && claude' 'claude'       # not whatever cwd the backend inherits
+    return $?
+  fi
   branch=$(spawn_pick_branch "$repo")
   cmd=$(spawn_build_cmd "$repo" "$branch")
   spawn_in_backend "$cmd" "$(basename "$repo")"
