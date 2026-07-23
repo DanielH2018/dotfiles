@@ -50,6 +50,18 @@ const DENY = [
   'node -e "require(\'fs\').readFileSync(\'.env\')"',
   'scp server:/home/u/.ssh/id_rsa .',
   'cp .env.example .env',
+  // ssh remote-exec guardrail: privileged/destructive payloads that the outer-command
+  // permission match and the quote-broken local anchors would otherwise let through
+  "ssh homelab 'sudo systemctl restart docker'",
+  'ssh ubuntu@10.0.0.161 "sudo rm -rf /var/lib"',
+  "ssh homelab 'rm -rf /'",
+  'ssh homelab "rm -rf ~"',
+  "ssh homelab 'su - root'",
+  "ssh homelab 'chown -R root:root /etc'",
+  "ssh homelab 'chmod 777 /etc/shadow'",
+  "ssh homelab 'shutdown -r now'",
+  "ssh homelab 'sudo reboot'",
+  '/usr/bin/ssh homelab "sudo poweroff"',
 ];
 
 const ALLOW = [
@@ -66,6 +78,13 @@ const ALLOW = [
   'sed -n 1p CHANGELOG.md',
   'echo "{}" | jq ".key"',
   'cat data.json | jq ".pem"',
+  // ssh remote-exec: legit deploys / reads / remote claude must still pass (no literal sudo)
+  "ssh homelab 'cd ~/server/ansible && ansible-playbook deploy.yml'",
+  "ssh homelab 'docker ps'",
+  "ssh homelab 'systemctl status docker'",
+  'ssh homelab "~/.local/bin/claude -p hello"',
+  "ssh homelab 'rm -rf ./build'",
+  'ssh-add -l',
 ];
 
 test('dangerous commands are denied', { skip }, () => {

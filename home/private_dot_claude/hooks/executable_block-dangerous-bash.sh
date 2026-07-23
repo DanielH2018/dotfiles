@@ -2,6 +2,10 @@
 # PreToolUse hook for Bash: deny patterns that are usually mistakes.
 # Returns a structured PreToolUse decision via JSON on stdout.
 
+# Body is mostly single-quoted grep regexes (literal $, \s, \b) plus a tr that
+# collapses literal backslashes — both are intentional and trip SC2016/SC1003 as
+# false positives, so disable those two info checks for the whole file.
+# shellcheck disable=SC2016,SC1003
 set -u
 
 INPUT=$(cat)
@@ -18,6 +22,27 @@ deny() {
   }'
   exit 0
 }
+
+# Remote-exec guardrail (ssh): the permission engine matches only the OUTER
+# command, so `ssh host '<payload>'` reads as a bare `ssh` — the deny list
+# (sudo/su/chown/…) never sees what runs on the far host, and the surrounding
+# quotes hide the payload from the checks below (the rm -rf path anchor breaks on
+# `ssh h 'rm -rf /'`, which ends in /'). Re-scan the payload so an agent can't do
+# over ssh what it's denied locally. Deploys are unaffected: they carry no literal
+# sudo (ansible uses become: internally). mkfs/dd/terraform/fork-bomb are already
+# caught whole-string below; this closes only the quoting/prefix-match gaps.
+if echo "$COMMAND" | grep -qiE '(^|[[:space:];&|(/])ssh([[:space:]]|$)'; then
+  # Strip quotes and collapse newline/tab/backslash so payload words regain clean
+  # boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
+  REMOTE=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+  ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not over ssh from an agent session."
+  echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside an ssh command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '(^|[[:space:]])su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside an ssh command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*(\s/[[:space:]]|\s/$|\s~|\s\$HOME)' && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\bchown\b' && deny "Blocked: chown inside an ssh command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside an ssh command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b' && deny "Blocked: power-state change (reboot/shutdown/halt) on the remote host. $ssh_hint"
+fi
 
 # rm -rf targeting home or root (handles separated flags: rm -r -f /, rm --recursive --force /)
 if echo "$COMMAND" | grep -qiE '\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*(\s/[[:space:]]|\s/$|\s~|\s\$HOME)'; then
