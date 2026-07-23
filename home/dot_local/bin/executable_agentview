@@ -507,6 +507,9 @@ prof() { [ -n "${AGENTVIEW_PROFILE:-}" ] && printf '%s\t%s\n' "${EPOCHREALTIME:-
 # (7d) drops the file; between 1 and 7 days a session is hidden but its file is kept.
 JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts, (.kind // "host"), (.locator // ""), (.title // "")] | @tsv'
 JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
+# Pin identity (mirrors compute_pin_id + JQ_ROW's field defaults): a real locator names the
+# pane; else host|cwd|kind, US-joined (). Lets gc_pins reconcile the pin sidecar.
+JQ_PINID='(.locator // "") as $l | (if ($l != "" and (($l|split(":")|.[0]) != "none")) then $l else ((.host // "?") + "" + (.cwd // "") + "" + (.kind // "host")) end)'
 PRUNE=$(( 7 * 86400 ))
 # remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
@@ -620,6 +623,23 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
   else case "$1" in daniel-server) _bn="homelab";; *) _bn="${1#daniel-}";; esac; fi
 }
 
+gc_pins() {  # drop pins whose session no longer exists anywhere (a local file OR the remote
+  # cache) — orphans left when a session ends, is pruned (7-day / dead-pid), or is CTRL+X'd,
+  # plus the "a new session in the same cwd inherits a stale locator-less pin" mispin. Runs each
+  # render AFTER the prune, reconciling the sidecar against current state. No-op (one stat) when
+  # nothing is pinned. jq over valid session JSON doesn't error, so a wrongly-emptied set is only
+  # reachable when there genuinely are no sessions — in which case every pin IS an orphan.
+  [ -s "$pinfile" ] || return
+  local live tmp="$pinfile.tmp.$$" lf
+  shopt -s nullglob; lf=( "$statedir"/*.json ); shopt -u nullglob
+  live=""
+  [ "${#lf[@]}" -gt 0 ] && live=$(jq -r "$JQ_PINID" "${lf[@]}" 2>/dev/null)
+  [ -s "$remote_cache" ] && live="$live"$'\n'"$(MSYS_NO_PATHCONV=1 jq -r "$JQ_PINID" < "$remote_cache" 2>/dev/null)"
+  if [ -n "$live" ]; then printf '%s\n' "$live" | grep -Fxf - "$pinfile" > "$tmp" 2>/dev/null
+  else : > "$tmp"; fi
+  mv -f "$tmp" "$pinfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+}
+
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
   local W=72 BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
@@ -628,6 +648,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   # set, then in the tally below count pinned rows separately so a state group's header
   # count reflects only what still renders under it.
   local -A PINNED_SET=()
+  gc_pins                                     # reconcile the sidecar against live sessions first
   if [ -f "$pinfile" ]; then
     while IFS= read -r _hp; do [ -n "$_hp" ] && PINNED_SET["$_hp"]=1; done < "$pinfile"
   fi

@@ -532,4 +532,37 @@ test('never pid-prunes a non-self host or a sandbox row (pid is not locally chec
   assert.ok(fs.existsSync(avFile(home, 'sb')), 'a sandbox row (container pid) is never pid-pruned');
 });
 
+// ---- pin sidecar GC: drop pins whose session no longer exists anywhere ----
+const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
+
+test('render drops an orphaned pin and keeps live / remote / locator-less pins', { skip }, () => {
+  const now = nowSec();
+  const remote = JSON.stringify({ state: 'working', cwd: '/r/pr', host: 'daniel-server', kind: 'host', ts: now - 5, locator: 'tmux:/s:sess:%1' });
+  const { env, home } = makeEnv({ remote });
+  stateFile(home, 'live', { state: 'working', cwd: 'C:\\a\\livepin', host: HOST, kind: 'host', ts: now - 60, pid: String(process.pid), locator: 'wezterm:9' });
+  stateFile(home, 'nl', { state: 'working', cwd: '/home/x/noloc', host: HOST, kind: 'host', ts: now - 60, pid: String(process.pid), locator: 'none:' });
+  const nlPin = [HOST, '/home/x/noloc', 'host'].join(US);
+  fs.writeFileSync(pinFile(home), `wezterm:9\n${nlPin}\ntmux:/s:sess:%1\nwezterm:404\n`);
+  run(env, []);
+  const pins = fs.readFileSync(pinFile(home), 'utf8').split('\n').filter(Boolean);
+  assert.ok(pins.includes('wezterm:9'), 'a live local session (locator pin) keeps its pin');
+  assert.ok(pins.includes(nlPin), 'a live locator-less session keeps its host|cwd|kind pin');
+  assert.ok(pins.includes('tmux:/s:sess:%1'), 'a live remote (cache) session keeps its pin');
+  assert.ok(!pins.includes('wezterm:404'), 'a pin with no matching session is dropped');
+});
+
+test('the GC never creates a pinfile when nothing is pinned', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 's', { state: 'working', cwd: 'C:\\a\\p', host: HOST, kind: 'host', ts: nowSec() - 60, pid: String(process.pid), locator: 'wezterm:1' });
+  run(env, []);
+  assert.ok(!fs.existsSync(pinFile(home)), 'no pinfile is created by the GC when nothing is pinned');
+});
+
+test('the GC clears every pin when no session exists (all orphaned)', { skip }, () => {
+  const { env, home } = makeEnv();
+  fs.writeFileSync(pinFile(home), 'wezterm:1\nwezterm:2\n');
+  run(env, []);
+  assert.strictEqual(fs.readFileSync(pinFile(home), 'utf8').trim(), '', 'every pin is dropped when no session exists');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
