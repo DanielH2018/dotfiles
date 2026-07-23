@@ -20,7 +20,7 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 ## Git conventions
 
-- Commits are signed via 1Password SSH agent — never pass `--no-verify` or any flag that bypasses signing.
+- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — never pass `--no-verify` or any flag that bypasses signing.
 - Default branch is `main`. Prefer rebase over merge.
 - Always create a new commit rather than amending unless I explicitly ask to amend.
 - Write commit messages that explain *why*, not just what changed. Example:
