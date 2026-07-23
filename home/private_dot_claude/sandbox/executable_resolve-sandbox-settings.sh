@@ -8,7 +8,10 @@
 # so only these keys cross:
 #   - permissions.deny : union(base, host) — denies are additive; host protections
 #                        also apply in-container and sandbox-specific denies survive.
-#   - outputStyle / model / enabledPlugins : host value wins (behavioral prefs).
+#   - outputStyle / model / enabledPlugins : host value wins (behavioral prefs),
+#     except the `remember` plugin, which is dropped: its memory store lives
+#     outside the container's writable mounts, so its SessionStart hook errors on
+#     every sandbox launch, and ephemeral sessions shouldn't accumulate memory.
 # Everything else from host is IGNORED. In particular permissions.allow (would
 # widen what the sandboxed agent may do) and hooks (the sandbox ships its own
 # container hook set) are deliberately NOT propagated.
@@ -36,7 +39,7 @@ if [ -n "$HOST" ] && [ -f "$HOST" ] && command -v jq >/dev/null 2>&1; then
         | .permissions.deny = ((($base.permissions.deny // []) + ($host.permissions.deny // [])) | unique)
         | (if $host.outputStyle    then .outputStyle    = $host.outputStyle    else . end)
         | (if $host.model          then .model          = $host.model          else . end)
-        | (if $host.enabledPlugins then .enabledPlugins = $host.enabledPlugins else . end)
+        | (if $host.enabledPlugins then .enabledPlugins = ($host.enabledPlugins | del(.["remember@claude-plugins-official"])) else . end)
       ' "$BASE" "$HOST" >"$HOUT" 2>/dev/null && [ -s "$HOUT" ]; then
     CUR="$HOUT"
   else

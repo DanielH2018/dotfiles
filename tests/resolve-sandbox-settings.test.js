@@ -74,7 +74,7 @@ const host = path.join(d, 'host.json');
 fs.writeFileSync(host, JSON.stringify({
   outputStyle: 'Fintech Terse',
   model: 'opus[1m]',
-  enabledPlugins: { 'superpowers@x': true },
+  enabledPlugins: { 'superpowers@x': true, 'remember@claude-plugins-official': true },
   permissions: { allow: ['Bash(host_allow_must_not_cross)'], deny: ['Bash(host_deny)'] },
   hooks: { PreToolUse: [{ matcher: 'Y', hooks: [{ type: 'command', command: 'host-hook-must-not-cross' }] }] },
 }));
@@ -89,7 +89,7 @@ fs.writeFileSync(host, JSON.stringify({
   assert.ok(m.permissions.deny.includes('Bash(host_deny)'), 'unions host deny');
   assert.strictEqual(m.outputStyle, 'Fintech Terse', 'takes host outputStyle');
   assert.strictEqual(m.model, 'opus[1m]', 'takes host model');
-  assert.deepStrictEqual(m.enabledPlugins, { 'superpowers@x': true }, 'takes host enabledPlugins');
+  assert.deepStrictEqual(m.enabledPlugins, { 'superpowers@x': true }, 'takes host enabledPlugins but drops remember (its store is unwritable in-container)');
   assert.deepStrictEqual(m.permissions.allow, ['Bash(sandbox_only)'], 'keeps sandbox allow, does NOT import host allow');
   assert.ok(!JSON.stringify(m.permissions.allow).includes('host_allow'), 'host allow never crosses');
   assert.deepStrictEqual(m.hooks, hbaseHooks(), 'keeps sandbox hooks, does NOT import host hooks');
