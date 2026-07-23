@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ctw — remote companion to `cts --ssh`. Resolves a repo NAME under $CTS_REMOTE_ROOTS,
+# optionally into a per-branch git worktree, then hands off to `ct` (native claude in a
+# named tmux session — see executable_ct). Because `ct` names its tmux session from a
+# cksum of the launch dir, each per-branch worktree is a distinct, auto-resuming session
+# that registers in Agent View for free; ctw itself never touches tmux.
+#
+# It also answers the queries that `cts --complete-*` sends over ssh, so completion and
+# launch resolve repos/branches through the exact same code and can never disagree.
+#
+# Usage:
+#   ctw <repo|path> [branch]     resolve (+ optional worktree), then exec ct <dir>
+#   ctw --list-repos             names of git repos under $CTS_REMOTE_ROOTS, one per line
+#   ctw --list-branches <repo>   local branch names for <repo>, one per line
+#
+# Env: CTS_REMOTE_ROOTS (colon-separated, default ~/Repositories), CTS_WORKTREE_ROOT
+# (default ~/.cts-worktrees), CTW_CT_BIN (override the ct launcher path).
+set -u
+
+roots_raw="${CTS_REMOTE_ROOTS:-$HOME/Repositories}"
+wt_root="${CTS_WORKTREE_ROOT:-$HOME/.cts-worktrees}"
+
+# Split the colon-separated roots into an array, expanding a leading ~ per element (the
+# value comes from the environment, so tilde expansion hasn't happened yet).
+IFS=':' read -r -a roots <<< "$roots_raw"
+for _i in "${!roots[@]}"; do
+  case "${roots[$_i]}" in
+    "~")   roots[$_i]="$HOME" ;;
+    "~/"*) roots[$_i]="$HOME/${roots[$_i]#\~/}" ;;
+  esac
+done
+
+# Resolve the ct launcher to an absolute path: prefer an override, then PATH, then the
+# installer's ~/.local/bin/ct (a non-login ssh shell may lack ~/.local/bin on PATH).
+ct_bin() {
+  if [ -n "${CTW_CT_BIN:-}" ]; then printf '%s\n' "$CTW_CT_BIN"; return; fi
+  command -v ct 2>/dev/null && return
+  if [ -x "$HOME/.local/bin/ct" ]; then printf '%s\n' "$HOME/.local/bin/ct"; return; fi
+  printf 'ct\n'
+}
+
+# Map a repo NAME to a path: first root that contains a git repo of that name wins. An arg
+# that already looks like a path (absolute, ~-prefixed, or containing a slash) is taken
+# literally so `cts --ssh /abs/dir` keeps working; only leading ~ is expanded.
+resolve_repo() {
+  local name="$1"
+  case "$name" in
+    /*|"~/"*|*/*)
+      case "$name" in "~/"*) name="$HOME/${name#\~/}" ;; esac
+      printf '%s\n' "$name"; return 0 ;;
+  esac
+  local r
+  for r in "${roots[@]}"; do
+    if [ -e "$r/$name/.git" ]; then printf '%s\n' "$r/$name"; return 0; fi
+  done
+  return 1
+}
+
+list_repos() {
+  local r d name seen=" "
+  for r in "${roots[@]}"; do
+    [ -d "$r" ] || continue
+    for d in "$r"/*/; do
+      [ -e "${d%/}/.git" ] || continue      # skip the literal glob and non-git dirs
+      name="$(basename "$d")"
+      case "$seen" in *" $name "*) continue ;; esac   # first root wins on collision
+      seen="$seen$name "
+      printf '%s\n' "$name"
+    done
+  done
+}
+
+list_branches() {
+  local repo
+  repo="$(resolve_repo "$1")" || { printf 'ctw: repo not found under $CTS_REMOTE_ROOTS: %s\n' "$1" >&2; return 1; }
+  [ -e "$repo/.git" ] || { printf 'ctw: not a git repo: %s\n' "$1" >&2; return 1; }
+  git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/
+}
+
+launch() {
+  local repo branch dir slug name
+  repo="$(resolve_repo "$1")" || { printf 'ctw: repo not found under $CTS_REMOTE_ROOTS: %s\n' "$1" >&2; exit 1; }
+  branch="${2:-}"
+
+  if [ -z "$branch" ]; then
+    # No branch: launch in place (git not required — matches the old passthrough).
+    exec "$(ct_bin)" "$repo"
+  fi
+
+  # Branch requested → the target must be a git repo we can add a worktree to.
+  [ -e "$repo/.git" ] || { printf 'ctw: not a git repo (needed for -b): %s\n' "$repo" >&2; exit 1; }
+  slug="$(printf '%s' "$branch" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+  [ -n "$slug" ] || slug="branch"
+  name="$(basename "$repo")"
+  dir="$wt_root/$name/$slug"
+
+  if [ ! -e "$dir/.git" ]; then
+    mkdir -p "$(dirname "$dir")"
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+      git -C "$repo" worktree add "$dir" "$branch" || exit 1
+    else
+      git -C "$repo" worktree add -b "$branch" "$dir" || exit 1
+    fi
+  fi
+  exec "$(ct_bin)" "$dir"
+}
+
+usage() {
+  echo "usage: ctw <repo|path> [branch]   resolve (+optional worktree) then launch ct"
+  echo "       ctw --list-repos           git repos under \$CTS_REMOTE_ROOTS"
+  echo "       ctw --list-branches <repo> local branches of <repo>"
+}
+
+case "${1:-}" in
+  -h|--help)         usage; exit 0 ;;
+  --list-repos)      list_repos; exit $? ;;
+  --list-branches)   shift; [ -n "${1:-}" ] || { printf 'ctw: --list-branches needs a repo\n' >&2; exit 2; }; list_branches "$1"; exit $? ;;
+  "")                exec "$(ct_bin)" ;;      # bare ctw → claude in the remote $HOME
+  -*)                printf 'ctw: unknown flag: %s\n' "$1" >&2; exit 2 ;;
+  *)                 launch "$@" ;;
+esac

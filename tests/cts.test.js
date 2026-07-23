@@ -158,33 +158,54 @@ exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
-  delete env.TMUX; delete env.CTS_REMOTE_HOST; delete env.CTS_REMOTE_CT;
+  delete env.TMUX; delete env.CTS_REMOTE_HOST; delete env.CTS_REMOTE_CT; delete env.CTS_REMOTE_CTW;
   Object.assign(env, extraEnv);
   execFileSync('bash', [CTS, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   return fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
 }
 
-test('cts --ssh: attaches to the default homelab and runs the remote ct launcher', { skip }, () => {
+test('cts --ssh: attaches to the default homelab and runs the remote ctw launcher', { skip }, () => {
   const out = runCtsSsh(['--ssh']);
   assert.match(out, /(^|\s)-t\s+daniel-server\b/, 'ssh -t to the default host');
-  assert.match(out, /\$HOME\/\.local\/bin\/ct\b/, 'invokes the deployed ct launcher on the remote');
+  assert.match(out, /\$HOME\/\.local\/bin\/ctw\b/, 'invokes the deployed ctw launcher on the remote');
 });
 
-test('cts --ssh DIR: forwards the remote directory to ct', { skip }, () => {
+test('cts --ssh REPO: forwards the repo to ctw for remote resolution', { skip }, () => {
   const out = runCtsSsh(['--ssh', '~/airflow']);
-  assert.match(out, /ct ~\/airflow\b/, 'remote dir passed through for remote-side expansion');
+  assert.match(out, /ctw ~\/airflow\b/, 'repo passed through for remote-side resolution/expansion');
+});
+
+test('cts --ssh REPO -b BRANCH: forwards repo + branch to ctw', { skip }, () => {
+  const out = runCtsSsh(['--ssh', 'proj', '-b', 'feature']);
+  assert.match(out, /ctw proj feature\b/, 'ctw receives repo then branch');
+});
+
+test('cts --ssh --branch BRANCH: long form also forwarded', { skip }, () => {
+  const out = runCtsSsh(['--ssh', 'proj', '--branch', 'feat/x']);
+  assert.match(out, /ctw proj feat\/x\b/);
+});
+
+test('cts --ssh -b without a repo errors', { skip }, () => {
+  const bin = scratch();
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
+  let err;
+  try {
+    execFileSync('bash', [CTS, '--ssh', '-b', 'feature'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { err = e; }
+  assert.ok(err, 'exited non-zero when -b has no repo');
+  assert.match(String(err.stderr), /-b .*requires a repo|requires a repo/i);
 });
 
 test('cts --ssh=HOST overrides the remote host', { skip }, () => {
   const out = runCtsSsh(['--ssh=box2', 'proj']);
   assert.match(out, /-t\s+box2\b/);
-  assert.match(out, /ct proj\b/);
+  assert.match(out, /ctw proj\b/);
 });
 
 test('cts -H HOST enables remote mode and sets the host', { skip }, () => {
   const out = runCtsSsh(['-H', 'box3', 'proj']);
   assert.match(out, /-t\s+box3\b/);
-  assert.match(out, /ct proj\b/);
+  assert.match(out, /ctw proj\b/);
 });
 
 test('CTS_REMOTE_HOST sets the default remote host', { skip }, () => {
@@ -192,15 +213,76 @@ test('CTS_REMOTE_HOST sets the default remote host', { skip }, () => {
   assert.match(out, /-t\s+box4\b/);
 });
 
-test('CTS_REMOTE_CT overrides the remote launcher path', { skip }, () => {
-  const out = runCtsSsh(['--ssh', 'proj'], { CTS_REMOTE_CT: '/opt/ct' });
-  assert.match(out, /\/opt\/ct proj\b/);
+test('CTS_REMOTE_CTW overrides the remote helper path', { skip }, () => {
+  const out = runCtsSsh(['--ssh', 'proj'], { CTS_REMOTE_CTW: '/opt/ctw' });
+  assert.match(out, /\/opt\/ctw proj\b/);
 });
 
 test('cts --ssh does not fall through to the local sandbox path', { skip }, () => {
   const out = runCtsSsh(['--ssh', 'proj']);
   assert.doesNotMatch(out, /new-session/, 'never runs the local tmux launcher in ssh mode');
   assert.doesNotMatch(out, /claude-sandbox/, '--ssh is not forwarded to claude-sandbox');
+});
+
+// ---- completion data modes: `cts --complete-repos|--complete-branches` -----------------
+// _cts (zsh) calls these over the same ssh contract to populate tab-completion. They query
+// `ctw --list-*` with fail-fast ssh flags and cache the result under $XDG_CACHE_HOME/cts.
+function runCtsComplete(args, { sshOut = '', cacheDir, env = {} } = {}) {
+  const bin = scratch();
+  const log = path.join(bin, 'ssh.log');
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
+echo "$*" >> ${JSON.stringify(log)}
+printf '%s' ${JSON.stringify(sshOut)}
+exit 0
+`, { mode: 0o755 });
+  const e = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  delete e.CTS_REMOTE_HOST; delete e.CTS_REMOTE_CT; delete e.CTS_REMOTE_CTW; delete e.CTS_CACHE_TTL;
+  if (cacheDir !== undefined) e.XDG_CACHE_HOME = cacheDir;
+  Object.assign(e, env);
+  let out = '', code = 0;
+  try { out = execFileSync('bash', [CTS, ...args], { env: e, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch (ex) { code = ex.status; out = String(ex.stdout || ''); }
+  const sshArgs = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+  return { out, code, sshArgs };
+}
+
+test('cts --complete-repos queries ctw --list-repos with fail-fast ssh flags', { skip }, () => {
+  const { out, sshArgs } = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\nbeta\n', cacheDir: scratch() });
+  assert.match(sshArgs, /ctw --list-repos/, 'runs the remote list-repos query');
+  assert.match(sshArgs, /BatchMode=yes/, 'never prompts for a password');
+  assert.match(sshArgs, /ConnectTimeout=2/, 'fails fast on an unreachable host');
+  assert.match(sshArgs, /(^|\s)box\b/, 'targets the given host');
+  assert.match(out, /alpha/); assert.match(out, /beta/);
+});
+
+test('cts --complete-repos defaults to the homelab host', { skip }, () => {
+  const { sshArgs } = runCtsComplete(['--complete-repos'], { sshOut: 'x\n', cacheDir: scratch() });
+  assert.match(sshArgs, /(^|\s)daniel-server\b/);
+});
+
+test('cts --complete-branches HOST REPO queries ctw --list-branches REPO', { skip }, () => {
+  const { out, sshArgs } = runCtsComplete(['--complete-branches', 'box', 'proj'], { sshOut: 'main\nfeature\n', cacheDir: scratch() });
+  assert.match(sshArgs, /ctw --list-branches proj/);
+  assert.match(sshArgs, /BatchMode=yes/);
+  assert.match(out, /feature/);
+});
+
+test('cts --complete-repos serves cache within the TTL (second call skips ssh)', { skip }, () => {
+  const cache = scratch();
+  const a = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\nbeta\n', cacheDir: cache });
+  assert.match(a.out, /alpha/);
+  const b = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'CHANGED\n', cacheDir: cache });
+  assert.match(b.out, /alpha/, 'served from cache');
+  assert.doesNotMatch(b.out, /CHANGED/, 'did not re-query');
+  assert.strictEqual(b.sshArgs, '', 'ssh not invoked on a cache hit');
+});
+
+test('cts --complete-repos refetches when the TTL is 0', { skip }, () => {
+  const cache = scratch();
+  runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\n', cacheDir: cache, env: { CTS_CACHE_TTL: '0' } });
+  const b = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'beta\n', cacheDir: cache, env: { CTS_CACHE_TTL: '0' } });
+  assert.match(b.out, /beta/, 'TTL=0 always refetches');
+  assert.ok(b.sshArgs.length > 0, 'ssh invoked again');
 });
 
 test('cts --ssh errors when ssh is missing', { skip }, () => {

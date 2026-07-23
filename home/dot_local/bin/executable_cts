@@ -12,10 +12,53 @@ set -u
 
 case "${1:-}" in
   -h|--help)
-    echo "usage: cts [dir] [claude-sandbox args…]   run claude-sandbox in a named tmux session (local)"
-    echo "       cts --ssh[=HOST] [remote-dir]       start a native claude tmux session on HOST over ssh"
-    echo "                                           HOST defaults to daniel-server (\$CTS_REMOTE_HOST); also -H/--host HOST"
+    echo "usage: cts [dir] [claude-sandbox args…]        run claude-sandbox in a named tmux session (local)"
+    echo "       cts --ssh[=HOST] [REPO] [-b BRANCH]      start a native claude tmux session on HOST over ssh"
+    echo "                                                REPO resolves under \$CTS_REMOTE_ROOTS on the host;"
+    echo "                                                -b BRANCH runs it in a per-branch git worktree."
+    echo "                                                HOST defaults to daniel-server (\$CTS_REMOTE_HOST); also -H/--host HOST"
     exit 0 ;;
+esac
+
+# ---- completion data (hidden; the _cts zsh completion calls these over ssh) -------------
+# `cts --complete-repos [HOST]` and `cts --complete-branches [HOST] REPO` print the remote
+# repo/branch lists tab-completion offers, by querying `ctw --list-*` on the host with
+# fail-fast ssh flags and caching the result under $XDG_CACHE_HOME/cts for CTS_CACHE_TTL
+# seconds (default 45) so repeated TABs feel instant. BatchMode+ConnectTimeout mean an
+# unreachable or auth-locked host fails fast and quietly rather than hanging the shell.
+_cts_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+_cts_complete() {
+  local kind="$1" host="${2:-}" repo="${3:-}"
+  [ -n "$host" ] || host="${CTS_REMOTE_HOST:-daniel-server}"
+  command -v ssh >/dev/null 2>&1 || return 0
+  local ctw="${CTS_REMOTE_CTW:-\$HOME/.local/bin/ctw}"
+  local ttl="${CTS_CACHE_TTL:-45}"
+  local cdir="${XDG_CACHE_HOME:-$HOME/.cache}/cts"
+  local key remote
+  if [ "$kind" = branches ]; then
+    [ -n "$repo" ] || return 0
+    key="branches_${host}_${repo}"; remote="$ctw --list-branches $repo"
+  else
+    key="repos_${host}"; remote="$ctw --list-repos"
+  fi
+  key="$(printf '%s' "$key" | tr -c 'a-zA-Z0-9._-' '_')"
+  local cache="$cdir/$key" now age
+  if [ -f "$cache" ]; then
+    now="$(date +%s)"; age=$(( now - $(_cts_mtime "$cache") ))
+    if [ "$age" -ge 0 ] && [ "$age" -lt "$ttl" ]; then cat "$cache"; return 0; fi
+  fi
+  mkdir -p "$cdir"
+  local out
+  if out="$(ssh -o BatchMode=yes -o ConnectTimeout=2 "$host" "$remote" 2>/dev/null)"; then
+    printf '%s\n' "$out" > "$cache"
+    printf '%s\n' "$out"
+  else
+    [ -f "$cache" ] && cat "$cache"    # fall back to a stale cache on a failed query
+  fi
+}
+case "${1:-}" in
+  --complete-repos)    shift; _cts_complete repos "${1:-}"; exit 0 ;;
+  --complete-branches) shift; _cts_complete branches "${1:-}" "${2:-}"; exit 0 ;;
 esac
 
 # ---- remote (SSH) mode -------------------------------------------------------
@@ -33,24 +76,28 @@ _remote=0
 for _a in "$@"; do case "$_a" in --ssh|--ssh=*|-H|--host) _remote=1; break ;; esac; done
 if [ "$_remote" -eq 1 ]; then
   host="${CTS_REMOTE_HOST:-daniel-server}"
-  rdir=""
+  rdir=""; rbranch=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --ssh)     shift ;;
-      --ssh=*)   host="${1#--ssh=}"; shift ;;
-      -H|--host) host="${2:?cts: --host requires a HOST value}"; shift 2 ;;
-      -*)        printf 'cts: unknown flag in --ssh mode: %s\n' "$1" >&2; exit 2 ;;
-      *)         if [ -z "$rdir" ]; then rdir="$1"; shift
-                 else printf 'cts: --ssh mode takes at most one remote-dir (extra: %s)\n' "$1" >&2; exit 2; fi ;;
+      --ssh)       shift ;;
+      --ssh=*)     host="${1#--ssh=}"; shift ;;
+      -H|--host)   host="${2:?cts: --host requires a HOST value}"; shift 2 ;;
+      -b|--branch) rbranch="${2:?cts: -b requires a BRANCH value}"; shift 2 ;;
+      -*)          printf 'cts: unknown flag in --ssh mode: %s\n' "$1" >&2; exit 2 ;;
+      *)           if [ -z "$rdir" ]; then rdir="$1"; shift
+                   else printf 'cts: --ssh mode takes at most one repo (extra: %s)\n' "$1" >&2; exit 2; fi ;;
     esac
   done
   [ -n "$host" ] || { printf 'cts: no remote host (set --host or $CTS_REMOTE_HOST)\n' >&2; exit 1; }
   command -v ssh >/dev/null 2>&1 || { printf 'cts: ssh not found on PATH\n' >&2; exit 1; }
-  # ct is deployed to ~/.local/bin/ct; reference it explicitly since a non-login ssh shell
-  # may not have ~/.local/bin on PATH. $HOME is expanded on the remote, not here.
-  remote_ct="${CTS_REMOTE_CT:-\$HOME/.local/bin/ct}"
-  if [ -n "$rdir" ]; then exec ssh -t "$host" "$remote_ct $rdir"; fi
-  exec ssh -t "$host" "$remote_ct"
+  [ -z "$rbranch" ] || [ -n "$rdir" ] || { printf 'cts: -b BRANCH requires a repo in --ssh mode\n' >&2; exit 2; }
+  # ctw is deployed to ~/.local/bin/ctw; reference it explicitly since a non-login ssh
+  # shell may not have ~/.local/bin on PATH. $HOME expands on the remote, not here. ctw
+  # resolves REPO under $CTS_REMOTE_ROOTS and, with a branch, into a per-branch worktree.
+  remote_ctw="${CTS_REMOTE_CTW:-\$HOME/.local/bin/ctw}"
+  if [ -n "$rdir" ] && [ -n "$rbranch" ]; then exec ssh -t "$host" "$remote_ctw $rdir $rbranch"; fi
+  if [ -n "$rdir" ]; then exec ssh -t "$host" "$remote_ctw $rdir"; fi
+  exec ssh -t "$host" "$remote_ctw"
 fi
 
 command -v tmux >/dev/null 2>&1 || { printf 'cts: tmux not found on PATH\n' >&2; exit 1; }
