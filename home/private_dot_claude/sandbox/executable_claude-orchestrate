@@ -17,6 +17,7 @@
 set -euo pipefail
 
 SB="$HOME/.claude/sandbox"
+. "$SB/sandbox-lib.sh"   # resolve_repo_path()
 
 usage() {
   cat >&2 <<'EOF'
@@ -106,9 +107,7 @@ if [[ -z "$REPO_PATH" ]]; then
   fi
 fi
 # Bare name -> ~/Repositories/<name>, mirroring claude-sandbox.
-if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-  REPO_PATH="$HOME/Repositories/$REPO_PATH"
-fi
+REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
 if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
   echo "claude-orchestrate: not a git repository: $REPO_PATH" >&2
   require_repo

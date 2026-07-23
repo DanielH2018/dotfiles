@@ -9,6 +9,7 @@ AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
+. "$SANDBOX_DIR/sandbox-lib.sh"   # resolve_repo_path()
 # Machine/work-specific values (e.g. CLAUDE_VAULT_DIR) for an optional work overlay.
 if [ -f "$HOME/.config/claude/local.env" ]; then
   . "$HOME/.config/claude/local.env"
@@ -214,9 +215,7 @@ fi
 [[ -z "$REPO_PATH" ]] && usage
 
 # Resolve short repo names: "airflow" -> ~/Repositories/airflow
-if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-  REPO_PATH="$HOME/Repositories/$REPO_PATH"
-fi
+REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
 
 REPO_PATH="$(cd "$REPO_PATH" && pwd)"
 # Sanitize repo name for use in Docker tags (must match [a-zA-Z0-9._-])
@@ -412,9 +411,7 @@ if [[ "$LIST_SESSIONS" == true ]]; then
   [[ -z "$REPO_PATH" ]] && usage
 
   # Resolve short repo names
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
 
   list_sessions
@@ -426,9 +423,7 @@ if [[ "$COMPLETE_WORKTREES" == true ]]; then
   [[ -z "$REPO_PATH" ]] && exit 0
 
   # Resolve short repo names
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
 
   repo_hash="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
@@ -461,9 +456,7 @@ fi
 if [[ "$COMPLETE_BRANCHES" == true ]]; then
   [[ -z "$REPO_PATH" ]] && exit 0
 
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
 
   # Local branches only (refs/heads). -b still accepts a remote-only branch
@@ -478,9 +471,7 @@ if [[ "$RENAME_WORKTREE" == true ]]; then
   [[ -z "$REPO_PATH" ]] && usage
 
   # Resolve short repo names
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
 
   # Validate new name
@@ -1607,9 +1598,7 @@ fi
 if [[ "$PRUNE_WORKTREES" == true ]]; then
   [[ -z "$REPO_PATH" ]] && usage
 
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
   REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
   REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
@@ -1622,9 +1611,7 @@ fi
 if [[ "$GC_WORKTREES" == true ]]; then
   [[ -z "$REPO_PATH" ]] && usage
 
-  if [[ "$REPO_PATH" != /* && "$REPO_PATH" != .* && -d "$HOME/Repositories/$REPO_PATH" ]]; then
-    REPO_PATH="$HOME/Repositories/$REPO_PATH"
-  fi
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
   REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
   REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"

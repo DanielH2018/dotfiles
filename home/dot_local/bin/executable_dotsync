@@ -32,7 +32,10 @@ function loadManifest(dir, home) {
   let names = [];
   try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort(); } catch { names = []; }
   for (const name of names) {
-    const raw = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+    const p = path.join(dir, name);
+    let raw;
+    try { raw = JSON.parse(fs.readFileSync(p, 'utf8')); }
+    catch (e) { throw new Error(`cannot parse ${p}: ${e.message}`); }
     if (raw.repo) {
       const r = raw.repo;
       repos.push({ name: r.name, type: r.type, path: expandTilde(r.path, home), remote: r.remote, roots: r.roots });
@@ -268,14 +271,21 @@ function main(argv, env, runner) {
   const [, , sub, ...rest] = argv;
   const force = rest.includes('--force');
   const dryRun = rest.includes('--dry-run');
-  switch (sub) {
-    case 'check': return cmdCheck({ home, manifestDir, runner });
-    case 'status': return cmdStatus({ home, manifestDir, runner });
-    case 'inventory': return cmdInventory({ home, manifestDir, runner });
-    case 'sync': return cmdSync({ home, manifestDir, runner, force, dryRun });
-    default:
-      console.error('usage: dotsync <check|status|inventory|sync> [--force] [--dry-run]');
-      return 2;
+  try {
+    switch (sub) {
+      case 'check': return cmdCheck({ home, manifestDir, runner });
+      case 'status': return cmdStatus({ home, manifestDir, runner });
+      case 'inventory': return cmdInventory({ home, manifestDir, runner });
+      case 'sync': return cmdSync({ home, manifestDir, runner, force, dryRun });
+      default:
+        console.error('usage: dotsync <check|status|inventory|sync> [--force] [--dry-run]');
+        return 2;
+    }
+  } catch (e) {
+    // A malformed manifest fragment (or other fatal setup error) shouldn't dump a
+    // raw stack trace from an unattended tool — report it and exit non-zero.
+    console.error(`dotsync: ${e.message}`);
+    return 2;
   }
 }
 

@@ -20,6 +20,20 @@ run_check() {
   fi
 }
 
+# Walk up from a starting dir to '/' looking for a marker file/dir; echo the
+# containing dir on success, non-zero on failure. Bottoms out on Windows where
+# dirname of a drive root repeats itself.
+find_up() {
+  local dir="$1" marker="$2" test_flag="${3:--e}" parent
+  while [ "$dir" != "/" ]; do
+    if [ "$test_flag" "$dir/$marker" ]; then printf '%s\n' "$dir"; return 0; fi
+    parent=$(dirname "$dir")
+    [ "$parent" = "$dir" ] && break
+    dir="$parent"
+  done
+  return 1
+}
+
 case "$FILE_PATH" in
   *.py)
     command -v ruff >/dev/null && run_check ruff check "$FILE_PATH"
@@ -30,33 +44,18 @@ case "$FILE_PATH" in
     # present; skip silently if absent so a missing compiler can't block the edit.
     # (`npx --no-install tsc` exits non-zero when typescript isn't installed, which the
     # old code mis-read as a lint failure and blocked every TS edit in such projects.)
-    DIR=$(dirname "$FILE_PATH")
-    while [ "$DIR" != "/" ]; do
-      if [ -x "$DIR/node_modules/.bin/tsc" ]; then
-        run_check "$DIR/node_modules/.bin/tsc" --noEmit --isolatedModules "$FILE_PATH"
-        break
-      fi
-      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
-      PARENT=$(dirname "$DIR")
-      [ "$PARENT" = "$DIR" ] && break
-      DIR=$PARENT
-    done
+    DIR=$(find_up "$(dirname "$FILE_PATH")" node_modules/.bin/tsc -x) &&
+      run_check "$DIR/node_modules/.bin/tsc" --noEmit --isolatedModules "$FILE_PATH"
     ;;
   *.rs)
     # Walk up to find Cargo.toml from the file's location, not CWD.
-    DIR=$(dirname "$FILE_PATH")
-    while [ "$DIR" != "/" ]; do
-      if [ -f "$DIR/Cargo.toml" ] && command -v cargo >/dev/null; then
-        # Skip on cold cache — first build is too slow for a per-edit hook
-        [ -d "$DIR/target" ] || break
+    if command -v cargo >/dev/null; then
+      DIR=$(find_up "$(dirname "$FILE_PATH")" Cargo.toml -f)
+      # Skip on cold cache — first build is too slow for a per-edit hook
+      if [ -n "$DIR" ] && [ -d "$DIR/target" ]; then
         run_check cargo check --quiet --manifest-path "$DIR/Cargo.toml"
-        break
       fi
-      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
-      PARENT=$(dirname "$DIR")
-      [ "$PARENT" = "$DIR" ] && break
-      DIR=$PARENT
-    done
+    fi
     ;;
   *.go)
     # Vet only the immediate package (not recursive) to keep per-edit latency low.
@@ -64,33 +63,17 @@ case "$FILE_PATH" in
     ;;
   *.java)
     # Find gradlew by walking up from the file; compileJava is fast if classes are cached.
-    DIR=$(dirname "$FILE_PATH")
-    while [ "$DIR" != "/" ]; do
-      if [ -x "$DIR/gradlew" ]; then
-        # Skip on cold cache — first Gradle build is too slow for a per-edit hook
-        [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ] || break
-        run_check "$DIR/gradlew" -p "$DIR" compileJava --no-daemon --quiet 2>/dev/null
-        break
-      fi
-      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
-      PARENT=$(dirname "$DIR")
-      [ "$PARENT" = "$DIR" ] && break
-      DIR=$PARENT
-    done
+    DIR=$(find_up "$(dirname "$FILE_PATH")" gradlew -x)
+    # Skip on cold cache — first Gradle build is too slow for a per-edit hook
+    if [ -n "$DIR" ] && { [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ]; }; then
+      run_check "$DIR/gradlew" -p "$DIR" compileJava --no-daemon --quiet 2>/dev/null
+    fi
     ;;
   *.kt|*.kts)
-    DIR=$(dirname "$FILE_PATH")
-    while [ "$DIR" != "/" ]; do
-      if [ -x "$DIR/gradlew" ]; then
-        [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ] || break
-        run_check "$DIR/gradlew" -p "$DIR" compileKotlin --no-daemon --quiet 2>/dev/null
-        break
-      fi
-      # Windows/Git Bash: dirname bottoms out at "C:" then ".", never "/" — stop when it stops making progress
-      PARENT=$(dirname "$DIR")
-      [ "$PARENT" = "$DIR" ] && break
-      DIR=$PARENT
-    done
+    DIR=$(find_up "$(dirname "$FILE_PATH")" gradlew -x)
+    if [ -n "$DIR" ] && { [ -d "$DIR/build" ] || [ -d "$DIR/.gradle" ]; }; then
+      run_check "$DIR/gradlew" -p "$DIR" compileKotlin --no-daemon --quiet 2>/dev/null
+    fi
     ;;
   *.sh|*.bash)
     command -v shellcheck >/dev/null && run_check shellcheck "$FILE_PATH"

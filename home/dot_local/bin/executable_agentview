@@ -299,6 +299,13 @@ C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_NAME="$E[1m$E[38;2;205;214;244m"     # text, bold — session name
 C_HDR="$E[1m$E[38;2;180;190;254m"      # lavender, bold — group label
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
+# Single-source the state→accent map and the empty-state row so the two render paths
+# (render_body + interactive picker) can't drift — they had: one used an extra leading
+# tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
+state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
+  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; *) _scol="$C_DONE";; esac
+}
+NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
@@ -331,7 +338,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   for grp in needs-input working completed idle; do
     cnt=${GCNT[$grp]:-0}
     [ "$cnt" -eq 0 ] && continue
-    case "$grp" in needs-input) scol="$C_NEED";; working) scol="$C_WORK";; *) scol="$C_DONE";; esac
+    state_color "$grp"; scol="$_scol"
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
     printf '\t%s●%s %s%s%s %s%s%s\n' "$scol" "$Z" "$C_HDR" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
@@ -356,11 +363,12 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       left_p="  ${bcell}  ${clabel} · ${name}"
       printf -v left_c '  %s%s %s %s %s%*s  %s%s · %s%s%s%s' \
         "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_NAME" "$name" "$Z"
+      state_color "$grp"; scol="$_scol"
       case "$grp" in
-        needs-input) scol="$C_NEED"; stext="${title:-needs input}";;
-        working)     scol="$C_WORK"; stext="${title:-working}";;
-        completed)   scol="$C_DONE"; fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
-        *)           scol="$C_DONE"; fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
+        needs-input) stext="${title:-needs input}";;
+        working)     stext="${title:-working}";;
+        completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
+        *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac
       maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
@@ -385,7 +393,7 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
     load_titles
   fi
   body=$(build_pretty)
-  [ -z "$body" ] && body=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+  [ -z "$body" ] && body="$NO_SESSIONS_ROW"
 }
 
 # --body: emit JUST the fzf list — used for the initial render AND the live reload the
@@ -422,7 +430,7 @@ htext="${total} session${ts_s} · ${machines} machine${ms_s}"
 printf -v hdrline '%*s' 72 "$htext"
 
 body=$(build_pretty); prof build_pretty
-[ -z "$body" ] && body=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+[ -z "$body" ] && body="$NO_SESSIONS_ROW"
 
 SELF="$HOME/.local/bin/agentview"
 # Live reload: open instantly on the cached snapshot above, then in the BACKGROUND

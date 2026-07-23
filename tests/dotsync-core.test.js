@@ -36,6 +36,11 @@ assert.strictEqual(m.repos[0].path, path.join(HOME, '.local/share/chezmoi'));  /
 assert.deepStrictEqual(m.repos[1].roots, ['.claude', '.config']);
 assert.deepStrictEqual(m.ignoreGlobs, ['~/.claude/settings.json', '~/.cache/**']);
 
+// --- loadManifest: a malformed fragment throws a path-tagged error, not a raw SyntaxError ---
+fs.writeFileSync(path.join(MAN, '99-broken.json'), '{ not valid json');
+assert.throws(() => loadManifest(MAN, HOME), /cannot parse .*99-broken\.json/);
+fs.unlinkSync(path.join(MAN, '99-broken.json'));
+
 // --- globToRegExp + matchesAnyGlob ---
 assert.ok(globToRegExp('~/.cache/**'.replace('~', HOME)).test(path.join(HOME, '.cache/foo/bar')));
 assert.ok(!globToRegExp('~/.cache/*'.replace('~', HOME)).test(path.join(HOME, '.cache/a/b'))); // * is one segment

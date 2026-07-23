@@ -19,7 +19,9 @@ export function readCaseFiles(caseDirs) {
     for (const agent of readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory())) {
       const dir = join(root, agent.name);
       for (const f of readdirSync(dir).filter(f => f.endsWith('.json'))) {
-        cases.push(JSON.parse(readFileSync(join(dir, f), 'utf8')));
+        const p = join(dir, f);
+        try { cases.push(JSON.parse(readFileSync(p, 'utf8'))); }
+        catch (e) { throw new Error(`invalid case JSON in ${p}: ${e.message}`); }
       }
     }
   }

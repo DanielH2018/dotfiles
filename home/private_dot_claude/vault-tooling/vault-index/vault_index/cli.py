@@ -14,7 +14,7 @@ from pathlib import Path
 # Override with HF_HUB_OFFLINE=0 to allow an online download.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-from .config import Config
+from .config import Config, DEFAULT_EXCLUDE_FILES
 from .indexer import build as build_index
 from .indexer import status as index_status
 from .query import search
@@ -22,11 +22,11 @@ from .query import search
 
 def _parse_paths_file(path: str) -> list[str]:
     """Parse an allowlist file: one path per line, `#` comments, blanks ignored.
-    Never indexes CLAUDE.md / index.md even if listed."""
+    Never indexes the bookkeeping files in DEFAULT_EXCLUDE_FILES even if listed."""
     entries = []
     for raw in Path(path).read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
-        if not line or os.path.basename(line) in ("CLAUDE.md", "index.md"):
+        if not line or os.path.basename(line) in DEFAULT_EXCLUDE_FILES:
             continue
         entries.append(line)
     return entries

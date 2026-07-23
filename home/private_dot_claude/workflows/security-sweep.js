@@ -96,6 +96,7 @@ const reviewed = await pipeline(
           `Adversarially verify this security finding — try to REFUTE it. Read the actual code at ${f.file}:${f.line || '?'} and decide whether it is a REAL, exploitable or compliance-violating issue, or a false positive. Default to real=false if uncertain, or if the code path takes no external/untrusted input.\n\n[${f.severity}] ${f.title}\n${f.detail}`,
           { label: `verify:${d.key}:${f.file}`, phase: 'Verify', agentType: 'security-reviewer', schema: VERDICT_SCHEMA }
         ).then(v => ({ ...f, dimension: d.key, verdict: v }))
+          .catch(e => ({ ...f, dimension: d.key, verdict: { real: false, reasoning: 'verification failed: ' + (e?.message || e) } }))
       )
   )
 )

@@ -7,16 +7,7 @@
 # Re-runs only when this file changes.
 # bump-to-reinstall: cli-tools v1
 
-$ErrorActionPreference = 'Stop'
-# PS 7.3+ makes native non-zero exits throw under Stop; disable so a single winget
-# failure (or "already installed") doesn't abort the loop. Harmless no-op on 5.1.
-$PSNativeCommandUseErrorActionPreference = $false
-
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Warning "winget not found — install 'App Installer' from the Microsoft Store, then re-run 'chezmoi apply'."
-    return
-}
-
+{{ includeTemplate "winget-install.ps1" . }}
 # id = exact winget package id; cmd = the binary it puts on PATH (used to skip).
 $packages = @(
     # Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of
@@ -45,18 +36,7 @@ foreach ($p in $packages) {
         Write-Host "[skip] $($p.cmd) already on PATH."
         continue
     }
-    # `winget list` exits 0 when the package is present, non-zero otherwise.
-    winget list --exact --id $p.id --accept-source-agreements 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "[skip] $($p.id) already installed (open a new shell to pick up PATH)."
-        continue
-    }
-    Write-Host "[install] $($p.id) ..."
-    winget install --exact --id $p.id --source winget `
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "winget install $($p.id) exited $LASTEXITCODE (continuing)."
-    }
+    Install-WingetPackage $p.id
 }
 
 # fnm installs only the version manager, not a Node runtime. dotsync and

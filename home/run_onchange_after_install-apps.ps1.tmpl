@@ -10,16 +10,7 @@
 # provide are in the manual checklist (WINDOWS-SETUP.md).
 # bump-to-reinstall: apps v1
 
-$ErrorActionPreference = 'Stop'
-# PS 7.3+ makes native non-zero exits throw under Stop; disable so a single winget
-# failure (or "already installed") doesn't abort the loop. Harmless no-op on 5.1.
-$PSNativeCommandUseErrorActionPreference = $false
-
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Warning "winget not found — install 'App Installer' from the Microsoft Store, then re-run 'chezmoi apply'."
-    return
-}
-
+{{ includeTemplate "winget-install.ps1" . }}
 # Package ids rendered from .chezmoidata/packages.toml. Newlines separate array elements
 # in a PowerShell @(...) literal, so no commas are needed.
 $packages = @(
@@ -34,20 +25,7 @@ $packages = @(
 {{- end }}
 )
 
-foreach ($id in $packages) {
-    # `winget list` exits 0 when the package is present, non-zero otherwise.
-    winget list --exact --id $id --accept-source-agreements 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "[skip] $id already installed."
-        continue
-    }
-    Write-Host "[install] $id ..."
-    winget install --exact --id $id --source winget `
-        --accept-package-agreements --accept-source-agreements --disable-interactivity
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "winget install $id exited $LASTEXITCODE (continuing)."
-    }
-}
+foreach ($id in $packages) { Install-WingetPackage $id }
 
 Write-Host "App install pass done. See WINDOWS-SETUP.md for the manual checklist (drivers, Office, game libraries, sign-ins)."
 {{- end -}}
