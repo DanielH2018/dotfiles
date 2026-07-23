@@ -4,6 +4,13 @@ const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
+// A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
+// where file:// can't reach the client) gets http://localhost:PORT/<rel> served by
+// serve-artifacts.sh; macOS gets file://<abs>. Mirror the hook's `uname` split.
+const PORT = process.env.CLAUDE_ARTIFACTS_PORT || '8181';
+const hostLink = (absPath, rel) =>
+  process.platform === 'linux' ? `http://localhost:${PORT}/${rel}` : `file://${absPath}`;
+
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
 function run(filePath, env = {}) {
@@ -36,11 +43,11 @@ function run(filePath, env = {}) {
   assert.ok(!ctx.includes('/home/claudebot'), 'never leaks the in-container /home path');
 }
 
-// 3. host ~/.claude/artifacts, no sandbox env -> emitted verbatim
+// 3. host ~/.claude/artifacts, no sandbox env -> the platform's clickable link
 {
   const ctx = run('/Users/d/.claude/artifacts/local.html');
-  assert.ok(ctx.includes('file:///Users/d/.claude/artifacts/local.html'),
-    `host path emitted verbatim; got: ${ctx}`);
+  assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
+    `host path emitted as the platform's clickable link; got: ${ctx}`);
 }
 
 // 4. non-openable extension -> no-op
@@ -66,8 +73,8 @@ if (process.platform !== 'win32') {
   fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
   const linked = path.join(home, '.claude', 'artifacts', 'report.html');
 
-  assert.ok(run(linked).includes(`file://${linked}`),
-    'host mode emits the ~/.claude/artifacts path verbatim (no resolution)');
+  assert.ok(run(linked).includes(hostLink(linked, 'report.html')),
+    'host mode emits the platform link for the ~/.claude/artifacts path (no resolution)');
   assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
     'container mode resolves the symlink before matching');
 
