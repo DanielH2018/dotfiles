@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 // terminal-cheatsheet — regenerate a single-page HTML cheatsheet of this machine's
-// terminal + Neovim + Yazi keybinds and key settings, parsed from the DEPLOYED
-// config files (so it reflects what's actually running, template-rendered).
+// terminal + Neovim + Yazi + Claude Code keybinds and key settings, parsed from the
+// DEPLOYED config files (so it reflects what's actually running, template-rendered).
 //
 // Cross-platform by design. It parses whichever configs are PRESENT, so the same
 // generator works everywhere:
 //   Windows -> WezTerm + Neovim + Yazi     macOS -> Ghostty + Neovim + Yazi
 //   Linux   -> Neovim + Yazi (+ Ghostty if installed there)
+// Claude Code keybinds (~/.claude/keybindings.json) are added on any box that has the
+// file. Under WSL the WezTerm config lives on the Windows side, so the generator also
+// probes /mnt/c/Users/*/.config/wezterm/wezterm.lua — the Linux sheet then still shows
+// the WezTerm binds you type in the host terminal. Any config that's absent is skipped.
 // Config roots honor $XDG_CONFIG_HOME and $YAZI_CONFIG_HOME, else ~/.config.
 //
 // chezmoi's run_after_terminal-cheatsheet.sh regenerates this on every `chezmoi
@@ -57,12 +61,20 @@ function weztCombo(mods, key) {
   return parts.join('+');
 }
 
-function weztLabel(action, line) {
-  if (/agentview/.test(line)) return 'Agent View — cross-machine session switcher';
-  if (/daniel-server/.test(line)) return 'New homelab tab (daniel-server)';
+// `text` is the WHOLE bind entry (see weztEntries), so content checks catch the binds
+// whose action isn't a bare `act.X` on the key line: action_callback bodies (Ctrl+W's
+// CloseCurrentPane, Ctrl+Shift+T's mux.spawn_window) and the multiline SpawnCommandInNewTab
+// tabs (agentview / sandbox / homelab), whose distinguishing string sits a few lines down.
+function weztLabel(action, text) {
+  if (/agentview\s+--spawn/.test(text)) return 'New sandbox session — pick repo + branch';
+  if (/agentview/.test(text)) return 'Agent View — cross-machine session switcher';
+  if (/daniel-server/.test(text)) return 'New homelab tab (daniel-server)';
+  if (/mux\.spawn_window/.test(text)) return 'New window';
+  if (/CloseCurrentPane/.test(text)) return 'Close tab / pane';
+  if (action === 'SpawnTab' && /DomainName\s*=\s*"local"/.test(text)) return 'New Git Bash tab (local)';
   if (action === 'SendString') return 'Insert newline (Claude Code multiline)';
-  if (action === 'ActivatePaneDirection') return /Prev/.test(line) ? 'Focus previous split' : 'Focus next split';
-  if (action === 'AdjustPaneSize') return /Left/.test(line) ? 'Resize split left' : 'Resize split right';
+  if (action === 'ActivatePaneDirection') return /Prev/.test(text) ? 'Focus previous split' : 'Focus next split';
+  if (action === 'AdjustPaneSize') return /Left/.test(text) ? 'Resize split left' : 'Resize split right';
   return ({
     ReloadConfiguration: 'Reload config',
     CopyTo: 'Copy to clipboard',
@@ -76,19 +88,61 @@ function weztLabel(action, line) {
   })[action] || action;
 }
 
+// WezTerm's config lives at $XDG_CONFIG_HOME/wezterm/wezterm.lua. Under WSL that resolves
+// to the Linux ~/.config, where the Windows-only config is never deployed — so also probe
+// the Windows user homes on /mnt/c so the Linux sheet still shows the host terminal's binds.
+// Returns the local path when nothing matches, so read() yields '' and the card is omitted.
+function weztermFile() {
+  const local = path.join(XDG, 'wezterm', 'wezterm.lua');
+  if (read(local).trim()) return local;
+  if (!process.env.WSL_DISTRO_NAME) return local;
+  let users = [];
+  try { users = fs.readdirSync('/mnt/c/Users'); } catch { return local; }
+  const skip = new Set(['Public', 'Default', 'Default User', 'All Users', 'desktop.ini']);
+  for (const u of users) {
+    if (skip.has(u)) continue;
+    const win = path.join('/mnt/c/Users', u, '.config', 'wezterm', 'wezterm.lua');
+    if (read(win).trim()) return win;
+  }
+  return local;
+}
+
+// Split a Lua table body into its top-level `{ … }` entries, brace-matched and string/
+// comment-aware so a multiline action_callback (and any `{ … }` nested in it, e.g.
+// SendKey({ key = "Escape" })) stays part of ONE entry. The old line-by-line scan dropped
+// callback binds (no `action = act.X` on the key line) and only ever handed weztLabel the
+// key line, so the SpawnCommandInNewTab tabs collapsed to a generic "SpawnCommandInNewTab".
+function weztEntries(block) {
+  const entries = [];
+  let depth = 0, start = -1, inStr = false, q = '';
+  for (let i = 0; i < block.length; i++) {
+    const ch = block[i];
+    if (inStr) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === q) inStr = false;
+      continue;
+    }
+    if (ch === '-' && block[i + 1] === '-') { const nl = block.indexOf('\n', i); if (nl < 0) break; i = nl; continue; }
+    if (ch === '"' || ch === "'") { inStr = true; q = ch; continue; }
+    if (ch === '{') { if (depth++ === 0) start = i; }
+    else if (ch === '}') { if (--depth === 0 && start >= 0) { entries.push(block.slice(start, i + 1)); start = -1; } }
+  }
+  return entries;
+}
+
 function parseWezterm() {
-  const file = path.join(XDG, 'wezterm', 'wezterm.lua');
+  const file = weztermFile();
   const src = read(file);
   if (!src.trim()) return null;
   const binds = [];
   const block = (src.match(/config\.keys\s*=\s*\{([\s\S]*?)\n\}/) || [, ''])[1];
-  for (const line of block.split('\n')) {
-    if (!/key\s*=/.test(line) || !/action\s*=/.test(line)) continue;
-    const key = (line.match(/key\s*=\s*"([^"]+)"/) || [])[1];
-    const mods = (line.match(/mods\s*=\s*"([^"]+)"/) || [, ''])[1];
-    const action = (line.match(/action\s*=\s*act\.(\w+)/) || [])[1];
-    if (!key || !action) continue;
-    binds.push({ combo: weztCombo(mods, key), desc: weztLabel(action, line) });
+  for (const entry of weztEntries(block)) {
+    if (!/\bkey\s*=/.test(entry) || !/\baction\s*=/.test(entry)) continue;
+    const key = (entry.match(/key\s*=\s*"([^"]+)"/) || [])[1];
+    const mods = (entry.match(/mods\s*=\s*"([^"]+)"/) || [, ''])[1];
+    const action = (entry.match(/action\s*=\s*act\.(\w+)/) || [])[1];
+    if (!key) continue;
+    binds.push({ combo: weztCombo(mods, key), desc: weztLabel(action, entry) });
   }
   const loop = src.match(/for\s+i\s*=\s*1\s*,\s*(\d+)[\s\S]*?ActivateTab\(i\s*-\s*1\)/);
   if (loop) binds.push({ combo: `Ctrl+1…${loop[1]}`, desc: `Jump straight to tab 1…${loop[1]}` });
@@ -288,6 +342,41 @@ function parseYazi() {
   return { title: 'Yazi', accent: 'var(--mauve)', sub: disp(kmFile), binds, settings };
 }
 
+// ----------------------------------------------------------------- Claude ----
+// ~/.claude/keybindings.json holds only the CUSTOM overrides layered on Claude Code's
+// built-in keymap, grouped by context ("Global", "Chat", …). Format-driven like the rest:
+// unknown action ids fall through to a de-camel-cased label, so binds added later show up
+// with no code change. Absent / unparseable file -> null, so the card is simply omitted.
+const CLAUDE_LABEL = {
+  'app:toggleTodos': 'Toggle to-do panel',
+  'app:globalSearch': 'Global search',
+  'chat:killAgents': 'Kill running agents',
+  'chat:imagePaste': 'Paste image from clipboard',
+};
+function claudeLabel(action) {
+  if (CLAUDE_LABEL[action]) return CLAUDE_LABEL[action];
+  const words = String(action).replace(/^[^:]+:/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : String(action);
+}
+
+function parseClaude() {
+  const file = path.join(HOME, '.claude', 'keybindings.json');
+  const src = read(file);
+  if (!src.trim()) return null;
+  let json;
+  try { json = JSON.parse(src); } catch { return null; }
+  const groups = {};
+  for (const ctx of Array.isArray(json.bindings) ? json.bindings : []) {
+    const name = ctx.context || 'Global';
+    for (const combo of Object.keys(ctx.bindings || {})) {
+      (groups[name] = groups[name] || []).push({ combo, desc: claudeLabel(ctx.bindings[combo]) });
+    }
+  }
+  if (!Object.keys(groups).length) return null;
+  return { title: 'Claude Code', accent: 'var(--peach)', sub: disp(file),
+    groups, settings: [['Scope', 'Custom overrides']] };
+}
+
 // ------------------------------------------------------------------ render ---
 const kbdCombo = (combo) => combo.split('+').map((k) => `<kbd>${esc(k)}</kbd>`).join('<span class="plus">+</span>');
 const chips = (settings) => settings.map(([k, v]) => `<span class="chip"><b>${esc(k)}</b>${esc(v)}</span>`).join('');
@@ -331,6 +420,21 @@ function nvimBody(groups, leader) {
   }).join('');
 }
 
+// Claude chords are space-separated steps, each a `+`-joined mods+key (e.g.
+// "ctrl+k ctrl+t"). Render every step as its own <kbd> run and separate steps with a
+// "then" so the two-stroke sequence reads clearly.
+const claudeCap = (s) => (s.length === 1 ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1));
+const claudeKeyHtml = (chord) => chord.trim().split(/\s+/).map((step) =>
+  step.split('+').map((k) => `<kbd>${esc(claudeCap(k))}</kbd>`).join('<span class="plus">+</span>')
+).join('<span class="then">then</span>');
+
+function claudeBody(groups) {
+  return Object.keys(groups).map((name) => {
+    const rows = groups[name].map((b) => ({ k: claudeKeyHtml(b.combo), desc: b.desc }));
+    return `<div class="grp"><h3>${esc(name)}</h3>${tableRows(rows)}</div>`;
+  }).join('');
+}
+
 function cardHtml(id, data, inner) {
   return `
   <section class="card" data-tool="${id}" style="--accent:${data.accent}">
@@ -344,15 +448,19 @@ function build() {
   const terminals = [parseWezterm(), parseGhostty()].filter(Boolean);
   const nv = parseNvim();
   const ya = parseYazi();
+  const cl = parseClaude();
 
   const cards = [];
   for (const t of terminals) cards.push(cardHtml(t.title.toLowerCase(), t, tableRows(t.binds.map((b) => ({ k: kbdCombo(b.combo), desc: b.desc })))));
   if (nv) cards.push(cardHtml('nvim', nv, nvimBody(nv.groups, nv.leader)));
   if (ya) cards.push(cardHtml('yazi', ya, tableRows(ya.binds.map((b) => ({ k: yaziKeyChips(b.keys), desc: b.desc })))));
+  if (cl) cards.push(cardHtml('claude', cl, claudeBody(cl.groups)));
 
+  const groupCount = (g) => Object.values(g).reduce((a, rows) => a + rows.length, 0);
   const total = terminals.reduce((a, t) => a + t.binds.length, 0)
-    + (nv ? Object.values(nv.groups).reduce((a, g) => a + g.length, 0) : 0)
-    + (ya ? ya.binds.length : 0);
+    + (nv ? groupCount(nv.groups) : 0)
+    + (ya ? ya.binds.length : 0)
+    + (cl ? groupCount(cl.groups) : 0);
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const host = os.hostname().replace(/\.local$/, '');
   const nvNote = nv || ya ? ' Neovim leader is <kbd>Space</kbd>; sequences like <kbd class="seq">c m</kbd> mean press the keys in order.' : '';
@@ -374,6 +482,7 @@ kbd{font-family:"IosevkaTerm Nerd Font Mono",ui-monospace,"Cascadia Code",monosp
   padding:.1em .45em;color:var(--text);white-space:nowrap}
 kbd.seq{background:#26263a}
 .plus{color:var(--overlay);margin:0 .25em;font-size:.8em}
+.then{color:var(--overlay);margin:0 .45em;font-size:.72em;font-style:italic}
 header{position:sticky;top:0;z-index:5;backdrop-filter:blur(10px);background:rgba(17,17,27,.82);
   border-bottom:1px solid var(--surface0);padding:1rem clamp(1rem,4vw,3rem)}
 .bar{display:flex;align-items:baseline;gap:.9rem;flex-wrap:wrap;max-width:1400px;margin:0 auto}
@@ -414,7 +523,7 @@ footer{max-width:1400px;margin:2rem auto 0;padding:0 clamp(1rem,4vw,3rem);color:
   <span class="meta" id="count">${total} keybinds</span>
   <input id="q" type="search" placeholder="Filter keys or actions…" autofocus>
 </div></header>
-${cards.length ? `<main>${cards.join('')}</main>` : '<p class="none">No WezTerm / Ghostty / Neovim / Yazi configs found under ' + esc(disp(XDG)) + '.</p>'}
+${cards.length ? `<main>${cards.join('')}</main>` : '<p class="none">No WezTerm / Ghostty / Neovim / Yazi / Claude Code configs found.</p>'}
 <footer>Auto-generated ${stamp} on ${esc(PLATFORM)} by <code>terminal-cheatsheet</code> — do not edit by hand;
   it is regenerated from the deployed configs on every <code>chezmoi apply</code>.${nvNote}</footer>
 <script>
