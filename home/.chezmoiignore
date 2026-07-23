@@ -5,6 +5,7 @@ Brewfile
 
 {{ if eq .chezmoi.os "windows" }}
 .local/bin/ct
+.local/bin/cts
 .local/bin/claude-sandbox
 .claude/sandbox
 {{ end }}

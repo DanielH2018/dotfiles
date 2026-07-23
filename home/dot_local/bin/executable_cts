@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# cts — run claude-sandbox in its OWN named tmux session (sibling to `ct`), so Agent
+# View captures a real tmux: locator for the session and <enter> can jump to it. A bare
+# `claude-sandbox .` from a WezTerm/WSL shell registers backend:none — WEZTERM_PANE
+# doesn't cross into WSL — and is not jumpable; running it inside tmux fixes that.
+# Usage: cts [dir] [claude-sandbox args…]
+#   dir defaults to $PWD; the first arg is the dir only if it isn't a flag. Everything
+#   else forwards verbatim to claude-sandbox (e.g. -b BRANCH). The session name is
+#   deterministic per repo(+branch), so re-running attaches instead of duplicating and
+#   each worktree stays independently jumpable.
+set -u
+
+case "${1:-}" in
+  -h|--help)
+    echo "usage: cts [dir] [claude-sandbox args…]  (run claude-sandbox in a named tmux session)"
+    exit 0 ;;
+esac
+
+command -v tmux >/dev/null 2>&1 || { printf 'cts: tmux not found on PATH\n' >&2; exit 1; }
+
+# Resolve the launcher exactly as agentview does: prefer it on PATH, else its deployed path.
+sandbox_bin="${CLAUDE_SANDBOX_BIN:-}"
+if [ -z "$sandbox_bin" ]; then
+  if command -v claude-sandbox >/dev/null 2>&1; then sandbox_bin="claude-sandbox"
+  else sandbox_bin="$HOME/.claude/sandbox/claude-sandbox"; fi
+fi
+
+# First arg is the target dir only when it isn't a flag; the rest pass through.
+dir="$PWD"
+if [ "$#" -gt 0 ]; then
+  case "$1" in
+    -*) ;;
+    *) dir="$1"; shift ;;
+  esac
+fi
+
+# Absolute path -> a stable session name AND a clean repo arg for claude-sandbox.
+absdir="$(cd "$dir" 2>/dev/null && pwd)" || { printf 'cts: no such directory: %s\n' "$dir" >&2; exit 1; }
+
+# Session name mirrors ct's scheme (basename + 6-digit cksum of the abs path) with an
+# `sb-` prefix so `tmux ls` distinguishes sandboxed sessions from host ones.
+base="$(basename "$absdir" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+[ -n "$base" ] || base="repo"
+h="$(printf '%s' "$absdir" | cksum | cut -d' ' -f1)"
+name="sb-${base}-${h: -6}"
+
+# Give each worktree its own session: pull -b/-w's VALUE out of the passthrough args
+# (skip if the next token is another flag — -w's name is optional).
+branch=""
+args=("$@")
+i=0
+while [ "$i" -lt "${#args[@]}" ]; do
+  case "${args[$i]}" in
+    -b|--branch|-w|--worktree)
+      j=$((i + 1))
+      if [ "$j" -lt "${#args[@]}" ]; then
+        case "${args[$j]}" in -*) ;; *) branch="${args[$j]}" ;; esac
+      fi ;;
+  esac
+  i=$((i + 1))
+done
+if [ -n "$branch" ]; then
+  slug="$(printf '%s' "$branch" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+  [ -n "$slug" ] && name="${name}-${slug}"
+fi
+
+# printf %q shell-quotes every element so tmux's `sh -c` re-parses it intact — the same
+# pattern agentview's --spawn uses for new-window.
+cmd="$(printf '%q ' "$sandbox_bin" "$absdir" "$@")"
+
+if [ -z "${TMUX:-}" ]; then
+  # Plain shell: attach-or-create. -A reuses a live session (never double-launches).
+  exec tmux new-session -A -s "$name" -c "$absdir" "$cmd"
+fi
+
+# Inside tmux we can't nest an attach: jump if it's already live, else create it
+# detached and switch the current client onto it.
+if tmux has-session -t "$name" 2>/dev/null; then
+  exec tmux switch-client -t "$name"
+fi
+tmux new-session -d -s "$name" -c "$absdir" "$cmd"
+exec tmux switch-client -t "$name"
