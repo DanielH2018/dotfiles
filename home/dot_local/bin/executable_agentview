@@ -126,21 +126,30 @@ remote_alias() {  # $1 = row host -> ssh alias. Single known remote today; exten
   esac
 }
 
-remote_attach() {  # $1=host $2=locator -> spawn a local tab ssh-attached at the pane
-  local host="$1" loc="$2" backend rest session pane alias
+remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
+  local host="$1" loc="$2" backend rest session pane sshalias rcmd
   backend="${loc%%:*}"; rest="${loc#*:}"
   [ "$backend" = "tmux" ] || return 1        # only tmux remotes attach; others list-only
   # rest = <socket>:<session>:<pane>
   pane="${rest##*:}"; rest="${rest%:*}"; session="${rest##*:}"
   [ -n "$session" ] && [ -n "$pane" ] || return 1
-  command -v wezterm >/dev/null 2>&1 || return 1
-  alias=$(remote_alias "$host")
-  # Fresh local tab: select the pane server-side, then attach the client to the session.
-  # \; reaches tmux as its command separator (protected from the remote shell). Errors
-  # (host down, session gone) surface IN the spawned tab, never a silent no-op.
-  wezterm cli spawn -- ssh -t "$alias" \
-    "tmux select-pane -t '$pane' \\; attach -t '$session'" >/dev/null 2>&1
-  return 0
+  sshalias=$(remote_alias "$host")
+  # Remote command: select the pane server-side, then attach the client. Two separate
+  # tmux calls joined by a shell ';' (not tmux's '\;') so it survives the quoting layers
+  # below. Errors (host down, session gone) surface IN the new view, never a silent no-op.
+  rcmd="tmux select-pane -t '$pane' 2>/dev/null; tmux attach -t '$session'"
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    # Portable: open a new window in the LOCAL tmux running the ssh-attach. Works under
+    # any outer terminal (Ghostty, WezTerm-hosting-WSL, bare ssh) — no wezterm needed.
+    tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
+    return 0
+  fi
+  if command -v wezterm >/dev/null 2>&1; then
+    # Windows-native WezTerm (no local tmux): spawn a fresh GUI tab.
+    wezterm cli spawn -- ssh -t "$sshalias" "$rcmd" >/dev/null 2>&1
+    return 0
+  fi
+  return 1
 }
 
 do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
@@ -271,13 +280,11 @@ gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered
 
 refresh_remote() {  # pull homelab state over ssh, atomically replace the cache
   local out rc tmp="$remote_cache.tmp.$$"
-  # One-shot ssh (NO ControlMaster) bounded by ConnectTimeout. Prefer the renamed
-  # agent-view/ dir; fall back to the legacy wez-state/ during the cross-machine
-  # rename transition (until the remote redeploys the renamed writer). `|| true` so a
+  # One-shot ssh (NO ControlMaster) bounded by ConnectTimeout. `|| true` so a
   # live-but-empty homelab returns rc 0 — we KEEP the old snapshot only when ssh itself
   # can't connect (rc 255), not when there simply are no remote sessions.
   out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server \
-        'if ls ~/.claude/agent-view/*.json >/dev/null 2>&1; then cat ~/.claude/agent-view/*.json; else cat ~/.claude/wez-state/*.json 2>/dev/null; fi || true' \
+        'cat ~/.claude/agent-view/*.json 2>/dev/null || true' \
         < /dev/null 2>/dev/null); rc=$?
   [ "$rc" -eq 255 ] && return
   printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null

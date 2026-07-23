@@ -238,9 +238,10 @@ test('a LOCAL row with a 4-field tmux locator dispatches select-pane', { skip },
   assert.match(log, /select-pane -t %3/, 'tmux backend focuses the captured pane');
 });
 
-test('selecting a REMOTE tmux row spawns a local ssh-attach tab', { skip }, () => {
+test('REMOTE tmux row, no local tmux -> WezTerm spawns an ssh-attach tab', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
-  // host != selfhost (daniel-server) -> remote attach, NOT local activation.
+  // host != selfhost (daniel-server) -> remote attach, NOT local activation. makeEnv
+  // deletes TMUX, so the picker isn't inside tmux -> the wezterm-spawn branch.
   const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
   run(env, [], { FZF_PICK: pick });
   const spawned = fs.readFileSync(spawnLog, 'utf8');
@@ -248,6 +249,19 @@ test('selecting a REMOTE tmux row spawns a local ssh-attach tab', { skip }, () =
   assert.match(spawned, /attach -t 'airflow'/, 'attaches the target tmux session');
   assert.match(spawned, /select-pane -t '%3'/, 'lands on the captured pane');
   assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'must NOT activate a remote pane locally');
+});
+
+test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', { skip }, () => {
+  const { env, tmuxLog, spawnLog } = makeEnv({ list: '[]' });
+  const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
+  // $TMUX set -> the picker is running inside tmux -> open a new tmux window instead of
+  // a WezTerm tab (works under Ghostty / WSL / bare ssh — the unification lever).
+  run(env, [], { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' });
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /new-window -n airflow/, 'opens a new tmux window for the attach');
+  assert.match(log, /ssh -t daniel-server/, 'the window runs the ssh-attach');
+  assert.match(log, /attach -t 'airflow'/, 'attaches the target session');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'must NOT use wezterm spawn when inside tmux');
 });
 
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
