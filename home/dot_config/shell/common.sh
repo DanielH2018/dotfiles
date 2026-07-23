@@ -30,6 +30,15 @@ command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 
+# --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
+# The vault lives on the Windows side under WSL; other machines don't have it. Export the var
+# only when a candidate path exists, so this is a clean no-op elsewhere (the vault skills skip
+# when CLAUDE_VAULT_DIR is unset/absent).
+for _vault in "$HOME/Documents/My_Vault" "/mnt/c/Users/$USER/My_Vault"; do
+  if [ -d "$_vault" ]; then export CLAUDE_VAULT_DIR="$_vault"; break; fi
+done
+unset _vault
+
 # --- ssh-agent: one shared agent across all shells/panes ---
 # When nothing else already provides an agent (macOS launchd / 1Password set SSH_AUTH_SOCK, so
 # we skip there), bind one to a fixed socket so every new shell and WezTerm pane reuses the same
