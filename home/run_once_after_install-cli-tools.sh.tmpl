@@ -7,7 +7,7 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v8
+# tools-bump: v9
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -148,6 +148,7 @@ if [ -n "$rust_arch" ]; then
   install_release fastfetch fastfetch-cli/fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"
   install_release curlie    rs/curlie               "https://github.com/rs/curlie/releases/download/{tag}/curlie_{ver}_linux_${go_arch}.tar.gz"
   install_release sd        chmln/sd                "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release starship  starship/starship       "https://github.com/starship/starship/releases/download/{tag}/starship-${rust_arch}-unknown-linux-gnu.tar.gz"
   # fzf/zoxide/ripgrep back the shell init (fzf keybindings, zoxide `cd`, rg as FZF_DEFAULT_COMMAND)
   # but have no apt field here, so install the current release binaries rather than relying on the
   # stale copies baked into the base image. ripgrep ships only musl on x86_64 and gnu on aarch64.
