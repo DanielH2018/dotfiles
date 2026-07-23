@@ -4,7 +4,11 @@ ConditionPathExists=%h/.local/bin/wsl-clip-bridge
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/wsl-clip-bridge --doctor
+# systemd user services get neither ~/.local/bin (tasklist.exe/taskkill.exe symlinks)
+# nor a WSL_INTEROP socket, so .exe interop fails without both. Borrow the newest live
+# session's socket; if it's stale the doctor just exits 1 and the timer retries in 5min.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh -c 'WSL_INTEROP=$$(ls -t /run/WSL/*_interop 2>/dev/null | head -n1) exec %h/.local/bin/wsl-clip-bridge --doctor'
 # A repair respawns the bridge daemon from inside this unit; the default
 # control-group cleanup would kill it the moment the oneshot finishes.
 KillMode=process
