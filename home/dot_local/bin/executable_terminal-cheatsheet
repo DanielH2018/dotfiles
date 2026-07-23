@@ -252,12 +252,13 @@ function parseNvim() {
   const o = read(path.join(XDG, 'nvim', 'lua', 'config', 'options.lua'));
   const og = (re) => (o.match(re) || [, ''])[1];
   const lead = og(/mapleader\s*=\s*"([^"]*)"/);
+  const leader = lead === ' ' ? 'Space' : (lead || '\\');
   const settings = [
-    ['Leader', lead === ' ' ? 'Space' : lead],
+    ['Leader', leader],
     ['Clipboard', og(/clipboard\s*=\s*"([^"]*)"/)],
     ['Line numbers', og(/\bnumber\s*=\s*(\w+)/)],
   ].filter((s) => s[1]);
-  return { title: 'Neovim', accent: 'var(--green)', sub: disp(path.join(XDG, 'nvim')) + '/', groups, settings };
+  return { title: 'Neovim', accent: 'var(--green)', sub: disp(path.join(XDG, 'nvim')) + '/', groups, settings, leader };
 }
 
 // ------------------------------------------------------------------- Yazi ----
@@ -289,7 +290,6 @@ function parseYazi() {
 
 // ------------------------------------------------------------------ render ---
 const kbdCombo = (combo) => combo.split('+').map((k) => `<kbd>${esc(k)}</kbd>`).join('<span class="plus">+</span>');
-const kbdKey = (k) => `<kbd class="seq">${esc(k)}</kbd>`;
 const chips = (settings) => settings.map(([k, v]) => `<span class="chip"><b>${esc(k)}</b>${esc(v)}</span>`).join('');
 
 function tableRows(rows) {
@@ -297,7 +297,26 @@ function tableRows(rows) {
   return `<table><tbody>${body}</tbody></table>`;
 }
 
-function nvimBody(groups) {
+// Map one key token to a readable label: `<leader>` -> the configured leader, angle-named
+// keys (<CR>, <Esc>, <Space>, …) -> friendly words, <C-w>/<M-x> -> Ctrl+/Alt+ combos, and
+// a plain run like "gd" stays as-is. Shared by the Neovim (lhs) and Yazi (on) cards.
+const NVIM_KEYNAME = { cr: 'Enter', esc: 'Esc', tab: 'Tab', bs: 'Bksp', del: 'Del',
+  space: 'Space', up: '↑', down: '↓', left: '←', right: '→' };
+function friendlyKey(tok, leader) {
+  if (tok[0] !== '<' || !tok.endsWith('>')) return tok;
+  const inner = tok.slice(1, -1), low = inner.toLowerCase();
+  if (leader && low === 'leader') return leader;
+  if (low === 'localleader') return 'LocalLdr';
+  if (NVIM_KEYNAME[low]) return NVIM_KEYNAME[low];
+  if (inner.includes('-')) return inner.replace(/[cC]-/g, 'Ctrl+').replace(/[mMaA]-/g, 'Alt+').replace(/[sS]-/g, 'Shift+');
+  return inner;
+}
+// Each token renders as its own <kbd> so a multi-key sequence reads clearly.
+const chipsHtml = (arr) => arr.map((c) => `<kbd class="seq">${esc(c)}</kbd>`).join(' ');
+const nvimKeyChips = (lhs, leader) => chipsHtml((lhs.match(/<[^>]+>|[^<]+/g) || []).map((t) => friendlyKey(t, leader)));
+const yaziKeyChips = (on) => chipsHtml(on.split(' ').filter(Boolean).map((t) => friendlyKey(t)));
+
+function nvimBody(groups, leader) {
   const order = ['General', 'LSP', 'Finder', 'Editor', 'Git', 'Debug (DAP)'];
   const names = Object.keys(groups).sort((a, b) => {
     const ia = order.indexOf(a), ib = order.indexOf(b);
@@ -305,7 +324,7 @@ function nvimBody(groups) {
   });
   return names.map((name) => {
     const rows = groups[name].map((b) => ({
-      k: `${kbdKey(b.keys)}${b.mode && b.mode !== 'n' ? `<span class="mode">${esc(b.mode)}</span>` : ''}`,
+      k: `${nvimKeyChips(b.keys, leader)}${b.mode && b.mode !== 'n' ? `<span class="mode">${esc(b.mode)}</span>` : ''}`,
       desc: b.desc,
     }));
     return `<div class="grp"><h3>${esc(name)}</h3>${tableRows(rows)}</div>`;
@@ -328,8 +347,8 @@ function build() {
 
   const cards = [];
   for (const t of terminals) cards.push(cardHtml(t.title.toLowerCase(), t, tableRows(t.binds.map((b) => ({ k: kbdCombo(b.combo), desc: b.desc })))));
-  if (nv) cards.push(cardHtml('nvim', nv, nvimBody(nv.groups)));
-  if (ya) cards.push(cardHtml('yazi', ya, tableRows(ya.binds.map((b) => ({ k: kbdKey(b.keys), desc: b.desc })))));
+  if (nv) cards.push(cardHtml('nvim', nv, nvimBody(nv.groups, nv.leader)));
+  if (ya) cards.push(cardHtml('yazi', ya, tableRows(ya.binds.map((b) => ({ k: yaziKeyChips(b.keys), desc: b.desc })))));
 
   const total = terminals.reduce((a, t) => a + t.binds.length, 0)
     + (nv ? Object.values(nv.groups).reduce((a, g) => a + g.length, 0) : 0)
