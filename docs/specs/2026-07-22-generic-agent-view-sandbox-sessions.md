@@ -1,7 +1,7 @@
 # Generic (terminal-agnostic) Agent View for claude-sandbox sessions — spec
 
 **Date:** 2026-07-22
-**Status:** Implemented — Phase 1 (`3647d49`), Phase 2 (`96b0fd2`), bonus §5 spawn (`4220f4d`). Committed in chezmoi source; not yet `chezmoi apply`-ed. Live end-to-end verification (§§2–3, real container/panes) is the remaining manual gate; logic is covered by `node --test` (agent-view-register / agent-view-state-hook / agentview / agentview-spawn / claude-sandbox-register / sandbox-settings-base).
+**Status:** Implemented — Phase 1 (registration + backend-aware switch), Phase 2 (live in-container state), and bonus §5 (spawn from picker) are all committed in the chezmoi source; not yet `chezmoi apply`-ed. Live end-to-end verification (§§2–3, real container/panes) is the remaining manual gate; logic is covered by `node --test` (agent-view-register / agent-view-state-hook / agentview / agentview-spawn / claude-sandbox-register / sandbox-settings-base).
 **Goal:** See, attach/switch, and (bonus) start `claude-sandbox` coding sessions from one picker — working under **both** the current terminal setup (WezTerm) **and** Ghostty, via a **generic pattern that does not depend on WezTerm**. Switching must feel instant (see Performance).
 
 **Naming (de-branded):** the generic layer carries **no terminal brand** in its names. `wezterm` survives only as one *backend id* and in genuinely WezTerm-specific config. Renames: `wezview` → `agentview`; `wezterm-state.sh` → `agent-view-state.sh`; `~/.claude/wez-state/` → `~/.claude/agent-view/`.
