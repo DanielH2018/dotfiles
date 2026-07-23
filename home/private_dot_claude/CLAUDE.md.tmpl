@@ -73,6 +73,10 @@ When compacting, always preserve:
 - Active branch name and whether changes are pushed
 
 @~/.claude/docs/orchestration.md
+
+## Homelab access
+
+The homelab server is `ubuntu@10.0.0.161` — Host alias `homelab` in `~/.ssh/config`; the remote user is `ubuntu`, not `daniel`. Run commands with `ssh homelab '<command>'`; `ssh` is in the permission `ask` list, so expect an approval prompt.
 {{ if .work }}
 @~/.claude/CLAUDE.local.md
 {{- end }}
