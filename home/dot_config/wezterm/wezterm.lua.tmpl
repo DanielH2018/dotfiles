@@ -59,8 +59,27 @@ config.visual_bell = { fade_in_duration_ms = 0, fade_out_duration_ms = 0 }
 config.enable_kitty_graphics = true
 
 -- ---------------------------------------------------------------------------
--- SHELL  — launch Git Bash (login + interactive), matching the Git-Bash-centric setup.
+-- DOMAINS / SHELL
+--   Default domain is WSL (Ubuntu): new windows, tabs, and splits open straight
+--   into the Linux login shell, starting in the Linux $HOME on fast ext4 — not a
+--   translated /mnt/c path over the slow 9p bridge. This box runs dev + Claude Code
+--   in UNIX, so Linux is the daily driver. Git Bash stays one keypress away on
+--   CTRL+SHIFT+B (a local-domain tab), and the agentview / homelab tabs pin
+--   DomainName="local" explicitly, so they're unaffected by the default flip.
 -- ---------------------------------------------------------------------------
+config.wsl_domains = {
+	{
+		name = "WSL:Ubuntu",
+		distribution = "Ubuntu",
+		-- Land in the Linux home (~) on ext4, not the Windows cwd under /mnt/c.
+		default_cwd = "~",
+	},
+}
+config.default_domain = "WSL:Ubuntu"
+
+-- Local-domain shell — Git Bash (login + interactive). Governs the local domain only:
+-- the CTRL+SHIFT+B Git Bash tab and the agentview / homelab tabs (all DomainName="local").
+-- The WSL default domain ignores this and runs its own login shell (bash + ble.sh).
 config.default_prog = { "C:\\Program Files\\Git\\bin\\bash.exe", "-l", "-i" }
 
 -- ---------------------------------------------------------------------------
