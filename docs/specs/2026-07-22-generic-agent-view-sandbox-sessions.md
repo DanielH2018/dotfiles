@@ -1,7 +1,7 @@
 # Generic (terminal-agnostic) Agent View for claude-sandbox sessions — spec
 
 **Date:** 2026-07-22
-**Status:** Implemented — Phase 1 (registration + backend-aware switch), Phase 2 (live in-container state), and bonus §5 (spawn from picker) are all committed in the chezmoi source; not yet `chezmoi apply`-ed. Live end-to-end verification (§§2–3, real container/panes) is the remaining manual gate; logic is covered by `node --test` (agent-view-register / agent-view-state-hook / agentview / agentview-spawn / claude-sandbox-register / sandbox-settings-base).
+**Status:** Implemented + verified. Phase 1 (registration + backend-aware switch), Phase 2 (live in-container state), and bonus §5 (spawn from picker) are committed, pushed, and `chezmoi apply`-ed (sandbox files sync outside chezmoi on non-macOS — see §1a note). See **§10** for verification results. The only step not machine-verified is an actual interactive Claude session inside the container emitting the hook events; the hook→registry mechanism it drives is proven.
 **Goal:** See, attach/switch, and (bonus) start `claude-sandbox` coding sessions from one picker — working under **both** the current terminal setup (WezTerm) **and** Ghostty, via a **generic pattern that does not depend on WezTerm**. Switching must feel instant (see Performance).
 
 **Naming (de-branded):** the generic layer carries **no terminal brand** in its names. `wezterm` survives only as one *backend id* and in genuinely WezTerm-specific config. Renames: `wezview` → `agentview`; `wezterm-state.sh` → `agent-view-state.sh`; `~/.claude/wez-state/` → `~/.claude/agent-view/`.
@@ -196,3 +196,11 @@ Pre-implementation review (verified against source) surfaced and resolved:
 - **Rename cross-machine ordering (moderate):** deploy renamed writers on every machine with/before the reader; the "age-out" story covers only the local path.
 - **Phase 2 resurrection race + new hook events + writer divergence (moderate):** update-if-exists-only guard; add `UserPromptSubmit/Notification/Stop` handlers + mount the hook; `write_full`/`update_state`/`guarded_remove` helper shape. (§2, §3)
 - **Stale citations fixed:** `docker run` `:2243`; EXIT trap `wezview:353`; `prof` `wezview:144`.
+
+## 10. Verification results (2026-07-23)
+Run on the WSL2/Linux box (Docker running, `claudebot:base` built, tmux 3.6, host uid 1000):
+- **Unit (`node --test`):** 152 pass across the six agentview/sandbox suites (agent-view-register, agent-view-state-hook, agentview, agentview-spawn, claude-sandbox-register, sandbox-settings-base). The one repo-wide failure (`link-artifact.test.js`) is pre-existing and environment-dependent — it fails identically with all this work stashed and touches none of these files.
+- **Phase 2 — real container (9/9):** the committed hook + shared helper, mounted into a live `claudebot:base` container over the real RW `agent-view` bind mount, flipped a seeded row `working → needs-input → completed`; preserved launcher-owned `run/locator/kind/title`; no-op'd with `AGENT_VIEW_KEY` unset (exec/shell path); and did **not** recreate a row the launcher had deleted (resurrection guard). This also empirically confirms the §3 native-Linux uid caveat is a non-issue here — `claudebot` (uid 1000) writes the host-owned registry because the uids align.
+- **Phase 1 — real tmux 3.6 (5/5):** `av_capture_locator` inside a real pane produced a well-formed `tmux:<socket>:<session>:<pane>` locator; parsing it back and `select-pane -t <captured id>` was accepted by tmux (rc 0) and **moved focus** to that pane after it had been parked elsewhere.
+- **Performance (§4):** `agentview --body` renders 15 seeded rows in ~45–54 ms warm — under the ~150 ms first-paint target (with a failing `wezterm cli list` still in the path; a tmux-only host is faster).
+- **Remaining manual gate:** observe the row transitions during an *actual* interactive Claude session in the container — the only piece needing Claude's live hook dispatch, which drives the mechanism proven above.
