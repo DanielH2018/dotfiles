@@ -206,6 +206,13 @@ config.keys = {
 		domain = { DomainName = "local" },
 		args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
 	}) },
+	-- CTRL+SHIFT+N: start a NEW claude-sandbox session (pick repo + branch) without the
+	-- picker. agentview --spawn runs its fzf pickers in this tab, then wezterm cli spawn
+	-- opens the launched session in a fresh tab (the wezterm backend, no tmux here).
+	{ key = "N", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
+		domain = { DomainName = "local" },
+		args = { git_bash, "--noprofile", "--norc", "-c", "agentview --spawn" },
+	}) },
 	-- Homelab entry: a local tab that ssh's in and attaches (or creates) a `main`
 	-- tmux session. tmux is the multiplexer now (not WezTerm-mux), so this is a plain
 	-- local tab running ssh -t — no mux domain round-trip.

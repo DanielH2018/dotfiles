@@ -4,7 +4,10 @@
 # backend a session captured at start (tmux / wezterm / none).
 # Modes:
 #   agentview             full-color fzf picker; on <enter> it jumps to the session.
-#                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this.
+#                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. CTRL+N
+#                         starts a NEW claude-sandbox session (pick repo + branch).
+#   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
+#                         new pane of the active backend (tmux new-window / wezterm spawn)
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
 #   agentview --card KEY  render the fzf preview card
@@ -220,6 +223,66 @@ for t in jq fzf; do
   command -v "$t" >/dev/null 2>&1 || { printf 'agentview: %s not found on PATH\n' "$t" >&2; exit 1; }
 done
 HAVE_WEZTERM=0; command -v wezterm >/dev/null 2>&1 && HAVE_WEZTERM=1
+
+# ---- new-session spawn (bonus): start a claude-sandbox session from the picker ----
+# Repos live under ~/Repositories (claude-sandbox's own convention); the launcher is on
+# PATH or at its deployed path. Both overridable (tests / non-standard layouts).
+repos_root="${SANDBOX_REPOS_ROOT:-$HOME/Repositories}"
+sandbox_bin="${CLAUDE_SANDBOX_BIN:-}"
+if [ -z "$sandbox_bin" ]; then
+  if command -v claude-sandbox >/dev/null 2>&1; then sandbox_bin="claude-sandbox"
+  else sandbox_bin="$HOME/.claude/sandbox/claude-sandbox"; fi
+fi
+
+spawn_pick_repo() {  # echo the chosen repo path (empty if cancelled)
+  local names sel d
+  names=$(for d in "$repos_root"/*/; do
+    [ -e "$d/.git" ] || continue                # a dir or a file (.git) -> a git repo
+    printf '%s\n' "$(basename "${d%/}")"
+  done | sort)
+  [ -n "$names" ] || { printf 'agentview: no git repos under %s\n' "$repos_root" >&2; return 1; }
+  sel=$(printf '%s\n' "$names" | fzf --prompt 'repo> ' --height='~70%' --layout=reverse \
+    --border=rounded --info=hidden --header 'new claude-sandbox session · pick a repo · esc cancels')
+  [ -n "$sel" ] && printf '%s' "$repos_root/$sel"
+}
+
+spawn_pick_branch() {  # $1 = repo path -> echo branch (empty = main repo, no worktree)
+  local repo="$1" out
+  # --print-query so the user can TYPE a new branch (claude-sandbox -b creates it) or pick
+  # an existing one; the typed query is the last line. Empty selection = the main checkout.
+  out=$("$sandbox_bin" "$repo" --complete-branches 2>/dev/null | fzf --prompt 'branch> ' \
+    --height='~70%' --layout=reverse --border=rounded --info=hidden --print-query \
+    --header 'pick or type a branch (-b) · empty = main repo · esc cancels' | tail -1)
+  printf '%s' "$out"
+}
+
+spawn_build_cmd() {  # $1=repo $2=branch -> a shell-quoted claude-sandbox command
+  if [ -n "$2" ]; then printf '%q %q -b %q' "$sandbox_bin" "$1" "$2"
+  else printf '%q %q' "$sandbox_bin" "$1"; fi
+}
+
+spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pane
+  local cmd="$1" title="$2"
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    tmux new-window -n "$title" "$cmd"; return 0
+  fi
+  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
+    wezterm cli spawn -- bash -lc "$cmd" >/dev/null 2>&1; return 0
+  fi
+  printf 'agentview: no tmux/wezterm backend to spawn into — run manually:\n  %s\n' "$cmd" >&2
+  return 1
+}
+
+do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the active backend
+  local repo branch cmd
+  repo=$(spawn_pick_repo) || return 1
+  [ -n "$repo" ] || return 0                       # cancelled at the repo pick
+  branch=$(spawn_pick_branch "$repo")
+  cmd=$(spawn_build_cmd "$repo" "$branch")
+  spawn_in_backend "$cmd" "$(basename "$repo")"
+}
+
+if [ "$mode" = "--spawn" ]; then do_spawn; exit $?; fi
 
 # Opt-in phase profiling: `AGENTVIEW_PROFILE=1 agentview` appends per-phase timestamps
 # to ~/.agentview-profile.log so a slow open can be traced to the responsible phase.
@@ -459,13 +522,14 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar \
   --header="$hdrline" --header-first \
-  --footer='  ↑↓ move · ↵ switch · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
+  --footer='  ↑↓ move · ↵ switch · ⌃n new · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='ctrl-r:reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='?:toggle-preview' \
   --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
 
