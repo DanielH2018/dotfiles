@@ -1,0 +1,57 @@
+{{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
+#!/bin/sh
+# Builds tmux from the release tarball into ~/.local, shadowing the older apt tmux (Ubuntu ships
+# 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's fullscreen
+# TUI ("tui": "fullscreen") blanks / goes stale on a tmux pane-split until you scroll: tmux only
+# implements synchronized output (DECSET 2026) from 3.7, with the end-of-update redraw fix in 3.7b.
+# The cts/av sandbox launchers are tmux-native, so upgrading tmux beats dropping to "tui":"default".
+# run_onchange_after_: re-runs whenever this script's rendered content changes — bump TMUX_VERSION
+# to pull a newer build. Linux + non-minimal only (the Pi opts out; macOS gets tmux via Brewfile).
+# A sudo-less run defers the apt build-deps and exits 1 so chezmoi retries next apply, but the
+# after_ placement means that does NOT block dotfile deployment.
+set -u
+
+TMUX_VERSION=3.7b
+BIN_DIR="$HOME/.local/bin"
+PREFIX="$HOME/.local"
+
+# Skip if a local build already satisfies the target — so a newer hand-build isn't clobbered and a
+# running server's binary isn't needlessly churned (the fix only reaches sessions on a fresh server,
+# so rebuilding an already-current tmux buys nothing). sort -V orders 3.6a < 3.7 < 3.7b < 3.8.
+if [ -x "$BIN_DIR/tmux" ]; then
+  have="$("$BIN_DIR/tmux" -V 2>/dev/null | awk '{print $2}')"
+  if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$TMUX_VERSION" | sort -V | head -1)" = "$TMUX_VERSION" ]; then
+    echo "install-tmux: ~/.local/bin/tmux is $have (>= $TMUX_VERSION); skipping build" >&2
+    exit 0
+  fi
+fi
+
+# Build-time deps only, so kept out of the shared tools.toml apt inventory (which lists runtime
+# tools). Needs sudo, which prompts in an interactive terminal.
+DEPS="build-essential libevent-dev libncurses-dev pkg-config bison"
+missing=""
+for p in $DEPS; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+if [ -n "$missing" ]; then
+  if sudo -v; then
+    sudo apt-get update -qq && sudo apt-get install -y $missing
+  else
+    echo "install-tmux: sudo unavailable; deferring build deps:$missing — re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
+    exit 1
+  fi
+fi
+
+# Fetch + build the release tarball into ~/.local (--prefix puts the binary at ~/.local/bin/tmux).
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+url="https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz"
+echo "install-tmux: building tmux $TMUX_VERSION from source ..." >&2
+if ! curl -fsSL "$url" -o "$tmp/tmux.tar.gz"; then
+  echo "install-tmux: failed to fetch $url" >&2; exit 1
+fi
+tar xzf "$tmp/tmux.tar.gz" -C "$tmp"
+src="$tmp/tmux-${TMUX_VERSION}"
+if ! ( cd "$src" && ./configure --prefix="$PREFIX" >/dev/null && make >/dev/null && make install >/dev/null ); then
+  echo "install-tmux: build failed" >&2; exit 1
+fi
+echo "install-tmux: installed $("$BIN_DIR/tmux" -V) to $BIN_DIR (run 'tmux kill-server' or restart WSL to pick it up)" >&2
+{{ end -}}
