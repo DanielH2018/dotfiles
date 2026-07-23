@@ -10,7 +10,13 @@ case "$dir" in
   -h|--help) echo "usage: ct [dir]  (launch claude in a named tmux session)"; exit 0 ;;
 esac
 command -v tmux >/dev/null 2>&1 || { printf 'ct: tmux not found on PATH\n' >&2; exit 1; }
-name="$(basename "$dir")"
-name="$(printf '%s' "$name" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
-[ -n "$name" ] || name="claude"
+base="$(basename "$dir")"
+base="$(printf '%s' "$base" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
+[ -n "$base" ] || base="claude"
+# Disambiguate same-basename repos (e.g. ~/work/api vs ~/personal/api) with a short
+# hash of the path — mirrors claude-sandbox's INSTANCE_ID. Deterministic, so re-running
+# ct in the same dir resumes (new-session -A) the same session. cksum is POSIX (Linux +
+# macOS); take the last 6 digits of its CRC.
+h="$(printf '%s' "$dir" | cksum | cut -d' ' -f1)"
+name="${base}-${h: -6}"
 exec tmux new-session -A -s "$name" -c "$dir" claude

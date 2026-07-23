@@ -31,20 +31,27 @@ exit 0
   return fs.readFileSync(log, 'utf8');
 }
 
-test('ct DIR opens a named tmux session (name = basename) running claude', { skip }, () => {
+test('ct DIR opens a named tmux session (basename + path hash) running claude', { skip }, () => {
   const out = runCt('/home/ubuntu/airflow');
-  assert.match(out, /new-session -A -s airflow -c \/home\/ubuntu\/airflow claude/);
+  assert.match(out, /new-session -A -s airflow-[0-9]+ -c \/home\/ubuntu\/airflow claude/);
 });
 
 test('ct with no arg uses $PWD basename', { skip }, () => {
   const workdir = path.join(scratch(), 'myrepo'); fs.mkdirSync(workdir);
   const out = runCt('', { cwd: workdir });
-  assert.match(out, /new-session -A -s myrepo/);
+  assert.match(out, /-s myrepo-[0-9]+/);
 });
 
 test('ct sanitizes an unsafe session name', { skip }, () => {
   const out = runCt('/tmp/we ird:name');
-  assert.match(out, /-s we-ird-name/, 'spaces/colons collapse to hyphens');
+  assert.match(out, /-s we-ird-name-[0-9]+/, 'spaces/colons collapse to hyphens');
+});
+
+test('ct disambiguates same-basename dirs by path hash', { skip }, () => {
+  const nameA = (runCt('/home/ubuntu/work/api').match(/-s (api-[0-9]+)/) || [])[1];
+  const nameB = (runCt('/home/ubuntu/personal/api').match(/-s (api-[0-9]+)/) || [])[1];
+  assert.ok(nameA && nameB, 'both produced an api-<hash> session name');
+  assert.notStrictEqual(nameA, nameB, 'same basename, different path -> different session');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
