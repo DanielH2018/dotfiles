@@ -15,7 +15,7 @@
 	autocrlf = input
 {{- else }}
 [credential]
-	helper = {{ if eq .chezmoi.os "windows" }}manager{{ else }}store{{ end }}
+	helper = {{ if eq .chezmoi.os "windows" }}manager{{ else if contains "microsoft" (lower .chezmoi.kernel.osrelease) }}/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe{{ else }}store{{ end }}
 [core]
 	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
 	excludesfile = ~/.gitignore_global
