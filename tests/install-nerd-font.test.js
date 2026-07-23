@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SRC = path.join(__dirname, '..', 'home', 'run_onchange_install-nerd-font.ps1.tmpl');
+const SRC = path.join(__dirname, '..', 'home', '.chezmoiscripts', 'os-windows', 'run_onchange_install-nerd-font.ps1.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
