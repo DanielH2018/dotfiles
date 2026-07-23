@@ -1633,7 +1633,7 @@ if [[ "$GC_WORKTREES" == true ]]; then
 fi
 
 # --- Ensure a worktree exists and print its path, then exit (early exit) ---
-# Reuses setup_worktree() so callers (e.g. claude-orchestrate) get the exact same
+# Reuses setup_worktree() so callers get the exact same
 # path/branch and creation behaviour without duplicating it. Info -> stderr; the
 # resolved worktree path is the only thing on stdout. No Docker, no cleanup trap.
 if [[ "$SETUP_WORKTREE" == true ]]; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# sandbox-lib.sh — shared helpers sourced by claude-sandbox and claude-orchestrate
-# (both live in ~/.claude/sandbox). Sourced, not executed: define functions only,
+# sandbox-lib.sh — shared helpers sourced by claude-sandbox
+# (lives in ~/.claude/sandbox). Sourced, not executed: define functions only,
 # never run anything at load time or set shell options here.
 
 # Map a bare repo name ("airflow") to ~/Repositories/airflow when that dir exists;
