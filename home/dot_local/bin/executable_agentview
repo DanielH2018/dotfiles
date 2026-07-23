@@ -27,6 +27,10 @@
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
 # one direct backend command with no discovery step. Rows lacking a locator (legacy /
 # pre-rename) fall back to cwd-correlation against `wezterm cli --prefer-mux list`.
+# kind is host|sandbox|bg. Local host rows are cross-checked against Claude's own
+# per-process registry (~/.claude/sessions/<pid>.json): its live status overrides a
+# stale hook state, hookless busy/waiting sessions are synthesized, and daemon
+# background jobs get kind=bg — no pane exists, so <enter> opens `claude agents`.
 set -u
 mode="${1:-fzf}"
 statedir="$HOME/.claude/agent-view"
@@ -197,14 +201,30 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   exec ssh -t "$sshalias" "$rcmd"
 }
 
+av_open_agents_ui() {  # a daemon-hosted bg session has no pane anywhere to focus —
+  # open Claude's own agents UI instead, in a new pane of the active backend, or in
+  # place (the picker is already gone) from a bare shell.
+  command -v claude >/dev/null 2>&1 || return 1
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    tmux new-window -n agents 'claude agents'; return 0
+  fi
+  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
+    wezterm cli spawn -- bash -lc 'claude agents' >/dev/null 2>&1; return 0
+  fi
+  exec claude agents
+}
+
 do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh local tab;
-  # local rows activate in-process (locator-direct, else legacy cwd-correlation).
-  local key="$1" host locator t
+  # local rows activate in-process (locator-direct, else legacy cwd-correlation);
+  # kind=bg rows (daemon background jobs) open the agents UI — they have no pane.
+  local key="$1" host kind locator t
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
   if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
     remote_attach "$host" "$locator"; return $?     # remote: never touch a local pane
   fi
+  if [ "$kind" = "bg" ]; then av_open_agents_ui; return $?; fi
   if [ -n "$locator" ] && [ "${locator%%:*}" != "none" ]; then
     av_activate_locator "$locator" && return 0
   fi
@@ -382,7 +402,7 @@ if [ "$mode" = "--card" ]; then
     completed)   sc="$e[38;2;108;112;134m"; sn="completed";;
     *)           sc="$e[38;2;108;112;134m"; sn="idle";;
   esac
-  [ "$k_kind" = "sandbox" ] && klabel="sandbox" || klabel="claude"
+  case "$k_kind" in sandbox) klabel="sandbox";; bg) klabel="background";; *) klabel="claude";; esac
   if [ "$k_host" = "$selfhost" ]; then mn="PC · $k_host"
   else case "$k_host" in daniel-server) mn="homelab · $k_host";; *) mn="$k_host";; esac; fi
   age=""
@@ -397,7 +417,7 @@ if [ "$mode" = "--card" ]; then
   name=$(basename "${k_cwd//\\//}" 2>/dev/null)
   printf '\n  %s✳%s  %s%s · %s%s%s\n\n' "$sc" "$z" "$dim" "$klabel" "$val" "$name" "$z"
   printf '  %s%-9s%s%s%s ●%s\n' "$lab" "State" "$sc" "$sn" "$sc" "$z"
-  [ "$k_kind" = "sandbox" ] && printf '  %s%-9s%s%s%s\n' "$lab" "Kind" "$val" "sandbox" "$z"
+  case "$k_kind" in sandbox|bg) printf '  %s%-9s%s%s%s\n' "$lab" "Kind" "$val" "$klabel" "$z";; esac
   printf '  %s%-9s%s%s%s\n'     "$lab" "Machine" "$val" "$mn" "$z"
   printf '  %s%-9s%s%s%s\n'     "$lab" "Folder" "$val" "$name" "$z"
   printf '  %s%-9s%s%s%s\n'     "$lab" "Path" "$dim" "$k_cwd" "$z"
@@ -514,8 +534,85 @@ PRUNE=$(( 7 * 86400 ))
 # remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
 
+# Claude's own per-process registry (~/.claude/sessions/<pid>.json) is the authoritative
+# live view. Daemon-hosted background jobs (`claude agents`) never fire UserPromptSubmit
+# for daemon-mediated replies or --reply-on-resume launches, so their hook rows go stale
+# (stuck needs-input while actually busy) or never exist at all. Each render folds the
+# registry in: a live status overrides a hook row's state/ts, and busy/waiting sessions
+# with no hook row are synthesized. Idle ones are NOT synthesized — the daemon's
+# pre-warmed spare processes register as idle sessions and would render as phantoms.
+sessionsdir="$HOME/.claude/sessions"
+declare -A SMAP=() SMAP_UPD=() SMAP_USED=()
+load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>cwd<TAB>name (live pids only)
+  local sf jqout pid sid st ts upd kind cwd name
+  SMAP=(); SMAP_UPD=(); SMAP_USED=()
+  shopt -s nullglob; sf=( "$sessionsdir"/*.json ); shopt -u nullglob
+  [ "${#sf[@]}" -gt 0 ] || return 0
+  # ONE jq over the dir (process spawns dominate on Windows). Dead pids and duplicate
+  # session ids (a resume under a new pid leaves the old file behind) filter in bash:
+  # kill -0 is a builtin, and the newest updatedAt wins. Files without a status are
+  # transient sdk/spare processes — skipped in jq. Timestamps there are ms; ts is
+  # emitted in seconds for the row, updatedAt kept raw for the dedupe.
+  jqout=$(jq -r '
+    select(((.status // "") != "") and ((.sessionId // "") != "")) |
+    [ (.pid // 0 | tostring), .sessionId,
+      (if .status == "busy" then "working" elif .status == "waiting" then "needs-input" else "completed" end),
+      (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
+      ((.updatedAt // .startedAt // 0) | tostring),
+      (if (.kind // "") == "bg" then "bg" else "host" end),
+      (.cwd // ""), (.name // "") ] | @tsv' "${sf[@]}" 2>/dev/null)
+  [ -n "$jqout" ] || return 0
+  while IFS=$'\t' read -r pid sid st ts upd kind cwd name; do
+    [ -n "$pid" ] && [ -n "$sid" ] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+    if [ -n "${SMAP_UPD[$sid]:-}" ] && [ "${SMAP_UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
+    SMAP_UPD[$sid]="$upd"
+    SMAP[$sid]="$st"$'\t'"$ts"$'\t'"$kind"$'\t'"$cwd"$'\t'"$name"
+  done <<< "$jqout"
+}
+
+merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state folded in.
+  # Hook fields the registry can't know (locator/pane/cwd, a /rename'd title) survive;
+  # state+ts come from the registry, and a bg session's kind flips to "bg" so the jump
+  # path knows there is no pane. Non-host kinds (sandbox) keep their own lifecycle.
+  local row="$1" sid="$2" m st host cwd pane ts kind locator title lst lts lkind
+  _mrow="$1"
+  [ -n "$sid" ] || return 0
+  m="${SMAP[$sid]:-}"; [ -n "$m" ] || return 0
+  st="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  host="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  cwd="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  pane="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  ts="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  kind="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  locator="${row%%$'\t'*}"; title="${row#*$'\t'}"
+  [ "$kind" = "host" ] || return 0
+  lst="${m%%$'\t'*}"; m="${m#*$'\t'}"
+  lts="${m%%$'\t'*}"; m="${m#*$'\t'}"
+  lkind="${m%%$'\t'*}"; m="${m#*$'\t'}"
+  m="${m#*$'\t'}"                                   # skip registry cwd; hook cwd wins
+  SMAP_USED[$sid]=1
+  [ -z "$title" ] && title="$m"                     # registry name fills an empty title
+  [ "$lkind" = "bg" ] && kind="bg"
+  _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"
+}
+
+synth_session_rows() {  # rows for live busy/waiting sessions the hook registry never saw
+  local sid m st ts kind cwd name
+  for sid in "${!SMAP[@]}"; do
+    [ -n "${SMAP_USED[$sid]:-}" ] && continue
+    m="${SMAP[$sid]}"
+    st="${m%%$'\t'*}"; m="${m#*$'\t'}"
+    ts="${m%%$'\t'*}"; m="${m#*$'\t'}"
+    kind="${m%%$'\t'*}"; m="${m#*$'\t'}"
+    cwd="${m%%$'\t'*}"; name="${m#*$'\t'}"
+    [ "$st" = "completed" ] && continue              # idle = maybe a spare — a hookless
+    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"none:"$'\t'"$name"$'\n'
+  done                                               # session shows once it works/waits
+}
+
 gather_local_rows() {  # append local session rows to global `rows`, prune >7d + dead-pid leaks
-  local local_files jqout jqlines i l _lr _lpid
+  local local_files jqout jqlines i l _lr _lpid _lsid _mrow
   # ONE jq over the whole state dir (process spawns dominate on Windows at ~55ms each,
   # so a per-file loop was pure overhead). Command substitution — NOT `< <(...)` — so
   # jq FULLY exits, releasing its read handles, before we prune: on Windows an open
@@ -525,34 +622,41 @@ gather_local_rows() {  # append local session rows to global `rows`, prune >7d +
   # prune via the bash glob path (rm-able on MSYS; jq's own input_filename comes back
   # in a drive form rm rejects). On a count mismatch (a corrupt file made jq drop a
   # record) we skip ALL pruning that run rather than risk rm-ing the wrong file.
+  load_session_map
   shopt -s nullglob; local_files=( "$statedir"/*.json ); shopt -u nullglob
-  [ "${#local_files[@]}" -gt 0 ] || return
+  if [ "${#local_files[@]}" -gt 0 ]; then
   jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" --arg self "$selfhost" "
-      $JQ_TS | (.pid // \"\" | tostring) as \$pid |
+      $JQ_TS | (.pid // \"\" | tostring) as \$pid | (.session // .key // \"\" | tostring) as \$sid |
       if   \$ts > 0 and \$age > \$prune then \"P\"
       elif \$ts > 0 and \$age > 86400  then \"H\"
       elif (.kind // \"host\") == \"host\" and (.host // \"\") == \$self and \$pid != \"\"
-           then \"L\t\" + \$pid + \"\t\" + ($JQ_ROW)
-      else \"R\t\" + ($JQ_ROW) end" "${local_files[@]}" 2>/dev/null)
+           then \"L\t\" + \$pid + \"\t\" + \$sid + \"\t\" + ($JQ_ROW)
+      else \"R\t\" + \$sid + \"\t\" + ($JQ_ROW) end" "${local_files[@]}" 2>/dev/null)
   jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
   if [ "${#jqlines[@]}" -eq "${#local_files[@]}" ]; then
     for i in "${!local_files[@]}"; do
       case "${jqlines[$i]}" in
         P)  rm -f "${local_files[$i]}" 2>/dev/null ;;
-        L*) _lr="${jqlines[$i]#L$'\t'}"; _lpid="${_lr%%$'\t'*}"       # L<TAB>pid<TAB>row
-            if kill -0 "$_lpid" 2>/dev/null; then rows+="${_lr#*$'\t'}"$'\n'
+        L*) _lr="${jqlines[$i]#L$'\t'}"; _lpid="${_lr%%$'\t'*}"       # L<TAB>pid<TAB>sid<TAB>row
+            _lr="${_lr#*$'\t'}"; _lsid="${_lr%%$'\t'*}"
+            if kill -0 "$_lpid" 2>/dev/null; then
+              merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n'
             else rm -f "${local_files[$i]}" 2>/dev/null; fi ;;        # process gone -> leaked, prune
-        R*) rows+="${jqlines[$i]#R$'\t'}"$'\n' ;;
+        R*) _lr="${jqlines[$i]#R$'\t'}"; _lsid="${_lr%%$'\t'*}"       # R<TAB>sid<TAB>row
+            merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n' ;;
       esac
     done
   else
     for l in "${jqlines[@]}"; do
       case "$l" in
-        L*) _lr="${l#L$'\t'}"; rows+="${_lr#*$'\t'}"$'\n' ;;          # count mismatch: render, never rm
-        R*) rows+="${l#R$'\t'}"$'\n' ;;
+        L*) _lr="${l#L$'\t'}"; _lr="${_lr#*$'\t'}"                    # count mismatch: render, never rm
+            rows+="${_lr#*$'\t'}"$'\n' ;;
+        R*) _lr="${l#R$'\t'}"; rows+="${_lr#*$'\t'}"$'\n' ;;
       esac
     done
   fi
+  fi
+  synth_session_rows
 }
 
 gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered, never pruned)
@@ -863,4 +967,5 @@ sel=$(printf '%s\n' "$body" | fzf \
 [ -z "$sel" ] && exit 0
 key=$(printf '%s' "$sel" | cut -f1)
 [ -z "$key" ] && exit 0
-do_jump "$key"
+# A failed jump must say so — a bare exit 1 here read as "enter does nothing".
+do_jump "$key" || { printf 'agentview: no pane found for that session\n' >&2; exit 1; }
