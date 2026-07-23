@@ -8,6 +8,32 @@ local act = wezterm.action
 local config = wezterm.config_builder()
 
 -- ---------------------------------------------------------------------------
+-- HELPERS
+-- Resolve the Git Bash launcher ONCE. The local domain plus the agentview/homelab
+-- tabs all spawn it; probing here keeps the path in a single place and survives a
+-- machine where Git isn't under Program Files (winget-per-user / Scoop). Falls back
+-- to the canonical path so a fresh box still gets a sensible default.
+-- ---------------------------------------------------------------------------
+local function first_existing(paths, fallback)
+	for _, p in ipairs(paths) do
+		if p and p ~= "" then
+			local f = io.open(p, "r")
+			if f then
+				f:close()
+				return p
+			end
+		end
+	end
+	return fallback
+end
+local git_bash = first_existing({
+	"C:\\Program Files\\Git\\bin\\bash.exe",
+	"C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+	(os.getenv("LOCALAPPDATA") or "") .. "\\Programs\\Git\\bin\\bash.exe",
+	(os.getenv("USERPROFILE") or "") .. "\\scoop\\apps\\git\\current\\bin\\bash.exe",
+}, "C:\\Program Files\\Git\\bin\\bash.exe")
+
+-- ---------------------------------------------------------------------------
 -- FONT  (shared values from .chezmoidata/terminal.toml — keeps Ghostty + WezTerm in sync).
 -- Windows registers the Mono family as "IosevkaTerm NFM", so list the full name first and
 -- the abbreviation as a fallback.
@@ -59,6 +85,16 @@ config.visual_bell = { fade_in_duration_ms = 0, fade_out_duration_ms = 0 }
 config.enable_kitty_graphics = true
 
 -- ---------------------------------------------------------------------------
+-- PERFORMANCE — pin the GPU front end so latency doesn't ride on WezTerm's runtime
+-- auto-pick, prefer the discrete GPU, and drop the animation smoothing a block cursor
+-- doesn't need. max_fps uncaps from the 60 default; WezTerm still clamps to the display.
+-- ---------------------------------------------------------------------------
+config.front_end = "WebGpu"
+config.webgpu_power_preference = "HighPerformance"
+config.animation_fps = 1
+config.max_fps = 120
+
+-- ---------------------------------------------------------------------------
 -- DOMAINS / SHELL
 --   Default domain is WSL (Ubuntu): new windows, tabs, and splits open straight
 --   into the Linux login shell, starting in the Linux $HOME on fast ext4 — not a
@@ -80,7 +116,7 @@ config.default_domain = "WSL:Ubuntu"
 -- Local-domain shell — Git Bash (login + interactive). Governs the local domain only:
 -- the CTRL+SHIFT+B Git Bash tab and the agentview / homelab tabs (all DomainName="local").
 -- The WSL default domain ignores this and runs its own login shell (bash + ble.sh).
-config.default_prog = { "C:\\Program Files\\Git\\bin\\bash.exe", "-l", "-i" }
+config.default_prog = { git_bash, "-l", "-i" }
 
 -- ---------------------------------------------------------------------------
 -- KEYBINDINGS  — mirror ~/.config/ghostty/config. On macOS `cmd` is free of the
@@ -150,14 +186,14 @@ config.keys = {
 	-- every tool. Halves the picker's bring-up time.
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
 		domain = { DomainName = "local" },
-		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "--noprofile", "--norc", "-c", "agentview" },
+		args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
 	}) },
 	-- Homelab entry: a local tab that ssh's in and attaches (or creates) a `main`
 	-- tmux session. tmux is the multiplexer now (not WezTerm-mux), so this is a plain
 	-- local tab running ssh -t — no mux domain round-trip.
 	{ key = "H", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
 		domain = { DomainName = "local" },
-		args = { "C:\\Program Files\\Git\\bin\\bash.exe", "-l", "-c",
+		args = { git_bash, "-l", "-c",
 			"ssh -t daniel-server 'tmux new-session -A -s main'" },
 	}) },
 	-- Local Git Bash tab (pins the built-in local domain for a Windows shell).
