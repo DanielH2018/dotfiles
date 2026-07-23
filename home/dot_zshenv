@@ -5,3 +5,7 @@
 # `ssh host ctw …` sources only .zshenv. $HOME because repos (e.g. ~/server) sit right under
 # home; the tool's own default is ~/Repositories.
 export CTS_REMOTE_ROOTS="$HOME"
+
+# Debian's /etc/zsh/zshrc otherwise runs its own full compinit (writing ~/.zcompdump)
+# on top of ~/.zshrc's cached compinit against ~/.cache/zsh — double work every shell start.
+skip_global_compinit=1
