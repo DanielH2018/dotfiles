@@ -26,6 +26,22 @@ if [ -f "$file" ]; then                                   # carry last-known fie
   case "$locator" in none:|none|'') locator=$(jq -r '.locator // ""' < "$file" 2>/dev/null);; esac
   title=$(jq -r '.title // ""' < "$file" 2>/dev/null)
 fi
+# Name the row from the session's own transcript when we have no title yet. On tmux/Ghostty
+# there's no wezterm pane title for the picker to correlate, so without this a host row shows
+# only its folder — indistinguishable when several sessions share a directory. The latest
+# custom-title (the name shown in Claude Code) wins; fall back to the agent name. Skipped
+# once a title exists, so a picker CTRL+R rename isn't overwritten on the next event.
+if [ -z "$title" ]; then
+  tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+  if [ -z "$tpath" ]; then
+    tpath="$HOME/.claude/projects/$(printf '%s' "$cwd" | sed 's#[/.]#-#g')/$sid.jsonl"
+  fi
+  if [ -f "$tpath" ]; then
+    line=$(grep -a '"type":"custom-title"' "$tpath" 2>/dev/null | tail -1)
+    [ -z "$line" ] && line=$(grep -a '"type":"agent-name"' "$tpath" 2>/dev/null | tail -1)
+    [ -n "$line" ] && title=$(printf '%s' "$line" | jq -r '.customTitle // .agentName // ""' 2>/dev/null)
+  fi
+fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)
 av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" ""

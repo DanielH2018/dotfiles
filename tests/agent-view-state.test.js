@@ -106,4 +106,47 @@ test('emits nothing on stdout (safe for UserPromptSubmit)', { skip }, () => {
   assert.strictEqual(out, '');
 });
 
+// ---- session name from the transcript (no wezterm to correlate a pane title) --------
+const jsonl = (...objs) => objs.map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+test('names the row from the transcript custom-title', { skip }, () => {
+  const home = freshHome();
+  const tp = path.join(home, 'ct.jsonl');
+  fs.writeFileSync(tp, jsonl(
+    { type: 'user', message: { content: 'hi' } },
+    { type: 'agent-name', agentName: 'ignored when a custom-title exists' },
+    { type: 'custom-title', customTitle: 'Cool Session' },
+  ));
+  run('working', { session_id: 'ct', cwd: '/tmp', transcript_path: tp }, { home });
+  assert.strictEqual(readState(home, 'ct').title, 'Cool Session');
+});
+
+test('falls back to the agent name when there is no custom-title', { skip }, () => {
+  const home = freshHome();
+  const tp = path.join(home, 'an.jsonl');
+  fs.writeFileSync(tp, jsonl({ type: 'agent-name', agentName: 'Some Agent' }));
+  run('working', { session_id: 'an', cwd: '/tmp', transcript_path: tp }, { home });
+  assert.strictEqual(readState(home, 'an').title, 'Some Agent');
+});
+
+test('reconstructs the transcript path from cwd+session_id when not passed', { skip }, () => {
+  const home = freshHome();
+  const proj = path.join(home, '.claude', 'projects', '-home-daniel'); // /home/daniel -> -home-daniel
+  fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'rc.jsonl'), jsonl({ type: 'custom-title', customTitle: 'Reconstructed' }));
+  run('working', { session_id: 'rc', cwd: '/home/daniel' }, { home }); // note: no transcript_path
+  assert.strictEqual(readState(home, 'rc').title, 'Reconstructed');
+});
+
+test('does not overwrite an existing title (a CTRL+R rename survives events)', { skip }, () => {
+  const home = freshHome();
+  const tp = path.join(home, 'stick.jsonl');
+  fs.writeFileSync(tp, jsonl({ type: 'custom-title', customTitle: 'First' }));
+  run('working', { session_id: 'stick', cwd: '/tmp', transcript_path: tp }, { home });
+  assert.strictEqual(readState(home, 'stick').title, 'First');
+  fs.writeFileSync(tp, jsonl({ type: 'custom-title', customTitle: 'Second' })); // renamed in Claude
+  run('needs-input', { session_id: 'stick', cwd: '/tmp', transcript_path: tp }, { home });
+  assert.strictEqual(readState(home, 'stick').title, 'First', 'once set, the title sticks (rename-safe)');
+});
+
 process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });

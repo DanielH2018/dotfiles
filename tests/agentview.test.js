@@ -173,6 +173,18 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   assert.doesNotMatch(body, /staleone/, 'session older than a day must be hidden');
 });
 
+test('a completed/idle row shows its session name (title) next to the idle age', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  // Two sessions in the SAME folder — only the title tells them apart.
+  stateFile(home, 'done', { pane: '1', state: 'completed', cwd: 'C:\\r\\chezmoi', session: 'done', host: HOST, ts: now - 3600, title: 'Agent View Setup' });
+  stateFile(home, 'work', { pane: '2', state: 'working',   cwd: 'C:\\r\\chezmoi', session: 'work', host: HOST, ts: now - 30,   title: 'Agent View Shortcuts' });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /Agent View Shortcuts/, 'the working row shows its name');
+  assert.match(body, /Agent View Setup · idle 1h/, 'the completed row shows its name and idle age');
+});
+
 test('body labels a sandbox row as "sandbox ·"', { skip }, () => {
   const { env, home, capture } = makeEnv();
   const now = nowSec();

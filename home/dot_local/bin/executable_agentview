@@ -633,8 +633,14 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       case "$st" in
         needs-input) stext="${title:-needs input}";;
         working)     stext="${title:-working}";;
-        completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
-        *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
+        completed)   fmt_age "$ts"
+                     if   [ -n "$title" ]; then stext="$title${_age:+ · idle $_age}"
+                     elif [ -n "$_age" ];  then stext="✓ idle $_age"
+                     else stext="✓ completed"; fi;;
+        *)           fmt_age "$ts"
+                     if   [ -n "$title" ]; then stext="$title${_age:+ · idle $_age}"
+                     elif [ -n "$_age" ];  then stext="· idle $_age"
+                     else stext="· idle"; fi;;
       esac
       maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
