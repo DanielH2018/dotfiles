@@ -20,4 +20,16 @@ for (const key of ['credential.helper', 'core.hooksPath', 'core.sshCommand', '.i
   );
 }
 
+// Agent View Phase 2 (in-container live state): the state hook is wired to the
+// UserPromptSubmit/Notification/Stop events with the right state argument, and NEVER to
+// a delete — the host launcher owns lifecycle, so the container must not remove rows.
+const H = parsed.hooks;
+const has = (evt, state) =>
+  Array.isArray(H[evt]) && /agent-view-state-hook\.sh (\w[\w-]*)/.test(JSON.stringify(H[evt])) &&
+  JSON.stringify(H[evt]).includes(`agent-view-state-hook.sh ${state}`);
+assert.ok(has('UserPromptSubmit', 'working'), 'UserPromptSubmit -> working');
+assert.ok(has('Notification', 'needs-input'), 'Notification -> needs-input');
+assert.ok(has('Stop', 'completed'), 'Stop -> completed');
+assert.ok(!/agent-view-state-hook\.sh end/.test(raw), 'container hook never deletes a row (no `end`)');
+
 console.log('ALL PASS');

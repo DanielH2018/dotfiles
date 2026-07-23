@@ -47,6 +47,24 @@ test('cleanup deregisters via the RUN_ID-guarded remove (inside cleanup, no 2nd 
   assert.strictEqual(traps.length, 1, 'must keep the single existing cleanup EXIT trap');
 });
 
+// ---- (1b) Phase 2 wiring: in-container live state --------------------------
+test('Phase 2: mounts the in-container state hook + shared helper read-only', () => {
+  assert.match(SRC, /agent-view-register\.sh:\/home\/claudebot\/\.claude-defaults\/hooks\/agent-view-register\.sh:ro/);
+  assert.match(SRC, /agent-view-state-hook\.sh:\/home\/claudebot\/\.claude-defaults\/hooks\/agent-view-state-hook\.sh:ro/);
+});
+
+test('Phase 2: binds the registry RW + passes AGENT_VIEW_KEY, interactive-only', () => {
+  assert.match(SRC, /-v "\$HOME\/\.claude\/agent-view:\/home\/claudebot\/\.claude\/agent-view"/);
+  assert.match(SRC, /-e "AGENT_VIEW_KEY=\$INSTANCE_ID"/);
+  // The RW mount + key live INSIDE the interactive registration block (after the row is
+  // written) and before the final docker run, so exec/shell containers never get them.
+  const gate = SRC.indexOf('AV_REGISTERED=true');
+  const mount = SRC.indexOf('agent-view:/home/claudebot/.claude/agent-view');
+  const runIdx = SRC.lastIndexOf('docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"');
+  assert.ok(gate > 0 && mount > gate && mount < runIdx,
+    'RW registry mount + key must be added after register, before the interactive docker run');
+});
+
 // ---- (2) behavioral contract (mirrors the launcher block) -----------------
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-reg-')); dirs.push(d); return d; }

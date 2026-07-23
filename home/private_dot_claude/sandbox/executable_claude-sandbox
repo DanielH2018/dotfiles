@@ -1776,6 +1776,12 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude-defaults/hooks/screen-injection.sh:ro"
   -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude-defaults/hooks/block-dangerous-bash.sh:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude-defaults/hooks/protect-secrets.sh:ro"
+  # Agent View Phase 2: the in-container state hook + the shared register library it
+  # sources. Present in every container (settings.base.json wires the hook for all), but
+  # they no-op unless AGENT_VIEW_KEY + the registry RW mount are set — added interactive-
+  # only below, so exec/shell containers can't touch the registry.
+  -v "$HOME/.claude/hooks/agent-view-register.sh:/home/claudebot/.claude-defaults/hooks/agent-view-register.sh:ro"
+  -v "$SANDBOX_DIR/agent-view-state-hook.sh:/home/claudebot/.claude-defaults/hooks/agent-view-state-hook.sh:ro"
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   # No sandbox-specific variant — mount the single canonical host copy (one source
   # of truth, no drift-prone parallel copy). The host script is a superset and
@@ -2250,6 +2256,15 @@ if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/a
     av_write_full "$INSTANCE_ID" "working" "$WORK_PATH" "$(hostname 2>/dev/null || echo '?')" \
       "$(date +%s 2>/dev/null || echo 0)" "sandbox" "$av_title" "$av_locator" "" "$RUN_ID" || true
     AV_REGISTERED=true
+    # Phase 2: bind the registry dir RW so the in-container UserPromptSubmit/Notification/
+    # Stop hooks can flip THIS row's state (joined by AGENT_VIEW_KEY=INSTANCE_ID). Only
+    # session-state JSON crosses the mount — no secrets. av_write_full just created the
+    # dir. Interactive-only: exec already exited and shell is gated out above, so their
+    # containers get neither the mount nor the key and the hook no-ops there.
+    DOCKER_ARGS+=(
+      -v "$HOME/.claude/agent-view:/home/claudebot/.claude/agent-view"
+      -e "AGENT_VIEW_KEY=$INSTANCE_ID"
+    )
   fi
 fi
 
