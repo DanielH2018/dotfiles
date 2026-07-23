@@ -36,11 +36,14 @@ Then open **http://localhost:3000** → dashboard **“Claude Code — Usage & O
 ## Activating telemetry in Claude Code
 
 The exporter env lives in the chezmoi base template
-`home/.chezmoitemplates/settings.base.json`, so it deploys to **every machine** through the
-generated `~/.claude/settings.json` (`chezmoi apply` after cloning). All telemetry data
-stays local on each machine — nothing leaves the box.
+`home/.chezmoitemplates/settings.base.json`, but it is **gated to this machine**: the whole
+OTEL block sits inside `{{ if eq .chezmoi.hostname "daniel-wsl" }}`, so the generated
+`~/.claude/settings.json` carries it only here. A freshly onboarded machine gets **no
+telemetry and no error** until its hostname is added to that conditional. All telemetry
+data stays local on each machine — nothing leaves the box.
 
-**Per machine:** clone dotfiles → `chezmoi apply` → `cd ~/claude-otel && docker compose up -d`.
+**Per machine:** add its hostname to the template gate → `chezmoi apply` →
+`cd ~/claude-otel && docker compose up -d`.
 Until the stack is running, Claude Code retries OTLP exports to `localhost:4317` in the
 background (harmless connection-refused noise, no user-visible impact).
 
