@@ -29,6 +29,22 @@ const OUT = process.argv[2] || process.env.TERMINAL_CHEATSHEET_OUT ||
 const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const disp = (p) => p.replace(HOME, '~').replace(/\\/g, '/');
+
+// Wrap a path in an OSC 8 terminal hyperlink so it's clickable in WezTerm / Ghostty /
+// iTerm2 / Kitty. Under WSL the click is handled by the Windows-side terminal, so a
+// Linux path must be rewritten to a \\wsl.localhost\<distro>\… UNC URI to resolve.
+const fileUri = (p) => {
+  const abs = path.resolve(p).replace(/\\/g, '/');
+  const distro = process.env.WSL_DISTRO_NAME;
+  if (distro && abs.startsWith('/')) return encodeURI('file://wsl.localhost/' + distro + abs);
+  return encodeURI('file://' + (abs.startsWith('/') ? abs : '/' + abs)); // Windows C:/… -> /C:/…
+};
+// chezmoi runs run_ scripts without a TTY (isTTY is false) but still forwards their
+// stdout to the terminal, so emit the link under `chezmoi apply` (CHEZMOI=1) too.
+// A manual run redirected to a file (no TTY, no CHEZMOI) stays plain text.
+const termLink = (p, text = p) =>
+  (process.stdout.isTTY || process.env.CHEZMOI)
+    ? `\x1b]8;;${fileUri(p)}\x1b\\${text}\x1b]8;;\x1b\\` : text;
 const PLATFORM = ({ darwin: 'macOS', win32: 'Windows', linux: 'Linux' })[os.platform()] || os.platform();
 
 // ---------------------------------------------------------------- WezTerm ----
@@ -400,4 +416,4 @@ q&&q.addEventListener('input',()=>{
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, build());
-console.log('terminal-cheatsheet: wrote ' + OUT);
+console.log('terminal-cheatsheet: wrote ' + termLink(OUT, path.basename(OUT)));
