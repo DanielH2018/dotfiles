@@ -61,6 +61,7 @@ Applies to every session — answers, summaries, research, and anything written 
 - When you produce an implementation plan or a spec for my review — in plan mode or in normal chat — also render it as an HTML artifact for readability, in addition to the written plan, not instead of it. Load the `artifact-design` skill first.
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` (create the dir if needed) and tell me the path. Do **not** publish to claude.ai or call the Artifact tool unless I explicitly ask you to send it there.
 - Skip the artifact only when the plan is trivial (a one-liner or single obvious step) or I've said not to.
+- **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Don't plan in stack-order (DB → service → API → frontend): that's the model's default, and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines, so test and review at each slice before moving to the next.
 
 ## Compaction policy
 
