@@ -26,7 +26,7 @@ run_check() {
 find_up() {
   local dir="$1" marker="$2" test_flag="${3:--e}" parent
   while [ "$dir" != "/" ]; do
-    if [ "$test_flag" "$dir/$marker" ]; then printf '%s\n' "$dir"; return 0; fi
+    if test "$test_flag" "$dir/$marker"; then printf '%s\n' "$dir"; return 0; fi
     parent=$(dirname "$dir")
     [ "$parent" = "$dir" ] && break
     dir="$parent"
@@ -76,7 +76,10 @@ case "$FILE_PATH" in
     fi
     ;;
   *.sh|*.bash)
-    command -v shellcheck >/dev/null && run_check shellcheck "$FILE_PATH"
+    # -e SC1091: our hooks `source` helpers by their runtime path (~/.claude/hooks/…) that
+    # ShellCheck can't follow statically — an info-level note. Since the hook blocks on any
+    # finding, excluding it stops every edit to a sourced script from nagging. Other checks stay.
+    command -v shellcheck >/dev/null && run_check shellcheck -e SC1091 "$FILE_PATH"
     ;;
   */Dockerfile|*/Dockerfile.*)
     command -v hadolint >/dev/null && run_check hadolint "$FILE_PATH"
