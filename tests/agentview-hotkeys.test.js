@@ -38,21 +38,37 @@ function makeEnv() {
   const bin = scratch('avh-bin-');
   const home = scratch('avh-home-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
+  const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
+  const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
+  const killLog = path.join(bin, 'kill.log'); fs.writeFileSync(killLog, '');
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${HOST}\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n`, { mode: 0o755 });
   // --body / --jump-nth run after the jq+fzf tool check, so fzf must exist (never invoked here).
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
-  const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, TMUX_LOG: tmuxLog };
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\necho "$*" >> "$SSH_LOG"\nexit 0\n`, { mode: 0o755 });
+  // Injection seam for the guarded kill — logs the pid instead of signalling anything.
+  const killStub = path.join(bin, 'killstub'); fs.writeFileSync(killStub, `#!/bin/bash\necho "$1" >> "$KILL_LOG"\nexit 0\n`, { mode: 0o755 });
+  const env = {
+    ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
+  };
   delete env.TMUX; // a bare shell -> tmux jump takes the attach path
-  return { bin, home, env, tmuxLog };
+  return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog };
 }
 
 function stateFile(home, sid, obj) {
   fs.writeFileSync(path.join(home, '.claude', 'agent-view', `${sid}.json`), JSON.stringify(obj));
 }
+// Seed a Claude-native per-process file (~/.claude/sessions/<pid>.json) mapping pid -> sid.
+function sessionProc(home, pid, sid) {
+  fs.writeFileSync(path.join(home, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: sid }));
+}
 const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
 const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
+const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
 
 function run(env, args, { input, extraEnv = {} } = {}) {
   try {
@@ -68,7 +84,7 @@ function rowKey({ host = HOST, cwd, state = 'working', ts = nowSec(), title = ''
   return cardKey([host, cwd, state, String(ts), title, pane, kind, locator]);
 }
 
-// ---- --pin (CTRL+T: toggle a pin in the sidecar) ------------------------
+// ---- --pin (CTRL+P: toggle a pin in the sidecar) ------------------------
 test('--pin adds a row to the sidecar, and --pin again removes it', { skip }, () => {
   const { env, home } = makeEnv();
   const key = rowKey({ cwd: '/r/alpha', locator: 'tmux:/s:sa:%1' });
@@ -139,32 +155,87 @@ test('the number gutter labels the first session row 1', { skip }, () => {
   assert.match(display, /^▎ 1 /, 'the first session shows the "1" jump gutter after the accent bar');
 });
 
-// ---- --rename (CTRL+R) --------------------------------------------------
-test('--rename writes the typed label to the matching local file', { skip }, () => {
-  const { env, home } = makeEnv();
-  const now = nowSec();
-  stateFile(home, 'c', { host: HOST, cwd: '/r/charlie', state: 'needs-input', ts: now, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'old' });
-  const key = rowKey({ cwd: '/r/charlie', state: 'needs-input', ts: now, title: 'old', pane: '%3', locator: 'tmux:/s:sc:%3' });
-  assert.strictEqual(run(env, ['--rename', key], { input: 'brand new label\n' }).code, 0);
-  assert.strictEqual(JSON.parse(fs.readFileSync(avFile(home, 'c'), 'utf8')).title, 'brand new label');
+// ---- --rename (CTRL+R: send Claude's own /rename into the pane) ----------
+test('--rename types "/rename <name>" + Enter into an idle tmux pane', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/c', state: 'needs-input', pane: '%3', locator: 'tmux:/s:sc:%3' });
+  assert.strictEqual(run(env, ['--rename', key], { input: 'Fix the parser\n' }).code, 0);
+  const log = read(tmuxLog);
+  assert.match(log, /send-keys -t %3 -l \/rename Fix the parser/, 'sends the /rename command literally');
+  assert.match(log, /send-keys -t %3 Enter/, 'then submits with Enter');
 });
 
-test('--rename with empty input clears the label', { skip }, () => {
-  const { env, home } = makeEnv();
-  const now = nowSec();
-  stateFile(home, 'c', { host: HOST, cwd: '/r/charlie', state: 'working', ts: now, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'was set' });
-  const key = rowKey({ cwd: '/r/charlie', ts: now, title: 'was set', pane: '%3', locator: 'tmux:/s:sc:%3' });
-  assert.strictEqual(run(env, ['--rename', key], { input: '\n' }).code, 0);
-  assert.strictEqual(JSON.parse(fs.readFileSync(avFile(home, 'c'), 'utf8')).title, '', 'empty input clears .title');
+test('--rename is a no-op for a none: (pane-less) session', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/none', state: 'idle', locator: 'none:' });
+  assert.strictEqual(run(env, ['--rename', key], { input: 'Nope\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'no pane to address -> nothing is sent');
 });
 
-test('--rename of a remote row leaves local files untouched', { skip }, () => {
-  const { env, home } = makeEnv();
+test('--rename refuses a working session (would inject mid-task)', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/busy', state: 'working', pane: '%4', locator: 'tmux:/s:sb:%4' });
+  assert.strictEqual(run(env, ['--rename', key], { input: 'Later\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'a working session is gated out');
+});
+
+test('--rename drives a REMOTE tmux session over ssh', { skip }, () => {
+  const { env, sshLog, tmuxLog } = makeEnv();
+  const key = rowKey({ host: 'daniel-server', cwd: '/home/ubuntu/p', state: 'idle', pane: '%9', locator: 'tmux:/s:rs:%9' });
+  assert.strictEqual(run(env, ['--rename', key], { input: 'Remote name\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'never touches a local pane for a remote session');
+  const log = read(sshLog);
+  assert.match(log, /daniel-server/, 'ssh targets the remote alias');
+  // The name is %q-escaped for the remote shell, so match loosely across the spaces.
+  assert.match(log, /send-keys -t %9 -l [^;]*rename[^;]*Remote[^;]*name/, 'ssh sends the /rename keys on the remote');
+  assert.match(log, /send-keys -t %9 Enter/, 'then submits with Enter');
+});
+
+// ---- --remove (CTRL+X: REALLY delete — kill the process + claude rm) -----
+test('--remove kills the mapped pid, runs `claude rm`, deletes the row (after confirm)', { skip }, () => {
+  const { env, home, killLog, claudeLog } = makeEnv();
+  stateFile(home, 'gone', { session: 'gone', cwd: '/r/gone', state: 'idle', host: HOST, kind: 'host', locator: 'tmux:/s:g:%1' });
+  sessionProc(home, 5150, 'gone');                    // Claude maps pid 5150 -> session gone
+  const key = rowKey({ cwd: '/r/gone', state: 'idle', locator: 'tmux:/s:g:%1' });
+  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.strictEqual(read(killLog).trim(), '5150', 'kills the pid Claude maps to this session');
+  assert.match(read(claudeLog), /rm gone/, 'runs `claude rm <sid>` to delete the record + worktree');
+  assert.ok(!fs.existsSync(avFile(home, 'gone')), 'the registry row is dropped');
+});
+
+test('--remove aborts entirely when the confirm is not "y"', { skip }, () => {
+  const { env, home, killLog } = makeEnv();
+  stateFile(home, 'keep', { session: 'keep', cwd: '/r/keep', state: 'idle', host: HOST, kind: 'host', locator: 'tmux:/s:k:%1' });
+  sessionProc(home, 6000, 'keep');
+  const key = rowKey({ cwd: '/r/keep', state: 'idle', locator: 'tmux:/s:k:%1' });
+  assert.strictEqual(run(env, ['--remove', key], { input: 'n\n' }).code, 0);
+  assert.strictEqual(read(killLog).trim(), '', 'no process is signalled');
+  assert.ok(fs.existsSync(avFile(home, 'keep')), 'the session is left intact');
+});
+
+test('--remove only kills the pid Claude currently maps to the sid (reuse-safe)', { skip }, () => {
+  const { env, home, killLog } = makeEnv();
+  stateFile(home, 'target', { session: 'target', cwd: '/r/t', state: 'idle', host: HOST, kind: 'host', locator: 'tmux:/s:t:%1' });
+  sessionProc(home, 1111, 'someone-else');            // 1111 belongs to a DIFFERENT session
+  sessionProc(home, 2222, 'target');                  // 2222 is our session
+  const key = rowKey({ cwd: '/r/t', state: 'idle', locator: 'tmux:/s:t:%1' });
+  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.strictEqual(read(killLog).trim(), '2222', 'only the sid-matched pid is killed, never a reused one');
+});
+
+test('--remove of a REMOTE row purges over ssh and filters the cache', { skip }, () => {
   const now = nowSec();
-  stateFile(home, 'local', { host: HOST, cwd: '/r/local', state: 'working', ts: now, kind: 'host', locator: 'tmux:/s:x:%1', pane: '%1', title: 'keep' });
-  const key = rowKey({ host: 'daniel-server', cwd: '/home/ubuntu/remote', locator: 'tmux:/s:remote:%9' });
-  assert.strictEqual(run(env, ['--rename', key], { input: 'nope\n' }).code, 0);
-  assert.strictEqual(JSON.parse(fs.readFileSync(avFile(home, 'local'), 'utf8')).title, 'keep', 'a remote rename never touches a local file');
+  const gone = JSON.stringify({ session: 'rg', cwd: '/r/rgone', state: 'working', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rg:%2' });
+  const keep = JSON.stringify({ session: 'rk', cwd: '/r/rkeep', state: 'idle', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rk:%1' });
+  const { env, home, sshLog } = makeEnv();
+  fs.writeFileSync(path.join(home, '.agentview-remote-cache'), `${gone}\n${keep}`);
+  const key = rowKey({ host: 'daniel-server', cwd: '/r/rgone', state: 'working', locator: 'tmux:/s:rg:%2' });
+  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.match(read(sshLog), /claude rm/, 'runs the purge on the remote over ssh');
+  assert.match(read(sshLog), /s=rg/, 'for the selected session id');
+  const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  assert.doesNotMatch(cache, /rgone/, 'the removed remote row leaves the cache');
+  assert.match(cache, /rkeep/, 'other remote rows stay');
 });
 
 // ---- --jump-nth (ALT+1..9) ---------------------------------------------

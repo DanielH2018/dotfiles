@@ -133,4 +133,14 @@ test('a missing/unreadable transcript_path is harmless (no title, no error)', { 
   assert.strictEqual(readState(home, 'notrans').title, '', 'a bad transcript path just leaves the title empty');
 });
 
+test('a custom-title (from /rename) overrides the ai-title', { skip }, () => {
+  const home = freshHome();
+  const tpath = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(tpath,
+    '{"type":"ai-title","aiTitle":"Auto summary","sessionId":"s"}\n' +
+    '{"type":"custom-title","customTitle":"My Chosen Name","sessionId":"s"}\n');
+  run('working', { session_id: 'ct', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'ct').title, 'My Chosen Name', 'a /rename custom-title wins over the auto ai-title');
+});
+
 process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });

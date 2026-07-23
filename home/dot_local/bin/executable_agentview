@@ -15,11 +15,13 @@
 #   agentview --jump-nth N  jump to the Nth session in render order (ALT+N target)
 #   agentview --card KEY  render the fzf preview card
 #   agentview --keys      render the keyboard-shortcut cheatsheet (shown on `?`)
-#   agentview --remove KEY  drop KEY from the view (CTRL+X): delete its local registry
-#                         file, or (remote row) filter it from the ssh-snapshot cache. A
-#                         still-live session reappears on its next hook / cache refresh.
+#   agentview --remove KEY  REALLY remove the session (CTRL+X, confirmed): stop its process
+#                         (pid-reuse-guarded) + `claude rm` its record/worktree + drop the
+#                         registry row. Remote rows act on their host over ssh, then filter
+#                         the cache. So a live session can't reappear.
 #   agentview --pin KEY   toggle this row's pin (CTRL+P); pins live in ~/.claude/agent-view-pins
-#   agentview --rename KEY  prompt for a new label, write it as the row's .title (CTRL+R)
+#   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
+#                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
@@ -214,21 +216,54 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   return 0
 }
 
-do_remove() {  # $1 = KEY -> drop this row from the view. A LOCAL row's registry file is
-  # deleted; a REMOTE row is filtered out of the ssh-snapshot cache (it has no local
-  # file). Either way it's remove-from-view, NOT kill: a still-live session reappears on
-  # its next hook event / next cache refresh; a finished one stays gone.
-  local key="$1" host cwd kind locator f m tmp="$remote_cache.tmp.$$"
+av_purge_local() {  # $1=sid -> REALLY stop + delete a local session. Find Claude's live
+  # process via ~/.claude/sessions/<pid>.json whose sessionId == sid (authoritative, and
+  # pid-reuse-safe by construction — only the pid Claude currently maps to this session is
+  # signalled), kill it, then `claude rm` removes Claude's record + any worktree. AV_KILLCMD
+  # is a test seam (defaults to the real kill).
+  local sid="$1" pf pid
+  [ -n "$sid" ] || return 0
+  shopt -s nullglob
+  for pf in "$HOME/.claude/sessions"/*.json; do
+    [ "$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)" = "$sid" ] || continue
+    pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
+    [ -n "$pid" ] && "${AV_KILLCMD:-kill}" "$pid" 2>/dev/null
+  done
+  shopt -u nullglob
+  command -v claude >/dev/null 2>&1 && claude rm "$sid" </dev/null >/dev/null 2>&1
+  return 0
+}
+
+av_purge_remote() {  # $1=alias $2=sid -> the same stop+delete on the remote over ssh, incl.
+  # dropping the remote's own registry file. sid is a uuid (literal under %q); $HOME and the
+  # sessionId lookup evaluate on the remote.
+  local alias="$1" sid="$2" script
+  [ -n "$sid" ] || return 0
+  printf -v script 's=%q; for pf in "$HOME/.claude/sessions/"*.json; do [ -f "$pf" ] || continue; if [ "$(jq -r ".sessionId // \"\"" "$pf" 2>/dev/null)" = "$s" ]; then p="$(jq -r ".pid // \"\"" "$pf" 2>/dev/null)"; [ -n "$p" ] && kill "$p" 2>/dev/null; fi; done; command -v claude >/dev/null 2>&1 && claude rm "$s" </dev/null >/dev/null 2>&1; rm -f "$HOME/.claude/agent-view/$s.json" 2>/dev/null' "$sid"
+  ssh -o ConnectTimeout=4 -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
+}
+
+do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop its process
+  # (pid-reuse-guarded) + `claude rm` its record/worktree + drop the registry row, so a live
+  # session can't reappear. Local rows act locally; remote rows act on their host over ssh,
+  # then the row is filtered from the ssh cache. An empty KEY (header/spacer) is a no-op.
+  local key="$1" host cwd kind locator f m sid ans name tmp="$remote_cache.tmp.$$"
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
   kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$cwd" ] || [ -n "$locator" ] || return 0
+  name=$(basename "${cwd//\\//}" 2>/dev/null)
+  printf '\n  Remove "%s" — stop its process and delete the session (worktree too)? [y/N] ' "$name" >&2
+  IFS= read -r ans || return 0
+  case "$ans" in y|Y|yes|YES|Yes) ;; *) return 0 ;; esac
   if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
-    # Remote row: no local file. Drop it from the ssh-snapshot cache so it leaves THIS
-    # view on the reload; the next background refresh re-adds it if it's still live on the
-    # remote — same "reappears if live" behavior as local. Read via stdin (native jq.exe
-    # can't open an MSYS path); on any jq error keep the old cache rather than clobber it.
     [ -s "$remote_cache" ] || return 0
+    # Pull the row's sid so we can stop it on the remote, then filter it from the cache.
+    sid=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
+      select( ($loc != "" and (.locator//"")==$loc) or ($loc=="" and (.cwd//"")==$cwd and (.host//"")==$host and (.kind//"host")==$kind) )
+      | (.session // .key // "")' < "$remote_cache" 2>/dev/null | head -1)
+    [ -n "$sid" ] && av_purge_remote "$(remote_alias "$host")" "$sid"
     MSYS_NO_PATHCONV=1 jq -c --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
       ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
       select( (($loc != "" and $l == $loc) or ($loc == "" and $c == $cwd and $h == $host and $k == $kind)) | not )
@@ -237,17 +272,16 @@ do_remove() {  # $1 = KEY -> drop this row from the view. A LOCAL row's registry
   fi
   shopt -s nullglob
   for f in "$statedir"/*.json; do
-    # Match on the unique locator (captured pane id) when present; else fall back to
-    # host+cwd+kind for legacy rows that predate the locator field. Per-file jq is fine
-    # here — this is a one-shot, user-initiated action, not the hot render path — so it
-    # sidesteps the glob/jq index-alignment the prune path has to do. An empty KEY (a
-    # group header / spacer row) has empty cwd+host, so it can never match a real file.
     m=$(jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
       ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
       if   ($loc != "" and $l == $loc)                                 then "M"
       elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
       else "N" end' "$f" 2>/dev/null)
-    [ "$m" = "M" ] && rm -f "$f" 2>/dev/null
+    if [ "$m" = "M" ]; then
+      sid=$(jq -r '.session // .key // ""' "$f" 2>/dev/null)
+      av_purge_local "$sid"
+      rm -f "$f" 2>/dev/null
+    fi
   done
   shopt -u nullglob
   return 0
@@ -276,37 +310,54 @@ do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works f
   return 0
 }
 
-do_rename() {  # $1 = KEY -> prompt for a new label and write it as .title on the matching
-  # local file (CTRL+R). Local-only: a remote row has no local file to edit. The rename
-  # survives future hook events — the host state hook carries .title forward on rewrite.
-  local key="$1" host cwd kind locator rloc cur newtitle f m tmp
+av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Enter into the
+  # session's pane so Claude runs its OWN /rename. tmux locally or over ssh; wezterm locally.
+  local host="$1" loc="$2" name="$3" backend rest sock pane cmd sshalias
+  backend="${loc%%:*}"; rest="${loc#*:}"
+  case "$backend" in
+    tmux)
+      # rest = <socket>:<session>:<pane>; socket + sanitized session carry no ':'.
+      pane="${rest##*:}"; rest="${rest%:*}"; sock="${rest%:*}"
+      [ -n "$pane" ] && [ -n "$sock" ] || return 1
+      if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+        sshalias=$(remote_alias "$host")
+        printf -v cmd 'tmux -S %q send-keys -t %q -l %q; tmux -S %q send-keys -t %q Enter' \
+          "$sock" "$pane" "/rename $name" "$sock" "$pane"
+        ssh -o ConnectTimeout=4 -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
+      else
+        tmux -S "$sock" send-keys -t "$pane" -l "/rename $name" 2>/dev/null
+        tmux -S "$sock" send-keys -t "$pane" Enter 2>/dev/null
+      fi ;;
+    wezterm)
+      pane="$rest"; [ -n "$pane" ] || return 1
+      command -v wezterm >/dev/null 2>&1 || return 1
+      wezterm cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+do_rename() {  # $1 = KEY -> run Claude's own /rename in the session's pane (CTRL+R). Types
+  # "/rename <name>" + Enter into the tmux/wezterm pane so Claude executes the real command
+  # (writing its own custom-title). Needs an addressable pane (not none:) and an idle session
+  # — never inject into a working one, where the keys would land mid-task. Remote tmux over ssh.
+  local key="$1" host state locator backend name
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
-  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
-  cur=$(printf '%s' "$key" | cut -d"$US" -f5)
-  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  state=$(printf '%s' "$key" | cut -d"$US" -f3)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
-  [ -n "$cwd" ] || [ -n "$locator" ] || return 0
-  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
-    printf 'agentview: rename is local-only — that session is on %s.\n' "$host" >&2; sleep 1; return 0
+  [ -n "$locator" ] || return 0
+  backend="${locator%%:*}"
+  if [ -z "$backend" ] || [ "$backend" = "none" ]; then
+    printf '\n  agentview: this session has no tmux/wezterm pane, so Claude'\''s /rename can'\''t\n  be sent to it — rename it from inside the session instead.\n' >&2; sleep 1.5; return 0
   fi
-  printf '\n  new label for this session (empty clears it):\n' >&2
-  IFS= read -r -e -i "$cur" -p '  label> ' newtitle || return 0
-  # A "none:" / empty locator can't distinguish two panes, so match by host+cwd+kind for
-  # those (rloc=""); a real locator matches its one file exactly.
-  rloc="$locator"; case "$locator" in ''|none:*) rloc="";; esac
-  shopt -s nullglob
-  for f in "$statedir"/*.json; do
-    m=$(jq -r --arg loc "$rloc" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
-      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
-      if   ($loc != "" and $l == $loc)                                 then "M"
-      elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
-      else "N" end' "$f" 2>/dev/null)
-    if [ "$m" = "M" ]; then
-      tmp="$f.tmp.$$"
-      jq -c --arg t "$newtitle" '.title=$t' "$f" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
-    fi
-  done
-  shopt -u nullglob
+  if [ "$state" = "working" ]; then
+    printf '\n  agentview: session is working — rename it when idle so the keys land at the\n  input prompt, not mid-task.\n' >&2; sleep 1.5; return 0
+  fi
+  printf '\n  send /rename to this session in Claude:\n' >&2
+  IFS= read -r -e -p '  new name> ' name || return 0
+  name="${name//$'\n'/ }"; name="${name//$'\r'/ }"
+  [ -n "$name" ] || return 0
+  av_send_rename "$host" "$locator" "$name"
   return 0
 }
 
@@ -763,7 +814,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-x:execute-silent('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-x:execute('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
   --bind='alt-2:become('"'$SELF'"' --jump-nth 2)' \
   --bind='alt-3:become('"'$SELF'"' --jump-nth 3)' \
