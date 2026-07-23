@@ -4,16 +4,20 @@
 # backend a session captured at start (tmux / wezterm / none).
 # Modes:
 #   agentview             full-color fzf picker; on <enter> it jumps to the session.
-#                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. CTRL+N
-#                         starts a NEW claude-sandbox session (pick repo + branch).
+#                         CTRL+SHIFT+S (WezTerm) / prefix+g (tmux) spawns this. Picker keys:
+#                         ALT+1..9 jump to the Nth session · CTRL+R rename · CTRL+T pin to
+#                         top · CTRL+N new claude-sandbox · CTRL+X remove · CTRL+F refresh.
 #   agentview --spawn     interactive: pick a repo + branch, launch claude-sandbox in a
 #                         new pane of the active backend (tmux new-window / wezterm spawn)
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
 #   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
+#   agentview --jump-nth N  jump to the Nth session in render order (ALT+N target)
 #   agentview --card KEY  render the fzf preview card
 #   agentview --remove KEY  drop KEY from the view (CTRL+X): delete its local registry
 #                         file, or (remote row) filter it from the ssh-snapshot cache. A
 #                         still-live session reappears on its next hook / cache refresh.
+#   agentview --pin KEY   toggle this row's pin (CTRL+T); pins live in ~/.claude/agent-view-pins
+#   agentview --rename KEY  prompt for a new label, write it as the row's .title (CTRL+R)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
@@ -27,9 +31,20 @@ statedir="$HOME/.claude/agent-view"
 # state dir and without a .json suffix so the local glob never mistakes it for a local
 # session file. Defined here (above do_remove) so Ctrl+X on a remote row can filter it.
 remote_cache="$HOME/.agentview-remote-cache"
+# Pin sidecar: newline-delimited row identities the user pinned with CTRL+T. Kept OUT of
+# the per-session state files so it survives the hook's full-record rewrites AND can pin
+# remote rows (which have no local file). The render reads it into a PINNED group up top.
+pinfile="$HOME/.claude/agent-view-pins"
 now=$(date +%s 2>/dev/null || echo 0)
 selfhost=$(hostname 2>/dev/null)
 US=$'\037'
+
+compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind $4=locator.
+  # A real (non-"none") locator uniquely names the pane; else fall back to host+cwd+kind
+  # (US-joined). No subshell — this runs per row in the hot render path.
+  if [ -n "$4" ] && [ "${4%%:*}" != "none" ]; then _pid="$4"
+  else _pid="$1$US$2$US$3"; fi
+}
 
 # Shared jq fragments (were copy-pasted three times). `norm` makes Windows and Unix
 # cwds comparable; JQ_NONSHELL keeps only panes whose title isn't a bare shell/mux
@@ -230,9 +245,68 @@ do_remove() {  # $1 = KEY -> drop this row from the view. A LOCAL row's registry
   return 0
 }
 
+do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+T). Works for local AND
+  # remote rows — the pin is keyed by identity, not by a local file. A header/spacer row
+  # (empty KEY) is a no-op.
+  local key="$1" host cwd kind locator tmp="$pinfile.tmp.$$" _pid
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$cwd" ] || [ -n "$locator" ] || return 0
+  compute_pin_id "$host" "$cwd" "$kind" "$locator"
+  if [ -f "$pinfile" ] && grep -qxF -- "$_pid" "$pinfile" 2>/dev/null; then
+    # grep -v exits 1 (not an error) when it filters out the ONLY line — accept 0 and 1 so
+    # unpinning the last pin still writes the now-empty file; only a real error (>=2) aborts.
+    local rc
+    grep -vxF -- "$_pid" "$pinfile" > "$tmp" 2>/dev/null; rc=$?
+    if [ "$rc" -le 1 ]; then mv -f "$tmp" "$pinfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else rm -f "$tmp" 2>/dev/null; fi
+  else
+    printf '%s\n' "$_pid" >> "$pinfile" 2>/dev/null
+  fi
+  return 0
+}
+
+do_rename() {  # $1 = KEY -> prompt for a new label and write it as .title on the matching
+  # local file (CTRL+R). Local-only: a remote row has no local file to edit. The rename
+  # survives future hook events — the host state hook carries .title forward on rewrite.
+  local key="$1" host cwd kind locator rloc cur newtitle f m tmp
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  cur=$(printf '%s' "$key" | cut -d"$US" -f5)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$cwd" ] || [ -n "$locator" ] || return 0
+  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+    printf 'agentview: rename is local-only — that session is on %s.\n' "$host" >&2; sleep 1; return 0
+  fi
+  printf '\n  new label for this session (empty clears it):\n' >&2
+  IFS= read -r -e -i "$cur" -p '  label> ' newtitle || return 0
+  # A "none:" / empty locator can't distinguish two panes, so match by host+cwd+kind for
+  # those (rloc=""); a real locator matches its one file exactly.
+  rloc="$locator"; case "$locator" in ''|none:*) rloc="";; esac
+  shopt -s nullglob
+  for f in "$statedir"/*.json; do
+    m=$(jq -r --arg loc "$rloc" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
+      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
+      if   ($loc != "" and $l == $loc)                                 then "M"
+      elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
+      else "N" end' "$f" 2>/dev/null)
+    if [ "$m" = "M" ]; then
+      tmp="$f.tmp.$$"
+      jq -c --arg t "$newtitle" '.title=$t' "$f" > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    fi
+  done
+  shopt -u nullglob
+  return 0
+}
+
 if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
 if [ "$mode" = "--jump" ]; then do_jump "${2:-}"; exit 0; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
+if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
+if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
@@ -415,6 +489,7 @@ C_WORK="$E[38;2;166;227;161m"          # green   — working
 C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
+C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 # Single-source the state→accent map and the empty-state row so the two render paths
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
@@ -422,10 +497,16 @@ BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
   case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; *) _scol="$C_DONE";; esac
 }
+row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads PINNED_SET
+  # via dynamic scope from build_pretty). No fork — runs per row on the render path.
+  local _pid
+  compute_pin_id "$1" "$2" "$3" "$4"
+  [ -n "${PINNED_SET[$_pid]:-}" ] && _pinned=1 || _pinned=0
+}
 NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
-declare -A GN=( [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
+declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
 
 fmt_age() {  # $1 = epoch -> sets _age: compact "12m"/"3h"/"2d"; empty for unknown/zero ts
   local t=${1:-0} d; _age=""
@@ -446,19 +527,41 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
   local W=72 BADGEW=11 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg icon first=1 fwd clabel
+  local PINCNT=0 idx=0 gut gutc _pinned _hp
+  # Pinned rows collect into a PINNED group at the very top. Load the sidecar once into a
+  # set, then in the tally below count pinned rows separately so a state group's header
+  # count reflects only what still renders under it.
+  local -A PINNED_SET=()
+  if [ -f "$pinfile" ]; then
+    while IFS= read -r _hp; do [ -n "$_hp" ] && PINNED_SET["$_hp"]=1; done < "$pinfile"
+  fi
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
   # spawns dominate render time on Windows.
   local -a sorted; local -A GCNT=()
   mapfile -t sorted < <(printf '%s' "$rows" | sort -t$'\t' -k5,5nr)
-  for L in "${sorted[@]}"; do st="${L%%$'\t'*}"; [ -n "$st" ] && GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); done
-  for grp in needs-input working completed idle; do
-    cnt=${GCNT[$grp]:-0}
+  for L in "${sorted[@]}"; do
+    st="${L%%$'\t'*}"; [ -z "$st" ] && continue
+    _rest="${L#*$'\t'}"; host="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+    cwd="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+    _rest="${_rest#*$'\t'}"                       # skip pane
+    _rest="${_rest#*$'\t'}"                       # skip ts
+    kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+    locator="${_rest%%$'\t'*}"
+    row_pinned "$host" "$cwd" "$kind" "$locator"
+    if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
+  done
+  for grp in pinned needs-input working completed idle; do
+    if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
-    state_color "$grp"; scol="$_scol"
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
-    printf '\t%s●%s %s%s%s%s %s%s%s\n' "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    if [ "$grp" = pinned ]; then
+      printf '\t%s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    else
+      state_color "$grp"; scol="$_scol"
+      printf '\t%s●%s %s%s%s%s %s%s%s\n' "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    fi
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
       # empty pane, and `IFS=$'\t' read` folds that empty field, shifting locator/title
@@ -471,7 +574,14 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       ts="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
       kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
       locator="${_rest%%$'\t'*}"; title_reg="${_rest#*$'\t'}"
-      [ "$st" = "$grp" ] || continue
+      # Membership: the PINNED group takes every pinned row (in ts order); each state
+      # group takes its own state MINUS anything already shown as pinned.
+      row_pinned "$host" "$cwd" "$kind" "$locator"
+      if [ "$grp" = pinned ]; then
+        [ "$_pinned" = 1 ] || continue
+      else
+        { [ "$st" = "$grp" ] && [ "$_pinned" = 0 ]; } || continue
+      fi
       fwd="${cwd//\\//}"; name="${fwd%/}"; name="${name##*/}"; [ -z "$name" ] && name="$cwd"
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
       # mux-correlated pane title (host rows on wezterm). Tabs would split the columns.
@@ -487,11 +597,15 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # fixed-width badge cell " <icon> <name> " so the "claude ·" column lines up
       bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
       printf -v bcell '%*s' "$BADGEW" ''
-      left_p="  ${bcell}  ${clabel} · ${name}"
-      printf -v left_c '  %s%s %s %s %s%*s  %s%s · %s%s%s%s%s' \
-        "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
-      state_color "$grp"; scol="$_scol"
-      case "$grp" in
+      state_color "$st"; scol="$_scol"     # colour by the row's real state, even under PINNED
+      # Number gutter (2 cols, replacing the old leading pad) so ALT+1..9 can jump straight
+      # to the Nth session; --jump-nth counts the same non-empty-KEY rows in this order.
+      idx=$(( idx + 1 ))
+      if [ "$idx" -le 9 ]; then gut="$idx "; gutc="${C_DIM}${idx}${Z} "; else gut="  "; gutc="  "; fi
+      left_p="${gut}${bcell}  ${clabel} · ${name}"
+      printf -v left_c '%s%s%s %s %s %s%*s  %s%s · %s%s%s%s%s' \
+        "$gutc" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
+      case "$st" in
         needs-input) stext="${title:-needs input}";;
         working)     stext="${title:-working}";;
         completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
@@ -505,7 +619,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # the jump path reads field 2 (cwd, legacy) + field 8 (locator, direct) and the
       # preview reads the whole thing via {1} — so no per-row fork is needed.
       printf -v key '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s' \
-        "$host" "$US" "$cwd" "$US" "$grp" "$US" "$ts" "$US" "$title" "$US" "${pane:-none}" "$US" "$kind" "$US" "$locator"
+        "$host" "$US" "$cwd" "$US" "$st" "$US" "$ts" "$US" "$title" "$US" "${pane:-none}" "$US" "$kind" "$US" "$locator"
       printf '%s\t%s%s%s%s%s\n' "$key" "$left_c" "$sp" "$scol" "$stext" "$Z"
     done
   done
@@ -526,6 +640,18 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
 # --body: emit JUST the fzf list — used for the initial render AND the live reload the
 # background ssh pushes in. No pane stamp / no profiling: it runs as fzf's own child.
 if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
+
+# --jump-nth N: focus the Nth session in the rendered order (pinned first, then by state,
+# ts desc) — the target of ALT+1..9. fzf fires this via `become`, so we inherit its pipes;
+# reconnect the real terminal (guarded — absent under the tests) so a tmux/ssh attach gets
+# a tty. Counts the same non-empty-KEY rows the number gutter labels, so ALT+K == gutter K.
+if [ "$mode" = "--jump-nth" ]; then
+  if { : < /dev/tty; } 2>/dev/null; then exec < /dev/tty > /dev/tty 2>/dev/tty; fi
+  render_body
+  key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} { c++; if (c==n) { print $1; exit } }')
+  [ -n "$key" ] && do_jump "$key"
+  exit $?
+fi
 
 # ---- interactive picker ----
 prof start
@@ -564,7 +690,7 @@ SELF="$HOME/.local/bin/agentview"
 # ssh is ConnectTimeout-bounded and the EXIT trap kills this job before the script
 # returns — nothing lingers to keep the picker's ConPTY alive (which is what hung
 # CTRL+W). If curl/ssh are missing or the pull fails, the picker just keeps showing
-# the cached snapshot — no error path. CTRL+R forces a manual refresh.
+# the cached snapshot — no error path. CTRL+F forces a manual refresh.
 portfile="$HOME/.agentview-fzfport.$$"
 rm -f "$portfile" 2>/dev/null
 (
@@ -584,15 +710,26 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↑↓ move · ↵ switch · ⌃n new · ⌃x remove · ? details · ⌃r refresh · esc cancel     state from Claude Code hooks' \
+  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃t pin · ⌃n new · ⌃x remove · ⌃f refresh · ? details · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
-  --bind='ctrl-r:reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-t:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-x:execute-silent('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
+  --bind='alt-2:become('"'$SELF'"' --jump-nth 2)' \
+  --bind='alt-3:become('"'$SELF'"' --jump-nth 3)' \
+  --bind='alt-4:become('"'$SELF'"' --jump-nth 4)' \
+  --bind='alt-5:become('"'$SELF'"' --jump-nth 5)' \
+  --bind='alt-6:become('"'$SELF'"' --jump-nth 6)' \
+  --bind='alt-7:become('"'$SELF'"' --jump-nth 7)' \
+  --bind='alt-8:become('"'$SELF'"' --jump-nth 8)' \
+  --bind='alt-9:become('"'$SELF'"' --jump-nth 9)' \
   --bind='?:toggle-preview' \
   --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
 
