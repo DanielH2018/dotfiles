@@ -56,6 +56,7 @@ test('required config keys survive rendering', { skip }, () => {
   const out = render();
   for (const needle of [
     'config.front_end = "WebGpu"',
+    'config.window_decorations = "INTEGRATED_BUTTONS|RESIZE"',
     'config.default_domain = "WSL:Ubuntu"',
     'config.default_prog = { git_bash',
     'local git_bash = first_existing(',   // single-source Git Bash path (probed at runtime)

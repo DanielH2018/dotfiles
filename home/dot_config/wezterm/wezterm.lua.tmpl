@@ -58,6 +58,11 @@ config.color_scheme = "{{ .terminal.theme }}"
 -- ---------------------------------------------------------------------------
 config.default_cursor_style = "BlinkingBlock"
 config.cursor_blink_rate = 500
+-- Hard on/off blink: the default EaseIn/EaseOut fade repaints the GPU every frame of the
+-- transition (kept alive even under animation_fps=1). A block cursor gains nothing from a
+-- fade, so make it a step so the GPU can idle between blinks.
+config.cursor_blink_ease_in = "Constant"
+config.cursor_blink_ease_out = "Constant"
 config.colors = {
 	cursor_bg = "{{ .terminal.cursor_color }}",
 	cursor_border = "{{ .terminal.cursor_color }}",
@@ -72,6 +77,19 @@ config.initial_rows = {{ .terminal.rows }}
 config.window_padding = { left = {{ .terminal.padding }}, right = {{ .terminal.padding }}, top = {{ .terminal.padding }}, bottom = {{ .terminal.padding }} }
 config.window_background_opacity = 1.0
 config.window_close_confirmation = "NeverPrompt"
+-- Drop the native Windows title bar and fold the min/max/close buttons into the fancy tab
+-- bar. Do NOT pair this with hide_tab_bar_if_only_one_tab — the integrated buttons live in
+-- the tab bar, so hiding it (with NeverPrompt + no title bar) would leave no pointer way to
+-- close the window. The tab bar always shows; this box lives in tabs anyway.
+config.window_decorations = "INTEGRATED_BUTTONS|RESIZE"
+-- Render the fancy tab bar in Iosevka (shared data keys) instead of WezTerm's built-in UI
+-- font, a couple points down so tab titles don't crowd the bar.
+config.window_frame = {
+	font = wezterm.font({ family = "{{ .terminal.font_family }}", weight = "{{ .terminal.font_weight }}" }),
+	font_size = {{ .terminal.font_size }}.0 - 4.0,
+}
+-- Don't reflow the whole window when zooming the font (CTRL+= / CTRL+-); keep its size.
+config.adjust_window_size_when_changing_font_size = false
 config.scrollback_lines = {{ .terminal.scrollback }}
 config.hide_mouse_cursor_when_typing = true
 -- Bell OFF: the readline boundary bell (e.g. arrow past end-of-line) otherwise fires
