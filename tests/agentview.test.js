@@ -461,8 +461,8 @@ test('machine source badges render as rounded pills (boxed)', { skip }, () => {
   assert.match(raw, /\ue0b6/, 'left rounded cap present');
   assert.match(raw, /\ue0b4/, 'right rounded cap present');
   assert.match(raw, /\ue0b6[^\n]*?PC[^\n]*?\ue0b4/, 'the pill encloses the PC source label');
-  // Tight body: the pill is a snug " PC " (single-space padding, no icon glyph).
-  assert.match(raw, /\x1b\[38;2;137;180;250m PC \x1b\[0m/, 'PC pill hugs the label with no icon');
+  // Tight body: caps hug the label directly — no icon, no inner padding.
+  assert.match(raw, /\x1b\[38;2;137;180;250mPC\x1b\[0m/, 'PC pill hugs the label tight');
 });
 
 // ---- per-group left accent rule (\u258e, state-colored) ----------------------
@@ -485,6 +485,20 @@ test('picker slims margins and trims the footer to fit narrow windows', () => {
   assert.match(src, /--margin=1,2%/, 'side margins are slimmed to reclaim width');
   assert.doesNotMatch(src, /state from Claude Code hooks/, 'the long footer tagline is dropped');
   assert.match(src, /⌃x remove/, 'the key hints stay in the trimmed footer');
+});
+
+// ---- right column: task title, else age (never the redundant state word) --
+test('the right column shows the task title, or the age — never the state word', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'titled', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\proj1', host: HOST, ts: now - 120, title: 'Fixing the parser' });
+  stateFile(home, 'bare',   { pane: '2', state: 'working',     cwd: 'C:\\a\\proj2', host: HOST, ts: now - 300 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /Fixing the parser/, 'a captured title shows in the right column');
+  assert.match(body, /5m/, 'a title-less row shows its age instead of the state word');
+  assert.doesNotMatch(body, /needs input/, 'no redundant lowercase "needs input" in a row');
+  assert.doesNotMatch(body, /·\s+working\b/, 'no redundant "working" in a row');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

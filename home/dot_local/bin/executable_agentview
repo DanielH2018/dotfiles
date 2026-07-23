@@ -453,7 +453,7 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W=72 BADGEW=9 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
+  local W=72 BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
@@ -493,20 +493,21 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
         homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
         *)       bfg="$E[38;2;205;214;244m";;   # text  — cloud
       esac
-      # badge cell = the rounded pill (caps + " <name> ") plus trailing pad, so the
-      # "claude ·" column lines up whatever the machine name's length.
-      bpad=$(( BADGEW - ${#bn} - 2 )); [ "$bpad" -lt 0 ] && bpad=0
+      # badge cell = the rounded pill (caps hugging <name>, no inner padding) + trailing pad,
+      # so the "claude ·" column lines up whatever the machine name's length.
+      bpad=$(( BADGEW - ${#bn} )); [ "$bpad" -lt 0 ] && bpad=0
       printf -v bcell '%*s' "$((BADGEW + 2))" ''
       left_p="  ${bcell}  ${clabel} · ${name}"
-      # Machine source as a rounded pill: caps (fill-colored) hug a surface-filled body with
-      # the machine-colored icon + name; trailing bpad right-pads to the shared column.
-      printf -v left_c '%s%s%s %s%s%s%s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+      # Machine source as a rounded pill: fill-colored caps hug the machine-colored name with
+      # no inner padding (tight); trailing bpad right-pads to the shared column.
+      printf -v left_c '%s%s%s %s%s%s%s%s%s%s%s%s%*s  %s%s · %s%s%s%s%s' \
         "$scol" "$GBAR" "$Z" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
         "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       state_color "$grp"; scol="$_scol"
       case "$grp" in
-        needs-input) stext="${title:-needs input}";;
-        working)     stext="${title:-working}";;
+        # Right column = the session's task title (its "name"). When none was captured, fall
+        # back to the age — never the state word, which just echoes the group header.
+        needs-input|working) if [ -n "$title" ]; then stext="$title"; else fmt_age "$ts"; stext="$_age"; fi;;
         completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
         *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac
