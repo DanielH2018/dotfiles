@@ -291,4 +291,56 @@ test('picker binds the new hotkeys and hints them in the footer', () => {
   assert.match(src, /\? keys/, 'footer advertises the shortcut help');
 });
 
+// ---- render width + twin-name disambiguation ----------------------------
+test('--body row width tracks FZF_COLUMNS instead of a fixed 72', { skip }, () => {
+  const { env, home } = makeEnv();
+  const longTitle = 'a very long task title that should be truncated at narrow widths, definitely longer than the pane';
+  stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: nowSec() - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: longTitle });
+  const rowAt = (cols) => {
+    const body = stripAnsi(run(env, ['--body'], { extraEnv: { FZF_COLUMNS: String(cols) } }).out);
+    const line = body.split('\n').find((l) => l.includes('alpha') && l.split('\t')[0] !== '');
+    assert.ok(line, `session row rendered at ${cols} cols`);
+    return line.split('\t').slice(1).join('\t');
+  };
+  const narrow = rowAt(50);
+  const wide = rowAt(120);
+  assert.ok(narrow.length <= 50, `a 50-col pane gets a row that fits it (got ${narrow.length})`);
+  assert.ok(wide.length > narrow.length, 'a wider pane renders a wider row');
+  assert.match(narrow, /…/, 'the long title truncates at narrow width instead of overflowing');
+});
+
+test('rows sharing a leaf dir name get a parent-dir prefix', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'a', { host: HOST, cwd: '/repos/one/proj', state: 'working', ts: now - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: '' });
+  stateFile(home, 'b', { host: HOST, cwd: '/repos/two/proj', state: 'working', ts: now - 9, kind: 'host', locator: 'tmux:/s:sb:%2', pane: '%2', title: '' });
+  stateFile(home, 'c', { host: HOST, cwd: '/repos/one/solo', state: 'working', ts: now - 3, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: '' });
+  const body = stripAnsi(run(env, ['--body']).out);
+  // Judge only the DISPLAY halves — the KEY field carries the full cwd either way.
+  const displays = body.split('\n').map((l) => l.split('\t').slice(1).join('\t'));
+  assert.ok(displays.some((d) => d.includes('one/proj')), 'first twin carries its parent dir');
+  assert.ok(displays.some((d) => d.includes('two/proj')), 'second twin carries its parent dir');
+  const solo = displays.find((d) => d.includes('solo'));
+  assert.ok(solo && !solo.includes('one/solo'), 'a unique leaf name stays bare');
+});
+
+// ---- --refresh-remote (CTRL+F / startup: pull homelab cache, reload fzf) --
+test('--refresh-remote pulls over ssh and posts a reload to the fzf port', { skip }, () => {
+  const { bin, env, home, sshLog } = makeEnv();
+  const curlLog = path.join(bin, 'curl.log'); fs.writeFileSync(curlLog, '');
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash\necho "$*" >> "$CURL_LOG"\nexit 0\n`, { mode: 0o755 });
+  const pf = path.join(home, 'portfile'); fs.writeFileSync(pf, '61234\n');
+  assert.strictEqual(run(env, ['--refresh-remote', pf], { extraEnv: { CURL_LOG: curlLog } }).code, 0);
+  assert.match(read(sshLog), /daniel-server/, 'refreshes the homelab snapshot over ssh');
+  assert.ok(fs.existsSync(path.join(home, '.agentview-remote-cache')), 'rewrites the remote cache');
+  const curl = read(curlLog);
+  assert.match(curl, /127\.0\.0\.1:61234/, 'posts to the port read from the portfile');
+  assert.match(curl, /reload\(/, 'the POST body is a reload action');
+});
+
+test('ctrl-f also kicks a background remote refresh', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  assert.match(src, /ctrl-f:.*--refresh-remote/, 'ctrl-f reloads locally, then refreshes the remote cache in the background');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

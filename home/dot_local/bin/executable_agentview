@@ -25,6 +25,9 @@
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
+#   agentview --refresh-remote PF  pull the homelab cache over ssh, then reload the live
+#                         picker via the fzf --listen port stored in portfile PF (used by
+#                         the startup background job and CTRL+F)
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
 # one direct backend command with no discovery step. Rows lacking a locator (legacy /
@@ -145,8 +148,13 @@ norm_bash() {  # sets _norm (no $() subshell per call — forks are slow on Wind
 # render) instead of one jq per row. Non-shell panes only, as normalized-cwd<TAB>title.
 TCWDS=(); TTITLES=()
 load_titles() {
-  local c t
-  while IFS=$'\t' read -r c t; do
+  local line c t
+  while IFS= read -r line; do
+    # Split on the first tab by parameter expansion — `IFS=$'\t' read` collapses an EMPTY
+    # leading field (tab is IFS whitespace), so a cwd-less pane would land its title in c
+    # and poison the map. Same fix build_pretty's row parser already carries.
+    c="${line%%$'\t'*}"
+    if [ "$c" = "$line" ]; then t=""; else t="${line#*$'\t'}"; fi
     [ -z "$c" ] && continue; TCWDS+=("$c"); TTITLES+=("$t")
   done < <(printf '%s' "$PANELIST" | MSYS_NO_PATHCONV=1 jq -r "
       $JQ_NORM
@@ -743,6 +751,20 @@ LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
 
+row_width() {  # sets _rw: usable row columns for the render + header alignment.
+  # Inside a reload/execute child fzf exports FZF_COLUMNS (its own area, margin/padding
+  # already excluded) — keep 2 for the pointer gutter. At the initial render (no fzf yet)
+  # start from the terminal and discount fzf's chrome (2×2% margin + padding + border).
+  # Floor of 40 keeps the pad/truncate math sane on tiny panes. Was a hardcoded 72, which
+  # overran narrow panes (clipped names) and wasted wide ones.
+  if [ -n "${FZF_COLUMNS:-}" ]; then _rw=$(( FZF_COLUMNS - 2 ))
+  else
+    _rw="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+    _rw=$(( _rw - _rw * 4 / 100 - 6 ))
+  fi
+  [ "$_rw" -lt 40 ] && _rw=40
+}
+
 fmt_age() {  # $1 = epoch -> sets _age: compact "12m"/"3h"/"2d"; empty for unknown/zero ts
   local t=${1:-0} d; _age=""
   case "$t" in ''|*[!0-9]*) return;; esac
@@ -777,9 +799,10 @@ gc_pins() {  # drop pins whose session no longer exists anywhere (a local file O
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W=72 BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
+  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
-  local PINCNT=0 idx=0 g1 gutc _pinned _hp
+  local PINCNT=0 idx=0 g1 gutc _pinned _hp _leaf _par
+  row_width; W=$_rw
   # Pinned rows collect into a PINNED group at the very top. Load the sidecar once into a
   # set, then in the tally below count pinned rows separately so a state group's header
   # count reflects only what still renders under it.
@@ -791,7 +814,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
   # group loop needs no per-group awk/sort — each of those was a process spawn, and
   # spawns dominate render time on Windows.
-  local -a sorted; local -A GCNT=()
+  local -a sorted; local -A GCNT=() NAMECNT=()
   mapfile -t sorted < <(printf '%s' "$rows" | sort -t$'\t' -k5,5nr)
   for L in "${sorted[@]}"; do
     st="${L%%$'\t'*}"; [ -z "$st" ] && continue
@@ -801,6 +824,10 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     _rest="${_rest#*$'\t'}"                       # skip ts
     kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
     locator="${_rest%%$'\t'*}"
+    # Tally leaf names so the render can tell twins apart (same-named checkout on
+    # another host / a worktree elsewhere) by prefixing the parent dir.
+    fwd="${cwd//\\//}"; fwd="${fwd%/}"; _leaf="${fwd##*/}"; [ -z "$_leaf" ] && _leaf="$cwd"
+    [ -n "$_leaf" ] && NAMECNT[$_leaf]=$(( ${NAMECNT[$_leaf]:-0} + 1 ))
     row_pinned "$host" "$cwd" "$kind" "$locator"
     if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
   done
@@ -835,7 +862,13 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       else
         { [ "$st" = "$grp" ] && [ "$_pinned" = 0 ]; } || continue
       fi
-      fwd="${cwd//\\//}"; name="${fwd%/}"; name="${name##*/}"; [ -z "$name" ] && name="$cwd"
+      fwd="${cwd//\\//}"; fwd="${fwd%/}"; name="${fwd##*/}"; [ -z "$name" ] && name="$cwd"
+      # Two rows sharing a leaf name render identically — prefix the parent dir so
+      # they stay tellable apart (full path remains in the CTRL+O card).
+      if [ -n "$name" ] && [ "${NAMECNT[$name]:-0}" -gt 1 ]; then
+        _par="${fwd%/*}"; _par="${_par##*/}"
+        [ -n "$_par" ] && [ "$_par" != "$name" ] && name="$_par/$name"
+      fi
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
       # mux-correlated pane title (host rows on wezterm). Tabs would split the columns.
       if [ -n "$title_reg" ]; then title="$title_reg"; else title_for_cwd "$cwd"; title="$_title"; fi
@@ -900,6 +933,23 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
 # background ssh pushes in. No pane stamp / no profiling: it runs as fzf's own child.
 if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
 
+# --refresh-remote PORTFILE: pull the homelab snapshot over ssh, then POST a reload into
+# the live fzf (PORTFILE holds its --listen port, written by the start bind). Runs
+# detached — once at picker startup and again on every CTRL+F — so remote rows refresh
+# without ever blocking the UI. Missing curl/port degrades to just updating the cache.
+if [ "$mode" = "--refresh-remote" ]; then
+  refresh_remote
+  _pf="${2:-}"
+  if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
+    for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
+    p=$(cat "$_pf" 2>/dev/null)
+    self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+    [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
+        --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
+  fi
+  exit 0
+fi
+
 # --jump-nth N: focus the Nth session in the rendered order (pinned first, then by state,
 # ts desc) — the target of ALT+1..9. fzf fires this via `become`, so we inherit its pipes;
 # reconnect the real terminal (guarded — absent under the tests) so a tmux/ssh attach gets
@@ -937,7 +987,8 @@ machines=${#_mh[@]}
 [ "$total" = 1 ]    && ts_s="" || ts_s="s"
 [ "$machines" = 1 ] && ms_s="" || ms_s="s"
 htext="${total} session${ts_s} · ${machines} machine${ms_s}"
-printf -v hdrline '%*s' 72 "$htext"
+row_width
+printf -v hdrline '%*s' "$_rw" "$htext"
 
 body=$(build_pretty); prof build_pretty
 [ -z "$body" ] && body="$NO_SESSIONS_ROW"
@@ -955,13 +1006,8 @@ SELF="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
 # the cached snapshot — no error path. CTRL+F forces a manual refresh.
 portfile="$HOME/.agentview-fzfport.$$"
 rm -f "$portfile" 2>/dev/null
-(
-  refresh_remote
-  for _ in $(seq 1 40); do [ -s "$portfile" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
-  p=$(cat "$portfile" 2>/dev/null)
-  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
-      --data "reload('$SELF' --body)+refresh-preview" >/dev/null 2>&1
-) >/dev/null 2>&1 &   # detach stdio so the job never holds the picker's pipes open
+"$SELF" --refresh-remote "$portfile" \
+  >/dev/null 2>&1 &   # detach stdio so the job never holds the picker's pipes open
 poster_pid=$!
 trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
@@ -980,7 +1026,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
   --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-x:execute('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
