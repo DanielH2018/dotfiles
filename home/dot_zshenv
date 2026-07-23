@@ -6,6 +6,15 @@
 # home; the tool's own default is ~/Repositories.
 export CTS_REMOTE_ROOTS="$HOME"
 
+# ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
+# zsh too — cron, systemd --user, `ssh host cmd` — not just the interactive shells that
+# source common.sh via .zshrc. Same idempotent prepend, so no duplicate when both run.
+for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
+  [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
+done
+unset _d
+export PATH
+
 # Debian's /etc/zsh/zshrc otherwise runs its own full compinit (writing ~/.zcompdump)
 # on top of ~/.zshrc's cached compinit against ~/.cache/zsh — double work every shell start.
 skip_global_compinit=1

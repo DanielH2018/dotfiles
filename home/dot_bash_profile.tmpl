@@ -11,6 +11,15 @@ fi
 # deterministic dir modes on hosts with a 0007 login umask (see dot_zshrc.tmpl).
 chezmoi() { ( umask 0022; command chezmoi "$@" ); }
 
+# ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
+# login shells too (`ssh host cmd`, bash -lc): .bashrc returns before its PATH setup
+# when non-interactive. Idempotent, so no duplicate when common.sh also runs.
+for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
+  [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
+done
+unset _d
+export PATH
+
 # Interactive setup (prompt, aliases, tool integrations) lives in ~/.bashrc; Git Bash
 # login shells don't read it automatically, so source it here.
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
