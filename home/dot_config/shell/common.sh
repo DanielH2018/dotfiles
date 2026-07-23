@@ -210,4 +210,16 @@ if command -v curlie >/dev/null 2>&1; then
   hdelete() { curlie DELETE "$@"; }
 fi
 
+# --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
+# WezTerm/Ghostty read OSC 7 to clone the active pane's cwd into a new tab or split. A new
+# *window* is pinned back to the WSL home by the terminal config (WezTerm's new-window
+# binding falls through to default_cwd), so the rule is: tab & split follow the cwd, a new
+# window resets home. Emitted before each prompt (so it tracks cd) via each shell's hook.
+__osc7_cwd() { printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-$HOST}" "$PWD"; }
+if [ -n "$ZSH_VERSION" ]; then
+  precmd_functions+=(__osc7_cwd)
+elif [ -n "$BASH_VERSION" ]; then
+  PROMPT_COMMAND="__osc7_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+fi
+
 unset _CUR_SHELL

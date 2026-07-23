@@ -177,7 +177,13 @@ config.keys = {
 			window:perform_action(act.CloseCurrentPane({ confirm = false }), pane)
 		end
 	end) },
-	{ key = "T", mods = "CTRL|SHIFT", action = act.SpawnWindow },
+	-- New window (ghostty: cmd+shift+t). With OSC 7 now reporting the cwd, a plain
+	-- SpawnWindow would inherit the active pane's dir — but a *window* should reset to the
+	-- WSL home (a new *tab* is what follows the cwd). Spawn through the mux with no cwd so it
+	-- falls through to the WSL:Ubuntu domain's default_cwd ("~") = the Linux home.
+	{ key = "T", mods = "CTRL|SHIFT", action = wezterm.action_callback(function()
+		wezterm.mux.spawn_window({ domain = { DomainName = "WSL:Ubuntu" } })
+	end) },
 	{ key = "W", mods = "CTRL|SHIFT", action = act.QuitApplication },
 
 	-- Splits (ghostty: cmd+d right / cmd+shift+d down). cmd+d maps to a BARE ctrl+d to
