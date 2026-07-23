@@ -236,6 +236,58 @@ if command -v curlie >/dev/null 2>&1; then
   hdelete() { curlie DELETE "$@"; }
 fi
 
+# --- WSL: dump the Windows clipboard image to a PNG for Claude Code ---
+# WSL can't hand a clipboard image straight to Claude (the WSLg clipboard bridge carries text,
+# and Windows stores screenshots as a BMP that Claude often can't decode). So save the clipboard
+# image to a PNG on the Windows side and print a Claude-ready `@path` to drop into the prompt.
+# powershell.exe isn't on PATH here (interop.appendWindowsPath=false), so resolve it directly;
+# gate the definition on its presence to stay a no-op off Windows/WSL.
+if command -v powershell.exe >/dev/null 2>&1 \
+   || [ -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]; then
+  clipimg() {
+    local ps=powershell.exe
+    command -v powershell.exe >/dev/null 2>&1 \
+      || ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+    # NB: name the result var anything but `status` — that's a special readonly-ish
+    # parameter in zsh (mirrors $?), so assigning to it silently breaks the function there.
+    local name res
+    name="clip-$(date +%Y%m%d-%H%M%S).png"
+    res=$("$ps" -NoProfile -Command \
+      "\$img = Get-Clipboard -Format Image; if (\$img) { New-Item -ItemType Directory -Force -Path 'C:\\Temp' | Out-Null; \$img.Save('C:\\Temp\\$name'); 'saved' } else { 'no-image' }" \
+      2>/dev/null | tr -d '\r\n')
+    if [ "$res" = "saved" ]; then
+      local ref="@/mnt/c/Temp/$name"
+      # Put the path on the Windows clipboard so it pastes straight into Claude with one
+      # keystroke (paste is Ctrl+Shift+V in WezTerm; Ctrl+C is SIGINT, not copy). This
+      # overwrites the image on the clipboard, which is fine — it's already saved to the PNG.
+      # clip.exe isn't on PATH here either, so call it by full path.
+      local clip=clip.exe
+      command -v clip.exe >/dev/null 2>&1 || clip=/mnt/c/Windows/System32/clip.exe
+      [ -x "$clip" ] && printf '%s' "$ref" | "$clip"
+      printf '%s  (copied to clipboard — paste with Ctrl+Shift+V)\n' "$ref"
+    else
+      echo "clipimg: no image on the Windows clipboard (grab one with Win+Shift+S first)" >&2
+      return 1
+    fi
+  }
+fi
+
+# --- WSL: autostart the Windows-clipboard image bridge (wsl-clip-bridge) ---
+# WSLg-only. Runs the bridge daemon once per WSL session so Alt+V pastes a Windows-clipboard
+# image into Claude Code (keybinding lives in ~/.claude/keybindings.json). Guarded by
+# $WAYLAND_DISPLAY (unset off WSLg) and the binary's presence, so it's a no-op elsewhere.
+# The "already running?" check is a cheap Linux-side pgrep, not the tool's tasklist.exe-based
+# --status — running a Windows process on every shell start would add real prompt latency.
+if [ -n "$WAYLAND_DISPLAY" ] && command -v wsl-clip-bridge >/dev/null 2>&1; then
+  # Match the daemon's executable path, not a bare "wsl-clip-bridge" — otherwise the check
+  # false-positives on a `tail ~/.cache/wsl-clip-bridge/bridge.log` or any command mentioning
+  # the tool, and skips the launch.
+  if ! pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1; then
+    nohup wsl-clip-bridge >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
+fi
+
 # --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
 # WezTerm/Ghostty read OSC 7 to clone the active pane's cwd into a new tab or split. A new
 # *window* is pinned back to the WSL home by the terminal config (WezTerm's new-window

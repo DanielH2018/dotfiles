@@ -20,6 +20,14 @@ Scripts
 .local/bin/jq
 {{ end }}
 
+# tasklist.exe / taskkill.exe symlinks are used only by wsl-clip-bridge (--status/--stop/
+# --doctor) and point into /mnt/c, so deploy them only on WSL (a linux kernel reporting
+# "microsoft"). Elsewhere they'd be dangling symlinks.
+{{ if not (and (eq .chezmoi.os "linux") (contains "microsoft" (lower .chezmoi.kernel.osrelease))) }}
+.local/bin/tasklist.exe
+.local/bin/taskkill.exe
+{{ end }}
+
 # yazi: plugin & flavor code is vendored by `ya pkg install` from the tracked
 # package.toml, so don't manage the fetched dirs — except the hand-written
 # linemode-cycle plugin, which IS tracked here.
