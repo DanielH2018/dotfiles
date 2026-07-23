@@ -450,4 +450,17 @@ test('picker highlights the whole current line so the state color reads on hover
   assert.match(src, /--highlight-line/, 'the current row gets a full-width highlight bar');
 });
 
+// ---- source badges rendered as rounded pills (boxes) --------------------
+// The machine source (PC / homelab) is wrapped in powerline half-circle caps
+// (U+E0B6  … U+E0B4 ) so it reads as a rounded box. Assert the caps enclose the label.
+test('machine source badges render as rounded pills (boxed)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\vaultproj', host: HOST, ts: nowSec() - 5 });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  assert.match(raw, /\ue0b6/, 'left rounded cap present');
+  assert.match(raw, /\ue0b4/, 'right rounded cap present');
+  assert.match(raw, /\ue0b6[^\n]*?PC[^\n]*?\ue0b4/, 'the pill encloses the PC source label');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

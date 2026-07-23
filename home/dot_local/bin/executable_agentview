@@ -422,6 +422,8 @@ C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
+BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's rounded end-caps
+PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
 # Single-source the state→accent map and the empty-state row so the two render paths
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
 # tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
@@ -490,12 +492,16 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
         homelab) bfg="$E[38;2;203;166;247m"; icon=$'';;   # mauve — server
         *)       bfg="$E[38;2;205;214;244m"; icon=$'';;   # text  — cloud
       esac
-      # fixed-width badge cell " <icon> <name> " so the "claude ·" column lines up
+      # fixed-width badge cell " <icon> <name> " + the 2 rounded pill caps, so the
+      # "claude ·" column lines up whatever the machine name's length.
       bpad=$(( BADGEW - ${#bn} - 4 )); [ "$bpad" -lt 0 ] && bpad=0
-      printf -v bcell '%*s' "$BADGEW" ''
+      printf -v bcell '%*s' "$((BADGEW + 2))" ''
       left_p="  ${bcell}  ${clabel} · ${name}"
-      printf -v left_c '  %s%s %s %s %s%*s  %s%s · %s%s%s%s%s' \
-        "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$bpad" '' "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
+      # Machine source as a rounded pill: caps (fill-colored) hug a surface-filled body with
+      # the machine-colored icon + name; trailing bpad right-pads to the shared column.
+      printf -v left_c '  %s%s%s%s %s %s %s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+        "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$icon" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
+        "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
       state_color "$grp"; scol="$_scol"
       case "$grp" in
         needs-input) stext="${title:-needs input}";;
