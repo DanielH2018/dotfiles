@@ -62,6 +62,20 @@ if command -v docker >/dev/null 2>&1; then
   else
     echo "install-docker: systemd not active yet — run 'wsl --shutdown' from Windows and reopen this distro; dockerd will auto-start." >&2
   fi
+
+  # 5. Socket-activate: drop the boot-time dockerd (largest boot-blame entry, ~3s), keep
+  #    on-demand start via docker.socket. Lived in debloat-wsl before, but that run_once
+  #    sorts ahead of this one and ran before Docker existed, so its docker.socket check
+  #    never passed on a fresh machine. Leaves a running dockerd alone — takes effect on
+  #    the next boot, where the socket lazy-starts it on the first `docker` command.
+  # socket-activation-bump: v1
+  if [ -d /run/systemd/system ] && systemctl cat docker.socket >/dev/null 2>&1; then
+    sudo systemctl enable docker.socket >/dev/null 2>&1 || true
+    if [ "$(systemctl is-enabled docker.service 2>/dev/null)" != disabled ]; then
+      sudo systemctl disable docker.service >/dev/null 2>&1 \
+        && echo "install-docker: docker.service disabled (now socket-activated via docker.socket)"
+    fi
+  fi
 fi
 
 # Fail loudly (retry next apply) if the engine still isn't installed — e.g. a sudo-less run.
