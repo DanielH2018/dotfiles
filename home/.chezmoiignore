@@ -12,6 +12,7 @@ Brewfile
 .config/wezterm
 .config/fastfetch/logos-trimmed
 .config/windows-provisioning
+.wslconfig
 bin
 Scripts
 .local/bin/jq

@@ -1,0 +1,21 @@
+# Managed by chezmoi (home/dot_wslconfig) -> %UserProfile%\.wslconfig.
+# Applies only after a full `wsl --shutdown` (the "8-second rule").
+[wsl2]
+# memory is a ceiling, not a reservation — idle WSL sits ~2GB (measured). On-demand
+# up to this cap, with autoMemoryReclaim handing cache back. Use `wsl --shutdown`
+# (Stream Deck: wsl-shutdown.cmd) to hard-free everything before a demanding game.
+memory=20GB
+# 10 of 16 logical threads; leaves 6 for Windows/games.
+processors=10
+swap=8GB
+# WSLg — Linux GUI apps.
+guiApplications=true
+# Not running VMs inside WSL; trims hypervisor surface (does NOT affect Vanguard/Hyper-V).
+nestedVirtualization=false
+
+[experimental]
+# Return page-cache RAM to Windows immediately (vs 'gradual'); the 2.7 default, pinned.
+autoMemoryReclaim=dropCache
+# Auto-shrink the ext4 VHD as docker-ce images churn. New VHDs only — convert the
+# existing disk once: `wsl --manage Ubuntu-26.04 --set-sparse true` then `sudo fstrim -v /`.
+sparseVhd=true

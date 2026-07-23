@@ -18,7 +18,7 @@ Write-Host '[power] AC standby=never, hibernate=30min'
 #     taskbar after resume/unlock/display transitions. Registered from the stored XMLs
 #     (they reference ~/bin/TaskbarAutoHideFix.exe, deployed by chezmoi). ---
 $tdir = Join-Path $env:USERPROFILE '.config\windows-provisioning\scheduled-tasks'
-foreach ($t in @('TaskbarAutoHideFix','TaskbarAutoHideFix-Poll')) {
+foreach ($t in @('TaskbarAutoHideFix','TaskbarAutoHideFix-Poll','WSL-ClockSync')) {
     $xml = Join-Path $tdir "$t.xml"
     if (Test-Path $xml) {
         Register-ScheduledTask -TaskName $t -Xml (Get-Content $xml -Raw) -User $env:USERNAME -Force | Out-Null
