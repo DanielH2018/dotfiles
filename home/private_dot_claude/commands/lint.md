@@ -39,6 +39,13 @@ Required fields: `title`, `summary`, `tags`, `created`, `updated`
 
 Flag any missing fields. If `created` or `updated` are missing and can be inferred, fill them in. Otherwise flag for human review.
 
+**Optional — source discipline (off by default).** Only if `$VAULT/.claude/wiki-context.local.md` contains a `§ Source discipline` section with `require_sources: true`, additionally check, for every factual page:
+- Missing or empty `sources` field → flag (every factual page should cite ≥1 source).
+- Missing `confidence` field (expected `high` | `medium` | `low`) → flag.
+- `confidence: high` with fewer than two `sources` → flag (claimed confidence contradicts the evidence).
+
+Flag only — never auto-fill `sources` or `confidence`; a human sets them. When the `§ Source discipline` section is absent, skip these checks entirely (zero output).
+
 STEP 4 — Link integrity (broken links, single-match auto-fix, orphans)
 
 **4a. Find broken links.** Scan all pages for `[[wikilink]]` / `[[wikilink|alias]]` patterns (and any markdown relative-path links). For each, verify the target resolves to an existing page.
@@ -106,5 +113,6 @@ Prepend a new entry to `$VAULT/log.md` (insert below the `---` separator, above 
 - Future-dated fields: <result>
 - Stale / superseded notes: <result>
 - Writing-style flags: <result>
+- Source discipline (only if enabled): <result>
 - Auto-fixed: <list or "none">
 - Needs human review: <list or "none">

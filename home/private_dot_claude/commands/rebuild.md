@@ -64,6 +64,14 @@ For each approved **split**:
 - Add backlinks from related pages
 - Delete or stub-out the original file
 
+**Source discipline (only if enabled** — a `§ Source discipline` section with
+`require_sources: true` in `$VAULT/.claude/wiki-context.local.md`; skip otherwise):
+- On **merge**: union the source pages' `sources` into the target and set the target's
+  `confidence` to the lowest of the merged pages (a merge is no more confident than its
+  weakest input).
+- On **split**: give each child the subset of the parent's `sources` it actually uses,
+  and set each child's `confidence` no higher than the parent's.
+
 STEP 7 — Regenerate index.md
 
 Rewrite index.md from scratch based on actual vault contents after all changes. Preserve the existing format, folder groupings, and the Folders table at the bottom. Update summary lines for any pages that changed significantly.
