@@ -225,6 +225,25 @@ for i = 1, 9 do
 end
 
 -- ---------------------------------------------------------------------------
+-- MOUSE  — Windows-terminal conventions on top of the CTRL+SHIFT+C/V keybinds.
+-- No Ghostty equivalent (mouse config is terminal-specific). Left-drag release copies
+-- the selection AND still opens a hyperlink on a plain click (OrOpenLink keeps the
+-- default link-open behavior); right-click pastes.
+-- ---------------------------------------------------------------------------
+config.mouse_bindings = {
+	{
+		event = { Up = { streak = 1, button = "Left" } },
+		mods = "NONE",
+		action = act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection"),
+	},
+	{
+		event = { Down = { streak = 1, button = "Right" } },
+		mods = "NONE",
+		action = act.PasteFrom("Clipboard"),
+	},
+}
+
+-- ---------------------------------------------------------------------------
 -- REMOTE ACCESS — the homelab is reached via ssh + tmux (CTRL+SHIFT+H), NOT a
 -- WezTerm mux domain. tmux is the portable multiplexer across machines; retiring the
 -- mux domain also removes the CTRL+W GUI-hang class (which was the mux round-trip over
@@ -247,6 +266,21 @@ wezterm.on("window-config-reloaded", function(window)
 		return
 	end
 	window:toast_notification("WezTerm", "Configuration reloaded ✳", nil, 1500)
+end)
+
+-- ---------------------------------------------------------------------------
+-- TAB TITLES — index + a domain glyph (WSL vs local Windows) + the pane title, so the
+-- WSL / git-bash / agentview / homelab-ssh tabs are distinguishable at a glance. Prefer an
+-- explicitly-set tab_title first: agentview stamps pane titles over OSC, and this only
+-- computes one when the process left the default. No Ghostty equivalent (WezTerm-only).
+-- ---------------------------------------------------------------------------
+wezterm.on("format-tab-title", function(tab)
+	local title = tab.tab_title
+	if title == nil or title == "" then
+		title = tab.active_pane.title
+	end
+	local glyph = (tab.active_pane.domain_name or ""):find("WSL") and " " or " "
+	return string.format(" %d %s%s ", tab.tab_index + 1, glyph, title)
 end)
 
 return config
