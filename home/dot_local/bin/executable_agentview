@@ -246,7 +246,9 @@ fi
 spawn_pick_repo() {  # echo the chosen repo path (empty if cancelled)
   local names sel d
   names=$(for d in "$repos_root"/*/; do
-    [ -e "$d/.git" ] || continue                # a dir or a file (.git) -> a git repo
+    [ -d "$d/.git" ] || continue                # .git dir = a real checkout; a .git FILE is a
+                                                # linked worktree (claude-sandbox's own -b sessions
+                                                # land in repos_root) -> skip, not a spawn target
     printf '%s\n' "$(basename "${d%/}")"
   done | sort)
   [ -n "$names" ] || { printf 'agentview: no git repos under %s\n' "$repos_root" >&2; return 1; }

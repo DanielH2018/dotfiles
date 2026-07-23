@@ -21,21 +21,30 @@ function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefi
 
 // A stub-bin dir (fzf/tmux/wezterm/claude-sandbox/hostname) + a repos root with fake git
 // repos. The fzf stub picks by prompt; tmux/wezterm log their spawn command.
-function makeEnv({ repos = ['airflow', 'webapp'] } = {}) {
+function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [] } = {}) {
   const bin = scratch('avs-bin-');
   const reposRoot = scratch('avs-repos-');
   for (const r of repos) fs.mkdirSync(path.join(reposRoot, r, '.git'), { recursive: true });
+  // Linked worktrees look like repos but carry a `.git` FILE (a gitdir pointer), not a dir.
+  for (const w of worktrees) {
+    const d = path.join(reposRoot, w); fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, '.git'), `gitdir: ${reposRoot}/${w.split('-wt-')[0]}/.git/worktrees/${w}\n`);
+  }
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
+  const repoListFile = path.join(bin, 'repo-list.txt'); fs.writeFileSync(repoListFile, '');
 
-  // fzf answers by prompt: repo> -> $FZF_REPO, branch> -> $FZF_BRANCH (drains the list).
+  // fzf answers by prompt: repo> -> $FZF_REPO, branch> -> $FZF_BRANCH. The repo> list is
+  // captured to $REPO_CAPTURE so a test can assert exactly which repos were offered.
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
 prompt=""; prev=""
 for a in "$@"; do [ "$prev" = "--prompt" ] && prompt="$a"; prev="$a"; done
-cat >/dev/null
 case "$prompt" in
-  repo*)   printf '%s\\n' "\${FZF_REPO:-}" ;;
-  branch*) printf '%s\\n' "\${FZF_BRANCH:-}" ;;
+  repo*)
+    if [ -n "\${REPO_CAPTURE:-}" ]; then cat > "\$REPO_CAPTURE"; else cat >/dev/null; fi
+    printf '%s\\n' "\${FZF_REPO:-}" ;;
+  branch*) cat >/dev/null; printf '%s\\n' "\${FZF_BRANCH:-}" ;;
+  *)       cat >/dev/null ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -59,10 +68,10 @@ echo host
     ...process.env, PATH: `${bin}:${process.env.PATH}`,
     SANDBOX_REPOS_ROOT: reposRoot,
     CLAUDE_SANDBOX_BIN: path.join(bin, 'claude-sandbox'),
-    TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog,
+    TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
-  return { bin, reposRoot, env, tmuxLog, spawnLog, sandboxBin: path.join(bin, 'claude-sandbox') };
+  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 function run(env, extraEnv = {}) {
   try {
@@ -94,6 +103,13 @@ test('empty branch -> main repo, no -b flag', { skip }, () => {
   const log = fs.readFileSync(tmuxLog, 'utf8');
   assert.ok(log.includes(`${sandboxBin} ${path.join(reposRoot, 'webapp')}`), 'launches the repo');
   assert.ok(!log.includes(' -b '), 'no -b flag when the branch is empty');
+});
+
+test('the repo picker offers real repos but hides linked worktrees', { skip }, () => {
+  const { env, repoListFile } = makeEnv({ repos: ['airflow'], worktrees: ['airflow-wt-feature'] });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  const offered = fs.readFileSync(repoListFile, 'utf8').split('\n').filter(Boolean);
+  assert.deepStrictEqual(offered, ['airflow'], `only the real checkout is offered, not the worktree; got ${JSON.stringify(offered)}`);
 });
 
 test('under wezterm (no tmux), spawns a new tab running the launcher', { skip }, () => {
