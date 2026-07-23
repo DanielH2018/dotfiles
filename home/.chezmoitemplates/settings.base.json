@@ -463,6 +463,11 @@
             "type": "command",
             "command": "~/.claude/hooks/allow-compound-bash.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-readonly-remote.sh",
+            "timeout": 10
           }
         ]
       }
