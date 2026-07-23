@@ -26,6 +26,16 @@ if [ -f "$file" ]; then                                   # carry last-known fie
   case "$locator" in none:|none|'') locator=$(jq -r '.locator // ""' < "$file" 2>/dev/null);; esac
   title=$(jq -r '.title // ""' < "$file" 2>/dev/null)
 fi
+# Name the row with Claude's OWN generated session title — the `ai-title` entries in the
+# transcript (`.aiTitle`), the same string the built-in Agent View shows (e.g. "cts ssh
+# flag handling"). grep the ai-title lines first (cheap even on a multi-MB JSONL), then jq
+# only those and take the latest. Falls back to the carried title (a sandbox repo·branch,
+# or empty -> the picker shows the age until Claude generates one).
+tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+if [ -n "$tpath" ] && [ -f "$tpath" ]; then
+  at=$(grep -aF '"ai-title"' "$tpath" 2>/dev/null | jq -r 'select(.type=="ai-title") | .aiTitle // empty' 2>/dev/null | tail -1)
+  [ -n "$at" ] && title="$at"
+fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)
 av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" ""

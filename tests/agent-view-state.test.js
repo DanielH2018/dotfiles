@@ -106,4 +106,31 @@ test('emits nothing on stdout (safe for UserPromptSubmit)', { skip }, () => {
   assert.strictEqual(out, '');
 });
 
+// ---- title from the transcript's ai-title (matches the built-in Agent View) ----
+test('names the row with the latest ai-title from the transcript', { skip }, () => {
+  const home = freshHome();
+  const tpath = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(tpath,
+    '{"type":"user","message":{"content":"hi"}}\n' +
+    '{"type":"ai-title","aiTitle":"Old title","sessionId":"s"}\n' +
+    '{"type":"assistant","message":{}}\n' +
+    '{"type":"ai-title","aiTitle":"Fix the parser race","sessionId":"s"}\n');
+  run('working', { session_id: 'titled', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'titled').title, 'Fix the parser race', 'the latest ai-title wins');
+});
+
+test('no ai-title in the transcript -> empty title (picker falls back to age)', { skip }, () => {
+  const home = freshHome();
+  const tpath = path.join(home, 'transcript.jsonl');
+  fs.writeFileSync(tpath, '{"type":"user","message":{"content":"hello"}}\n');
+  run('working', { session_id: 'untitled', cwd: '/tmp', transcript_path: tpath }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'untitled').title, '', 'no ai-title yields an empty title');
+});
+
+test('a missing/unreadable transcript_path is harmless (no title, no error)', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'notrans', cwd: '/tmp', transcript_path: '/no/such/file.jsonl' }, { pane: '1', home });
+  assert.strictEqual(readState(home, 'notrans').title, '', 'a bad transcript path just leaves the title empty');
+});
+
 process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });
