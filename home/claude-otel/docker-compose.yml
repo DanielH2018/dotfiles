@@ -5,6 +5,13 @@ name: claude-otel
 # Claude Code (running on the WSL host) exports OTLP -> otel-collector:4317,
 # which fans metrics out to Prometheus and event logs out to Loki; Grafana reads both.
 
+# The daemon default (unrotated json-file) grows without bound on always-on services.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.157.0
@@ -16,6 +23,7 @@ services:
       - "127.0.0.1:4318:4318"   # OTLP HTTP  (alternative)
       - "127.0.0.1:8889:8889"   # Prometheus scrape endpoint (collector -> prom)
     restart: unless-stopped
+    logging: *logging
 
   prometheus:
     image: prom/prometheus:v3.0.1
@@ -29,6 +37,7 @@ services:
     ports:
       - "127.0.0.1:9090:9090"
     restart: unless-stopped
+    logging: *logging
 
   loki:
     image: grafana/loki:3.3.0
@@ -39,6 +48,7 @@ services:
     ports:
       - "127.0.0.1:3100:3100"
     restart: unless-stopped
+    logging: *logging
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -61,6 +71,7 @@ services:
       - prometheus
       - loki
     restart: unless-stopped
+    logging: *logging
 
 volumes:
   prometheus-data:
