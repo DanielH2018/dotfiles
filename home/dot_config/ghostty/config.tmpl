@@ -88,6 +88,12 @@ mouse-hide-while-typing = true
 shell-integration = zsh
 #shell-integration-features = true
 
+# Auto-attach to an existing tmux session on launch (create one if none), so every
+# Ghostty window lands in tmux. Falls back to a plain login shell when tmux isn't
+# installed. (Ported from hendrikmi/dotfiles. Ghostty is macOS/Linux-only, so this
+# never runs on the Windows/WezTerm box. Remove this line to open bare shells.)
+command = zsh --login -c "if command -v tmux >/dev/null 2>&1; then tmux attach || tmux; else exec zsh; fi"
+
 # Set TERM for better Vim compatibility
 term = xterm-ghostty
 

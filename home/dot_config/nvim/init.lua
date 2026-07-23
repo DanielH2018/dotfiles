@@ -5,6 +5,9 @@ require("config.options")
 require("config.keymaps")
 require("config.autocmds")
 
+-- Standalone tools (no plugin deps; self-register commands/keymaps at load).
+require("tools.sql-runner")
+
 -- Bootstrap lazy.nvim (self-installs on first launch).
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then

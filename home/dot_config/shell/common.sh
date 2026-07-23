@@ -24,6 +24,8 @@ export IGNOREEOF=2
 # --- Editor ---
 export EDITOR='vim'
 export VISUAL="$EDITOR"
+# Read man pages in nvim (search, yank, syntax) when it's installed.
+command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
@@ -67,13 +69,13 @@ if command -v fzf >/dev/null 2>&1; then
     export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
     export FZF_ALT_C_COMMAND='fd -t d --hidden --follow --exclude .git'
   fi
-  if command -v eza >/dev/null 2>&1; then
-    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "[ -d {} ] && eza -la --icons --group-directories-first {} || head -n 200 {}"'
-    export FZF_ALT_C_OPTS='--preview "eza -la --icons --group-directories-first {}"'
-  else
-    export FZF_CTRL_T_OPTS='--height 40% --layout=reverse --border --info=inline --preview "if [ -d {} ]; then ls -la {}; else head -n 200 {}; fi"'
-    export FZF_ALT_C_OPTS='--preview "ls -la {}"'
-  fi
+  # Previews: syntax-highlighted file view (bat, else head) + rich dir listing
+  # (eza, else ls). ctrl-/ cycles the preview pane down/hidden/back.
+  if command -v bat >/dev/null 2>&1; then _fzf_fprev='bat -n --color=always {}'; else _fzf_fprev='head -n 200 {}'; fi
+  if command -v eza >/dev/null 2>&1; then _fzf_dprev='eza -la --icons --group-directories-first {}'; else _fzf_dprev='ls -la {}'; fi
+  export FZF_CTRL_T_OPTS="--height 40% --layout=reverse --border --info=inline --preview '[ -d {} ] && $_fzf_dprev || $_fzf_fprev' --bind 'ctrl-/:change-preview-window(down|hidden|)'"
+  export FZF_ALT_C_OPTS="--preview '$_fzf_dprev'"
+  unset _fzf_fprev _fzf_dprev
   export FZF_COMPLETION_TRIGGER='**'
 fi
 
@@ -146,6 +148,49 @@ if command -v fastfetch >/dev/null 2>&1; then
     else
       _ff_banner
     fi
+  }
+fi
+
+# --- fzf + git helpers (ported from hendrikmi/dotfiles) ---
+# Functions (not zsh ZLE widgets) so they work the same under bash+ble.sh and zsh.
+# `while read` instead of `xargs -o` (that flag is BSD-only; breaks on GNU/Git Bash).
+if command -v fzf >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+  # Check out a branch picked with fzf.
+  gcofzf() {
+    local b
+    b=$(git branch --format='%(refname:short)' | fzf) || return
+    [ -n "$b" ] && git checkout "$b"
+  }
+  # Stage modified/untracked files picked with fzf (Tab = multi-select).
+  gafzf() {
+    git ls-files -m -o --exclude-standard | grep -v '__pycache__' \
+      | fzf -m --preview 'git diff --color=always -- {}' \
+      | while IFS= read -r f; do [ -n "$f" ] && git add -- "$f"; done
+  }
+  # Unstage (git restore --staged) files picked with fzf.
+  grsfzf() {
+    git diff --name-only --cached \
+      | fzf -m --preview 'git diff --color=always --cached -- {}' \
+      | while IFS= read -r f; do [ -n "$f" ] && git restore --staged -- "$f"; done
+  }
+  # Discard working-tree changes (git restore) for files picked with fzf.
+  grfzf() {
+    git diff --name-only \
+      | fzf -m --preview 'git diff --color=always -- {}' \
+      | while IFS= read -r f; do [ -n "$f" ] && git restore -- "$f"; done
+  }
+fi
+
+# Search shell history with fzf and run the chosen command.
+if command -v fzf >/dev/null 2>&1; then
+  fh() {
+    local cmd
+    if [ -n "$ZSH_VERSION" ]; then
+      cmd=$(fc -l 1 | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' | fzf --tac +s) || return
+    else
+      cmd=$(history | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' | fzf --tac +s) || return
+    fi
+    [ -n "$cmd" ] && eval "$cmd"
   }
 fi
 
