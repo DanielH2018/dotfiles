@@ -708,7 +708,10 @@ printf -v hdrline '%*s' 72 "$htext"
 body=$(build_pretty); prof build_pretty
 [ -z "$body" ] && body="$NO_SESSIONS_ROW"
 
-SELF="$HOME/.local/bin/agentview"
+# Self-reference used by every fzf bind (reload/preview/rename/pin/jump). Defaults to the
+# deployed path; AGENTVIEW_SELF overrides it so an un-deployed copy (e.g. a worktree under
+# review) can drive its own picker end-to-end without clobbering the installed binary.
+SELF="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
 # Live reload: open instantly on the cached snapshot above, then in the BACKGROUND
 # refresh the homelab cache over ssh and POST a `reload` into this fzf via its
 # --listen server, so fresh remote rows swap in without ever blocking the open. The
