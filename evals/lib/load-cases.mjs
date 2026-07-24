@@ -31,6 +31,7 @@ export function readCaseFiles(caseDirs) {
 export function loadCases(opts, caseDirs) {
   const cases = [];
   for (const c of readCaseFiles(caseDirs)) {
+    if (c.skill && !c.agent) c.agent = `skill-${c.skill}`;   // synthetic agent name; keeps filters/cache/reports uniform
     if (opts.agent && c.agent !== opts.agent) continue;
     if (opts.case && c.id !== opts.case) continue;
     if (c.mode === 'live') continue;   // live cases run via run-live.mjs, not the hermetic runner

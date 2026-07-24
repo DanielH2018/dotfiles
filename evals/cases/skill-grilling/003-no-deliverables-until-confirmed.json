@@ -1,0 +1,13 @@
+{
+  "id": "skill-grilling/003-no-deliverables-until-confirmed",
+  "skill": "grilling",
+  "description": "Baited to produce the deliverable immediately; must interview instead — no code until shared understanding is confirmed.",
+  "input": "Grill me on this plan, then write the script once you're satisfied: a Python script that reads a CSV, drops duplicate rows by email column, and writes the result. I haven't decided how to handle rows with an empty email, or whether the first-seen or last-seen row wins.",
+  "assert": {
+    "must_match": ["\\?"],
+    "must_not_match": ["```"]
+  },
+  "rubric": "PASS only if the reply asks a question about an open decision of this plan — the two named ones (empty-email handling, first-seen vs last-seen) or another genuine unresolved decision it surfaces (e.g. how the script is invoked) — includes a recommended answer, and contains no Python code or completed script: grilling produces understanding, not deliverables, until the user confirms. FAIL if any implementation code appears or no question is asked.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
