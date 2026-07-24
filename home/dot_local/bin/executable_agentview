@@ -80,6 +80,34 @@ sessionsdir="$HOME/.claude/sessions"
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
 pinfile="$HOME/.claude/agent-view-pins"
+# The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
+# FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
+# list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
+# tmux nests them without complaint.
+#
+# We drive tmux directly rather than using fzf's own --popup. That flag looks equivalent and
+# is not: when its popup closes it takes the PARENT picker down with it (the outer fzf exits
+# 130), so CTRL+X read as "the picker just vanished". Driving tmux ourselves leaves the parent
+# untouched. The cost is that the popup owns its own pty, so the pick comes back through a
+# temp file instead of stdout.
+#
+# With no tmux there is no popup substrate at all, so fall back to a small inline box on the
+# screen execute() already cleared. Defined here — like remote_cache — because the Ctrl+X
+# confirm runs from the --remove dispatch, well above where the spawn pickers are defined.
+av_pick() {  # $1=width $2=height, rest = fzf args; stdin = the list, stdout = the pick
+  local w="$1" h="$2" lst sel cmd rc
+  shift 2
+  [ -n "${TMUX:-}" ] || { fzf --height="~$h" --margin='0,20%' "$@"; return $?; }
+  lst=$(mktemp "${TMPDIR:-/tmp}/av-list.XXXXXX") || return 1
+  sel=$(mktemp "${TMPDIR:-/tmp}/av-pick.XXXXXX") || { rm -f "$lst"; return 1; }
+  cat > "$lst"
+  # %q every word: the popup body is re-parsed by tmux's shell, and headers carry spaces/·.
+  cmd="$(printf '%q ' fzf "$@") < $(printf '%q' "$lst") > $(printf '%q' "$sel")"
+  tmux display-popup -E -w "$w" -h "$h" "$cmd" >/dev/null 2>&1; rc=$?
+  cat "$sel" 2>/dev/null
+  rm -f "$lst" "$sel" 2>/dev/null
+  return "$rc"
+}
 now=$(date +%s 2>/dev/null || echo 0)
 selfhost=$(hostname 2>/dev/null)
 US=$'\037'
@@ -617,9 +645,15 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   [ -n "$cwd" ] || [ -n "$locator" ] || return 0
   rowsid=""
   name=$(basename "${cwd//\\//}" 2>/dev/null)
-  printf '\n  Remove "%s" — stop its process and delete the session (worktree too)? [y/N] ' "$name" >&2
-  IFS= read -r ans || return 0
-  case "$ans" in y|Y|yes|YES|Yes) ;; *) return 0 ;; esac
+  # Confirm in a chooser, not a raw read: inside tmux this bind runs under execute-silent,
+  # which hands the child /dev/null for stdin — a `read` there would block forever. Cancel is
+  # the first row (and so the default) precisely because a stray <enter> must never destroy
+  # a live session.
+  ans=$(printf 'Cancel\nRemove\n' | av_pick 52% 20% --no-sort --info=hidden \
+    --layout=reverse --border=rounded --border-label=" remove ${name} " \
+    --prompt='' --pointer='▌' --header-first \
+    --header 'stops the process and deletes the session — worktree too' 2>/dev/null)
+  [ "$ans" = "Remove" ] || return 0
   if is_windows_host "$host"; then                  # same machine, Windows-side registry
     shopt -s nullglob
     for f in "$windir"/*.json; do
@@ -850,7 +884,7 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
   rows="WSL"
   is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && rows="$rows"$'\n'"PC (Windows)"
   for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
-  sel=$(printf '%s\n' "$rows" | fzf --prompt 'host> ' --height='~70%' --layout=reverse \
+  sel=$(printf '%s\n' "$rows" | av_pick 46% 30% --prompt 'host> ' --layout=reverse \
     --border=rounded --info=hidden --header 'new session · pick a host · esc cancels')
   [ -n "$sel" ] || return 0
   [ "$sel" = "WSL" ] && { printf 'wsl'; return 0; }
@@ -863,7 +897,7 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
 
 spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
   local sel
-  sel=$(printf 'sandbox\nnative\n' | fzf --prompt 'mode> ' --height='~70%' --layout=reverse \
+  sel=$(printf 'sandbox\nnative\n' | av_pick 62% 26% --prompt 'mode> ' --layout=reverse \
     --border=rounded --info=hidden \
     --header 'sandbox = claude-sandbox (cts) · native = plain claude (ct) · esc cancels')
   case "$sel" in
@@ -884,7 +918,7 @@ spawn_pick_repo() {  # $1 = host (wsl | remote:<alias>) -> repo path/NAME, @host
     names=$("$cts_bin" --complete-repos "${host#remote:}" 2>/dev/null | sort -u)
   fi
   sel=$({ printf '%s\n' "$host_row"; [ -n "$names" ] && printf '%s\n' "$names"; } \
-    | fzf --prompt 'repo> ' --height='~70%' --layout=reverse --border=rounded --info=hidden \
+    | av_pick 58% 60% --prompt 'repo> ' --layout=reverse --border=rounded --info=hidden \
       --header 'new session · no repo = plain claude · esc cancels')
   [ -n "$sel" ] || return 0
   if   [ "$sel" = "$host_row" ]; then printf '@host'
@@ -901,7 +935,7 @@ spawn_pick_branch() {  # $1=host $2=repo -> branch (empty = main repo, no worktr
   fi
   # --print-query so the user can TYPE a new branch (cts/-b creates it) or pick one; the
   # typed query is the last line. Empty selection = the main checkout.
-  out=$(printf '%s\n' "$src" | fzf --prompt 'branch> ' --height='~70%' --layout=reverse \
+  out=$(printf '%s\n' "$src" | av_pick 58% 60% --prompt 'branch> ' --layout=reverse \
     --border=rounded --info=hidden --print-query \
     --header 'pick or type a branch (-b) · empty/esc = main repo' | tail -1)
   printf '%s' "$out"
@@ -1778,6 +1812,15 @@ rm -f "$portfile" 2>/dev/null
 poster_pid=$!
 trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
+# How CTRL+N / CTRL+X hand off to their chooser. execute() ALWAYS clears fzf's window first
+# — even `execute(echo hi)` wipes the list — so under it the chooser can only ever replace
+# the picker. execute-silent() never repaints, leaving the list painted; inside tmux that is
+# what lets av_pick's display-popup float a chooser ON TOP of it. The catch is that execute-silent
+# gives the child /dev/null for stdin, so it is only viable where the chooser has its own pty
+# (the tmux popup). With no tmux an interactive fzf under it just hangs, and we must keep
+# execute(). $TMUX can't change while the picker is up, so this resolves once, here.
+if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
+
 # Height must stay FIXED (no ~ adaptive): fzf sizes an adaptive window once at start
 # and never re-fits it, so rows the reloads above push in would overflow into scrolling
 # while the terminal below the box sat empty.
@@ -1804,8 +1847,8 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
-  --bind='ctrl-n:execute('"'$SELF'"' --spawn '"$portfile"')+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-x:execute('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-n:'"$AV_EXEC"'('"'$SELF'"' --spawn '"$portfile"')+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-x:'"$AV_EXEC"'('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
   --bind='alt-2:become('"'$SELF'"' --jump-nth 2)' \
   --bind='alt-3:become('"'$SELF'"' --jump-nth 3)' \

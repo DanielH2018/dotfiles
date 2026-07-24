@@ -386,7 +386,7 @@ test('--remove of a Windows row taskkills the pid and drops its windir file', { 
   const { env, windir, killLog, sshLog } = makeEnv();
   winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\p', state: 'idle', ts: nowSec(), kind: 'host', locator: 'wezterm:9', pane: '', title: 't', pid: '5150' });
   const key = cardKey([WINHOST, 'C:\\p', 'idle', '0', 't', '9', 'host', 'wezterm:9']);
-  run(env, ['--remove', key], 'y\n');
+  run({ ...env, FZF_PICK: 'Remove' }, ['--remove', key]);
   assert.match(fs.readFileSync(killLog, 'utf8'), /5150/, 'taskkill invoked on the Windows pid');
   assert.ok(!fs.existsSync(path.join(windir, 'w9.json')), 'Windows row file removed');
   assert.strictEqual(fs.readFileSync(sshLog, 'utf8'), '', 'no ssh for a same-machine Windows remove');
@@ -402,7 +402,7 @@ test('--remove of a pid-less Windows bg row taskkills the pid from the daemon ro
   winRow(windir, sid, { key: sid, session: sid, host: WINHOST, cwd: 'C:\\Users\\daniel', state: 'idle', ts: nowSec(), kind: 'bg', locator: 'bg:3eeba696', pane: '', title: 'Bg job', pid: '' });
   const roster = JSON.stringify([{ pid: 26984, id: '3eeba696', cwd: 'C:\\Users\\daniel', kind: 'background', sessionId: sid, name: 'Bg job', status: 'idle' }]);
   const key = cardKey([WINHOST, 'C:\\Users\\daniel', 'idle', '0', 'Bg job', '', 'bg', 'bg:3eeba696']);
-  run({ ...env, WIN_AGENTS: roster }, ['--remove', key], 'y\n');
+  run({ ...env, WIN_AGENTS: roster, FZF_PICK: 'Remove' }, ['--remove', key]);
   assert.match(fs.readFileSync(killLog, 'utf8'), /26984/, 'taskkill invoked on the roster pid');
   assert.ok(!fs.existsSync(path.join(windir, `${sid}.json`)), 'Windows bg row file removed');
 });
@@ -414,7 +414,7 @@ test('--remove matches a Windows row by cwd when the KEY arrives @tsv-backslash-
   const { env, windir } = makeEnv();
   winRow(windir, 'w7', { key: 'w7', session: 'w7', host: WINHOST, cwd: 'C:\\Users\\daniel', state: 'idle', ts: nowSec(), kind: 'host', locator: '', pane: '', title: 'legacy', pid: '7007' });
   const key = cardKey([WINHOST, 'C:\\\\Users\\\\daniel', 'idle', '0', 'legacy', '', 'host', '']);
-  run(env, ['--remove', key], 'y\n');
+  run({ ...env, FZF_PICK: 'Remove' }, ['--remove', key]);
   assert.ok(!fs.existsSync(path.join(windir, 'w7.json')), 'the doubled-backslash cwd still matches the row');
 });
 

@@ -46,7 +46,8 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${HOST}\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n`, { mode: 0o755 });
   // --body / --jump-nth run after the jq+fzf tool check, so fzf must exist (never invoked here).
-  fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
+  // Answers the Ctrl+X confirm chooser. An unset FZF_PICK is an empty pick — i.e. cancelled.
+  fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\n[ -n "\${FZF_PICK:-}" ] && printf '%s\\n' "$FZF_PICK"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\necho "$*" >> "$SSH_LOG"\nexit 0\n`, { mode: 0o755 });
   // Injection seam for the guarded kill — logs the pid instead of signalling anything.
@@ -197,18 +198,18 @@ test('--remove kills the mapped pid, runs `claude rm`, deletes the row (after co
   stateFile(home, 'gone', { session: 'gone', cwd: '/r/gone', state: 'idle', host: HOST, kind: 'host', locator: 'tmux:/s:g:%1' });
   sessionProc(home, 5150, 'gone');                    // Claude maps pid 5150 -> session gone
   const key = rowKey({ cwd: '/r/gone', state: 'idle', locator: 'tmux:/s:g:%1' });
-  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Remove' } }).code, 0);
   assert.strictEqual(read(killLog).trim(), '5150', 'kills the pid Claude maps to this session');
   assert.match(read(claudeLog), /rm gone/, 'runs `claude rm <sid>` to delete the record + worktree');
   assert.ok(!fs.existsSync(avFile(home, 'gone')), 'the registry row is dropped');
 });
 
-test('--remove aborts entirely when the confirm is not "y"', { skip }, () => {
+test('--remove aborts entirely when the confirm chooser returns Cancel', { skip }, () => {
   const { env, home, killLog } = makeEnv();
   stateFile(home, 'keep', { session: 'keep', cwd: '/r/keep', state: 'idle', host: HOST, kind: 'host', locator: 'tmux:/s:k:%1' });
   sessionProc(home, 6000, 'keep');
   const key = rowKey({ cwd: '/r/keep', state: 'idle', locator: 'tmux:/s:k:%1' });
-  assert.strictEqual(run(env, ['--remove', key], { input: 'n\n' }).code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Cancel' } }).code, 0);
   assert.strictEqual(read(killLog).trim(), '', 'no process is signalled');
   assert.ok(fs.existsSync(avFile(home, 'keep')), 'the session is left intact');
 });
@@ -219,7 +220,7 @@ test('--remove only kills the pid Claude currently maps to the sid (reuse-safe)'
   sessionProc(home, 1111, 'someone-else');            // 1111 belongs to a DIFFERENT session
   sessionProc(home, 2222, 'target');                  // 2222 is our session
   const key = rowKey({ cwd: '/r/t', state: 'idle', locator: 'tmux:/s:t:%1' });
-  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Remove' } }).code, 0);
   assert.strictEqual(read(killLog).trim(), '2222', 'only the sid-matched pid is killed, never a reused one');
 });
 
@@ -230,7 +231,7 @@ test('--remove of a REMOTE row purges over ssh and filters the cache', { skip },
   const { env, home, sshLog } = makeEnv();
   fs.writeFileSync(path.join(home, '.agentview-remote-cache'), `${gone}\n${keep}`);
   const key = rowKey({ host: 'daniel-server', cwd: '/r/rgone', state: 'working', locator: 'tmux:/s:rg:%2' });
-  assert.strictEqual(run(env, ['--remove', key], { input: 'y\n' }).code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Remove' } }).code, 0);
   assert.match(read(sshLog), /claude rm/, 'runs the purge on the remote over ssh');
   assert.match(read(sshLog), /s=rg/, 'for the selected session id');
   const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');

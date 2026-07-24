@@ -55,6 +55,14 @@ exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
+# Real tmux RUNS the command string a display-popup is handed, and av_pick depends on that to
+# get the pick back through a temp file. A stub that only logged would strand every chooser on
+# an empty selection, so model the execution too.
+if [ "$1" = "display-popup" ]; then
+  for a in "$@"; do cmd="$a"; done
+  bash -c "$cmd"
+  exit $?
+fi
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'wezterm'), `#!/bin/bash
@@ -130,7 +138,9 @@ function waitFor(pred, ms = 3000) {
 
 // ---- structural: the picker exposes the spawn action ----
 test('interactive picker binds ctrl-n to --spawn and hints it in the footer', () => {
-  assert.match(SRC, /ctrl-n:execute\([^)]*--spawn/, 'ctrl-n runs agentview --spawn');
+  // The literal action is $AV_EXEC now — execute-silent under tmux (so the spawn pickers can
+  // float as a popup over the list), plain execute otherwise. See av_pick in the script.
+  assert.match(SRC, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n runs agentview --spawn');
   assert.match(SRC, /⌃n new/, 'footer advertises the new-session action');
 });
 
@@ -197,7 +207,9 @@ test('under wezterm (no tmux), spawns a new tab running the launcher', { skip },
 test('cancelling the repo pick is a clean no-op (no spawn)', { skip }, () => {
   const { env, tmuxLog, spawnLog } = makeEnv();
   run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: '', FZF_BRANCH: 'x' });
-  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no window spawned when repo pick is empty');
+  // The tmux log is no longer empty on a cancel — the chooser itself is a display-popup now.
+  // What must not appear is a new-window: that is the actual spawn.
+  assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('new-window'), 'no window spawned when repo pick is empty');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
@@ -220,8 +232,8 @@ test('no backend + the no-repo row -> execs ct ~/dev in place', { skip }, () => 
 
 // ---- ctrl-n dismiss: a real spawn tells the picker to abort (close its popup/tab) ----
 test('ctrl-n bind passes the fzf portfile to --spawn', () => {
-  assert.match(SRC, /ctrl-n:execute\(.*--spawn '"\$portfile"'\)/,
-    'the ctrl-n execute() forwards the live picker portfile to --spawn');
+  assert.match(SRC, /ctrl-n:'"\$AV_EXEC"'\(.*--spawn '"\$portfile"'\)/,
+    'the ctrl-n handoff forwards the live picker portfile to --spawn');
 });
 
 test('a successful spawn POSTs abort to the picker portfile', { skip }, () => {
@@ -259,7 +271,7 @@ test('the host pick offers WSL + homelab, and routes WSL to the repo pick', { sk
 test('cancelling the host pick is a clean no-op', { skip }, () => {
   const { env, tmuxLog, spawnLog } = makeEnv();
   run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: '', FZF_REPO: 'airflow' });
-  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'nothing spawned when the host pick is empty');
+  assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('new-window'), 'nothing spawned when the host pick is empty');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
@@ -284,7 +296,7 @@ test('WSL native mode in a bare shell execs ct <repo>', { skip }, () => {
 test('cancelling the mode pick is a clean no-op', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: '' });
-  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'nothing spawned when the mode pick is empty');
+  assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('new-window'), 'nothing spawned when the mode pick is empty');
 });
 
 // ---- homelab (remote) spawn ----

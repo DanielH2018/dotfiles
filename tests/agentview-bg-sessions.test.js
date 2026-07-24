@@ -50,12 +50,21 @@ function makeEnv() {
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
+  // The chooser's window flags are the point of the popup rework and arrive in argv, not on
+  // stdin — so log argv separately from the piped list.
+  const fzfArgs = path.join(bin, 'fzf-args.txt'); fs.writeFileSync(fzfArgs, '');
   fs.writeFileSync(path.join(bin, 'wezterm'), '#!/bin/bash\necho "[]"\nexit 0\n', { mode: 0o755 });
   // Stateful enough to model window de-dup: new-window records the window name, select-window
   // exits 0 only if that name already exists (real tmux behaviour), kill-window drops it.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
+# Real tmux RUNS a display-popup's command string; av_pick gets its pick back that way.
+if [ "$1" = "display-popup" ]; then
+  for a in "$@"; do cmd="$a"; done
+  bash -c "$cmd"
+  exit $?
+fi
 case "$1" in
   select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
   new-window)    echo "$3" >> "$wins"; exit 0 ;;
@@ -64,7 +73,7 @@ esac
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'fzf'), '#!/bin/bash\ncat > "$FZF_CAPTURE"\n[ -n "${FZF_PICK:-}" ] && printf \'%s\\n\' "$FZF_PICK"\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'fzf'), '#!/bin/bash\necho "$*" >> "$FZF_ARGS"\ncat > "$FZF_CAPTURE"\n[ -n "${FZF_PICK:-}" ] && printf \'%s\\n\' "$FZF_PICK"\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho "${HOST}"\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
@@ -74,12 +83,12 @@ exit 0
   fs.writeFileSync(path.join(bin, 'kill-stub'), '#!/bin/bash\necho "$*" >> "$KILL_LOG"\nexit 0\n', { mode: 0o755 });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
-    TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, FZF_CAPTURE: capture,
+    TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, FZF_CAPTURE: capture, FZF_ARGS: fzfArgs,
     AV_KILLCMD: path.join(bin, 'kill-stub'), KILL_LOG: killLog,
   };
   delete env.TMUX;
   delete env.WEZTERM_PANE;
-  return { bin, home, env, tmuxLog, claudeLog, capture, killLog };
+  return { bin, home, env, tmuxLog, claudeLog, capture, killLog, fzfArgs };
 }
 
 function hookRow(home, sid, obj) {
@@ -428,6 +437,9 @@ test('a host row with a reused pid keeps rendering but its stale pane locator is
 // (merge_session_row). --remove then gets a KEY that matches NOTHING on disk, because the hook
 // file still says kind=host / locator=none: — so Ctrl+X silently did nothing on every bg row.
 const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
+// The Ctrl+X confirm is an fzf chooser now, not a `read`, so the stub answers it via FZF_PICK
+// instead of stdin. Leaving FZF_PICK unset models an empty pick — i.e. cancelling.
+const CONFIRM = { FZF_PICK: 'Remove' };
 
 test('--remove deletes a bg-merged hook row whose KEY carries the bg: locator', { skip }, () => {
   const { env, home, capture, killLog } = makeEnv();
@@ -445,7 +457,7 @@ test('--remove deletes a bg-merged hook row whose KEY carries the bg: locator', 
   const row = raw.split('\n').find((l) => l.includes(US) && l.split('\t')[0].split(US)[7] === 'bg:bbbb2222');
   assert.ok(row, 'the merged row renders with a bg: locator');
   const key = row.split('\t')[0];
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], CONFIRM).code, 0);
   assert.ok(!fs.existsSync(avFile(home, sid)), 'the bg row\'s hook file is deleted');
   assert.match(fs.readFileSync(killLog, 'utf8'), new RegExp(String(ALIVE_PID2)),
     'the live process behind the session is signalled');
@@ -470,7 +482,7 @@ test('--remove of one bg row leaves the other bg rows alone', { skip }, () => {
   }
   const raw = body(env, capture);
   const row = raw.split('\n').find((l) => l.includes(US) && l.split('\t')[0].split(US)[7] === 'bg:bbbb2222');
-  assert.strictEqual(run(env, ['--remove', row.split('\t')[0]], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', row.split('\t')[0]], CONFIRM).code, 0);
   assert.ok(!fs.existsSync(avFile(home, gone)), 'the picked bg row is removed');
   assert.ok(fs.existsSync(avFile(home, keep)), 'the other bg row at the same cwd survives');
 });
@@ -485,8 +497,76 @@ test('--remove still matches a bg row by locator when the hook file records bg: 
     locator: 'bg:dddd4444', pane: '', title: 'Direct', pid: '', ts: nowSec() - 30,
   });
   const key = cardKey([HOST, '/home/daniel/dev', 'idle', String(nowSec()), 'Direct', '', 'bg', 'bg:dddd4444']);
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], CONFIRM).code, 0);
   assert.ok(!fs.existsSync(avFile(home, sid)), 'a hook row that already stores bg:<job> still matches');
+});
+
+// ---- Ctrl+X / Ctrl+N as popups (see av_pick + AV_EXEC) --------------------------------
+// The confirm moved from a raw `read` to an fzf chooser so it can render as a tmux popup
+// floating over the session list. Two things have to hold: Cancel must be the default, and
+// the chooser must ask for a popup window only where tmux can actually provide one.
+
+test('--remove cancels when the confirm chooser is dismissed', { skip }, () => {
+  const { env, home } = makeEnv();
+  const sid = 'bbbb2222-0000-0000-0000-000000000005';
+  hookRow(home, sid, {
+    key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'bg',
+    locator: 'bg:eeee5555', pane: '', title: 'Keep me', pid: '', ts: nowSec() - 30,
+  });
+  const key = cardKey([HOST, '/home/daniel/dev', 'idle', String(nowSec()), 'Keep me', '', 'bg', 'bg:eeee5555']);
+  // No FZF_PICK: <esc> out of the chooser. A destructive action must never be the fallback.
+  assert.strictEqual(run(env, ['--remove', key]).code, 0);
+  assert.ok(fs.existsSync(avFile(home, sid)), 'an empty pick leaves the session alone');
+});
+
+test('--remove will not act on a pick that is not exactly "Remove"', { skip }, () => {
+  const { env, home } = makeEnv();
+  const sid = 'bbbb2222-0000-0000-0000-000000000006';
+  hookRow(home, sid, {
+    key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'bg',
+    locator: 'bg:ffff6666', pane: '', title: 'Cancelled', pid: '', ts: nowSec() - 30,
+  });
+  const key = cardKey([HOST, '/home/daniel/dev', 'idle', String(nowSec()), 'Cancelled', '', 'bg', 'bg:ffff6666']);
+  assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Cancel' }).code, 0);
+  assert.ok(fs.existsSync(avFile(home, sid)), 'picking Cancel leaves the session alone');
+});
+
+test('the confirm chooser runs in a tmux popup only when $TMUX is set', { skip }, () => {
+  const { env, home, fzfArgs, tmuxLog } = makeEnv();
+  const sid = 'bbbb2222-0000-0000-0000-000000000007';
+  const mk = () => hookRow(home, sid, {
+    key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'bg',
+    locator: 'bg:7777aaaa', pane: '', title: 'Geo', pid: '', ts: nowSec() - 30,
+  });
+  const key = cardKey([HOST, '/home/daniel/dev', 'idle', String(nowSec()), 'Geo', '', 'bg', 'bg:7777aaaa']);
+
+  mk();
+  run(env, ['--remove', key], { FZF_PICK: 'Cancel' });          // makeEnv deletes TMUX
+  assert.match(fs.readFileSync(fzfArgs, 'utf8'), /--height/,
+    'with no popup substrate the chooser is a small inline fzf box');
+  assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('display-popup'),
+    'and nothing is asked of tmux');
+
+  fs.writeFileSync(fzfArgs, ''); fs.writeFileSync(tmuxLog, '');
+  mk();
+  run(env, ['--remove', key], { FZF_PICK: 'Cancel', TMUX: '/tmp/tmux-1000/default,1,0' });
+  // NOT fzf's own --popup: that flag takes the parent picker down with it (the outer fzf
+  // exits 130 when the popup closes), which read as "Ctrl+X made the picker vanish".
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /display-popup -E -w 52% -h 20%/,
+    'inside tmux the chooser floats over the session list');
+  assert.ok(!fs.readFileSync(fzfArgs, 'utf8').includes('--popup'),
+    'fzf is never handed --popup — tmux is driven directly');
+});
+
+test('ctrl-n and ctrl-x hand off via $AV_EXEC, which only goes silent under tmux', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  // execute() unconditionally clears fzf's window, so the chooser can only float above the
+  // list when the bind is execute-silent. That is only safe where the chooser owns its own
+  // pty (the tmux popup) — execute-silent hands the child /dev/null and an inline fzf hangs.
+  assert.match(src, /if \[ -n "\$\{TMUX:-\}" \]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi/,
+    'the bind action resolves once, from $TMUX');
+  assert.match(src, /ctrl-x:'"\$AV_EXEC"'\([^)]*--remove \{1\}\)\+reload/, 'ctrl-x still reloads after removing');
+  assert.match(src, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n still runs --spawn');
 });
 
 process.on('exit', () => {
