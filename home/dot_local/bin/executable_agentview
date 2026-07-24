@@ -911,6 +911,13 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
         *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac
       maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
+      # Idle/completed rows keep their title too: the idle marker appends only while
+      # both fit — when width runs out the name wins and the marker drops.
+      case "$st" in needs-input|working) ;; *)
+        if [ -n "$title" ]; then
+          [ $(( ${#title} + 2 + ${#stext} )) -le "$maxs" ] && stext="$title  $stext" || stext="$title"
+        fi;;
+      esac
       [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
       pad=$(( W - ${#left_p} - ${#stext} )); [ "$pad" -lt 1 ] && pad=1
       printf -v sp '%*s' "$pad" ''
