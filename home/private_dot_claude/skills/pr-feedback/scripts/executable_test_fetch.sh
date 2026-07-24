@@ -2,12 +2,14 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX="$SCRIPT_DIR/fixtures"
+FETCH="$SCRIPT_DIR/fetch.sh"
+[[ -f "$FETCH" ]] || FETCH="$SCRIPT_DIR/executable_fetch.sh"  # source tree, prefix not stripped
 pass=0; fail=0
 assert_eq() {  # desc expected actual
   if [[ "$2" == "$3" ]]; then pass=$((pass+1));
   else fail=$((fail+1)); echo "FAIL: $1"; echo "  expected: [$2]"; echo "  actual:   [$3]"; fi
 }
-run() { PR_FEEDBACK_FIXTURE="$FIX/$1" bash "$SCRIPT_DIR/fetch.sh"; }
+run() { PR_FEEDBACK_FIXTURE="$FIX/$1" bash "$FETCH"; }
 
 out="$(run mixed.json)"
 assert_eq "mixed total"            "3"        "$(jq -r '.counts.total' <<<"$out")"

@@ -1,0 +1,156 @@
+// Regression guard for two pure-ish helpers inside the 2000+ line
+// executable_claude-sandbox launcher, picked as the highest-value slice
+// testable without docker:
+//   - validate_version(): the only gate between untrusted repo content
+//     (.sdkmanrc/.nvmrc/go.mod/.terraform-version version strings) and a
+//     shell command / curl URL built from it in generate_dockerfile() —
+//     a missed injection char here is a container-escape-adjacent bug.
+//   - detect_docker_need(): decides whether the container is granted a
+//     Docker socket proxy at all (see the NEEDS_DOCKER gate later in the
+//     launcher) — a false negative silently breaks compose workflows, a
+//     false positive grants unnecessary Docker access.
+// Uses the same technique as claude-sandbox-compose-scan.test.js: extract the
+// REAL function body at test runtime (awk brace-depth counter) and drive it
+// in a bash harness, rather than re-implementing or guessing its logic.
+// Offline. Skips cleanly if bash is unavailable.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
+
+let toolsOk = true;
+try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }
+const skip = toolsOk ? false : 'bash/awk unavailable';
+
+// Extract <name>() { ... } verbatim: print from its def line, tracking brace
+// depth, stop once depth returns to 0 at the matching closing brace.
+function extractFunction(name) {
+  const src = execFileSync('awk', [
+    `/^${name}\\(\\) \\{/ { started=1 }\n` +
+    'started {\n' +
+    '  print\n' +
+    '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
+    '  if (started && depth==0) exit\n' +
+    '}',
+    SANDBOX,
+  ], { encoding: 'utf8' });
+  assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
+  assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);
+  return src;
+}
+
+const VALIDATE_VERSION_SRC = extractFunction('validate_version');
+const DETECT_DOCKER_NEED_SRC = extractFunction('detect_docker_need');
+
+// Single-quote for safe embedding in a bash -c string (double quotes would let
+// $(...) / `...` in an "unsafe" fixture actually execute during the harness's
+// own parsing, before validate_version ever sees the literal string).
+function shq(s) { return `'${s.replace(/'/g, `'\\''`)}'`; }
+
+function run(script, env = {}) {
+  try {
+    const out = execFileSync('bash', ['-c', script], {
+      env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { code: 0, stdout: out, stderr: '' };
+  } catch (e) {
+    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
+  }
+}
+
+// --- validate_version(): untrusted-input sanitizer ---
+
+const SAFE_VERSIONS = ['1.5.7', '3.11', '17', '1.21.0-rc1', '17_2+build'];
+const UNSAFE_VERSIONS = [
+  '1.5.7; rm -rf /',
+  '$(whoami)',
+  '1.5 7',
+  '1.5.7`id`',
+  '../../etc/passwd',
+  '1.5.7|true',
+  '1.5.7&&true',
+  "1.5.7'",
+];
+
+test('validate_version accepts version strings made only of [0-9a-zA-Z._+-]', { skip }, () => {
+  for (const v of SAFE_VERSIONS) {
+    const r = run(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
+    assert.strictEqual(r.code, 0, `should accept: ${v} (stderr: ${r.stderr})`);
+    assert.strictEqual(r.stderr, '');
+  }
+});
+
+test('validate_version rejects shell-metacharacter strings with exit 1 and an error message', { skip }, () => {
+  for (const v of UNSAFE_VERSIONS) {
+    const r = run(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
+    assert.strictEqual(r.code, 1, `should reject: ${v}`);
+    assert.match(r.stderr, /unsafe label version string/);
+  }
+});
+
+// --- detect_docker_need(): NEEDS_DOCKER gate ---
+
+const dirs = [];
+function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-docker-need-')); dirs.push(d); return d; }
+
+function detectDockerNeed(repoPath) {
+  const r = run(`${DETECT_DOCKER_NEED_SRC}\nNEEDS_DOCKER=false\ndetect_docker_need\nprintf '%s' "$NEEDS_DOCKER"`,
+    { REPO_PATH: repoPath });
+  assert.strictEqual(r.code, 0);
+  return r.stdout;
+}
+
+test('a repo with no compose file and no Makefile does not need docker', { skip }, () => {
+  const dir = scratch();
+  assert.strictEqual(detectDockerNeed(dir), 'false');
+});
+
+test('a top-level docker-compose.yml sets NEEDS_DOCKER=true', { skip }, () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'docker-compose.yml'), 'services: {}\n');
+  assert.strictEqual(detectDockerNeed(dir), 'true');
+});
+
+test('a top-level compose.yaml (the newer compose-spec name) also sets NEEDS_DOCKER=true', { skip }, () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'compose.yaml'), 'services: {}\n');
+  assert.strictEqual(detectDockerNeed(dir), 'true');
+});
+
+test('a compose file one directory deep (monorepo layout, maxdepth 2) is still detected', { skip }, () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, 'backend'));
+  fs.writeFileSync(path.join(dir, 'backend', 'docker-compose.yml'), 'services: {}\n');
+  assert.strictEqual(detectDockerNeed(dir), 'true');
+});
+
+test('a compose file two directories deep is past the documented maxdepth 2 boundary and is missed', { skip }, () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, 'backend', 'svc'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'backend', 'svc', 'docker-compose.yml'), 'services: {}\n');
+  assert.strictEqual(detectDockerNeed(dir), 'false');
+});
+
+test('a Makefile referencing "docker compose" (space form) sets NEEDS_DOCKER=true', { skip }, () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'Makefile'), 'up:\n\tdocker compose up -d\n');
+  assert.strictEqual(detectDockerNeed(dir), 'true');
+});
+
+test('a Makefile referencing "docker-compose" (hyphen form) sets NEEDS_DOCKER=true', { skip }, () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'Makefile'), 'up:\n\tdocker-compose up -d\n');
+  assert.strictEqual(detectDockerNeed(dir), 'true');
+});
+
+test('a Makefile with unrelated content does not need docker', { skip }, () => {
+  const dir = scratch();
+  fs.writeFileSync(path.join(dir, 'Makefile'), 'build:\n\tgo build ./...\n');
+  assert.strictEqual(detectDockerNeed(dir), 'false');
+});
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
