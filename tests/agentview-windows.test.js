@@ -157,10 +157,11 @@ test('--jump of a Windows row activates its pane via wezterm.exe, not ssh', { sk
 // A Windows session outlives its pane id (the mux renumbers on a domain re-attach) but keeps
 // writing the old one, because its hook reads $WEZTERM_PANE from the session's own frozen
 // environment. The picker must not trust the recorded id blindly.
-const WIN_PANES = JSON.stringify([
+const WIN_PANES_ARR = [
   { window_id: 0, tab_id: 0, pane_id: 0, title: 'wezterm.exe', cwd: 'file://daniel-wsl/home/daniel/dev' },
   { window_id: 0, tab_id: 4, pane_id: 5, title: 'Investigate typing lag', cwd: 'file://daniel-desktop/c/Users/daniel' },
-]);
+];
+const WIN_PANES = JSON.stringify(WIN_PANES_ARR);
 const activated = (log) => fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
 // --body renders row KEYs through jq's @tsv, which escapes every backslash as two — so the key
 // fzf hands back for a Windows row really does carry "C:\\Users\\daniel". Build the fixtures the
@@ -189,13 +190,43 @@ test('--jump falls back to a bare-shell pane when no retitled pane matches', { s
   assert.ok(activated(activateLog).includes('7'), 'second tier accepts a pane Claude never retitled');
 });
 
-test('--jump of a Windows row with no live pane fails loudly', { skip }, () => {
-  const { env, activateLog } = makeEnv();
-  const key = cardKey([WINHOST, tsvCwd('C:\\Projects\\other'), 'working', '0', 'task', '12', 'host', 'wezterm:12']);
+// ---- jump tier 3: no pane anywhere --------------------------------------
+// A Windows session can outlive its pane entirely — close the tab and the process (plus its
+// hook) keeps running, refreshing a row that offers a jump nothing can serve. A Windows pty
+// can't be attached from WSL the way a tmux one can, so the only way back in is a fresh pane.
+test('--jump reopens a Windows session whose pane is gone, resuming its conversation', { skip }, () => {
+  const { env, windir, activateLog, sendLog } = makeEnv();
+  winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\Users\\daniel\\dotfiles', state: 'needs-input', ts: nowSec() - 60, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'orphan', pid: '29644' });
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel\\dotfiles'), 'needs-input', '0', 'orphan', '12', 'host', 'wezterm:12']);
+  // The live mux has pane 0 (a WSL shell) and pane 5 (cwd c/Users/daniel) — neither serves
+  // ...\dotfiles, so both the recorded id and the cwd correlation come up empty.
+  const r = run({ ...env, WEZWIN_PANES: JSON.stringify([WIN_PANES_ARR[0]]) }, ['--jump', key]);
+  assert.strictEqual(r.code, 0, 'a reopened session is a successful jump');
+  const spawned = fs.readFileSync(sendLog, 'utf8');
+  assert.match(spawned, /cli spawn --domain-name local/, 'opens a new Windows tab');
+  assert.match(spawned, /--resume w9/, 'resumes the row\'s own conversation, not a blank one');
+  assert.match(spawned, /C:\/Users\/daniel\/dotfiles/, 'lands in the row cwd, backslashes undoubled');
+  assert.deepStrictEqual(activated(activateLog), ['12'], 'no unrelated pane was activated');
+});
+
+test('--jump still fails loudly when there is nothing to reopen', { skip }, () => {
+  const { env, activateLog, sendLog } = makeEnv();
+  // No cwd on the row and no windir entry: nothing to correlate, resume, or even cd into.
+  const key = cardKey([WINHOST, '', 'working', '0', 'task', '12', 'host', 'wezterm:12']);
   const r = run({ ...env, WEZWIN_PANES: WIN_PANES }, ['--jump', key]);
   assert.notStrictEqual(r.code, 0, 'a jump that focused nothing must not exit 0');
   assert.match(r.err, /no pane found/, 'and must say so — silence reads as a dead keybinding');
+  assert.strictEqual(fs.readFileSync(sendLog, 'utf8'), '', 'and must not spawn a blank session');
   assert.deepStrictEqual(activated(activateLog), ['12'], 'no unrelated pane was activated');
+});
+
+test('--jump does not respawn when a live pane still serves the row', { skip }, () => {
+  const { env, windir, sendLog } = makeEnv();
+  winRow(windir, 'w5', { key: 'w5', session: 'w5', host: WINHOST, cwd: 'C:\\Users\\daniel', state: 'working', ts: nowSec() - 60, kind: 'host', locator: 'wezterm:5', pane: '5', title: 'live', pid: '1' });
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel'), 'working', '0', 'live', '5', 'host', 'wezterm:5']);
+  const r = run({ ...env, WEZWIN_PANES: WIN_PANES }, ['--jump', key]);
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(fs.readFileSync(sendLog, 'utf8'), '', 'focusing a live pane must never open a second one');
 });
 
 test('--jump leaves a live locator alone (no needless re-resolve)', { skip }, () => {

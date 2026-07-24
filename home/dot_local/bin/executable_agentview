@@ -14,7 +14,10 @@
 #                         Picking the "no repo" entry launches a plain HOST claude at $HOME
 #                         instead (no sandbox, no branch pick).
 #   agentview --resolve KEY  print the CLIENT-side pane id to jump to (or nothing)
-#   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd)
+#   agentview --jump KEY  activate the session's pane (locator-direct, or legacy cwd). Where the
+#                         picker owns its terminal (no $TMUX — i.e. the dedicated "Agent View"
+#                         WezTerm tab) the session opens IN that tab; a Windows row whose pane
+#                         is gone is reopened in a fresh Windows tab instead.
 #   agentview --jump-nth N  jump to the Nth session in render order (ALT+N target)
 #   agentview --card KEY  render the fzf preview card
 #   agentview --keys      render the keyboard-shortcut cheatsheet (shown on `?`)
@@ -230,21 +233,22 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   # below. Errors (host down, session gone) surface IN the new view, never a silent no-op.
   rcmd="tmux select-pane -t '$pane' 2>/dev/null; tmux attach -t '$session'"
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    # Portable: open a new window in the LOCAL tmux running the ssh-attach. Works under
-    # any outer terminal (Ghostty, WezTerm-hosting-WSL, bare ssh) — no wezterm needed.
+    # Popup entry point (prefix+g): the picker is a display-popup that dies with its command,
+    # so attaching in place would strand the session in a 90%x90% overlay. Use a window —
+    # REUSING the one already attached to this remote session, or repeat jumps leak one each.
+    # Same reuse trick av_open_claude_cmd applies to bg sessions.
+    tmux select-window -t "=$session" 2>/dev/null && return 0
     tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
+    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
     return 0
   fi
-  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    # Native WezTerm: spawn a fresh GUI tab. `wezterm cli spawn` derives its target from
-    # $WEZTERM_PANE, which is unset when WSL doesn't inherit WezTerm's env — gate on it, or
-    # spawn fails and (with output swallowed) this branch silently no-ops.
-    wezterm cli spawn -- ssh -t "$sshalias" "$rcmd" >/dev/null 2>&1
-    return 0
-  fi
-  # Bare shell (no local tmux, no usable wezterm — e.g. a plain WSL shell): attach in THIS
-  # terminal. exec replaces the picker with the ssh-attach, mirroring the local bare-shell
-  # path. Errors (host down, session gone) surface here instead of a silent no-op.
+  # No tmux: the picker owns its terminal — the dedicated "Agent View" WezTerm tab runs
+  # `agentview` as the tab's own command — so attach RIGHT HERE. exec replaces the picker and
+  # the session lands in the tab you opened it from. There is deliberately NO `wezterm cli
+  # spawn` branch: from WSL that binary reaches its own mux, not the Windows GUI, so it spawned
+  # the attach into a pane no window displays. Worse, it was gated on $WEZTERM_PANE and sat
+  # ABOVE this line, so whenever WezTerm exported that var it outranked the path that works and
+  # the jump became a silent no-op. Errors (host down, session gone) surface here instead.
   command -v ssh >/dev/null 2>&1 || return 1
   exec ssh -t "$sshalias" "$rcmd"
 }
@@ -269,6 +273,49 @@ resolve_windows_pane() {  # $1 = the row's cwd -> echo a live Windows pane id se
   [ -n "$target" ] && printf '%s' "$target"
 }
 
+win_path() {  # sets _wp = $1 as a forward-slash Windows path Git Bash accepts ("C:/Users/...")
+  # A row KEY reaches us through @tsv, which doubles every backslash, so convert then collapse
+  # the runs — exactly why JQ_NORM carries gsub("//+";"/"). No UNC paths live in this registry.
+  local s="${1//\\//}"
+  while [[ "$s" == *//* ]]; do s="${s//\/\///}"; done
+  _wp="$s"
+}
+
+win_sid_for_row() {  # $1=locator $2=cwd -> echo this row's Windows session id (or nothing)
+  # Same match predicate do_remove uses over $windir: trust the locator when the row has one,
+  # else fall back to cwd. Every file in $windir is a Windows row, so host/kind add nothing.
+  # Both cwds go through `norm` first — the KEY's arrives @tsv-doubled ("C:\\Users") while the
+  # registry stores it single ("C:\Users"), so a raw == would never fire and this would quietly
+  # degrade to a resume-less respawn.
+  local loc="$1" cwd="$2" f sid
+  [ -d "$windir" ] || return
+  shopt -s nullglob
+  for f in "$windir"/*.json; do
+    sid=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$loc" --arg cwd "$cwd" "
+      $JQ_NORM
+      (\$cwd|norm) as \$w
+      | select( (\$loc != \"\" and (.locator // \"\") == \$loc)
+             or (\$w != \"\" and ((.cwd // \"\")|norm) == \$w) )
+      | (.session // .key // \"\")" "$f" 2>/dev/null)
+    [ -n "$sid" ] && break
+  done
+  shopt -u nullglob
+  [ -n "$sid" ] && printf '%s' "$sid"
+}
+
+av_respawn_windows() {  # $1=cwd $2=sid -> reopen the session in a NEW Windows tab. 0 on success.
+  # Reached only when the session has no pane anywhere: its terminal was closed while the
+  # process (and its hook) lived on, leaving a row that offers a jump nothing can serve. Mirrors
+  # spawn_windows_claude, but lands in the row's own cwd and resumes its conversation.
+  local cwd="$1" sid="$2" cmd _wp
+  [ -x "$WEZTERM_WIN" ] || return 1
+  [ -n "$cwd" ] || return 1
+  win_path "$cwd"
+  cmd="cd \"$_wp\" 2>/dev/null || cd; exec claude"
+  [ -n "$sid" ] && cmd="$cmd --resume $sid"
+  "$WEZTERM_WIN" cli spawn --domain-name local -- "$WIN_GITBASH" -lc "$cmd" >/dev/null 2>&1
+}
+
 av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus a Windows WezTerm
   # pane from WSL via the Windows wezterm.exe. Pane-ids are GUI-global, so a WSL WezTerm tab can
   # activate a Windows-domain pane; activate-pane reuses the pane (no new tab). Only works when
@@ -282,13 +329,23 @@ av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus
   # notice it is wrong from the inside. So a dead id is re-resolved HERE, by cwd, and a jump that
   # still finds nothing returns non-zero: activate-pane's failure used to be swallowed and
   # reported as success, which is what made <enter> look like a no-op.
-  local loc="$1" scwd="${2:-}" pane=""
+  #
+  # Tier 3 covers the case neither id nor cwd can: the pane is gone but the process isn't, so
+  # the row keeps refreshing and there is nothing to focus. Reopen the conversation in a new
+  # Windows tab rather than report failure — a Windows pane can never be attached from WSL the
+  # way a tmux one can, so a fresh pane is the only way back into that session.
+  local loc="$1" scwd="${2:-}" pane="" sid
   [ -x "$WEZTERM_WIN" ] || return 1
   case "$loc" in wezterm:?*) pane="${loc#wezterm:}" ;; esac
   if [ -z "$pane" ] || ! "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1; then
     pane=$(resolve_windows_pane "$scwd")
-    [ -n "$pane" ] || return 1
-    "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1 || return 1
+    if [ -n "$pane" ]; then
+      "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1 || pane=""
+    fi
+    if [ -z "$pane" ]; then
+      sid=$(win_sid_for_row "$loc" "$scwd")
+      av_respawn_windows "$scwd" "$sid"; return $?
+    fi
   fi
   nohup bash -c "sleep 0.25; '$WEZTERM_WIN' cli activate-pane --pane-id '$pane'" \
     >/dev/null 2>&1 </dev/null &
@@ -311,9 +368,9 @@ av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a pane of the
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name stable for reuse
     return 0
   fi
-  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli spawn -- bash -lc "claude $1" >/dev/null 2>&1; return 0
-  fi
+  # No tmux: the picker owns its terminal, so run the session HERE and it lands in the tab you
+  # opened the picker from. No wezterm-spawn branch — see remote_attach for why that path was
+  # both invisible and higher-priority than this one.
   # shellcheck disable=SC2086 — intentional word split of the subcommand
   exec claude $1
 }

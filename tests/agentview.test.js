@@ -66,8 +66,17 @@ case "$*" in
 esac
 exit 0
 `, { mode: 0o755 });
+  // tmux stub with a window registry, mirroring agentview-actions.test.js: `select-window`
+  // only succeeds for a window some earlier `new-window` created. The picker's reuse paths
+  // are built on that failure, so a stub that exits 0 unconditionally would report reuse for
+  // windows that never existed and hide whether a window is ever actually opened.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
+wins="$TMUX_LOG.wins"; touch "$wins"
+case "$1" in
+  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
+  new-window)    echo "$3" >> "$wins" ;;
+esac
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
@@ -333,16 +342,20 @@ test('a sandbox row with an EMPTY pane keeps the locator at KEY field 8 (no tab-
   assert.strictEqual(fields[7], loc, `locator must land in KEY field 8; got ${JSON.stringify(fields)}`);
 });
 
-test('REMOTE tmux row, WEZTERM_PANE set -> WezTerm spawns an ssh-attach tab', { skip }, () => {
-  const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
-  // host != selfhost (daniel-server) -> remote attach, NOT local activation. Not inside
-  // tmux, but WEZTERM_PANE is set so `wezterm cli spawn` can target a pane -> a GUI tab.
+test('REMOTE tmux row, WEZTERM_PANE set -> STILL attaches in place, never a wezterm tab', { skip }, () => {
+  const { env, sshLog, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  // host != selfhost (daniel-server) -> remote attach, NOT local activation. WEZTERM_PANE is
+  // set, which used to divert this to `wezterm cli spawn`. From WSL that binary reaches its own
+  // mux rather than the Windows GUI, so the attach landed in a pane no window displays — and
+  // because the branch sat ABOVE the exec, setting this var was enough to make <enter> look
+  // dead. The picker owns its terminal here, so the attach belongs in THIS tab.
   const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
   run(env, [], { FZF_PICK: pick, WEZTERM_PANE: '0' });
-  const spawned = fs.readFileSync(spawnLog, 'utf8');
-  assert.match(spawned, /spawn -- ssh -t daniel-server/, 'spawns a local tab ssh-ing to the remote');
-  assert.match(spawned, /attach -t 'airflow'/, 'attaches the target tmux session');
-  assert.match(spawned, /select-pane -t '%3'/, 'lands on the captured pane');
+  const ssh = fs.readFileSync(sshLog, 'utf8');
+  assert.match(ssh, /-t daniel-server/, 'ssh -t to the remote host, in this terminal');
+  assert.match(ssh, /attach -t 'airflow'/, 'attaches the target tmux session');
+  assert.match(ssh, /select-pane -t '%3'/, 'lands on the captured pane');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn — it would be invisible');
   assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'must NOT activate a remote pane locally');
 });
 
@@ -371,6 +384,19 @@ test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', 
   assert.match(log, /ssh -t daniel-server/, 'the window runs the ssh-attach');
   assert.match(log, /attach -t 'airflow'/, 'attaches the target session');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'must NOT use wezterm spawn when inside tmux');
+});
+
+test('REMOTE tmux row jumped twice reuses its window instead of stacking a second', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });
+  // Under the popup entry point every jump used to call new-window unconditionally, so
+  // returning to one remote session repeatedly buried the client in duplicates.
+  const pick = [cardKey(['daniel-server', '/home/ubuntu/airflow', 'working', '0', 'airflow', '%3', 'host', 'tmux:/tmp/tmux-1000/default:airflow:%3']), 'display'].join('\t');
+  const inTmux = { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, [], inTmux);
+  run(env, [], inTmux);
+  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n airflow'));
+  assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t =airflow/, 'and gets there by selecting it');
 });
 
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
