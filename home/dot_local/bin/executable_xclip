@@ -2,15 +2,39 @@
 # Shim: forward xclip calls to WSLg's wl-copy/wl-paste, which bridge to the
 # Windows clipboard. Installed because /etc/wsl.conf sets appendWindowsPath=false
 # (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
-# Supports the common flag shapes CLI clipboard libraries emit.
+# Supports the common flag shapes CLI clipboard libraries emit — including the
+# TARGETS probe and typed image reads Claude Code uses to paste screenshots.
+#
+# The TARGETS handling matters: Claude probes `xclip -t TARGETS -o` and greps the
+# output for image/png|image/bmp to decide a pasted image exists. The old shim
+# ignored -t and dumped raw clipboard bytes, so that grep saw pixel data, matched
+# nothing, and Claude concluded there was no image — Alt+V silently did nothing.
 out=0
+target=
+prev=
 for arg in "$@"; do
+  case "$prev" in
+    -t|-target) target="$arg" ;;
+  esac
   case "$arg" in
     -o|-out) out=1 ;;
   esac
+  prev="$arg"
 done
+
 if [ "$out" -eq 1 ]; then
-  exec wl-paste --no-newline
+  case "$target" in
+    # Answer the TARGETS probe with the list of available MIME types, like real
+    # xclip — wl-paste -l is the Wayland equivalent.
+    TARGETS) exec wl-paste -l ;;
+    # Typed read (e.g. image/png, image/bmp): forward the type so binary payloads
+    # come back intact instead of wl-paste's default text selection.
+    ?*)      exec wl-paste --no-newline --type "$target" ;;
+    *)       exec wl-paste --no-newline ;;
+  esac
 else
-  exec wl-copy
+  case "$target" in
+    ?*) exec wl-copy --type "$target" ;;
+    *)  exec wl-copy ;;
+  esac
 fi

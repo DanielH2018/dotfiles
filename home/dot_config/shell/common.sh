@@ -303,35 +303,6 @@ if command -v powershell.exe >/dev/null 2>&1 \
   }
 fi
 
-# --- WSL: autostart the Windows-clipboard image bridge (wsl-clip-bridge) ---
-# WSLg-only. Runs the bridge daemon once per WSL session so Alt+V pastes a Windows-clipboard
-# image into Claude Code (keybinding lives in ~/.claude/keybindings.json). Guarded by
-# $WAYLAND_DISPLAY (unset off WSLg) and the binary's presence, so it's a no-op elsewhere.
-# The "already running?" check is a cheap Linux-side pgrep, not the tool's tasklist.exe-based
-# --status — running a Windows process on every shell start would add real prompt latency.
-if [ -n "$WAYLAND_DISPLAY" ] && command -v wsl-clip-bridge >/dev/null 2>&1; then
-  # Serialize with other shells via flock: opening several panes at once otherwise races —
-  # each passes the check, several wrappers launch, their listeners collide on the Win32
-  # single-instance mutex, and the losers orphan (leaving no listener at all). One shell wins
-  # the lock and launches; the rest recheck inside it and no-op. Match the daemon's exe path
-  # ('bin/wsl-clip-bridge'), not a bare name, so the check can't false-positive on a
-  # `tail ~/.cache/wsl-clip-bridge/bridge.log`.
-  (
-    flock -w 2 9 || exit 0
-    if ! pgrep -f 'bin/wsl-clip-bridge' >/dev/null 2>&1; then
-      if pgrep -f 'clip-listener\.exe.*--win-out' >/dev/null 2>&1; then
-        # A listener outlived its wrapper (pane closed, wrapper died with it): nothing
-        # pipes to wl-copy anymore, and the orphan holds the Win32 single-instance mutex
-        # so a plain relaunch would lose to it. --doctor kills the orphan and starts a
-        # fresh pair; detached, so the (rare) tasklist.exe call never blocks the prompt.
-        nohup wsl-clip-bridge --doctor >/dev/null 2>&1 & disown
-      else
-        nohup wsl-clip-bridge >/dev/null 2>&1 & disown
-      fi
-    fi
-  ) 9>"${XDG_RUNTIME_DIR:-/tmp}/wsl-clip-bridge.autostart.lock" 2>/dev/null
-fi
-
 # --- OSC 7: report cwd so the terminal reopens new tabs/splits in the current dir ---
 # WezTerm/Ghostty read OSC 7 to clone the active pane's cwd into a new tab or split. A new
 # *window* is pinned back to the WSL home by the terminal config (WezTerm's new-window

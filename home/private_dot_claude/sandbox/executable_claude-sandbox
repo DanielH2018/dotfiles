@@ -1826,8 +1826,8 @@ if [[ -f "$HOME/.claude/keybindings.json" ]]; then
 fi
 
 # WSL image paste: share the host WSLg Wayland clipboard so alt+v in-container reads the
-# image/png the host wsl-clip-bridge daemon puts there (the Windows clipboard is BMP-only and
-# the container has no Windows interop to convert it). Gated on the socket, so it's a no-op off
+# image WSLg mirrors from the Windows clipboard as image/bmp (the container's xclip shim
+# forwards the typed read to wl-paste). Gated on the socket, so it's a no-op off
 # WSLg. The socket is world-accessible (0777) and the container uid matches the host (1000), so
 # no permission setup is needed. WAYLAND_DISPLAY is the absolute socket path, which avoids having
 # to set XDG_RUNTIME_DIR (that would point other tools at a root-owned mount point).

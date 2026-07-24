@@ -1,8 +1,7 @@
-// Regression guard for the xclip/xsel/wsl-clip-bridge clipboard shims in
-// home/dot_local/bin. xclip and xsel forward to WSLg's wl-copy/wl-paste
-// (not directly to a Windows exe — see the comments in each script); this
-// drives the REAL scripts against stub wl-copy/wl-paste/tasklist.exe/taskkill.exe
-// placed first on PATH, so no real clipboard or Windows interop is touched.
+// Regression guard for the xclip/xsel clipboard shims in home/dot_local/bin.
+// xclip and xsel forward to WSLg's wl-copy/wl-paste (not directly to a Windows
+// exe — see the comments in each script); this drives the REAL scripts against
+// stub wl-copy/wl-paste placed first on PATH, so no real clipboard is touched.
 // Offline. Skips cleanly if bash is unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -14,7 +13,6 @@ const path = require('node:path');
 const BIN_DIR = path.join(__dirname, '..', 'home', 'dot_local', 'bin');
 const XCLIP = path.join(BIN_DIR, 'executable_xclip');
 const XSEL = path.join(BIN_DIR, 'executable_xsel');
-const BRIDGE = path.join(BIN_DIR, 'executable_wsl-clip-bridge');
 
 // Resolve bash by absolute path so spawning it doesn't depend on (and isn't broken
 // by) the deliberately-stripped-down PATH we hand to the scripts under test.
@@ -81,6 +79,39 @@ test('xclip -out (long alias) also routes to the paste path', { skip }, () => {
   assert.strictEqual(r.stdout, 'out');
 });
 
+// --- xclip: TARGETS probe + typed reads (what Claude Code uses to paste images) ---
+test('xclip -t TARGETS -o answers with the type list from wl-paste -l', { skip }, () => {
+  // The old shim ignored -t and dumped raw clipboard bytes here, so Claude's
+  // `... | grep image/png|image/bmp` saw pixels, matched nothing, and concluded
+  // no image was pasteable. wl-paste -l is the type list that probe expects.
+  const dir = scratch();
+  const argvFile = path.join(dir, 'argv.txt');
+  makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'image/bmp\\ntext/plain\\n'`);
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], { env: { ...process.env, PATH: dir } });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /image\/bmp/);
+  assert.strictEqual(fs.readFileSync(argvFile, 'utf8'), '-l', 'TARGETS maps to wl-paste -l, not a raw paste');
+});
+
+test('xclip -t image/png -o forwards the type so binary reads stay intact', { skip }, () => {
+  const dir = scratch();
+  const argvFile = path.join(dir, 'argv.txt');
+  makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'PNGBYTES'`);
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'PNGBYTES');
+  assert.strictEqual(fs.readFileSync(argvFile, 'utf8'), '--no-newline --type image/png');
+});
+
+test('xclip -t <type> on the copy path forwards the type to wl-copy', { skip }, () => {
+  const dir = scratch();
+  const argvFile = path.join(dir, 'argv.txt');
+  makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png'], { env: { ...process.env, PATH: dir }, input: 'x' });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(fs.readFileSync(argvFile, 'utf8'), '--type image/png');
+});
+
 // --- xclip: missing backend ---
 test('xclip fails loudly when wl-copy is missing from PATH', { skip }, () => {
   const dir = scratch(); // empty — no wl-copy/wl-paste stub
@@ -134,53 +165,6 @@ test('xsel -b (cluster without i or a) still reads, does not write', { skip }, (
   const r = run(XSEL, ['-b'], { env: { ...process.env, PATH: dir } });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, 'read-path');
-});
-
-// --- wsl-clip-bridge: --status / --stop argument routing, and missing backend ---
-test('wsl-clip-bridge --status reports "running" when tasklist.exe lists the listener', { skip }, () => {
-  const dir = scratch();
-  makeStub(dir, 'tasklist.exe', `printf 'Image Name\\nclip-listener.exe  1234 Console  1  10,000 K\\n'`);
-  const r = run(BRIDGE, ['--status'], { env: { ...process.env, PATH: dir } });
-  assert.strictEqual(r.code, 0);
-  assert.strictEqual(r.stdout.trim(), 'running');
-});
-
-test('wsl-clip-bridge --status reports "stopped" when tasklist.exe has no match', { skip }, () => {
-  const dir = scratch();
-  makeStub(dir, 'tasklist.exe', `printf 'INFO: No tasks running.\\n'`);
-  const r = run(BRIDGE, ['--status'], { env: { ...process.env, PATH: dir } });
-  assert.strictEqual(r.code, 0);
-  assert.strictEqual(r.stdout.trim(), 'stopped');
-});
-
-test('wsl-clip-bridge --stop reports "stopped" when taskkill.exe succeeds', { skip }, () => {
-  const dir = scratch();
-  makeStub(dir, 'taskkill.exe', `exit 0`);
-  const r = run(BRIDGE, ['--stop'], { env: { ...process.env, PATH: dir } });
-  assert.strictEqual(r.code, 0);
-  assert.strictEqual(r.stdout.trim(), 'stopped');
-});
-
-test('wsl-clip-bridge --stop reports nothing-running when taskkill.exe fails', { skip }, () => {
-  const dir = scratch();
-  makeStub(dir, 'taskkill.exe', `exit 1`);
-  const r = run(BRIDGE, ['--stop'], { env: { ...process.env, PATH: dir } });
-  assert.strictEqual(r.code, 0);
-  assert.match(r.stdout, /no clip-listener\.exe running/);
-});
-
-test('wsl-clip-bridge --status errors when tasklist.exe (the backend) is missing', { skip }, () => {
-  const dir = scratch(); // empty — no tasklist.exe stub
-  const r = run(BRIDGE, ['--status'], { env: { ...process.env, PATH: dir } });
-  assert.notStrictEqual(r.code, 0);
-  assert.match(r.stderr, /tasklist\.exe not found/);
-});
-
-test('wsl-clip-bridge --stop errors when taskkill.exe (the backend) is missing', { skip }, () => {
-  const dir = scratch(); // empty — no taskkill.exe stub
-  const r = run(BRIDGE, ['--stop'], { env: { ...process.env, PATH: dir } });
-  assert.notStrictEqual(r.code, 0);
-  assert.match(r.stderr, /taskkill\.exe not found/);
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
