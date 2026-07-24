@@ -8,8 +8,8 @@
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
-    "CTS_REMOTE_ROOTS": "~/server"{{ if eq .chezmoi.hostname "daniel-wsl" }},
-    {{/* OTEL export targets the local claude-otel stack — only this machine runs the collector on :4317 */}}
+    "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop") }},
+    {{/* OTEL export targets the claude-otel stack on daniel-wsl (:4317); daniel-desktop reaches it via WSL2 localhost forwarding */}}
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
