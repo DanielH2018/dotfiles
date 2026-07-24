@@ -245,9 +245,37 @@ remote_alias() {  # $1 = row host -> ssh alias, from the HOST_SSH table (falls b
   printf '%s' "${HOST_SSH[$1]:-$1}"
 }
 
+remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon session over ssh.
+  # The remote analogue of av_jump_bg. A daemon-hosted job has no pane on either side, so the
+  # only way in is the daemon's own client — and it must run on the OWNING host: the local
+  # `claude` knows nothing about a session hosted elsewhere. Window reuse (cc-<job>) mirrors
+  # av_open_claude_cmd, since `claude attach` leaves the session running when its client exits.
+  local host="$1" job="$2" sshalias rcmd wname
+  command -v ssh >/dev/null 2>&1 || return 1
+  # Job ids come from the remote registry (hex/uuid). Reject anything else rather than quote
+  # it: the remote command crosses ssh AND (inside tmux) a `sh -c`, where quoting a hostile
+  # value is far easier to get wrong than refusing it.
+  case "$job" in *[!a-zA-Z0-9._-]*) return 1;; esac
+  sshalias=$(remote_alias "$host")
+  # A non-interactive ssh gets a bare PATH — ~/.local/bin (where claude installs) is added by
+  # the login shell we don't get — so extend PATH remotely. Written WITHOUT double quotes so
+  # the string survives the tmux `sh -c` layer below with $HOME/$PATH still unexpanded, i.e.
+  # resolved on the remote and not against this machine's environment.
+  if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"; wname="cc-$job"
+  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents"; fi
+  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+    tmux select-window -t "=$wname" 2>/dev/null && return 0
+    tmux new-window -n "$wname" "ssh -t $sshalias '$rcmd'"
+    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    return 0
+  fi
+  exec ssh -t "$sshalias" "$rcmd"
+}
+
 remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
   local host="$1" loc="$2" backend rest session pane sshalias rcmd
   backend="${loc%%:*}"; rest="${loc#*:}"
+  [ "$backend" = "bg" ] && { remote_attach_bg "$host" "$rest"; return $?; }
   [ "$backend" = "tmux" ] || return 1        # only tmux remotes attach; others list-only
   # rest = <socket>:<session>:<pane>
   pane="${rest##*:}"; rest="${rest%:*}"; session="${rest##*:}"
@@ -1288,20 +1316,25 @@ refresh_remote() {  # pull homelab state over ssh, fold its live registry in, re
   out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob
 declare -A M UPD
-# sid -> "state<TAB>ts" from live, non-sdk, alive-pid sessions (newest updatedAt wins).
+# sid -> "state<TAB>ts<TAB>kind<TAB>jobId" from live, non-sdk, alive-pid sessions (newest
+# updatedAt wins). kind/jobId carry the daemon identity the hook row cannot know — see the
+# bg rewrite below. jobId is emitted LAST because it is the only field that can be empty and
+# tab is IFS whitespace: a middle empty would collapse and shift every later column.
 for sf in "$HOME/.claude/sessions"/*.json; do
   line=$(jq -r '
     select(((.status // "") != "") and ((.sessionId // "") != "") and (((.entrypoint // "") | startswith("sdk")) | not)) |
     [ (.pid // 0 | tostring), .sessionId,
       (if .status == "busy" then "working" elif .status == "waiting" then "needs-input" else "completed" end),
       (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
-      ((.updatedAt // .startedAt // 0) | tostring) ] | @tsv' "$sf" 2>/dev/null)
+      ((.updatedAt // .startedAt // 0) | tostring),
+      (if (.kind // "") == "bg" then "bg" else "host" end),
+      (.jobId // "") ] | @tsv' "$sf" 2>/dev/null)
   [ -n "$line" ] || continue
-  IFS=$'\t' read -r pid sid st ts upd <<< "$line"
+  IFS=$'\t' read -r pid sid st ts upd lkind ljob <<< "$line"
   [ -n "$pid" ] && [ -n "$sid" ] || continue
   kill -0 "$pid" 2>/dev/null || continue
   if [ -n "${UPD[$sid]:-}" ] && [ "${UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
-  UPD[$sid]="$upd"; M[$sid]="$st"$'\t'"$ts"
+  UPD[$sid]="$upd"; M[$sid]="$st"$'\t'"$ts"$'\t'"$lkind"$'\t'"${ljob:-}"
 done
 # Emit each hook row, its HOST state/ts overridden by the live registry when present.
 for af in "$HOME/.claude/agent-view"/*.json; do
@@ -1309,11 +1342,18 @@ for af in "$HOME/.claude/agent-view"/*.json; do
   kind=$(jq -r '.kind // "host"' "$af" 2>/dev/null)
   ov="${M[$sid]:-}"
   if [ -n "$ov" ] && [ "$kind" = "host" ]; then
-    st="${ov%%$'\t'*}"; ts="${ov#*$'\t'}"
+    st="${ov%%$'\t'*}"; ov="${ov#*$'\t'}"
+    ts="${ov%%$'\t'*}"; ov="${ov#*$'\t'}"
+    lkind="${ov%%$'\t'*}"; ljob="${ov#*$'\t'}"
     # Idle folds to "completed"; a dirty/unpushed tree (a stamped .git marker) is REVIEW —
     # keep .git and re-derive, mirroring the local merge_session_row upgrade.
-    jq -c --arg s "$st" --argjson t "${ts:-0}" \
-      '.state=(if $s=="completed" and ((.git // "")!="") then "review" else $s end) | .ts=$t' "$af" 2>/dev/null
+    # A daemon bg job has no pane on either side, so its hook row carries a none: locator the
+    # jump path can only reject. Flip kind to bg and carry the JOB id as the focus target
+    # (attach matches jobId, NOT the session uuid) — the same swap merge_session_row makes
+    # locally, so <enter> reaches `claude attach` over ssh instead of reporting "no pane".
+    jq -c --arg s "$st" --argjson t "${ts:-0}" --arg k "$lkind" --arg j "$ljob" \
+      '.state=(if $s=="completed" and ((.git // "")!="") then "review" else $s end) | .ts=$t
+       | if $k == "bg" then .kind="bg" | .locator="bg:"+$j | .backend="bg" else . end' "$af" 2>/dev/null
   else
     jq -c '.' "$af" 2>/dev/null
   fi

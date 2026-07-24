@@ -265,6 +265,34 @@ test('--refresh-remote ignores a dead-pid registry entry and keeps the hook stat
   assert.strictEqual(row.state, 'needs-input', 'a dead-pid registry entry does not override the hook state');
 });
 
+// A daemon-hosted homelab session has NO pane anywhere — its hook row is written with a
+// none: locator, which the jump path can only reject. The fold already reads the remote live
+// registry, so it must do what the local merge does: flip kind to bg and carry the JOB id as
+// the focus target, or <enter> on the row reports "no pane found" and nothing opens.
+test('--refresh-remote marks a remote DAEMON session bg and gives it a bg:<jobId> locator', { skip }, () => {
+  const now = nowSec();
+  const { env, home } = makeEnv();
+  const rhome = scratch('av-remote-');
+  fs.mkdirSync(path.join(rhome, '.claude', 'agent-view'), { recursive: true });
+  fs.mkdirSync(path.join(rhome, '.claude', 'sessions'), { recursive: true });
+  const sid = 'eeee5555-0000-0000-0000-0000000000ee';
+  // What the remote state hook records for a daemon job: no pane, so no locator.
+  fs.writeFileSync(path.join(rhome, '.claude', 'agent-view', `${sid}.json`),
+    JSON.stringify({ key: sid, session: sid, kind: 'host', state: 'needs-input', cwd: '/home/ubuntu/server',
+      host: 'daniel-server', ts: now - 300, backend: 'none', locator: 'none:', title: '' }));
+  // The remote live registry knows it is a bg job and knows its jobId — the attach handle.
+  fs.writeFileSync(path.join(rhome, '.claude', 'sessions', `${process.pid}.json`),
+    JSON.stringify({ pid: process.pid, sessionId: sid, status: 'waiting', entrypoint: 'cli',
+      kind: 'bg', jobId: 'eeee5555', updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
+  run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
+  assert.strictEqual(row.kind, 'bg', 'kind routes <enter> to the remote bg attach');
+  assert.strictEqual(row.locator, 'bg:eeee5555', 'locator carries the JOB id, not the session uuid');
+  assert.strictEqual(row.backend, 'bg', 'backend mirrors the locator prefix');
+  assert.strictEqual(row.state, 'needs-input', 'live waiting status still folds into the state');
+});
+
 test('--body prints the grouped list (local + cache) to stdout for the live reload', { skip }, () => {
   const now = nowSec();
   const remote = JSON.stringify({ pane: '1', state: 'needs-input', cwd: '/home/ubuntu/remotebody', session: 'r', host: 'daniel-server', ts: now - 5 });
@@ -405,6 +433,41 @@ test('a REMOTE row with a non-tmux locator does not activate locally', { skip },
   run(env, [], { FZF_PICK: pick });
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no spawn for a non-tmux remote');
   assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'no local activation of a remote pane');
+});
+
+// A homelab bg row is the remote analog of the local bg jump (agentview-bg-sessions): there is
+// no pane on either side, so the only way in is the remote daemon's own client. It must run
+// THERE, over ssh — the local `claude` cannot attach a session hosted on another machine.
+const RBG = ['daniel-server', '/home/ubuntu/server', 'needs-input', '0', 'job', '', 'bg', 'bg:eeee5555'];
+
+test('a REMOTE bg row execs `claude attach <jobId>` on the remote, not locally', { skip }, () => {
+  const { env, sshLog, spawnLog, activateLog } = makeEnv({ list: '[]' });
+  const pick = [cardKey(RBG), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  const ssh = fs.readFileSync(sshLog, 'utf8');
+  assert.match(ssh, /-t daniel-server/, 'ssh -t to the remote host, in this terminal');
+  assert.match(ssh, /claude attach eeee5555/, 'attaches the daemon job by its jobId');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn');
+  assert.strictEqual(fs.readFileSync(activateLog, 'utf8'), '', 'no local pane to activate');
+});
+
+test('a REMOTE bg row INSIDE tmux opens one reusable per-session window', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });
+  const inTmux = { FZF_PICK: [cardKey(RBG), 'display'].join('\t'), TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, [], inTmux);
+  run(env, [], inTmux);
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /new-window -n cc-eeee5555 ssh -t daniel-server/, 'the window runs the remote attach');
+  assert.match(log, /claude attach eeee5555/, 'attaching the job, not a tmux session');
+  const opened = log.split('\n').filter((l) => l.startsWith('new-window -n cc-eeee5555'));
+  assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
+});
+
+test('a REMOTE bg row with no jobId falls back to the remote agents roster', { skip }, () => {
+  const { env, sshLog } = makeEnv({ list: '[]' });
+  const pick = [cardKey([...RBG.slice(0, 7), 'bg:']), 'display'].join('\t');
+  run(env, [], { FZF_PICK: pick });
+  assert.match(fs.readFileSync(sshLog, 'utf8'), /claude agents/, 'no job id -> open the roster there');
 });
 
 // ---- reliability --------------------------------------------------------
