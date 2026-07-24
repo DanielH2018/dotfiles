@@ -1,0 +1,12 @@
+{
+  "id": "skill-gh-stack/002-submit-requires-auto",
+  "skill": "gh-stack",
+  "description": "Creating/updating the stack's PRs non-interactively requires --auto on submit.",
+  "input": "What exact command do you run to push the current stack's branches and create or update their PRs? Nothing can be executed here — just state the command.",
+  "assert": {
+    "must_match": ["gh stack submit --auto"]
+  },
+  "rubric": "PASS only if the stated command includes `gh stack submit --auto`, and the reply does not present bare `gh stack submit` (without `--auto`) as a valid or alternative way to submit the stack. FAIL if a flagless `gh stack submit` is recommended anywhere in the reply.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

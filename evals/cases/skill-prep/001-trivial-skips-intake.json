@@ -1,0 +1,12 @@
+{
+  "id": "skill-prep/001-trivial-skips-intake",
+  "skill": "prep",
+  "description": "A one-line named-file+change+check ask routes to the trivial gear: no intake block, no batch of questions.",
+  "input": "This is a self-contained, hypothetical scenario, independent of any real project or session you might otherwise have context on: fix a typo in src/utils/formatDate.js at line 42: change the string 'recieve' to 'receive'. Verify by grepping for 'recieve' in that file — it should return no matches after the fix. There is no repo attached for you to inspect, and none should be assumed to exist on disk — take the file and its content at line 42 as given fact, the same way you would if the user had pasted the relevant line directly. Don't spend a turn checking whether the file exists; there's nothing to check with, so state the edit and the verification step as you'd perform them.",
+  "assert": {
+    "must_not_match": ["Prompt gaps"]
+  },
+  "rubric": "PASS only if the reply treats this as trivial: it does not produce the medium-gear intake block (no Understanding/Assumptions/Context pulled/Questions/Prompt gaps headers) and does not ask a batch of clarifying questions before proceeding. It's fine for the reply to note it has no filesystem access and describe the edit and the grep check instead of literally performing them, and fine to mention verification briefly as part of doing the work rather than as a separate gated section. FAIL if it produces the intake block, asks clarifying questions before proceeding, or stops to wait for a 'go' instead of treating the task as ready to execute.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

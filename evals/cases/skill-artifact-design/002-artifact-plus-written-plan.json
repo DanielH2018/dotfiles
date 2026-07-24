@@ -1,0 +1,12 @@
+{
+  "id": "skill-artifact-design/002-artifact-plus-written-plan",
+  "skill": "artifact-design",
+  "description": "The HTML artifact is delivered in addition to the written plan in chat, not instead of it.",
+  "input": "Here's a short implementation plan I want rendered as an artifact for review: add a /healthz endpoint to the API service that returns 200 and checks DB connectivity, add a Kubernetes liveness probe pointing at it, and add a unit test for the handler. That's the whole plan — three steps, nothing else. You have no filesystem access in this turn, so don't try to write a file to disk — instead print the complete, self-contained HTML artifact inline in your reply (e.g. in a fenced code block), in addition to the plan in prose.",
+  "assert": {
+    "must_match": ["<style"]
+  },
+  "rubric": "PASS only if the reply includes both (a) a complete self-contained HTML artifact printed inline, and (b) the plan itself written out in the chat as readable prose or markdown (headings, paragraphs, or a bulleted list of the three steps) — not merely a one-line pointer telling the reader to look at the HTML. The written version doesn't need to duplicate the HTML's exact wording, just cover the same three steps in plain chat text. FAIL if the reply gives only the HTML artifact with no separate written plan in the chat response, or gives only a written plan with no HTML artifact.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

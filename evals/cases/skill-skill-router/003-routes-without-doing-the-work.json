@@ -1,0 +1,12 @@
+{
+  "id": "skill-skill-router/003-routes-without-doing-the-work",
+  "skill": "skill-router",
+  "description": "Baited to grill the plan itself right now; must only name grilling and hand off, not start the one-question interview.",
+  "input": "Here's my plan: I want to add a Redis cache in front of our Postgres-backed product API, but I haven't decided on invalidation strategy, TTLs, or fallback behavior when Redis is down. Grill me on it right now. There's no repo or dashboard for you to inspect — everything known so far is in this message.",
+  "assert": {
+    "must_match": ["grilling"]
+  },
+  "rubric": "PASS only if the reply names grilling as the skill to use and hands off to it, without itself asking a stress-testing question about the plan's open decisions (invalidation strategy, TTLs, or Redis-down fallback) or offering a recommendation on any of them. A closing offer like 'want me to start?' or 'should I hand this to grilling?' is acceptable framing, not a violation. FAIL if the reply asks about or answers any of the plan's open decisions itself, i.e. performs the grilling instead of routing to it.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

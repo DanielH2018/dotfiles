@@ -1,0 +1,12 @@
+{
+  "id": "skill-skill-router/002-routes-pr-feedback",
+  "skill": "skill-router",
+  "description": "Asking what's blocking open PRs / what review comments are waiting routes to pr-feedback.",
+  "input": "What review comments are waiting on my open PRs, and what's blocking them from merging? Which skill should I use for this? There's no repo or PR list for you to inspect — just tell me which skill fits.",
+  "assert": {
+    "must_match": ["pr-feedback"]
+  },
+  "rubric": "PASS only if the reply names pr-feedback as the skill to use for this situation. FAIL if the reply recommends a different skill (e.g. gh-stack, triage) as the primary fit instead, or does not name a skill at all.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
