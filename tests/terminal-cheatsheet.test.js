@@ -97,7 +97,7 @@ test('Claude card: grouped by context, readable labels, two-step chords', () => 
 
   assert.match(html, /<h2>Claude Code<\/h2>/);
   assert.match(html, /--accent:var\(--peach\)/);
-  assert.match(html, /Custom overrides/);
+  assert.match(html, /Built-ins \+ custom overrides/);
   // Grouped by context.
   assert.match(html, /<h3>Global<\/h3>/);
   assert.match(html, /<h3>Chat<\/h3>/);
@@ -140,12 +140,85 @@ test('Claude card omitted (no crash) when keybindings.json is absent', () => {
   assert.match(html, /No WezTerm \/ Ghostty \/ Neovim \/ Yazi \/ Claude Code configs found/);
 });
 
-test('Claude card omitted (no crash) when keybindings.json is malformed', () => {
+test('Claude card: malformed keybindings.json falls back to built-ins only (no crash)', () => {
   const home = tmpdir(), xdg = tmpdir();
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'keybindings.json'), '{ this is not json');
   const html = runGen({ home, xdg });
-  assert.ok(!html.includes('<h2>Claude Code</h2>'), 'malformed config must be skipped, not crash');
+  assert.match(html, /<h2>Claude Code<\/h2>/);
+  assert.match(html, /<h3>Built-in<\/h3>/);
+  assert.match(html, /built-in keymap/);
+  assert.ok(!html.includes('Toggle to-do panel'), 'custom overrides must not render from malformed json');
+});
+
+test('Claude card: built-in defaults render alongside custom overrides', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  writeKeybindings(home, SAMPLE_BINDINGS);
+  const html = runGen({ home, xdg });
+  assert.match(html, /<h3>Built-in<\/h3>/);
+  assert.match(html, /<h3>Transcript mode \(Ctrl\+O\)<\/h3>/);
+  assert.match(html, /<kbd>Ctrl<\/kbd><span class="plus">\+<\/span><kbd>O<\/kbd>/);
+  assert.ok(html.includes('Transcript mode — browse the full session history'), 'Ctrl+O built-in missing');
+  // Custom context groups still render next to the built-in ones.
+  assert.match(html, /<h3>Global<\/h3>/);
+  assert.match(html, /Toggle to-do panel/);
+});
+
+// The built-ins are hand-curated rather than parsed, so nothing but a test stops a wrong
+// row from shipping. These pin the two the docs contradict most easily.
+test('Claude built-ins match the documented keymap', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  writeKeybindings(home, SAMPLE_BINDINGS);
+  const html = runGen({ home, xdg });
+  // Extended thinking is Alt+T / Option+T. Tab is autocomplete and must never claim it.
+  assert.match(html, /<kbd>Alt<\/kbd><span class="plus">\+<\/span><kbd>T<\/kbd>/);
+  assert.ok(html.includes('Toggle extended thinking'), 'extended-thinking row missing');
+  assert.ok(!/<kbd>Tab<\/kbd>[^]{0,120}extended thinking/.test(html),
+    'Tab must not be labeled as the extended-thinking toggle');
+  // Permission modes are named default(Manual)/acceptEdits/plan — "auto-accept" is not a
+  // mode, and `auto` is a separate one, so the old label was actively misleading.
+  assert.ok(html.includes('acceptEdits'), 'permission mode names must match the docs');
+  assert.ok(!html.includes('auto-accept'), 'auto-accept is not a permission mode name');
+});
+
+// The common real-world state: everyone running Claude Code has ~/.claude, almost nobody
+// has keybindings.json. This is the branch the built-ins exist to serve.
+test('Claude card: built-ins render when ~/.claude exists but keybindings.json does not', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const html = runGen({ home, xdg });
+  assert.match(html, /<h2>Claude Code<\/h2>/);
+  assert.match(html, /<h3>Built-in<\/h3>/);
+  assert.match(html, /<h3>Transcript mode \(Ctrl\+O\)<\/h3>/);
+  assert.match(html, /built-in keymap/);
+  assert.match(html, /<span class="chip"><b>Scope<\/b>Built-ins<\/span>/);
+});
+
+test('Claude card: a custom context colliding with a built-in group keeps both', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  writeKeybindings(home, { bindings: [{ context: 'Built-in', bindings: { 'ctrl+g': 'chat:someNewThing' } }] });
+  const html = runGen({ home, xdg });
+  assert.ok(html.includes('Some new thing'), 'custom bind dropped by the built-in group of the same name');
+  assert.ok(html.includes('Transcript mode — browse the full session history'), 'built-in rows dropped');
+});
+
+test('Layout: cards flow into independent columns, not shared grid rows', () => {
+  const home = tmpdir(), xdg = tmpdir();
+  writeKeybindings(home, SAMPLE_BINDINGS);
+  writeWezterm(xdg, WEZTERM_FIXTURE);
+  const html = runGen({ home, xdg });
+  // Grid rows size to the tallest card in the row, pushing down cards in other columns.
+  assert.ok(!html.includes('grid-template-columns'), 'main must not lay cards out on a shared grid');
+  assert.match(html, /\.col\{[^}]*flex-direction:column/, 'per-column stack CSS missing');
+  assert.ok(html.includes("className:'col'"), 'column-building script missing');
+  // The .col wrappers are script-built, so the served markup has none: main must stack in a
+  // single column until they exist, or every card flashes squeezed into one flex row.
+  assert.ok(!html.includes('class="col"'), 'columns are built by script, not emitted');
+  assert.match(html, /main\{[^}]*flex-direction:column/, 'pre-script main must be a single-column stack');
+  assert.match(html, /main:has\(\.col\)\{flex-direction:row/, 'main must go horizontal only once columns exist');
+  // Filtering changes which cards are visible, so the deal has to be redone — otherwise a
+  // hidden card holds its slot and leaves a blank column 1/n of the page wide.
+  assert.match(html, /relayout\(true\); \/\/ the visible set changed/, 'filter must force a redeal');
 });
 
 test('WezTerm: action_callback and multiline spawn binds are parsed and labeled', () => {
