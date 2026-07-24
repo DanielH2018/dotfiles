@@ -652,7 +652,7 @@ spawn_pick_branch() {  # $1=host $2=repo -> branch (empty = main repo, no worktr
   # typed query is the last line. Empty selection = the main checkout.
   out=$(printf '%s\n' "$src" | fzf --prompt 'branch> ' --height='~70%' --layout=reverse \
     --border=rounded --info=hidden --print-query \
-    --header 'pick or type a branch (-b) · empty = main repo · esc cancels' | tail -1)
+    --header 'pick or type a branch (-b) · empty/esc = main repo' | tail -1)
   printf '%s' "$out"
 }
 
