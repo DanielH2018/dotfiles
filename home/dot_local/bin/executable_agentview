@@ -68,6 +68,15 @@ declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
 declare -A HOST_SSH=( [daniel-server]="daniel-server" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
+# Dir a picker-spawned Windows claude lands in. MUST be a folder whose Claude trust
+# dialog is already accepted — Claude runs no hooks in an untrusted folder, so a session
+# started somewhere untrusted (e.g. a fresh ~/dev) never fires agent-view-state.sh and
+# never appears here. The Vault is trusted, so its sessions register. Kept `~`-relative so
+# it expands on the Windows side (git_bash $HOME), not in WSL.
+win_spawn_dir="${AGENT_VIEW_WIN_SPAWN_DIR:-~/My_Vault}"
+# Windows git bash, as a NATIVE Windows path — passed to wezterm.exe (a Windows process) as
+# the spawn program. A bare `bash` there resolves into WSL, so name the exe explicitly.
+WIN_GITBASH="${AGENT_VIEW_WIN_GITBASH:-C:\\Program Files\\Git\\bin\\bash.exe}"
 
 host_label()      { _hl="${HOST_LABEL[$1]:-}"; [ -z "$_hl" ] && _hl="${1#daniel-}"; }
 is_local_host()   { [ -n "${HOST_LOCAL[$1]:-}" ]; }
@@ -618,7 +627,11 @@ spawn_windows_claude() {  # open a plain Windows-native claude in a NEW local-do
   # the pane's process becomes node/claude, so WezTerm's CTRL+Left (which passes through when the
   # foreground process looks like a shell) reads it as non-shell and opens the picker instead.
   [ -x "$WEZTERM_WIN" ] || return 1
-  "$WEZTERM_WIN" cli spawn --domain-name local -- bash -lc 'cd ~/dev 2>/dev/null || cd; exec claude' >/dev/null 2>&1
+  # Spawn the WINDOWS git bash by absolute path — a bare `bash` here resolves into WSL
+  # (wrong $HOME, wrong claude), so the session never lands on the Windows side and its
+  # hooks never write a Windows row. $win_spawn_dir is left unquoted so a leading `~`
+  # expands on the Windows side (git_bash $HOME).
+  "$WEZTERM_WIN" cli spawn --domain-name local -- "$WIN_GITBASH" -lc "cd $win_spawn_dir 2>/dev/null || cd; exec claude" >/dev/null 2>&1
 }
 
 spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pane

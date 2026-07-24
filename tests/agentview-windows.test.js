@@ -166,5 +166,12 @@ test('--spawn offers a Windows entry and opens a local-domain WezTerm tab', { sk
   const { env, sendLog, capture } = makeEnv();
   run({ ...env, FZF_PICK: '[Windows · plain claude]' }, ['--spawn']);
   assert.match(fs.readFileSync(capture, 'utf8'), /\[Windows · plain claude\]/, 'the picker lists the Windows spawn entry');
-  assert.match(fs.readFileSync(sendLog, 'utf8'), /spawn --domain-name local/, 'spawns a Windows local-domain tab via wezterm.exe');
+  const spawnLog = fs.readFileSync(sendLog, 'utf8');
+  assert.match(spawnLog, /spawn --domain-name local/, 'spawns a Windows local-domain tab via wezterm.exe');
+  // The exe must be the absolute Windows git bash, NOT a bare `bash` (which resolves into WSL —
+  // wrong $HOME/claude, so the session never registers on the Windows side).
+  assert.match(spawnLog, /Git\\bin\\bash\.exe/, 'spawns via the absolute Windows git bash path');
+  assert.doesNotMatch(spawnLog, /-- bash /, 'never spawns a bare bash (would land in WSL)');
+  // Lands in a trusted folder (the Vault) so Claude runs hooks and the session registers.
+  assert.match(spawnLog, /cd ~\/My_Vault/, 'lands the new session in the trusted Vault');
 });
