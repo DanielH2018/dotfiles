@@ -54,6 +54,28 @@ now=$(date +%s 2>/dev/null || echo 0)
 selfhost=$(hostname 2>/dev/null)
 US=$'\037'
 
+# ── Source registry ───────────────────────────────────────────────────────────
+# Every host that can contribute rows maps to a friendly label + a "locality".
+# LOCAL hosts live on THIS physical machine (no ssh): the WSL side (self) and the
+# Windows side seen over /mnt/c. REMOTE hosts (homelab) are reached by ssh. Adding a
+# source later = one entry in these tables + a discover/focus branch. `winhost` is
+# the Windows hostname its own hook records; `windir` is that side's registry over
+# the WSL mount; `WEZTERM_WIN` is the Windows wezterm binary (WSL's PATH excludes it,
+# appendWindowsPath=false) used to focus/rename/spawn Windows panes.
+winhost="daniel-desktop"
+declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="homelab" )
+declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
+declare -A HOST_SSH=( [daniel-server]="daniel-server" )
+windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
+WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
+
+host_label()      { _hl="${HOST_LABEL[$1]:-}"; [ -z "$_hl" ] && _hl="${1#daniel-}"; }
+is_local_host()   { [ -n "${HOST_LOCAL[$1]:-}" ]; }
+# The Windows side is a distinct source only when agentview runs elsewhere (WSL). If
+# agentview IS running on the Windows host (selfhost == winhost), there's no cross-boundary
+# source — self rows use the normal local path — so this stays false.
+is_windows_host() { [ "$winhost" != "$selfhost" ] && [ "$1" = "$winhost" ]; }
+
 compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind $4=locator.
   # A real (non-"none") locator uniquely names the pane; else fall back to host+cwd+kind
   # (US-joined). No subshell — this runs per row in the hot render path.
@@ -174,11 +196,9 @@ title_for_cwd() {  # $1 = cwd -> sets _title to the Claude pane title at that cw
   done
 }
 
-remote_alias() {  # $1 = row host -> ssh alias. Single known remote today; extensible.
-  case "$1" in
-    daniel-server) printf 'daniel-server' ;;
-    *)             printf 'daniel-server' ;;   # only one remote; map new hosts here
-  esac
+remote_alias() {  # $1 = row host -> ssh alias, from the HOST_SSH table (falls back to the
+  # host name itself for an unmapped remote, rather than the old catch-all to daniel-server).
+  printf '%s' "${HOST_SSH[$1]:-$1}"
 }
 
 remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
@@ -213,6 +233,22 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   exec ssh -t "$sshalias" "$rcmd"
 }
 
+av_activate_windows() {  # $1 = "wezterm:<pane_id>" -> focus a Windows WezTerm pane from WSL
+  # via the Windows wezterm.exe. Pane-ids are GUI-global, so a WSL WezTerm tab can activate a
+  # Windows-domain pane; activate-pane reuses the pane (no new tab). Only works when the picker
+  # itself runs inside a WezTerm pane (else the cli can't reach the GUI). Mirrors the local
+  # wezterm double-activate: immediate + a detached re-activate so closing the picker pane can't
+  # steal focus back.
+  local loc="$1" backend pane
+  backend="${loc%%:*}"; pane="${loc#*:}"
+  [ "$backend" = "wezterm" ] && [ -n "$pane" ] || return 1
+  [ -x "$WEZTERM_WIN" ] || return 1
+  "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1
+  nohup bash -c "sleep 0.25; '$WEZTERM_WIN' cli activate-pane --pane-id '$pane'" \
+    >/dev/null 2>&1 </dev/null &
+  return 0
+}
+
 av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a new pane of the
   # active backend, or in place (the picker is already gone) from a bare shell.
   command -v claude >/dev/null 2>&1 || return 1
@@ -242,8 +278,11 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
-  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+  if [ -n "$host" ] && ! is_local_host "$host"; then
     remote_attach "$host" "$locator"; return $?     # remote: never touch a local pane
+  fi
+  if is_windows_host "$host"; then                  # same machine, but a Windows WezTerm pane
+    av_activate_windows "$locator"; return $?
   fi
   if [ "$kind" = "bg" ]; then av_jump_bg "$locator"; return $?; fi
   if [ -n "$locator" ] && [ "${locator%%:*}" != "none" ]; then
@@ -275,6 +314,20 @@ av_purge_local() {  # $1=sid -> REALLY stop + delete a local session. Find Claud
   return 0
 }
 
+av_purge_windows() {  # $1=sid -> stop a Windows Claude session + drop its row, over /mnt/c.
+  # The Windows pid is in the row; taskkill.exe /F ends it (WSL's `kill` can't reach a Windows
+  # pid). Windows-side `claude rm` isn't cleanly reachable from WSL, so Claude's own session
+  # record is left for the Windows side to reap; the agentview row is removed here. AV_WINKILL
+  # is a test seam (defaults to the real taskkill.exe).
+  local sid="$1" f pid
+  [ -n "$sid" ] || return 0
+  f="$windir/$sid.json"
+  pid=$(jq -r '.pid // ""' "$f" 2>/dev/null)
+  [ -n "$pid" ] && "${AV_WINKILL:-taskkill.exe}" /PID "$pid" /F >/dev/null 2>&1
+  rm -f "$f" 2>/dev/null
+  return 0
+}
+
 av_purge_remote() {  # $1=alias $2=sid -> the same stop+delete on the remote over ssh, incl.
   # dropping the remote's own registry file. sid is a uuid (literal under %q); $HOME and the
   # sessionId lookup evaluate on the remote.
@@ -298,7 +351,22 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   printf '\n  Remove "%s" — stop its process and delete the session (worktree too)? [y/N] ' "$name" >&2
   IFS= read -r ans || return 0
   case "$ans" in y|Y|yes|YES|Yes) ;; *) return 0 ;; esac
-  if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+  if is_windows_host "$host"; then                  # same machine, Windows-side registry
+    shopt -s nullglob
+    for f in "$windir"/*.json; do
+      m=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
+        ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
+        if   ($loc != "" and $l == $loc)                                 then "M"
+        elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
+        else "N" end' "$f" 2>/dev/null)
+      if [ "$m" = "M" ]; then
+        sid=$(jq -r '.session // .key // ""' "$f" 2>/dev/null); av_purge_windows "$sid"
+      fi
+    done
+    shopt -u nullglob
+    return 0
+  fi
+  if [ -n "$host" ] && ! is_local_host "$host"; then
     [ -s "$remote_cache" ] || return 0
     # Pull the row's sid so we can stop it on the remote, then filter it from the cache.
     sid=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
@@ -360,7 +428,7 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
       # rest = <socket>:<session>:<pane>; socket + sanitized session carry no ':'.
       pane="${rest##*:}"; rest="${rest%:*}"; sock="${rest%:*}"
       [ -n "$pane" ] && [ -n "$sock" ] || return 1
-      if [ -n "$host" ] && [ "$host" != "$selfhost" ]; then
+      if [ -n "$host" ] && ! is_local_host "$host"; then
         sshalias=$(remote_alias "$host")
         printf -v cmd 'tmux -S %q send-keys -t %q -l %q; tmux -S %q send-keys -t %q Enter' \
           "$sock" "$pane" "/rename $name" "$sock" "$pane"
@@ -371,8 +439,13 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
       fi ;;
     wezterm)
       pane="$rest"; [ -n "$pane" ] || return 1
-      command -v wezterm >/dev/null 2>&1 || return 1
-      wezterm cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1 ;;
+      if is_windows_host "$host"; then              # Windows pane -> the Windows wezterm.exe
+        [ -x "$WEZTERM_WIN" ] || return 1
+        "$WEZTERM_WIN" cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1
+      else
+        command -v wezterm >/dev/null 2>&1 || return 1
+        wezterm cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1
+      fi ;;
     *) return 1 ;;
   esac
   return 0
@@ -424,8 +497,8 @@ if [ "$mode" = "--card" ]; then
     *)           sc="$e[38;2;108;112;134m"; sn="idle";;
   esac
   case "$k_kind" in sandbox) klabel="sandbox";; bg) klabel="background";; *) klabel="claude";; esac
-  if [ "$k_host" = "$selfhost" ]; then mn="PC · $k_host"
-  else case "$k_host" in daniel-server) mn="homelab · $k_host";; *) mn="$k_host";; esac; fi
+  host_label "$k_host"
+  if [ -n "${HOST_LABEL[$k_host]:-}" ]; then mn="$_hl · $k_host"; else mn="$k_host"; fi
   age=""
   case "$k_ts" in ''|*[!0-9]*) :;; *)
     if [ "$k_ts" -gt 0 ]; then d=$(( now - k_ts )); [ "$d" -lt 0 ] && d=0
@@ -490,6 +563,8 @@ fi
 
 # First row of the repo pick: no repo at all -> a plain HOST claude session (no sandbox).
 host_row='[no repo · plain claude]'
+# Same machine, Windows side: a plain Windows-native claude in a new local-domain WezTerm tab.
+winhost_row='[Windows · plain claude]'
 
 spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row (empty if cancelled)
   local names sel d
@@ -499,11 +574,15 @@ spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row
                                                 # land in repos_root) -> skip, not a spawn target
     printf '%s\n' "$(basename "${d%/}")"
   done | sort)
-  sel=$({ printf '%s\n' "$host_row"; [ -n "$names" ] && printf '%s\n' "$names"; } \
+  sel=$({ printf '%s\n' "$host_row"; \
+          is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && printf '%s\n' "$winhost_row"; \
+          [ -n "$names" ] && printf '%s\n' "$names"; } \
     | fzf --prompt 'repo> ' --height='~70%' --layout=reverse \
     --border=rounded --info=hidden --header 'new session · repo = claude-sandbox · no repo = host claude · esc cancels')
   [ -n "$sel" ] || return 0
-  if [ "$sel" = "$host_row" ]; then printf '@host'; else printf '%s' "$repos_root/$sel"; fi
+  if   [ "$sel" = "$host_row" ];    then printf '@host'
+  elif [ "$sel" = "$winhost_row" ]; then printf '@windows'
+  else printf '%s' "$repos_root/$sel"; fi
 }
 
 spawn_pick_branch() {  # $1 = repo path -> echo branch (empty = main repo, no worktree)
@@ -521,6 +600,14 @@ spawn_build_cmd() {  # $1=repo $2=branch -> a shell-quoted claude-sandbox comman
   else printf '%q %q' "$sandbox_bin" "$1"; fi
 }
 
+spawn_windows_claude() {  # open a plain Windows-native claude in a NEW local-domain WezTerm tab
+  # via the Windows wezterm.exe. The tab runs git_bash (Windows), where `claude` is on PATH; the
+  # session registers itself over /mnt/c and appears via gather_windows_rows, focusable via Slice 2.
+  # One home tab per new session — no proliferation on jump.
+  [ -x "$WEZTERM_WIN" ] || return 1
+  "$WEZTERM_WIN" cli spawn --domain-name local -- bash -lc 'cd ~/dev 2>/dev/null || cd; claude' >/dev/null 2>&1
+}
+
 spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pane
   local cmd="$1" title="$2"
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
@@ -536,23 +623,46 @@ spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pa
   exec bash -c "$cmd"
 }
 
-do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the active backend
-  local repo branch cmd
+av_close_picker() {  # $1=portfile -> tell the live picker to abort, dismissing its popup/tab
+  # after a NEW session actually spawned. Detached + brief delay so the POST lands after fzf
+  # returns from THIS ctrl-n execute() to its event loop (the --listen server is quiescent
+  # while an execute child runs). No portfile / no curl -> silent no-op, so the standalone
+  # `--spawn` path and the bare-shell in-place spawn (which replaces the picker anyway) are
+  # unaffected. Mirrors --refresh-remote's detached reload POST.
+  local pf="${1:-}" p
+  [ -n "$pf" ] && [ -s "$pf" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  p=$(cat "$pf" 2>/dev/null); [ -n "$p" ] || return 0
+  nohup bash -c "sleep 0.1; curl -s -XPOST '127.0.0.1:$p' --data abort >/dev/null 2>&1" \
+    >/dev/null 2>&1 </dev/null &
+}
+
+do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the active backend.
+  # $1 = optional fzf portfile: on a successful spawn we POST `abort` to dismiss the picker.
+  local repo branch cmd pf="${1:-}" rc
   repo=$(spawn_pick_repo) || return 1
-  [ -n "$repo" ] || return 0                       # cancelled at the repo pick
+  [ -n "$repo" ] || return 0                       # cancelled at the repo pick -> keep the picker
   if [ "$repo" = "@host" ]; then                   # no repo -> plain host claude. Land in ~/dev,
                                                     # not $HOME: a $HOME workspace makes Claude
                                                     # re-ask its trust prompt every launch
                                                     # (claude-code#43958). Falls back to $HOME.
-    spawn_in_backend 'cd ~/dev 2>/dev/null || cd; claude' 'claude'
-    return $?
+    spawn_in_backend 'cd ~/dev 2>/dev/null || cd; claude' 'claude'; rc=$?
+    [ "$rc" -eq 0 ] && av_close_picker "$pf"
+    return "$rc"
+  fi
+  if [ "$repo" = "@windows" ]; then                # same machine, Windows-native claude tab
+    spawn_windows_claude; rc=$?
+    [ "$rc" -eq 0 ] && av_close_picker "$pf"
+    return "$rc"
   fi
   branch=$(spawn_pick_branch "$repo")
   cmd=$(spawn_build_cmd "$repo" "$branch")
-  spawn_in_backend "$cmd" "$(basename "$repo")"
+  spawn_in_backend "$cmd" "$(basename "$repo")"; rc=$?
+  [ "$rc" -eq 0 ] && av_close_picker "$pf"
+  return "$rc"
 }
 
-if [ "$mode" = "--spawn" ]; then do_spawn; exit $?; fi
+if [ "$mode" = "--spawn" ]; then do_spawn "${2:-}"; exit $?; fi
 
 # Opt-in phase profiling: `AGENTVIEW_PROFILE=1 agentview` appends per-phase timestamps
 # to ~/.agentview-profile.log so a slow open can be traced to the responsible phase.
@@ -722,6 +832,31 @@ gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered
   [ -n "$rrows" ] && rows+="$rrows"$'\n'
 }
 
+gather_windows_rows() {  # append Windows-side rows (same machine, via /mnt/c). No dead-pid
+  # prune — the pids are Windows pids not checkable from WSL; rely on the Windows SessionEnd
+  # hook + the 7-day age prune. One jq over the dir (MSYS_NO_PATHCONV keeps the C:\ cwds intact),
+  # emitting P=prune>7d / R<TAB>row IN ARGUMENT ORDER so lines align 1:1 with the glob — same
+  # count-mismatch guard as gather_local_rows (render, never rm) against a corrupt file.
+  local wfiles jqout jqlines i
+  [ "$winhost" != "$selfhost" ] || return    # no distinct Windows source (or we ARE the win host)
+  [ -d "$windir" ] || return
+  shopt -s nullglob; wfiles=( "$windir"/*.json ); shopt -u nullglob
+  [ "${#wfiles[@]}" -gt 0 ] || return
+  jqout=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" --argjson prune "$PRUNE" "
+      $JQ_TS | if \$ts > 0 and \$age > \$prune then \"P\" else \"R\t\" + ($JQ_ROW) end" "${wfiles[@]}" 2>/dev/null)
+  jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
+  if [ "${#jqlines[@]}" -eq "${#wfiles[@]}" ]; then
+    for i in "${!wfiles[@]}"; do
+      case "${jqlines[$i]}" in
+        P)  rm -f "${wfiles[$i]}" 2>/dev/null ;;
+        R*) rows+="${jqlines[$i]#R$'\t'}"$'\n' ;;
+      esac
+    done
+  else
+    for i in "${jqlines[@]}"; do case "$i" in R*) rows+="${i#R$'\t'}"$'\n';; esac; done
+  fi
+}
+
 refresh_remote() {  # pull homelab state over ssh, atomically replace the cache
   local out rc tmp="$remote_cache.tmp.$$"
   # One-shot ssh (NO ControlMaster) bounded by ConnectTimeout. `|| true` so a
@@ -788,9 +923,8 @@ fmt_age() {  # $1 = epoch -> sets _age: compact "12m"/"3h"/"2d"; empty for unkno
   else _age="$((d/86400))d"; fi
 }
 
-badge_name() {  # $1 = host -> sets _bn: friendly machine tag
-  if [ "$1" = "$selfhost" ]; then _bn="PC"
-  else case "$1" in daniel-server) _bn="homelab";; *) _bn="${1#daniel-}";; esac; fi
+badge_name() {  # $1 = host -> sets _bn: friendly machine tag (from HOST_LABEL)
+  host_label "$1"; _bn="$_hl"
 }
 
 gc_pins() {  # drop pins whose session no longer exists anywhere (a local file OR the remote
@@ -1007,6 +1141,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
 render_body() {  # sets global `body` from local + cached-remote rows (the fzf list)
   rows=""
   gather_local_rows
+  gather_windows_rows                        # same-machine Windows sessions, via /mnt/c
   gather_remote_rows
   collapse_bg_forks                          # one row per task: fold a bg fork into its origin
   if [ "$HAVE_WEZTERM" = 1 ]; then
@@ -1058,6 +1193,7 @@ prof start
 
 rows=""
 gather_local_rows;  prof gather_local
+gather_windows_rows;  prof gather_windows # same-machine Windows sessions, via /mnt/c
 gather_remote_rows                       # cached homelab snapshot — instant, no network
 collapse_bg_forks                        # one row per task: fold a bg fork into its origin
 if [ "$HAVE_WEZTERM" = 1 ]; then
@@ -1116,7 +1252,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
-  --bind='ctrl-n:execute('"'$SELF'"' --spawn)+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-n:execute('"'$SELF'"' --spawn '"$portfile"')+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-x:execute('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
   --bind='alt-2:become('"'$SELF'"' --jump-nth 2)' \

@@ -71,24 +71,43 @@ exit 0
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo host
 `, { mode: 0o755 });
+  // curl stub: log the POST body so a test can assert the picker is told to `abort` after a
+  // real spawn (the ctrl-n dismiss). The real close POST is detached (nohup+sleep), so tests
+  // poll CURL_LOG rather than read it once.
+  const curlLog = path.join(bin, 'curl.log'); fs.writeFileSync(curlLog, '');
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash
+prev=""; for a in "$@"; do [ "$prev" = "--data" ] && echo "$a" >> "$CURL_LOG"; prev="$a"; done
+exit 0
+`, { mode: 0o755 });
 
   const env = {
     ...process.env, PATH: `${bin}:${process.env.PATH}`,
     SANDBOX_REPOS_ROOT: reposRoot,
     CLAUDE_SANDBOX_BIN: path.join(bin, 'claude-sandbox'),
+    // No Windows source in these repo-picker tests: point WEZTERM_WIN at a nonexistent path so
+    // the '[Windows · plain claude]' row is suppressed regardless of the real host (a dev machine
+    // with a real wezterm.exe would otherwise leak it in). Windows spawn has its own test file.
+    AGENT_VIEW_WEZTERM_WIN: path.join(bin, 'no-such-wezterm.exe'),
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
-    SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog,
+    SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
-  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog,
+  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
-function run(env, extraEnv = {}) {
+// `--spawn [portfile]`: a portfile arg opts into the ctrl-n dismiss (POST abort on success).
+function run(env, extraEnv = {}, args = []) {
   try {
-    return { out: execFileSync('bash', [VIEW, '--spawn'], {
+    return { out: execFileSync('bash', [VIEW, '--spawn', ...args], {
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, ...extraEnv },
     }), code: 0, err: '' };
   } catch (e) { return { out: e.stdout || '', code: e.status, err: e.stderr || '' }; }
+}
+// The close POST is detached (nohup; sleep 0.1) so it outlives the --spawn process — poll.
+function waitFor(pred, ms = 3000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (pred()) return true; execFileSync('sleep', ['0.05']); }
+  return pred();
 }
 
 // ---- structural: the picker exposes the spawn action ----
@@ -179,6 +198,37 @@ test('no backend + the no-repo row -> plain claude runs in place', { skip }, () 
   assert.match(fs.readFileSync(claudeLog, 'utf8'), /run/, 'host claude ran in place');
   assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no tmux involved');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm involved');
+});
+
+// ---- ctrl-n dismiss: a real spawn tells the picker to abort (close its popup/tab) ----
+test('ctrl-n bind passes the fzf portfile to --spawn', () => {
+  assert.match(SRC, /ctrl-n:execute\(.*--spawn '"\$portfile"'\)/,
+    'the ctrl-n execute() forwards the live picker portfile to --spawn');
+});
+
+test('a successful spawn POSTs abort to the picker portfile', { skip }, () => {
+  const { env, curlLog } = makeEnv();
+  const pf = path.join(scratch('avs-pf-'), 'port'); fs.writeFileSync(pf, '4321');
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: 'main' }, [pf]);
+  assert.ok(waitFor(() => /abort/.test(fs.readFileSync(curlLog, 'utf8'))),
+    'the picker is told to abort after the session spawns');
+});
+
+test('cancelling the repo pick does NOT dismiss the picker', { skip }, () => {
+  const { env, curlLog } = makeEnv();
+  const pf = path.join(scratch('avs-pf-'), 'port'); fs.writeFileSync(pf, '4321');
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: '', FZF_BRANCH: 'x' }, [pf]);
+  // give any (erroneous) detached POST time to fire, then assert none did
+  execFileSync('sleep', ['0.3']);
+  assert.strictEqual(fs.readFileSync(curlLog, 'utf8'), '', 'no abort POST when nothing spawned');
+});
+
+test('an empty portfile is a silent no-op (standalone --spawn unaffected)', { skip }, () => {
+  const { env, curlLog, tmuxLog } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: 'main' });
+  execFileSync('sleep', ['0.3']);
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window/, 'the session still spawns');
+  assert.strictEqual(fs.readFileSync(curlLog, 'utf8'), '', 'no POST without a portfile');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
