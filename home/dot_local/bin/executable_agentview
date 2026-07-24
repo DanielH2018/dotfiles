@@ -722,14 +722,55 @@ gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered
   [ -n "$rrows" ] && rows+="$rrows"$'\n'
 }
 
-refresh_remote() {  # pull homelab state over ssh, atomically replace the cache
+refresh_remote() {  # pull homelab state over ssh, fold its live registry in, replace the cache
   local out rc tmp="$remote_cache.tmp.$$"
-  # One-shot ssh (NO ControlMaster) bounded by ConnectTimeout. `|| true` so a
-  # live-but-empty homelab returns rc 0 — we KEEP the old snapshot only when ssh itself
-  # can't connect (rc 255), not when there simply are no remote sessions.
-  out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server \
-        'cat ~/.claude/agent-view/*.json 2>/dev/null || true' \
-        < /dev/null 2>/dev/null); rc=$?
+  # Mirror the LOCAL live-registry override (load_session_map + merge_session_row) on the
+  # homelab so cached remote rows can't go stale. A remote session's hook state
+  # (~/.claude/agent-view/<sid>.json) LAGS: an idle/permission Notification writes
+  # "needs-input" and NO later hook fires when the user merely reads the pane over ssh — so
+  # the picker showed a sticky needs-input. Claude's own per-process registry
+  # (~/.claude/sessions/<pid>.json) is the live truth, but only the owning host can read it
+  # AND kill -0 its pids, so the fold MUST run remote-side: `ssh bash -s` feeds it the heredoc
+  # below. Each HOST row's state/ts is rewritten from the live status (busy->working,
+  # waiting->needs-input, idle/else->completed), newest updatedAt winning per session, dead
+  # pids skipped, sdk/spare processes ignored. A session with no live registry entry (older
+  # claude, or a genuinely gone process) passes its raw hook row through unchanged, so a
+  # pre-registry homelab still renders. One-shot ssh (NO ControlMaster) bounded by
+  # ConnectTimeout — we KEEP the old snapshot only when ssh itself can't connect (rc 255),
+  # not when there simply are no remote sessions.
+  out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
+set -u; shopt -s nullglob
+declare -A M UPD
+# sid -> "state<TAB>ts" from live, non-sdk, alive-pid sessions (newest updatedAt wins).
+for sf in "$HOME/.claude/sessions"/*.json; do
+  line=$(jq -r '
+    select(((.status // "") != "") and ((.sessionId // "") != "") and (((.entrypoint // "") | startswith("sdk")) | not)) |
+    [ (.pid // 0 | tostring), .sessionId,
+      (if .status == "busy" then "working" elif .status == "waiting" then "needs-input" else "completed" end),
+      (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
+      ((.updatedAt // .startedAt // 0) | tostring) ] | @tsv' "$sf" 2>/dev/null)
+  [ -n "$line" ] || continue
+  IFS=$'\t' read -r pid sid st ts upd <<< "$line"
+  [ -n "$pid" ] && [ -n "$sid" ] || continue
+  kill -0 "$pid" 2>/dev/null || continue
+  if [ -n "${UPD[$sid]:-}" ] && [ "${UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
+  UPD[$sid]="$upd"; M[$sid]="$st"$'\t'"$ts"
+done
+# Emit each hook row, its HOST state/ts overridden by the live registry when present.
+for af in "$HOME/.claude/agent-view"/*.json; do
+  sid=$(jq -r '.session // .key // ""' "$af" 2>/dev/null)
+  kind=$(jq -r '.kind // "host"' "$af" 2>/dev/null)
+  ov="${M[$sid]:-}"
+  if [ -n "$ov" ] && [ "$kind" = "host" ]; then
+    st="${ov%%$'\t'*}"; ts="${ov#*$'\t'}"
+    jq -c --arg s "$st" --argjson t "${ts:-0}" '.state=$s | .ts=$t' "$af" 2>/dev/null
+  else
+    jq -c '.' "$af" 2>/dev/null
+  fi
+done
+REMOTE_FOLD
+)
+  rc=$?
   [ "$rc" -eq 255 ] && return
   printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }

@@ -72,7 +72,15 @@ exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
 echo "$*" >> "$SSH_LOG"
-cat "$SSH_REMOTE_FILE" 2>/dev/null; exit 0
+# When agentview asks for a remote shell (bash -s) AND a fake remote HOME is provided,
+# run the piped script against it — exercises the remote-side live-registry fold. Otherwise
+# behave like the old stub and just cat the canned snapshot (every pre-existing test path).
+if [ -n "\${SSH_REMOTE_HOME:-}" ] && printf ' %s ' "$*" | grep -q -- ' -s '; then
+  HOME="$SSH_REMOTE_HOME" bash -s
+else
+  cat "$SSH_REMOTE_FILE" 2>/dev/null
+fi
+exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
 cat > "$FZF_CAPTURE"
@@ -197,6 +205,55 @@ test('body merges remote (homelab) sessions from the cache snapshot', { skip }, 
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /localproj/);
   assert.match(body, /remoteproj/, 'remote session from the cache must appear');
+});
+
+// ---- refresh_remote: fold the homelab's OWN live registry over its hook state --------
+// A remote session's hook state (~/.claude/agent-view/<sid>.json) lags: an idle/permission
+// Notification writes "needs-input" and NO later hook fires when the user merely reads the
+// pane, so the picker showed a sticky needs-input. --refresh-remote runs the fold ON the
+// remote (ssh bash -s), where Claude's live per-process registry is readable + its pids are
+// kill -0-able, and rewrites the cached row's state from the live status. This is the remote
+// analog of the LOCAL merge (load_session_map/merge_session_row) covered in bg-sessions.
+test('--refresh-remote folds the homelab live registry over a stale needs-input row', { skip }, () => {
+  const now = nowSec();
+  const { env, home } = makeEnv();                     // no seeded cache: refresh_remote writes it
+  const rhome = scratch('av-remote-');                 // the fake remote HOME the ssh stub folds against
+  fs.mkdirSync(path.join(rhome, '.claude', 'agent-view'), { recursive: true });
+  fs.mkdirSync(path.join(rhome, '.claude', 'sessions'), { recursive: true });
+  const sid = 'cccc3333-0000-0000-0000-0000000000cc';
+  // Stale hook state: needs-input, recorded 5 minutes ago.
+  fs.writeFileSync(path.join(rhome, '.claude', 'agent-view', `${sid}.json`),
+    JSON.stringify({ key: sid, session: sid, kind: 'host', state: 'needs-input', cwd: '/home/ubuntu/server',
+      host: 'daniel-server', ts: now - 300, locator: 'tmux:/tmp/t:main:%2', title: 'Homelab review' }));
+  // Live registry: the SAME session is actually busy, updated seconds ago — the truth.
+  fs.writeFileSync(path.join(rhome, '.claude', 'sessions', `${process.pid}.json`),
+    JSON.stringify({ pid: process.pid, sessionId: sid, status: 'busy', entrypoint: 'cli',
+      updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
+  run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
+  assert.strictEqual(row.state, 'working', 'live busy status overrides the stale needs-input hook state');
+  assert.strictEqual(row.locator, 'tmux:/tmp/t:main:%2', 'hook identity fields (locator) survive the fold');
+  assert.strictEqual(row.title, 'Homelab review', 'the /rename title survives the fold');
+});
+
+// A dead-pid registry entry must NOT override — a leaked stale session can't resurrect a row.
+test('--refresh-remote ignores a dead-pid registry entry and keeps the hook state', { skip }, () => {
+  const now = nowSec();
+  const { env, home } = makeEnv();
+  const rhome = scratch('av-remote-');
+  fs.mkdirSync(path.join(rhome, '.claude', 'agent-view'), { recursive: true });
+  fs.mkdirSync(path.join(rhome, '.claude', 'sessions'), { recursive: true });
+  const sid = 'dddd4444-0000-0000-0000-0000000000dd';
+  fs.writeFileSync(path.join(rhome, '.claude', 'agent-view', `${sid}.json`),
+    JSON.stringify({ key: sid, session: sid, kind: 'host', state: 'needs-input', cwd: '/home/ubuntu/server',
+      host: 'daniel-server', ts: now - 300, locator: 'tmux:/tmp/t:main:%2', title: 'Homelab review' }));
+  fs.writeFileSync(path.join(rhome, '.claude', 'sessions', `33554432.json`),   // pid beyond pid_max -> dead
+    JSON.stringify({ pid: 33554432, sessionId: sid, status: 'busy', entrypoint: 'cli', updatedAt: (now - 5) * 1000 }));
+  run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
+  assert.strictEqual(row.state, 'needs-input', 'a dead-pid registry entry does not override the hook state');
 });
 
 test('--body prints the grouped list (local + cache) to stdout for the live reload', { skip }, () => {
