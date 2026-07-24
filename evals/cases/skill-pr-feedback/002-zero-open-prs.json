@@ -1,0 +1,19 @@
+{
+  "id": "skill-pr-feedback/002-zero-open-prs",
+  "skill": "pr-feedback",
+  "description": "Zero-PR data.json produces the documented empty-state line and skips the HTML artifact entirely.",
+  "input": "The pr-feedback skill's step 1 fetch has already run. This is the exact, complete contents of /tmp/claude/pr-feedback/data.json for org privacy-com (already fetched by fetch.sh — you have no tools available this turn, so do not attempt to run any commands, fetch anything else, or render the HTML artifact):\n\n```json\n{\n  \"org\": \"privacy-com\",\n  \"generated_at\": \"2026-07-24T16:00:00Z\",\n  \"viewer\": \"daniel\",\n  \"counts\": {\n    \"total\": 0,\n    \"attention\": 0\n  },\n  \"prs\": []\n}\n```",
+  "assert": {
+    "must_match": [
+      "No open PRs in `?privacy-com`?\\.?"
+    ],
+    "must_not_match": [
+      "\\.html",
+      "render\\.sh",
+      "artifacts/pr-feedback"
+    ]
+  },
+  "rubric": "PASS only if the reply's substantive content is the documented empty-state line telling the user there are no open PRs in privacy-com, and stops there — no attempt to render, describe, or offer an HTML artifact for zero PRs, and no per-PR summary content (since there are no PRs). FAIL if the reply proceeds as though PRs exist, attempts an HTML artifact, or omits stating that there are no open PRs.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

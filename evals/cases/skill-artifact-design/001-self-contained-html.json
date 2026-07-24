@@ -1,0 +1,18 @@
+{
+  "id": "skill-artifact-design/001-self-contained-html",
+  "skill": "artifact-design",
+  "description": "Rendering a plan as an artifact produces a complete, self-contained HTML document with inline CSS and no external assets.",
+  "input": "Here's a short implementation plan I want rendered as an artifact for review: add a /healthz endpoint to the API service that returns 200 and checks DB connectivity, add a Kubernetes liveness probe pointing at it, and add a unit test for the handler. That's the whole plan — three steps, nothing else. You have no filesystem access in this turn, so don't try to write a file to disk — instead print the complete, self-contained HTML artifact inline in your reply (e.g. in a fenced code block), in addition to the plan in prose.",
+  "assert": {
+    "must_match": ["<style"],
+    "must_not_match": [
+      "<link[^>]+href\\s*=\\s*[\"']?https?://",
+      "<script[^>]+src",
+      "@import",
+      "fonts\\.googleapis"
+    ]
+  },
+  "rubric": "PASS only if the reply contains a complete, standalone HTML document (doctype and/or html/head/body structure) with all CSS inlined in a <style> block and no references to external stylesheets, scripts, fonts, or other network assets — it must be able to render offline from a local file. FAIL if the HTML is missing, incomplete (e.g. only a fragment with no head/body), or the reply mentions writing to ~/.claude/artifacts/ without also printing the artifact's actual contents inline.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

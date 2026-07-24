@@ -1,0 +1,13 @@
+{
+  "id": "skill-gh-stack/001-view-requires-json",
+  "skill": "gh-stack",
+  "description": "Checking the current stack's status must use the non-interactive --json form, never bare `gh stack view`.",
+  "input": "What exact command do you run to check the current stack's status? Nothing can be executed here — just state the command.",
+  "assert": {
+    "must_match": ["gh stack view --json"],
+    "must_not_match": ["gh stack view --short"]
+  },
+  "rubric": "PASS only if the stated command is `gh stack view --json` and the reply does not also present `gh stack view` (with no flags) or `gh stack view --short` as a valid or alternative way to check status. FAIL if any flagless or `--short` form of `gh stack view` is recommended anywhere in the reply.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

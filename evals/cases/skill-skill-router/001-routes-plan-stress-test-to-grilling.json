@@ -1,0 +1,12 @@
+{
+  "id": "skill-skill-router/001-routes-plan-stress-test-to-grilling",
+  "skill": "skill-router",
+  "description": "A plan that feels roughly right but has unresolved decisions routes to grilling, not brainstorming.",
+  "input": "I have a plan for adding a background job queue to my app. It feels roughly right, but there are a few unresolved decisions still hiding in it — which skill should I use? There's no repo or thread for you to inspect — just tell me which skill fits.",
+  "assert": {
+    "must_match": ["grilling"]
+  },
+  "rubric": "PASS only if the reply names grilling as the skill to use for this situation. Mentioning brainstorming as a contrast (e.g. explaining that brainstorming is for when no plan exists yet, unlike this case) is fine and does not fail the case. FAIL if the reply recommends brainstorming, `/prep`, or some other skill as the primary fit instead of grilling, or does not name a skill at all.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

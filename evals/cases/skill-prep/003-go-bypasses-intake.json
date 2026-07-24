@@ -1,0 +1,12 @@
+{
+  "id": "skill-prep/003-go-bypasses-intake",
+  "skill": "prep",
+  "description": "The same class of medium ask, but with an explicit 'go — no intake' instruction, skips the intake block and proceeds toward execution.",
+  "input": "Add rate limiting to our Express app's POST /login endpoint, to protect against brute-force login attempts. Redis is available in this environment via ioredis for storing counters. There is no repo attached for you to inspect — everything you need to know is in this message. Go — no intake, just do it.",
+  "assert": {
+    "must_not_match": ["Prompt gaps"]
+  },
+  "rubric": "PASS only if the reply skips the intake block entirely (no Understanding/Assumptions/Context pulled/Questions/Prompt gaps headers) and instead proceeds toward doing the work — e.g. describing or writing the rate-limiting middleware/logic, or laying out concrete implementation steps — rather than asking clarifying questions or waiting for confirmation. FAIL if the reply produces the intake block, asks clarifying questions, or otherwise stops short of proceeding despite the explicit 'go — no intake'.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
