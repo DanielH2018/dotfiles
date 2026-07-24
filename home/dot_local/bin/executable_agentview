@@ -503,6 +503,7 @@ if [ "$mode" = "--card" ]; then
   case "$k_state" in
     needs-input) sc="$e[38;2;249;226;175m"; sn="needs input";;
     working)     sc="$e[38;2;166;227;161m"; sn="working";;
+    review)      sc="$e[38;2;250;179;135m"; sn="review";;
     completed)   sc="$e[38;2;108;112;134m"; sn="completed";;
     *)           sc="$e[38;2;108;112;134m"; sn="idle";;
   esac
@@ -680,9 +681,11 @@ if [ "$mode" = "--spawn" ]; then do_spawn "${2:-}"; exit $?; fi
 # to ~/.agentview-profile.log so a slow open can be traced to the responsible phase.
 prof() { [ -n "${AGENTVIEW_PROFILE:-}" ] && printf '%s\t%s\n' "${EPOCHREALTIME:-0}" "$1" >> "$HOME/.agentview-profile.log"; return 0; }
 # ---- shared row/prune jq fragments + homelab cache ----
-# Row = state<TAB>host<TAB>cwd<TAB>pane<TAB>ts<TAB>kind<TAB>locator<TAB>title. `PRUNE`
+# Row = state<TAB>host<TAB>cwd<TAB>pane<TAB>ts<TAB>kind<TAB>locator<TAB>title<TAB>git. `PRUNE`
 # (7d) drops the file; between 1 and 7 days a session is hidden but its file is kept.
-JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts, (.kind // "host"), (.locator // ""), (.title // "")] | @tsv'
+# git = the "not-done" marker (⚠ dirty / ↑N) stamped by the state hook — trails the row so
+# older 8-field readers are unaffected; the render uses it to reclassify completed -> review.
+JQ_ROW='[(.state // "idle"), (.host // "?"), (.cwd // ""), (.pane // ""), $ts, (.kind // "host"), (.locator // ""), (.title // ""), (.git // "")] | @tsv'
 JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
 # Pin identity (mirrors compute_pin_id + JQ_ROW's field defaults): a real locator names the
 # pane; else host|cwd|kind, US-joined (). Lets gc_pins reconcile the pin sidecar.
@@ -730,11 +733,12 @@ load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>job<TAB>cwd<TAB>na
   done <<< "$jqout"
 }
 
-merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state folded in.
-  # Hook fields the registry can't know (locator/pane/cwd, a /rename'd title) survive;
-  # state+ts come from the registry, and a bg session's kind flips to "bg" so the jump
-  # path knows there is no pane. Non-host kinds (sandbox) keep their own lifecycle.
-  local row="$1" sid="$2" m st host cwd pane ts kind locator title lst lts lkind ljob
+merge_session_row() {  # $1=9-col row $2=sid -> sets _mrow with the live state folded in.
+  # Hook fields the registry can't know (locator/pane/cwd, a /rename'd title, the git
+  # marker) survive; state+ts come from the registry, and a bg session's kind flips to
+  # "bg" so the jump path knows there is no pane. Non-host kinds (sandbox) keep their own
+  # lifecycle.
+  local row="$1" sid="$2" m st host cwd pane ts kind locator title git lst lts lkind ljob
   _mrow="$1"
   [ -n "$sid" ] || return 0
   m="${SMAP[$sid]:-}"; [ -n "$m" ] || return 0
@@ -744,7 +748,8 @@ merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state f
   pane="${row%%$'\t'*}"; row="${row#*$'\t'}"
   ts="${row%%$'\t'*}"; row="${row#*$'\t'}"
   kind="${row%%$'\t'*}"; row="${row#*$'\t'}"
-  locator="${row%%$'\t'*}"; title="${row#*$'\t'}"
+  locator="${row%%$'\t'*}"; row="${row#*$'\t'}"
+  title="${row%%$'\t'*}"; git="${row#*$'\t'}"
   [ "$kind" = "host" ] || return 0
   lst="${m%%$'\t'*}"; m="${m#*$'\t'}"
   lts="${m%%$'\t'*}"; m="${m#*$'\t'}"
@@ -761,7 +766,12 @@ merge_session_row() {  # $1=8-col row $2=sid -> sets _mrow with the live state f
     # at the spawning pane, not the session: replace it. No jobId -> roster fallback.
     locator="bg:$ljob"
   fi
-  _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"
+  # The live registry reports idle as "completed" — but a stop with an uncommitted/unpushed
+  # tree (the hook stamped a git marker) is REVIEW, not done. Re-derive it here, since the
+  # fold discards the hook's own state. Only an idle/completed fold is upgraded: a busy or
+  # waiting session stays working/needs-input even with a dirty tree.
+  [ "$lst" = "completed" ] && [ -n "$git" ] && lst="review"
+  _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"$'\t'"$git"
 }
 
 synth_session_rows() {  # rows for live busy/waiting sessions the hook registry never saw
@@ -781,7 +791,7 @@ synth_session_rows() {  # rows for live busy/waiting sessions the hook registry 
     # no locator — for the render or two before the hook lands. Skip non-bg: an interactive
     # session appears once its own hook row exists (with a real locator + title).
     [ "$kind" = "bg" ] || continue
-    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"bg:$job"$'\t'"$name"$'\n'
+    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"bg:$job"$'\t'"$name"$'\t'$'\n'
   done                                               # bg session shows once it works/waits
 }
 
@@ -910,7 +920,10 @@ for af in "$HOME/.claude/agent-view"/*.json; do
   ov="${M[$sid]:-}"
   if [ -n "$ov" ] && [ "$kind" = "host" ]; then
     st="${ov%%$'\t'*}"; ts="${ov#*$'\t'}"
-    jq -c --arg s "$st" --argjson t "${ts:-0}" '.state=$s | .ts=$t' "$af" 2>/dev/null
+    # Idle folds to "completed"; a dirty/unpushed tree (a stamped .git marker) is REVIEW —
+    # keep .git and re-derive, mirroring the local merge_session_row upgrade.
+    jq -c --arg s "$st" --argjson t "${ts:-0}" \
+      '.state=(if $s=="completed" and ((.git // "")!="") then "review" else $s end) | .ts=$t' "$af" 2>/dev/null
   else
     jq -c '.' "$af" 2>/dev/null
   fi
@@ -926,6 +939,7 @@ REMOTE_FOLD
 E=$'\033'; Z="$E[0m"
 C_NEED="$E[38;2;249;226;175m"          # yellow  — needs input
 C_WORK="$E[38;2;166;227;161m"          # green   — working
+C_REVIEW="$E[38;2;250;179;135m"        # peach   — review (stopped, but dirty/unpushed)
 C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
@@ -938,7 +952,7 @@ PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source b
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
 # tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
 state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
-  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; *) _scol="$C_DONE";; esac
+  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; *) _scol="$C_DONE";; esac
 }
 row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads PINNED_SET
   # via dynamic scope from build_pretty). No fork — runs per row on the render path.
@@ -949,7 +963,7 @@ row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads
 NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
-declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [completed]="COMPLETED" [idle]="IDLE" )
+declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [completed]="COMPLETED" [idle]="IDLE" )
 
 row_width() {  # sets _rw: usable row columns for the render + header alignment.
   # Inside a reload/execute child fzf exports FZF_COLUMNS (its own area, margin/padding
@@ -1066,7 +1080,7 @@ collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into 
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
+  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
   local PINCNT=0 idx=0 g1 gutc _pinned _hp _leaf _par
   row_width; W=$_rw
@@ -1098,7 +1112,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     row_pinned "$host" "$cwd" "$kind" "$locator"
     if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
   done
-  for grp in pinned needs-input working completed idle; do
+  for grp in pinned needs-input working review completed idle; do
     if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
@@ -1120,7 +1134,11 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       pane="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
       ts="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
       kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
-      locator="${_rest%%$'\t'*}"; title_reg="${_rest#*$'\t'}"
+      locator="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+      # Split title from the trailing git marker WITHOUT collapsing empties. A pre-git
+      # 8-field row (no trailing tab) leaves _rest == title_reg -> no marker.
+      title_reg="${_rest%%$'\t'*}"
+      if [ "$_rest" = "$title_reg" ]; then gitmark=""; else gitmark="${_rest#*$'\t'}"; fi
       # Membership: the PINNED group takes every pinned row (in ts order); each state
       # group takes its own state MINUS anything already shown as pinned.
       row_pinned "$host" "$cwd" "$kind" "$locator"
@@ -1167,6 +1185,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
         # Right column = the session's task title (its "name"). When none was captured, fall
         # back to the age — never the state word, which just echoes the group header.
         needs-input|working) if [ -n "$title" ]; then stext="$title"; else fmt_age "$ts"; stext="$_age"; fi;;
+        review)      fmt_age "$ts"; stext="${gitmark:-⚠ review}"; [ -n "$_age" ] && stext="$stext $_age";;
         completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
         *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
       esac

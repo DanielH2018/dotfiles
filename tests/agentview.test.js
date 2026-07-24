@@ -622,4 +622,76 @@ test('the GC clears every pin when no session exists (all orphaned)', { skip }, 
   assert.strictEqual(fs.readFileSync(pinFile(home), 'utf8').trim(), '', 'every pin is dropped when no session exists');
 });
 
+// ---- REVIEW bucket: stopped-but-dirty sessions grouped apart from COMPLETED ----
+// The hook stamps a `git` marker + writes state "review" when a stop left the tree dirty or
+// unpushed. The picker renders REVIEW between WORKING and COMPLETED, peach-accented, with the
+// marker in the right column. For a LOCAL session the render re-derives state from the live
+// registry (idle -> completed), so the marker also drives a completed -> review upgrade.
+const SC_REVIEW = '38;2;250;179;135';   // peach
+
+// Write a live registry entry so load_session_map/merge_session_row fold over the hook row.
+function sessionFile(home, pid, obj) {
+  const d = path.join(home, '.claude', 'sessions');
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, `${pid}.json`), JSON.stringify(obj));
+}
+
+test('a review row renders in its own REVIEW bucket with the git marker', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'rv', { state: 'review', cwd: 'C:\\a\\dirtyproj', session: 'rv', host: HOST,
+    ts: nowSec() - 180, git: '⚠ dirty' });
+  run(env, []);
+  const raw = fs.readFileSync(capture, 'utf8');
+  const body = stripAnsi(raw);
+  assert.match(body, /REVIEW/, 'a REVIEW group header renders');
+  assert.match(body, /⚠ dirty/, 'the git marker shows in the row');
+  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC_REVIEW}mREVIEW`), 'REVIEW header is bold peach');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC_REVIEW}mdirtyproj`), 'the review session name is peach');
+});
+
+test('REVIEW sorts between WORKING and COMPLETED', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { state: 'working',   cwd: 'C:\\a\\wproj', session: 'w', host: HOST, ts: now - 5 });
+  stateFile(home, 'r', { state: 'review',    cwd: 'C:\\a\\rproj', session: 'r', host: HOST, ts: now - 6, git: '↑2' });
+  stateFile(home, 'c', { state: 'completed', cwd: 'C:\\a\\cproj', session: 'c', host: HOST, ts: now - 7 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  const iW = body.indexOf('WORKING'), iR = body.indexOf('REVIEW'), iC = body.indexOf('COMPLETED');
+  assert.ok(iW > -1 && iR > -1 && iC > -1, 'all three headers present');
+  assert.ok(iW < iR && iR < iC, `order must be WORKING < REVIEW < COMPLETED (got ${iW},${iR},${iC})`);
+});
+
+test('a clean completed row (no marker) stays in COMPLETED', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'c', { state: 'completed', cwd: 'C:\\a\\cleanproj', session: 'c', host: HOST, ts: nowSec() - 30, git: '' });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /COMPLETED/);
+  assert.doesNotMatch(body, /REVIEW/, 'a clean stop is not reviewed');
+});
+
+test('the live registry fold re-derives review from the git marker (idle -> completed -> review)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  const sid = 'aaaa1111-0000-0000-0000-0000000000aa';
+  // Hook row: a local host session with a dirty marker and a live (this-process) pid.
+  stateFile(home, sid, { state: 'review', session: sid, kind: 'host', cwd: 'C:\\a\\foldproj',
+    host: HOST, ts: now - 60, pid: String(process.pid), locator: 'none:', git: '⚠ dirty' });
+  // Live registry says idle -> the fold maps that to "completed"; the marker upgrades it back.
+  sessionFile(home, process.pid, { pid: process.pid, sessionId: sid, status: 'idle', entrypoint: 'cli',
+    updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /REVIEW/, 'the folded idle session is upgraded to review, not shown as completed');
+  assert.match(body, /foldproj/);
+});
+
+test('--card labels a review session with the peach state', { skip }, () => {
+  const { env } = makeEnv();
+  const blob = cardKey([HOST, 'C:\\a\\rproj', 'review', '0', 'fixing things', '1', 'host', 'none:']);
+  const txt = stripAnsi(run(env, ['--card', blob]).out);
+  assert.match(txt, /State\s+review/);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

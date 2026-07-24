@@ -158,4 +158,78 @@ test('carries the pid forward when a later event lacks CLAUDE_PID', { skip }, ()
   assert.strictEqual(String(readState(home, 'sid').pid), '4242', 'pid persists across events');
 });
 
-process.on('exit', () => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });
+// ---- review state: a stop with an uncommitted/unpushed tree is not "done" ----
+// The Stop/task_complete hooks fire `completed` at every turn end; the hook downgrades that
+// to `review` (and stamps a marker) when the repo is dirty or ahead of upstream, so the
+// picker can group loose-end sessions apart. Needs real git.
+let gitOk = true;
+try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { gitOk = false; }
+const gitSkip = skip || (gitOk ? false : 'git unavailable');
+
+const repos = [];
+const GITENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+// Build a temp repo in one of four shapes: 'clean' (committed+pushed), 'dirty' (uncommitted
+// change), 'unpushed' (a commit ahead of upstream), 'nonrepo' (a plain dir). Returns its cwd.
+function makeRepo(shape) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'av-repo-'));
+  repos.push(d);
+  if (shape === 'nonrepo') return d;
+  const git = (...a) => execFileSync('git', ['-C', d, ...a], { stdio: 'ignore', env: { ...process.env, ...GITENV } });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(d, 'f'), '1\n');
+  git('add', '.'); git('commit', '-qm', 'init');
+  if (shape === 'dirty') { fs.writeFileSync(path.join(d, 'f'), '2\n'); return d; }
+  // clean/unpushed both need an upstream to compare against.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'av-bare-'));
+  repos.push(bare);
+  execFileSync('git', ['init', '-q', '--bare', bare], { stdio: 'ignore', env: { ...process.env, ...GITENV } });
+  git('remote', 'add', 'origin', bare);
+  git('push', '-q', '-u', 'origin', 'main');
+  if (shape === 'unpushed') { fs.writeFileSync(path.join(d, 'f'), '3\n'); git('commit', '-qam', 'ahead'); }
+  return d;
+}
+
+test('completed in a dirty repo downgrades to review with a ⚠ dirty marker', { skip: gitSkip }, () => {
+  const home = freshHome();
+  run('completed', { session_id: 'r1', cwd: makeRepo('dirty') }, { pane: '1', home });
+  const s = readState(home, 'r1');
+  assert.strictEqual(s.state, 'review', 'a dirty stop is review, not completed');
+  assert.match(s.git, /dirty/, 'the git marker names the dirty tree');
+});
+
+test('completed with unpushed commits downgrades to review with an ↑N marker', { skip: gitSkip }, () => {
+  const home = freshHome();
+  run('completed', { session_id: 'r2', cwd: makeRepo('unpushed') }, { pane: '1', home });
+  const s = readState(home, 'r2');
+  assert.strictEqual(s.state, 'review', 'an unpushed stop is review');
+  assert.match(s.git, /↑1/, 'the marker counts commits ahead of upstream');
+});
+
+test('completed in a clean, pushed repo stays completed (no marker)', { skip: gitSkip }, () => {
+  const home = freshHome();
+  run('completed', { session_id: 'r3', cwd: makeRepo('clean') }, { pane: '1', home });
+  const s = readState(home, 'r3');
+  assert.strictEqual(s.state, 'completed', 'a clean+pushed stop is genuinely done');
+  assert.strictEqual(s.git, '', 'no marker on a clean tree');
+});
+
+test('completed outside any git repo stays completed', { skip: gitSkip }, () => {
+  const home = freshHome();
+  run('completed', { session_id: 'r4', cwd: makeRepo('nonrepo') }, { pane: '1', home });
+  const s = readState(home, 'r4');
+  assert.strictEqual(s.state, 'completed', 'a non-repo cwd has nothing to review');
+  assert.strictEqual(s.git, '');
+});
+
+test('only completed is downgraded — a working turn in a dirty repo stays working', { skip: gitSkip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 'r5', cwd: makeRepo('dirty') }, { pane: '1', home });
+  const s = readState(home, 'r5');
+  assert.strictEqual(s.state, 'working', 'an active turn is never review, dirty or not');
+  assert.strictEqual(s.git, '', 'no marker stamped outside a completed stop');
+});
+
+process.on('exit', () => {
+  for (const h of homes) fs.rmSync(h, { recursive: true, force: true });
+  for (const d of repos) fs.rmSync(d, { recursive: true, force: true });
+});

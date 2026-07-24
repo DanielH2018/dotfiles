@@ -38,22 +38,24 @@ av_capture_locator() {  # echo "backend:locator" for THIS session's OWN pane
   fi
 }
 
-# av_write_full KEY STATE CWD HOST TS KIND TITLE LOCATOR PANE RUN [PID]
+# av_write_full KEY STATE CWD HOST TS KIND TITLE LOCATOR PANE RUN [PID] [GIT]
 # Full record write (atomic temp+mv). MSYS_NO_PATHCONV keeps a leading-slash POSIX
 # cwd intact when a native jq.exe would otherwise let Git-Bash rewrite it. Writes via
 # redirect (not a jq path arg) so jq never has to open a Windows path. PID (the session's
 # CLAUDE_PID) lets the picker prune leaked local rows whose process is no longer alive.
+# GIT is a short "not-done" marker (⚠ dirty / ↑N) the state hook stamps when a session
+# stops with an uncommitted/unpushed tree; the picker reclassifies such rows into REVIEW.
 av_write_full() {
   local key="$1" state="$2" cwd="$3" host="$4" ts="$5" kind="$6" title="$7" \
-        locator="$8" pane="$9" run="${10}" pid="${11:-}"
+        locator="$8" pane="$9" run="${10}" pid="${11:-}" git="${12:-}"
   local dir; dir=$(av_dir); mkdir -p "$dir" 2>/dev/null
   local file="$dir/$key.json" tmp="$dir/$key.json.tmp.$$"
   if MSYS_NO_PATHCONV=1 jq -nc \
        --arg key "$key" --arg run "$run" --arg kind "$kind" --arg cwd "$cwd" \
        --arg title "$title" --arg state "$state" --arg host "$host" \
        --arg backend "${locator%%:*}" --arg locator "$locator" \
-       --arg pane "$pane" --arg session "$key" --arg pid "$pid" --argjson ts "${ts:-0}" \
-       '{key:$key,run:$run,kind:$kind,cwd:$cwd,title:$title,state:$state,host:$host,ts:$ts,backend:$backend,locator:$locator,pane:$pane,session:$session,pid:$pid}' \
+       --arg pane "$pane" --arg session "$key" --arg pid "$pid" --arg git "$git" --argjson ts "${ts:-0}" \
+       '{key:$key,run:$run,kind:$kind,cwd:$cwd,title:$title,state:$state,host:$host,ts:$ts,backend:$backend,locator:$locator,pane:$pane,session:$session,pid:$pid,git:$git}' \
        > "$tmp" 2>/dev/null; then
     mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
   else

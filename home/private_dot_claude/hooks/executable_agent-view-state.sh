@@ -8,6 +8,20 @@
 state="${1:-idle}"
 source "$HOME/.claude/hooks/agent-view-register.sh"
 dir=$(av_dir)
+
+# git_review_marker CWD -> echo a short "not-done" marker if the repo is dirty or has
+# unpushed commits, else nothing. Used to split a genuinely-finished stop from one that
+# left work behind: the turn ends (state "completed") but the tree isn't committed/pushed.
+git_review_marker() {
+  local cwd="$1" mark="" ahead
+  command -v git >/dev/null 2>&1 || return 0
+  git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ] && mark="⚠ dirty"
+  ahead=$(git -C "$cwd" rev-list --count '@{upstream}..HEAD' 2>/dev/null)
+  case "$ahead" in ''|*[!0-9]*) ahead=0;; esac
+  [ "$ahead" -gt 0 ] 2>/dev/null && mark="${mark:+$mark }↑$ahead"
+  printf '%s' "$mark"
+}
 input=$(cat 2>/dev/null)
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
 [ -z "$sid" ] && sid="nosession"
@@ -57,5 +71,15 @@ if [ -n "$tpath" ] && [ -f "$tpath" ]; then
 fi
 ts=$(date +%s 2>/dev/null || echo 0)
 host=$(hostname 2>/dev/null)
-av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" "" "$pid"
+# A stop with an uncommitted/unpushed tree isn't truly done: keep the marker AND downgrade
+# "completed" to "review" so the picker groups it apart. Only completed is downgraded — a
+# working/needs-input turn stays as-is (and clears any prior marker). The marker is also
+# stored for local sessions whose render state is recomputed from the live registry (idle ->
+# completed), where the picker re-derives review from this field.
+gitmark=""
+if [ "$state" = "completed" ]; then
+  gitmark=$(git_review_marker "$cwd")
+  [ -n "$gitmark" ] && state="review"
+fi
+av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" "" "$pid" "$gitmark"
 exit 0
