@@ -593,8 +593,6 @@ fi
 
 # First row of the repo pick: no repo at all -> a plain HOST claude session (no sandbox).
 host_row='[no repo · plain claude]'
-# Same machine, Windows side: a plain Windows-native claude in a new local-domain WezTerm tab.
-winhost_row='[Windows · plain claude]'
 
 spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachable hosts only.
   local rows sel h label
@@ -624,31 +622,36 @@ spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
   esac
 }
 
-spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row (empty if cancelled)
-  local names sel d
-  names=$(for d in "$repos_root"/*/; do
-    [ -d "$d/.git" ] || continue                # .git dir = a real checkout; a .git FILE is a
-                                                # linked worktree (claude-sandbox's own -b sessions
-                                                # land in repos_root) -> skip, not a spawn target
-    printf '%s\n' "$(basename "${d%/}")"
-  done | sort)
-  sel=$({ printf '%s\n' "$host_row"; \
-          is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && printf '%s\n' "$winhost_row"; \
-          [ -n "$names" ] && printf '%s\n' "$names"; } \
-    | fzf --prompt 'repo> ' --height='~70%' --layout=reverse \
-    --border=rounded --info=hidden --header 'new session · repo = claude-sandbox · no repo = host claude · esc cancels')
+spawn_pick_repo() {  # $1 = host (wsl | remote:<alias>) -> repo path/NAME, @host, or empty
+  local host="$1" names sel d
+  if [ "$host" = "wsl" ]; then
+    names=$(for d in "$repos_root"/*/; do
+      [ -d "$d/.git" ] || continue                  # real checkout; a .git FILE = linked worktree
+      printf '%s\n' "$(basename "${d%/}")"
+    done | sort)
+  else                                              # remote:<alias> -> ctw over ssh (cached)
+    names=$("$cts_bin" --complete-repos "${host#remote:}" 2>/dev/null | sort -u)
+  fi
+  sel=$({ printf '%s\n' "$host_row"; [ -n "$names" ] && printf '%s\n' "$names"; } \
+    | fzf --prompt 'repo> ' --height='~70%' --layout=reverse --border=rounded --info=hidden \
+      --header 'new session · no repo = plain claude · esc cancels')
   [ -n "$sel" ] || return 0
-  if   [ "$sel" = "$host_row" ];    then printf '@host'
-  elif [ "$sel" = "$winhost_row" ]; then printf '@windows'
-  else printf '%s' "$repos_root/$sel"; fi
+  if   [ "$sel" = "$host_row" ]; then printf '@host'
+  elif [ "$host" = "wsl" ];      then printf '%s' "$repos_root/$sel"
+  else printf '%s' "$sel"; fi                        # remote: pass the NAME (ctw resolves it)
 }
 
-spawn_pick_branch() {  # $1 = host, $2 = repo path -> echo branch (empty = main repo, no worktree)
-  local repo="$2" out
-  # --print-query so the user can TYPE a new branch (claude-sandbox -b creates it) or pick
-  # an existing one; the typed query is the last line. Empty selection = the main checkout.
-  out=$("$sandbox_bin" "$repo" --complete-branches 2>/dev/null | fzf --prompt 'branch> ' \
-    --height='~70%' --layout=reverse --border=rounded --info=hidden --print-query \
+spawn_pick_branch() {  # $1=host $2=repo -> branch (empty = main repo, no worktree)
+  local host="$1" repo="$2" out src
+  if [ "$host" = "wsl" ]; then
+    src=$("$sandbox_bin" "$repo" --complete-branches 2>/dev/null)
+  else
+    src=$("$cts_bin" --complete-branches "${host#remote:}" "$repo" 2>/dev/null)
+  fi
+  # --print-query so the user can TYPE a new branch (cts/-b creates it) or pick one; the
+  # typed query is the last line. Empty selection = the main checkout.
+  out=$(printf '%s\n' "$src" | fzf --prompt 'branch> ' --height='~70%' --layout=reverse \
+    --border=rounded --info=hidden --print-query \
     --header 'pick or type a branch (-b) · empty = main repo · esc cancels' | tail -1)
   printf '%s' "$out"
 }
@@ -706,17 +709,31 @@ do_spawn() {  # interactive: pick host -> repo -> (mode) -> branch, spawn in the
     [ "$rc" -eq 0 ] && av_close_picker "$pf"
     return "$rc"
   fi
+  if [ "${host#remote:}" != "$host" ]; then          # remote:<alias>
+    alias="${host#remote:}"
+    repo=$(spawn_pick_repo "$host") || return 1
+    [ -n "$repo" ] || return 0
+    if [ "$repo" = "@host" ]; then
+      inner="$(printf '%q --ssh=%q' "$cts_bin" "$alias")"; title="${HOST_LABEL[$alias]:-$alias}"
+    else
+      branch=$(spawn_pick_branch "$host" "$repo")
+      if [ -n "$branch" ]; then
+        inner="$(printf '%q --ssh=%q %q -b %q' "$cts_bin" "$alias" "$repo" "$branch")"
+      else
+        inner="$(printf '%q --ssh=%q %q' "$cts_bin" "$alias" "$repo")"
+      fi
+      title="$repo"
+    fi
+    spawn_in_backend "$inner" "$title" "$inner"; rc=$?   # inner == named for remote
+    [ "$rc" -eq 0 ] && av_close_picker "$pf"
+    return "$rc"
+  fi
   repo=$(spawn_pick_repo "$host") || return 1
   [ -n "$repo" ] || return 0
   if [ "$repo" = "@host" ]; then
     inner='cd ~/dev 2>/dev/null || cd; claude'
     named="$(printf '%q %q' "$ct_bin" "$HOME/dev")"
     spawn_in_backend "$inner" 'claude' "$named"; rc=$?
-    [ "$rc" -eq 0 ] && av_close_picker "$pf"
-    return "$rc"
-  fi
-  if [ "$repo" = "@windows" ]; then
-    spawn_windows_claude; rc=$?
     [ "$rc" -eq 0 ] && av_close_picker "$pf"
     return "$rc"
   fi
