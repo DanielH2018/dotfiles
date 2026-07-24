@@ -209,15 +209,15 @@ config.keys = {
 	{ key = "phys:RightBracket", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
 
 	-- --- WezTerm extras (no Ghostty equivalent) ---
-	-- Agent View switcher (agentview): full-color fzf picker in a local tab. Dismiss with
-	-- ESC (clean exit) — it also closes itself after a jump.
-	-- `--noprofile --norc`: skip the login-shell profile (~400ms of ble.sh/tool
-	-- inits agentview doesn't need). bash.exe auto-adds /usr/bin + /mingw64/bin, and
-	-- jq/wezterm/fzf/agentview all live on the Windows PATH — so bare bash still finds
-	-- every tool. Halves the picker's bring-up time.
+	-- Agent View switcher (agentview): the UNIFIED picker, run WSL-side in a WSL:Ubuntu tab so
+	-- ONE picker aggregates WSL + Windows + homelab sessions (Windows rows over /mnt/c, homelab
+	-- over ssh). It MUST run inside a WezTerm pane so its Windows-pane focus (wezterm.exe cli
+	-- activate-pane) can reach the GUI — a WSL-domain tab gives it $WEZTERM_PANE + the gui socket.
+	-- `bash -lc` for a login PATH (~/.local/bin/agentview + jq/fzf); dismiss with ESC — it also
+	-- closes itself after a jump.
 	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
-		domain = { DomainName = "local" },
-		args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
+		domain = { DomainName = "WSL:Ubuntu" },
+		args = { "bash", "-lc", "agentview" },
 	}) },
 	-- CTRL+Left: back to Agent View from inside a session pane (claude, sandbox docker,
 	-- ssh attach). Fires only when the foreground process is NOT a shell — at a prompt
@@ -238,8 +238,8 @@ config.keys = {
 			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
 		else
 			window:perform_action(act.SpawnCommandInNewTab({
-				domain = { DomainName = "local" },
-				args = { git_bash, "--noprofile", "--norc", "-c", "agentview" },
+				domain = { DomainName = "WSL:Ubuntu" },   -- the unified WSL picker (see CTRL+SHIFT+S)
+				args = { "bash", "-lc", "agentview" },
 			}), pane)
 		end
 	end) },
@@ -291,7 +291,7 @@ config.mouse_bindings = {
 -- REMOTE ACCESS — the homelab is reached via ssh + tmux (CTRL+SHIFT+H), NOT a
 -- WezTerm mux domain. tmux is the portable multiplexer across machines; retiring the
 -- mux domain also removes the CTRL+W GUI-hang class (which was the mux round-trip over
--- WireGuard). The agentview picker (CTRL+SHIFT+S) still aggregates PC + homelab
+-- WireGuard). The agentview picker (CTRL+SHIFT+S) aggregates WSL + Windows (PC) + homelab
 -- sessions and attaches to remote ones by spawning an ssh+tmux tab. Default domain
 -- stays local; nothing to configure.
 -- ---------------------------------------------------------------------------
