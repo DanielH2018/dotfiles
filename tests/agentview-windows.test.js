@@ -204,6 +204,62 @@ test('--refresh-remote spares a just-started Windows row not yet on the roster',
   assert.ok(fs.existsSync(path.join(windir, 'newborn.json')), 'a session younger than the grace window is not reapable');
 });
 
+// ---- sync: synthesize rows for live sessions no hook registered ---------
+// The registry is written by state hooks, which fire only AFTER activity. A session started or
+// resumed and then left idle submits no prompt and ends no turn, so it never wrote a row and the
+// picker could not see it — nothing had been reaped, there was never a row. The daemon roster
+// already knows the session, so the same query that drives the reap fills the gap.
+test('--refresh-remote synthesizes a row for a live session that never registered one', { skip }, () => {
+  const { env, windir } = makeEnv();
+  const agents = JSON.stringify([{ id: 'n3w', sessionId: 'unreg', cwd: 'C:\\Users\\daniel',
+    kind: 'background', status: 'busy', name: 'never registered', startedAt: (nowSec() - 300) * 1000 }]);
+  run({ ...env, WIN_AGENTS: agents }, ['--refresh-remote']);
+  const file = path.join(windir, 'unreg.json');
+  assert.ok(fs.existsSync(file), 'a live session with no row gets one');
+  const row = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(row.session, 'unreg', 'keyed by the stable session id');
+  assert.strictEqual(row.host, WINHOST, 'attributed to the Windows host, so it renders with a PC badge');
+  assert.strictEqual(row.state, 'working', 'roster status busy maps to working');
+  assert.strictEqual(row.cwd, 'C:\\Users\\daniel',
+    'the Windows cwd round-trips verbatim — @tsv would have escaped it to C:\\\\Users\\\\daniel');
+  assert.ok(row.ts > nowSec() - 400 && row.ts <= nowSec(), 'startedAt (ms) becomes a second-resolution ts');
+  const txt = stripAnsi(run(env, ['--body']).out);
+  assert.match(txt, /never registered/, 'and the row renders in the picker');
+  assert.match(txt, /\bPC\b/, 'carrying the PC badge');
+});
+
+test('--refresh-remote never overwrites a row a hook already wrote', { skip }, () => {
+  const { env, windir } = makeEnv();
+  // The hook captured a real pane; the roster cannot supply one. Synthesizing over the top would
+  // silently downgrade a direct jump to "no pane", so an existing file is left strictly alone.
+  winRow(windir, 'w5', { key: 'w5', session: 'w5', host: WINHOST, cwd: 'C:\\real', state: 'needs-input', ts: nowSec() - 600, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'hook title', pid: '99' });
+  const agents = JSON.stringify([{ id: 'w5short', sessionId: 'w5', cwd: 'C:\\roster', kind: 'background', status: 'idle', name: 'roster title', startedAt: nowSec() * 1000 }]);
+  run({ ...env, WIN_AGENTS: agents }, ['--refresh-remote']);
+  const row = JSON.parse(fs.readFileSync(path.join(windir, 'w5.json'), 'utf8'));
+  assert.strictEqual(row.locator, 'wezterm:12', 'the hook-captured pane survives');
+  assert.strictEqual(row.title, 'hook title', 'and so does its title');
+});
+
+test('a synthesized row locates a background session by agent id, an interactive one not at all', { skip }, () => {
+  const { env, windir } = makeEnv();
+  const agents = JSON.stringify([
+    { id: 'sh0rt', sessionId: 'bgsid', cwd: 'C:\\b', kind: 'background', status: 'idle', name: 'bg', startedAt: nowSec() * 1000 },
+    { pid: 4242, sessionId: 'intsid', cwd: 'C:\\i', kind: 'interactive', status: 'idle', name: 'int', startedAt: nowSec() * 1000 },
+  ]);
+  run({ ...env, WIN_AGENTS: agents }, ['--refresh-remote']);
+  const bg = JSON.parse(fs.readFileSync(path.join(windir, 'bgsid.json'), 'utf8'));
+  const int = JSON.parse(fs.readFileSync(path.join(windir, 'intsid.json'), 'utf8'));
+  assert.strictEqual(bg.locator, 'bg:sh0rt', 'a daemon-held session is attachable by its agent id');
+  assert.strictEqual(bg.kind, 'bg', 'and is labelled bg');
+  assert.strictEqual(int.locator, 'none:', 'an interactive session has no pane WSL can name — never invent one');
+});
+
+test('--refresh-remote synthesizes nothing when the roster query fails', { skip }, () => {
+  const { env, windir } = makeEnv();
+  run({ ...env, WIN_AGENTS_RC: '3' }, ['--refresh-remote']);
+  assert.strictEqual(fs.readdirSync(windir).length, 0, 'an unreachable oracle invents no rows');
+});
+
 // ---- jump (focus in place, no ssh, no new tab) --------------------------
 test('--jump of a Windows row activates its pane via wezterm.exe, not ssh', { skip }, () => {
   const { env, activateLog, sshLog } = makeEnv();
