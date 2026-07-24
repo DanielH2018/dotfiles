@@ -138,3 +138,26 @@ one-question+recommendation contract held ~40% of runs on sonnet vs 100% on opus
 fidelity boundary as agents — this grades the skill's prompt/behavior, not Skill-tool
 loading plumbing, and `--tools ""` means a case's input must say when there is nothing to
 inspect, or the skill will reasonably ask for a repo it can't reach.
+
+### Skill triage (2026-07-24)
+
+Which of the 15 repo skills have cases, and why the rest don't. A skill only gets a case
+if a single no-tools turn can exhibit a falsifiable behavior from its contract.
+
+| Skill | Verdict |
+|---|---|
+| `grilling` | cases — one-question / recommendation / no-deliverables contract |
+| `prep` | cases — gear routing: trivial skips intake, medium produces the block and stops |
+| `skill-router` | cases — named situation routes to the named skill, regex-gradable |
+| `artifact-design` | cases — self-contained HTML: no external assets, inline CSS |
+| `pr-feedback` | cases — fixed markers/header/zero-PR line on inline sample data |
+| `pr-review-prep` | cases — verbalized safety gates (force-with-lease, stop on guard failure) |
+| `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
+| `building-evals` | skip — methodology reference; no falsifiable single-turn output |
+| `codebase-design` | skip — vocabulary rule is judge-only and echoes of banned words false-fail |
+| `config-lint` | skip — pass 1 is script-bound; placement review too open-ended to anchor |
+| `deep-understanding` | skip — the comprehension loop is inherently multi-turn |
+| `distill-scan` | skip — the regex validation loop needs node execution |
+| `domain-modeling` | skip — provenance behavior needs the vault to source against |
+| `reprime` | skip — its core act is re-reading external rule files |
+| `writing-great-skills` | skip — open-ended authoring judgment, low regression value |
