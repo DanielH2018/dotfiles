@@ -128,6 +128,28 @@ test('ctw slugifies a slashed branch for the worktree dir but keeps the real bra
   assert.match(branches, /(^|\n)feat\/x(\n|$)/, 'real slashed branch name preserved');
 });
 
+test('ctw REPO BRANCH launches the main checkout when it already holds that branch', { skip }, () => {
+  const root = scratch();
+  const repo = gitRepo(root, 'proj');                // 'main' is checked out in the repo itself
+  const wt = scratch();
+  const { ct, code, err } = runCtw(['proj', 'main'], { roots: root, wtRoot: wt });
+  assert.strictEqual(code, 0, err);
+  assert.strictEqual(ct, repo, 'ct launched in the checkout that holds the branch');
+  assert.deepStrictEqual(fs.readdirSync(wt), [], 'no worktree created');
+});
+
+test('ctw REPO BRANCH launches an existing worktree that already holds that branch', { skip }, () => {
+  const root = scratch();
+  const repo = gitRepo(root, 'proj', ['feature']);
+  const elsewhere = path.join(scratch(), 'feature-wt');   // a worktree the repo owns itself
+  execFileSync('git', ['-C', repo, 'worktree', 'add', elsewhere, 'feature'], { stdio: 'ignore' });
+  const wt = scratch();
+  const { ct, code, err } = runCtw(['proj', 'feature'], { roots: root, wtRoot: wt });
+  assert.strictEqual(code, 0, err);
+  assert.strictEqual(ct, elsewhere, 'ct launched in the existing worktree');
+  assert.deepStrictEqual(fs.readdirSync(wt), [], 'no second worktree created');
+});
+
 test('ctw REPO BRANCH twice reuses the worktree without error', { skip }, () => {
   const root = scratch();
   gitRepo(root, 'proj', ['feature']);
