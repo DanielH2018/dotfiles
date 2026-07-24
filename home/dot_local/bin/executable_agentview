@@ -29,9 +29,10 @@
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
-#   agentview --refresh-remote PF  reap Windows rows the daemon no longer runs + pull the
-#                         homelab cache over ssh, then reload the live picker via the fzf
-#                         --listen port stored in portfile PF (used by the startup background
+#   agentview --refresh-remote PF  reconcile Windows rows against the daemon roster (reap the
+#                         ones it no longer runs, synthesize the live ones no hook registered)
+#                         + pull the homelab cache over ssh, then reload the live picker via the
+#                         fzf --listen port stored in portfile PF (used by the startup background
 #                         job and CTRL+F). Detached: this is where the slow off-render work goes.
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
@@ -313,10 +314,16 @@ win_roster() {  # echo the Windows daemon's roster as a JSON array; nonzero when
   # Failure MUST stay distinguishable from an empty array — win_agent_live and reap_windows_rows
   # both refuse to act on "unknown". Costs ~0.7s (a Windows process spawn), so never call this
   # from a render path; --refresh-remote is where it belongs.
+  # Memoized for the life of the process, since --refresh-remote now asks twice (reap, then
+  # sync) and would otherwise pay that ~0.7s twice over. Only a SUCCESSFUL answer is cached: a
+  # failure has to stay retryable, and every caller runs in a short-lived process, so a cached
+  # roster cannot outlive the single command that fetched it.
   local out
+  [ -n "${_win_roster_memo:-}" ] && { printf '%s' "$_win_roster_memo"; return 0; }
   [ -x "$WIN_CLAUDE" ] || return 1
   out=$("$WIN_CLAUDE" agents --json 2>/dev/null) || return 1
   printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+  _win_roster_memo=$out
   printf '%s' "$out"
 }
 
@@ -931,9 +938,10 @@ JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
 JQ_PINID='(.locator // "") as $l | (if ($l != "" and (($l|split(":")|.[0]) != "none")) then $l else ((.host // "?") + "" + (.cwd // "") + "" + (.kind // "host")) end)'
 PRUNE=$(( 7 * 86400 ))
 # How settled a Windows registry entry must be before reap_windows_rows will believe the daemon
-# roster over it. The SessionStart hook writes the row and the session registers with the daemon
-# independently, so a brand-new session is briefly on disk yet absent from the roster; without
-# this it could be reaped mid-birth. Only ever delays reaping a genuinely dead row by one refresh.
+# roster over it. The row and the daemon registration are written by INDEPENDENT paths — a state
+# hook writes the file, the session itself handshakes with the daemon — so a brand-new session is
+# briefly on disk yet absent from the roster; without this it could be reaped mid-birth. Only ever
+# delays reaping a genuinely dead row by one refresh.
 REAP_GRACE=120
 # remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
@@ -1183,6 +1191,61 @@ reap_windows_rows() {  # delete $windir entries whose session the Windows daemon
   for i in "${!wfiles[@]}"; do
     [ "${jqlines[$i]}" = "D" ] && rm -f "${wfiles[$i]}" 2>/dev/null
   done
+  return 0
+}
+
+sync_windows_rows() {  # write $windir rows for live Windows sessions that never registered one.
+  # The registry is written by STATE HOOKS, so a row only exists once a session submits a prompt
+  # or ends a turn. A session that starts (or resumes) and is then left idle fires neither, so it
+  # runs with no file and the picker cannot see it — the reap is not involved, there was never a
+  # row to reap. The SessionStart hook now covers new sessions, but only on hosts already running
+  # that config; the daemon roster covers the rest, and it already knows everything a row needs.
+  # CREATE-ONLY: an existing file is left ALONE. A hook-written row carries the pane and locator
+  # the roster cannot supply, so overwriting one would downgrade a direct jump to "no pane".
+  # Runs from --refresh-remote right after reap_windows_rows, sharing its memoized roster query.
+  local out entries sid cwd title kind state ts bgid locator file tmp
+  [ "$winhost" != "$selfhost" ] || return    # same guard as gather_windows_rows
+  [ -d "$windir" ] || return
+  out=$(win_roster) || return
+  # Roster status maps onto picker states exactly as refresh_remote's homelab fold does
+  # (busy -> working, waiting -> needs-input, anything else -> idle). Background sessions get a
+  # bg:<id> locator so <enter> attaches via the daemon; an interactive one has no pane WSL can
+  # name, so it stays none: and the jump path re-resolves it against the roster at <enter> time.
+  # Fields are US-joined, NOT @tsv: @tsv escapes backslashes, so a Windows cwd came back as
+  # C:\\Users\\daniel and got written to disk doubled. join() applies no escaping — the field
+  # separator is safe instead because `clean` strips US (and newlines, which would split a row).
+  # The class is written with SINGLE backslashes so jq's own string parser turns them into the
+  # real control characters: "\\u001f" would reach Oniguruma as an escape it does not know and
+  # degrade into the literal set {u,0,1,f}, which silently ate the 0 out of an agent id.
+  entries=$(printf '%s' "$out" | jq -r '
+      def clean: (. // "") | tostring | gsub("[\n\r]"; " ") | gsub("\u001f"; " ");
+      .[] | select((.sessionId // "") != "") |
+      [ (.sessionId|clean), (.cwd|clean), (.name|clean),
+        (if (.kind // "") == "background" then "bg" else "host" end),
+        (if (.status // "") == "busy" then "working"
+         elif (.status // "") == "waiting" then "needs-input" else "idle" end),
+        ((.startedAt // 0) / 1000 | floor | tostring), (.id|clean) ] | join("\u001f")' 2>/dev/null) || return
+  [ -n "$entries" ] || return
+  while IFS=$'\037' read -r sid cwd title kind state ts bgid; do
+    [ -n "$sid" ] || continue
+    file="$windir/$sid.json"
+    [ -e "$file" ] && continue
+    case "$ts" in ''|*[!0-9]*) ts=0;; esac
+    locator="none:"; [ "$kind" = "bg" ] && [ -n "$bgid" ] && locator="bg:$bgid"
+    tmp="$file.tmp.$$"
+    # Same schema and same atomic temp+mv as the hook's av_write_full, so a row this writes is
+    # indistinguishable to every reader (and to the reap) from one a hook wrote.
+    if MSYS_NO_PATHCONV=1 jq -nc --arg key "$sid" --arg session "$sid" --arg cwd "$cwd" \
+         --arg title "$title" --arg state "$state" --arg host "$winhost" --arg kind "$kind" \
+         --arg locator "$locator" --argjson ts "$ts" \
+         '{key:$key,run:"",kind:$kind,cwd:$cwd,title:$title,state:$state,host:$host,ts:$ts,
+           backend:($locator|split(":")[0]),locator:$locator,pane:"",session:$session,pid:"",git:""}' \
+         > "$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$file" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else
+      rm -f "$tmp" 2>/dev/null
+    fi
+  done <<< "$entries"
   return 0
 }
 
@@ -1540,8 +1603,9 @@ if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
 # detached — once at picker startup and again on every CTRL+F — so remote rows refresh
 # without ever blocking the UI. Missing curl/port degrades to just updating the cache.
 if [ "$mode" = "--refresh-remote" ]; then
-  reap_windows_rows   # first: drop Windows rows the daemon no longer runs, so the POST below
-  refresh_remote      # reloads a list already free of them (see reap_windows_rows for the cost)
+  reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
+  sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
+  refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
   _pf="${2:-}"
   if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
     for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
