@@ -29,9 +29,10 @@
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
-#   agentview --refresh-remote PF  pull the homelab cache over ssh, then reload the live
-#                         picker via the fzf --listen port stored in portfile PF (used by
-#                         the startup background job and CTRL+F)
+#   agentview --refresh-remote PF  reap Windows rows the daemon no longer runs + pull the
+#                         homelab cache over ssh, then reload the live picker via the fzf
+#                         --listen port stored in portfile PF (used by the startup background
+#                         job and CTRL+F). Detached: this is where the slow off-render work goes.
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
 # one direct backend command with no discovery step. Rows lacking a locator (legacy /
@@ -306,6 +307,19 @@ win_sid_for_row() {  # $1=locator $2=cwd -> echo this row's Windows session id (
   [ -n "$sid" ] && printf '%s' "$sid"
 }
 
+win_roster() {  # echo the Windows daemon's roster as a JSON array; nonzero when we cannot ask.
+  # `agents --json` is documented as printing "active sessions (interactive and background)",
+  # which makes it the one oracle that can see a Windows session WSL has no checkable pid for.
+  # Failure MUST stay distinguishable from an empty array — win_agent_live and reap_windows_rows
+  # both refuse to act on "unknown". Costs ~0.7s (a Windows process spawn), so never call this
+  # from a render path; --refresh-remote is where it belongs.
+  local out
+  [ -x "$WIN_CLAUDE" ] || return 1
+  out=$("$WIN_CLAUDE" agents --json 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+  printf '%s' "$out"
+}
+
 win_agent_live() {  # $1=sid -> echo the daemon's short agent id when that session is still LIVE.
   # 0 = live (id on stdout), 1 = the daemon does not have it, 2 = cannot tell. The distinction
   # matters: "no pane" is NOT "gone". A Windows session detaches from its terminal and keeps
@@ -315,9 +329,7 @@ win_agent_live() {  # $1=sid -> echo the daemon's short agent id when that sessi
   # as "everything is dead" and every row would look reapable.
   local sid="$1" out aid
   [ -n "$sid" ] || return 2
-  [ -x "$WIN_CLAUDE" ] || return 2
-  out=$("$WIN_CLAUDE" agents --json 2>/dev/null) || return 2
-  printf '%s' "$out" | jq -e . >/dev/null 2>&1 || return 2
+  out=$(win_roster) || return 2
   aid=$(printf '%s' "$out" | jq -r --arg sid "$sid" '
     .[] | select((.sessionId // "") == $sid) | (.id // "")' 2>/dev/null | head -1)
   [ -n "$aid" ] || return 1
@@ -918,6 +930,11 @@ JQ_TS='((.ts // 0)|tonumber? // 0) as $ts | ($now - $ts) as $age'
 # pane; else host|cwd|kind, US-joined (). Lets gc_pins reconcile the pin sidecar.
 JQ_PINID='(.locator // "") as $l | (if ($l != "" and (($l|split(":")|.[0]) != "none")) then $l else ((.host // "?") + "" + (.cwd // "") + "" + (.kind // "host")) end)'
 PRUNE=$(( 7 * 86400 ))
+# How settled a Windows registry entry must be before reap_windows_rows will believe the daemon
+# roster over it. The SessionStart hook writes the row and the session registers with the daemon
+# independently, so a brand-new session is briefly on disk yet absent from the roster; without
+# this it could be reaped mid-birth. Only ever delays reaping a genuinely dead row by one refresh.
+REAP_GRACE=120
 # remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
 rows=""
 
@@ -1131,6 +1148,42 @@ gather_windows_rows() {  # append Windows-side rows (same machine, via /mnt/c). 
   else
     for i in "${jqlines[@]}"; do case "$i" in R*) rows+="${i#R$'\t'}"$'\n';; esac; done
   fi
+}
+
+reap_windows_rows() {  # delete $windir entries whose session the Windows daemon no longer runs.
+  # This is the Windows half of gather_local_rows' dead-pid prune. A local row is dropped the
+  # moment `kill -0` fails; Windows pids are not checkable from WSL, so the daemon roster stands
+  # in as the liveness oracle and the POLICY matches — gone is gone, no 7-day wait. Without this
+  # a session whose SessionEnd hook never fired (tab killed, crash) leaves a file behind that
+  # renders as a phantom row offering a jump nothing can serve.
+  # Runs ONLY from --refresh-remote, i.e. detached and off the render path: win_roster costs
+  # ~0.7s where a single 55ms process spawn already hurts, and the reload that job POSTs is what
+  # makes the reaped rows vanish from the open picker.
+  # Two deliberate refusals to act: an unreachable roster reaps NOTHING (unknown is not death,
+  # or one broken query would wipe every Windows row), and an entry younger than REAP_GRACE is
+  # spared so a just-started session cannot be reaped before it registers.
+  local wfiles out live jqout jqlines i
+  [ "$winhost" != "$selfhost" ] || return    # same guard as gather_windows_rows
+  [ -d "$windir" ] || return
+  shopt -s nullglob; wfiles=( "$windir"/*.json ); shopt -u nullglob
+  [ "${#wfiles[@]}" -gt 0 ] || return
+  out=$(win_roster) || return
+  live=$(printf '%s' "$out" | jq -c '[.[] | (.sessionId // "") | select(. != "")]' 2>/dev/null) || return
+  [ -n "$live" ] || return
+  # One jq over the dir emitting K/D per file IN ARGUMENT ORDER so lines align 1:1 with the glob
+  # and we rm via the bash path (jq's own input_filename comes back in a drive form rm rejects on
+  # MSYS). On a count mismatch reap nothing this run — same guard, same reason, as the gathers.
+  jqout=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" --argjson live "$live" \
+      --argjson grace "$REAP_GRACE" "
+      $JQ_TS | (.session // .key // \"\" | tostring) as \$sid |
+      if \$sid == \"\" or \$age < \$grace or (\$live | index(\$sid)) then \"K\" else \"D\" end
+      " "${wfiles[@]}" 2>/dev/null)
+  jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
+  [ "${#jqlines[@]}" -eq "${#wfiles[@]}" ] || return
+  for i in "${!wfiles[@]}"; do
+    [ "${jqlines[$i]}" = "D" ] && rm -f "${wfiles[$i]}" 2>/dev/null
+  done
+  return 0
 }
 
 refresh_remote() {  # pull homelab state over ssh, fold its live registry in, replace the cache
@@ -1487,7 +1540,8 @@ if [ "$mode" = "--body" ]; then render_body; printf '%s\n' "$body"; exit 0; fi
 # detached — once at picker startup and again on every CTRL+F — so remote rows refresh
 # without ever blocking the UI. Missing curl/port degrades to just updating the cache.
 if [ "$mode" = "--refresh-remote" ]; then
-  refresh_remote
+  reap_windows_rows   # first: drop Windows rows the daemon no longer runs, so the POST below
+  refresh_remote      # reloads a list already free of them (see reap_windows_rows for the cost)
   _pf="${2:-}"
   if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
     for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
