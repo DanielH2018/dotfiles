@@ -424,14 +424,15 @@
     "defaultMode": "auto",
     "disableBypassPermissionsMode": "disable"
   },
-  "model": "Fable",
+  "model": "claude-opus-5",
   "effortLevel": "xhigh",
   "fallbackModel": [
     "claude-sonnet-5"
   ],
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
-       is the UNION of every model the setup actually requests: opus[1m] (main),
-       "opus" alias (eval judge + planner/migration-reviewer agents), "sonnet"
+       is the UNION of every model the setup actually requests: claude-opus-5 (main),
+       opus[1m] (Opus with the 1M-context variant), "opus" alias (eval judge +
+       planner/migration-reviewer agents), "sonnet"
        (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
        (fallbackModel), "haiku" (kept for Claude Code's internal/auxiliary calls, e.g.
        the eval judge's helper call — no agent pins it), and "fable"/claude-fable-5
@@ -443,6 +444,7 @@
        subagent invocation before trusting it. */}}
   "availableModels": [
     "opus[1m]",
+    "claude-opus-5",
     "opus",
     "sonnet",
     "claude-sonnet-5",
