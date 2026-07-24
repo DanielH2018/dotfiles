@@ -344,4 +344,34 @@ elif [ -n "$BASH_VERSION" ]; then
   PROMPT_COMMAND="__osc7_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 fi
 
+# --- WezTerm-only: OSC 133 prompt marks + command-finish notify (Ghostty is native) ---
+# 133;A marks each prompt so ScrollToPrompt (CTRL+SHIFT+Up/Down in the WezTerm config)
+# can jump between commands — the piece Ghostty gets from `shell-integration = zsh`.
+# OSC 777 raises a desktop toast when a command ran >= 10s; the WezTerm config shows it
+# only for unfocused panes (notification_handling = "SuppressFromFocusedPane"), which
+# reproduces Ghostty's notify-on-command-finish = unfocused. Gated on $WEZTERM_PANE:
+# inert under Ghostty, and inside tmux the sequences are swallowed harmlessly.
+if [ -n "${WEZTERM_PANE:-}" ]; then
+  __wz_preexec() { __wz_t0=$SECONDS; __wz_cmd=$1; }
+  __wz_precmd() {
+    printf '\033]133;A\033\\'
+    if [ -n "${__wz_t0:-}" ]; then
+      local dur=$((SECONDS - __wz_t0))
+      unset __wz_t0
+      if [ "$dur" -ge 10 ]; then
+        printf '\033]777;notify;Done in %ss;%s\033\\' "$dur" "${__wz_cmd%%$'\n'*}"
+      fi
+    fi
+  }
+  if [ -n "$ZSH_VERSION" ]; then
+    preexec_functions+=(__wz_preexec)
+    precmd_functions+=(__wz_precmd)
+  elif [ -n "$BASH_VERSION" ]; then
+    PROMPT_COMMAND="__wz_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+    # Timing needs a preexec; ble.sh provides one (sourced before this file in ~/.bashrc)
+    # and passes the command as $1. Plain bash keeps the marks and skips the notify.
+    type blehook >/dev/null 2>&1 && blehook PREEXEC+=__wz_preexec
+  fi
+fi
+
 unset _CUR_SHELL

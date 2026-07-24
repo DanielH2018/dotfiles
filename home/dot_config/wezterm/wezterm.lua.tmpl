@@ -92,11 +92,20 @@ config.window_frame = {
 config.adjust_window_size_when_changing_font_size = false
 config.scrollback_lines = {{ .terminal.scrollback }}
 config.hide_mouse_cursor_when_typing = true
+-- Dim unfocused panes (ghostty: unfocused-split-opacity = 0.6). WezTerm's default
+-- inactive_pane_hsb only drops brightness to ~0.8 — pull it to 0.6 to match Ghostty.
+config.inactive_pane_hsb = { saturation = 0.9, brightness = 0.6 }
+-- Snap interactive window resizes to cell increments (ghostty: window-step-resize).
+config.use_resize_increments = true
 -- Bell OFF: the readline boundary bell (e.g. arrow past end-of-line) otherwise fires
 -- Windows MessageBeep, which flashes the window when "visual notifications for sounds"
 -- accessibility is on. Disable audible + zero-duration visual so nothing beeps or flashes.
 config.audible_bell = "Disabled"
 config.visual_bell = { fade_in_duration_ms = 0, fade_out_duration_ms = 0 }
+-- Command-finish notifications (ghostty: notify-on-command-finish = unfocused):
+-- shell/common.sh emits OSC 777 when a command ran >= 10s under WezTerm; showing it
+-- only for unfocused panes reproduces Ghostty's `unfocused` mode.
+config.notification_handling = "SuppressFromFocusedPane"
 -- Kitty graphics protocol is OFF by default in WezTerm; enable it for any
 -- kitty-graphics tools. (The fastfetch banner itself uses the iterm2 protocol,
 -- which WezTerm supports natively — see the fastfetch config.)
@@ -207,6 +216,12 @@ config.keys = {
 	-- Resize splits (ghostty: cmd+shift+[ left / cmd+shift+] right)
 	{ key = "phys:LeftBracket",  mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Left", 10 }) },
 	{ key = "phys:RightBracket", mods = "CTRL|SHIFT|ALT", action = act.AdjustPaneSize({ "Right", 10 }) },
+
+	-- Jump between prompts (ghostty default: cmd+up / cmd+down = jump_to_prompt), via the
+	-- OSC 133 marks shell/common.sh emits under WezTerm. Overrides WezTerm's default
+	-- CTRL+SHIFT+arrow pane navigation — pane nav lives on the bracket keys here.
+	{ key = "UpArrow",   mods = "CTRL|SHIFT", action = act.ScrollToPrompt(-1) },
+	{ key = "DownArrow", mods = "CTRL|SHIFT", action = act.ScrollToPrompt(1) },
 
 	-- --- WezTerm extras (no Ghostty equivalent) ---
 	-- Agent View switcher (agentview): the UNIFIED picker, run WSL-side in a WSL:Ubuntu tab so

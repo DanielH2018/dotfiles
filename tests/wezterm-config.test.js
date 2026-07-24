@@ -65,6 +65,10 @@ test('required config keys survive rendering', { skip }, () => {
     'local git_bash = first_existing(',   // single-source Git Bash path (probed at runtime)
     '"-c", "agentview"',                    // CTRL+SHIFT+S picker tab
     'tmux new-session -A -s main',          // CTRL+SHIFT+H homelab tab
+    'config.inactive_pane_hsb',             // ghostty unfocused-split-opacity parity
+    'config.use_resize_increments = true',  // ghostty window-step-resize parity
+    'config.notification_handling = "SuppressFromFocusedPane"', // command-finish notify
+    'act.ScrollToPrompt(',                  // prompt jumps over OSC 133 marks
   ]) {
     assert.ok(out.includes(needle), `rendered config contains: ${needle}`);
   }
