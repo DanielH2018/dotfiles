@@ -229,6 +229,47 @@ test('only completed is downgraded — a working turn in a dirty repo stays work
   assert.strictEqual(s.git, '', 'no marker stamped outside a completed stop');
 });
 
+// ---- the `start` state (SessionStart) ------------------------------------
+// Every other event fires only after the user does something, so a session started or resumed
+// and then left idle never wrote a row and was invisible to the picker. `start` closes that,
+// but it runs BEFORE any activity has proven the session is interactive — so unlike the other
+// states it treats an absent per-process registry file as "don't know" and declines to write.
+function writeSessionRegistry(home, pid, entrypoint) {
+  const dir = path.join(home, '.claude', 'sessions');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${pid}.json`), JSON.stringify({ pid: Number(pid), entrypoint }));
+}
+
+test('start registers an idle row for a real cli session', { skip }, () => {
+  const home = freshHome();
+  writeSessionRegistry(home, '4242', 'cli');
+  run('start', { session_id: 's1', cwd: '/home/daniel/dev' }, { pane: '3', home, pid: '4242' });
+  const s = readState(home, 's1');
+  assert.strictEqual(s.state, 'idle', 'a session that has done nothing yet is idle, not working');
+  assert.strictEqual(s.locator, 'wezterm:3', 'and its pane is captured at start like any other event');
+});
+
+test('start declines to register an sdk session', { skip }, () => {
+  const home = freshHome();
+  writeSessionRegistry(home, '4243', 'sdk-cli');
+  run('start', { session_id: 's2', cwd: '/tmp' }, { pane: '3', home, pid: '4243' });
+  assert.ok(!fs.existsSync(stateFile(home, 's2')), 'a headless `claude -p` run is not a picker row');
+});
+
+test('start declines when the per-process registry says nothing yet', { skip }, () => {
+  const home = freshHome();
+  run('start', { session_id: 's3', cwd: '/tmp' }, { pane: '3', home, pid: '9999' });
+  assert.ok(!fs.existsSync(stateFile(home, 's3')),
+    'unknown is not "interactive" — UserPromptSubmit registers it moments later if it is real');
+});
+
+test('the other states still register without a per-process registry', { skip }, () => {
+  const home = freshHome();
+  run('working', { session_id: 's4', cwd: '/home/daniel/dev' }, { pane: '3', home, pid: '9999' });
+  assert.strictEqual(readState(home, 's4').state, 'working',
+    'the older-claude fallback is unchanged: only `start` is strict');
+});
+
 process.on('exit', () => {
   for (const h of homes) fs.rmSync(h, { recursive: true, force: true });
   for (const d of repos) fs.rmSync(d, { recursive: true, force: true });

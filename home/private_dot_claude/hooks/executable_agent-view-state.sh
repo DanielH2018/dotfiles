@@ -4,7 +4,7 @@
 # picker can focus it directly; caches the last-known pane/locator/title since some
 # hook events on Windows fire without WEZTERM_PANE. Delegates the atomic write to the
 # shared register helper. Emits NOTHING on stdout.
-# Usage: agent-view-state.sh <working|needs-input|completed|idle|end>
+# Usage: agent-view-state.sh <start|working|needs-input|completed|idle|end>
 state="${1:-idle}"
 # shellcheck disable=SC1091  # deployed sibling; source name differs in the chezmoi tree
 source "$HOME/.claude/hooks/agent-view-register.sh"
@@ -39,6 +39,20 @@ if [ "$state" = "end" ]; then av_guarded_remove "$sid"; exit 0; fi
 if [ -n "${CLAUDE_PID:-}" ]; then
   case "$(jq -r '.entrypoint // ""' "$HOME/.claude/sessions/${CLAUDE_PID}.json" 2>/dev/null)" in
     sdk*) exit 0;;
+  esac
+fi
+
+# SessionStart registration. Every other event fires only AFTER the user does something, so a
+# session started (or resumed) and then left idle never wrote a row at all and was invisible to
+# the picker — not reaped, never registered. This closes that hole.
+# Deliberately stricter about the sdk filter than the events above: they run once real activity
+# has proven the session is interactive, this one runs before any, so an ABSENT registry file is
+# "don't know yet" and we skip rather than risk an sdk row. Skipping costs nothing — a session
+# that goes on to do anything is registered moments later by UserPromptSubmit or Stop.
+if [ "$state" = "start" ]; then
+  case "$(jq -r '.entrypoint // ""' "$HOME/.claude/sessions/${CLAUDE_PID:-}.json" 2>/dev/null)" in
+    cli) state="idle";;
+    *)   exit 0;;
   esac
 fi
 
