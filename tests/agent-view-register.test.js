@@ -37,6 +37,12 @@ test('av_capture_locator: none: when no TMUX/WEZTERM_PANE', { skip }, () => {
   assert.strictEqual(sh('av_capture_locator').out, 'none:');
 });
 
+test('av_capture_locator: none: under TMUX with no TMUX_PANE (backgrounded/daemon)', { skip }, () => {
+  // A session whose hook fires without $TMUX_PANE (daemon/backgrounded) has no own pane to
+  // pin to — record none: rather than guessing the active pane, which would misroute <enter>.
+  assert.strictEqual(sh('av_capture_locator', { env: { TMUX: 'fake' } }).out, 'none:');
+});
+
 test('av_capture_locator: wezterm:<pane> from WEZTERM_PANE', { skip }, () => {
   assert.strictEqual(sh('av_capture_locator', { env: { WEZTERM_PANE: '42' } }).out, 'wezterm:42');
 });
@@ -103,11 +109,14 @@ test('av_guarded_remove with empty run deletes unconditionally (host hook)', { s
 
 test('av_capture_locator: tmux:<socket>:<session>:<pane> from a tmux pane', { skip }, () => {
   const bin = scratch();
-  // Faithful stub: substitute the known fields into the actual '-p <fmt>' arg ($3) and
-  // print it VERBATIM, preserving the caller's separator. So a buggy literal-'\\t' format
-  // (which real tmux does not expand) is reproduced as one unsplit field and fails here.
+  // Faithful stub: the capture targets its own pane with `-t "$TMUX_PANE"`, so the args
+  // are `display -p -t %3 <fmt>` — the format is the LAST arg. Assert the -t target is the
+  // session's pane (proving the fix pins to $TMUX_PANE, not the active pane), then echo the
+  // format VERBATIM with the fields substituted. A buggy literal-'\\t' format (which real
+  // tmux does not expand) is reproduced as one unsplit field and fails here.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
-fmt="\$3"
+[ "\$3" = "-t" ] && [ "\$4" = "%3" ] || { echo "expected -t %3, got: \$*" >&2; exit 1; }
+fmt="\${@: -1}"
 out="\${fmt//'#{socket_path}'//tmp/tmux-1000/default}"
 out="\${out//'#{session_name}'/airflow}"
 out="\${out//'#{pane_id}'/%3}"
@@ -115,7 +124,7 @@ printf '%s' "\$out"
 `, { mode: 0o755 });
   const out = execFileSync('bash', ['-c', `source "${HELPER}"; av_capture_locator`], {
     encoding: 'utf8',
-    env: { ...process.env, TMUX: 'fake', PATH: `${bin}:${process.env.PATH}` },
+    env: { ...process.env, TMUX: 'fake', TMUX_PANE: '%3', PATH: `${bin}:${process.env.PATH}` },
   });
   assert.strictEqual(out, 'tmux:/tmp/tmux-1000/default:airflow:%3');
 });

@@ -15,17 +15,22 @@
 
 av_dir() { printf '%s' "${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"; }
 
-av_capture_locator() {  # echo "backend:locator" for the CURRENT pane
-  if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+av_capture_locator() {  # echo "backend:locator" for THIS session's OWN pane
+  if [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] && command -v tmux >/dev/null 2>&1; then
     local sock sess pane
     # One call: socket disambiguates multiple servers; session is the attach target;
     # pane is the focus target. TSV-parsed so the ':'-joined locator stays unambiguous
     # (socket paths and sanitized session names carry no ':').
     # $'…' so bash inserts REAL tab chars into the format — tmux does NOT expand a
     # literal '\t' in a -p format, so single quotes would emit one unsplit field.
+    # -t "$TMUX_PANE" pins the query to THIS hook's pane. `tmux display -p` with no -t
+    # (and it ignores $TMUX_PANE in the env) reports the client's ACTIVE pane, so with
+    # several live sessions each hook captured whichever pane happened to be focused at
+    # fire time — locators collided and <enter> jumped to the wrong session.
     IFS=$'\t' read -r sock sess pane \
-      < <(tmux display -p $'#{socket_path}\t#{session_name}\t#{pane_id}' 2>/dev/null)
-    printf 'tmux:%s:%s:%s' "$sock" "$sess" "$pane"
+      < <(tmux display -p -t "$TMUX_PANE" $'#{socket_path}\t#{session_name}\t#{pane_id}' 2>/dev/null)
+    if [ -n "$pane" ]; then printf 'tmux:%s:%s:%s' "$sock" "$sess" "$pane"
+    else printf 'none:'; fi          # stale/gone $TMUX_PANE -> honest none:, never a wrong pane
   elif [ -n "${WEZTERM_PANE:-}" ]; then
     printf 'wezterm:%s' "$WEZTERM_PANE"
   else
