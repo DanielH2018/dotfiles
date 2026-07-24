@@ -123,3 +123,17 @@ EVAL_AGENT_DIRS=~/work-laptop-config/.claude/agents \
 `EVAL_AGENT_DIRS` is empty by default, so the CI/hermetic path is unchanged. Without it, a
 work-overlay case fails fast with a message naming the dirs it searched. New cases use
 `evals/_case.template.json`.
+
+## Skill cases
+
+A case can grade a **skill** instead of an agent: set `"skill": "<name>"` in the case JSON
+(no `"agent"` field) and put it under `evals/cases/skill-<name>/`. The runner loads
+`home/private_dot_claude/skills/<name>/SKILL.md`, strips the frontmatter, and runs the body
+as a synthetic agent named `skill-<name>` (filter with `--agent skill-<name>`), prefixed
+with a short "this skill has just been invoked — follow it exactly" framing to mirror how
+skills load in a live session. The model is pinned to **opus**: skills execute in the main
+session on the top-tier model, and adherence differs by tier (measured on grilling: the
+one-question+recommendation contract held ~40% of runs on sonnet vs 100% on opus). Same
+fidelity boundary as agents — this grades the skill's prompt/behavior, not Skill-tool
+loading plumbing, and `--tools ""` means a case's input must say when there is nothing to
+inspect, or the skill will reasonably ask for a repo it can't reach.

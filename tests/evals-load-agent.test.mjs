@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError } from '../evals/lib/load-agent.mjs';
+import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError, loadSkillFlagOrError } from '../evals/lib/load-agent.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
@@ -94,6 +94,38 @@ test('loadAgentFlagOrError returns an error (no flag) for a bogus agent name', (
   try {
     const r = loadAgentFlagOrError('nonexistent-agent', fakeRepo, []);
     assert.ok(r.error);
+    assert.ok(!('flag' in r));
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadSkillFlagOrError resolves a repo skill as synthetic agent skill-<name> with a pinned model', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'grilling');
+  mkdirSync(sdir, { recursive: true });
+  writeFileSync(pjoin(sdir, 'SKILL.md'),
+    '---\nname: grilling\ndescription: One-question-at-a-time interview.\nmetadata:\n    author: daniel\n    version: 0.1.0\n---\n\nAsk exactly one question per turn.');
+  try {
+    const r = loadSkillFlagOrError('grilling', fakeRepo);
+    assert.ok(!r.error, r.error);
+    const flag = JSON.parse(r.flag);
+    assert.deepStrictEqual(Object.keys(flag), ['skill-grilling']);
+    assert.strictEqual(flag['skill-grilling'].model, 'opus');     // pinned: skills carry no model frontmatter
+    assert.match(flag['skill-grilling'].prompt, /^The skill below has just been invoked/); // execution framing
+    assert.match(flag['skill-grilling'].prompt, /exactly one question per turn/);
+    assert.ok(!flag['skill-grilling'].prompt.includes('author:')); // frontmatter stripped, incl. indented metadata
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadSkillFlagOrError reports an error naming the missing path for an unknown skill', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  try {
+    const r = loadSkillFlagOrError('nonexistent-skill', fakeRepo);
+    assert.ok(r.error);
+    assert.match(r.error, /nonexistent-skill/);
     assert.ok(!('flag' in r));
   } finally {
     rmSync(fakeRepo, { recursive: true, force: true });

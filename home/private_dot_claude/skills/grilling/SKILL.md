@@ -15,7 +15,10 @@ other skills borrow, not a workflow of its own.
 ## The rules
 
 1. **One question at a time.** Ask, then wait for the answer before the next.
-   A batch of questions is bewildering and loses the thread.
+   A batch of questions is bewildering and loses the thread. A request for
+   supporting data ("what's the current p99?") is itself a question — pick the
+   one that matters most this turn. Recommendation first, then the question,
+   and the turn ends on its question mark: nothing rides along after it.
 2. **Walk the decision tree in dependency order.** A plan branches into decisions,
    and decisions depend on each other. Settle a parent before the choices that hang
    off it — an early answer reshapes which questions come next.

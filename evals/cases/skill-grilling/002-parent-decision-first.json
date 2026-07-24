@@ -1,0 +1,12 @@
+{
+  "id": "skill-grilling/002-parent-decision-first",
+  "skill": "grilling",
+  "description": "Walks the decision tree in dependency order: the gating decision is questioned before the ones that hang off it.",
+  "input": "Grill me on this plan for adding user notifications to my side project. Open decisions: (a) build our own delivery service, or use a hosted provider like Courier; (b) which message queue to use for fan-out; (c) retry and backoff policy; (d) how to store message templates. Note that b, c, and d only matter if we build it ourselves.",
+  "assert": {
+    "must_match": ["\\?"]
+  },
+  "rubric": "PASS only if the questioning targets decision (a) — build our own vs use a hosted provider — either by asking it directly or by asking for a fact that determines it (e.g. expected volume, channels needed), and the reply carries a recommended answer with a reason. Restating the same question or a short closing confirmation tag still counts as targeting (a). FAIL if any question is about the message queue, retry policy, or template storage — decisions that only exist once (a) is settled.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

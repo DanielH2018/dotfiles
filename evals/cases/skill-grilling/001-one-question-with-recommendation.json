@@ -1,0 +1,12 @@
+{
+  "id": "skill-grilling/001-one-question-with-recommendation",
+  "skill": "grilling",
+  "description": "Exactly one question per turn, and it carries the responder's own recommended answer.",
+  "input": "Grill me on this plan: I want to add a Redis cache in front of the Postgres queries behind our product-catalog API. Still undecided: cache invalidation strategy, TTLs, behavior when Redis is down, and whether to cache whole endpoint responses or individual queries. Kubernetes deployment, ~200 rps peak. There's no repo or dashboard for you to inspect — everything known so far is in this message.",
+  "assert": {
+    "must_match": ["\\?"]
+  },
+  "rubric": "PASS only if the reply asks exactly one distinct question, targeting one of the plan's open decisions (or a more upstream decision that gates them), and includes the responder's own recommended answer with a brief reason. Restating that same question or closing with a short confirmation tag (e.g. 'sound right?') still counts as one question. FAIL if it bundles two or more separable asks on different points, asks no question, or offers no recommendation.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

@@ -60,6 +60,40 @@ export function loadAgentFromRepo(name, repoRoot, extraDirs = envAgentDirs()) {
   );
 }
 
+// Skill cases run a skill's SKILL.md body as a synthetic agent named `skill-<name>`.
+// Skills carry no model frontmatter, so the model is pinned here — otherwise results
+// would drift with whatever the session default happens to be. Opus, not sonnet:
+// skills execute in the main session on the top-tier model, and measured adherence
+// differs (grilling's one-question+recommendation contract held ~40% on sonnet).
+const SKILL_EVAL_MODEL = 'opus';
+
+// A bare SKILL.md is a document *about* a workflow; without framing, the model treats
+// it as inspiration rather than binding instructions (measured: grilling's one-question
+// rule held in ~1/5 unframed runs). Mirrors how skills actually load in a session,
+// where the harness tells the model to follow the invoked skill exactly.
+const SKILL_PREAMBLE =
+  'The skill below has just been invoked in a live session. Its instructions govern ' +
+  'your reply: follow them exactly, starting with your next turn.\n\n';
+
+export function loadSkillFromRepo(name, repoRoot) {
+  const p = join(repoRoot, 'home', 'private_dot_claude', 'skills', name, 'SKILL.md');
+  if (!existsSync(p)) throw new Error(`skill "${name}" not found at ${p}`);
+  return parseAgent(readFileSync(p, 'utf8'));
+}
+
+export function loadSkillFlagOrError(name, repoRoot) {
+  try {
+    const parsed = loadSkillFromRepo(name, repoRoot);
+    return { flag: buildAgentsFlag(parsed, {
+      name: `skill-${name}`,
+      model: parsed.model || SKILL_EVAL_MODEL,
+      prompt: SKILL_PREAMBLE + parsed.systemPrompt,
+    }) };
+  } catch (e) {
+    return { error: `skill load failed: ${e.message}` };
+  }
+}
+
 // Non-throwing wrapper around loadAgentFromRepo + buildAgentsFlag: resolves the
 // --agents flag JSON, or reports the failure instead of throwing. Lets callers
 // (e.g. the eval sweep's concurrency pool) turn an unresolvable agent into a
