@@ -483,6 +483,16 @@
           }
         ]
       },
+      {{/* reap the redundant interactive origin left running when a session is backgrounded; /proc-based, so non-Windows only. No-ops unless the daemon's ancestor cmdline carries the fork signature */}}{{ if ne .chezmoi.os "windows" }}{
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/reap-backgrounded-origin.sh",
+            "timeout": 5
+          }
+        ]
+      },{{ end }}
       {{/* dev-container network glue (Linux/macOS); skip on Windows */}}{{ if ne .chezmoi.os "windows" }}{
         "matcher": "startup",
         "hooks": [
