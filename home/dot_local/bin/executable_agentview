@@ -596,6 +596,22 @@ host_row='[no repo · plain claude]'
 # Same machine, Windows side: a plain Windows-native claude in a new local-domain WezTerm tab.
 winhost_row='[Windows · plain claude]'
 
+spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachable hosts only.
+  local rows sel h label
+  rows="WSL"
+  is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && rows="$rows"$'\n'"PC (Windows)"
+  for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
+  sel=$(printf '%s\n' "$rows" | fzf --prompt 'host> ' --height='~70%' --layout=reverse \
+    --border=rounded --info=hidden --header 'new session · pick a host · esc cancels')
+  [ -n "$sel" ] || return 0
+  [ "$sel" = "WSL" ] && { printf 'wsl'; return 0; }
+  [ "$sel" = "PC (Windows)" ] && { printf 'pc'; return 0; }
+  for h in "${!HOST_SSH[@]}"; do
+    if [ "$sel" = "${HOST_LABEL[$h]:-$h}" ]; then printf 'remote:%s' "${HOST_SSH[$h]}"; return 0; fi
+  done
+  return 0
+}
+
 spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row (empty if cancelled)
   local names sel d
   names=$(for d in "$repos_root"/*/; do
@@ -669,9 +685,16 @@ av_close_picker() {  # $1=portfile -> tell the live picker to abort, dismissing 
     >/dev/null 2>&1 </dev/null &
 }
 
-do_spawn() {  # interactive: pick repo + branch, spawn in the active backend.
-  local repo branch pf="${1:-}" rc inner named title
-  repo=$(spawn_pick_repo) || return 1
+do_spawn() {  # interactive: pick host -> repo -> (mode) -> branch, spawn in the active backend.
+  local host repo branch pf="${1:-}" rc inner named title alias
+  host=$(spawn_pick_host) || return 1
+  [ -n "$host" ] || return 0                        # cancelled at the host pick
+  if [ "$host" = "pc" ]; then
+    spawn_windows_claude; rc=$?
+    [ "$rc" -eq 0 ] && av_close_picker "$pf"
+    return "$rc"
+  fi
+  repo=$(spawn_pick_repo "$host") || return 1
   [ -n "$repo" ] || return 0
   if [ "$repo" = "@host" ]; then
     inner='cd ~/dev 2>/dev/null || cd; claude'

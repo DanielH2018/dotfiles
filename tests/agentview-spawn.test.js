@@ -47,6 +47,8 @@ case "$prompt" in
     if [ -n "\${REPO_CAPTURE:-}" ]; then cat > "\$REPO_CAPTURE"; else cat >/dev/null; fi
     printf '%s\\n' "\${FZF_REPO:-}" ;;
   branch*) cat >/dev/null; printf '%s\\n' "\${FZF_BRANCH:-}" ;;
+  host*) cat >/dev/null; printf '%s\\n' "\${FZF_HOST-WSL}" ;;
+  mode*) cat >/dev/null; printf '%s\\n' "\${FZF_MODE:-sandbox}" ;;
   *)       cat >/dev/null ;;
 esac
 exit 0
@@ -245,6 +247,20 @@ test('an empty portfile is a silent no-op (standalone --spawn unaffected)', { sk
   execFileSync('sleep', ['0.3']);
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window/, 'the session still spawns');
   assert.strictEqual(fs.readFileSync(curlLog, 'utf8'), '', 'no POST without a portfile');
+});
+
+// ---- host pick (step 0) ----
+test('the host pick offers WSL + homelab, and routes WSL to the repo pick', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n airflow/, 'WSL path still spawns the repo');
+});
+
+test('cancelling the host pick is a clean no-op', { skip }, () => {
+  const { env, tmuxLog, spawnLog } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: '', FZF_REPO: 'airflow' });
+  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'nothing spawned when the host pick is empty');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
