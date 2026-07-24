@@ -1,0 +1,6 @@
+[Unit]
+Description=Reap interactive origins left running behind backgrounded Claude sessions
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/reap-backgrounded-origins-sweep

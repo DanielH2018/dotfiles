@@ -141,6 +141,27 @@ with how existing Agentview hooks are shipped.
 ## Resolved risk
 
 `SessionStart` firing for daemon bg jobs is now **verified** (source `startup`, hooks run
-as bash — evidence in `edad6d70`'s transcript). Approach B (periodic sweep) is retained as
-a documented fallback only if the live end-to-end test reveals the ancestry-cmdline read
-is unreliable in practice.
+as bash — evidence in `edad6d70`'s transcript).
+
+## Update (2026-07-24): daemon caches hook config — sweep added as the reliable path
+
+Live testing exposed the hook's fatal limitation: the persistent Claude **daemon** loads
+its hook config once at startup and serves that snapshot to every bg session it spawns.
+A daemon started before the hook was deployed spawns forks with *no* reap hook, so the
+hook never fires until the daemon restarts. Confirmed: fork `0ed79489`, spawned after
+deploy by an 08:04 daemon, ran only the pre-existing hooks and left its origin alive.
+
+**Approach B (periodic sweep) is therefore implemented as the reliable, daemon-independent
+supplement** (the hook stays as a zero-latency fast-path for when the daemon is current):
+
+- `home/dot_local/bin/executable_reap-backgrounded-origins-sweep` — scans every live
+  session's own worker cmdline by pid (from `/proc`) and delegates to the shared lib.
+- `home/private_dot_claude/hooks/reap-origin-lib.sh` — the shared detection + reap, sourced
+  by BOTH the hook and the sweep (single source of truth for signature + guards).
+- `home/dot_config/systemd/user/reap-backgrounded-origins.{service,timer}` — a 30s
+  `systemd --user` oneshot timer running the sweep, independent of the daemon.
+- `home/.chezmoiscripts/os-linux/run_onchange_after_enable-reap-timer.sh.tmpl` — reloads +
+  enables the timer on apply (idempotent; embeds unit hashes so unit edits retrigger it).
+
+Verified live: enabling the timer reaped the real backgrounded origin `857022e9`
+(`dev-aa`, pid `932262`) within one interval while its fork stayed intact.

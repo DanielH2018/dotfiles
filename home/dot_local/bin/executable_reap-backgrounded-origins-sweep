@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Periodic sweep: reap the redundant interactive ORIGIN left running behind every
+# backgrounded Claude session. Runs on a systemd-user timer, INDEPENDENT of the Claude
+# daemon's hook config (which the SessionStart hook depends on and which goes stale until
+# the daemon restarts). For each live session, read its own worker cmdline by pid and,
+# only on the exact backgrounding signature, SIGTERM its origin via the shared lib.
+#
+# This is the daemon-independent supplement to the reap-backgrounded-origin.sh hook; both
+# share reap-origin-lib.sh so detection + guards are identical.
+#
+# Test seams: CLAUDE_SESSIONS_DIR, AGENT_VIEW_DIR, REAP_KILLCMD, REAP_LOG, REAP_LIB,
+# REAP_PROC_DIR.
+set -u
+
+# shellcheck source=/dev/null
+. "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
+
+sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
+proc_dir="${REAP_PROC_DIR:-/proc}"
+
+shopt -s nullglob
+for pf in "$sessions_dir"/*.json; do
+  sid=$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)
+  pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
+  [ -n "$sid" ] && [ -n "$pid" ] || continue
+  case "$pid" in ''|*[!0-9]*) continue;; esac
+  [ -r "$proc_dir/$pid/cmdline" ] || continue          # worker gone
+  cmdline=" $(tr '\0' ' ' < "$proc_dir/$pid/cmdline" 2>/dev/null) "
+  # delegate: no-ops unless this worker carries the backgrounding signature
+  reap_origin_from_cmdline "$cmdline" "$sid"
+done
+shopt -u nullglob

@@ -18,8 +18,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_reap-backgrounded-origin.sh');
-const SRC = fs.readFileSync(HOOK, 'utf8');
+const HOOKS_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks');
+const HOOK = path.join(HOOKS_DIR, 'executable_reap-backgrounded-origin.sh');
+const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
+const SRC = fs.readFileSync(HOOK, 'utf8') + '\n' + fs.readFileSync(LIB, 'utf8');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -50,6 +52,7 @@ function run(env, cmdline, ownSid = 'FORK-SID') {
   const e = {
     ...process.env,
     REAP_CMDLINE_SOURCE: cmdline,
+    REAP_LIB: LIB,
     CLAUDE_SESSIONS_DIR: env.sdir,
     AGENT_VIEW_DIR: env.avdir,
     REAP_KILLCMD: env.killcmd,

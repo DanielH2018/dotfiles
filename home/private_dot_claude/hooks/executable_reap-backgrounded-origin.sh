@@ -14,10 +14,10 @@
 # AGENT_VIEW_DIR, REAP_KILLCMD, REAP_LOG.
 set -u
 
-sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
-av_dir="${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"
-killcmd="${REAP_KILLCMD:-kill}"
-logfile="${REAP_LOG:-$HOME/.local/state/reap-origin.log}"
+# Shared detection + reap lives in the lib (single source of truth with the periodic sweep).
+# REAP_LIB seam lets tests point at the in-repo copy.
+# shellcheck source=/dev/null
+. "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
 
 own_sid=""
 if input=$(cat 2>/dev/null) && [ -n "$input" ]; then
@@ -47,52 +47,6 @@ else
   done
 fi
 
-# --- signature gate: all three markers, else no-op ---
-case " $cmdline " in *" --fork-session "*) ;; *) exit 0;; esac
-case " $cmdline " in *" --reply-on-resume "*) ;; *) exit 0;; esac
-case "$cmdline" in *"--resume "*) ;; *) exit 0;; esac
-
-# origin sid = basename of the token after --resume, minus .jsonl
-resume_path=""
-# shellcheck disable=SC2086  # deliberate word-split: tokenize the space-joined cmdline
-set -- $cmdline
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--resume" ]; then resume_path="${2:-}"; break; fi
-  shift
-done
-case "$resume_path" in *.jsonl) ;; *) exit 0;; esac
-origin_sid="${resume_path##*/}"; origin_sid="${origin_sid%.jsonl}"
-
-# guard: non-empty and never self
-[ -n "$origin_sid" ] || exit 0
-[ "$origin_sid" != "$own_sid" ] || exit 0
-
-# resolve origin pid pid-reuse-safely: the sessions/<pid>.json whose sessionId matches
-origin_pid=""
-shopt -s nullglob
-for pf in "$sessions_dir"/*.json; do
-  if [ "$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)" = "$origin_sid" ]; then
-    origin_pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
-    break
-  fi
-done
-shopt -u nullglob
-[ -n "$origin_pid" ] || exit 0
-
-# never signal ourselves / a non-numeric pid
-case "$origin_pid" in ''|*[!0-9]*) exit 0;; esac
-[ "$origin_pid" != "$$" ] && [ "$origin_pid" != "$PPID" ] || exit 0
-
-# SIGTERM (graceful): transcript stays on disk, resumable
-"$killcmd" "$origin_pid" 2>/dev/null
-
-# drop the Agentview row so it vanishes now instead of on the next dead-pid prune
-rm -f "$av_dir/$origin_sid.json" 2>/dev/null
-
-# audit
-mkdir -p "$(dirname "$logfile")" 2>/dev/null
-printf '%s reaped origin %s pid=%s from fork %s\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$origin_sid" "$origin_pid" "${own_sid:-?}" \
-  >> "$logfile" 2>/dev/null
-
+# signature gate + origin resolution + graceful reap all live in the shared lib
+reap_origin_from_cmdline "$cmdline" "$own_sid"
 exit 0

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically reap backgrounded Claude session origins
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
