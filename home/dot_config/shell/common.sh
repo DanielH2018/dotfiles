@@ -261,6 +261,14 @@ alias ..='cd ..'
 alias ...='cd ../..'
 command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
 mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
+# Drift checks that ignore run_ scripts. run_after_terminal-cheatsheet.sh regenerates on
+# EVERY apply by design (it parses the just-deployed wezterm/nvim/yazi/ghostty configs), so
+# it is permanently "pending" — plain `chezmoi verify` therefore always exits 1 and plain
+# `chezmoi status` is never empty, which makes both useless as a real drift signal.
+if command -v chezmoi >/dev/null 2>&1; then
+  alias czv='chezmoi verify --exclude=scripts'
+  alias czs='chezmoi status --exclude=scripts'
+fi
 # shellcheck disable=SC2009  # deliberately shows the full `ps aux` line, which pgrep doesn't
 psgrep() { ps aux | grep -i "$1" | grep -v grep; }
 
