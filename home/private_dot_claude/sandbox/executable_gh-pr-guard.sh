@@ -31,6 +31,7 @@ deny() {
 
 # Collapse newline/tab/backslash-continuation and strip quotes so compound and
 # multi-line forms scan as one line (mirrors the terraform guard).
+# shellcheck disable=SC1003  # \\ in set1 is an escaped backslash for tr, not a quote-escape attempt
 NORM=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
 
 # Fast exit unless a scoped-mutating pr verb is present. \b after the verb keeps

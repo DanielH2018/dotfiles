@@ -5,6 +5,7 @@
 
 set -u
 
+# shellcheck disable=SC1091  # optional per-host env, not present in the chezmoi tree
 [ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
 
 INPUT=$(cat)

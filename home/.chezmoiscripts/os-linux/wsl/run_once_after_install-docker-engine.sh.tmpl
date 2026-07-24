@@ -25,6 +25,7 @@ if ! command -v docker >/dev/null 2>&1 || [ ! -f "$DOCKER_LIST" ]; then
       rm -f "$tmpk"
     fi
     if [ ! -f "$DOCKER_LIST" ]; then
+      # shellcheck disable=SC1091  # system file, present on any apt host
       . /etc/os-release
       echo "deb [arch=$(dpkg --print-architecture) signed-by=$DOCKER_KEYRING] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
         | sudo tee "$DOCKER_LIST" >/dev/null

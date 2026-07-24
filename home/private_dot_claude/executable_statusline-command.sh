@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154  # all data vars (cwd, model_id, …) are assigned by the eval'd jq block below
 # Claude Code status line — mirrors Starship gruvbox_dark theme
 # Colors (256-color approximate for gruvbox_dark):
 #   color_orange  #d65d0e → 166
@@ -83,7 +84,7 @@ if [[ -n "$git_branch" ]]; then
   [[ -f "$_git_cache" ]] && _cache_age=$(( $(date +%s) - $(stat -f%m "$_git_cache" 2>/dev/null || stat -c%Y "$_git_cache" 2>/dev/null || echo 0) ))
   if [[ $_cache_age -gt 3 ]]; then
     dirty_count=$(git -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-    ab=$(git -C "$cwd" rev-list --left-right --count HEAD...@{upstream} 2>/dev/null)
+    ab=$(git -C "$cwd" rev-list --left-right --count "HEAD...@{upstream}" 2>/dev/null)
     ahead=0 behind=0
     if [[ -n "$ab" ]]; then
       read -r ahead behind <<< "$ab"
@@ -121,6 +122,7 @@ fi
 # (ephemeral_1h vs ephemeral_5m cache_creation buckets). Hidden once the cache is cold.
 tp="$transcript_path"
 if [[ -z "$tp" && -n "$session_id" ]]; then
+  # shellcheck disable=SC2012  # <session_id>.jsonl names are fixed-charset; ls|head just picks the first match
   tp=$(ls -1 "$HOME"/.claude/projects/*/"$session_id".jsonl 2>/dev/null | head -1)
 fi
 if [[ -n "$tp" && -r "$tp" ]]; then

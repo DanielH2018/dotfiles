@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015  # `[ cond ] && pass || fail` harness idiom: pass() always returns 0
 set -euo pipefail
 # NOTE: run with the Claude Code bash sandbox disabled — git config-locking
 # and mktemp restrictions under the sandbox can produce false failures here.

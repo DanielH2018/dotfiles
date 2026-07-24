@@ -33,6 +33,7 @@ missing=""
 for p in $DEPS; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
 if [ -n "$missing" ]; then
   if sudo -v; then
+    # shellcheck disable=SC2086  # $missing is a space-separated package list; splitting intended
     sudo apt-get update -qq && sudo apt-get install -y $missing
   else
     echo "install-tmux: sudo unavailable; deferring build deps:$missing — re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2

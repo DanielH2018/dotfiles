@@ -6,6 +6,7 @@
 # shared register helper. Emits NOTHING on stdout.
 # Usage: agent-view-state.sh <working|needs-input|completed|idle|end>
 state="${1:-idle}"
+# shellcheck disable=SC1091  # deployed sibling; source name differs in the chezmoi tree
 source "$HOME/.claude/hooks/agent-view-register.sh"
 dir=$(av_dir)
 

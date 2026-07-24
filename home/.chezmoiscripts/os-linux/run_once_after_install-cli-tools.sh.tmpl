@@ -7,7 +7,7 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v9
+# tools-bump: v10
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -38,6 +38,7 @@ for p in $APT_PKGS; do
 done
 if [ -n "$missing" ]; then
   if sudo -v; then
+    # shellcheck disable=SC2086  # $missing is a space-separated package list; splitting intended
     sudo apt-get update -qq && sudo apt-get install -y $missing
   else
     echo "install-cli-tools: sudo unavailable; deferring apt packages:$missing" >&2
@@ -92,7 +93,7 @@ if [ ! -f "$WEZ_LIST" ]; then
 fi
 
 # 2. Real-name symlinks for Ubuntu's renamed binaries (so the shell uses bat/fd).
-for pair in "bat:batcat" "fd:fdfind"; do
+for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4"; do
   name="${pair%%:*}"; real="${pair##*:}"
   rp="$(command -v "$real" 2>/dev/null || true)"
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"

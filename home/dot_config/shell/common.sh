@@ -8,11 +8,14 @@
 #
 # Sourced from each rc. Every integration is guarded by `command -v`, so this is a clean
 # no-op wherever a tool isn't installed. Keep it POSIX-ish (it's parsed by both shells).
+# shellcheck shell=bash disable=SC1003
+# (no shebang — sourced, bash is the nearest shellcheck dialect; SC1003: printf '\033\\'
+# is the OSC string terminator ESC-\, not a quote-escape attempt)
 
 # --- Which shell is sourcing us (for the inits that take a --shell arg) ---
 if [ -n "$ZSH_VERSION" ]; then _CUR_SHELL=zsh
 elif [ -n "$BASH_VERSION" ]; then _CUR_SHELL=bash
-else _CUR_SHELL=sh
+else _CUR_SHELL="sh"
 fi
 
 # --- Guard against accidental Ctrl+D exit (EOF) ---
@@ -102,13 +105,13 @@ if command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init "$_CUR_SHELL" --cmd cd)"
   alias zi='zoxide query -i'
   # Escape hatch to use the real cd when zoxide's override gets in the way.
-  cdreal() { builtin cd "$@"; }
+  cdreal() { builtin cd "$@" || return; }
   # Interactive zoxide jump via fzf.
   zz() {
     command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
     local dir
     dir="$(zoxide query -ls | sed 's/^[^ ]* //' | fzf --tac --prompt='zoxide> ')" || return
-    cd "$dir"
+    cd "$dir" || return
   }
 fi
 
@@ -143,7 +146,7 @@ if command -v eza >/dev/null 2>&1; then
   alias la="eza -la --icons --git --group-directories-first --time-style=relative"
   alias lt="eza --tree --level=2 --icons -a"
   alias lg="eza -l --git --icons"
-elif ls --color=auto -d . >/dev/null 2>&1; then
+elif command ls --color=auto -d . >/dev/null 2>&1; then
   # GNU coreutils (Linux / Git Bash)
   alias ls='ls --color=auto --group-directories-first'
   alias ll='ls -lA --color=auto --group-directories-first'
@@ -165,6 +168,7 @@ if command -v yazi >/dev/null 2>&1; then
     tmp="$(mktemp -t yazi-cwd.XXXXXX)"
     yazi "$@" --cwd-file="$tmp"
     IFS= read -r -d '' cwd < "$tmp"
+    # shellcheck disable=SC2164  # quit-without-cd leaves cwd empty; either way fall through to cleanup
     [ -n "$cwd" ] && [ "$cwd" != "$PWD" ] && builtin cd -- "$cwd"
     rm -f -- "$tmp"
   }
@@ -256,7 +260,8 @@ alias c="clear"
 alias ..='cd ..'
 alias ...='cd ../..'
 command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
-mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
+mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
+# shellcheck disable=SC2009  # deliberately shows the full `ps aux` line, which pgrep doesn't
 psgrep() { ps aux | grep -i "$1" | grep -v grep; }
 
 # --- HTTP helpers via curlie (prefixed to avoid collisions with system `delete` etc.) ---

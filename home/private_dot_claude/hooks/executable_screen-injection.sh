@@ -38,7 +38,8 @@ warn() {  # $1 = optional short reason appended in brackets
 # --- Layer 1: deterministic ------------------------------------------------------
 # Fold homoglyph/leetspeak so 1gnore / previou5 / pr0mpt read as words, and decode any
 # base64 payloads, then scan the original + folded + decoded text together.
-FOLDED=$(printf '%s' "$OUT" | tr 'A-Z' 'a-z' | tr '103457@$' 'ioeastas')
+# shellcheck disable=SC2020  # char-by-char leet map (1→i 0→o 3→e 4→a 5→s 7→t @→a $→s); duplicate targets intended
+FOLDED=$(printf '%s' "$OUT" | tr '[:upper:]' '[:lower:]' | tr '103457@$' 'ioeastas')
 
 B64=""
 for tok in $(printf '%s' "$OUT" | grep -oE '[A-Za-z0-9+/]{16,}={0,2}' 2>/dev/null); do
