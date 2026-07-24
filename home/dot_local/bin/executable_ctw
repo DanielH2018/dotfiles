@@ -70,6 +70,13 @@ list_repos() {
   done
 }
 
+# Path of the checkout that already has <branch> — the main working tree or any linked
+# worktree, wherever the repo keeps them. Empty when the branch is checked out nowhere.
+checkout_holding() {
+  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v b="branch refs/heads/$2" '
+    /^worktree / { wt = substr($0, 10) } $0 == b { print wt; exit }'
+}
+
 list_branches() {
   local repo
   repo="$(resolve_repo "$1")" || { printf 'ctw: repo not found under $CTS_REMOTE_ROOTS: %s\n' "$1" >&2; return 1; }
@@ -78,7 +85,7 @@ list_branches() {
 }
 
 launch() {
-  local repo branch dir slug name
+  local repo branch dir slug name held
   repo="$(resolve_repo "$1")" || { printf 'ctw: repo not found under $CTS_REMOTE_ROOTS: %s\n' "$1" >&2; exit 1; }
   branch="${2:-}"
 
@@ -95,6 +102,11 @@ launch() {
   dir="$wt_root/$name/$slug"
 
   if [ ! -e "$dir/.git" ]; then
+    # git refuses a second worktree for a branch some checkout already holds ("fatal: 'X' is
+    # already used by worktree at ..."), which is exactly what picking the repo's current
+    # branch does. Launch in the checkout that holds it rather than failing.
+    held="$(checkout_holding "$repo" "$branch")"
+    [ -n "$held" ] && exec "$(ct_bin)" "$held"
     mkdir -p "$(dirname "$dir")"
     if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
       git -C "$repo" worktree add "$dir" "$branch" || exit 1
