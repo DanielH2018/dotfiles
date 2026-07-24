@@ -71,6 +71,11 @@ statedir="$HOME/.claude/agent-view"
 # state dir and without a .json suffix so the local glob never mistakes it for a local
 # session file. Defined here (above do_remove) so Ctrl+X on a remote row can filter it.
 remote_cache="$HOME/.agentview-remote-cache"
+# Claude's own per-process registry (see the load_session_map block below for what the render
+# does with it). Defined here — like remote_cache — because do_remove needs it: the render
+# rewrites a daemon session's locator to bg:<jobId>, and only this registry maps that job back
+# to the session id the on-disk row is keyed by.
+sessionsdir="$HOME/.claude/sessions"
 # Pin sidecar: newline-delimited row identities the user pinned with CTRL+P. Kept OUT of
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
@@ -522,10 +527,15 @@ av_purge_windows() {  # $1=sid -> stop a Windows Claude session + drop its row, 
   # pid). Windows-side `claude rm` isn't cleanly reachable from WSL, so Claude's own session
   # record is left for the Windows side to reap; the agentview row is removed here. AV_WINKILL
   # is a test seam (defaults to the real taskkill.exe).
-  local sid="$1" f pid
+  local sid="$1" f pid roster
   [ -n "$sid" ] || return 0
   f="$windir/$sid.json"
   pid=$(jq -r '.pid // ""' "$f" 2>/dev/null)
+  # A row sync_windows_rows synthesized from the daemon roster carries no pid — only the daemon
+  # knows it. Deleting the file alone would not be a removal: the next --refresh-remote asks the
+  # roster, still sees the job, and writes the row straight back. So ask the roster for the pid.
+  [ -z "$pid" ] && roster=$(win_roster) && pid=$(printf '%s' "$roster" | jq -r --arg sid "$sid" '
+    .[] | select((.sessionId // "") == $sid) | (.pid // "" | tostring)' 2>/dev/null | head -1)
   [ -n "$pid" ] && "${AV_WINKILL:-taskkill.exe}" /PID "$pid" /F >/dev/null 2>&1
   rm -f "$f" 2>/dev/null
   return 0
@@ -540,16 +550,44 @@ av_purge_remote() {  # $1=alias $2=sid -> the same stop+delete on the remote ove
   ssh -o ConnectTimeout=4 -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
 }
 
+# Does THIS registry record describe the row CTRL+X selected? Emits M/N, and every do_remove
+# branch matches with it so the three registries can't drift apart. $sid wins when we resolved
+# one (see av_sid_for_job) — a bg row's KEY locator is render-time-only and matches no file.
+# Otherwise the locator names the row, and a legacy row that never recorded one falls back to
+# host+cwd+kind. Both cwds go through `norm`: the KEY's arrives @tsv-doubled ("C:\\Users\\daniel")
+# while the registry stores it single, so a raw == could never fire for a Windows path.
+JQ_ROWMATCH='((.locator // "")) as $l | ((.session // .key // "")) as $s |
+  if   ($sid != "" and $s == $sid)                                       then "M"
+  elif ($sid == "" and $loc != "" and $l == $loc)                        then "M"
+  elif ($loc == "" and ((.cwd // "")|norm) == ($cwd|norm)
+        and (.host // "") == $host and (.kind // "host") == $kind)       then "M"
+  else "N" end'
+
+av_sid_for_job() {  # $1=jobId -> echo the session id Claude's live registry maps that job to.
+  # A daemon session's row is written by the state hook under its SESSION id and still says
+  # kind=host / locator=none:, but the render (merge_session_row) hands the picker a KEY saying
+  # kind=bg / locator=bg:<jobId>. Matching that KEY's locator against the file's therefore never
+  # fires — which is what made CTRL+X a no-op on every background session. The registry is the
+  # only thing that knows job -> session, so ask it and match on the session id instead.
+  local job="$1" sf
+  [ -n "$job" ] || return 1
+  shopt -s nullglob; sf=( "$sessionsdir"/*.json ); shopt -u nullglob
+  [ "${#sf[@]}" -gt 0 ] || return 1
+  jq -r --arg job "$job" 'select((.jobId // "") == $job) | (.sessionId // "")' "${sf[@]}" 2>/dev/null \
+    | grep -m1 . || return 1
+}
+
 do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop its process
   # (pid-reuse-guarded) + `claude rm` its record/worktree + drop the registry row, so a live
   # session can't reappear. Local rows act locally; remote rows act on their host over ssh,
   # then the row is filtered from the ssh cache. An empty KEY (header/spacer) is a no-op.
-  local key="$1" host cwd kind locator f m sid ans name tmp="$remote_cache.tmp.$$"
+  local key="$1" host cwd kind locator f m sid rowsid ans name tmp="$remote_cache.tmp.$$"
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
   kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
   [ -n "$cwd" ] || [ -n "$locator" ] || return 0
+  rowsid=""
   name=$(basename "${cwd//\\//}" 2>/dev/null)
   printf '\n  Remove "%s" — stop its process and delete the session (worktree too)? [y/N] ' "$name" >&2
   IFS= read -r ans || return 0
@@ -557,11 +595,8 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   if is_windows_host "$host"; then                  # same machine, Windows-side registry
     shopt -s nullglob
     for f in "$windir"/*.json; do
-      m=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
-        ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
-        if   ($loc != "" and $l == $loc)                                 then "M"
-        elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
-        else "N" end' "$f" 2>/dev/null)
+      m=$(MSYS_NO_PATHCONV=1 jq -r --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
+        --arg host "$host" --arg kind "$kind" "$JQ_NORM$JQ_ROWMATCH" "$f" 2>/dev/null)
       if [ "$m" = "M" ]; then
         sid=$(jq -r '.session // .key // ""' "$f" 2>/dev/null); av_purge_windows "$sid"
       fi
@@ -572,23 +607,27 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   if [ -n "$host" ] && ! is_local_host "$host"; then
     [ -s "$remote_cache" ] || return 0
     # Pull the row's sid so we can stop it on the remote, then filter it from the cache.
-    sid=$(MSYS_NO_PATHCONV=1 jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
-      select( ($loc != "" and (.locator//"")==$loc) or ($loc=="" and (.cwd//"")==$cwd and (.host//"")==$host and (.kind//"host")==$kind) )
-      | (.session // .key // "")' < "$remote_cache" 2>/dev/null | head -1)
+    sid=$(MSYS_NO_PATHCONV=1 jq -r --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
+      --arg host "$host" --arg kind "$kind" \
+      "$JQ_NORM select(($JQ_ROWMATCH) == \"M\") | (.session // .key // \"\")" \
+      < "$remote_cache" 2>/dev/null | head -1)
     [ -n "$sid" ] && av_purge_remote "$(remote_alias "$host")" "$sid"
-    MSYS_NO_PATHCONV=1 jq -c --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
-      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
-      select( (($loc != "" and $l == $loc) or ($loc == "" and $c == $cwd and $h == $host and $k == $kind)) | not )
-    ' < "$remote_cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    MSYS_NO_PATHCONV=1 jq -c --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
+      --arg host "$host" --arg kind "$kind" \
+      "$JQ_NORM select((($JQ_ROWMATCH) == \"M\") | not)" \
+      < "$remote_cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
     return 0
   fi
+  # Local (this host). A bg:<jobId> locator is a RENDER-TIME identity no row stores — resolve it
+  # to the session id the file is keyed by. Only here: the Windows and homelab registries live on
+  # other sides of a boundary, and THIS machine's job ids say nothing about theirs. Empty when the
+  # row already stores its own bg: locator, or the registry has no such job — both fall through
+  # to the locator arm.
+  case "$locator" in bg:?*) rowsid=$(av_sid_for_job "${locator#bg:}") || rowsid="" ;; esac
   shopt -s nullglob
   for f in "$statedir"/*.json; do
-    m=$(jq -r --arg loc "$locator" --arg cwd "$cwd" --arg host "$host" --arg kind "$kind" '
-      ((.locator // "")) as $l | ((.cwd // "")) as $c | ((.host // "")) as $h | ((.kind // "host")) as $k |
-      if   ($loc != "" and $l == $loc)                                 then "M"
-      elif ($loc == "" and $c == $cwd and $h == $host and $k == $kind) then "M"
-      else "N" end' "$f" 2>/dev/null)
+    m=$(jq -r --arg sid "$rowsid" --arg loc "$locator" --arg cwd "$cwd" \
+      --arg host "$host" --arg kind "$kind" "$JQ_NORM$JQ_ROWMATCH" "$f" 2>/dev/null)
     if [ "$m" = "M" ]; then
       sid=$(jq -r '.session // .key // ""' "$f" 2>/dev/null)
       av_purge_local "$sid"
@@ -973,7 +1012,6 @@ rows=""
 # registry in: a live status overrides a hook row's state/ts, and busy/waiting sessions
 # with no hook row are synthesized. Idle ones are NOT synthesized — the daemon's
 # pre-warmed spare processes register as idle sessions and would render as phantoms.
-sessionsdir="$HOME/.claude/sessions"
 declare -A SMAP=() SMAP_UPD=() SMAP_USED=()
 load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>job<TAB>cwd<TAB>name (live pids only)
   local sf jqout pid sid st ts upd kind job cwd name

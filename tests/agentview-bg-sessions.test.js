@@ -68,13 +68,18 @@ exit 0
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho "${HOST}"\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
+  // Stands in for `kill` (AV_KILLCMD) so a --remove test can assert WHICH pid was signalled
+  // without the suite actually killing the live process it borrowed for the registry fixture.
+  const killLog = path.join(bin, 'kill.log'); fs.writeFileSync(killLog, '');
+  fs.writeFileSync(path.join(bin, 'kill-stub'), '#!/bin/bash\necho "$*" >> "$KILL_LOG"\nexit 0\n', { mode: 0o755 });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, FZF_CAPTURE: capture,
+    AV_KILLCMD: path.join(bin, 'kill-stub'), KILL_LOG: killLog,
   };
   delete env.TMUX;
   delete env.WEZTERM_PANE;
-  return { bin, home, env, tmuxLog, claudeLog, capture };
+  return { bin, home, env, tmuxLog, claudeLog, capture, killLog };
 }
 
 function hookRow(home, sid, obj) {
@@ -83,10 +88,10 @@ function hookRow(home, sid, obj) {
 function sessFile(home, pid, obj) {
   fs.writeFileSync(path.join(home, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, ...obj }));
 }
-function run(env, args, extraEnv = {}) {
+function run(env, args, extraEnv = {}, input = '') {
   try {
     return { out: execFileSync(BASH, [VIEW, ...args], {
-      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, ...extraEnv }, input: '',
+      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...env, ...extraEnv }, input,
     }), code: 0, err: '' };
   } catch (e) { return { out: e.stdout || '', code: e.status, err: e.stderr || '' }; }
 }
@@ -416,6 +421,72 @@ test('a host row with a reused pid keeps rendering but its stale pane locator is
   const k = row.split('\t')[0].split(US);
   assert.strictEqual(k[7], 'none:', 'the unverified pane locator is scrubbed');
   assert.doesNotMatch(raw, /%9/, 'the stale pane id never reaches a KEY');
+});
+
+// ---- --remove of a bg-MERGED row (Ctrl+X) ------------------------------------
+// The render rewrites a daemon session's KEY: kind host -> bg and locator none: -> bg:<jobId>
+// (merge_session_row). --remove then gets a KEY that matches NOTHING on disk, because the hook
+// file still says kind=host / locator=none: — so Ctrl+X silently did nothing on every bg row.
+const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
+
+test('--remove deletes a bg-merged hook row whose KEY carries the bg: locator', { skip }, () => {
+  const { env, home, capture, killLog } = makeEnv();
+  const sid = 'bbbb2222-0000-0000-0000-000000000001';
+  hookRow(home, sid, {
+    key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'host',
+    locator: 'none:', pane: '', title: '', pid: String(ALIVE_PID2), ts: nowSec() - 30,
+  });
+  sessFile(home, ALIVE_PID2, {
+    sessionId: sid, kind: 'bg', status: 'busy', jobId: 'bbbb2222', name: 'Nameless Job',
+    cwd: '/home/daniel/dev', statusUpdatedAt: nowMs(),
+  });
+  // Take the KEY the picker would actually hand Ctrl+X, not a hand-built one.
+  const raw = body(env, capture);
+  const row = raw.split('\n').find((l) => l.includes(US) && l.split('\t')[0].split(US)[7] === 'bg:bbbb2222');
+  assert.ok(row, 'the merged row renders with a bg: locator');
+  const key = row.split('\t')[0];
+  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.ok(!fs.existsSync(avFile(home, sid)), 'the bg row\'s hook file is deleted');
+  assert.match(fs.readFileSync(killLog, 'utf8'), new RegExp(String(ALIVE_PID2)),
+    'the live process behind the session is signalled');
+});
+
+test('--remove of one bg row leaves the other bg rows alone', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const gone = 'bbbb2222-0000-0000-0000-000000000002';
+  const keep = 'bbbb2222-0000-0000-0000-000000000003';
+  // Both hook rows sit at the same cwd with the same none: locator — the shape every local bg
+  // row has on disk. Only the session id tells them apart, so a matcher that fell back to
+  // host+cwd+kind here would take out the wrong row (or both).
+  for (const [sid, pid, job] of [[gone, ALIVE_PID2, 'bbbb2222'], [keep, ALIVE_PID, 'cccc3333']]) {
+    hookRow(home, sid, {
+      key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'host',
+      locator: 'none:', pane: '', title: '', pid: String(pid), ts: nowSec() - 30,
+    });
+    sessFile(home, pid, {
+      sessionId: sid, kind: 'bg', status: 'busy', jobId: job, name: `job ${job}`,
+      cwd: '/home/daniel/dev', statusUpdatedAt: nowMs(),
+    });
+  }
+  const raw = body(env, capture);
+  const row = raw.split('\n').find((l) => l.includes(US) && l.split('\t')[0].split(US)[7] === 'bg:bbbb2222');
+  assert.strictEqual(run(env, ['--remove', row.split('\t')[0]], {}, 'y\n').code, 0);
+  assert.ok(!fs.existsSync(avFile(home, gone)), 'the picked bg row is removed');
+  assert.ok(fs.existsSync(avFile(home, keep)), 'the other bg row at the same cwd survives');
+});
+
+test('--remove still matches a bg row by locator when the hook file records bg: itself', { skip }, () => {
+  // A row synthesized straight into the registry (or written by a newer hook) already carries
+  // bg:<job>; the sid-resolving path must not regress that plain locator match.
+  const { env, home } = makeEnv();
+  const sid = 'bbbb2222-0000-0000-0000-000000000004';
+  hookRow(home, sid, {
+    key: sid, session: sid, host: HOST, cwd: '/home/daniel/dev', state: 'idle', kind: 'bg',
+    locator: 'bg:dddd4444', pane: '', title: 'Direct', pid: '', ts: nowSec() - 30,
+  });
+  const key = cardKey([HOST, '/home/daniel/dev', 'idle', String(nowSec()), 'Direct', '', 'bg', 'bg:dddd4444']);
+  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.ok(!fs.existsSync(avFile(home, sid)), 'a hook row that already stores bg:<job> still matches');
 });
 
 process.on('exit', () => {

@@ -392,6 +392,32 @@ test('--remove of a Windows row taskkills the pid and drops its windir file', { 
   assert.strictEqual(fs.readFileSync(sshLog, 'utf8'), '', 'no ssh for a same-machine Windows remove');
 });
 
+test('--remove of a pid-less Windows bg row taskkills the pid from the daemon roster', { skip }, () => {
+  // A bg row synthesized from the roster (sync_windows_rows) carries no pid — only the daemon
+  // knows it. Deleting the file alone is not a removal: the very next --refresh-remote asks the
+  // roster, sees the job still running, and writes the row straight back. The roster is also the
+  // only place that pid exists, so ask it before dropping the file.
+  const { env, windir, killLog } = makeEnv();
+  const sid = '3eeba696-5038-4ede-8030-c7db135032f1';
+  winRow(windir, sid, { key: sid, session: sid, host: WINHOST, cwd: 'C:\\Users\\daniel', state: 'idle', ts: nowSec(), kind: 'bg', locator: 'bg:3eeba696', pane: '', title: 'Bg job', pid: '' });
+  const roster = JSON.stringify([{ pid: 26984, id: '3eeba696', cwd: 'C:\\Users\\daniel', kind: 'background', sessionId: sid, name: 'Bg job', status: 'idle' }]);
+  const key = cardKey([WINHOST, 'C:\\Users\\daniel', 'idle', '0', 'Bg job', '', 'bg', 'bg:3eeba696']);
+  run({ ...env, WIN_AGENTS: roster }, ['--remove', key], 'y\n');
+  assert.match(fs.readFileSync(killLog, 'utf8'), /26984/, 'taskkill invoked on the roster pid');
+  assert.ok(!fs.existsSync(path.join(windir, `${sid}.json`)), 'Windows bg row file removed');
+});
+
+test('--remove matches a Windows row by cwd when the KEY arrives @tsv-backslash-doubled', { skip }, () => {
+  // JQ_ROW renders the body through @tsv, which doubles every backslash, so a KEY's cwd reads
+  // "C:\\Users\\daniel" while the registry stores "C:\Users\daniel". The locator-less fallback
+  // compared the two raw, so it could never fire for a Windows path.
+  const { env, windir } = makeEnv();
+  winRow(windir, 'w7', { key: 'w7', session: 'w7', host: WINHOST, cwd: 'C:\\Users\\daniel', state: 'idle', ts: nowSec(), kind: 'host', locator: '', pane: '', title: 'legacy', pid: '7007' });
+  const key = cardKey([WINHOST, 'C:\\\\Users\\\\daniel', 'idle', '0', 'legacy', '', 'host', '']);
+  run(env, ['--remove', key], 'y\n');
+  assert.ok(!fs.existsSync(path.join(windir, 'w7.json')), 'the doubled-backslash cwd still matches the row');
+});
+
 // ---- rename (send /rename into the Windows pane) ------------------------
 test('--rename of an idle Windows row sends /rename via wezterm.exe send-text', { skip }, () => {
   const { env, sendLog } = makeEnv();
