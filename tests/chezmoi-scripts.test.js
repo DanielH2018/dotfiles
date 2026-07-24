@@ -29,6 +29,16 @@ try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { too
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 
+// The two scripts under os-linux/wsl/ open with `{{ if contains "microsoft" (lower
+// .chezmoi.kernel.osrelease) }}`, so off WSL they render to an EMPTY string. The Part 2
+// behavior tests would then run an empty script and read exit 0 / an empty stub log --
+// failing on assertions about a script body that does not exist there, which is what the
+// homelab (plain Ubuntu, same suite) hits. Gate them on the same fact the template keys off:
+// os.release() is the same uname release chezmoi reads into .chezmoi.kernel.osrelease.
+// Deliberately NOT gated on "did it render empty?" -- that would also silently skip on WSL if
+// the guard itself broke, turning a real regression into a green run.
+const skipWsl = skip || (/microsoft/i.test(os.release()) ? false : 'WSL-only script (renders empty off WSL)');
+
 function walk(dir) {
   let out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -197,7 +207,7 @@ const SUDO_STUB = [
 {
   const CW_SRC = path.join(SCRIPTS_DIR, 'os-linux', 'wsl', 'run_once_after_configure-wsl.sh.tmpl');
 
-  test('configure-wsl.sh.tmpl: sudo unavailable -> defers with exit 1, nothing else attempted', { skip }, () => {
+  test('configure-wsl.sh.tmpl: sudo unavailable -> defers with exit 1, nothing else attempted', { skip: skipWsl }, () => {
     const dir = tmpdir('configure-wsl-');
     const logFile = path.join(dir, 'log.txt');
     fs.writeFileSync(logFile, '');
@@ -261,7 +271,7 @@ const SUDO_STUB = [
   // MOTD/sysctl/journald writes all key off hardcoded absolute /etc paths with no override --
   // left unasserted (though harmless either way, since sudo never really executes anything);
   // the sudo guard and the systemctl mask/skip decision loop below are fully sandboxed.
-  test('debloat-wsl.sh.tmpl: sudo unavailable -> defers with exit 1 before masking anything', { skip }, () => {
+  test('debloat-wsl.sh.tmpl: sudo unavailable -> defers with exit 1 before masking anything', { skip: skipWsl }, () => {
     const { scriptFile, env, logFile } = dwSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const { status } = runSh(scriptFile, env);
@@ -269,7 +279,7 @@ const SUDO_STUB = [
     assert.strictEqual(readLog(logFile).trim(), 'sudo -v');
   });
 
-  test('debloat-wsl.sh.tmpl: masks an existing unmasked unit, skips missing/already-masked units', { skip }, () => {
+  test('debloat-wsl.sh.tmpl: masks an existing unmasked unit, skips missing/already-masked units', { skip: skipWsl }, () => {
     const { scriptFile, env, logFile } = dwSandbox({
       maskedUnits: 'landscape-client.service',
       missingUnits: 'snapd.socket snapd.seeded.service wsl-pro.service motd-news.timer',
