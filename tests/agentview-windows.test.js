@@ -164,8 +164,8 @@ test('--rename of an idle Windows row sends /rename via wezterm.exe send-text', 
 // ---- spawn (a new Windows-native session from the picker) ---------------
 test('--spawn offers a Windows entry and opens a local-domain WezTerm tab', { skip }, () => {
   const { env, sendLog, capture } = makeEnv();
-  run({ ...env, FZF_PICK: '[Windows · plain claude]' }, ['--spawn']);
-  assert.match(fs.readFileSync(capture, 'utf8'), /\[Windows · plain claude\]/, 'the picker lists the Windows spawn entry');
+  run({ ...env, FZF_PICK: 'PC (Windows)' }, ['--spawn']);
+  assert.match(fs.readFileSync(capture, 'utf8'), /PC \(Windows\)/, 'the host pick lists the Windows (PC) entry');
   const spawnLog = fs.readFileSync(sendLog, 'utf8');
   assert.match(spawnLog, /spawn --domain-name local/, 'spawns a Windows local-domain tab via wezterm.exe');
   // The exe must be the absolute Windows git bash, NOT a bare `bash` (which resolves into WSL —
