@@ -103,7 +103,9 @@ av_pick() {  # $1=width $2=height, rest = fzf args; stdin = the list, stdout = t
   cat > "$lst"
   # %q every word: the popup body is re-parsed by tmux's shell, and headers carry spaces/·.
   cmd="$(printf '%q ' fzf "$@") < $(printf '%q' "$lst") > $(printf '%q' "$sel")"
-  tmux display-popup -E -w "$w" -h "$h" "$cmd" >/dev/null 2>&1; rc=$?
+  # -B: no tmux border. fzf draws its own (rounded, with a label), and stacking the two
+  # produced a double frame with a dead ring between them.
+  tmux display-popup -E -B -w "$w" -h "$h" "$cmd" >/dev/null 2>&1; rc=$?
   cat "$sel" 2>/dev/null
   rm -f "$lst" "$sel" 2>/dev/null
   return "$rc"
@@ -638,8 +640,12 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   # session can't reappear. Local rows act locally; remote rows act on their host over ssh,
   # then the row is filtered from the ssh cache. An empty KEY (header/spacer) is a no-op.
   local key="$1" host cwd kind locator f m sid rowsid ans name tmp="$remote_cache.tmp.$$"
+  local state ts title agetxt sname disp l1 l2 r2 hdr w d e z cdim cfg cred
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  state=$(printf '%s' "$key" | cut -d"$US" -f3)
+  ts=$(printf '%s' "$key" | cut -d"$US" -f4)
+  title=$(printf '%s' "$key" | cut -d"$US" -f5)
   kind=$(printf '%s' "$key" | cut -d"$US" -f7)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
   [ -n "$cwd" ] || [ -n "$locator" ] || return 0
@@ -649,11 +655,39 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   # which hands the child /dev/null for stdin — a `read` there would block forever. Cancel is
   # the first row (and so the default) precisely because a stray <enter> must never destroy
   # a live session.
-  ans=$(printf 'Cancel\nRemove\n' | av_pick 52% 20% --no-sort --info=hidden \
-    --layout=reverse --border=rounded --border-label=" remove ${name} " \
-    --prompt='' --pointer='▌' --header-first \
-    --header 'stops the process and deletes the session — worktree too' 2>/dev/null)
-  [ "$ans" = "Remove" ] || return 0
+  #
+  # The KEY already carries the whole row, so the popup names WHAT is about to die — task,
+  # machine, state, path — rather than just a folder basename. Same age wording as --card.
+  agetxt=""
+  case "$ts" in ''|*[!0-9]*) :;; *)
+    if [ "$ts" -gt 0 ]; then d=$(( now - ts )); [ "$d" -lt 0 ] && d=0
+      if   [ "$d" -lt 60 ];    then agetxt="${d}s ago"
+      elif [ "$d" -lt 3600 ];  then agetxt="$((d/60))m ago"
+      elif [ "$d" -lt 86400 ]; then agetxt="$((d/3600))h ago"
+      else agetxt="$((d/86400))d ago"; fi
+    fi;;
+  esac
+  case "$state" in needs-input) sname="needs input";; working) sname="working";;
+    review) sname="review";; completed) sname="completed";; *) sname="idle";; esac
+  host_label "$host"
+  disp="$cwd"; case "$disp" in "$HOME"/*) disp="~${disp#"$HOME"}";; esac
+  e=$'\033'; z="$e[0m"
+  cdim="$e[38;2;108;112;134m"; cfg="$e[38;2;205;214;244m"; cred="$e[38;2;243;139;168m"
+  l1="${title:-$name} · ${_hl:-$host} · ${sname}${agetxt:+ · $agetxt}"
+  l2="$disp"
+  r2='Remove  · kills the process, deletes the worktree'
+  # Size to content so the box has no dead rows: 2 header + 2 options + fzf's own border.
+  w=${#l1}; [ "${#l2}" -gt "$w" ] && w=${#l2}; [ "${#r2}" -gt "$w" ] && w=${#r2}
+  w=$(( w + 6 )); [ "$w" -lt 46 ] && w=46; [ "$w" -gt 88 ] && w=88
+  hdr="${cfg}${l1}${z}"$'\n'"${cdim}${l2}${z}"
+  ans=$(printf '%s\n' "Cancel" "${cred}Remove${z}${cdim}${r2#Remove}${z}" \
+    | av_pick "$w" 6 --ansi --no-sort --no-input --info=hidden --layout=reverse \
+      --border=rounded --border-label=' remove session ' --border-label-pos=3 \
+      --pointer='▌' --highlight-line --header-first --header "$hdr" \
+      --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,header:#9399b2,border:#45475a,label:#bac2de,pointer:#f38ba8' 2>/dev/null)
+  # --ansi hands back the ORIGINAL line, escape codes and all, so strip them before matching.
+  ans=$(printf '%s' "$ans" | sed -e 's/\x1b\[[0-9;:]*m//g')
+  case "$ans" in Remove*) ;; *) return 0 ;; esac
   if is_windows_host "$host"; then                  # same machine, Windows-side registry
     shopt -s nullglob
     for f in "$windir"/*.json; do
