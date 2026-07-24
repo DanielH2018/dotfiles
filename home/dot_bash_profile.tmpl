@@ -8,7 +8,9 @@ if command -v fnm >/dev/null 2>&1; then
 fi
 
 # chezmoi creates dirs under the process umask, so pin 0022 in a subshell for
-# deterministic dir modes on hosts with a 0007 login umask (see dot_zshrc.tmpl).
+# deterministic dir modes on hosts with a 0007 login umask (rationale in dot_zshenv, which
+# carries the zsh copy; kept per-shell rather than in common.sh because that is sourced only
+# by interactive shells, and non-interactive applies are what recreate the 0750 drift).
 chezmoi() { ( umask 0022; command chezmoi "$@" ); }
 
 # ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
