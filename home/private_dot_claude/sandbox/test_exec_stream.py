@@ -7,6 +7,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILTER = os.path.join(HERE, "exec-stream.py")
+if not os.path.exists(FILTER):
+    FILTER = os.path.join(HERE, "executable_exec-stream.py")  # source tree, prefix not stripped
 
 BEGIN = "<<<EXEC_RESULT>>>"
 END = "<<<END_EXEC_RESULT>>>"

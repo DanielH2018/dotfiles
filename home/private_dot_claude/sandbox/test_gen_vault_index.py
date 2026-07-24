@@ -7,6 +7,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GEN = os.path.join(HERE, "gen-vault-index.py")
+if not os.path.exists(GEN):
+    GEN = os.path.join(HERE, "executable_gen-vault-index.py")  # source tree, prefix not stripped
 
 
 def write(path, text):

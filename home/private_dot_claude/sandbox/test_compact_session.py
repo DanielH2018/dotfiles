@@ -8,6 +8,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "executable_compact-session.py")
+if not os.path.exists(SCRIPT):
+    SCRIPT = os.path.join(HERE, "compact-session.py")  # deployed tree, prefix stripped
 
 
 def write(path, text):

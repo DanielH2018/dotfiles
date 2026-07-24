@@ -12,6 +12,8 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "executable_gh-pr-guard.sh")
+if not os.path.exists(HOOK):
+    HOOK = os.path.join(HERE, "gh-pr-guard.sh")  # deployed tree, prefix stripped
 BRANCH = "claude/feat"
 
 

@@ -5,6 +5,7 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RENDER="$SCRIPT_DIR/render.sh"
+[[ -f "$RENDER" ]] || RENDER="$SCRIPT_DIR/executable_render.sh"  # source tree, prefix not stripped
 REAL_TEMPLATE="$SCRIPT_DIR/../templates/report.html"
 MARK='/*__PR_FEEDBACK_DATA__*/null'
 pass=0; fail=0
