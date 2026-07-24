@@ -263,6 +263,36 @@ test('--jump-nth counts a pinned session as #1', { skip }, () => {
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %2/, 'the pinned session is jump target #1');
 });
 
+// ---- --skip (up/down step over the group headers + spacers) -------------
+test('--skip leaves the cursor on a real session row', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', rowKey({ cwd: '/r/alpha', locator: 'tmux:/s:sa:%1' })]).out;
+  assert.strictEqual(out, '', 'a keyed row emits no follow-up action');
+});
+
+test('--skip keeps going the same way off a keyless header/spacer row', { skip }, () => {
+  const { env } = makeEnv();
+  assert.match(run(env, ['--skip', 'up', '']).out, /^up\+transform\(.*--skip up \{1\} 3\)$/,
+    'up off a header moves up again and re-arms itself with a hop spent');
+  assert.match(run(env, ['--skip', 'down', '']).out, /^down\+transform\(.*--skip down \{1\} 3\)$/,
+    'down off a header moves down again');
+});
+
+test('--skip runs out of hops, so an all-keyless list cannot spin forever', { skip }, () => {
+  const { env } = makeEnv();
+  let out = run(env, ['--skip', 'down', '']).out;
+  let hops = 0;
+  while (out && hops < 20) { hops++; out = run(env, ['--skip', 'down', '', out.match(/\{1\} (\d+)\)$/)[1]]).out; }
+  assert.ok(hops < 20, `the chain terminates on its own (took ${hops} hops)`);
+  assert.strictEqual(run(env, ['--skip', 'down', '', '0']).out, '', 'a spent budget emits nothing');
+});
+
+test('--skip re-arms with AGENTVIEW_SELF, so an undeployed copy drives its own picker', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', ''], { extraEnv: { AGENTVIEW_SELF: '/tmp/av-copy' } }).out;
+  assert.match(out, /transform\('\/tmp\/av-copy' --skip down/, 'the recursion points back at the same copy');
+});
+
 // ---- --keys (the ? shortcut cheatsheet) ---------------------------------
 test('--keys renders every shortcut in the cheatsheet', { skip }, () => {
   const { env } = makeEnv();
@@ -284,6 +314,9 @@ test('picker binds the new hotkeys and hints them in the footer', () => {
   assert.match(src, /alt-9:become\([^)]*--jump-nth 9\)/, 'alt-9 jumps to session #9');
   assert.match(src, /'\?:show-preview\+preview\([^)]*--keys\)'/, '? shows the shortcut cheatsheet');
   assert.match(src, /ctrl-o:toggle-preview/, 'ctrl-o toggles the session details card');
+  assert.match(src, /up:up\+transform\([^)]*--skip up \{1\}\)/, 'up steps over a group header');
+  assert.match(src, /down:down\+transform\([^)]*--skip down \{1\}\)/, 'down steps over a group header');
+  assert.match(src, /load:transform\([^)]*--skip down \{1\}\)/, 'the picker never opens on a header row');
   assert.match(src, /⌃r rename/, 'footer advertises rename');
   assert.match(src, /⌃p pin/, 'footer advertises pin');
   assert.match(src, /alt-# jump/, 'footer advertises the alt jump');

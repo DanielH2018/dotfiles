@@ -28,6 +28,8 @@
 #   agentview --pin KEY   toggle this row's pin (CTRL+P); pins live in ~/.claude/agent-view-pins
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
+#   agentview --skip DIR KEY [HOPS]  emit the fzf actions that carry the cursor off a group
+#                         header/spacer (armed on up/down — see the dispatch below)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 #   agentview --refresh-remote PF  reconcile Windows rows against the daemon roster (reap the
 #                         ones it no longer runs, synthesize the live ones no hook registered)
@@ -45,6 +47,24 @@
 # runs `claude attach <jobId>` in a new backend pane (roster fallback without one).
 set -u
 mode="${1:-fzf}"
+
+# --skip DIR KEY [HOPS]: the picker's up/down keys arm this as an fzf `transform`. Group
+# headers and the blank spacers between groups are list rows carrying an EMPTY key, so the
+# cursor must never come to rest on one — when it lands there, keep going the same
+# direction. Each hop re-arms the transform (a group boundary is two rows: spacer + header,
+# and a header can sit at either end of the list), with HOPS as the backstop so a list of
+# nothing but keyless rows — the "no active sessions" placeholder — can't spin forever.
+# Dispatched above every other setup line: this runs on each arrow keypress.
+if [ "$mode" = "--skip" ]; then
+  [ -n "${3:-}" ] && exit 0                  # a real session row — stay on it
+  hops="${4:-4}"; case "$hops" in ''|*[!0-9]*) hops=0;; esac
+  [ "$hops" -gt 0 ] || exit 0
+  dir="${2:-down}"
+  printf "%s+transform('%s' --skip %s {1} %s)" \
+    "$dir" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$dir" "$(( hops - 1 ))"
+  exit 0
+fi
+
 statedir="$HOME/.claude/agent-view"
 # Homelab snapshot cache: the picker renders from THIS file instantly (no network on
 # open); a background job refreshes it over ssh and live-reloads fzf. Kept OUT of the
@@ -1696,6 +1716,13 @@ sel=$(printf '%s\n' "$body" | fzf \
   --preview-label=' session ' \
   --listen=0 \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
+  --bind='up:up+transform('"'$SELF'"' --skip up {1})' \
+  --bind='down:down+transform('"'$SELF'"' --skip down {1})' \
+  --bind='ctrl-k:up+transform('"'$SELF'"' --skip up {1})' \
+  --bind='ctrl-j:down+transform('"'$SELF'"' --skip down {1})' \
+  --bind='page-up:page-up+transform('"'$SELF'"' --skip up {1})' \
+  --bind='page-down:page-down+transform('"'$SELF'"' --skip down {1})' \
+  --bind='load:transform('"'$SELF'"' --skip down {1})' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
