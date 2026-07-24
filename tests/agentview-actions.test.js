@@ -287,7 +287,7 @@ test('do_remove (local): kills only the targeted pid, deletes only its file', { 
   sessionProc(home, 9001, 'alpha');
   sessionProc(home, 9002, 'bravo');
   const key = rowKey({ cwd: '/r/a', state: 'idle', locator: 'tmux:/s:a:%1' });
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   assert.strictEqual(read(killLog).trim(), '9001', 'only alpha\'s pid is killed');
   assert.match(read(claudeLog), /rm alpha/);
   assert.doesNotMatch(read(claudeLog), /rm bravo/);
@@ -303,7 +303,7 @@ test('do_remove (remote): purges only the targeted session over ssh, local files
     { session: 'rk', host: REMOTE1, cwd: '/r/rk', kind: 'host', state: 'idle', locator: 'tmux:/s:rk:%1' },
   ]);
   const key = rowKey({ host: REMOTE1, cwd: '/r/rg', locator: 'tmux:/s:rg:%2' });
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   assert.match(read(sshLog), /daniel-server/);
   assert.match(read(sshLog), /s=rg/, 'purges the selected sid');
   assert.doesNotMatch(read(sshLog), /s=rk/, 'never touches the other remote sid');
@@ -319,7 +319,7 @@ test('do_remove (Windows): taskkills only that pid, never touches local files or
   localFile(home, 'localsafe', { session: 'localsafe', host: SELF, cwd: '/r/safe', state: 'idle', kind: 'host', locator: 'tmux:/s:safe:%1' });
   remoteCache(home, [{ session: 'rsafe', host: REMOTE1, cwd: '/r/rsafe', kind: 'host', state: 'idle', locator: 'tmux:/s:rsafe:%1' }]);
   const key = rowKey({ host: WINHOST, cwd: 'C:\\p1', locator: 'wezterm:9' });
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   assert.match(read(taskkillLog), /4242/, 'the Windows pid is taskkilled');
   assert.ok(!fs.existsSync(winAvFile(windir, 'w1')), 'the Windows registry row is dropped');
   assert.ok(fs.existsSync(localAvFile(home, 'localsafe')), 'local files are untouched by a Windows removal');
@@ -335,7 +335,7 @@ test('do_remove (remote): two hosts sharing a cwd — removing one never sshes o
     { session: 'sidb', host: REMOTE2, cwd: '/shared/proj', kind: 'host', state: 'working', locator: '' },
   ]);
   const key = rowKey({ host: REMOTE1, cwd: '/shared/proj', locator: '' });
-  assert.strictEqual(run(env, ['--remove', key], {}, 'y\n').code, 0);
+  assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   const ssh = read(sshLog);
   assert.match(ssh, /daniel-server/);
   assert.match(ssh, /s=sida/);
