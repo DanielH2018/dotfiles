@@ -653,9 +653,14 @@ synth_session_rows() {  # rows for live busy/waiting sessions the hook registry 
     job="${m%%$'\t'*}"; m="${m#*$'\t'}"
     cwd="${m%%$'\t'*}"; name="${m#*$'\t'}"
     [ "$st" = "completed" ] && continue              # idle = maybe a spare — a hookless
-    if [ "$kind" = "bg" ]; then locator="bg:$job"; else locator="none:"; fi
-    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"$locator"$'\t'"$name"$'\n'
-  done                                               # session shows once it works/waits
+    # Only DAEMON bg jobs legitimately lack a hook row (they fire no UserPromptSubmit). An
+    # interactive session registers its hook row on the first prompt, so synthesizing it here
+    # would flash a nameless, un-jumpable (none:) placeholder — its auto "<leaf>-<hex>" name,
+    # no locator — for the render or two before the hook lands. Skip non-bg: an interactive
+    # session appears once its own hook row exists (with a real locator + title).
+    [ "$kind" = "bg" ] || continue
+    rows+="$st"$'\t'"$selfhost"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"bg:$job"$'\t'"$name"$'\n'
+  done                                               # bg session shows once it works/waits
 }
 
 gather_local_rows() {  # append local session rows to global `rows`, prune >7d + dead-pid leaks

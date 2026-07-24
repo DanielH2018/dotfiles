@@ -122,6 +122,19 @@ test('hookless waiting bg session lands in NEEDS INPUT', { skip }, () => {
   assert.match(txt, /Deep Review/);
 });
 
+test('a hookless busy interactive session is NOT synthesized (no phantom placeholder)', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  // A freshly-started interactive session is busy in the registry before its own hook row
+  // lands. Synthesizing it would flash a nameless, un-jumpable none: row (its auto name, no
+  // locator) until the hook fires — only daemon bg jobs (which fire no hook) get synthesized.
+  sessFile(home, ALIVE_PID, {
+    sessionId: 'aaaa1111-0000-0000-0000-000000000007', kind: 'interactive', status: 'busy',
+    name: 'dev-23', cwd: '/home/daniel/dev', statusUpdatedAt: nowMs(),
+  });
+  const txt = stripAnsi(body(env, capture));
+  assert.match(txt, /no active Claude sessions/, 'interactive session waits for its own hook row');
+});
+
 test('idle registry entries (daemon spare pool) are not synthesized', { skip }, () => {
   const { env, home, capture } = makeEnv();
   sessFile(home, ALIVE_PID, {
