@@ -90,6 +90,18 @@ brew = "fastfetch"
 apt = ""
 
 [[tools]]
+name = "lua"
+cmd = "lua"
+# Here for tests/wezterm-config.test.js, which syntax-checks the rendered WezTerm config
+# with `luac -p`. Ubuntu's package installs /usr/bin/{lua5.4,luac5.4} and no bare names, so
+# the installer symlinks both lua -> lua5.4 and luac -> luac5.4 into ~/.local/bin. No winget
+# id: Windows gets Lua from the hardcoded DEVCOM.Lua entry in the ps1 installer instead,
+# because that package hides luac.exe outside PATH and needs the bespoke skip handling.
+winget = ""
+brew = "lua"
+apt = "lua5.4"
+
+[[tools]]
 name = "btop"
 cmd = "btop"
 winget = ""
