@@ -46,7 +46,18 @@ function makeEnv() {
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
   fs.writeFileSync(path.join(bin, 'wezterm'), '#!/bin/bash\necho "[]"\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n', { mode: 0o755 });
+  // Stateful enough to model window de-dup: new-window records the window name, select-window
+  // exits 0 only if that name already exists (real tmux behaviour), kill-window drops it.
+  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
+echo "$*" >> "$TMUX_LOG"
+wins="$TMUX_LOG.wins"; touch "$wins"
+case "$1" in
+  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
+  new-window)    echo "$3" >> "$wins"; exit 0 ;;
+  kill-window)   name="\${3#=}"; grep -vxF "$name" "$wins" > "$wins.t" 2>/dev/null; mv "$wins.t" "$wins"; exit 0 ;;
+esac
+exit 0
+`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), '#!/bin/bash\ncat > "$FZF_CAPTURE"\n[ -n "${FZF_PICK:-}" ] && printf \'%s\\n\' "$FZF_PICK"\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho "${HOST}"\n`, { mode: 0o755 });
@@ -231,12 +242,34 @@ test('sandbox rows are not touched by the registry merge', { skip }, () => {
 const BG_JOB = 'dddd4444';
 const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', `bg:${BG_JOB}`]);
 
-test('--jump on a bg row inside tmux runs `claude attach <jobId>` in a new window', { skip }, () => {
+test('--jump on a bg row inside tmux runs `claude attach <jobId>` in a per-session window', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey], { TMUX: '/tmp/tmux-1000/default,1,0' });
   assert.strictEqual(r.code, 0);
   assert.match(fs.readFileSync(tmuxLog, 'utf8'),
-    new RegExp(`new-window -n agents claude attach ${BG_JOB}`));
+    new RegExp(`new-window -n cc-${BG_JOB} claude attach ${BG_JOB}`));
+});
+
+test('a second --jump to the same bg session reuses its window (no per-jump leak)', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const tmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, ['--jump', bgKey], tmux);
+  run(env, ['--jump', bgKey], tmux);          // jump to the SAME live session again
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  const spawns = (log.match(new RegExp(`new-window -n cc-${BG_JOB}`, 'g')) || []).length;
+  assert.strictEqual(spawns, 1, 'the window is spawned once, then reused — this is the leak fix');
+  assert.match(log, new RegExp(`select-window -t =cc-${BG_JOB}`), 'the reuse path checks for an existing window');
+});
+
+test('--jump to two different bg sessions opens two distinct windows', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const tmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
+  const other = cardKey([HOST, '/home/daniel', 'working', '0', 'Other Job', 'none', 'bg', 'bg:eeee5555']);
+  run(env, ['--jump', bgKey], tmux);
+  run(env, ['--jump', other], tmux);
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, new RegExp(`new-window -n cc-${BG_JOB}`), 'first session gets its window');
+  assert.match(log, /new-window -n cc-eeee5555/, 'a distinct session gets a separate window');
 });
 
 test('--jump on a bg row from a bare shell execs `claude attach <jobId>` in place', { skip }, () => {
