@@ -329,6 +329,9 @@ config.keys = {
 	}) },
 	-- Local Git Bash tab (pins the built-in local domain for a Windows shell).
 	{ key = "B", mods = "CTRL|SHIFT", action = act.SpawnTab({ DomainName = "local" }) },
+	-- WSL tab, pinned. CTRL+T follows the current pane's domain, so from a Git Bash
+	-- pane it spawns another Git Bash tab — this always lands in WSL:Ubuntu.
+	{ key = "t", mods = "CTRL|ALT", action = act.SpawnTab({ DomainName = "WSL:Ubuntu" }) },
 }
 
 -- Jump straight to tab 1-9 (CTRL+<n>). No Ghostty equivalent — standard terminal

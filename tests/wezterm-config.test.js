@@ -63,8 +63,9 @@ test('required config keys survive rendering', { skip }, () => {
     'default_cwd = "~/dev"',                          // trusted non-$HOME landing dir (trust persistence)
     'config.default_prog = { git_bash',
     'local git_bash = first_existing(',   // single-source Git Bash path (probed at runtime)
-    '"-c", "agentview"',                    // CTRL+SHIFT+S picker tab
+    '"agentview; exec bash -li"',           // CTRL+SHIFT+S picker tab
     'tmux new-session -A -s main',          // CTRL+SHIFT+H homelab tab
+    'act.SpawnTab({ DomainName = "WSL:Ubuntu" })', // CTRL+ALT+T WSL-pinned tab
     'config.inactive_pane_hsb',             // ghostty unfocused-split-opacity parity
     'config.use_resize_increments = true',  // ghostty window-step-resize parity
     'config.notification_handling = "SuppressFromFocusedPane"', // command-finish notify
