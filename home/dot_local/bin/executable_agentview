@@ -805,6 +805,74 @@ gc_pins() {  # drop pins whose session no longer exists anywhere (a local file O
   mv -f "$tmp" "$pinfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
 }
 
+loc_rank() {  # sets _lr = jump quality of locator $1: real pane 2 > bg attach 1 > none 0
+  case "$1" in
+    tmux:?*|wezterm:?*) _lr=2 ;;
+    bg:?*)              _lr=1 ;;
+    *)                  _lr=0 ;;   # none: / empty / bg: with no job
+  esac
+}
+
+collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into one row.
+  # Backgrounding a session spawns a bg job that inherits the task title but gets a fresh
+  # session id with NO lineage link (session files carry no parent field), so the origin and
+  # the fork render as two same-named rows. Correlate on host+cwd+title, using REAL titles
+  # only — an auto name ("<leaf>-<2 hex>") is not a shared task identity, so those never
+  # merge. Collapse only a group holding BOTH a bg and a non-bg member (two plain interactive
+  # sessions that merely share a title stay separate); keep the base = freshest member but
+  # adopt the best jump target across the pair (a live pane beats bg-attach beats none:) and
+  # set kind to route <enter> accordingly. Rewrites global `rows`. Row = state<TAB>host<TAB>
+  # cwd<TAB>pane<TAB>ts<TAB>kind<TAB>locator<TAB>title.
+  local -A GROUP=()
+  local pass="" L rest cwd title fwd leaf host
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    rest="${L#*$'\t'}"                       # drop state
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    rest="${rest#*$'\t'}"; rest="${rest#*$'\t'}"; rest="${rest#*$'\t'}"; rest="${rest#*$'\t'}"  # pane ts kind locator
+    title="$rest"
+    fwd="${cwd//\\//}"; fwd="${fwd%/}"; leaf="${fwd##*/}"
+    # Not mergeable (no shared task identity): empty title, or Claude's auto "<leaf>-<2 hex>".
+    if [ -z "$title" ] || [[ "$title" == "$leaf"-[0-9a-f][0-9a-f] ]]; then
+      pass+="$L"$'\n'; continue
+    fi
+    GROUP["$host$US$cwd$US$title"]+="$L"$'\n'
+  done <<< "$rows"
+  local k members m mrest nbg nother base base_ts bestloc bestrank _lr
+  local b_st b_host b_cwd b_pane b_ts b_kind b_loc b_title m_ts m_kind m_loc
+  for k in "${!GROUP[@]}"; do
+    members="${GROUP[$k]}"
+    nbg=0; nother=0; base=""; base_ts=-1; bestloc=""; bestrank=-1
+    while IFS= read -r m; do
+      [ -z "$m" ] && continue
+      mrest="${m#*$'\t'}"; mrest="${mrest#*$'\t'}"; mrest="${mrest#*$'\t'}"  # -> after host,cwd
+      mrest="${mrest#*$'\t'}"                                                # -> after pane
+      m_ts="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      m_kind="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      m_loc="${mrest%%$'\t'*}"
+      [ "$m_kind" = "bg" ] && nbg=$((nbg+1)) || nother=$((nother+1))
+      case "$m_ts" in ''|*[!0-9]*) m_ts=0;; esac
+      [ "$m_ts" -gt "$base_ts" ] && { base_ts="$m_ts"; base="$m"; }
+      loc_rank "$m_loc"; [ "$_lr" -gt "$bestrank" ] && { bestrank="$_lr"; bestloc="$m_loc"; }
+    done <<< "$members"
+    if [ "$nbg" -gt 0 ] && [ "$nother" -gt 0 ]; then
+      b_st="${base%%$'\t'*}"; mrest="${base#*$'\t'}"
+      b_host="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      b_cwd="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      b_pane="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      b_ts="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      b_kind="${mrest%%$'\t'*}"; mrest="${mrest#*$'\t'}"
+      b_loc="${mrest%%$'\t'*}"; b_title="${mrest#*$'\t'}"
+      case "$bestloc" in bg:*) b_kind="bg";; tmux:*|wezterm:*) b_kind="host";; esac
+      pass+="$b_st"$'\t'"$b_host"$'\t'"$b_cwd"$'\t'"$b_pane"$'\t'"$b_ts"$'\t'"$b_kind"$'\t'"$bestloc"$'\t'"$b_title"$'\n'
+    else
+      pass+="$members"
+    fi
+  done
+  rows="$pass"
+}
+
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
   local W BADGEW=7 grp st host cwd pane ts kind locator title_reg name title bn scol stext cnt key L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
@@ -935,6 +1003,7 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
   rows=""
   gather_local_rows
   gather_remote_rows
+  collapse_bg_forks                          # one row per task: fold a bg fork into its origin
   if [ "$HAVE_WEZTERM" = 1 ]; then
     PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
     load_titles
@@ -985,6 +1054,7 @@ prof start
 rows=""
 gather_local_rows;  prof gather_local
 gather_remote_rows                       # cached homelab snapshot — instant, no network
+collapse_bg_forks                        # one row per task: fold a bg fork into its origin
 if [ "$HAVE_WEZTERM" = 1 ]; then
   PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null); prof wezterm_list
   load_titles;      prof load_titles

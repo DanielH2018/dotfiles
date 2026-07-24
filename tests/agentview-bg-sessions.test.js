@@ -249,4 +249,67 @@ test('--card labels a bg row as background', { skip }, () => {
   assert.match(txt, /Kind\s+background/);
 });
 
+// ---- collapse: a bg fork folds into its interactive origin -------------------
+// Backgrounding a session spawns a bg job that inherits the task title under a fresh
+// session id with no lineage link, so the origin + fork render as two same-named rows.
+// collapse_bg_forks folds a bg/non-bg pair sharing host+cwd+title into one, keeping the
+// best jump target (live pane > bg-attach > none:).
+
+test('a bg fork and its interactive origin collapse to one row, keeping the live pane', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const cwd = '/home/daniel/proj';
+  // interactive origin: a hook row with a real tmux pane (the better jump target), kept
+  // fresher so it's the surviving base.
+  hookRow(home, 'aaaaaaaa-0000-0000-0000-0000000000aa', {
+    session: 'aaaaaaaa-0000-0000-0000-0000000000aa', host: HOST, cwd, state: 'working', kind: 'host',
+    locator: 'tmux:/tmp/x:sess:%3', title: 'Shared Task', pid: ALIVE_PID, ts: nowSec(),
+  });
+  // backgrounded fork: a hookless bg registry session with the SAME task name (synthesized).
+  sessFile(home, ALIVE_PID, {
+    sessionId: 'bbbbbbbb-0000-0000-0000-0000000000bb', kind: 'bg', status: 'busy', jobId: 'bjob',
+    name: 'Shared Task', cwd, statusUpdatedAt: nowMs() - 5000,
+  });
+  const raw = body(env, capture);
+  const rows = raw.split('\n').filter((l) => l.includes(US) && l.split('\t')[0].split(US)[4] === 'Shared Task');
+  assert.strictEqual(rows.length, 1, 'the fork folds into a single row');
+  const k = rows[0].split('\t')[0].split(US);
+  assert.strictEqual(k[6], 'host', 'kept the interactive kind (it has a live pane)');
+  assert.strictEqual(k[7], 'tmux:/tmp/x:sess:%3', 'kept the live pane as the jump target, not bg-attach');
+});
+
+test('a bg fork whose origin has no pane keeps the bg-attach locator', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const cwd = '/home/daniel/proj';
+  hookRow(home, 'cccccccc-0000-0000-0000-0000000000cc', {
+    session: 'cccccccc-0000-0000-0000-0000000000cc', host: HOST, cwd, state: 'working', kind: 'host',
+    locator: 'none:', title: 'Paneless Task', pid: ALIVE_PID, ts: nowSec() - 30,
+  });
+  sessFile(home, ALIVE_PID, {
+    sessionId: 'dddddddd-0000-0000-0000-0000000000dd', kind: 'bg', status: 'busy', jobId: 'djob',
+    name: 'Paneless Task', cwd, statusUpdatedAt: nowMs(),
+  });
+  const raw = body(env, capture);
+  const rows = raw.split('\n').filter((l) => l.includes(US) && l.split('\t')[0].split(US)[4] === 'Paneless Task');
+  assert.strictEqual(rows.length, 1, 'still one row');
+  const k = rows[0].split('\t')[0].split(US);
+  assert.strictEqual(k[7], 'bg:djob', 'bg-attach beats a none: origin');
+  assert.strictEqual(k[6], 'bg', 'kind routes <enter> to the bg attach');
+});
+
+test('two interactive sessions sharing a title (no bg fork) are NOT merged', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const cwd = '/home/daniel/proj';
+  hookRow(home, 'eeeeeeee-0000-0000-0000-0000000000e1', {
+    session: 'eeeeeeee-0000-0000-0000-0000000000e1', host: HOST, cwd, state: 'working', kind: 'host',
+    locator: 'tmux:/tmp/x:sess:%3', title: 'Twin Task', pid: ALIVE_PID, ts: nowSec(),
+  });
+  hookRow(home, 'eeeeeeee-0000-0000-0000-0000000000e2', {
+    session: 'eeeeeeee-0000-0000-0000-0000000000e2', host: HOST, cwd, state: 'working', kind: 'host',
+    locator: 'tmux:/tmp/x:sess:%4', title: 'Twin Task', pid: ALIVE_PID, ts: nowSec(),
+  });
+  const raw = body(env, capture);
+  const rows = raw.split('\n').filter((l) => l.includes(US) && l.split('\t')[0].split(US)[4] === 'Twin Task');
+  assert.strictEqual(rows.length, 2, 'no bg fork present -> both interactive sessions stay distinct');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
