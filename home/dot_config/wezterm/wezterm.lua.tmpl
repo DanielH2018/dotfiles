@@ -157,6 +157,36 @@ config.default_prog = { git_bash, "-l", "-i" }
 -- and close (cmd+w) map to BARE ctrl+d / ctrl+w so they match Ghostty's muscle
 -- memory exactly — these override the shell's EOF / delete-word. Keep in sync with Ghostty.
 -- ---------------------------------------------------------------------------
+
+-- Open the agentview picker, REUSING an already-open picker tab instead of piling up a fresh
+-- one on every CTRL+Left / CTRL+SHIFT+S. The picker is `fzf` running in a WSL:Ubuntu tab — the
+-- same signal CTRL+W uses to detect it (line ~190). If such a tab is already open (you opened
+-- the picker, then switched away without dismissing), activate it; otherwise spawn a new one.
+-- pcall-guarded: a nil/throwing probe can never block the open — on any error we fall through
+-- to a plain spawn, so the worst case is the old always-spawn behaviour, never a dead key.
+local function open_agentview(window, pane)
+	local existing = nil
+	pcall(function()
+		for _, item in ipairs(window:mux_window():tabs_with_info()) do
+			local ap = item.tab:active_pane()
+			local proc = (ap:get_foreground_process_name() or ""):lower()
+			local dom = ap:get_domain_name() or ""
+			if proc:find("fzf") and dom:find("WSL") then
+				existing = item.tab
+				break
+			end
+		end
+	end)
+	if existing then
+		existing:activate()
+	else
+		window:perform_action(act.SpawnCommandInNewTab({
+			domain = { DomainName = "WSL:Ubuntu" },   -- the unified WSL picker (see CTRL+SHIFT+S)
+			args = { "bash", "-lc", "agentview" },
+		}), pane)
+	end
+end
+
 config.keys = {
 	-- Claude Code multiline (ghostty: shift+enter=text:\n)
 	{ key = "Enter", mods = "SHIFT", action = act.SendString("\n") },
@@ -230,10 +260,7 @@ config.keys = {
 	-- activate-pane) can reach the GUI — a WSL-domain tab gives it $WEZTERM_PANE + the gui socket.
 	-- `bash -lc` for a login PATH (~/.local/bin/agentview + jq/fzf); dismiss with ESC — it also
 	-- closes itself after a jump.
-	{ key = "S", mods = "CTRL|SHIFT", action = act.SpawnCommandInNewTab({
-		domain = { DomainName = "WSL:Ubuntu" },
-		args = { "bash", "-lc", "agentview" },
-	}) },
+	{ key = "S", mods = "CTRL|SHIFT", action = wezterm.action_callback(open_agentview) },
 	-- CTRL+Left: back to Agent View from inside a session pane (claude, sandbox docker,
 	-- ssh attach). At a shell prompt the key passes through and stays word-left (zsh binds
 	-- ^[[1;5D backward-word). Two signals decide "this is an app pane, not a shell":
@@ -256,10 +283,7 @@ config.keys = {
 			powershell = true, cmd = true, ubuntu = true, wsl = true, wslhost = true,
 		}
 		if is_agent or (base ~= "" and not shells[base]) then
-			window:perform_action(act.SpawnCommandInNewTab({
-				domain = { DomainName = "WSL:Ubuntu" },   -- the unified WSL picker (see CTRL+SHIFT+S)
-				args = { "bash", "-lc", "agentview" },
-			}), pane)
+			open_agentview(window, pane)   -- reuse an open picker tab; only spawn if none exists
 		else
 			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
 		end
