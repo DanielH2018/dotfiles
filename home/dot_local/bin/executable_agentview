@@ -603,9 +603,11 @@ spawn_build_cmd() {  # $1=repo $2=branch -> a shell-quoted claude-sandbox comman
 spawn_windows_claude() {  # open a plain Windows-native claude in a NEW local-domain WezTerm tab
   # via the Windows wezterm.exe. The tab runs git_bash (Windows), where `claude` is on PATH; the
   # session registers itself over /mnt/c and appears via gather_windows_rows, focusable via Slice 2.
-  # One home tab per new session — no proliferation on jump.
+  # One home tab per new session — no proliferation on jump. `exec claude` so bash REPLACES itself:
+  # the pane's process becomes node/claude, so WezTerm's CTRL+Left (which passes through when the
+  # foreground process looks like a shell) reads it as non-shell and opens the picker instead.
   [ -x "$WEZTERM_WIN" ] || return 1
-  "$WEZTERM_WIN" cli spawn --domain-name local -- bash -lc 'cd ~/dev 2>/dev/null || cd; claude' >/dev/null 2>&1
+  "$WEZTERM_WIN" cli spawn --domain-name local -- bash -lc 'cd ~/dev 2>/dev/null || cd; exec claude' >/dev/null 2>&1
 }
 
 spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pane
