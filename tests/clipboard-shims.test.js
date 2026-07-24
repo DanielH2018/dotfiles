@@ -1,8 +1,9 @@
-// Regression guard for the xclip/xsel clipboard shims in home/dot_local/bin.
-// xclip and xsel forward to WSLg's wl-copy/wl-paste (not directly to a Windows
-// exe — see the comments in each script); this drives the REAL scripts against
-// stub wl-copy/wl-paste placed first on PATH, so no real clipboard is touched.
-// Offline. Skips cleanly if bash is unavailable.
+// Regression guard for the xclip/xsel clipboard shims and the wl-bmp2png
+// converter in home/dot_local/bin. xclip and xsel forward to WSLg's
+// wl-copy/wl-paste (not directly to a Windows exe — see the comments in each
+// script); this drives the REAL scripts against stub wl-copy/wl-paste/wl-bmp2png
+// placed first on PATH, so no real clipboard is touched. Offline. Skips cleanly
+// if bash (or, for the converter, python3) is unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -13,11 +14,31 @@ const path = require('node:path');
 const BIN_DIR = path.join(__dirname, '..', 'home', 'dot_local', 'bin');
 const XCLIP = path.join(BIN_DIR, 'executable_xclip');
 const XSEL = path.join(BIN_DIR, 'executable_xsel');
+const WLBMP2PNG = path.join(BIN_DIR, 'executable_wl-bmp2png');
 
 // Resolve bash by absolute path so spawning it doesn't depend on (and isn't broken
 // by) the deliberately-stripped-down PATH we hand to the scripts under test.
 const BASH = ['/usr/bin/bash', '/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';
+const PYTHON = ['/usr/bin/python3', '/usr/local/bin/python3'].find((p) => fs.existsSync(p));
+const skipPy = BASH ? (PYTHON ? false : 'python3 unavailable') : skip;
+
+// Minimal 1x1 24-bit BI_RGB BMP with a known BGR pixel (bottom-up, row padded to 4B).
+function makeBmp1x1(b, g, r) {
+  const buf = Buffer.alloc(58);
+  buf.write('BM', 0);
+  buf.writeUInt32LE(58, 2);   // file size
+  buf.writeUInt32LE(54, 10);  // pixel data offset
+  buf.writeUInt32LE(40, 14);  // BITMAPINFOHEADER size
+  buf.writeInt32LE(1, 18);    // width
+  buf.writeInt32LE(1, 22);    // height
+  buf.writeUInt16LE(1, 26);   // planes
+  buf.writeUInt16LE(24, 28);  // bpp
+  buf.writeUInt32LE(0, 30);   // BI_RGB
+  buf.writeUInt32LE(4, 34);   // image size
+  buf[54] = b; buf[55] = g; buf[56] = r; buf[57] = 0;
+  return buf;
+}
 
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clip-shim-')); dirs.push(d); return d; }
@@ -165,6 +186,46 @@ test('xsel -b (cluster without i or a) still reads, does not write', { skip }, (
   const r = run(XSEL, ['-b'], { env: { ...process.env, PATH: dir } });
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, 'read-path');
+});
+
+// --- xclip: BMP->PNG conversion (WSLg gives only image/bmp; Claude needs png) ---
+test('xclip -t TARGETS -o advertises image/png when only a bmp is present', { skip }, () => {
+  const dir = scratch();
+  makeStub(dir, 'wl-paste', `[ "$*" = "-l" ] && printf 'image/bmp\\n'`);
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], { env: { ...process.env, PATH: dir } });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /image\/bmp/);
+  assert.match(r.stdout, /image\/png/, 'a synthesized png target is offered so Claude sees a supported type');
+});
+
+test('xclip -t image/png -o converts the bmp via wl-bmp2png when no native png exists', { skip }, () => {
+  const dir = scratch();
+  makeStub(dir, 'wl-paste', `case "$*" in "-l") printf 'image/bmp\\n';; *"--type image/bmp"*) printf 'RAWBMP';; esac`);
+  makeStub(dir, 'wl-bmp2png', `IFS= read -r -d '' _body <&0 || true\nprintf 'PNG(%s)' "$_body"`);
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'PNG(RAWBMP)', 'the bmp is piped through wl-bmp2png');
+});
+
+test('xclip -t image/png -o passes a native png straight through (no conversion)', { skip }, () => {
+  const dir = scratch();
+  makeStub(dir, 'wl-paste', `case "$*" in "-l") printf 'image/png\\n';; *) printf 'NATIVEPNG';; esac`);
+  makeStub(dir, 'wl-bmp2png', `exit 1`); // must NOT be called
+  const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'NATIVEPNG');
+});
+
+// --- wl-bmp2png: real converter, stdlib only ---
+test('wl-bmp2png turns a BMP on stdin into a valid PNG of the same size', { skip: skipPy }, () => {
+  const png = execFileSync(PYTHON, [WLBMP2PNG], { input: makeBmp1x1(10, 20, 30) });
+  assert.strictEqual(png.subarray(0, 8).toString('latin1'), '\x89PNG\r\n\x1a\n', 'PNG signature');
+  assert.strictEqual(png.readUInt32BE(16), 1, 'IHDR width');
+  assert.strictEqual(png.readUInt32BE(20), 1, 'IHDR height');
+});
+
+test('wl-bmp2png exits non-zero on non-BMP input so the shim can fall back', { skip: skipPy }, () => {
+  assert.throws(() => execFileSync(PYTHON, [WLBMP2PNG], { input: Buffer.from('not a bitmap'), stdio: ['pipe', 'pipe', 'pipe'] }));
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

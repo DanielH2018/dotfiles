@@ -2,13 +2,19 @@
 # Shim: forward xclip calls to WSLg's wl-copy/wl-paste, which bridge to the
 # Windows clipboard. Installed because /etc/wsl.conf sets appendWindowsPath=false
 # (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
-# Supports the common flag shapes CLI clipboard libraries emit — including the
-# TARGETS probe and typed image reads Claude Code uses to paste screenshots.
 #
-# The TARGETS handling matters: Claude probes `xclip -t TARGETS -o` and greps the
-# output for image/png|image/bmp to decide a pasted image exists. The old shim
-# ignored -t and dumped raw clipboard bytes, so that grep saw pixel data, matched
-# nothing, and Claude concluded there was no image — Alt+V silently did nothing.
+# Two things beyond a plain forward, both for Claude Code's image paste:
+#   - The TARGETS probe is answered with `wl-paste -l` (the type list). The old
+#     shim ignored -t and dumped raw bytes, so Claude's `... | grep image/*`
+#     matched nothing and it saw no image.
+#   - WSLg mirrors the Windows clipboard image ONLY as image/bmp, but Claude and
+#     the Anthropic API accept png/jpeg/gif/webp — not bmp. So a request for
+#     image/png with only a bmp present is converted on the fly (wl-bmp2png), and
+#     TARGETS advertises image/png when a bmp is available.
+# Match a whole line in a newline-separated list, using only bash builtins so the
+# shim needs nothing on PATH but wl-copy/wl-paste (+ wl-bmp2png for conversion).
+has_type() { case $'\n'"$1"$'\n' in *$'\n'"$2"$'\n'*) return 0 ;; *) return 1 ;; esac; }
+
 out=0
 target=
 prev=
@@ -24,13 +30,33 @@ done
 
 if [ "$out" -eq 1 ]; then
   case "$target" in
-    # Answer the TARGETS probe with the list of available MIME types, like real
-    # xclip — wl-paste -l is the Wayland equivalent.
-    TARGETS) exec wl-paste -l ;;
-    # Typed read (e.g. image/png, image/bmp): forward the type so binary payloads
-    # come back intact instead of wl-paste's default text selection.
-    ?*)      exec wl-paste --no-newline --type "$target" ;;
-    *)       exec wl-paste --no-newline ;;
+    TARGETS)
+      types="$(wl-paste -l 2>/dev/null)" || exit 1
+      printf '%s\n' "$types"
+      # Advertise image/png when only a bmp is on the clipboard — the image/png
+      # read below synthesizes it, and callers that gate on a supported type
+      # (Claude) then see one.
+      if ! has_type "$types" image/png && has_type "$types" image/bmp; then
+        echo image/png
+      fi
+      ;;
+    image/png)
+      types="$(wl-paste -l 2>/dev/null)"
+      if has_type "$types" image/png; then
+        exec wl-paste --no-newline --type image/png
+      elif has_type "$types" image/bmp; then
+        wl-paste --type image/bmp 2>/dev/null | wl-bmp2png
+        exit "${PIPESTATUS[1]}"
+      else
+        exec wl-paste --no-newline --type image/png
+      fi
+      ;;
+    ?*)
+      exec wl-paste --no-newline --type "$target"
+      ;;
+    *)
+      exec wl-paste --no-newline
+      ;;
   esac
 else
   case "$target" in
