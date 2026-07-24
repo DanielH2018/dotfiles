@@ -49,11 +49,22 @@ function makeEnv() {
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
 
-  // Windows wezterm.exe stub: log activate-pane ids and send-text payloads.
+  // Windows wezterm.exe stub: log activate-pane ids and send-text payloads. $WEZWIN_PANES, when
+  // set to a `cli list --format json` payload, makes the stub model a REAL mux — it serves that
+  // inventory and fails activate-pane for any id not in it, the way the real binary answers a
+  // stale locator with "Error: pane N not found". Unset, it accepts every id (the pre-existing
+  // tests predate the inventory and only care that the right id was asked for).
   const wezwin = path.join(bin, 'wezterm-win.sh');
   fs.writeFileSync(wezwin, `#!/bin/bash
 case "$*" in
-  *activate-pane*) prev=""; for a in "$@"; do [ "$prev" = "--pane-id" ] && echo "$a" >> "$WEZWIN_ACTIVATE_LOG"; prev="$a"; done ;;
+  *"cli list"*)    printf '%s' "\${WEZWIN_PANES:-}" ;;
+  *activate-pane*)
+    prev=""; id=""
+    for a in "$@"; do [ "$prev" = "--pane-id" ] && id="$a"; prev="$a"; done
+    echo "$id" >> "$WEZWIN_ACTIVATE_LOG"
+    if [ -n "\${WEZWIN_PANES:-}" ]; then
+      printf '%s' "$WEZWIN_PANES" | jq -e --arg p "$id" 'any(.[]; (.pane_id|tostring) == $p)' >/dev/null 2>&1 || exit 1
+    fi ;;
   *send-text*)     echo "$*" >> "$WEZWIN_SEND_LOG" ;;
   *spawn*)         echo "$*" >> "$WEZWIN_SEND_LOG" ;;
 esac
@@ -140,6 +151,59 @@ test('--jump of a Windows row activates its pane via wezterm.exe, not ssh', { sk
   run(env, ['--jump', key]);
   assert.match(fs.readFileSync(activateLog, 'utf8'), /(^|\n)7(\n|$)/, 'activate-pane called with pane 7');
   assert.strictEqual(fs.readFileSync(sshLog, 'utf8'), '', 'no ssh for a same-machine Windows row');
+});
+
+// ---- jump with a stale locator ------------------------------------------
+// A Windows session outlives its pane id (the mux renumbers on a domain re-attach) but keeps
+// writing the old one, because its hook reads $WEZTERM_PANE from the session's own frozen
+// environment. The picker must not trust the recorded id blindly.
+const WIN_PANES = JSON.stringify([
+  { window_id: 0, tab_id: 0, pane_id: 0, title: 'wezterm.exe', cwd: 'file://daniel-wsl/home/daniel/dev' },
+  { window_id: 0, tab_id: 4, pane_id: 5, title: 'Investigate typing lag', cwd: 'file://daniel-desktop/c/Users/daniel' },
+]);
+const activated = (log) => fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
+// --body renders row KEYs through jq's @tsv, which escapes every backslash as two — so the key
+// fzf hands back for a Windows row really does carry "C:\\Users\\daniel". Build the fixtures the
+// way the picker builds them, or these tests pass on a path production never takes.
+const tsvCwd = (p) => p.replace(/\\/g, '\\\\');
+
+test('--jump re-resolves a stale Windows pane id by cwd instead of no-oping', { skip }, () => {
+  const { env, activateLog } = makeEnv();
+  // Row says pane 12; the live mux only has 0 (a WSL shell) and 5 (this session, one dir up).
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel\\dotfiles'), 'working', '0', 'task', '12', 'host', 'wezterm:12']);
+  const r = run({ ...env, WEZWIN_PANES: WIN_PANES }, ['--jump', key]);
+  const ids = activated(activateLog);
+  assert.ok(ids.includes('12'), 'tries the recorded pane first');
+  assert.ok(ids.includes('5'), 'falls back to the live Windows pane serving that cwd');
+  assert.ok(!ids.includes('0'), 'never grabs the WSL pane — its cwd does not correlate');
+  assert.strictEqual(r.code, 0, 'a re-resolved jump reports success');
+});
+
+test('--jump falls back to a bare-shell pane when no retitled pane matches', { skip }, () => {
+  const { env, activateLog } = makeEnv();
+  const panes = JSON.stringify([
+    { window_id: 0, tab_id: 1, pane_id: 7, title: 'bash.exe', cwd: 'file://daniel-desktop/c/Users/daniel' },
+  ]);
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel'), 'idle', '0', 'task', '12', 'host', 'wezterm:12']);
+  run({ ...env, WEZWIN_PANES: panes }, ['--jump', key]);
+  assert.ok(activated(activateLog).includes('7'), 'second tier accepts a pane Claude never retitled');
+});
+
+test('--jump of a Windows row with no live pane fails loudly', { skip }, () => {
+  const { env, activateLog } = makeEnv();
+  const key = cardKey([WINHOST, tsvCwd('C:\\Projects\\other'), 'working', '0', 'task', '12', 'host', 'wezterm:12']);
+  const r = run({ ...env, WEZWIN_PANES: WIN_PANES }, ['--jump', key]);
+  assert.notStrictEqual(r.code, 0, 'a jump that focused nothing must not exit 0');
+  assert.match(r.err, /no pane found/, 'and must say so — silence reads as a dead keybinding');
+  assert.deepStrictEqual(activated(activateLog), ['12'], 'no unrelated pane was activated');
+});
+
+test('--jump leaves a live locator alone (no needless re-resolve)', { skip }, () => {
+  const { env, activateLog } = makeEnv();
+  const key = cardKey([WINHOST, 'C:\\Users\\daniel\\dotfiles', 'working', '0', 'task', '5', 'host', 'wezterm:5']);
+  const r = run({ ...env, WEZWIN_PANES: WIN_PANES }, ['--jump', key]);
+  assert.deepStrictEqual([...new Set(activated(activateLog))], ['5'], 'activates the recorded pane, nothing else');
+  assert.strictEqual(r.code, 0);
 });
 
 // ---- remove (taskkill + drop the windir row, no ssh) --------------------

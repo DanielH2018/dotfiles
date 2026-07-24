@@ -96,7 +96,14 @@ compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind
 # cwds comparable; JQ_NONSHELL keeps only panes whose title isn't a bare shell/mux
 # name (i.e. the pane Claude retitled with its task). MSYS_NO_PATHCONV guards the
 # `--arg cwd` from Git-Bash rewriting a leading-slash POSIX cwd on Windows.
-JQ_NORM='def norm: sub("^file://";"") | gsub("\\\\";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("/$";"") | ascii_downcase;'
+# `wezterm cli list` reports cwd as a file:// URL carrying the HOST as the authority
+# ("file://daniel-desktop/c/Users/daniel"), so norm drops the whole authority — not just
+# the scheme — and folds that mount-style "/c/" drive back to "c:/", or a Windows pane's
+# cwd never compares equal to the "C:\..." cwd its row records. Runs of separators collapse
+# because a row KEY reaches us through @tsv, which escapes every backslash as two: the rendered
+# key reads "C:\\Users\\daniel", which would otherwise norm to "c://users//daniel" and match
+# nothing.
+JQ_NORM='def norm: sub("^file://[^/]*";"") | gsub("\\\\";"/") | gsub("//+";"/") | sub("^/(?<d>[A-Za-z]:)"; .d) | sub("^/(?<d>[A-Za-z])/"; .d + ":/") | sub("/$";"") | ascii_downcase;'
 JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|login)(\\.exe)?|wezterm\\.exe|cmd\\.exe|ubuntu)$"))|not'
 
 # ---- backend focus (the ONLY terminal-specific code) --------------------------
@@ -242,17 +249,47 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   exec ssh -t "$sshalias" "$rcmd"
 }
 
-av_activate_windows() {  # $1 = "wezterm:<pane_id>" -> focus a Windows WezTerm pane from WSL
-  # via the Windows wezterm.exe. Pane-ids are GUI-global, so a WSL WezTerm tab can activate a
-  # Windows-domain pane; activate-pane reuses the pane (no new tab). Only works when the picker
-  # itself runs inside a WezTerm pane (else the cli can't reach the GUI). Mirrors the local
-  # wezterm double-activate: immediate + a detached re-activate so closing the picker pane can't
-  # steal focus back.
-  local loc="$1" backend pane
-  backend="${loc%%:*}"; pane="${loc#*:}"
-  [ "$backend" = "wezterm" ] && [ -n "$pane" ] || return 1
+resolve_windows_pane() {  # $1 = the row's cwd -> echo a live Windows pane id serving it (or nothing)
+  # The Windows analogue of resolve_key: correlate by cwd against the live mux instead of
+  # trusting a recorded pane id. Same two tiers — prefer a pane Claude retitled, fall back to
+  # any pane at that cwd. A pane whose cwd norms to "" (the filesystem root) is dropped: every
+  # row startswith("") so it would swallow the match and focus an unrelated pane.
+  local scwd="$1" list target q
+  [ -n "$scwd" ] || return
+  [ -x "$WEZTERM_WIN" ] || return
+  list=$("$WEZTERM_WIN" cli list --format json 2>/dev/null)
+  [ -n "$list" ] || return
+  q="$JQ_NORM
+    (\$cwd|norm) as \$w | [ .[] | (.cwd|norm) as \$c
+      | select(\$c != \"\" and (\$c==\$w or (\$w|startswith(\$c)) or (\$c|startswith(\$w))))"
+  target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" \
+    "$q | select($JQ_NONSHELL) | .pane_id ] | first // empty" 2>/dev/null)
+  [ -z "$target" ] && target=$(printf '%s' "$list" | MSYS_NO_PATHCONV=1 jq -r --arg cwd "$scwd" \
+    "$q | .pane_id ] | first // empty" 2>/dev/null)
+  [ -n "$target" ] && printf '%s' "$target"
+}
+
+av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus a Windows WezTerm
+  # pane from WSL via the Windows wezterm.exe. Pane-ids are GUI-global, so a WSL WezTerm tab can
+  # activate a Windows-domain pane; activate-pane reuses the pane (no new tab). Only works when
+  # the picker itself runs inside a WezTerm pane (else the cli can't reach the GUI). Mirrors the
+  # local wezterm double-activate: immediate + a detached re-activate so closing the picker pane
+  # can't steal focus back.
+  #
+  # The recorded id goes stale and stays stale: a Windows session that outlives its pane id (the
+  # mux renumbers on a domain re-attach) keeps writing the old id, because the hook reads
+  # $WEZTERM_PANE from the session's own frozen environment and caches it when unset — it cannot
+  # notice it is wrong from the inside. So a dead id is re-resolved HERE, by cwd, and a jump that
+  # still finds nothing returns non-zero: activate-pane's failure used to be swallowed and
+  # reported as success, which is what made <enter> look like a no-op.
+  local loc="$1" scwd="${2:-}" pane=""
   [ -x "$WEZTERM_WIN" ] || return 1
-  "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1
+  case "$loc" in wezterm:?*) pane="${loc#wezterm:}" ;; esac
+  if [ -z "$pane" ] || ! "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1; then
+    pane=$(resolve_windows_pane "$scwd")
+    [ -n "$pane" ] || return 1
+    "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1 || return 1
+  fi
   nohup bash -c "sleep 0.25; '$WEZTERM_WIN' cli activate-pane --pane-id '$pane'" \
     >/dev/null 2>&1 </dev/null &
   return 0
@@ -301,7 +338,8 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
     remote_attach "$host" "$locator"; return $?     # remote: never touch a local pane
   fi
   if is_windows_host "$host"; then                  # same machine, but a Windows WezTerm pane
-    av_activate_windows "$locator"; return $?
+    # cwd rides along as the fallback handle for when the recorded pane id is stale.
+    av_activate_windows "$locator" "$(printf '%s' "$key" | cut -d"$US" -f2)"; return $?
   fi
   if [ "$kind" = "bg" ]; then av_jump_bg "$locator"; return $?; fi
   if [ -n "$locator" ] && [ "${locator%%:*}" != "none" ]; then
@@ -313,6 +351,14 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   nohup bash -c "sleep 0.25; wezterm cli --prefer-mux activate-pane --pane-id '$t'" \
     >/dev/null 2>&1 </dev/null &
   return 0
+}
+
+jump_or_report() {  # $1 = KEY -> jump, or say why not. Every entry point that focuses a session
+  # goes through here: a jump that fails silently is indistinguishable from a dead keybinding,
+  # so the failure must reach the terminal AND the exit status.
+  do_jump "$1" && return 0
+  printf 'agentview: no pane found for that session\n' >&2
+  return 1
 }
 
 av_purge_local() {  # $1=sid -> REALLY stop + delete a local session. Find Claude's live
@@ -495,7 +541,7 @@ do_rename() {  # $1 = KEY -> run Claude's own /rename in the session's pane (CTR
 }
 
 if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
-if [ "$mode" = "--jump" ]; then do_jump "${2:-}"; exit 0; fi
+if [ "$mode" = "--jump" ]; then jump_or_report "${2:-}"; exit $?; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
 if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
 if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
@@ -1362,7 +1408,7 @@ if [ "$mode" = "--jump-nth" ]; then
   if { : < /dev/tty; } 2>/dev/null; then exec < /dev/tty > /dev/tty 2>/dev/tty; fi
   render_body
   key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} { c++; if (c==n) { print $1; exit } }')
-  [ -n "$key" ] && do_jump "$key"
+  [ -n "$key" ] && jump_or_report "$key"
   exit $?
 fi
 
@@ -1455,4 +1501,4 @@ sel=$(printf '%s\n' "$body" | fzf \
 key=$(printf '%s' "$sel" | cut -f1)
 [ -z "$key" ] && exit 0
 # A failed jump must say so — a bare exit 1 here read as "enter does nothing".
-do_jump "$key" || { printf 'agentview: no pane found for that session\n' >&2; exit 1; }
+jump_or_report "$key" || exit 1
