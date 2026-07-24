@@ -220,12 +220,18 @@ config.keys = {
 		args = { "bash", "-lc", "agentview" },
 	}) },
 	-- CTRL+Left: back to Agent View from inside a session pane (claude, sandbox docker,
-	-- ssh attach). Fires only when the foreground process is NOT a shell — at a prompt
-	-- the key passes through and stays word-left (zsh binds ^[[1;5D backward-word). WSL
-	-- panes pass through too: WezTerm only sees wsl.exe there, and the tmux inside
-	-- carries its own C-Left bind. pcall-guarded like CTRL+W; on any probe error the
-	-- key passes through — never steal it on a bad read.
+	-- ssh attach). At a shell prompt the key passes through and stays word-left (zsh binds
+	-- ^[[1;5D backward-word). Two signals decide "this is an app pane, not a shell":
+	--   1. pane TITLE — Claude Code sets it to "✳ Claude Code". This is the reliable one on
+	--      Windows/MSYS, where get_foreground_process_name reports the `claude` shim as sh/bash.
+	--   2. foreground process NAME not in the shell set — the fallback for panes that don't set
+	--      a distinctive title (sandbox docker, ssh) where the probe IS reliable (Linux).
+	-- WSL panes keep their wslhost.exe title + shell-name, so they pass through (the inner tmux
+	-- carries its own C-Left). pcall-guarded; on any probe error, fall through to word-left.
 	{ key = "LeftArrow", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
+		local title = ""
+		pcall(function() title = (pane:get_title() or ""):lower() end)
+		local is_agent = title:find("claude code", 1, true) ~= nil
 		local ok, proc = pcall(function()
 			return (pane:get_foreground_process_name() or ""):lower()
 		end)
@@ -234,13 +240,13 @@ config.keys = {
 			zsh = true, bash = true, fish = true, sh = true, login = true, pwsh = true,
 			powershell = true, cmd = true, ubuntu = true, wsl = true, wslhost = true,
 		}
-		if base == "" or shells[base] then
-			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
-		else
+		if is_agent or (base ~= "" and not shells[base]) then
 			window:perform_action(act.SpawnCommandInNewTab({
 				domain = { DomainName = "WSL:Ubuntu" },   -- the unified WSL picker (see CTRL+SHIFT+S)
 				args = { "bash", "-lc", "agentview" },
 			}), pane)
+		else
+			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
 		end
 	end) },
 	-- CTRL+SHIFT+N: start a NEW claude-sandbox session (pick repo + branch) without the
