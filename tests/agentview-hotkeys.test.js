@@ -390,7 +390,10 @@ test('tmux binds prefix-less C-Left: shells pass through, other panes get the pi
   assert.ok(bind, 'a root-table (no prefix) C-Left bind exists');
   assert.match(bind, /if -F/, 'the bind branches on the pane command');
   assert.match(bind, /send-keys C-Left/, 'a shell keeps word-left — the key passes through');
-  assert.match(bind, /display-popup .*agentview/, 'a non-shell pane opens the picker popup');
+  // A window, not a display-popup: tmux allows one popup per client, and a picker that was
+  // itself a popup could never float its CTRL+X / CTRL+N choosers (tmux drops the nested
+  // request silently). -S reuses the window instead of stacking a new one per press.
+  assert.match(bind, /new-window -S -n agentview agentview/, 'a non-shell pane opens the picker window');
 });
 
 test('the C-Left condition passes shells and catches claude panes (real tmux)', { skip: tmuxSkip }, () => {

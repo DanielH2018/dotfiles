@@ -552,8 +552,11 @@ test('the confirm chooser runs in a tmux popup only when $TMUX is set', { skip }
   run(env, ['--remove', key], { FZF_PICK: 'Cancel', TMUX: '/tmp/tmux-1000/default,1,0' });
   // NOT fzf's own --popup: that flag takes the parent picker down with it (the outer fzf
   // exits 130 when the popup closes), which read as "Ctrl+X made the picker vanish".
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /display-popup -E -w 52% -h 20%/,
-    'inside tmux the chooser floats over the session list');
+  // -B: fzf draws the only border. Width is computed from the session's own title/path so the
+  // box has no dead space, hence [0-9]+ rather than a fixed size; height is exactly the 2
+  // header lines + 2 options + fzf's border.
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /display-popup -E -B -w [0-9]+ -h 6/,
+    'inside tmux the chooser floats over the session list, sized to its content');
   assert.ok(!fs.readFileSync(fzfArgs, 'utf8').includes('--popup'),
     'fzf is never handed --popup — tmux is driven directly');
 });
