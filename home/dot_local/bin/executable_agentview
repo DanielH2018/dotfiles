@@ -612,6 +612,18 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
   return 0
 }
 
+spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
+  local sel
+  sel=$(printf 'sandbox\nnative\n' | fzf --prompt 'mode> ' --height='~70%' --layout=reverse \
+    --border=rounded --info=hidden \
+    --header 'sandbox = claude-sandbox (cts) · native = plain claude (ct) · esc cancels')
+  case "$sel" in
+    sandbox) printf 'sandbox' ;;
+    native)  printf 'native' ;;
+    *)       return 0 ;;
+  esac
+}
+
 spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row (empty if cancelled)
   local names sel d
   names=$(for d in "$repos_root"/*/; do
@@ -631,8 +643,8 @@ spawn_pick_repo() {  # echo the chosen repo path, or "@host" for the no-repo row
   else printf '%s' "$repos_root/$sel"; fi
 }
 
-spawn_pick_branch() {  # $1 = repo path -> echo branch (empty = main repo, no worktree)
-  local repo="$1" out
+spawn_pick_branch() {  # $1 = host, $2 = repo path -> echo branch (empty = main repo, no worktree)
+  local repo="$2" out
   # --print-query so the user can TYPE a new branch (claude-sandbox -b creates it) or pick
   # an existing one; the typed query is the last line. Empty selection = the main checkout.
   out=$("$sandbox_bin" "$repo" --complete-branches 2>/dev/null | fzf --prompt 'branch> ' \
@@ -686,7 +698,7 @@ av_close_picker() {  # $1=portfile -> tell the live picker to abort, dismissing 
 }
 
 do_spawn() {  # interactive: pick host -> repo -> (mode) -> branch, spawn in the active backend.
-  local host repo branch pf="${1:-}" rc inner named title alias
+  local host repo branch mode pf="${1:-}" rc inner named title alias
   host=$(spawn_pick_host) || return 1
   [ -n "$host" ] || return 0                        # cancelled at the host pick
   if [ "$host" = "pc" ]; then
@@ -708,13 +720,20 @@ do_spawn() {  # interactive: pick host -> repo -> (mode) -> branch, spawn in the
     [ "$rc" -eq 0 ] && av_close_picker "$pf"
     return "$rc"
   fi
-  branch=$(spawn_pick_branch "$repo")
-  if [ -n "$branch" ]; then
-    inner="$(printf '%q %q -b %q' "$sandbox_bin" "$repo" "$branch")"
-    named="$(printf '%q %q -b %q' "$cts_bin" "$repo" "$branch")"
+  mode=$(spawn_pick_mode) || return 1
+  [ -n "$mode" ] || return 0                        # cancelled at the mode pick
+  if [ "$mode" = "native" ]; then
+    inner="$(printf 'cd %q 2>/dev/null || cd; claude' "$repo")"
+    named="$(printf '%q %q' "$ct_bin" "$repo")"
   else
-    inner="$(printf '%q %q' "$sandbox_bin" "$repo")"
-    named="$(printf '%q %q' "$cts_bin" "$repo")"
+    branch=$(spawn_pick_branch "$host" "$repo")
+    if [ -n "$branch" ]; then
+      inner="$(printf '%q %q -b %q' "$sandbox_bin" "$repo" "$branch")"
+      named="$(printf '%q %q -b %q' "$cts_bin" "$repo" "$branch")"
+    else
+      inner="$(printf '%q %q' "$sandbox_bin" "$repo")"
+      named="$(printf '%q %q' "$cts_bin" "$repo")"
+    fi
   fi
   spawn_in_backend "$inner" "$(basename "$repo")" "$named"; rc=$?
   [ "$rc" -eq 0 ] && av_close_picker "$pf"

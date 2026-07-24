@@ -48,7 +48,7 @@ case "$prompt" in
     printf '%s\\n' "\${FZF_REPO:-}" ;;
   branch*) cat >/dev/null; printf '%s\\n' "\${FZF_BRANCH:-}" ;;
   host*) cat >/dev/null; printf '%s\\n' "\${FZF_HOST-WSL}" ;;
-  mode*) cat >/dev/null; printf '%s\\n' "\${FZF_MODE:-sandbox}" ;;
+  mode*) cat >/dev/null; printf '%s\\n' "\${FZF_MODE-sandbox}" ;;
   *)       cat >/dev/null ;;
 esac
 exit 0
@@ -261,6 +261,30 @@ test('cancelling the host pick is a clean no-op', { skip }, () => {
   run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: '', FZF_REPO: 'airflow' });
   assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'nothing spawned when the host pick is empty');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
+});
+
+// ---- WSL native mode (ct) ----
+test('WSL native mode spawns plain claude in a tmux window, no sandbox, no branch', { skip }, () => {
+  const { env, tmuxLog, sandboxBin, reposRoot } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: 'native' });
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  assert.match(log, /new-window -n airflow/, 'opens a titled window');
+  assert.ok(log.includes(`cd ${path.join(reposRoot, 'airflow')} 2>/dev/null || cd; claude`),
+    `runs plain claude in the repo; got: ${log}`);
+  assert.ok(!log.includes(sandboxBin) && !log.includes(' -b '), 'no sandbox, no -b');
+});
+
+test('WSL native mode in a bare shell execs ct <repo>', { skip }, () => {
+  const { env, ctLog, reposRoot } = makeEnv();
+  run(env, { FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: 'native' });   // no mux
+  assert.ok(fs.readFileSync(ctLog, 'utf8').includes(path.join(reposRoot, 'airflow')),
+    'ct ran on the repo dir');
+});
+
+test('cancelling the mode pick is a clean no-op', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: '' });
+  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'nothing spawned when the mode pick is empty');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
