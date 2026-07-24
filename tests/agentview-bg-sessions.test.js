@@ -28,6 +28,11 @@ const BASH = findBash();
 
 const HOST = 'daniel-desktop';
 const ALIVE_PID = process.pid;          // the test runner itself — always kill -0-able
+// A second genuinely-live, owned pid — for scenarios needing two distinct live sessions (each
+// registry file is keyed by pid, so two live sessions can't share one). Reaped on exit.
+const sleeper = require('node:child_process').spawn('sleep', ['300'], { stdio: 'ignore' });
+sleeper.unref();                        // don't hold Node's event loop open past the tests
+const ALIVE_PID2 = sleeper.pid;
 const DEAD_PID = 33554432;              // beyond pid_max — kill -0 always fails
 const nowMs = () => Date.now();
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -305,10 +310,15 @@ test('a bg fork and its interactive origin collapse to one row, keeping the live
   const { env, home, capture } = makeEnv();
   const cwd = '/home/daniel/proj';
   // interactive origin: a hook row with a real tmux pane (the better jump target), kept
-  // fresher so it's the surviving base.
+  // fresher so it's the surviving base. Its pid maps to a LIVE registry session (a live
+  // interactive session always has one) — the reuse-safe gate keeps its locator only then.
   hookRow(home, 'aaaaaaaa-0000-0000-0000-0000000000aa', {
     session: 'aaaaaaaa-0000-0000-0000-0000000000aa', host: HOST, cwd, state: 'working', kind: 'host',
-    locator: 'tmux:/tmp/x:sess:%3', title: 'Shared Task', pid: ALIVE_PID, ts: nowSec(),
+    locator: 'tmux:/tmp/x:sess:%3', title: 'Shared Task', pid: ALIVE_PID2, ts: nowSec(),
+  });
+  sessFile(home, ALIVE_PID2, {
+    sessionId: 'aaaaaaaa-0000-0000-0000-0000000000aa', kind: 'interactive', status: 'busy',
+    name: 'Shared Task', cwd, statusUpdatedAt: nowMs() - 6000,
   });
   // backgrounded fork: a hookless bg registry session with the SAME task name (synthesized).
   sessFile(home, ALIVE_PID, {
@@ -358,4 +368,57 @@ test('two interactive sessions sharing a title (no bg fork) are NOT merged', { s
   assert.strictEqual(rows.length, 2, 'no bg fork present -> both interactive sessions stay distinct');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+// ---- reuse-safety: a stale host row whose pid the OS recycled must not lend its --------
+// now-reassigned pane to a live session. This is the Clipboard->memory-usage misroute:
+// a dead "Claude Clipboard Fix" host row kept pane %14, tmux handed %14 to a "WSL Memory
+// leak" pane, and collapse folded the stale pane into the live bg daemon of the same name,
+// so <enter> jumped to the memory pane. gather_local_rows must drop a host row whose sid is
+// absent from the live registry, even though its (recycled) pid still passes kill -0.
+
+test('a stale host row with a reused pid does not lend its pane to a live bg of the same name', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const cwd = '/home/daniel/dev';
+  // Dead "Clipboard Fix" host row: its sid is NOT in the registry, but ALIVE_PID (the test
+  // runner — a non-Claude process) has recycled the pid, so kill -0 passes. Its pane %14 has
+  // since been reassigned by tmux to another session.
+  hookRow(home, 'deadc0de-0000-0000-0000-00000000dead', {
+    session: 'deadc0de-0000-0000-0000-00000000dead', host: HOST, cwd, state: 'completed', kind: 'host',
+    locator: 'tmux:/tmp/tmux-1000/default:claude-37183:%14', title: 'Claude Clipboard Fix',
+    pid: ALIVE_PID, ts: nowSec() - 300,
+  });
+  // The real, live "Claude Clipboard Fix" — a bg daemon (hookless, synthesized).
+  sessFile(home, ALIVE_PID2, {
+    sessionId: 'c11b0000-0000-0000-0000-00000000c11b', kind: 'bg', status: 'busy', jobId: 'clipjob',
+    name: 'Claude Clipboard Fix', cwd, statusUpdatedAt: nowMs(),
+  });
+  const raw = body(env, capture);
+  const rows = raw.split('\n').filter((l) => l.includes(US) && l.split('\t')[0].split(US)[4] === 'Claude Clipboard Fix');
+  assert.strictEqual(rows.length, 1, 'the stale host row is dropped; only the live bg daemon renders');
+  const k = rows[0].split('\t')[0].split(US);
+  assert.strictEqual(k[7], 'bg:clipjob', 'jumps via claude attach, NOT the reused %14 pane');
+  assert.strictEqual(k[6], 'bg', 'routes <enter> to the live bg session');
+  assert.doesNotMatch(raw, /%14/, 'the reassigned pane id never reaches a KEY');
+});
+
+test('a host row with a reused pid keeps rendering but its stale pane locator is scrubbed', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  // No registry entry for this sid (session dead / not yet registered); ALIVE_PID recycled to a
+  // non-Claude process. The row must still render (a live session momentarily off the registry
+  // must not vanish), but its unverified pane %9 must be scrubbed so <enter> can't land on it.
+  hookRow(home, 'deadbeef-0000-0000-0000-00000000beef', {
+    session: 'deadbeef-0000-0000-0000-00000000beef', host: HOST, cwd: '/home/daniel/dev',
+    state: 'working', kind: 'host', locator: 'tmux:/tmp/x:sess:%9', title: 'Ghosted Session',
+    pid: ALIVE_PID, ts: nowSec() - 120,
+  });
+  const raw = body(env, capture);
+  assert.match(stripAnsi(raw), /Ghosted Session/, 'the row still renders');
+  const row = raw.split('\n').find((l) => l.includes(US) && l.split('\t')[0].split(US)[4] === 'Ghosted Session');
+  const k = row.split('\t')[0].split(US);
+  assert.strictEqual(k[7], 'none:', 'the unverified pane locator is scrubbed');
+  assert.doesNotMatch(raw, /%9/, 'the stale pane id never reaches a KEY');
+});
+
+process.on('exit', () => {
+  try { sleeper.kill(); } catch { /* already gone */ }
+  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+});

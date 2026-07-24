@@ -774,6 +774,22 @@ merge_session_row() {  # $1=9-col row $2=sid -> sets _mrow with the live state f
   _mrow="$lst"$'\t'"$host"$'\t'"$cwd"$'\t'"$pane"$'\t'"$lts"$'\t'"$kind"$'\t'"$locator"$'\t'"$title"$'\t'"$git"
 }
 
+av_neutralize_locator() {  # $1 = 9-col row -> _mrow = the row with a none: locator (pane cleared).
+  # For a host row whose sid the live registry can't confirm: its recorded pane id may since
+  # have been reassigned to another session, so strip it rather than risk a wrong-pane jump.
+  # State/title/git survive so the row still renders and self-heals once the registry confirms it.
+  local r="$1" st host cwd ts kind title git
+  st="${r%%$'\t'*}"; r="${r#*$'\t'}"
+  host="${r%%$'\t'*}"; r="${r#*$'\t'}"
+  cwd="${r%%$'\t'*}"; r="${r#*$'\t'}"
+  r="${r#*$'\t'}"                                   # drop pane
+  ts="${r%%$'\t'*}"; r="${r#*$'\t'}"
+  kind="${r%%$'\t'*}"; r="${r#*$'\t'}"
+  r="${r#*$'\t'}"                                   # drop locator
+  title="${r%%$'\t'*}"; git="${r#*$'\t'}"
+  _mrow="$st"$'\t'"$host"$'\t'"$cwd"$'\t'$'\t'"$ts"$'\t'"$kind"$'\t'"none:"$'\t'"$title"$'\t'"$git"
+}
+
 synth_session_rows() {  # rows for live busy/waiting sessions the hook registry never saw
   local sid m st ts kind job cwd name locator
   for sid in "${!SMAP[@]}"; do
@@ -823,9 +839,20 @@ gather_local_rows() {  # append local session rows to global `rows`, prune >7d +
         P)  rm -f "${local_files[$i]}" 2>/dev/null ;;
         L*) _lr="${jqlines[$i]#L$'\t'}"; _lpid="${_lr%%$'\t'*}"       # L<TAB>pid<TAB>sid<TAB>row
             _lr="${_lr#*$'\t'}"; _lsid="${_lr%%$'\t'*}"
-            if kill -0 "$_lpid" 2>/dev/null; then
-              merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n'
-            else rm -f "${local_files[$i]}" 2>/dev/null; fi ;;        # process gone -> leaked, prune
+            if ! kill -0 "$_lpid" 2>/dev/null; then
+              rm -f "${local_files[$i]}" 2>/dev/null                  # process gone -> leaked, prune
+            elif [ -n "${SMAP[$_lsid]:-}" ]; then
+              merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n'   # live session: fold + render
+            else
+              # kill -0 is NOT pid-reuse-safe: a dead session whose pid the OS recycled to a live
+              # process still passes it, yet the stale row's recorded pane id may since have been
+              # reassigned by the mux to a DIFFERENT session — trusting it misroutes <enter> (the
+              # Clipboard->memory bug). SMAP (load_session_map: keyed by sessionId, dead-pid-filtered)
+              # is authoritative for liveness; when it can't confirm this sid, keep rendering the row
+              # (a live session momentarily missing from the registry must not vanish) but scrub the
+              # unverified locator so the jump can't land on a stranger's pane.
+              av_neutralize_locator "${_lr#*$'\t'}"; rows+="$_mrow"$'\n'
+            fi ;;
         R*) _lr="${jqlines[$i]#R$'\t'}"; _lsid="${_lr%%$'\t'*}"       # R<TAB>sid<TAB>row
             merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n' ;;
       esac
