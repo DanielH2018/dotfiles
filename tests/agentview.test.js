@@ -507,6 +507,17 @@ test('picker highlights the whole current line so the state color reads on hover
   assert.match(src, /--highlight-line/, 'the current row gets a full-width highlight bar');
 });
 
+test('picker height is fixed, not adaptive — reloaded rows must not overflow into scrolling', () => {
+  const src = fs.readFileSync(VIEW, 'utf8');
+  // The session picker opens on a cached snapshot and live-reloads rows in afterwards;
+  // fzf sizes an adaptive (~) window once at start and never re-fits it, so ~ here means
+  // late rows scroll while the terminal below the box sits empty.
+  const picker = src.split('\n').filter((l) => l.includes('--min-height=12'));
+  assert.strictEqual(picker.length, 1, 'exactly one session-picker height line');
+  assert.match(picker[0], /--height='90%'/, 'session picker uses a fixed height');
+  assert.doesNotMatch(picker[0], /--height='~/, 'adaptive height would freeze at the initial row count');
+});
+
 // ---- source badges rendered as rounded pills (boxes) --------------------
 // The machine source (PC / homelab) is wrapped in powerline half-circle caps
 // (U+E0B6  … U+E0B4 ) so it reads as a rounded box. Assert the caps enclose the label.

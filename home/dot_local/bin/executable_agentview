@@ -1348,9 +1348,12 @@ rm -f "$portfile" 2>/dev/null
 poster_pid=$!
 trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
+# Height must stay FIXED (no ~ adaptive): fzf sizes an adaptive window once at start
+# and never re-fits it, so rows the reloads above push in would overflow into scrolling
+# while the terminal below the box sat empty.
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
-  --height='~90%' --min-height=12 --margin=1,2% --padding=1 \
+  --height='90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
