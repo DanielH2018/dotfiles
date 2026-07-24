@@ -24,7 +24,13 @@ esac
 #     analog of zsh-autosuggestions + zsh-syntax-highlighting. Source with --noattach here
 #     and `ble-attach` at the very end so it wraps the whole interactive session. Installed
 #     by run_onchange_after_install-blesh.sh.tmpl; a clean no-op when absent.
-[ -f "$HOME/.local/share/blesh/ble.sh" ] && source "$HOME/.local/share/blesh/ble.sh" --noattach
+#     Skipped on Windows (msys/cygwin): ble.sh re-implements the whole line editor in bash,
+#     and MSYS bash runs that per-keystroke work several times slower than Linux — felt as
+#     typing lag in Git Bash tabs (a TUI in the same tab is crisp, so the cost is ble.sh,
+#     not the terminal). Plain readline is the Windows tradeoff.
+if [[ $OSTYPE != msys* && $OSTYPE != cygwin* && -f "$HOME/.local/share/blesh/ble.sh" ]]; then
+  source "$HOME/.local/share/blesh/ble.sh" --noattach
+fi
 
 # --- History (bash equivalents of the zsh HIST_* options) ---
 HISTSIZE=200000
