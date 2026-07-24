@@ -80,6 +80,9 @@ win_spawn_dir="${AGENT_VIEW_WIN_SPAWN_DIR:-~/My_Vault}"
 # Windows git bash, as a NATIVE Windows path — passed to wezterm.exe (a Windows process) as
 # the spawn program. A bare `bash` there resolves into WSL, so name the exe explicitly.
 WIN_GITBASH="${AGENT_VIEW_WIN_GITBASH:-C:\\Program Files\\Git\\bin\\bash.exe}"
+# Windows claude, as a WSL path — we run it from HERE (not through git bash) purely to ask
+# `agents --json` which sessions the Windows daemon still holds. See win_agent_live.
+WIN_CLAUDE="${AGENT_VIEW_WIN_CLAUDE:-/mnt/c/Users/${USER}/.local/bin/claude.exe}"
 
 host_label()      { _hl="${HOST_LABEL[$1]:-}"; [ -z "$_hl" ] && _hl="${1#daniel-}"; }
 is_local_host()   { [ -n "${HOST_LOCAL[$1]:-}" ]; }
@@ -303,10 +306,40 @@ win_sid_for_row() {  # $1=locator $2=cwd -> echo this row's Windows session id (
   [ -n "$sid" ] && printf '%s' "$sid"
 }
 
+win_agent_live() {  # $1=sid -> echo the daemon's short agent id when that session is still LIVE.
+  # 0 = live (id on stdout), 1 = the daemon does not have it, 2 = cannot tell. The distinction
+  # matters: "no pane" is NOT "gone". A Windows session detaches from its terminal and keeps
+  # running under `claude.exe daemon run`, which holds the pty on \\.\pipe\cc-daemon-*-pty-<id>
+  # — that is what a --bg session IS. Panes are therefore a bad liveness proxy and the daemon's
+  # own roster is the real one. Never fold 2 into 1: an unreachable oracle would otherwise read
+  # as "everything is dead" and every row would look reapable.
+  local sid="$1" out aid
+  [ -n "$sid" ] || return 2
+  [ -x "$WIN_CLAUDE" ] || return 2
+  out=$("$WIN_CLAUDE" agents --json 2>/dev/null) || return 2
+  printf '%s' "$out" | jq -e . >/dev/null 2>&1 || return 2
+  aid=$(printf '%s' "$out" | jq -r --arg sid "$sid" '
+    .[] | select((.sessionId // "") == $sid) | (.id // "")' 2>/dev/null | head -1)
+  [ -n "$aid" ] || return 1
+  printf '%s' "$aid"
+}
+
+av_attach_windows() {  # $1=agent id -> open the LIVE background session in a new Windows tab.
+  # `claude attach <id>` re-hosts the daemon's pty in this terminal and leaves the session
+  # running when the tab closes, so repeat jumps cost nothing. It has to run Windows-side:
+  # the daemon's pipes are Windows IPC that WSL cannot open, which is also why this is a new
+  # tab and not the picker's own — see remote_attach for the backends that do land in place.
+  local aid="$1"
+  [ -x "$WEZTERM_WIN" ] || return 1
+  [ -n "$aid" ] || return 1
+  "$WEZTERM_WIN" cli spawn --domain-name local -- \
+    "$WIN_GITBASH" -lc "exec claude attach $aid" >/dev/null 2>&1
+}
+
 av_respawn_windows() {  # $1=cwd $2=sid -> reopen the session in a NEW Windows tab. 0 on success.
-  # Reached only when the session has no pane anywhere: its terminal was closed while the
-  # process (and its hook) lived on, leaving a row that offers a jump nothing can serve. Mirrors
-  # spawn_windows_claude, but lands in the row's own cwd and resumes its conversation.
+  # Reached only once the daemon has disowned the session too, so there is nothing to attach to
+  # and a fresh process is the only way back into the conversation. Mirrors spawn_windows_claude,
+  # but lands in the row's own cwd and resumes its conversation.
   local cwd="$1" sid="$2" cmd _wp
   [ -x "$WEZTERM_WIN" ] || return 1
   [ -n "$cwd" ] || return 1
@@ -331,10 +364,10 @@ av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus
   # reported as success, which is what made <enter> look like a no-op.
   #
   # Tier 3 covers the case neither id nor cwd can: the pane is gone but the process isn't, so
-  # the row keeps refreshing and there is nothing to focus. Reopen the conversation in a new
-  # Windows tab rather than report failure — a Windows pane can never be attached from WSL the
-  # way a tmux one can, so a fresh pane is the only way back into that session.
-  local loc="$1" scwd="${2:-}" pane="" sid
+  # the row keeps refreshing and there is nothing to focus. Give it a new Windows tab rather
+  # than report failure — a Windows pane can never be attached from WSL the way a tmux one can,
+  # so a fresh pane is the only way back into that session.
+  local loc="$1" scwd="${2:-}" pane="" sid aid
   [ -x "$WEZTERM_WIN" ] || return 1
   case "$loc" in wezterm:?*) pane="${loc#wezterm:}" ;; esac
   if [ -z "$pane" ] || ! "$WEZTERM_WIN" cli activate-pane --pane-id "$pane" >/dev/null 2>&1; then
@@ -344,6 +377,15 @@ av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus
     fi
     if [ -z "$pane" ]; then
       sid=$(win_sid_for_row "$loc" "$scwd")
+      # Ask the daemon before assuming the session died with its pane — a detached Windows
+      # session is still LIVE and attachable, and `--resume`ing one forks a second process onto
+      # the same transcript (the docs promise only that the two interleave, which is not a state
+      # worth creating deliberately). Attach the running one; only respawn what is really gone.
+      if aid=$(win_agent_live "$sid"); then
+        av_attach_windows "$aid"; return $?
+      fi
+      # Not on the roster, or we could not reach it to ask (return 2). Reopening is the honest
+      # fallback for the first and the only option for the second.
       av_respawn_windows "$scwd" "$sid"; return $?
     fi
   fi
