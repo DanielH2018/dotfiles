@@ -47,12 +47,16 @@ claude() {
     || { [ -z "${CLAUDE_WRAP_TTY:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; }; then
     command claude "$@"; return $?
   fi
-  local _n="claude-$$" _cmd="claude" _a
+  local _n="claude-$$" _cmd="claude" _a _dir="$PWD"
+  # A $HOME workspace makes Claude Code re-ask its trust prompt on every launch — it never
+  # persists there (claude-code#43958). Redirect a home-dir session to ~/dev, which trusts
+  # once and sticks; a real project cwd is left alone. Skip if ~/dev doesn't exist yet.
+  [ "$_dir" = "$HOME" ] && [ -d "$HOME/dev" ] && _dir="$HOME/dev"
   for _a in "$@"; do _cmd="$_cmd $(printf '%q' "$_a")"; done
   # Create detached so `status off` lands before the attach draws anything. If the name
   # already exists (a prior detach from this same shell), the failed create is silent
   # and the attach reconnects to it — the -A semantics, split so the set can run between.
-  tmux new-session -d -s "$_n" "$_cmd" 2>/dev/null
+  tmux new-session -d -s "$_n" -c "$_dir" "$_cmd" 2>/dev/null
   tmux set-option -t "$_n" status off 2>/dev/null
   tmux attach-session -t "$_n"
 }

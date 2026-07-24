@@ -43,11 +43,21 @@ function run(shell, env, args, extraEnv = {}) {
   execFileSync(shell, ['-c', `${FN}\nclaude ${argv}`], { env: { ...env, ...extraEnv }, stdio: 'ignore', timeout: 10000 });
 }
 
+// Like run(), but pins the shell's cwd and $HOME so the wrapper's "$HOME -> ~/dev"
+// redirect (Claude Code's trust prompt never persists for a $HOME workspace) is testable.
+function runIn(shell, env, { args = [], extraEnv = {}, cwd, home }) {
+  const argv = args.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
+  const e = { ...env, ...extraEnv };
+  if (home) e.HOME = home;
+  if (cwd) e.PWD = cwd;
+  execFileSync(shell, ['-c', `${FN}\nclaude ${argv}`], { env: e, cwd, stdio: 'ignore', timeout: 10000 });
+}
+
 test('a bare interactive start wraps: detached create, status off, then attach', () => {
   const { env, tmuxLog, claudeLog } = makeEnv();
   run('bash', env, [], { CLAUDE_WRAP_TTY: '1' });
   const log = read(tmuxLog);
-  assert.match(log, /new-session -d -s claude-\d+ claude/, 'creates a detached session running claude');
+  assert.match(log, /new-session -d -s claude-\d+ -c \S+ claude/, 'creates a detached session running claude in a cwd');
   assert.match(log, /set-option -t claude-\d+ status off/, 'hides the status line before the attach');
   assert.match(log, /attach-session -t claude-\d+/, 'then attaches this terminal');
   assert.strictEqual(read(claudeLog), '', 'claude runs inside tmux, never directly');
@@ -101,7 +111,7 @@ test('the wrap behaves identically under zsh', { skip: zshSkip }, () => {
   const { env, tmuxLog, claudeLog } = makeEnv();
   run('zsh', env, [], { CLAUDE_WRAP_TTY: '1' });
   const log = read(tmuxLog);
-  assert.match(log, /new-session -d -s claude-\d+ claude/, 'zsh creates the detached session');
+  assert.match(log, /new-session -d -s claude-\d+ -c \S+ claude/, 'zsh creates the detached session');
   assert.match(log, /attach-session/, 'zsh attaches');
   assert.strictEqual(read(claudeLog), '', 'zsh never runs claude directly');
 });
@@ -128,6 +138,32 @@ test('against real tmux: the session exists, runs claude, and hides its status',
   } finally {
     try { execFileSync('tmux', ['kill-server'], { env: realTmux, stdio: 'ignore' }); } catch { /* server already gone */ }
   }
+});
+
+test('a real project cwd becomes the session -c dir', () => {
+  const { env, tmuxLog } = makeEnv();
+  const proj = scratch('cwrap-proj-');
+  const home = scratch('cwrap-home-');            // cwd != $HOME -> no redirect
+  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: proj, home });
+  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${proj} claude`),
+    'the tmux session opens in the current project dir');
+});
+
+test('a $HOME cwd is redirected to ~/dev so Claude Code trust persists', () => {
+  const { env, tmuxLog } = makeEnv();
+  const home = scratch('cwrap-home-');
+  fs.mkdirSync(path.join(home, 'dev'));
+  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: home, home });
+  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${home}/dev claude`),
+    'launching from $HOME lands the session in ~/dev, never $HOME (claude-code#43958)');
+});
+
+test('a $HOME cwd with no ~/dev falls back to $HOME rather than failing to launch', () => {
+  const { env, tmuxLog } = makeEnv();
+  const home = scratch('cwrap-home-');            // no dev/ subdir
+  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: home, home });
+  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${home} claude`),
+    'without ~/dev the session stays in $HOME so the launch still works');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

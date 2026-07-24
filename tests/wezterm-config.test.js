@@ -60,6 +60,7 @@ test('required config keys survive rendering', { skip }, () => {
     'config.mouse_bindings',                          // copy-on-select / right-click paste
     'wezterm.on("format-tab-title"',                  // custom tab titles
     'config.default_domain = "WSL:Ubuntu"',
+    'default_cwd = "~/dev"',                          // trusted non-$HOME landing dir (trust persistence)
     'config.default_prog = { git_bash',
     'local git_bash = first_existing(',   // single-source Git Bash path (probed at runtime)
     '"-c", "agentview"',                    // CTRL+SHIFT+S picker tab

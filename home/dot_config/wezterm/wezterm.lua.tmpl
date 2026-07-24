@@ -125,8 +125,10 @@ config.wsl_domains = {
 	{
 		name = "WSL:Ubuntu",
 		distribution = "Ubuntu",
-		-- Land in the Linux home (~) on ext4, not the Windows cwd under /mnt/c.
-		default_cwd = "~",
+		-- Land in ~/dev on ext4 (a dedicated, trusted workspace), not $HOME or the Windows
+		-- cwd under /mnt/c. Claude Code's trust prompt never persists for a $HOME workspace
+		-- (claude-code#43958), so new shells/tabs/windows start in ~/dev to dodge it.
+		default_cwd = "~/dev",
 	},
 }
 config.default_domain = "WSL:Ubuntu"
@@ -184,8 +186,8 @@ config.keys = {
 	end) },
 	-- New window (ghostty: cmd+shift+t). With OSC 7 now reporting the cwd, a plain
 	-- SpawnWindow would inherit the active pane's dir — but a *window* should reset to the
-	-- WSL home (a new *tab* is what follows the cwd). Spawn through the mux with no cwd so it
-	-- falls through to the WSL:Ubuntu domain's default_cwd ("~") = the Linux home.
+	-- default (a new *tab* is what follows the cwd). Spawn through the mux with no cwd so it
+	-- falls through to the WSL:Ubuntu domain's default_cwd ("~/dev").
 	{ key = "T", mods = "CTRL|SHIFT", action = wezterm.action_callback(function()
 		wezterm.mux.spawn_window({ domain = { DomainName = "WSL:Ubuntu" } })
 	end) },

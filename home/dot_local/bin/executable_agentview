@@ -540,8 +540,11 @@ do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the act
   local repo branch cmd
   repo=$(spawn_pick_repo) || return 1
   [ -n "$repo" ] || return 0                       # cancelled at the repo pick
-  if [ "$repo" = "@host" ]; then                   # no repo -> plain host claude; `cd` = $HOME,
-    spawn_in_backend 'cd && claude' 'claude'       # not whatever cwd the backend inherits
+  if [ "$repo" = "@host" ]; then                   # no repo -> plain host claude. Land in ~/dev,
+                                                    # not $HOME: a $HOME workspace makes Claude
+                                                    # re-ask its trust prompt every launch
+                                                    # (claude-code#43958). Falls back to $HOME.
+    spawn_in_backend 'cd ~/dev 2>/dev/null || cd; claude' 'claude'
     return $?
   fi
   branch=$(spawn_pick_branch "$repo")
