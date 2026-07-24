@@ -158,6 +158,52 @@ test('a >7d Windows row is pruned from the windir', { skip }, () => {
   assert.ok(!fs.existsSync(path.join(windir, 'stale.json')), 'stale Windows row deleted');
 });
 
+// ---- reap: reconcile the windir against the daemon roster ---------------
+// A Windows session that dies without firing SessionEnd (tab killed hard, crash) leaves its
+// registry file behind, and WSL has no checkable pid to notice — so the row lingers as a phantom
+// offering a jump nothing can serve. The daemon roster is the stand-in for the `kill -0` the
+// local prune gets for free, so the policy matches it: gone is gone, no 7-day wait. It costs
+// ~0.7s, hence --refresh-remote (already detached for the homelab pull) rather than a render.
+test('--refresh-remote reaps a Windows row the daemon no longer runs', { skip }, () => {
+  const { env, home, windir } = makeEnv();
+  const ts = nowSec() - 600;
+  winRow(windir, 'ghost', { key: 'ghost', session: 'ghost', host: WINHOST, cwd: 'C:\\x', state: 'idle', ts, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'phantom row', pid: '1' });
+  wslRow(home, 'l1', { key: 'l1', session: 'l1', host: SELF, cwd: '/home/daniel/dev', state: 'working', ts, kind: 'host', locator: 'tmux:/tmp/t:s:%1', pane: '', title: 'WSL task', pid: '' });
+  run({ ...env, WIN_AGENTS: '[]' }, ['--refresh-remote']);
+  assert.ok(!fs.existsSync(path.join(windir, 'ghost.json')), 'a session absent from the roster is reaped');
+  assert.ok(fs.existsSync(path.join(home, '.claude', 'agent-view', 'l1.json')), 'the Windows roster says nothing about WSL rows');
+  assert.doesNotMatch(stripAnsi(run(env, ['--body']).out), /phantom row/, 'and the row is gone from the next render');
+});
+
+test('--refresh-remote keeps a Windows row the daemon still runs', { skip }, () => {
+  const { env, windir } = makeEnv();
+  // The detached-but-live case: no pane, hook state long stale, yet the daemon holds its pty.
+  // Reaping this row would delete a session the user is still using.
+  winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\x', state: 'needs-input', ts: nowSec() - 600, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'detached', pid: '1' });
+  const agents = JSON.stringify([{ id: 'w9short', sessionId: 'w9', kind: 'background', status: 'idle' }]);
+  run({ ...env, WIN_AGENTS: agents }, ['--refresh-remote']);
+  assert.ok(fs.existsSync(path.join(windir, 'w9.json')), 'a session on the roster is live, whatever its pane says');
+});
+
+test('--refresh-remote reaps nothing when the roster query fails', { skip }, () => {
+  const { env, windir } = makeEnv();
+  const ts = nowSec() - 600;
+  winRow(windir, 'a', { key: 'a', session: 'a', host: WINHOST, cwd: 'C:\\a', state: 'idle', ts, kind: 'host', locator: 'none:', pane: '', title: 'a', pid: '1' });
+  winRow(windir, 'b', { key: 'b', session: 'b', host: WINHOST, cwd: 'C:\\b', state: 'idle', ts, kind: 'host', locator: 'none:', pane: '', title: 'b', pid: '2' });
+  run({ ...env, WIN_AGENTS_RC: '3' }, ['--refresh-remote']);
+  assert.ok(fs.existsSync(path.join(windir, 'a.json')), 'an unreachable oracle is not evidence of death');
+  assert.ok(fs.existsSync(path.join(windir, 'b.json')), 'one broken query must not wipe every Windows row');
+});
+
+test('--refresh-remote spares a just-started Windows row not yet on the roster', { skip }, () => {
+  const { env, windir } = makeEnv();
+  // The hook writes the row and the session registers with the daemon independently, so a
+  // newborn session is briefly on disk but absent from the roster. REAP_GRACE covers that gap.
+  winRow(windir, 'newborn', { key: 'newborn', session: 'newborn', host: WINHOST, cwd: 'C:\\n', state: 'working', ts: nowSec(), kind: 'host', locator: 'wezterm:3', pane: '3', title: 'newborn', pid: '1' });
+  run({ ...env, WIN_AGENTS: '[]' }, ['--refresh-remote']);
+  assert.ok(fs.existsSync(path.join(windir, 'newborn.json')), 'a session younger than the grace window is not reapable');
+});
+
 // ---- jump (focus in place, no ssh, no new tab) --------------------------
 test('--jump of a Windows row activates its pane via wezterm.exe, not ssh', { skip }, () => {
   const { env, activateLog, sshLog } = makeEnv();
