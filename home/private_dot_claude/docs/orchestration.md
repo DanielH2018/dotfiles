@@ -40,6 +40,16 @@ exact spot nobody has actually pinned down. Resolve it by testing the contested 
 truth (run the code, read the primary source, reproduce the case), then fold in only the settled
 result. Treat a conflict as a prompt to gather one more piece of evidence, not to pick a side.
 
+**Depth vs. breadth — pick the right loop.** Fanning out N judges over one artifact is a *breadth*
+move: it surveys many failure modes at once, best for *vetting* something you won't change. To *improve*
+a single artifact, use the *depth* move instead — an evaluator-optimizer loop: one agent generates, a
+second evaluates against explicit criteria and returns PASS / NEEDS_IMPROVEMENT / FAIL plus concrete
+feedback, and the generator regenerates with the full history of prior attempts + the latest critique
+appended, until PASS or a hard iteration cap. Keep the evaluator strictly critiquing, never solving, and
+give it a rubric — a vague evaluator loops forever. Reach for this when the criteria are objective and
+the first pass is fixable (code correctness/style, a spec's completeness); skip it when "good" is
+subjective or the output is already good enough.
+
 **Stop at diminishing returns.** Once the answer is good enough, stop spawning and write it — don't
 chase marginal coverage.
 
