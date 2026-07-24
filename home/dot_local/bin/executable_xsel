@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Shim: forward xsel calls to WSLg's wl-copy/wl-paste (bridges to Windows
+# clipboard). See the xclip shim in this dir for why this exists.
+# Writes are requested via -i/--input or -a/--append; xsel allows these as
+# combined short-flag clusters (e.g. -ib = input + clipboard), so match the
+# letter anywhere in a single-dash cluster. Default (no write flag) is read.
+write=0
+for arg in "$@"; do
+  case "$arg" in
+    --input|--append) write=1 ;;
+    --*) ;;                       # other long flags: ignore
+    -*[ia]*) write=1 ;;           # single-dash cluster containing i or a
+  esac
+done
+if [ "$write" -eq 1 ]; then
+  exec wl-copy
+else
+  exec wl-paste --no-newline
+fi

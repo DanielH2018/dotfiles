@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Shim: forward xclip calls to WSLg's wl-copy/wl-paste, which bridge to the
+# Windows clipboard. Installed because /etc/wsl.conf sets appendWindowsPath=false
+# (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
+# Supports the common flag shapes CLI clipboard libraries emit.
+out=0
+for arg in "$@"; do
+  case "$arg" in
+    -o|-out) out=1 ;;
+  esac
+done
+if [ "$out" -eq 1 ]; then
+  exec wl-paste --no-newline
+else
+  exec wl-copy
+fi
