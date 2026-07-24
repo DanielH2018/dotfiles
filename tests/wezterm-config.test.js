@@ -56,6 +56,8 @@ test('required config keys survive rendering', { skip }, () => {
   const out = render();
   for (const needle of [
     'config.front_end = "WebGpu"',
+    'config.max_fps = 255',                   // u8 ceiling — 299Hz display headroom
+    'config.webgpu_present_mode = "Mailbox"', // Windows input-latency fix (wezterm#5400)
     'config.window_decorations = "INTEGRATED_BUTTONS|RESIZE"',
     'config.mouse_bindings',                          // copy-on-select / right-click paste
     'wezterm.on("format-tab-title"',                  // custom tab titles

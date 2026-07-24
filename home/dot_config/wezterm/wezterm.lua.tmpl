@@ -114,12 +114,21 @@ config.enable_kitty_graphics = true
 -- ---------------------------------------------------------------------------
 -- PERFORMANCE — pin the GPU front end so latency doesn't ride on WezTerm's runtime
 -- auto-pick, prefer the discrete GPU, and drop the animation smoothing a block cursor
--- doesn't need. max_fps uncaps from the 60 default; WezTerm still clamps to the display.
+-- doesn't need. max_fps is capped at 255 by the option's type (u8) — on the 299Hz
+-- display take all the headroom it allows; WezTerm still clamps to the display.
 -- ---------------------------------------------------------------------------
 config.front_end = "WebGpu"
 config.webgpu_power_preference = "HighPerformance"
 config.animation_fps = 1
-config.max_fps = 120
+config.max_fps = 255
+-- Mailbox presentation + a 1-frame swapchain queue: the maintainer-verified Windows
+-- input-latency fix (wezterm/wezterm#5400). Both options are nightly-only — the 20240203
+-- stable rejects them, and config_builder raises on unknown fields — so pcall-guard the
+-- pair: on a stable build they're skipped and the rest of the config still loads.
+pcall(function()
+	config.webgpu_present_mode = "Mailbox"
+	config.webgpu_max_frame_latency = 1
+end)
 
 -- ---------------------------------------------------------------------------
 -- DOMAINS / SHELL
