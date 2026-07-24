@@ -276,16 +276,25 @@ config.keys = {
 	-- `bash -lc` for a login PATH (~/.local/bin/agentview + jq/fzf); dismiss with ESC — it also
 	-- closes itself after a jump.
 	{ key = "S", mods = "CTRL|SHIFT", action = wezterm.action_callback(open_agentview) },
-	-- CTRL+Left: back to Agent View from inside a session pane (claude, sandbox docker,
-	-- ssh attach). At a shell prompt the key passes through and stays word-left (zsh binds
-	-- ^[[1;5D backward-word). Two signals decide "this is an app pane, not a shell":
-	--   1. pane TITLE — Claude Code sets it to "✳ Claude Code". This is the reliable one on
-	--      Windows/MSYS, where get_foreground_process_name reports the `claude` shim as sh/bash.
-	--   2. foreground process NAME not in the shell set — the fallback for panes that don't set
-	--      a distinctive title (sandbox docker, ssh) where the probe IS reliable (Linux).
-	-- WSL panes keep their wslhost.exe title + shell-name, so they pass through (the inner tmux
-	-- carries its own C-Left). pcall-guarded; on any probe error, fall through to word-left.
+	-- CTRL+Left: back to Agent View from inside a session pane.
+	-- WSL panes run tmux, and tmux OWNS C-Left (~/.tmux.conf): shell -> word-left, app -> the
+	-- agentview POPUP (`display-popup`, the floating overlay over the dimmed session — what we
+	-- want EVERY time). So for any WSL pane we pass C-Left straight through and let tmux decide;
+	-- we must NOT intercept here, or a pane whose title/proc trips the app-heuristic (e.g. tmux
+	-- forwarding Claude's "✳ Claude Code" title) would spawn a WezTerm tab instead of the popup —
+	-- that was the intermittent "sometimes a tab, sometimes the popup" bug. The tab path below is
+	-- only for NON-WSL panes (git-bash / Windows) where there is no tmux and thus no popup.
+	-- pcall-guarded; on any probe error we still pass the key through (word-left), never a dead key.
 	{ key = "LeftArrow", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
+		local dom = ""
+		pcall(function() dom = pane:get_domain_name() or "" end)
+		if dom:find("WSL") then
+			-- tmux's own C-Left binding handles it (word-left OR the agentview popup).
+			window:perform_action(act.SendKey({ key = "LeftArrow", mods = "CTRL" }), pane)
+			return
+		end
+		-- Non-WSL pane: no tmux popup available. Use the title/proc heuristic to tell an app
+		-- pane from a shell, and fall back to the dedicated Agent View tab for app panes.
 		local title = ""
 		pcall(function() title = (pane:get_title() or ""):lower() end)
 		local is_agent = title:find("claude code", 1, true) ~= nil
