@@ -230,13 +230,17 @@ const jumpScenarios = [
     },
   },
   {
-    name: 'remote tmux, WEZTERM_PANE set (no local tmux) -> wezterm spawns an ssh-attach tab',
+    // WEZTERM_PANE set used to divert this to `wezterm cli spawn`, which from WSL reaches its
+    // own mux rather than the Windows GUI — the attach landed where nothing displays it. The
+    // picker owns its terminal here, so the attach belongs in it.
+    name: 'remote tmux, WEZTERM_PANE set (no local tmux) -> still attaches in place',
     key: rowKey({ host: REMOTE1, cwd: '/home/ubuntu/r2', kind: 'host', locator: 'tmux:/tmp/tmux-1000/default:rsess2:%5' }),
     extraEnv: { WEZTERM_PANE: '0' },
     check: (l) => {
-      assert.match(l.spawnLog, /spawn -- ssh -t daniel-server/);
-      assert.match(l.spawnLog, /attach -t 'rsess2'/);
-      assert.strictEqual(l.tmuxLog, ''); assert.strictEqual(l.sshLog, ''); assert.strictEqual(l.activateLog, '');
+      assert.match(l.sshLog, /-t daniel-server/);
+      assert.match(l.sshLog, /attach -t 'rsess2'/);
+      assert.strictEqual(l.spawnLog, '', 'a wezterm spawn here would be invisible');
+      assert.strictEqual(l.tmuxLog, ''); assert.strictEqual(l.activateLog, '');
     },
   },
   {
