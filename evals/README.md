@@ -13,7 +13,7 @@ Plan: `docs/superpowers/plans/2026-07-08-subagent-evals.md`.
 # from the repo root
 node evals/run-evals.mjs                       # every case, using each case's own k
 node evals/run-evals.mjs --smoke               # k=1 for every case (cheap iteration)
-node evals/run-evals.mjs --agent planner       # only one agent's cases
+node evals/run-evals.mjs --agent implementer   # only one agent's cases
 node evals/run-evals.mjs --case migration-reviewer/001-drop-column-still-read
 node evals/run-evals.mjs --k 3                 # override k for every case
 node evals/run-evals.mjs --json report.json    # also write a machine-readable report
@@ -106,9 +106,10 @@ update this note if models or case sizes change.
 
 ## The agents
 
-Cases exist for all seven agents. Three are defined **in this repo**
-(`home/private_dot_claude/agents/`) and load with no extra setup: `implementer`, `planner`,
-`migration-reviewer`.
+Cases exist for all six agents. Two are defined **in this repo**
+(`home/private_dot_claude/agents/`) and load with no extra setup: `implementer` and
+`migration-reviewer`. (`planner` was dropped deliberately in 67a07ae — prep hands off to
+superpowers/Plan now — and its cases were retired with it.)
 
 The four work-overlay agents — `security-reviewer`, `ops-investigator`, `processing-engineer`,
 `network-navigator` — are defined in **`work-laptop-config/.claude/agents/`**, not this repo. Their
