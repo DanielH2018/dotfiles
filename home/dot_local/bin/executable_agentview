@@ -581,6 +581,16 @@ if [ -z "$sandbox_bin" ]; then
   else sandbox_bin="$HOME/.claude/sandbox/claude-sandbox"; fi
 fi
 
+# Named-session launchers (jumpable): prefer them on PATH, else their deployed path.
+ct_bin="${AGENT_VIEW_CT_BIN:-}"
+if [ -z "$ct_bin" ]; then
+  if command -v ct >/dev/null 2>&1; then ct_bin="ct"; else ct_bin="$HOME/.local/bin/ct"; fi
+fi
+cts_bin="${AGENT_VIEW_CTS_BIN:-}"
+if [ -z "$cts_bin" ]; then
+  if command -v cts >/dev/null 2>&1; then cts_bin="cts"; else cts_bin="$HOME/.local/bin/cts"; fi
+fi
+
 # First row of the repo pick: no repo at all -> a plain HOST claude session (no sandbox).
 host_row='[no repo · plain claude]'
 # Same machine, Windows side: a plain Windows-native claude in a new local-domain WezTerm tab.
@@ -615,11 +625,6 @@ spawn_pick_branch() {  # $1 = repo path -> echo branch (empty = main repo, no wo
   printf '%s' "$out"
 }
 
-spawn_build_cmd() {  # $1=repo $2=branch -> a shell-quoted claude-sandbox command
-  if [ -n "$2" ]; then printf '%q %q -b %q' "$sandbox_bin" "$1" "$2"
-  else printf '%q %q' "$sandbox_bin" "$1"; fi
-}
-
 spawn_windows_claude() {  # open a plain Windows-native claude in a NEW local-domain WezTerm tab
   # via the Windows wezterm.exe. The tab runs git_bash (Windows), where `claude` is on PATH; the
   # session registers itself over /mnt/c and appears via gather_windows_rows, focusable via Slice 2.
@@ -634,19 +639,20 @@ spawn_windows_claude() {  # open a plain Windows-native claude in a NEW local-do
   "$WEZTERM_WIN" cli spawn --domain-name local -- "$WIN_GITBASH" -lc "cd $win_spawn_dir 2>/dev/null || cd; exec claude" >/dev/null 2>&1
 }
 
-spawn_in_backend() {  # $1=command string $2=window title -> open it in a new pane
-  local cmd="$1" title="$2"
+spawn_in_backend() {  # $1=inner (new-pane cmd) $2=title $3=named (bare-shell named-session cmd)
+  local inner="$1" title="$2" named="${3:-$1}"
+  # Inside tmux: a new window IS a jumpable pane — run the raw inner command there. (We do
+  # NOT let cts/ct switch-client from under a live fzf execute(); see the design's placement
+  # note.)
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux new-window -n "$title" "$cmd"; return 0
+    tmux new-window -n "$title" "$inner"; return 0
   fi
   if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli spawn -- bash -lc "$cmd" >/dev/null 2>&1; return 0
+    wezterm cli spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
   fi
-  # Bare shell (e.g. WSL WezTerm: no tmux server, WEZTERM_PANE not propagated): no mux to
-  # open a pane in, so run it in place — mirroring <enter>'s bare-shell attach. Under the
-  # picker's ctrl+n execute() the session owns the tty until it exits, then fzf reloads.
-  # The old "run manually" error was cleared by fzf before it could be read.
-  exec bash -c "$cmd"
+  # Bare shell (no mux): exec the NAMED launcher so the session lands in a named, jumpable
+  # tmux session — the case cts/ct exist to fix. Replaces the picker's tty, as before.
+  exec bash -c "$named"
 }
 
 av_close_picker() {  # $1=portfile -> tell the live picker to abort, dismissing its popup/tab
@@ -663,27 +669,31 @@ av_close_picker() {  # $1=portfile -> tell the live picker to abort, dismissing 
     >/dev/null 2>&1 </dev/null &
 }
 
-do_spawn() {  # interactive: pick repo + branch, spawn claude-sandbox in the active backend.
-  # $1 = optional fzf portfile: on a successful spawn we POST `abort` to dismiss the picker.
-  local repo branch cmd pf="${1:-}" rc
+do_spawn() {  # interactive: pick repo + branch, spawn in the active backend.
+  local repo branch pf="${1:-}" rc inner named title
   repo=$(spawn_pick_repo) || return 1
-  [ -n "$repo" ] || return 0                       # cancelled at the repo pick -> keep the picker
-  if [ "$repo" = "@host" ]; then                   # no repo -> plain host claude. Land in ~/dev,
-                                                    # not $HOME: a $HOME workspace makes Claude
-                                                    # re-ask its trust prompt every launch
-                                                    # (claude-code#43958). Falls back to $HOME.
-    spawn_in_backend 'cd ~/dev 2>/dev/null || cd; claude' 'claude'; rc=$?
+  [ -n "$repo" ] || return 0
+  if [ "$repo" = "@host" ]; then
+    inner='cd ~/dev 2>/dev/null || cd; claude'
+    named="$(printf '%q %q' "$ct_bin" "$HOME/dev")"
+    spawn_in_backend "$inner" 'claude' "$named"; rc=$?
     [ "$rc" -eq 0 ] && av_close_picker "$pf"
     return "$rc"
   fi
-  if [ "$repo" = "@windows" ]; then                # same machine, Windows-native claude tab
+  if [ "$repo" = "@windows" ]; then
     spawn_windows_claude; rc=$?
     [ "$rc" -eq 0 ] && av_close_picker "$pf"
     return "$rc"
   fi
   branch=$(spawn_pick_branch "$repo")
-  cmd=$(spawn_build_cmd "$repo" "$branch")
-  spawn_in_backend "$cmd" "$(basename "$repo")"; rc=$?
+  if [ -n "$branch" ]; then
+    inner="$(printf '%q %q -b %q' "$sandbox_bin" "$repo" "$branch")"
+    named="$(printf '%q %q -b %q' "$cts_bin" "$repo" "$branch")"
+  else
+    inner="$(printf '%q %q' "$sandbox_bin" "$repo")"
+    named="$(printf '%q %q' "$cts_bin" "$repo")"
+  fi
+  spawn_in_backend "$inner" "$(basename "$repo")" "$named"; rc=$?
   [ "$rc" -eq 0 ] && av_close_picker "$pf"
   return "$rc"
 }

@@ -68,6 +68,20 @@ exit 0
 echo "run $*" >> "$CLAUDE_LOG"
 exit 0
 `, { mode: 0o755 });
+  const ctLog = path.join(bin, 'ct.log'); fs.writeFileSync(ctLog, '');
+  const ctsLog = path.join(bin, 'cts.log'); fs.writeFileSync(ctsLog, '');
+  fs.writeFileSync(path.join(bin, 'ct'), `#!/bin/bash
+echo "$*" >> "$CT_LOG"
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'cts'), `#!/bin/bash
+echo "$*" >> "$CTS_LOG"
+case "$*" in
+  *--complete-repos*)    printf 'infra\\nnotes\\n' ;;
+  *--complete-branches*) printf 'main\\ndev\\n' ;;
+esac
+exit 0
+`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo host
 `, { mode: 0o755 });
@@ -90,9 +104,11 @@ exit 0
     AGENT_VIEW_WEZTERM_WIN: path.join(bin, 'no-such-wezterm.exe'),
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
+    CT_LOG: ctLog, CTS_LOG: ctsLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
+    ctLog, ctsLog,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 // `--spawn [portfile]`: a portfile arg opts into the ctrl-n dismiss (POST abort on success).
@@ -183,20 +199,20 @@ test('cancelling the repo pick is a clean no-op (no spawn)', { skip }, () => {
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
-test('no tmux/wezterm backend -> runs the launcher in place', { skip }, () => {
-  const { env, sandboxLog, reposRoot } = makeEnv();
+test('no tmux/wezterm backend -> execs the named cts launcher in place', { skip }, () => {
+  const { env, ctsLog, reposRoot } = makeEnv();
   const r = run(env, { FZF_REPO: 'airflow', FZF_BRANCH: 'main' });   // neither TMUX nor WEZTERM_PANE
   assert.strictEqual(r.code, 0, `in-place spawn exits clean; stderr: ${r.err}`);
-  assert.ok(fs.readFileSync(sandboxLog, 'utf8').includes(`${path.join(reposRoot, 'airflow')} -b main`),
-    'the launcher itself ran (exec\'d in place, not printed as advice)');
+  assert.ok(fs.readFileSync(ctsLog, 'utf8').includes(`${path.join(reposRoot, 'airflow')} -b main`),
+    'the named cts launcher ran in place (jumpable named tmux session)');
 });
 
-test('no backend + the no-repo row -> plain claude runs in place', { skip }, () => {
-  const { env, claudeLog, tmuxLog, spawnLog } = makeEnv();
+test('no backend + the no-repo row -> execs ct ~/dev in place', { skip }, () => {
+  const { env, ctLog, tmuxLog, spawnLog } = makeEnv();
   const r = run(env, { FZF_REPO: HOST_ROW });
   assert.strictEqual(r.code, 0, `in-place spawn exits clean; stderr: ${r.err}`);
-  assert.match(fs.readFileSync(claudeLog, 'utf8'), /run/, 'host claude ran in place');
-  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no tmux involved');
+  assert.ok(fs.readFileSync(ctLog, 'utf8').includes(`${process.env.HOME}/dev`), 'ct ran on ~/dev');
+  assert.strictEqual(fs.readFileSync(tmuxLog, 'utf8'), '', 'no direct tmux from agentview');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm involved');
 });
 
