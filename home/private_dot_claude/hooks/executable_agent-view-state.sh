@@ -49,10 +49,17 @@ fi
 # has proven the session is interactive, this one runs before any, so an ABSENT registry file is
 # "don't know yet" and we skip rather than risk an sdk row. Skipping costs nothing — a session
 # that goes on to do anything is registered moments later by UserPromptSubmit or Stop.
+# A daemon session (kind "bg") is skipped here for the same reason: the daemon keeps a pool of
+# PRE-WARMED spares — claimed processes with a real session id that run this hook and then wait
+# for a job that may never come. They have no job, no transcript, and `claude agents` never lists
+# them, so registering one renders a nameless idle row CTRL+X cannot clear: removing it only makes
+# the daemon warm a replacement, which lands right back here under a new id. A bg session that is
+# really running proves it by prompting, and registers from UserPromptSubmit moments later.
 if [ "$state" = "start" ]; then
-  case "$(jq -r '.entrypoint // ""' "$HOME/.claude/sessions/${CLAUDE_PID:-}.json" 2>/dev/null)" in
-    cli) state="idle";;
-    *)   exit 0;;
+  case "$(jq -r '(.entrypoint // "") + ":" + (.kind // "")' "$HOME/.claude/sessions/${CLAUDE_PID:-}.json" 2>/dev/null)" in
+    cli:bg) exit 0;;
+    cli:*)  state="idle";;
+    *)      exit 0;;
   esac
 fi
 

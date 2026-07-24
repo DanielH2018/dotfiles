@@ -234,10 +234,10 @@ test('only completed is downgraded — a working turn in a dirty repo stays work
 // and then left idle never wrote a row and was invisible to the picker. `start` closes that,
 // but it runs BEFORE any activity has proven the session is interactive — so unlike the other
 // states it treats an absent per-process registry file as "don't know" and declines to write.
-function writeSessionRegistry(home, pid, entrypoint) {
+function writeSessionRegistry(home, pid, entrypoint, kind) {
   const dir = path.join(home, '.claude', 'sessions');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, `${pid}.json`), JSON.stringify({ pid: Number(pid), entrypoint }));
+  fs.writeFileSync(path.join(dir, `${pid}.json`), JSON.stringify({ pid: Number(pid), entrypoint, kind }));
 }
 
 test('start registers an idle row for a real cli session', { skip }, () => {
@@ -261,6 +261,26 @@ test('start declines when the per-process registry says nothing yet', { skip }, 
   run('start', { session_id: 's3', cwd: '/tmp' }, { pane: '3', home, pid: '9999' });
   assert.ok(!fs.existsSync(stateFile(home, 's3')),
     'unknown is not "interactive" — UserPromptSubmit registers it moments later if it is real');
+});
+
+// The daemon keeps a pool of PRE-WARMED sessions: claimed spare processes with a real session id
+// that fire SessionStart and then wait for a background job. They have no job, no transcript, and
+// `claude agents` never lists them — but registering one renders a nameless idle row the picker
+// cannot get rid of, because CTRL+X only makes the daemon warm a replacement that lands right back
+// here under a new id.
+test('start declines to register a pre-warmed daemon session', { skip }, () => {
+  const home = freshHome();
+  writeSessionRegistry(home, '4244', 'cli', 'bg');
+  run('start', { session_id: 's5', cwd: '/home/daniel/dev' }, { home, pid: '4244' });
+  assert.ok(!fs.existsSync(stateFile(home, 's5')), 'a spare awaiting a job is not a picker row');
+});
+
+test('a bg session that is actually running still registers on its first event', { skip }, () => {
+  const home = freshHome();
+  writeSessionRegistry(home, '4245', 'cli', 'bg');
+  run('working', { session_id: 's6', cwd: '/home/daniel/dev' }, { home, pid: '4245' });
+  assert.strictEqual(readState(home, 's6').state, 'working',
+    'only `start` is blind to bg — a dispatched job proves itself by prompting');
 });
 
 test('the other states still register without a per-process registry', { skip }, () => {
