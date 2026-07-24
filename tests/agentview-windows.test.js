@@ -70,6 +70,19 @@ case "$*" in
 esac
 exit 0
 `, { mode: 0o755 });
+  // Windows claude.exe stub: answers `agents --json` from $WIN_AGENTS — the daemon roster that
+  // decides whether a paneless session is still attachable. Default [] means "daemon holds
+  // nothing", the pre-existing respawn path. $WIN_AGENTS_RC forces the query to fail, which must
+  // never be mistaken for an empty roster.
+  const winclaude = path.join(bin, 'claude-win.exe');
+  fs.writeFileSync(winclaude, `#!/bin/bash
+case "$*" in
+  *"agents --json"*)
+    [ -n "\${WIN_AGENTS_RC:-}" ] && exit "\${WIN_AGENTS_RC}"
+    printf '%s' "\${WIN_AGENTS:-[]}" ;;
+esac
+exit 0
+`, { mode: 0o755 });
   // taskkill.exe stub: log the pid it was asked to kill.
   fs.writeFileSync(path.join(bin, 'taskkill.exe'), `#!/bin/bash
 echo "$*" >> "$TASKKILL_LOG"
@@ -95,6 +108,7 @@ exit 0
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     AGENT_VIEW_WINDIR: windir,
     AGENT_VIEW_WEZTERM_WIN: wezwin,      // stub stands in for the real wezterm.exe
+    AGENT_VIEW_WIN_CLAUDE: winclaude,    // ...and for the Windows claude.exe we ask for the roster
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     WEZWIN_ACTIVATE_LOG: activateLog, WEZWIN_SEND_LOG: sendLog,
     TASKKILL_LOG: killLog, SSH_LOG: sshLog, FZF_CAPTURE: capture,
@@ -192,8 +206,11 @@ test('--jump falls back to a bare-shell pane when no retitled pane matches', { s
 
 // ---- jump tier 3: no pane anywhere --------------------------------------
 // A Windows session can outlive its pane entirely — close the tab and the process (plus its
-// hook) keeps running, refreshing a row that offers a jump nothing can serve. A Windows pty
-// can't be attached from WSL the way a tmux one can, so the only way back in is a fresh pane.
+// hook) keeps running, refreshing a row that offers a jump nothing can serve. What tier 3 does
+// about that turns on a distinction panes cannot see: a detached session whose daemon still
+// holds its pty is LIVE and must be attached, while one the daemon has forgotten is gone and can
+// only be resumed. Resuming a live one forks a second process onto its transcript, so the roster
+// (`claude agents --json`) is the oracle here, not the mux inventory.
 test('--jump reopens a Windows session whose pane is gone, resuming its conversation', { skip }, () => {
   const { env, windir, activateLog, sendLog } = makeEnv();
   winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\Users\\daniel\\dotfiles', state: 'needs-input', ts: nowSec() - 60, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'orphan', pid: '29644' });
@@ -207,6 +224,31 @@ test('--jump reopens a Windows session whose pane is gone, resuming its conversa
   assert.match(spawned, /--resume w9/, 'resumes the row\'s own conversation, not a blank one');
   assert.match(spawned, /C:\/Users\/daniel\/dotfiles/, 'lands in the row cwd, backslashes undoubled');
   assert.deepStrictEqual(activated(activateLog), ['12'], 'no unrelated pane was activated');
+});
+
+test('--jump attaches a paneless session the daemon still holds, never resuming it', { skip }, () => {
+  const { env, windir, sendLog } = makeEnv();
+  winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\Users\\daniel\\dotfiles', state: 'idle', ts: nowSec() - 60, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'detached', pid: '29644' });
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel\\dotfiles'), 'idle', '0', 'detached', '12', 'host', 'wezterm:12']);
+  // The row looks identical to the reopen case above — same dead pane, same missing cwd
+  // correlation. Only the roster distinguishes them.
+  const agents = JSON.stringify([{ pid: 29644, id: 'w9short', sessionId: 'w9', kind: 'background', status: 'idle' }]);
+  const r = run({ ...env, WEZWIN_PANES: JSON.stringify([WIN_PANES_ARR[0]]), WIN_AGENTS: agents }, ['--jump', key]);
+  assert.strictEqual(r.code, 0, 'an attached session is a successful jump');
+  const spawned = fs.readFileSync(sendLog, 'utf8');
+  assert.match(spawned, /claude attach w9short/, 'attaches by the daemon id, re-hosting the live pty');
+  assert.doesNotMatch(spawned, /--resume/, 'resuming would fork a second process onto one transcript');
+});
+
+test('--jump reopens rather than attaches when the roster query itself fails', { skip }, () => {
+  const { env, windir, sendLog } = makeEnv();
+  winRow(windir, 'w9', { key: 'w9', session: 'w9', host: WINHOST, cwd: 'C:\\Users\\daniel\\dotfiles', state: 'idle', ts: nowSec() - 60, kind: 'host', locator: 'wezterm:12', pane: '12', title: 'detached', pid: '29644' });
+  const key = cardKey([WINHOST, tsvCwd('C:\\Users\\daniel\\dotfiles'), 'idle', '0', 'detached', '12', 'host', 'wezterm:12']);
+  const r = run({ ...env, WEZWIN_PANES: JSON.stringify([WIN_PANES_ARR[0]]), WIN_AGENTS_RC: '3' }, ['--jump', key]);
+  assert.strictEqual(r.code, 0, 'an unreachable oracle must not turn a jump into a failure');
+  const spawned = fs.readFileSync(sendLog, 'utf8');
+  assert.match(spawned, /--resume w9/, 'falls back to reopening the conversation');
+  assert.doesNotMatch(spawned, /claude attach/, 'and never invents an agent id it could not read');
 });
 
 test('--jump still fails loudly when there is nothing to reopen', { skip }, () => {
