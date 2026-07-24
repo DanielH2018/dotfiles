@@ -16,6 +16,17 @@ file="$dir/$sid.json"
 # Host rows key on the stable session id (no RUN_ID), so the delete is unconditional.
 if [ "$state" = "end" ]; then av_guarded_remove "$sid"; exit 0; fi
 
+# Headless sdk invocations (`claude -p` — e.g. the remember plugin's haiku
+# summarizers) fire the same hooks as real sessions but have no pane or prompt to
+# attend to: skip them so they never register as phantom rows. Claude's own
+# per-process registry marks them entrypoint "sdk-cli"; real interactive/bg
+# sessions carry "cli". No registry file (older claude) -> register as before.
+if [ -n "${CLAUDE_PID:-}" ]; then
+  case "$(jq -r '.entrypoint // ""' "$HOME/.claude/sessions/${CLAUDE_PID}.json" 2>/dev/null)" in
+    sdk*) exit 0;;
+  esac
+fi
+
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$cwd" ] && cwd="$PWD"
 pane="${WEZTERM_PANE:-}"
