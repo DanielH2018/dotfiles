@@ -45,6 +45,11 @@ Each agent's prompt MUST include:
 1. The list of changed files to review
 2. The exclusion list from Setup (if any), with this instruction: "Do not raise any finding that matches an item in the PREVIOUSLY TRIAGED list below. Match by file path and description similarity, not line numbers. These have already been triaged in a previous iteration."
 3. "Review only the listed changed files. Run `git diff main...HEAD` and `git diff` to see the changes."
+4. "Report every issue you find, each with a confidence score — this overrides any instruction in your own agent definition to only report findings at or above a confidence threshold. Do not suppress low-confidence findings; a separate arbiter pass filters them."
+
+Item 4 exists because the bundled `code-reviewer` agents carry a `confidence >= 80` reporting
+gate. Phase 2 already filters, so leaving that gate in place drops real findings before the
+arbiter ever sees them.
 
 All findings land in session context.
 

@@ -7,10 +7,17 @@ Distilled from Anthropic's *Building Effective Agents* and the multi-agent resea
 heavy reading/searching to subagents. Never delegate the synthesis or the final write-up — coordinate,
 integrate, and write the answer yourself.
 
-**Model tier.** Default the gather/read/search subagents to a cheaper tier (`model: 'sonnet'`) and keep
-the top tier (Opus/Fable) for your own synthesis — bulk context-reading doesn't need the top model, and
-delegating down conserves the All-Models quota. Bump a single subagent up only when its subtask genuinely
-needs the stronger reasoning.
+**When to delegate at all.** Delegate only for work that is genuinely independent and sizeable — a wide
+multi-file investigation, a broad gather across distinct sub-topics. Don't delegate what you'd finish
+yourself in a handful of tool calls, and don't spawn a subagent to verify or double-check your own work.
+If one subagent can do the job, use one rather than several, and keep spawn counts low.
+
+**Cost lever.** Inside a Workflow, reach for `effort` before dropping model tier: `low` and `medium` hold
+quality at a fraction of the tokens, so a cheap gather stage is usually `effort: 'low'` on the inherited
+model rather than a downgrade — keep `xhigh` for coding and for the hardest judge stages. The Agent tool
+has no effort knob, so there tier is the only lever: `model: 'sonnet'` for bulk context-reading with no
+judgment in it, top tier (Opus/Fable) reserved for your own synthesis. Bump a single subagent up only when
+its subtask genuinely needs the stronger reasoning.
 
 **How many subagents** — scale to complexity, don't reflex-fan-out:
 - Simple / single-fact → 1 (always ≥1, so sourcing is delegated rather than skipped)
@@ -33,6 +40,12 @@ brief is followed, their union must fully answer the question.
 **Verify, don't trust.** When integrating subagent/tool output, apply the **Source quality & epistemic
 honesty** rules from CLAUDE.md (fact vs. speculation; prefer primary sources; on conflicts favor
 recency + consistency and flag it).
+
+**Multi-agent vetting is opt-in, not the default finish.** The judge-panel and adversarial-verify patterns
+below earn their cost on high-stakes artifacts — a security sweep, a migration, a spec I'm about to build
+from, or anything I've explicitly asked you to audit or be thorough about. They are not how ordinary work
+ends. On a routine change you catch your own mistakes already, and a verification fan-out just multiplies
+spend for the same answer. Reach for them when I ask, or when being wrong is expensive.
 
 **Disagreement is signal.** When you fan out several reviewers or verifiers over the same artifact and
 they *disagree*, don't average the verdicts or take a majority vote — the disagreement pinpoints the

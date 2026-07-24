@@ -7,6 +7,9 @@
 - When referencing code, include `file:line` so I can jump to it.
 - When you give me a path to a generated artifact or file I'll open (specs, plans, sandbox session artifacts, HTML reports), format it as a short clickable markdown link — `[short-label](file:///abs/path)`, never the raw path. Raw paths wrap in Ghostty and stop being clickable when they cross a line boundary.
 - If something is ambiguous, ask one focused question rather than listing all possibilities.
+- Say in one sentence what you're about to do before your first tool call. While working, update me only when you find something important or change direction — don't narrate each step. When you finish, lead with the outcome: the first sentence answers "what happened" or "what did you find", supporting detail after it.
+- Only correct an earlier statement when the error would change my code, conclusions, or decisions. State the correction plainly and continue; for a slip that changes nothing for me, just fix it and move on without flagging it.
+- Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance; don't pad with filler sections, redundant summaries, or boilerplate.
 - Skip hedging-theater and faux-balance filler — no "*two threads worth untangling*", "*that changes things significantly*", "*let me cash that claim out*", "*the honest answer is*"-style openers. Lead with the answer or the recommendation; add a caveat only if it changes what I'd do. Code-naming and comment conventions live in `rules/anti-slop.md`.
 
 ## Config & dotfiles management (chezmoi)
@@ -39,6 +42,17 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 Write tests for any new code I create. Match the style and framework already used in the project.
 
+## Verification & self-checking
+
+You already re-read and sanity-check your own work as you go, so don't bolt a separate verification pass on top of it: no "final verification step" appended to routine tasks, no re-reading a file you just wrote purely to confirm the edit landed, no subagent dispatched to double-check something you finished yourself. That compounds with what you already do and costs me tokens and latency for nothing.
+
+What does not relax is **evidence before claims** — a different thing from re-checking. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you must have run that command in this session and read its output. Don't extrapolate from an earlier run, from a passing linter, or from "the code looks right". When you haven't run it, say the status is unverified rather than asserting it.
+
+## Code review
+
+- Ask review agents for **everything** they find, each finding carrying a confidence or severity score — never "only report high-confidence issues", "only high-severity", or "be conservative". Those instructions get followed literally and real bugs go unreported. Filtering is a separate pass: an arbiter, or me, drops the noise after seeing the full list.
+- This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` and `pr-review-toolkit:code-reviewer` agents — state the override in the dispatch prompt when you spawn them.
+
 ## Scope discipline
 
 Touch only what the task requires and match the surrounding code. Each rule pairs a "don't" with what to do instead:
@@ -47,6 +61,7 @@ Touch only what the task requires and match the surrounding code. Each rule pair
 - Don't refactor or "clean up" beyond what the task requires — if you spot an unrelated improvement, note it in your summary and leave the code alone.
 - Don't add error handling for scenarios that can't happen — guard only failure modes actually reachable from the real call sites.
 - Don't create a new file when editing an existing one would do — reach for a new file only when the change genuinely doesn't belong in any current one.
+- Don't quietly narrow, widen, or transform the request — deliver what was asked, at the scope intended, and finish the whole thing. Make routine judgment calls yourself; check in only when different readings of the request would lead to materially different work. If the request seems mistaken or a better approach exists, say so in a sentence and continue with the task as asked.
 
 ## Source quality & epistemic honesty
 
