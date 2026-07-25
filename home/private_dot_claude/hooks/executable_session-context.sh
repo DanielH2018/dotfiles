@@ -13,9 +13,15 @@ SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
+# Repos that ship an install-hook-shim keep a pre-push guard in .git/, where no
+# checkout can restore it. Re-assert it so a stray `git config core.hooksPath`,
+# a fresh clone, or a manual delete can't silently drop the guard.
+SHIM_REPAIR=$("$(git rev-parse --show-toplevel)/bin/install-hook-shim" --quiet 2>/dev/null)
+
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 echo "=== Repo context ==="
+[ -n "$SHIM_REPAIR" ] && echo "$SHIM_REPAIR"
 echo "Branch: $BRANCH"
 echo "Last commit: $(git log -1 --pretty=format:'%h %s (%cr)' 2>/dev/null)"
 
