@@ -163,8 +163,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
-      "hash": "7ff2c913d08b1cba5757f4c7f4e054cfea946164937d47b2673721ad90e85030",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "7c61af65be102289a97b1235eb9681956b41c2f809c507a59c4cdc093305b46b",
+      "landed": "2026-07-25T12:13:12.887Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
