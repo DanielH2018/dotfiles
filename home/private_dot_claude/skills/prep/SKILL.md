@@ -59,7 +59,7 @@ Intake produces understanding + a verification check; it does not implement.
 When a design decision is still open, hand off to the brainstorming skill or
 the writing-plans skill (or the built-in `Plan` agent); once there's a plan,
 route to the implementer agent or superpowers:executing-plans to build.
-Before any hand-off fans out to subagents, size it per
-[orchestration.md](~/.claude/docs/orchestration.md) — scale count to
+Before any hand-off fans out to subagents, size it per the
+`orchestrating-subagents` skill — scale count to
 complexity, keep synthesis on the orchestrator, and brief each agent with
 objective + tools + budget.
