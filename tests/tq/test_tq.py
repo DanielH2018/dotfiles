@@ -2,7 +2,9 @@
 """Unit tests for the tq adapters and digest, against fixtures captured from
 real pytest and node --test runs. Run directly: python3 tests/tq/test_tq.py"""
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,13 +17,15 @@ sys.path.insert(
     0, os.path.join(HERE, os.pardir, os.pardir, "home", "dot_local", "share", "tq")
 )
 
+import detect as detect_mod
 import scope
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
 from adapters import rdjson as rdjson_adapter
+from adapters import survey as survey_adapter
 from digest import MAX_DIGEST, digest
-from result import Failure, Result, strip_ansi
+from result import Failure, Item, Result, strip_ansi
 
 
 def fixture(name):
@@ -252,6 +256,8 @@ class TestDigest(unittest.TestCase):
                 "attempts",
                 "totals",
                 "failures",
+                "items",
+                "limited",
                 "notes",
                 "truncated",
             },
@@ -450,17 +456,20 @@ class TestDetection(unittest.TestCase):
 
     def test_launchers_and_python_m_are_seen_through(self):
         self.assertEqual(
-            self.cli.tool_name(["uv", "run", "python", "-m", "pytest"]), "pytest"
+            detect_mod.tool_name(["uv", "run", "python", "-m", "pytest"]), "pytest"
         )
-        self.assertEqual(self.cli.tool_name(["uv", "run", "ruff", "check"]), "ruff")
-        self.assertEqual(self.cli.tool_name(["/usr/bin/node", "--test"]), "node")
-        self.assertEqual(self.cli.tool_name(["env", "FOO=1", "pytest"]), "pytest")
+        self.assertEqual(detect_mod.tool_name(["uv", "run", "ruff", "check"]), "ruff")
+        self.assertEqual(detect_mod.tool_name(["/usr/bin/node", "--test"]), "node")
+        self.assertEqual(detect_mod.tool_name(["env", "FOO=1", "pytest"]), "pytest")
 
     def test_a_command_that_merely_names_a_runner_is_not_one(self):
         # Scanning every token for the runner's name turns `grep pytest notes`
-        # into a test run, and injects reporter flags into the grep.
-        self.assertIsNone(self.cli.detect(["grep", "pytest", "notes.txt"]))
-        self.assertIsNone(self.cli.detect(["grep", "shellcheck", "notes.txt"]))
+        # into a test run, and injects reporter flags into the grep. Since greps
+        # became a survey the answer is no longer None, but it is still the
+        # program that was actually run and never the one it was looking for.
+        self.assertEqual(self.cli.detect(["grep", "pytest", "notes.txt"]), "grep")
+        self.assertEqual(self.cli.detect(["grep", "shellcheck", "notes.txt"]), "grep")
+        self.assertIsNone(self.cli.detect(["cat", "pytest", "notes.txt"]))
 
     def test_ruff_format_is_not_a_diagnostics_run(self):
         self.assertIsNone(self.cli.detect(["ruff", "format", "--check", "."]))
@@ -895,6 +904,292 @@ class TestRetryFlagParsing(unittest.TestCase):
         # from a report is how a retry silently reruns the wrong tests.
         cli = load_cli()
         self.assertEqual(set(cli.RETRYABLE), {"node", "pytest"})
+
+
+def survey_blank(kind, runner="find", exit_code=0):
+    return Result(runner=runner, kind=kind, cmd=runner, cwd="/sample", exit=exit_code)
+
+
+class TestSurveyDetection(unittest.TestCase):
+    def setUp(self):
+        self.cli = load_cli()
+
+    def test_only_the_read_only_git_subcommands_are_claimed(self):
+        self.assertEqual(self.cli.detect(["git", "log", "--oneline"]), "git-log")
+        self.assertEqual(self.cli.detect(["git", "diff", "HEAD"]), "git-diff")
+        self.assertEqual(self.cli.detect(["git", "-C", "/repo", "log"]), "git-log")
+        # A wrapper that captures stdout must never be the thing that decides a
+        # mutation was safe, so everything else runs untouched.
+        self.assertIsNone(self.cli.detect(["git", "commit", "-m", "x"]))
+        self.assertIsNone(self.cli.detect(["git", "push"]))
+        self.assertIsNone(self.cli.detect(["git", "-C", "/repo", "reset", "--hard"]))
+        self.assertIsNone(self.cli.detect(["git"]))
+
+    def test_a_find_that_runs_or_reformats_is_not_a_sweep(self):
+        self.assertEqual(self.cli.detect(["find", ".", "-name", "*.py"]), "find")
+        for action in (["-delete"], ["-exec", "rm", "{}", ";"], ["-printf", "%p"]):
+            self.assertIsNone(self.cli.detect(["find", ".", *action]), action)
+
+    def test_grep_flags_that_change_the_answer_shape_pass_through(self):
+        self.assertEqual(self.cli.detect(["grep", "-rn", "x", "."]), "grep")
+        self.assertEqual(self.cli.detect(["rg", "x", "."]), "rg")
+        # `rg --files` takes no pattern at all; --json would reject it.
+        self.assertEqual(self.cli.detect(["rg", "--files"]), "rg-files")
+        for flag in ("-c", "-l", "-L", "-q", "-o"):
+            self.assertIsNone(self.cli.detect(["grep", flag, "x", "."]), flag)
+
+    def test_ls_is_a_sweep_only_when_recursive_and_not_long(self):
+        self.assertEqual(self.cli.detect(["ls", "-R", "src"]), "ls")
+        self.assertEqual(self.cli.detect(["ls", "-aR", "src"]), "ls")
+        self.assertIsNone(self.cli.detect(["ls", "src"]))
+        # -lR bundles a long listing: those lines carry permissions, not paths.
+        self.assertIsNone(self.cli.detect(["ls", "-lR", "src"]))
+
+    def test_a_diff_asked_for_its_status_is_left_alone(self):
+        # --exit-code makes the status the answer. The survey headline reads a
+        # non-zero status as an incomplete enumeration, so the two cannot share
+        # a command without one of them lying.
+        self.assertIsNone(self.cli.detect(["git", "diff", "--exit-code"]))
+        self.assertIsNone(self.cli.detect(["git", "diff", "--quiet"]))
+
+
+class TestSurveyFlags(unittest.TestCase):
+    def setUp(self):
+        self.cli = load_cli()
+
+    def test_format_flags_are_dropped_without_eating_their_neighbour(self):
+        # drop_flag() assumes a flag takes a value and skips the token after it.
+        # These take none, so the same helper would swallow the pathspec.
+        self.assertEqual(
+            self.cli.drop_switches(
+                ["git", "log", "--oneline", "-40", "src"], self.cli.LOG_FORMATS
+            ),
+            ["git", "log", "-40", "src"],
+        )
+        self.assertEqual(
+            self.cli.drop_switches(
+                ["git", "diff", "--stat", "HEAD"], self.cli.DIFF_FORMATS
+            ),
+            ["git", "diff", "HEAD"],
+        )
+
+    def test_a_pathspec_past_the_separator_is_a_path_not_a_flag(self):
+        self.assertEqual(
+            self.cli.drop_switches(
+                ["git", "log", "--oneline", "--", "--stat"], self.cli.LOG_FORMATS
+            ),
+            ["git", "log", "--", "--stat"],
+        )
+
+    def test_a_limit_is_recorded_only_when_the_command_reached_it(self):
+        self.assertEqual(
+            self.cli.count_limit(["git", "log", "-n", "50"], ("-n",)), (50, "-n 50")
+        )
+        self.assertEqual(
+            self.cli.count_limit(["git", "log", "-5"], ("-n",), bare=True), (5, "-5")
+        )
+        self.assertEqual(self.cli.count_limit(["git", "log"], ("-n",)), (None, ""))
+
+        # A log capped at 50 that found 12 was not capped by anything: there
+        # were 12. Saying "there may be more" then would invent a tail.
+        short = survey_blank("commits")
+        short.items = [Item(sha="a")] * 12
+        self.cli.note_limit(short, 50, "-n 50")
+        self.assertEqual(short.limited, "")
+
+        at_cap = survey_blank("commits")
+        at_cap.items = [Item(sha="a")] * 50
+        self.cli.note_limit(at_cap, 50, "-n 50")
+        self.assertEqual(at_cap.limited, "-n 50")
+
+
+class TestSurveyParsers(unittest.TestCase):
+    def test_paths_split_on_nul_when_the_command_could_be_asked_for_it(self):
+        res = survey_adapter.parse_paths("a/b.py\0a/c.py\0", survey_blank("paths"))
+        self.assertEqual([i.path for i in res.items], ["a/b.py", "a/c.py"])
+
+    def test_a_newline_in_a_filename_only_costs_the_fallback_form(self):
+        nul = survey_adapter.parse_paths("we\nird.py\0ok.py\0", survey_blank("paths"))
+        self.assertEqual([i.path for i in nul.items], ["we\nird.py", "ok.py"])
+
+    def test_ls_entries_are_joined_onto_the_header_they_appeared_under(self):
+        text = "src:\napp.py\nutil.py\n\nsrc/web:\nviews.py\n"
+        res = survey_adapter.parse_ls_r(text, survey_blank("paths"))
+        # A bare name is not a path: grouping on one would put every views.py
+        # in the tree into a single bucket.
+        self.assertEqual(
+            [i.path for i in res.items],
+            ["src/app.py", "src/util.py", "src/web/views.py"],
+        )
+
+    def test_a_line_matched_twice_is_two_matches_and_one_row(self):
+        event = json.dumps(
+            {
+                "type": "match",
+                "data": {
+                    "path": {"text": "a.py"},
+                    "line_number": 3,
+                    "lines": {"text": "x = x + 1\n"},
+                    "submatches": [{"start": 0}, {"start": 4}],
+                },
+            }
+        )
+        res = survey_adapter.parse_rg_json(event, survey_blank("matches", "rg"))
+        self.assertEqual(len(res.items), 1)
+        self.assertEqual(res.items[0].matches, 2)
+        self.assertEqual(res.items[0].line, 3)
+
+    def test_a_form_feed_in_a_matched_line_is_not_a_second_match(self):
+        # str.splitlines() breaks on form feed, the record separators and NEL.
+        # A source file with an Emacs page break in it would have one hit
+        # counted as two, and the count is the whole answer here.
+        res = survey_adapter.parse_grep(
+            "a.py\x0012:before\x0cafter\n", survey_blank("matches", "grep")
+        )
+        self.assertEqual(len(res.items), 1)
+        self.assertEqual(res.items[0].path, "a.py")
+        self.assertEqual(res.items[0].line, 12)
+
+    def test_a_path_with_a_colon_survives_the_nul_form(self):
+        res = survey_adapter.parse_grep(
+            "od:d.py\x009:hit\n", survey_blank("matches", "grep")
+        )
+        self.assertEqual(res.items[0].path, "od:d.py")
+        self.assertEqual(res.items[0].line, 9)
+
+    def test_numstat_reads_renames_and_binaries(self):
+        raw = "10\t2\tsrc/a.py\x005\t0\t\x00old/b.py\x00new/b.py\x00-\t-\tlogo.png\x00"
+        res = survey_adapter.parse_numstat(raw, survey_blank("diff", "git diff"))
+        self.assertEqual(
+            [i.path for i in res.items], ["src/a.py", "new/b.py", "logo.png"]
+        )
+        self.assertEqual(res.items[1].old_path, "old/b.py")
+        self.assertEqual(res.items[1].status, "R")
+        # git writes "-" for a binary rather than 0, which is the difference
+        # between "no lines changed" and "lines are not the unit here".
+        self.assertIsNone(res.items[2].added)
+
+    def test_commits_survive_the_record_separator_they_are_marked_with(self):
+        raw = (
+            "\x1eabc123\x1fDaniel\x1f2026-07-25T10:00:00-05:00\x1fFix the thing\n"
+            "\x1edef456\x1fSam\x1f2026-07-24T10:00:00-05:00\x1fAdd a thing\n"
+        )
+        res = survey_adapter.parse_commits(raw, survey_blank("commits", "git log"))
+        self.assertEqual([i.sha for i in res.items], ["abc123", "def456"])
+        self.assertEqual(res.items[0].text, "Fix the thing")
+        self.assertEqual(res.items[1].author, "Sam")
+
+    def test_numstat_rows_are_attributed_to_the_commit_above_them(self):
+        raw = (
+            "\x1eabc\x1fDaniel\x1f2026-07-25T10:00:00-05:00\x1fOne\n"
+            "3\t1\ta.py\n7\t0\tb.py\n"
+            "\x1edef\x1fDaniel\x1f2026-07-24T10:00:00-05:00\x1fTwo\n"
+            "1\t1\tc.py\n"
+        )
+        res = survey_adapter.parse_commits(raw, survey_blank("commits", "git log"))
+        self.assertEqual((res.items[0].added, res.items[0].deleted), (10, 1))
+        self.assertEqual(res.items[0].matches, 2)
+        self.assertEqual(res.items[1].matches, 1)
+
+
+class TestSurveyDigest(unittest.TestCase):
+    def paths(self, names, exit_code=0):
+        res = survey_blank("paths", exit_code=exit_code)
+        res.items = [Item(path=name) for name in names]
+        return res
+
+    def test_a_sweep_small_enough_to_print_is_printed_whole(self):
+        # A histogram of nine paths is strictly worse than the nine paths, and
+        # tq only earns its place when it says less than the command would have.
+        res = self.paths([f"src/f{n}.py" for n in range(9)])
+        text = digest(res, "/tmp/x.json")
+        for n in range(9):
+            self.assertIn(f"src/f{n}.py", text)
+        self.assertNotIn("sample (", text)
+        # Nothing was withheld, so there is nothing to go and look up.
+        self.assertNotIn("/tmp/x.json", text)
+
+    def test_a_truncated_histogram_accounts_for_what_it_dropped(self):
+        names = [f"d{n:03d}/f{i}.py" for n in range(40) for i in range(5)]
+        text = digest(self.paths(names), "/tmp/x.json")
+        self.assertIn("more directories", text)
+        shown = [ln for ln in text.splitlines() if re.match(r"^  d\d{3}\s", ln)]
+        listed = sum(int(ln.split()[-1].replace(",", "")) for ln in shown)
+        remainder = int(
+            re.search(r"\+([\d,]+) more directories", text)[1].replace(",", "")
+        )
+        dropped = int(
+            re.search(r"more directories, ([\d,]+) paths", text)[1].replace(",", "")
+        )
+        # The buckets shown plus the ones counted off the bottom must be every
+        # path: a top-N list that does not add up reads as the whole shape.
+        self.assertEqual(listed + dropped, 200)
+        self.assertEqual(len(shown) + remainder, 40)
+
+    def test_the_sample_crosses_the_list_rather_than_taking_its_head(self):
+        # find walks depth-first and git log runs newest-first, so the first
+        # eight rows of either come from one corner of the answer.
+        names = [f"d{n:03d}/f.py" for n in range(200)]
+        text = digest(self.paths(names), "/tmp/x.json")
+        block = text.split("evenly spaced):")[1]
+        self.assertIn("d000/", block)
+        self.assertIn("d175/", block)
+        self.assertNotIn("d001/", block)
+
+    def test_a_grouping_key_that_says_nothing_is_not_drawn(self):
+        # Every path under one directory makes a one-bucket histogram, which
+        # restates the count in a second place and distinguishes nothing.
+        text = digest(self.paths([f"src/f{n}.py" for n in range(60)]), "/tmp/x.json")
+        self.assertNotIn("  src   ", text)
+        self.assertIn("sample (", text)
+
+    def test_a_failed_sweep_never_reports_a_total(self):
+        # find keeps going past an unreadable directory and exits non-zero. The
+        # count is of what it could reach, which is not the count of what is
+        # there — the same rule as TIMED OUT.
+        text = digest(self.paths([f"d{n}/f.py" for n in range(60)], exit_code=1), "/x")
+        self.assertIn("enumeration incomplete", text)
+
+    def test_nothing_found_and_nothing_readable_do_not_read_alike(self):
+        self.assertIn("no paths", digest(self.paths([]), "/x"))
+        self.assertIn("NO PATHS PARSED", digest(self.paths([], exit_code=1), "/x"))
+
+    def test_a_capped_count_is_reported_as_a_floor(self):
+        res = survey_blank("commits", "git log")
+        res.items = [Item(sha=f"{n:07d}", date="2026-07-25") for n in range(50)]
+        res.limited = "-n 50"
+        self.assertIn("there may be more", digest(res, "/x"))
+
+    def test_no_match_is_an_answer_and_a_broken_search_is_not(self):
+        # Exit 1 is how every grep says "nothing matched".
+        quiet = survey_blank("matches", "grep", exit_code=1)
+        self.assertIn("no matches", digest(quiet, "/x"))
+        broken = survey_blank("matches", "grep", exit_code=2)
+        self.assertIn("NO MATCHES PARSED", digest(broken, "/x"))
+
+    def test_the_headline_names_both_figures_when_they_differ(self):
+        res = survey_blank("matches", "rg")
+        res.items = [Item(path=f"f{n % 4}.py", line=n, matches=2) for n in range(1, 61)]
+        text = digest(res, "/x")
+        # The histogram counts matches and the sample counts rows; a headline
+        # carrying only the larger figure leaves the two contradicting.
+        self.assertIn("120 matches on 60 lines", text)
+        self.assertIn("60 matching lines", text)
+
+    def test_a_count_of_one_is_not_pluralised_and_a_match_is_not_a_matchs(self):
+        one = survey_blank("matches", "rg")
+        one.items = [Item(path="a.py", line=1, matches=1)]
+        self.assertIn("1 match in 1 file", digest(one, "/x"))
+        many = survey_blank("matches", "rg")
+        many.items = [Item(path=f"{n}.py", line=1, matches=1) for n in range(3)]
+        self.assertIn("3 matches in 3 files", digest(many, "/x"))
+
+    def test_a_diff_reports_the_stat_shape(self):
+        res = survey_blank("diff", "git diff")
+        res.items = [Item(path=f"f{n}.py", added=n, deleted=1) for n in range(5)]
+        text = digest(res, "/x")
+        self.assertIn("5 files changed, +10 −5", text)
+        self.assertIn("f4.py  +4 −1", text)
 
 
 if __name__ == "__main__":

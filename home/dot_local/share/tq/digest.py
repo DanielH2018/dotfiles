@@ -10,6 +10,17 @@ MAX_FAILURES = 10
 MAX_OUTPUT = 2000
 MAX_NOTE = 500
 MAX_MESSAGE = 2000
+# Surveys. A sweep small enough to print is printed whole — a histogram of nine
+# paths is strictly worse than the nine paths, and tq is only worth putting in
+# front of a command when it says less than the command would have.
+MAX_ROWS = 40
+MAX_ROWS_BYTES = 2000
+# Buckets in a histogram, and how deep a directory key may go to fill them.
+MAX_BUCKETS = 12
+MAX_DIR_DEPTH = 4
+SAMPLE = 8
+MAX_ROW_TEXT = 120
+SURVEY_KINDS = ("paths", "matches", "diff", "commits")
 # A ceiling on the whole digest, not just on each part of it. Ten failures each
 # allowed a capped message plus two capped streams is ~40KB, and the tool result
 # tq's output lands in is capped again below that — so without a total the
@@ -18,7 +29,16 @@ MAX_DIGEST = 12000
 
 
 def plural(count, noun):
-    return noun if count == 1 else noun + "s"
+    if count == 1:
+        return noun
+    # "matchs" and "directorys" are what appending an s alone produced, and a
+    # digest that cannot spell what it counted reads as a broken tool whatever
+    # the number to the left of it says.
+    if noun.endswith(("ch", "sh", "s", "x")):
+        return noun + "es"
+    if noun.endswith("y") and not noun.endswith(("ay", "ey", "oy", "uy")):
+        return noun[:-1] + "ies"
+    return noun + "s"
 
 
 def _size(lines):
@@ -60,15 +80,245 @@ def timeout_headline(result):
         so_far = (
             f"  ({found} {plural(found, 'finding')} before the cut)" if found else ""
         )
+    elif result.kind in SURVEY_KINDS:
+        rows = len(result.items)
+        so_far = f"  ({rows:,} found before the cut)" if rows else ""
     else:
         ran = result.totals["tests"]
         so_far = f"  ({ran} {plural(ran, 'test')} completed)" if ran else ""
     return f"TIMED OUT after {seconds:.0f}s{so_far}"
 
 
+def survey_headline(result):
+    """How much there is, and what stops that being the whole answer.
+
+    A survey asserts nothing, so it has no pass or fail to report — but a count
+    can still lie in two directions, and both are named here rather than left
+    for the reader to infer. It is short of the truth when the command capped
+    itself, and it is not a count of anything when the command failed.
+    """
+    seconds = result.duration_ms / 1000
+    n = len(result.items)
+    if result.kind == "matches":
+        files = len({i.path for i in result.items if i.path})
+        total = sum(i.matches or 1 for i in result.items)
+        # Exit 1 is how every grep says "nothing matched", which is an answer.
+        # Anything above it is the tool failing, and "0 matches" would report a
+        # broken search as an exhaustive one.
+        if not n and result.exit > 1:
+            return f"NO MATCHES PARSED  (exited {result.exit})  {seconds:.1f}s"
+        if not n:
+            return f"no matches  {seconds:.1f}s"
+        body = f"{total:,} {plural(total, 'match')}"
+        if total != n:
+            # A line matched twice is two matches and one row. The histogram
+            # below counts matches and the sample counts rows, so with only the
+            # larger figure in the headline the two disagree by a number the
+            # reader has no way to account for.
+            body = f"{body} on {n:,} {plural(n, 'line')}"
+        body = f"{body} in {files:,} {plural(files, 'file')}"
+    elif result.kind == "diff":
+        added = sum(i.added or 0 for i in result.items)
+        deleted = sum(i.deleted or 0 for i in result.items)
+        if not n:
+            return f"no changes  {seconds:.1f}s"
+        body = f"{n:,} {plural(n, 'file')} changed, +{added:,} −{deleted:,}"
+    elif result.kind == "commits":
+        if not n:
+            return f"no commits  {seconds:.1f}s"
+        body = f"{n:,} {plural(n, 'commit')}"
+        dates = sorted(i.date[:10] for i in result.items if i.date)
+        if dates and dates[0] != dates[-1]:
+            body = f"{body}  {dates[0]}..{dates[-1]}"
+    else:
+        if not n and result.exit != 0:
+            return f"NO PATHS PARSED  (exited {result.exit})  {seconds:.1f}s"
+        if not n:
+            return f"no paths  {seconds:.1f}s"
+        body = f"{n:,} {plural(n, 'path')}"
+    if result.limited:
+        # The count is what the command was allowed to find, not what is there.
+        body = f"{body}, the {result.limited} limit — there may be more"
+    elif result.exit != 0:
+        # A sweep that could not read part of the tree enumerated part of it.
+        # Same rule as TIMED OUT: a partial pass over the ground has no total.
+        body = f"{body} so far — exited {result.exit}, enumeration incomplete"
+    return f"{body}  {seconds:.1f}s"
+
+
+def _dir_key(path, depth):
+    parts = (path or "").split("/")[:-1]
+    return "/".join(parts[:depth]) or "."
+
+
+def _dir_depth(paths):
+    """How many path segments to group on.
+
+    One segment is the obvious choice and is wrong whenever a sweep has a single
+    root: `src/` for every row says nothing. Buckets only grow as the key gets
+    longer, so the deepest key that still fits the histogram is the most it can
+    say within the same number of lines.
+    """
+    best = 1
+    for depth in range(1, MAX_DIR_DEPTH + 1):
+        if len({_dir_key(p, depth) for p in paths}) > MAX_BUCKETS:
+            break
+        best = depth
+    return best
+
+
+def _tally(rows):
+    """(key, count) pairs, heaviest first, ties broken by name so that two runs
+    over the same tree produce the same digest."""
+    counts = {}
+    for key, weight in rows:
+        counts[key] = counts.get(key, 0) + weight
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _histogram(pairs, noun, unit, out):
+    """The heaviest buckets, and an explicit accounting of the rest.
+
+    The remainder line is the point. A top-ten list with the tail dropped reads
+    as the whole distribution, and every conclusion drawn from it is wrong by
+    however much was left off the bottom.
+
+    One bucket is not a distribution — it restates the count in a second place —
+    so nothing is drawn and the caller is told nothing was.
+    """
+    if len(pairs) < 2:
+        return False
+    width = max((len(key) for key, _ in pairs[:MAX_BUCKETS]), default=0)
+    for key, count in pairs[:MAX_BUCKETS]:
+        out.append(f"  {key.ljust(width)}  {count:>6,}")
+    rest = pairs[MAX_BUCKETS:]
+    if rest:
+        total = sum(count for _, count in rest)
+        out.append(
+            f"  … +{len(rest):,} more {plural(len(rest), noun)}, "
+            f"{total:,} {plural(total, unit)}"
+        )
+    return True
+
+
+def _sample(items, size):
+    """Evenly spaced through the list, not the front of it.
+
+    find and ls walk depth-first and git log runs newest-first, so the first
+    eight rows of any of them come from one corner of the answer. A reader shown
+    the head infers a shape from it; a stride at least crosses the whole list.
+    """
+    if len(items) <= size:
+        return list(items)
+    stride = len(items) / size
+    return [items[int(i * stride)] for i in range(size)]
+
+
+def _row(item, kind):
+    if kind == "matches":
+        where = f"{item.path}:{item.line}" if item.line else (item.path or "?")
+        text, _ = cap((item.text or "").strip(), MAX_ROW_TEXT)
+        return f"{where}  {text}".rstrip()
+    if kind == "diff":
+        move = f"{item.old_path} → " if item.old_path else ""
+        return f"{move}{item.path}  +{item.added or 0:,} −{item.deleted or 0:,}"
+    if kind == "commits":
+        text, _ = cap((item.text or "").strip(), MAX_ROW_TEXT)
+        return f"{item.sha[:7]} {item.date[:10]} {text}".rstrip()
+    return item.path or "?"
+
+
+# What one row of each survey is, so a sample can say what it is a sample of.
+# A matches row is a line, not a match: the same line can hold several.
+ROW_NOUN = {
+    "paths": "path",
+    "matches": "matching line",
+    "diff": "file",
+    "commits": "commit",
+}
+
+JQ_HINTS = {
+    "paths": ".items[].path",
+    "matches": '.items[] | "\\(.path):\\(.line)  \\(.text)"',
+    "diff": '.items[] | "\\(.added)\\t\\(.deleted)\\t\\(.path)"',
+    "commits": '.items[] | "\\(.sha[0:7]) \\(.text)"',
+}
+
+
+def survey_shape(result, out):
+    """The histogram that stands in for the rows, one per kind."""
+    if result.kind == "commits":
+        _histogram(
+            _tally([(i.author or "?", 1) for i in result.items]),
+            "author",
+            "commit",
+            out,
+        )
+        return
+    if result.kind == "diff":
+        rows = [
+            (i.path or "?", (i.added or 0) + (i.deleted or 0)) for i in result.items
+        ]
+        _histogram(_tally(rows), "file", "changed line", out)
+        return
+    if result.kind == "matches":
+        _histogram(
+            _tally([(i.path or "?", i.matches or 1) for i in result.items]),
+            "file",
+            "match",
+            out,
+        )
+        return
+    paths = [i.path or "" for i in result.items]
+    depth = _dir_depth(paths)
+    drawn = _histogram(
+        _tally([(_dir_key(p, depth), 1) for p in paths]), "directory", "path", out
+    )
+    exts = _tally([(os.path.splitext(p)[1] or "(none)", 1) for p in paths])
+    # Only when it distinguishes anything. `.py 1,847` under a sweep that asked
+    # for *.py is a line spent restating the command.
+    if len(exts) > 1:
+        if drawn:
+            out.append("")
+        _histogram(exts, "extension", "path", out)
+
+
+def survey_digest(result, json_path, out):
+    rows = [_row(item, result.kind) for item in result.items]
+    body = "\n".join(f"  {row}" for row in rows)
+    if rows and len(rows) <= MAX_ROWS and len(body.encode("utf-8")) <= MAX_ROWS_BYTES:
+        # Everything, because everything fits. No json line and no jq hint:
+        # nothing was withheld, so there is nothing to go and look up.
+        out.append("")
+        out.extend(f"  {row}" for row in rows)
+        return "\n".join(out)
+    out.append(f"json: {json_path}")
+    if not result.items:
+        return "\n".join(out)
+    shape = []
+    survey_shape(result, shape)
+    if shape:
+        out.append("")
+        out.extend(shape)
+    shown = _sample(result.items, SAMPLE)
+    if len(shown) < len(result.items):
+        noun = ROW_NOUN[result.kind]
+        out.append("")
+        out.append(
+            f"sample ({len(shown)} of {len(result.items):,} "
+            f"{plural(len(result.items), noun)}, evenly spaced):"
+        )
+        out.extend(f"  {_row(item, result.kind)}" for item in shown)
+    out.append("")
+    out.append(f"jq: jq -r '{JQ_HINTS[result.kind]}' {json_path}")
+    return "\n".join(out)
+
+
 def headline(result):
     if result.timed_out:
         return timeout_headline(result)
+    if result.kind in SURVEY_KINDS:
+        return survey_headline(result)
     if result.kind == "lint":
         return lint_headline(result)
     t = result.totals
@@ -163,6 +413,8 @@ def digest(result, json_path):
             out.append(f"note: {line}")
         if dropped:
             out.append(f"note: … +{dropped} bytes (see json)")
+    if result.kind in SURVEY_KINDS:
+        return survey_digest(result, json_path, out)
     if not result.failures:
         # Not when scoping emptied the list: the headline has already said the
         # findings exist and where they are, and "no reported failures" would

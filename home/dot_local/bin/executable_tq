@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""tq — run a test or lint command, print a compact digest, keep the full result as JSON.
+"""tq — run a command, print a compact digest, keep the full result as JSON.
 
     tq node --test [files...]
     tq uv run pytest            (also: pytest, python -m pytest)
     tq prek run --all-files
     tq ruff check [paths...]    (also: uv run ruff check)
     tq shellcheck [files...]
+
+    tq find . -name '*.py'      (also: fd, ls -R, rg --files, git ls-files)
+    tq rg TODO src/             (also: grep, egrep, ugrep)
+    tq git diff main
+    tq git log --oneline -200
 
 tq's own flags come before the command; the first token that is not one of
 them starts the runner's argv, which is passed on untouched.
@@ -36,6 +41,20 @@ TIMED OUT with whatever it managed first, 0 to let it run as long as it likes.
 
 Linters are digested as findings, not as a pass rate: silence about a line is
 not an assertion that the line is good, so there is no denominator to report.
+
+Sweeps — paths, matches, changed files, commits — are digested as a count, a
+histogram and an evenly spaced sample, with every row kept in the json for jq.
+They assert nothing at all, so they have no verdict either: the count is the
+answer, and what the digest owes the reader is the two ways a count misleads.
+It is a floor when the command capped itself (`git log -n 50` that returned 50),
+and it is not a count of anything when the command failed part-way (a find that
+could not read three directories). Both are said in the headline rather than
+left to be inferred from an exit code nobody sees.
+
+A sweep small enough to print is printed whole and nothing is written about its
+shape: a histogram of nine paths is worse than the nine paths. A command that
+runs something or writes something — `find -delete`, `find -exec`, `git commit`
+— is never claimed, whatever it would have printed.
 """
 
 from __future__ import annotations
@@ -59,8 +78,12 @@ from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
 import scope  # noqa: E402
 from adapters import rdjson as rdjson_adapter  # noqa: E402
-from digest import digest  # noqa: E402
+from adapters import survey as survey_adapter  # noqa: E402
+import detect as detect_mod  # noqa: E402
+from digest import SURVEY_KINDS, digest  # noqa: E402
 from result import Result  # noqa: E402
+
+detect = detect_mod.detect
 
 REPORTER = os.path.join(LIB, "node-reporter.mjs")
 PYTEST_HOOK_ID = "pytest"
@@ -69,50 +92,6 @@ RAW_TAIL = 4000
 # Ten minutes, which no suite tq is put in front of comes close to. TQ_TIMEOUT=0
 # disables the kill for the one that legitimately does.
 TIMEOUT = int(os.environ.get("TQ_TIMEOUT") or 600)
-
-# Tokens that stand in front of the real program without being it.
-LAUNCHERS = {"uv", "uvx", "poetry", "pdm", "rye", "hatch", "pipenv", "env", "command"}
-SUBCOMMANDS = {"run", "exec", "tool", "--"}
-PYTHON = re.compile(r"^python(3(\.\d+)?)?$")
-
-
-def tool_name(argv):
-    """The program a command really runs, seeing through `uv run <tool>` and
-    `python -m <tool>`.
-
-    Scanning for the tool's name anywhere in argv is what a first cut does, and
-    it misfires on any command that merely mentions it — `grep pytest file` is
-    not a test run, and injecting reporter flags into it would be.
-    """
-    for tok in argv:
-        if tok.startswith("-") and tok != "--":
-            continue
-        base = os.path.basename(tok)
-        if base in LAUNCHERS or base in SUBCOMMANDS or PYTHON.match(base):
-            continue
-        if "=" in base:
-            continue  # `env FOO=1 pytest`, and `FOO=1 pytest` via a shell
-        return base
-    return ""
-
-
-def detect(argv):
-    """Which adapter owns this command, or None to run it untouched."""
-    tool = tool_name(argv)
-    if tool == "node" and "--test" in argv:
-        return "node"
-    if tool == "prek":
-        return "prek"
-    if tool == "pytest":
-        return "pytest"
-    # `ruff format --check` reports reformatting, not diagnostics, and carries
-    # no locations worth digesting — the bare word is what marks a lint run.
-    if tool == "ruff" and "check" in argv:
-        return "ruff"
-    if tool == "shellcheck":
-        return "shellcheck"
-    return None
-
 
 def drop_flag(argv, flags):
     """argv without a flag tq is about to set for itself, in either spelling."""
@@ -382,12 +361,232 @@ def run_ingested(argv, workdir, tmp, fmt):
     return result, proc
 
 
+# Flags that choose how git renders a diff or a log. Dropped rather than merged
+# with tq's own: git resolves a repeated format flag by position for some of
+# these and by precedence for others, so a digest that let both stand would
+# change shape when the user reordered their command.
+DIFF_FORMATS = (
+    "--stat",
+    "--numstat",
+    "--shortstat",
+    "--dirstat",
+    "--compact-summary",
+    "--name-only",
+    "--name-status",
+    "--summary",
+    "--raw",
+    "--color",
+    "-p",
+    "--patch",
+    "-u",
+)
+LOG_FORMATS = DIFF_FORMATS + (
+    "--oneline",
+    "--graph",
+    "--pretty",
+    "--format",
+    "--abbrev-commit",
+)
+# Sentinel-led so the numstat rows that follow a commit can be told from it.
+COMMIT_FORMAT = "--pretty=format:%x1e%H%x1f%an%x1f%aI%x1f%s"
+# git log flags that ask for per-file detail. tq adds --numstat only when one of
+# them was given: a 500-commit log is fast until it has to diff every commit.
+LOG_WANTS_FILES = ("--stat", "--numstat", "--name-only", "--name-status", "-p", "--patch")
+BARE_COUNT = re.compile(r"^-(\d+)$")
+
+
+def drop_switches(argv, flags):
+    """argv without the valueless format flags tq is about to replace.
+
+    Everything from `--` onward is kept whatever it spells: past that separator
+    a token is a path, and a file genuinely named --stat is still a file.
+    """
+    out = []
+    for i, tok in enumerate(argv):
+        if tok == "--":
+            out.extend(argv[i:])
+            break
+        if tok in flags or any(tok.startswith(f"{flag}=") for flag in flags):
+            continue
+        out.append(tok)
+    return out
+
+
+def count_limit(argv, names, bare=False):
+    """The cap a command put on its own output, as (number, how it was spelled).
+
+    Only the flags that stop the search early. -maxdepth and a pathspec narrow
+    what is being asked about, which is the question rather than a limit on the
+    answer; -n stops a complete answer part-way through.
+    """
+    for i, tok in enumerate(argv):
+        if bare and BARE_COUNT.match(tok):
+            return int(BARE_COUNT.match(tok).group(1)), tok
+        for name in names:
+            if tok == name and i + 1 < len(argv) and argv[i + 1].isdigit():
+                return int(argv[i + 1]), f"{name} {argv[i + 1]}"
+            value = tok[len(name) + 1 :] if tok.startswith(f"{name}=") else ""
+            if value.isdigit():
+                return int(value), tok
+            short = tok[len(name) :] if len(name) == 2 and tok.startswith(name) else ""
+            if short.isdigit():
+                return int(short), tok
+    return None, ""
+
+
+def note_limit(result, limit, spelling):
+    """Record the cap only when the command actually ran into it. `git log -n 50`
+    that found 12 commits was not limited by anything — there were 12."""
+    if limit is not None and len(result.items) >= limit:
+        result.limited = spelling
+
+
+def survey(runner, kind, argv, workdir, proc, timed_out):
+    return Result(
+        runner=runner,
+        kind=kind,
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+
+
+def finish_survey(result, proc):
+    """Whatever the command said on stderr, when it is not already the answer.
+
+    find writes one "Permission denied" per unreadable directory and keeps
+    going, which is exactly the case where the count is short and nothing in
+    stdout says so.
+    """
+    note = (proc.stderr or "").strip()
+    if note:
+        result.notes.append(note)
+
+
+def run_find(argv, workdir, tmp):
+    cmd = list(argv)
+    if not any(tok in detect_mod.FIND_OPERATORS for tok in argv):
+        # Only where appending cannot change which paths come back. With an -o
+        # in the expression `-print0` binds to the last branch alone, so the
+        # command is left as it stands and the output split on newlines.
+        cmd = ["-print0" if tok == "-print" else tok for tok in cmd]
+        if "-print0" not in cmd:
+            cmd.append("-print0")
+    proc, timed_out = run(cmd, plain_env())
+    result = survey("find", "paths", argv, workdir, proc, timed_out)
+    survey_adapter.parse_paths(proc.stdout, result)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_fd(argv, workdir, tmp):
+    cmd = list(argv)
+    if not any(tok in ("-0", "--print0") for tok in cmd):
+        cmd.append("--print0")
+    proc, timed_out = run(cmd, plain_env())
+    result = survey("fd", "paths", argv, workdir, proc, timed_out)
+    survey_adapter.parse_paths(proc.stdout, result)
+    limit, spelling = count_limit(argv, ("--max-results",))
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_ls(argv, workdir, tmp):
+    proc, timed_out = run(list(argv) + ["-1"], plain_env())
+    result = survey("ls", "paths", argv, workdir, proc, timed_out)
+    survey_adapter.parse_ls_r(proc.stdout, result)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_rg_files(argv, workdir, tmp):
+    proc, timed_out = run(list(argv) + ["--null"], plain_env())
+    result = survey("rg", "paths", argv, workdir, proc, timed_out)
+    survey_adapter.parse_paths(proc.stdout, result)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_rg(argv, workdir, tmp):
+    proc, timed_out = run([argv[0], "--json"] + argv[1:], plain_env())
+    result = survey("rg", "matches", argv, workdir, proc, timed_out)
+    survey_adapter.parse_rg_json(proc.stdout, result)
+    limit, spelling = count_limit(argv, ("--max-count", "-m"))
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_grep(argv, workdir, tmp):
+    # Ahead of the pattern rather than after the file list: a grep asked to
+    # honour POSIX argument order stops permuting, and flags trailing the
+    # operands would be read as more operands.
+    proc, timed_out = run(
+        [argv[0], "--null", "-H", "-n"] + argv[1:], plain_env()
+    )
+    result = survey("grep", "matches", argv, workdir, proc, timed_out)
+    survey_adapter.parse_grep(proc.stdout, result)
+    limit, spelling = count_limit(argv, ("--max-count", "-m"))
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def git_env():
+    env = plain_env()
+    # A pager attached to a captured pipe is not a risk git takes, but a
+    # configured one that ignores isatty is, and it would hang the run.
+    env["GIT_PAGER"] = "cat"
+    return env
+
+
+def run_git_diff(argv, workdir, tmp):
+    cmd = drop_switches(argv, DIFF_FORMATS) + ["--numstat", "-z", "--no-color"]
+    proc, timed_out = run(cmd, git_env())
+    result = survey("git diff", "diff", argv, workdir, proc, timed_out)
+    survey_adapter.parse_numstat(proc.stdout, result)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_git_ls_files(argv, workdir, tmp):
+    proc, timed_out = run(list(argv) + ["-z"], git_env())
+    result = survey("git ls-files", "paths", argv, workdir, proc, timed_out)
+    survey_adapter.parse_paths(proc.stdout, result)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_git_log(argv, workdir, tmp):
+    cmd = drop_switches(argv, LOG_FORMATS) + [COMMIT_FORMAT, "--no-color"]
+    if any(tok in argv for tok in LOG_WANTS_FILES):
+        cmd.append("--numstat")
+    proc, timed_out = run(cmd, git_env())
+    result = survey("git log", "commits", argv, workdir, proc, timed_out)
+    survey_adapter.parse_commits(proc.stdout, result)
+    limit, spelling = count_limit(argv, ("--max-count", "-n"), bare=True)
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
 RUNNERS = {
     "node": run_node,
     "pytest": run_pytest,
     "prek": run_prek,
     "ruff": run_ruff,
     "shellcheck": run_shellcheck,
+    "find": run_find,
+    "fd": run_fd,
+    "ls": run_ls,
+    "rg": run_rg,
+    "rg-files": run_rg_files,
+    "grep": run_grep,
+    "git-diff": run_git_diff,
+    "git-log": run_git_log,
+    "git-ls-files": run_git_ls_files,
 }
 
 INGESTORS = {
@@ -547,7 +746,11 @@ def main(argv):
         sys.stdout.write(text + "\n")
 
     # A runner that died before reporting anything must never read as a pass.
-    if result.exit != 0 and not result.failures:
+    # A survey is exempt: it has no failures to be missing, a non-zero exit is
+    # how grep reports "nothing matched", and the headline has already said what
+    # the status means. Dumping the raw output here would undo the digest in the
+    # one case — a sweep that found nothing — where it is cheapest to be right.
+    if result.exit != 0 and not result.failures and result.kind not in SURVEY_KINDS:
         tail = raw_tail(proc)
         if tail:
             sys.stdout.write(f"\nno failures parsed — raw output follows:\n{tail}\n")

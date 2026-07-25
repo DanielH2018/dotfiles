@@ -95,14 +95,64 @@ class Failure:
 
 
 @dataclass
+class Item:
+    """One row of a survey — a path, a match, a changed file, a commit.
+
+    Every field optional, and for the same reason Failure's are: the four
+    surveys share one record rather than each inventing its own, and a path
+    sweep that left `added` unset is saying nothing about lines rather than
+    saying zero. What a survey has and a finding does not is that no row is
+    wrong — there is no verdict here, only a shape and a count.
+    """
+
+    path: str | None = None
+    line: int | None = None
+    text: str = ""
+    # How many matches this row stands for: one per row everywhere except a
+    # grep line matched twice, which is one row and two matches.
+    matches: int | None = None
+    added: int | None = None
+    deleted: int | None = None
+    # git's status letter for a changed path, or "d"/"f"/"l" for a swept one.
+    status: str = ""
+    # A rename's source. Kept apart from `path` so a rename counts once as a
+    # changed file while still naming both ends of the move.
+    old_path: str | None = None
+    sha: str = ""
+    author: str = ""
+    date: str = ""
+
+    def to_dict(self):
+        # Every key on every row, including the ones this survey never sets. A
+        # jq filter over the json is written against a shape, and one that has
+        # to guard for missing keys is one nobody writes correctly first try.
+        return {
+            "path": self.path,
+            "line": self.line,
+            "text": self.text,
+            "matches": self.matches,
+            "added": self.added,
+            "deleted": self.deleted,
+            "status": self.status,
+            "old_path": self.old_path,
+            "sha": self.sha,
+            "author": self.author,
+            "date": self.date,
+        }
+
+
+@dataclass
 class Result:
     runner: str
     cmd: str
     cwd: str
     exit: int
-    # "tests" or "lint". A linter has no pass count — every line it emits is a
-    # finding and a clean run emits nothing — so it cannot borrow the test
-    # verdict without inventing passes that were never asserted.
+    # "tests", "lint", or one of the survey kinds — "paths", "matches", "diff",
+    # "commits". A linter has no pass count — every line it emits is a finding
+    # and a clean run emits nothing — so it cannot borrow the test verdict
+    # without inventing passes that were never asserted. A survey has less
+    # still: nothing was asserted at all, so its only verdict is that the
+    # command ran, and its answer is the count.
     kind: str = "tests"
     # Set when the runner had to be killed for exceeding TQ_TIMEOUT. What was
     # collected up to that point is still worth reporting, but it is a partial
@@ -114,6 +164,15 @@ class Result:
     attempts: int = 1
     totals: dict = field(default_factory=new_totals)
     failures: list = field(default_factory=list)
+    # A survey's rows. Every one of them, however many that is: the whole point
+    # of the json is that the digest can show a shape because the full list is
+    # still somewhere.
+    items: list = field(default_factory=list)
+    # The flag by which the command capped its own output, when it did — `-n 50`
+    # on a log, `--max-count` on a grep. A capped count is a floor, and reporting
+    # it as a total is the survey-shaped false pass: "50 commits" reads as the
+    # answer when it is only as far as git was asked to look.
+    limited: str = ""
     # Things the runner said that are not findings but change what the run
     # means: ruff warns "No Python files found under the given path(s)" on
     # stderr and still exits 0, which is a clean verdict over nothing at all.
@@ -134,6 +193,8 @@ class Result:
             "attempts": self.attempts,
             "totals": self.totals,
             "failures": [f.to_dict() for f in self.failures],
+            "items": [i.to_dict() for i in self.items],
+            "limited": self.limited,
             "notes": self.notes,
             "truncated": self.truncated,
         }

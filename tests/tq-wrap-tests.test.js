@@ -65,8 +65,35 @@ test('a command tq does not claim is left alone', { skip }, () => {
     'ls -la',
     'node script.js',            // no --test
     'ruff format --check .',     // reformatting, not diagnostics
-    'grep pytest notes.txt',     // merely names a runner
     'echo "run node --test"',
+  ]) {
+    assert.strictEqual(rewritten(command), null, `must not rewrite: ${command}`);
+  }
+});
+
+test('the sweeps that dominate context are routed too', { skip }, () => {
+  assert.strictEqual(rewritten('git log --oneline -50'), 'tq git log --oneline -50');
+  assert.strictEqual(rewritten('git diff main'), 'tq git diff main');
+  assert.strictEqual(rewritten("find . -name '*.py'"), "tq find . -name '*.py'");
+  assert.strictEqual(rewritten('rg TODO src'), 'tq rg TODO src');
+  assert.strictEqual(rewritten('ls -R src'), 'tq ls -R src');
+  // Still not mistaken for the runner it merely names: this is a grep survey,
+  // and nothing injects pytest's reporter flags into it.
+  assert.strictEqual(rewritten('grep pytest notes.txt'), 'tq grep pytest notes.txt');
+});
+
+test('a command that writes or runs something is never claimed', { skip }, () => {
+  // The line tq must not cross: it captures stdout, so it can only ever stand
+  // in front of a command whose whole effect is what it printed.
+  for (const command of [
+    'git commit -m wip',
+    'git push',
+    'git checkout -b x',
+    'find . -name "*.tmp" -delete',
+    'find . -exec rm {} ;',
+    'git diff --quiet',          // the status is the answer, not the shape
+    'grep -l TODO src',          // a different answer shape: names, not matches
+    'ls -lR src',                // a long listing carries permissions, not paths
   ]) {
     assert.strictEqual(rewritten(command), null, `must not rewrite: ${command}`);
   }
