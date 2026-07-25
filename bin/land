@@ -15,7 +15,8 @@
 # for a settled main instead of racing it.
 #
 # Background jobs must not run this — they open draft PRs and stop there. This is
-# the operator half: it is the only thing here that force-pushes or merges.
+# the operator half: it is the only thing here that force-pushes, takes a PR out
+# of draft, or merges.
 #
 #   land                 land the current branch
 #   land <branch>        land <branch> (must be checked out in this worktree)
@@ -29,7 +30,7 @@ BRANCH=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) printf 'land: unknown flag %s\n' "$1" >&2; exit 2 ;;
     *) BRANCH=$1 ;;
   esac
@@ -81,7 +82,9 @@ if [ "$DRY" -eq 1 ]; then
   say "fetch   origin"
   say "rebase  $BRANCH onto origin/main"
   say "push    --force-with-lease (runs the pre-push gate)"
-  say "merge   gh pr merge $PR --rebase --delete-branch"
+  say "ready   gh pr ready $PR (only if it is still a draft)"
+  say "merge   gh pr merge $PR --rebase"
+  say "delete  git push origin --delete $BRANCH"
   exit 0
 fi
 
@@ -102,9 +105,31 @@ land() {
   # The push runs the pre-push gate, so a red suite stops the landing here.
   git push --force-with-lease origin "$BRANCH" || return 1
 
-  gh pr merge "$PR" --rebase --delete-branch || return 1
+  # Every PR here arrives as a draft — that is the convention background jobs
+  # follow — and GitHub refuses to merge one: "Pull Request is still a draft".
+  # Landing it is the operator saying it is ready, so say so and carry on.
+  if [ "$(gh pr view "$PR" --json isDraft --jq '.isDraft' 2>/dev/null)" = "true" ]; then
+    say "PR #$PR is a draft — marking it ready"
+    gh pr ready "$PR" || return 1
+  fi
+
+  # Deliberately not --delete-branch. Its local half checks out the default
+  # branch, which cannot work here: main is held by the primary worktree, so gh
+  # fails with "'main' is already used by worktree at ..." *after* the merge has
+  # already gone through. The landing then reports as failed when it succeeded,
+  # and the branch it promised to delete is still on the remote. Merge, then
+  # delete the remote ref with git, which has no opinion about checkouts.
+  gh pr merge "$PR" --rebase || return 1
+
+  if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+    git push -q origin --delete "$BRANCH" ||
+      say "could not delete origin/$BRANCH — delete it by hand"
+  fi
 
   printf 'landed %s (PR #%s)\n' "$BRANCH" "$PR"
+  # The local branch is checked out right here, so it cannot delete itself. It is
+  # on main under a new SHA after the rebase-merge, which is why -d refuses it.
+  say "worktree still holds $BRANCH; from the primary: git worktree remove <path> && git branch -D $BRANCH"
 }
 
 if command -v flock >/dev/null 2>&1; then
