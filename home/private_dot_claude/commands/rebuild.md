@@ -13,7 +13,7 @@ of this command.
 
 STEP 1 — Run lint
 
-Execute the full lint check (/lint STEP 1–6) to get a baseline health report before restructuring. Fix all safe issues now so the rebuild starts from a clean state.
+Run /lint end to end (its STEP 0 vault resolve is already done above) to get a baseline health report before restructuring, and to fix all safe issues so the rebuild starts from a clean state.
 
 STEP 2 — Read all wiki pages
 

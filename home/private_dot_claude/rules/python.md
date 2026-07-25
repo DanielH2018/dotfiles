@@ -1,6 +1,7 @@
 ---
 paths:
   - "**/*.py"
+  - "**/*.pyi"
 ---
 - Use ruff for linting and formatting
 - Type hints on function signatures; skip inline variable annotations unless non-obvious

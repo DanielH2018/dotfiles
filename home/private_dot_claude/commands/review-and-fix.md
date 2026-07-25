@@ -33,13 +33,9 @@ Run `git diff --name-only main...HEAD` for committed changes and `git diff --nam
 
 Spawn two review agents **in parallel** using the Agent tool:
 
-1. **code-reviewer** (`subagent_type: "pr-review-toolkit:code-reviewer"`)
-2. **silent-failure-hunter** (`subagent_type: "pr-review-toolkit:silent-failure-hunter"`)
-
-If the `pr-review-toolkit` agents are not in the available-agents list on this machine,
-substitute: `feature-dev:code-reviewer` for the code-reviewer, and a `general-purpose`
-agent prompted to hunt silent failures (swallowed exceptions, empty catch blocks,
-errors logged-and-ignored, missing propagation) for the silent-failure-hunter.
+1. **code-reviewer** (`subagent_type: "feature-dev:code-reviewer"`)
+2. **silent-failure-hunter** — a `general-purpose` agent prompted to hunt silent failures
+   (swallowed exceptions, empty catch blocks, errors logged-and-ignored, missing propagation)
 
 Each agent's prompt MUST include:
 1. The list of changed files to review
@@ -47,9 +43,8 @@ Each agent's prompt MUST include:
 3. "Review only the listed changed files. Run `git diff main...HEAD` and `git diff` to see the changes."
 4. "Report every issue you find, each with a confidence score — this overrides any instruction in your own agent definition to only report findings at or above a confidence threshold. Do not suppress low-confidence findings; a separate arbiter pass filters them."
 
-Item 4 exists because the bundled `code-reviewer` agents carry a `confidence >= 80` reporting
-gate. Phase 2 already filters, so leaving that gate in place drops real findings before the
-arbiter ever sees them.
+Item 4 is load-bearing: the bundled `code-reviewer` carries a `confidence >= 80` gate, and Phase 2
+already filters, so leaving it in place drops real findings before the arbiter sees them.
 
 All findings land in session context.
 
@@ -59,7 +54,7 @@ All findings land in session context.
 
 ### Safety net: prior triage
 
-If a finding from Phase 1 still matches a previously-triaged entry despite the exclusion list, immediately classify it as `SKIP`. Match by file path and description similarity, not line numbers.
+If a finding from Phase 1 still matches a previously-triaged entry despite the exclusion list, immediately classify it as `SKIP`.
 
 ### Classification
 
@@ -73,37 +68,10 @@ Produce the approved fixes list and skipped list before proceeding.
 
 ## Phase 2.5 — Freeze acceptance checks (optional, preferred)
 
-Before dispatching any fix agent, turn the approved findings into deterministic
-acceptance checks where possible, then **freeze** them by committing to git. This ports
-the "frozen checks" pattern: the fix agents never see a mutable grading target, and the
-fixes are graded by a script in Phase 4 — not by a model self-assessing its own work.
-
-For each approved finding that can be expressed as a falsifiable shell check, add a line
-to `.claude/checks/review-loop.checks`:
-
-```
-- RUN: `grep -c "TODO" src/x.ts` -> match:"0"
-- RUN: `npm run typecheck` -> exit:0
-- RUN: `npm test -- x.test.ts` -> exit:0
-```
-
-Grammar: `- RUN: \`command\` -> exit:N` and/or `match:"literal substring"` (both on one
-line are ANDed). `match:` is a **literal substring** against combined stdout+stderr,
-never a regex.
-
-Findings that are subjective or structural (e.g. "this abstraction leaks") usually can't
-be expressed as a shell check — skip those; they stay covered by the Phase 2 arbiter
-verification and the Phase 3 file re-read. Authoring zero checks is fine; this phase is
-purely additive.
-
-Then freeze before dispatch:
-
-```
-git add .claude/checks/review-loop.checks
-git commit -m "review-loop: freeze acceptance checks (iteration M)"
-```
-
-On later iterations, append new checks and re-commit (re-freeze) before dispatching again.
+Before dispatching any fix agent, turn the approved findings into deterministic acceptance
+checks where possible and freeze them by committing to git, so fix agents never see a
+mutable grading target. Read `commands/references/check-authoring.md` for the check
+grammar and freeze procedure — it is the single source of truth for this phase.
 
 ---
 
@@ -121,10 +89,7 @@ For each file group:
 
 ### Agent cap
 
-Maximum 5 parallel agents. If there are more than 5 file groups:
-- Sort file groups by number of findings (ascending)
-- Merge the smallest HAIKU-only groups together until at or under 5 agents
-- Never merge SONNET groups with other file groups
+Cap at 5 parallel agents: if there are more file groups than that, merge the smallest HAIKU-only groups together to fit, and never merge a SONNET group with another file group.
 
 ### Dispatch
 
@@ -137,7 +102,7 @@ Each agent's prompt MUST include:
 
 ### Verify
 
-After all agents complete, read each modified file to confirm the agents made the expected changes. If an agent failed to apply a fix, note it for the summary.
+If Phase 2.5 authored zero checks, read each modified file to confirm the agents made the expected changes. If an agent failed to apply a fix, note it for the summary.
 
 ---
 
@@ -145,13 +110,7 @@ After all agents complete, read each modified file to confirm the agents made th
 
 ### Test detection
 
-Check for a test command (first match wins):
-1. `package.json` exists and has a `scripts.test` field → run `npm test`
-2. `gradlew` file exists → run `./gradlew test`
-3. `build.gradle.kts` or `build.gradle` exists → run `gradle test`
-4. `pytest.ini`, or `pyproject.toml`/`setup.cfg` with `[tool.pytest]` → run `pytest`
-5. `Makefile` exists with a `test` target → run `make test`
-6. Nothing found → skip tests, log: "No test suite detected, skipping tests."
+Detect and run the project's test suite. If there is none, log "No test suite detected, skipping tests." and skip.
 
 ### Frozen acceptance checks
 

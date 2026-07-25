@@ -34,7 +34,7 @@ Read `$VAULT/index.md`.
 
 STEP 3 — Check frontmatter compliance
 
-For every wiki page (all .md files, using the same exclusion set as STEP 2 — from `$VAULT/.claude/wiki-context.local.md` if present, else the generic defaults above):
+For every wiki page (all .md files, same exclusion set as STEP 2):
 Required fields: `title`, `summary`, `tags`, `created`, `updated`
 
 Flag any missing fields. If `created` or `updated` are missing and can be inferred, fill them in. Otherwise flag for human review.
@@ -81,25 +81,13 @@ Report both lists for human review. Do not auto-fix — deciding whether a fact 
 
 STEP 8 — Writing-style check (flag only)
 
-Scan wiki-page prose (skip frontmatter, code blocks, tables, and wikilinks) for "AI-writing" tells, so Claude-authored pages read like notes, not boilerplate. Flag — do **not** auto-rewrite; rewriting prose can change meaning. Report per file the offending snippet + which pattern it matched. Patterns (case-insensitive), adapted from `avoid-ai-writing`:
-
-- **Significance inflation** — "plays a vital/crucial/pivotal role", "stands as a testament", "is a game-changer", "in today's fast-paced world".
-- **Vague attribution** — "experts say", "it is widely regarded", "studies show" with no source (vault facts should cite `[[Page]]` or an MCP source).
-- **Promotional filler** — "seamless", "robust", "cutting-edge", "leverage the power of", "unlock", "elevate", "delve into", "navigate the complexities".
-- **Hedged nothing-statements** — "it's important to note that", "it's worth mentioning that", "when it comes to".
-- **Rule-of-three padding & rhetorical questions** — reflexive tricolons and "But what does this mean?"-style questions.
-- **Formatting tells** — em-dash pile-ups used for drama, emoji as section markers, "Certainly!/Great question!"-style openers, closing "In summary/In conclusion" recaps on a short note.
-- **Unfilled placeholders** — literal "[TODO]", "[insert …]", "lorem ipsum", "XXX".
+Scan wiki-page prose (skip frontmatter, code blocks, tables, and wikilinks) for "AI-writing" tells, so Claude-authored pages read like notes, not boilerplate. Read `~/.claude/rules/anti-slop.md` and apply it to the prose — its `paths:` frontmatter scopes it to code file extensions, so it does NOT auto-load for wiki Markdown; this step must read it explicitly. Flag — do **not** auto-rewrite; rewriting prose can change meaning. Report per file the offending snippet + which pattern it matched.
 
 Keep this a lightweight signal, not a witch-hunt — flag clear cases, and a short count ("3 style flags across 2 pages") is enough.
 
 STEP 9 — Auto-fix safe issues
 
-Execute all auto-fixes identified above:
-- Reset future-dated `updated` fields to `today`
-- Add unlisted .md files to index.md with an appropriate one-line summary
-- Fill in inferable missing frontmatter fields
-- Repair broken links that resolve to exactly one page (renamed/normalized target); leave zero- or multiple-match links for human review
+Apply the auto-fixes identified above.
 
 STEP 10 — Prepend to log
 
