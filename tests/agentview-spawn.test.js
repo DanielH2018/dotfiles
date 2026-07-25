@@ -22,7 +22,7 @@ function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefi
 
 // A stub-bin dir (fzf/tmux/wezterm/claude-sandbox/hostname) + a repos root with fake git
 // repos. The fzf stub picks by prompt; tmux/wezterm log their spawn command.
-function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [] } = {}) {
+function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [], winWezterm = false } = {}) {
   const bin = scratch('avs-bin-');
   const reposRoot = scratch('avs-repos-');
   for (const r of repos) fs.mkdirSync(path.join(reposRoot, r, '.git'), { recursive: true });
@@ -71,6 +71,16 @@ exit 0
 case "$*" in *spawn*) echo "$*" >> "$WEZ_SPAWN_LOG" ;; esac
 exit 0
 `, { mode: 0o755 });
+  // The WINDOWS wezterm.exe, reached over /mnt/c. Off by default so the repo-picker tests keep
+  // their '[Windows · plain claude]' row suppressed; the WSL spawn tests opt in.
+  const winWezLog = path.join(bin, 'win-wez.log'); fs.writeFileSync(winWezLog, '');
+  const winWezBin = path.join(bin, winWezterm ? 'wezterm.exe' : 'no-such-wezterm.exe');
+  if (winWezterm) {
+    fs.writeFileSync(winWezBin, `#!/bin/bash
+echo "$*" >> "$WIN_WEZ_LOG"
+exit 0
+`, { mode: 0o755 });
+  }
   fs.writeFileSync(path.join(bin, 'claude-sandbox'), `#!/bin/bash
 echo "$*" >> "$SANDBOX_LOG"
 case "$*" in *--complete-branches*) printf 'main\\nfeature-x\\n' ;; esac
@@ -114,14 +124,14 @@ exit 0
     // No Windows source in these repo-picker tests: point WEZTERM_WIN at a nonexistent path so
     // the '[Windows · plain claude]' row is suppressed regardless of the real host (a dev machine
     // with a real wezterm.exe would otherwise leak it in). Windows spawn has its own test file.
-    AGENT_VIEW_WEZTERM_WIN: path.join(bin, 'no-such-wezterm.exe'),
+    AGENT_VIEW_WEZTERM_WIN: winWezBin,
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
-    CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog,
+    CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog, WIN_WEZ_LOG: winWezLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
-    ctLog, ctsLog, fzfArgsLog,
+    ctLog, ctsLog, fzfArgsLog, winWezLog, winWezBin,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 // `--spawn [portfile]`: a portfile arg opts into the ctrl-n dismiss (POST abort on success).
@@ -206,7 +216,8 @@ test('picking the no-repo row spawns plain host claude in a tmux window, no sand
 
 test('picking the no-repo row under wezterm spawns host claude in a new tab', { skip }, () => {
   const { env, spawnLog } = makeEnv();
-  run(env, { WEZTERM_PANE: '3', FZF_REPO: HOST_ROW });
+  // IS_WSL=0: a NATIVE wezterm, where the local CLI reaches the GUI that owns this pane.
+  run(env, { WEZTERM_PANE: '3', AGENT_VIEW_IS_WSL: '0', FZF_REPO: HOST_ROW });
   const log = fs.readFileSync(spawnLog, 'utf8');
   assert.match(log, /spawn --/, 'uses wezterm cli spawn');
   assert.ok(log.includes('cd ~/dev 2>/dev/null || cd; claude'), `runs host claude in ~/dev; got: ${log}`);
@@ -222,10 +233,34 @@ test('the no-repo row is offered even when the repos root is empty', { skip }, (
 
 test('under wezterm (no tmux), spawns a new tab running the launcher', { skip }, () => {
   const { env, spawnLog } = makeEnv();
-  run(env, { WEZTERM_PANE: '3', FZF_REPO: 'airflow', FZF_BRANCH: 'main' });
+  run(env, { WEZTERM_PANE: '3', AGENT_VIEW_IS_WSL: '0', FZF_REPO: 'airflow', FZF_BRANCH: 'main' });
   const log = fs.readFileSync(spawnLog, 'utf8');
   assert.match(log, /spawn --/, 'uses wezterm cli spawn');
   assert.match(log, /airflow -b main/, 'passes the repo + branch to the launcher');
+});
+
+// ---- WSL: the GUI is the WINDOWS wezterm, so the LINUX cli must not be used ----
+// A WSL pane's WEZTERM_PANE is forwarded in over WSLENV (wezterm.lua), so it looks local
+// while the GUI lives on Windows. `wezterm cli spawn` in WSL cannot reach that GUI: it
+// daemonizes its own headless wezterm-mux-server and spawns there, where nobody is
+// attached — CTRL+N read as a no-op. These pin the routing so that can't come back.
+test('in WSL, a spawn goes out through wezterm.exe pinned to the WSL domain', { skip }, () => {
+  const { env, winWezLog, spawnLog } = makeEnv({ winWezterm: true });
+  run(env, { WEZTERM_PANE: '3', AGENT_VIEW_IS_WSL: '1', FZF_HOST: 'Homelab', FZF_REPO: 'infra', FZF_BRANCH: 'dev' });
+  const win = fs.readFileSync(winWezLog, 'utf8');
+  assert.match(win, /cli spawn/, `spawns via the Windows wezterm.exe; got: ${win}`);
+  assert.match(win, /--domain-name WSL:Ubuntu/, `pins the WSL domain so the tab lands Linux-side; got: ${win}`);
+  assert.match(win, /--ssh=daniel-server infra -b dev/, `carries the remote launcher; got: ${win}`);
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '',
+    'the Linux wezterm cli is never used — it would spawn into a phantom mux server');
+});
+
+test('in WSL with no reachable wezterm.exe, a spawn execs the named launcher instead', { skip }, () => {
+  const { env, ctsLog, spawnLog } = makeEnv();   // winWezterm off -> WEZTERM_WIN does not exist
+  run(env, { WEZTERM_PANE: '3', AGENT_VIEW_IS_WSL: '1', FZF_HOST: 'Homelab', FZF_REPO: 'infra', FZF_BRANCH: 'dev' });
+  assert.match(fs.readFileSync(ctsLog, 'utf8'), /--ssh=daniel-server infra -b dev/,
+    'falls through to the in-place named launcher rather than spawning into nowhere');
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'still never the Linux wezterm cli');
 });
 
 test('cancelling the repo pick is a clean no-op (no spawn)', { skip }, () => {

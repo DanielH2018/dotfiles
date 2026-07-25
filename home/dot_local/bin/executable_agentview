@@ -141,6 +141,14 @@ declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
 declare -A HOST_SSH=( [daniel-server]="daniel-server" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
+# Which side of the WSL boundary we're on. This decides which wezterm BINARY can reach the
+# GUI (see spawn_in_backend): in WSL the GUI is wezterm.exe on Windows, and the Linux cli
+# cannot see its mux. Overridable so the tests can drive both sides.
+if [ -n "${AGENT_VIEW_IS_WSL:-}" ]; then IS_WSL="$AGENT_VIEW_IS_WSL"
+elif grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then IS_WSL=1
+else IS_WSL=0; fi
+# The wezterm domain a WSL-side tab must be pinned to (config.wsl_domains in wezterm.lua).
+WSL_DOMAIN="${AGENT_VIEW_WSL_DOMAIN:-WSL:Ubuntu}"
 # Dir a picker-spawned Windows claude lands in. MUST be a folder whose Claude trust
 # dialog is already accepted — Claude runs no hooks in an untrusted folder, so a session
 # started somewhere untrusted (e.g. a fresh ~/dev) never fires agent-view-state.sh and
@@ -1012,8 +1020,21 @@ spawn_in_backend() {  # $1=inner (new-pane cmd) $2=title $3=named (bare-shell na
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux new-window -n "$title" "$inner"; return 0
   fi
-  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
+  # WezTerm: a new tab. WHICH binary can reach the GUI depends on the side we're on. In a WSL
+  # pane the GUI is wezterm.exe on Windows and $WEZTERM_PANE only looks local because
+  # wezterm.lua forwards it over WSLENV; the Linux cli cannot see that GUI's mux, so
+  # `wezterm cli spawn` quietly daemonizes its OWN headless wezterm-mux-server and spawns
+  # there, where nobody is attached — which is how CTRL+N read as doing nothing at all. Go
+  # back out through wezterm.exe, pinning the WSL domain so the tab lands on THIS side.
+  # No reachable wezterm.exe falls through to the named launcher below: spawning in place is
+  # worse than a new tab, but it is a session the user can actually see.
+  if [ -n "${WEZTERM_PANE:-}" ]; then
+    if [ "$IS_WSL" = 1 ]; then
+      [ -x "$WEZTERM_WIN" ] && { "$WEZTERM_WIN" cli spawn --domain-name "$WSL_DOMAIN" \
+        -- bash -lc "$inner" >/dev/null 2>&1; return 0; }
+    elif command -v wezterm >/dev/null 2>&1; then
+      wezterm cli spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
+    fi
   fi
   # Bare shell (no mux): exec the NAMED launcher so the session lands in a named, jumpable
   # tmux session — the case cts/ct exist to fix. Replaces the picker's tty, as before.
