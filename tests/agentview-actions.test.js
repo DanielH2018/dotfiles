@@ -133,7 +133,11 @@ exit 0
     WEZWIN_SEND_LOG: wezwinSendLog, TASKKILL_LOG: taskkillLog, CLAUDE_LOG: claudeLog, KILL_LOG: killLog,
     FZF_CAPTURE: capture,
   };
-  delete env.TMUX; delete env.WEZTERM_PANE;
+  // These model agentview running where the LOCAL cli owns the GUI, so the `wezterm` stub above
+  // is the one that should be reached. Under WSL that is false — only wezterm.exe reaches the
+  // GUI — and the suite itself runs in WSL, so say which scenario this is instead of inheriting
+  // it. The WSL routing gets its own tests further down.
+  delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
   return {
     bin, home, windir, env, tmuxLog, activateLog, spawnLog, wezSendLog, wezListFile, sshLog,
     wezwinActivateLog, wezwinSendLog, taskkillLog, claudeLog, killLog, capture,
@@ -214,6 +218,20 @@ const jumpScenarios = [
     check: (l) => {
       assert.match(l.wezwinActivateLog, /(^|\n)22(\n|$)/);
       assert.strictEqual(l.activateLog, '', 'must never activate a local wezterm pane for a Windows row');
+      assert.strictEqual(l.tmuxLog, ''); assert.strictEqual(l.sshLog, '');
+    },
+  },
+  {
+    // The row's host says WSL, but the question is which cli can reach the GUI — and from WSL
+    // the Linux /usr/bin/wezterm cannot, at all. Routing on the host would send this to the
+    // local cli, which answers out of a mux server it silently starts: the pane is "activated"
+    // in a headless phantom and the jump looks like a no-op.
+    name: 'WSL: a local-host wezterm row routes to wezterm.exe, never the Linux cli',
+    key: rowKey({ cwd: '/local/c', kind: 'host', locator: 'wezterm:33' }),
+    extraEnv: { WSL_DISTRO_NAME: 'Ubuntu' },
+    check: (l) => {
+      assert.match(l.wezwinActivateLog, /(^|\n)33(\n|$)/);
+      assert.strictEqual(l.activateLog, '', 'the Linux cli cannot reach the GUI from WSL');
       assert.strictEqual(l.tmuxLog, ''); assert.strictEqual(l.sshLog, '');
     },
   },
@@ -389,6 +407,26 @@ test('do_rename: local wezterm pane gets /rename via local wezterm cli, no tmux/
   assert.strictEqual(read(tmuxLog), '', 'no tmux for a wezterm-backed rename');
   assert.strictEqual(read(sshLog), '', 'no ssh for a local rename');
   assert.strictEqual(read(wezwinSendLog), '', 'never the Windows wezterm.exe for a local pane');
+});
+
+test('do_rename: every wezterm cli call carries --no-auto-start', { skip }, () => {
+  // Without it a cli that finds no server does not fail — it STARTS one (wezterm-mux-server),
+  // which comes up owning a default pane numbered from 0. That is a stray daemon, and its pane
+  // ids collide with the real ones wezterm-pane-ssh resolves through $WEZTERM_PANE.
+  const { env, wezSendLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/w', state: 'idle', locator: 'wezterm:12' });
+  assert.strictEqual(run(env, ['--rename', key], {}, 'New Title\n').code, 0);
+  assert.match(read(wezSendLog), /--no-auto-start/);
+});
+
+test('do_rename: under WSL the rename goes out through wezterm.exe, still --no-auto-start', { skip }, () => {
+  const { env, wezSendLog, wezwinSendLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/w', state: 'idle', locator: 'wezterm:12' });
+  assert.strictEqual(run(env, ['--rename', key], { WSL_DISTRO_NAME: 'Ubuntu' }, 'New Title\n').code, 0);
+  const sent = read(wezwinSendLog);
+  assert.match(sent, /send-text.*--no-paste --pane-id 12/);
+  assert.match(sent, /--no-auto-start/);
+  assert.strictEqual(read(wezSendLog), '', 'the Linux cli cannot reach the GUI from WSL');
 });
 
 // ==========================================================================
