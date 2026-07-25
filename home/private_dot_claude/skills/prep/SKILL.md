@@ -1,6 +1,6 @@
 ---
 name: prep
-description: Use before starting non-trivial work — understand, enrich context, clarify, and confirm before executing. Invoked as /prep or self-triggered on non-trivial prompts.
+description: Use before starting non-trivial work — understand, enrich context, clarify, and confirm before executing. Invoked explicitly as /prep only; do not self-trigger on prompts.
 ---
 
 # Prep — intake before execution
