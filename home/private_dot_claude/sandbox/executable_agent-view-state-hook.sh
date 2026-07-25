@@ -6,6 +6,12 @@
 # the launcher owns identity + lifecycle (resurrection guard, spec §3). No `set -e`: it
 # sources the shared helper, which must not fail-on-error a hook. Emits NOTHING on stdout.
 # Usage: agent-view-state-hook.sh <working|needs-input|completed>
+# Drain the event JSON before anything else. The state comes from $1, so the payload is
+# unused -- but Claude writes it to our stdin regardless, and exiting without reading it
+# leaves that write racing a pipe we already closed (EPIPE for the caller). The no-key
+# no-op below is the fastest exit and so the most likely to lose that race. Every sibling
+# hook consumes stdin the same way.
+cat >/dev/null 2>&1
 key="${AGENT_VIEW_KEY:-}"
 [ -n "$key" ] || exit 0                       # exec/shell containers never set it -> no-op
 helper="$HOME/.claude/hooks/agent-view-register.sh"

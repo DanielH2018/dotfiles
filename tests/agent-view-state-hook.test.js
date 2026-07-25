@@ -33,16 +33,17 @@ function fakeEnv() {
   fs.mkdirSync(reg, { recursive: true });
   return { home, reg };
 }
-function runHook(state, { home, reg, key }) {
+function runHook(state, { home, reg, key, input = '{"session_id":"x"}' }) {
   const env = { ...process.env, HOME: home, AGENT_VIEW_DIR: reg };
   if (key !== undefined) env.AGENT_VIEW_KEY = key; else delete env.AGENT_VIEW_KEY;
   delete env.TMUX; delete env.WEZTERM_PANE;
-  // No stdin: this hook reads its state from argv and AGENT_VIEW_KEY, never from stdin.
-  // Writing a payload it never drains raced its exit and failed ~20% of runs with
-  // `spawnSync bash EPIPE`, most often on the early-exit paths that return before
-  // sourcing the helper.
+  // Send a realistic payload by default. The hook takes its state from argv, but Claude
+  // writes the event JSON to its stdin regardless, so a test that sends nothing stops
+  // modelling the real call. Passing '' here did silence the `spawnSync bash EPIPE`
+  // flake, but only by removing the write that lost the race -- the deployed hook still
+  // raced Claude's. The fix is in the hook, which now drains stdin before it exits.
   return execFileSync('bash', [HOOK, state], {
-    env, encoding: 'utf8', input: '', stdio: ['pipe', 'pipe', 'pipe'],
+    env, encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
 function writeRow(reg, key, state) {
@@ -79,6 +80,17 @@ test('no AGENT_VIEW_KEY -> no-op (exec/shell container, key never set)', { skip 
   writeRow(reg, 'k', 'working');
   runHook('completed', { home, reg });                 // key undefined
   assert.strictEqual(readRow(reg, 'k').state, 'working', 'must not touch any row');
+});
+// Regression: the hook must consume the event JSON Claude writes to its stdin. Exiting
+// without draining leaves the caller's write racing a pipe the hook already closed, which
+// showed up here as an intermittent `spawnSync bash EPIPE` (~4% of runs, worst on the
+// no-key path -- the earliest exit). A payload past the 64KiB pipe buffer can't be absorbed
+// by an undraining child at all, so it turns that race into a certainty: without the drain
+// this fails every time, not one run in twenty-five.
+test('drains stdin, so the caller never races a closed pipe', { skip }, () => {
+  const { home, reg } = fakeEnv();
+  const big = JSON.stringify({ session_id: 'x', pad: 'p'.repeat(256 * 1024) });
+  assert.doesNotThrow(() => runHook('completed', { home, reg, input: big }));
 });
 test('missing row -> never created (resurrection guard)', { skip }, () => {
   const { home, reg } = fakeEnv();
