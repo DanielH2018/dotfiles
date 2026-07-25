@@ -608,6 +608,11 @@
             "type": "command",
             "command": "~/.claude/hooks/chezmoi-apply-guard.sh",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/tq-wrap-tests.py",
+            "timeout": 10
           }
         ]
       },
