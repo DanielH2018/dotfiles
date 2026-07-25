@@ -8,8 +8,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "653d953c1d0f53a930ff55f7e83a7e98b6e7b06f0180d8685eea8b6717be0c4e",
-      "landed": "2026-07-25T19:06:23.063Z"
+      "hash": "2bec6d92ff4eff4cf0752a452a9b56d7a10f6a5abc49be5ef9a085553b587ea9",
+      "landed": "2026-07-25T22:27:40.398Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "2431bde852dbe309b8d165e2aa5d860a5a0eb112ed8420b227ad6cd2b1d0bf90",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "83e011fd76a70d59ef5af1c2808dfbc72a985c1a75a27aa070cd128e0f793c96",
+      "landed": "2026-07-25T22:27:40.398Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
