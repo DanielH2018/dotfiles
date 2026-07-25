@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="ruff" tests="1" failures="0" errors="0">
+    <testsuite name="ruff" tests="1" disabled="0" errors="0" failures="0" package="org.ruff">
+        <testcase name="No errors found" classname="ruff">
+        </testcase>
+    </testsuite>
+</testsuites>

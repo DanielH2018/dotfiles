@@ -15,6 +15,14 @@ let python3Ok = true;
 try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
 const skip = python3Ok ? false : 'python3 unavailable';
 
+function needs(binary) {
+  if (!python3Ok) return skip;
+  try { execFileSync(binary, ['--version'], { stdio: 'ignore' }); } catch { return `${binary} unavailable`; }
+  return false;
+}
+const skipRuff = needs('ruff');
+const skipShellcheck = needs('shellcheck');
+
 const TQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_tq');
 
 function runTq(dir, args) {
@@ -124,6 +132,60 @@ test('TQ_JSON does not follow tq into the runner it spawns', { skip }, () => {
   // The outer run still honours its own TQ_JSON — dropping it for the child
   // must not mean dropping it for tq itself.
   assert.ok(fs.existsSync(target));
+});
+
+test('ruff findings digest to a rule code at a real location', { skip: skipRuff }, () => {
+  const dir = scratch({ 'bad.py': 'import os\n' });
+  const r = runTq(dir, ['ruff', 'check', 'bad.py']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /^FAIL 1 finding in 1 file {2}\d+\.\d+s$/m);
+  // The location has to survive: ruff states it in attributes, and its
+  // @classname has the .py stripped off.
+  assert.match(r.stdout, /^bad\.py:1 {2}F401$/m);
+  assert.doesNotMatch(r.stdout, /org\.ruff/);
+});
+
+test('a clean ruff run is one line', { skip: skipRuff }, () => {
+  const dir = scratch({ 'ok.py': 'x = 1\nprint(x)\n' });
+  const r = runTq(dir, ['ruff', 'check', 'ok.py']);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout.trim(), r.stdout.trim().match(/^CLEAN {2}\d+\.\d+s$/)?.[0]);
+});
+
+test('ruff over a tree holding no python says so instead of passing', { skip: skipRuff }, () => {
+  // exit 0 and an empty report, identical to a clean run by exit code alone —
+  // the whole reason a lint digest cannot just print PASS.
+  const dir = scratch({ 'notes.txt': 'nothing to lint\n' });
+  const r = runTq(dir, ['ruff', 'check', '.']);
+  assert.strictEqual(r.status, 0);
+  assert.match(r.stdout, /^CLEAN {2}\d+\.\d+s$/m);
+  assert.match(r.stdout, /^note: .*No Python files found/m);
+});
+
+test('shellcheck findings carry severity, code and line', { skip: skipShellcheck }, () => {
+  const dir = scratch({ 'bad.sh': '#!/bin/bash\necho $undefined\n' });
+  const r = runTq(dir, ['shellcheck', 'bad.sh']);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /^FAIL \d+ findings in 1 file {2}\d+\.\d+s$/m);
+  assert.match(r.stdout, /^bad\.sh:2 {2}SC\d+$/m);
+  assert.match(r.stdout, /(warning|info): /);
+});
+
+test('a linter that cannot read its input never reads as clean', { skip: skipShellcheck }, () => {
+  const dir = scratch({});
+  const r = runTq(dir, ['shellcheck', 'no-such-file.sh']);
+  assert.notStrictEqual(r.status, 0);
+  assert.doesNotMatch(r.stdout, /CLEAN/);
+  assert.match(r.stdout, /^NO FINDINGS PARSED/m);
+});
+
+test('a command that merely names a runner is left alone', { skip }, () => {
+  // `grep pytest ...` is not a test run; treating it as one would splice
+  // reporter flags into the grep.
+  const dir = scratch({ 'notes.txt': 'remember to run pytest\n' });
+  const r = runTq(dir, ['grep', '-c', 'pytest', 'notes.txt']);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(r.stdout, '1\n');
 });
 
 test('an unrecognised command runs untouched', { skip }, () => {
