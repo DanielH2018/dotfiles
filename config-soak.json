@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "53312edb9c68afb90972fa8a0c31c612ea8070c3168c1316a82819c17ae88818",
-      "landed": "2026-07-25T17:47:04.301Z"
+      "hash": "97c5ca367de7234c489e60167f3c60bfbe3d073e9d1762ee146c8189e0dbb9df",
+      "landed": "2026-07-25T19:06:23.063Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "433d0cf1d1a2e02229ec53eb8a54bb15d338a0d4832e666559891bce4276006a",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "653d953c1d0f53a930ff55f7e83a7e98b6e7b06f0180d8685eea8b6717be0c4e",
+      "landed": "2026-07-25T19:06:23.063Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -103,8 +103,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_pre-compact.sh",
-      "hash": "ce2c33f3915d86b7672cb6e4df5b3d00fc5015fa53a6df54b093c23eb29d05dc",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "36d8f04fd515529461d681f085cf51a85328294c5804d445593f1965c694bf4c",
+      "landed": "2026-07-25T19:06:23.063Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
