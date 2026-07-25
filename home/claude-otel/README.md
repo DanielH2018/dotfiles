@@ -74,5 +74,11 @@ network too and change `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://otel-collector:4
 ## Notes
 
 - Image tags are pinned; bump them in `docker-compose.yml` as you like.
-- `OTEL_METRICS_INCLUDE_SESSION_ID=false` keeps Prometheus cardinality bounded over time.
+- `OTEL_METRICS_INCLUDE_SESSION_ID=true` is required for correct totals. With it `false`,
+  every concurrent Claude Code process collapses into a single Prometheus series and the
+  collector's prometheus exporter (last-writer-wins per label set) stops accumulating:
+  raw `sum()` under-reports by ~10x and `increase()[7d]` over-reports by ~274x, because
+  each process restart reads as a counter reset. Loki is unaffected — every event log is
+  stored independently, so event counts stayed trustworthy throughout.
+  The cost is cardinality: one series set per session, held for `metric_expiration` (168h).
 - Retention: Prometheus 90d, Loki 31d (edit in `docker-compose.yml` / `loki-config.yaml`).
