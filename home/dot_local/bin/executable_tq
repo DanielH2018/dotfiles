@@ -48,6 +48,7 @@ from adapters import junit as junit_adapter  # noqa: E402
 from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
 import scope  # noqa: E402
+from adapters import rdjson as rdjson_adapter  # noqa: E402
 from digest import digest  # noqa: E402
 from result import Result  # noqa: E402
 
@@ -269,9 +270,8 @@ def finish_lint(result, proc):
 
 
 def run_ruff(argv, workdir, tmp):
-    xml = os.path.join(tmp, "ruff.xml")
     cmd = drop_flag(argv, ("--output-format", "--output-file", "-o"))
-    proc, timed_out = run(cmd + ["--output-format=junit"], plain_env())
+    proc, timed_out = run(cmd + ["--output-format=json"], plain_env())
     result = Result(
         runner="ruff",
         kind="lint",
@@ -280,15 +280,7 @@ def run_ruff(argv, workdir, tmp):
         exit=proc.returncode,
         timed_out=timed_out,
     )
-    # ruff reports on stdout; stage it as a file so the JUnit adapter is fed the
-    # same way it is for pytest.
-    with open(xml, "w", encoding="utf-8") as fh:
-        fh.write(proc.stdout or "")
-    parse_junit(xml, result)
-    for fail in result.failures:
-        # ruff names each case after the rule, prefixed with its JUnit package:
-        # "org.ruff.F401". The rule code is the half worth reading.
-        fail.name = fail.name.removeprefix("org.ruff.")
+    lint_adapter.parse_ruff(proc.stdout, result)
     finish_lint(result, proc)
     return result, proc
 
@@ -351,6 +343,26 @@ def json_target():
     return path
 
 
+def run_ingested(argv, workdir, tmp, fmt):
+    """Any command at all, as long as its stdout speaks a format tq reads.
+
+    The escape hatch from tq's fixed list of runners: a linter tq has never
+    heard of still gets digested, and one it cannot be taught still runs.
+    """
+    proc, timed_out = run(argv, plain_env())
+    result = Result(
+        runner=os.path.basename(argv[0]),
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    INGESTORS[fmt](proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
 RUNNERS = {
     "node": run_node,
     "pytest": run_pytest,
@@ -359,7 +371,13 @@ RUNNERS = {
     "shellcheck": run_shellcheck,
 }
 
-TQ_FLAGS = ("--scope", "--diff-base")
+INGESTORS = {
+    "rdjson": rdjson_adapter.parse,
+    "ruff-json": lint_adapter.parse_ruff,
+    "shellcheck-json1": lint_adapter.parse_shellcheck,
+}
+
+TQ_FLAGS = ("--scope", "--diff-base", "--ingest")
 
 
 def split_flags(argv):
@@ -399,7 +417,11 @@ def main(argv):
     if not argv:
         sys.stderr.write("tq: no command given\n")
         return 2
-    kind = detect(argv)
+    fmt = opts.get("--ingest")
+    if fmt is not None and fmt not in INGESTORS:
+        sys.stderr.write(f"tq: --ingest must be one of {', '.join(INGESTORS)}\n")
+        return 2
+    kind = "ingest" if fmt else detect(argv)
     if kind is None:
         try:
             os.execvp(argv[0], argv)
@@ -410,7 +432,10 @@ def main(argv):
     workdir = os.getcwd()
     with tempfile.TemporaryDirectory(prefix="tq-") as tmp:
         started = time.monotonic()
-        result, proc = RUNNERS[kind](argv, workdir, tmp)
+        if kind == "ingest":
+            result, proc = run_ingested(argv, workdir, tmp, fmt)
+        else:
+            result, proc = RUNNERS[kind](argv, workdir, tmp)
         result.duration_ms = result.duration_ms or int(
             (time.monotonic() - started) * 1000
         )

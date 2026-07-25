@@ -141,7 +141,9 @@ test('ruff findings digest to a rule code at a real location', { skip: skipRuff 
   assert.match(r.stdout, /^FAIL 1 finding in 1 file {2}\d+\.\d+s$/m);
   // The location has to survive: ruff states it in attributes, and its
   // @classname has the .py stripped off.
-  assert.match(r.stdout, /^bad\.py:1 {2}F401$/m);
+  // The rule code now arrives as itself rather than as "org.ruff.F401" dug
+  // out of a JUnit classname, and the column survives with it.
+  assert.match(r.stdout, /^bad\.py:1:\d+ {2}F401$/m);
   assert.doesNotMatch(r.stdout, /org\.ruff/);
 });
 
@@ -167,8 +169,9 @@ test('shellcheck findings carry severity, code and line', { skip: skipShellcheck
   const r = runTq(dir, ['shellcheck', 'bad.sh']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /^FAIL \d+ findings in 1 file {2}\d+\.\d+s$/m);
-  assert.match(r.stdout, /^bad\.sh:2 {2}SC\d+$/m);
-  assert.match(r.stdout, /(warning|info): /);
+  // Column and severity come from json1 and used to be thrown away: the
+  // location was line-only and the level was glued onto the message text.
+  assert.match(r.stdout, /^bad\.sh:2:\d+ {2}SC\d+ {2}(warning|info)$/m);
 });
 
 test('a linter that cannot read its input never reads as clean', { skip: skipShellcheck }, () => {

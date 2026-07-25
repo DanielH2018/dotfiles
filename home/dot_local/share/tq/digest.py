@@ -110,6 +110,18 @@ def _output_block(label, text, scope, out):
     return dropped
 
 
+def fix_note(result):
+    """How many findings the tool offered to fix, and how many of those it
+    considers safe. The split is the point: an unsafe fix changes behaviour, so
+    "apply them all" is only ever right for the safe half."""
+    fixable = [f for f in result.failures if f.fixable]
+    if not fixable:
+        return ""
+    safe = sum(1 for f in fixable if f.fixable == "safe")
+    count = f"{len(fixable)} auto-fixable"
+    return f"{count} ({safe} safe)" if safe != len(fixable) else f"{count}, all safe"
+
+
 def _failure_block(fail, cwd, out):
     """One failure's lines, appended to `out`. Returns the bytes dropped."""
     where = shorten(fail.file, cwd) or "?"
@@ -118,6 +130,12 @@ def _failure_block(fail, cwd, out):
     label = "" if same else f"  {fail.name}"
     if fail.line:
         where = f"{where}:{fail.line}"
+        if fail.column:
+            where = f"{where}:{fail.column}"
+    # A linter's severity is part of the finding; a test failure has no such
+    # gradation and its default would be noise on every line.
+    if fail.source and fail.severity and fail.severity != "error":
+        label = f"{label}  {fail.severity}"
     out.append(f"{where}{label}")
     # An assertion diff over a large structure is unbounded, and one of them is
     # enough to spend the whole digest on a single failure.
@@ -170,4 +188,7 @@ def digest(result, json_path):
     result.truncated["stdout_bytes"] = dropped_bytes
     if result.truncated["failures"]:
         out.append(f"… {result.truncated['failures']} more failures in the json")
+    fixes = fix_note(result)
+    if fixes:
+        out.append(fixes)
     return "\n".join(out)

@@ -57,12 +57,33 @@ class Failure:
     # Set when the captured output is attributed more coarsely than one test —
     # node reports stdout per file, and a digest must not imply otherwise.
     scope: str = field(default="", repr=False)
+    # What a linter knows and a test runner does not. All optional: a test
+    # failure leaves every one of them unset, so the two kinds of finding share
+    # one record without either having to pretend to be the other.
+    column: int | None = None
+    end_line: int | None = None
+    end_column: int | None = None
+    severity: str = "error"
+    # The rule's documentation. Worth more than the code alone to a reader who
+    # can follow it, and the code alone is all JUnit was ever able to carry.
+    code_url: str | None = None
+    source: str | None = None
+    # "safe" or "unsafe" where the tool says so — whether the fix can be applied
+    # without reading it first is the part that decides what to do next.
+    fixable: str | None = None
 
     def to_dict(self):
         return {
             "file": self.file,
             "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
             "name": self.name,
+            "severity": self.severity,
+            "code_url": self.code_url,
+            "source": self.source,
+            "fixable": self.fixable,
             "message": self.message,
             "stdout": self.stdout,
             "stderr": self.stderr,
