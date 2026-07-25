@@ -228,12 +228,22 @@ end
 --   * the WSL helper — neither of the above reaches a WSL pane attached to a REMOTE tmux
 --     session (an agentview homelab jump): remote tmux swallows OSC 7 and WSL hides the
 --     process, so nothing on this side can see the hop. `wezterm-pane-ssh` answers from
---     inside Linux, where $WEZTERM_PANE is readable out of /proc. It costs a wsl.exe round
---     trip, so it is gated behind both cheap probes failing, and a split with no directory
---     to land in — the remote tmux pane's cwd isn't worth a second ssh to go fetch.
+--     inside Linux, matching $WEZTERM_PANE out of /proc. It costs a wsl.exe round trip, so
+--     it is gated behind both cheap probes failing, and a split with no directory to land
+--     in — the remote tmux pane's cwd isn't worth a second ssh to go fetch.
 -- The destination doubles as the ssh alias, matching agentview's HOST_SSH fallback: an
 -- unknown host surfaces ssh's own error IN the new pane, never a silently local shell.
 -- ---------------------------------------------------------------------------
+
+-- WEZTERM_PANE is a Windows-side variable, and a WSL pane is launched through wsl.exe, which
+-- forwards only what WSLENV names — so without this the helper above matches nothing and every
+-- agentview jump splits locally. WezTerm appends its own list to this value rather than replacing
+-- it (a live pane ends up naming TERM and friends twice), so repeating that list here is redundant
+-- — it stays as insurance in case that ever becomes an overwrite.
+config.set_environment_variables = {
+	WSLENV = "WEZTERM_PANE:TERM:COLORTERM:TERM_PROGRAM:TERM_PROGRAM_VERSION",
+}
+
 local LOCAL_HOSTS = {                          -- OSC 7 authorities that mean "this machine"
 	[(wezterm.hostname() or ""):lower()] = true,   -- the Windows box (local-domain panes)
 	["daniel-wsl"] = true,                         -- the WSL distro (WSL-domain panes)

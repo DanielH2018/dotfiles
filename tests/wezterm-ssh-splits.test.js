@@ -169,6 +169,7 @@ callback(window, pane)
 print("action=" .. tostring(captured.action))
 print("domain=" .. tostring(captured.arg.domain))
 print("cwd=" .. tostring(captured.arg.cwd))
+print("wslenv=" .. tostring((config.set_environment_variables or {}).WSLENV))
 print("probe_calls=" .. probe_calls)
 for _, a in ipairs(probe_argv or {}) do print("probe=" .. a) end
 if captured.arg.args == nil then
@@ -223,6 +224,7 @@ function split(paneName, { vertical = false } = {}) {
       : lines.filter((l) => l.startsWith('arg=')).map((l) => l.slice(4)),
     probeCalls: Number(get('probe_calls')),
     probeArgv: lines.filter((l) => l.startsWith('probe=')).map((l) => l.slice(6)),
+    wslenv: get('wslenv'),
   };
 }
 
@@ -323,6 +325,20 @@ test('a WSL probe that finds nothing, or fails outright, leaves the split local'
 test('flags in the probed argv are kept and their values are not read as the destination', { skip }, () => {
   assert.deepStrictEqual(split('agentview_flags').args,
     ['ssh', '-p', '2222', '-i', '/home/daniel/.ssh/k', 'box']);
+});
+
+// The probe matches panes by $WEZTERM_PANE, which is a WINDOWS variable: wsl.exe forwards
+// only what WSLENV names, so without WEZTERM_PANE listed there the helper finds no holder and
+// every agentview jump silently splits locally — green probe tests and all. Measured on a live
+// pane: WSLENV carried TERM/COLORTERM/TERM_PROGRAM/TERM_PROGRAM_VERSION and nothing else.
+test('WSLENV forwards WEZTERM_PANE, without dropping what WezTerm already sends', { skip }, () => {
+  const wslenv = split('local_wsl').wslenv;
+  const named = wslenv.split(':');
+  assert.ok(named.includes('WEZTERM_PANE'),
+    `WSLENV must name WEZTERM_PANE or the WSL probe can never match a pane; got "${wslenv}"`);
+  for (const v of ['TERM', 'COLORTERM', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION']) {
+    assert.ok(named.includes(v), `WSLENV still forwards ${v}`);
+  }
 });
 
 test('CTRL+SHIFT+D splits down with the same ssh-aware command', { skip }, () => {
