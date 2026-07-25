@@ -4,6 +4,10 @@ paths:
   - "**/*.tsx"
   - "**/*.js"
   - "**/*.jsx"
+  - "**/*.mts"
+  - "**/*.cts"
+  - "**/*.mjs"
+  - "**/*.cjs"
 ---
 - Use strict TypeScript; avoid `any` — prefer `unknown` with type guards
 - Prefer `const` over `let`; never use `var`

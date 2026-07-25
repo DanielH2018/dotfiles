@@ -3,15 +3,7 @@ description: "Iterative Claude Code setup review and fix loop. Usage: /review-se
 disable-model-invocation: true
 ---
 
-Parse the arguments from `$ARGUMENTS`:
-
-1. **Max iterations:** Extract the first bare number. Default to `3` if not provided.
-2. **Autonomy mode:** Check for flags:
-   - `--auto` → set mode to `auto`
-   - `--confirm` → set mode to `confirm`
-   - Neither → set mode to `default`
-
-Before starting the loop, delete `.claude/review-setup-triage.local.md` if it exists — each `/review-setup-loop` invocation starts with a clean triage slate.
+Parse `$ARGUMENTS`: the first bare number is max iterations (default `3`), and `--auto`/`--confirm` set the autonomy mode (default `default`); then delete `.claude/review-setup-triage.local.md` if it exists so each `/review-setup-loop` invocation starts with a clean triage slate.
 
 Construct the Ralph Loop prompt:
 

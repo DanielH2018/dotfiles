@@ -2,6 +2,7 @@
 paths:
   - "**/*.sh"
   - "**/*.bash"
+  - "**/*.zsh"
 ---
 - Use `set -euo pipefail` at the top of scripts
 - Quote all variable expansions: `"$var"` not `$var`

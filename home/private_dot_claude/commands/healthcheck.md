@@ -65,11 +65,3 @@ If there are changes:
 If the commit fails (e.g., GPG signing unavailable, or no tracked files to commit), skip silently. Do not pass `--no-gpg-sign` or `--no-verify`.
 
 If there are no changes, skip this step.
-
-STEP 4 — Scheduling (external)
-
-If scheduling is handled by launchd (or another OS scheduler) rather than in-app
-crons, a launchd agent (e.g. `~/Library/LaunchAgents/com.<you>.claude.healthcheck.plist`)
-typically runs `~/.claude/scheduled/run-skill.sh healthcheck headless`. If this vault's
-setup uses that pattern, do NOT create or renew an in-app cron for this skill; it
-would double-fire alongside the external scheduler.
