@@ -278,6 +278,21 @@ mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
 if command -v chezmoi >/dev/null 2>&1; then
   alias czv='chezmoi verify --exclude=scripts'
   alias czs='chezmoi status --exclude=scripts'
+  # Bare `chezmoi` only prints help, so spend it on the thing actually done constantly: cd to
+  # the source dir. Every invocation WITH arguments passes straight through, so `chezmoi apply`,
+  # `diff`, `source-path` and the czv/czs aliases above are untouched. The path is asked of
+  # `source-path` rather than hardcoded, because the source dir differs per machine (this WSL
+  # clone is ~/.local/share/chezmoi; the Windows one is C:\Users\daniel\dotfiles).
+  chezmoi() {
+    [ $# -gt 0 ] && { command chezmoi "$@"; return $?; }
+    local _src _root
+    _src=$(command chezmoi source-path) || return $?
+    # .chezmoiroot=home makes source-path report <repo>/home, but the useful landing spot is the
+    # repo root — git, the test suite and CLAUDE.md all live there, and home/ is one cd away.
+    # Outside a checkout (no git, or a non-repo source) this falls back to the source dir.
+    _root=$(cd "$_src" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)
+    cd "${_root:-$_src}" || return
+  }
 fi
 # shellcheck disable=SC2009  # deliberately shows the full `ps aux` line, which pgrep doesn't
 psgrep() { ps aux | grep -i "$1" | grep -v grep; }
