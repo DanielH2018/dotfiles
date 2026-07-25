@@ -1,3 +1,4 @@
+const { test, before, after } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -22,65 +23,79 @@ function chezmoiCanRenderRepo() {
     return !!srcDir && fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'));
   } catch { return false; }
 }
-if (!chezmoiCanRenderRepo()) { console.log('SKIP: chezmoi cannot render this repo\'s templates'); process.exit(0); }
+const skip = chezmoiCanRenderRepo() ? false : 'chezmoi cannot render this repo\'s templates';
 
-const rendered = execFileSync('chezmoi', ['execute-template'], {
-  input: fs.readFileSync(TEMPLATE, 'utf8'),
-  encoding: 'utf8',
+let tmp, script, run;
+before(() => {
+  if (skip) return;
+  const rendered = execFileSync('chezmoi', ['execute-template'], {
+    input: fs.readFileSync(TEMPLATE, 'utf8'),
+    encoding: 'utf8',
+  });
+
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'modset-'));
+  script = path.join(tmp, 'modify_settings.sh');
+  fs.writeFileSync(script, rendered, { mode: 0o755 });
+  // Run via bash (not the .sh directly): Windows can't exec a .sh (EFTYPE); bash handles both.
+  run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8' });
+});
+after(() => {
+  if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'modset-'));
-const script = path.join(tmp, 'modify_settings.sh');
-fs.writeFileSync(script, rendered, { mode: 0o755 });
-// Run via bash (not the .sh directly): Windows can't exec a .sh (EFTYPE); bash handles both.
-const run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8' });
-
 // 1. Output is valid JSON carrying the base structure (the base always defines permissions).
-const out = JSON.parse(run(''));
-assert.ok(out.permissions && typeof out.permissions === 'object', 'output has a permissions object');
+test('output is valid JSON carrying the base structure', { skip }, () => {
+  const out = JSON.parse(run(''));
+  assert.ok(out.permissions && typeof out.permissions === 'object', 'output has a permissions object');
+});
 
 // 2. Fully derived: stdin is IGNORED. Different stdin yields identical output, and a key that
 //    exists only in stdin never appears in the result (the file is not merged with stdin).
-const withJunk = run(JSON.stringify({ model: 'sonnet', __stdin_only_key__: true }));
-assert.strictEqual(withJunk, run(''), 'output is independent of stdin');
-assert.ok(!withJunk.includes('__stdin_only_key__'), 'stdin content is not merged into the output');
+test('output is fully derived; stdin is ignored', { skip }, () => {
+  const withJunk = run(JSON.stringify({ model: 'sonnet', __stdin_only_key__: true }));
+  assert.strictEqual(withJunk, run(''), 'output is independent of stdin');
+  assert.ok(!withJunk.includes('__stdin_only_key__'), 'stdin content is not merged into the output');
+});
 
 // 3. Idempotent: feeding the output back in yields identical output.
-const once = run('');
-assert.strictEqual(run(once), once, 'modify script is idempotent');
+test('modify script is idempotent', { skip }, () => {
+  const once = run('');
+  assert.strictEqual(run(once), once, 'modify script is idempotent');
+});
 
 // 4. fnm fallback (Unix-only: hardcoded ~/.local/share/fnm alias path, a /bin/sh node shim,
 //    and a POSIX ':'-joined restricted PATH). Skipped on Windows.
-if (process.platform !== 'win32') {
-const fnmHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fnmhome-'));
-const fnmDefaultBin = path.join(fnmHome, '.local', 'share', 'fnm', 'aliases', 'default', 'bin');
-fs.mkdirSync(fnmDefaultBin, { recursive: true });
-fs.writeFileSync(
-  path.join(fnmDefaultBin, 'node'),
-  `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
-  { mode: 0o755 },
-);
-// Minimal PATH: the coreutils the script needs, but deliberately no `node`.
-const toolbin = fs.mkdtempSync(path.join(os.tmpdir(), 'toolbin-'));
-for (const tool of ['cat', 'mktemp', 'rm']) {
-  const p = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim();
-  if (p) fs.symlinkSync(p, path.join(toolbin, tool));
-}
-const outFnm = execFileSync(script, [], {
-  input: '',
-  encoding: 'utf8',
-  env: { HOME: fnmHome, PATH: toolbin },
+test('fnm fallback', { skip }, () => {
+  if (process.platform !== 'win32') {
+    const fnmHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fnmhome-'));
+    const fnmDefaultBin = path.join(fnmHome, '.local', 'share', 'fnm', 'aliases', 'default', 'bin');
+    fs.mkdirSync(fnmDefaultBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fnmDefaultBin, 'node'),
+      `#!/bin/sh\nexec "${process.execPath}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    // Minimal PATH: the coreutils the script needs, but deliberately no `node`.
+    const toolbin = fs.mkdtempSync(path.join(os.tmpdir(), 'toolbin-'));
+    for (const tool of ['cat', 'mktemp', 'rm']) {
+      const p = execFileSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim();
+      if (p) fs.symlinkSync(p, path.join(toolbin, tool));
+    }
+    const outFnm = execFileSync(script, [], {
+      input: '',
+      encoding: 'utf8',
+      env: { HOME: fnmHome, PATH: toolbin },
+    });
+    assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base permissions');
+    fs.rmSync(fnmHome, { recursive: true, force: true });
+    fs.rmSync(toolbin, { recursive: true, force: true });
+  }
 });
-assert.ok(JSON.parse(outFnm).permissions, 'fnm-fallback output carries the base permissions');
-fs.rmSync(fnmHome, { recursive: true, force: true });
-fs.rmSync(toolbin, { recursive: true, force: true });
-}
 
 // 5. log-permission.js is fully removed (superseded by the permission-audit plugin). The
 //    hooks block remains, but no merged setting references the retired script.
-const base = JSON.parse(run(''));
-assert.ok(base.hooks && typeof base.hooks === 'object', 'hooks block is present');
-assert.ok(!JSON.stringify(base).includes('log-permission'), 'no log-permission.js reference remains');
-
-fs.rmSync(tmp, { recursive: true, force: true });
-console.log('ALL PASS');
+test('log-permission.js is fully removed', { skip }, () => {
+  const base = JSON.parse(run(''));
+  assert.ok(base.hooks && typeof base.hooks === 'object', 'hooks block is present');
+  assert.ok(!JSON.stringify(base).includes('log-permission'), 'no log-permission.js reference remains');
+});

@@ -1,3 +1,4 @@
+const { test, after } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -9,7 +10,7 @@ const MERGE_SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'execut
 
 // The sandbox settings resolver is Unix-only (the sandbox doesn't run on Windows) and this
 // test relies on POSIX ':'-joined PATHs and /usr/bin,/bin. Skip cleanly on Windows.
-if (process.platform === 'win32') { console.log('SKIP: sandbox resolver is Unix-only'); process.exit(0); }
+const skip = process.platform === 'win32' ? 'sandbox resolver is Unix-only' : false;
 
 const cleanups = [];
 function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
@@ -31,37 +32,6 @@ const okBin = tmp('okbin-');
 fs.writeFileSync(path.join(okBin, 'claude-settings-merge'),
   `#!/bin/sh\nexec node ${JSON.stringify(MERGE_SRC)} "$@"\n`, { mode: 0o755 });
 
-// 1. overlay absent -> base path
-assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'absent overlay -> base');
-
-// 2. overlay present + tool available -> merged temp path with both denies
-{
-  const r = run([base, overlay], { pathDirs: [okBin, ...process.env.PATH.split(':')] });
-  assert.notStrictEqual(r.stdout, base, 'merged path differs from base');
-  assert.ok(fs.existsSync(r.stdout), 'merged file exists');
-  const merged = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
-  assert.ok(merged.permissions.deny.includes('mcp__base__only'), 'keeps base deny');
-  assert.ok(merged.permissions.deny.includes('mcp__work__only'), 'adds work deny');
-  cleanups.push(r.stdout);
-}
-
-// 3. tool missing -> base path + warning
-{
-  const emptyHome = tmp('emptyhome-');
-  const r = run([base, overlay], { home: emptyHome, pathDirs: ['/usr/bin', '/bin'] });
-  assert.strictEqual(r.stdout, base, 'missing tool -> base');
-  assert.match(r.stderr, /not found/, 'warns when tool missing');
-}
-
-// 4. tool fails -> base path + warning
-{
-  const failBin = tmp('failbin-');
-  fs.writeFileSync(path.join(failBin, 'claude-settings-merge'), `#!/bin/sh\nexit 1\n`, { mode: 0o755 });
-  const r = run([base, overlay], { pathDirs: [failBin, '/usr/bin', '/bin'] });
-  assert.strictEqual(r.stdout, base, 'merge failure -> base');
-  assert.match(r.stderr, /merge failed/, 'warns when merge fails');
-}
-
 // --- host-safe fold (step 1) ---
 // A richer base with its own allow, deny, and hooks; and a host with the safe
 // keys plus keys that must NOT propagate (permissions.allow, hooks).
@@ -79,8 +49,40 @@ fs.writeFileSync(host, JSON.stringify({
   hooks: { PreToolUse: [{ matcher: 'Y', hooks: [{ type: 'command', command: 'host-hook-must-not-cross' }] }] },
 }));
 
-// 5. host fold, no overlay -> host-safe keys folded into base, allow/hooks untouched
-{
+function hbaseHooks() {
+  return { PreToolUse: [{ matcher: 'X', hooks: [{ type: 'command', command: 'sandbox-hook' }] }] };
+}
+
+test('overlay absent -> base path', { skip }, () => {
+  assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'absent overlay -> base');
+});
+
+test('overlay present + tool available -> merged temp path with both denies', { skip }, () => {
+  const r = run([base, overlay], { pathDirs: [okBin, ...process.env.PATH.split(':')] });
+  assert.notStrictEqual(r.stdout, base, 'merged path differs from base');
+  assert.ok(fs.existsSync(r.stdout), 'merged file exists');
+  const merged = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
+  assert.ok(merged.permissions.deny.includes('mcp__base__only'), 'keeps base deny');
+  assert.ok(merged.permissions.deny.includes('mcp__work__only'), 'adds work deny');
+  cleanups.push(r.stdout);
+});
+
+test('tool missing -> base path + warning', { skip }, () => {
+  const emptyHome = tmp('emptyhome-');
+  const r = run([base, overlay], { home: emptyHome, pathDirs: ['/usr/bin', '/bin'] });
+  assert.strictEqual(r.stdout, base, 'missing tool -> base');
+  assert.match(r.stderr, /not found/, 'warns when tool missing');
+});
+
+test('tool fails -> base path + warning', { skip }, () => {
+  const failBin = tmp('failbin-');
+  fs.writeFileSync(path.join(failBin, 'claude-settings-merge'), `#!/bin/sh\nexit 1\n`, { mode: 0o755 });
+  const r = run([base, overlay], { pathDirs: [failBin, '/usr/bin', '/bin'] });
+  assert.strictEqual(r.stdout, base, 'merge failure -> base');
+  assert.match(r.stderr, /merge failed/, 'warns when merge fails');
+});
+
+test('host fold, no overlay -> host-safe keys folded into base, allow/hooks untouched', { skip }, () => {
   const r = run([hbase, path.join(d, 'nope.json'), host]);
   assert.notStrictEqual(r.stdout, hbase, 'host fold produces a new file');
   assert.ok(fs.existsSync(r.stdout), 'host-folded file exists');
@@ -94,10 +96,9 @@ fs.writeFileSync(host, JSON.stringify({
   assert.ok(!JSON.stringify(m.permissions.allow).includes('host_allow'), 'host allow never crosses');
   assert.deepStrictEqual(m.hooks, hbaseHooks(), 'keeps sandbox hooks, does NOT import host hooks');
   cleanups.push(r.stdout);
-}
+});
 
-// 6. host fold + overlay -> deny is union(base, host, overlay)
-{
+test('host fold + overlay -> deny is union(base, host, overlay)', { skip }, () => {
   const r = run([hbase, overlay, host], { pathDirs: [okBin, ...process.env.PATH.split(':')] });
   const m = JSON.parse(fs.readFileSync(r.stdout, 'utf8'));
   for (const dny of ['Bash(base_deny)', 'Bash(host_deny)', 'mcp__work__only']) {
@@ -105,24 +106,21 @@ fs.writeFileSync(host, JSON.stringify({
   }
   assert.strictEqual(m.model, 'opus[1m]', 'host model survives overlay merge');
   cleanups.push(r.stdout);
-}
+});
 
-// 7. host arg absent -> unchanged legacy behavior (base path, no fold)
-assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'no host arg -> legacy base');
+test('host arg absent -> unchanged legacy behavior (base path, no fold)', { skip }, () => {
+  assert.strictEqual(run([base, path.join(d, 'nope.json')]).stdout, base, 'no host arg -> legacy base');
+});
 
-// 8. broken host json -> falls back, base deny preserved (no partial import)
-{
+test('broken host json -> falls back, base deny preserved (no partial import)', { skip }, () => {
   const badhost = path.join(d, 'bad.json');
   fs.writeFileSync(badhost, '{ not json');
   const r = run([hbase, path.join(d, 'nope.json'), badhost]);
   // fold fails -> CUR stays hbase (the raw base path)
   assert.strictEqual(r.stdout, hbase, 'broken host json -> base path');
   assert.match(r.stderr, /host-safe fold failed/, 'warns on broken host json');
-}
+});
 
-function hbaseHooks() {
-  return { PreToolUse: [{ matcher: 'X', hooks: [{ type: 'command', command: 'sandbox-hook' }] }] };
-}
-
-for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
-console.log('ALL PASS');
+after(() => {
+  for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
+});
