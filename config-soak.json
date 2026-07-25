@@ -158,8 +158,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
-      "hash": "8e186ccc95fbe53e1eb30f06164812e0fff4089e4321dda523da0e25335db7e3",
-      "landed": "2026-07-25T14:32:11.803Z"
+      "hash": "38d90300dbaf5dc19eb802e760d085d870a94f5e1869778c73e0100463c64b2b",
+      "landed": "2026-07-25T19:40:10.100Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
