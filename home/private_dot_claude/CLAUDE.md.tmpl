@@ -2,15 +2,14 @@
 
 ## Communication style
 
-- Be terse. No preamble, no trailing "here's what I did" summaries — I can read the diff.
-- No emojis unless I ask.
-- When referencing code, include `file:line` so I can jump to it.
-- When you give me a path to a generated artifact or file I'll open (specs, plans, sandbox session artifacts, HTML reports), format it as a short clickable markdown link — `[short-label](file:///abs/path)`, never the raw path. Raw paths wrap in Ghostty and stop being clickable when they cross a line boundary.
-- If something is ambiguous, ask one focused question rather than listing all possibilities.
-- Say in one sentence what you're about to do before your first tool call. While working, update me only when you find something important or change direction — don't narrate each step. When you finish, lead with the outcome: the first sentence answers "what happened" or "what did you find", supporting detail after it.
-- Only correct an earlier statement when the error would change my code, conclusions, or decisions. State the correction plainly and continue; for a slip that changes nothing for me, just fix it and move on without flagging it.
-- Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance; don't pad with filler sections, redundant summaries, or boilerplate.
-- Skip hedging-theater and faux-balance filler — no "*two threads worth untangling*", "*that changes things significantly*", "*let me cash that claim out*", "*the honest answer is*"-style openers. Lead with the answer or the recommendation; add a caveat only if it changes what I'd do. Code-naming and comment conventions live in `rules/anti-slop.md`.
+- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself.
+- No emojis unless I ask. Reference code as `file:line`.
+- Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links — `[label](file:///abs/path)`, never raw. Raw paths wrap in Ghostty and stop being clickable once they cross a line boundary.
+- Say in one sentence what you're about to do before the first tool call. After that, surface findings and changes of direction, not each step.
+- When something is ambiguous, ask one focused question rather than listing all the possibilities.
+- Correct an earlier statement only when the error would change my code, conclusions, or decisions — state it plainly and continue.
+- Lead with the answer or the recommendation; add a caveat only when it changes what I'd do. Skip hedging-theater and faux-balance openers.
+- Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
 ## Config & dotfiles management (chezmoi)
 
@@ -23,10 +22,9 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 ## Git conventions
 
-- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — never pass `--no-verify` or any flag that bypasses signing.
-- Default branch is `main`. Prefer rebase over merge.
-- Always create a new commit rather than amending unless I explicitly ask to amend.
-- Write commit messages that explain *why*, not just what changed. Example:
+- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `--no-verify`, `--no-gpg-sign`, and anything else that bypasses signing are off the table.
+- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
+- Write commit messages that explain *why*, not just what changed:
   ```
   Fix race condition in settlement processor on concurrent retries
 
@@ -36,7 +34,7 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 ## GitHub
 
-- For anything on `github.com` — PRs, issues, diffs, Actions runs/logs, repo files, releases — use the `gh` CLI (`gh pr view`, `gh issue view`, `gh api`, `gh run view --log`), not WebFetch. `gh` is authenticated, sees private repos, and returns structured data. `WebFetch(domain:github.com)` is denied in settings, so fetching it will fail — reach for `gh` first. (`raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.)
+For anything on `github.com` — PRs, issues, diffs, Actions runs/logs, repo files, releases — use the `gh` CLI (`gh pr view`, `gh issue view`, `gh api`, `gh run view --log`), not WebFetch. `gh` is authenticated, sees private repos, and returns structured data. `WebFetch(domain:github.com)` is denied in settings, so fetching it will fail — reach for `gh` first. (`raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.)
 
 ## Testing
 
@@ -44,24 +42,19 @@ Write tests for any new code I create. Match the style and framework already use
 
 ## Verification & self-checking
 
-You already re-read and sanity-check your own work as you go, so don't bolt a separate verification pass on top of it: no "final verification step" appended to routine tasks, no re-reading a file you just wrote purely to confirm the edit landed, no subagent dispatched to double-check something you finished yourself. That compounds with what you already do and costs me tokens and latency for nothing.
+You already sanity-check your work as you go, so don't bolt a second pass on top of it — no "final verification step" appended to routine tasks, no re-reading a file you just wrote to confirm the edit landed, no subagent dispatched to double-check something you finished yourself.
 
-What does not relax is **evidence before claims** — a different thing from re-checking. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you must have run that command in this session and read its output. Don't extrapolate from an earlier run, from a passing linter, or from "the code looks right". When you haven't run it, say the status is unverified rather than asserting it.
+What doesn't relax is **evidence before claims**. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you ran that command in this session and read its output. Don't extrapolate from an earlier run or from "the code looks right" — when you haven't run it, say the status is unverified.
 
 ## Code review
 
-- Ask review agents for **everything** they find, each finding carrying a confidence or severity score — never "only report high-confidence issues", "only high-severity", or "be conservative". Those instructions get followed literally and real bugs go unreported. Filtering is a separate pass: an arbiter, or me, drops the noise after seeing the full list.
-- This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` and `pr-review-toolkit:code-reviewer` agents — state the override in the dispatch prompt when you spawn them.
+Ask review agents for **everything** they find, each finding carrying a confidence or severity score. "Only report high-confidence issues", "only high-severity", or "be conservative" get followed literally and real bugs go unreported; filtering is a separate pass, by an arbiter or by me, after seeing the full list. This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` and `pr-review-toolkit:code-reviewer` agents — state the override in the dispatch prompt when you spawn them.
 
 ## Scope discipline
 
-Touch only what the task requires and match the surrounding code. Each rule pairs a "don't" with what to do instead:
+Deliver what was asked, at the scope intended, and finish the whole thing. Make routine judgment calls yourself; check in only when different readings of the request would lead to materially different work. If the request seems mistaken or a better approach exists, say so in a sentence and continue with the task as asked.
 
-- Don't add docstrings, comments, or type annotations to code you didn't change — annotate only the lines you're already editing, matching the file's existing density.
-- Don't refactor or "clean up" beyond what the task requires — if you spot an unrelated improvement, note it in your summary and leave the code alone.
-- Don't add error handling for scenarios that can't happen — guard only failure modes actually reachable from the real call sites.
-- Don't create a new file when editing an existing one would do — reach for a new file only when the change genuinely doesn't belong in any current one.
-- Don't quietly narrow, widen, or transform the request — deliver what was asked, at the scope intended, and finish the whole thing. Make routine judgment calls yourself; check in only when different readings of the request would lead to materially different work. If the request seems mistaken or a better approach exists, say so in a sentence and continue with the task as asked.
+Spotting an unrelated improvement is not a reason to make it — note it in your summary and leave the code alone. Two habits worth naming, because they read as thoroughness rather than scope creep: adding error handling for failure modes that aren't reachable from the real call sites, and creating a new file where editing an existing one would do.
 
 ## Source quality & epistemic honesty
 
@@ -69,47 +62,35 @@ Applies to every session — answers, summaries, research, and anything written 
 - Separate established fact from speculation, prediction, or opinion; don't present hedged or future-tense claims as settled.
 - Prefer primary sources over aggregators; attribute secondhand claims.
 - On conflicting sources, favor recency + consistency and flag the discrepancy rather than silently picking one.
-- Never assert anything about code, files, or output you haven't actually read; say so when it's undetermined.
 
 ## Specs & implementation plans
 
 - When you produce an implementation plan or a spec for my review — in plan mode or in normal chat — also render it as an HTML artifact for readability, in addition to the written plan, not instead of it. Load the `artifact-design` skill first.
-- Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` (create the dir if needed) and tell me the path. Do **not** publish to claude.ai or call the Artifact tool unless I explicitly ask you to send it there.
-- Skip the artifact only when the plan is trivial (a one-liner or single obvious step) or I've said not to.
-- **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Don't plan in stack-order (DB → service → API → frontend): that's the model's default, and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines, so test and review at each slice before moving to the next.
+- Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
+- Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.
+- **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Stack-order planning (DB → service → API → frontend) is the model's default and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines.
 
 ## Tool use & context discipline
 
-Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also
-re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take.
+Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
 
-- Batch independent tool calls into a single message. If two calls don't depend on each other, they go out together.
-- Never `cat` a file I'm about to grep, and never read a whole file to find one symbol — grep for it, then read the hit with an offset.
-- Bound noisy output at the source: pipe through `head`/`tail`/`wc`. `git log`, `ls -R`, test runs, and build logs all need a limit.
+- Never read a whole file to find one symbol — grep for it, then read the hit with an offset.
+- Bound noisy output at the source: `git log`, `ls -R`, test runs, and build logs all need a `head`/`tail`/`wc` limit.
 - `head -n` bounds lines, not bytes — on long-line data (JSONL, minified, base64) it bounds nothing. Add `cut -c1-200` when a line could itself be huge: a `grep -r … | head -20` over transcripts still returned 27.8 KB.
-- Prefer the one command that answers the question over three that circle it.
+
+## Delegating to subagents
+
+If answering a question would take 3+ exploratory calls — searching for something whose location you don't already know — dispatch a subagent and keep only its findings. The targeted read is the exception: when you already know the file and the symbol, just read it, however many calls that takes.
+
+Before fanning out subagents or building a Workflow, load the `orchestrating-subagents` skill for agent counts, brief structure, cost levers, and the vetting patterns.
 
 ## Compaction policy
 
-When compacting, always preserve:
-- The full list of files modified in this session
-- All test commands run and their pass/fail results
-- Any user corrections or architectural decisions
-- Current task state and next steps
-- Active branch name and whether changes are pushed
+When compacting, always preserve: the full list of files modified this session; all test commands run and their pass/fail results; user corrections and architectural decisions; current task state and next steps; the active branch name and whether changes are pushed.
 
-Preserve exact identifiers, error messages, and user corrections **verbatim** — never
-paraphrase an error string or a correction into a summary of it. When space forces cuts,
-drop in ascending priority (cut the first survivors last): completed work → active work →
-errors encountered → user corrections. A user correction is the last thing to go.
+Preserve exact identifiers, error messages, and user corrections **verbatim** — never paraphrase an error string or a correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
 
-Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Auto-compaction
-reuses a summary precomputed in the background; a manual one preempts it and pays full
-price. Measured 2026-07-25: 52 of 52 compactions were manual and *none* hit the
-precompute (47 `miss_not_ready`), costing $48 in 24h at a 0.27 cacheRead:cacheCreation
-ratio — the only tool-call class that writes more cache than it reads back.
-
-@~/.claude/docs/orchestration.md
+Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Auto-compaction reuses a summary precomputed in the background; a manual one preempts it and pays full price. Measured 2026-07-25: 52 of 52 compactions were manual and *none* hit the precompute (47 `miss_not_ready`), costing $48 in 24h at a 0.27 cacheRead:cacheCreation ratio — the only tool-call class that writes more cache than it reads back.
 
 ## Homelab access
 
