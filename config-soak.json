@@ -13,13 +13,13 @@
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "f86c46dc2ca59b605d3c076227140009aee2da12d0ee3edb5abf163f244a402d",
-      "landed": "2026-07-25T23:12:01.504Z"
+      "hash": "9c3b0e518455d8fb27284d817f75659ceb5a2ab91b6669cafd57e973a44c7b11",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "a3e25ccbacfeda638512d6858a9b1151e7b360fb4b6d0877b3b985e6b6d7ed26",
-      "landed": "2026-07-25T22:28:09.994Z"
+      "hash": "fd8a536f1a2b46f6cd03ee7cdce362ad72414b610312ed268cbc9dd3876825f1",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
@@ -178,8 +178,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
-      "hash": "7e50dfde354d18417e9665959a6c566a33001ae3213b7eb962cf3bdb0b244fd0",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "af0f417446f130f65cd8cbd0268e3c23d329a4b8c65155da720db470d2cd602b",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/rules/go.md",
@@ -193,8 +193,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/python.md",
-      "hash": "fca9a5dd5cddb4c74d2a20ba7844aca9f5e441f8a12c17feb5024dee28a4f5c1",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "62660718f862b17e5beee514db68ab8cb6c9160f9771cd8d8166b26eaf0a0ae6",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/rules/rust.md",
@@ -203,8 +203,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/shell.md",
-      "hash": "de4f880534d29031027538502f38e66944b890fad9922b57e6ce3c4d563decc1",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "98c279ec947a118e2eaa411dcea5b71fc5a8c8fcd74cc3698d0d47d20b4638f7",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/rules/sql.md",
@@ -213,8 +213,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/typescript.md",
-      "hash": "408e0861c708a2cad91924a136c4793e1bba50ea2fd3aa05d05cd1c2616343ea",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "19e4395058b5c1927e9aa8e3464548e76019aaac28aca6174b8fc71677b7d455",
+      "landed": "2026-07-25T23:56:39.220Z"
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
