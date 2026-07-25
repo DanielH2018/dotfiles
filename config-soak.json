@@ -157,6 +157,11 @@
       "landed": "2026-07-09T21:18:00.291Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
+      "hash": "8e186ccc95fbe53e1eb30f06164812e0fff4089e4321dda523da0e25335db7e3",
+      "landed": "2026-07-25T14:32:11.803Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
       "hash": "efa2e8715ee1068689ee8d85f6a8ab5b1f0dcf34b53941e15ef17fb2f9b65260",
       "landed": "2026-07-25T01:23:11.477Z"
