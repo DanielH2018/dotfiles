@@ -17,7 +17,13 @@
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_METRIC_EXPORT_INTERVAL": "10000",
     "OTEL_LOGS_EXPORT_INTERVAL": "5000",
-    "OTEL_METRICS_INCLUDE_SESSION_ID": "false"{{ end }}
+    {{/* session_id MUST stay on. Without it every concurrent Claude Code process
+         collapses into one Prometheus series, and the collector's prometheus exporter
+         is last-writer-wins per label set — so cumulative counters (tokens, cost,
+         sessions, active_time) stop accumulating. Measured with it off: 7549 api_request
+         events reported only 1.86M tokens (246 tokens/request, ~10x low), while
+         increase()[7d] over-corrected for the false counter resets by ~274x. */}}
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "true"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
