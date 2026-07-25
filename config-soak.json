@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "e5c251f7b9092374d600ef697cb3bd67319711172a498f32300637a4cb49249c",
-      "landed": "2026-07-25T20:10:43.532Z"
+      "hash": "0bb785326eaaf190698120e1a2535d0337d50e36d740bc99d81fdc9af96b967d",
+      "landed": "2026-07-25T22:17:52.542Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -93,8 +93,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
-      "hash": "6d0f002b62ca626e998d3fb433ae2f87e28384194adc8810259e13ae0151d791",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "cad9b1cb6a75e3bf47ad36cde4b185179814cfd33f8bc6dbddbc524cc4468c26",
+      "landed": "2026-07-25T22:17:52.542Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
