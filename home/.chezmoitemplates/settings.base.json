@@ -498,7 +498,7 @@
     "disableBypassPermissionsMode": "disable"
   },
   "model": "claude-opus-5",
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
   "fallbackModel": [
     "claude-sonnet-5"
   ],
