@@ -203,7 +203,9 @@ test('a remote shell (OSC 7) splits back over ssh into the same directory', { sk
     'ssh', '-t', 'daniel-server',
     "cd '/home/ubuntu/proj' 2>/dev/null || cd; exec ${SHELL:-/bin/sh} -l",
   ]);
-  assert.strictEqual(got.cwd, null, 'WSL spawn keeps the inherited cwd (it falls back to /)');
+  // Inheriting the pane's cwd here would chdir a LOCAL spawn into the remote path:
+  // `WSL ... CreateProcessCommon:788: chdir(/home/ubuntu) failed 2`.
+  assert.strictEqual(got.cwd, '/', 'WSL spawn launches from a dir that exists locally');
 });
 
 test('the homelab tab splits into a second shell, not a mirror of its tmux session', { skip }, () => {
@@ -234,6 +236,16 @@ test('a remote path with a quote survives the trip to the remote shell', { skip 
   const got = split('quoted_path');
   assert.strictEqual(got.args[3],
     "cd '/home/ubuntu/it'\\''s here' 2>/dev/null || cd; exec ${SHELL:-/bin/sh} -l");
+});
+
+test('no ssh split is ever launched from the remote path', { skip }, () => {
+  // The symptom when it is: `WSL (…) ERROR: CreateProcessCommon:788: chdir(/home/ubuntu)
+  // failed 2` — a local spawn trying to enter a directory that only exists on the far side.
+  for (const pane of ['remote_shell_wsl', 'quoted_path', 'homelab_tab', 'remote_shell_gitbash']) {
+    const got = split(pane);
+    assert.ok(got.cwd, `${pane}: launch dir is pinned, not inherited`);
+    assert.ok(!got.cwd.startsWith('/home/ubuntu'), `${pane}: launch dir is not the remote path`);
+  }
 });
 
 test('CTRL+SHIFT+D splits down with the same ssh-aware command', { skip }, () => {
