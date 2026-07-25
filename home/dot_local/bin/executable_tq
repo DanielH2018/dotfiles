@@ -17,6 +17,16 @@ them starts the runner's argv, which is passed on untouched.
                              never scoped. Also TQ_SCOPE.
     --diff-base=<ref>        what to diff against. Default HEAD, which covers
                              staged and unstaged work. Also TQ_DIFF_BASE.
+    --retry                  give the failures one more go at the runner and
+                             mark whatever passes the second time FLAKY. node
+                             and pytest only, both of which name their own
+                             failures exactly. Skipped above
+                             TQ_RETRY_MAX_FAILURES (10) failures, which is
+                             breakage rather than flakiness. Also TQ_RETRY.
+    --flaky-result=pass      count a flake as a pass. Default is fail: a test
+                             that needed two goes did not hold.
+    --ingest=<format>        digest any command whose stdout is rdjson,
+                             ruff-json or shellcheck-json1.
 
 Any other command is executed untouched. The runner's exit code is always
 preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
@@ -191,7 +201,7 @@ def plain_env():
     return env
 
 
-def pytest_env(xml_path):
+def pytest_env(xml_path, last_failed=False):
     """pytest takes its flags through the environment because prek offers no
     argument passthrough, and PYTEST_ADDOPTS survives `uv run` either way."""
     env = plain_env()
@@ -202,11 +212,15 @@ def pytest_env(xml_path):
         "--tb=short",
         "-q",
     ]
+    if last_failed:
+        # pytest's own cache names the failures exactly, parametrised cases
+        # included — far better than anything tq could rebuild from a report.
+        flags.append("--last-failed")
     env["PYTEST_ADDOPTS"] = " ".join([env.get("PYTEST_ADDOPTS", ""), *flags]).strip()
     return env
 
 
-def run_node(argv, workdir, tmp):
+def run_node(argv, workdir, tmp, rerun_state=None):
     ndjson = os.path.join(tmp, "events.ndjson")
     cmd = list(argv)
     at = cmd.index("--test") + 1
@@ -214,6 +228,11 @@ def run_node(argv, workdir, tmp):
         f"--test-reporter={REPORTER}",
         f"--test-reporter-destination={ndjson}",
     ]
+    if rerun_state:
+        # node keeps its own record of what has passed and reruns the rest, so
+        # the flag goes on both attempts: the first writes it, the second reads
+        # it. Nothing here has to name a test or reconstruct an id.
+        cmd[at:at] = [f"--test-rerun-failures={rerun_state}"]
     proc, timed_out = run(cmd, plain_env())
     result = Result(
         runner="node",
@@ -227,9 +246,9 @@ def run_node(argv, workdir, tmp):
     return result, proc
 
 
-def run_pytest(argv, workdir, tmp):
+def run_pytest(argv, workdir, tmp, last_failed=False):
     xml = os.path.join(tmp, "junit.xml")
-    proc, timed_out = run(argv, pytest_env(xml))
+    proc, timed_out = run(argv, pytest_env(xml, last_failed))
     result = Result(
         runner="pytest",
         cmd=shlex.join(argv),
@@ -377,7 +396,59 @@ INGESTORS = {
     "shellcheck-json1": lint_adapter.parse_shellcheck,
 }
 
-TQ_FLAGS = ("--scope", "--diff-base", "--ingest")
+TQ_FLAGS = ("--scope", "--diff-base", "--ingest", "--flaky-result")
+# Flags that take no value. Kept apart because treating one as if it did would
+# swallow the program name — `tq --retry node --test` would run `--test`.
+TQ_SWITCHES = ("--retry",)
+
+# Runners that can name their own failures exactly, which is the only basis on
+# which tq is willing to rerun a subset.
+RETRYABLE = ("node", "pytest")
+# Past this many failures a rerun is not testing for flakiness, it is paying
+# for a second full run to confirm the code is broken.
+RETRY_MAX_FAILURES = int(os.environ.get("TQ_RETRY_MAX_FAILURES") or 10)
+
+
+def failure_key(fail):
+    return (fail.file, fail.name)
+
+
+def attempt(kind, argv, workdir, tmp, state, last_failed=False):
+    if kind == "node":
+        return run_node(argv, workdir, tmp, rerun_state=state)
+    if kind == "pytest":
+        return run_pytest(argv, workdir, tmp, last_failed=last_failed)
+    return RUNNERS[kind](argv, workdir, tmp)
+
+
+def run_with_retry(kind, argv, workdir, tmp, retry):
+    """Run, and when asked, give the failures one more chance at the runner.
+
+    A test that fails and then passes without the code changing is telling you
+    about itself, not about the change — and an agent that cannot tell the two
+    apart spends an edit cycle "fixing" nondeterminism.
+    """
+    state = os.path.join(tmp, "rerun.json") if retry and kind == "node" else None
+    result, proc = attempt(kind, argv, workdir, tmp, state)
+    if not retry or kind not in RETRYABLE:
+        return result, proc
+    if not result.failures or result.timed_out:
+        return result, proc
+    if len(result.failures) > RETRY_MAX_FAILURES:
+        result.notes.append(
+            f"{len(result.failures)} failures is too many to be flakiness — not retried"
+        )
+        return result, proc
+
+    again, _ = attempt(kind, argv, workdir, tmp, state, last_failed=True)
+    if again.timed_out:
+        result.notes.append("the retry timed out; first-attempt failures stand")
+        return result, proc
+    still_failing = {failure_key(f) for f in again.failures}
+    for fail in result.failures:
+        fail.flaky = failure_key(fail) not in still_failing
+    result.attempts = 2
+    return result, proc
 
 
 def split_flags(argv):
@@ -391,6 +462,10 @@ def split_flags(argv):
     opts, i = {}, 0
     while i < len(argv):
         name, sep, value = argv[i].partition("=")
+        if name in TQ_SWITCHES:
+            opts[name] = value or "1"
+            i += 1
+            continue
         if name not in TQ_FLAGS:
             break
         if sep:
@@ -417,6 +492,11 @@ def main(argv):
     if not argv:
         sys.stderr.write("tq: no command given\n")
         return 2
+    retry = "--retry" in opts or bool(os.environ.get("TQ_RETRY"))
+    # Defaulting a flake to FAIL is the same rule as NO TESTS RAN: a run that
+    # did not hold cannot be reported as one that did, and a test that needed
+    # two goes did not hold.
+    flaky_pass = opts.get("--flaky-result") == "pass"
     fmt = opts.get("--ingest")
     if fmt is not None and fmt not in INGESTORS:
         sys.stderr.write(f"tq: --ingest must be one of {', '.join(INGESTORS)}\n")
@@ -435,7 +515,14 @@ def main(argv):
         if kind == "ingest":
             result, proc = run_ingested(argv, workdir, tmp, fmt)
         else:
-            result, proc = RUNNERS[kind](argv, workdir, tmp)
+            result, proc = run_with_retry(kind, argv, workdir, tmp, retry)
+        if flaky_pass and result.failures and all(f.flaky for f in result.failures):
+            # Moved wholesale rather than just zeroing the exit: a FAIL verdict
+            # beside a zero exit is a worse report than either alone.
+            flaky = len(result.failures)
+            result.totals["fail"] -= flaky
+            result.totals["pass"] += flaky
+            result.exit = 0
         result.duration_ms = result.duration_ms or int(
             (time.monotonic() - started) * 1000
         )

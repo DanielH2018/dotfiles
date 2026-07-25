@@ -89,6 +89,9 @@ def headline(result):
         )
         if t[key]
     ]
+    flaky = sum(1 for f in result.failures if f.flaky)
+    if flaky:
+        notes.insert(0, f"{flaky} flaky")
     note = f"  ({', '.join(notes)})" if notes else ""
     return f"{verdict} {counter}/{t['tests']}{note}  {seconds:.1f}s"
 
@@ -137,6 +140,8 @@ def _failure_block(fail, cwd, out):
     if fail.source and fail.severity and fail.severity != "error":
         label = f"{label}  {fail.severity}"
     out.append(f"{where}{label}")
+    if fail.flaky:
+        out.append("  FLAKY — failed, then passed on retry")
     # An assertion diff over a large structure is unbounded, and one of them is
     # enough to spend the whole digest on a single failure.
     body, dropped = cap(fail.message, MAX_MESSAGE)

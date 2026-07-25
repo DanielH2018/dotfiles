@@ -68,6 +68,9 @@ class Failure:
     # can follow it, and the code alone is all JUnit was ever able to carry.
     code_url: str | None = None
     source: str | None = None
+    # True when this failed on the first attempt and passed on a retry, the
+    # code unchanged in between — a fact about the test, not about the change.
+    flaky: bool = False
     # "safe" or "unsafe" where the tool says so — whether the fix can be applied
     # without reading it first is the part that decides what to do next.
     fixable: str | None = None
@@ -84,6 +87,7 @@ class Failure:
             "code_url": self.code_url,
             "source": self.source,
             "fixable": self.fixable,
+            "flaky": self.flaky,
             "message": self.message,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -105,6 +109,9 @@ class Result:
     # record and no verdict can be read off it.
     timed_out: bool = False
     duration_ms: int = 0
+    # How many times the runner was asked. More than one only when a retry
+    # was requested and there was something worth retrying.
+    attempts: int = 1
     totals: dict = field(default_factory=new_totals)
     failures: list = field(default_factory=list)
     # Things the runner said that are not findings but change what the run
@@ -124,6 +131,7 @@ class Result:
             "exit": self.exit,
             "timed_out": self.timed_out,
             "duration_ms": self.duration_ms,
+            "attempts": self.attempts,
             "totals": self.totals,
             "failures": [f.to_dict() for f in self.failures],
             "notes": self.notes,
