@@ -26,8 +26,29 @@ process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive:
 const BG = (originSid, ownSid) =>
   `/x/claude --session-id ${ownSid} --fork-session --resume /p/${originSid}.jsonl --reply-on-resume`;
 
-// procs: { pid: cmdline }, sessions: { pid: sid }, rows: [sid]
-function fakeEnv({ procs = {}, sessions = {}, rows = [] }) {
+// A daemon-roster worker entry. Backgrounding a session dispatches it onto a spare, so the
+// only origin link is dispatch.launch.sessionId — the shape reap_origin_from_roster gates on.
+const bgWorker = (originSid, ownSid) => ({
+  pid: 1, sessionId: ownSid,
+  dispatch: {
+    source: 'slash', sessionId: ownSid,
+    launch: { mode: 'resume', sessionId: `/p/${originSid}.jsonl`, fork: true, flagArgs: ['--reply-on-resume'] },
+    seed: { intent: '(backgrounded)', name: 'Some Session' },
+  },
+});
+// A plain spare-spawned agent: never a backgrounding, must never be treated as one.
+const spareWorker = (ownSid) => ({
+  pid: 2, sessionId: ownSid,
+  dispatch: {
+    source: 'spare', sessionId: ownSid,
+    launch: { mode: 'prompt', args: ['--session-id', ownSid, '--agent', 'claude'] },
+    seed: { intent: '' },
+  },
+});
+const rosterOf = (workers) => ({ proto: 1, supervisorPid: 999, workers });
+
+// procs: { pid: cmdline }, sessions: { pid: sid }, rows: [sid], roster: {workers}|null
+function fakeEnv({ procs = {}, sessions = {}, rows = [], roster = null }) {
   const home = scratch('sweep-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const pdir = path.join(home, 'proc'); fs.mkdirSync(pdir, { recursive: true });
@@ -45,13 +66,18 @@ function fakeEnv({ procs = {}, sessions = {}, rows = [] }) {
   const killcmd = path.join(home, 'kill.sh');
   fs.writeFileSync(killcmd, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> ${JSON.stringify(killed)}\n`);
   fs.chmodSync(killcmd, 0o755);
-  return { home, sdir, pdir, avdir, killcmd, killed, log: path.join(home, 'reap.log') };
+  // Always a concrete path, even with no fixture: an unset REAP_ROSTER would fall back to
+  // the real ~/.claude/daemon/roster.json and let a live session leak into the test.
+  const rosterPath = path.join(home, 'roster.json');
+  if (roster) fs.writeFileSync(rosterPath, JSON.stringify(rosterOf(roster)));
+  return { home, sdir, pdir, avdir, killcmd, killed, roster: rosterPath, log: path.join(home, 'reap.log') };
 }
 function runSweep(env) {
   execFileSync('bash', [SWEEP], {
     env: {
       ...process.env, REAP_LIB: LIB, CLAUDE_SESSIONS_DIR: env.sdir, REAP_PROC_DIR: env.pdir,
       AGENT_VIEW_DIR: env.avdir, REAP_KILLCMD: env.killcmd, REAP_LOG: env.log,
+      REAP_ROSTER: env.roster,
     }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -107,4 +133,69 @@ test('worker whose /proc cmdline is gone is skipped without error', { skip }, ()
   });
   runSweep(env);
   assert.deepStrictEqual(killed(env), []);
+});
+
+// --- spare-dispatched backgrounding: origin link lives only in the daemon roster ---
+
+test('reaps the origin of a spare-dispatched backgrounding (roster path)', { skip }, () => {
+  const env = fakeEnv({
+    // The fork's own argv carries NO --resume: this is exactly the case the cmdline scan misses.
+    procs: { '111': '/x/claude bg-spare --bg-spare /tmp/x/abc.claim.sock', '222': '/x/claude' },
+    sessions: { '111': 'FORK', '222': 'ORIGIN' },
+    rows: ['ORIGIN'],
+    roster: { FORK: bgWorker('ORIGIN', 'FORK') },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), ['222'], 'origin pid reaped via roster');
+  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN.json')), 'row removed');
+  assert.match(fs.readFileSync(env.log, 'utf8'), /ORIGIN.*222/);
+});
+
+test('plain spare agent in roster -> nothing killed', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '111': '/x/claude bg-spare --bg-spare /tmp/x/abc.claim.sock', '222': '/x/claude' },
+    sessions: { '111': 'AGENT', '222': 'OTHER' },
+    roster: { AGENT: spareWorker('AGENT') },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), [], 'a spare-spawned agent is not a backgrounding');
+});
+
+test('roster fork whose origin is not a live session -> no-op', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '111': '/x/claude bg-spare' },
+    sessions: { '111': 'FORK' },                    // nothing maps to GHOST
+    roster: { FORK: bgWorker('GHOST', 'FORK') },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), []);
+});
+
+test('roster entry pointing at its own session -> never self', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '111': '/x/claude bg-spare' },
+    sessions: { '111': 'SELF' },
+    roster: { SELF: bgWorker('SELF', 'SELF') },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), []);
+});
+
+test('missing roster file -> no error, nothing killed', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '222': '/x/claude' },
+    sessions: { '222': 'ORIGIN' },
+  });                                               // roster fixture omitted -> file absent
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), []);
+});
+
+test('multiple spare-dispatched backgroundings reaped in one sweep', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '111': '/x/claude bg-spare', '112': '/x/claude bg-spare' },
+    sessions: { '111': 'F1', '10': 'O1', '112': 'F2', '20': 'O2' },
+    roster: { F1: bgWorker('O1', 'F1'), F2: bgWorker('O2', 'F2') },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env).sort(), ['10', '20']);
 });
