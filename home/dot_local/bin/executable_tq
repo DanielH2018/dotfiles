@@ -9,7 +9,9 @@
 
 Any other command is executed untouched. The runner's exit code is always
 preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
-it goes to a temp file whose path the digest prints.
+it goes to a temp file whose path the digest prints. TQ_TIMEOUT=<seconds>
+bounds the run — a runner still going after that is killed and reported as
+TIMED OUT with whatever it managed first, 0 to let it run as long as it likes.
 
 Linters are digested as findings, not as a pass rate: silence about a line is
 not an assertion that the line is good, so there is no denominator to report.
@@ -41,6 +43,9 @@ REPORTER = os.path.join(LIB, "node-reporter.mjs")
 PYTEST_HOOK_ID = "pytest"
 HOOK_ID = re.compile(r"^- hook id: (?P<id>\S+)\s*$")
 RAW_TAIL = 4000
+# Ten minutes, which no suite tq is put in front of comes close to. TQ_TIMEOUT=0
+# disables the kill for the one that legitimately does.
+TIMEOUT = int(os.environ.get("TQ_TIMEOUT") or 600)
 
 # Tokens that stand in front of the real program without being it.
 LAUNCHERS = {"uv", "uvx", "poetry", "pdm", "rye", "hatch", "pipenv", "env", "command"}
@@ -103,7 +108,52 @@ def drop_flag(argv, flags):
 
 
 def run(argv, env):
-    return subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace")
+    """The finished process, plus whether it had to be killed for running long.
+
+    A hung runner is the one failure tq used to handle worse than no tq at all:
+    the digest is built after the process exits, so a suite that never exits
+    produced no output whatsoever, where the bare runner would at least have
+    streamed what it managed first.
+    """
+    try:
+        proc = subprocess.run(
+            argv,
+            env=env,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=TIMEOUT or None,
+        )
+        return proc, False
+    except subprocess.TimeoutExpired as expired:
+        # TimeoutExpired keeps what was captured before the kill, but hands it
+        # back as bytes even under text=True, and carries no returncode at all.
+        # 124 is what timeout(1) reports, so a caller reading tq's status has
+        # something it already recognises.
+        return subprocess.CompletedProcess(
+            expired.cmd, 124, _text(expired.stdout), _text(expired.stderr)
+        ), True
+
+
+def _text(raw):
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", "replace")
+    return raw or ""
+
+
+def parse_junit(xml_path, result, summary_text=""):
+    """Parse a JUnit report if there is a readable one, else leave the result be.
+
+    Deliberately broad: a report tq cannot parse must degrade to the raw output
+    main() already prints for an unreported failure, never to a traceback in
+    place of the digest. A killed runner is the common way to get half a file.
+    """
+    if not os.path.exists(xml_path):
+        return
+    try:
+        junit_adapter.parse(xml_path, result, summary_text=summary_text)
+    except Exception:  # noqa: BLE001 — see above
+        pass
 
 
 def plain_env():
@@ -147,9 +197,18 @@ def run_node(argv, workdir, tmp):
     ndjson = os.path.join(tmp, "events.ndjson")
     cmd = list(argv)
     at = cmd.index("--test") + 1
-    cmd[at:at] = [f"--test-reporter={REPORTER}", f"--test-reporter-destination={ndjson}"]
-    proc = run(cmd, plain_env())
-    result = Result(runner="node", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
+    cmd[at:at] = [
+        f"--test-reporter={REPORTER}",
+        f"--test-reporter-destination={ndjson}",
+    ]
+    proc, timed_out = run(cmd, plain_env())
+    result = Result(
+        runner="node",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
     if os.path.exists(ndjson):
         node_adapter.parse(ndjson, result)
     return result, proc
@@ -157,19 +216,29 @@ def run_node(argv, workdir, tmp):
 
 def run_pytest(argv, workdir, tmp):
     xml = os.path.join(tmp, "junit.xml")
-    proc = run(argv, pytest_env(xml))
-    result = Result(runner="pytest", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
-    if os.path.exists(xml):
-        junit_adapter.parse(xml, result, summary_text=proc.stdout)
+    proc, timed_out = run(argv, pytest_env(xml))
+    result = Result(
+        runner="pytest",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    parse_junit(xml, result, summary_text=proc.stdout)
     return result, proc
 
 
 def run_prek(argv, workdir, tmp):
     xml = os.path.join(tmp, "junit.xml")
-    proc = run(argv, pytest_env(xml))
-    result = Result(runner="prek", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
-    if os.path.exists(xml):
-        junit_adapter.parse(xml, result, summary_text=proc.stdout)
+    proc, timed_out = run(argv, pytest_env(xml))
+    result = Result(
+        runner="prek",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    parse_junit(xml, result, summary_text=proc.stdout)
     return result, proc
 
 
@@ -190,21 +259,20 @@ def finish_lint(result, proc):
 def run_ruff(argv, workdir, tmp):
     xml = os.path.join(tmp, "ruff.xml")
     cmd = drop_flag(argv, ("--output-format", "--output-file", "-o"))
-    proc = run(cmd + ["--output-format=junit"], plain_env())
+    proc, timed_out = run(cmd + ["--output-format=junit"], plain_env())
     result = Result(
-        runner="ruff", kind="lint", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode
+        runner="ruff",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
     )
     # ruff reports on stdout; stage it as a file so the JUnit adapter is fed the
     # same way it is for pytest.
     with open(xml, "w", encoding="utf-8") as fh:
         fh.write(proc.stdout or "")
-    try:
-        junit_adapter.parse(xml, result)
-    except Exception:  # noqa: BLE001 — see below
-        # Deliberately broad: a report tq cannot parse must degrade to the raw
-        # output that main() already prints for an unreported failure, never to
-        # a traceback in place of the digest.
-        pass
+    parse_junit(xml, result)
     for fail in result.failures:
         # ruff names each case after the rule, prefixed with its JUnit package:
         # "org.ruff.F401". The rule code is the half worth reading.
@@ -215,9 +283,14 @@ def run_ruff(argv, workdir, tmp):
 
 def run_shellcheck(argv, workdir, tmp):
     cmd = drop_flag(argv, ("--format", "-f"))
-    proc = run(cmd + ["--format=json1"], plain_env())
+    proc, timed_out = run(cmd + ["--format=json1"], plain_env())
     result = Result(
-        runner="shellcheck", kind="lint", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode
+        runner="shellcheck",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
     )
     lint_adapter.parse_shellcheck(proc.stdout, result)
     finish_lint(result, proc)
@@ -291,7 +364,9 @@ def main(argv):
     with tempfile.TemporaryDirectory(prefix="tq-") as tmp:
         started = time.monotonic()
         result, proc = RUNNERS[kind](argv, workdir, tmp)
-        result.duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
+        result.duration_ms = result.duration_ms or int(
+            (time.monotonic() - started) * 1000
+        )
         path = json_target()
         text = digest(result, path)
         result.write(path)

@@ -79,6 +79,10 @@ class Result:
     # finding and a clean run emits nothing — so it cannot borrow the test
     # verdict without inventing passes that were never asserted.
     kind: str = "tests"
+    # Set when the runner had to be killed for exceeding TQ_TIMEOUT. What was
+    # collected up to that point is still worth reporting, but it is a partial
+    # record and no verdict can be read off it.
+    timed_out: bool = False
     duration_ms: int = 0
     totals: dict = field(default_factory=new_totals)
     failures: list = field(default_factory=list)
@@ -95,6 +99,7 @@ class Result:
             "cmd": self.cmd,
             "cwd": self.cwd,
             "exit": self.exit,
+            "timed_out": self.timed_out,
             "duration_ms": self.duration_ms,
             "totals": self.totals,
             "failures": [f.to_dict() for f in self.failures],
