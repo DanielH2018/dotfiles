@@ -293,3 +293,110 @@ const SUDO_STUB = [
     }
   });
 }
+
+// 2d. os-unix/run_once_after_install-python-tools.sh.tmpl ------------------------------------
+// No sudo here, but it curl|sh's a remote installer, so the sandbox stubs curl (never reaches
+// the network) and uv (never installs anything). The fake installer the curl stub writes is
+// executed for real by the script's `sh`, which is what proves UV_INSTALL_DIR /
+// INSTALLER_NO_MODIFY_PATH are actually handed to it.
+{
+  const PT_SRC = path.join(SCRIPTS_DIR, 'os-unix', 'run_once_after_install-python-tools.sh.tmpl');
+
+  const UNAME_STUB = '#!/bin/sh\necho "${TEST_UNAME_S:-Linux}"\n';
+
+  // Logs its argv, then writes a stand-in for astral's install.sh to the -o path. The stand-in
+  // records the env it was invoked with and drops a uv stub in UV_INSTALL_DIR, so the script's
+  // post-install `command -v uv` probe resolves exactly as it would after a real install.
+  const CURL_STUB = [
+    '#!/bin/sh',
+    'echo "curl $*" >> "$STUB_LOG"',
+    '[ "${CURL_EXIT:-0}" = "0" ] || exit "$CURL_EXIT"',
+    'out=""; prev=""',
+    'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done',
+    'cat > "$out" <<EOF',
+    'echo "uv-installer UV_INSTALL_DIR=\\$UV_INSTALL_DIR INSTALLER_NO_MODIFY_PATH=\\$INSTALLER_NO_MODIFY_PATH" >> "$STUB_LOG"',
+    'mkdir -p "\\$UV_INSTALL_DIR"',
+    'cp "$STUB_DIR/uv.payload" "\\$UV_INSTALL_DIR/uv"',
+    'EOF',
+    'exit 0',
+  ].join('\n');
+
+  // `uv tool install <name>` materializes <name> in the stub dir (always on PATH) so the
+  // script's final command -v sweep sees the tools a real install would have produced.
+  const UV_STUB = [
+    '#!/bin/sh',
+    'echo "uv $*" >> "$STUB_LOG"',
+    'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then',
+    '  printf "#!/bin/sh\\n" > "$STUB_DIR/$3" && chmod 755 "$STUB_DIR/$3"',
+    'fi',
+    'exit "${UV_EXIT:-0}"',
+  ].join('\n');
+
+  function ptSandbox({ uvPresent = false, unameS = 'Linux' } = {}) {
+    const dir = tmpdir('python-tools-');
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'uname'), UNAME_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'curl'), CURL_STUB, { mode: 0o755 });
+    // uv.payload is what the fake installer copies into UV_INSTALL_DIR; it sits off PATH so
+    // `command -v uv` misses it until the install "runs". uvPresent also drops it on PATH.
+    fs.writeFileSync(path.join(dir, 'uv.payload'), UV_STUB, { mode: 0o755 });
+    if (uvPresent) fs.writeFileSync(path.join(dir, 'uv'), UV_STUB, { mode: 0o755 });
+    for (const b of ['cat', 'chmod', 'cp', 'mkdir', 'mktemp', 'rm', 'sh']) {
+      fs.symlinkSync(realBin(b), path.join(dir, b));
+    }
+    const rendered = renderTemplate(PT_SRC);
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, rendered);
+    const env = {
+      PATH: dir, HOME: dir, STUB_LOG: logFile, STUB_DIR: dir, TEST_UNAME_S: unameS,
+    };
+    return { scriptFile, env, logFile, dir };
+  }
+
+  test('install-python-tools.sh.tmpl: uv missing on Linux -> fetches the installer with UV_INSTALL_DIR pinned and PATH edits off', { skip }, () => {
+    const { scriptFile, env, logFile, dir } = ptSandbox({ uvPresent: false });
+    const { status } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.ok(log.includes('curl -LsSf https://astral.sh/uv/install.sh'), `installer should be fetched:\n${log}`);
+    assert.ok(
+      log.includes(`uv-installer UV_INSTALL_DIR=${path.join(dir, '.local', 'bin')} INSTALLER_NO_MODIFY_PATH=1`),
+      `installer should get a pinned dir and no PATH edits:\n${log}`,
+    );
+  });
+
+  test('install-python-tools.sh.tmpl: uv already present -> no download, installs python + ruff + prek', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true });
+    const { status } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.ok(!log.includes('curl '), `nothing should be downloaded when uv exists:\n${log}`);
+    assert.ok(log.includes('uv python install 3.12'), `managed CPython should be provisioned:\n${log}`);
+    assert.ok(log.includes('uv tool install ruff'), `ruff should be installed:\n${log}`);
+    assert.ok(log.includes('uv tool install prek'), `prek should be installed:\n${log}`);
+  });
+
+  // pytest is intentionally left to each project's own env (`uv run pytest`); a global one
+  // could not import the project under test. Asserted so a future edit can't quietly add it.
+  test('install-python-tools.sh.tmpl: never installs pytest globally', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true });
+    runSh(scriptFile, env);
+    assert.ok(!/tool install pytest/.test(readLog(logFile)), 'pytest must not be installed as a global uv tool');
+  });
+
+  test('install-python-tools.sh.tmpl: non-Linux without uv -> defers with exit 1, no download, no uv calls', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: false, unameS: 'Darwin' });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1);
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('install-python-tools.sh.tmpl: installer download fails -> exit 1 without touching uv', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: false });
+    env.CURL_EXIT = '22';
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1);
+    assert.ok(!readLog(logFile).includes('uv tool install'), 'no tool install should be attempted without uv');
+  });
+}

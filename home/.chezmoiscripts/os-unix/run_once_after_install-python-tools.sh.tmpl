@@ -1,0 +1,85 @@
+{{ if and (ne .chezmoi.os "windows") (ne .profile "minimal") -}}
+#!/bin/sh
+# Installs uv (Astral's Python package/project manager) plus the two Python CLIs that are
+# machine-global rather than per-project:
+#
+#   uv   — ~/dev/server's prek hooks shell out to `uv run`, so uv must be on PATH for
+#          `prek run` to work at all. The vault-tooling projects chezmoi deploys under
+#          ~/.claude/vault-tooling (config-map, vault-index) are uv projects too.
+#   ruff — private_dot_claude/hooks/{auto-format,lint-after-edit}.sh call a bare `ruff` on
+#          every *.py Claude edits. Without a global one those hooks silently no-op unless
+#          the cwd happens to sit in a venv that has ruff.
+#   prek — the Rust pre-commit replacement, invoked as `prek run --all-files`. A git-hook
+#          runner is global by nature; its per-repo config is the repo's prek.toml.
+#
+# pytest is deliberately NOT installed globally. It has to import the project under test and
+# that project's dependencies, so it can only come from the project's own environment:
+# `uv run pytest` (auto-syncs from uv.lock) or `uvx pytest`, both of which work once uv is
+# here. A global pytest would run in an isolated venv that can see no project at all, and
+# would only serve to make a bare `pytest` fail confusingly instead of failing fast.
+#
+# Linux gets the uv binary from Astral's standalone installer — there is no apt package,
+# which is why uv is absent from .chezmoidata/tools.toml. macOS takes it from the Brewfile
+# and Windows from winget; same split as fnm. The `uv tool install` steps below then run on
+# every non-Windows OS, mirroring run_once_before_install-fnm.sh.tmpl's shape. The Windows
+# counterpart lives in os-windows/run_onchange_install-cli-tools.ps1.tmpl.
+#
+# run_once_after_: runs AFTER file targets, so a failure here (no network, brew not bundled
+# yet) fails loudly WITHOUT blocking dotfile deployment — chezmoi does not record success, so
+# the next `chezmoi apply` retries. Gated off profile=minimal alongside the rest of the heavy
+# tooling. Bump the marker to force a refresh.
+# python-tools-bump: v1
+set -u
+
+BIN_DIR="$HOME/.local/bin"   # already on PATH via dot_config/shell/common.sh, but chezmoi
+PATH="$BIN_DIR:$PATH"        # runs scripts non-interactively, so re-add it before probing.
+mkdir -p "$BIN_DIR"
+
+# 1. uv binary. Linux only — see header for where the other two OSes get it.
+if ! command -v uv >/dev/null 2>&1 && [ "$(uname -s)" = "Linux" ]; then
+  echo "install-python-tools: installing uv ..." >&2
+  tmp="$(mktemp -d)"
+  if curl -LsSf https://astral.sh/uv/install.sh -o "$tmp/uv-install.sh"; then
+    # UV_INSTALL_DIR pins the target next to the other release binaries instead of leaving uv
+    # to guess between XDG_BIN_HOME/~/.local/bin/~/.cargo/bin. INSTALLER_NO_MODIFY_PATH stops
+    # it appending a PATH line to .bashrc/.zshenv — common.sh already puts BIN_DIR on PATH,
+    # and those files are chezmoi-managed, so an edit there would be reverted next apply.
+    UV_INSTALL_DIR="$BIN_DIR" INSTALLER_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh" \
+      || echo "install-python-tools: uv installer failed" >&2
+  else
+    echo "install-python-tools: failed to fetch https://astral.sh/uv/install.sh" >&2
+  fi
+  rm -rf "$tmp"
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "install-python-tools: uv not on PATH; skipping ruff/prek." >&2
+  echo "install-python-tools: on macOS run 'brew bundle --file ~/Brewfile' first, then re-run 'chezmoi apply'." >&2
+  exit 1
+fi
+
+# 2. Managed CPython 3.12 (mirrors the same step in the Windows installer). uv resolves an
+#    interpreter per project, but the vault-tooling projects target >=3.11 and 3.12 has the
+#    widest wheel coverage for vault-index's fastembed/duckdb deps — a distro python3 that has
+#    moved on to 3.13/3.14 has none of them. Idempotent: uv skips a version it already has.
+#    (~/dev/server pins >=3.14 and keeps resolving to the system interpreter.)
+uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' failed" >&2
+
+# 3. Global CLIs. `uv tool install` replaces an existing install rather than erroring, so a
+#    re-apply also refreshes a stale ruff/prek in place — the same upgrade-on-apply policy the
+#    install_release helper in os-linux/run_once_after_install-cli-tools.sh.tmpl uses. The
+#    executables land in uv's tool bin dir (`uv tool dir --bin`), which is BIN_DIR here.
+for t in ruff prek; do
+  uv tool install "$t" || echo "install-python-tools: 'uv tool install $t' failed" >&2
+done
+
+# Fail loudly (and retry next apply) if anything is still missing.
+missing=""
+for c in uv ruff prek; do
+  command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+done
+if [ -n "$missing" ]; then
+  echo "install-python-tools: still missing:$missing — re-run 'chezmoi apply'." >&2
+  exit 1
+fi
+{{ end -}}

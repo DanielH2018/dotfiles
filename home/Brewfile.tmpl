@@ -7,6 +7,10 @@ brew "mas"
 brew "pipx"
 brew "pre-commit"
 brew "tmux"
+# uv is the macOS half of run_once_after_install-python-tools.sh.tmpl, which installs the
+# binary itself only on Linux (no apt package) and then `uv tool install`s ruff + prek on
+# both. Windows gets uv from winget. Not in tools.toml: no apt field means no shared row.
+brew "uv"
 brew "wget"
 brew "pulumi/tap/pulumi"
 
