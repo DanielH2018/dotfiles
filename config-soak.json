@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "7574de88294975924a5709d16577125bd74868c57c1afa37e4e80776531a2961",
-      "landed": "2026-07-20T14:44:51.590Z"
+      "hash": "32f4621e115d3bf9efd7fdd75081a1204bb59839205d95bd7121f08bc5a93fb7",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "f62181f8a7dc7bd057873e2d8f4007158a21e7d9827bb27ffc8f5847749487ae",
-      "landed": "2026-07-16T16:24:54.939Z"
+      "hash": "433d0cf1d1a2e02229ec53eb8a54bb15d338a0d4832e666559891bce4276006a",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -22,24 +22,39 @@
       "landed": "2026-07-09T21:18:00.291Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
+      "hash": "491bec5c4a906482d5454f7eccd43912a4fa12c4fdeb79985291a3f0412aa071",
+      "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-state.sh",
+      "hash": "d220e9f96d12fffc429886e59df48ee11e14908fc94faa65e5842d0acd0b22ce",
+      "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
       "hash": "06d6e78cdf09de5eb592e9dfa07e4b25e6da783a70c8ab432c58055add71ee19",
       "landed": "2026-07-09T16:24:12.841Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
+      "hash": "e0262acc9d20da2a0acfa90b9437504ced7eedb65ba24087c77290f53fb00bf0",
+      "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
-      "hash": "2a2d1f0adc38115068a83e9ac770632bdcf86ddc16d4511c1797ca526b7bed93",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "7d16ad8aefed1cba665d2dbac0bcada9206175b831bb3becc1b81bfe280fd30c",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "48b73c0de08b27b131f0f902e1c0a84e465c25a9046cc974f0db456688cdceea",
-      "landed": "2026-07-16T18:01:25.708Z"
+      "hash": "157443dba8eeb277e7c458b868f79acf3de128192be2a08ed951f1a435c082b1",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
-      "hash": "c83913ab0e80e0b4f86f1349cbe456125e9646be9557d3ea41eac1a6bfc25d13",
-      "landed": "2026-07-16T12:45:12.981Z"
+      "hash": "0ba0116c1e2d9c47768a8b2f8ceef421cb6c29ba60989b0493adf9b3c83e2905",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
@@ -58,18 +73,23 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "f1e60badcc58679c6357c1b12427a01d1952860025bfd786ac4d41b8094c6ae8",
-      "landed": "2026-07-11T19:00:28.364Z"
+      "hash": "4c630cfcc7d6b14a588ab6d9e8f4ced845f3bb1c6fd3194240b17538203c01bb",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
-      "hash": "1f9494c4a1224d2f702be15384b2da4f4d879098ae9b6b10e7e9aca6f6132867",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "8ba3eae487fc2256b148fc3a000f436ced53d852a70a413ffbdf34ec712f17d3",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
-      "hash": "eab4630a172fdc1a4caf02ba94708e792c6754bb34c5487adce52b0287faf742",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "02a57bbd9d372a87dea7a0e0bfd99b24c2ed685c356d3b6886d9300482365e43",
+      "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
+      "hash": "6d0f002b62ca626e998d3fb433ae2f87e28384194adc8810259e13ae0151d791",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
@@ -78,13 +98,18 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_pre-compact.sh",
-      "hash": "c1ec9a031c4cef3e0871bc1ef343ac792e8f5834037d924471002ddb7eb149a1",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "ce2c33f3915d86b7672cb6e4df5b3d00fc5015fa53a6df54b093c23eb29d05dc",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
       "hash": "74e261ef897638dceed675b653c0f1b5da52b14048867f077ef0d43ca0fe9d7e",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
+      "hash": "1a37711585014032f4672146cdc903f0af9d19c458280e651f25fbca53c5738d",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reprime-nudge.sh",
@@ -93,8 +118,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
-      "hash": "d6d3c88c3b647235f98c5eb44ed27293845cfe0af3e90b9bebf1f1c8e5dbe6ab",
-      "landed": "2026-07-09T16:47:44.162Z"
+      "hash": "4bcd5f7272c210956e58ba9413629534505bb62271d7a33e972a4ed63e3f9431",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_serve-artifacts.sh",
@@ -128,18 +153,18 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
-      "hash": "98e1bb8465c5588149b9fa4c137597e0a3fb9db85a989afbb81417904617c096",
-      "landed": "2026-07-08T20:17:05.073Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_wezterm-state.sh",
-      "hash": "87017217b063ab199f4a8bd4c84f30319faa99283bd35c0690ca2df34cd85b91",
-      "landed": "2026-07-21T17:10:24.947Z"
+      "hash": "efa2e8715ee1068689ee8d85f6a8ab5b1f0dcf34b53941e15ef17fb2f9b65260",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
       "hash": "73eaccf3d3d6a2d2adbd66d4fc867d25b38ce56257284f5947264a883524781b",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
+      "hash": "7ff2c913d08b1cba5757f4c7f4e054cfea946164937d47b2673721ad90e85030",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
@@ -183,8 +208,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "e2e5bfabea67157bc76d9a18687ab8c61d3484fe44e00f4be881c0963abc229e",
-      "landed": "2026-07-15T13:29:16.858Z"
+      "hash": "988d98e85d30cabb4ac9520f9055d9a86b39aa9d995ec2ac2b4026c9e6e7c94e",
+      "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
+      "hash": "78e0877b50ab527b72a851c1c8721491b038e317daca8af7b349ed3774fce5de",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
@@ -208,8 +238,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",
-      "hash": "41a79ab019f7685f01fe63a2415b135efa09e960d89eb4fd74e545f0e64de079",
-      "landed": "2026-07-09T21:18:00.291Z"
+      "hash": "5e09c0765df1bb12a576f1c1a4705500a1bda6c1a620ad09b411aa69fe5b6a02",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/distill-scan/SKILL.md",
@@ -228,8 +258,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/grilling/SKILL.md",
-      "hash": "53a35757a2b8f3788aed346db8c5abc084ed7f8ab188fcf5f07af0bd67f35e45",
-      "landed": "2026-07-14T15:33:28.076Z"
+      "hash": "3a825f53311efeba6b167134a97ba9956c9bc2dc94f0a2c2e59b2ac41a3deed1",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
@@ -248,13 +278,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_fetch.sh",
-      "hash": "ae543f1c0ef1ec5345e368999555b7b3c13e2de12232dce97858d7e415942ac9",
-      "landed": "2026-07-09T16:04:31.305Z"
+      "hash": "c65f66eefd09b5cf2c53031a8373a2cfea8aa58fc00e29925ab91f4140ef2f46",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_test_render.sh",
-      "hash": "c0e45cb1965dc252bb902e63ddeca3335e5a95596f4250bbc82f7735fc291c84",
-      "landed": "2026-07-09T16:10:57.488Z"
+      "hash": "a14c26363051b83514e55dc902a7616bc752c1bcd2ff8ac093331e3c1d61b1bd",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/scripts/fixtures/comment_only.json",
@@ -293,8 +323,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/templates/report.html",
-      "hash": "b781f46ab003546a1e52d9a21875ea7b1c3580d0eda78582ab7e21cb2257da63",
-      "landed": "2026-07-09T16:04:31.305Z"
+      "hash": "3fabb96c536ada451ec0eb22b4cfa4ad8b2453152f8b8ab376b477dafe70a511",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-review-prep/SKILL.md",
@@ -303,8 +333,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-review-prep/references/test_triage.sh",
-      "hash": "c1889bf5a9f66ee80ad2b95567a28687d42c5825dc1dc1584db4b64cbaec6569",
-      "landed": "2026-07-22T16:52:53.587Z"
+      "hash": "f1e96d704cb3a106c54dccf330776c910c32d8ceeadb95099b19642f317ac97c",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-review-prep/references/triage.sh",
@@ -323,8 +353,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/skill-router/SKILL.md",
-      "hash": "04f803ac01f8c4f3458671f8293f1b6eb7595e17dbd5557328fccbddc5a7b0f0",
-      "landed": "2026-07-14T15:33:28.076Z"
+      "hash": "c6098dbb7200f7380edc5e47bcf9debc682f10b120be3f32e44bc97209a14364",
+      "landed": "2026-07-25T01:23:11.477Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
