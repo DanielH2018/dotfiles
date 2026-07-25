@@ -96,7 +96,7 @@ errors encountered → user corrections. A user correction is the last thing to 
 
 ## Homelab access
 
-The homelab server is `ubuntu@10.0.0.161` — Host alias `homelab` in `~/.ssh/config`; the remote user is `ubuntu`, not `daniel`. Run commands with `ssh homelab '<command>'`; `ssh` is in the permission `ask` list, so expect an approval prompt.
+The homelab server is `ubuntu@10.0.0.161` — Host alias `homelab` in `~/.ssh/config`; the remote user is `ubuntu`, not `daniel`. Run commands with `ssh homelab '<command>'`. `ssh` is in the permission `ask` list, but `allow-readonly-remote.sh` auto-approves a narrow set of provably read-only remote verbs (`uptime`, `docker ps`, `systemctl status`, `journalctl`, ...), so those run without a prompt; anything else still prompts.
 {{ if .work }}
 @~/.claude/CLAUDE.local.md
 {{- end }}

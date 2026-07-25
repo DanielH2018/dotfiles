@@ -50,7 +50,13 @@
 </div>
 <script>
 const DATA = /*__PR_FEEDBACK_DATA__*/null;
-function esc(s){ return (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+// Quotes must be escaped too: every esc() result below lands inside a double-quoted
+// attribute, and a CheckRun detailsUrl / StatusContext targetUrl is set by whoever
+// wrote the commit status, not by GitHub — `" onmouseover="…` would otherwise break
+// out of href and run when the report is opened locally.
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+// …and escaping alone still leaves `javascript:` clickable, so pin the scheme.
+function safeUrl(u){ return /^https?:\/\//i.test(String(u==null?"":u)) ? esc(u) : "#"; }
 function ago(iso){ const d=(Date.now()-new Date(iso).getTime())/3.6e6;
   if(d<1) return Math.round(d*60)+"m ago"; if(d<24) return Math.round(d)+"h ago"; return Math.round(d/24)+"d ago"; }
 function render(){
@@ -61,21 +67,21 @@ function render(){
   list.innerHTML=DATA.prs.map(pr=>{
     const reviews=pr.reviews.map(r=>`${esc(r.author)} ${r.state.toLowerCase().replace(/_/g,"-")}`).join(" · ")||"—";
     const checks=pr.checks.length
-      ? pr.checks.map(c=>`<span class="fail">${esc(c.name)}</span> <a href="${esc(c.url)}">${esc(c.state)}</a>`).join(" · ")
+      ? pr.checks.map(c=>`<span class="fail">${esc(c.name)}</span> <a href="${safeUrl(c.url)}">${esc(c.state)}</a>`).join(" · ")
       : (pr.checksFailing?'<span class="fail">checks failing — see PR</span>':"—");
     const threads=pr.threads.length
       ? `<details open><summary>${pr.threads.length} unresolved thread(s)</summary>`+
-        pr.threads.map(t=>`<div class="thread"><span class="loc">${esc(t.path)}:${esc(t.line)}</span>${t.isOutdated?' <span class="loc">(outdated)</span>':''}<br><span class="who">${esc(t.author)}</span>: <span class="body">${esc(t.body)}</span> <a href="${esc(t.url)}">link</a></div>`).join("")+
+        pr.threads.map(t=>`<div class="thread"><span class="loc">${esc(t.path)}:${esc(t.line)}</span>${t.isOutdated?' <span class="loc">(outdated)</span>':''}<br><span class="who">${esc(t.author)}</span>: <span class="body">${esc(t.body)}</span> <a href="${safeUrl(t.url)}">link</a></div>`).join("")+
         `</details>`
       : "";
     const comments=pr.comments.length
       ? `<details><summary>${pr.comments.length} comment(s)</summary>`+
-        pr.comments.map(c=>`<div class="comment"><span class="who">${esc(c.author)}</span>: <span class="body">${esc(c.body)}</span> <a href="${esc(c.url)}">link</a></div>`).join("")+
+        pr.comments.map(c=>`<div class="comment"><span class="who">${esc(c.author)}</span>: <span class="body">${esc(c.body)}</span> <a href="${safeUrl(c.url)}">link</a></div>`).join("")+
         `</details>`
       : "";
     return `<div class="card t${pr.tier}">
       <div class="titlerow"><span class="badge t${pr.tier}">T${pr.tier}</span>
-        <a href="${esc(pr.url)}">${esc(pr.title)}</a>
+        <a href="${safeUrl(pr.url)}">${esc(pr.title)}</a>
         <span class="repo">${esc(pr.repo)}#${pr.number}</span></div>
       <div class="sub">${esc(pr.branch)} · updated ${ago(pr.updatedAt)} · ${esc(pr.reviewDecision||"")}${pr.isDraft?" · draft":""}</div>
       <div class="row"><span class="k">Reviews</span>${reviews}</div>

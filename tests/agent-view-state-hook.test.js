@@ -37,8 +37,12 @@ function runHook(state, { home, reg, key }) {
   const env = { ...process.env, HOME: home, AGENT_VIEW_DIR: reg };
   if (key !== undefined) env.AGENT_VIEW_KEY = key; else delete env.AGENT_VIEW_KEY;
   delete env.TMUX; delete env.WEZTERM_PANE;
+  // No stdin: this hook reads its state from argv and AGENT_VIEW_KEY, never from stdin.
+  // Writing a payload it never drains raced its exit and failed ~20% of runs with
+  // `spawnSync bash EPIPE`, most often on the early-exit paths that return before
+  // sourcing the helper.
   return execFileSync('bash', [HOOK, state], {
-    env, encoding: 'utf8', input: '{"session_id":"x"}', stdio: ['pipe', 'pipe', 'pipe'],
+    env, encoding: 'utf8', input: '', stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
 function writeRow(reg, key, state) {

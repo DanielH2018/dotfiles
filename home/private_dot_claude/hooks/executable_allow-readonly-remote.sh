@@ -22,10 +22,13 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
 # Any shell metacharacter can smuggle a second command past the verb check
 # (`hl uptime; rm -rf /`) or redirect output (`hl cat x > y`); a pipe/subst can
-# hide an unlisted command. Refuse to auto-approve if the raw command carries
-# one — it just falls through to a normal prompt.
+# hide an unlisted command. Glob chars (*?[]) let a literal that doesn't match
+# SECRET_RE below (e.g. `/proc/self/enviro?`) expand into a secret path once
+# the remote shell glob-expands it. Refuse to auto-approve if the raw command
+# carries one — it just falls through to a normal prompt.
 case $COMMAND in
-  *';'* | *'&'* | *'|'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'* | *'{'* | *'}'* | *\\* | *$'\n'* )
+  *';'* | *'&'* | *'|'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'* | *'{'* | *'}'* | \
+  *'*'* | *'?'* | *'['* | *']'* | *\\* | *$'\n'* )
     exit 0 ;;
 esac
 
@@ -65,45 +68,69 @@ allow() {
 # /proc/<pid>/environ dumps the process environment — every exported token — and is
 # world-readable to its own user, so it is the practical form of this attack rather
 # than a root-only file like /etc/shadow.
-SECRET_RE='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem($|[^a-z])|\.key($|[^a-z])|\.p12($|[^a-z])|\.pfx($|[^a-z]))'
+# \.ssh, \.gnupg and /secrets match without a trailing slash too, since
+# `grep -r x /home/ubuntu/.ssh` reads the whole directory (every key) without
+# ever writing a slash after it.
+SECRET_RE='(\.env|\.ssh(/|[[:space:]]|$)|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg(/|[[:space:]]|$)|\.netrc|\.pypirc|\.npmrc|/secrets(/|[[:space:]]|$)|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.config/gcloud/|\.config/rclone/rclone\.conf|terraform\.tfstate|\.bash_history|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^[:space:]]*environ|\.pem($|[^a-z])|\.key($|[^a-z])|\.p12($|[^a-z])|\.pfx($|[^a-z]))'
 printf '%s' "$rest" | grep -qiE "$SECRET_RE" && exit 0
 # journalctl reads logs, but these flags delete or rotate them.
 if [ "$verb" = journalctl ]; then
   printf '%s' "$rest" | grep -qE -- '--(vacuum-(size|time|files)|rotate|flush|sync|relinquish-var)' && exit 0
+fi
+# dmesg reads the kernel ring buffer, but these flags clear it.
+if [ "$verb" = dmesg ]; then
+  printf '%s' "$rest" | grep -qE -- '(^| )-[a-zA-Z]*[Cc][a-zA-Z]*($| )|--clear|--read-clear' && exit 0
+fi
+# ss lists sockets, but -K/--kill closes them.
+if [ "$verb" = ss ]; then
+  printf '%s' "$rest" | grep -qE -- '(^| )-[a-zA-Z]*K[a-zA-Z]*($| )|--kill' && exit 0
 fi
 
 third=${REMOTE[2]:-}
 # env/printenv are deliberately absent from this list: they print every exported
 # variable, which on a homelab host includes API tokens. They read as "read-only"
 # but are an exfiltration path, so they fall through to a normal prompt.
+# `command` is a shell builtin on the remote that executes its argument, so
+# having it here would launder any verb past this allowlist. `mount` (with no
+# args, or writing fstab) mutates, and `sort -o`/`uniq [IN OUT]`/`xxd -r [IN
+# OUT]` all take an output file, so none of the three belong on a read-only list.
 case $verb in
-  uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|which|type|command|\
+  uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|which|type|\
   df|free|du|ps|top|htop|vmstat|iostat|w|who|last|lscpu|lsblk|lsof|lsmod|dmesg|\
-  sensors|nvidia-smi|getent|mount|\
+  sensors|nvidia-smi|getent|\
   ls|cat|head|tail|wc|stat|file|tree|readlink|realpath|basename|dirname|\
-  grep|egrep|fgrep|rg|echo|printf|sort|uniq|cut|tr|jq|xxd|od|\
+  grep|egrep|fgrep|rg|echo|printf|cut|tr|jq|od|\
   md5sum|sha1sum|sha256sum|cksum|\
-  ip|ss|netstat|ping|ping6|dig|host|nslookup|traceroute|tracepath|\
+  ss|netstat|ping|ping6|dig|host|nslookup|traceroute|tracepath|\
   journalctl)
     allow ;;
+  ip)
+    # Only inspection subcommands are read-only ("ip a", "ip route", "ip addr
+    # show"); anything else ("ip link set", "ip addr add", ...) mutates.
+    case $third in ''|show|list|ls|get) allow ;; esac
+    ;;
   docker)
+    # inspect/config are excluded here (and below) because they print the
+    # container/compose Env[], the same secret-dumping shape as `env`.
     case $sub in
-      ps|logs|inspect|images|stats|version|info|top|port|diff|history|events|search)
+      ps|logs|images|stats|version|info|top|port|diff|history|events|search)
         allow ;;
       network|volume|context|node) case $third in ls|inspect) allow ;; esac ;;
-      container) case $third in ls|inspect|logs|top|stats|port|diff) allow ;; esac ;;
-      image) case $third in ls|inspect|history) allow ;; esac ;;
+      container) case $third in ls|logs|top|stats|port|diff) allow ;; esac ;;
+      image) case $third in ls|history) allow ;; esac ;;
       system) case $third in df|info|events) allow ;; esac ;;
-      compose) case $third in ps|logs|config|images|top) allow ;; esac ;;
-      service) case $third in ls|ps|inspect|logs) allow ;; esac ;;
+      compose) case $third in ps|logs|images|top) allow ;; esac ;;
+      service) case $third in ls|ps|logs) allow ;; esac ;;
       stack) case $third in ls|ps|services) allow ;; esac ;;
     esac
     ;;
   systemctl)
+    # show/cat/show-environment print unit `Environment=` values — same
+    # secret-dumping shape as `env`, so they're excluded like docker inspect above.
     case $sub in
-      status|is-active|is-enabled|is-failed|list-units|list-unit-files|show|cat|\
+      status|is-active|is-enabled|is-failed|list-units|list-unit-files|\
       get-default|list-timers|list-sockets|list-dependencies|list-jobs|\
-      is-system-running|show-environment)
+      is-system-running)
         allow ;;
     esac
     ;;
