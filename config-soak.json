@@ -228,13 +228,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
-      "hash": "012f158dbf657fc9c2d98de0e40d8aa8e0b40ebde98f68673b2602dab3ba0c8d",
-      "landed": "2026-07-14T15:33:28.076Z"
+      "hash": "c9928d26405842c81faa72438219a6174c394612e27c14846d74c59f8ae1cc0a",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/SKILL.md",
-      "hash": "b53b6f50fab7132d425dc795665aa2b0679d4d4f1e7a8e219fea6c118e8b3033",
-      "landed": "2026-07-09T21:18:00.291Z"
+      "hash": "18ca5ed7a97779760be6221ead6b827a95e3d781c12ab794b8386a80821396bb",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.js",
@@ -248,8 +248,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",
-      "hash": "5e09c0765df1bb12a576f1c1a4705500a1bda6c1a620ad09b411aa69fe5b6a02",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "d57a8d52bd7e5ba5799d115c650c32d877090cdb6d66dac17b7a8180e0896fc8",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/distill-scan/SKILL.md",
@@ -258,8 +258,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/domain-modeling/SKILL.md",
-      "hash": "a3f04c6e4aa85cf8114db8681c97f0dfbd4bd01f1202fe17aa1fdc954901cf2c",
-      "landed": "2026-07-14T15:33:28.076Z"
+      "hash": "2a7f0325a7939a094debcf375731a0157bb798459b1cb9e1b489898f2b3cf948",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
@@ -268,8 +268,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/grilling/SKILL.md",
-      "hash": "3a825f53311efeba6b167134a97ba9956c9bc2dc94f0a2c2e59b2ac41a3deed1",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "7fe693588d5d03566f7ea717474f9522923a76b5802b935c91653722402fa72c",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
@@ -278,8 +278,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
-      "hash": "9c8c5f2f9ef76063d4e83032a7a7f32604905c83cb4433f4ec3c3970e89813ec",
-      "landed": "2026-07-09T21:18:00.291Z"
+      "hash": "683a2ed97132573875c5af4edc005c51c4ec5d50d50e77dfa392f91707bc47e3",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/scripts/executable_fetch.sh",
@@ -358,8 +358,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
-      "hash": "6391f7e7c3b1e43c308defe5b0cd684b6f3f68dfe688bcfc5cfbcb6ddcbb3e19",
-      "landed": "2026-07-25T23:12:01.504Z"
+      "hash": "970d61fa55a8e12d1f7225c6afcaafae2e1bf87a88e7c8438589a31804f8e756",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/reprime/SKILL.md",
@@ -367,14 +367,14 @@
       "landed": "2026-07-09T21:18:00.291Z"
     },
     {
-      "path": "home/private_dot_claude/skills/skill-router/SKILL.md",
-      "hash": "c6098dbb7200f7380edc5e47bcf9debc682f10b120be3f32e44bc97209a14364",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "path": "home/private_dot_claude/skills/skill-router/SKILL.md.tmpl",
+      "hash": "cb524f834d86a19de1ddc589397b746510d4d8dae914768a58d2d1c8afc25e8e",
+      "landed": "2026-07-25T23:57:09.741Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
-      "hash": "4d25b9f978c4d76125448553fb1b596bf76a240bd229ac242a2cab616de3c959",
-      "landed": "2026-07-14T15:33:28.076Z"
+      "hash": "044f7765edab9444cc318f49fbb7ac91f0ac70065c69239ac7255540e1ba8949",
+      "landed": "2026-07-25T23:57:09.741Z"
     }
   ]
 }
