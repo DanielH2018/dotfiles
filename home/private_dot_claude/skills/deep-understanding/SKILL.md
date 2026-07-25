@@ -1,6 +1,6 @@
 ---
 name: deep-understanding
-description: Use when the user wants to deeply understand something — not just complete a task. Trigger on "teach me", "help me understand", "walk me through", "explain as we go", "ELI5", "explain like an intern", "quiz me", "make sure I actually get this", onboarding into an unfamiliar codebase/service, grasping a PR or diff before approving it, understanding an incident's root cause, or learning a network-spec/protocol concept. Treats the user's understanding as the deliverable: incremental explanation, restate-then-quiz checkpoints, and a running comprehension checklist that only closes once understanding is demonstrated.
+description: Use when the user wants to *learn* something, not just get it done — "teach me", "help me understand", "walk me through", "ELI5", "quiz me" — or when onboarding into an unfamiliar codebase, grasping a PR before approving it, or unpicking an incident's root cause. Understanding is the deliverable, not the change. Not for stress-testing a plan (use grilling).
 metadata:
     author: daniel
     version: 0.1.0
