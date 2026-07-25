@@ -86,10 +86,15 @@ let failed = 0;
 const rows = [];
 for (const c of checks) {
   const r = spawnSync('bash', ['-c', c.cmd], { encoding: 'utf8' });
-  const code = r.status ?? (r.error ? 127 : 0);
+  // A signal-killed child reports status:null with no error, so the nullish fallback
+  // used to grade an OOM kill or a segfault as exit 0 — i.e. report PASS for the very
+  // crash the check exists to catch. Signals get the shell's 128+n treatment instead.
+  const code = r.status ?? (r.signal ? 128 : (r.error ? 127 : 0));
   const out = (r.stdout || '') + (r.stderr || '');
   const reasons = [];
-  if (c.exit !== null && code !== c.exit) reasons.push(`exit ${code}≠${c.exit}`);
+  if (c.exit !== null && code !== c.exit) {
+    reasons.push(r.signal ? `killed by ${r.signal}` : `exit ${code}≠${c.exit}`);
+  }
   if (c.match !== null && !out.includes(c.match)) reasons.push(`missing "${c.match}"`);
   const pass = reasons.length === 0;
   if (!pass) failed++;

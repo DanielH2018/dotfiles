@@ -49,6 +49,17 @@ test('a failing check -> exit 1', { skip }, () => {
   assert.equal(run(dir, ['c.checks']).code, 1);
 });
 
+// spawnSync reports status:null with no error when the child dies from a signal, so the
+// nullish fallback graded a SIGKILL as exit 0 and reported PASS — the self-assessment
+// failure this tool exists to prevent.
+test('a signal-killed command fails an exit:0 check instead of passing', { skip }, () => {
+  const dir = mkrepo();
+  write(dir, 'c.checks', '- RUN: `kill -9 $$` -> exit:0\n');
+  const { code, out } = run(dir, ['c.checks']);
+  assert.equal(code, 1);
+  assert.match(out, /killed by SIGKILL/);
+});
+
 test('exit and match are ANDed on one line', { skip }, () => {
   const dir = mkrepo();
   // right exit, wrong substring -> fail
