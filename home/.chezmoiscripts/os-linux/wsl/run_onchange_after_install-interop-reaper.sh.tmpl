@@ -1,0 +1,59 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: deploy the Windows-side wslhost interop reaper and register its scheduled task.
+#
+# WSL leaks a permanently-spinning CPU thread whenever the VM-mode interop path loses a
+# control socket: ProcessInteropMessages re-issues its ReadFile forever when the read
+# completes synchronously with 0 bytes, because every loop exit sits inside `if (!Success)`
+# and a closed hvsocket returns success with BytesRead == 0 (microsoft/WSL#41173, unfixed
+# through WSL 2.9.4 -- there is no version to upgrade to). Measured here at ~12 leaked
+# cores in 2.5h, which pegs the host while the Linux guest sits idle.
+#
+# The reaper has to be a native Windows scheduled task rather than a systemd timer here:
+# polling from WSL would mean invoking powershell.exe from a unit with no owning wsl.exe
+# on every sweep, i.e. driving the very interop path we are trying to keep quiet.
+#
+# chezmoi manages $HOME only, and Scripts/ is gated to .chezmoi.os == "windows" in
+# .chezmoiignore, so on WSL the payload is written into the Windows profile directly --
+# same reasoning as the /etc drop-in in run_once_after_enable-fstrim. Applying on Windows
+# deploys the identical files through Scripts/, so the two clones converge.
+#
+# Re-runs whenever any payload changes:
+#   reaper:  {{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1" | sha256sum }}
+#   vbs:     {{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs" | sha256sum }}
+#   install: {{ include "Scripts/wslhost-interop-reaper/install.ps1" | sha256sum }}
+set -u
+
+PS=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+if [ ! -x "$PS" ]; then
+  echo "install-interop-reaper: powershell.exe not found; skipping" >&2
+  exit 0
+fi
+
+# Resolve the Windows profile rather than assuming the Linux and Windows usernames match.
+win_profile=$("$PS" -NoProfile -NonInteractive -Command '[Console]::Out.Write($env:USERPROFILE)' 2>/dev/null | tr -d '\r')
+if [ -z "$win_profile" ]; then
+  echo "install-interop-reaper: could not resolve %USERPROFILE%; deferring (retries next apply)" >&2
+  exit 1
+fi
+
+dest=$(wslpath -u "$win_profile")/Scripts/wslhost-interop-reaper
+mkdir -p "$dest"
+
+cat > "$dest/wslhost-interop-reaper.ps1" <<'REAPER_EOF'
+{{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1" | trimSuffix "\n" }}
+REAPER_EOF
+
+cat > "$dest/wslhost-interop-reaper-hidden.vbs" <<'VBS_EOF'
+{{ include "Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs" | trimSuffix "\n" }}
+VBS_EOF
+
+cat > "$dest/install.ps1" <<'INSTALL_EOF'
+{{ include "Scripts/wslhost-interop-reaper/install.ps1" | trimSuffix "\n" }}
+INSTALL_EOF
+
+# install.ps1 registers with -Force, so re-running just refreshes the task definition.
+"$PS" -NoProfile -ExecutionPolicy Bypass -File "$win_profile\\Scripts\\wslhost-interop-reaper\\install.ps1"
+{{ end -}}
+{{ end -}}

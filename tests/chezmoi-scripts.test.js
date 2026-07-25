@@ -5,8 +5,8 @@
 // --source flag makes `include` directives resolve against this worktree), and the output is
 // checked with `bash -n`. Every *.ps1.tmpl is rendered only (no pwsh on this machine).
 //
-// Part 2 (behavior): the three riskiest scripts (chsh, sudo+/etc edits, sudo+systemctl) are
-// driven as RENDERED scripts under a PATH-shim sandbox. PATH is fully REPLACED (not merely
+// Part 2 (behavior): the riskiest scripts (chsh, sudo+/etc edits, sudo+systemctl, curl|sh,
+// sudo+apt) are driven as RENDERED scripts under a PATH-shim sandbox. PATH is fully REPLACED (not merely
 // prepended) with a temp dir of stub executables that log their argv to a file and exit
 // 0/controllable -- so no real chsh/sudo/systemctl/getent call ever reaches the real system,
 // regardless of which branch a test takes. Every mutating step in all three scripts is
@@ -29,7 +29,7 @@ try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { too
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 
-// The two scripts under os-linux/wsl/ open with `{{ if contains "microsoft" (lower
+// The os-linux/wsl/ scripts driven in Part 2 open with `{{ if contains "microsoft" (lower
 // .chezmoi.kernel.osrelease) }}`, so off WSL they render to an EMPTY string. The Part 2
 // behavior tests would then run an empty script and read exit 0 / an empty stub log --
 // failing on assertions about a script body that does not exist there, which is what the
@@ -398,5 +398,80 @@ const SUDO_STUB = [
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 1);
     assert.ok(!readLog(logFile).includes('uv tool install'), 'no tool install should be attempted without uv');
+  });
+}
+
+// 2e. os-linux/wsl/run_once_after_install-wslg-audio.sh.tmpl ---------------------------------
+// Installs pulseaudio-utils so play-sound.sh uses WSLg's PulseAudio instead of powershell.exe
+// interop (which leaks a spinning CPU thread per launch, microsoft/WSL#41173). Both mutating
+// steps are `sudo apt-get ...` and the sudo stub never execs them, so no real apt call happens.
+{
+  const WA_SRC = path.join(SCRIPTS_DIR, 'os-linux', 'wsl', 'run_once_after_install-wslg-audio.sh.tmpl');
+
+  // Materializes paplay in STUB_DIR on `apt-get install` so the script's post-install
+  // `command -v paplay` probe resolves exactly as it would after a real install.
+  // APT_INSTALL_FAILS=1 simulates apt exiting non-zero and leaving nothing behind.
+  const APT_SUDO_STUB = [
+    '#!/bin/sh',
+    'echo "sudo $*" >> "$STUB_LOG"',
+    'if [ "$1" = "-v" ] || [ "$1" = "-n" ]; then',
+    '  exit "${SUDO_PROBE_EXIT:-0}"',
+    'fi',
+    'if [ "$2" = "install" ]; then',
+    '  [ "${APT_INSTALL_FAILS:-0}" = "0" ] || exit 100',
+    '  printf "#!/bin/sh\\n" > "$STUB_DIR/paplay" && chmod 755 "$STUB_DIR/paplay"',
+    'fi',
+    'exit "${SUDO_EXIT:-0}"',
+    '',
+  ].join('\n');
+
+  function waSandbox({ paplayPresent = false } = {}) {
+    const dir = tmpdir('wslg-audio-');
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'sudo'), APT_SUDO_STUB, { mode: 0o755 });
+    if (paplayPresent) fs.writeFileSync(path.join(dir, 'paplay'), '#!/bin/sh\n', { mode: 0o755 });
+    fs.symlinkSync(realBin('chmod'), path.join(dir, 'chmod')); // used by the sudo stub itself
+    const rendered = renderTemplate(WA_SRC);
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, rendered);
+    const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, STUB_DIR: dir };
+    return { scriptFile, env, logFile };
+  }
+
+  test('install-wslg-audio.sh.tmpl: paplay already present -> exits 0 without invoking sudo', { skip: skipWsl }, () => {
+    const { scriptFile, env, logFile } = waSandbox({ paplayPresent: true });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.strictEqual(readLog(logFile), '', 'converged run must not probe or invoke sudo');
+  });
+
+  test('install-wslg-audio.sh.tmpl: sudo unavailable -> defers with exit 1 before touching apt', { skip: skipWsl }, () => {
+    const { scriptFile, env, logFile } = waSandbox();
+    env.SUDO_PROBE_EXIT = '1';
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1, 'must exit 1 so chezmoi does not record success');
+    assert.strictEqual(readLog(logFile).trim(), 'sudo -v', 'no apt call should follow a failed sudo probe');
+  });
+
+  test('install-wslg-audio.sh.tmpl: paplay missing + sudo available -> installs pulseaudio-utils and nothing else', { skip: skipWsl }, () => {
+    const { scriptFile, env, logFile } = waSandbox();
+    const { status, stdout } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.ok(log.includes('sudo apt-get update -qq'), `apt index should be refreshed first:\n${log}`);
+    assert.ok(log.includes('sudo apt-get install -y pulseaudio-utils'), `pulseaudio-utils should be installed:\n${log}`);
+    // Guards against a future edit quietly widening this into a general audio-stack install.
+    const installs = log.split('\n').filter((l) => l.includes('apt-get install'));
+    assert.deepStrictEqual(installs, ['sudo apt-get install -y pulseaudio-utils'], `exactly one package expected:\n${log}`);
+    assert.match(stdout, /pulseaudio-utils installed/);
+  });
+
+  test('install-wslg-audio.sh.tmpl: apt fails to provide paplay -> exit 1 so the next apply retries', { skip: skipWsl }, () => {
+    const { scriptFile, env, logFile } = waSandbox();
+    env.APT_INSTALL_FAILS = '1';
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1, 'a silent fallback to interop must not be recorded as success');
+    assert.ok(readLog(logFile).includes('apt-get install -y pulseaudio-utils'), 'the install should have been attempted');
   });
 }

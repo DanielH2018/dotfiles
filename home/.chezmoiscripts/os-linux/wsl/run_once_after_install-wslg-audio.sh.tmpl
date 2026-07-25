@@ -1,0 +1,50 @@
+{{ if eq .chezmoi.os "linux" -}}
+{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+#!/bin/sh
+# WSL-only: install pulseaudio-utils so private_dot_claude/hooks/play-sound.sh can reach the
+# speakers through WSLg's PulseAudio socket (/mnt/wslg/PulseServer) rather than by launching
+# powershell.exe.
+#
+# This is the other half of the wslhost interop-leak fix (see the sibling
+# run_onchange_after_install-interop-reaper, which reaps leaks that do happen). A Windows
+# binary launched from a session whose owning wsl.exe has already exited takes WSL's VM-mode
+# interop path, and that path leaks a permanently spinning CPU thread per launch
+# (microsoft/WSL#41173, unfixed through WSL 2.9.4 -- there is no version to upgrade to).
+# reap-backgrounded-origins.timer manufactures exactly that orphaned condition every 30s, and
+# play-sound.sh fires on every permission and idle prompt, which made it the single largest
+# source of those leaks. paplay starts no Windows process at all. Without this package the
+# hook silently falls back to interop and the leak comes back -- the fallback is deliberate
+# (a missing player should not break the hook) which is precisely why it fails quietly.
+#
+# Deliberately NOT in .chezmoidata/tools.toml: that file is the source of truth for tools
+# installed on more than one OS, and this one is WSL-unique -- no winget or brew counterpart.
+#
+# chezmoi manages $HOME only, so apt needs sudo here. run_once_after_: a sudo-less run fails
+# loud (exit 1 -> chezmoi does NOT record success -> retries next apply) WITHOUT blocking
+# dotfile deployment. Bump the marker to force a refresh.
+# wslg-audio-bump: v1
+set -u
+
+# Converged check mirrors what the hook actually tests for (command -v paplay), not dpkg -s,
+# so a paplay from any source counts.
+if command -v paplay >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! sudo -v; then
+  echo "install-wslg-audio: sudo unavailable; deferring pulseaudio-utils (retries next apply)" >&2
+  exit 1
+fi
+
+sudo apt-get update -qq && sudo apt-get install -y pulseaudio-utils
+
+if command -v paplay >/dev/null 2>&1; then
+  echo "install-wslg-audio: pulseaudio-utils installed (play-sound.sh now uses WSLg, not interop)"
+else
+  echo "install-wslg-audio: pulseaudio-utils still missing; play-sound.sh will fall back to" >&2
+  echo "  powershell.exe interop, which leaks CPU threads. Re-run 'chezmoi apply' in a" >&2
+  echo "  terminal where sudo can prompt." >&2
+  exit 1
+fi
+{{ end -}}
+{{ end -}}
