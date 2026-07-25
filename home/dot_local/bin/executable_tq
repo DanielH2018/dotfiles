@@ -7,6 +7,17 @@
     tq ruff check [paths...]    (also: uv run ruff check)
     tq shellcheck [files...]
 
+tq's own flags come before the command; the first token that is not one of
+them starts the runner's argv, which is passed on untouched.
+
+    --scope=all|file|added   which of a linter's findings reach the digest:
+                             everything, those in a file the diff touches, or
+                             those on a line it changed. Default all. Findings
+                             set aside stay in the json, and test failures are
+                             never scoped. Also TQ_SCOPE.
+    --diff-base=<ref>        what to diff against. Default HEAD, which covers
+                             staged and unstaged work. Also TQ_DIFF_BASE.
+
 Any other command is executed untouched. The runner's exit code is always
 preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
 it goes to a temp file whose path the digest prints. TQ_TIMEOUT=<seconds>
@@ -36,6 +47,7 @@ sys.path.insert(0, LIB)
 from adapters import junit as junit_adapter  # noqa: E402
 from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
+import scope  # noqa: E402
 from digest import digest  # noqa: E402
 from result import Result  # noqa: E402
 
@@ -347,11 +359,46 @@ RUNNERS = {
     "shellcheck": run_shellcheck,
 }
 
+TQ_FLAGS = ("--scope", "--diff-base")
+
+
+def split_flags(argv):
+    """tq's own flags, then the command it wraps.
+
+    Parsing stops at the first token tq does not own, and everything from there
+    is the runner's, passed on untouched — the passthrough guarantee is what
+    makes tq safe to put in front of an arbitrary command, so it cannot start
+    interpreting flags that appear after the program name.
+    """
+    opts, i = {}, 0
+    while i < len(argv):
+        name, sep, value = argv[i].partition("=")
+        if name not in TQ_FLAGS:
+            break
+        if sep:
+            opts[name] = value
+            i += 1
+        elif i + 1 < len(argv):
+            opts[name] = argv[i + 1]
+            i += 2
+        else:
+            break  # a flag with no value is not tq's to guess at
+    return opts, argv[i:]
+
 
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip())
         return 0
+    opts, argv = split_flags(argv)
+    mode = opts.get("--scope") or os.environ.get("TQ_SCOPE") or "all"
+    base = opts.get("--diff-base") or os.environ.get("TQ_DIFF_BASE") or "HEAD"
+    if mode not in scope.MODES:
+        sys.stderr.write(f"tq: --scope must be one of {', '.join(scope.MODES)}\n")
+        return 2
+    if not argv:
+        sys.stderr.write("tq: no command given\n")
+        return 2
     kind = detect(argv)
     if kind is None:
         try:
@@ -368,7 +415,15 @@ def main(argv):
             (time.monotonic() - started) * 1000
         )
         path = json_target()
+        # Narrow the digest, then hand the json the full set back. A finding
+        # outside the diff is still a true finding; it just is not what this
+        # change is answerable for, and the record has to keep both facts.
+        everything = list(result.failures)
+        result.truncated["out_of_scope"] = scope.apply_scope(
+            result, mode, workdir, base
+        )
         text = digest(result, path)
+        result.failures = everything
         result.write(path)
 
     if kind == "prek":

@@ -90,7 +90,9 @@ class Result:
     # means: ruff warns "No Python files found under the given path(s)" on
     # stderr and still exits 0, which is a clean verdict over nothing at all.
     notes: list = field(default_factory=list)
-    truncated: dict = field(default_factory=lambda: {"failures": 0, "stdout_bytes": 0})
+    truncated: dict = field(
+        default_factory=lambda: {"failures": 0, "stdout_bytes": 0, "out_of_scope": 0}
+    )
 
     def to_dict(self):
         return {
