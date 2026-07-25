@@ -30,6 +30,14 @@ set -u
 ROOT="$(git rev-parse --show-toplevel)" || exit 1
 cd "$ROOT" || exit 1
 
+# Git exports GIT_DIR/GIT_PREFIX (and friends) into its hooks. Anything below that
+# shells out to git in a temp directory — several tests build throwaway repos — would
+# otherwise operate on THIS repo instead of their own fixture, so the suite fails under
+# the hook while passing when run by hand. Drop them now that ROOT is resolved.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
+      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH \
+      GIT_CONFIG_PARAMETERS GIT_REFLOG_ACTION
+
 # Colors only when stdout is a terminal.
 if [ -t 1 ]; then
   B=$'\033[1m'; G=$'\033[32m'; R=$'\033[31m'; Z=$'\033[0m'
