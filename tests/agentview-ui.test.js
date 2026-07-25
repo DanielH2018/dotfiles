@@ -14,6 +14,9 @@ const { execFileSync } = require('node:child_process');
 const { Term, ptyAvailable } = require('./lib/pty');
 
 const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
+// The script sources its modules from ../share/agentview relative to its own path;
+// the copy under test lives in a scratch bin/, so point it back at the source tree.
+const LIB = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'agentview');
 const HOST = 'testbox';
 
 const missing = (t) => { try { execFileSync('sh', ['-c', `command -v ${t}`], { stdio: 'ignore' }); return false; } catch { return true; } };
@@ -56,6 +59,7 @@ function makeEnv() {
     PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog,
     AGENTVIEW_SELF: self,
+    AGENTVIEW_LIB: LIB,
     AV_KILLCMD: 'true',   // the seam do_remove kills through; nothing real to signal here
   };
   delete env.TMUX;          // a bare pty: binds use execute, not execute-silent
