@@ -16,8 +16,11 @@ try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catc
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
 // Forward-slash HOME so Git Bash resolves it cleanly on Windows.
+const dirs = [];
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'reprime-')).replace(/\\/g, '/');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'reprime-')).replace(/\\/g, '/');
+  dirs.push(d);
+  return d;
 }
 
 function runHook(home, every, input) {
@@ -64,3 +67,5 @@ test('malformed stdin exits cleanly with no nudge', { skip }, () => {
   const out = runHook(home, 3, 'not json'); // returns stdout even on nonzero exit
   assert.strictEqual(ctx(out), null);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

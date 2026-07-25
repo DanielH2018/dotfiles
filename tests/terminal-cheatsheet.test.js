@@ -14,7 +14,8 @@ const path = require('node:path');
 const REPO = path.join(__dirname, '..');
 const GEN = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_terminal-cheatsheet');
 
-function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'cheatsheet-')); }
+const dirs = [];
+function tmpdir() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cheatsheet-')); dirs.push(d); return d; }
 
 // Run the generator against a fixture and return the emitted HTML. keepWsl=false strips
 // WSL_DISTRO_NAME so the /mnt/c reach-across is disabled (deterministic fixture-only runs).
@@ -252,3 +253,5 @@ test('WezTerm reach-across: WSL sheet finds the Windows-side config on /mnt/c', 
   const html = runGen({ home, xdg, keepWsl: true });
   assert.match(html, /<h2>WezTerm<\/h2>/);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

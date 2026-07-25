@@ -22,10 +22,13 @@ const CLEAN_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
 );
 
+const dirs = [];
+
 // Stub gh: reports an open PR only when STUB_PR is set, answers the draft check
 // from STUB_DRAFT, and records every call that would change something — reads
 // stay unrecorded, so the tests can still prove --dry-run made no changes.
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'land-bin-'));
+dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'gh'), `#!/bin/bash
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then printf '%s' "\${STUB_PR:-}"; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then printf '%s\\n' "\${STUB_DRAFT:-false}"; exit 0; fi
@@ -39,6 +42,7 @@ function git(cwd, ...args) {
 
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'land-repo-'));
+  dirs.push(dir);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
@@ -56,6 +60,7 @@ function makeRepo() {
 // delete — runs for real with nothing stubbed but gh.
 function makeRepoWithOrigin() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'land-remote-'));
+  dirs.push(base);
   const origin = path.join(base, 'origin.git');
   const dir = path.join(base, 'work');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env: CLEAN_ENV });
@@ -158,7 +163,9 @@ test('rejects an unknown flag rather than guessing', { skip }, () => {
 
 test('the plan names a lock shared by every worktree of the repo', { skip }, () => {
   const repo = makeRepo();
-  const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'land-wt-')), 'w');
+  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'land-wt-'));
+  dirs.push(wtRoot);
+  const wt = path.join(wtRoot, 'w');
   git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
   fs.writeFileSync(path.join(wt, 'g'), 'z\n');
   git(wt, 'add', '-A');
@@ -216,3 +223,5 @@ test('lands from a linked worktree while the primary holds main', { skip }, () =
   assert.match(r.stdout, /landed feature/);
   assert.ok(!remoteHas(dir, 'feature'), 'origin still holds the landed branch');
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

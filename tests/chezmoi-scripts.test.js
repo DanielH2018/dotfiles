@@ -59,7 +59,8 @@ function renderTemplate(file) {
   });
 }
 
-function tmpdir(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
+const dirs = [];
+function tmpdir(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
 
 function realBin(name) {
   return execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim();
@@ -475,3 +476,5 @@ const SUDO_STUB = [
     assert.ok(readLog(logFile).includes('apt-get install -y pulseaudio-utils'), 'the install should have been attempted');
   });
 }
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

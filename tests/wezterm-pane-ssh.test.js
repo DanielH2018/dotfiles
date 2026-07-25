@@ -38,8 +38,11 @@ function mkProc(root, { pid, comm, ppid, pane, argv = [], fd0 }) {
   }
 }
 
+const dirs = [];
 function tmpdir(name) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `pane-ssh-${name}-`));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), `pane-ssh-${name}-`));
+  dirs.push(d);
+  return d;
 }
 
 // A stub tmux answering the two queries the helper makes, so the tmux layout is testable
@@ -168,3 +171,5 @@ test('a tmux layout survives tmux being absent', { skip }, () => {
   assert.deepStrictEqual(got.argv, [], 'no output rather than a crash');
   assert.notStrictEqual(got.code, 0);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

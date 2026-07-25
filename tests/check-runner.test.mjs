@@ -16,8 +16,10 @@ let bashOk = true;
 try { spawnSync('bash', ['-c', 'true']).status === 0 || (bashOk = false); } catch { bashOk = false; }
 const skip = bashOk ? false : 'bash unavailable';
 
+const dirs = [];
 function mkrepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cr-'));
+  dirs.push(dir);
   spawnSync('git', ['init', '-q'], { cwd: dir });
   spawnSync('git', ['config', 'user.email', 't@t.t'], { cwd: dir });
   spawnSync('git', ['config', 'user.name', 't'], { cwd: dir });
@@ -114,3 +116,5 @@ test('missing checks file -> exit 3', { skip }, () => {
   const dir = mkrepo();
   assert.equal(run(dir, ['nope.checks']).code, 3);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

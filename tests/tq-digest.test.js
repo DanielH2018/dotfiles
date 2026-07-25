@@ -29,8 +29,10 @@ function runTq(dir, args) {
   return spawnSync('python3', [TQ, ...args], { cwd: dir, encoding: 'utf8' });
 }
 
+const dirs = [];
 function scratch(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-e2e-'));
+  dirs.push(dir);
   for (const [name, body] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), body);
   }
@@ -196,3 +198,5 @@ test('an unrecognised command runs untouched', { skip }, () => {
   assert.strictEqual(r.status, 7);
   assert.strictEqual(r.stdout, 'hello\n');
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
