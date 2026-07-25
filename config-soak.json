@@ -263,8 +263,18 @@
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
-      "hash": "088d8e9895adacc507ec99ff535c5595e388bd01cd6a3180a4c7cc7944cadc98",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "a33b8b4cd0363686da336b47c28476449a62a5d4eec960cf8478edae61612c6c",
+      "landed": "2026-07-25T23:57:40.952Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/gh-stack/references/commands.md",
+      "hash": "76a94d17412870fd112561636bf9b0ebca1411e3942ca38ad0035c16704d69c6",
+      "landed": "2026-07-25T23:57:40.952Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/gh-stack/references/workflows.md",
+      "hash": "b07c891c288157f364469989000bc4e7c8016900c33f44a19e3e5243365f05aa",
+      "landed": "2026-07-25T23:57:40.952Z"
     },
     {
       "path": "home/private_dot_claude/skills/grilling/SKILL.md",
