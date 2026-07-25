@@ -1,6 +1,6 @@
 ---
 name: pr-feedback
-description: Summarize the feedback waiting on the user's open GitHub PRs in the Lithic org (privacy-com). Use when the user asks about their open PRs, PR feedback, review comments waiting on them, unresolved review threads, or "what's blocking my PRs".
+description: Use when the user asks about their open GitHub PRs, PR feedback, review comments waiting on them, unresolved review threads, or "what's blocking my PRs" — summarizes feedback across their open PRs in the Lithic org (privacy-com).
 metadata:
   author: daniel
   version: 0.1.0

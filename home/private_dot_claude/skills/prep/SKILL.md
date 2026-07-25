@@ -1,6 +1,7 @@
 ---
 name: prep
-description: Use before starting non-trivial work — understand, enrich context, clarify, and confirm before executing. Invoked explicitly as /prep only; do not self-trigger on prompts.
+description: Use as the intake gate for a task that is vague, multi-file, or hard to reverse — gather context, surface unknowns, delegate the questioning to grilling, then confirm the approach before any edit. Precedes work; does not perform it. Invoked as /prep only.
+disable-model-invocation: true
 ---
 
 # Prep — intake before execution
