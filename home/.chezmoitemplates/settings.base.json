@@ -22,6 +22,14 @@
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_METRIC_EXPORT_INTERVAL": "10000",
     "OTEL_LOGS_EXPORT_INTERVAL": "5000",
+    {{/* Claude Code exports metrics as DELTA by default, but the collector's prometheus
+         exporter republishes whatever it receives as a cumulative counter — so
+         claude_code_token_usage_tokens_total sawtooths instead of accumulating
+         (measured 13 resets in 51 points over 4h). Every non-increase() PromQL total is
+         wrong as a result: Prometheus reported $216/7d against $712 summed from Loki's
+         api_request cost_usd over just 24h, a ~5x undercount. Cumulative is the
+         source-side fix documented at code.claude.com/docs/en/monitoring-usage. */}}
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
     {{/* session_id MUST stay on. Without it every concurrent Claude Code process
          collapses into one Prometheus series, and the collector's prometheus exporter
          is last-writer-wins per label set — so cumulative counters (tokens, cost,
