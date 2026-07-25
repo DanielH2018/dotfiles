@@ -75,6 +75,18 @@ const DEFER = [
   'hl cat /home/ubuntu/.ssh/id_ed25519',
   'hl cat ~/.aws/credentials',
   'hl tail /etc/app/.env',
+  // whole-environment dumps: read-only in form, but they print every exported token
+  'hl env',
+  'hl printenv',
+  'hl cat /proc/self/environ',
+  'hl cat /proc/1234/environ',
+  'ssh ubuntu@10.0.0.161 printenv',
+  // credential stores that weren't on the secret-path list
+  'hl cat /etc/shadow',
+  'hl cat ~/.git-credentials',
+  'hl cat ~/.kube/config',
+  'hl cat ~/.claude.json',
+  'hl cat ~/.config/gh/hosts.yml',
   // journalctl that deletes/rotates logs
   'hl journalctl --vacuum-size=100M',
   'hl journalctl --rotate',

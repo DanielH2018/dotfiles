@@ -12,6 +12,25 @@ INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
+# Normalized copy for the whole-string checks below: collapse newline/tab/backslash
+# (so a `\`-continuation can't split a binary from its verb, or a flag from its
+# target) and drop quote characters, which are grouping rather than content —
+# without this, `rm -rf "$HOME"` reads as `rm -rf "$HOME"` and slips past the
+# `\s\$HOME` anchor that catches the unquoted form.
+SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+
+# Catastrophic rm targets: root, root-with-a-glob (`rm -rf /*` erases the same tree
+# but leaves no whitespace after the slash), home tilde, and $HOME.
+RM_TARGET='(\s/[[:space:]]|\s/$|\s/\*|\s~|\s\$HOME'
+# ...and the home path written out in full (`rm -rf /home/you`), which none of the
+# anchors above match. Trailing `/?(\s|\*|$)` keeps subdirectories allowed: it stops
+# at the home dir itself, so `rm -rf $HOME/dev/build` still passes.
+if [ -n "${HOME:-}" ]; then
+  HOME_RE=$(printf '%s' "$HOME" | sed 's/[][\\.*^$+?(){}|]/\\&/g')
+  RM_TARGET="$RM_TARGET|\\s$HOME_RE/?(\\s|\\*|\$)"
+fi
+RM_TARGET="$RM_TARGET)"
+
 deny() {
   jq -n --arg reason "$1" '{
     hookSpecificOutput: {
@@ -32,23 +51,23 @@ deny() {
 # sudo (ansible uses become: internally). mkfs/dd/terraform/fork-bomb are already
 # caught whole-string below; this closes only the quoting/prefix-match gaps.
 if echo "$COMMAND" | grep -qiE '(^|[[:space:];&|(/])ssh([[:space:]]|$)'; then
-  # Strip quotes and collapse newline/tab/backslash so payload words regain clean
-  # boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
-  REMOTE=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+  # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
+  # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
+  REMOTE="$SCAN"
   ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not over ssh from an agent session."
   echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside an ssh command. $ssh_hint"
   echo "$REMOTE" | grep -qiE '(^|[[:space:]])su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside an ssh command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*(\s/[[:space:]]|\s/$|\s~|\s\$HOME)' && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
+  echo "$REMOTE" | grep -qiE "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET" && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
   echo "$REMOTE" | grep -qiE '\bchown\b' && deny "Blocked: chown inside an ssh command. $ssh_hint"
   echo "$REMOTE" | grep -qiE '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside an ssh command. $ssh_hint"
   echo "$REMOTE" | grep -qiE '\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b' && deny "Blocked: power-state change (reboot/shutdown/halt) on the remote host. $ssh_hint"
 fi
 
 # rm -rf targeting home or root (handles separated flags: rm -r -f /, rm --recursive --force /)
-if echo "$COMMAND" | grep -qiE '\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*(\s/[[:space:]]|\s/$|\s~|\s\$HOME)'; then
+if echo "$SCAN" | grep -qiE "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET"; then
   deny "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
 fi
-if echo "$COMMAND" | grep -qiE '\brm\s' && echo "$COMMAND" | grep -qiE '(\s-[a-zA-Z]*r|\s--recursive)' && echo "$COMMAND" | grep -qiE '(\s-[a-zA-Z]*f|\s--force)' && echo "$COMMAND" | grep -qE '(\s/[[:space:]]|\s/$|\s~|\s\$HOME)'; then
+if echo "$SCAN" | grep -qiE '\brm\s' && echo "$SCAN" | grep -qiE '(\s-[a-zA-Z]*r|\s--recursive)' && echo "$SCAN" | grep -qiE '(\s-[a-zA-Z]*f|\s--force)' && echo "$SCAN" | grep -qE "$RM_TARGET"; then
   deny "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
 fi
 
@@ -83,6 +102,14 @@ if echo "$COMMAND" | grep -qE '(curl|wget)[^|]*\|\s*(sh|bash|zsh)'; then
   deny "Blocked: piping remote content to a shell. Download, inspect, then run."
 fi
 
+# Same payload as curl|sh via process or command substitution — `bash <(curl url)`,
+# `sh -c "$(wget -O- url)"`, `eval "$(curl url)"`. No literal pipe, so the rules
+# above (and permissions.deny) never see it. Match on the raw command: the quote
+# stripping in SCAN would leave `$(` intact but the pattern reads either form.
+if echo "$COMMAND" | grep -qE '\b(sh|bash|zsh|dash|fish|eval|source)\b[^;&]*[<$]\(\s*(curl|wget)\b'; then
+  deny "Blocked: executing downloaded content via process/command substitution. Download, inspect, then run."
+fi
+
 # Writing to protected files
 if echo "$COMMAND" | grep -qE '>\s*(\.env|~?/\.ssh/|~?/\.aws/credentials)'; then
   deny "Blocked: writing to a secrets file. Ask the user to do this manually."
@@ -104,16 +131,24 @@ if echo "$COMMAND" | grep -qE '\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b'; then
 fi
 
 # Reading secret files via bash commands (bypasses Read deny rules).
-# Args before the first pipe only, so a trailing jq/grep filter like '.key' isn't
-# misread as a path. Best-effort: catches common readers, not obfuscated invocations.
-SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem|\.key|\.p12|\.pfx)'
+# Best-effort: catches common readers, not obfuscated invocations.
+# /proc/<pid>/environ and env-dumping paths belong here too — they carry exported
+# tokens just as directly as a credentials file does.
+SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem|\.key|\.p12|\.pfx)'
 # Content dumpers, searchers (grep/awk/sed), pagers, editors, hashers, and
 # copy/exfil tools — any of these reading a secret path is a leak vector.
 READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar)'
-CMD_ARGS="${COMMAND%%|*}"
-if echo "$CMD_ARGS" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
-  deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
-fi
+# Check every pipe segment. Scanning only the args before the first pipe left
+# `true | cat .env` completely unchecked. The false positive that truncation was
+# guarding against is a jq/yq filter (`| jq '.key'`), where `.key`/`.pem` is a query
+# and not a path — so skip those segments by name instead of dropping all of them.
+while IFS= read -r seg; do
+  seg_trim="${seg#"${seg%%[![:space:]]*}"}"
+  case "${seg_trim%%[[:space:]]*}" in jq|yq|gojq|jaq|*/jq|*/yq) continue ;; esac
+  if echo "$seg" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
+    deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
+  fi
+done <<< "$(printf '%s' "$COMMAND" | tr '|' '\n')"
 # Interpreters that can slurp a file (python -c 'open(".env")', node -e, perl, ...).
 # Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
 if echo "$COMMAND" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
@@ -135,7 +170,7 @@ fi
 # Read-only ops stay allowed: plan, validate, fmt, show, output, providers,
 # graph, init, get, state list/show, workspace list/select.
 TF_BIN='(terraform|tofu|terragrunt)'
-TF_SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+TF_SCAN="$SCAN"
 # Destructive verb as the first token after the binary (optional global flags
 # like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
 # since the verb still appears as a whole word.

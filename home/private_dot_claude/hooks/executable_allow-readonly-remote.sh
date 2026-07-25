@@ -62,7 +62,10 @@ allow() {
 }
 
 # Reading a secret path (even with `cat`) exfiltrates it into the transcript.
-SECRET_RE='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.pem($|[^a-z])|\.key($|[^a-z])|\.p12($|[^a-z])|\.pfx($|[^a-z]))'
+# /proc/<pid>/environ dumps the process environment — every exported token — and is
+# world-readable to its own user, so it is the practical form of this attack rather
+# than a root-only file like /etc/shadow.
+SECRET_RE='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem($|[^a-z])|\.key($|[^a-z])|\.p12($|[^a-z])|\.pfx($|[^a-z]))'
 printf '%s' "$rest" | grep -qiE "$SECRET_RE" && exit 0
 # journalctl reads logs, but these flags delete or rotate them.
 if [ "$verb" = journalctl ]; then
@@ -70,8 +73,11 @@ if [ "$verb" = journalctl ]; then
 fi
 
 third=${REMOTE[2]:-}
+# env/printenv are deliberately absent from this list: they print every exported
+# variable, which on a homelab host includes API tokens. They read as "read-only"
+# but are an exfiltration path, so they fall through to a normal prompt.
 case $verb in
-  uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|env|printenv|which|type|command|\
+  uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|which|type|command|\
   df|free|du|ps|top|htop|vmstat|iostat|w|who|last|lscpu|lsblk|lsof|lsmod|dmesg|\
   sensors|nvidia-smi|getent|mount|\
   ls|cat|head|tail|wc|stat|file|tree|readlink|realpath|basename|dirname|\
