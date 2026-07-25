@@ -15,7 +15,7 @@ sys.path.insert(
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
-from digest import digest
+from digest import MAX_DIGEST, digest
 from result import Failure, Result, strip_ansi
 
 
@@ -242,6 +242,7 @@ class TestDigest(unittest.TestCase):
                 "cmd",
                 "cwd",
                 "exit",
+                "timed_out",
                 "duration_ms",
                 "totals",
                 "failures",
@@ -474,6 +475,118 @@ class TestTextHelpers(unittest.TestCase):
         # node marks actual-vs-expected with colour only when FORCE_COLOR is
         # set; with it unset the +/- prefixes are real text and must survive.
         self.assertEqual(strip_ansi("\x1b[32m+ '/tmp/x'\x1b[39m"), "+ '/tmp/x'")
+
+
+class TestDigestBudget(unittest.TestCase):
+    def noisy(self, count):
+        res = blank("node")
+        res.totals.update(tests=count, fail=count)
+        for i in range(count):
+            res.failures.append(
+                Failure(
+                    name=f"t{i}",
+                    file="a.js",
+                    line=i + 1,
+                    stdout="o" * 4000,
+                    stderr="e" * 4000,
+                )
+            )
+        return res
+
+    def test_the_whole_digest_stays_under_its_ceiling(self):
+        # Per-failure caps alone allow ten of these, which is ~40KB — over the
+        # cap applied to the tool result this lands in.
+        text = digest(self.noisy(10), "/tmp/x.json")
+        self.assertLessEqual(len(text.encode("utf-8")), MAX_DIGEST + 100)
+
+    def test_the_json_path_precedes_the_failure_detail(self):
+        text = digest(self.noisy(10), "/tmp/tq-4f2a.json")
+        lines = text.splitlines()
+        self.assertEqual(lines[1], "json: /tmp/tq-4f2a.json")
+
+    def test_budget_dropped_failures_are_counted_not_lost(self):
+        res = self.noisy(10)
+        text = digest(res, "/tmp/x.json")
+        self.assertGreater(res.truncated["failures"], 0)
+        self.assertIn(f"{res.truncated['failures']} more failures in the json", text)
+
+    def test_one_oversized_failure_is_still_shown_whole(self):
+        # A digest that names a failure without showing any of it is barely
+        # better than no digest, so the first block ignores the ceiling.
+        res = self.noisy(1)
+        text = digest(res, "/tmp/x.json")
+        self.assertEqual(res.truncated["failures"], 0)
+        self.assertIn("stdout", text)
+
+    def test_an_unbounded_message_is_capped(self):
+        res = blank("node")
+        res.totals.update(tests=1, fail=1)
+        res.failures.append(Failure(name="t", file="a.js", line=1, message="m" * 9000))
+        text = digest(res, "/tmp/x.json")
+        self.assertIn("bytes (see json)", text)
+        self.assertLess(len(text.encode("utf-8")), 9000)
+
+
+class TestTimeoutDigest(unittest.TestCase):
+    def test_a_timed_out_run_is_never_a_verdict(self):
+        res = blank("node", 124)
+        res.timed_out = True
+        res.duration_ms = 600000
+        res.totals.update(tests=412, **{"pass": 412})
+        text = digest(res, "/tmp/x.json")
+        self.assertTrue(text.startswith("TIMED OUT after 600s  (412 tests completed)"))
+        self.assertNotIn("PASS", text)
+
+    def test_a_timed_out_run_that_collected_nothing_says_so(self):
+        res = blank("node", 124)
+        res.timed_out = True
+        res.duration_ms = 2000
+        text = digest(res, "/tmp/x.json")
+        self.assertTrue(text.startswith("TIMED OUT after 2s"))
+        # The empty-run wording would imply the runner finished and found none.
+        self.assertNotIn("NO TESTS RAN", text)
+
+    def test_a_timed_out_linter_is_not_reported_clean(self):
+        res = blank("ruff", 124)
+        res.kind = "lint"
+        res.timed_out = True
+        res.duration_ms = 5000
+        text = digest(res, "/tmp/x.json")
+        self.assertTrue(text.startswith("TIMED OUT after 5s"))
+        self.assertNotIn("CLEAN", text)
+
+
+class TestRunTimeout(unittest.TestCase):
+    """`run()` against a real child, because the trap here is in what CPython
+    hands back on a kill, not in anything tq computes."""
+
+    def sleeper(self):
+        return [
+            sys.executable,
+            "-c",
+            "import sys, time; print('ran a bit'); sys.stdout.flush(); time.sleep(30)",
+        ]
+
+    def test_a_killed_runner_yields_its_partial_output_as_text(self):
+        tq = load_cli()
+        tq.TIMEOUT = 1
+        proc, timed_out = tq.run(self.sleeper(), os.environ.copy())
+        self.assertTrue(timed_out)
+        self.assertEqual(proc.returncode, 124)
+        # TimeoutExpired carries bytes even under text=True, and no returncode
+        # at all — both have to be normalised or the digest blows up on a hang.
+        self.assertIsInstance(proc.stdout, str)
+        self.assertIn("ran a bit", proc.stdout)
+
+    def test_a_runner_that_finishes_is_not_marked_timed_out(self):
+        tq = load_cli()
+        tq.TIMEOUT = 30
+        proc, timed_out = tq.run(
+            [sys.executable, "-c", "print('done')"], os.environ.copy()
+        )
+        self.assertFalse(timed_out)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("done", proc.stdout)
 
 
 if __name__ == "__main__":
