@@ -211,6 +211,98 @@ local function open_agentview(window, _pane)
 	end)
 end
 
+-- ---------------------------------------------------------------------------
+-- SSH-AWARE SPLITS (CTRL+D / CTRL+SHIFT+D)
+-- A split spawns a shell in the pane's own domain, so splitting a pane that is ssh'd
+-- somewhere puts you back on THIS machine — and it inherits the pane's OSC 7 cwd, so a
+-- remote /home/ubuntu reopens as a LOCAL /home/ubuntu (or `/` when that path doesn't
+-- exist here). Splitting a remote view should stay remote, so probe the pane two ways:
+--   * the ssh process — a local-domain pane (the CTRL+SHIFT+H homelab tab) exposes its
+--     foreground process, so reuse that command's destination AND its options
+--     (-p / -i / -J ...). Everything past the destination is dropped: the homelab tab
+--     runs `tmux new-session -A -s main`, and replaying that would mirror the SAME tmux
+--     session into the split instead of giving you a second shell on the box.
+--   * OSC 7 — a WSL pane is opaque (WezTerm only ever sees wslhost.exe), but a remote
+--     shell that reached a prompt reports its host and cwd, so the split can cd there.
+-- Neither reaches a WSL pane attached to a REMOTE tmux session (an agentview homelab
+-- jump): remote tmux swallows OSC 7 and WSL hides the process, so that case still splits
+-- locally — fixing it needs a WSL-side probe of the tmux client, not a WezTerm probe.
+-- The destination doubles as the ssh alias, matching agentview's HOST_SSH fallback: an
+-- unknown host surfaces ssh's own error IN the new pane, never a silently local shell.
+-- ---------------------------------------------------------------------------
+local LOCAL_HOSTS = {                          -- OSC 7 authorities that mean "this machine"
+	[(wezterm.hostname() or ""):lower()] = true,   -- the Windows box (local-domain panes)
+	["daniel-wsl"] = true,                         -- the WSL distro (WSL-domain panes)
+	["localhost"] = true,
+}
+
+-- ssh flags that consume the NEXT argv entry — skipped as a pair so their value is never
+-- mistaken for the destination (`ssh -p 2222 host`, `ssh -o Foo=bar host`).
+local SSH_FLAG_TAKES_VALUE = {}
+for flag in ("-B -b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w"):gmatch("%S+") do
+	SSH_FLAG_TAKES_VALUE[flag] = true
+end
+
+local function squote(str)   -- POSIX single-quoting, for the path we hand the remote shell
+	local escaped = tostring(str):gsub("'", "'\\''")
+	return "'" .. escaped .. "'"
+end
+
+-- The pane's ssh invocation, truncated at the destination (nil when it isn't running ssh).
+local function ssh_command(pane)
+	local info
+	pcall(function() info = pane:get_foreground_process_info() end)
+	if not info or type(info.argv) ~= "table" then return nil end
+	if ((info.name or ""):lower():gsub("%.exe$", "")) ~= "ssh" then return nil end
+	local argv = { info.executable or info.argv[1] or "ssh" }
+	local i = 2
+	while i <= #info.argv do
+		local arg = info.argv[i]
+		table.insert(argv, arg)
+		if arg:sub(1, 1) ~= "-" then return argv end          -- the destination — stop here
+		if SSH_FLAG_TAKES_VALUE[arg] and info.argv[i + 1] then
+			table.insert(argv, info.argv[i + 1])
+			i = i + 1
+		end
+		i = i + 1
+	end
+	return nil                                                -- flags only, no destination
+end
+
+-- Host + directory from OSC 7, when the pane's shell is reporting from another machine.
+local function osc7_remote(pane)
+	local host, dir
+	pcall(function()
+		local cwd = pane:get_current_working_dir()
+		if cwd then host, dir = cwd.host, cwd.file_path end
+	end)
+	if not host or host == "" or LOCAL_HOSTS[host:lower()] then return nil end
+	return host, dir
+end
+
+-- SpawnCommand for a split: an ssh hop when the pane is remote, otherwise the plain
+-- inherit-this-pane's-cwd split (exactly what WezTerm did before).
+local function split_command(pane)
+	local host, dir = osc7_remote(pane)
+	local argv = ssh_command(pane)
+	if not argv and not host then return { domain = "CurrentPaneDomain" } end
+	argv = argv or { "ssh", host }
+	if dir then
+		-- Land in the same remote directory, falling back to $HOME once it's gone. `exec` so
+		-- the pane's shell IS the login shell, with no wrapper left holding the pane open.
+		-- A remote command suppresses ssh's automatic tty, hence the explicit -t.
+		table.insert(argv, 2, "-t")
+		table.insert(argv, "cd " .. squote(dir) .. " 2>/dev/null || cd; exec ${SHELL:-/bin/sh} -l")
+	end
+	local cmd = { domain = "CurrentPaneDomain", args = argv }
+	-- Never hand a remote path to a Windows spawn as the launch dir — it isn't a valid local
+	-- path. WSL quietly falls back to `/`; the local domain would fail to start the pane.
+	local domain = ""
+	pcall(function() domain = pane:get_domain_name() or "" end)
+	if not domain:find("WSL") then cmd.cwd = wezterm.home_dir end
+	return cmd
+end
+
 config.keys = {
 	-- Claude Code multiline (ghostty: shift+enter=text:\n)
 	{ key = "Enter", mods = "SHIFT", action = act.SendString("\n") },
@@ -260,8 +352,13 @@ config.keys = {
 	-- match Ghostty. That eats the shell's EOF (exit) on ctrl+d — IGNOREEOF in
 	-- ~/.config/shell/common.sh guards accidental exits in panes WezTerm doesn't intercept.
 	-- Lowercase `key="d"` for the bare chord; `key="D"` (implies Shift) for the down-split.
-	{ key = "d", mods = "CTRL",           action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }) },
-	{ key = "D", mods = "CTRL|SHIFT",     action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
+	-- Both go through split_command so a split of an ssh'd pane stays on that host.
+	{ key = "d", mods = "CTRL", action = wezterm.action_callback(function(window, pane)
+		window:perform_action(act.SplitHorizontal(split_command(pane)), pane)
+	end) },
+	{ key = "D", mods = "CTRL|SHIFT", action = wezterm.action_callback(function(window, pane)
+		window:perform_action(act.SplitVertical(split_command(pane)), pane)
+	end) },
 
 	-- Navigate splits (ghostty: cmd+[ previous / cmd+] next)
 	{ key = "phys:LeftBracket",  mods = "CTRL|SHIFT", action = act.ActivatePaneDirection("Prev") },
