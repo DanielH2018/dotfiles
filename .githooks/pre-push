@@ -77,10 +77,12 @@ TQ="$ROOT/home/dot_local/bin/executable_tq"
 if [ -z "${TQ_OFF:-}" ] && [ -f "$TQ" ] && command -v python3 >/dev/null 2>&1; then
   TQ_HOME="$ROOT/home/dot_local/share/tq"
   export TQ_HOME
-  # --git-path, not $ROOT/.git: in a worktree that is a file, not a directory.
+  # --absolute-git-dir, not $ROOT/.git: in a worktree that is a file, not a
+  # directory. Absolute because TQ_JSON is a path some other process may resolve
+  # from a cwd of its own; --git-path answers relatively in the main checkout.
   # Pinning TQ_JSON also stops tq's mkstemp default littering /tmp with a
   # never-read record on every green push.
-  TQ_JSON_DIR="$(git rev-parse --git-path tq)"
+  TQ_JSON_DIR="$(git rev-parse --absolute-git-dir)/tq"
   mkdir -p "$TQ_JSON_DIR" || TQ_JSON_DIR=""
   # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
   tq_node() { # tq_node <json-name> [node --test args...]

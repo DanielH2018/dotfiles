@@ -66,6 +66,12 @@ def plain_env():
     # Leaked into a nested run — tq invoked from inside a test — this makes
     # `node --test` collect nothing and exit 0, which reads as a clean pass.
     env.pop("NODE_TEST_CONTEXT", None)
+    # json_target() has already read TQ_JSON by the time the runner starts, so no
+    # child needs it, and a nested tq inheriting it writes its own record over
+    # this run's. When the path is relative the nested run does not even get that
+    # far: it resolves against the inner cwd, and tq dies on the missing
+    # directory instead of reporting the tests it just ran.
+    env.pop("TQ_JSON", None)
     return env
 
 

@@ -101,6 +101,31 @@ test('a leaked node test context cannot fake a clean run', { skip }, () => {
   assert.match(r.stdout, /^FAIL 1\/1 /);
 });
 
+test('TQ_JSON does not follow tq into the runner it spawns', { skip }, () => {
+  // tq has consumed TQ_JSON before the runner starts, so a child inheriting it
+  // can only do harm: a nested tq — which this very suite spawns — would write
+  // its own record over the outer run's. The pre-push gate pins TQ_JSON to a
+  // `git rev-parse --git-path` value, relative in the main checkout, and the
+  // nested run resolved it against its own cwd and died on the missing
+  // directory, printing a traceback where the digest should have been.
+  const dir = scratch({
+    'env.test.js':
+      "const {test}=require('node:test');const fs=require('node:fs');\n" +
+      "test('records what it inherited',()=>{\n" +
+      "  fs.writeFileSync('seen.txt', String(process.env.TQ_JSON));\n" +
+      '});\n',
+  });
+  const target = path.join(dir, 'outer.json');
+  const r = spawnSync('python3', [TQ, 'node', '--test', 'env.test.js'], {
+    cwd: dir, encoding: 'utf8', env: { ...process.env, TQ_JSON: target },
+  });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'seen.txt'), 'utf8'), 'undefined');
+  // The outer run still honours its own TQ_JSON — dropping it for the child
+  // must not mean dropping it for tq itself.
+  assert.ok(fs.existsSync(target));
+});
+
 test('an unrecognised command runs untouched', { skip }, () => {
   const r = spawnSync('python3', [TQ, 'bash', '-c', 'echo hello; exit 7'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 7);
