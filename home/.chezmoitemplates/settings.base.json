@@ -5,7 +5,12 @@
     "EDITOR": "vim",
     "PAGER": "less -R",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
+    {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
+         window unconditionally, and long sessions were compacting 3-6 times each —
+         every compaction also truncates history before the remember pipeline can
+         save it, so the aggressive setting was degrading tomorrow's memory too.
+         85 keeps a safety margin without paying full-window cache-read latency. */}}
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
     "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop") }},
