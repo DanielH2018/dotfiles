@@ -227,6 +227,18 @@
       "Bash(chezmoi managed:*)",
       "Bash(chezmoi data:*)",
       "Bash(chezmoi verify:*)",
+      "Bash(chezmoi status:*)",
+      "Bash(claude --help)",
+      {{/* exact match only — `claude agents` takes no subcommands, but it does accept --dangerously-skip-permissions, --permission-mode, --settings and --plugin-dir, so any trailing wildcard (even after --json) would auto-approve a permission escalation */}}
+      "Bash(claude agents)",
+      "Bash(claude agents --json)",
+      "Bash(claude agents --json --all)",
+      "Bash(gh auth status:*)",
+      "Bash(bash -n:*)",
+      "Bash(systemctl status:*)",
+      "Bash(systemctl --user status:*)",
+      "Bash(systemctl --user list-units:*)",
+      "Bash(fzf --version)",
       "WebSearch",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:code.claude.com)",
@@ -349,6 +361,9 @@
       "Bash(terragrunt run-all destroy:*)"
     ],
     "ask": [
+      {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript */}}
+      "Bash(gh auth status *--show-token*)",
+      "Bash(gh auth status *-t*)",
       "Bash(docker build:*)",
       "Bash(node -e:*)",
       "Bash(python3 -c:*)",
