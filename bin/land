@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+#
+# land — integrate a branch through its PR, one branch at a time.
+#
+# Work here is fast-forward-linear and gets merged locally, after which the PR
+# that a background job opened is closed unmerged: 10 of the first 27 went that
+# way. The cost isn't bookkeeping. A branch rebased locally and merged leaves its
+# remote ref behind, so the PR ends up holding commits that are byte-identical
+# duplicates of what is already on main under different SHAs — PR #20 reached
+# exactly that state before it was closed. Nothing serialises this either, so two
+# sessions landing at once rebase onto a main the other is still moving.
+#
+# So: rebase, push the rebased branch, and let GitHub do the merge. Same linear
+# history, but the PR is the record, and the flock means the second lander waits
+# for a settled main instead of racing it.
+#
+# Background jobs must not run this — they open draft PRs and stop there. This is
+# the operator half: it is the only thing here that force-pushes or merges.
+#
+#   land                 land the current branch
+#   land <branch>        land <branch> (must be checked out in this worktree)
+#   land --dry-run       print the plan, touch nothing
+#
+# Kept bash-3.2 clean, like the gate it leans on.
+set -u
+
+DRY=0
+BRANCH=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) printf 'land: unknown flag %s\n' "$1" >&2; exit 2 ;;
+    *) BRANCH=$1 ;;
+  esac
+  shift
+done
+
+die() { printf 'land: %s\n' "$1" >&2; exit 1; }
+say() { printf '  %s\n' "$1"; }
+
+command -v gh >/dev/null 2>&1 || die "gh is required (it does the merge)"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+CURRENT=$(git rev-parse --abbrev-ref HEAD) || exit 1
+[ -n "$BRANCH" ] || BRANCH=$CURRENT
+
+[ "$BRANCH" = "$CURRENT" ] ||
+  die "$BRANCH is not checked out here (on $CURRENT) — run land from its worktree"
+
+case "$BRANCH" in
+  main|master|HEAD) die "refusing to land $BRANCH — it is the integration branch" ;;
+esac
+
+[ -z "$(git status --porcelain)" ] ||
+  die "worktree is dirty — commit or set aside first, a rebase needs it clean"
+
+# A rebase or merge already in flight would make everything below ambiguous.
+GITDIR=$(git rev-parse --git-dir)
+if [ -d "$GITDIR/rebase-merge" ] || [ -d "$GITDIR/rebase-apply" ]; then
+  die "a rebase is in progress — finish or abort it first"
+fi
+if [ -f "$GITDIR/MERGE_HEAD" ]; then
+  die "a merge is in progress — finish or abort it first"
+fi
+
+PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null) || PR=''
+[ -n "$PR" ] ||
+  die "no open PR for $BRANCH — open one first (gh pr create), so the merge has a record"
+
+# One lander at a time, across every worktree of this repo: the common dir is
+# shared by all of them, a per-worktree lock would not be.
+COMMON=$(git rev-parse --git-common-dir)
+case "$COMMON" in /*) ;; *) COMMON=$ROOT/$COMMON ;; esac
+LOCK="$COMMON/land.lock"
+
+if [ "$DRY" -eq 1 ]; then
+  printf 'land --dry-run: %s (PR #%s)\n' "$BRANCH" "$PR"
+  say "lock    $LOCK"
+  say "fetch   origin"
+  say "rebase  $BRANCH onto origin/main"
+  say "push    --force-with-lease (runs the pre-push gate)"
+  say "merge   gh pr merge $PR --rebase --delete-branch"
+  exit 0
+fi
+
+land() {
+  printf 'landing %s (PR #%s)\n' "$BRANCH" "$PR"
+
+  git fetch origin || return 1
+
+  # Rebase before the gate, so what gets tested is what gets merged.
+  if ! git rebase origin/main; then
+    git rebase --abort 2>/dev/null
+    printf 'land: %s does not rebase cleanly onto origin/main — resolve by hand\n' "$BRANCH" >&2
+    return 1
+  fi
+
+  # --force-with-lease, never plain --force: if someone else moved the remote
+  # branch while we held the lock, this refuses rather than discarding their work.
+  # The push runs the pre-push gate, so a red suite stops the landing here.
+  git push --force-with-lease origin "$BRANCH" || return 1
+
+  gh pr merge "$PR" --rebase --delete-branch || return 1
+
+  printf 'landed %s (PR #%s)\n' "$BRANCH" "$PR"
+}
+
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK" || die "cannot open $LOCK"
+  if ! flock -n 9; then
+    say "another worktree is landing; waiting for it to finish..."
+    flock 9 || die "could not take $LOCK"
+  fi
+  land
+  rc=$?
+  exec 9>&-
+  exit $rc
+fi
+
+# No flock (macOS): still worth doing, just without the mutual exclusion.
+say "flock unavailable — landing without the cross-worktree lock"
+land
