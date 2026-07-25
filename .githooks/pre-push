@@ -54,9 +54,11 @@ run() { # run "<label>" <cmd...>
 run "config-soak (review ledger)" node bin/config-soak status
 
 # 2. Instruction-file quality. Security gate (>=70) is always enforced by
-#    `verify`; the composite floor is opt-in and starts low so it never blocks
-#    on today's baseline (implementer.md == 49). Raise via QUALITY_MIN_SCORE.
-QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-45}"
+#    `verify`; the composite floor is a ratchet pinned to today's worst file, so
+#    any regression below the current baseline blocks the push. rules/python.md
+#    and rules/rust.md both score 52 and set the floor; 53 fails. Raise this as
+#    those files improve — a floor below the true minimum is slack, not a gate.
+QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-52}"
 QFILES=$(ls home/private_dot_claude/agents/*.md \
             home/private_dot_claude/skills/*/SKILL.md \
             home/private_dot_claude/rules/*.md \
