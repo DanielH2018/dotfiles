@@ -2,6 +2,7 @@
 name: migration-reviewer
 description: Review database migrations for safety — locking, backfill strategy, rollback plans, and data integrity. Use when a migration PR is ready for review, before you merge or deploy any schema change, or when you need a second opinion on lock duration or rollback risk.
 model: opus
+effort: xhigh
 tools: Read, Grep, Glob, Bash
 ---
 

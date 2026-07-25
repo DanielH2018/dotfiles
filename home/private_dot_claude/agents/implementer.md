@@ -2,6 +2,7 @@
 name: implementer
 description: Write code, fix bugs, refactor, and execute implementation plans. Use when a plan or well-scoped task already exists and you need it turned into code — after planning is complete, for straightforward coding tasks, or when `/review-and-fix` dispatches per-file fixes in parallel. Don't reach for it before design decisions are settled.
 model: sonnet
+effort: high
 ---
 
 ## What I do
