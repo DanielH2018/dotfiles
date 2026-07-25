@@ -45,6 +45,15 @@ Scripts
 # that sees it, and without this it deploys the .pyc files as managed dotfiles.
 **/__pycache__
 
+# Python test and environment scratch, for the same reason and with a worse blast
+# radius: the vault-tooling projects are pytest projects living in the source
+# tree, so `uv sync` or a bare `pytest` there drops a .venv or .pytest_cache next
+# to managed files. The wired suites avoid both (`--no-project`,
+# `-p no:cacheprovider`), but running them by hand should not be able to deploy a
+# few thousand files into ~/.claude.
+**/.venv
+**/.pytest_cache
+
 # claude artifacts: ~/.claude/artifacts is local scratch for plan/spec renders.
 # Don't manage the dir by default — blocks `chezmoi add` on ad-hoc artifacts so
 # scratch can't be swept upstream. Track only the specific plan files kept here.
