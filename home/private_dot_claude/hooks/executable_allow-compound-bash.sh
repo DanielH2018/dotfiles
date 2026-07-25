@@ -59,14 +59,6 @@ matches_any() {
   return 1
 }
 
-# Bail out if delimiters appear inside quotes — naive splitting would mangle them.
-# This check catches: echo "hello && world" && git status
-# The failure mode without this guard is "unnecessary prompt" (safe), but fixing it
-# lets more legitimate compound commands auto-approve.
-if printf '%s' "$COMMAND" | grep -qE "(['\"])[^'\"]*[&;|][^'\"]*\1"; then
-  exit 0
-fi
-
 # Command substitution / process substitution can smuggle a gated or unlisted
 # command inside an otherwise-allowed segment; the split below won't see it
 # (e.g. `echo $(curl …) && ls` would auto-approve the curl). Defer to normal handling.
@@ -74,13 +66,66 @@ if printf '%s' "$COMMAND" | grep -qE '\$\(|`|<\(|>\('; then
   exit 0
 fi
 
-# Use awk for splitting — BSD sed (macOS) doesn't interpret \n in replacements.
+# Split on &&, ||, ; and | that fall OUTSIDE quotes.
+#
+# This used to bail whenever a delimiter appeared anywhere inside quotes, so that a
+# naive splitter never mangled `echo "a && b" && ls`. The regex it used could not tell
+# a delimiter *inside* one quoted string from one *between* two separately quoted
+# arguments, so it also fired on `jq '.a' f.json; jq '.b' f.json` and on every jq filter
+# containing a pipe — i.e. on most real JSON work, which then prompted every time.
+# Tracking quote state costs a character loop and lets those through, while a quoted
+# delimiter stays inert because it never ends a segment.
+#
+# Bash 3.2 clean (macOS default bash): no mapfile, no associative arrays.
+split_outside_quotes() {
+  local s="$1"
+  local n=${#s}   # separate `local`: ${#s} would read the *outer* s in a combined one
+  local i=0 q='' cur='' c next
+  while [ "$i" -lt "$n" ]; do
+    c=${s:i:1}
+    if [ -n "$q" ]; then
+      # Inside quotes. Only "..." honours a backslash escape; '...' is literal.
+      if [ "$q" = '"' ] && [ "$c" = $'\\' ]; then
+        cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue
+      fi
+      [ "$c" = "$q" ] && q=''
+      cur="$cur$c"; i=$((i + 1)); continue
+    fi
+    case $c in
+      \'|\") q=$c; cur="$cur$c"; i=$((i + 1)); continue ;;
+      \\)    cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue ;;
+    esac
+    next=${s:i+1:1}
+    if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
+      printf '%s\n' "$cur"; cur=''; i=$((i + 2)); continue
+    fi
+    if [ "$c" = ';' ] || [ "$c" = '|' ]; then
+      printf '%s\n' "$cur"; cur=''; i=$((i + 1)); continue
+    fi
+    cur="$cur$c"; i=$((i + 1))
+  done
+  # Unbalanced quote — we cannot reason about the shape, so refuse to split it.
+  [ -n "$q" ] && return 1
+  printf '%s\n' "$cur"
+  return 0
+}
+
+SPLIT=$(split_outside_quotes "$COMMAND") || exit 0
 PARTS=()
-while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done < <(printf '%s' "$COMMAND" | awk '{gsub(/&&|\|\||;|\|/, "\n"); print}')
+while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done <<< "$SPLIT"
 
 for part in "${PARTS[@]}"; do
   part=$(trim "$part")
   [ -z "$part" ] && continue
+
+  # Redirection turns an allow-listed reader into a writer (`jq . f.json > ~/.bashrc`),
+  # and matches_any only ever looks at the command prefix. Quote-aware splitting brought
+  # segments like that within reach for the first time, so bail rather than guess.
+  # /dev/null and fd dups are the harmless cases and are everywhere in diagnostics.
+  redir=$(printf '%s' "$part" | sed -E 's@[0-9]*>>?[[:space:]]*/dev/null@@g; s@[0-9]*>&[0-9-]@@g')
+  case $redir in
+    *'>'*) exit 0 ;;
+  esac
 
   # Deny or ask list → defer to normal permission handling
   if matches_any "$part" "${DENY[@]}" || matches_any "$part" "${ASK[@]}"; then

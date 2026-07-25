@@ -19,7 +19,8 @@ const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-'));
 fs.mkdirSync(path.join(HOME, '.claude'), { recursive: true });
 fs.writeFileSync(path.join(HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
-    allow: ['Bash(git status:*)', 'Bash(ls:*)', 'Bash(echo:*)', 'Bash(cat:*)'],
+    allow: ['Bash(git status:*)', 'Bash(ls:*)', 'Bash(echo:*)', 'Bash(cat:*)',
+      'Bash(jq:*)', 'Bash(jsonq:*)'],
     deny: ['Bash(rm:*)'],
     ask: ['Bash(git push:*)'],
   },
@@ -53,9 +54,45 @@ test('defers when any part is denied, ask-listed, or unlisted', { skip }, () => 
   assert.strictEqual(allowed('git status && frobnicate'), null);    // unlisted
 });
 
-test('defers when a delimiter hides inside quotes or a substitution', { skip }, () => {
-  assert.strictEqual(allowed('echo "a && b" && ls'), null);         // quoted delimiter
+test('defers when a command substitution could smuggle a segment', { skip }, () => {
   assert.strictEqual(allowed('echo $(whoami) && ls'), null);        // command substitution
+  assert.strictEqual(allowed('echo `whoami` && ls'), null);         // backticks
+  assert.strictEqual(allowed('cat <(curl example.com) && ls'), null); // process substitution
+});
+
+// A quoted delimiter used to force a prompt: the hook bailed rather than risk a naive
+// split mangling it. The splitter is quote-aware now, so the `&&` inside the string is
+// inert — it is an argument to an allow-listed `echo`, and both segments are allow-listed.
+// This assertion deliberately changed direction; it is not a regression.
+test('splits on delimiters outside quotes, leaving quoted ones inert', { skip }, () => {
+  assert.strictEqual(allowed('echo "a && b" && ls'), 'allow');
+  assert.strictEqual(allowed("echo 'a; b' && ls"), 'allow');
+  assert.strictEqual(allowed('echo "a | b" && ls'), 'allow');
+  // The shapes this was really costing us: a filter containing a pipe, and two
+  // separately quoted arguments either side of a delimiter.
+  assert.strictEqual(allowed(`cat a.json | jq -r '.hooks | keys[]'`), 'allow');
+  assert.strictEqual(allowed(`jq -r '.a' f.json; jq -r '.b' f.json`), 'allow');
+  assert.strictEqual(allowed(`echo "one" && echo "two" && echo "three"`), 'allow');
+});
+
+test('still inspects every segment when quotes are involved', { skip }, () => {
+  assert.strictEqual(allowed('echo "a && b" && rm -rf build'), null);      // deny
+  assert.strictEqual(allowed(`echo "x" && git push origin main`), null);   // ask
+  assert.strictEqual(allowed(`echo "x" && frobnicate 'y'`), null);         // unlisted
+});
+
+test('defers on unbalanced quoting rather than guessing', { skip }, () => {
+  assert.strictEqual(allowed(`echo 'unbalanced && ls`), null);
+  assert.strictEqual(allowed('echo "unbalanced && ls'), null);
+});
+
+test('defers when a segment redirects to a real target', { skip }, () => {
+  assert.strictEqual(allowed('cat a.json > /etc/passwd && ls'), null);
+  assert.strictEqual(allowed('echo hi >> ~/.bashrc && ls'), null);
+  // /dev/null and fd dups are harmless and must keep working.
+  assert.strictEqual(allowed('cat a.json 2>/dev/null && ls'), 'allow');
+  assert.strictEqual(allowed('cat a.json > /dev/null && ls'), 'allow');
+  assert.strictEqual(allowed('cat a.json 2>&1 && ls'), 'allow');
 });
 
 process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
