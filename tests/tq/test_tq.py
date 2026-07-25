@@ -19,6 +19,7 @@ import scope
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
+from adapters import rdjson as rdjson_adapter
 from digest import MAX_DIGEST, digest
 from result import Failure, Result, strip_ansi
 
@@ -256,7 +257,21 @@ class TestDigest(unittest.TestCase):
         )
         self.assertEqual(
             set(payload["failures"][0]),
-            {"file", "line", "name", "message", "stdout", "stderr"},
+            {
+                "file",
+                "line",
+                "column",
+                "end_line",
+                "end_column",
+                "name",
+                "severity",
+                "code_url",
+                "source",
+                "fixable",
+                "message",
+                "stdout",
+                "stderr",
+            },
         )
 
 
@@ -355,9 +370,7 @@ class TestLintAdapter(unittest.TestCase):
     def test_worst_level_sorts_first_so_the_digest_cap_keeps_errors(self):
         res = blank("shellcheck")
         lint_adapter.parse_shellcheck(read("shellcheck-findings.json"), res)
-        ranks = [
-            lint_adapter.LEVEL_RANK[f.message.split(":", 1)[0]] for f in res.failures
-        ]
+        ranks = [lint_adapter.LEVEL_RANK[f.severity] for f in res.failures]
         self.assertEqual(ranks, sorted(ranks))
         self.assertEqual(res.failures[-1].name, "SC2086")  # the only info-level one
 
@@ -733,6 +746,96 @@ class TestFlagSplit(unittest.TestCase):
         opts, argv = cli.split_flags(["node", "--test"])
         self.assertEqual(opts, {})
         self.assertEqual(argv, ["node", "--test"])
+
+
+class TestRuffJSON(unittest.TestCase):
+    def setUp(self):
+        self.res = lint_adapter.parse_ruff(read("ruff-json.json"), blank("ruff"))
+        self.res.kind = "lint"
+
+    def test_everything_junit_could_not_carry_survives(self):
+        # The whole point of leaving JUnit behind: it has nowhere to put a
+        # column, a severity, a rule url or a fix.
+        fail = by_name(self.res, "F401")
+        self.assertEqual(fail.line, 1)
+        self.assertEqual(fail.column, 8)
+        self.assertEqual(fail.end_line, 1)
+        self.assertEqual(fail.source, "ruff")
+        self.assertIn("ruff/rules/unused-import", fail.code_url)
+
+    def test_fix_applicability_is_kept_apart(self):
+        # An unsafe fix changes behaviour, so "apply them all" is only ever
+        # right for the safe half.
+        self.assertEqual(by_name(self.res, "F401").fixable, "safe")
+        self.assertEqual(by_name(self.res, "F841").fixable, "unsafe")
+
+    def test_the_rule_code_needs_no_unmangling(self):
+        # ruff's JUnit named each case org.ruff.F401, so the code had to be dug
+        # back out of a classname. Nothing to strip here.
+        for fail in self.res.failures:
+            self.assertNotIn("org.ruff", fail.name)
+            self.assertRegex(fail.name, r"^F\d+$")
+
+    def test_the_digest_reports_what_can_be_fixed_safely(self):
+        text = digest(self.res, "/tmp/x.json")
+        self.assertIn("2 auto-fixable (1 safe)", text)
+
+    def test_locations_reach_the_digest_with_their_column(self):
+        self.assertIn(":1:8  F401", digest(self.res, "/tmp/x.json"))
+
+    def test_output_that_is_not_json_leaves_the_result_alone(self):
+        res = lint_adapter.parse_ruff("ruff: command exploded", blank("ruff"))
+        self.assertEqual(res.failures, [])
+
+
+class TestShellcheckFields(unittest.TestCase):
+    def setUp(self):
+        self.res = lint_adapter.parse_shellcheck(
+            read("shellcheck-json1.json"), blank("shellcheck")
+        )
+
+    def test_the_json1_fields_tq_used_to_drop_are_kept(self):
+        fail = self.res.failures[0]
+        self.assertIsNotNone(fail.column)
+        self.assertIsNotNone(fail.end_column)
+        self.assertEqual(fail.source, "shellcheck")
+
+    def test_the_wiki_url_is_derived_from_the_code(self):
+        fail = self.res.failures[0]
+        self.assertEqual(fail.code_url, f"https://www.shellcheck.net/wiki/{fail.name}")
+
+    def test_severity_is_a_field_not_a_prefix_on_the_message(self):
+        # It used to be glued to the front of the message, which put it beyond
+        # the reach of sorting and of the digest's own formatting.
+        for fail in self.res.failures:
+            self.assertNotIn(f"{fail.severity}:", fail.message)
+            self.assertIn(fail.severity, ("error", "warning", "info", "style"))
+
+
+class TestRdjson(unittest.TestCase):
+    def setUp(self):
+        self.res = rdjson_adapter.parse(read("ruff-rdjson.json"), blank("ruff"))
+        self.res.kind = "lint"
+
+    def test_a_tool_tq_has_never_met_still_digests(self):
+        self.assertEqual(len(self.res.failures), 2)
+        fail = by_name(self.res, "F401")
+        self.assertEqual((fail.line, fail.column), (1, 8))
+        self.assertEqual(fail.source, "ruff")
+        self.assertIn("unused-import", fail.code_url)
+
+    def test_a_run_level_severity_reaches_every_finding(self):
+        # rdjson may state severity once at the top rather than per diagnostic.
+        self.assertTrue(all(f.severity == "warning" for f in self.res.failures))
+
+    def test_a_suggestion_is_never_claimed_to_be_safe(self):
+        # rdjson states the edit but not whether applying it is safe, and tq
+        # must not upgrade silence into a promise.
+        self.assertTrue(all(f.fixable == "unsafe" for f in self.res.failures))
+
+    def test_output_that_is_not_rdjson_leaves_the_result_alone(self):
+        self.assertEqual(rdjson_adapter.parse("<html>", blank("x")).failures, [])
+        self.assertEqual(rdjson_adapter.parse("[1,2]", blank("x")).failures, [])
 
 
 if __name__ == "__main__":
