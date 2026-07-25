@@ -119,7 +119,7 @@ exit 0
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
     CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog,
   };
-  delete env.TMUX; delete env.WEZTERM_PANE;
+  delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
     ctLog, ctsLog, fzfArgsLog,
     sandboxBin: path.join(bin, 'claude-sandbox') };
@@ -210,6 +210,18 @@ test('picking the no-repo row under wezterm spawns host claude in a new tab', { 
   const log = fs.readFileSync(spawnLog, 'utf8');
   assert.match(log, /spawn --/, 'uses wezterm cli spawn');
   assert.ok(log.includes('cd ~/dev 2>/dev/null || cd; claude'), `runs host claude in ~/dev; got: ${log}`);
+});
+
+test('under WSL the wezterm spawn is skipped — it would land in a phantom mux', { skip }, () => {
+  // From WSL the Linux cli reaches no GUI, so `wezterm cli spawn` silently starts a headless
+  // mux server and spawns the tab THERE, where nothing displays it. Falling through to the
+  // named-tmux launcher is the jumpable outcome. Same failure the remote-attach path already
+  // guards against; this covers the launcher's copy of it.
+  const { env, spawnLog, ctLog } = makeEnv();
+  run(env, { WEZTERM_PANE: '3', WSL_DISTRO_NAME: 'Ubuntu', FZF_REPO: HOST_ROW });
+  assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn from WSL');
+  assert.ok(fs.readFileSync(ctLog, 'utf8').includes(`${process.env.HOME}/dev`),
+    'falls through to the named ct launcher instead of dropping the spawn');
 });
 
 test('the no-repo row is offered even when the repos root is empty', { skip }, () => {

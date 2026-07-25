@@ -161,6 +161,30 @@ is_local_host()   { [ -n "${HOST_LOCAL[$1]:-}" ]; }
 # source — self rows use the normal local path — so this stays false.
 is_windows_host() { [ "$winhost" != "$selfhost" ] && [ "$1" = "$winhost" ]; }
 
+# Every `wezterm cli` call that has to reach the GUI goes through here. Two things it settles:
+#   * WHICH BINARY. From WSL the Linux /usr/bin/wezterm cannot reach the Windows GUI at all —
+#     different OS, different socket — so it must be $WEZTERM_WIN, the same reason
+#     av_activate_windows uses it. Routing this on is_windows_host would be wrong: that asks
+#     where the SESSION runs, but the question here is which cli can reach the GUI, and from WSL
+#     that is always wezterm.exe no matter which OS the pane's shell lives in. Pane ids are
+#     GUI-global, so the Windows binary can address a WSL pane perfectly well.
+#   * --no-auto-start. Without it, a cli that finds no server does not fail — it quietly STARTS
+#     one (wezterm-mux-server), which comes up owning a default pane numbered from 0 and then
+#     answers every query with that phantom instead of the real GUI. That is both a stray daemon
+#     and an id space that collides with the real $WEZTERM_PANE ids wezterm-pane-ssh resolves.
+# Sets _wezbin to that binary, so the detached re-activate below — which runs in a FRESH bash
+# that has never seen these functions — can name it directly instead of calling back in.
+av_wezterm_bin() {
+  if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+    [ -x "$WEZTERM_WIN" ] || return 1
+    _wezbin="$WEZTERM_WIN"
+  else
+    _wezbin=$(command -v wezterm 2>/dev/null) || return 1
+    [ -n "$_wezbin" ] || return 1
+  fi
+}
+av_wezterm() { av_wezterm_bin || return 1; "$_wezbin" cli --no-auto-start "$@"; }
+
 compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind $4=locator.
   # A real (non-"none") locator uniquely names the pane; else fall back to host+cwd+kind
   # (US-joined). No subshell — this runs per row in the hot render path.
@@ -189,11 +213,11 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
   case "$backend" in
     wezterm)
       [ -z "$rest" ] && return 1
-      command -v wezterm >/dev/null 2>&1 || return 1
+      av_wezterm_bin || return 1
       # Immediate activate + a detached, SIGHUP-immune re-activate 0.25s later so
       # closing the picker pane can't steal focus back over the jump.
-      wezterm cli --prefer-mux activate-pane --pane-id "$rest" 2>/dev/null
-      nohup bash -c "sleep 0.25; wezterm cli --prefer-mux activate-pane --pane-id '$rest'" \
+      av_wezterm --prefer-mux activate-pane --pane-id "$rest" 2>/dev/null
+      nohup bash -c "sleep 0.25; '$_wezbin' cli --no-auto-start --prefer-mux activate-pane --pane-id '$rest'" \
         >/dev/null 2>&1 </dev/null &
       return 0 ;;
     tmux)
@@ -226,6 +250,10 @@ resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or not
   # Legacy cwd-correlation for rows with no locator: the stored pane id is only valid
   # in the mux where it was recorded, so it can't be trusted across the local vs.
   # homelab windows. Needs `wezterm cli list`.
+  # Stays on the LOCAL cli rather than av_wezterm: this asks what the cli's OWN gui is showing,
+  # and routing it to wezterm.exe would put a ~0.4s interop round trip in the render path. From
+  # WSL it therefore answers nothing and the caller falls back, exactly as it did before —
+  # --no-auto-start only stops that empty answer from costing a stray mux daemon.
   local key="$1" scwd list target
   scwd=$(printf '%s' "$key" | cut -d"$US" -f2)
   [ -z "$scwd" ] && return
@@ -233,7 +261,7 @@ resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or not
   # Reuse the render's mux snapshot when we're jumping in-process; only the
   # standalone --resolve/--jump invocations need their own `list` call.
   list="${PANELIST:-}"
-  [ -z "$list" ] && list=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+  [ -z "$list" ] && list=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null)
   [ -z "$list" ] && return
   # Prefer a cwd match whose pane is non-shell (Claude's pane); fall back to any
   # cwd match if every candidate at that cwd is a plain shell.
@@ -560,9 +588,9 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
     av_activate_locator "$locator" && return 0
   fi
   t=$(resolve_key "$key"); [ -z "$t" ] && return 1
-  command -v wezterm >/dev/null 2>&1 || return 1
-  wezterm cli --prefer-mux activate-pane --pane-id "$t" 2>/dev/null
-  nohup bash -c "sleep 0.25; wezterm cli --prefer-mux activate-pane --pane-id '$t'" \
+  av_wezterm_bin || return 1
+  av_wezterm --prefer-mux activate-pane --pane-id "$t" 2>/dev/null
+  nohup bash -c "sleep 0.25; '$_wezbin' cli --no-auto-start --prefer-mux activate-pane --pane-id '$t'" \
     >/dev/null 2>&1 </dev/null &
   return 0
 }
@@ -790,13 +818,10 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
       fi ;;
     wezterm)
       pane="$rest"; [ -n "$pane" ] || return 1
-      if is_windows_host "$host"; then              # Windows pane -> the Windows wezterm.exe
-        [ -x "$WEZTERM_WIN" ] || return 1
-        "$WEZTERM_WIN" cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1
-      else
-        command -v wezterm >/dev/null 2>&1 || return 1
-        wezterm cli send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1
-      fi ;;
+      # A Windows-host row and a WSL-host row are panes of the SAME GUI, and pane ids are
+      # GUI-global — so the is_windows_host split this used to carry was answering the wrong
+      # question. av_wezterm picks the cli that can actually reach that GUI from here.
+      av_wezterm send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
   return 0
@@ -1012,8 +1037,12 @@ spawn_in_backend() {  # $1=inner (new-pane cmd) $2=title $3=named (bare-shell na
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux new-window -n "$title" "$inner"; return 0
   fi
-  if [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
+  # Deliberately NOT routed through av_wezterm: this one only makes sense where the local cli
+  # owns the GUI. From WSL it does not, and wezterm.exe would resolve the bare `bash` on the
+  # Windows side (the reason the Windows spawns below name $WIN_GITBASH explicitly). So WSL
+  # falls through to the named-tmux launcher, which is the jumpable outcome anyway.
+  if [ -z "${WSL_DISTRO_NAME:-}" ] && [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
+    wezterm cli --no-auto-start spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
   fi
   # Bare shell (no mux): exec the NAMED launcher so the session lands in a named, jumpable
   # tmux session — the case cts/ct exist to fix. Replaces the picker's tty, as before.
@@ -1768,7 +1797,7 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
   gather_remote_rows
   collapse_bg_forks                          # one row per task: fold a bg fork into its origin
   if [ "$HAVE_WEZTERM" = 1 ]; then
-    PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null)
+    PANELIST=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null)
     load_titles
   fi
   body=$(build_pretty)
@@ -1822,7 +1851,7 @@ gather_windows_rows;  prof gather_windows # same-machine Windows sessions, via /
 gather_remote_rows                       # cached homelab snapshot — instant, no network
 collapse_bg_forks                        # one row per task: fold a bg fork into its origin
 if [ "$HAVE_WEZTERM" = 1 ]; then
-  PANELIST=$(wezterm cli --prefer-mux list --format json 2>/dev/null); prof wezterm_list
+  PANELIST=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null); prof wezterm_list
   load_titles;      prof load_titles
 fi
 

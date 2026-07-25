@@ -88,6 +88,7 @@ exit 0
   };
   delete env.TMUX;
   delete env.WEZTERM_PANE;
+  delete env.WSL_DISTRO_NAME;  // else the cli routes to the real wezterm.exe, not the stub above
   return { bin, home, env, tmuxLog, claudeLog, capture, killLog, fzfArgs };
 }
 

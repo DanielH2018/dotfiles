@@ -112,6 +112,7 @@ exit 0
   };
   delete env.TMUX;          // never let the test host's tmux socket leak into detection
   delete env.WEZTERM_PANE;  // nor its WezTerm pane id — remote-attach branches on it
+  delete env.WSL_DISTRO_NAME; // nor its WSL-ness, which would route the cli to the real wezterm.exe
   return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture };
 }
 

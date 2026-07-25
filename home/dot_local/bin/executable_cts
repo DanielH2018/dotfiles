@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # cts — run claude-sandbox in its OWN named tmux session (sibling to `ct`), so Agent
 # View captures a real tmux: locator for the session and <enter> can jump to it. A bare
-# `claude-sandbox .` from a WezTerm/WSL shell registers backend:none — WEZTERM_PANE
-# doesn't cross into WSL — and is not jumpable; running it inside tmux fixes that.
+# `claude-sandbox .` from a WezTerm/WSL shell used to register backend:none because
+# WEZTERM_PANE did not cross into WSL; it now registers wezterm:<id> (wezterm.lua forwards the
+# variable via WSLENV), but a tmux: locator is still the more robust target — it survives the
+# pane id going stale, which a wezterm: one does not.
 # Usage: cts [dir] [claude-sandbox args…]
 #   dir defaults to $PWD; the first arg is the dir only if it isn't a flag. Everything
 #   else forwards verbatim to claude-sandbox (e.g. -b BRANCH). The session name is
