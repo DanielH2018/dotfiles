@@ -89,6 +89,8 @@
       "Bash(awk:*)",
       "Bash(sed:*)",
       "Bash(jq:*)",
+      {{/* jsonq evaluates Python expressions over JSON, but only after an AST allowlist rejects imports, underscore-prefixed names/attributes, and `format` — so it cannot import, open a file it wasn't handed, spawn a process, or reach the network. That, plus its own copy of the hook's secret-path guard, is what makes a blanket allow safe; tests/jsonq.test.js is the escape suite holding it to that. */}}
+      "Bash(jsonq:*)",
       "Bash(yq:*)",
       "Bash(xargs:*)",
       "Bash(tr:*)",
