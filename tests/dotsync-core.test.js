@@ -13,8 +13,10 @@ const { expandTilde, loadManifest, globToRegExp, matchesAnyGlob, deriveTargets, 
 const skip = process.platform === 'win32' ? 'dotsync is Unix-only' : false;
 
 let HOME, MAN, w, m, fakeRunner;
+const dirs = [];
 if (!skip) {
   HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dshome-'));
+  dirs.push(HOME);
   MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN, { recursive: true });
   w = (name, obj) => fs.writeFileSync(path.join(MAN, name), JSON.stringify(obj));
@@ -113,6 +115,6 @@ test('conflict: two repos claim the same path', { skip }, () => {
   const dupOwn = buildOwnership(m.repos, HOME, dupRunner);
   const chk3 = computeCheck({ ownership: dupOwn, existing: [path.join(HOME, '.config/zsh/local.zsh')], ignoreGlobs: [], home: HOME });
   assert.deepStrictEqual(chk3.conflicts, [{ path: path.join(HOME, '.config/zsh/local.zsh'), repos: ['general', 'work'] }]);
-
-  fs.rmSync(HOME, { recursive: true, force: true });
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

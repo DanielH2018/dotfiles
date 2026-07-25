@@ -28,6 +28,8 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV }).trim();
 }
 
+const dirs = [];
+
 function run(cwd, ...args) {
   try {
     const stdout = execFileSync('bash', [INSTALLER, ...args], {
@@ -43,6 +45,7 @@ function run(cwd, ...args) {
 // exercisable rather than inert.
 function makeRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-repo-'));
+  dirs.push(dir);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
@@ -154,7 +157,9 @@ test('replaces the shim by rename, leaving a push already reading it intact', { 
 
 test('from a linked worktree, installs into the shared .git', { skip }, () => {
   const repo = makeRepo();
-  const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shim-wt-')), 'w');
+  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-wt-'));
+  dirs.push(wtRoot);
+  const wt = path.join(wtRoot, 'w');
   git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
 
   const r = run(wt);
@@ -171,6 +176,7 @@ test('from a linked worktree, installs into the shared .git', { skip }, () => {
 
 test('outside a repo it exits quietly, so it can never fail a session', { skip }, () => {
   const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-bare-'));
+  dirs.push(notRepo);
   const r = run(notRepo);
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
@@ -182,3 +188,5 @@ test('rejects an unknown flag rather than guessing', { skip }, () => {
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /usage/);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

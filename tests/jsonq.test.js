@@ -21,7 +21,9 @@ try {
   skip = 'python3 unavailable';
 }
 
+const dirs = [];
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'jsonq-'));
+dirs.push(DIR);
 const T = path.join(DIR, 't.json');
 const U = path.join(DIR, 'u.json');
 fs.writeFileSync(T, JSON.stringify({
@@ -234,3 +236,5 @@ test('rejects a syntax error before evaluating', { skip }, () => {
   assert.strictEqual(r.code, 2);
   assert.match(r.err, /syntax error/);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

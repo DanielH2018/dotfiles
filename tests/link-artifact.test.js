@@ -3,6 +3,8 @@ const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const path = require('node:path');
 
+const dirs = [];
+
 const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
 // A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
@@ -72,8 +74,10 @@ test('symlink resolution gated to in-container', () => {
     const fs = require('node:fs');
     const os = require('node:os');
     const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));
+    dirs.push(real);
     fs.writeFileSync(path.join(real, 'report.html'), '<html>');
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-home-'));
+    dirs.push(home);
     fs.mkdirSync(path.join(home, '.claude'));
     fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
     const linked = path.join(home, '.claude', 'artifacts', 'report.html');
@@ -82,8 +86,7 @@ test('symlink resolution gated to in-container', () => {
       'host mode emits the platform link for the ~/.claude/artifacts path (no resolution)');
     assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
       'container mode resolves the symlink before matching');
-
-    fs.rmSync(real, { recursive: true, force: true });
-    fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+process.on('exit', () => { const fs = require('node:fs'); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

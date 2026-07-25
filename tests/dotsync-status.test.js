@@ -12,8 +12,10 @@ const { cmdStatus } = mod;
 const skip = process.platform === 'win32' ? 'dotsync is Unix-only' : false;
 
 let HOME, MAN, w, captureStatus;
+const dirs = [];
 if (!skip) {
   HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dsstatus-'));
+  dirs.push(HOME);
   MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN, { recursive: true });
   w = (name, obj) => fs.writeFileSync(path.join(MAN, name), JSON.stringify(obj));
@@ -88,6 +90,6 @@ test('(c) multiple manifest repos: header + status printed per repo, in manifest
   assert.ok(output.includes('M .claude/CLAUDE.local.md'), "work repo's own git status surfaced");
   const diffCalls = calls.filter((c) => c[0] === 'chezmoi' && c.includes('diff'));
   assert.strictEqual(diffCalls.length, 1, 'chezmoi diff is only invoked for the chezmoi-type repo');
-
-  fs.rmSync(HOME, { recursive: true, force: true });
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

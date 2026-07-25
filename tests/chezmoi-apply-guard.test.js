@@ -18,7 +18,9 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
+const dirs = [];
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'czag-bin-'));
+dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 # Only 'status' is consulted by the hook; echo the fixture it was given.
 case "$1" in
@@ -106,3 +108,5 @@ test('stays silent when chezmoi status fails', { skip }, () => {
   // Stub returns nothing for an unknown subcommand shape; hook must not block.
   allows('chezmoi apply', CLEAN);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -179,10 +179,12 @@ else
 end
 `;
 
+const dirs = [];
 let dir, rendered;
 function setup() {
   if (dir) return;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wezterm-split-'));
+  dirs.push(dir);
   rendered = path.join(dir, 'wezterm.lua');
   fs.writeFileSync(rendered, execFileSync('chezmoi', ['execute-template'], {
     input: fs.readFileSync(TMPL, 'utf8'), cwd: REPO, encoding: 'utf8',
@@ -346,3 +348,5 @@ test('CTRL+SHIFT+D splits down with the same ssh-aware command', { skip }, () =>
   assert.strictEqual(got.action, 'SplitVertical');
   assert.strictEqual(got.args[2], 'daniel-server', 'same ssh destination as CTRL+D');
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

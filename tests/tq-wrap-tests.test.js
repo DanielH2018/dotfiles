@@ -21,9 +21,11 @@ const skip = python3Ok ? false : 'python3 unavailable';
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias
 // and point TQ_BIN at it: this exercises the checkout rather than whatever
 // `chezmoi apply` last deployed.
+const dirs = [];
 let binDir = '';
 if (python3Ok) {
   binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hook-bin-'));
+  dirs.push(binDir);
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
 }
 
@@ -156,3 +158,5 @@ test('the rewrite is skipped when tq cannot be resolved by name', { skip }, () =
   assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
   assert.strictEqual(r.stdout.trim(), '');
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
