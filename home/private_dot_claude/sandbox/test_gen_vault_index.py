@@ -97,7 +97,13 @@ if __name__ == "__main__":
     # test added to the file but forgotten in the list, then prints OK for the
     # ones it did run — and the harness sees only the exit code, so a forgotten
     # *failing* test still reads as a pass.
+    #
+    # The count in the OK line is the harness's cross-check on this loop — see
+    # tests/python-suites.test.js, which counts the test_* defs itself and fails
+    # when the two disagree.
+    ran = 0
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-    print("OK")
+            ran += 1
+    print(f"OK {ran}")
