@@ -294,13 +294,18 @@ local function split_command(pane)
 		table.insert(argv, 2, "-t")
 		table.insert(argv, "cd " .. squote(dir) .. " 2>/dev/null || cd; exec ${SHELL:-/bin/sh} -l")
 	end
-	local cmd = { domain = "CurrentPaneDomain", args = argv }
-	-- Never hand a remote path to a Windows spawn as the launch dir — it isn't a valid local
-	-- path. WSL quietly falls back to `/`; the local domain would fail to start the pane.
+	-- Pin a launch dir that exists on THIS machine. Left alone the split inherits the pane's
+	-- OSC 7 cwd — the REMOTE path — and the spawn then chdirs into it locally: WSL logs
+	-- `CreateProcessCommon:788: chdir(/home/ubuntu) failed 2` before falling back to `/`, and
+	-- the Windows domain has no such path at all. ssh replaces the process immediately, so
+	-- this is only ever the directory ssh itself is launched from.
 	local domain = ""
 	pcall(function() domain = pane:get_domain_name() or "" end)
-	if not domain:find("WSL") then cmd.cwd = wezterm.home_dir end
-	return cmd
+	return {
+		domain = "CurrentPaneDomain",
+		args = argv,
+		cwd = domain:find("WSL") and "/" or wezterm.home_dir,
+	}
 end
 
 config.keys = {
