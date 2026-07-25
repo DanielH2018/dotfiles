@@ -31,7 +31,14 @@ def lint_headline(result):
     stayed quiet about."""
     seconds = result.duration_ms / 1000
     found = len(result.failures)
+    aside = result.truncated.get("out_of_scope") or 0
     if not found:
+        if aside:
+            # Ahead of the exit check: a linter that found things exits non-zero
+            # even when every one of them was scoped away, and NO FINDINGS
+            # PARSED would report a working tool as a broken one. Bare CLEAN is
+            # equally wrong — the diff is clean, the repo demonstrably is not.
+            return f"CLEAN in your diff  ({aside} outside it)  {seconds:.1f}s"
         if result.exit != 0:
             # The lint-shaped false pass: the tool broke — bad config, no such
             # file, an unreadable rule — and printing CLEAN would bless it.
@@ -39,7 +46,8 @@ def lint_headline(result):
         return f"CLEAN  {seconds:.1f}s"
     files = len({f.file for f in result.failures if f.file})
     where = f" in {files} {plural(files, 'file')}" if files else ""
-    return f"FAIL {found} {plural(found, 'finding')}{where}  {seconds:.1f}s"
+    scoped = f"  ({aside} outside your diff)" if aside else ""
+    return f"FAIL {found} {plural(found, 'finding')}{where}{scoped}  {seconds:.1f}s"
 
 
 def timeout_headline(result):
@@ -133,7 +141,10 @@ def digest(result, json_path):
         if dropped:
             out.append(f"note: … +{dropped} bytes (see json)")
     if not result.failures:
-        if result.exit != 0:
+        # Not when scoping emptied the list: the headline has already said the
+        # findings exist and where they are, and "no reported failures" would
+        # contradict it while describing the same run.
+        if result.exit != 0 and not result.truncated.get("out_of_scope"):
             out.append(f"runner exited {result.exit} with no reported failures")
         return "\n".join(out)
 

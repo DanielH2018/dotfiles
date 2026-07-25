@@ -3,7 +3,10 @@
 real pytest and node --test runs. Run directly: python3 tests/tq/test_tq.py"""
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +15,7 @@ sys.path.insert(
     0, os.path.join(HERE, os.pardir, os.pardir, "home", "dot_local", "share", "tq")
 )
 
+import scope
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
@@ -587,6 +591,148 @@ class TestRunTimeout(unittest.TestCase):
         self.assertFalse(timed_out)
         self.assertEqual(proc.returncode, 0)
         self.assertIn("done", proc.stdout)
+
+
+class TestScope(unittest.TestCase):
+    """Against a real repo, because every bug this filter can have lives in
+    what git actually prints rather than in the filtering itself."""
+
+    def setUp(self):
+        self.repo = tempfile.mkdtemp(prefix="tq-scope-")
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        self.git("init", "-q", ".")
+        self.git("config", "user.email", "t@t.co")
+        self.git("config", "user.name", "t")
+        self.write("a.py", "one\ntwo\nthree\nfour\n")
+        self.write("b.py", "one\ntwo\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+
+    def git(self, *args, **env):
+        subprocess.run(
+            ["git", *args],
+            cwd=self.repo,
+            check=True,
+            capture_output=True,
+            env={**os.environ, **env},
+        )
+
+    def write(self, name, text):
+        with open(os.path.join(self.repo, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def fail_at(self, name, line):
+        return Failure(name="F401", file=os.path.join(self.repo, name), line=line)
+
+    def lint_result(self, *failures):
+        res = Result(runner="ruff", kind="lint", cmd="ruff", cwd=self.repo, exit=1)
+        res.failures.extend(failures)
+        return res
+
+    def test_only_changed_lines_survive_added_mode(self):
+        self.write("a.py", "one\ntwo\nthree\nCHANGED\n")
+        res = self.lint_result(self.fail_at("a.py", 4), self.fail_at("a.py", 1))
+        dropped = scope.apply_scope(res, "added", self.repo)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([f.line for f in res.failures], [4])
+
+    def test_file_mode_keeps_findings_outside_the_hunk(self):
+        # An unused import at line 1 is a real finding in a file you touched;
+        # `added` alone would drop every one of them.
+        self.write("a.py", "one\ntwo\nthree\nCHANGED\n")
+        res = self.lint_result(self.fail_at("a.py", 1), self.fail_at("b.py", 1))
+        dropped = scope.apply_scope(res, "file", self.repo)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([os.path.basename(f.file) for f in res.failures], ["a.py"])
+
+    def test_mnemonic_prefixes_do_not_scope_everything_away(self):
+        # diff.mnemonicPrefix renames the diff header's a/ and b/ to c/ and w/.
+        # Stripping a hardcoded "b/" leaves a path matching nothing, which reads
+        # as a completely clean diff — the failure this guards is silent.
+        self.git("config", "diff.mnemonicPrefix", "true")
+        self.write("a.py", "one\ntwo\nthree\nCHANGED\n")
+        changed = scope.touched("HEAD", self.repo)
+        self.assertEqual(
+            [os.path.basename(p) for p in changed], ["a.py"], f"got {changed}"
+        )
+
+    def test_a_finding_that_cannot_be_placed_is_kept(self):
+        res = self.lint_result(Failure(name="E902", file=None, line=None))
+        self.assertEqual(scope.apply_scope(res, "added", self.repo), 0)
+        self.assertEqual(len(res.failures), 1)
+
+    def test_test_failures_are_never_scoped(self):
+        # A test breaking in a file the diff never touched is the most valuable
+        # thing a run reports; "you did not edit it" must not hide it.
+        res = Result(runner="node", cmd="node", cwd=self.repo, exit=1)
+        res.failures.append(self.fail_at("b.py", 1))
+        self.assertEqual(scope.apply_scope(res, "added", self.repo), 0)
+        self.assertEqual(len(res.failures), 1)
+
+    def test_outside_a_repo_everything_is_reported(self):
+        plain = tempfile.mkdtemp(prefix="tq-norepo-")
+        self.addCleanup(shutil.rmtree, plain, True)
+        res = self.lint_result(self.fail_at("a.py", 1))
+        self.assertIsNone(scope.touched("HEAD", plain))
+        self.assertEqual(scope.apply_scope(res, "added", plain), 0)
+        self.assertEqual(len(res.failures), 1)
+
+
+class TestScopeHeadline(unittest.TestCase):
+    def scoped(self, found, aside, exit_code=1):
+        res = Result(runner="ruff", kind="lint", cmd="ruff", cwd="/s", exit=exit_code)
+        res.failures.extend(
+            Failure(name="F401", file="a.py", line=i) for i in range(found)
+        )
+        res.truncated["out_of_scope"] = aside
+        return digest(res, "/tmp/x.json")
+
+    def test_a_filtered_clean_run_is_not_called_clean(self):
+        text = self.scoped(found=0, aside=12)
+        self.assertTrue(text.startswith("CLEAN in your diff  (12 outside it)"))
+
+    def test_a_filtered_clean_run_is_not_called_broken(self):
+        # The linter exits non-zero because findings exist; reporting that as
+        # NO FINDINGS PARSED would call a working tool a broken one.
+        self.assertNotIn("NO FINDINGS PARSED", self.scoped(found=0, aside=12))
+        self.assertNotIn("no reported failures", self.scoped(found=0, aside=12))
+
+    def test_withheld_findings_are_counted_in_the_headline(self):
+        self.assertIn("(9 outside your diff)", self.scoped(found=2, aside=9))
+
+    def test_an_unscoped_run_says_nothing_about_scope(self):
+        self.assertNotIn("diff", self.scoped(found=2, aside=0))
+        self.assertEqual(
+            self.scoped(found=0, aside=0, exit_code=0).split("  ")[0], "CLEAN"
+        )
+
+
+class TestFlagSplit(unittest.TestCase):
+    def test_tq_flags_are_taken_and_the_command_is_left_whole(self):
+        cli = load_cli()
+        opts, argv = cli.split_flags(["--scope=added", "ruff", "check", "."])
+        self.assertEqual(opts["--scope"], "added")
+        self.assertEqual(argv, ["ruff", "check", "."])
+
+    def test_a_separated_value_is_accepted(self):
+        cli = load_cli()
+        opts, argv = cli.split_flags(["--scope", "file", "pytest"])
+        self.assertEqual(opts["--scope"], "file")
+        self.assertEqual(argv, ["pytest"])
+
+    def test_parsing_stops_at_the_command(self):
+        # The runner's own flags are the runner's, even when tq has a flag by
+        # the same name — passthrough is what makes tq safe to sit in front of.
+        cli = load_cli()
+        opts, argv = cli.split_flags(["pytest", "--scope=added"])
+        self.assertEqual(opts, {})
+        self.assertEqual(argv, ["pytest", "--scope=added"])
+
+    def test_a_bare_command_is_untouched(self):
+        cli = load_cli()
+        opts, argv = cli.split_flags(["node", "--test"])
+        self.assertEqual(opts, {})
+        self.assertEqual(argv, ["node", "--test"])
 
 
 if __name__ == "__main__":
