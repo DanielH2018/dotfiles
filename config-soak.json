@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "453fcebfdfd60816f81bc7da37628a61ce9060b42675d717d182ee74de6ef967",
-      "landed": "2026-07-25T02:56:53.679Z"
+      "hash": "00edfa81cd47f1dc1b25f2306334d0e848c5e4aab15abdf7a5e127f8f243f758",
+      "landed": "2026-07-25T13:44:01.858Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
