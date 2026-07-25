@@ -233,6 +233,19 @@
       "Bash(chezmoi data:*)",
       "Bash(chezmoi verify:*)",
       "Bash(chezmoi status:*)",
+      {{/* this repo's own review gate — the three documented verbs only, never a bare
+           `node bin/config-soak:*` wildcard, so a future subcommand is not pre-approved.
+           Relative path because the ledger is anchored to the script's own location
+           (REPO_ROOT = __dirname/..), so a worktree must run ITS copy: the invocation is always
+           `cd <root> && node bin/config-soak <verb>`, and that compound form is what
+           allow-compound-bash.sh matches (prefix only, no mid-path globs, so an absolute rule
+           spanning every worktree under .claude cannot be written). Same relative-executable risk shape
+           as the already-allowed ./gradlew and make. `land` is included deliberately: it lets
+           Claude self-certify config it just wrote, trading the gate's independence for an
+           unattended push — an explicit call by the repo owner, not an oversight. */}}
+      "Bash(node bin/config-soak status:*)",
+      "Bash(node bin/config-soak list)",
+      "Bash(node bin/config-soak land:*)",
       "Bash(claude --help)",
       {{/* exact match only — `claude agents` takes no subcommands, but it does accept --dangerously-skip-permissions, --permission-mode, --settings and --plugin-dir, so any trailing wildcard (even after --json) would auto-approve a permission escalation */}}
       "Bash(claude agents)",

@@ -65,6 +65,13 @@ acknowledged before it counts as reviewed, and is only flagged stable after a so
   new/changed files, preserves the clock for unchanged ones. Commit the ledger to persist it.
 - `config-soak list` — print the tracked paths.
 
+All three verbs are allow-listed in `settings.base.json`, so Claude runs them unprompted — including
+`land`, which means Claude can acknowledge config it wrote itself. The gate still records *what*
+changed and *when*; it no longer guarantees a human looked. Invoke it as
+`cd <repo-or-worktree> && node bin/config-soak <verb>`: the ledger is anchored to the script's own
+location, so a worktree must run its own copy, and that compound form is the shape
+`allow-compound-bash.sh` auto-approves.
+
 It is the deterministic complement to the LLM-driven `/review-setup` skill. See
 `docs/superpowers/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
 
