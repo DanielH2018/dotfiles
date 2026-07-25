@@ -1,9 +1,12 @@
 import hashlib
+import shutil
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from vault_index.config import EMBED_DIM, Config
+from vault_index.indexer import build
 
 FIXTURE_ROOT = Path(__file__).parent / "fixture_vault"
 
@@ -39,3 +42,28 @@ def fixture_config(tmp_path) -> Config:
 @pytest.fixture
 def fake_embedder() -> FakeEmbedder:
     return FakeEmbedder()
+
+
+@pytest.fixture(scope="session")
+def _prebuilt_index(tmp_path_factory) -> Path:
+    """A full build of the fixture vault, done once. It costs ~1.2s and was the whole suite's
+    dominant cost when every test that merely *needed* an index paid for its own."""
+    path = tmp_path_factory.mktemp("prebuilt") / "test.duckdb"
+    try:
+        build(
+            Config(root=FIXTURE_ROOT, index_path=path),
+            embedder=FakeEmbedder(),
+            full=True,
+        )
+    except duckdb.Error as e:  # fts extension needs network on first use
+        pytest.skip(f"duckdb fts extension unavailable offline: {e}")
+    return path
+
+
+@pytest.fixture
+def built_config(tmp_path, _prebuilt_index) -> Config:
+    """A config whose index is already built, as a private copy — tests may mutate it freely.
+    Use this instead of building in the test unless the build itself is what's under test."""
+    index_path = tmp_path / "test.duckdb"
+    shutil.copyfile(_prebuilt_index, index_path)
+    return Config(root=FIXTURE_ROOT, index_path=index_path)

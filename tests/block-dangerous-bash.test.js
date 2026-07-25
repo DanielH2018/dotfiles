@@ -3,7 +3,7 @@
 // decisions. Offline and deterministic. Skips cleanly if bash/jq are unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const path = require('node:path');
 const os = require('node:os');
 
@@ -15,17 +15,38 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
+// One bash per case, and the case lists below are ~145 long: run them in lanes rather than
+// end to end. The hook is a pure stdin->stdout decision with no shared state, so the only
+// thing serial execution bought was ~10s of process-startup wait (this was the whole suite's
+// slowest file). Failures still surface in list order — see `decide` below.
 function runHook(command) {
-  try {
-    return execFileSync('bash', [HOOK], {
-      input: JSON.stringify({ tool_input: { command } }),
-      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-    });
-  } catch (e) { return e.stdout || ''; }
+  return new Promise((resolve) => {
+    const p = spawn('bash', [HOOK], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.setEncoding('utf8');
+    p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => resolve(''));            // bash missing/unspawnable -> no decision
+    p.on('close', () => resolve(out));
+    p.stdin.on('error', () => {});               // hook may exit before reading all of stdin
+    p.stdin.end(JSON.stringify({ tool_input: { command } }));
+  });
 }
 function decision(stdout) {
   if (!stdout.trim()) return null;
   try { return JSON.parse(stdout).hookSpecificOutput.permissionDecision; } catch { return null; }
+}
+const LANES = Math.min(8, os.availableParallelism());
+// Decisions for `commands`, indexed to match, so callers assert in list order.
+async function decide(commands) {
+  const out = new Array(commands.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: LANES }, async () => {
+    while (next < commands.length) {
+      const i = next++;
+      out[i] = decision(await runHook(commands[i]));
+    }
+  }));
+  return out;
 }
 
 const DENY = [
@@ -146,20 +167,18 @@ const ALLOW = [
   'echo "run terraform destroy manually"',
 ];
 
-test('dangerous commands are denied', { skip }, () => {
-  for (const cmd of DENY) {
-    assert.strictEqual(decision(runHook(cmd)), 'deny', `should deny: ${cmd}`);
-  }
+test('dangerous commands are denied', { skip }, async () => {
+  const got = await decide(DENY);
+  DENY.forEach((cmd, i) => assert.strictEqual(got[i], 'deny', `should deny: ${cmd}`));
 });
 
-test('benign/safe commands are not denied', { skip }, () => {
-  for (const cmd of ALLOW) {
-    assert.notStrictEqual(decision(runHook(cmd)), 'deny', `should not deny: ${cmd}`);
-  }
+test('benign/safe commands are not denied', { skip }, async () => {
+  const got = await decide(ALLOW);
+  ALLOW.forEach((cmd, i) => assert.notStrictEqual(got[i], 'deny', `should not deny: ${cmd}`));
 });
 
-test('--force to a feature branch is upgraded to --force-with-lease', { skip }, () => {
-  const parsed = JSON.parse(runHook('git push --force origin feature-x')).hookSpecificOutput;
+test('--force to a feature branch is upgraded to --force-with-lease', { skip }, async () => {
+  const parsed = JSON.parse(await runHook('git push --force origin feature-x')).hookSpecificOutput;
   assert.strictEqual(parsed.permissionDecision, 'allow');
   assert.match(parsed.updatedInput.command, /--force-with-lease/);
 });
