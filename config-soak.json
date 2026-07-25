@@ -8,13 +8,13 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "2bec6d92ff4eff4cf0752a452a9b56d7a10f6a5abc49be5ef9a085553b587ea9",
-      "landed": "2026-07-25T22:27:40.398Z"
+      "hash": "c260a5d389b69a0610417d83dad8b9406f2245312c12e1aa9d6d1629df46202c",
+      "landed": "2026-07-25T23:12:01.504Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "429c17488d02a095c12f739f0889277a41776abc88e0032bcf30482a81d95e75",
-      "landed": "2026-07-25T22:28:09.994Z"
+      "hash": "f86c46dc2ca59b605d3c076227140009aee2da12d0ee3edb5abf163f244a402d",
+      "landed": "2026-07-25T23:12:01.504Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
@@ -223,8 +223,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
-      "hash": "78e0877b50ab527b72a851c1c8721491b038e317daca8af7b349ed3774fce5de",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "f030f7924b14276e0851c674f75fecde3060b682b1f9ab784627485d17e14882",
+      "landed": "2026-07-25T23:12:01.504Z"
     },
     {
       "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
@@ -270,6 +270,11 @@
       "path": "home/private_dot_claude/skills/grilling/SKILL.md",
       "hash": "3a825f53311efeba6b167134a97ba9956c9bc2dc94f0a2c2e59b2ac41a3deed1",
       "landed": "2026-07-25T01:23:11.477Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
+      "hash": "10949e44bf6a6e80f5b05c874509a2098ca6698a2788c7a599d5befec4c022bc",
+      "landed": "2026-07-25T23:12:01.504Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
@@ -353,8 +358,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/prep/SKILL.md",
-      "hash": "56c3823d43eb1d2ccd7a4df8220aeff772fc7d70eb5aef928cbb4a836949ab1a",
-      "landed": "2026-07-25T22:28:09.994Z"
+      "hash": "6391f7e7c3b1e43c308defe5b0cd684b6f3f68dfe688bcfc5cfbcb6ddcbb3e19",
+      "landed": "2026-07-25T23:12:01.504Z"
     },
     {
       "path": "home/private_dot_claude/skills/reprime/SKILL.md",
