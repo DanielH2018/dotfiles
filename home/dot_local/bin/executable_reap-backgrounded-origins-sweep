@@ -8,8 +8,13 @@
 # This is the daemon-independent supplement to the reap-backgrounded-origin.sh hook; both
 # share reap-origin-lib.sh so detection + guards are identical.
 #
+# Since Claude Code 2.1 a backgrounded session is dispatched onto a pre-warmed spare, whose
+# argv keeps no --resume link to the origin, so the cmdline scan alone silently stops
+# reaping. The roster pass below covers that dispatch; the cmdline pass still covers forks
+# that carry the flags directly.
+#
 # Test seams: CLAUDE_SESSIONS_DIR, AGENT_VIEW_DIR, REAP_KILLCMD, REAP_LOG, REAP_LIB,
-# REAP_PROC_DIR.
+# REAP_PROC_DIR, REAP_ROSTER.
 set -u
 
 # shellcheck source=/dev/null
@@ -30,3 +35,8 @@ for pf in "$sessions_dir"/*.json; do
   reap_origin_from_cmdline "$cmdline" "$sid"
 done
 shopt -u nullglob
+
+# Spare-dispatched backgroundings: the origin link lives only in the daemon roster.
+# "nothing to reap" is the normal case and returns 1 — never let it fail the timer unit.
+reap_origin_from_roster || true
+exit 0

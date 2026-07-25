@@ -4,35 +4,33 @@
 # Keeping the safety-critical detection in ONE place means both paths reap on exactly the
 # same signature and guards.
 #
+# Two detection paths, both ending in _reap_origin_sid (same guards, same graceful kill):
+#
 # reap_origin_from_cmdline <cmdline> <fork_sid>
 #   Given the cmdline of a bg-fork worker and that fork's own session id, SIGTERM the
 #   redundant interactive ORIGIN it was forked from — but ONLY on the exact three-flag
 #   backgrounding signature, never self, graceful only. Returns 0 if it reaped, 1 otherwise.
 #
+# reap_origin_from_roster [roster_file]
+#   Claude Code >=2.1 dispatches a backgrounded session onto a pre-warmed spare, so the
+#   worker argv is only `claude bg-spare --bg-spare <claim.sock>` — the --resume link to
+#   the origin is gone from the cmdline and survives solely in the daemon roster. Same
+#   three-marker rigor, read from dispatch instead: launch.mode=resume + launch.fork=true
+#   + seed.intent="(backgrounded)", where launch.sessionId is the origin transcript path.
+#   A plain spare-spawned agent (source=spare, mode=prompt, intent="") never matches.
+#
 # Test seams (defaults are the real thing): CLAUDE_SESSIONS_DIR, AGENT_VIEW_DIR,
-# REAP_KILLCMD, REAP_LOG.
-reap_origin_from_cmdline() {
-  local cmdline="$1" fork_sid="$2"
+# REAP_KILLCMD, REAP_LOG, REAP_ROSTER.
+
+# _reap_origin_sid <origin_sid> <fork_sid>
+#   Resolve the origin session id to a live pid and SIGTERM it. Never self, graceful only.
+#   Returns 0 if it reaped, 1 otherwise.
+_reap_origin_sid() {
+  local origin_sid="$1" fork_sid="$2"
   local sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
   local av_dir="${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"
   local killcmd="${REAP_KILLCMD:-kill}"
   local logfile="${REAP_LOG:-$HOME/.local/state/reap-origin.log}"
-
-  # --- signature gate: all three markers, else no-op ---
-  case " $cmdline " in *" --fork-session "*) ;; *) return 1;; esac
-  case " $cmdline " in *" --reply-on-resume "*) ;; *) return 1;; esac
-  case "$cmdline" in *"--resume "*) ;; *) return 1;; esac
-
-  # origin sid = basename of the token after --resume, minus .jsonl
-  local resume_path=""
-  # shellcheck disable=SC2086  # deliberate word-split: tokenize the space-joined cmdline
-  set -- $cmdline
-  while [ $# -gt 0 ]; do
-    if [ "$1" = "--resume" ]; then resume_path="${2:-}"; break; fi
-    shift
-  done
-  case "$resume_path" in *.jsonl) ;; *) return 1;; esac
-  local origin_sid="${resume_path##*/}"; origin_sid="${origin_sid%.jsonl}"
 
   # guard: non-empty and never self
   [ -n "$origin_sid" ] || return 1
@@ -66,4 +64,49 @@ reap_origin_from_cmdline() {
     "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$origin_sid" "$origin_pid" "${fork_sid:-?}" \
     >> "$logfile" 2>/dev/null
   return 0
+}
+
+reap_origin_from_cmdline() {
+  local cmdline="$1" fork_sid="$2"
+
+  # --- signature gate: all three markers, else no-op ---
+  case " $cmdline " in *" --fork-session "*) ;; *) return 1;; esac
+  case " $cmdline " in *" --reply-on-resume "*) ;; *) return 1;; esac
+  case "$cmdline" in *"--resume "*) ;; *) return 1;; esac
+
+  # origin sid = basename of the token after --resume, minus .jsonl
+  local resume_path=""
+  # shellcheck disable=SC2086  # deliberate word-split: tokenize the space-joined cmdline
+  set -- $cmdline
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--resume" ]; then resume_path="${2:-}"; break; fi
+    shift
+  done
+  case "$resume_path" in *.jsonl) ;; *) return 1;; esac
+  local origin_sid="${resume_path##*/}"; origin_sid="${origin_sid%.jsonl}"
+
+  _reap_origin_sid "$origin_sid" "$fork_sid"
+}
+
+reap_origin_from_roster() {
+  local roster="${1:-${REAP_ROSTER:-$HOME/.claude/daemon/roster.json}}"
+  [ -r "$roster" ] || return 1
+
+  # dispatch gate mirrors the cmdline one: all three markers, else the entry is skipped.
+  local origin_sid fork_sid rc=1
+  while IFS="$(printf '\t')" read -r origin_sid fork_sid; do
+    [ -n "$origin_sid" ] || continue
+    _reap_origin_sid "$origin_sid" "$fork_sid" && rc=0
+  done <<EOF
+$(jq -r '
+  (.workers // {}) | to_entries[] | .value as $w | ($w.dispatch // {}) as $d |
+  select(($d.launch.mode // "")  == "resume")         |
+  select(($d.launch.fork // false) == true)           |
+  select(($d.seed.intent // "") == "(backgrounded)")  |
+  ($d.launch.sessionId // "") as $p                   |
+  select($p | endswith(".jsonl"))                     |
+  (($p | split("/") | last | sub("\\.jsonl$"; "")) + "\t" + ($w.sessionId // ""))
+' "$roster" 2>/dev/null)
+EOF
+  return $rc
 }
