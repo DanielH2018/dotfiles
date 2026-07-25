@@ -216,7 +216,8 @@ end
 -- A split spawns a shell in the pane's own domain, so splitting a pane that is ssh'd
 -- somewhere puts you back on THIS machine — and it inherits the pane's OSC 7 cwd, so a
 -- remote /home/ubuntu reopens as a LOCAL /home/ubuntu (or `/` when that path doesn't
--- exist here). Splitting a remote view should stay remote, so probe the pane two ways:
+-- exist here). Splitting a remote view should stay remote, so probe the pane three ways,
+-- cheapest first — each one covers a shape the others are blind to:
 --   * the ssh process — a local-domain pane (the CTRL+SHIFT+H homelab tab) exposes its
 --     foreground process, so reuse that command's destination AND its options
 --     (-p / -i / -J ...). Everything past the destination is dropped: the homelab tab
@@ -224,9 +225,12 @@ end
 --     session into the split instead of giving you a second shell on the box.
 --   * OSC 7 — a WSL pane is opaque (WezTerm only ever sees wslhost.exe), but a remote
 --     shell that reached a prompt reports its host and cwd, so the split can cd there.
--- Neither reaches a WSL pane attached to a REMOTE tmux session (an agentview homelab
--- jump): remote tmux swallows OSC 7 and WSL hides the process, so that case still splits
--- locally — fixing it needs a WSL-side probe of the tmux client, not a WezTerm probe.
+--   * the WSL helper — neither of the above reaches a WSL pane attached to a REMOTE tmux
+--     session (an agentview homelab jump): remote tmux swallows OSC 7 and WSL hides the
+--     process, so nothing on this side can see the hop. `wezterm-pane-ssh` answers from
+--     inside Linux, where $WEZTERM_PANE is readable out of /proc. It costs a wsl.exe round
+--     trip, so it is gated behind both cheap probes failing, and a split with no directory
+--     to land in — the remote tmux pane's cwd isn't worth a second ssh to go fetch.
 -- The destination doubles as the ssh alias, matching agentview's HOST_SSH fallback: an
 -- unknown host surfaces ssh's own error IN the new pane, never a silently local shell.
 -- ---------------------------------------------------------------------------
@@ -248,6 +252,30 @@ local function squote(str)   -- POSIX single-quoting, for the path we hand the r
 	return "'" .. escaped .. "'"
 end
 
+-- An ssh argv cut off at its destination: the flags (plus the value of any that takes one)
+-- and the host, dropping whatever remote command followed. nil if there is no destination.
+local function truncate_at_destination(argv)
+	local out = { argv[1] }
+	local i = 2
+	while i <= #argv do
+		local arg = argv[i]
+		table.insert(out, arg)
+		if arg:sub(1, 1) ~= "-" then return out end           -- the destination — stop here
+		if SSH_FLAG_TAKES_VALUE[arg] and argv[i + 1] then
+			table.insert(out, argv[i + 1])
+			i = i + 1
+		end
+		i = i + 1
+	end
+	return nil                                                -- flags only, no destination
+end
+
+local function pane_domain(pane)
+	local domain = ""
+	pcall(function() domain = pane:get_domain_name() or "" end)
+	return domain
+end
+
 -- The pane's ssh invocation, truncated at the destination (nil when it isn't running ssh).
 local function ssh_command(pane)
 	local info
@@ -255,18 +283,35 @@ local function ssh_command(pane)
 	if not info or type(info.argv) ~= "table" then return nil end
 	if ((info.name or ""):lower():gsub("%.exe$", "")) ~= "ssh" then return nil end
 	local argv = { info.executable or info.argv[1] or "ssh" }
-	local i = 2
-	while i <= #info.argv do
-		local arg = info.argv[i]
-		table.insert(argv, arg)
-		if arg:sub(1, 1) ~= "-" then return argv end          -- the destination — stop here
-		if SSH_FLAG_TAKES_VALUE[arg] and info.argv[i + 1] then
-			table.insert(argv, info.argv[i + 1])
-			i = i + 1
-		end
-		i = i + 1
-	end
-	return nil                                                -- flags only, no destination
+	for i = 2, #info.argv do argv[i] = info.argv[i] end
+	return truncate_at_destination(argv)
+end
+
+-- Last resort for a WSL pane — the one shape both probes above are blind to. WezTerm sees
+-- nothing but wslhost.exe there, and an agentview jump runs `ssh -t host 'tmux attach'`
+-- whose REMOTE tmux eats OSC 7, so neither signal fires. The Linux side can still answer:
+-- $WEZTERM_PANE is readable out of /proc, and the ssh client hangs below it (or below the
+-- local tmux session the pane is attached to). Costs a wsl.exe round trip, so it only runs
+-- once the two cheap probes have come back empty. A missing helper just returns nil and the
+-- split stays local, exactly as it did before.
+local PANE_SSH_PROBE = 'exec "$HOME/.local/bin/wezterm-pane-ssh" "$1"'
+local function wsl_ssh_command(pane)
+	local distro = pane_domain(pane):match("^WSL:(.+)$")
+	if not distro then return nil end
+	local id
+	pcall(function() id = pane:pane_id() end)
+	if not id then return nil end
+	local ok, stdout
+	pcall(function()
+		ok, stdout = wezterm.run_child_process({
+			"wsl.exe", "-d", distro, "--", "sh", "-c", PANE_SSH_PROBE, "_", tostring(id),
+		})
+	end)
+	if not ok or not stdout then return nil end
+	local argv = {}
+	for line in stdout:gmatch("[^\r\n]+") do table.insert(argv, line) end
+	if #argv < 2 then return nil end                          -- needs at least `ssh <host>`
+	return truncate_at_destination(argv)
 end
 
 -- Host + directory from OSC 7, when the pane's shell is reporting from another machine.
@@ -285,6 +330,7 @@ end
 local function split_command(pane)
 	local host, dir = osc7_remote(pane)
 	local argv = ssh_command(pane)
+	if not argv and not host then argv = wsl_ssh_command(pane) end
 	if not argv and not host then return { domain = "CurrentPaneDomain" } end
 	argv = argv or { "ssh", host }
 	if dir then
@@ -299,12 +345,10 @@ local function split_command(pane)
 	-- `CreateProcessCommon:788: chdir(/home/ubuntu) failed 2` before falling back to `/`, and
 	-- the Windows domain has no such path at all. ssh replaces the process immediately, so
 	-- this is only ever the directory ssh itself is launched from.
-	local domain = ""
-	pcall(function() domain = pane:get_domain_name() or "" end)
 	return {
 		domain = "CurrentPaneDomain",
 		args = argv,
-		cwd = domain:find("WSL") and "/" or wezterm.home_dir,
+		cwd = pane_domain(pane):find("WSL") and "/" or wezterm.home_dir,
 	}
 end
 

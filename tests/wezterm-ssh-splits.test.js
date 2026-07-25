@@ -85,15 +85,50 @@ const PANES = {
   },
   // Both probes throwing must never wedge the key.
   probe_error: { cwdError: true, procError: true, domain: 'WSL:Ubuntu' },
+  // An agentview homelab jump in a WSL pane — the shape nothing on the Windows side can
+  // see. WezTerm gets wslhost.exe, and the REMOTE tmux ate OSC 7 (the reported cwd is
+  // still the local one), so only the WSL-side helper can answer. `probeOut` is its
+  // stdout: the ssh client's argv it found in /proc, one argument per line.
+  agentview_wsl: {
+    cwd: { host: 'daniel-wsl', file_path: '/home/daniel/dev' },
+    domain: 'WSL:Ubuntu', paneId: 5,
+    probeOut: "ssh\n-t\ndaniel-server\ntmux select-pane -t '%3' 2>/dev/null; tmux attach -t 'claude-9'\n",
+  },
+  // The probed argv gets the same flag handling as a locally-visible ssh process.
+  agentview_flags: {
+    cwd: { host: 'daniel-wsl', file_path: '/home/daniel' },
+    domain: 'WSL:Ubuntu', paneId: 6,
+    probeOut: 'ssh\n-p\n2222\n-i\n/home/daniel/.ssh/k\nbox\ntmux attach\n',
+  },
+  // The helper found no ssh: the pane really is local.
+  agentview_silent: {
+    cwd: { host: 'daniel-wsl', file_path: '/home/daniel' },
+    domain: 'WSL:Ubuntu', paneId: 7, probeOut: '',
+  },
+  // wsl.exe itself failed (distro stopped, helper not deployed yet).
+  agentview_probe_fail: {
+    cwd: { host: 'daniel-wsl', file_path: '/home/daniel' },
+    domain: 'WSL:Ubuntu', paneId: 8, probeFail: true,
+  },
 };
 
 // Stubs `wezterm`, loads the rendered config, fires one binding, prints the SpawnCommand.
 const HARNESS = String.raw`
 local rendered, pane_json, key, mods = ...
+local spec = dofile(pane_json)   -- a Lua table literal written by the test
 local function ctor(name)
   return setmetatable({}, { __call = function(_, arg) return { action = name, arg = arg } end })
 end
+-- Stands in for the wsl.exe round trip to wezterm-pane-ssh. Counted, so a test can prove
+-- the expensive probe is NOT reached when a cheaper signal already answered.
+local probe_calls, probe_argv = 0, nil
 local wezterm = {
+  run_child_process = function(argv)
+    probe_calls = probe_calls + 1
+    probe_argv = argv
+    if spec.probeFail then return false, "", "wsl.exe: no such distro" end
+    return true, spec.probeOut or "", ""
+  end,
   action = setmetatable({}, { __index = function(_, k) return ctor(k) end }),
   action_callback = function(fn) return { callback = fn } end,
   config_builder = function() return {} end,
@@ -108,8 +143,8 @@ local wezterm = {
 package.preload["wezterm"] = function() return wezterm end
 local config = dofile(rendered)
 
-local spec = dofile(pane_json)   -- a Lua table literal written by the test
 local pane = {
+  pane_id = function() return spec.paneId or 0 end,
   get_current_working_dir = function()
     if spec.cwdError then error("probe failed") end
     return spec.cwd
@@ -134,6 +169,8 @@ callback(window, pane)
 print("action=" .. tostring(captured.action))
 print("domain=" .. tostring(captured.arg.domain))
 print("cwd=" .. tostring(captured.arg.cwd))
+print("probe_calls=" .. probe_calls)
+for _, a in ipairs(probe_argv or {}) do print("probe=" .. a) end
 if captured.arg.args == nil then
   print("args=nil")
 else
@@ -155,7 +192,13 @@ function setup() {
 // Serialize a pane spec as a Lua table literal the harness can dofile().
 function luaLiteral(value) {
   if (value === true) return 'true';
-  if (typeof value === 'string') return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'string') {
+    // Newlines matter here: the probe's stdout is line-per-argument, and a raw LF inside a
+    // Lua quoted string is a syntax error, not a line break.
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n').replace(/\r/g, '\\r')}"`;
+  }
   if (Array.isArray(value)) return `{ ${value.map(luaLiteral).join(', ')} }`;
   const body = Object.entries(value).map(([k, v]) => `["${k}"] = ${luaLiteral(v)}`);
   return `{ ${body.join(', ')} }`;
@@ -178,6 +221,8 @@ function split(paneName, { vertical = false } = {}) {
     cwd: get('cwd') === 'nil' ? null : get('cwd'),
     args: lines.some((l) => l === 'args=nil') ? null
       : lines.filter((l) => l.startsWith('arg=')).map((l) => l.slice(4)),
+    probeCalls: Number(get('probe_calls')),
+    probeArgv: lines.filter((l) => l.startsWith('probe=')).map((l) => l.slice(6)),
   };
 }
 
@@ -246,6 +291,38 @@ test('no ssh split is ever launched from the remote path', { skip }, () => {
     assert.ok(got.cwd, `${pane}: launch dir is pinned, not inherited`);
     assert.ok(!got.cwd.startsWith('/home/ubuntu'), `${pane}: launch dir is not the remote path`);
   }
+});
+
+test('an agentview homelab jump splits over ssh via the WSL-side probe', { skip }, () => {
+  const got = split('agentview_wsl');
+  // The `tmux attach` is dropped for the same reason as the homelab tab: replaying it
+  // would mirror the SAME remote session instead of opening a second shell on the box.
+  assert.deepStrictEqual(got.args, ['ssh', '-t', 'daniel-server']);
+  assert.strictEqual(got.cwd, '/', 'launched from a dir that exists inside WSL');
+  assert.deepStrictEqual(got.probeArgv.slice(0, 4), ['wsl.exe', '-d', 'Ubuntu', '--'],
+    'the probe runs in the distro backing that pane, not a hardcoded one');
+  assert.strictEqual(got.probeArgv.at(-1), '5', 'the pane id is what it asks about');
+});
+
+test('the WSL probe is skipped whenever a cheaper signal already answered', { skip }, () => {
+  // It costs a wsl.exe round trip on a keypress, so reaching it at all is a regression.
+  assert.strictEqual(split('remote_shell_wsl').probeCalls, 0, 'OSC 7 already answered');
+  assert.strictEqual(split('homelab_tab').probeCalls, 0, 'the ssh argv already answered');
+  assert.strictEqual(split('local_windows').probeCalls, 0, 'not a WSL pane at all');
+});
+
+test('a WSL probe that finds nothing, or fails outright, leaves the split local', { skip }, () => {
+  for (const pane of ['agentview_silent', 'agentview_probe_fail']) {
+    const got = split(pane);
+    assert.strictEqual(got.probeCalls, 1, `${pane}: the probe was actually consulted`);
+    assert.strictEqual(got.args, null, `${pane}: no ssh destination invented`);
+    assert.strictEqual(got.cwd, null, `${pane}: cwd left to WezTerm, as before the fix`);
+  }
+});
+
+test('flags in the probed argv are kept and their values are not read as the destination', { skip }, () => {
+  assert.deepStrictEqual(split('agentview_flags').args,
+    ['ssh', '-p', '2222', '-i', '/home/daniel/.ssh/k', 'box']);
 });
 
 test('CTRL+SHIFT+D splits down with the same ssh-aware command', { skip }, () => {

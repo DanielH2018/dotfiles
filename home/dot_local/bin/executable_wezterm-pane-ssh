@@ -1,0 +1,158 @@
+#!/bin/sh
+# wezterm-pane-ssh <wezterm-pane-id>
+#
+# Print the argv of the ssh client backing a WezTerm pane, one argument per line,
+# or print nothing when the pane isn't ssh'd anywhere. Exit status is advisory
+# only: callers treat "no output" as "not remote".
+#
+# WezTerm can't answer this itself for a WSL pane. It only ever sees `wslhost.exe`
+# (no Linux process visibility), and OSC 7 — its other signal — is swallowed by
+# tmux, so an agentview homelab jump is invisible from the Windows side. The one
+# handle that does cross the boundary is $WEZTERM_PANE, which WezTerm exports into
+# the pane's shell and which is readable from /proc here.
+#
+# Two layouts have to be resolved, matching agentview's two attach paths:
+#   direct  the pane's own shell exec'd ssh (agentview's dedicated tab, or just
+#           typing `ssh homelab`) -> the ssh is a descendant of the pane shell.
+#   tmux    agentview opened a LOCAL tmux window running ssh (its prefix+g popup
+#           path) -> the ssh is a child of the tmux *server*, NOT of the pane, and
+#           its own $WEZTERM_PANE is stale garbage inherited from whichever pane
+#           happened to start that server. Walking descendants finds nothing; the
+#           pane's tmux *client* has to be mapped to its session, and the session's
+#           active pane inspected instead.
+
+set -u
+
+pane="${1:-}"
+case "$pane" in
+	'' | *[!0-9]*) exit 2 ;;          # a pane id is always a plain integer
+esac
+
+# Overridable so the tests can point at a fixture tree; nothing else sets it.
+PROC="${WEZTERM_PANE_SSH_PROC:-/proc}"
+
+# --- process table -----------------------------------------------------------
+# One pass over /proc, emitting "pid ppid comm". /proc/N/stat stays readable for
+# processes we don't own (unlike environ), and comm is parenthesised and may hold
+# spaces ("tmux: client"), so take the text between the FIRST '(' and LAST ')'.
+procs=$(
+	gawk '
+		BEGINFILE { if (ERRNO) nextfile }         # skip vanished/unreadable pids
+		{
+			open = index($0, "(") ; close_ = match($0, /\)[^)]*$/)
+			pid = substr($0, 1, open - 1) + 0
+			comm = substr($0, open + 1, close_ - open - 1)
+			rest = substr($0, close_ + 1)
+			split(rest, f, " ")                    # f[1]=state f[2]=ppid
+			print pid, f[2], comm
+		}
+	' "$PROC"/[0-9]*/stat 2>/dev/null
+)
+[ -n "$procs" ] || exit 1
+
+children_of() {   # $1=pid -> its direct children, one per line
+	printf '%s\n' "$procs" | gawk -v p="$1" '$2 == p { print $1 }'
+}
+
+# Every pid at or below the roots, breadth-first — deliberately NOT depth-first, so
+# an ssh that is the pane's own foreground process wins over one buried in some
+# unrelated background job. Emitted as a list rather than searched in place: the
+# callers below need two different classes out of the same walk, and collecting
+# them inside a $(...) would lose the state to the subshell.
+descendants() {   # $@=root pids -> pids in BFS order
+	frontier="$*"
+	depth=0
+	while [ -n "$frontier" ] && [ "$depth" -lt 24 ]; do
+		next=''
+		for pid in $frontier; do
+			echo "$pid"
+			kids=$(children_of "$pid")
+			[ -n "$kids" ] && next="$next $kids"
+		done
+		frontier="$next"
+		depth=$((depth + 1))
+	done
+}
+
+first_matching() {   # $1=comm $2=pids -> the first of those pids with that comm
+	printf '%s\n' "$procs" | gawk -v want="$1" -v list="$2" '
+		{ pid = $1 ; $1 = "" ; $2 = "" ; sub(/^  /, "") ; comm[pid] = $0 }
+		END {
+			n = split(list, order, /[ \n]+/)
+			for (i = 1; i <= n; i++)
+				if (order[i] != "" && comm[order[i]] == want) { print order[i] ; exit }
+		}
+	'
+}
+
+# --- roots: the processes carrying this pane's WEZTERM_PANE ------------------
+# An exact record match, so pane 1 never matches pane 12. Unreadable environs
+# (other users' processes) are skipped rather than fatal — gawk aborts the whole
+# run on a permission error otherwise.
+holders=$(
+	gawk -v want="WEZTERM_PANE=$pane" '
+		BEGIN { RS = "\0" }
+		BEGINFILE { if (ERRNO) nextfile }
+		$0 == want { n = split(FILENAME, a, "/") ; print a[n - 1] ; nextfile }
+	' "$PROC"/[0-9]*/environ 2>/dev/null
+)
+[ -n "$holders" ] || exit 1
+
+# The variable is inherited, so every descendant carries it too. Keep only the
+# TOPMOST holders — the ones whose parent isn't also one — or the walk below starts
+# mid-tree and loses its depth ordering, letting a deep background ssh outrank the
+# pane's own foreground one.
+#
+# A tmux server is dropped outright, along with everything under it. It is a daemon
+# shared by every pane, and its WEZTERM_PANE is a fossil of whichever pane happened
+# to start it — trusting that would claim some unrelated pane is ssh'd wherever the
+# server's oldest child happens to be. The genuine tmux case is resolved below, from
+# the client instead, which is the only thing that knows what is actually on screen.
+roots=$(
+	printf '%s\n' "$procs" | gawk -v list="$holders" '
+		{ pid = $1 ; ppid = $2 ; $1 = "" ; $2 = "" ; sub(/^  /, "")
+		  comm[pid] = $0 ; parent[pid] = ppid }
+		END {
+			n = split(list, h, /[ \n]+/)
+			for (i = 1; i <= n; i++) if (h[i] != "") held[h[i]] = 1
+			for (i = 1; i <= n; i++) {
+				p = h[i]
+				if (p == "" || comm[p] == "tmux: server") continue
+				if (parent[p] in held) continue
+				print p
+			}
+		}
+	'
+)
+[ -n "$roots" ] || exit 1
+
+# shellcheck disable=SC2086  # $roots is a pid list; splitting it is the point
+tree=$(descendants $roots)
+
+# --- direct layout -----------------------------------------------------------
+ssh_pid=$(first_matching ssh "$tree")
+
+# --- tmux layout -------------------------------------------------------------
+# The pane runs a local tmux client, so the ssh lives under the server instead.
+# Map client -> session by tty (its stdin is the pane's pts), then take that
+# session's ACTIVE pane — the one actually on screen — and search under it.
+if [ -z "$ssh_pid" ] && command -v tmux >/dev/null 2>&1; then
+	client=$(first_matching 'tmux: client' "$tree")
+	tty=$(readlink "$PROC/$client/fd/0" 2>/dev/null)
+	if [ -n "${client:-}" ] && [ -n "${tty:-}" ]; then
+		session=$(tmux list-clients -F '#{client_tty} #{session_name}' 2>/dev/null |
+			gawk -v t="$tty" '$1 == t { print $2 ; exit }')
+		pane_pid=$(tmux list-panes -a -F \
+			'#{session_name} #{window_active}#{pane_active} #{pane_pid}' 2>/dev/null |
+			gawk -v s="${session:-}" 's != "" && $1 == s && $2 == "11" { print $3 ; exit }')
+		# shellcheck disable=SC2086  # ditto: a pid list
+		[ -n "$pane_pid" ] && ssh_pid=$(first_matching ssh "$(descendants $pane_pid)")
+	fi
+fi
+
+[ -n "$ssh_pid" ] || exit 1
+
+# argv, one entry per line. ssh arguments never contain newlines in any layout
+# here (the remote command is a single-line shell string), and line-per-arg keeps
+# the Lua side a plain gmatch instead of a NUL split.
+tr '\0' '\n' < "$PROC/$ssh_pid/cmdline" 2>/dev/null | sed '${/^$/d;}'
