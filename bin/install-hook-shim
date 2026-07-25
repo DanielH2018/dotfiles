@@ -109,8 +109,17 @@ if [ "$mode" = check ]; then
 fi
 
 mkdir -p "$HOOKS_DIR" || exit 1
-printf '%s\n' "$WANT" >"$SHIM" || exit 1
-chmod +x "$SHIM" || exit 1
+
+# Write a sibling and rename, rather than truncating $SHIM in place. Another
+# worktree may be running this exact file as its pre-push hook right now, and
+# bash reads a script incrementally as it executes — rewriting it underneath a
+# live push feeds that shell a torn file. rename(2) swaps the directory entry
+# instead, so a push already in flight keeps reading the inode it opened.
+TMP=$SHIM.$$.tmp
+printf '%s\n' "$WANT" >"$TMP" || { rm -f "$TMP"; exit 1; }
+chmod +x "$TMP" || { rm -f "$TMP"; exit 1; }
+mv -f "$TMP" "$SHIM" || { rm -f "$TMP"; exit 1; }
+
 (cd "$ROOT" && git config core.hooksPath "$HOOKS_DIR") || exit 1
 
 printf 'pre-push shim repaired: %s\n' "$drift"
