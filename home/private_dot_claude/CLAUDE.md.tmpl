@@ -86,6 +86,7 @@ re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never 
 - Batch independent tool calls into a single message. If two calls don't depend on each other, they go out together.
 - Never `cat` a file I'm about to grep, and never read a whole file to find one symbol — grep for it, then read the hit with an offset.
 - Bound noisy output at the source: pipe through `head`/`tail`/`wc`. `git log`, `ls -R`, test runs, and build logs all need a limit.
+- `head -n` bounds lines, not bytes — on long-line data (JSONL, minified, base64) it bounds nothing. Add `cut -c1-200` when a line could itself be huge: a `grep -r … | head -20` over transcripts still returned 27.8 KB.
 - Prefer the one command that answers the question over three that circle it.
 
 ## Compaction policy
@@ -101,6 +102,12 @@ Preserve exact identifiers, error messages, and user corrections **verbatim** �
 paraphrase an error string or a correction into a summary of it. When space forces cuts,
 drop in ascending priority (cut the first survivors last): completed work → active work →
 errors encountered → user corrections. A user correction is the last thing to go.
+
+Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Auto-compaction
+reuses a summary precomputed in the background; a manual one preempts it and pays full
+price. Measured 2026-07-25: 52 of 52 compactions were manual and *none* hit the
+precompute (47 `miss_not_ready`), costing $48 in 24h at a 0.27 cacheRead:cacheCreation
+ratio — the only tool-call class that writes more cache than it reads back.
 
 @~/.claude/docs/orchestration.md
 

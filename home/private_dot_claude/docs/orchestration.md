@@ -45,6 +45,13 @@ to use (for internal questions, prefer internal MCP sources over the web); the e
 and a budget — roughly <5 tool calls (simple) / 5 / ~10 (hard) / up to 15, hard stop ~20. If every
 brief is followed, their union must fully answer the question.
 
+**Don't pay for the same document N times.** Subagents share no context, so a large file named in
+several briefs is re-read in full by each one. Measured 2026-07-25: the Claude Code docs bundle was
+read whole by seven separate agents (61–87 KB each, ~485 KB / ~230k tokens for one document), and a
+53 KB plan four times. Every one of the fifteen largest tool results in the corpus was a whole-file
+`Read`. Either read it once yourself and pass the extracted finding, or give each brief the specific
+question plus a grep/offset to reach for — never the bare path and a hope they'll bound it.
+
 **Verify, don't trust.** When integrating subagent/tool output, apply the **Source quality & epistemic
 honesty** rules from CLAUDE.md (fact vs. speculation; prefer primary sources; on conflicts favor
 recency + consistency and flag it).
