@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "453fcebfdfd60816f81bc7da37628a61ce9060b42675d717d182ee74de6ef967",
-      "landed": "2026-07-25T02:56:53.679Z"
+      "hash": "784ac47c0f5e1e0f2c8196fe1ec8b44a5209af39740c6ccace028c13d3255672",
+      "landed": "2026-07-25T13:47:29.509Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -60,6 +60,11 @@
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
       "hash": "5e27f263659843eba861b8a1c737d2e9aba2b17c86e3f4cc127cf665c3edf9a6",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_chezmoi-apply-guard.sh",
+      "hash": "d0d990e2af238549a6d233d34648a14f23caea80b0dcb6d790e6dd6b9157e9ca",
+      "landed": "2026-07-25T13:47:29.509Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
@@ -128,8 +133,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
-      "hash": "3e350c99b1c354c2b58636f089e61cb7e9ee7a5e2f0737899d7546075414a88e",
-      "landed": "2026-07-08T20:17:05.073Z"
+      "hash": "962d2d9b71156cdbe6e0fe2071d58445425d1e5b10fb97e37e8aa21daf48a81d",
+      "landed": "2026-07-25T13:47:29.509Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
