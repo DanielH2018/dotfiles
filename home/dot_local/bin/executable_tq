@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""tq — run a test command, print a compact digest, keep the full result as JSON.
+
+    tq node --test [files...]
+    tq uv run pytest          (also: pytest, python -m pytest)
+    tq prek run --all-files
+
+Any other command is executed untouched. The runner's exit code is always
+preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
+it goes to a temp file whose path the digest prints.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+LIB = os.path.normpath(
+    os.environ.get("TQ_HOME") or os.path.join(HERE, os.pardir, "share", "tq")
+)
+sys.path.insert(0, LIB)
+
+from adapters import junit as junit_adapter  # noqa: E402
+from adapters import node as node_adapter  # noqa: E402
+from digest import digest  # noqa: E402
+from result import Result  # noqa: E402
+
+REPORTER = os.path.join(LIB, "node-reporter.mjs")
+PYTEST_HOOK_ID = "pytest"
+HOOK_ID = re.compile(r"^- hook id: (?P<id>\S+)\s*$")
+RAW_TAIL = 4000
+
+
+def detect(argv):
+    """Which adapter owns this command, or None to run it untouched."""
+    head = os.path.basename(argv[0])
+    if head == "node" and "--test" in argv:
+        return "node"
+    if head == "prek":
+        return "prek"
+    if any(os.path.basename(tok) == "pytest" for tok in argv if not tok.startswith("-")):
+        return "pytest"
+    return None
+
+
+def run(argv, env):
+    return subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace")
+
+
+def plain_env():
+    """Colour off, by both mechanisms. A FORCE_COLOR in the ambient environment
+    makes runners emit ANSI even when stdout is a file, and the two runners
+    disagree on precedence — pytest lets NO_COLOR win, node lets FORCE_COLOR
+    win — so the only portable answer is to drop FORCE_COLOR outright. It is
+    not cosmetic: node's coloured assertion diff marks actual-vs-expected with
+    colour *only*, so stripping ANSI from it silently merges the two values."""
+    env = os.environ.copy()
+    env.pop("FORCE_COLOR", None)
+    env["NO_COLOR"] = "1"
+    # Leaked into a nested run — tq invoked from inside a test — this makes
+    # `node --test` collect nothing and exit 0, which reads as a clean pass.
+    env.pop("NODE_TEST_CONTEXT", None)
+    return env
+
+
+def pytest_env(xml_path):
+    """pytest takes its flags through the environment because prek offers no
+    argument passthrough, and PYTEST_ADDOPTS survives `uv run` either way."""
+    env = plain_env()
+    flags = [
+        f"--junit-xml={shlex.quote(xml_path)}",
+        "-o junit_logging=out-err",
+        "-o junit_log_passing_tests=false",
+        "--tb=short",
+        "-q",
+    ]
+    env["PYTEST_ADDOPTS"] = " ".join([env.get("PYTEST_ADDOPTS", ""), *flags]).strip()
+    return env
+
+
+def run_node(argv, workdir, tmp):
+    ndjson = os.path.join(tmp, "events.ndjson")
+    cmd = list(argv)
+    at = cmd.index("--test") + 1
+    cmd[at:at] = [f"--test-reporter={REPORTER}", f"--test-reporter-destination={ndjson}"]
+    proc = run(cmd, plain_env())
+    result = Result(runner="node", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
+    if os.path.exists(ndjson):
+        node_adapter.parse(ndjson, result)
+    return result, proc
+
+
+def run_pytest(argv, workdir, tmp):
+    xml = os.path.join(tmp, "junit.xml")
+    proc = run(argv, pytest_env(xml))
+    result = Result(runner="pytest", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
+    if os.path.exists(xml):
+        junit_adapter.parse(xml, result, summary_text=proc.stdout)
+    return result, proc
+
+
+def run_prek(argv, workdir, tmp):
+    xml = os.path.join(tmp, "junit.xml")
+    proc = run(argv, pytest_env(xml))
+    result = Result(runner="prek", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode)
+    if os.path.exists(xml):
+        junit_adapter.parse(xml, result, summary_text=proc.stdout)
+    return result, proc
+
+
+def splice_prek(text, digest_text):
+    """Swap the pytest hook's indented output dump for the digest. Every other
+    hook's status line and failure block passes through verbatim — losing one
+    behind the splice would be the prek-shaped version of a false pass."""
+    lines = text.splitlines()
+    if not any(HOOK_ID.match(ln) for ln in lines):
+        return text, False  # not a prek layout we recognise: never guess
+    out, i, replaced = [], 0, False
+    while i < len(lines):
+        matched = HOOK_ID.match(lines[i])
+        out.append(lines[i])
+        i += 1
+        if not matched or matched.group("id") != PYTEST_HOOK_ID:
+            continue
+        while i < len(lines) and lines[i].startswith("- "):
+            out.append(lines[i])
+            i += 1
+        start = i
+        while i < len(lines) and (not lines[i].strip() or lines[i].startswith("  ")):
+            i += 1
+        if i > start:
+            out.append("")  # prek puts a blank line before a hook's output
+            out.extend(f"  {ln}" if ln else "" for ln in digest_text.splitlines())
+            replaced = True
+    return "\n".join(out), replaced
+
+
+def raw_tail(proc):
+    """Last of whatever the runner actually said, for when nothing parsed."""
+    text = ((proc.stderr or "") + (proc.stdout or "")).strip()
+    return text[-RAW_TAIL:] if len(text) > RAW_TAIL else text
+
+
+def json_target():
+    override = os.environ.get("TQ_JSON")
+    if override:
+        return override
+    handle, path = tempfile.mkstemp(prefix="tq-", suffix=".json")
+    os.close(handle)
+    return path
+
+
+RUNNERS = {"node": run_node, "pytest": run_pytest, "prek": run_prek}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    kind = detect(argv)
+    if kind is None:
+        try:
+            os.execvp(argv[0], argv)
+        except OSError as exc:
+            sys.stderr.write(f"tq: cannot run {argv[0]}: {exc}\n")
+            return 127
+
+    workdir = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix="tq-") as tmp:
+        started = time.monotonic()
+        result, proc = RUNNERS[kind](argv, workdir, tmp)
+        result.duration_ms = result.duration_ms or int((time.monotonic() - started) * 1000)
+        path = json_target()
+        text = digest(result, path)
+        result.write(path)
+
+    if kind == "prek":
+        spliced, replaced = splice_prek(proc.stdout, text)
+        sys.stdout.write(spliced.rstrip("\n") + "\n")
+        if not replaced:
+            sys.stdout.write(f"\n{text}\n")
+    else:
+        sys.stdout.write(text + "\n")
+
+    # A runner that died before reporting anything must never read as a pass.
+    if result.exit != 0 and not result.failures:
+        tail = raw_tail(proc)
+        if tail:
+            sys.stdout.write(f"\nno failures parsed — raw output follows:\n{tail}\n")
+    if proc.stderr and kind == "prek":
+        sys.stderr.write(proc.stderr)
+    return result.exit
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

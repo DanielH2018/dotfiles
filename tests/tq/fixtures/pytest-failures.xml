@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="1" tests="4" time="0.100" timestamp="2026-07-24T21:04:43.594598-05:00" hostname="host"><testcase classname="test_fail" name="test_passes" time="0.001" /><testcase classname="test_fail" name="test_fails_with_output" time="0.003"><failure message="AssertionError: boom mismatch&#10;assert 'a' == 'b'&#10;  &#10;  - b&#10;  + a">test_fail.py:11: in test_fails_with_output
+    assert "a" == "b", "boom mismatch"
+E   AssertionError: boom mismatch
+E   assert 'a' == 'b'
+E     
+E     - b
+E     + a</failure><system-out>--------------------------------- Captured Out ---------------------------------
+config key missing from rendered template
+subproc stdout detail
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+subproc stderr detail
+
+</system-err></testcase><testcase classname="test_fail" name="test_raises" time="0.011"><failure message="RuntimeError: unexpected explosion">test_fail.py:15: in test_raises
+    raise RuntimeError("unexpected explosion")
+E   RuntimeError: unexpected explosion</failure><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="test_fail" name="test_skipped" time="0.000"><skipped type="pytest.skip" message="not today">test_fail.py:20: not today</skipped><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase></testsuite></testsuites>
