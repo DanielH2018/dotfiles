@@ -259,9 +259,23 @@
       "Bash(systemctl --user status:*)",
       "Bash(systemctl --user list-units:*)",
       "Bash(fzf --version)",
+      {{/* PR plumbing runs unattended. CLAUDE.md instructs Claude to open a draft PR at the end of a
+           worktree job, so leaving `gh pr create` in the ask list contradicted the instruction it had
+           already been given; the prompt audit measured 45 invocations, every one of the shape
+           `cd <worktree> && gh pr create --draft`. These verbs are all reversible from the GitHub UI.
+           `gh pr merge` stays in the ask list below — merging is the irreversible step. */}}
+      "Bash(gh pr create:*)",
+      "Bash(gh pr ready:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh pr close:*)",
+      {{/* adding a worktree only creates a directory and a branch; `git worktree remove` stays in the
+           ask list because it discards uncommitted work in a tree another session may be using. */}}
+      "Bash(git worktree add:*)",
       "WebSearch",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:code.claude.com)",
+      "WebFetch(domain:platform.claude.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:developer.mozilla.org)",
       "WebFetch(domain:stackoverflow.com)",
@@ -280,6 +294,26 @@
       "Edit(~/.claude/**)",
       "Edit(~/.local/bin/*)",
       "Edit(~/.gitignore)",
+      {{/* read-only homelab observability. Named individually rather than mcp__homelab__* so a tool
+           added to the server later does not inherit auto-approval. read_file and list_files are the
+           two with real reach: they read arbitrary paths on the homelab host and are not constrained
+           by the local Read deny rules above, so a secret there is readable without a prompt. */}}
+      "mcp__homelab__host_overview",
+      "mcp__homelab__service_health",
+      "mcp__homelab__container_status",
+      "mcp__homelab__list_containers",
+      "mcp__homelab__container_logs",
+      "mcp__homelab__top_containers",
+      "mcp__homelab__query_logs",
+      "mcp__homelab__query_metric",
+      "mcp__homelab__scrape_targets",
+      "mcp__homelab__disk_health",
+      "mcp__homelab__cert_expiry",
+      "mcp__homelab__ha_state",
+      "mcp__homelab__claude_code_usage",
+      "mcp__homelab__claude_code_events",
+      "mcp__homelab__list_files",
+      "mcp__homelab__read_file",
       "Bash(~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "Bash(/bin/bash ~/.claude/hooks/allow-compound-bash.sh)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
@@ -415,9 +449,7 @@
       "Bash(git branch -M:*)",
       "Bash(git branch --delete:*)",
       "Bash(git branch -c:*)",
-      "Bash(git worktree add:*)",
       "Bash(git worktree remove:*)",
-      "Bash(gh pr create:*)",
       "Bash(gh pr merge:*)",
       "Bash(gh issue create:*)",
       "Bash(gh api *-X POST*)",
