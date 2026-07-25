@@ -69,3 +69,11 @@ chase marginal coverage.
 **Tooling.** Deterministic multi-stage fan-out → Workflow tool (pipeline-by-default; scale width with
 `budget`), which the user must opt into. One-off independent tasks → Agent tool, batched in a single
 turn.
+
+**Worktree isolation needs a git repo.** `isolation: "worktree"` (Agent tool) and `opts.isolation`
+(Workflow) fail instantly with `WorktreeIsolationError` when the session's cwd is not a git repository
+and no `WorktreeCreate`/`WorktreeRemove` hooks are configured. The primary working directory
+`~/dev` is *not* a repo — it's a parent holding many repos — so isolation requested from there always
+fails. Check `git rev-parse --is-inside-work-tree` before asking for it, or spawn the agent with its
+cwd inside the specific repo. Only reach for isolation when agents actually mutate files in parallel
+and would otherwise conflict; it costs ~200-500ms plus disk per agent.
