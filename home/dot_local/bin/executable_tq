@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""tq — run a test command, print a compact digest, keep the full result as JSON.
+"""tq — run a test or lint command, print a compact digest, keep the full result as JSON.
 
     tq node --test [files...]
-    tq uv run pytest          (also: pytest, python -m pytest)
+    tq uv run pytest            (also: pytest, python -m pytest)
     tq prek run --all-files
+    tq ruff check [paths...]    (also: uv run ruff check)
+    tq shellcheck [files...]
 
 Any other command is executed untouched. The runner's exit code is always
 preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
 it goes to a temp file whose path the digest prints.
+
+Linters are digested as findings, not as a pass rate: silence about a line is
+not an assertion that the line is good, so there is no denominator to report.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ LIB = os.path.normpath(
 sys.path.insert(0, LIB)
 
 from adapters import junit as junit_adapter  # noqa: E402
+from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
 from digest import digest  # noqa: E402
 from result import Result  # noqa: E402
@@ -36,17 +42,64 @@ PYTEST_HOOK_ID = "pytest"
 HOOK_ID = re.compile(r"^- hook id: (?P<id>\S+)\s*$")
 RAW_TAIL = 4000
 
+# Tokens that stand in front of the real program without being it.
+LAUNCHERS = {"uv", "uvx", "poetry", "pdm", "rye", "hatch", "pipenv", "env", "command"}
+SUBCOMMANDS = {"run", "exec", "tool", "--"}
+PYTHON = re.compile(r"^python(3(\.\d+)?)?$")
+
+
+def tool_name(argv):
+    """The program a command really runs, seeing through `uv run <tool>` and
+    `python -m <tool>`.
+
+    Scanning for the tool's name anywhere in argv is what a first cut does, and
+    it misfires on any command that merely mentions it — `grep pytest file` is
+    not a test run, and injecting reporter flags into it would be.
+    """
+    for tok in argv:
+        if tok.startswith("-") and tok != "--":
+            continue
+        base = os.path.basename(tok)
+        if base in LAUNCHERS or base in SUBCOMMANDS or PYTHON.match(base):
+            continue
+        if "=" in base:
+            continue  # `env FOO=1 pytest`, and `FOO=1 pytest` via a shell
+        return base
+    return ""
+
 
 def detect(argv):
     """Which adapter owns this command, or None to run it untouched."""
-    head = os.path.basename(argv[0])
-    if head == "node" and "--test" in argv:
+    tool = tool_name(argv)
+    if tool == "node" and "--test" in argv:
         return "node"
-    if head == "prek":
+    if tool == "prek":
         return "prek"
-    if any(os.path.basename(tok) == "pytest" for tok in argv if not tok.startswith("-")):
+    if tool == "pytest":
         return "pytest"
+    # `ruff format --check` reports reformatting, not diagnostics, and carries
+    # no locations worth digesting — the bare word is what marks a lint run.
+    if tool == "ruff" and "check" in argv:
+        return "ruff"
+    if tool == "shellcheck":
+        return "shellcheck"
     return None
+
+
+def drop_flag(argv, flags):
+    """argv without a flag tq is about to set for itself, in either spelling."""
+    out, skip = [], False
+    for tok in argv:
+        if skip:
+            skip = False
+            continue
+        if tok in flags:
+            skip = True  # its value is the next token
+            continue
+        if any(tok.startswith(f"{flag}=") for flag in flags):
+            continue
+        out.append(tok)
+    return out
 
 
 def run(argv, env):
@@ -120,6 +173,57 @@ def run_prek(argv, workdir, tmp):
     return result, proc
 
 
+def finish_lint(result, proc):
+    """Counts restated as findings, plus whatever the tool said on stderr.
+
+    That stderr matters: a linter reports "I examined nothing" there and still
+    exits 0, which is indistinguishable from a clean run by exit code alone.
+    """
+    lint_adapter.as_diagnostics(result)
+    note = (proc.stderr or "").strip()
+    # Only when the run looks clean. A failing run already has main() print the
+    # raw output, and saying the same thing twice buries the one line that counts.
+    if note and result.exit == 0:
+        result.notes.append(note)
+
+
+def run_ruff(argv, workdir, tmp):
+    xml = os.path.join(tmp, "ruff.xml")
+    cmd = drop_flag(argv, ("--output-format", "--output-file", "-o"))
+    proc = run(cmd + ["--output-format=junit"], plain_env())
+    result = Result(
+        runner="ruff", kind="lint", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode
+    )
+    # ruff reports on stdout; stage it as a file so the JUnit adapter is fed the
+    # same way it is for pytest.
+    with open(xml, "w", encoding="utf-8") as fh:
+        fh.write(proc.stdout or "")
+    try:
+        junit_adapter.parse(xml, result)
+    except Exception:  # noqa: BLE001 — see below
+        # Deliberately broad: a report tq cannot parse must degrade to the raw
+        # output that main() already prints for an unreported failure, never to
+        # a traceback in place of the digest.
+        pass
+    for fail in result.failures:
+        # ruff names each case after the rule, prefixed with its JUnit package:
+        # "org.ruff.F401". The rule code is the half worth reading.
+        fail.name = fail.name.removeprefix("org.ruff.")
+    finish_lint(result, proc)
+    return result, proc
+
+
+def run_shellcheck(argv, workdir, tmp):
+    cmd = drop_flag(argv, ("--format", "-f"))
+    proc = run(cmd + ["--format=json1"], plain_env())
+    result = Result(
+        runner="shellcheck", kind="lint", cmd=shlex.join(argv), cwd=workdir, exit=proc.returncode
+    )
+    lint_adapter.parse_shellcheck(proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
 def splice_prek(text, digest_text):
     """Swap the pytest hook's indented output dump for the digest. Every other
     hook's status line and failure block passes through verbatim — losing one
@@ -162,7 +266,13 @@ def json_target():
     return path
 
 
-RUNNERS = {"node": run_node, "pytest": run_pytest, "prek": run_prek}
+RUNNERS = {
+    "node": run_node,
+    "pytest": run_pytest,
+    "prek": run_prek,
+    "ruff": run_ruff,
+    "shellcheck": run_shellcheck,
+}
 
 
 def main(argv):

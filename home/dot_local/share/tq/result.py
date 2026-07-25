@@ -75,20 +75,30 @@ class Result:
     cmd: str
     cwd: str
     exit: int
+    # "tests" or "lint". A linter has no pass count — every line it emits is a
+    # finding and a clean run emits nothing — so it cannot borrow the test
+    # verdict without inventing passes that were never asserted.
+    kind: str = "tests"
     duration_ms: int = 0
     totals: dict = field(default_factory=new_totals)
     failures: list = field(default_factory=list)
+    # Things the runner said that are not findings but change what the run
+    # means: ruff warns "No Python files found under the given path(s)" on
+    # stderr and still exits 0, which is a clean verdict over nothing at all.
+    notes: list = field(default_factory=list)
     truncated: dict = field(default_factory=lambda: {"failures": 0, "stdout_bytes": 0})
 
     def to_dict(self):
         return {
             "runner": self.runner,
+            "kind": self.kind,
             "cmd": self.cmd,
             "cwd": self.cwd,
             "exit": self.exit,
             "duration_ms": self.duration_ms,
             "totals": self.totals,
             "failures": [f.to_dict() for f in self.failures],
+            "notes": self.notes,
             "truncated": self.truncated,
         }
 

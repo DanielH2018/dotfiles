@@ -13,6 +13,7 @@ sys.path.insert(
 )
 
 from adapters import junit as junit_adapter
+from adapters import lint as lint_adapter
 from adapters import node as node_adapter
 from digest import digest
 from result import Failure, Result, strip_ansi
@@ -237,12 +238,14 @@ class TestDigest(unittest.TestCase):
             set(payload),
             {
                 "runner",
+                "kind",
                 "cmd",
                 "cwd",
                 "exit",
                 "duration_ms",
                 "totals",
                 "failures",
+                "notes",
                 "truncated",
             },
         )
@@ -308,6 +311,158 @@ class TestPrekSplice(unittest.TestCase):
         text, replaced = self.cli.splice_prek("some other tool's output\n", "FAIL 1/2")
         self.assertFalse(replaced)
         self.assertEqual(text, "some other tool's output\n")
+
+
+class TestJUnitLocationFallbacks(unittest.TestCase):
+    """JUnit emitters that are not pytest state the location in attributes
+    instead of a traceback. ruff is the case in hand: its @classname drops the
+    file extension, and only the enclosing @testsuite name is the real path."""
+
+    def test_ruff_location_comes_from_the_suite_name_and_line_attribute(self):
+        res = junit_adapter.parse(fixture("ruff-findings.xml"), blank("ruff"))
+        fail = res.failures[0]
+        self.assertEqual(fail.file, "/sample/bad.py")  # not @classname "/sample/bad"
+        self.assertEqual(fail.line, 1)
+
+    def test_a_real_frame_still_outranks_the_attributes(self):
+        # The fallbacks must stay fallbacks: pytest's own @line is 0-based and
+        # points at the declaration, so preferring it would move every location.
+        res = junit_adapter.parse(fixture("pytest-failures.xml"), blank("pytest"))
+        fail = by_name(res, "test_fails_with_output")
+        self.assertEqual(fail.file, "test_fail.py")
+        self.assertEqual(fail.line, 11)
+
+    def test_a_suite_name_that_is_not_a_path_is_never_used_as_one(self):
+        self.assertFalse(junit_adapter.looks_like_path("pytest"))
+        self.assertFalse(junit_adapter.looks_like_path(None))
+        self.assertTrue(junit_adapter.looks_like_path("/sample/bad.py"))
+        self.assertTrue(junit_adapter.looks_like_path("bad.py"))
+
+
+class TestLintAdapter(unittest.TestCase):
+    def test_shellcheck_findings_become_located_failures(self):
+        res = blank("shellcheck")
+        lint_adapter.parse_shellcheck(read("shellcheck-findings.json"), res)
+        self.assertEqual(len(res.failures), 4)
+        self.assertEqual(res.failures[0].file, "bad.sh")
+        self.assertEqual(res.failures[0].name, "SC2034")
+
+    def test_worst_level_sorts_first_so_the_digest_cap_keeps_errors(self):
+        res = blank("shellcheck")
+        lint_adapter.parse_shellcheck(read("shellcheck-findings.json"), res)
+        ranks = [
+            lint_adapter.LEVEL_RANK[f.message.split(":", 1)[0]] for f in res.failures
+        ]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(res.failures[-1].name, "SC2086")  # the only info-level one
+
+    def test_a_clean_run_yields_no_findings(self):
+        res = blank("shellcheck", exit_code=0)
+        lint_adapter.parse_shellcheck(read("shellcheck-clean.json"), res)
+        self.assertEqual(res.failures, [])
+
+    def test_output_that_is_not_json_is_left_for_the_raw_fallback(self):
+        res = blank("shellcheck")
+        lint_adapter.parse_shellcheck("shellcheck: command not found", res)
+        self.assertEqual(res.failures, [])
+
+    def test_ruffs_clean_placeholder_is_not_kept_as_a_passing_test(self):
+        # ruff writes <testcase name="No errors found"/> when it finds nothing,
+        # which the test-shaped reading reports as PASS 1/1 — the same for a
+        # directory holding no Python at all.
+        res = junit_adapter.parse(fixture("ruff-clean.xml"), blank("ruff", exit_code=0))
+        self.assertEqual(res.totals["tests"], 1)
+        lint_adapter.as_diagnostics(res)
+        self.assertEqual(res.totals["tests"], 0)
+        self.assertEqual(res.totals["pass"], 0)
+
+    def test_diagnostic_totals_are_a_count_not_a_pass_rate(self):
+        res = junit_adapter.parse(fixture("ruff-findings.xml"), blank("ruff"))
+        lint_adapter.as_diagnostics(res)
+        self.assertEqual(res.totals["tests"], 4)
+        self.assertEqual(res.totals["fail"], 4)
+        self.assertEqual(res.totals["pass"], 0)
+
+
+class TestLintDigest(unittest.TestCase):
+    def lint(self, exit_code=0, failures=(), notes=(), ms=100):
+        res = Result(
+            runner="ruff", kind="lint", cmd="ruff check", cwd="/sample", exit=exit_code
+        )
+        res.failures.extend(failures)
+        res.notes.extend(notes)
+        res.duration_ms = ms
+        return lint_adapter.as_diagnostics(res)
+
+    def test_a_clean_lint_run_is_one_line(self):
+        self.assertEqual(digest(self.lint(), "/tmp/x.json"), "CLEAN  0.1s")
+
+    def test_a_linter_that_broke_is_never_reported_as_clean(self):
+        text = digest(self.lint(exit_code=2), "/tmp/x.json")
+        self.assertTrue(text.startswith("NO FINDINGS PARSED"))
+        self.assertNotIn("CLEAN", text)
+
+    def test_a_clean_verdict_over_nothing_carries_the_warning(self):
+        text = digest(
+            self.lint(notes=["warning: No Python files found under the given path(s)"]),
+            "/tmp/x.json",
+        )
+        self.assertIn("note: warning: No Python files found", text)
+
+    def test_findings_are_counted_over_files(self):
+        fails = [
+            Failure(name="F401", file="/sample/a.py", line=1, message="unused"),
+            Failure(name="F821", file="/sample/b.py", line=2, message="undefined"),
+        ]
+        text = digest(self.lint(exit_code=1, failures=fails), "/tmp/x.json")
+        self.assertTrue(text.startswith("FAIL 2 findings in 2 files"))
+        self.assertIn("a.py:1  F401", text)
+
+    def test_one_of_each_reads_singular(self):
+        fails = [Failure(name="F401", file="/sample/a.py", line=1, message="unused")]
+        text = digest(self.lint(exit_code=1, failures=fails), "/tmp/x.json")
+        self.assertTrue(text.startswith("FAIL 1 finding in 1 file"))
+
+
+class TestDetection(unittest.TestCase):
+    def setUp(self):
+        self.cli = load_cli()
+
+    def test_launchers_and_python_m_are_seen_through(self):
+        self.assertEqual(
+            self.cli.tool_name(["uv", "run", "python", "-m", "pytest"]), "pytest"
+        )
+        self.assertEqual(self.cli.tool_name(["uv", "run", "ruff", "check"]), "ruff")
+        self.assertEqual(self.cli.tool_name(["/usr/bin/node", "--test"]), "node")
+        self.assertEqual(self.cli.tool_name(["env", "FOO=1", "pytest"]), "pytest")
+
+    def test_a_command_that_merely_names_a_runner_is_not_one(self):
+        # Scanning every token for the runner's name turns `grep pytest notes`
+        # into a test run, and injects reporter flags into the grep.
+        self.assertIsNone(self.cli.detect(["grep", "pytest", "notes.txt"]))
+        self.assertIsNone(self.cli.detect(["grep", "shellcheck", "notes.txt"]))
+
+    def test_ruff_format_is_not_a_diagnostics_run(self):
+        self.assertIsNone(self.cli.detect(["ruff", "format", "--check", "."]))
+        self.assertEqual(self.cli.detect(["ruff", "check", "."]), "ruff")
+
+    def test_each_known_runner_is_claimed(self):
+        self.assertEqual(self.cli.detect(["node", "--test", "x.js"]), "node")
+        self.assertEqual(self.cli.detect(["shellcheck", "x.sh"]), "shellcheck")
+        self.assertEqual(self.cli.detect(["prek", "run", "--all-files"]), "prek")
+        self.assertIsNone(self.cli.detect(["node", "x.js"]))  # no --test
+
+    def test_drop_flag_removes_either_spelling(self):
+        self.assertEqual(
+            self.cli.drop_flag(
+                ["ruff", "check", "--output-format=json", "x"], ("--output-format",)
+            ),
+            ["ruff", "check", "x"],
+        )
+        self.assertEqual(
+            self.cli.drop_flag(["shellcheck", "-f", "json", "x"], ("-f",)),
+            ["shellcheck", "x"],
+        )
 
 
 class TestTextHelpers(unittest.TestCase):

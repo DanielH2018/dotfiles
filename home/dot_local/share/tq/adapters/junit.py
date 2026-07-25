@@ -20,6 +20,17 @@ IN_SECONDS = re.compile(r"\bin \d+\.\d+s")
 COUNT = re.compile(r"(\d+) (passed|failed|xfailed|xpassed|skipped|error|errors)\b")
 
 
+def looks_like_path(text):
+    """Whether a JUnit @name is really a filename. ruff names each testsuite
+    after the file it linted, so that is the only place the full path survives —
+    its @classname has the extension stripped. pytest names its suite "pytest",
+    which must never be mistaken for a location."""
+    if not text:
+        return False
+    base = text.replace("\\", "/").rsplit("/", 1)[-1]
+    return "/" in text or "\\" in text or "." in base
+
+
 def pick_frame(body, fallback):
     """Deepest frame in the user's own code, else the E-block, else the deepest
     frame at all. Naive last-frame-wins blames the stdlib for a user typo."""
@@ -73,6 +84,7 @@ def parse(xml_path, result, summary_text=""):
         failed += int(suite.get("failures", 0)) + int(suite.get("errors", 0))
         skipped += int(suite.get("skipped", 0))
         seconds += float(suite.get("time", 0) or 0)
+        suite_file = suite.get("name") if looks_like_path(suite.get("name")) else None
         for case in suite.iter("testcase"):
             bad = case.find("failure")
             if bad is None:
@@ -82,7 +94,15 @@ def parse(xml_path, result, summary_text=""):
             body = strip_ansi(bad.text or "")
             # A strict XPASS has no traceback at all — nothing failed — and
             # xunit2 omits @file, so classname is the only location left.
-            path, line = pick_frame(body, case.get("file") or case.get("classname"))
+            fallback = case.get("file") or suite_file or case.get("classname")
+            path, line = pick_frame(body, fallback)
+            if line is None and case.get("line"):
+                # No traceback to mine, so trust the attributes: a linter states
+                # the location that way and never writes a frame. Consulted only
+                # after pick_frame comes up empty, so pytest's own @line — which
+                # is 0-based, and points at the test declaration rather than the
+                # failing assert — can never override a real frame.
+                line = int(case.get("line"))
             result.failures.append(
                 Failure(
                     name=case.get("name") or "?",

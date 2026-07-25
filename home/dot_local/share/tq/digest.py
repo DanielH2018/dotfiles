@@ -8,9 +8,33 @@ from result import cap, shorten
 
 MAX_FAILURES = 10
 MAX_OUTPUT = 2000
+MAX_NOTE = 500
+
+
+def plural(count, noun):
+    return noun if count == 1 else noun + "s"
+
+
+def lint_headline(result):
+    """A linter's verdict is a count of diagnostics, not a pass rate: there is
+    no denominator to report, because nothing was asserted about the lines it
+    stayed quiet about."""
+    seconds = result.duration_ms / 1000
+    found = len(result.failures)
+    if not found:
+        if result.exit != 0:
+            # The lint-shaped false pass: the tool broke — bad config, no such
+            # file, an unreadable rule — and printing CLEAN would bless it.
+            return f"NO FINDINGS PARSED  {seconds:.1f}s"
+        return f"CLEAN  {seconds:.1f}s"
+    files = len({f.file for f in result.failures if f.file})
+    where = f" in {files} {plural(files, 'file')}" if files else ""
+    return f"FAIL {found} {plural(found, 'finding')}{where}  {seconds:.1f}s"
 
 
 def headline(result):
+    if result.kind == "lint":
+        return lint_headline(result)
     t = result.totals
     seconds = result.duration_ms / 1000
     if not t["tests"]:
@@ -52,6 +76,12 @@ def _output_block(label, text, scope, out):
 
 def digest(result, json_path):
     out = [headline(result)]
+    for note in result.notes:
+        body, dropped = cap(note.strip(), MAX_NOTE)
+        for line in body.splitlines():
+            out.append(f"note: {line}")
+        if dropped:
+            out.append(f"note: … +{dropped} bytes (see json)")
     if not result.failures:
         if result.exit != 0:
             out.append(f"runner exited {result.exit} with no reported failures")
