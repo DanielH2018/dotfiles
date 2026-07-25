@@ -15,12 +15,29 @@ const dedupe = (arr) => {
   return out;
 };
 
-const merge = (a, b) => {
+const shape = (v) =>
+  Array.isArray(v) ? 'array' : isObj(v) ? 'object' : v === null ? 'null' : 'scalar';
+
+// Overlaying a structured value with a different shape is a malformed overlay, not an
+// intentional override: taking the overlay there is how {"permissions": null} or
+// {"permissions": "deny"} silently produces a settings.json with no permission model
+// at all, at exit 0. null means "unset", so the other side wins; a genuine shape
+// conflict is refused rather than resolved by guesswork.
+const merge = (a, b, path = []) => {
   if (Array.isArray(a) && Array.isArray(b)) return dedupe([...a, ...b]);
   if (isObj(a) && isObj(b)) {
     const out = { ...a };
-    for (const k of Object.keys(b)) out[k] = k in a ? merge(a[k], b[k]) : b[k];
+    for (const k of Object.keys(b)) out[k] = k in a ? merge(a[k], b[k], [...path, k]) : b[k];
     return out;
+  }
+  if (b === null) return a;
+  if (a === null) return b;
+  if (shape(a) !== shape(b)) {
+    const where = path.length ? path.join('.') : '<root>';
+    process.stderr.write(
+      `claude-settings-merge: type conflict at ${where}: cannot overlay ${shape(b)} onto ${shape(a)}\n`,
+    );
+    process.exit(1);
   }
   return b;
 };

@@ -53,3 +53,9 @@ Scripts
 **/*.local.zsh
 **/*.local.env
 **/local.config
+
+# The work overlay merged into settings.json by modify_settings.json.sh.tmpl. It
+# doesn't match *.local.* above, so without this a `chezmoi add` would sweep a
+# work-machine permission set into this public repo.
+.config/claude/settings.work.json
+**/*.work.json
