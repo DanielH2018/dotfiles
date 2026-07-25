@@ -95,4 +95,28 @@ test('defers when a segment redirects to a real target', { skip }, () => {
   assert.strictEqual(allowed('cat a.json 2>&1 && ls'), 'allow');
 });
 
+// A lone `&` is a separator, not an ordinary character. The splitter only ever paired
+// `&` with a following `&`, so a backgrounded segment stayed glued to the one before it
+// and matches_any — which inspects a segment's prefix only — approved the whole chain off
+// the allow-listed leader. `git status && ls & anything` auto-allowed.
+test('treats a bare & as a separator rather than gluing the next command on', { skip }, () => {
+  assert.strictEqual(allowed('git status && ls & frobnicate'), null);
+  assert.strictEqual(allowed('git status; echo hi & rm -rf build'), null);
+  // Backgrounding an allow-listed command is deferred too: we cannot split it safely,
+  // and a prompt is the conservative outcome.
+  assert.strictEqual(allowed('ls & git status'), null);
+  // fd dups contain a `&` but are not separators, and must keep working.
+  assert.strictEqual(allowed('cat a.json 2>&1 && ls'), 'allow');
+  assert.strictEqual(allowed('echo "a & b" && ls'), 'allow');
+});
+
+// The matcher has three branches (exact, prefix-plus-space, prefix-slash) and nothing
+// pinned the boundary, so simplifying it to a bare prefix-star would have gone unnoticed
+// while letting `lsof` ride in on `ls`.
+test('matches an allow prefix only at a command boundary', { skip }, () => {
+  assert.strictEqual(allowed('lsof -i && ls'), null);
+  assert.strictEqual(allowed('git statusfoo && ls'), null);
+  assert.strictEqual(allowed('echoes hi && ls'), null);
+});
+
 process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
