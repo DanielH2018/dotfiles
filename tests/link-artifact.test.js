@@ -1,3 +1,4 @@
+const { test } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const path = require('node:path');
@@ -27,24 +28,21 @@ function run(filePath, env = {}) {
   return JSON.parse(out).hookSpecificOutput.additionalContext;
 }
 
-// 1. container /artifacts -> translated via CLAUDE_ARTIFACTS_HOST_DIR
-{
+test('container /artifacts -> translated via CLAUDE_ARTIFACTS_HOST_DIR', () => {
   const ctx = run('/artifacts/plan.html', { CLAUDE_ARTIFACTS_HOST_DIR: '/Users/d/.claude/sandbox/artifacts/repo-abc' });
   assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/artifacts/repo-abc/plan.html'),
     `translates /artifacts to host bind-mount source; got: ${ctx}`);
-}
+});
 
-// 2. container ~/.claude/artifacts -> translated via CLAUDE_STATE_HOST_DIR (the bug fix)
-{
+test('container ~/.claude/artifacts -> translated via CLAUDE_STATE_HOST_DIR (the bug fix)', () => {
   const ctx = run('/home/claudebot/.claude/artifacts/proc-review.html',
     { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' });
   assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/state/artifacts/proc-review.html'),
     `translates container-home artifact to host state dir; got: ${ctx}`);
   assert.ok(!ctx.includes('/home/claudebot'), 'never leaks the in-container /home path');
-}
+});
 
-// 3. host ~/.claude/artifacts, no sandbox env -> the platform's clickable link
-{
+test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link', () => {
   const ctx = run('/Users/d/.claude/artifacts/local.html');
   assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
     `host path emitted as the platform's clickable link; got: ${ctx}`);
@@ -52,38 +50,40 @@ function run(filePath, env = {}) {
     // WezTerm/Ghostty need Shift to bypass the TUI's mouse capture; Ctrl is VS Code-only.
     assert.match(ctx, /Shift\+click/, `linux message names the Shift+click gesture; got: ${ctx}`);
   }
-}
+});
 
-// 4. non-openable extension -> no-op
-assert.strictEqual(run('/artifacts/data.json', { CLAUDE_ARTIFACTS_HOST_DIR: '/Users/d/x' }), '',
-  'non-openable extension is a no-op');
+test('non-openable extension -> no-op', () => {
+  assert.strictEqual(run('/artifacts/data.json', { CLAUDE_ARTIFACTS_HOST_DIR: '/Users/d/x' }), '',
+    'non-openable extension is a no-op');
+});
 
-// 5. write outside any artifacts dir -> no-op
-assert.strictEqual(run('/workspace/src/index.html'), '', 'non-artifact write is a no-op');
+test('write outside any artifacts dir -> no-op', () => {
+  assert.strictEqual(run('/workspace/src/index.html'), '', 'non-artifact write is a no-op');
+});
 
-// 6. symlink resolution is gated to in-container (mirrors ~/.claude/artifacts -> /artifacts).
+// symlink resolution is gated to in-container (mirrors ~/.claude/artifacts -> /artifacts).
 //    A symlinked ~/.claude/artifacts dir: on the host (env unset) the path is emitted
 //    verbatim; in-container (CLAUDE_STATE_HOST_DIR set) readlink -f collapses it to the
 //    real target first, so it no longer matches an artifacts branch here (in a real
 //    container it would resolve to /artifacts and hit case 1's translation).
 // Creating a symlink needs privilege on Windows (EPERM), so this Unix-host case is skipped there.
-if (process.platform !== 'win32') {
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));
-  fs.writeFileSync(path.join(real, 'report.html'), '<html>');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-home-'));
-  fs.mkdirSync(path.join(home, '.claude'));
-  fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
-  const linked = path.join(home, '.claude', 'artifacts', 'report.html');
+test('symlink resolution gated to in-container', () => {
+  if (process.platform !== 'win32') {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));
+    fs.writeFileSync(path.join(real, 'report.html'), '<html>');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-home-'));
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
+    const linked = path.join(home, '.claude', 'artifacts', 'report.html');
 
-  assert.ok(run(linked).includes(hostLink(linked, 'report.html')),
-    'host mode emits the platform link for the ~/.claude/artifacts path (no resolution)');
-  assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
-    'container mode resolves the symlink before matching');
+    assert.ok(run(linked).includes(hostLink(linked, 'report.html')),
+      'host mode emits the platform link for the ~/.claude/artifacts path (no resolution)');
+    assert.strictEqual(run(linked, { CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' }), '',
+      'container mode resolves the symlink before matching');
 
-  fs.rmSync(real, { recursive: true, force: true });
-  fs.rmSync(home, { recursive: true, force: true });
-}
-
-console.log('ALL PASS');
+    fs.rmSync(real, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

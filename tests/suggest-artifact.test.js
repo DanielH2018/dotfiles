@@ -1,3 +1,4 @@
+const { test } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const path = require('node:path');
@@ -15,29 +16,24 @@ function run({ home = '/home/tester', artifactDir } = {}) {
   return JSON.parse(r.stdout).hookSpecificOutput;
 }
 
-// 1. emits a valid PostToolUse payload
-{
+test('emits a valid PostToolUse payload', () => {
   const h = run();
   assert.strictEqual(h.hookEventName, 'PostToolUse', 'emits PostToolUse');
   assert.match(h.additionalContext, /AUTO-ARTIFACT/, 'carries the artifact nudge');
-}
+});
 
-// 2. host default: ARTIFACT_DIR unset -> $HOME/.claude/artifacts
-{
+test('host default: ARTIFACT_DIR unset -> $HOME/.claude/artifacts', () => {
   const h = run({ home: '/home/tester' });
   assert.ok(h.additionalContext.includes('/home/tester/.claude/artifacts/'),
     'defaults to $HOME/.claude/artifacts on host');
   assert.ok(!h.additionalContext.includes(' /artifacts/'),
     'does not leak the bare container path on host');
-}
+});
 
-// 3. container: ARTIFACT_DIR=/artifacts overrides the default
-{
+test('container: ARTIFACT_DIR=/artifacts overrides the default', () => {
   const h = run({ artifactDir: '/artifacts' });
   assert.ok(h.additionalContext.includes('/artifacts/ (create it if needed)'),
     'uses ARTIFACT_DIR (container bind-mount) when set');
   assert.ok(!h.additionalContext.includes('.claude/artifacts/'),
     'does not fall back to the host default when ARTIFACT_DIR is set');
-}
-
-console.log('ALL PASS');
+});

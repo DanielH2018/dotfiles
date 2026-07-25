@@ -1,3 +1,4 @@
+const { test, after } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -41,8 +42,7 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   }
 }
 
-// ---- auto-format.sh: vault markdown skipped, non-vault markdown formatted ----
-{
+test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () => {
   const home = tmp('hookhome-');
   const vault = path.join(home, 'Vault');
   fs.mkdirSync(vault, { recursive: true });
@@ -60,10 +60,9 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   fs.writeFileSync(ofile, '# y');
   runHook(AUTO_FORMAT, { input: JSON.stringify({ tool_input: { file_path: fwd(ofile) } }), home, extraPath: bin });
   assert.ok(fs.existsSync(marker), 'non-vault markdown must be formatted');
-}
+});
 
-// ---- check-before-stop.sh: protected-branch block, vault exemption, dead paths removed ----
-{
+test('check-before-stop.sh: protected-branch block, vault exemption, dead paths removed', () => {
   const home = tmp('hookhome-');
   const repo = path.join(home, 'repo');
   fs.mkdirSync(repo, { recursive: true });
@@ -84,10 +83,9 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   const src = fs.readFileSync(CHECK_STOP, 'utf8');
   assert.ok(!src.includes('.dotfiles'), 'retired ~/.dotfiles logic removed');
   assert.ok(!/My_Vault/.test(src), 'hardcoded My_Vault removed');
-}
+});
 
-// ---- watch-paths.sh: vault raw/ watched only when configured ----
-{
+test('watch-paths.sh: vault raw/ watched only when configured', () => {
   const home = tmp('hookhome-');
   const vault = path.join(home, 'Vault');
   fs.mkdirSync(path.join(vault, 'raw'), { recursive: true });
@@ -106,7 +104,8 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
 
   const r3 = runHook(WATCH, { input: JSON.stringify({ source: 'resume' }), home });
   assert.strictEqual(r3.stdout.trim(), '', 'non-startup source produces no output');
-}
+});
 
-for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
-console.log('ALL PASS');
+after(() => {
+  for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
+});

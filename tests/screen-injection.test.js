@@ -10,6 +10,7 @@
 //                          stubbed injection:true verdict the hook MUST warn.
 //   classifier_silent   -> reaches the classifier, but a stubbed injection:false verdict
 //                          MUST keep the hook quiet.
+const { test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -43,24 +44,33 @@ const STUB_FALSE = `printf '%s' '{"injection":false,"reason":"stub"}'`;
 const clsOn = (cmd) => ({ SCREEN_INJECTION_CLASSIFIER: '1', SCREEN_INJECTION_CLASSIFY_CMD: cmd });
 
 // Layer 1 — deterministic, classifier OFF (default).
-for (const f of fixtures.flag) {
-  assert.ok(isFlagged(runHook(f.input).stdout), `flag fixture must be warned by Layer 1: ${f.name}`);
-}
-for (const f of fixtures.silent) {
-  assert.strictEqual(runHook(f.input).stdout.trim(), '', `silent fixture must stay quiet: ${f.name}`);
-}
+test('flag fixtures are warned by Layer 1', () => {
+  for (const f of fixtures.flag) {
+    assert.ok(isFlagged(runHook(f.input).stdout), `flag fixture must be warned by Layer 1: ${f.name}`);
+  }
+});
+
+test('silent fixtures stay quiet under Layer 1', () => {
+  for (const f of fixtures.silent) {
+    assert.strictEqual(runHook(f.input).stdout.trim(), '', `silent fixture must stay quiet: ${f.name}`);
+  }
+});
 
 // Layer 2 — classifier enabled, verdict stubbed (offline).
-for (const f of fixtures.flag_via_classifier) {
-  // Must genuinely slip Layer 1 (else it belongs in `flag`).
-  assert.strictEqual(runHook(f.input).stdout.trim(), '', `flag_via_classifier must slip Layer 1: ${f.name}`);
-  assert.ok(isFlagged(runHook(f.input, clsOn(STUB_TRUE)).stdout), `classifier injection:true must warn: ${f.name}`);
-}
-for (const f of fixtures.classifier_silent) {
-  assert.strictEqual(runHook(f.input, clsOn(STUB_FALSE)).stdout.trim(), '', `classifier injection:false must stay quiet: ${f.name}`);
-}
+test('flag_via_classifier fixtures slip Layer 1 but are warned when the classifier says injection:true', () => {
+  for (const f of fixtures.flag_via_classifier) {
+    // Must genuinely slip Layer 1 (else it belongs in `flag`).
+    assert.strictEqual(runHook(f.input).stdout.trim(), '', `flag_via_classifier must slip Layer 1: ${f.name}`);
+    assert.ok(isFlagged(runHook(f.input, clsOn(STUB_TRUE)).stdout), `classifier injection:true must warn: ${f.name}`);
+  }
+});
+
+test('classifier_silent fixtures stay quiet when the classifier says injection:false', () => {
+  for (const f of fixtures.classifier_silent) {
+    assert.strictEqual(runHook(f.input, clsOn(STUB_FALSE)).stdout.trim(), '', `classifier injection:false must stay quiet: ${f.name}`);
+  }
+});
 
 console.log(`screen-injection: ${fixtures.flag.length} flagged by regex, `
   + `${fixtures.flag_via_classifier.length} via classifier (stubbed), `
   + `${fixtures.silent.length} benign quiet, 0 known evasions.`);
-console.log('ALL PASS');
