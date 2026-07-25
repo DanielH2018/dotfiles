@@ -14,8 +14,28 @@
 	excludesfile = ~/.gitignore_global
 	autocrlf = input
 {{- else }}
+{{- if eq .chezmoi.os "windows" }}
 [credential]
-	helper = {{ if eq .chezmoi.os "windows" }}manager{{ else if contains "microsoft" (lower .chezmoi.kernel.osrelease) }}/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe{{ else }}store{{ end }}
+	helper = manager
+{{- else if contains "microsoft" (lower .chezmoi.kernel.osrelease) }}
+# GitHub goes through gh, NOT the Windows Git Credential Manager: launching a .exe from WSL
+# takes the VM-mode interop path, which leaks a permanently spinning CPU thread per call once
+# the owning wsl.exe has exited (microsoft/WSL#41173, unfixed through WSL 2.9.4), and every
+# HTTPS push and fetch would pay it. gh is a native Linux binary and already authenticated.
+# This section must precede the generic [credential] below -- git tries helpers in config
+# order, so a generic-first layout would hand github.com back to the .exe. Gated on gh being
+# present: file targets apply before install-cli-tools provides it, so a fresh machine falls
+# back to the manager for one apply, then self-heals on the next.
+[credential "https://github.com"]
+	helper = {{ if lookPath "gh" }}!gh auth git-credential{{ else }}/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe{{ end }}
+[credential]
+	# Non-GitHub hosts keep the manager -- gh only answers for hosts it is logged in to, and
+	# dropping this would leave them with no helper at all.
+	helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe
+{{- else }}
+[credential]
+	helper = store
+{{- end }}
 [core]
 	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
 	excludesfile = ~/.gitignore_global
