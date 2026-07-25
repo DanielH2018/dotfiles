@@ -249,6 +249,7 @@ class TestDigest(unittest.TestCase):
                 "exit",
                 "timed_out",
                 "duration_ms",
+                "attempts",
                 "totals",
                 "failures",
                 "notes",
@@ -268,6 +269,7 @@ class TestDigest(unittest.TestCase):
                 "code_url",
                 "source",
                 "fixable",
+                "flaky",
                 "message",
                 "stdout",
                 "stderr",
@@ -836,6 +838,63 @@ class TestRdjson(unittest.TestCase):
     def test_output_that_is_not_rdjson_leaves_the_result_alone(self):
         self.assertEqual(rdjson_adapter.parse("<html>", blank("x")).failures, [])
         self.assertEqual(rdjson_adapter.parse("[1,2]", blank("x")).failures, [])
+
+
+class TestFlaky(unittest.TestCase):
+    def run_with(self, flaky_count, still_failing=0):
+        res = blank("node")
+        total = flaky_count + still_failing
+        res.totals.update(tests=total + 1, fail=total, **{"pass": 1})
+        res.duration_ms = 1800
+        for i in range(flaky_count):
+            res.failures.append(
+                Failure(name=f"flaky{i}", file="a.test.js", line=i + 1, flaky=True)
+            )
+        for i in range(still_failing):
+            res.failures.append(
+                Failure(name=f"broken{i}", file="b.test.js", line=i + 1)
+            )
+        return res
+
+    def test_a_flake_is_counted_in_the_headline(self):
+        text = digest(self.run_with(flaky_count=1, still_failing=1), "/tmp/x.json")
+        self.assertTrue(text.startswith("FAIL 2/3  (1 flaky)"))
+
+    def test_a_flake_says_why_it_is_listed(self):
+        text = digest(self.run_with(flaky_count=1), "/tmp/x.json")
+        self.assertIn("FLAKY — failed, then passed on retry", text)
+
+    def test_a_run_without_retry_says_nothing_about_flakiness(self):
+        res = blank("node")
+        res.totals.update(tests=2, fail=1, **{"pass": 1})
+        res.failures.append(Failure(name="t", file="a.test.js", line=1))
+        self.assertNotIn("flaky", digest(res, "/tmp/x.json").lower())
+
+    def test_attempts_defaults_to_one(self):
+        self.assertEqual(blank("node").attempts, 1)
+
+
+class TestRetryFlagParsing(unittest.TestCase):
+    def test_the_retry_switch_does_not_swallow_the_command(self):
+        # Treating a valueless flag as if it took one would consume the program
+        # name, leaving tq to run the runner's first argument as the runner.
+        cli = load_cli()
+        opts, argv = cli.split_flags(["--retry", "node", "--test"])
+        self.assertIn("--retry", opts)
+        self.assertEqual(argv, ["node", "--test"])
+
+    def test_switches_and_valued_flags_mix(self):
+        cli = load_cli()
+        opts, argv = cli.split_flags(["--retry", "--scope=added", "pytest"])
+        self.assertIn("--retry", opts)
+        self.assertEqual(opts["--scope"], "added")
+        self.assertEqual(argv, ["pytest"])
+
+    def test_only_runners_that_name_their_own_failures_are_retried(self):
+        # Rerunning a subset means asking the runner which subset. Guessing it
+        # from a report is how a retry silently reruns the wrong tests.
+        cli = load_cli()
+        self.assertEqual(set(cli.RETRYABLE), {"node", "pytest"})
 
 
 if __name__ == "__main__":
