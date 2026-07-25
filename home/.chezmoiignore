@@ -39,6 +39,12 @@ Scripts
 # nvim: lazy's lockfile is machine-local (stable branches, no pinning).
 .config/nvim/lazy-lock.json
 
+# Python bytecode. tq imports its library from .local/share/tq, so running it —
+# or its tests — from the source tree writes __pycache__ next to the source.
+# A global gitignore keeps that out of `git status`, so chezmoi is the only thing
+# that sees it, and without this it deploys the .pyc files as managed dotfiles.
+**/__pycache__
+
 # claude artifacts: ~/.claude/artifacts is local scratch for plan/spec renders.
 # Don't manage the dir by default — blocks `chezmoi add` on ad-hoc artifacts so
 # scratch can't be swept upstream. Track only the specific plan files kept here.
