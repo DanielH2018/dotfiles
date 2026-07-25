@@ -136,7 +136,7 @@ US=$'\037'
 # the WSL mount; `WEZTERM_WIN` is the Windows wezterm binary (WSL's PATH excludes it,
 # appendWindowsPath=false) used to focus/rename/spawn Windows panes.
 winhost="daniel-desktop"
-declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="homelab" )
+declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="Homelab" )
 declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
 declare -A HOST_SSH=( [daniel-server]="daniel-server" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
@@ -1713,7 +1713,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       badge_name "$host"; bn="$_bn"
       case "$bn" in
         PC)      bfg="$E[38;2;137;180;250m";;   # blue  — desktop
-        homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
+        Homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
         *)       bfg="$E[38;2;205;214;244m";;   # text  — cloud
       esac
       # badge cell = the rounded pill (caps hugging <name>, no inner padding) + trailing pad,

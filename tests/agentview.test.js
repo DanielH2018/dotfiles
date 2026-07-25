@@ -142,11 +142,11 @@ test('--card renders a local session card with PC machine label', { skip }, () =
   assert.match(txt, /Updated\s+5m ago/);
 });
 
-test('--card labels a daniel-server session as homelab', { skip }, () => {
+test('--card labels a daniel-server session as Homelab', { skip }, () => {
   const { env } = makeEnv();
   const blob = cardKey(['daniel-server', '/home/ubuntu/proj', 'needs-input', '0', '', '1', 'host', 'none:']);
   const txt = stripAnsi(run(env, ['--card', blob]).out);
-  assert.match(txt, /Machine\s+homelab · daniel-server/);
+  assert.match(txt, /Machine\s+Homelab · daniel-server/);
   assert.match(txt, /State\s+needs input/);
 });
 

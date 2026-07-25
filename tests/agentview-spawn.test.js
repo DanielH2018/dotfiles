@@ -326,7 +326,7 @@ test('cancelling the mode pick is a clean no-op', { skip }, () => {
 // ---- homelab (remote) spawn ----
 test('homelab repo+branch spawns cts --ssh=<alias> <repo> -b <branch> in a tmux window', { skip }, () => {
   const { env, tmuxLog, ctsLog } = makeEnv();
-  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'homelab', FZF_REPO: 'infra', FZF_BRANCH: 'dev' });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'Homelab', FZF_REPO: 'infra', FZF_BRANCH: 'dev' });
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n infra .*cts --ssh=daniel-server infra -b dev/,
     `wraps the remote launcher in a window; got: ${fs.readFileSync(tmuxLog, 'utf8')}`);
   const cts = fs.readFileSync(ctsLog, 'utf8');
@@ -336,14 +336,14 @@ test('homelab repo+branch spawns cts --ssh=<alias> <repo> -b <branch> in a tmux 
 
 test('homelab no-repo spawns plain remote claude (cts --ssh=<alias>)', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
-  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'homelab', FZF_REPO: HOST_ROW });
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n homelab .*cts --ssh=daniel-server/,
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'Homelab', FZF_REPO: HOST_ROW });
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n Homelab .*cts --ssh=daniel-server/,
     'no-repo remote session runs bare cts --ssh');
 });
 
 test('homelab spawn in a bare shell execs cts --ssh=<alias> <repo>', { skip }, () => {
   const { env, ctsLog } = makeEnv();
-  run(env, { FZF_HOST: 'homelab', FZF_REPO: 'infra', FZF_BRANCH: '' });   // no mux
+  run(env, { FZF_HOST: 'Homelab', FZF_REPO: 'infra', FZF_BRANCH: '' });   // no mux
   assert.match(fs.readFileSync(ctsLog, 'utf8'), /--ssh=daniel-server infra/, 'remote launcher exec\'d in place');
 });
 
