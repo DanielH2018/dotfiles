@@ -598,6 +598,11 @@
             "type": "command",
             "command": "~/.claude/hooks/block-dangerous-bash.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/chezmoi-apply-guard.sh",
+            "timeout": 15
           }
         ]
       },
