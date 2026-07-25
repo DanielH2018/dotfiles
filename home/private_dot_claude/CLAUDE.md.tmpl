@@ -78,6 +78,16 @@ Applies to every session — answers, summaries, research, and anything written 
 - Skip the artifact only when the plan is trivial (a one-liner or single obvious step) or I've said not to.
 - **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Don't plan in stack-order (DB → service → API → frontend): that's the model's default, and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines, so test and review at each slice before moving to the next.
 
+## Tool use & context discipline
+
+Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also
+re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take.
+
+- Batch independent tool calls into a single message. If two calls don't depend on each other, they go out together.
+- Never `cat` a file I'm about to grep, and never read a whole file to find one symbol — grep for it, then read the hit with an offset.
+- Bound noisy output at the source: pipe through `head`/`tail`/`wc`. `git log`, `ls -R`, test runs, and build logs all need a limit.
+- Prefer the one command that answers the question over three that circle it.
+
 ## Compaction policy
 
 When compacting, always preserve:
