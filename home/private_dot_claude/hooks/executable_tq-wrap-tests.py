@@ -31,43 +31,29 @@ import shlex
 import shutil
 import sys
 
-# The programs worth loading tq to ask about, checked before the import so that
-# the overwhelming majority of Bash calls — git, ls, grep — cost a set lookup.
-CANDIDATES = {
-    "node",
-    "pytest",
-    "prek",
-    "ruff",
-    "shellcheck",
-    "uv",
-    "uvx",
-    "poetry",
-    "pdm",
-    "rye",
-    "hatch",
-    "pipenv",
-    "python",
-    "python3",
-}
-
 # Anything that makes the command more than one simple command.
 SHELL_CHARS = set(";&|<>()`$\n")
 
 # The deployed CLI, since that is what the rewritten command will run. TQ_BIN
 # overrides it so a checkout's own tq can be exercised before `chezmoi apply`.
 TQ_SOURCE = os.environ.get("TQ_BIN") or os.path.expanduser("~/.local/bin/tq")
+TQ_LIB = os.environ.get("TQ_HOME") or os.path.join(
+    os.path.dirname(os.path.dirname(TQ_SOURCE)), "share", "tq"
+)
 
 
 def load_detect():
-    """tq's own detect(), imported by path — the CLI has no .py suffix."""
-    import importlib.machinery
-    import importlib.util
+    """tq's own detect(), and the candidate set it is worth asking about.
 
-    loader = importlib.machinery.SourceFileLoader("tq_cli", TQ_SOURCE)
-    spec = importlib.util.spec_from_loader("tq_cli", loader)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.detect
+    From the lib rather than from the CLI. Importing the CLI drags in the XML,
+    JSON and subprocess machinery of every adapter for ~74ms, which was tolerable
+    while the candidates were test runners and is not now that they include git,
+    ls and grep — the programs an agent runs most.
+    """
+    sys.path.insert(0, TQ_LIB)
+    import detect
+
+    return detect.detect, detect.CANDIDATES
 
 
 def rewrite(command):
@@ -84,9 +70,16 @@ def rewrite(command):
         argv = shlex.split(command)
     except ValueError:  # unbalanced quotes: not ours to interpret
         return None
-    if not argv or os.path.basename(argv[0]) not in CANDIDATES:
+    if not argv:
         return None
-    if load_detect()(argv) is None:
+    detect, candidates = load_detect()
+    # Both the shortlist and the decision come from tq's own module. Keeping a
+    # copy of the shortlist here would save the import on most calls and is what
+    # this used to do, but the two would then drift, and the failure that causes
+    # is a command tq claims that the hook never offers it.
+    if os.path.basename(argv[0]) not in candidates:
+        return None
+    if detect(argv) is None:
         return None
     return f"tq {command}"
 
