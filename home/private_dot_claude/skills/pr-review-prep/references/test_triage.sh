@@ -9,14 +9,16 @@ FAILS=0
 pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; FAILS=$((FAILS+1)); }
 
-TMPDIRS=()
-cleanup() { [ "${#TMPDIRS[@]}" -eq 0 ] || rm -rf "${TMPDIRS[@]}"; }
+TMPROOT="$(mktemp -d)"
+cleanup() { rm -rf "$TMPROOT"; }
 trap cleanup EXIT
 
+# Hand out subdirectories of the single root rather than registering each one in
+# an array: every caller invokes this as `d="$(new_tmpdir)"`, and a command
+# substitution runs in a subshell, so an array append here would be discarded
+# with that subshell and cleanup would delete nothing.
 new_tmpdir() {
-  local d; d="$(mktemp -d)"
-  TMPDIRS+=("$d")
-  echo "$d"
+  mktemp -d "$TMPROOT/XXXXXX"
 }
 
 # Build a scratch repo with a fake 'origin' remote whose HEAD points at main.
