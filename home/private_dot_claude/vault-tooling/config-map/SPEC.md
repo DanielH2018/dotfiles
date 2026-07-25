@@ -64,7 +64,7 @@ Detail level: **name + one-line purpose + key fields per item; full bodies behin
 
 1. **Overview banner** — per-category counts, generated-at, git SHA of each source repo.
 2. **Settings & precedence** — layer stack `managed → project-local → project → user`; per present layer: key fields, `allow`/`deny`/`ask` counts (user layer today: 268 / 95 / 119), `skillOverrides`, `sandbox` summary, `env`, model/output-style/effort. Show which layers are absent.
-3. **CLAUDE.md cascade** — the `@`-include tree with provenance per node: `~/.claude/CLAUDE.md` → `docs/orchestration.md` + `CLAUDE.local.md` (→work) → `docs/integrations.md` + `docs/enforcement.md` (→work); then project `CLAUDE.md`. Each node also lists its `#`/`##` section headings + line count so the file's shape is visible without opening it.
+3. **CLAUDE.md cascade** — the `@`-include tree with provenance per node: `~/.claude/CLAUDE.md` → `CLAUDE.local.md` (→work) → `docs/integrations.md` + `docs/enforcement.md` (→work); then project `CLAUDE.md`. Each node also lists its `#`/`##` section headings + line count so the file's shape is visible without opening it.
 4. **Hooks** — grouped by event (13 events: SessionStart×4, PostToolUse×8, PreToolUse×2, UserPromptSubmit×2, +9 single). Each: script, provenance, one-line purpose.
 5. **Skills / Commands / Agents / Rules / Output-styles** — inventory with provenance + purpose.
 6. **Plugins** — only **enabled** plugins (`enabledPlugins == true`) are shown; disabled/unlisted are hidden and the count noted. Each carries its manifest `description` (from `<installPath>/.claude-plugin/plugin.json`) + marketplace/scope/version.

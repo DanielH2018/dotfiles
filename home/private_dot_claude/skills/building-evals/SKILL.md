@@ -77,7 +77,7 @@ Score = `count('correct') / total * 100`. Report the number and the failing case
   `pipeline(cases, run, grade)` — each case runs through the thing-under-test
   then its grader, no barrier. Return the scored list; you synthesize the
   summary (pass rate + every failure with its input). This composes with the
-  evaluator-optimizer loop in [orchestration.md](~/.claude/docs/orchestration.md):
+  evaluator-optimizer loop in the `orchestrating-subagents` skill:
   the model grader here *is* that loop's evaluator.
 
 ## Discipline
