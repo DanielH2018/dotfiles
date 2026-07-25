@@ -13,8 +13,10 @@ font_size = 16
 # Base OpenType feature tags; each template formats them (+tag for Ghostty, tag=1 for WezTerm).
 font_features = ["liga", "kern", "calt", "ss01", "ss02"]
 theme = "Catppuccin Mocha"
-cursor_color = "#fabd2f"
-cursor_fg = "#1e1e2e"
+# Mocha yellow. Was #fabd2f — gruvbox's bright yellow, the last of that palette left in the
+# terminal itself; this keeps the warm cursor without importing a colour from another theme.
+cursor_color = "#f9e2af"
+cursor_fg = "#1e1e2e"                             # base — the cursor's own text, under the block
 padding = 20
 scrollback = 100000
 cols = 120

@@ -94,9 +94,22 @@ pinfile="$HOME/.claude/agent-view-pins"
 # With no tmux there is no popup substrate at all, so fall back to a small inline box on the
 # screen execute() already cleared. Defined here — like remote_cache — because the Ctrl+X
 # confirm runs from the --remove dispatch, well above where the spawn pickers are defined.
+
+# The terminal runs Catppuccin Mocha (chezmoi `.chezmoidata/terminal.toml`), so every box this
+# script paints uses it too. ONE definition, because six choosers each carrying their own copy
+# is how the spawn pickers ended up in raw terminal defaults while the picker beside them was
+# fully themed. av_pick passes this FIRST and fzf merges successive --color flags key-by-key,
+# so a caller appends only what it wants to differ (the Ctrl+X confirm reddens `pointer`).
+# bg:-1/gutter:-1 keep the terminal's own background, which is what makes a popup read as
+# floating rather than as a pasted-on panel.
+AV_COLOR='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8'
+AV_COLOR="$AV_COLOR,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7"
+AV_COLOR="$AV_COLOR,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de"
+
 av_pick() {  # $1=width $2=height, rest = fzf args; stdin = the list, stdout = the pick
   local w="$1" h="$2" lst sel cmd rc
   shift 2
+  set -- --color="$AV_COLOR" "$@"
   [ -n "${TMUX:-}" ] || { fzf --height="~$h" --margin='0,20%' "$@"; return $?; }
   lst=$(mktemp "${TMPDIR:-/tmp}/av-list.XXXXXX") || return 1
   sel=$(mktemp "${TMPDIR:-/tmp}/av-pick.XXXXXX") || { rm -f "$lst"; return 1; }
@@ -684,7 +697,7 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
     | av_pick "$w" 6 --ansi --no-sort --no-input --info=hidden --layout=reverse \
       --border=rounded --border-label=' remove session ' --border-label-pos=3 \
       --pointer='▌' --highlight-line --header-first --header "$hdr" \
-      --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,header:#9399b2,border:#45475a,label:#bac2de,pointer:#f38ba8' 2>/dev/null)
+      --color='pointer:#f38ba8' 2>/dev/null)
   # --ansi hands back the ORIGINAL line, escape codes and all, so strip them before matching.
   ans=$(printf '%s' "$ans" | sed -e 's/\x1b\[[0-9;:]*m//g')
   case "$ans" in Remove*) ;; *) return 0 ;; esac
@@ -919,7 +932,8 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
   is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && rows="$rows"$'\n'"PC (Windows)"
   for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
   sel=$(printf '%s\n' "$rows" | av_pick 46% 30% --prompt 'host> ' --layout=reverse \
-    --border=rounded --info=hidden --header 'new session · pick a host · esc cancels')
+    --border=rounded --info=hidden --pointer='▌' --highlight-line \
+    --header 'new session · pick a host · esc cancels')
   [ -n "$sel" ] || return 0
   [ "$sel" = "WSL" ] && { printf 'wsl'; return 0; }
   [ "$sel" = "PC (Windows)" ] && { printf 'pc'; return 0; }
@@ -932,7 +946,7 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
 spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
   local sel
   sel=$(printf 'sandbox\nnative\n' | av_pick 62% 26% --prompt 'mode> ' --layout=reverse \
-    --border=rounded --info=hidden \
+    --border=rounded --info=hidden --pointer='▌' --highlight-line \
     --header 'sandbox = claude-sandbox (cts) · native = plain claude (ct) · esc cancels')
   case "$sel" in
     sandbox) printf 'sandbox' ;;
@@ -953,6 +967,7 @@ spawn_pick_repo() {  # $1 = host (wsl | remote:<alias>) -> repo path/NAME, @host
   fi
   sel=$({ printf '%s\n' "$host_row"; [ -n "$names" ] && printf '%s\n' "$names"; } \
     | av_pick 58% 60% --prompt 'repo> ' --layout=reverse --border=rounded --info=hidden \
+      --pointer='▌' --highlight-line \
       --header 'new session · no repo = plain claude · esc cancels')
   [ -n "$sel" ] || return 0
   if   [ "$sel" = "$host_row" ]; then printf '@host'
@@ -970,7 +985,7 @@ spawn_pick_branch() {  # $1=host $2=repo -> branch (empty = main repo, no worktr
   # --print-query so the user can TYPE a new branch (cts/-b creates it) or pick one; the
   # typed query is the last line. Empty selection = the main checkout.
   out=$(printf '%s\n' "$src" | av_pick 58% 60% --prompt 'branch> ' --layout=reverse \
-    --border=rounded --info=hidden --print-query \
+    --border=rounded --info=hidden --print-query --pointer='▌' --highlight-line \
     --header 'pick or type a branch (-b) · empty/esc = main repo' | tail -1)
   printf '%s' "$out"
 }
@@ -1894,7 +1909,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='alt-9:become('"'$SELF'"' --jump-nth 9)' \
   --bind='ctrl-o:toggle-preview' \
   --bind='?:show-preview+preview('"'$SELF'"' --keys)' \
-  --color='bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de') || exit 0
+  --color="$AV_COLOR") || exit 0
 
 [ -z "$sel" ] && exit 0
 key=$(printf '%s' "$sel" | cut -f1)

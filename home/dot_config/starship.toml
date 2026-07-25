@@ -34,19 +34,25 @@ $time\
 [ ](fg:color_bg1)\
 $line_break$character"""
 
-palette = 'gruvbox_dark'
+palette = 'catppuccin_mocha'
 
-[palettes.gruvbox_dark]
-color_fg0 = '#fbf1c7'
-color_bg1 = '#3c3836'
-color_bg3 = '#665c54'
-color_blue = '#458588'
-color_aqua = '#689d6a'
-color_green = '#98971a'
-color_orange = '#d65d0e'
-color_purple = '#b16286'
-color_red = '#cc241d'
-color_yellow = '#d79921'
+# Matches the terminal (chezmoi `.chezmoidata/terminal.toml` -> Ghostty/WezTerm "Catppuccin
+# Mocha"). Two foregrounds, where gruvbox needed one: gruvbox's accents are dark enough to
+# carry light text, but Mocha's are pastel, so text on an accent segment has to go dark or it
+# vanishes. color_fg0 is that dark text; color_fg1 is for the dark bg1/bg3 segments.
+[palettes.catppuccin_mocha]
+color_fg0 = '#11111b'   # crust — on the pastel accent segments
+color_fg1 = '#cdd6f4'   # text  — on the dark bg1/bg3 segments
+color_bg1 = '#313244'   # surface0
+color_bg3 = '#585b70'   # surface2
+color_blue = '#89b4fa'
+color_aqua = '#94e2d5'  # teal
+color_green = '#a6e3a1'
+color_orange = '#fab387' # peach
+color_purple = '#cba6f7' # mauve
+color_red = '#f38ba8'
+color_yellow = '#f9e2af'
+color_sky = '#89dceb'   # sky — aws/docker/conda, kept distinct from the bg3 text as before
 
 [os]
 disabled = false
@@ -157,31 +163,31 @@ format = '[[ $symbol( $version) ](fg:color_fg0 bg:color_blue)]($style)'
 [aws]
 symbol = "󰸏 "
 style = "bg:color_bg3"
-format = '[[ $symbol($profile) ](fg:#83a598 bg:color_bg3)]($style)'
+format = '[[ $symbol($profile) ](fg:color_sky bg:color_bg3)]($style)'
 
 [docker_context]
 symbol = ""
 style = "bg:color_bg3"
-format = '[[ $symbol( $context) ](fg:#83a598 bg:color_bg3)]($style)'
+format = '[[ $symbol( $context) ](fg:color_sky bg:color_bg3)]($style)'
 
 [conda]
 style = "bg:color_bg3"
-format = '[[ $symbol( $environment) ](fg:#83a598 bg:color_bg3)]($style)'
+format = '[[ $symbol( $environment) ](fg:color_sky bg:color_bg3)]($style)'
 
 [pixi]
 style = "bg:color_bg3"
-format = '[[ $symbol( $version)( $environment) ](fg:color_fg0 bg:color_bg3)]($style)'
+format = '[[ $symbol( $version)( $environment) ](fg:color_fg1 bg:color_bg3)]($style)'
 
 [time]
 disabled = false
 time_format = "%R"
 style = "bg:color_bg1"
-format = '[[  $time ](fg:color_fg0 bg:color_bg1)]($style)'
+format = '[[  $time ](fg:color_fg1 bg:color_bg1)]($style)'
 
 [cmd_duration]
 min_time = 2000
 style = "bg:color_bg1"
-format = '[[ 󱎫 $duration ](fg:color_fg0 bg:color_bg1)]($style)'
+format = '[[ 󱎫 $duration ](fg:color_fg1 bg:color_bg1)]($style)'
 
 [line_break]
 disabled = false

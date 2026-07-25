@@ -27,9 +27,39 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 - **Filename**: `<slug>_<YYYY-MM-DD>.html`.
 - Always still deliver the written plan/spec in the chat. The artifact is a readability aid, never a replacement — if you only render the HTML and skip the chat version, you've failed the task.
 
+## Palette
+
+Use **Catppuccin Mocha** — the terminal's own theme, so an artifact and the terminal it was
+generated from look like one system. "A dark palette" used to be the only guidance here, and
+the result was drift: artifacts landed in GitHub Dark, Tokyo Night, and several one-off
+schemes. Don't pick a palette per artifact; use these values.
+
+| role | hex | | role | hex |
+|---|---|---|---|---|
+| page background | `#1e1e2e` base | | body text | `#cdd6f4` text |
+| recessed panel | `#181825` mantle | | secondary text | `#a6adc8` subtext0 |
+| deepest well | `#11111b` crust | | muted / captions | `#6c7086` overlay0 |
+| card / raised | `#313244` surface0 | | links, info | `#89b4fa` blue |
+| borders, rules | `#45475a` surface1 | | success, added | `#a6e3a1` green |
+| subtle border | `#585b70` surface2 | | warning | `#f9e2af` yellow |
+| | | | danger, removed | `#f38ba8` red |
+| | | | emphasis, accent | `#cba6f7` mauve |
+
+Also available when a chart or a set of categories needs more distinct hues: peach `#fab387`,
+teal `#94e2d5`, sky `#89dceb`, lavender `#b4befe`, pink `#f5c2e7`, rosewater `#f5e0dc`.
+
+**Text on an accent background must be `#11111b` (crust), never white.** Mocha's accents are
+pastel, so light text on a filled badge, pill, or button disappears. This is the single most
+common way an otherwise-correct artifact comes out unreadable.
+
+Define these once as CSS custom properties on `:root` and reference them — don't scatter raw
+hexes through the stylesheet. If the artifact needs a light mode, use Catppuccin **Latte**
+(base `#eff1f5`, text `#4c4f69`, subtext0 `#6c6f85`, surface0 `#ccd0da`, blue `#1e66f5`,
+green `#40a02b`, yellow `#df8e1d`, red `#d20f39`, mauve `#8839ef`) rather than inventing one.
+
 ## Style
 
-- Use a dark, terminal-friendly palette; system font stack; generous line-height.
+- System font stack; generous line-height.
 - Lead with a one-line summary and any at-a-glance stats, then the detail — prefer tables over walls of prose.
 - Use `code` styling for file paths, commands, and identifiers.
 - Keep it skimmable: headers, tables, and severity/priority cues where relevant.

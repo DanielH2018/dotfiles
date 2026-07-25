@@ -17,17 +17,17 @@ PROVENANCE_LABELS = {
 
 CSS = """
 :root{
-  --bg:#f6f8fa; --panel:#ffffff; --panel2:#f0f2f5; --border:#d0d7de;
-  --fg:#1f2328; --dim:#57606a; --faint:#8c959f;
-  --accent:#0969da; --green:#1a7f37; --amber:#9a6700; --purple:#8250df;
-  --code:#1f2328; --codebg:#f6f8fa;
+  --bg:#eff1f5; --panel:#ccd0da; --panel2:#e6e9ef; --border:#bcc0cc;
+  --fg:#4c4f69; --dim:#6c6f85; --faint:#9ca0b0;
+  --accent:#1e66f5; --green:#40a02b; --amber:#df8e1d; --purple:#8839ef;
+  --code:#4c4f69; --codebg:#eff1f5;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#2b3340;
-    --fg:#e6edf3; --dim:#9aa7b4; --faint:#6b7683;
-    --accent:#58a6ff; --green:#3fb950; --amber:#d29922; --purple:#bc8cff;
-    --code:#c9d1d9; --codebg:#010409;
+    --bg:#1e1e2e; --panel:#313244; --panel2:#181825; --border:#45475a;
+    --fg:#cdd6f4; --dim:#a6adc8; --faint:#6c7086;
+    --accent:#89b4fa; --green:#a6e3a1; --amber:#f9e2af; --purple:#cba6f7;
+    --code:#bac2de; --codebg:#11111b;
   }
 }
 *{box-sizing:border-box}
@@ -59,10 +59,13 @@ th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--border);
 th{color:var(--dim);font-weight:600;font-size:.76rem;text-transform:uppercase;letter-spacing:.03em}
 td:first-child{white-space:nowrap;color:var(--fg)}
 .chip{display:inline-block;font-size:.68rem;font-weight:600;padding:.08em .5em;border-radius:20px;border:1px solid}
-.c-chezmoi{color:#1a7f37;border-color:#1a7f37;background:rgba(26,127,55,.12)}
-.c-generated{color:#8250df;border-color:#8250df;background:rgba(130,80,223,.12)}
-.c-work{color:#0969da;border-color:#0969da;background:rgba(9,105,218,.12)}
-.c-project{color:#9a6700;border-color:#9a6700;background:rgba(154,103,0,.12)}
+/* Chips follow the flavor vars rather than pinning one flavor's hexes: Mocha's pastels are
+   built for a dark page and go low-contrast on the Latte one. currentColor keeps the border
+   and the wash in step with whichever flavor is live. */
+.c-chezmoi{color:var(--green);background:color-mix(in srgb,currentColor 12%,transparent)}
+.c-generated{color:var(--purple);background:color-mix(in srgb,currentColor 12%,transparent)}
+.c-work{color:var(--accent);background:color-mix(in srgb,currentColor 12%,transparent)}
+.c-project{color:var(--amber);background:color-mix(in srgb,currentColor 12%,transparent)}
 .c-unmanaged{color:var(--faint);border-color:var(--faint);background:transparent}
 .c-inline{color:var(--faint);border-color:var(--faint);border-style:dashed;background:transparent}
 .toolbar{display:flex;gap:.5rem;margin:0 0 .8rem}

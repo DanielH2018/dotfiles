@@ -118,8 +118,18 @@ fi
 # --- fnm (Fast Node Manager): auto-switch Node per directory ---
 command -v fnm >/dev/null 2>&1 && eval "$(fnm env --use-on-cd --shell "$_CUR_SHELL")"
 
+# bat ships a vendored Catppuccin Mocha theme (dot_config/bat/themes) and a post-install
+# script builds its cache, but nothing ever SELECTED it — only yazi passed --theme
+# explicitly, so every other bat call (including the fzf preview below) rendered in bat's
+# Monokai default. An env var rather than a bat config file: the config isn't chezmoi-managed.
+command -v bat >/dev/null 2>&1 && export BAT_THEME="Catppuccin Mocha"
+
 # --- fzf: env + previews (the shell keybinding integration lives in each rc) ---
 if command -v fzf >/dev/null 2>&1; then
+  # Same palette agentview paints its picker with, so ctrl-r/ctrl-t/alt-c match the terminal
+  # and the session picker. Set via env so it reaches every fzf; agentview still passes
+  # --color on the command line, which fzf applies after this and therefore wins.
+  export FZF_DEFAULT_OPTS="--color=bg+:#313244,bg:-1,fg:#cdd6f4,fg+:#ffffff,gutter:-1,hl:#f38ba8,hl+:#f38ba8,header:#9399b2,info:#cba6f7,pointer:#b4befe,prompt:#cba6f7,border:#45475a,label:#bac2de,spinner:#f5e0dc,marker:#a6e3a1"
   if command -v rg >/dev/null 2>&1; then
     export FZF_DEFAULT_COMMAND='rg --files --hidden --follow --glob "!.git"'
     export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"

@@ -42,6 +42,8 @@ function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [] } = {}) {
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
 prompt=""; prev=""
 for a in "$@"; do [ "$prev" = "--prompt" ] && prompt="$a"; prev="$a"; done
+# One line per chooser: "<prompt>\\t<argv>", so a test can assert how each box was styled.
+[ -n "\${FZF_ARGS_LOG:-}" ] && printf '%s\\t%s\\n' "\$prompt" "\$*" >> "\$FZF_ARGS_LOG"
 case "$prompt" in
   repo*)
     if [ -n "\${REPO_CAPTURE:-}" ]; then cat > "\$REPO_CAPTURE"; else cat >/dev/null; fi
@@ -99,6 +101,7 @@ echo host
   // real spawn (the ctrl-n dismiss). The real close POST is detached (nohup+sleep), so tests
   // poll CURL_LOG rather than read it once.
   const curlLog = path.join(bin, 'curl.log'); fs.writeFileSync(curlLog, '');
+  const fzfArgsLog = path.join(bin, 'fzf-args.log'); fs.writeFileSync(fzfArgsLog, '');
   fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash
 prev=""; for a in "$@"; do [ "$prev" = "--data" ] && echo "$a" >> "$CURL_LOG"; prev="$a"; done
 exit 0
@@ -114,11 +117,11 @@ exit 0
     AGENT_VIEW_WEZTERM_WIN: path.join(bin, 'no-such-wezterm.exe'),
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
-    CT_LOG: ctLog, CTS_LOG: ctsLog,
+    CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE;
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
-    ctLog, ctsLog,
+    ctLog, ctsLog, fzfArgsLog,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 // `--spawn [portfile]`: a portfile arg opts into the ctrl-n dismiss (POST abort on success).
@@ -142,6 +145,27 @@ test('interactive picker binds ctrl-n to --spawn and hints it in the footer', ()
   // float as a popup over the list), plain execute otherwise. See av_pick in the script.
   assert.match(SRC, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n runs agentview --spawn');
   assert.match(SRC, /⌃n new/, 'footer advertises the new-session action');
+});
+
+// ---- theming: every box the spawn flow opens is Catppuccin Mocha, like the terminal ----
+test('every spawn chooser inherits the Mocha palette from av_pick', { skip }, () => {
+  const { env, fzfArgsLog } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: 'feature-x' });
+  const lines = fs.readFileSync(fzfArgsLog, 'utf8').split('\n').filter(Boolean);
+  assert.ok(lines.length >= 2, `the flow opened choosers; got ${JSON.stringify(lines)}`);
+  // av_pick prepends --color, so no call site can forget it — the bug this guards is a NEW
+  // chooser landing in raw terminal defaults beside a fully themed picker.
+  for (const l of lines) {
+    const [prompt, argv] = l.split('\t');
+    assert.match(argv, /--color=[^ ]*fg:#cdd6f4/, `${prompt} chooser carries Mocha text`);
+    assert.match(argv, /--color=[^ ]*bg\+:#313244/, `${prompt} chooser carries Mocha surface0`);
+    // bg+ only paints something when the whole row is highlighted; without this the palette
+    // is set but invisible, which is how these boxes read as unthemed.
+    assert.match(argv, /--highlight-line/, `${prompt} chooser marks the selected row`);
+  }
+  const prompts = lines.map((l) => l.split('\t')[0]);
+  assert.ok(prompts.some((p) => p.startsWith('repo')), `repo chooser ran; got ${prompts}`);
+  assert.ok(prompts.some((p) => p.startsWith('branch')), `branch chooser ran; got ${prompts}`);
 });
 
 // ---- behavioral ----

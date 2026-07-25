@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # all data vars (cwd, model_id, …) are assigned by the eval'd jq block below
-# Claude Code status line — mirrors Starship gruvbox_dark theme
-# Colors (256-color approximate for gruvbox_dark):
-#   color_orange  #d65d0e → 166
-#   color_yellow  #d79921 → 136
-#   color_aqua    #689d6a → 71
-#   color_blue    #458588 → 66
-#   color_purple  #b16286 → 132
-#   color_bg1     #3c3836 → 237
-#   color_fg0     #fbf1c7 → 230
+# Claude Code status line — mirrors the Starship catppuccin_mocha theme, which is the
+# terminal's own (chezmoi `.chezmoidata/terminal.toml`). 24-bit, not 256-color: the old
+# codes were documented as "approximate", and the terminal renders truecolor, so the
+# statusline can hit the exact palette every other surface uses.
+#   peach    #fab387 → 250;179;135   session name, dirty count
+#   yellow   #f9e2af → 249;226;175   path, warning thresholds
+#   green    #a6e3a1 → 166;227;161   git branch, ahead, healthy
+#   blue     #89b4fa → 137;180;250   model label
+#   mauve    #cba6f7 → 203;166;247   vim mode, worktree
+#   red      #f38ba8 → 243;139;168   behind, over-threshold
+#   overlay0 #6c7086 → 108;112;134   dim: effort, low cost, duration
 
 # Single jq call to extract all fields at once (avoids fork overhead)
 eval "$(cat | jq -r '[
@@ -65,16 +67,16 @@ fi
 # Build output
 
 # Segment: vim mode (purple) — only shown when vim mode is active
-[[ -n "$vim_mode" ]] && printf '\033[38;5;132m %s \033[0m' "$vim_mode"
+[[ -n "$vim_mode" ]] && printf '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
 
 # Segment: session name (orange) — only shown when renamed
-[[ -n "$session_name" ]] && printf '\033[38;5;166m %s \033[0m' "$session_name"
+[[ -n "$session_name" ]] && printf '\033[38;2;250;179;135m %s \033[0m' "$session_name"
 
 # Segment: directory (yellow)
-printf '\033[38;5;136m %s \033[0m' "$short_cwd"
+printf '\033[38;2;249;226;175m %s \033[0m' "$short_cwd"
 
 # Segment: worktree name (purple) — only shown in linked worktrees
-[[ -n "$worktree_name" ]] && printf '\033[38;5;132m ⎇ %s \033[0m' "$worktree_name"
+[[ -n "$worktree_name" ]] && printf '\033[38;2;203;166;247m ⎇ %s \033[0m' "$worktree_name"
 
 # Segment: git branch (aqua) + dirty indicator + ahead/behind
 # Cache git status for 3 seconds to avoid repeated forks on rapid redraws
@@ -93,28 +95,28 @@ if [[ -n "$git_branch" ]]; then
   else
     read -r dirty_count ahead behind < "$_git_cache"
   fi
-  printf '\033[38;5;71m  %s\033[0m' "$git_branch"
-  (( dirty_count > 0 )) && printf '\033[38;5;166m *%d\033[0m' "$dirty_count"
-  (( ahead > 0 )) && printf '\033[38;5;71m +%d\033[0m' "$ahead"
-  (( behind > 0 )) && printf '\033[38;5;167m -%d\033[0m' "$behind"
+  printf '\033[38;2;166;227;161m  %s\033[0m' "$git_branch"
+  (( dirty_count > 0 )) && printf '\033[38;2;250;179;135m *%d\033[0m' "$dirty_count"
+  (( ahead > 0 )) && printf '\033[38;2;166;227;161m +%d\033[0m' "$ahead"
+  (( behind > 0 )) && printf '\033[38;2;243;139;168m -%d\033[0m' "$behind"
   printf ' '
 fi
 
 # Segment: model (blue) — compact label
-printf '\033[38;5;66m %s \033[0m' "$model_label"
+printf '\033[38;2;137;180;250m %s \033[0m' "$model_label"
 
 # Segment: effort level (dim grey) — only shown when set and non-default (medium)
-[[ -n "$effort_level" && "$effort_level" != "medium" ]] && printf '\033[38;5;237m %s \033[0m' "$effort_level"
+[[ -n "$effort_level" && "$effort_level" != "medium" ]] && printf '\033[38;2;108;112;134m %s \033[0m' "$effort_level"
 
 # Segment: context usage
 if [[ -n "$used_pct" ]]; then
   used_int=$(printf '%.0f' "$used_pct")
   if (( used_int >= 90 )); then
-    printf '\033[38;5;167mctx:%d%% \033[0m' "$used_int"
+    printf '\033[38;2;243;139;168mctx:%d%% \033[0m' "$used_int"
   elif (( used_int >= 70 )); then
-    printf '\033[38;5;136mctx:%d%% \033[0m' "$used_int"
+    printf '\033[38;2;249;226;175mctx:%d%% \033[0m' "$used_int"
   else
-    printf '\033[38;5;71mctx:%d%% \033[0m' "$used_int"
+    printf '\033[38;2;166;227;161mctx:%d%% \033[0m' "$used_int"
   fi
 fi
 
@@ -147,8 +149,8 @@ if [[ -n "$tp" && -r "$tp" ]]; then
       if (( remain > 0 )); then
         if (( remain >= 60 )); then cstr=$(printf '%dm%ds' $((remain/60)) $((remain%60)))
         else cstr=$(printf '%ds' "$remain"); fi
-        (( remain < 60 )) && ccol=136 || ccol=71
-        printf '\033[38;5;%dm cache %s \033[0m' "$ccol" "$cstr"
+        (( remain < 60 )) && ccol='249;226;175' || ccol='166;227;161'
+        printf '\033[38;2;%sm cache %s \033[0m' "$ccol" "$cstr"
       fi
     fi
   fi
@@ -159,17 +161,17 @@ rate_out=""
 if [[ -n "$five_pct" ]]; then
   five_int=$(printf '%.0f' "$five_pct")
   if (( five_int >= 80 )); then
-    rate_out="${rate_out}\033[38;5;167m5h:${five_int}%\033[0m "
+    rate_out="${rate_out}\033[38;2;243;139;168m5h:${five_int}%\033[0m "
   else
-    rate_out="${rate_out}\033[38;5;136m5h:${five_int}%\033[0m "
+    rate_out="${rate_out}\033[38;2;249;226;175m5h:${five_int}%\033[0m "
   fi
 fi
 if [[ -n "$week_pct" ]]; then
   week_int=$(printf '%.0f' "$week_pct")
   if (( week_int >= 80 )); then
-    rate_out="${rate_out}\033[38;5;167m7d:${week_int}%\033[0m "
+    rate_out="${rate_out}\033[38;2;243;139;168m7d:${week_int}%\033[0m "
   else
-    rate_out="${rate_out}\033[38;5;136m7d:${week_int}%\033[0m "
+    rate_out="${rate_out}\033[38;2;249;226;175m7d:${week_int}%\033[0m "
   fi
 fi
 [[ -n "$rate_out" ]] && printf '%b' "$rate_out"
@@ -179,18 +181,18 @@ if [[ -n "$total_cost" ]]; then
   cost_fmt=$(printf '$%.2f' "$total_cost")
   cost_cents=$(printf '%.0f' "$(echo "$total_cost * 100" | bc 2>/dev/null || echo 0)")
   if (( cost_cents >= 1500 )); then
-    printf '\033[38;5;167m%s \033[0m' "$cost_fmt"
+    printf '\033[38;2;243;139;168m%s \033[0m' "$cost_fmt"
   elif (( cost_cents >= 500 )); then
-    printf '\033[38;5;136m%s \033[0m' "$cost_fmt"
+    printf '\033[38;2;249;226;175m%s \033[0m' "$cost_fmt"
   else
-    printf '\033[38;5;237m%s \033[0m' "$cost_fmt"
+    printf '\033[38;2;108;112;134m%s \033[0m' "$cost_fmt"
   fi
 fi
 
 # Segment: lines changed (+added aqua / -removed red) — only when non-zero
 la=${lines_added:-0}; lr=${lines_removed:-0}
 if (( la > 0 || lr > 0 )); then
-  printf '\033[38;5;71m+%d\033[0m/\033[38;5;167m-%d\033[0m ' "$la" "$lr"
+  printf '\033[38;2;166;227;161m+%d\033[0m/\033[38;2;243;139;168m-%d\033[0m ' "$la" "$lr"
 fi
 
 # Segment: session duration (dim grey)
@@ -199,6 +201,6 @@ if [[ -n "$dur_ms" ]]; then
   if   (( dur_s >= 3600 )); then dstr=$(printf '%dh%dm' $((dur_s/3600)) $(((dur_s%3600)/60)))
   elif (( dur_s >= 60 ));   then dstr=$(printf '%dm' $((dur_s/60)))
   else dstr=$(printf '%ds' "$dur_s"); fi
-  printf '\033[38;5;237m%s \033[0m' "$dstr"
+  printf '\033[38;2;108;112;134m%s \033[0m' "$dstr"
 fi
 exit 0
