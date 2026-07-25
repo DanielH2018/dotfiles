@@ -7,10 +7,18 @@ Distilled from Anthropic's *Building Effective Agents* and the multi-agent resea
 heavy reading/searching to subagents. Never delegate the synthesis or the final write-up — coordinate,
 integrate, and write the answer yourself.
 
-**When to delegate at all.** Delegate only for work that is genuinely independent and sizeable — a wide
-multi-file investigation, a broad gather across distinct sub-topics. Don't delegate what you'd finish
-yourself in a handful of tool calls, and don't spawn a subagent to verify or double-check your own work.
-If one subagent can do the job, use one rather than several, and keep spawn counts low.
+**When to delegate at all.** The trigger is countable, because the judgment-call version of this rule
+measurably did not fire — across five real sessions it ran 710 inline Bash calls to 19 delegations.
+**If answering a question would take 3+ exploratory calls — searching for something whose location you
+don't already know — dispatch a subagent and keep only its findings.** Exploratory search is precisely
+the work whose tool output *and* reasoning should never have entered the main context; a subagent pays
+both costs in its own window and returns a conclusion. The exception is the targeted read: when you
+already know the file and the symbol, just read it, however many calls that takes.
+
+Beyond that trigger, delegate work that is genuinely independent and sizeable — a wide multi-file
+investigation, a broad gather across distinct sub-topics. Don't spawn a subagent to verify or
+double-check your own work. If one subagent can do the job, use one rather than several, and keep
+spawn counts low.
 
 **Cost lever.** Inside a Workflow, reach for `effort` before dropping model tier: `low` and `medium` hold
 quality at a fraction of the tokens, so a cheap gather stage is usually `effort: 'low'` on the inherited
