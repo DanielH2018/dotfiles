@@ -141,6 +141,8 @@ declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
 declare -A HOST_SSH=( [daniel-server]="daniel-server" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
+# The wezterm domain a WSL-side tab must be pinned to (config.wsl_domains in wezterm.lua).
+WSL_DOMAIN="${AGENT_VIEW_WSL_DOMAIN:-WSL:Ubuntu}"
 # Dir a picker-spawned Windows claude lands in. MUST be a folder whose Claude trust
 # dialog is already accepted — Claude runs no hooks in an untrusted folder, so a session
 # started somewhere untrusted (e.g. a fresh ~/dev) never fires agent-view-state.sh and
@@ -1037,12 +1039,18 @@ spawn_in_backend() {  # $1=inner (new-pane cmd) $2=title $3=named (bare-shell na
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux new-window -n "$title" "$inner"; return 0
   fi
-  # Deliberately NOT routed through av_wezterm: this one only makes sense where the local cli
-  # owns the GUI. From WSL it does not, and wezterm.exe would resolve the bare `bash` on the
-  # Windows side (the reason the Windows spawns below name $WIN_GITBASH explicitly). So WSL
-  # falls through to the named-tmux launcher, which is the jumpable outcome anyway.
-  if [ -z "${WSL_DISTRO_NAME:-}" ] && [ -n "${WEZTERM_PANE:-}" ] && command -v wezterm >/dev/null 2>&1; then
-    wezterm cli --no-auto-start spawn -- bash -lc "$inner" >/dev/null 2>&1; return 0
+  # WezTerm: a new tab, via the cli that can actually reach the GUI. From WSL that is
+  # wezterm.exe — the Linux cli sees no GUI there and would quietly daemonize its OWN headless
+  # wezterm-mux-server and spawn into it, where nobody is attached, which is how CTRL+N read as
+  # doing nothing at all. `bash` still resolves WSL-side because --domain-name pins the spawn to
+  # the WSL domain (unlike the Windows spawns above, which want $WIN_GITBASH in `local`); the
+  # pin also keeps this correct if wezterm.lua's default_domain ever moves. No reachable cli
+  # falls through to the named launcher below — in place is worse than a tab, but it is visible.
+  if [ -n "${WEZTERM_PANE:-}" ] && av_wezterm_bin; then
+    local -a dom=()
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then dom=(--domain-name "$WSL_DOMAIN"); fi
+    "$_wezbin" cli --no-auto-start spawn "${dom[@]}" -- bash -lc "$inner" >/dev/null 2>&1
+    return 0
   fi
   # Bare shell (no mux): exec the NAMED launcher so the session lands in a named, jumpable
   # tmux session — the case cts/ct exist to fix. Replaces the picker's tty, as before.
