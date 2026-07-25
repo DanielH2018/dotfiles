@@ -116,8 +116,11 @@ def test_malformed_line_tolerated():
 
 
 if __name__ == "__main__":
-    test_success()
-    test_error_exit()
-    test_missing_result_is_error()
-    test_malformed_line_tolerated()
+    # Discovered, not hand-listed. A written-out call list silently skips any
+    # test added to the file but forgotten in the list, then prints OK for the
+    # ones it did run — and the harness sees only the exit code, so a forgotten
+    # *failing* test still reads as a pass.
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
     print("OK")

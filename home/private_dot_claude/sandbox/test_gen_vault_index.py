@@ -20,7 +20,7 @@ def write(path, text):
         f.write(text)
 
 
-def run_case():
+def test_file_entries_exclude_unlisted_and_claude_md():
     with tempfile.TemporaryDirectory() as d:
         vault = os.path.join(d, "vault")
         write(
@@ -57,10 +57,9 @@ def run_case():
         assert "On-Call" not in text and "On_Call" not in text, "sensitive page leaked"
         assert "AWS account IDs" not in text, "sensitive summary leaked"
         assert "trap" not in text and "CLAUDE" not in text, "CLAUDE.md not excluded"
-        print("ok")
 
 
-def run_dir_case():
+def test_directory_entry_walk_skips_claude_md_and_index():
     with tempfile.TemporaryDirectory() as d:
         vault = os.path.join(d, "vault")
         write(
@@ -91,9 +90,14 @@ def run_dir_case():
         assert "safe reference page" in text, "allowlisted dir page missing"
         assert "dir-walk trap claude" not in text, "CLAUDE.md leaked via dir walk"
         assert "dir-walk trap index" not in text, "index.md leaked via dir walk"
-        print("ok (dir)")
 
 
 if __name__ == "__main__":
-    run_case()
-    run_dir_case()
+    # Discovered, not hand-listed. A written-out call list silently skips any
+    # test added to the file but forgotten in the list, then prints OK for the
+    # ones it did run — and the harness sees only the exit code, so a forgotten
+    # *failing* test still reads as a pass.
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+    print("OK")
