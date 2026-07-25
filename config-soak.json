@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "97c5ca367de7234c489e60167f3c60bfbe3d073e9d1762ee146c8189e0dbb9df",
-      "landed": "2026-07-25T19:06:23.063Z"
+      "hash": "f18e9d1336ee96ebb63faaba50705638440dba2038d24b5d700d097a1774e586",
+      "landed": "2026-07-25T19:39:51.131Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -33,8 +33,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "06d6e78cdf09de5eb592e9dfa07e4b25e6da783a70c8ab432c58055add71ee19",
-      "landed": "2026-07-09T16:24:12.841Z"
+      "hash": "4a751e326dd0bdd9a019427e0165e829f74e8bed399842a90273c33327c1fb82",
+      "landed": "2026-07-25T19:39:51.131Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
