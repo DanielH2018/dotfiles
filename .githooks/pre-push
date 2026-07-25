@@ -23,6 +23,9 @@
 #                             settings merge, dotsync, evals lib); offline, self-skips the
 #                             chezmoi-template tests when chezmoi isn't installed.
 #
+# Both test steps print a tq digest rather than the runner's own log — see
+# tq_node below. TQ_OFF=1 git push restores the raw output.
+#
 # Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
 
 set -u
@@ -58,6 +61,37 @@ run() { # run "<label>" <cmd...>
   fi
 }
 
+# node --test relays a line per test: ~65KB / 680 lines on a run where nothing
+# is wrong, which is the bulk of everything this gate prints. tq collapses that
+# to a one-line verdict, and on failure to the failures alone — file:line, the
+# assertion, the failing test's output — plus a json path holding the untrimmed
+# record. It re-exports the runner's exit code verbatim (bin/tq returns
+# result.exit; no adapter assigns to it), so `run` above still branches on
+# node's own verdict. tq decides what gets printed, never what passes.
+#
+# Resolved from the repo, not from PATH: a gate should exercise the tq being
+# pushed, and this has to work in a clone where `chezmoi apply` has not run.
+# Falls back to the raw runner when tq or python3 is absent, or on TQ_OFF=1 —
+# tq buffers, so a long suite says nothing until it finishes.
+TQ="$ROOT/home/dot_local/bin/executable_tq"
+if [ -z "${TQ_OFF:-}" ] && [ -f "$TQ" ] && command -v python3 >/dev/null 2>&1; then
+  TQ_HOME="$ROOT/home/dot_local/share/tq"
+  export TQ_HOME
+  # --git-path, not $ROOT/.git: in a worktree that is a file, not a directory.
+  # Pinning TQ_JSON also stops tq's mkstemp default littering /tmp with a
+  # never-read record on every green push.
+  TQ_JSON_DIR="$(git rev-parse --git-path tq)"
+  mkdir -p "$TQ_JSON_DIR" || TQ_JSON_DIR=""
+  # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
+  tq_node() { # tq_node <json-name> [node --test args...]
+    name="$1"; shift
+    TQ_JSON="${TQ_JSON_DIR:+$TQ_JSON_DIR/$name.json}" python3 "$TQ" node --test "$@"
+  }
+else
+  # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
+  tq_node() { shift; node --test "$@"; }
+fi
+
 # 1. Deterministic review/soak ledger — no LLM, no judgement.
 run "config-soak (review ledger)" node bin/config-soak status
 
@@ -77,12 +111,15 @@ if [ -n "$QFILES" ]; then
     python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
 fi
 
-# 3. Injection-hook red-team regression guard.
-run "screen-injection red-team" node tests/screen-injection.test.js
+# 3. Injection-hook red-team regression guard. Run through --test rather than as
+#    a bare script so the digest covers it too; the file is a node:test suite
+#    either way, and step 4's glob picks it up as well — it stays a named step so
+#    a red-team regression is attributed instead of buried in the suite total.
+run "screen-injection red-team" tq_node injection tests/screen-injection.test.js
 
 # 4. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
 #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
-run "unit tests (node --test)" node --test
+run "unit tests (node --test)" tq_node unit
 
 if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2

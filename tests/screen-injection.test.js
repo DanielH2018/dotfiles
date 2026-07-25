@@ -43,6 +43,16 @@ const STUB_TRUE = `printf '%s' '{"injection":true,"reason":"stub"}'`;
 const STUB_FALSE = `printf '%s' '{"injection":false,"reason":"stub"}'`;
 const clsOn = (cmd) => ({ SCREEN_INJECTION_CLASSIFIER: '1', SCREEN_INJECTION_CLASSIFY_CMD: cmd });
 
+// Every test below is a `for` over one fixture category, so an empty category
+// passes without asserting anything. The counts used to be visible only in the
+// console.log at the bottom of this file, which a digested pre-push run does not
+// print — so assert the corpus is populated instead of trusting someone to read it.
+test('fixture corpus is populated', () => {
+  for (const category of ['flag', 'silent', 'flag_via_classifier', 'classifier_silent']) {
+    assert.ok(fixtures[category]?.length > 0, `fixture category must not be empty: ${category}`);
+  }
+});
+
 // Layer 1 — deterministic, classifier OFF (default).
 test('flag fixtures are warned by Layer 1', () => {
   for (const f of fixtures.flag) {
