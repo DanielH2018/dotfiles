@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="1" tests="5" time="0.097" timestamp="2026-07-24T21:04:44.313752-05:00" hostname="host"><testcase classname="test_markers" name="test_xfail_that_fails" time="0.001"><skipped type="pytest.xfail" message="known bug #123" /></testcase><testcase classname="test_markers" name="test_xpass_nonstrict" time="0.000" /><testcase classname="test_markers" name="test_xpass_strict" time="0.000"><failure message="[XPASS(strict)] strict guard">[XPASS(strict)] strict guard</failure><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="test_markers" name="test_normal_pass" time="0.000" /><testcase classname="test_markers" name="test_normal_fail" time="0.000"><failure message="assert 3 == 4">test_markers.py:24: in test_normal_fail
+    assert 3 == 4
+E   assert 3 == 4</failure><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase></testsuite></testsuites>

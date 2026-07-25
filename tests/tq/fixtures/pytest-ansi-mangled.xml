@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="1" tests="4" time="0.316" timestamp="2026-07-24T20:05:47.441491-05:00" hostname="host"><testcase classname="test_spike" name="test_passes" time="0.000" /><testcase classname="test_spike" name="test_fails_with_output" time="0.029"><failure message="AssertionError: boom mismatch&#10;assert 'a' == 'b'&#10;  &#10;  #x1B[0m#x1B[91m- b#x1B[39;49;00m#x1B[90m#x1B[39;49;00m&#10;  #x1B[92m+ a#x1B[39;49;00m#x1B[90m#x1B[39;49;00m">#x1B[1m#x1B[31mtest_spike.py#x1B[0m:13: in test_fails_with_output
+    #x1B[0m#x1B[94massert#x1B[39;49;00m #x1B[33m"#x1B[39;49;00m#x1B[33ma#x1B[39;49;00m#x1B[33m"#x1B[39;49;00m == #x1B[33m"#x1B[39;49;00m#x1B[33mb#x1B[39;49;00m#x1B[33m"#x1B[39;49;00m, #x1B[33m"#x1B[39;49;00m#x1B[33mboom mismatch#x1B[39;49;00m#x1B[33m"#x1B[39;49;00m#x1B[90m#x1B[39;49;00m
+#x1B[1m#x1B[31mE   AssertionError: boom mismatch#x1B[0m
+#x1B[1m#x1B[31mE   assert 'a' == 'b'#x1B[0m
+#x1B[1m#x1B[31mE     #x1B[0m
+#x1B[1m#x1B[31mE     #x1B[0m#x1B[91m- b#x1B[39;49;00m#x1B[90m#x1B[39;49;00m#x1B[0m
+#x1B[1m#x1B[31mE     #x1B[92m+ a#x1B[39;49;00m#x1B[90m#x1B[39;49;00m#x1B[0m</failure><system-out>--------------------------------- Captured Out ---------------------------------
+IMPORTANT: config key missing from rendered template
+subproc stdout detail
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+stderr-side detail
+subproc stderr detail
+
+</system-err></testcase><testcase classname="test_spike" name="test_raises" time="0.000"><failure message="RuntimeError: unexpected explosion">#x1B[1m#x1B[31mtest_spike.py#x1B[0m:17: in test_raises
+    #x1B[0m#x1B[94mraise#x1B[39;49;00m #x1B[96mRuntimeError#x1B[39;49;00m(#x1B[33m"#x1B[39;49;00m#x1B[33munexpected explosion#x1B[39;49;00m#x1B[33m"#x1B[39;49;00m)#x1B[90m#x1B[39;49;00m
+#x1B[1m#x1B[31mE   RuntimeError: unexpected explosion#x1B[0m</failure><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase><testcase classname="test_spike" name="test_skipped" time="0.000"><skipped type="pytest.skip" message="not today">test_spike.py:22: not today</skipped><system-out>--------------------------------- Captured Out ---------------------------------
+
+</system-out><system-err>--------------------------------- Captured Err ---------------------------------
+
+</system-err></testcase></testsuite></testsuites>
