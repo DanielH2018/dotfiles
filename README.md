@@ -67,3 +67,16 @@ acknowledged before it counts as reviewed, and is only flagged stable after a so
 
 It is the deterministic complement to the LLM-driven `/review-setup` skill. See
 `docs/superpowers/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
+
+## pre-push gate — one-time install per clone
+
+`.githooks/pre-push` runs config-soak, instruction quality, the injection red-team, and the
+`node --test` suite. Git does not clone hook configuration, so **each clone must opt in once**:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Without it the hook is inert and every check above is advisory — the repo looks gated while
+nothing runs. Verify with `git config core.hooksPath` (expect `.githooks`); a `git push` then
+prints the four check headings before it contacts the remote.
