@@ -156,7 +156,9 @@ def test_summarize_with_no_content_skips_network():
 
 
 if __name__ == "__main__":
+    ran = 0
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-    print("OK")
+            ran += 1
+    print(f"OK {ran}")

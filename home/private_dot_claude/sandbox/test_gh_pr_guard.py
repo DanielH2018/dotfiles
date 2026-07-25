@@ -90,7 +90,9 @@ def test_catches_compound_and_continuation():
 
 
 if __name__ == "__main__":
+    ran = 0
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
             fn()
-    print("OK")
+            ran += 1
+    print(f"OK {ran}")
