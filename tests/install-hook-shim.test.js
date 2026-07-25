@@ -119,6 +119,39 @@ test('repairs a deleted shim and a tampered body', { skip }, () => {
   assert.match(fs.readFileSync(shimPath(repo), 'utf8'), /unset GIT_DIR/);
 });
 
+test('replaces the shim by rename, leaving a push already reading it intact', { skip }, () => {
+  const repo = makeRepo();
+  run(repo);
+  const shim = shimPath(repo);
+
+  // Drift, so the next run actually rewrites.
+  const stale = '#!/usr/bin/env bash\nexit 0\n';
+  fs.writeFileSync(shim, stale, { mode: 0o755 });
+  const staleIno = fs.statSync(shim).ino;
+
+  // Stand in for a push mid-flight: bash reads a hook script incrementally as it
+  // executes, so truncating the path in place would hand that shell the new
+  // bytes partway through. Holding the descriptor is what a running push has.
+  const fd = fs.openSync(shim, 'r');
+  try {
+    assert.match(run(repo).stdout, /repaired/);
+
+    assert.strictEqual(fs.readFileSync(fd, 'utf8'), stale,
+      'the open descriptor still sees the file it opened, not the replacement');
+    assert.notStrictEqual(fs.statSync(shim).ino, staleIno,
+      'the path points at a new inode — a rename, not a truncate');
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  assert.match(fs.readFileSync(shim, 'utf8'), /unset GIT_DIR/);
+  assert.ok(fs.statSync(shim).mode & 0o111, 'replacement is executable');
+  assert.deepStrictEqual(
+    fs.readdirSync(path.dirname(shim)).filter((f) => f !== 'pre-push'), [],
+    'no temp file left behind',
+  );
+});
+
 test('from a linked worktree, installs into the shared .git', { skip }, () => {
   const repo = makeRepo();
   const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shim-wt-')), 'w');
