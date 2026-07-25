@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "453fcebfdfd60816f81bc7da37628a61ce9060b42675d717d182ee74de6ef967",
-      "landed": "2026-07-25T02:56:53.679Z"
+      "hash": "f45351a257f78a5a4856ab0395c9d907ec88ff412036602e5460d95cbd03ffd5",
+      "landed": "2026-07-25T14:32:11.803Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -150,6 +150,11 @@
       "path": "home/private_dot_claude/hooks/executable_suggest-artifact.sh",
       "hash": "fbb53728a9a18b565e39cf9df1f791c8ad41cdff9bc8aab0b13410116fe90a9b",
       "landed": "2026-07-09T21:18:00.291Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
+      "hash": "8e186ccc95fbe53e1eb30f06164812e0fff4089e4321dda523da0e25335db7e3",
+      "landed": "2026-07-25T14:32:11.803Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
