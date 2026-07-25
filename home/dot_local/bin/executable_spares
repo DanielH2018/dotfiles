@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# spares — tell claimed Claude sessions apart from idle pre-warmed spares.
+#
+# `ps` cannot do this. A session dispatched onto a spare KEEPS its `--bg-spare` argv once
+# the claim socket is consumed, so every argv scan reports live working sessions as idle
+# spares. The daemon roster is the only oracle, and its `pid` field is the bg-pty-host —
+# not the bg-spare worker underneath it — so a pid-keyed join misses every worker. The
+# join here runs through the spare id that both socket paths share:
+# <id>.pty.sock (roster + pty-host argv) and <id>.claim.sock (worker argv).
+#
+# Exits 2 when the roster is unreadable: nothing can be classified without it, and
+# defaulting to "spare" is exactly the wrong answer this tool exists to prevent.
+#
+# Test seams: SPARES_PROC_DIR, SPARES_ROSTER.
+set -u
+
+proc_dir="${SPARES_PROC_DIR:-/proc}"
+roster="${SPARES_ROSTER:-$HOME/.claude/daemon/roster.json}"
+sessions_dir="${SPARES_SESSIONS_DIR:-$HOME/.claude/sessions}"
+
+as_json=0
+for arg in "$@"; do
+  case "$arg" in
+    --json) as_json=1 ;;
+    -h|--help) printf 'usage: spares [--json]\n\nClassify every claude bg-spare process as claimed (a live session) or\nan unclaimed spare, joined against the daemon roster.\n'; exit 0 ;;
+    *) printf 'spares: unknown option %s\n' "$arg" >&2; exit 64 ;;
+  esac
+done
+
+pagesize=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+
+# <cmdline> <flag> <suffix> -> the spare id embedded in that flag's socket path
+sock_id() {
+  local rest=${1#*"$2" }
+  rest=${rest%% *}
+  rest=${rest##*/}
+  printf '%s' "${rest%"$3"}"
+}
+
+scan_procs() {
+  local d pid cmd kind id rss res
+  for d in "$proc_dir"/[0-9]*; do
+    [ -r "$d/cmdline" ] || continue
+    pid=${d##*/}
+    cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null)
+    # Order matters: a pty-host's argv also carries --bg-spare, after a `--`.
+    case " $cmd " in
+      *" --bg-pty-host "*) kind=pty;  id=$(sock_id "$cmd" --bg-pty-host .pty.sock) ;;
+      *" --bg-spare "*)    kind=work; id=$(sock_id "$cmd" --bg-spare .claim.sock) ;;
+      *) continue ;;
+    esac
+    [ -n "$id" ] || continue
+    rss=0
+    if [ -r "$d/statm" ] && read -r _ res _ <"$d/statm" 2>/dev/null; then
+      case "$res" in ''|*[!0-9]*) res=0 ;; esac
+      rss=$((res * pagesize / 1024))
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$kind" "$id" "$pid" "$rss"
+  done
+}
+
+roster_ok=1
+[ -r "$roster" ] || roster_ok=0
+
+claimed='[]'
+if [ "$roster_ok" = 1 ]; then
+  claimed=$(jq -c '
+    [ (.workers // {}) | to_entries[] | .value
+      | select((.ptySock // "") | endswith(".pty.sock"))
+      | { id:      (.ptySock | split("/") | last | sub("\\.pty\\.sock$"; "")),
+          session: (.sessionId // ""),
+          cwd:     (.cwd // ""),
+          name:    (.dispatch.seed.name // "") } ]
+  ' "$roster" 2>/dev/null) || claimed='[]'
+  [ -n "$claimed" ] || claimed='[]'
+fi
+
+# Keyed by worker pid — the one id the roster does not carry — so it only lines up once
+# the pty-host/worker join above is right.
+sessions='[]'
+if [ -d "$sessions_dir" ]; then
+  sessions=$(jq -c -s '[ .[] | { pid, name: (.name // ""), status: (.status // "") } ]' \
+    "$sessions_dir"/*.json 2>/dev/null) || sessions='[]'
+  [ -n "$sessions" ] || sessions='[]'
+fi
+
+report=$(scan_procs | jq -R -s \
+  --argjson claimed "$claimed" --argjson sessions "$sessions" --argjson ok "$roster_ok" '
+  [ split("\n")[] | select(length > 0) | split("\t")
+    | { kind: .[0], id: .[1], pid: (.[2] | tonumber), rssKb: (.[3] | tonumber) } ] as $procs
+  | ($claimed | INDEX(.id)) as $by_id
+  | ($sessions | INDEX(.pid | tostring)) as $by_pid
+  | ([ $procs[] | select(.kind == "pty") ] | INDEX(.id)) as $pty
+  | [ $procs[]
+      | select(.kind == "work")
+      | . as $w
+      | ($by_id[$w.id]) as $c
+      | ($by_pid[$w.pid | tostring]) as $s
+      | { spare:      $w.id,
+          pid:        $w.pid,
+          ptyHostPid: ($pty[$w.id].pid // null),
+          rssKb:      $w.rssKb,
+          ptyRssKb:   ($pty[$w.id].rssKb // 0),
+          state:      (if $ok == 0 then "unknown" elif $c then "claimed" else "spare" end),
+          status:     (if ($s.status // "") == "" then null else $s.status end),
+          session:    (if $c then $c.session else null end),
+          name:       (if   ($s.name // "") != "" then $s.name
+                       elif ($c.name // "") != "" then $c.name
+                       else null end),
+          cwd:        (if $c then $c.cwd else null end) } ]
+  | sort_by(.state, .spare) as $rows
+  | { rows: $rows,
+      summary: {
+        claimed:      ([ $rows[] | select(.state == "claimed") ] | length),
+        spare:        ([ $rows[] | select(.state == "spare")   ] | length),
+        unknown:      ([ $rows[] | select(.state == "unknown") ] | length),
+        busy:         ([ $rows[] | select(.status == "busy")   ] | length),
+        idle:         ([ $rows[] | select(.status == "idle")   ] | length),
+        claimedRssKb: ([ $rows[] | select(.state == "claimed") | .rssKb + .ptyRssKb ] | add // 0),
+        spareRssKb:   ([ $rows[] | select(.state == "spare")   | .rssKb + .ptyRssKb ] | add // 0) } }
+')
+
+if [ "$as_json" = 1 ]; then
+  printf '%s\n' "$report"
+else
+  printf '%s' "$report" | jq -r '
+    def mb: if . >= 1024 then "\(. / 1024 | round)M" else "\(.)K" end;
+    (["SPARE", "WORKER", "PTYHOST", "RSS", "STATE", "STATUS", "SESSION"] | @tsv),
+    (.rows[] | [ .spare, (.pid | tostring), (.ptyHostPid // "-" | tostring),
+                 (.rssKb | mb), .state, (.status // "-"),
+                 (.name // (if .session then .session[0:8] else "-" end)) ] | @tsv)
+  ' | column -t -s "$(printf '\t')"
+  printf '%s' "$report" | jq -r '
+    def mb: if . >= 1024 then "\(. / 1024 | round)M" else "\(.)K" end;
+    "\n\(.summary.claimed) claimed" +
+    (if .summary.busy + .summary.idle > 0
+       then " (\(.summary.busy) busy, \(.summary.idle) idle)" else "" end) +
+    " \(.summary.claimedRssKb | mb) · " +
+    "\(.summary.spare) unclaimed spare \(.summary.spareRssKb | mb)" +
+    (if .summary.unknown > 0 then " · \(.summary.unknown) unknown" else "" end) +
+    "\nrss is per-process resident and double-counts pages shared between them"'
+fi
+
+[ "$roster_ok" = 1 ] || { printf 'spares: cannot read roster %s — nothing classified\n' "$roster" >&2; exit 2; }
