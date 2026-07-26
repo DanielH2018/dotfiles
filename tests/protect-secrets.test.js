@@ -3,7 +3,9 @@
 // while ordinary source files pass. Offline. Skips cleanly if bash/jq are unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
@@ -54,4 +56,30 @@ test('sensitive file paths are denied', { skip }, () => {
 
 test('ordinary source files are allowed', { skip }, () => {
   for (const p of ALLOW) assert.notStrictEqual(decision(runHook(p)), 'deny', `should not deny: ${p}`);
+});
+
+// Every decision here is routed through jq, so a PATH without jq used to make the hook
+// exit 0 with empty stdout — the secret-file layer gone, and nothing saying so. Run the
+// hook with an empty PATH (the preflight needs only shell builtins) and require a
+// decision. spawnSync, not execFileSync: the hook exits before reading stdin, and the
+// resulting EPIPE would surface as a throw.
+const noJqSkip = skip || (fs.existsSync('/bin/bash') ? false : '/bin/bash unavailable');
+function runHookWithoutJq(file_path) {
+  const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'nojq-'));
+  try {
+    return spawnSync('/bin/bash', [HOOK], {
+      input: JSON.stringify({ tool_input: { file_path } }),
+      encoding: 'utf8',
+      env: { PATH: emptyPath, HOME: os.homedir() },
+    }).stdout || '';
+  } finally {
+    fs.rmSync(emptyPath, { recursive: true, force: true });
+  }
+}
+
+test('asks rather than failing open when jq is unavailable', { skip: noJqSkip }, () => {
+  assert.strictEqual(decision(runHookWithoutJq('/home/u/.ssh/id_rsa')), 'ask');
+  // The path cannot be parsed without jq, so the fallback is unconditional — an
+  // ordinary file gets the same prompt. That is the point: visible, not silent.
+  assert.strictEqual(decision(runHookWithoutJq('/home/u/project/README.md')), 'ask');
 });
