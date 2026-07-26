@@ -43,6 +43,16 @@ Integrate with `bin/land`, which rebases, pushes, and merges the PR under a repo
 two sessions can't land onto a main the other is still moving. Background jobs don't run it —
 they open a draft PR and stop there.
 
+To *test* a branch, don't go to its worktree — bring it to the primary checkout with
+`bin/try <branch>`, and `bin/try --back` when you're done. It detaches onto the branch, which
+git permits even while a worktree still holds it, or fast-forwards main onto it with
+`--merge`; then it deploys. Going to the worktree instead is not just inconvenient, it is
+wrong: chezmoi reads its source from `~/.local/share/chezmoi`, so an apply from a worktree
+needs `--source`, and a plain apply from the primary checkout deploys main rather than the
+branch you meant to test. `try` holds its own lock and makes the same refusal
+`chezmoi-apply-guard.sh` does, since that hook matches the Bash command string and never sees
+the apply inside a script.
+
 ## Two different "sandboxes" — don't conflate
 
 - **OS sandbox**: the `sandbox` block *inside* the generated `~/.claude/settings.json`

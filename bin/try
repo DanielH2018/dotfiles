@@ -14,11 +14,13 @@
 # Only `git checkout <branch>` is refused, and that refusal is the property worth
 # keeping — it is what stops a session's branch hijacking the primary checkout.
 #
-#   try <branch>          detach onto <branch>, leaving main where it is
-#   try --merge <branch>  fast-forward main onto <branch> first
-#   try --back            return to main
-#   try --diff            stop after chezmoi diff — moves HEAD, deploys nothing
-#   try --dry-run         print the plan, touch nothing
+# bin/ is not on PATH, so this is invoked by path, from the repo root:
+#
+#   bin/try <branch>          detach onto <branch>, leaving main where it is
+#   bin/try --merge <branch>  fast-forward main onto <branch> first
+#   bin/try --back            return to main
+#   bin/try --diff            stop after chezmoi diff — moves HEAD, deploys nothing
+#   bin/try --dry-run         print the plan, touch nothing
 #
 # --merge is the mode that leaves a trace: main moves locally, and `land` still
 # integrates through the PR, so a branch merged here and landed later puts commits
@@ -46,7 +48,7 @@ while [ $# -gt 0 ]; do
     --back) MODE=back ;;
     --diff) DIFF_ONLY=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) printf 'try: unknown flag %s\n' "$1" >&2; exit 2 ;;
     *) [ -z "$BRANCH" ] || die "one branch at a time (got $BRANCH, then $1)"
        BRANCH=$1 ;;
