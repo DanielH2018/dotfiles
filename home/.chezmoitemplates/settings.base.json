@@ -11,6 +11,25 @@
          save it, so the aggressive setting was degrading tomorrow's memory too.
          85 keeps a safety margin without paying full-window cache-read latency. */}}
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "85",
+    {{/* Without this, auto-compaction does not run at all on claude-opus-5. The client
+         resolves a compaction window via PY(); when every source misses it returns
+         source:"auto", and the auto-compact check bails on exactly that case
+         (`if (Gbe() && !s8e(t,r)) return !1`) rather than falling back to a default.
+         claude-opus-5 is absent from the 2.1.218 model tables, so it hits that path and
+         the client silently stops managing context — no compaction and no blocking.
+         Setting this env var takes PY's first branch, yielding source:"env", which
+         satisfies the guard. The same fix covers the other native-1M models
+         (opus-4-7/4-8, fable-5, mythos-5), which fall into the same hole.
+
+         Value derivation — the goal is compaction at 60% of the real 1M window:
+           budget E    = window - min(max_output, 20000) = 726000 - 20000 = 706000
+           compact at  = min(floor(E * 85/100), E - 13000)
+                       = min(600100, 693000) = 600100  ->  60.0% of 1M
+         Tuning the window rather than the percentage keeps 200k models unchanged:
+         PY clamps to min(Xv, configured), so they stay at 200000 and compact at
+         153000 as before. Requires model "opus[1m]" below — without the suffix Xv is
+         200000 and this value is clamped away. */}}
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
     "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop") }},
@@ -505,7 +524,14 @@
     "defaultMode": "auto",
     "disableBypassPermissionsMode": "disable"
   },
-  "model": "claude-opus-5",
+  {{/* opus[1m], not claude-opus-5: the [1m] suffix is the only lever that raises the
+       client's resolved window (jb() matches /\[1m\]/i and returns 1e6, otherwise
+       claude-opus-5 falls through to the 200000 default because it is absent from the
+       model table). CLAUDE_CODE_AUTO_COMPACT_WINDOW above is clamped to
+       min(resolved, configured), so without this suffix it would be capped at 200000
+       and compaction would fire at 153000 — a sixth of the real window. Verified the
+       alias resolves to claude-opus-5 and is honoured under enforceAvailableModels. */}}
+  "model": "opus[1m]",
   "effortLevel": "high",
   "fallbackModel": [
     "claude-sonnet-5"

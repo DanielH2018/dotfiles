@@ -164,10 +164,18 @@ fi
 
 if [[ -n "$used_int" ]]; then
   # Auto-compaction triggers at min(pct_override%, budget-13000) where budget is the window less
-  # a 20k output reserve. Below ~33k of window the reserves swamp it; fall back to a flat 90.
+  # a 20k output reserve. The window it compacts against is min(real window,
+  # CLAUDE_CODE_AUTO_COMPACT_WINDOW) — the bar is still drawn against the real window, so
+  # derive the threshold from the former and express it as a fraction of the latter, or red
+  # lands at the wrong place. Below ~33k the reserves swamp the budget; fall back to a flat 90.
   compact_pct=90
-  if [[ -n "$ctx_window" ]] && (( ctx_window > 33000 )); then
-    ctx_budget=$(( ctx_window - 20000 ))
+  ctx_compact_window="$ctx_window"
+  if [[ "${CLAUDE_CODE_AUTO_COMPACT_WINDOW:-}" =~ ^[0-9]+$ && -n "$ctx_window" ]] \
+     && (( CLAUDE_CODE_AUTO_COMPACT_WINDOW > 0 && CLAUDE_CODE_AUTO_COMPACT_WINDOW < ctx_window )); then
+    ctx_compact_window="$CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+  fi
+  if [[ -n "$ctx_window" ]] && (( ctx_compact_window > 33000 )); then
+    ctx_budget=$(( ctx_compact_window - 20000 ))
     compact_at=$(( ctx_budget - 13000 ))
     if [[ "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" =~ ^[0-9]+$ ]] \
        && (( CLAUDE_AUTOCOMPACT_PCT_OVERRIDE > 0 && CLAUDE_AUTOCOMPACT_PCT_OVERRIDE <= 100 )); then

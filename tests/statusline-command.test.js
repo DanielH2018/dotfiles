@@ -88,12 +88,14 @@ const RED = '\x1b[38;2;243;139;168m';
 // otherwise these assertions flip depending on the developer's own shell. XDG_CACHE_HOME is
 // redirected per call for the same reason, and so that the learned-window cache these cases
 // write never touches the developer's real one.
-function runCtx({ model, tokens, size, pctOverride }) {
+function runCtx({ model, tokens, size, pctOverride, compactWindow }) {
   const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-ctx-'));
   try {
     const env = { ...process.env, XDG_CACHE_HOME: cacheHome };
     if (pctOverride === undefined) delete env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE;
     else env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(pctOverride);
+    if (compactWindow === undefined) delete env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+    else env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compactWindow);
     const input = JSON.stringify({
       model: { id: model },
       context_window: { total_input_tokens: tokens, context_window_size: size },
@@ -168,6 +170,28 @@ test('model labels are derived per family, including releases postdating the scr
   assert.ok(!/\bopus5\b/.test(label('claude-opus-4-5')), 'opus-4-5 must not be mislabelled opus5');
   // A family this script does not know falls back to the payload's display name.
   assert.ok(label('some-other-vendor-model').includes('Fallback Name'), 'unknown family falls back');
+});
+
+test('colour tiers follow CLAUDE_CODE_AUTO_COMPACT_WINDOW, not the real window', { skip }, () => {
+  // The deployed config sets window=726000 + pct=85, so the client compacts at
+  // min(floor(706000*0.85), 706000-13000) = 600100 — 60% of the real 1M window.
+  // Without honouring the env var the bar would put red at 83% and miss it entirely.
+  const at = (tokens) => runCtx({
+    model: 'claude-opus-5', tokens, size: 200000, pctOverride: 85, compactWindow: 726000,
+  });
+  assert.ok(at(650000).includes(`${RED}ctx:65%`), 'past the 60% compaction point is red');
+  assert.ok(at(550000).includes(`${YELLOW}ctx:55%`), 'approaching it is yellow');
+  assert.ok(at(300000).includes(`${GREEN}ctx:30%`), 'well below it is green');
+  // The percentage itself stays a fraction of the real window, not of the compaction window.
+  assert.ok(at(600000).includes('ctx:60%'), '600k of 1M reads as 60%, not 82%');
+});
+
+test('a compaction window larger than the real one is ignored', { skip }, () => {
+  // PY clamps to min(real, configured), so a too-large value must not inflate the threshold.
+  const out = runCtx({
+    model: 'claude-sonnet-4-6', tokens: 150000, size: 200000, pctOverride: 85, compactWindow: 726000,
+  });
+  assert.ok(out.includes(`${YELLOW}ctx:75%`), `200k model keeps its own threshold, got: ${JSON.stringify(out.trim())}`);
 });
 
 test('an unknown model learns its real window from proof, and remembers it', { skip }, () => {
