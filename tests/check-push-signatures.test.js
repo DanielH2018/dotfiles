@@ -136,6 +136,55 @@ test('checks every ref in a multi-ref push', { skip }, () => {
   assert.match(err, /bad-on-side/);
 });
 
+// The case that made this gate unusable in practice. `gh pr merge --rebase` replays
+// commits server-side without signatures, so main collects unsigned commits on every
+// landing; a branch rebased onto main then carried them inside $remote_sha..$local_sha
+// and was rejected for history it neither wrote nor could amend.
+test('a branch rebased onto unsigned main history still passes', { skip }, () => {
+  const r = repo();
+  const git = (...args) => execFileSync('git', args, { cwd: r.root, encoding: 'utf8' }).trim();
+  const origin = path.join(scratch(), 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  git('remote', 'add', 'origin', origin);
+
+  r.commit('base');
+  git('push', '-q', 'origin', 'main');
+  git('checkout', '-qb', 'feature');
+  const early = r.commit('early work');
+  git('push', '-q', 'origin', 'feature');
+
+  // A landing lands on main unsigned, exactly as gh pr merge --rebase leaves it.
+  git('checkout', '-q', 'main');
+  const landed = r.commit('landed by gh, replayed unsigned', { signed: false });
+  git('push', '-q', 'origin', 'main');
+
+  // Rebasing feature onto that main puts the unsigned commit in its ancestry.
+  git('checkout', '-qB', 'feature', landed);
+  const head = r.commit('work after the rebase');
+  assert.ok(git('rev-list', `${early}..${head}`).split('\n').includes(landed),
+    'the unsigned commit really is inside the old push range');
+
+  const { code, err } = check(r.root, `refs/heads/feature ${head} refs/heads/feature ${early}\n`);
+  assert.strictEqual(code, 0, err);
+});
+
+test('an unsigned commit of your own still blocks, rebase or not', { skip }, () => {
+  const r = repo();
+  const git = (...args) => execFileSync('git', args, { cwd: r.root, encoding: 'utf8' }).trim();
+  const origin = path.join(scratch(), 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  git('remote', 'add', 'origin', origin);
+
+  const base = r.commit('base');
+  git('push', '-q', 'origin', 'main');
+  git('checkout', '-qb', 'feature');
+  const mine = r.commit('mine, unsigned', { signed: false });
+
+  const { code, err } = check(r.root, `refs/heads/feature ${mine} refs/heads/feature ${base}\n`);
+  assert.strictEqual(code, 1, 'widening the exclusion must not blind the gate');
+  assert.match(err, /mine, unsigned/);
+});
+
 test('does nothing when run by hand with no pre-push input', { skip }, () => {
   const r = repo();
   r.commit('base', { signed: false });
