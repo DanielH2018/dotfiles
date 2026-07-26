@@ -33,7 +33,7 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog };
-  delete env.TMUX; delete env.WEZTERM_PANE; delete env.CLAUDE_WRAP_TTY;
+  delete env.TMUX; delete env.WEZTERM_PANE; delete env.CLAUDE_WRAP_TTY; delete env.WSL_DISTRO_NAME;
   return { bin, env, tmuxLog, claudeLog };
 }
 const read = (p) => fs.readFileSync(p, 'utf8');
@@ -74,6 +74,17 @@ test('a native wezterm pane passes through (the wezterm keybind owns C-Left)', (
   const { env, tmuxLog } = makeEnv();
   run('bash', env, [], { CLAUDE_WRAP_TTY: '1', WEZTERM_PANE: '7' });
   assert.strictEqual(read(tmuxLog), '', 'WEZTERM_PANE suppresses the wrap');
+});
+
+// wezterm.lua.tmpl does NOT handle C-Left itself in a WSL pane — it can't see the pane's
+// foreground process through wsl.exe, so it forwards the key and lets tmux decide. That
+// makes tmux mandatory there. WEZTERM_PANE now crosses into WSL (it is in WSLENV), so it
+// no longer means "an outer layer owns the key"; only a non-WSL wezterm pane does.
+test('a wezterm WSL pane still wraps (wezterm forwards C-Left to tmux there)', () => {
+  const { env, tmuxLog, claudeLog } = makeEnv();
+  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', WEZTERM_PANE: '7', WSL_DISTRO_NAME: 'Ubuntu' });
+  assert.match(read(tmuxLog), /new-session -d -s claude-\d+/, 'a WSL pane needs the tmux layer to catch C-Left');
+  assert.strictEqual(read(claudeLog), '', 'claude runs inside tmux, never directly');
 });
 
 test('non-TUI invocations pass through even on a TTY', () => {

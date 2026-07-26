@@ -38,15 +38,18 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 # catch the key, and Claude Code's own keybindings can't run external commands. Only
 # interactive TUI starts wrap (no args / continue / resume / attach / agents, on a real
 # TTY); everything else — scripts, -p pipes, --version, the daemon — hits the real
-# binary untouched. Inside tmux/WezTerm the outer layer already owns the key, so those
-# pass through. Detaching (C-b d) keeps the session alive and visible in agentview.
+# binary untouched. Inside tmux the outer layer already owns the key, and so does a
+# non-WSL WezTerm pane, so those pass through. A WezTerm WSL pane does NOT: wezterm.lua
+# can't read a WSL pane's foreground process, so it forwards C-Left and lets tmux decide
+# — the wrap is what tmux there is. Detaching (C-b d) keeps the session alive in agentview.
 # CLAUDE_WRAP_TTY=1 is a test seam that stands in for the TTY check.
 claude() {
   case "${1:-}" in
     ''|-c|--continue|-r|--resume|attach|agents) ;;
     *) command claude "$@"; return $? ;;
   esac
-  if [ -n "${TMUX:-}" ] || [ -n "${WEZTERM_PANE:-}" ] || ! command -v tmux >/dev/null 2>&1 \
+  if [ -n "${TMUX:-}" ] || { [ -n "${WEZTERM_PANE:-}" ] && [ -z "${WSL_DISTRO_NAME:-}" ]; } \
+    || ! command -v tmux >/dev/null 2>&1 \
     || { [ -z "${CLAUDE_WRAP_TTY:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; }; then
     command claude "$@"; return $?
   fi

@@ -442,9 +442,9 @@ config.keys = {
 	-- closes itself after a jump.
 	{ key = "S", mods = "CTRL|SHIFT", action = wezterm.action_callback(open_agentview) },
 	-- CTRL+Left: back to Agent View from inside a session pane.
-	-- WSL panes run tmux, and tmux OWNS C-Left (~/.tmux.conf): shell -> word-left, app -> the
-	-- agentview POPUP (`display-popup`, the floating overlay over the dimmed session — what we
-	-- want EVERY time). So for any WSL pane we pass C-Left straight through and let tmux decide;
+	-- WSL panes run tmux (shell/common.sh wraps a bare claude in one for exactly this reason),
+	-- and tmux OWNS C-Left (~/.tmux.conf): shell -> word-left, app -> the dedicated `agentview`
+	-- tmux window. So for any WSL pane we pass C-Left straight through and let tmux decide;
 	-- we must NOT intercept here, or a pane whose title/proc trips the app-heuristic (e.g. tmux
 	-- forwarding Claude's "✳ Claude Code" title) would spawn a WezTerm tab instead of the popup —
 	-- that was the intermittent "sometimes a tab, sometimes the popup" bug. The tab path below is
