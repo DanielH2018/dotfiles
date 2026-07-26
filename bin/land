@@ -10,9 +10,10 @@
 # exactly that state before it was closed. Nothing serialises this either, so two
 # sessions landing at once rebase onto a main the other is still moving.
 #
-# So: rebase, push the rebased branch, and let GitHub do the merge. Same linear
-# history, but the PR is the record, and the flock means the second lander waits
-# for a settled main instead of racing it.
+# So: rebase, push the rebased branch, then fast-forward main onto that same ref.
+# Same linear history, the PR is still the record, your signatures survive because
+# main ends up on the very objects you signed, and the flock means the second
+# lander waits for a settled main instead of racing it.
 #
 # Background jobs must not run this — they open draft PRs and stop there. This is
 # the operator half: it is the only thing here that force-pushes, takes a PR out
@@ -83,7 +84,8 @@ if [ "$DRY" -eq 1 ]; then
   say "rebase  $BRANCH onto origin/main"
   say "push    --force-with-lease (runs the pre-push gate)"
   say "ready   gh pr ready $PR (only if it is still a draft)"
-  say "merge   gh pr merge $PR --rebase"
+  say "merge   git push origin $BRANCH:main (fast-forward; keeps your signatures)"
+  say "close   gh pr close $PR (only if GitHub has not marked it merged)"
   say "delete  git push origin --delete $BRANCH"
   exit 0
 fi
@@ -113,13 +115,33 @@ land() {
     gh pr ready "$PR" || return 1
   fi
 
-  # Deliberately not --delete-branch. Its local half checks out the default
+  # Fast-forward main onto the branch rather than `gh pr merge --rebase`. That
+  # replayed the commits server-side into fresh objects carrying no signature, so
+  # every landing put unsigned commits on main — 12 of the 16 before this changed,
+  # including 4f52f8b, the commit that added the signing gate. Worse, a branch
+  # rebased onto that main inherited them into its own push range and the gate
+  # rejected the push for history the branch never wrote.
+  #
+  # The branch was rebased onto origin/main and pushed above, so main can just be
+  # moved to that same ref: identical objects, signatures intact, history still
+  # linear, and the PR still holds exactly the commits that landed. This is not
+  # the local-merge trap in the header either — there the PR kept pre-rebase SHAs
+  # while main got different ones; here they are the same objects.
+  git push -q origin "$BRANCH:main" || return 1
+
+  # GitHub marks a PR merged once its head commits are reachable from the base.
+  # If it has not, say what happened rather than leaving it open unexplained.
+  if [ "$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)" = "OPEN" ]; then
+    gh pr close "$PR" --comment "Landed on main as $(git rev-parse --short HEAD)." ||
+      say "PR #$PR is still open — close it by hand"
+  fi
+
+  # Deliberately not gh's --delete-branch. Its local half checks out the default
   # branch, which cannot work here: main is held by the primary worktree, so gh
-  # fails with "'main' is already used by worktree at ..." *after* the merge has
-  # already gone through. The landing then reports as failed when it succeeded,
-  # and the branch it promised to delete is still on the remote. Merge, then
-  # delete the remote ref with git, which has no opinion about checkouts.
-  gh pr merge "$PR" --rebase || return 1
+  # fails with "'main' is already used by worktree at ..." *after* the landing has
+  # gone through. The landing then reports as failed when it succeeded, and the
+  # branch it promised to delete is still on the remote. Delete the remote ref
+  # with git, which has no opinion about checkouts.
 
   if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
     git push -q origin --delete "$BRANCH" ||
@@ -127,8 +149,9 @@ land() {
   fi
 
   printf 'landed %s (PR #%s)\n' "$BRANCH" "$PR"
-  # The local branch is checked out right here, so it cannot delete itself. It is
-  # on main under a new SHA after the rebase-merge, which is why -d refuses it.
+  # The local branch is checked out right here, so it cannot delete itself — even
+  # though main now points at exactly these commits, which is new: before the
+  # fast-forward the landed SHAs differed and -d would have refused them too.
   say "worktree still holds $BRANCH; from the primary: git worktree remove <path> && git branch -D $BRANCH"
 }
 

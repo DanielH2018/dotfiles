@@ -31,7 +31,13 @@ const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'land-bin-'));
 dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'gh'), `#!/bin/bash
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then printf '%s' "\${STUB_PR:-}"; exit 0; fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ]; then printf '%s\\n' "\${STUB_DRAFT:-false}"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *state*) printf '%s\\n' "\${STUB_PR_STATE:-MERGED}" ;;
+    *) printf '%s\\n' "\${STUB_DRAFT:-false}" ;;
+  esac
+  exit 0
+fi
 echo "gh $*" >> "$STUB_GH_CALLS"
 exit 0
 `, { mode: 0o755 });
@@ -84,14 +90,14 @@ function makeRepoWithOrigin() {
 const ghCalls = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', branch) !== '';
 
-function land(cwd, args = [], { pr = '7', draft = 'false' } = {}) {
+function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED' } = {}) {
   const calls = path.join(cwd, '.gh-calls');
   try {
     const stdout = execFileSync('bash', [LAND, ...args], {
       cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
-        STUB_PR: pr, STUB_DRAFT: draft, STUB_GH_CALLS: calls,
+        STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
       },
     });
     return { code: 0, stdout, stderr: '', calls };
@@ -147,8 +153,9 @@ test('--dry-run prints the plan and changes nothing', { skip }, () => {
   assert.match(r.stdout, /PR #7/);
   assert.match(r.stdout, /force-with-lease/);
   assert.match(r.stdout, /gh pr ready 7/);
-  assert.match(r.stdout, /gh pr merge 7 --rebase$/m);
+  assert.match(r.stdout, /git push origin feature:main/);
   assert.match(r.stdout, /git push origin --delete feature/);
+  assert.doesNotMatch(r.stdout, /gh pr merge/, 'the merge no longer goes through gh');
 
   assert.strictEqual(git(repo, 'rev-parse', 'HEAD'), before, 'HEAD moved');
   assert.ok(!fs.existsSync(r.calls), 'no state-changing gh call was made');
@@ -179,16 +186,16 @@ test('the plan names a lock shared by every worktree of the repo', { skip }, () 
   assert.strictEqual(lockOf(fromWt.stdout), lockOf(fromMain.stdout));
 });
 
-test('takes the PR out of draft first, because GitHub will not merge one', { skip }, () => {
+test('still takes the PR out of draft', { skip }, () => {
   const { dir } = makeRepoWithOrigin();
   const r = land(dir, [], { draft: 'true' });
   assert.strictEqual(r.code, 0, r.stderr);
 
-  // Background jobs open drafts by convention, so without this every landing
-  // dies on "Pull Request is still a draft" after the force-push has happened.
-  const calls = ghCalls(r.calls);
-  assert.match(calls, /gh pr ready 7/);
-  assert.ok(calls.indexOf('pr ready') < calls.indexOf('pr merge'), 'marked ready after the merge');
+  // The original reason was that GitHub refuses to merge a draft, which no longer
+  // applies now that main is fast-forwarded by git rather than merged by GitHub.
+  // Kept anyway: background jobs open drafts by convention, and a PR that landed
+  // should not still read as one.
+  assert.match(ghCalls(r.calls), /gh pr ready 7/);
 });
 
 test('leaves a PR that is already out of draft alone', { skip }, () => {
@@ -210,6 +217,36 @@ test('deletes the remote branch with git, not gh --delete-branch', { skip }, () 
   // merge, so a landing that worked reports as failed and the branch survives.
   assert.doesNotMatch(ghCalls(r.calls), /--delete-branch/);
   assert.ok(!remoteHas(dir, 'feature'), 'origin still holds the landed branch');
+});
+
+// The point of the fast-forward. `gh pr merge --rebase` replayed commits into new
+// objects with no signature, so main collected unsigned commits on every landing.
+// Moving main onto the branch's own ref keeps the objects, and with them the
+// signatures — the SHA being identical is what proves nothing was replayed.
+test('main lands on the branch tip itself, not a replayed copy', { skip }, () => {
+  const { dir, origin } = makeRepoWithOrigin();
+  const tip = git(dir, 'rev-parse', 'feature');
+
+  const r = land(dir, [], { draft: 'true' });
+  assert.strictEqual(r.code, 0, r.stderr);
+
+  const landed = execFileSync('git', ['rev-parse', 'main'], { cwd: origin, encoding: 'utf8', env: CLEAN_ENV }).trim();
+  assert.strictEqual(landed, tip, 'origin/main is the exact commit that was pushed');
+  assert.doesNotMatch(ghCalls(r.calls), /pr merge/, 'GitHub never re-created the commits');
+});
+
+test('closes the PR itself when GitHub has not marked it merged', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true', state: 'OPEN' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(ghCalls(r.calls), /pr close 7/);
+});
+
+test('leaves the PR alone when GitHub already marked it merged', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true', state: 'MERGED' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(ghCalls(r.calls), /pr close/);
 });
 
 test('lands from a linked worktree while the primary holds main', { skip }, () => {
