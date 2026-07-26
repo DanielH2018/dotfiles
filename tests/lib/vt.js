@@ -10,7 +10,7 @@
 // in tests/python-suites.test.js about pytest being unavailable on this machine.
 const { StringDecoder } = require('node:string_decoder');
 
-const GROUND = 0, ESCAPE = 1, CSI = 2, OSC = 3;
+const GROUND = 0, ESCAPE = 1, CSI = 2, OSC = 3, CHARSET = 4;
 
 class Screen {
   constructor(cols = 80, rows = 24) {
@@ -52,12 +52,20 @@ class Screen {
         else if (ch === 'M') { this.reverseIndex(); this.state = GROUND; }
         else if (ch === '7') { this.saved = [this.row, this.col]; this.state = GROUND; }
         else if (ch === '8') { [this.row, this.col] = this.saved || [0, 0]; this.state = GROUND; }
-        else this.state = GROUND; // charset selects, keypad modes: consumed, ignored
+        else if (ch === '(' || ch === ')' || ch === '*' || ch === '+') this.state = CHARSET;
+        else this.state = GROUND; // keypad modes and the like: consumed, ignored
         return;
 
       case CSI:
         if (code >= 0x40 && code <= 0x7e) { this.csi(ch); this.state = GROUND; }
         else this.params += ch;
+        return;
+
+      case CHARSET:
+        // ESC ( B and friends designate a character set in two bytes. Dropping to
+        // GROUND after the '(' leaves the 'B' to be printed as text -- which is
+        // exactly what tmux emits mid-status-line.
+        this.state = GROUND;
         return;
 
       case OSC:
