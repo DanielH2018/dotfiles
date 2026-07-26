@@ -8,8 +8,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "c260a5d389b69a0610417d83dad8b9406f2245312c12e1aa9d6d1629df46202c",
-      "landed": "2026-07-25T23:12:01.504Z"
+      "hash": "2373a9dd5049b0bd5b7eb6eb4ca7aeedebeac0600874e302996e635902a9fc86",
+      "landed": "2026-07-26T13:17:32.064Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "4c630cfcc7d6b14a588ab6d9e8f4ced845f3bb1c6fd3194240b17538203c01bb",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "29cf29e578ea540ec8d399f6d5e872356456fe836fe0f763f1050d85334bc74b",
+      "landed": "2026-07-26T13:17:32.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -153,8 +153,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_suggest-artifact.sh",
-      "hash": "fbb53728a9a18b565e39cf9df1f791c8ad41cdff9bc8aab0b13410116fe90a9b",
-      "landed": "2026-07-09T21:18:00.291Z"
+      "hash": "a37c06c74a081a0c289ee6ae52b0559af9f34d56a48faf70acc010e126a1d284",
+      "landed": "2026-07-26T13:17:32.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
@@ -218,8 +218,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "988d98e85d30cabb4ac9520f9055d9a86b39aa9d995ec2ac2b4026c9e6e7c94e",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "de034bcc9510f8f556b5ec8febe07415c4ddd429f4202d14f43e8684243e13c9",
+      "landed": "2026-07-26T13:17:32.064Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",

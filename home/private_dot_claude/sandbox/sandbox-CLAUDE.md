@@ -73,8 +73,9 @@ digging through the worktree or git branch. Files written there don't show up in
 When you produce an implementation plan or a spec for review — in plan mode or in normal
 chat — also render it as an HTML artifact for readability, in addition to the written plan.
 Load the `artifact-design` skill first, then write a self-contained HTML file to `/artifacts`
-and report the path. Keep it **local**: do NOT publish to claude.ai or call the Artifact tool
-unless explicitly asked to send it there. Skip only when the plan is trivial or you're told not to.
+and report the path as the last line of your reply, after the written plan — not before it, or
+the reader has to scroll back up past the plan to open it. Keep it **local**: do NOT publish to
+claude.ai or call the Artifact tool unless explicitly asked to send it there. Skip only when the plan is trivial or you're told not to.
 
 ## Plugins
 
