@@ -18,17 +18,22 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-audit-')); dirs.push(d); return d; }
 
-// LOG_FILE is $LOG_DIR/<UTC date>.jsonl — mirror that so tests can find/seed it.
-const today = new Date().toISOString().slice(0, 10);
-
 function runHook(logDir, input) {
   return execFileSync('bash', [HOOK], {
     input, encoding: 'utf8', env: { ...process.env, LOG_DIR: logDir }, stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
+// LOG_FILE is $LOG_DIR/<UTC date>.jsonl. Discover the name the hook actually used
+// rather than recomputing the date here: a locally captured date and the hook's
+// own stamp disagree when the run straddles UTC midnight, which made every
+// assertion below fail once, unreproducibly, at 23:59:59.
+function logPath(logDir) {
+  const files = fs.readdirSync(logDir).filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f));
+  assert.strictEqual(files.length, 1, `expected exactly one dated log in ${logDir}, got: ${files.join(', ')}`);
+  return path.join(logDir, files[0]);
+}
 function readLines(logDir) {
-  const f = path.join(logDir, `${today}.jsonl`);
-  return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean);
+  return fs.readFileSync(logPath(logDir), 'utf8').split('\n').filter(Boolean);
 }
 
 test('a single tool call is appended as one JSONL line with expected fields', { skip }, () => {
@@ -58,9 +63,11 @@ test('exceeding MAX_LINES rotates the log down to KEEP_LINES, keeping the newest
   // MAX_LINES=5000/KEEP_LINES=3000 are hardcoded in the script, not env-overridable —
   // pre-seed past the threshold rather than shrinking the knobs.
   const dir = scratch();
-  const logFile = path.join(dir, `${today}.jsonl`);
+  // One throwaway call so the hook names the log file; then seed that exact file,
+  // so the seed and the append below can't land on two different dates.
+  runHook(dir, JSON.stringify({ session_id: 's0', tool_name: 'Bash', tool_input: { command: 'discard' } }));
   const seed = Array.from({ length: 5001 }, (_, i) => `seed-${i}`).join('\n') + '\n';
-  fs.writeFileSync(logFile, seed);
+  fs.writeFileSync(logPath(dir), seed);
   runHook(dir, JSON.stringify({ session_id: 'sN', tool_name: 'Bash', tool_input: { command: 'newest' } }));
   const lines = readLines(dir);
   assert.strictEqual(lines.length, 3000);

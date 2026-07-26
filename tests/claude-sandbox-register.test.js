@@ -49,8 +49,10 @@ test('cleanup deregisters via the RUN_ID-guarded remove (inside cleanup, no 2nd 
 
 // ---- (1b) Phase 2 wiring: in-container live state --------------------------
 test('Phase 2: mounts the in-container state hook + shared helper read-only', () => {
-  assert.match(SRC, /agent-view-register\.sh:\/home\/claudebot\/\.claude-defaults\/hooks\/agent-view-register\.sh:ro/);
-  assert.match(SRC, /agent-view-state-hook\.sh:\/home\/claudebot\/\.claude-defaults\/hooks\/agent-view-state-hook\.sh:ro/);
+  // Live ~/.claude/hooks path, not the ~/.claude-defaults staging area: hooks are
+  // no longer copied into the writable state volume, they are :ro-mounted in place.
+  assert.match(SRC, /agent-view-register\.sh:\/home\/claudebot\/\.claude\/hooks\/agent-view-register\.sh:ro/);
+  assert.match(SRC, /agent-view-state-hook\.sh:\/home\/claudebot\/\.claude\/hooks\/agent-view-state-hook\.sh:ro/);
 });
 
 test('Phase 2: binds the registry RW + passes AGENT_VIEW_KEY, interactive-only', () => {

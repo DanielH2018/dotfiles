@@ -121,6 +121,33 @@ test('broken host json -> falls back, base deny preserved (no partial import)', 
   assert.match(r.stderr, /host-safe fold failed/, 'warns on broken host json');
 });
 
+test('the step-1 host-fold temp is deleted once the overlay merge supersedes it', { skip }, () => {
+  // Both steps mktemp into TMPDIR, and only the final path is returned. The
+  // intermediate used to be abandoned, leaking one file per sandbox launch.
+  const tmpdir = tmp('rss-leak-');
+  const r = spawnSync('bash', [HELPER, hbase, overlay, host], {
+    env: { ...process.env, TMPDIR: tmpdir, PATH: [okBin, ...process.env.PATH.split(':')].join(':') },
+    encoding: 'utf8',
+  });
+  const out = (r.stdout || '').trim();
+  const left = fs.readdirSync(tmpdir);
+  assert.deepStrictEqual(left, [path.basename(out)],
+    `only the returned settings file may remain in TMPDIR, found: ${left.join(', ')}`);
+  assert.match(out, /sandbox-settings-/, 'the returned path is the step-2 merge output');
+});
+
+test('a fallback that returns the real base file never deletes it', { skip }, () => {
+  // $CUR === $BASE whenever the fold is skipped or fails, and $BASE is the
+  // caller's tracked settings.base.json — an unguarded rm there is destructive.
+  const tmpdir = tmp('rss-keep-');
+  const r = spawnSync('bash', [HELPER, base, overlay], {
+    env: { ...process.env, TMPDIR: tmpdir, PATH: [okBin, ...process.env.PATH.split(':')].join(':') },
+    encoding: 'utf8',
+  });
+  assert.ok(fs.existsSync(base), 'the base settings file must still exist after a no-host run');
+  cleanups.push((r.stdout || '').trim());
+});
+
 after(() => {
   for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
 });
