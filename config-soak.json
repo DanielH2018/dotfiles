@@ -13,13 +13,13 @@
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
-      "hash": "9c3b0e518455d8fb27284d817f75659ceb5a2ab91b6669cafd57e973a44c7b11",
-      "landed": "2026-07-25T23:56:39.220Z"
+      "hash": "3982ac6fb752cfb84a73bc1e0396e3451bde7edd17eb5ddb075bb09138cc2d41",
+      "landed": "2026-07-26T00:05:12.535Z"
     },
     {
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
-      "hash": "fd8a536f1a2b46f6cd03ee7cdce362ad72414b610312ed268cbc9dd3876825f1",
-      "landed": "2026-07-25T23:56:39.220Z"
+      "hash": "9562f16b0a6d8e249259112b6e1eafe7a2c2ef49975bab13c15655d862be4e98",
+      "landed": "2026-07-26T00:05:12.535Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
