@@ -35,6 +35,11 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 function makeEnv() {
   const bin = scratch('avui-bin-');
   const home = scratch('avui-home-');
+  // The Windows-side registry is an absolute /mnt/c path, not $HOME-relative, so a temp
+  // HOME does not isolate it: without this the picker renders the real Windows sessions
+  // alongside the fixtures and every row-position assertion below shifts. It also prunes
+  // that dir, so an unpointed run deletes real session state.
+  const windir = scratch('avui-win-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
 
@@ -60,6 +65,7 @@ function makeEnv() {
     TMUX_LOG: tmuxLog,
     AGENTVIEW_SELF: self,
     AGENTVIEW_LIB: LIB,
+    AGENT_VIEW_WINDIR: windir,
     AV_KILLCMD: 'true',   // the seam do_remove kills through; nothing real to signal here
   };
   delete env.TMUX;          // a bare pty: binds use execute, not execute-silent

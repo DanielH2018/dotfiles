@@ -37,6 +37,11 @@ function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefi
 function makeEnv() {
   const bin = scratch('avh-bin-');
   const home = scratch('avh-home-');
+  // The Windows-side registry is an absolute /mnt/c path, so a temp HOME does not isolate
+  // it: real Windows sessions would render alongside the fixtures and shift the row
+  // numbering the pin/jump assertions depend on. It is also pruned, so leaving it unset
+  // lets a test run delete real session state.
+  const windir = scratch('avh-win-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
@@ -55,6 +60,7 @@ function makeEnv() {
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
+    AGENT_VIEW_WINDIR: windir,
   };
   delete env.TMUX; // a bare shell -> tmux jump takes the attach path
   return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog };
