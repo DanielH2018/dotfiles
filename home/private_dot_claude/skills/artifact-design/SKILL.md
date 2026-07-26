@@ -10,7 +10,7 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 ## When to use
 
 - Use when a plan/spec/design doc is about to go to Daniel for review, in plan mode or normal chat. See also the writing-plans and brainstorming skills, which usually produce the plan this renders.
-- Reach for it before you send the written plan, not after — the artifact and the chat message go out together.
+- Load it before you write the plan, not after — the artifact and the chat message go out together. (Loading early, emitting the link last: see Output rules.)
 - Only render when the deliverable is a plan or spec for review. A status update, a quick answer, or a single-file diff isn't a plan and doesn't need one.
 - Skip when the plan is trivial (a one-liner or single obvious step), or when Daniel said not to.
 
@@ -18,6 +18,7 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 
 - **Local by default.** Write one self-contained `.html` file to `~/.claude/artifacts/` and tell Daniel the path.
   - If that directory doesn't exist yet, create it first — don't skip the artifact because the directory is missing.
+- **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file.
 - **Never publish to claude.ai** or call the Artifact tool unless Daniel explicitly asks for it.
 - **Self-contained.** Inline all CSS; no external fonts, scripts, or network assets — it must render offline from `file://`. A minimal skeleton:
   ```html

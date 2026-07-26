@@ -62,7 +62,7 @@ esac
 
 # Default (macOS/Ghostty host): a file:// link, opened with Shift+Cmd+click.
 url="file://$host"
-msg="An artifact was written. Include this link verbatim in your reply, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
+msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
 
 # Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
 # which lacks the remote path, so it errors. Emit an http://localhost link served by
@@ -79,7 +79,7 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
       # The TUI captures the mouse (alt screen since v2.1.89), so a plain click goes to
       # the app; a modifier lets the terminal's own link handler fire. WezTerm/Ghostty
       # use Shift (the xterm bypass-mouse-reporting modifier); VS Code's terminal uses Ctrl.
-      msg="An artifact was written. Include this link verbatim in your reply and tell the user to Shift+click it (Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
+      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+click it (Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
       ;;
   esac
 fi

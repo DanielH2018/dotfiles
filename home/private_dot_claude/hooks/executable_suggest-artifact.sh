@@ -21,7 +21,7 @@ ART_DIR="${ARTIFACT_DIR:-$HOME/.claude/artifacts}"
 jq -n --arg art "$ART_DIR" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: "AUTO-ARTIFACT (standing preference): You just presented an implementation plan via ExitPlanMode. If the user approved it and it is non-trivial, also render the plan as an HTML artifact for readability — in addition to executing the plan, not instead of it. Keep it LOCAL: (1) load the artifact-design skill to calibrate design effort, (2) write a self-contained HTML page of the plan (phases, files touched, build sequence, risks) to \($art)/ (create it if needed), (3) tell the user the file path. Do NOT publish to claude.ai / call the Artifact tool unless the user explicitly asks you to. Skip entirely if the plan is a one-liner, the user opted out, or the plan was rejected."
+    additionalContext: "AUTO-ARTIFACT (standing preference): You just presented an implementation plan via ExitPlanMode. If the user approved it and it is non-trivial, also render the plan as an HTML artifact for readability — in addition to executing the plan, not instead of it. Keep it LOCAL: (1) load the artifact-design skill to calibrate design effort, (2) write a self-contained HTML page of the plan (phases, files touched, build sequence, risks) to \($art)/ (create it if needed), (3) tell the user the file path as the LAST line of your reply, with nothing after it — the user should not have to scroll back up past the plan to open it. Do NOT publish to claude.ai / call the Artifact tool unless the user explicitly asks you to. Skip entirely if the plan is a one-liner, the user opted out, or the plan was rejected."
   }
 }'
 
