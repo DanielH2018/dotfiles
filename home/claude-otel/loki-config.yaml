@@ -33,6 +33,11 @@ limits_config:
   allow_structured_metadata: true
   volume_enabled: true
   retention_period: 744h   # 31 days
+  # Prompts, responses and tool output arrive as structured metadata, and Claude Code
+  # only truncates them at CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH (60K UTF-16 units — more
+  # than 64KB once encoded). At Loki's 64KB default the whole event is rejected, not
+  # merely the oversized field, so a long turn would vanish from the log entirely.
+  max_structured_metadata_size: 512KB
 
 compactor:
   working_directory: /loki/compactor

@@ -62,7 +62,28 @@
          to permission waits (tool.blocked_on_user) vs tool execution vs model latency.
          Collector fans these to Tempo; see home/claude-otel/tempo-config.yaml. */}}
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
-    "OTEL_TRACES_EXPORTER": "otlp"{{ end }}
+    "OTEL_TRACES_EXPORTER": "otlp",
+    {{/* app_entrypoint as a metric label: splits cost and tokens by how the session was
+         started (interactive REPL vs SDK vs background job vs hook), which is the axis
+         that says whether spend is me typing or automation running. Cheap — it is a
+         small closed set, unlike session_id. The sibling OTEL_METRICS_INCLUDE_VERSION is
+         deliberately left off: the collector's resource_to_telemetry_conversion already
+         puts service_version on every series, so it would only duplicate a label. */}}
+    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
+    {{/* Content logging, on deliberately. Default-off redacts prompts and responses to
+         "<REDACTED>" and drops tool arguments and output, which leaves the logs able to
+         say a turn was expensive but never what it was doing. Safe here and only here:
+         the whole stack binds to 127.0.0.1, stores on local disk, and reports to nobody.
+         Do not copy this block to a shared or hosted collector.
+         TOOL_CONTENT rides on spans, so it needs the tracing block above to be on.
+         Loki's max_structured_metadata_size is raised to match — see loki-config.yaml.
+         OTEL_LOG_RAW_API_BODIES stays off: it stores the entire request JSON on every
+         call, which re-serialises the full system prompt and conversation history each
+         turn, for content already captured by the four vars below. */}}
+    "OTEL_LOG_USER_PROMPTS": "1",
+    "OTEL_LOG_ASSISTANT_RESPONSES": "1",
+    "OTEL_LOG_TOOL_DETAILS": "1",
+    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
