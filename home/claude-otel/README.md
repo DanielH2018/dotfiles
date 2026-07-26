@@ -1,8 +1,11 @@
 # claude-otel — local observability for Claude Code
 
 Self-hosted, single-user OpenTelemetry stack for Claude Code. Everything runs in
-Docker, binds to `127.0.0.1` only, and keeps all data on this machine. **No prompt,
-response, or tool content is collected** — only metrics and structured event logs.
+Docker, binds to `127.0.0.1` only, and keeps all data on this machine. Content logging is
+**on**: prompts, responses, and tool arguments/output are stored verbatim. That is a
+deliberate choice for a single-user local stack, and the reason nothing here listens off
+the loopback interface — treat the Loki and Tempo volumes as being as sensitive as the
+transcripts themselves.
 
 ```
                                                  ┌─ /metrics:8889 ◄─scrape─ Prometheus ─┐
@@ -24,6 +27,14 @@ Claude Code ──OTLP/gRPC:4317──► otel-collector ──┼─ OTLP ─�
 Traces need **two** env vars, not one: `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` turns span
 emission on (it is beta-gated), and `OTEL_TRACES_EXPORTER=otlp` routes it. Setting only the
 exporter yields silence.
+
+Content is enabled by `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`,
+`OTEL_LOG_TOOL_DETAILS` (arguments and output on events) and `OTEL_LOG_TOOL_CONTENT`
+(full input/output on spans — requires tracing). Without them prompts and responses read
+`<REDACTED>` and tool arguments are absent, though tool *names* are reported either way.
+`OTEL_LOG_RAW_API_BODIES` is deliberately left off: it captures the same content by
+storing every request and response body whole, re-serialising the system prompt and the
+entire conversation history on each call.
 
 ## Start / stop
 
