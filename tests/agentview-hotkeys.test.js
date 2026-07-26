@@ -55,12 +55,16 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\n[ -n "\${FZF_PICK:-}" ] && printf '%s\\n' "$FZF_PICK"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\necho "$*" >> "$SSH_LOG"\nexit 0\n`, { mode: 0o755 });
+  // WIN_CLAUDE is an absolute /mnt/c path, so PATH cannot stub it: unpointed, the roster
+  // query spawns the real claude.exe through WSL interop. Empty array = no Windows sessions.
+  const winclaude = path.join(bin, 'claude-win.exe');
+  fs.writeFileSync(winclaude, "#!/bin/bash\nprintf '[]'\n", { mode: 0o755 });
   // Injection seam for the guarded kill — logs the pid instead of signalling anything.
   const killStub = path.join(bin, 'killstub'); fs.writeFileSync(killStub, `#!/bin/bash\necho "$1" >> "$KILL_LOG"\nexit 0\n`, { mode: 0o755 });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
-    AGENT_VIEW_WINDIR: windir,
+    AGENT_VIEW_WINDIR: windir, AGENT_VIEW_WIN_CLAUDE: winclaude,
   };
   delete env.TMUX; // a bare shell -> tmux jump takes the attach path
   return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog };

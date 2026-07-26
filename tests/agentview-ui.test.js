@@ -57,6 +57,12 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   // ctrl-x's confirm path calls `claude rm` on the real binary if it finds one.
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  // The background refresh every picker open fires asks the Windows daemon for its roster.
+  // WIN_CLAUDE is an absolute /mnt/c path, so PATH cannot stub it: unpointed, each test
+  // spawns the real claude.exe through WSL interop. An empty array is the honest answer
+  // here -- the fixture world has no Windows sessions.
+  const winclaude = path.join(bin, 'claude-win.exe');
+  fs.writeFileSync(winclaude, "#!/bin/bash\nprintf '[]'\n", { mode: 0o755 });
 
   const env = {
     ...process.env,
@@ -66,6 +72,7 @@ function makeEnv() {
     AGENTVIEW_SELF: self,
     AGENTVIEW_LIB: LIB,
     AGENT_VIEW_WINDIR: windir,
+    AGENT_VIEW_WIN_CLAUDE: winclaude,
     AV_KILLCMD: 'true',   // the seam do_remove kills through; nothing real to signal here
   };
   delete env.TMUX;          // a bare pty: binds use execute, not execute-silent
