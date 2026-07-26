@@ -85,21 +85,37 @@ FIND_OPERATORS = {"-o", "-or", "-a", "-and", "!", "-not", "(", ")", ","}
 # Flags that make a grep print something other than `file:line:text` — counts,
 # bare filenames, or nothing at all. Each is a different shape of answer and
 # none of them is the one the matches digest reports.
-GREP_OTHER_OUTPUT = {
-    "-c",
+#
+# Short and long are kept apart because a short one can arrive bundled. `-rl`
+# is a file list and `-rn` is not, and to a membership test on whole tokens
+# they look equally unlike `-l`; the letters have to be looked at one at a time.
+GREP_OTHER_LETTERS = set("clLqoZ")
+GREP_OTHER_LONG = {
     "--count",
-    "-l",
     "--files-with-matches",
-    "-L",
     "--files-without-match",
-    "-q",
     "--quiet",
     "--silent",
-    "-o",
     "--only-matching",
-    "-Z",
     "--null",
 }
+
+# Short options whose value may be attached in the same token. Expanding a
+# bundle has to stop at one of these, because what follows it is the value and
+# not more flags: the `o` in `-eTODO` is part of the pattern.
+GREP_VALUE_LETTERS = set("efmABCDd")
+
+# The same two questions for ripgrep, which shares grep's letters for the
+# output modes but not for the options that take a value — `-r` is
+# --recursive to grep and --replace to rg, and reading it as the wrong one
+# either drops the rest of a bundle or keeps reading a replacement string.
+RG_OTHER_LETTERS = set("clqo0")
+RG_VALUE_LETTERS = set("efmABCgtTMr")
+
+# fd runs commands too, and --list-details is its long format.
+FD_OTHER_LETTERS = set("xXl")
+FD_OTHER_LONG = {"--exec", "--exec-batch", "--list-details"}
+FD_VALUE_LETTERS = set("detESj")
 
 # ls modes that are not a recursive name listing: the long formats carry
 # permissions and sizes per line, which is not a path.
@@ -126,12 +142,17 @@ def tool_name(argv):
     return ""
 
 
-def git_subcommand(argv):
-    """The verb in a git command, past git's own options.
+def git_subcommand_index(argv):
+    """Where the verb sits in a git command, past git's own options, or -1.
 
     `git -C /repo log` is a log; `git --version` is not, and neither is a bare
     `git`. Options are skipped by name rather than by counting, because the ones
     that take a value would otherwise hand back their argument as the verb.
+
+    The position rather than the token, because the runners need somewhere to
+    splice their format flags in — after the verb, since a flag ahead of it is
+    git's own and `git --numstat log` is an error. A second copy of this walk
+    living in the runners would be one more thing to keep in step.
     """
     i = argv.index("git") + 1 if "git" in argv else 1
     while i < len(argv):
@@ -142,8 +163,13 @@ def git_subcommand(argv):
         if tok.startswith("-"):
             i += 1
             continue
-        return tok
-    return ""
+        return i
+    return -1
+
+
+def git_subcommand(argv):
+    i = git_subcommand_index(argv)
+    return argv[i] if i >= 0 else ""
 
 
 def ls_is_recursive(argv):
@@ -167,20 +193,54 @@ def ls_is_recursive(argv):
     return recursive
 
 
+def short_letters(tok, value_letters):
+    """The flag letters in a bundled short option like `-rln`, or ().
+
+    Expansion stops at the first letter that takes a value, because the rest of
+    the token is that value rather than more flags.
+    """
+    if not tok.startswith("-") or tok.startswith("--") or len(tok) < 2:
+        return ()
+    out = []
+    for char in tok[1:]:
+        out.append(char)
+        if char in value_letters:
+            break
+    return tuple(out)
+
+
+def _no_other_output(argv, letters, long_forms, value_letters):
+    """Whether every flag in argv leaves the output in the shape tq parses.
+
+    Scanning stops at `--`, past which a token is the pattern or a path: in
+    `grep -- -l file` the -l is what is being searched for.
+    """
+    for tok in argv:
+        if tok == "--":
+            break
+        if tok.split("=")[0] in long_forms:
+            return False
+        if set(short_letters(tok, value_letters)) & letters:
+            return False
+    return True
+
+
 def find_is_survey(argv):
     return not any(tok in FIND_UNSAFE for tok in argv)
 
 
 def fd_is_survey(argv):
-    # fd runs commands too, and --list-details is its long format.
-    return not any(
-        tok in ("-x", "--exec", "-X", "--exec-batch", "-l", "--list-details")
-        for tok in argv
-    )
+    return _no_other_output(argv, FD_OTHER_LETTERS, FD_OTHER_LONG, FD_VALUE_LETTERS)
+
+
+def rg_is_survey(argv):
+    return _no_other_output(argv, RG_OTHER_LETTERS, GREP_OTHER_LONG, RG_VALUE_LETTERS)
 
 
 def grep_is_survey(argv):
-    return not any(tok in GREP_OTHER_OUTPUT for tok in argv)
+    return _no_other_output(
+        argv, GREP_OTHER_LETTERS, GREP_OTHER_LONG, GREP_VALUE_LETTERS
+    )
 
 
 def detect(argv):
@@ -212,7 +272,7 @@ def detect(argv):
         return "fd"
     if tool == "ls" and ls_is_recursive(argv):
         return "ls"
-    if tool == "rg" and grep_is_survey(argv):
+    if tool == "rg" and rg_is_survey(argv):
         # `rg --files` takes no pattern and lists what would be searched, which
         # is a path sweep wearing a grep's name. --json rejects it outright.
         return "rg-files" if "--files" in argv else "rg"

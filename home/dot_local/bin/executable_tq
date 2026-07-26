@@ -412,6 +412,24 @@ def drop_switches(argv, flags):
     return out
 
 
+def inject(argv, flags, after=1):
+    """argv with the flags tq needs spliced in ahead of the operands.
+
+    Appending them is what reads naturally and is wrong everywhere it matters.
+    Past a `--` every token is a path, so `git log -- src` would grow a pathspec
+    spelled --pretty=format:… , match nothing and report no commits; git rejects
+    options after operands even with no separator in sight; and a `--print0`
+    trailing `fd pat dir` is a second directory to search.
+    """
+    return list(argv[:after]) + list(flags) + list(argv[after:])
+
+
+def git_inject(argv, flags):
+    """inject(), landing past git's own options and the subcommand."""
+    i = detect_mod.git_subcommand_index(argv)
+    return inject(argv, flags, after=i + 1 if i >= 0 else 1)
+
+
 def count_limit(argv, names, bare=False):
     """The cap a command put on its own output, as (number, how it was spelled).
 
@@ -483,7 +501,7 @@ def run_find(argv, workdir, tmp):
 def run_fd(argv, workdir, tmp):
     cmd = list(argv)
     if not any(tok in ("-0", "--print0") for tok in cmd):
-        cmd.append("--print0")
+        cmd = inject(cmd, ["--print0"])
     proc, timed_out = run(cmd, plain_env())
     result = survey("fd", "paths", argv, workdir, proc, timed_out)
     survey_adapter.parse_paths(proc.stdout, result)
@@ -494,7 +512,7 @@ def run_fd(argv, workdir, tmp):
 
 
 def run_ls(argv, workdir, tmp):
-    proc, timed_out = run(list(argv) + ["-1"], plain_env())
+    proc, timed_out = run(inject(argv, ["-1"]), plain_env())
     result = survey("ls", "paths", argv, workdir, proc, timed_out)
     survey_adapter.parse_ls_r(proc.stdout, result)
     finish_survey(result, proc)
@@ -502,7 +520,7 @@ def run_ls(argv, workdir, tmp):
 
 
 def run_rg_files(argv, workdir, tmp):
-    proc, timed_out = run(list(argv) + ["--null"], plain_env())
+    proc, timed_out = run(inject(argv, ["--null"]), plain_env())
     result = survey("rg", "paths", argv, workdir, proc, timed_out)
     survey_adapter.parse_paths(proc.stdout, result)
     finish_survey(result, proc)
@@ -510,7 +528,7 @@ def run_rg_files(argv, workdir, tmp):
 
 
 def run_rg(argv, workdir, tmp):
-    proc, timed_out = run([argv[0], "--json"] + argv[1:], plain_env())
+    proc, timed_out = run(inject(argv, ["--json"]), plain_env())
     result = survey("rg", "matches", argv, workdir, proc, timed_out)
     survey_adapter.parse_rg_json(proc.stdout, result)
     limit, spelling = count_limit(argv, ("--max-count", "-m"))
@@ -520,12 +538,7 @@ def run_rg(argv, workdir, tmp):
 
 
 def run_grep(argv, workdir, tmp):
-    # Ahead of the pattern rather than after the file list: a grep asked to
-    # honour POSIX argument order stops permuting, and flags trailing the
-    # operands would be read as more operands.
-    proc, timed_out = run(
-        [argv[0], "--null", "-H", "-n"] + argv[1:], plain_env()
-    )
+    proc, timed_out = run(inject(argv, ["--null", "-H", "-n"]), plain_env())
     result = survey("grep", "matches", argv, workdir, proc, timed_out)
     survey_adapter.parse_grep(proc.stdout, result)
     limit, spelling = count_limit(argv, ("--max-count", "-m"))
@@ -543,7 +556,7 @@ def git_env():
 
 
 def run_git_diff(argv, workdir, tmp):
-    cmd = drop_switches(argv, DIFF_FORMATS) + ["--numstat", "-z", "--no-color"]
+    cmd = git_inject(drop_switches(argv, DIFF_FORMATS), ["--numstat", "-z", "--no-color"])
     proc, timed_out = run(cmd, git_env())
     result = survey("git diff", "diff", argv, workdir, proc, timed_out)
     survey_adapter.parse_numstat(proc.stdout, result)
@@ -552,7 +565,7 @@ def run_git_diff(argv, workdir, tmp):
 
 
 def run_git_ls_files(argv, workdir, tmp):
-    proc, timed_out = run(list(argv) + ["-z"], git_env())
+    proc, timed_out = run(git_inject(argv, ["-z"]), git_env())
     result = survey("git ls-files", "paths", argv, workdir, proc, timed_out)
     survey_adapter.parse_paths(proc.stdout, result)
     finish_survey(result, proc)
@@ -560,9 +573,10 @@ def run_git_ls_files(argv, workdir, tmp):
 
 
 def run_git_log(argv, workdir, tmp):
-    cmd = drop_switches(argv, LOG_FORMATS) + [COMMIT_FORMAT, "--no-color"]
+    flags = [COMMIT_FORMAT, "--no-color"]
     if any(tok in argv for tok in LOG_WANTS_FILES):
-        cmd.append("--numstat")
+        flags.append("--numstat")
+    cmd = git_inject(drop_switches(argv, LOG_FORMATS), flags)
     proc, timed_out = run(cmd, git_env())
     result = survey("git log", "commits", argv, workdir, proc, timed_out)
     survey_adapter.parse_commits(proc.stdout, result)

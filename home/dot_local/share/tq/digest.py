@@ -328,8 +328,15 @@ def headline(result):
         # a runner that collected nothing look identical from here, and the
         # second one is the dangerous one.
         return f"NO TESTS RAN  {seconds:.1f}s"
-    verdict = "PASS" if result.exit == 0 and t["fail"] == 0 else "FAIL"
-    counter = t["pass"] if verdict == "PASS" else t["fail"]
+    # The recorded failures get a vote alongside the counts, because the two can
+    # disagree and the count is the half that lies: a JUnit suite can carry
+    # failures="0" over a <failure> child, and a runner that reports per-file
+    # totals can leave the run-level ones short. Either way the block of failures
+    # below this line would otherwise be printed under the word PASS.
+    unforgiven = [f for f in result.failures if not f.flaky]
+    passed = result.exit == 0 and t["fail"] == 0 and not unforgiven
+    verdict = "PASS" if passed else "FAIL"
+    counter = t["pass"] if passed else max(t["fail"], len(unforgiven))
     notes = [
         f"{t[key]} {label}"
         for key, label in (
