@@ -34,13 +34,15 @@ const FINDINGS_SCHEMA = {
         additionalProperties: false,
         properties: {
           severity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] },
+          confidence: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW'] },
+          reachability: { type: 'string', enum: ['external-input', 'internal-only', 'unknown'] },
           file: { type: 'string' },
           line: { type: 'string' },
           title: { type: 'string' },
           detail: { type: 'string' },
           fix: { type: 'string' },
         },
-        required: ['severity', 'file', 'title', 'detail'],
+        required: ['severity', 'confidence', 'reachability', 'file', 'title', 'detail'],
       },
     },
   },
@@ -85,27 +87,45 @@ const fileList = files.join('\n')
 const reviewed = await pipeline(
   DIMENSIONS,
   d => agent(
-    `Security-review the changed files below, focusing ONLY on the "${d.key}" dimension: ${d.lens}.\n\nFiles:\n${fileList}\n\nRead each file and its diff vs ${ref}. Report concrete, specific findings with file, line, severity, why it matters (PCI-DSS/SOC2/security impact), and a suggested fix. Do not report theoretical issues in internal-only code paths with no external input.`,
-    { label: `review:${d.key}`, phase: 'Review', agentType: 'security-reviewer', schema: FINDINGS_SCHEMA }
+    `Security-review the changed files below, focusing ONLY on the "${d.key}" dimension: ${d.lens}.\n\nFiles:\n${fileList}\n\nRead each file and its diff vs ${ref}. Report EVERY finding, including theoretical issues in internal-only code paths — do not withhold anything at discovery time; a separate arbiter pass decides what to act on. For each finding give file, line, severity, an explicit confidence rating (HIGH/MEDIUM/LOW), reachability (whether the path takes external/untrusted input, or is internal-only), why it matters (PCI-DSS/SOC2/security impact), and a suggested fix.`,
+    { label: `review:${d.key}`, phase: 'Review', agentType: 'general-purpose', schema: FINDINGS_SCHEMA }
   ),
-  (review, d) => parallel(
-    ((review && review.findings) || [])
-      .filter(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')
-      .map(f => () =>
+  (review, d) => {
+    const all = (review && review.findings) || []
+    const toVerify = all.filter(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')
+    const unverified = all.filter(f => !(f.severity === 'CRITICAL' || f.severity === 'HIGH'))
+    return parallel([
+      ...toVerify.map(f => () =>
         agent(
           `Adversarially verify this security finding — try to REFUTE it. Read the actual code at ${f.file}:${f.line || '?'} and decide whether it is a REAL, exploitable or compliance-violating issue, or a false positive. Default to real=false if uncertain, or if the code path takes no external/untrusted input.\n\n[${f.severity}] ${f.title}\n${f.detail}`,
-          { label: `verify:${d.key}:${f.file}`, phase: 'Verify', agentType: 'security-reviewer', schema: VERDICT_SCHEMA }
+          { label: `verify:${d.key}:${f.file}`, phase: 'Verify', agentType: 'general-purpose', schema: VERDICT_SCHEMA }
         ).then(v => ({ ...f, dimension: d.key, verdict: v }))
           .catch(e => ({ ...f, dimension: d.key, verdict: { real: false, reasoning: 'verification failed: ' + (e?.message || e) } }))
-      )
-  )
+      ),
+      ...unverified.map(f => () => Promise.resolve({ ...f, dimension: d.key, unverified: true })),
+    ])
+  }
 )
 
-const confirmed = reviewed
-  .flat()
-  .filter(Boolean)
-  .filter(f => f.verdict && f.verdict.real)
+const flatFindings = reviewed.flat().filter(Boolean)
+const verified = flatFindings.filter(f => f.verdict)
+const unverified = flatFindings.filter(f => f.unverified)
+
+const confirmed = verified
+  .filter(f => f.verdict.real)
   .sort((a, b) => (a.severity === 'CRITICAL' ? 0 : 1) - (b.severity === 'CRITICAL' ? 0 : 1))
 
-log(`Confirmed ${confirmed.length} high/critical finding(s) after adversarial verification`)
-return { ref, filesReviewed: files.length, confirmedCount: confirmed.length, confirmed }
+const unverifiedBySeverity = unverified.reduce((acc, f) => {
+  acc[f.severity] = (acc[f.severity] || 0) + 1
+  return acc
+}, {})
+log(`Confirmed ${confirmed.length} high/critical finding(s) after adversarial verification; ${unverified.length} finding(s) skipped verification (${Object.entries(unverifiedBySeverity).map(([s, n]) => `${n} ${s}`).join(', ') || 'none'})`)
+
+return {
+  ref,
+  filesReviewed: files.length,
+  confirmedCount: confirmed.length,
+  confirmed,
+  unverifiedCount: unverified.length,
+  unverified,
+}

@@ -28,9 +28,11 @@ PREVIOUSLY TRIAGED — DO NOT RE-RAISE:
 Read all of these in parallel:
 - `~/.claude/settings.json`
 - `~/.claude/CLAUDE.md`
-- All files in `~/.claude/docs/`
+- All files in `~/.claude/skills/*/SKILL.md`
 - All hooks in `~/.claude/hooks/`
 - All commands in `~/.claude/commands/*.md`
+- All agents in `~/.claude/agents/`
+- All rules in `~/.claude/rules/`
 
 ### Run hook tests
 
@@ -40,12 +42,8 @@ If `~/.claude/hooks/*.test.*` files exist, run them. Note any failures.
 
 For each hook script:
 - Does it have a matching entry in `settings.json` hooks config?
-- Is it executable? (`test -x`)
 - Does it use `set -u` or equivalent?
 - Are there shellcheck issues? (run `shellcheck` if available)
-- Is the shebang correct?
-- Are there dead code paths or unreachable logic?
-- Does it handle missing dependencies gracefully?
 - Does the settings.json hook entry have an appropriate `timeout`?
 
 ### Audit settings
@@ -96,6 +94,11 @@ Apply autonomy mode:
 
 Fix directly. Keep changes minimal — fix bugs, don't refactor.
 
+If the file lives under `~/.claude/` and is chezmoi-managed, audit the deployed copy but
+write the fix to the chezmoi source: run `chezmoi source-path <file>` to find it. A `.tmpl`
+source means the deployed file is generated — editing the deployed copy is reverted on the
+next `chezmoi apply`.
+
 ### settings.json
 
 Batch all recommended changes and present as a single Edit operation. Explain each change before applying. In `auto` mode, apply without asking.
@@ -130,11 +133,3 @@ SKIPPED:
 FIXED:
 - file: path/to/file, desc: "description of finding"
 ```
-
-## Rules
-
-- Don't change behavior — fix bugs and fill gaps, don't redesign.
-- Don't add features that weren't there.
-- Run tests after modifying hook scripts.
-- For settings.json, explain *why* each change matters before applying.
-- If nothing needs fixing, say so. Don't manufacture improvements.

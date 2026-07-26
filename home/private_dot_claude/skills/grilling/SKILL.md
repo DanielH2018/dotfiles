@@ -1,6 +1,6 @@
 ---
 name: grilling
-description: Use to stress-test a plan, design, or decision before building — a relentless one-question-at-a-time interview that walks the decision tree until you and the user share the same understanding. Trigger on "grill me", "poke holes in this", "stress-test this plan", "what am I missing", "interrogate this design", or whenever a plan feels roughly right but has unresolved decisions hiding in it. Other skills (prep, to-spec, to-tickets) reach for this as their interview primitive.
+description: Use to stress-test an existing plan, design, or decision before building — a relentless one-question-at-a-time interview. Trigger on "grill me", "poke holes in this", "stress-test this plan", "what am I missing", "interrogate this design", or when a plan feels roughly right but hides unresolved decisions. Interrogates the user's plan; it does not teach (deep-understanding) or gather context for new work (prep).
 metadata:
     author: daniel
     version: 0.1.0
@@ -40,7 +40,8 @@ other skills borrow, not a workflow of its own.
 ## Where it fits
 
 The stateless stress-test under the build flow. `prep` delegates its questioning
-here; [[to-spec]] and [[to-tickets]] grill the breakdown before publishing. For
+here; on the work laptop, `to-spec` and `to-tickets` grill the breakdown before
+publishing (neither is installed on the personal machine). For
 open-ended ideation (no plan yet) reach for `superpowers:brainstorming` instead —
 grilling hardens an existing plan, brainstorming generates one. When unsure which
 skill fits, `/skill-router`.

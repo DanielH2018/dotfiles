@@ -41,7 +41,7 @@ The changelog is newest-first (top `## <version>` heading is the latest release)
 
 Record the newest version at the top of the file — this becomes the new `last_processed_version` in STEP 5 regardless of how many entries were surfaced.
 
-If there are **no** new versions: skip STEP 4, append nothing, and bump only `updated` in the note frontmatter (STEP 6 is a no-op now that scheduling is external).
+If there are **no** new versions: skip STEP 4, append nothing, and bump only `updated` in the note frontmatter.
 
 STEP 4 — Evaluate against the setup
 
@@ -90,11 +90,3 @@ git -C "$VAULT" add -- Meta/Claude_Code_Changelog_Watch.md
 git -C "$VAULT" commit -m "changelog-watch: review through <newest_version>"
 ```
 If the commit fails (GPG signing unavailable, nothing to commit), skip silently. Never pass `--no-gpg-sign` or `--no-verify`.
-
-STEP 6 — Scheduling (external)
-
-If scheduling is handled by launchd (or another OS scheduler) rather than in-app
-crons, a launchd agent (e.g. `~/Library/LaunchAgents/com.<you>.claude.changelog-watch.plist`)
-typically runs `~/.claude/scheduled/run-skill.sh changelog-watch shown`. If this
-vault's setup uses that pattern, do NOT create or renew an in-app cron for this
-skill; it would double-fire alongside the external scheduler.

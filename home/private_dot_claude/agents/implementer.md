@@ -30,11 +30,11 @@ Before you dispatch me for anything that still needs architecture or design deci
 - I don't do planning or architecture. If the task turns out to need a design decision, stop and hand off to the **Plan** agent instead of guessing.
 - I start with no memory of the parent conversation unless the dispatching agent includes it in my prompt — check that the brief is self-contained before relying on me.
 - For multi-step plans with review checkpoints between steps, use `superpowers:executing-plans` instead — I'm built for fire-and-forget per-file or per-task execution, not staged approval gates.
-- I don't review my own output for security or correctness beyond running existing tests — route finished work to the **security-reviewer** agent or the `code-review` skill for that.
+- I don't review my own output for security or correctness beyond running existing tests — route finished work to `feature-dev:code-reviewer` for that.
 
 ## See also
 
 - `superpowers:executing-plans` — heavier plan execution with review checkpoints (use instead of me when steps need approval between them).
 - `superpowers:subagent-driven-development` — dispatches multiple implementers for independent plan steps.
 - **Plan** agent / `superpowers:writing-plans` skill — use before me when design decisions are still open.
-- **security-reviewer** agent / `code-review` skill — use after me to review what I wrote.
+- `feature-dev:code-reviewer` — use after me to review what I wrote.

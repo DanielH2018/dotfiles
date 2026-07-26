@@ -5,39 +5,19 @@ disable-model-invocation: true
 
 ## Arbiter Classification
 
-For each finding from the review phase, perform these steps:
-
-### Step 1: Verify the finding
-
-Read the actual code at the cited file:line. Confirm the finding is accurate against the current code. If the code has already been fixed or the finding references stale line numbers, classify as `SKIP`.
-
-### Step 2: Classify
+### Step 1: Classify
 
 Assign exactly one classification:
 
-**`SKIP`** — The finding is:
-- A false positive (code is correct)
-- A stylistic nit (formatting, naming preferences)
-- A suggestion that adds unnecessary complexity
-- Already fixed or stale
+**`SKIP`** — false positive, stylistic nit, unnecessary complexity, or already fixed/stale.
 
-**`HAIKU-FIX`** — The fix is mechanical and single-line:
-- Missing null/undefined check
-- Typo in string, variable name, or comment
-- Simple rename
-- Adding a missing return statement
-- Obvious one-liner with no behavioral ambiguity
+**`HAIKU-FIX`** — the fix is mechanical and single-line, with no behavioral ambiguity.
 
-**`SONNET-FIX`** — The fix requires reasoning:
-- Multi-line logic change
-- Cross-file edit (changing an interface and its callers)
-- Guard clause that requires understanding control flow
-- Error handling that requires understanding failure modes
-- Any fix where the "right" answer isn't immediately obvious
+**`SONNET-FIX`** — the fix requires reasoning: multi-line logic, a cross-file edit, or anything where the "right" answer isn't immediately obvious.
 
 When in doubt between HAIKU-FIX and SONNET-FIX, choose SONNET-FIX.
 
-### Step 3: Apply autonomy mode
+### Step 2: Apply autonomy mode
 
 The mode is passed as an argument from `/review-loop`.
 
@@ -61,15 +41,6 @@ The mode is passed as an argument from `/review-loop`.
 - Wait for user approval before proceeding
 - User can modify classifications or skip additional findings
 
-### Step 4: Output
+### Step 3: Output
 
-Produce a structured list of approved findings for the fix phase:
-
-```
-APPROVED FIXES:
-- { file: "src/a.ts", line: 42, type: "HAIKU-FIX", desc: "Missing null check", reasoning: "..." }
-- { file: "src/b.ts", line: 15, type: "SONNET-FIX", desc: "Race in token refresh", reasoning: "..." }
-
-SKIPPED:
-- { file: "src/c.ts", line: 99, reason: "Stylistic preference, not a bug" }
-```
+Produce two lists — approved fixes and skipped findings — each entry carrying file, line, classification, description, and reasoning.

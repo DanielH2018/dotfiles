@@ -1,7 +1,6 @@
 ---
 name: writing-great-skills
-description: Reference for writing and editing skills well — the vocabulary and principles that make a skill behave the same way every run. Invoke as /writing-great-skills when authoring or diagnosing a skill.
-disable-model-invocation: true
+description: Use when authoring, editing, or debugging a SKILL.md — the vocabulary and principles that make a skill behave the same way every run. Trigger on writing a new skill, rewriting a description, or a skill that fires inconsistently.
 metadata:
     author: daniel
     version: 0.1.0
