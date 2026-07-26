@@ -51,6 +51,23 @@ test('shell script with a lint violation: block decision surfaces the output', {
   assert.match(out, /SC2086/);
 });
 
+// The whole linter output went into the block reason, i.e. into the model's context, for
+// one edit. A failing tsc on a real project emits thousands of lines; the head carries the
+// first actual error, so cap it and say what was dropped instead of truncating silently.
+test('a very noisy linter run is truncated with a notice, not pasted whole', { skip: skipLintCase }, () => {
+  const dir = scratch();
+  const f = path.join(dir, 'noisy.sh');
+  const violations = Array.from({ length: 40 }, (_, i) => `v${i}=$1\necho $v${i}\n`).join('');
+  fs.writeFileSync(f, `#!/bin/bash\n${violations}`);
+  const out = runHook(JSON.stringify({ tool_input: { file_path: f } }));
+  assert.strictEqual(decision(out), 'block');
+  const reason = JSON.parse(out).reason;
+  assert.match(reason, /more line\(s\) truncated/);
+  // Head retained, so the first real finding still reaches the model.
+  assert.match(reason, /SC2086/);
+  assert.ok(reason.split('\n').length < 60, `reason should be bounded, got ${reason.split('\n').length} lines`);
+});
+
 test('unsupported file type is a no-op', { skip }, () => {
   const dir = scratch();
   const f = path.join(dir, 'notes.txt');

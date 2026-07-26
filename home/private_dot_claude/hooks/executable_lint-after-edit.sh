@@ -87,6 +87,17 @@ case "$FILE_PATH" in
 esac
 
 if [ "$FAILED" -eq 1 ]; then
+  # A failing tsc or gradle run can emit thousands of lines, and every one of them was
+  # pasted into the block reason — i.e. straight into the model's context — for a single
+  # edit. Keep the head, where the first real error is, and say what was dropped rather
+  # than truncating silently.
+  MAX_LINES=40
+  TOTAL=$(printf '%s\n' "$OUTPUT" | wc -l | tr -d '[:space:]')
+  if [ "$TOTAL" -gt "$MAX_LINES" ]; then
+    OUTPUT="$(printf '%s\n' "$OUTPUT" | head -n "$MAX_LINES")
+
+[$((TOTAL - MAX_LINES)) more line(s) truncated — re-run the checker for the full output]"
+  fi
   jq -n --arg reason "Lint/typecheck failed after edit:
 
 $OUTPUT" '{

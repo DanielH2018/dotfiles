@@ -1,6 +1,6 @@
 ---
 name: domain-modeling
-description: Use when pinning down domain terminology / ubiquitous language, resolving an overloaded term, or recording a hard-to-reverse architectural decision. Trigger when two people mean different things by a word, a term is doing several jobs, or a design keeps snagging on an unnamed concept. The vault is the store of record — read the Glossary before coining, source-verify before writing. Another skill needing to record a term or decision reaches for this.
+description: Use when pinning down domain terminology / ubiquitous language, resolving an overloaded term, or recording a hard-to-reverse architectural decision. Trigger when two people mean different things by a word, a term is doing several jobs, or a design keeps snagging on an unnamed concept.
 metadata:
     author: daniel
     version: 0.1.0

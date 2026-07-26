@@ -1,6 +1,6 @@
 ---
 name: config-lint
-description: Use to audit a Claude Code config dir for drift — dead/dormant plugins, orphaned hook script paths, absent @-includes, duplicate skill names, CLAUDE.md bloat — and to advise whether each instruction lives in the right home (hook vs skill vs rule vs permission). Report-only. Triggers on "audit my claude config", "config drift", "lint my setup", "check my CLAUDE.md".
+description: Use to audit a Claude Code config dir for drift — dead/dormant plugins, orphaned hook script paths, absent @-includes, duplicate skill names, CLAUDE.md bloat — and to advise whether each instruction lives in the right home (hook vs skill vs rule vs permission). Report-only. Triggers on "audit my claude config", "config drift", "lint my setup", "check my CLAUDE.md". Does not audit permission rules (`audit-permissions`) or edit settings.json (`update-config`).
 ---
 
 # config-lint
