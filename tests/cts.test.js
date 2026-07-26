@@ -172,17 +172,17 @@ test('cts --ssh: attaches to the default homelab and runs the remote ctw launche
 
 test('cts --ssh REPO: forwards the repo to ctw for remote resolution', { skip }, () => {
   const out = runCtsSsh(['--ssh', '~/airflow']);
-  assert.match(out, /ctw ~\/airflow\b/, 'repo passed through for remote-side resolution/expansion');
+  assert.match(out, /ctw \$HOME\/'airflow'/, 'leading ~/ still expands on the remote; the rest is quoted');
 });
 
 test('cts --ssh REPO -b BRANCH: forwards repo + branch to ctw', { skip }, () => {
   const out = runCtsSsh(['--ssh', 'proj', '-b', 'feature']);
-  assert.match(out, /ctw proj feature\b/, 'ctw receives repo then branch');
+  assert.match(out, /ctw 'proj' 'feature'/, 'ctw receives repo then branch');
 });
 
 test('cts --ssh --branch BRANCH: long form also forwarded', { skip }, () => {
   const out = runCtsSsh(['--ssh', 'proj', '--branch', 'feat/x']);
-  assert.match(out, /ctw proj feat\/x\b/);
+  assert.match(out, /ctw 'proj' 'feat\/x'/);
 });
 
 test('cts --ssh -b without a repo errors', { skip }, () => {
@@ -199,13 +199,13 @@ test('cts --ssh -b without a repo errors', { skip }, () => {
 test('cts --ssh=HOST overrides the remote host', { skip }, () => {
   const out = runCtsSsh(['--ssh=box2', 'proj']);
   assert.match(out, /-t\s+box2\b/);
-  assert.match(out, /ctw proj\b/);
+  assert.match(out, /ctw 'proj'/);
 });
 
 test('cts -H HOST enables remote mode and sets the host', { skip }, () => {
   const out = runCtsSsh(['-H', 'box3', 'proj']);
   assert.match(out, /-t\s+box3\b/);
-  assert.match(out, /ctw proj\b/);
+  assert.match(out, /ctw 'proj'/);
 });
 
 test('CTS_REMOTE_HOST sets the default remote host', { skip }, () => {
@@ -215,7 +215,7 @@ test('CTS_REMOTE_HOST sets the default remote host', { skip }, () => {
 
 test('CTS_REMOTE_CTW overrides the remote helper path', { skip }, () => {
   const out = runCtsSsh(['--ssh', 'proj'], { CTS_REMOTE_CTW: '/opt/ctw' });
-  assert.match(out, /\/opt\/ctw proj\b/);
+  assert.match(out, /\/opt\/ctw 'proj'/);
 });
 
 test('cts --ssh does not fall through to the local sandbox path', { skip }, () => {
@@ -262,7 +262,7 @@ test('cts --complete-repos defaults to the homelab host', { skip }, () => {
 
 test('cts --complete-branches HOST REPO queries ctw --list-branches REPO', { skip }, () => {
   const { out, sshArgs } = runCtsComplete(['--complete-branches', 'box', 'proj'], { sshOut: 'main\nfeature\n', cacheDir: scratch() });
-  assert.match(sshArgs, /ctw --list-branches proj/);
+  assert.match(sshArgs, /ctw --list-branches 'proj'/);
   assert.match(sshArgs, /BatchMode=yes/);
   assert.match(out, /feature/);
 });
@@ -310,6 +310,72 @@ test('-h documents --ssh remote mode', { skip }, () => {
   const out = execFileSync('bash', [CTS, '-h'], { encoding: 'utf8' });
   assert.match(out, /^usage: cts /, 'still prints the local usage first');
   assert.match(out, /--ssh/, 'documents the ssh remote mode');
+});
+
+// ---- remote-arg injection: repo/branch must reach the remote as DATA, not as code ------
+// ssh concatenates its command arguments into ONE string and the remote login shell
+// re-parses it, so asserting on cts's output text proves nothing on its own — the honest
+// test is to let a real shell re-parse what cts produced. The `ssh` stub below stands in
+// for the far side: it evals the command string with a `ctw` stub on PATH that records the
+// argv it was actually handed, inside a throwaway HOME. A payload that escapes quoting
+// leaves a marker file behind; one that doesn't, can't.
+function runCtsRemote(args, { env = {} } = {}) {
+  const bin = scratch();
+  const log = path.join(bin, 'ctw.log');
+  fs.writeFileSync(path.join(bin, 'ctw'), `#!/bin/bash
+printf '%s\\n' "$@" >> ${JSON.stringify(log)}
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
+cmd="\${!#}"                    # ssh's last argument is the remote command string
+cd ${JSON.stringify(bin)} || exit 1
+PATH=${JSON.stringify(bin)}:"$PATH" HOME=${JSON.stringify(bin)} bash -c "$cmd"
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
+  const e = { ...process.env, PATH: `${bin}:${process.env.PATH}`, CTS_REMOTE_CTW: 'ctw' };
+  delete e.TMUX; delete e.CTS_REMOTE_HOST; delete e.CTS_CACHE_TTL;
+  e.XDG_CACHE_HOME = scratch();
+  Object.assign(e, env);
+  execFileSync('bash', [CTS, ...args], { env: e, stdio: ['ignore', 'pipe', 'pipe'] });
+  return {
+    argv: fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : [],
+    injected: fs.existsSync(path.join(bin, 'INJECTED')),
+    home: bin,
+  };
+}
+
+test('cts --ssh: a repo carrying shell metacharacters reaches ctw as one literal argument', { skip }, () => {
+  const r = runCtsRemote(['--ssh', 'x;touch INJECTED']);
+  assert.deepStrictEqual(r.argv, ['x;touch INJECTED'], 'the whole payload is a single argv entry');
+  assert.ok(!r.injected, 'the injected command did not run on the remote');
+});
+
+test('cts --ssh -b: a branch carrying shell metacharacters is quoted too', { skip }, () => {
+  const r = runCtsRemote(['--ssh', 'proj', '-b', 'y;touch INJECTED']);
+  assert.deepStrictEqual(r.argv, ['proj', 'y;touch INJECTED'], 'repo then branch, both intact');
+  assert.ok(!r.injected, 'the injected command did not run on the remote');
+});
+
+test('cts --ssh: command substitution in a repo name is not evaluated remotely', { skip }, () => {
+  const r = runCtsRemote(['--ssh', 'x$(touch INJECTED)']);
+  assert.deepStrictEqual(r.argv, ['x$(touch INJECTED)']);
+  assert.ok(!r.injected, '$( ) stayed literal');
+});
+
+test('cts --ssh: a repo name with an embedded single quote survives quoting', { skip }, () => {
+  const r = runCtsRemote(["--ssh", "it's-a-repo"]);
+  assert.deepStrictEqual(r.argv, ["it's-a-repo"], "the ' is escaped, not dropped or split on");
+});
+
+test('cts --ssh: a leading ~/ still expands on the remote, not locally', { skip }, () => {
+  const r = runCtsRemote(['--ssh', '~/airflow']);
+  assert.deepStrictEqual(r.argv, [`${r.home}/airflow`], 'expanded against the REMOTE home');
+});
+
+test('cts --complete-branches: a hostile repo word cannot execute on TAB', { skip }, () => {
+  const r = runCtsRemote(['--complete-branches', 'box', 'x;touch INJECTED']);
+  assert.deepStrictEqual(r.argv, ['--list-branches', 'x;touch INJECTED'], 'passed as data');
+  assert.ok(!r.injected, 'pressing TAB does not run the completed word');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
