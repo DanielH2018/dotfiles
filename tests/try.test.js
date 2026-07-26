@@ -246,8 +246,9 @@ test('-h prints usage without touching the repo', { skip }, () => {
   const before = head(dir);
   const r = run(dir, ['-h']);
   assert.strictEqual(r.code, 0);
-  assert.match(r.stdout, /try <branch>\s+detach onto <branch>/);
-  assert.match(r.stdout, /try --back/);
+  assert.match(r.stdout, /bin\/try <branch>\s+detach onto <branch>/);
+  assert.match(r.stdout, /bin\/try --back/);
+  assert.match(r.stdout, /TRY_APPLY_GUARD=off/, 'the override is documented, not just implemented');
   assert.strictEqual(head(dir), before);
   assert.strictEqual(calls(r.file), '');
 });
