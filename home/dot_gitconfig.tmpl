@@ -17,7 +17,7 @@
 {{- if eq .chezmoi.os "windows" }}
 [credential]
 	helper = manager
-{{- else if contains "microsoft" (lower .chezmoi.kernel.osrelease) }}
+{{- else if or (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (stat "/proc/sys/fs/binfmt_misc/WSLInterop") }}
 # GitHub goes through gh, NOT the Windows Git Credential Manager: launching a .exe from WSL
 # takes the VM-mode interop path, which leaks a permanently spinning CPU thread per call once
 # the owning wsl.exe has exited (microsoft/WSL#41173, unfixed through WSL 2.9.4), and every
@@ -33,22 +33,36 @@
 	# dropping this would leave them with no helper at all.
 	helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe
 {{- else }}
+# Generic Linux/BSD fallback: the homelab, any container or VM, and any WSL kernel whose
+# osrelease has been rebuilt without the "microsoft" substring. This was `helper = store`,
+# which writes username+token to ~/.git-credentials in cleartext on the first HTTPS push
+# and leaves it there forever. gh where it exists, an in-memory cache otherwise; `store`
+# is never a default -- opt into it per-machine in ~/.config/git/local.config if you must.
 [credential]
-	helper = store
+	helper = {{ if lookPath "gh" }}!gh auth git-credential{{ else }}cache --timeout=3600{{ end }}
 {{- end }}
 [core]
 	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
 	excludesfile = ~/.gitignore_global
 	pager = less
-{{- if stat (printf "%s/.ssh/id_ed25519" .chezmoi.homeDir) }}
-[user]
-	signingkey = ~/.ssh/id_ed25519.pub
+# Signing policy is emitted UNCONDITIONALLY, and only the key path is detected.
+# All of this used to sit inside the id_ed25519 stat below, so a machine whose key is
+# named something else rendered a gitconfig with no signing directives at all and every
+# commit was silently unsigned -- which is what Windows has been doing: it signs with
+# ~/.ssh/github-signing, the probe missed, and the branch went quiet. Emitting the policy
+# outside the gate turns a missing key into a failed commit instead of an unsigned one.
 [gpg]
 	format = ssh
 [gpg "ssh"]
 	allowedSignersFile = {{ .chezmoi.homeDir }}/.config/git/allowed_signers
 [commit]
 	gpgsign = true
+{{- if stat (printf "%s/.ssh/id_ed25519" .chezmoi.homeDir) }}
+[user]
+	signingkey = ~/.ssh/id_ed25519.pub
+{{- else if stat (printf "%s/.ssh/github-signing" .chezmoi.homeDir) }}
+[user]
+	signingkey = ~/.ssh/github-signing.pub
 {{- end }}
 {{- end }}
 [pull]
