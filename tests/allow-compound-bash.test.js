@@ -20,9 +20,12 @@ fs.mkdirSync(path.join(HOME, '.claude'), { recursive: true });
 fs.writeFileSync(path.join(HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
     allow: ['Bash(git status:*)', 'Bash(ls:*)', 'Bash(echo:*)', 'Bash(cat:*)',
-      'Bash(jq:*)', 'Bash(jsonq:*)'],
-    deny: ['Bash(rm:*)'],
-    ask: ['Bash(git push:*)'],
+      'Bash(jq:*)', 'Bash(jsonq:*)', 'Bash(git commit:*)', 'Bash(gh api:*)',
+      'Bash(sh:*)',
+      // An allow rule with an interior wildcard, to pin that those stay literal.
+      'Bash(frob * --safe)'],
+    deny: ['Bash(rm:*)', 'Bash(git commit *--no-verify)', 'Bash(* | sh)'],
+    ask: ['Bash(git push:*)', 'Bash(gh api *-X DELETE)'],
   },
 }));
 
@@ -117,6 +120,37 @@ test('matches an allow prefix only at a command boundary', { skip }, () => {
   assert.strictEqual(allowed('lsof -i && ls'), null);
   assert.strictEqual(allowed('git statusfoo && ls'), null);
   assert.strictEqual(allowed('echoes hi && ls'), null);
+});
+
+// The extraction only strips a TRAILING wildcard, so a deny/ask rule whose `*` sits in
+// the middle kept it — and matches_any compares with the pattern quoted, making all 20
+// such rules in the real settings dead strings. Each then matched an allow prefix
+// (`git commit`, `gh api`) and auto-approved the very thing it was written to stop.
+test('evaluates deny/ask rules with an interior wildcard as globs', { skip }, () => {
+  assert.strictEqual(allowed('git status && git commit -m x --no-verify'), null);
+  assert.strictEqual(allowed('git status && git commit --no-verify -m x'), null);
+  assert.strictEqual(allowed('ls && gh api -X DELETE /repos/o/r'), null);
+});
+
+// A rule written across a pipe is only ever intact before the split, since the splitter
+// consumes `|` — so the whole command is tested against the glob list as well.
+test('applies pipe-spanning deny globs to the whole command', { skip }, () => {
+  assert.strictEqual(allowed('cat a.json | sh'), null);
+  assert.strictEqual(allowed('echo hi && cat a.json | sh'), null);
+});
+
+// The glob must not swallow the ordinary form of the same command.
+test('interior-wildcard rules do not over-match', { skip }, () => {
+  assert.strictEqual(allowed('git status && git commit -m x'), 'allow');
+  assert.strictEqual(allowed('git status && gh api /repos/o/r'), 'allow');
+  assert.strictEqual(allowed('git status && gh api -X GET /repos/o/r'), 'allow');
+});
+
+// Deliberate asymmetry: activating the allow list's dead wildcards would WIDEN what is
+// auto-approved without a prompt. Narrowing is a security fix; widening is the owner's
+// call, so allow patterns stay on literal prefix matching.
+test('leaves interior wildcards in ALLOW rules inert', { skip }, () => {
+  assert.strictEqual(allowed('ls && frob x --safe'), null);
 });
 
 process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));

@@ -37,10 +37,27 @@ extract_bash_prefixes() {
 
 ALLOW=()
 while IFS= read -r line; do [[ -n "$line" ]] && ALLOW+=("$line"); done < <(extract_bash_prefixes "allow")
-DENY=()
-while IFS= read -r line; do [[ -n "$line" ]] && DENY+=("$line"); done < <(extract_bash_prefixes "deny")
-ASK=()
-while IFS= read -r line; do [[ -n "$line" ]] && ASK+=("$line"); done < <(extract_bash_prefixes "ask")
+
+# Deny/ask rules split into two classes. The gsub chain above only strips a TRAILING
+# wildcard, so any `*` still present is an interior or leading one — `git commit
+# *--no-verify`, `* | sh`, the eight `gh api *-X <VERB>` rules — and matches_any
+# compares with the pattern QUOTED, making every one of them a dead literal string.
+# Each then fell through to an allow prefix (`git commit`, `gh api`) and auto-approved.
+# Route those to matches_glob instead.
+#
+# Deny/ask only, deliberately: the same treatment on the allow list would activate its
+# dead wildcards too and WIDEN auto-approval. Narrowing is a security fix; widening is
+# the owner's call.
+DENY=(); DENY_GLOB=()
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  case $line in *'*'*) DENY_GLOB+=("$line") ;; *) DENY+=("$line") ;; esac
+done < <(extract_bash_prefixes "deny")
+ASK=(); ASK_GLOB=()
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  case $line in *'*'*) ASK_GLOB+=("$line") ;; *) ASK+=("$line") ;; esac
+done < <(extract_bash_prefixes "ask")
 
 trim() {
   local s="$1"
@@ -55,6 +72,20 @@ matches_any() {
   for p in ${patterns[@]+"${patterns[@]}"}; do
     # Exact match, or prefix followed by a space (prevents "git" matching "git-lfs")
     [[ "$cmd" == "$p" || "$cmd" == "$p "* || "$cmd" == "$p"/* ]] && return 0
+  done
+  return 1
+}
+
+# Same job as matches_any for patterns carrying an interior `*`, but the RHS is left
+# UNQUOTED so bash treats it as a pattern. The trailing-`*` variant covers the rules
+# whose wildcard sits before the flag they are guarding — `git commit *--no-verify`
+# has to catch `git commit -m x --no-verify -S` too, not just a command ending there.
+matches_glob() {
+  local cmd="$1"; shift
+  local p
+  for p in ${1+"$@"}; do
+    # shellcheck disable=SC2053  # unquoted RHS is the point: glob, not literal compare
+    [[ "$cmd" == $p || "$cmd" == $p* ]] && return 0
   done
   return 1
 }
@@ -122,6 +153,14 @@ split_outside_quotes() {
   return 0
 }
 
+# Glob deny/ask patterns are tested against the WHOLE command before it is split, as
+# well as against each segment below. The splitter consumes `|`, so a rule written
+# across a pipe — `* | sh`, `* | bash` — is only ever intact at this point.
+if matches_glob "$COMMAND" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
+  || matches_glob "$COMMAND" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
+  exit 0
+fi
+
 SPLIT=$(split_outside_quotes "$COMMAND") || exit 0
 PARTS=()
 while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done <<< "$SPLIT"
@@ -140,7 +179,9 @@ for part in "${PARTS[@]}"; do
   esac
 
   # Deny or ask list → defer to normal permission handling
-  if matches_any "$part" "${DENY[@]}" || matches_any "$part" "${ASK[@]}"; then
+  if matches_any "$part" ${DENY[@]+"${DENY[@]}"} || matches_any "$part" ${ASK[@]+"${ASK[@]}"} \
+    || matches_glob "$part" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
+    || matches_glob "$part" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
     exit 0
   fi
 
