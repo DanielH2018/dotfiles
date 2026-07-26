@@ -29,6 +29,24 @@ esac
 # seconds (default 45) so repeated TABs feel instant. BatchMode+ConnectTimeout mean an
 # unreachable or auth-locked host fails fast and quietly rather than hanging the shell.
 _cts_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
+# Quote a value for the REMOTE shell. ssh joins its command arguments into ONE string and
+# the remote login shell re-splits it, so anything interpolated there is code, not data --
+# and repo/branch values arrive from tab-completion of remote listings, i.e. from off this
+# machine. Single-quoting is the whole job; not printf %q, which can emit bash-only $'…'
+# for control characters while the remote shell may be sh or zsh.
+#
+# A leading ~/ is the one thing kept unquoted, as $HOME/ so the REMOTE expands it -- that
+# is the documented way to name a path in the remote's home (see the --ssh notes below),
+# and quoting it wholesale would silently start passing a literal tilde to ctw.
+_cts_shq() {
+  local v="${1:-}" pre=""
+  case "$v" in
+    '~')   printf '%s' '$HOME'; return 0 ;;
+    '~/'*) pre='$HOME/'; v="${v#'~/'}" ;;
+  esac
+  printf "%s'%s'" "$pre" "${v//\'/\'\\\'\'}"
+}
 _cts_complete() {
   local kind="$1" host="${2:-}" repo="${3:-}"
   [ -n "$host" ] || host="${CTS_REMOTE_HOST:-daniel-server}"
@@ -39,7 +57,7 @@ _cts_complete() {
   local key remote
   if [ "$kind" = branches ]; then
     [ -n "$repo" ] || return 0
-    key="branches_${host}_${repo}"; remote="$ctw --list-branches $repo"
+    key="branches_${host}_${repo}"; remote="$ctw --list-branches $(_cts_shq "$repo")"
   else
     key="repos_${host}"; remote="$ctw --list-repos"
   fi
@@ -97,8 +115,8 @@ if [ "$_remote" -eq 1 ]; then
   # shell may not have ~/.local/bin on PATH. $HOME expands on the remote, not here. ctw
   # resolves REPO under $CTS_REMOTE_ROOTS and, with a branch, into a per-branch worktree.
   remote_ctw="${CTS_REMOTE_CTW:-\$HOME/.local/bin/ctw}"
-  if [ -n "$rdir" ] && [ -n "$rbranch" ]; then exec ssh -t "$host" "$remote_ctw $rdir $rbranch"; fi
-  if [ -n "$rdir" ]; then exec ssh -t "$host" "$remote_ctw $rdir"; fi
+  if [ -n "$rdir" ] && [ -n "$rbranch" ]; then exec ssh -t "$host" "$remote_ctw $(_cts_shq "$rdir") $(_cts_shq "$rbranch")"; fi
+  if [ -n "$rdir" ]; then exec ssh -t "$host" "$remote_ctw $(_cts_shq "$rdir")"; fi
   exec ssh -t "$host" "$remote_ctw"
 fi
 
