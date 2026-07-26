@@ -282,6 +282,11 @@
       "landed": "2026-07-25T23:57:09.741Z"
     },
     {
+      "path": "home/private_dot_claude/skills/handoff/SKILL.md",
+      "hash": "8fee26651fc4a26ba9ca80b3b06fc0bb42762ba2b52850087ec8365a6f2ad281",
+      "landed": "2026-07-26T18:30:24.162Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
       "hash": "8acb40e475ae9da188c2051751f321291672cc349b299da0bb18b04eb0ba59ed",
       "landed": "2026-07-26T13:29:20.904Z"
@@ -383,8 +388,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/skill-router/SKILL.md.tmpl",
-      "hash": "cb524f834d86a19de1ddc589397b746510d4d8dae914768a58d2d1c8afc25e8e",
-      "landed": "2026-07-25T23:57:09.741Z"
+      "hash": "35c7ea72664ea9faf70fe7e1c7cd5eb2c391f293b565e032c6c05248a6152d38",
+      "landed": "2026-07-26T18:30:24.162Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
