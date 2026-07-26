@@ -110,7 +110,11 @@ if command -v zoxide >/dev/null 2>&1; then
   zz() {
     command -v fzf >/dev/null 2>&1 || { echo "fzf not installed"; return 1; }
     local dir
-    dir="$(zoxide query -ls | sed 's/^[^ ]* //' | fzf --tac --prompt='zoxide> ')" || return
+    # `zoxide query -ls` right-aligns the score, so every row starts with spaces:
+    # "  32.0 /path". `^[^ ]* ` matched an empty run at position 0 and ate one space,
+    # leaving " 32.0 /path" — which `cd` (aliased to zoxide above) then treated as a
+    # query that matched nothing, so this never jumped anywhere.
+    dir="$(zoxide query -ls | sed 's/^[[:space:]]*[0-9.]*[[:space:]]*//' | fzf --tac --prompt='zoxide> ')" || return
     cd "$dir" || return
   }
 fi

@@ -88,3 +88,30 @@ test('a null base is replaced by a real overlay value', () => {
   const out = run(w('b11.json', { statusLine: null }), w('o11.json', { statusLine: { type: 'command' } }));
   assert.deepStrictEqual(out.statusLine, { type: 'command' });
 });
+
+// Written as raw text: a `__proto__` key in a JS object literal sets the prototype rather
+// than an own property, so JSON.stringify would drop it and the fixture would prove nothing.
+const wRaw = (name, text) => { const p = path.join(tmp, name); fs.writeFileSync(p, text); return p; };
+
+// `out[k] = …` goes through [[Set]], so a `__proto__` key hit Object.prototype's setter and
+// set the accumulator's prototype instead of defining a key. A later fragment then saw those
+// keys through the chain and merged them in, producing permission rules that appear in no
+// visible key of any input — a silent write to the settings.json that governs enforcement.
+test('refuses a prototype key rather than merging it into the output', () => {
+  const inject = wRaw('proto1.json', '{"__proto__":{"permissions":{"allow":["Bash(INJECTED:*)"]}},"model":"opus"}');
+  const plain = w('proto2.json', { permissions: { allow: ['Bash(ls:*)'] } });
+  const r = runFail(inject, plain);
+  assert.strictEqual(r.status, 1, 'a __proto__ key must exit 1');
+  assert.match(r.stderr, /refusing prototype key "__proto__"/);
+  assert.doesNotMatch(String(r.stdout || ''), /INJECTED/, 'injected rule must not reach the output');
+
+  assert.strictEqual(runFail(wRaw('proto3.json', '{"constructor":{"x":1}}')).status, 1);
+});
+
+// `in` walks the prototype chain, so a fragment key that shadows an Object.prototype member
+// used to be merged against a function rather than treated as a new key.
+test('treats a key named after an Object.prototype member as an ordinary key', () => {
+  const out = run(w('b12.json', { model: 'opus' }), wRaw('o12.json', '{"toString":{"type":"command"}}'));
+  assert.deepStrictEqual(out.toString, { type: 'command' });
+  assert.strictEqual(out.model, 'opus');
+});

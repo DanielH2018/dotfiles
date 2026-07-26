@@ -23,11 +23,30 @@ const shape = (v) =>
 // {"permissions": "deny"} silently produces a settings.json with no permission model
 // at all, at exit 0. null means "unset", so the other side wins; a genuine shape
 // conflict is refused rather than resolved by guesswork.
+// JSON.parse makes `__proto__` an own property, but `out[k] = …` goes through [[Set]] and
+// hits Object.prototype's setter instead of defining a key. A fragment carrying
+// {"__proto__": {"permissions": …}} therefore set the accumulator's prototype, a later
+// fragment saw those keys through the chain, and the values merged into the real output —
+// producing permission rules present in no visible key of any input. This script writes
+// ~/.claude/settings.json, so that is a silent write to the enforced permission model.
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 const merge = (a, b, path = []) => {
   if (Array.isArray(a) && Array.isArray(b)) return dedupe([...a, ...b]);
   if (isObj(a) && isObj(b)) {
     const out = { ...a };
-    for (const k of Object.keys(b)) out[k] = k in a ? merge(a[k], b[k], [...path, k]) : b[k];
+    for (const k of Object.keys(b)) {
+      if (FORBIDDEN_KEYS.has(k)) {
+        const where = path.length ? path.join('.') : '<root>';
+        process.stderr.write(
+          `claude-settings-merge: refusing prototype key "${k}" at ${where}\n`,
+        );
+        process.exit(1);
+      }
+      // hasOwnProperty, not `in`: `in` walks the prototype chain, so a fragment key
+      // named toString or valueOf would be merged against a function off Object.prototype.
+      out[k] = Object.prototype.hasOwnProperty.call(a, k) ? merge(a[k], b[k], [...path, k]) : b[k];
+    }
     return out;
   }
   if (b === null) return a;

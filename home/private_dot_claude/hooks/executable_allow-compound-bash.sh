@@ -80,7 +80,7 @@ fi
 split_outside_quotes() {
   local s="$1"
   local n=${#s}   # separate `local`: ${#s} would read the *outer* s in a combined one
-  local i=0 q='' cur='' c next
+  local i=0 q='' cur='' c next prev
   while [ "$i" -lt "$n" ]; do
     c=${s:i:1}
     if [ -n "$q" ]; then
@@ -98,6 +98,18 @@ split_outside_quotes() {
     next=${s:i+1:1}
     if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
       printf '%s\n' "$cur"; cur=''; i=$((i + 2)); continue
+    fi
+    # A lone `&` backgrounds the command to its left and starts a new one, so it is a
+    # separator too. Falling through to the append below glued everything after it onto
+    # the previous segment, and matches_any only ever inspects a segment's prefix — so
+    # `git status && ls & <anything>` inherited `ls`'s approval and auto-allowed.
+    # `>&`/`<&` are fd dups rather than separators; leave those to the redirection check.
+    if [ "$c" = '&' ]; then
+      prev=''
+      [ -n "$cur" ] && prev=${cur:$((${#cur} - 1)):1}
+      if [ "$prev" != '>' ] && [ "$prev" != '<' ]; then
+        return 1
+      fi
     fi
     if [ "$c" = ';' ] || [ "$c" = '|' ]; then
       printf '%s\n' "$cur"; cur=''; i=$((i + 1)); continue
