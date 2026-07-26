@@ -22,4 +22,4 @@ Register-ScheduledTask -TaskName 'WSL Interop Reaper' -Action $action -Trigger $
 
 Start-ScheduledTask -TaskName 'WSL Interop Reaper'
 Write-Host 'Installed and started. It will also auto-start at every logon.'
-Write-Host "Reaps are logged to $env:LOCALAPPDATA\wslhost-interop-reaper.log"
+Write-Host "Every sweep is logged to $env:LOCALAPPDATA\wslhost-interop-reaper.log"

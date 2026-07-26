@@ -53,27 +53,28 @@ param(
 $ErrorActionPreference = 'SilentlyContinue'
 $logPath = Join-Path $env:LOCALAPPDATA 'wslhost-interop-reaper.log'
 
-# Single-instance guard: two reapers would double-sample and could race on the same
-# kill. Only the first instance runs. Matches the streamdeck-watcher pattern.
-$singleton = New-Object System.Threading.Mutex($false, 'Local\WslhostInteropReaperSingleton')
-if (-not $singleton.WaitOne(0)) { return }
-
 function Write-Log {
     param([string]$Message)
     $line = '{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
     Write-Output $line
-    # Keep the log from growing without bound; it only ever records reaps.
+    # Keep the log from growing without bound. Every sweep records a line, so at the default
+    # poll that is ~288/day and the 1MB cap is reached in weeks, not years; keep enough tail
+    # to still cover the run-up to whatever prompted the reading.
     if ((Test-Path $logPath) -and ((Get-Item $logPath).Length -gt 1MB)) {
-        Set-Content -Path $logPath -Value (Get-Content $logPath -Tail 200)
+        Set-Content -Path $logPath -Value (Get-Content $logPath -Tail 2000)
     }
     Add-Content -Path $logPath -Value $line
 }
 
+function Get-WslHost {
+    Get-CimInstance Win32_Process -Filter "Name = 'wslhost.exe'"
+}
+
 function Get-VmModeHost {
+    param($Hosts)
     # The VM-mode host is the leak target: --vm-id present, --distro-id absent.
     # The per-distro host (--distro-id) belongs to a live wsl.exe and must be left alone.
-    Get-CimInstance Win32_Process -Filter "Name = 'wslhost.exe'" |
-        Where-Object { $_.CommandLine -match '--vm-id' -and $_.CommandLine -notmatch '--distro-id' }
+    $Hosts | Where-Object { $_.CommandLine -match '--vm-id' -and $_.CommandLine -notmatch '--distro-id' }
 }
 
 function Measure-SpinningThread {
@@ -101,9 +102,29 @@ function Measure-SpinningThread {
 }
 
 function Invoke-Sweep {
-    foreach ($h in Get-VmModeHost) {
+    $all = @(Get-WslHost)
+    $hosts = @(Get-VmModeHost -Hosts $all)
+
+    if ($hosts.Count -eq 0) {
+        # Separate "nothing to reap" from "the filter cannot see anything". Win32_Process
+        # reports CommandLine as $null for a process the caller lacks rights to inspect, and
+        # the filter then matches nothing however hard the host is spinning -- a silent no-op
+        # that reads exactly like a healthy idle sweep unless both counts are on the record.
+        # Observed 2026-07-26: the task swept for ~2h while a host climbed to 9 leaked
+        # threads, logging nothing, because only reaps were ever written down.
+        $blind = @($all | Where-Object { -not $_.CommandLine }).Count
+        $note = "sweep: 0 VM-mode hosts of $($all.Count) wslhost"
+        if ($blind) { $note += "; $blind with unreadable CommandLine (insufficient rights?)" }
+        Write-Log $note
+        return
+    }
+
+    foreach ($h in $hosts) {
         $spinning = Measure-SpinningThread -ProcessId $h.ProcessId
-        if ($null -eq $spinning) { continue }
+        if ($null -eq $spinning) {
+            Write-Log "sweep: wslhost pid=$($h.ProcessId) exited or unreadable during sampling"
+            continue
+        }
 
         if ($spinning -ge $LeakThreshold) {
             $verb = if ($DryRun) { 'would reap' } else { 'reaping' }
@@ -112,10 +133,22 @@ function Invoke-Sweep {
                 Stop-Process -Id $h.ProcessId -Force -ErrorAction SilentlyContinue
             }
         }
-        elseif ($DryRun) {
-            Write-Log "ok wslhost pid=$($h.ProcessId): $spinning threads spinning"
+        else {
+            Write-Log "sweep: wslhost pid=$($h.ProcessId) ok, $spinning threads spinning (threshold $LeakThreshold)"
         }
     }
+}
+
+# Single-instance guard: two reapers would double-sample and could race on the same
+# kill. Only the first instance runs. Matches the streamdeck-watcher pattern. Sits below
+# Write-Log so the refusal can be recorded: a blocked instance is otherwise silent, and a
+# hand-run -Once that quietly does nothing looks exactly like a sweep that found nothing
+# (which cost an hour of misattribution on 2026-07-26 -- the scheduled task had made the
+# kill, while the manual run it was credited to had returned here without sweeping).
+$singleton = New-Object System.Threading.Mutex($false, 'Local\WslhostInteropReaperSingleton')
+if (-not $singleton.WaitOne(0)) {
+    Write-Log 'sweep skipped: another reaper instance holds the singleton'
+    return
 }
 
 if ($Once) {
