@@ -1030,6 +1030,5 @@
   "fileCheckpointingEnabled": true,
   "showTurnDuration": true,
   "autoConnectIde": true,
-  "autoInstallIdeExtension": true,
-  "maxSkillDescriptionChars": 800
+  "autoInstallIdeExtension": true
 }

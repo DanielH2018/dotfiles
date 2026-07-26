@@ -34,7 +34,7 @@ Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-lapto
 
 ## GitHub
 
-For anything on `github.com` — PRs, issues, diffs, Actions runs/logs, repo files, releases — use the `gh` CLI (`gh pr view`, `gh issue view`, `gh api`, `gh run view --log`), not WebFetch. `gh` is authenticated, sees private repos, and returns structured data. `WebFetch(domain:github.com)` is denied in settings, so fetching it will fail — reach for `gh` first. (`raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.)
+For anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, releases — use the authenticated `gh` CLI, never WebFetch (`WebFetch(domain:github.com)` is denied in settings and will fail); `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
 
 ## Testing
 
@@ -87,15 +87,10 @@ Before fanning out subagents or building a Workflow, load the `orchestrating-sub
 
 ## Compaction policy
 
-When compacting, always preserve: the full list of files modified this session; all test commands run and their pass/fail results; user corrections and architectural decisions; current task state and next steps; the active branch name and whether changes are pushed.
-
-Preserve exact identifiers, error messages, and user corrections **verbatim** — never paraphrase an error string or a correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
+`pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder — all from ground truth, so don't restate them. What the hook *cannot* derive, and you must carry across yourself: test **pass/fail results**, architectural decisions, and next steps. Never paraphrase an error string or a user correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
 
 Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Auto-compaction reuses a summary precomputed in the background; a manual one preempts it and pays full price. Measured 2026-07-25: 52 of 52 compactions were manual and *none* hit the precompute (47 `miss_not_ready`), costing $48 in 24h at a 0.27 cacheRead:cacheCreation ratio — the only tool-call class that writes more cache than it reads back.
 
-## Homelab access
-
-The homelab server is `ubuntu@10.0.0.161` — Host alias `homelab` in `~/.ssh/config`; the remote user is `ubuntu`, not `daniel`. Run commands with `ssh homelab '<command>'`. `ssh` is in the permission `ask` list, but `allow-readonly-remote.sh` auto-approves a narrow set of provably read-only remote verbs (`uptime`, `docker ps`, `systemctl status`, `journalctl`, ...), so those run without a prompt; anything else still prompts.
 {{ if .work }}
 @~/.claude/CLAUDE.local.md
 {{- end }}
