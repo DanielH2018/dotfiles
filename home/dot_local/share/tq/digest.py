@@ -210,8 +210,14 @@ def _sample(items, size):
     """
     if len(items) <= size:
         return list(items)
-    stride = len(items) / size
-    return [items[int(i * stride)] for i in range(size)]
+    if size == 1:
+        return [items[0]]
+    # Spread across the gaps rather than the length, so the last row is the last
+    # item. Dividing by size instead put the final sample at 1235 of 1412 and
+    # left the tail of every long sweep unseen — which is the end a truncated
+    # answer is most often wrong about.
+    step = (len(items) - 1) / (size - 1)
+    return [items[round(i * step)] for i in range(size)]
 
 
 def _row(item, kind):

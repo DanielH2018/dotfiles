@@ -25,6 +25,11 @@ HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
 MODES = ("all", "file", "added")
 
+# A file git has never seen is new all the way down, so every line of it counts
+# as added. Kept distinct from a set of line numbers because "all of them" is
+# not a number tq can know without reading the file.
+EVERY_LINE = object()
+
 
 def _git(args, cwd):
     try:
@@ -71,9 +76,17 @@ def touched(base, cwd):
     if out is None:
         return None
 
-    changed, path = {}, None
+    changed, path, in_header = {}, None, False
     for line in out.splitlines():
-        if line.startswith("+++ "):
+        # Only the header block between `diff --git` and the first hunk can name
+        # a file. An added line whose own content begins `++ ` arrives in the
+        # body as `+++ `, and reading that as a header points the hunks that
+        # follow at a path invented from the file's contents — which scopes the
+        # real findings away and admits findings from a file that does not exist.
+        if line.startswith("diff --git "):
+            in_header, path = True, None
+            continue
+        if in_header and line.startswith("+++ "):
             target = line[4:].strip()
             # A deleted file has no new side, so nothing can be reported in it.
             if target == "/dev/null":
@@ -82,15 +95,40 @@ def touched(base, cwd):
             path = os.path.realpath(os.path.join(root, target))
             changed.setdefault(path, set())
             continue
-        if path is None:
-            continue
         hunk = HUNK.match(line)
         if hunk:
+            in_header = False
+            if path is None:
+                continue
             start = int(hunk.group("start"))
             # An absent count means one line; a count of 0 is a pure deletion,
             # which touches the file without adding a line to report on.
             count = 1 if hunk.group("count") is None else int(hunk.group("count"))
             changed[path].update(range(start, start + count))
+
+    # A file the agent has just created is not in any diff against HEAD, so
+    # every finding in the newest code in the tree scoped away as "not yours".
+    # That is the wrong way round: it is the most yours of anything here.
+    # --full-name and the :/ pathspec because ls-files otherwise answers about
+    # the current directory's subtree, in paths relative to it — where the diff
+    # above is repo-wide. Run from a subdirectory the two would not line up.
+    untracked = _git(
+        [
+            "-c",
+            "core.quotePath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+            "-z",
+            "--",
+            ":/",
+        ],
+        cwd,
+    )
+    for name in (untracked or "").split("\0"):
+        if name:
+            changed[os.path.realpath(os.path.join(root, name))] = EVERY_LINE
     return changed
 
 
@@ -107,7 +145,7 @@ def in_scope(fail, mode, changed, cwd):
     lines = changed.get(os.path.realpath(path))
     if lines is None:
         return False
-    if mode == "file" or fail.line is None:
+    if mode == "file" or fail.line is None or lines is EVERY_LINE:
         return True
     return fail.line in lines
 
