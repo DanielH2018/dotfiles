@@ -18,33 +18,28 @@ export NPM_CONFIG_IGNORE_SCRIPTS=true
 export NPM_CONFIG_FUND=false
 
 # --- Sync managed files into persistent state volume ---
-# The persistent volume at ~/.claude/ starts empty. Managed files (settings,
-# hooks, CLAUDE.md) are bind-mounted into ~/.claude-defaults/ at runtime and
-# force-copied here so edits take effect without rebuilding the image.
-# Non-managed files (auth state, history) in the volume are left untouched.
+# The persistent volume at ~/.claude/ starts empty. CLAUDE.md and keybindings.json
+# are bind-mounted into ~/.claude-defaults/ at runtime and force-copied here so
+# edits take effect without rebuilding the image.
+#
+# settings.json, every hook, and statusline-command.sh are NOT copied: the
+# launcher mounts them read-only at their live ~/.claude paths. They are the
+# container's permission policy and its guard-hook code, and ~/.claude is a
+# read-write bind mount, so a copy here would hand the agent the ability to
+# rewrite the boundary it runs inside. Do not reintroduce a copy for them —
+# the :ro mount would make it fail anyway.
 DEFAULTS_DIR="/home/claudebot/.claude-defaults"
 CLAUDE_DIR="/home/claudebot/.claude"
 
+# Claude Code reads settings.local.json automatically and nothing manages it, so
+# one poisoned session could leave extra permissions or hooks behind for every
+# later launch — $STATE_DIR is shared by every instance and every repo.
+rm -f "$CLAUDE_DIR/settings.local.json"
+
 if [[ -d "$DEFAULTS_DIR" ]]; then
-  mkdir -p "$CLAUDE_DIR/hooks"
   # Use if/then instead of && to avoid set -e exiting when the test is false
-  if [[ -f "$DEFAULTS_DIR/settings.json" ]]; then
-    cp -f "$DEFAULTS_DIR/settings.json" "$CLAUDE_DIR/settings.json"
-  fi
   if [[ -f "$DEFAULTS_DIR/CLAUDE.md" ]]; then
     cp -f "$DEFAULTS_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
-  fi
-  # Copy every bind-mounted hook script into the live hooks dir (audit.sh,
-  # suggest-artifact.sh, and any future ones) so edits take effect on restart.
-  if [[ -d "$DEFAULTS_DIR/hooks" ]]; then
-    for _hook in "$DEFAULTS_DIR"/hooks/*.sh; do
-      [[ -f "$_hook" ]] || continue
-      cp -f "$_hook" "$CLAUDE_DIR/hooks/$(basename "$_hook")"
-      chmod +x "$CLAUDE_DIR/hooks/$(basename "$_hook")"
-    done
-  fi
-  if [[ -f "$DEFAULTS_DIR/statusline-command.sh" ]]; then
-    cp -f "$DEFAULTS_DIR/statusline-command.sh" "$CLAUDE_DIR/statusline-command.sh"
   fi
   if [[ -f "$DEFAULTS_DIR/keybindings.json" ]]; then
     cp -f "$DEFAULTS_DIR/keybindings.json" "$CLAUDE_DIR/keybindings.json"
@@ -121,14 +116,14 @@ CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
 
   # Docker access
   if [[ -n "${DOCKER_HOST:-}" ]]; then
-    echo "- **Docker**: available via socket proxy (\`DOCKER_HOST=${DOCKER_HOST}\`). Exec, build, commit, and system calls are blocked by the proxy."
+    echo "- **Docker**: available via socket proxy (\`DOCKER_HOST=${DOCKER_HOST}\`). Exec, build, commit, and system calls are blocked by the proxy, but container **create/start IS permitted** (compose needs it) and the proxy filters by API path only, never by request body — so this is a capability on the real host daemon, not a sandboxed one. Use it for the repo's own compose services; do not use it to start containers with host bind mounts, \`--privileged\`, or host networking."
   else
     echo "- **Docker**: not available in this session"
   fi
 
   # GitHub auth (token delivered via gh config file, not env var)
   if [[ -f "${GH_CONFIG_DIR:-/home/claudebot/.config/gh}/hosts.yml" ]]; then
-    echo "- **GitHub**: \`gh\` CLI authenticated (read-only — write ops denied). Token is in gh config, not in environment."
+    echo "- **GitHub**: \`gh\` CLI authenticated — \`gh\` **write verbs are denied** by the deny-list. The token itself is Daniel's full-scope user token in gh's config file, not a read-only one, so treat it as a live credential: don't read it, echo it, copy it, or pass it to anything but \`gh\`."
   else
     echo "- **GitHub**: not authenticated — \`gh\` CLI will not work"
   fi

@@ -822,7 +822,18 @@ start_proxy() {
 
   # Proxy scope: containers/networks/volumes/images are enabled for compose
   # workflows. POST is required for container create/start. exec/build/commit
-  # are blocked to prevent sandbox escape.
+  # are blocked.
+  #
+  # Blocking exec/build/commit does NOT prevent escape, and this comment used to
+  # claim it did. docker-socket-proxy filters by API PATH, never by request body,
+  # so POST=1 + ALLOW_START=1 forwards /containers/create with any HostConfig the
+  # caller asks for — `-v /:/host`, `--privileged`, `--pid=host`. A plain HTTP
+  # POST to the proxy port does it; no `docker` binary is involved, so the Bash
+  # deny-list never sees it. Treat Docker access as granting host-equivalent
+  # privilege, which is what the interactive confirmation above is really for.
+  # Closing it means either dropping POST/ALLOW_START (breaks compose) or putting
+  # a body-inspecting proxy in front that rejects
+  # Binds/Mounts/Privileged/PidMode/CapAdd/NetworkMode=host.
   echo "Starting Docker socket proxy ($PROXY_NAME)..."
   # $PROXY_NAME can exceed the 63-char DNS label limit (RFC 1035), in which
   # case Docker's embedded resolver (127.0.0.11) never registers it and the
@@ -1690,7 +1701,10 @@ fi
 AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
 SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
 ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
-mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR"
+# $STATE_DIR/hooks is the parent of the per-hook :ro mount points below. Create it
+# here so Docker doesn't materialise it root-owned on the host when it makes the
+# mount points (the state dir lives under the user's real ~/.claude tree).
+mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR" "$STATE_DIR/hooks"
 
 # --- Auto-resume: continue the most recent conversation for this instance ---
 # The container cwd is always /workspace, which Claude escapes to the "-workspace"
@@ -1771,33 +1785,49 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/agents:/home/claudebot/.claude/agents:ro"
   # Config files — bind-mounted (not baked into image) so edits don't
   # bust the Docker layer cache for toolchain installs.
-  -v "$SANDBOX_SETTINGS:/home/claudebot/.claude-defaults/settings.json:ro"
-  -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude-defaults/hooks/audit.sh:ro"
+  #
+  # settings.json, every hook, and the statusline script are mounted READ-ONLY
+  # AT THEIR LIVE PATHS, not staged in ~/.claude-defaults for entrypoint.sh to
+  # copy. settings.base.json sets defaultMode:bypassPermissions and the image
+  # launches with --dangerously-skip-permissions, so the deny-list plus these
+  # hooks ARE the whole boundary — and ~/.claude is the read-write $STATE_DIR
+  # bind mount. Copying them there left the agent able to overwrite its own
+  # permission policy and stub out every guard hook (`echo 'exit 0' > …`), since
+  # the settings hook entries name absolute paths that are re-read from disk on
+  # each tool call. A :ro mount point can't be rewritten, chmod'd, or
+  # deleted-and-recreated. Nested mounts inside the state volume, same as
+  # plugins/commands/agents above; the auth container already does this for
+  # settings.json.
+  -v "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro"
+  -v "$SANDBOX_DIR/audit.sh:/home/claudebot/.claude/hooks/audit.sh:ro"
   # Sandbox-only: scopes gh pr create/edit/comment/ready to $SANDBOX_BRANCH. Never
   # mounted on the host, so host gh pr behavior is unaffected.
-  -v "$SANDBOX_DIR/gh-pr-guard.sh:/home/claudebot/.claude-defaults/hooks/gh-pr-guard.sh:ro"
+  -v "$SANDBOX_DIR/gh-pr-guard.sh:/home/claudebot/.claude/hooks/gh-pr-guard.sh:ro"
   # These hooks have no sandbox-specific variant — mount the single canonical host
   # copy (one source of truth, no drift-prone parallel copy). suggest-artifact is
   # parameterized by ARTIFACT_DIR (set to /artifacts above) so the one file works
   # host and container. screen-injection, block-dangerous-bash and protect-secrets
   # add in-container defense-in-depth (injection screening; deny secret reads/writes,
   # disk wipes, fork bombs, pipe-to-shell) beyond what the settings deny-list covers.
-  -v "$HOME/.claude/hooks/suggest-artifact.sh:/home/claudebot/.claude-defaults/hooks/suggest-artifact.sh:ro"
-  -v "$HOME/.claude/hooks/link-artifact.sh:/home/claudebot/.claude-defaults/hooks/link-artifact.sh:ro"
-  -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude-defaults/hooks/screen-injection.sh:ro"
-  -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude-defaults/hooks/block-dangerous-bash.sh:ro"
-  -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude-defaults/hooks/protect-secrets.sh:ro"
+  -v "$HOME/.claude/hooks/suggest-artifact.sh:/home/claudebot/.claude/hooks/suggest-artifact.sh:ro"
+  -v "$HOME/.claude/hooks/link-artifact.sh:/home/claudebot/.claude/hooks/link-artifact.sh:ro"
+  -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude/hooks/screen-injection.sh:ro"
+  -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude/hooks/block-dangerous-bash.sh:ro"
+  -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
   # Agent View Phase 2: the in-container state hook + the shared register library it
   # sources. Present in every container (settings.base.json wires the hook for all), but
   # they no-op unless AGENT_VIEW_KEY + the registry RW mount are set — added interactive-
   # only below, so exec/shell containers can't touch the registry.
-  -v "$HOME/.claude/hooks/agent-view-register.sh:/home/claudebot/.claude-defaults/hooks/agent-view-register.sh:ro"
-  -v "$SANDBOX_DIR/agent-view-state-hook.sh:/home/claudebot/.claude-defaults/hooks/agent-view-state-hook.sh:ro"
+  -v "$HOME/.claude/hooks/agent-view-register.sh:/home/claudebot/.claude/hooks/agent-view-register.sh:ro"
+  -v "$SANDBOX_DIR/agent-view-state-hook.sh:/home/claudebot/.claude/hooks/agent-view-state-hook.sh:ro"
+  # CLAUDE.md is the one managed file that stays staged-and-copied: entrypoint.sh
+  # appends the dynamic environment context to it, so it has to be writable.
+  # It is instructions, not policy or executable code.
   -v "$SANDBOX_DIR/sandbox-CLAUDE.md:/home/claudebot/.claude-defaults/CLAUDE.md:ro"
   # No sandbox-specific variant — mount the single canonical host copy (one source
   # of truth, no drift-prone parallel copy). The host script is a superset and
   # degrades gracefully in-container (bc/stat/date fallbacks all guarded).
-  -v "$HOME/.claude/statusline-command.sh:/home/claudebot/.claude-defaults/statusline-command.sh:ro"
+  -v "$HOME/.claude/statusline-command.sh:/home/claudebot/.claude/statusline-command.sh:ro"
   -v "$SANDBOX_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro"
   # Read-only git identity (see sandbox/gitconfig). Mounted :ro so a compromised
   # session can neither rewrite credential.helper/core.hooksPath/url.insteadOf
@@ -1911,6 +1941,23 @@ if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" 
   case "$REPO_PATH/" in
     "$CLAUDE_VAULT_DIR"/*)
       DOCKER_ARGS+=(-v "$CHEZMOI_SRC:$CHEZMOI_SRC")
+      # The host `chezmoi apply` is the trust boundary for TARGET files, but two
+      # paths in this tree run on the host without any apply-time review of their
+      # contents: .chezmoiscripts/run_* (apply executes them as the user) and
+      # .git/hooks (any host git command in the repo runs them, no apply needed).
+      # Re-mount both :ro so a session can still edit every managed dotfile —
+      # which is the point of a vault session — without being able to plant
+      # host-side code execution. Nested mounts over the RW mount above.
+      _cm_root="$CHEZMOI_SRC"
+      if [[ -f "$CHEZMOI_SRC/.chezmoiroot" ]]; then
+        _cm_root="$CHEZMOI_SRC/$(tr -d '[:space:]' < "$CHEZMOI_SRC/.chezmoiroot")"
+      fi
+      if [[ -d "$_cm_root/.chezmoiscripts" ]]; then
+        DOCKER_ARGS+=(-v "$_cm_root/.chezmoiscripts:$_cm_root/.chezmoiscripts:ro")
+      fi
+      if [[ -d "$CHEZMOI_SRC/.git/hooks" ]]; then
+        DOCKER_ARGS+=(-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro")
+      fi
       # Point the in-container chezmoi binary at the mounted source so
       # cat/diff/managed/source-path/execute-template work. apply/add are denied
       # (settings.base.json) — their dest is the container home, not the host.
@@ -1930,6 +1977,14 @@ if [[ "$NO_WORK_CONFIG" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$WORK_CONF
   case "$REPO_PATH/" in
     "$CLAUDE_VAULT_DIR"/*)
       DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC:$WORK_CONFIG_SRC")
+      # Same reasoning as the chezmoi mount: install.sh runs on the host, and
+      # .git/hooks runs on any host git command. Everything else stays writable.
+      if [[ -f "$WORK_CONFIG_SRC/install.sh" ]]; then
+        DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/install.sh:$WORK_CONFIG_SRC/install.sh:ro")
+      fi
+      if [[ -d "$WORK_CONFIG_SRC/.git/hooks" ]]; then
+        DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro")
+      fi
       echo "  work-laptop-config: source mounted READ-WRITE at $WORK_CONFIG_SRC (install on host; --no-work-config to disable)"
       ;;
   esac
@@ -2105,6 +2160,19 @@ if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
   # Worktree .git points into the main repo; mount it so in-container git
   # resolves the gitdir + shared object store (read-write enables commits).
   DOCKER_ARGS+=(-v "$REPO_PATH/.git:$REPO_PATH/.git")
+  # …but .git holds two things the HOST's git executes: hooks/ and config
+  # (core.fsmonitor, aliases, core.hooksPath). Both are plain file writes needing
+  # no `git config` call, so a RW mount of the whole gitdir is host code execution
+  # the next time Daniel runs any git command in that repo. Re-mount just those
+  # two :ro — objects/, refs/, index and logs/ stay writable, so commits still
+  # work. Nested mounts, so Docker layers them over the RW gitdir above.
+  # if/then, not &&: under set -e a false test at statement level exits the script.
+  if [[ -d "$REPO_PATH/.git/hooks" ]]; then
+    DOCKER_ARGS+=(-v "$REPO_PATH/.git/hooks:$REPO_PATH/.git/hooks:ro")
+  fi
+  if [[ -f "$REPO_PATH/.git/config" ]]; then
+    DOCKER_ARGS+=(-v "$REPO_PATH/.git/config:$REPO_PATH/.git/config:ro")
+  fi
 fi
 
 # GitHub CLI authentication (read-only access)
@@ -2220,6 +2288,13 @@ cleanup() {
   if [[ -n "${VAULT_DB_TMPDIR:-}" && -d "$VAULT_DB_TMPDIR" ]]; then
     rm -rf "$VAULT_DB_TMPDIR"
   fi
+  # The resolved settings file is the mount source, so it has to outlive the
+  # container — remove it here rather than earlier. Pattern-matched because
+  # resolve-sandbox-settings.sh falls back to returning $SANDBOX_DIR/settings.base.json
+  # (a real tracked file) when the fold and the merge both fail.
+  case "${SANDBOX_SETTINGS:-}" in
+    */sandbox-settings-*.json | */sandbox-host-*.json) rm -f "$SANDBOX_SETTINGS" ;;
+  esac
   if [[ "$NEEDS_DOCKER" == true ]]; then
     stop_proxy
   fi

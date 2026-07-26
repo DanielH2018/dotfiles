@@ -75,21 +75,21 @@ function parseEntries(file) {
     .filter(Boolean);
 }
 
-test('both vault path lists exist and contain at least one real entry', { skip: false }, () => {
+test('both vault path lists exist and contain at least one real entry', () => {
   const allow = parseEntries(ALLOWLIST);
   const sensitive = parseEntries(SENSITIVE);
   assert.ok(allow.length > 0, 'vault-allowlist.txt must have at least one entry');
   assert.ok(sensitive.length > 0, 'vault-sensitive.txt must have at least one entry');
 });
 
-test('no entry is well-formed-invalid: no blank/absolute paths, no path traversal', { skip: false }, () => {
+test('no entry is well-formed-invalid: no blank/absolute paths, no path traversal', () => {
   for (const entry of [...parseEntries(ALLOWLIST), ...parseEntries(SENSITIVE)]) {
     assert.ok(!entry.startsWith('/'), `entry must be relative, not absolute: ${entry}`);
     assert.ok(!entry.split('/').includes('..'), `entry must not path-traverse: ${entry}`);
   }
 });
 
-test('no entry lists CLAUDE.md or index.md directly (gen-vault-index.py would silently skip it)', { skip: false }, () => {
+test('no entry lists CLAUDE.md or index.md directly (gen-vault-index.py would silently skip it)', () => {
   for (const entry of [...parseEntries(ALLOWLIST), ...parseEntries(SENSITIVE)]) {
     const base = path.basename(entry);
     assert.notStrictEqual(base, 'CLAUDE.md', `must not list CLAUDE.md: ${entry}`);
@@ -97,7 +97,7 @@ test('no entry lists CLAUDE.md or index.md directly (gen-vault-index.py would si
   }
 });
 
-test('vault-allowlist.txt and vault-sensitive.txt never list the same entry', { skip: false }, () => {
+test('vault-allowlist.txt and vault-sensitive.txt never list the same entry', () => {
   const allow = new Set(parseEntries(ALLOWLIST));
   const sensitive = parseEntries(SENSITIVE);
   const overlap = sensitive.filter((e) => allow.has(e));
@@ -121,21 +121,125 @@ const LAUNCHER_SRC = fs.readFileSync(LAUNCHER, 'utf8');
 const DOCKER_ARGS_BLOCK = extractBlock(LAUNCHER_SRC, 'DOCKER_ARGS=(', '\n)\n');
 const PROXY_RUN_BLOCK = extractBlock(LAUNCHER_SRC, 'docker run -d --rm', '>/dev/null\n');
 
-test('the sandbox container drops all Linux capabilities and blocks privilege escalation', { skip: false }, () => {
+test('the sandbox container drops all Linux capabilities and blocks privilege escalation', () => {
   assert.ok(DOCKER_ARGS_BLOCK.includes('\n  --cap-drop all\n'), '--cap-drop all must be set on the sandbox container');
   assert.ok(DOCKER_ARGS_BLOCK.includes('\n  --security-opt no-new-privileges\n'), '--security-opt no-new-privileges must be set on the sandbox container');
 });
 
-test('the sandbox container caps its process count via pids-limit, bounding a fork bomb', { skip: false }, () => {
+test('the sandbox container caps its process count via pids-limit, bounding a fork bomb', () => {
   assert.match(DOCKER_ARGS_BLOCK, /\n {2}--pids-limit \d+\n/);
 });
 
-test('the docker socket proxy container drops all Linux capabilities', { skip: false }, () => {
+test('the docker socket proxy container drops all Linux capabilities', () => {
   assert.ok(PROXY_RUN_BLOCK.includes('    --cap-drop all \\\n'), '--cap-drop all must be set on the socket proxy container');
 });
 
-test('the docker socket proxy denies exec and other high-risk Docker API endpoints by default', { skip: false }, () => {
+test('the docker socket proxy denies exec and other high-risk Docker API endpoints by default', () => {
   for (const denied of ['EXEC', 'AUTH', 'SECRETS', 'SWARM', 'BUILD', 'COMMIT', 'CONFIGS', 'DISTRIBUTION', 'NODES', 'PLUGINS', 'SYSTEM', 'SERVICES', 'TASKS']) {
     assert.ok(PROXY_RUN_BLOCK.includes(`-e ${denied}=0 `), `${denied} must be denied (=0) on the socket proxy`);
   }
+});
+
+// --- the container's own permission policy and guard hooks must not be writable
+// from inside it. settings.base.json sets defaultMode:bypassPermissions and the
+// image launches --dangerously-skip-permissions, so the deny-list plus the hooks
+// ARE the whole boundary — and ~/.claude is the read-write $STATE_DIR bind mount.
+// These guard the fix: mount them :ro at their LIVE paths instead of staging them
+// in ~/.claude-defaults for entrypoint.sh to copy into the writable volume.
+const ENTRYPOINT_SRC = fs.readFileSync(path.join(SANDBOX_DIR, 'executable_entrypoint.sh'), 'utf8');
+
+// Every `-v "host:container[:mode]"` in the launcher, as [containerPath, mode].
+function containerMounts(src) {
+  return [...src.matchAll(/-v "([^"]+)"/g)].map((m) => {
+    const parts = m[1].split(':');
+    const mode = parts.length > 2 ? parts[parts.length - 1] : '';
+    const target = mode ? parts[parts.length - 2] : parts[parts.length - 1];
+    return [target, mode];
+  });
+}
+const MOUNTS = containerMounts(LAUNCHER_SRC);
+
+test('settings.json is mounted read-only at its live path, not copied into the writable state volume', () => {
+  const live = MOUNTS.filter(([t]) => t === '/home/claudebot/.claude/settings.json');
+  assert.ok(live.length > 0, 'settings.json must be mounted at /home/claudebot/.claude/settings.json');
+  for (const [, mode] of live) {
+    assert.strictEqual(mode, 'ro', 'the live settings.json mount must be :ro — it is the container permission policy');
+  }
+});
+
+test('every hook is mounted read-only at its live ~/.claude/hooks path', () => {
+  const hooks = MOUNTS.filter(([t]) => t.startsWith('/home/claudebot/.claude/hooks/'));
+  assert.ok(hooks.length >= 8, `expected the full hook set mounted live, found ${hooks.length}`);
+  for (const [target, mode] of hooks) {
+    assert.strictEqual(mode, 'ro', `${target} must be mounted :ro — a writable guard hook is no guard`);
+  }
+});
+
+test('the statusline script is mounted read-only at its live path (it is executed, so it is code)', () => {
+  const sl = MOUNTS.filter(([t]) => t === '/home/claudebot/.claude/statusline-command.sh');
+  assert.ok(sl.length > 0, 'statusline-command.sh must be mounted at its live path');
+  for (const [, mode] of sl) assert.strictEqual(mode, 'ro');
+});
+
+test('~/.claude-defaults stages only non-policy, non-executable files', () => {
+  // Anything staged there is copied into the agent-writable ~/.claude by
+  // entrypoint.sh, so the staging area must not carry settings or hook code.
+  const allowed = new Set(['CLAUDE.md', 'keybindings.json']);
+  for (const [target] of MOUNTS) {
+    if (!target.includes('/.claude-defaults/')) continue;
+    const base = target.split('/').pop();
+    assert.ok(allowed.has(base),
+      `${target} is staged for copy into the writable ~/.claude — mount it :ro at its live path instead`);
+  }
+});
+
+test('entrypoint.sh does not copy settings or hooks into the writable state volume', () => {
+  assert.ok(!/cp -f "\$DEFAULTS_DIR\/settings\.json"/.test(ENTRYPOINT_SRC),
+    'copying settings.json into ~/.claude would let the agent rewrite its own permission policy');
+  assert.ok(!/DEFAULTS_DIR"\/hooks\/\*\.sh/.test(ENTRYPOINT_SRC),
+    'copying hooks into ~/.claude would let the agent stub out every guard hook');
+  assert.ok(!/cp -f "\$DEFAULTS_DIR\/statusline-command\.sh"/.test(ENTRYPOINT_SRC),
+    'statusline-command.sh is executed, so a writable copy is a code-execution path');
+});
+
+test('entrypoint.sh clears settings.local.json, which nothing manages and every instance shares', () => {
+  assert.match(ENTRYPOINT_SRC, /rm -f "\$CLAUDE_DIR\/settings\.local\.json"/);
+});
+
+// --- host code-execution paths reachable through the read-write mounts ---
+
+test('the worktree gitdir mount re-mounts hooks/ and config read-only', () => {
+  // The whole .git is RW so in-container commits resolve, but hooks/ and config
+  // (core.fsmonitor, aliases, core.hooksPath) are executed by the HOST's git.
+  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/hooks:$REPO_PATH/.git/hooks:ro"'),
+    'a writable .git/hooks in the mounted repo is host code execution on the next host git command');
+  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/config:$REPO_PATH/.git/config:ro"'),
+    'a writable .git/config lets core.fsmonitor or an alias run on the host');
+});
+
+test('the read-write chezmoi source mount re-mounts .chezmoiscripts and .git/hooks read-only', () => {
+  // `chezmoi apply` on the host executes .chezmoiscripts/run_* as the user, and
+  // .git/hooks runs on any host git command — neither is covered by diff review.
+  assert.match(LAUNCHER_SRC, /-v "\$_cm_root\/\.chezmoiscripts:\$_cm_root\/\.chezmoiscripts:ro"/);
+  assert.ok(LAUNCHER_SRC.includes('-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro"'));
+});
+
+test('the read-write work-laptop-config mount re-mounts install.sh and .git/hooks read-only', () => {
+  assert.ok(LAUNCHER_SRC.includes('-v "$WORK_CONFIG_SRC/install.sh:$WORK_CONFIG_SRC/install.sh:ro"'));
+  assert.ok(LAUNCHER_SRC.includes('-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro"'));
+});
+
+test('the conditional mounts use if/then, not && — set -e would abort the launcher', () => {
+  // `[[ -d x ]] && DOCKER_ARGS+=(…)` at statement level exits under set -euo pipefail
+  // whenever the path is absent, which is the ordinary case for a fresh repo.
+  assert.match(LAUNCHER_SRC, /^set -euo pipefail$/m, 'this guard only matters while set -e is on');
+  for (const m of LAUNCHER_SRC.matchAll(/^[ \t]*\[\[[^\n]*\]\] && DOCKER_ARGS\+=/gm)) {
+    assert.fail(`use if/then instead of && for a conditional mount: ${m[0].trim()}`);
+  }
+});
+
+test('the resolved settings temp file is removed on exit, not leaked once per launch', () => {
+  const cleanup = extractBlock(LAUNCHER_SRC, 'cleanup() {', '\n}\n');
+  assert.match(cleanup, /sandbox-settings-\*\.json/,
+    'cleanup() must remove the resolved settings file (it is the mount source, so it outlives the container)');
 });

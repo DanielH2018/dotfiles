@@ -68,6 +68,12 @@ _TMP="$(mktemp "${TMPDIR:-/tmp}/sandbox-settings-XXXXXX")"
 OUT="${_TMP}.json"
 mv "$_TMP" "$OUT"
 if "$MERGE" "$CUR" "$OVERLAY" >"$OUT" 2>/dev/null; then
+  # The step-1 host-fold temp is now superseded and nothing else references it.
+  # Only remove it if it IS a temp we made — $CUR is $BASE when the fold was
+  # skipped or failed, and $BASE is the caller's real settings.base.json.
+  if [ "$CUR" != "$BASE" ]; then
+    rm -f "$CUR"
+  fi
   printf '%s\n' "$OUT"
 else
   echo "resolve-sandbox-settings: merge failed; mounting host-folded base" >&2
