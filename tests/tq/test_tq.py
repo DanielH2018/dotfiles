@@ -1192,5 +1192,287 @@ class TestSurveyDigest(unittest.TestCase):
         self.assertIn("f4.py  +4 −1", text)
 
 
+class TestRunnerArgv(unittest.TestCase):
+    """The argv each survey runner hands the OS.
+
+    This is the seam the suite used to have no test on. drop_switches() was
+    correct about `--` and had a test saying so, and the caller appended tq's
+    own format flags past the separator one line later — so `git log -- src`
+    grew a pathspec spelled --pretty=format:… , matched nothing, and reported
+    no commits with a zero exit. Testing the helper alone could not see it.
+    """
+
+    class Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def setUp(self):
+        self.cli = load_cli()
+        self.cmds = []
+
+        def fake_run(argv, env):
+            self.cmds.append(list(argv))
+            return self.Proc(), False
+
+        self.cli.run = fake_run
+
+    def built(self, kind, argv):
+        self.cli.RUNNERS[kind](argv, "/sample", "/sample/tmp")
+        return self.cmds[-1]
+
+    def test_git_flags_land_after_the_subcommand_not_after_the_pathspec(self):
+        self.assertEqual(
+            self.built("git-log", ["git", "log", "-3", "--", "home"]),
+            ["git", "log", self.cli.COMMIT_FORMAT, "--no-color", "-3", "--", "home"],
+        )
+        self.assertEqual(
+            self.built("git-diff", ["git", "diff", "HEAD", "--", "home"]),
+            ["git", "diff", "--numstat", "-z", "--no-color", "HEAD", "--", "home"],
+        )
+        self.assertEqual(
+            self.built("git-ls-files", ["git", "ls-files", "--", "home"]),
+            ["git", "ls-files", "-z", "--", "home"],
+        )
+
+    def test_git_own_options_keep_their_place_ahead_of_the_verb(self):
+        # `git --numstat -C /repo diff` is an error: the flag belongs to the
+        # subcommand, so it has to clear git's own options as well as the verb.
+        self.assertEqual(
+            self.built("git-diff", ["git", "-C", "/repo", "diff", "--", "src"]),
+            [
+                "git",
+                "-C",
+                "/repo",
+                "diff",
+                "--numstat",
+                "-z",
+                "--no-color",
+                "--",
+                "src",
+            ],
+        )
+
+    def test_a_log_asked_for_files_gets_numstat_in_the_same_place(self):
+        self.assertEqual(
+            self.built("git-log", ["git", "log", "--stat", "--", "home"]),
+            [
+                "git",
+                "log",
+                self.cli.COMMIT_FORMAT,
+                "--no-color",
+                "--numstat",
+                "--",
+                "home",
+            ],
+        )
+
+    def test_the_other_surveys_put_their_flags_before_the_operands(self):
+        self.assertEqual(
+            self.built("ls", ["ls", "-R", "--", "dir"]),
+            ["ls", "-1", "-R", "--", "dir"],
+        )
+        self.assertEqual(
+            self.built("rg-files", ["rg", "--files", "--", "dir"]),
+            ["rg", "--null", "--files", "--", "dir"],
+        )
+        self.assertEqual(
+            self.built("rg", ["rg", "TODO", "--", "dir"]),
+            ["rg", "--json", "TODO", "--", "dir"],
+        )
+        self.assertEqual(
+            self.built("grep", ["grep", "-rn", "TODO", "--", "src"]),
+            ["grep", "--null", "-H", "-n", "-rn", "TODO", "--", "src"],
+        )
+        self.assertEqual(
+            self.built("fd", ["fd", "--", "pat", "dir"]),
+            ["fd", "--print0", "--", "pat", "dir"],
+        )
+
+    def test_find_keeps_its_primary_last(self):
+        # The exception, and not an oversight: -print0 is part of find's
+        # expression, and an expression is evaluated left to right.
+        self.assertEqual(
+            self.built("find", ["find", "dir", "-name", "*.py"]),
+            ["find", "dir", "-name", "*.py", "-print0"],
+        )
+
+
+class TestBundledShortFlags(unittest.TestCase):
+    """Detection has to read a bundle letter by letter.
+
+    `-rl` prints a file list and `-rn` prints matches, and to a membership test
+    on whole tokens neither looks like `-l`. tq claimed both and reported the
+    26 filenames of a `grep -rl` as one match.
+    """
+
+    def test_a_bundle_hiding_another_output_shape_is_not_claimed(self):
+        self.assertIsNone(detect_mod.detect(["grep", "-rq", "TODO", "src"]))
+        self.assertIsNone(detect_mod.detect(["grep", "-rl", "TODO", "src"]))
+        self.assertIsNone(detect_mod.detect(["rg", "-lF", "TODO", "src"]))
+
+    def test_a_bundle_hiding_a_command_runner_is_not_claimed(self):
+        # The one that is a safety bug rather than a wrong count: claiming this
+        # splices --print0 into the argument list of whatever fd is about to run.
+        self.assertIsNone(detect_mod.detect(["fd", "-Hx", "rm", "pat"]))
+        self.assertIsNone(detect_mod.detect(["fd", "-HX", "rm", "pat"]))
+
+    def test_a_bundle_without_one_is_still_a_survey(self):
+        self.assertEqual(detect_mod.detect(["grep", "-rn", "TODO", "src"]), "grep")
+        self.assertEqual(detect_mod.detect(["grep", "-ri", "TODO", "src"]), "grep")
+        self.assertEqual(detect_mod.detect(["rg", "-iF", "TODO", "src"]), "rg")
+        self.assertEqual(detect_mod.detect(["fd", "-Ht", "f", "pat"]), "fd")
+
+    def test_expansion_stops_where_the_value_starts(self):
+        # `-eTODO` is one flag and a pattern. Reading its `o` as --only-matching
+        # would have tq decline an ordinary grep — safe, but it gives up the
+        # digest on a whole class of real commands.
+        self.assertEqual(detect_mod.detect(["grep", "-eTODO", "src"]), "grep")
+        # grep spells -r --recursive and rg spells it --replace, so the same
+        # bundle has to be read differently for the two tools.
+        self.assertEqual(detect_mod.detect(["rg", "-rl", "x", "src"]), "rg")
+
+    def test_past_the_separator_a_flag_is_the_pattern(self):
+        self.assertEqual(detect_mod.detect(["grep", "--", "-l", "src"]), "grep")
+
+
+class TestSurveyMatchesTheBareCommand(unittest.TestCase):
+    """Run the real command and check tq's answer against the truth.
+
+    The unit tests above all pass against a tq that answers wrongly, because
+    every guard in the digest keys off a non-zero exit or a parse failure and a
+    corrupted argv produces neither. Only actually running the thing notices.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cli = load_cli()
+        cls.dir = tempfile.mkdtemp(prefix="tq-survey-")
+        # Two siblings, because the sweeps below count everything under the tree
+        # they are given and a repo left inside it would be four more paths.
+        cls.tree = os.path.join(cls.dir, "tree")
+        cls.repo = os.path.join(cls.dir, "repo")
+        os.makedirs(os.path.join(cls.tree, "sub", "deep"))
+        for rel in ("a.txt", "sub/b.txt", "sub/deep/c.txt"):
+            with open(os.path.join(cls.tree, rel), "w", encoding="utf-8") as handle:
+                handle.write("alpha TODO\n")
+        os.makedirs(os.path.join(cls.repo, "sub"))
+        # Cut off from the machine's git config: a global commit.gpgsign or
+        # user.name would otherwise decide whether this fixture can be built.
+        cls.env = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_AUTHOR_NAME": "tq tests",
+            "GIT_AUTHOR_EMAIL": "tq@example.invalid",
+            "GIT_COMMITTER_NAME": "tq tests",
+            "GIT_COMMITTER_EMAIL": "tq@example.invalid",
+        }
+        cls._git("init", "-q", "-b", "main")
+        for rel in ("a.txt", "sub/b.txt"):
+            with open(os.path.join(cls.repo, rel), "w", encoding="utf-8") as handle:
+                handle.write("one\n")
+            cls._git("add", rel)
+            cls._git("commit", "-q", "-m", f"add {rel}")
+
+    @classmethod
+    def _git(cls, *args):
+        subprocess.run(
+            ["git", *args],
+            cwd=cls.repo,
+            env=cls.env,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def survey(self, kind, argv):
+        result, _ = self.cli.RUNNERS[kind](argv, self.dir, self.dir)
+        return result
+
+    def test_a_pathspec_past_the_separator_still_reaches_the_paths(self):
+        result = self.survey("ls", ["ls", "-R", "--", self.tree])
+        self.assertEqual(result.exit, 0)
+        self.assertEqual(len(result.items), 5)
+
+    @unittest.skipUnless(shutil.which("git"), "git unavailable")
+    def test_a_git_log_narrowed_by_pathspec_finds_its_commits(self):
+        # -C rather than a chdir, which also puts a value-taking git option
+        # ahead of the verb — the case the splice has to walk past.
+        whole = self.survey("git-log", ["git", "-C", self.repo, "log"])
+        narrowed = self.survey("git-log", ["git", "-C", self.repo, "log", "--", "sub"])
+        self.assertEqual(len(whole.items), 2)
+        self.assertEqual(len(narrowed.items), 1)
+        self.assertEqual(narrowed.exit, 0)
+
+    @unittest.skipUnless(shutil.which("git"), "git unavailable")
+    def test_a_git_diff_narrowed_by_pathspec_finds_its_changes(self):
+        result = self.survey(
+            "git-diff",
+            ["git", "-C", self.repo, "diff", "HEAD~1", "HEAD", "--", "sub"],
+        )
+        self.assertEqual(result.exit, 0)
+        self.assertEqual([item.path for item in result.items], ["sub/b.txt"])
+
+    @unittest.skipUnless(shutil.which("rg"), "rg unavailable")
+    def test_an_rg_file_sweep_past_the_separator_exits_clean(self):
+        result = self.survey("rg-files", ["rg", "--files", "--", self.tree])
+        self.assertEqual(result.exit, 0)
+        self.assertEqual(len(result.items), 3)
+
+    def test_a_grep_that_prints_filenames_is_left_to_the_shell(self):
+        # Not a tq result at all: detect() declines it, so the agent sees grep's
+        # own 3 lines rather than tq's "1 match in 1 file".
+        self.assertIsNone(detect_mod.detect(["grep", "-rl", "TODO", self.tree]))
+
+
+class TestVerdictAgainstRecordedFailures(unittest.TestCase):
+    """A PASS headline must never sit above a printed failure.
+
+    Two runners can hand back totals that disagree with the failures they also
+    reported — JUnit with failures="0" over a <failure> child, and a node run
+    with no run-level summary. The counts were the only vote, so both printed
+    PASS with the failure listed underneath it.
+    """
+
+    def test_a_recorded_failure_outvotes_a_zero_count(self):
+        result = blank("pytest", exit_code=0)
+        result.totals.update(tests=3, **{"pass": 3})
+        result.failures = [Failure(name="test_a", file="t.py")]
+        self.assertTrue(digest(result, "/x").startswith("FAIL 1/3"))
+
+    def test_a_flake_forgiven_as_a_pass_still_reads_pass(self):
+        result = blank("pytest", exit_code=0)
+        result.totals.update(tests=3, **{"pass": 3})
+        result.failures = [Failure(name="test_a", file="t.py", flaky=True)]
+        self.assertTrue(digest(result, "/x").startswith("PASS 3/3"))
+
+    def test_agreeing_counts_are_unaffected(self):
+        result = blank("pytest", exit_code=0)
+        result.totals.update(tests=3, **{"pass": 3})
+        self.assertTrue(digest(result, "/x").startswith("PASS 3/3"))
+
+
+class TestNodeSummaryTotals(unittest.TestCase):
+    def test_per_file_summaries_are_added_up_not_sampled(self):
+        # With no run-level summary the last file's counts used to stand in for
+        # the run, which reads as a small green suite next to a long red one.
+        result = blank("node")
+        records = [
+            {"t": "summary", "file": "a.test.js", "counts": {"tests": 9, "failed": 2}},
+            {"t": "summary", "file": "b.test.js", "counts": {"tests": 3, "failed": 0}},
+        ]
+        path = os.path.join(tempfile.mkdtemp(prefix="tq-node-"), "out.ndjson")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(json.dumps(rec) for rec in records))
+        node_adapter.parse(path, result)
+        self.assertEqual(result.totals["tests"], 12)
+        self.assertEqual(result.totals["fail"], 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
