@@ -882,8 +882,17 @@
       }
     ]
   },
+  {{/* baseRef=head branches a new worktree from whatever the primary checkout
+       happens to be sitting on. With several sessions in this repo at once that
+       is not reliably main: a session that created a branch in the primary
+       checkout instead of a worktree leaves it parked there, and every worktree
+       opened afterwards silently inherits that branch's commits. Found exactly
+       that state — the primary on `context-review-safe-items` — which is how an
+       unrelated session's work ends up in a fresh branch's diff. `fresh` branches
+       from origin/main regardless of local state, so a worktree's base is a fact
+       about the remote rather than about whoever touched the checkout last. */}}
   "worktree": {
-    "baseRef": "head"
+    "baseRef": "fresh"
   },
   "statusLine": {
     "type": "command",

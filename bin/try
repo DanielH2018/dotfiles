@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+#
+# try — put a session's branch on the bench in the primary checkout.
+#
+# Worktrees isolate the work; they also scatter it. Testing a branch by cd-ing to
+# whichever .claude/worktrees/* happens to hold it makes the thing under test a
+# different directory every time, and for this repo it makes it the wrong one:
+# chezmoi reads its source from ~/.local/share/chezmoi, so a worktree can only be
+# deployed by passing --source, while a plain apply from the primary checkout
+# deploys main — not the branch you meant to try.
+#
+# So bring the branch here instead. Git allows that even while a worktree holds
+# it: detaching onto a branch checked out elsewhere is fine, and so is merging it.
+# Only `git checkout <branch>` is refused, and that refusal is the property worth
+# keeping — it is what stops a session's branch hijacking the primary checkout.
+#
+#   try <branch>          detach onto <branch>, leaving main where it is
+#   try --merge <branch>  fast-forward main onto <branch> first
+#   try --back            return to main
+#   try --diff            stop after chezmoi diff — moves HEAD, deploys nothing
+#   try --dry-run         print the plan, touch nothing
+#
+# --merge is the mode that leaves a trace: main moves locally, and `land` still
+# integrates through the PR, so a branch merged here and landed later puts commits
+# on that PR which are byte-identical duplicates of what main already has — the
+# state land's own header describes. Prefer the detached form unless you
+# specifically want to test a merged main.
+#
+# Kept bash-3.2 clean, like land.
+set -u
+
+die() { printf 'try: %s\n' "$1" >&2; exit 1; }
+say() { printf '  %s\n' "$1"; }
+
+MODE=peek
+BRANCH=''
+DRY=0
+DIFF_ONLY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --merge) MODE=merge ;;
+    --back) MODE=back ;;
+    --diff) DIFF_ONLY=1 ;;
+    --dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) printf 'try: unknown flag %s\n' "$1" >&2; exit 2 ;;
+    *) [ -z "$BRANCH" ] || die "one branch at a time (got $BRANCH, then $1)"
+       BRANCH=$1 ;;
+  esac
+  shift
+done
+
+command -v chezmoi >/dev/null 2>&1 || die "chezmoi is required (it does the deploy)"
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+
+# The bench is the primary checkout by definition: it is the one directory chezmoi
+# reads as its source without --source. A linked worktree has a git dir of its
+# own; only the primary has one that is also the common dir.
+GITDIR=$(cd "$(git rev-parse --git-dir)" && pwd -P) || exit 1
+COMMON=$(cd "$(git rev-parse --git-common-dir)" && pwd -P) || exit 1
+[ "$GITDIR" = "$COMMON" ] ||
+  die "this is a linked worktree — run try from the primary checkout, $(dirname "$COMMON")"
+
+CURRENT=$(git rev-parse --abbrev-ref HEAD) || exit 1  # literally "HEAD" when detached
+
+# Either would make every move below ambiguous.
+if [ -d "$GITDIR/rebase-merge" ] || [ -d "$GITDIR/rebase-apply" ]; then
+  die "a rebase is in progress here — finish or abort it first"
+fi
+[ ! -f "$GITDIR/MERGE_HEAD" ] ||
+  die "a merge is in progress here — finish or abort it first"
+
+# A dirty primary checkout is either your own half-finished test or — more often
+# in this repo — another session's work parked in the shared tree. Moving HEAD
+# under it would drag those changes onto the branch being tried.
+[ -z "$(git status --porcelain)" ] ||
+  die "primary checkout is dirty — commit or set aside first (git status)"
+
+case "$MODE" in
+  back)
+    [ -z "$BRANCH" ] || die "--back takes no branch"
+    ;;
+  *)
+    [ -n "$BRANCH" ] ||
+      die "which branch? (try <branch>, or try --back to return to main)"
+    git show-ref --verify --quiet "refs/heads/$BRANCH" || die "no such branch: $BRANCH"
+    case "$BRANCH" in
+      main|master|HEAD) die "$BRANCH is the bench, not something to try — use --back" ;;
+    esac
+    ;;
+esac
+
+if [ "$MODE" = merge ]; then
+  [ "$CURRENT" = main ] ||
+    die "--merge needs main checked out here (on $CURRENT) — run try --back first"
+  # Refuse a merge that would not be a fast-forward here rather than letting git
+  # build a merge commit: history in this repo is linear, and a branch that has
+  # diverged needs land's rebase, not a local knot.
+  git merge-base --is-ancestor main "refs/heads/$BRANCH" ||
+    die "$BRANCH is not a fast-forward from main — land it through its PR instead"
+elif [ "$MODE" = peek ] && [ "$CURRENT" != main ] && [ "$CURRENT" != HEAD ]; then
+  say "note: primary checkout is on $CURRENT, not main — try --back returns it"
+fi
+
+if [ "$DRY" -eq 1 ]; then
+  case "$MODE" in
+    peek)  printf 'try --dry-run: %s, detached\n' "$BRANCH"
+           say "move    git checkout --detach $BRANCH" ;;
+    merge) printf 'try --dry-run: %s, merged into main\n' "$BRANCH"
+           say "move    git merge --ff-only $BRANCH" ;;
+    back)  printf 'try --dry-run: back to main\n'
+           say "move    git checkout main" ;;
+  esac
+  say "show    chezmoi diff"
+  [ "$DIFF_ONLY" -eq 1 ] || say "deploy  chezmoi apply"
+  exit 0
+fi
+
+case "$MODE" in
+  peek)
+    # Detaching is the whole trick: git refuses `checkout <branch>` while another
+    # worktree holds it, but has no objection to --detach.
+    say "detaching onto $BRANCH"
+    git checkout -q --detach "$BRANCH" || die "could not detach onto $BRANCH"
+    ;;
+  merge)
+    say "fast-forwarding main onto $BRANCH"
+    git merge --ff-only "$BRANCH" || die "fast-forward failed"
+    ;;
+  back)
+    say "returning to main"
+    git checkout -q main || die "could not check main back out"
+    ;;
+esac
+
+# The primary checkout is the chezmoi source dir, so a plain apply deploys
+# whatever HEAD now points at — no --source, no per-worktree special case.
+chezmoi diff || die "chezmoi diff failed"
+
+if [ "$DIFF_ONLY" -eq 1 ]; then
+  say "stopping before apply (--diff) — HEAD moved, \$HOME did not"
+  exit 0
+fi
+
+chezmoi apply || die "chezmoi apply failed — \$HOME may be half-deployed"
+
+printf 'bench: %s\n' "$(git log --oneline -1)"
+
+# A --merge test leaves main ahead of the remote, which is exactly the setup that
+# gives land a PR full of duplicates. Say so while it is still cheap to notice.
+AHEAD=$(git rev-list --count origin/main..main 2>/dev/null) || AHEAD=0
+if [ "${AHEAD:-0}" -gt 0 ]; then
+  say "main is $AHEAD commit(s) ahead of origin/main — if a --merge test put them there, undo that before landing"
+fi
