@@ -917,8 +917,16 @@
        unrelated session's work ends up in a fresh branch's diff. `fresh` branches
        from origin/main regardless of local state, so a worktree's base is a fact
        about the remote rather than about whoever touched the checkout last. */}}
+  {{/* A background job has nobody watching the checkout it runs in, so it is the
+       one most likely to leave the primary parked on a branch, or to race another
+       session over the shared index. `worktree` blocks Edit/Write in the main
+       checkout until the job calls EnterWorktree, which puts its changes on their
+       own branch and leaves the primary where it was. This is also the shipped
+       default; pinning it keeps a repo-level opt-out from passing unnoticed and
+       survives a change to that default. */}}
   "worktree": {
-    "baseRef": "fresh"
+    "baseRef": "fresh",
+    "bgIsolation": "worktree"
   },
   "statusLine": {
     "type": "command",
