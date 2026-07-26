@@ -49,7 +49,8 @@ It does no work itself; it orients, then hands off to the skill that does the jo
 ## Vault (LLM Wiki)
 
 {{ if .work }}`vault-lookup` to pull team/service/ops/people context · `/ingest` raw material ·
-{{ end }}`remember` before `/clear` · `/lint` `/rebuild` maintenance{{ if .work }} · `service-context`
+{{ end }}`remember` before `/clear` (durable facts) · `/handoff` before `/clear` (one session's
+in-flight state, for its successor) · `/lint` `/rebuild` maintenance{{ if .work }} · `service-context`
 maps a Processing service → repo/dashboards/runbooks{{ end }}.
 
 ## Config / meta
