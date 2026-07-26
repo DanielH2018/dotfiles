@@ -12,6 +12,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const US = '\x1f';
@@ -105,15 +106,19 @@ exit 0
 echo "$*" >> "$CLAUDE_LOG"
 exit 0
 `, { mode: 0o755 });
-  // Windows wezterm.exe stub: same shape as the local one, on its own logs.
-  const wezwin = path.join(bin, 'wezterm-win.sh');
-  fs.writeFileSync(wezwin, `#!/bin/bash
+  // The WSL-routing tests drive the Windows wezterm, so it gets a body: same shape as the
+  // local stub, on its own logs. The other two seams take the helper's inert defaults.
+  const seams = agentviewWinSeams({
+    bin,
+    windir,
+    weztermBody: `#!/bin/bash
 case "$*" in
   *activate-pane*) prev=""; for a in "$@"; do [ "$prev" = "--pane-id" ] && echo "$a" >> "$WEZWIN_ACTIVATE_LOG"; prev="$a"; done ;;
   *send-text*|*spawn*) echo "$*" >> "$WEZWIN_SEND_LOG" ;;
 esac
 exit 0
-`, { mode: 0o755 });
+`,
+  });
   fs.writeFileSync(path.join(bin, 'taskkill.exe'), `#!/bin/bash
 echo "$*" >> "$TASKKILL_LOG"
 exit 0
@@ -126,7 +131,8 @@ exit 0
 
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
-    AGENT_VIEW_WINDIR: windir, AGENT_VIEW_WEZTERM_WIN: wezwin, AV_WINKILL: path.join(bin, 'taskkill.exe'),
+    ...seams.env,
+    AV_WINKILL: path.join(bin, 'taskkill.exe'),
     AV_KILLCMD: killStub,
     TMUX_LOG: tmuxLog, WEZ_ACTIVATE_LOG: activateLog, WEZ_SPAWN_LOG: spawnLog, WEZ_SEND_LOG: wezSendLog,
     WEZ_LIST_FILE: wezListFile, SSH_LOG: sshLog, WEZWIN_ACTIVATE_LOG: wezwinActivateLog,

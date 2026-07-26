@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const SRC = fs.readFileSync(VIEW, 'utf8');
@@ -71,16 +72,18 @@ exit 0
 case "$*" in *spawn*) echo "$*" >> "$WEZ_SPAWN_LOG" ;; esac
 exit 0
 `, { mode: 0o755 });
-  // The WINDOWS wezterm.exe, reached over /mnt/c. Off by default so the repo-picker tests keep
-  // their '[Windows · plain claude]' row suppressed; the WSL spawn tests opt in.
+  // The WINDOWS wezterm.exe, reached over /mnt/c. Absent by default so the repo-picker tests
+  // keep their '[Windows · plain claude]' row suppressed regardless of the real host (a dev
+  // machine with a real wezterm.exe would otherwise leak it in); the WSL spawn tests opt in.
   const winWezLog = path.join(bin, 'win-wez.log'); fs.writeFileSync(winWezLog, '');
-  const winWezBin = path.join(bin, winWezterm ? 'wezterm.exe' : 'no-such-wezterm.exe');
-  if (winWezterm) {
-    fs.writeFileSync(winWezBin, `#!/bin/bash
+  const seams = agentviewWinSeams({
+    bin,
+    scratch,
+    weztermBody: winWezterm ? `#!/bin/bash
 echo "$*" >> "$WIN_WEZ_LOG"
 exit 0
-`, { mode: 0o755 });
-  }
+` : undefined,
+  });
   fs.writeFileSync(path.join(bin, 'claude-sandbox'), `#!/bin/bash
 echo "$*" >> "$SANDBOX_LOG"
 case "$*" in *--complete-branches*) printf 'main\\nfeature-x\\n' ;; esac
@@ -121,17 +124,14 @@ exit 0
     ...process.env, PATH: `${bin}:${process.env.PATH}`,
     SANDBOX_REPOS_ROOT: reposRoot,
     CLAUDE_SANDBOX_BIN: path.join(bin, 'claude-sandbox'),
-    // No Windows source in these repo-picker tests: point WEZTERM_WIN at a nonexistent path so
-    // the '[Windows · plain claude]' row is suppressed regardless of the real host (a dev machine
-    // with a real wezterm.exe would otherwise leak it in). Windows spawn has its own test file.
-    AGENT_VIEW_WEZTERM_WIN: winWezBin,
+    ...seams.env,
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
     CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog, WIN_WEZ_LOG: winWezLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
-    ctLog, ctsLog, fzfArgsLog, winWezLog, winWezBin,
+    ctLog, ctsLog, fzfArgsLog, winWezLog, winWezBin: seams.wezterm,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
 // `--spawn [portfile]`: a portfile arg opts into the ctrl-n dismiss (POST abort on success).

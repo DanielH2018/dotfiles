@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const US = '\x1f';
@@ -49,13 +50,23 @@ function makeEnv() {
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
 
-  // Windows wezterm.exe stub: log activate-pane ids and send-text payloads. $WEZWIN_PANES, when
-  // set to a `cli list --format json` payload, makes the stub model a REAL mux — it serves that
+  // This suite is the one that drives the Windows seams rather than just isolating them, so it
+  // supplies behaviour for both stubs instead of taking the inert defaults.
+  //
+  // wezterm.exe: log activate-pane ids and send-text payloads. $WEZWIN_PANES, when set to a
+  // `cli list --format json` payload, makes the stub model a REAL mux — it serves that
   // inventory and fails activate-pane for any id not in it, the way the real binary answers a
   // stale locator with "Error: pane N not found". Unset, it accepts every id (the pre-existing
   // tests predate the inventory and only care that the right id was asked for).
-  const wezwin = path.join(bin, 'wezterm-win.sh');
-  fs.writeFileSync(wezwin, `#!/bin/bash
+  //
+  // claude.exe: answers `agents --json` from $WIN_AGENTS — the daemon roster that decides
+  // whether a paneless session is still attachable. Default [] means "daemon holds nothing",
+  // the pre-existing respawn path. $WIN_AGENTS_RC forces the query to fail, which must never
+  // be mistaken for an empty roster.
+  const seams = agentviewWinSeams({
+    bin,
+    windir,
+    weztermBody: `#!/bin/bash
 case "$*" in
   *"cli list"*)    printf '%s' "\${WEZWIN_PANES:-}" ;;
   *activate-pane*)
@@ -69,20 +80,16 @@ case "$*" in
   *spawn*)         echo "$*" >> "$WEZWIN_SEND_LOG" ;;
 esac
 exit 0
-`, { mode: 0o755 });
-  // Windows claude.exe stub: answers `agents --json` from $WIN_AGENTS — the daemon roster that
-  // decides whether a paneless session is still attachable. Default [] means "daemon holds
-  // nothing", the pre-existing respawn path. $WIN_AGENTS_RC forces the query to fail, which must
-  // never be mistaken for an empty roster.
-  const winclaude = path.join(bin, 'claude-win.exe');
-  fs.writeFileSync(winclaude, `#!/bin/bash
+`,
+    winClaudeBody: `#!/bin/bash
 case "$*" in
   *"agents --json"*)
     [ -n "\${WIN_AGENTS_RC:-}" ] && exit "\${WIN_AGENTS_RC}"
     printf '%s' "\${WIN_AGENTS:-[]}" ;;
 esac
 exit 0
-`, { mode: 0o755 });
+`,
+  });
   // taskkill.exe stub: log the pid it was asked to kill.
   fs.writeFileSync(path.join(bin, 'taskkill.exe'), `#!/bin/bash
 echo "$*" >> "$TASKKILL_LOG"
@@ -106,9 +113,7 @@ exit 0
 
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
-    AGENT_VIEW_WINDIR: windir,
-    AGENT_VIEW_WEZTERM_WIN: wezwin,      // stub stands in for the real wezterm.exe
-    AGENT_VIEW_WIN_CLAUDE: winclaude,    // ...and for the Windows claude.exe we ask for the roster
+    ...seams.env,
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     WEZWIN_ACTIVATE_LOG: activateLog, WEZWIN_SEND_LOG: sendLog,
     TASKKILL_LOG: killLog, SSH_LOG: sshLog, FZF_CAPTURE: capture,

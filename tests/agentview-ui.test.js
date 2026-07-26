@@ -12,6 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { Term, ptyAvailable } = require('./lib/pty');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 // The script sources its modules from ../share/agentview relative to its own path;
@@ -35,11 +36,6 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 function makeEnv() {
   const bin = scratch('avui-bin-');
   const home = scratch('avui-home-');
-  // The Windows-side registry is an absolute /mnt/c path, not $HOME-relative, so a temp
-  // HOME does not isolate it: without this the picker renders the real Windows sessions
-  // alongside the fixtures and every row-position assertion below shifts. It also prunes
-  // that dir, so an unpointed run deletes real session state.
-  const windir = scratch('avui-win-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
 
@@ -57,12 +53,9 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   // ctrl-x's confirm path calls `claude rm` on the real binary if it finds one.
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
-  // The background refresh every picker open fires asks the Windows daemon for its roster.
-  // WIN_CLAUDE is an absolute /mnt/c path, so PATH cannot stub it: unpointed, each test
-  // spawns the real claude.exe through WSL interop. An empty array is the honest answer
-  // here -- the fixture world has no Windows sessions.
-  const winclaude = path.join(bin, 'claude-win.exe');
-  fs.writeFileSync(winclaude, "#!/bin/bash\nprintf '[]'\n", { mode: 0o755 });
+  // Without these the picker renders the operator's real Windows sessions beside the
+  // fixtures and every row-position assertion below shifts. See tests/lib/agentview-env.js.
+  const seams = agentviewWinSeams({ bin, scratch });
 
   const env = {
     ...process.env,
@@ -71,8 +64,7 @@ function makeEnv() {
     TMUX_LOG: tmuxLog,
     AGENTVIEW_SELF: self,
     AGENTVIEW_LIB: LIB,
-    AGENT_VIEW_WINDIR: windir,
-    AGENT_VIEW_WIN_CLAUDE: winclaude,
+    ...seams.env,
     AV_KILLCMD: 'true',   // the seam do_remove kills through; nothing real to signal here
   };
   delete env.TMUX;          // a bare pty: binds use execute, not execute-silent

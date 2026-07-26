@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const US = '\x1f';
@@ -37,11 +38,6 @@ function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefi
 function makeEnv() {
   const bin = scratch('avh-bin-');
   const home = scratch('avh-home-');
-  // The Windows-side registry is an absolute /mnt/c path, so a temp HOME does not isolate
-  // it: real Windows sessions would render alongside the fixtures and shift the row
-  // numbering the pin/jump assertions depend on. It is also pruned, so leaving it unset
-  // lets a test run delete real session state.
-  const windir = scratch('avh-win-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
@@ -55,16 +51,15 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\n[ -n "\${FZF_PICK:-}" ] && printf '%s\\n' "$FZF_PICK"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\necho "$*" >> "$SSH_LOG"\nexit 0\n`, { mode: 0o755 });
-  // WIN_CLAUDE is an absolute /mnt/c path, so PATH cannot stub it: unpointed, the roster
-  // query spawns the real claude.exe through WSL interop. Empty array = no Windows sessions.
-  const winclaude = path.join(bin, 'claude-win.exe');
-  fs.writeFileSync(winclaude, "#!/bin/bash\nprintf '[]'\n", { mode: 0o755 });
   // Injection seam for the guarded kill — logs the pid instead of signalling anything.
   const killStub = path.join(bin, 'killstub'); fs.writeFileSync(killStub, `#!/bin/bash\necho "$1" >> "$KILL_LOG"\nexit 0\n`, { mode: 0o755 });
+  // Real Windows sessions would render alongside the fixtures and shift the row numbering
+  // the pin/jump assertions depend on. See tests/lib/agentview-env.js.
+  const seams = agentviewWinSeams({ bin, scratch });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
-    AGENT_VIEW_WINDIR: windir, AGENT_VIEW_WIN_CLAUDE: winclaude,
+    ...seams.env,
   };
   delete env.TMUX; // a bare shell -> tmux jump takes the attach path
   return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog };

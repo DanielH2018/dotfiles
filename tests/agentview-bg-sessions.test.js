@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const US = '\x1f';
@@ -83,6 +84,7 @@ exit 0
   fs.writeFileSync(path.join(bin, 'kill-stub'), '#!/bin/bash\necho "$*" >> "$KILL_LOG"\nexit 0\n', { mode: 0o755 });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    ...agentviewWinSeams({ bin, scratch }).env,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, FZF_CAPTURE: capture, FZF_ARGS: fzfArgs,
     AV_KILLCMD: path.join(bin, 'kill-stub'), KILL_LOG: killLog,
   };

@@ -13,6 +13,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { agentviewWinSeams } = require('./lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const US = '\x1f';
@@ -105,8 +106,10 @@ exit 0
 `, { mode: 0o755 });
 
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
+  const seams = agentviewWinSeams({ bin, scratch });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    ...seams.env,
     WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
   };
