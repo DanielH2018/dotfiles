@@ -7,7 +7,7 @@
 // to record its calls, so nothing here touches $HOME. Skips without bash/git.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -25,11 +25,15 @@ const CLEAN_ENV = Object.fromEntries(
 const dirs = [];
 
 // Stub chezmoi: records every call, so a test can prove apply was reached — or
-// prove it was not, which is the whole point of --diff and --dry-run.
+// prove it was not, which is the whole point of --diff and --dry-run. STUB_STATUS
+// stands in for a target that something other than chezmoi wrote.
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'try-bin-'));
 dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 echo "chezmoi $*" >> "$STUB_CHEZMOI_CALLS"
+if [ "$1" = status ]; then
+  [ -z "\${STUB_STATUS:-}" ] || printf '%s\\n' "$STUB_STATUS"
+fi
 exit 0
 `, { mode: 0o755 });
 
@@ -71,14 +75,16 @@ const branchOf = (dir) => git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 
 // The calls file lives outside the repo on purpose: dropped inside it, it would
 // itself make the tree dirty and trip try's own guard on the next invocation.
-function run(cwd, args = []) {
+function run(cwd, args = [], extraEnv = {}) {
   const box = fs.mkdtempSync(path.join(os.tmpdir(), 'try-calls-'));
   dirs.push(box);
   const file = path.join(box, 'calls');
   try {
     const stdout = execFileSync('bash', [TRY, ...args], {
       cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`, STUB_CHEZMOI_CALLS: file },
+      env: {
+        ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`, STUB_CHEZMOI_CALLS: file, ...extraEnv,
+      },
     });
     return { code: 0, stdout, stderr: '', file };
   } catch (e) {
@@ -244,6 +250,66 @@ test('-h prints usage without touching the repo', { skip }, () => {
   assert.match(r.stdout, /try --back/);
   assert.strictEqual(head(dir), before);
   assert.strictEqual(calls(r.file), '');
+});
+
+// chezmoi-apply-guard.sh never sees this apply — it matches the Bash command
+// string, which here is `try <branch>` — so try has to make the same refusal
+// itself or it becomes the way around the guard.
+test('refuses to deploy over a file something other than chezmoi wrote', { skip }, () => {
+  const { dir } = makeRepo();
+  const r = run(dir, ['feature'], { STUB_STATUS: 'MM home/dot_zshrc' });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /would overwrite files something other than chezmoi wrote/);
+  assert.match(r.stderr, /MM home\/dot_zshrc/);
+  assert.match(calls(r.file), /chezmoi status/);
+  assert.doesNotMatch(calls(r.file), /chezmoi apply/);
+});
+
+test('TRY_APPLY_GUARD=off deploys over it anyway', { skip }, () => {
+  const { dir } = makeRepo();
+  const r = run(dir, ['feature'], { STUB_STATUS: 'MM home/dot_zshrc', TRY_APPLY_GUARD: 'off' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(calls(r.file), /chezmoi apply/);
+});
+
+// Only column 2 in [ADM] means apply would overwrite something. A source-side
+// change alone — the ordinary case, every edit under home/ — must not block.
+test('a source-only change does not count as a conflict', { skip }, () => {
+  const { dir } = makeRepo();
+  const r = run(dir, ['feature'], { STUB_STATUS: ' M home/dot_zshrc' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(calls(r.file), /chezmoi apply/);
+});
+
+test('takes a lock, so two benches cannot interleave', { skip }, () => {
+  const { dir } = makeRepo();
+  const r = run(dir, ['feature']);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(dir, '.git', 'try.lock')));
+});
+
+let flockOk = true;
+try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockOk = false; }
+
+test('waits for a bench another worktree is holding', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+  const { dir } = makeRepo();
+  const lock = path.join(dir, '.git', 'try.lock');
+  const marker = path.join(dir, '.git', 'held');
+  // The holder announces itself once it actually owns the lock, so the run below
+  // is guaranteed to contend rather than racing it for first grab.
+  const holder = spawn('flock', [lock, '-c', `touch ${marker}; sleep 2`], { stdio: 'ignore' });
+  try {
+    for (let i = 0; i < 60 && !fs.existsSync(marker); i += 1) {
+      execFileSync('sleep', ['0.05']);
+    }
+    assert.ok(fs.existsSync(marker), 'holder never took the lock');
+    const r = run(dir, ['feature']);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /another worktree is using the bench; waiting/);
+    assert.strictEqual(head(dir), git(dir, 'rev-parse', 'feature'));
+  } finally {
+    holder.kill();
+  }
 });
 
 test.after(() => {

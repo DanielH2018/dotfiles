@@ -26,6 +26,10 @@
 # state land's own header describes. Prefer the detached form unless you
 # specifically want to test a merged main.
 #
+# The deploy refuses to overwrite a file something other than chezmoi wrote, the
+# same case chezmoi-apply-guard.sh denies; TRY_APPLY_GUARD=off overrides it, as
+# CHEZMOI_APPLY_GUARD=off does for the hook. One bench at a time, under a lock.
+#
 # Kept bash-3.2 clean, like land.
 set -u
 
@@ -42,7 +46,7 @@ while [ $# -gt 0 ]; do
     --back) MODE=back ;;
     --diff) DIFF_ONLY=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) printf 'try: unknown flag %s\n' "$1" >&2; exit 2 ;;
     *) [ -z "$BRANCH" ] || die "one branch at a time (got $BRANCH, then $1)"
        BRANCH=$1 ;;
@@ -116,39 +120,80 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
-case "$MODE" in
-  peek)
-    # Detaching is the whole trick: git refuses `checkout <branch>` while another
-    # worktree holds it, but has no objection to --detach.
-    say "detaching onto $BRANCH"
-    git checkout -q --detach "$BRANCH" || die "could not detach onto $BRANCH"
-    ;;
-  merge)
-    say "fast-forwarding main onto $BRANCH"
-    git merge --ff-only "$BRANCH" || die "fast-forward failed"
-    ;;
-  back)
-    say "returning to main"
-    git checkout -q main || die "could not check main back out"
-    ;;
-esac
+bench() {
+  case "$MODE" in
+    peek)
+      # Detaching is the whole trick: git refuses `checkout <branch>` while another
+      # worktree holds it, but has no objection to --detach.
+      say "detaching onto $BRANCH"
+      git checkout -q --detach "$BRANCH" || die "could not detach onto $BRANCH"
+      ;;
+    merge)
+      say "fast-forwarding main onto $BRANCH"
+      git merge --ff-only "$BRANCH" || die "fast-forward failed"
+      ;;
+    back)
+      say "returning to main"
+      git checkout -q main || die "could not check main back out"
+      ;;
+  esac
 
-# The primary checkout is the chezmoi source dir, so a plain apply deploys
-# whatever HEAD now points at — no --source, no per-worktree special case.
-chezmoi diff || die "chezmoi diff failed"
+  # The primary checkout is the chezmoi source dir, so a plain apply deploys
+  # whatever HEAD now points at — no --source, no per-worktree special case.
+  chezmoi diff || die "chezmoi diff failed"
 
-if [ "$DIFF_ONLY" -eq 1 ]; then
-  say "stopping before apply (--diff) — HEAD moved, \$HOME did not"
-  exit 0
+  if [ "$DIFF_ONLY" -eq 1 ]; then
+    say "stopping before apply (--diff) — HEAD moved, \$HOME did not"
+    return 0
+  fi
+
+  # chezmoi-apply-guard.sh cannot see the apply below. It is a PreToolUse Bash
+  # hook that matches the command string, so what it gets handed is `try
+  # <branch>` — no `chezmoi apply` in it, and it exits without looking. Without
+  # the same check here, try is simply the way around that guard, and it is a
+  # multi-session tool, which is the one case the guard exists for: a parallel
+  # worktree job deploys a build straight to its target to exercise it, and those
+  # bytes are the only copy. Column 2 in [ADM] means apply would overwrite one.
+  # Same escape hatch as the hook, for a deliberate revert.
+  if [ "${TRY_APPLY_GUARD:-on}" != off ]; then
+    CONFLICTS=$(chezmoi status 2>/dev/null | grep -E '^[ADM][ADM] ' || true)
+    if [ -n "$CONFLICTS" ]; then
+      printf 'try: chezmoi apply would overwrite files something other than chezmoi wrote:\n%s\n' "$CONFLICTS" >&2
+      die "usually a parallel worktree job's deployed build — recover it first, or TRY_APPLY_GUARD=off to override"
+    fi
+  fi
+
+  chezmoi apply || die "chezmoi apply failed — \$HOME may be half-deployed"
+
+  printf 'bench: %s\n' "$(git log --oneline -1)"
+
+  # A --merge test leaves main ahead of the remote, which is exactly the setup that
+  # gives land a PR full of duplicates. Say so while it is still cheap to notice.
+  AHEAD=$(git rev-list --count origin/main..main 2>/dev/null) || AHEAD=0
+  if [ "${AHEAD:-0}" -gt 0 ]; then
+    say "main is $AHEAD commit(s) ahead of origin/main — if a --merge test put them there, undo that before landing"
+  fi
+}
+
+# One bench at a time, across every worktree of this repo. There is only one
+# primary checkout and one $HOME, so two trys moving HEAD and applying at once
+# interleave into a deploy that matches neither branch. Its own lock, not land's:
+# sharing that one would make a bench wait on a full landing, and would change
+# what land's "one lander at a time" means.
+LOCK="$COMMON/try.lock"
+
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK" || die "cannot open $LOCK"
+  if ! flock -n 9; then
+    say "another worktree is using the bench; waiting for it to finish..."
+    flock 9 || die "could not take $LOCK"
+  fi
+  bench
+  rc=$?
+  exec 9>&-
+  exit $rc
 fi
 
-chezmoi apply || die "chezmoi apply failed — \$HOME may be half-deployed"
-
-printf 'bench: %s\n' "$(git log --oneline -1)"
-
-# A --merge test leaves main ahead of the remote, which is exactly the setup that
-# gives land a PR full of duplicates. Say so while it is still cheap to notice.
-AHEAD=$(git rev-list --count origin/main..main 2>/dev/null) || AHEAD=0
-if [ "${AHEAD:-0}" -gt 0 ]; then
-  say "main is $AHEAD commit(s) ahead of origin/main — if a --merge test put them there, undo that before landing"
-fi
+# No flock (macOS): still worth doing, just without the mutual exclusion.
+say "flock unavailable — using the bench without the cross-worktree lock"
+bench
