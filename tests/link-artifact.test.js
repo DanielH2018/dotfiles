@@ -8,11 +8,13 @@ const dirs = [];
 const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
 // A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
-// where file:// can't reach the client) gets http://localhost:PORT/<rel> served by
+// where file:// can't reach the client) gets http://127.0.0.1:PORT/<rel> served by
 // serve-artifacts.sh; macOS gets file://<abs>. Mirror the hook's `uname` split.
+// The literal 127.0.0.1 is load-bearing — see the hook for why `localhost` hangs on
+// the Windows side of WSL.
 const PORT = process.env.CLAUDE_ARTIFACTS_PORT || '8181';
 const hostLink = (absPath, rel) =>
-  process.platform === 'linux' ? `http://localhost:${PORT}/${rel}` : `file://${absPath}`;
+  process.platform === 'linux' ? `http://127.0.0.1:${PORT}/${rel}` : `file://${absPath}`;
 
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
