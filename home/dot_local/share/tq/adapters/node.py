@@ -94,10 +94,22 @@ def parse(ndjson_path, result):
         elif kind == "summary":
             summaries.append(rec)
 
-    roots = [s for s in summaries if not s.get("file")] or summaries
+    roots = [s for s in summaries if not s.get("file")]
     if roots:
         counts = roots[-1].get("counts") or {}
         result.duration_ms = int(roots[-1].get("duration_ms") or 0)
+    elif summaries:
+        # No run-level summary, so the per-file ones are the whole account and
+        # have to be added up. Taking the last of them instead reports one
+        # file's counts for the run, which reads as a small green suite.
+        counts = {}
+        for summary in summaries:
+            for key, value in (summary.get("counts") or {}).items():
+                counts[key] = counts.get(key, 0) + value
+        result.duration_ms = max(
+            (int(s.get("duration_ms") or 0) for s in summaries), default=0
+        )
+    if summaries:
         # node counts a todo test as todo and nowhere else, whether it passed or
         # failed — so the two halves partition cleanly into xpass and xfail.
         todo = counts.get("todo", 0)
