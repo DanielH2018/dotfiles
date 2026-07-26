@@ -18,6 +18,8 @@ eval "$(cat | jq -r '[
   "model_id=\(.model.id // "" | @sh)",
   "model_name=\(.model.display_name // .model.id // "Claude" | @sh)",
   "used_pct=\(.context_window.used_percentage // "" | @sh)",
+  "ctx_tokens=\(.context_window.total_input_tokens // "" | @sh)",
+  "ctx_size=\(.context_window.context_window_size // "" | @sh)",
   "session_name=\(.session_name // "" | @sh)",
   "vim_mode=\(.vim.mode // "" | @sh)",
   "worktree_name=\(.worktree.name // .workspace.git_worktree // "" | @sh)",
@@ -32,21 +34,22 @@ eval "$(cat | jq -r '[
   "dur_ms=\(.cost.total_duration_ms // "" | @sh)"
 ] | .[]')"
 
-# Shorten model name to a compact label
-case "$model_id" in
-  *opus*-4-8*|*opus*-4.8*)    model_label="opus4.8" ;;
-  *opus*-4-7*|*opus*-4.7*)    model_label="opus4.7" ;;
-  *opus*-4-6*|*opus*-4.6*)    model_label="opus4.6" ;;
-  *opus*-4-5*|*opus*-4.5*)    model_label="opus4.5" ;;
-  *opus*-4*)                  model_label="opus4" ;;
-  *opus*)                     model_label="opus" ;;
-  *sonnet*-4-6*|*sonnet*-4.6*)  model_label="sonnet4.6" ;;
-  *sonnet*-4-5*|*sonnet*-4.5*)  model_label="sonnet4.5" ;;
-  *sonnet*-4*)                model_label="sonnet4" ;;
-  *sonnet*)                   model_label="sonnet" ;;
-  *haiku*)                    model_label="haiku" ;;
-  *)                          model_label="$model_name" ;;
-esac
+# Shorten model name to a compact label. Derived from the id rather than enumerated, so a release
+# this script has never heard of (claude-opus-6, claude-sonnet-5-2, …) still labels itself.
+# A trailing date stamp (claude-haiku-4-5-20251001) and bare years are not version parts: the
+# version match requires 1-2 digit groups ending at a "-" or end-of-string, so "20251001" and
+# "2025" both fail to match and are ignored rather than becoming "haiku202".
+model_label="$model_name"
+if [[ "$model_id" =~ (opus|sonnet|haiku|fable|mythos) ]]; then
+  model_family="${BASH_REMATCH[1]}"
+  model_rest="${model_id#*"$model_family"}"
+  model_ver=""
+  if [[ "$model_rest" =~ ^-([0-9]{1,2})(-([0-9]{1,2}))?(-|$) ]]; then
+    model_ver="${BASH_REMATCH[1]}"
+    [[ -n "${BASH_REMATCH[3]}" ]] && model_ver="${model_ver}.${BASH_REMATCH[3]}"
+  fi
+  model_label="${model_family}${model_ver}"
+fi
 
 # Shorten path: replace $HOME with ~, then truncate to last 3 segments
 home="$HOME"
@@ -109,11 +112,73 @@ printf '\033[38;2;137;180;250m %s \033[0m' "$model_label"
 [[ -n "$effort_level" && "$effort_level" != "medium" ]] && printf '\033[38;2;108;112;134m %s \033[0m' "$effort_level"
 
 # Segment: context usage
-if [[ -n "$used_pct" ]]; then
+#
+# The CLI's own used_percentage divides by context_window_size, which it derives from a compiled
+# model table. Any model missing from that table falls back to 200000 — claude-opus-5 is absent
+# in 2.1.218, so 1M-window sessions pin at ctx:100% once past 200k tokens while the real usage is
+# a fifth of that. Recompute from the raw token count against the model's actual window, and
+# colour against the point where compaction really fires rather than a fixed 70/90.
+ctx_window=""
+case "$model_id" in
+  *'[1m]'*)                                        ctx_window=1000000 ;;
+  *opus-5*|*sonnet-5*|*fable-5*|*mythos-5*)        ctx_window=1000000 ;;
+  *opus-4-7*|*opus-4-8*)                           ctx_window=1000000 ;;
+  *claude-3-*|*haiku-4-5*|*sonnet-4-*|*opus-4-*)   ctx_window=200000 ;;
+esac
+
+# Unknown model — i.e. a release newer than both this script and the CLI's own table. Its
+# context_window_size is then the CLI's 200000 fallback and can't be trusted. A request can never
+# exceed its real window, so an observed token count above the declared size is proof the size is
+# understated; escalate on that proof rather than guessing a window up front. Escalations are
+# remembered per model id so the correction holds from token 0 in later sessions, instead of the
+# bar having to re-cross 200k every time.
+ctx_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline/context-windows"
+if [[ -z "$ctx_window" ]]; then
+  ctx_window="$ctx_size"
+  if [[ -n "$model_id" && -r "$ctx_cache" ]]; then
+    learned=$(awk -F'\t' -v m="$model_id" '$1==m{w=$2} END{if (w) print w}' "$ctx_cache" 2>/dev/null)
+    if [[ "$learned" =~ ^[0-9]+$ ]] && (( learned > ${ctx_window:-0} )); then
+      ctx_window="$learned"
+    fi
+  fi
+  if [[ -n "$ctx_tokens" && -n "$ctx_window" ]] && (( ctx_tokens > ctx_window )); then
+    while (( ctx_tokens > ctx_window )); do
+      if   (( ctx_window < 200000 ));  then ctx_window=200000
+      elif (( ctx_window < 1000000 )); then ctx_window=1000000
+      else ctx_window=$(( ctx_window * 2 ))
+      fi
+    done
+    if [[ -n "$model_id" ]] && mkdir -p "${ctx_cache%/*}" 2>/dev/null; then
+      printf '%s\t%s\n' "$model_id" "$ctx_window" >> "$ctx_cache" 2>/dev/null
+    fi
+  fi
+fi
+
+used_int=""
+if [[ -n "$ctx_tokens" && -n "$ctx_window" ]] && (( ctx_window > 0 )); then
+  used_int=$(( ctx_tokens * 100 / ctx_window ))
+  (( used_int > 100 )) && used_int=100
+elif [[ -n "$used_pct" ]]; then
   used_int=$(printf '%.0f' "$used_pct")
-  if (( used_int >= 90 )); then
+fi
+
+if [[ -n "$used_int" ]]; then
+  # Auto-compaction triggers at min(pct_override%, budget-13000) where budget is the window less
+  # a 20k output reserve. Below ~33k of window the reserves swamp it; fall back to a flat 90.
+  compact_pct=90
+  if [[ -n "$ctx_window" ]] && (( ctx_window > 33000 )); then
+    ctx_budget=$(( ctx_window - 20000 ))
+    compact_at=$(( ctx_budget - 13000 ))
+    if [[ "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-}" =~ ^[0-9]+$ ]] \
+       && (( CLAUDE_AUTOCOMPACT_PCT_OVERRIDE > 0 && CLAUDE_AUTOCOMPACT_PCT_OVERRIDE <= 100 )); then
+      by_pct=$(( ctx_budget * CLAUDE_AUTOCOMPACT_PCT_OVERRIDE / 100 ))
+      (( by_pct < compact_at )) && compact_at=$by_pct
+    fi
+    compact_pct=$(( compact_at * 100 / ctx_window ))
+  fi
+  if (( used_int >= compact_pct )); then
     printf '\033[38;2;243;139;168mctx:%d%% \033[0m' "$used_int"
-  elif (( used_int >= 70 )); then
+  elif (( used_int >= compact_pct * 85 / 100 )); then
     printf '\033[38;2;249;226;175mctx:%d%% \033[0m' "$used_int"
   else
     printf '\033[38;2;166;227;161mctx:%d%% \033[0m' "$used_int"
