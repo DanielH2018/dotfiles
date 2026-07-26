@@ -51,7 +51,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # that was pushed long before this gate existed.
     range="$local_sha --not --remotes"
   else
-    range="$remote_sha..$local_sha"
+    # $remote_sha is what the remote actually holds for this ref, straight from the
+    # pre-push protocol, so it stays the primary exclusion. --remotes is added on top
+    # for the rebase case: `gh pr merge --rebase`, which bin/land calls, replays commits
+    # server-side and the replayed objects carry no signature, so main gains unsigned
+    # commits on every landing. Rebasing a branch onto main then pulled those into
+    # $remote_sha..$local_sha and the push was rejected for history the branch did not
+    # write and could not fix. Anything already on a remote is out of scope either way.
+    range="$local_sha --not $remote_sha --remotes"
   fi
 
   # shellcheck disable=SC2086  # $range is two or three deliberate rev-list tokens
