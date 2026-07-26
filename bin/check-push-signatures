@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# check-push-signatures — reject a push that carries unsigned commits.
+#
+# `commit.gpgsign = true` is a default, not a guarantee: -c commit.gpgsign=false, an
+# alternate HOME or GIT_CONFIG_GLOBAL, a clone on a machine whose gitconfig never got the
+# signing block, and any rebase backend that drops signatures all produce unsigned commits
+# with no complaint. Measured on this repo: 173 of 607 commits do not verify. Nothing
+# rejected them at push time, so the invariant only held where it happened to hold.
+#
+# Reads git's pre-push protocol on stdin -- "<local ref> <local sha> <remote ref>
+# <remote sha>" per ref -- and inspects only the commits this push would actually add.
+#
+# Verdicts follow git's %G? codes:
+#   N (unsigned), B (bad signature), R (revoked key)  -> always rejected
+#   U/X/Y/E (signed, but not verifiable against allowed_signers)  -> warn
+#   G (good)                                                      -> pass
+# U is a warning rather than an error on purpose: it means the signature is real but the
+# signer is missing from ~/.config/git/allowed_signers, which is a local trust-list gap,
+# not an unsigned commit. Set SIGN_GATE_STRICT=1 to demand G for everything -- do that
+# once every signing key in use is listed there.
+#
+# Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
+
+set -u
+
+STRICT="${SIGN_GATE_STRICT:-}"
+
+# Nothing on stdin means this was run by hand rather than by git. Checking a range we
+# were never given would either hang on the terminal or invent one, so do neither.
+if [ -t 0 ]; then
+  printf 'check-push-signatures: no pre-push input on stdin (run me from the hook)\n' >&2
+  exit 0
+fi
+
+# An all-zero sha is git's "this ref does not exist": as the local sha it means the push
+# deletes the ref (no commits to check), as the remote sha it means the branch is new.
+is_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+bad=0
+warned=0
+checked=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  is_zero "$local_sha" && continue                     # ref deletion
+
+  if is_zero "${remote_sha:-}"; then
+    # New branch: everything not already reachable from some other remote-tracking ref.
+    # Without --not --remotes this walks back to the root commit and re-judges history
+    # that was pushed long before this gate existed.
+    range="$local_sha --not --remotes"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  # shellcheck disable=SC2086  # $range is two or three deliberate rev-list tokens
+  while IFS=$'\t' read -r sig sha subject; do
+    [ -n "${sig:-}" ] || continue
+    checked=$((checked + 1))
+    case "$sig" in
+      G) ;;
+      N) printf '  unsigned   %s %s\n' "${sha:0:9}" "${subject:-}" >&2; bad=$((bad + 1)) ;;
+      B) printf '  BAD sig    %s %s\n' "${sha:0:9}" "${subject:-}" >&2; bad=$((bad + 1)) ;;
+      R) printf '  revoked    %s %s\n' "${sha:0:9}" "${subject:-}" >&2; bad=$((bad + 1)) ;;
+      *) printf '  unverified %s %s (%s)\n' "${sha:0:9}" "${subject:-}" "$sig" >&2
+         warned=$((warned + 1))
+         [ -n "$STRICT" ] && bad=$((bad + 1)) ;;
+    esac
+  done < <(git log --format='%G?%x09%H%x09%s' $range 2>/dev/null)
+done
+
+if [ "$bad" -ne 0 ]; then
+  printf '\n%d of %d pushed commit(s) are not properly signed.\n' "$bad" "$checked" >&2
+  printf 'Sign them (git rebase --exec "git commit --amend --no-edit -S" <base>) rather than bypassing.\n' >&2
+  exit 1
+fi
+
+if [ "$warned" -ne 0 ]; then
+  printf '%d signed commit(s) could not be verified -- add the signing key to ~/.config/git/allowed_signers.\n' "$warned" >&2
+fi
+exit 0

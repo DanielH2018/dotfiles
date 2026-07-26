@@ -12,14 +12,17 @@
 # Bypass once (rarely, e.g. WIP push): git push --no-verify
 #
 # Checks:
-#   1. config-soak status   — every behavior-affecting config change must be
+#   1. commit signatures    — every commit this push adds must carry a signature.
+#                             commit.gpgsign is only a default; nothing enforced it, and
+#                             173 of this repo's 607 commits do not verify as a result.
+#   2. config-soak status   — every behavior-affecting config change must be
 #                             reviewed and `config-soak land`ed before push.
-#   2. instruction quality  — security dimension is a hard gate (>=70) on the
+#   3. instruction quality  — security dimension is a hard gate (>=70) on the
 #                             agent / skill / CLAUDE instruction files; the
 #                             composite floor is a soft ratchet (QUALITY_MIN_SCORE,
 #                             default 45 — raise it as the files improve).
-#   3. screen-injection     — red-team regression guard on the injection hook.
-#   4. unit tests           — the deterministic `node --test` suite (hooks, config-soak,
+#   4. screen-injection     — red-team regression guard on the injection hook.
+#   5. unit tests           — the deterministic `node --test` suite (hooks, config-soak,
 #                             settings merge, dotsync, evals lib); offline, self-skips the
 #                             chezmoi-template tests when chezmoi isn't installed.
 #
@@ -94,10 +97,16 @@ else
   tq_node() { shift; node --test "$@"; }
 fi
 
-# 1. Deterministic review/soak ledger — no LLM, no judgement.
+# 1. Commit signatures. Reads git's pre-push protocol from stdin, so it has to come
+#    before anything else that might consume it. Unsigned/bad/revoked fail; signed but
+#    unverifiable (signer absent from allowed_signers) warns — SIGN_GATE_STRICT=1 to
+#    demand a good signature outright.
+run "commit signatures" bin/check-push-signatures
+
+# 2. Deterministic review/soak ledger — no LLM, no judgement.
 run "config-soak (review ledger)" node bin/config-soak status
 
-# 2. Instruction-file quality. Security gate (>=70) is always enforced by
+# 3. Instruction-file quality. Security gate (>=70) is always enforced by
 #    `verify`; the composite floor is a ratchet pinned to today's worst file, so
 #    any regression below the current baseline blocks the push. rules/python.md
 #    and rules/rust.md both score 52 and set the floor; 53 fails. Raise this as
@@ -113,13 +122,13 @@ if [ -n "$QFILES" ]; then
     python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
 fi
 
-# 3. Injection-hook red-team regression guard. Run through --test rather than as
+# 4. Injection-hook red-team regression guard. Run through --test rather than as
 #    a bare script so the digest covers it too; the file is a node:test suite
-#    either way, and step 4's glob picks it up as well — it stays a named step so
+#    either way, and step 5's glob picks it up as well — it stays a named step so
 #    a red-team regression is attributed instead of buried in the suite total.
 run "screen-injection red-team" tq_node injection tests/screen-injection.test.js
 
-# 4. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
+# 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
 #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
 run "unit tests (node --test)" tq_node unit
 
