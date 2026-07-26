@@ -16,7 +16,30 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 # Repos that ship an install-hook-shim keep a pre-push guard in .git/, where no
 # checkout can restore it. Re-assert it so a stray `git config core.hooksPath`,
 # a fresh clone, or a manual delete can't silently drop the guard.
-SHIM_REPAIR=$("$(git rev-parse --show-toplevel)/bin/install-hook-shim" --quiet 2>/dev/null)
+#
+# Trusted repos ONLY. This runs at SessionStart -- before you type anything, and before
+# the permission gates see any of it -- so keying off "the file exists" would execute
+# whatever `bin/install-hook-shim` happens to ship in any repo you cd into, with 2>/dev/null
+# swallowing the evidence. Resolved from --git-common-dir rather than --show-toplevel so a
+# linked worktree maps back to the repo that owns it instead of failing the check.
+# Colon-separated list, overridable with $CLAUDE_SHIM_TRUSTED_ROOTS.
+SHIM_REPAIR=""
+COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ -n "$COMMON_DIR" ] && REPO_ROOT=$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P); then
+  TRUSTED="${CLAUDE_SHIM_TRUSTED_ROOTS:-$HOME/.local/share/chezmoi}"
+  trusted=0
+  rest="$TRUSTED"
+  while [ -n "$rest" ]; do
+    entry="${rest%%:*}"
+    case "$rest" in *:*) rest="${rest#*:}" ;; *) rest="" ;; esac
+    [ -n "$entry" ] || continue
+    canon=$(cd "$entry" 2>/dev/null && pwd -P) || continue
+    if [ "$canon" = "$REPO_ROOT" ]; then trusted=1; break; fi
+  done
+  if [ "$trusted" -eq 1 ] && [ -x "$REPO_ROOT/bin/install-hook-shim" ]; then
+    SHIM_REPAIR=$("$REPO_ROOT/bin/install-hook-shim" --quiet 2>/dev/null)
+  fi
+fi
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
