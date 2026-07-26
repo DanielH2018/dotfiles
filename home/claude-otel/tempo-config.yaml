@@ -1,0 +1,37 @@
+# Trace backend for Claude Code's enhanced-telemetry spans
+# (interaction -> llm_request / tool -> tool.blocked_on_user + tool.execution).
+# Spans arrive via the collector's traces pipeline, not directly from Claude Code.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  # Flush blocks often so a span is queryable minutes after the turn that made it,
+  # rather than at the 30m default — this stack is read interactively while working.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # 30d. Shorter than Prometheus' 90d: spans are per-turn and far bulkier than
+    # counters, and trace-level debugging is retrospective by days, not months.
+    block_retention: 720h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+# Tempo posts anonymous usage stats to grafana.com by default. This stack is
+# deliberately local-only (127.0.0.1 binds throughout), so opt out.
+usage_report:
+  reporting_enabled: false

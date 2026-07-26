@@ -15,3 +15,20 @@ datasources:
     type: loki
     access: proxy
     url: http://loki:3100
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Claude Code stamps trace_id/span_id onto its log events (CLI >= 2.1.212), so a
+      # span can jump straight to the events emitted inside it.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: true
+        customQuery: false
+      nodeGraph:
+        enabled: true

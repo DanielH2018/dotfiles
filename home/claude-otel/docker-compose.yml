@@ -50,6 +50,31 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # Named volumes are created root-owned; Tempo runs as uid 10001 and would fail to
+  # write its WAL. One-shot chown, as in Grafana's own local-stack example.
+  tempo-init:
+    image: grafana/tempo:2.8.1
+    user: root
+    entrypoint: ["chown", "-R", "10001:10001", "/var/tempo"]
+    volumes:
+      - tempo-data:/var/tempo
+    restart: "no"
+    logging: *logging
+
+  tempo:
+    image: grafana/tempo:2.8.1
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"   # Tempo query API (Grafana reads here)
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging: *logging
+
   grafana:
     image: grafana/grafana:11.4.0
     environment:
@@ -70,10 +95,12 @@ services:
     depends_on:
       - prometheus
       - loki
+      - tempo
     restart: unless-stopped
     logging: *logging
 
 volumes:
   prometheus-data:
   loki-data:
+  tempo-data:
   grafana-data:

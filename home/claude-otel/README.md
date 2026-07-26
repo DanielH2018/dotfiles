@@ -5,8 +5,9 @@ Docker, binds to `127.0.0.1` only, and keeps all data on this machine. **No prom
 response, or tool content is collected** — only metrics and structured event logs.
 
 ```
-Claude Code ──OTLP/gRPC:4317──► otel-collector ──┬─ /metrics:8889 ◄─scrape─ Prometheus ─┐
- (WSL host)                                       └─ OTLP ─► Loki ──────────────────────┤► Grafana :3000
+                                                 ┌─ /metrics:8889 ◄─scrape─ Prometheus ─┐
+Claude Code ──OTLP/gRPC:4317──► otel-collector ──┼─ OTLP ─► Loki ───────────────────────┤► Grafana :3000
+ (WSL host)                                      └─ OTLP ─► Tempo ──────────────────────┘
 ```
 
 ## What's collected
@@ -14,10 +15,15 @@ Claude Code ──OTLP/gRPC:4317──► otel-collector ──┬─ /metrics:8
 - **Metrics** (Prometheus): sessions, token usage (by model/type), estimated cost,
   lines of code, commits, PRs, active time, code-edit accept/reject decisions.
 - **Event logs** (Loki): tool decisions, `api_request` / `api_error` / `api_refusal`,
-  `mcp_server_connection`, plugin lifecycle, permission-mode changes. Metadata only.
+  `mcp_server_connection`, plugin lifecycle, permission-mode changes.
+- **Traces** (Tempo): `claude_code.interaction` per turn, with child `llm_request`,
+  `tool`, `tool.blocked_on_user` and `tool.execution` spans. This is the only signal that
+  attributes a turn's wall-clock — time spent waiting on a permission prompt looks
+  identical to time spent running the tool in the metrics and logs.
 
-Content-logging env vars (`OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_ASSISTANT_RESPONSES`,
-`OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT`) are deliberately **unset** → default off.
+Traces need **two** env vars, not one: `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` turns span
+emission on (it is beta-gated), and `OTEL_TRACES_EXPORTER=otlp` routes it. Setting only the
+exporter yields silence.
 
 ## Start / stop
 
@@ -59,6 +65,10 @@ curl -s localhost:8889/metrics | grep -c '^claude_code'
 open http://localhost:9090   # query: {__name__=~"claude_code.*"}
 # loki got events?
 open http://localhost:3100/ready
+# tempo got spans?
+curl -s localhost:3200/ready
+curl -sG localhost:3200/api/search --data-urlencode 'q={resource.service.name="claude-code"}' \
+  --data-urlencode "start=$(date -d '1 hour ago' +%s)" --data-urlencode "end=$(date +%s)"
 ```
 
 If a dashboard panel is empty, the metric/label name likely has a unit suffix the query's
@@ -81,4 +91,9 @@ network too and change `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://otel-collector:4
   each process restart reads as a counter reset. Loki is unaffected — every event log is
   stored independently, so event counts stayed trustworthy throughout.
   The cost is cardinality: one series set per session, held for `metric_expiration` (168h).
-- Retention: Prometheus 90d, Loki 31d (edit in `docker-compose.yml` / `loki-config.yaml`).
+- Retention: Prometheus 90d, Loki 31d, Tempo 30d (edit in `docker-compose.yml` /
+  `loki-config.yaml` / `tempo-config.yaml`).
+- Editing a bind-mounted config (`otel-collector-config.yaml`, `tempo-config.yaml`,
+  Grafana provisioning) does **not** take effect on `docker compose up -d` — compose only
+  recreates a container when its *service definition* changes. Follow with an explicit
+  `docker compose restart <service>`.

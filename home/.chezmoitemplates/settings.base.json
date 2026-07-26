@@ -55,7 +55,14 @@
          sessions, active_time) stop accumulating. Measured with it off: 7549 api_request
          events reported only 1.86M tokens (246 tokens/request, ~10x low), while
          increase()[7d] over-corrected for the false counter resets by ~274x. */}}
-    "OTEL_METRICS_INCLUDE_SESSION_ID": "true"{{ end }}
+    "OTEL_METRICS_INCLUDE_SESSION_ID": "true",
+    {{/* Traces are a separate signal from metrics/logs and are gated twice: the beta
+         flag turns span emission on at all, the exporter routes it. Without both, the
+         only view of a turn is its aggregate cost — spans are what attribute wall-clock
+         to permission waits (tool.blocked_on_user) vs tool execution vs model latency.
+         Collector fans these to Tempo; see home/claude-otel/tempo-config.yaml. */}}
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+    "OTEL_TRACES_EXPORTER": "otlp"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
