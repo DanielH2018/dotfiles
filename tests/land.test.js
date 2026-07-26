@@ -27,13 +27,25 @@ const dirs = [];
 // Stub gh: reports an open PR only when STUB_PR is set, answers the draft check
 // from STUB_DRAFT, and records every call that would change something — reads
 // stay unrecorded, so the tests can still prove --dry-run made no changes.
+// STUB_OPEN_FOR makes the state check answer OPEN that many times before settling
+// on STUB_PR_STATE, standing in for GitHub taking a moment to mark a PR merged.
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'land-bin-'));
 dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'gh'), `#!/bin/bash
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then printf '%s' "\${STUB_PR:-}"; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
-    *state*) printf '%s\\n' "\${STUB_PR_STATE:-MERGED}" ;;
+    *state*)
+      seen=0
+      [ -f "$STUB_STATE_SEEN" ] && seen=\$(cat "$STUB_STATE_SEEN")
+      seen=\$((seen + 1))
+      printf '%s' "\$seen" > "$STUB_STATE_SEEN"
+      if [ "\$seen" -le "\${STUB_OPEN_FOR:-0}" ]; then
+        printf 'OPEN\\n'
+      else
+        printf '%s\\n' "\${STUB_PR_STATE:-MERGED}"
+      fi
+      ;;
     *) printf '%s\\n' "\${STUB_DRAFT:-false}" ;;
   esac
   exit 0
@@ -90,7 +102,7 @@ function makeRepoWithOrigin() {
 const ghCalls = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', branch) !== '';
 
-function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED' } = {}) {
+function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', openFor = '0' } = {}) {
   const calls = path.join(cwd, '.gh-calls');
   try {
     const stdout = execFileSync('bash', [LAND, ...args], {
@@ -98,6 +110,7 @@ function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED' } = 
       env: {
         ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
         STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
+        STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
       },
     });
     return { code: 0, stdout, stderr: '', calls };
@@ -240,6 +253,16 @@ test('closes the PR itself when GitHub has not marked it merged', { skip }, () =
   const r = land(dir, [], { draft: 'true', state: 'OPEN' });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(ghCalls(r.calls), /pr close 7/);
+});
+
+// The bug this replaced: one check straight after the push read OPEN, so land closed
+// a PR GitHub marked MERGED a moment later — the fallback racing what it backs up.
+test('waits for GitHub to catch up before closing anything', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true', openFor: '2' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /waiting for GitHub/);
+  assert.doesNotMatch(ghCalls(r.calls), /pr close/, 'GitHub got there on its own');
 });
 
 test('leaves the PR alone when GitHub already marked it merged', { skip }, () => {

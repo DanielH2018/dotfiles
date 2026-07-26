@@ -129,9 +129,22 @@ land() {
   # while main got different ones; here they are the same objects.
   git push -q origin "$BRANCH:main" || return 1
 
-  # GitHub marks a PR merged once its head commits are reachable from the base.
-  # If it has not, say what happened rather than leaving it open unexplained.
-  if [ "$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)" = "OPEN" ]; then
+  # GitHub marks a PR merged once its head commits are reachable from the base, but
+  # not the instant the push returns. Checked once, straight after the push, the
+  # landing that introduced this read OPEN and closed a PR that GitHub marked MERGED
+  # moments later — a fallback racing the thing it is meant to back up. Poll instead,
+  # and only close if GitHub really has not caught up.
+  attempt=0
+  state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
+  while [ "$state" = "OPEN" ] && [ "$attempt" -lt 4 ]; do
+    [ "$attempt" -eq 0 ] && say "waiting for GitHub to mark PR #$PR merged..."
+    sleep 1
+    attempt=$((attempt + 1))
+    state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
+  done
+
+  if [ "$state" = "OPEN" ]; then
+    say "GitHub still reports PR #$PR open — closing it with a pointer to the landing"
     gh pr close "$PR" --comment "Landed on main as $(git rev-parse --short HEAD)." ||
       say "PR #$PR is still open — close it by hand"
   fi
