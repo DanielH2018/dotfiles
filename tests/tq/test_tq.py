@@ -18,11 +18,13 @@ sys.path.insert(
 )
 
 import detect as detect_mod
+import digest as digest_mod
 import scope
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
 from adapters import rdjson as rdjson_adapter
+from adapters import sarif as sarif_adapter
 from adapters import survey as survey_adapter
 from digest import MAX_DIGEST, digest
 from result import Failure, Item, Result, strip_ansi
@@ -701,6 +703,36 @@ class TestScope(unittest.TestCase):
         self.assertEqual(scope.apply_scope(res, "added", plain), 0)
         self.assertEqual(len(res.failures), 1)
 
+    def test_added_content_that_looks_like_a_header_is_content(self):
+        # A line whose own text starts `++ ` arrives in the diff body as `+++ `.
+        # Read as a header it invents a path from the file's contents, and the
+        # hunks that follow are filed under it — so the real findings in a.py
+        # scope away and findings in a file that does not exist are kept.
+        self.write("a.py", "one\n++ b/evil.py\nthree\nfour\n")
+        changed = scope.touched("HEAD", self.repo)
+        self.assertEqual(sorted(os.path.basename(p) for p in changed), ["a.py"])
+        self.assertIn(2, changed[os.path.realpath(os.path.join(self.repo, "a.py"))])
+
+    def test_a_file_git_has_never_seen_is_in_scope(self):
+        # The newest code in the tree is the most likely to be the agent's, and
+        # it appears in no diff against HEAD at all.
+        self.write("new.py", "one\ntwo\n")
+        res = self.lint_result(self.fail_at("new.py", 2))
+        self.assertEqual(scope.apply_scope(res, "added", self.repo), 0)
+        self.assertEqual(len(res.failures), 1)
+        res = self.lint_result(self.fail_at("new.py", 2))
+        self.assertEqual(scope.apply_scope(res, "file", self.repo), 0)
+        self.assertEqual(len(res.failures), 1)
+
+    def test_an_ignored_file_is_still_out_of_scope(self):
+        # --exclude-standard: a build artifact is untracked too, and sweeping
+        # every untracked path in would put node_modules back in the digest.
+        self.write(".gitignore", "junk.py\n")
+        self.write("junk.py", "one\n")
+        res = self.lint_result(self.fail_at("junk.py", 1))
+        self.assertEqual(scope.apply_scope(res, "file", self.repo), 1)
+        self.assertEqual(res.failures, [])
+
 
 class TestScopeHeadline(unittest.TestCase):
     def scoped(self, found, aside, exit_code=1):
@@ -1132,8 +1164,10 @@ class TestSurveyDigest(unittest.TestCase):
         names = [f"d{n:03d}/f.py" for n in range(200)]
         text = digest(self.paths(names), "/tmp/x.json")
         block = text.split("evenly spaced):")[1]
+        # Both ends and nothing bunched at the front. Pinning the middle rows to
+        # particular indices only pins the arithmetic that produced them.
         self.assertIn("d000/", block)
-        self.assertIn("d175/", block)
+        self.assertIn("d199/", block)
         self.assertNotIn("d001/", block)
 
     def test_a_grouping_key_that_says_nothing_is_not_drawn(self):
@@ -1472,6 +1506,177 @@ class TestNodeSummaryTotals(unittest.TestCase):
         node_adapter.parse(path, result)
         self.assertEqual(result.totals["tests"], 12)
         self.assertEqual(result.totals["fail"], 2)
+
+
+class TestSampleReachesBothEnds(unittest.TestCase):
+    def test_the_last_item_is_the_last_row(self):
+        # Dividing by size put the final sample of 1,412 paths at index 1235 and
+        # never showed the tail — the end a truncated answer is most often
+        # wrong about, and the one a reader checks to see how far it got.
+        items = list(range(1412))
+        shown = digest_mod._sample(items, 8)
+        self.assertEqual(len(shown), 8)
+        self.assertEqual(shown[0], 0)
+        self.assertEqual(shown[-1], 1411)
+
+    def test_a_short_list_is_shown_whole(self):
+        self.assertEqual(digest_mod._sample([1, 2, 3], 8), [1, 2, 3])
+        self.assertEqual(digest_mod._sample([1, 2, 3], 3), [1, 2, 3])
+
+    def test_the_rows_stay_in_order_and_do_not_repeat(self):
+        shown = digest_mod._sample(list(range(50)), 8)
+        self.assertEqual(shown, sorted(shown))
+        self.assertEqual(len(set(shown)), 8)
+
+    def test_a_sample_of_one_does_not_divide_by_zero(self):
+        self.assertEqual(digest_mod._sample([1, 2, 3], 1), [1])
+
+
+SARIF = json.dumps(
+    {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "ESLint",
+                        "rules": [
+                            {
+                                "id": "no-unused-vars",
+                                "helpUri": "https://eslint.org/x",
+                                "defaultConfiguration": {"level": "warning"},
+                            }
+                        ],
+                    }
+                },
+                "results": [
+                    {
+                        "ruleId": "no-unused-vars",
+                        "level": "error",
+                        "message": {"text": "'x' is defined but never used."},
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": "src/a%20b.js"},
+                                    "region": {
+                                        "startLine": 3,
+                                        "startColumn": 5,
+                                        "endLine": 3,
+                                        "endColumn": 9,
+                                    },
+                                }
+                            }
+                        ],
+                        "fixes": [{"description": {"text": "remove"}}],
+                    },
+                    {
+                        "ruleIndex": 0,
+                        "message": {"text": "inherits the rule's level"},
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": "file:///tmp/c.js"}
+                                }
+                            }
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+)
+
+
+class TestSarifAdapter(unittest.TestCase):
+    def parsed(self, text):
+        result = blank("eslint")
+        sarif_adapter.parse(text, result)
+        return result.failures
+
+    def test_a_finding_carries_its_rule_location_and_severity(self):
+        first = self.parsed(SARIF)[0]
+        self.assertEqual(first.name, "no-unused-vars")
+        self.assertEqual(first.severity, "error")
+        self.assertEqual(first.line, 3)
+        self.assertEqual(first.column, 5)
+        self.assertEqual(first.end_line, 3)
+        self.assertEqual(first.source, "ESLint")
+        self.assertEqual(first.code_url, "https://eslint.org/x")
+        # SARIF states an edit but never that it preserves behaviour.
+        self.assertEqual(first.fixable, "unsafe")
+
+    def test_a_percent_escaped_uri_becomes_a_path(self):
+        # Left as a URI it reaches the digest as src/a%20b.js, which no editor
+        # opens and no scope check matches against the file on disk.
+        self.assertEqual(self.parsed(SARIF)[0].file, "src/a b.js")
+
+    def test_a_file_uri_loses_its_scheme(self):
+        self.assertEqual(self.parsed(SARIF)[1].file, "/tmp/c.js")
+
+    def test_a_result_without_a_level_inherits_the_rules(self):
+        self.assertEqual(self.parsed(SARIF)[1].severity, "warning")
+        self.assertEqual(self.parsed(SARIF)[1].name, "no-unused-vars")
+
+    def test_a_note_is_information_not_a_warning(self):
+        text = json.dumps(
+            {
+                "runs": [
+                    {
+                        "tool": {"driver": {"name": "x"}},
+                        "results": [{"level": "note", "message": {"text": "m"}}],
+                    }
+                ]
+            }
+        )
+        found = self.parsed(text)
+        self.assertEqual(found[0].severity, "info")
+        # No location at all is still a finding: unplaceable is not absent.
+        self.assertIsNone(found[0].file)
+
+    def test_output_that_is_not_sarif_is_left_to_the_raw_fallback(self):
+        self.assertEqual(self.parsed("not json at all"), [])
+        self.assertEqual(self.parsed(json.dumps({"diagnostics": []})), [])
+        self.assertEqual(self.parsed(json.dumps([1, 2])), [])
+
+    def test_the_cli_offers_it_as_an_ingest_format(self):
+        self.assertIn("sarif", load_cli().INGESTORS)
+
+
+class TestRawTee(unittest.TestCase):
+    """The runner's own bytes, kept when the run went wrong.
+
+    Everything else tq writes is what an adapter made of the output, and this
+    review found several adapters that were confidently wrong. A miscounted
+    total looks exactly like a correct one; the original settles it.
+    """
+
+    class Proc:
+        def __init__(self, out="", err=""):
+            self.stdout = out
+            self.stderr = err
+            self.returncode = 1
+
+    def setUp(self):
+        self.cli = load_cli()
+        self.dir = tempfile.mkdtemp(prefix="tq-raw-")
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.json_path = os.path.join(self.dir, "out.json")
+
+    def test_both_streams_are_kept_verbatim(self):
+        path = self.cli.tee_raw(
+            self.Proc("stdout here\n", "stderr here\n"), self.json_path
+        )
+        self.assertEqual(path, f"{self.json_path}.raw")
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "stdout here\nstderr here\n")
+
+    def test_nothing_is_written_when_the_runner_said_nothing(self):
+        self.assertEqual(self.cli.tee_raw(self.Proc("", "  \n"), self.json_path), "")
+        self.assertFalse(os.path.exists(f"{self.json_path}.raw"))
+
+    def test_an_unwritable_target_does_not_take_the_digest_down(self):
+        blocked = os.path.join(self.dir, "nope", "out.json")
+        self.assertEqual(self.cli.tee_raw(self.Proc("x"), blocked), "")
 
 
 if __name__ == "__main__":

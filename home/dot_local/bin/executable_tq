@@ -30,12 +30,14 @@ them starts the runner's argv, which is passed on untouched.
                              breakage rather than flakiness. Also TQ_RETRY.
     --flaky-result=pass      count a flake as a pass. Default is fail: a test
                              that needed two goes did not hold.
-    --ingest=<format>        digest any command whose stdout is rdjson,
+    --ingest=<format>        digest any command whose stdout is rdjson, sarif,
                              ruff-json or shellcheck-json1.
 
 Any other command is executed untouched. The runner's exit code is always
 preserved. TQ_JSON=<path> chooses where the structured result lands; otherwise
-it goes to a temp file whose path the digest prints. TQ_TIMEOUT=<seconds>
+it goes to a temp file whose path the digest prints. A run that failed also
+leaves the runner's own unparsed output at <json>.raw, because everything else
+tq writes is what an adapter made of it. TQ_TIMEOUT=<seconds>
 bounds the run — a runner still going after that is killed and reported as
 TIMED OUT with whatever it managed first, 0 to let it run as long as it likes.
 
@@ -78,6 +80,7 @@ from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
 import scope  # noqa: E402
 from adapters import rdjson as rdjson_adapter  # noqa: E402
+from adapters import sarif as sarif_adapter  # noqa: E402
 from adapters import survey as survey_adapter  # noqa: E402
 import detect as detect_mod  # noqa: E402
 from digest import SURVEY_KINDS, digest  # noqa: E402
@@ -330,6 +333,26 @@ def raw_tail(proc):
     """Last of whatever the runner actually said, for when nothing parsed."""
     text = ((proc.stderr or "") + (proc.stdout or "")).strip()
     return text[-RAW_TAIL:] if len(text) > RAW_TAIL else text
+
+
+def tee_raw(proc, json_path):
+    """The runner's own bytes, kept beside the json when the run went wrong.
+
+    The json is what an adapter made of the output, and an adapter can be wrong
+    in ways no digest can show: a miscounted total looks exactly like a correct
+    one. On a run that failed, the unparsed original is the only thing that can
+    settle which of the two happened, and it goes when tq exits.
+    """
+    text = (proc.stdout or "") + (proc.stderr or "")
+    if not text.strip():
+        return ""
+    path = f"{json_path}.raw"
+    try:
+        with open(path, "w", encoding="utf-8", errors="replace") as handle:
+            handle.write(text)
+    except OSError:
+        return ""  # the digest is still worth printing without it
+    return path
 
 
 def json_target():
@@ -606,6 +629,7 @@ RUNNERS = {
 INGESTORS = {
     "rdjson": rdjson_adapter.parse,
     "ruff-json": lint_adapter.parse_ruff,
+    "sarif": sarif_adapter.parse,
     "shellcheck-json1": lint_adapter.parse_shellcheck,
 }
 
@@ -751,6 +775,12 @@ def main(argv):
         result.failures = everything
         result.write(path)
 
+    # Surveys are exempt for the same reason they are exempt below: a grep that
+    # matched nothing exits 1 and is not a run that went wrong.
+    raw_path = ""
+    if result.kind not in SURVEY_KINDS and (result.exit != 0 or result.failures):
+        raw_path = tee_raw(proc, path)
+
     if kind == "prek":
         spliced, replaced = splice_prek(proc.stdout, text)
         sys.stdout.write(spliced.rstrip("\n") + "\n")
@@ -758,6 +788,8 @@ def main(argv):
             sys.stdout.write(f"\n{text}\n")
     else:
         sys.stdout.write(text + "\n")
+    if raw_path:
+        sys.stdout.write(f"raw: {raw_path}\n")
 
     # A runner that died before reporting anything must never read as a pass.
     # A survey is exempt: it has no failures to be missing, a non-zero exit is
