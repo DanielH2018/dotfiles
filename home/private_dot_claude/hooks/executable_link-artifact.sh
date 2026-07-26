@@ -65,17 +65,23 @@ url="file://$host"
 msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
 
 # Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
-# which lacks the remote path, so it errors. Emit an http://localhost link served by
-# serve-artifacts.sh instead — WSL2 mirrored networking shares localhost with Windows,
+# which lacks the remote path, so it errors. Emit an http:// link served by
+# serve-artifacts.sh instead — WSL2 mirrored networking shares loopback with Windows,
 # and VS Code forwards the port over SSH, so it renders from either. Gated to the
 # non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to ~/.claude/artifacts writes;
 # macOS and the sandbox keep file://.
+#
+# The host is 127.0.0.1, NOT localhost: serve-artifacts.sh binds IPv4 loopback only,
+# but Windows resolves localhost to ::1 first, so a browser on the Windows side hangs
+# on the IPv6 attempt and the artifact never renders (measured: localhost:8181 times
+# out from Windows, 127.0.0.1:8181 returns 200). Naming the address family skips the
+# resolution entirely and works from both sides.
 if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   case "$path" in
     */.claude/artifacts/*)
       PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
       rel="${path#*/.claude/artifacts/}"
-      url="http://localhost:${PORT}/${rel}"
+      url="http://127.0.0.1:${PORT}/${rel}"
       # The TUI captures the mouse (alt screen since v2.1.89), so a plain click goes to
       # the app; a modifier lets the terminal's own link handler fire. WezTerm/Ghostty
       # use Shift (the xterm bypass-mouse-reporting modifier); VS Code's terminal uses Ctrl.
