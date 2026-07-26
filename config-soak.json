@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "32a8ae7a9d13f972a98fe6d4b9b19a9bf39e9bf55da7a3e6274d7cb2332d3278",
-      "landed": "2026-07-25T22:47:40.734Z"
+      "hash": "df1f61cca512bc9ea5e43e7df39951a6d2380f27895c5faff080dfe963afa385",
+      "landed": "2026-07-26T13:29:20.904Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "2373a9dd5049b0bd5b7eb6eb4ca7aeedebeac0600874e302996e635902a9fc86",
-      "landed": "2026-07-26T13:17:32.064Z"
+      "hash": "1c6eccf854c70427ad5076ce2d6cd0e5391c4f3d86c8f74920379049be96be9e",
+      "landed": "2026-07-26T13:29:20.904Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -280,6 +280,11 @@
       "path": "home/private_dot_claude/skills/grilling/SKILL.md",
       "hash": "7fe693588d5d03566f7ea717474f9522923a76b5802b935c91653722402fa72c",
       "landed": "2026-07-25T23:57:09.741Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/homelab/SKILL.md",
+      "hash": "8acb40e475ae9da188c2051751f321291672cc349b299da0bb18b04eb0ba59ed",
+      "landed": "2026-07-26T13:29:20.904Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
