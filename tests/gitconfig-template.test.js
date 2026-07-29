@@ -70,6 +70,29 @@ test('never configures the cleartext credential store', { skip }, () => {
   assert.doesNotMatch(render(fakeHome([])), /^\s*helper\s*=\s*store\s*$/m, 'nor does a render');
 });
 
+test('never reaches for the Windows credential manager .exe', { skip }, () => {
+  // The WSL branch used to point every non-GitHub host at git-credential-manager.exe, and fell
+  // back to it for github.com too when gh was missing. Launching a .exe from WSL takes the
+  // VM-mode interop path, which leaks a spinning CPU thread per call (microsoft/WSL#41173) —
+  // and a credential helper runs on every HTTPS fetch and push. Comments may still name it.
+  // `#` lines survive into the rendered gitconfig (they are git comments, not template
+  // comments), so both sides are filtered the same way.
+  const configLines = (text) => text.split('\n').filter((l) => !l.trimStart().startsWith('#'));
+  assert.deepStrictEqual(configLines(fs.readFileSync(TMPL, 'utf8')).filter((l) => /\.exe\b/.test(l)), [],
+    'no branch of the template names a .exe helper');
+  // A render on this machine covers whichever branch it actually takes.
+  assert.deepStrictEqual(configLines(render(fakeHome([]))).filter((l) => /\.exe\b/.test(l)), [], 'nor does a render');
+});
+
+test('non-GitHub hosts still get a credential helper', { skip }, () => {
+  // Dropping the manager without a replacement would leave non-GitHub HTTPS remotes with no
+  // helper at all — gh only answers for hosts it is logged in to.
+  const out = render(fakeHome([]));
+  const generic = out.split('\n').find((l) => /^\s*helper\s*=/.test(l) && !/gh auth/.test(l));
+  assert.ok(generic, 'a non-gh helper is configured');
+  assert.match(generic, /cache --timeout=/, 'and it is the in-memory cache, not a .exe or the cleartext store');
+});
+
 test('always points at an allowed_signers file', { skip }, () => {
   const home = fakeHome([]);
   assert.match(render(home), new RegExp(`allowedSignersFile = ${home}/\\.config/git/allowed_signers`));

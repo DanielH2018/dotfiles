@@ -18,20 +18,21 @@
 [credential]
 	helper = manager
 {{- else if or (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (stat "/proc/sys/fs/binfmt_misc/WSLInterop") }}
-# GitHub goes through gh, NOT the Windows Git Credential Manager: launching a .exe from WSL
-# takes the VM-mode interop path, which leaks a permanently spinning CPU thread per call once
-# the owning wsl.exe has exited (microsoft/WSL#41173, unfixed through WSL 2.9.4), and every
-# HTTPS push and fetch would pay it. gh is a native Linux binary and already authenticated.
+# No branch here may name the Windows Git Credential Manager. Launching a .exe from WSL takes
+# the VM-mode interop path, which leaks a permanently spinning CPU thread per call once the
+# owning wsl.exe has exited (microsoft/WSL#41173, unfixed through WSL 2.9.4), and every HTTPS
+# push and fetch would pay it. gh is a native Linux binary and already authenticated.
 # This section must precede the generic [credential] below -- git tries helpers in config
-# order, so a generic-first layout would hand github.com back to the .exe. Gated on gh being
-# present: file targets apply before install-cli-tools provides it, so a fresh machine falls
-# back to the manager for one apply, then self-heals on the next.
+# order, so a generic-first layout would hand github.com back to the generic helper. Gated on
+# gh being present: file targets apply before install-cli-tools provides it, so a fresh machine
+# falls back to the cache for one apply, then self-heals on the next.
 [credential "https://github.com"]
-	helper = {{ if lookPath "gh" }}!gh auth git-credential{{ else }}/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe{{ end }}
+	helper = {{ if lookPath "gh" }}!gh auth git-credential{{ else }}cache --timeout=3600{{ end }}
 [credential]
-	# Non-GitHub hosts keep the manager -- gh only answers for hosts it is logged in to, and
-	# dropping this would leave them with no helper at all.
-	helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe
+	# Non-GitHub hosts: gh only answers for hosts it is logged in to, so they get the same
+	# in-memory cache the generic Linux branch below uses -- one prompt per hour, nothing
+	# written to disk. This replaced the credential manager .exe; `store` is never a default.
+	helper = cache --timeout=3600
 {{- else }}
 # Generic Linux/BSD fallback: the homelab, any container or VM, and any WSL kernel whose
 # osrelease has been rebuilt without the "microsoft" substring. This was `helper = store`,
