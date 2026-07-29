@@ -66,6 +66,10 @@ test('the lint runners are routed too', { skip }, () => {
   assert.strictEqual(rewritten('go vet ./...'), 'tq go vet ./...');
   assert.strictEqual(rewritten('cargo clippy'), 'tq cargo clippy');
   assert.strictEqual(rewritten('cargo test'), 'tq cargo test');
+  assert.strictEqual(rewritten('gradle test'), 'tq gradle test');
+  assert.strictEqual(rewritten('./gradlew test'), 'tq ./gradlew test');
+  assert.strictEqual(rewritten('mvn test'), 'tq mvn test');
+  assert.strictEqual(rewritten('mvn clean test'), 'tq mvn clean test');
 });
 
 test('a command tq does not claim is left alone', { skip }, () => {
@@ -75,6 +79,8 @@ test('a command tq does not claim is left alone', { skip }, () => {
     'node script.js',            // no --test
     'ruff format --check .',     // reformatting, not diagnostics
     'echo "run node --test"',
+    'gradle build',               // does not name the test task explicitly
+    'mvn install',                // does not name the test phase explicitly
   ]) {
     assert.strictEqual(rewritten(command), null, `must not rewrite: ${command}`);
   }

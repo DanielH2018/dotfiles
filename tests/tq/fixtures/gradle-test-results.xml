@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.CalculatorTest" tests="3" skipped="0" failures="1" errors="0" timestamp="2026-07-24T21:04:43" hostname="host" time="0.045">
+  <properties/>
+  <testcase name="testAdd" classname="com.example.CalculatorTest" time="0.012"/>
+  <testcase name="testSubtract" classname="com.example.CalculatorTest" time="0.009"/>
+  <testcase name="testDivideByZero" classname="com.example.CalculatorTest" time="0.024">
+    <failure message="expected:&lt;1&gt; but was:&lt;0&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected:&lt;1&gt; but was:&lt;0&gt;
+	at com.example.CalculatorTest.testDivideByZero(CalculatorTest.java:42)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)</failure>
+    <system-out><![CDATA[dividing by zero
+]]></system-out>
+    <system-err><![CDATA[]]></system-err>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

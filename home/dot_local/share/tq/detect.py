@@ -49,6 +49,9 @@ CANDIDATES = {
     "git",
     "go",
     "cargo",
+    "gradle",
+    "gradlew",
+    "mvn",
 }
 
 # git subcommands that only read. Everything else — including every subcommand
@@ -357,6 +360,15 @@ def detect(argv):
         return GO_SUBCOMMANDS.get(go_subcommand(argv))
     if tool == "cargo":
         return CARGO_SUBCOMMANDS.get(cargo_subcommand(argv))
+    # `gradle build`/`mvn install` also run tests as a side effect of their
+    # default lifecycle, but claiming that requires understanding Gradle's and
+    # Maven's lifecycle bindings — out of scope. Only a bare "test" token is
+    # unambiguous, the same exact-membership care FIND_UNSAFE and the grep
+    # letter sets take elsewhere: "testCompile" must not match.
+    if tool in ("gradle", "gradlew") and "test" in argv:
+        return "gradle-test"
+    if tool == "mvn" and "test" in argv:
+        return "mvn-test"
     if tool == "git":
         sub = git_subcommand(argv)
         # --exit-code and --quiet make the status the answer rather than a

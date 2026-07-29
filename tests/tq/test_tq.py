@@ -744,6 +744,38 @@ class TestDetection(unittest.TestCase):
         self.assertEqual(detect_mod.go_subcommand(["go", "-C", "sub", "test"]), "test")
         self.assertEqual(self.cli.detect(["go", "-C", "sub", "vet", "./..."]), "go-vet")
 
+    def test_gradle_test_is_claimed_in_either_spelling(self):
+        self.assertEqual(self.cli.detect(["gradle", "test"]), "gradle-test")
+        self.assertEqual(self.cli.detect(["./gradlew", "test"]), "gradle-test")
+        self.assertEqual(
+            self.cli.detect(["gradle", "test", "--tests", "FooTest"]), "gradle-test"
+        )
+
+    def test_gradle_build_and_check_pass_through_untouched(self):
+        # gradle's default lifecycle also runs tests under `build`/`check`,
+        # but claiming that requires understanding the lifecycle binding —
+        # out of scope. Only an explicit `test` task is claimed.
+        self.assertIsNone(self.cli.detect(["gradle", "build"]))
+        self.assertIsNone(self.cli.detect(["gradle", "check"]))
+        self.assertIsNone(self.cli.detect(["gradle"]))
+
+    def test_gradle_task_token_must_be_exact_not_a_substring(self):
+        # "testCompile" merely contains "test" — the same care FIND_UNSAFE
+        # and the grep letter sets take elsewhere against a substring match.
+        self.assertIsNone(self.cli.detect(["gradle", "testCompile"]))
+
+    def test_mvn_test_is_claimed(self):
+        self.assertEqual(self.cli.detect(["mvn", "test"]), "mvn-test")
+        self.assertEqual(self.cli.detect(["mvn", "clean", "test"]), "mvn-test")
+        self.assertEqual(self.cli.detect(["mvn", "-pl", "module", "test"]), "mvn-test")
+
+    def test_mvn_install_and_verify_pass_through_untouched(self):
+        # `mvn install`/`mvn verify` also run tests as part of Maven's default
+        # lifecycle, but same principle as gradle build/check: out of scope.
+        self.assertIsNone(self.cli.detect(["mvn", "install"]))
+        self.assertIsNone(self.cli.detect(["mvn", "verify"]))
+        self.assertIsNone(self.cli.detect(["mvn"]))
+
 
 class TestTextHelpers(unittest.TestCase):
     def test_strip_ansi_handles_both_real_and_xml_escaped_forms(self):
@@ -1225,6 +1257,162 @@ class TestCargoTestAdapter(unittest.TestCase):
         self.assertIn("crate a assertion failed", by_file["crate_a/src/lib.rs"].message)
         self.assertEqual(by_file["crate_b/src/lib.rs"].line, 20)
         self.assertIn("crate b assertion failed", by_file["crate_b/src/lib.rs"].message)
+
+
+class TestGradleAndMavenFixturesAreOrdinaryJUnit(unittest.TestCase):
+    """Gradle and Maven need no adapter of their own — junit_adapter already
+    parses whatever standard JUnit XML they write to disk."""
+
+    def test_gradle_report_parses_as_junit(self):
+        res = junit_adapter.parse(fixture("gradle-test-results.xml"), blank("gradle"))
+        self.assertEqual(res.totals["tests"], 3)
+        self.assertEqual(res.totals["pass"], 2)
+        self.assertEqual(res.totals["fail"], 1)
+        fail = by_name(res, "testDivideByZero")
+        self.assertIn("expected:<1> but was:<0>", fail.message)
+
+    def test_maven_report_parses_as_junit(self):
+        res = junit_adapter.parse(fixture("maven-surefire-report.xml"), blank("mvn"))
+        self.assertEqual(res.totals["tests"], 2)
+        self.assertEqual(res.totals["pass"], 1)
+        self.assertEqual(res.totals["fail"], 1)
+        fail = by_name(res, "testWeight")
+        self.assertIn("expected:<5.0> but was:<4.5>", fail.message)
+
+
+class TestJunitReportMerging(unittest.TestCase):
+    """parse_junit_reports() exists because junit_adapter.parse() overwrites
+    result.totals and result.duration_ms on every call rather than summing
+    them — each call recomputes both from just the <testsuite> elements in
+    the one file it was given. Calling it straight on a shared Result across
+    Gradle's or Maven's several report files would keep only the last file's
+    counts. failures is the exception: parse() appends into whatever list it
+    is handed, so it is safe to grow directly."""
+
+    def setUp(self):
+        self.cli = load_cli()
+
+    def test_totals_are_summed_across_files_not_overwritten(self):
+        result = blank("gradle", exit_code=0)
+        paths = [
+            fixture("gradle-test-results.xml"),
+            fixture("maven-surefire-report.xml"),
+        ]
+        self.cli.parse_junit_reports(paths, result)
+        self.assertEqual(result.totals["tests"], 5)
+        self.assertEqual(result.totals["pass"], 3)
+        self.assertEqual(result.totals["fail"], 2)
+
+    def test_failures_from_every_file_are_kept(self):
+        result = blank("gradle", exit_code=0)
+        paths = [
+            fixture("gradle-test-results.xml"),
+            fixture("maven-surefire-report.xml"),
+        ]
+        self.cli.parse_junit_reports(paths, result)
+        self.assertEqual(
+            {f.name for f in result.failures}, {"testDivideByZero", "testWeight"}
+        )
+
+    def test_an_unreadable_path_is_skipped_not_fatal(self):
+        # A compile failure can leave a partial or truncated report behind
+        # for one module while another module's report is intact — one bad
+        # file must not cost the whole merge.
+        result = blank("gradle", exit_code=0)
+        paths = ["/no/such/file.xml", fixture("gradle-test-results.xml")]
+        self.cli.parse_junit_reports(paths, result)
+        self.assertEqual(result.totals["tests"], 3)
+        self.assertEqual(len(result.failures), 1)
+
+    def test_no_paths_leaves_totals_at_zero(self):
+        result = blank("gradle", exit_code=0)
+        self.cli.parse_junit_reports([], result)
+        self.assertEqual(result.totals["tests"], 0)
+        self.assertEqual(result.failures, [])
+
+
+class TestGradleAndMvnRunners(unittest.TestCase):
+    """run_gradle_test/run_mvn_test: run the command untouched, then glob for
+    whatever report files it left behind. The command itself is faked out —
+    the real risk here is glob-path correctness across a multi-module build,
+    not the subprocess call, which every other run_* already exercises."""
+
+    class Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def setUp(self):
+        self.cli = load_cli()
+        self.cmds = []
+
+        def fake_run(argv, env):
+            self.cmds.append(list(argv))
+            return self.Proc(), False
+
+        self.cli.run = fake_run
+
+    def test_no_flags_are_injected(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            self.assertEqual(self.cmds[-1], ["gradle", "test"])
+            self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            self.assertEqual(self.cmds[-1], ["mvn", "test"])
+
+    def test_gradle_reports_are_found_across_multiple_modules(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            for module, src in (
+                ("module-a", "gradle-test-results.xml"),
+                ("module-b", "maven-surefire-report.xml"),
+            ):
+                dest = os.path.join(workdir, module, "build", "test-results", "test")
+                os.makedirs(dest)
+                shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
+            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            self.assertEqual(result.totals["tests"], 5)
+            self.assertEqual(result.totals["fail"], 2)
+            self.assertEqual(len(result.failures), 2)
+
+    def test_mvn_reports_are_found_across_multiple_modules(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            for module, src in (
+                ("module-a", "gradle-test-results.xml"),
+                ("module-b", "maven-surefire-report.xml"),
+            ):
+                dest = os.path.join(workdir, module, "target", "surefire-reports")
+                os.makedirs(dest)
+                shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
+            result, _ = self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            self.assertEqual(result.totals["tests"], 5)
+            self.assertEqual(result.totals["fail"], 2)
+
+    def test_glob_matches_are_sorted_for_deterministic_order(self):
+        with tempfile.TemporaryDirectory() as workdir:
+            dest = os.path.join(workdir, "build", "test-results", "test")
+            os.makedirs(dest)
+            shutil.copy(
+                fixture("maven-surefire-report.xml"), os.path.join(dest, "TEST-z.xml")
+            )
+            shutil.copy(
+                fixture("gradle-test-results.xml"), os.path.join(dest, "TEST-a.xml")
+            )
+            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            self.assertEqual(
+                [f.name for f in result.failures], ["testDivideByZero", "testWeight"]
+            )
+
+    def test_no_report_files_leaves_totals_at_zero(self):
+        # A compile failure before any test class runs writes no report at
+        # all — nothing here to parse, and the empty totals are what let
+        # digest.py's NO TESTS RAN carry the verdict, the same as every
+        # other test runner's "collected nothing" case.
+        with tempfile.TemporaryDirectory() as workdir:
+            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            self.assertEqual(result.totals["tests"], 0)
+            self.assertEqual(result.failures, [])
+            result, _ = self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            self.assertEqual(result.totals["tests"], 0)
+            self.assertEqual(result.failures, [])
 
 
 class TestRdjson(unittest.TestCase):

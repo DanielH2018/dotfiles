@@ -13,6 +13,8 @@
     tq go test [paths...]
     tq cargo clippy [paths...]
     tq cargo test
+    tq gradle test               (also: ./gradlew test)
+    tq mvn test
 
     tq find . -name '*.py'      (also: fd, ls -R, rg --files, git ls-files)
     tq rg TODO src/             (also: grep, egrep, ugrep)
@@ -69,6 +71,7 @@ runs something or writes something — `find -delete`, `find -exec`, `git commit
 from __future__ import annotations
 
 import contextlib
+import glob
 import os
 import re
 import shlex
@@ -168,6 +171,32 @@ def parse_junit(xml_path, result, summary_text=""):
         return
     with contextlib.suppress(Exception):  # deliberately broad — see above
         junit_adapter.parse(xml_path, result, summary_text=summary_text)
+
+
+def parse_junit_reports(paths, result):
+    """Merge every JUnit report in `paths` into `result` — Gradle and Maven
+    write one XML file per test class rather than pytest's single report, so
+    there is no one path to hand to parse_junit().
+
+    junit_adapter.parse() recomputes result.totals and result.duration_ms
+    from scratch on every call — it assigns, it does not accumulate — so
+    calling it straight on `result` for a second file would silently discard
+    the first file's counts. Only result.failures is safe to grow directly,
+    since parse() appends into whatever list it is given. So each report is
+    parsed into a throwaway Result and its totals/duration summed in by hand.
+    """
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with contextlib.suppress(Exception):  # deliberately broad — see above
+            scratch = Result(
+                runner=result.runner, cmd=result.cmd, cwd=result.cwd, exit=0
+            )
+            junit_adapter.parse(path, scratch)
+            for key, value in scratch.totals.items():
+                result.totals[key] += value
+            result.duration_ms += scratch.duration_ms
+            result.failures.extend(scratch.failures)
 
 
 def plain_env():
@@ -420,6 +449,42 @@ def run_cargo_test(argv, workdir, tmp):
     )
     cargo_adapter.parse_cargo_test(proc.stdout, result)
     return result, proc
+
+
+def run_junit_report_glob(runner, argv, workdir, pattern):
+    """Run `argv` as given, then glob `pattern` under `workdir` for whatever
+    JUnit XML report files it produced and merge them into one Result.
+
+    Shared by Gradle and Maven, whose only difference is where each writes
+    its reports — both run untouched (no flags to inject, matching every
+    other test-runner run_*) and both leave zero XML behind on a run that
+    never reached a test class, which is left as an all-zero totals for
+    digest.py's existing NO TESTS RAN / "exited N with no reported failures"
+    fallback to describe rather than something new here.
+    """
+    proc, timed_out = run(argv, plain_env())
+    result = Result(
+        runner=runner,
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    # sorted(): glob order is not guaranteed stable across runs, and a digest
+    # that reorders findings between two identical runs is worth avoiding.
+    paths = sorted(glob.glob(pattern, recursive=True))
+    parse_junit_reports(paths, result)
+    return result, proc
+
+
+def run_gradle_test(argv, workdir, tmp):
+    pattern = os.path.join(workdir, "**", "build", "test-results", "test", "TEST-*.xml")
+    return run_junit_report_glob("gradle", argv, workdir, pattern)
+
+
+def run_mvn_test(argv, workdir, tmp):
+    pattern = os.path.join(workdir, "**", "target", "surefire-reports", "TEST-*.xml")
+    return run_junit_report_glob("mvn", argv, workdir, pattern)
 
 
 def splice_prek(text, digest_text):
@@ -751,6 +816,8 @@ RUNNERS = {
     "go-test": run_go_test,
     "cargo-clippy": run_cargo_clippy,
     "cargo-test": run_cargo_test,
+    "gradle-test": run_gradle_test,
+    "mvn-test": run_mvn_test,
     "find": run_find,
     "fd": run_fd,
     "ls": run_ls,

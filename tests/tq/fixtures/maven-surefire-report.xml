@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.WidgetTest" tests="2" skipped="0" failures="1" errors="0" timestamp="2026-07-24T21:04:43" hostname="host" time="0.030">
+  <properties/>
+  <testcase name="testAssemble" classname="com.example.WidgetTest" time="0.011"/>
+  <testcase name="testWeight" classname="com.example.WidgetTest" time="0.019">
+    <failure message="expected:&lt;5.0&gt; but was:&lt;4.5&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected:&lt;5.0&gt; but was:&lt;4.5&gt;
+	at com.example.WidgetTest.testWeight(WidgetTest.java:17)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)</failure>
+    <system-out><![CDATA[weighing widget
+]]></system-out>
+    <system-err><![CDATA[]]></system-err>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
