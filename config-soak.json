@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "a9dcefc0a6d3fe2ce496b8921b710e457ae81e35591a06094bc0d0a457101b39",
-      "landed": "2026-07-29T21:46:27.487Z"
+      "hash": "377765ad0f9ba4247d3c0cdb76166d3560bfab5b13eecd3906774232cfdcf38b",
+      "landed": "2026-07-29T22:04:36.798Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "94c1f0487da14c8968f4ec6c04f2755fe54d0bc5a50faf53e480348a52cdb7d7",
-      "landed": "2026-07-29T20:46:20.391Z"
+      "hash": "2cd90059678d661d3ed3e172f738ac3572bfaa3e1265b1af3054a06c5cf8d60f",
+      "landed": "2026-07-29T21:38:43.529Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -218,8 +218,8 @@
     },
     {
       "path": "home/private_dot_claude/rules/shell.md",
-      "hash": "98c279ec947a118e2eaa411dcea5b71fc5a8c8fcd74cc3698d0d47d20b4638f7",
-      "landed": "2026-07-25T23:56:39.220Z"
+      "hash": "5d31eabc5c9433dcf56edd71e4a9b31f71586a3bfb374a490d2275ac8beba4f6",
+      "landed": "2026-07-29T21:38:43.529Z"
     },
     {
       "path": "home/private_dot_claude/rules/sql.md",

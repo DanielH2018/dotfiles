@@ -137,6 +137,13 @@
       "Bash(md5:*)",
       "Bash(df:*)",
       "Bash(du:*)",
+      {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
+           It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
+           auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
+           wrapper above, and deny globs can't cover it without enumerating every
+           interpreter. Getting the convenience back safely needs allow-compound-bash.sh to
+           unwrap a leading wrapper (timeout/env/nice/stdbuf/nohup) and match the command it
+           wraps, so `timeout 200 node --test` is allowed because `node --test` is. */}}
       "Bash(history)",
       "Bash(man:*)",
       "Bash(less:*)",
@@ -1008,10 +1015,6 @@
 {{- end }}
     "ralph-loop@claude-plugins-official": true,
     "claude-permission-audit@daniel-tools": true
-  },
-  "skillOverrides": {
-    "incident-response": "off",
-    "git-commit-and-push": "off"
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {
