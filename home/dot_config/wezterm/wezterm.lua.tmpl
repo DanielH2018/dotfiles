@@ -194,8 +194,13 @@ local function open_agentview(window, _pane)
 		-- after a jump); if fzf is already up, activating is enough.
 		pcall(function()
 			local ap = target:active_pane()
+			-- Compare the executable's BASENAME, not a substring of its whole path.
+			-- `find("fzf")` also matched `.../fzf-tmux`, or any path with fzf in a
+			-- directory name, and a false positive here reads as a dead key: the tab
+			-- activates and the picker is never brought back.
 			local proc = (ap:get_foreground_process_name() or ""):lower()
-			if not proc:find("fzf") then
+			local base = (proc:match("([^/\\]+)$") or proc):gsub("%.exe$", "")
+			if base ~= "fzf" then
 				ap:send_text("agentview\n")
 			end
 		end)
