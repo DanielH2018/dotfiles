@@ -47,6 +47,15 @@ def by_name(result, name):
     return next(f for f in result.failures if f.name == name)
 
 
+def write_ndjson(records):
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".ndjson", delete=False, encoding="utf-8"
+    ) as fh:
+        for record in records:
+            fh.write(json.dumps(record) + "\n")
+        return fh.name
+
+
 class TestJUnitAdapter(unittest.TestCase):
     def test_totals_partition_the_run(self):
         res = junit_adapter.parse(fixture("pytest-failures.xml"), blank("pytest"))
@@ -185,6 +194,47 @@ class TestNodeAdapter(unittest.TestCase):
             self.assertEqual(res.totals["tests"], self.res.totals["tests"])
         finally:
             os.unlink(fh.name)
+
+    def test_a_subprocess_scoped_failure_does_not_swallow_the_next_files_stream(self):
+        # A failure carrying error.stdout/error.stderr takes its own streams and
+        # never reads streams["out"]/["err"] for its file — so it must not mark
+        # that file as charged, or a later file-scoped failure in the same file
+        # finds the shared stream already spent and reports it empty.
+        path = write_ndjson(
+            [
+                {"t": "out", "file": "/sample/a.test.js", "text": "file stdout\n"},
+                {"t": "err", "file": "/sample/a.test.js", "text": "file stderr\n"},
+                {
+                    "t": "fail",
+                    "file": "/sample/a.test.js",
+                    "name": "first",
+                    "error": {
+                        "name": "Error",
+                        "message": "boom1",
+                        "stdout": "proc stdout",
+                        "stderr": "proc stderr",
+                    },
+                },
+                {
+                    "t": "fail",
+                    "file": "/sample/a.test.js",
+                    "name": "second",
+                    "error": {"name": "Error", "message": "boom2"},
+                },
+                {
+                    "t": "summary",
+                    "counts": {"tests": 2, "failed": 2},
+                    "duration_ms": 1,
+                },
+            ]
+        )
+        try:
+            res = node_adapter.parse(path, blank("node"))
+        finally:
+            os.unlink(path)
+        second = by_name(res, "second")
+        self.assertEqual(second.stdout, "file stdout\n")
+        self.assertEqual(second.stderr, "file stderr\n")
 
 
 class TestDigest(unittest.TestCase):
@@ -411,6 +461,37 @@ class TestLintAdapter(unittest.TestCase):
         self.assertEqual(res.totals["fail"], 4)
         self.assertEqual(res.totals["pass"], 0)
 
+    def test_mypy_findings_become_located_failures(self):
+        res = blank("mypy")
+        lint_adapter.parse_mypy(read("mypy-findings.json"), res)
+        self.assertEqual(len(res.failures), 2)
+        self.assertEqual(res.failures[0].file, "pkg/models.py")
+        self.assertEqual(res.failures[0].line, 12)
+        self.assertEqual(res.failures[0].name, "return-value")
+        self.assertEqual(res.failures[0].severity, "error")
+
+    def test_mypys_summary_line_is_not_json_and_is_skipped(self):
+        res = blank("mypy")
+        lint_adapter.parse_mypy(read("mypy-findings.json"), res)
+        self.assertTrue(all(f.name != "?" for f in res.failures))
+        self.assertEqual(len(res.failures), 2)  # the summary line adds no third
+
+    def test_eslint_findings_are_flattened_from_their_per_file_grouping(self):
+        res = blank("eslint")
+        lint_adapter.parse_eslint(read("eslint-findings.json"), res)
+        self.assertEqual(len(res.failures), 3)
+        by_rule = {f.name: f for f in res.failures}
+        self.assertEqual(by_rule["no-unused-vars"].severity, "error")
+        self.assertEqual(by_rule["no-console"].severity, "warning")
+        self.assertEqual(by_rule["no-console"].fixable, "unsafe")
+
+    def test_eslint_ruleless_fatal_error_still_gets_a_name(self):
+        res = blank("eslint")
+        lint_adapter.parse_eslint(read("eslint-findings.json"), res)
+        fatal = next(f for f in res.failures if f.file == "/sample/src/broken.js")
+        self.assertEqual(fatal.name, "eslint")
+        self.assertEqual(fatal.severity, "error")
+
 
 class TestLintDigest(unittest.TestCase):
     def lint(self, exit_code=0, failures=(), notes=(), ms=100):
@@ -547,6 +628,21 @@ class TestDigestBudget(unittest.TestCase):
         text = digest(res, "/tmp/x.json")
         self.assertEqual(res.truncated["failures"], 0)
         self.assertIn("stdout", text)
+
+    def test_truncated_stdout_bytes_only_counts_shown_failures(self):
+        # A failure dropped for blowing the digest budget still gets its block
+        # built (to measure whether it fits), and that block's own cap-dropped
+        # bytes must not be folded into a total meant to describe what the
+        # *shown* blocks lost.
+        res = self.noisy(10)
+        digest(res, "/tmp/x.json")
+        shown = 10 - res.truncated["failures"]
+        self.assertGreater(res.truncated["failures"], 0)  # else nothing to prove
+        only_shown = self.noisy(shown)
+        digest(only_shown, "/tmp/x.json")
+        self.assertEqual(
+            res.truncated["stdout_bytes"], only_shown.truncated["stdout_bytes"]
+        )
 
     def test_an_unbounded_message_is_capped(self):
         res = blank("node")

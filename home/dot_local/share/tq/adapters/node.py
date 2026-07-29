@@ -145,7 +145,8 @@ def parse(ndjson_path, result):
             first = rec.get("file") not in charged
             out_text = "".join(streams["out"].get(rec.get("file"), [])) if first else ""
             err_text, scope = (stderr_text if first else ""), "file"
-        charged.add(rec.get("file"))
+            if first:
+                charged.add(rec.get("file"))
         if err_text.strip() and err_text.strip() in message:
             err_text = ""  # node already folded it into the message
         result.failures.append(

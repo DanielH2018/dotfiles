@@ -57,6 +57,8 @@ test('the lint runners are routed too', { skip }, () => {
   // Proves the hook is asking tq's own detect() rather than a private copy:
   // ruff and shellcheck are only recognised by the tq in this checkout.
   assert.strictEqual(rewritten('ruff check .'), 'tq ruff check .');
+  assert.strictEqual(rewritten('mypy src'), 'tq mypy src');
+  assert.strictEqual(rewritten('eslint .'), 'tq eslint .');
   assert.strictEqual(rewritten('shellcheck x.sh'), 'tq shellcheck x.sh');
   assert.strictEqual(rewritten('uv run pytest'), 'tq uv run pytest');
 });

@@ -1,0 +1,21 @@
+[project]
+name = "tq-dev-tooling"
+version = "0.0.0"
+requires-python = ">=3.9"
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py39"
+extend-include = ["home/dot_local/bin/executable_tq"]
+
+[tool.ruff.lint]
+# PTH (pathlib) intentionally left out of select: os.path is load-bearing
+# throughout scope.py's diff-path matching and converting it is a separate task.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path.insert() before the import it enables, same as executable_tq's own
+# inline noqa comments a few lines up.
+"tests/tq/test_tq.py" = ["E501", "E402"]

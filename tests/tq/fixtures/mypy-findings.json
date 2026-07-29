@@ -1,0 +1,3 @@
+{"file": "pkg/models.py", "line": 12, "column": 8, "message": "Incompatible return value type (got \"int\", expected \"str\")", "hint": null, "code": "return-value", "severity": "error"}
+{"file": "pkg/models.py", "line": 20, "column": 4, "message": "Unused \"type: ignore\" comment", "hint": null, "code": "unused-ignore", "severity": "warning"}
+Found 2 errors in 2 files (checked 3 source files)

@@ -75,6 +75,46 @@ def parse_ruff(stdout, result):
     return result
 
 
+def parse_mypy(stdout, result):
+    """mypy --output=json -> Result. Fills `result` in place.
+
+    JSON Lines rather than a single document: mypy writes one object per
+    diagnostic as it finds it, with no enclosing array to make the stream valid
+    JSON only once the run has finished.
+    """
+    findings = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            findings.append(json.loads(line))
+        except ValueError:
+            continue  # a note mypy printed outside --output=json, or a partial line
+    ordered = sorted(
+        findings,
+        key=lambda f: (
+            LEVEL_RANK.get((f.get("severity") or "error").lower(), len(LEVEL_RANK)),
+            f.get("file") or "",
+            f.get("line") or 0,
+            f.get("column") or 0,
+        ),
+    )
+    for note in ordered:
+        result.failures.append(
+            Failure(
+                name=note.get("code") or "mypy",
+                file=note.get("file"),
+                line=note.get("line"),
+                column=note.get("column"),
+                severity=(note.get("severity") or "error").lower(),
+                source="mypy",
+                message=(note.get("message") or "").strip(),
+            )
+        )
+    return result
+
+
 def parse_shellcheck(stdout, result):
     """shellcheck --format=json1 -> Result. Fills `result` in place.
 
@@ -116,6 +156,56 @@ def parse_shellcheck(stdout, result):
                 ),
                 source="shellcheck",
                 fixable="safe" if note.get("fix") else None,
+                message=(note.get("message") or "").strip(),
+            )
+        )
+    return result
+
+
+ESLINT_SEVERITY = {1: "warning", 2: "error"}
+
+
+def parse_eslint(stdout, result):
+    """eslint --format=json -> Result. Fills `result` in place.
+
+    A top-level array of per-file results, each carrying its own `messages`
+    array — flattened here into the one findings list every other adapter
+    produces. A rule-less fatal message (a syntax error eslint could not even
+    parse past) still gets a name: "eslint" rather than a missing ruleId.
+    """
+    try:
+        payload = json.loads(stdout or "")
+    except ValueError:
+        return result  # not JSON: leave it to the caller's raw-output fallback
+    if not isinstance(payload, list):
+        return result
+    findings = [
+        (entry.get("filePath"), note)
+        for entry in payload
+        for note in entry.get("messages") or []
+    ]
+    ordered = sorted(
+        findings,
+        key=lambda fn: (
+            LEVEL_RANK.get(ESLINT_SEVERITY.get(fn[1].get("severity"), "error"), 0),
+            fn[0] or "",
+            fn[1].get("line") or 0,
+            fn[1].get("column") or 0,
+        ),
+    )
+    for file_path, note in ordered:
+        result.failures.append(
+            Failure(
+                name=note.get("ruleId") or "eslint",
+                file=file_path,
+                line=note.get("line"),
+                column=note.get("column"),
+                end_line=note.get("endLine"),
+                end_column=note.get("endColumn"),
+                severity=ESLINT_SEVERITY.get(note.get("severity"), "error"),
+                source="eslint",
+                # eslint states no per-message safety, only whether a fix exists.
+                fixable="unsafe" if note.get("fix") else None,
                 message=(note.get("message") or "").strip(),
             )
         )

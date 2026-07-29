@@ -5,6 +5,8 @@
     tq uv run pytest            (also: pytest, python -m pytest)
     tq prek run --all-files
     tq ruff check [paths...]    (also: uv run ruff check)
+    tq mypy [paths...]
+    tq eslint [files...]
     tq shellcheck [files...]
 
     tq find . -name '*.py'      (also: fd, ls -R, rg --files, git ls-files)
@@ -61,6 +63,7 @@ runs something or writes something — `find -delete`, `find -exec`, `git commit
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shlex
@@ -75,14 +78,14 @@ LIB = os.path.normpath(
 )
 sys.path.insert(0, LIB)
 
+import detect as detect_mod  # noqa: E402
+import scope  # noqa: E402
 from adapters import junit as junit_adapter  # noqa: E402
 from adapters import lint as lint_adapter  # noqa: E402
 from adapters import node as node_adapter  # noqa: E402
-import scope  # noqa: E402
 from adapters import rdjson as rdjson_adapter  # noqa: E402
 from adapters import sarif as sarif_adapter  # noqa: E402
 from adapters import survey as survey_adapter  # noqa: E402
-import detect as detect_mod  # noqa: E402
 from digest import SURVEY_KINDS, digest  # noqa: E402
 from result import Result  # noqa: E402
 
@@ -95,6 +98,7 @@ RAW_TAIL = 4000
 # Ten minutes, which no suite tq is put in front of comes close to. TQ_TIMEOUT=0
 # disables the kill for the one that legitimately does.
 TIMEOUT = int(os.environ.get("TQ_TIMEOUT") or 600)
+
 
 def drop_flag(argv, flags):
     """argv without a flag tq is about to set for itself, in either spelling."""
@@ -155,10 +159,8 @@ def parse_junit(xml_path, result, summary_text=""):
     """
     if not os.path.exists(xml_path):
         return
-    try:
+    with contextlib.suppress(Exception):  # deliberately broad — see above
         junit_adapter.parse(xml_path, result, summary_text=summary_text)
-    except Exception:  # noqa: BLE001 — see above
-        pass
 
 
 def plain_env():
@@ -282,6 +284,38 @@ def run_ruff(argv, workdir, tmp):
         timed_out=timed_out,
     )
     lint_adapter.parse_ruff(proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
+def run_mypy(argv, workdir, tmp):
+    cmd = drop_flag(argv, ("--output",))
+    proc, timed_out = run(cmd + ["--output=json"], plain_env())
+    result = Result(
+        runner="mypy",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    lint_adapter.parse_mypy(proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
+def run_eslint(argv, workdir, tmp):
+    cmd = drop_flag(argv, ("--format", "-f", "--output-file", "-o"))
+    proc, timed_out = run(cmd + ["--format=json"], plain_env())
+    result = Result(
+        runner="eslint",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    lint_adapter.parse_eslint(proc.stdout, result)
     finish_lint(result, proc)
     return result, proc
 
@@ -414,7 +448,14 @@ LOG_FORMATS = DIFF_FORMATS + (
 COMMIT_FORMAT = "--pretty=format:%x1e%H%x1f%an%x1f%aI%x1f%s"
 # git log flags that ask for per-file detail. tq adds --numstat only when one of
 # them was given: a 500-commit log is fast until it has to diff every commit.
-LOG_WANTS_FILES = ("--stat", "--numstat", "--name-only", "--name-status", "-p", "--patch")
+LOG_WANTS_FILES = (
+    "--stat",
+    "--numstat",
+    "--name-only",
+    "--name-status",
+    "-p",
+    "--patch",
+)
 BARE_COUNT = re.compile(r"^-(\d+)$")
 
 
@@ -579,7 +620,9 @@ def git_env():
 
 
 def run_git_diff(argv, workdir, tmp):
-    cmd = git_inject(drop_switches(argv, DIFF_FORMATS), ["--numstat", "-z", "--no-color"])
+    cmd = git_inject(
+        drop_switches(argv, DIFF_FORMATS), ["--numstat", "-z", "--no-color"]
+    )
     proc, timed_out = run(cmd, git_env())
     result = survey("git diff", "diff", argv, workdir, proc, timed_out)
     survey_adapter.parse_numstat(proc.stdout, result)
@@ -614,6 +657,8 @@ RUNNERS = {
     "pytest": run_pytest,
     "prek": run_prek,
     "ruff": run_ruff,
+    "mypy": run_mypy,
+    "eslint": run_eslint,
     "shellcheck": run_shellcheck,
     "find": run_find,
     "fd": run_fd,

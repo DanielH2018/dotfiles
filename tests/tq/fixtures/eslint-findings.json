@@ -1,0 +1,39 @@
+[
+  {
+    "filePath": "/sample/src/app.js",
+    "messages": [
+      {
+        "ruleId": "no-unused-vars",
+        "severity": 2,
+        "message": "'x' is assigned a value but never used.",
+        "line": 3,
+        "column": 7,
+        "endLine": 3,
+        "endColumn": 8
+      },
+      {
+        "ruleId": "no-console",
+        "severity": 1,
+        "message": "Unexpected console statement.",
+        "line": 10,
+        "column": 1,
+        "endLine": 10,
+        "endColumn": 20,
+        "fix": {"range": [120, 140], "text": ""}
+      }
+    ]
+  },
+  {
+    "filePath": "/sample/src/broken.js",
+    "messages": [
+      {
+        "ruleId": null,
+        "fatal": true,
+        "severity": 2,
+        "message": "Parsing error: Unexpected token }",
+        "line": 1,
+        "column": 5
+      }
+    ]
+  }
+]

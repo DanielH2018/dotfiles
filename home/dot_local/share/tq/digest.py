@@ -445,13 +445,14 @@ def digest(result, json_path):
     used, shown, dropped_bytes = _size(out), 0, 0
     for fail in result.failures[:MAX_FAILURES]:
         block = []
-        dropped_bytes += _failure_block(fail, result.cwd, block)
+        block_dropped = _failure_block(fail, result.cwd, block)
         # The first failure is rendered whole however large it is: naming a
         # failure while showing none of it barely beats saying nothing.
         if shown and used + _size(block) > MAX_DIGEST:
             break
         out.extend(block)
         used += _size(block)
+        dropped_bytes += block_dropped
         shown += 1
 
     result.truncated["failures"] = len(result.failures) - shown

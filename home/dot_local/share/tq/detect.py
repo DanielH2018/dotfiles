@@ -24,6 +24,8 @@ CANDIDATES = {
     "pytest",
     "prek",
     "ruff",
+    "mypy",
+    "eslint",
     "shellcheck",
     "uv",
     "uvx",
@@ -256,6 +258,18 @@ def detect(argv):
     # no locations worth digesting — the bare word is what marks a lint run.
     if tool == "ruff" and "check" in argv:
         return "ruff"
+    # --install-types prompts and mutates the environment rather than checking
+    # it, and neither flag below reports diagnostics for --output=json to carry.
+    if tool == "mypy" and not any(
+        t in ("--version", "-h", "--help", "--install-types") for t in argv
+    ):
+        return "mypy"
+    # --print-config answers with a config object, not diagnostics, and both
+    # flags below print to stdout and exit before any file is linted.
+    if tool == "eslint" and not any(
+        t in ("--version", "-h", "--help", "--print-config", "--init") for t in argv
+    ):
+        return "eslint"
     if tool == "shellcheck":
         return "shellcheck"
     if tool == "git":
