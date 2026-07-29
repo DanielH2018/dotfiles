@@ -312,39 +312,52 @@ if command -v curlie >/dev/null 2>&1; then
   hdelete() { curlie DELETE "$@"; }
 fi
 
-# --- WSL: dump the Windows clipboard image to a PNG for Claude Code ---
-# WSL can't hand a clipboard image straight to Claude (the WSLg clipboard bridge carries text,
-# and Windows stores screenshots as a BMP that Claude often can't decode). So save the clipboard
-# image to a PNG on the Windows side and print a Claude-ready `@path` to drop into the prompt.
-# powershell.exe isn't on PATH here (interop.appendWindowsPath=false), so resolve it directly;
-# gate the definition on its presence to stay a no-op off Windows/WSL.
-if command -v powershell.exe >/dev/null 2>&1 \
-   || [ -x /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ]; then
+# --- Dump the clipboard image to a PNG for Claude Code ---
+# Claude can't take a clipboard image straight from the terminal, so save it to a file and
+# print a Claude-ready `@path` to drop into the prompt. Under WSL the image arrives via WSLg,
+# which mirrors the Windows clipboard onto Wayland but offers an image ONLY as image/bmp —
+# a format Claude and the Anthropic API reject — so a bmp goes through wl-bmp2png, the same
+# converter the xclip shim uses for inline paste.
+#
+# This used to run `powershell.exe Get-Clipboard -Format Image` and pipe the path to clip.exe.
+# Launching a Windows binary from WSL takes the VM-mode interop path, which leaks a permanently
+# spinning CPU thread per call (microsoft/WSL#41173, unfixed through WSL 2.9.4). wl-paste/wl-copy
+# reach the same clipboard through WSLg and start no Windows process, and the PNG now lands on
+# ext4 instead of C:\Temp behind the 9p bridge.
+if command -v wl-paste >/dev/null 2>&1; then
   clipimg() {
-    local ps=powershell.exe
-    command -v powershell.exe >/dev/null 2>&1 \
-      || ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
     # NB: name the result var anything but `status` — that's a special readonly-ish
     # parameter in zsh (mirrors $?), so assigning to it silently breaks the function there.
-    local name res
-    name="clip-$(date +%Y%m%d-%H%M%S).png"
-    res=$("$ps" -NoProfile -Command \
-      "\$img = Get-Clipboard -Format Image; if (\$img) { New-Item -ItemType Directory -Force -Path 'C:\\Temp' | Out-Null; \$img.Save('C:\\Temp\\$name'); 'saved' } else { 'no-image' }" \
-      2>/dev/null | tr -d '\r\n')
-    if [ "$res" = "saved" ]; then
-      local ref="@/mnt/c/Temp/$name"
-      # Put the path on the Windows clipboard so it pastes straight into Claude with one
-      # keystroke (paste is Ctrl+Shift+V in WezTerm; Ctrl+C is SIGINT, not copy). This
-      # overwrites the image on the clipboard, which is fine — it's already saved to the PNG.
-      # clip.exe isn't on PATH here either, so call it by full path.
-      local clip=clip.exe
-      command -v clip.exe >/dev/null 2>&1 || clip=/mnt/c/Windows/System32/clip.exe
-      [ -x "$clip" ] && printf '%s' "$ref" | "$clip"
-      printf '%s  (copied to clipboard — paste with Ctrl+Shift+V)\n' "$ref"
-    else
-      echo "clipimg: no image on the Windows clipboard (grab one with Win+Shift+S first)" >&2
+    local types dir out saved nl
+    nl='
+'
+    types=$(wl-paste -l 2>/dev/null)
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/clipimg"
+    mkdir -p "$dir" || return 1
+    out="$dir/clip-$(date +%Y%m%d-%H%M%S).png"
+    saved=0
+    # Match a whole line of wl-paste's newline-separated type list, so image/bmp can't be
+    # matched by a longer type that merely contains it.
+    case "$nl$types$nl" in
+      *"${nl}image/png${nl}"*)
+        wl-paste --no-newline --type image/png > "$out" 2>/dev/null && saved=1 ;;
+      *"${nl}image/bmp${nl}"*)
+        # WSLg's only image mirror. wl-bmp2png exits non-zero on a bmp it can't read.
+        command -v wl-bmp2png >/dev/null 2>&1 \
+          && wl-paste --type image/bmp 2>/dev/null | wl-bmp2png > "$out" 2>/dev/null \
+          && saved=1 ;;
+    esac
+    if [ "$saved" != 1 ] || [ ! -s "$out" ]; then
+      rm -f "$out"
+      echo "clipimg: no image on the clipboard (grab one with Win+Shift+S first)" >&2
       return 1
     fi
+    local ref="@$out"
+    # Put the path on the clipboard so it pastes straight into Claude with one keystroke
+    # (paste is Ctrl+Shift+V in WezTerm; Ctrl+C is SIGINT, not copy). This overwrites the
+    # image on the clipboard, which is fine — it's already saved to the PNG.
+    printf '%s' "$ref" | wl-copy 2>/dev/null
+    printf '%s  (copied to clipboard — paste with Ctrl+Shift+V)\n' "$ref"
   }
 fi
 
