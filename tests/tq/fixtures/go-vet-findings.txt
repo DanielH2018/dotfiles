@@ -1,0 +1,5 @@
+# example.com/mymod/util
+util/parse.go:8:2: Printf call has arguments but no formatting directives
+# example.com/mymod
+main.go:12:5: unreachable code
+./cmd/tool.go:20:10: struct field tag not compatible with reflect.StructTag.Get

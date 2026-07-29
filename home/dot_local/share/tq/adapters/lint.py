@@ -25,6 +25,15 @@ TSC_DIAGNOSTIC = re.compile(
     r"(?P<severity>error|warning) TS(?P<code>\d+): (?P<message>.*)$"
 )
 
+# go vet's own line, and every other go/analysis tool built on the same
+# framework: `<path>:<line>:<col>: <message>`. A `# <import path>` header line,
+# printed ahead of the findings for each package when more than one is vetted,
+# is handled by the caller skipping any line that starts with "#" rather than
+# by this pattern.
+GO_VET_LINE = re.compile(
+    r"^(?P<file>[^:]+):(?P<line>\d+):(?P<column>\d+):\s*(?P<message>.*)$"
+)
+
 
 def as_diagnostics(result):
     """Restate the totals as findings: n seen, n bad, nothing 'passed'.
@@ -173,6 +182,43 @@ def parse_tsc(stdout, result):
                 severity=note["severity"],
                 source="tsc",
                 message=note["message"],
+            )
+        )
+    return result
+
+
+def parse_go_vet(stdout, result):
+    """go vet (and the rest of the go/analysis tools) -> Result. Fills
+    `result` in place.
+
+    Plain text, one finding per line: `path:line:col: message`. Vetting more
+    than one package prints a `# <import path>` header ahead of the findings
+    it groups; skipped rather than parsed, since the path in each finding
+    already stands on its own. go vet carries no rule code the way ruff or
+    eslint do, and no severity tier either — every finding is name="vet",
+    severity="error".
+    """
+    findings = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = GO_VET_LINE.match(line)
+        if match:
+            findings.append(match.groupdict())
+    ordered = sorted(
+        findings, key=lambda f: (f["file"], int(f["line"]), int(f["column"]))
+    )
+    for note in ordered:
+        result.failures.append(
+            Failure(
+                name="vet",
+                file=note["file"],
+                line=int(note["line"]),
+                column=int(note["column"]),
+                severity="error",
+                source="go vet",
+                message=note["message"].strip(),
             )
         )
     return result

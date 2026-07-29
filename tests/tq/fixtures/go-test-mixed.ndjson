@@ -1,0 +1,13 @@
+{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/mymod","Test":"TestAdd"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestAdd","Output":"=== RUN   TestAdd\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/mymod","Test":"TestAdd","Elapsed":0}
+{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/mymod","Test":"TestMul"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestMul","Output":"=== RUN   TestMul\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/mymod","Test":"TestMul","Elapsed":0}
+{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/mymod","Test":"TestSub"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestSub","Output":"=== RUN   TestSub\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestSub","Output":"    sub_test.go:10: expected 2, got 3\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestSub","Output":"--- FAIL: TestSub (0.00s)\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/mymod","Test":"TestSub","Elapsed":0}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Output":"FAIL\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"fail","Package":"example.com/mymod","Elapsed":0.01}

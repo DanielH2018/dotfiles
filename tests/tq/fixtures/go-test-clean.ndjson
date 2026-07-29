@@ -1,0 +1,9 @@
+{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/mymod","Test":"TestAdd"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestAdd","Output":"=== RUN   TestAdd\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/mymod","Test":"TestAdd","Elapsed":0}
+{"Time":"2024-01-01T00:00:00Z","Action":"run","Package":"example.com/mymod","Test":"TestMul"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Test":"TestMul","Output":"=== RUN   TestMul\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/mymod","Test":"TestMul","Elapsed":0}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Output":"PASS\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"output","Package":"example.com/mymod","Output":"ok  \texample.com/mymod\t0.002s\n"}
+{"Time":"2024-01-01T00:00:00Z","Action":"pass","Package":"example.com/mymod","Elapsed":0.002}

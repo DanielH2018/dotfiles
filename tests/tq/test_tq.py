@@ -20,6 +20,7 @@ sys.path.insert(
 import detect as detect_mod
 import digest as digest_mod
 import scope
+from adapters import go as go_adapter
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from adapters import node as node_adapter
@@ -235,6 +236,74 @@ class TestNodeAdapter(unittest.TestCase):
         second = by_name(res, "second")
         self.assertEqual(second.stdout, "file stdout\n")
         self.assertEqual(second.stderr, "file stderr\n")
+
+
+def ndjson(records):
+    return "\n".join(json.dumps(r) for r in records)
+
+
+class TestGoTestAdapter(unittest.TestCase):
+    def setUp(self):
+        self.res = go_adapter.parse_go_test(read("go-test-mixed.ndjson"), blank("go"))
+
+    def test_totals_partition_the_run(self):
+        self.assertEqual(self.res.totals["tests"], 3)
+        self.assertEqual(self.res.totals["pass"], 2)
+        self.assertEqual(self.res.totals["fail"], 1)
+        self.assertEqual(self.res.totals["skip"], 0)
+
+    def test_a_package_level_outcome_is_not_double_counted(self):
+        # go-test-mixed.ndjson carries a package-level "fail" with no Test
+        # field after TestSub's own — 3 tests, not 4.
+        self.assertEqual(
+            sum(self.res.totals[k] for k in ("pass", "fail", "skip")),
+            self.res.totals["tests"],
+        )
+
+    def test_a_failing_tests_location_is_pulled_from_its_output(self):
+        fail = by_name(self.res, "TestSub")
+        self.assertEqual(fail.file, "sub_test.go")
+        self.assertEqual(fail.line, 10)
+        self.assertEqual(fail.message, "expected 2, got 3")
+
+    def test_a_failing_tests_full_output_is_kept_as_stdout(self):
+        fail = by_name(self.res, "TestSub")
+        self.assertIn("=== RUN   TestSub", fail.stdout)
+        self.assertIn("--- FAIL: TestSub", fail.stdout)
+
+    def test_passing_tests_are_not_listed_as_failures(self):
+        self.assertNotIn("TestAdd", [f.name for f in self.res.failures])
+        self.assertNotIn("TestMul", [f.name for f in self.res.failures])
+
+    def test_a_clean_run_has_no_failures(self):
+        res = go_adapter.parse_go_test(read("go-test-clean.ndjson"), blank("go", 0))
+        self.assertEqual(res.failures, [])
+        self.assertEqual(res.totals["tests"], 2)
+        self.assertEqual(res.totals["pass"], 2)
+
+    def test_no_location_pattern_falls_back_to_the_raw_output(self):
+        text = ndjson(
+            [
+                {"Action": "run", "Package": "m", "Test": "TestX"},
+                {
+                    "Action": "output",
+                    "Package": "m",
+                    "Test": "TestX",
+                    "Output": "panic: boom, no location here\n",
+                },
+                {"Action": "fail", "Package": "m", "Test": "TestX"},
+            ]
+        )
+        res = go_adapter.parse_go_test(text, blank("go"))
+        fail = by_name(res, "TestX")
+        self.assertIsNone(fail.file)
+        self.assertIsNone(fail.line)
+        self.assertEqual(fail.message, "panic: boom, no location here")
+
+    def test_a_partial_final_line_does_not_lose_the_run(self):
+        text = read("go-test-mixed.ndjson") + '{"Action":"output","Package":"m'
+        res = go_adapter.parse_go_test(text, blank("go"))
+        self.assertEqual(res.totals["tests"], self.res.totals["tests"])
 
 
 class TestDigest(unittest.TestCase):
@@ -526,6 +595,30 @@ class TestLintAdapter(unittest.TestCase):
         lint_adapter.parse_tsc("tsc: command not found", res)
         self.assertEqual(res.failures, [])
 
+    def test_go_vet_findings_become_located_failures(self):
+        res = blank("go")
+        lint_adapter.parse_go_vet(read("go-vet-findings.txt"), res)
+        self.assertEqual(len(res.failures), 3)
+        self.assertTrue(all(f.name == "vet" for f in res.failures))
+        self.assertTrue(all(f.severity == "error" for f in res.failures))
+        by_file = {f.file: f for f in res.failures}
+        self.assertEqual(by_file["util/parse.go"].line, 8)
+        self.assertEqual(by_file["util/parse.go"].column, 2)
+        self.assertIn("Printf call", by_file["util/parse.go"].message)
+        self.assertEqual(by_file["main.go"].line, 12)
+        self.assertEqual(by_file["./cmd/tool.go"].line, 20)
+
+    def test_go_vets_package_header_lines_are_not_findings(self):
+        res = blank("go")
+        lint_adapter.parse_go_vet(read("go-vet-findings.txt"), res)
+        self.assertNotIn("# example.com/mymod/util", [f.message for f in res.failures])
+        self.assertTrue(all(not f.message.startswith("#") for f in res.failures))
+
+    def test_a_clean_go_vet_run_yields_no_findings(self):
+        res = blank("go", exit_code=0)
+        lint_adapter.parse_go_vet(read("go-vet-clean.txt"), res)
+        self.assertEqual(res.failures, [])
+
 
 class TestLintDigest(unittest.TestCase):
     def lint(self, exit_code=0, failures=(), notes=(), ms=100):
@@ -609,6 +702,24 @@ class TestDetection(unittest.TestCase):
             self.cli.drop_flag(["shellcheck", "-f", "json", "x"], ("-f",)),
             ["shellcheck", "x"],
         )
+
+    def test_go_test_and_go_vet_are_claimed_by_their_subcommand(self):
+        self.assertEqual(self.cli.detect(["go", "test", "./..."]), "go-test")
+        self.assertEqual(self.cli.detect(["go", "vet", "./..."]), "go-vet")
+
+    def test_other_go_subcommands_pass_through_untouched(self):
+        for argv in (
+            ["go", "build", "./..."],
+            ["go", "run", "main.go"],
+            ["go", "get", "x"],
+            ["go", "mod", "tidy"],
+            ["go"],
+        ):
+            self.assertIsNone(self.cli.detect(argv), argv)
+
+    def test_gos_own_flag_ahead_of_the_verb_does_not_hide_it(self):
+        self.assertEqual(detect_mod.go_subcommand(["go", "-C", "sub", "test"]), "test")
+        self.assertEqual(self.cli.detect(["go", "-C", "sub", "vet", "./..."]), "go-vet")
 
 
 class TestTextHelpers(unittest.TestCase):
@@ -1460,6 +1571,47 @@ class TestRunnerArgv(unittest.TestCase):
             self.built("find", ["find", "dir", "-name", "*.py"]),
             ["find", "dir", "-name", "*.py", "-print0"],
         )
+
+    def test_go_test_gets_json_spliced_right_after_the_verb(self):
+        self.assertEqual(
+            self.built("go-test", ["go", "test", "./..."]),
+            ["go", "test", "-json", "./..."],
+        )
+        self.assertEqual(
+            self.built("go-test", ["go", "-C", "sub", "test", "-v", "./..."]),
+            ["go", "-C", "sub", "test", "-json", "-v", "./..."],
+        )
+
+    def test_go_test_does_not_double_inject_json(self):
+        self.assertEqual(
+            self.built("go-test", ["go", "test", "-json", "./..."]),
+            ["go", "test", "-json", "./..."],
+        )
+
+    def test_go_vet_runs_with_no_flags_injected(self):
+        self.assertEqual(
+            self.built("go-vet", ["go", "vet", "./..."]),
+            ["go", "vet", "./..."],
+        )
+
+    def test_go_vet_parses_stderr_not_stdout(self):
+        # go vet writes its findings to stderr. Parsing stdout instead digests
+        # every real run as clean, which is the one failure mode tq exists to
+        # prevent.
+        class VetProc:
+            returncode = 1
+            stdout = ""
+            stderr = "main.go:12:5: unreachable code\n"
+
+        def fake_run(argv, env):
+            return VetProc(), False
+
+        self.cli.run = fake_run
+        result, _ = self.cli.run_go_vet(
+            ["go", "vet", "./..."], "/sample", "/sample/tmp"
+        )
+        self.assertEqual(len(result.failures), 1)
+        self.assertEqual(result.failures[0].file, "main.go")
 
 
 class TestBundledShortFlags(unittest.TestCase):

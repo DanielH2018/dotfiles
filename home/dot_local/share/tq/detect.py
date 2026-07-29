@@ -47,6 +47,7 @@ CANDIDATES = {
     "ugrep",
     "rg",
     "git",
+    "go",
 }
 
 # git subcommands that only read. Everything else — including every subcommand
@@ -57,6 +58,17 @@ GIT_SURVEYS = {"log": "git-log", "diff": "git-diff", "ls-files": "git-ls-files"}
 # git's own options, before the subcommand. The ones listed take a separate
 # value, so the token after them is not the subcommand.
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+
+# go's own options, before the subcommand. Far rarer than git's — -C (change
+# directory before running, added in Go 1.20) is the one that takes a
+# separate value.
+GO_VALUE_OPTS = {"-C"}
+
+# go subcommands this owns. Everything else — build, run, get, mod, etc. —
+# passes through untouched, on the same principle as git's log/diff/ls-files
+# carve-out: a wrapper that captures stdout must never decide a build was safe
+# to claim.
+GO_SUBCOMMANDS = {"test": "go-test", "vet": "go-vet"}
 
 # find primaries that either run something or replace the one-path-per-line
 # output tq is about to parse. Either way the command is not a path sweep and
@@ -175,6 +187,31 @@ def git_subcommand(argv):
     return argv[i] if i >= 0 else ""
 
 
+def go_subcommand_index(argv):
+    """Where the verb sits in a go command, past go's own options, or -1.
+
+    Mirrors git_subcommand_index for the same reason: `go -C dir test` must
+    not read "-C" as the verb, and the position is what run_go_test needs to
+    splice -json in after, not just the token.
+    """
+    i = argv.index("go") + 1 if "go" in argv else 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok in GO_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return i
+    return -1
+
+
+def go_subcommand(argv):
+    i = go_subcommand_index(argv)
+    return argv[i] if i >= 0 else ""
+
+
 def ls_is_recursive(argv):
     """`ls -R`, in any of the spellings, and not in a long format.
 
@@ -279,6 +316,8 @@ def detect(argv):
         return "tsc"
     if tool == "shellcheck":
         return "shellcheck"
+    if tool == "go":
+        return GO_SUBCOMMANDS.get(go_subcommand(argv))
     if tool == "git":
         sub = git_subcommand(argv)
         # --exit-code and --quiet make the status the answer rather than a

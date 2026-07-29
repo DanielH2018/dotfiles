@@ -51,6 +51,7 @@ function rewritten(command, opts) {
 test('a bare node --test run is routed through tq', { skip }, () => {
   assert.strictEqual(rewritten('node --test'), 'tq node --test');
   assert.strictEqual(rewritten('node --test tests/x.test.js'), 'tq node --test tests/x.test.js');
+  assert.strictEqual(rewritten('go test ./...'), 'tq go test ./...');
 });
 
 test('the lint runners are routed too', { skip }, () => {
@@ -62,6 +63,7 @@ test('the lint runners are routed too', { skip }, () => {
   assert.strictEqual(rewritten('tsc --noEmit'), 'tq tsc --noEmit');
   assert.strictEqual(rewritten('shellcheck x.sh'), 'tq shellcheck x.sh');
   assert.strictEqual(rewritten('uv run pytest'), 'tq uv run pytest');
+  assert.strictEqual(rewritten('go vet ./...'), 'tq go vet ./...');
 });
 
 test('a command tq does not claim is left alone', { skip }, () => {
