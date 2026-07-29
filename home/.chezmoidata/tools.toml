@@ -41,6 +41,14 @@ brew = "fzf"
 apt = ""
 
 [[tools]]
+name = "gron"
+cmd = "gron"
+# No winget package (checked microsoft/winget-pkgs — none exists); Windows goes without.
+winget = ""
+brew = "gron"
+apt = "gron"
+
+[[tools]]
 name = "jq"
 cmd = "jq"
 winget = "jqlang.jq"

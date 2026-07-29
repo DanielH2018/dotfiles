@@ -7,7 +7,7 @@
 # run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
 # (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
 # deployment. Bump the marker to force a refresh.
-# tools-bump: v10
+# tools-bump: v11
 set -u
 
 BIN_DIR="$HOME/.local/bin"

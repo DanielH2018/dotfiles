@@ -78,6 +78,7 @@ Long sessions die of a thousand medium tool calls, never one big one. Every extr
 - Never read a whole file to find one symbol — grep for it, then read the hit with an offset.
 - Bound noisy output at the source: `git log`, `ls -R`, test runs, and build logs all need a `head`/`tail`/`wc` limit.
 - `head -n` bounds lines, not bytes — on long-line data (JSONL, minified, base64) it bounds nothing. Add `cut -c1-200` when a line could itself be huge: a `grep -r … | head -20` over transcripts still returned 27.8 KB.
+- Same principle for JSON whose shape you don't already know (a `gh api` response, an MCP tool result, a large config): `gron file.json | rg keyword` finds the exact dotted path in one shot, which you then feed to a targeted `jq` query — instead of dumping the whole blob into context or spending several turns on exploratory `jq keys` calls. Reach for `jq` directly when you already know the schema; reach for `gron` first when you don't.
 
 ## Delegating to subagents
 
