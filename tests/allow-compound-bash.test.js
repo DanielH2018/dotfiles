@@ -29,13 +29,13 @@ fs.writeFileSync(path.join(HOME, '.claude', 'settings.json'), JSON.stringify({
   },
 }));
 
-function allowed(command, home = HOME) {
+function allowed(command, home = HOME, projectDir = '') {
   let out;
   try {
     out = execFileSync('bash', [HOOK], {
       input: JSON.stringify({ tool_input: { command } }),
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: '' },
+      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: projectDir },
     });
   } catch (e) { out = e.stdout || ''; }
   if (!out.trim()) return null; // hook deferred to normal handling
@@ -173,7 +173,7 @@ fs.mkdirSync(path.join(ESC_HOME, '.claude'), { recursive: true });
 fs.writeFileSync(path.join(ESC_HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
     allow: ['Bash(echo:*)', 'Bash(ls:*)', 'Bash(find:*)', 'Bash(awk:*)', 'Bash(xargs:*)',
-      'Bash(/usr/bin/env bash --version)'],
+      'Bash(tee:*)', 'Bash(/usr/bin/env bash --version)'],
     deny: ['Bash(find *-exec*)', 'Bash(find *-execdir*)', 'Bash(find *-ok*)',
       'Bash(find *-delete*)', 'Bash(find *-fprintf*)', 'Bash(awk *system(*)',
       'Bash(xargs *sh*)', 'Bash(xargs *bash*)'],
@@ -208,13 +208,57 @@ test('env is not allow-listed as a wrapper', { skip }, () => {
   assert.strictEqual(allowed('echo hi && /usr/bin/env bash --version', ESC_HOME), 'allow');
 });
 
+// ---------------------------------------------------------------------------
+// A repo must not be able to widen what is auto-approved. The hook reads the project's
+// .claude/settings.json and settings.local.json so there is one source of truth for
+// deny/ask, but reading `allow` from them too meant any repo could grant itself whatever
+// it liked and merely opening it turned that into an unprompted approval.
+const PROJ = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-proj-'));
+fs.mkdirSync(path.join(PROJ, '.claude'), { recursive: true });
+
+function writeProject(perms) {
+  fs.writeFileSync(path.join(PROJ, '.claude', 'settings.json'), JSON.stringify({ permissions: perms }));
+}
+
+test('a project settings file cannot widen the allow list', { skip }, () => {
+  writeProject({ allow: ['Bash(frobnicate:*)'] });
+  // Unlisted in the user settings, so it must stay a prompt no matter what the repo says.
+  assert.strictEqual(allowed('echo hi && frobnicate --wipe /', HOME, PROJ), null);
+  // Sanity: the same command is a prompt without the project dir too, so the assertion
+  // above is not passing for an unrelated reason.
+  assert.strictEqual(allowed('echo hi && frobnicate --wipe /', HOME), null);
+});
+
+test('a project settings file can still tighten via deny and ask', { skip }, () => {
+  // `ls` is allow-listed in the fixture, so this pins that project deny/ask still bite.
+  writeProject({ deny: ['Bash(ls:*)'] });
+  assert.strictEqual(allowed('echo hi && ls -la', HOME, PROJ), null);
+  writeProject({ ask: ['Bash(ls:*)'] });
+  assert.strictEqual(allowed('echo hi && ls -la', HOME, PROJ), null);
+  // With neither, the allow-listed pair is approved as before — proves the deny/ask
+  // above are what changed the outcome, not the mere presence of a project file.
+  writeProject({});
+  assert.strictEqual(allowed('echo hi && ls -la', HOME, PROJ), 'allow');
+});
+
+// tee writes every path it is handed, with no `>` for the redirection guard to catch.
+test('tee is treated as a writer unless its target is harmless', { skip }, () => {
+  assert.strictEqual(allowed('echo hi | tee /tmp/pwned', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi | tee -a /tmp/pwned', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi | tee /usr/bin/tee', ESC_HOME), null);
+  // Copying to stdout writes nothing, and shows up in real diagnostics.
+  assert.strictEqual(allowed('echo hi | tee', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi | tee /dev/null', ESC_HOME), 'allow');
+});
+
 // Content guard on the REAL allow list, so the rules above cannot be reintroduced.
 // Scoped to the allow array: deny and ask entries legitimately name these commands.
 const REAL_SETTINGS = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.base.json');
 // Commands that take another command as an argument. None may be an allow prefix.
+// `make` counts: a target's recipe is arbitrary code living in the repo's own Makefile.
 const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', 'python3',
   'node', 'perl', 'ruby', 'eval', 'exec', 'sudo', 'ssh', 'nohup', 'setsid', 'script',
-  'entr', 'timeout', 'nice', 'stdbuf', 'watch'];
+  'entr', 'timeout', 'nice', 'stdbuf', 'watch', 'make'];
 // `fnm env` ends in the word `env` but prints shell init text; it never runs an argument.
 const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
 // Allow-listed spawners that are guarded by deny globs instead of being removed.
@@ -260,4 +304,5 @@ test('each allow-listed spawner that is kept carries its deny globs', () => {
 process.on('exit', () => {
   fs.rmSync(HOME, { recursive: true, force: true });
   fs.rmSync(ESC_HOME, { recursive: true, force: true });
+  fs.rmSync(PROJ, { recursive: true, force: true });
 });
