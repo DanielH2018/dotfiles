@@ -138,7 +138,7 @@ land() {
   state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
   while [ "$state" = "OPEN" ] && [ "$attempt" -lt 4 ]; do
     [ "$attempt" -eq 0 ] && say "waiting for GitHub to mark PR #$PR merged..."
-    sleep 1
+    sleep "${LAND_POLL_INTERVAL:-1}"
     attempt=$((attempt + 1))
     state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
   done

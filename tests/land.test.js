@@ -111,6 +111,7 @@ function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', ope
         ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
         STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
         STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
+        LAND_POLL_INTERVAL: '0.05',
       },
     });
     return { code: 0, stdout, stderr: '', calls };
