@@ -64,6 +64,8 @@ test('the lint runners are routed too', { skip }, () => {
   assert.strictEqual(rewritten('shellcheck x.sh'), 'tq shellcheck x.sh');
   assert.strictEqual(rewritten('uv run pytest'), 'tq uv run pytest');
   assert.strictEqual(rewritten('go vet ./...'), 'tq go vet ./...');
+  assert.strictEqual(rewritten('cargo clippy'), 'tq cargo clippy');
+  assert.strictEqual(rewritten('cargo test'), 'tq cargo test');
 });
 
 test('a command tq does not claim is left alone', { skip }, () => {

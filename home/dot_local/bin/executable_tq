@@ -11,6 +11,8 @@
     tq shellcheck [files...]
     tq go vet [paths...]
     tq go test [paths...]
+    tq cargo clippy [paths...]
+    tq cargo test
 
     tq find . -name '*.py'      (also: fd, ls -R, rg --files, git ls-files)
     tq rg TODO src/             (also: grep, egrep, ugrep)
@@ -83,6 +85,7 @@ sys.path.insert(0, LIB)
 
 import detect as detect_mod  # noqa: E402
 import scope  # noqa: E402
+from adapters import cargo as cargo_adapter  # noqa: E402
 from adapters import go as go_adapter  # noqa: E402
 from adapters import junit as junit_adapter  # noqa: E402
 from adapters import lint as lint_adapter  # noqa: E402
@@ -387,6 +390,35 @@ def run_go_test(argv, workdir, tmp):
         timed_out=timed_out,
     )
     go_adapter.parse_go_test(proc.stdout, result)
+    return result, proc
+
+
+def run_cargo_clippy(argv, workdir, tmp):
+    cmd = drop_flag(argv, ("--message-format",))
+    proc, timed_out = run(cmd + ["--message-format=json"], plain_env())
+    result = Result(
+        runner="cargo clippy",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    lint_adapter.parse_cargo_clippy(proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
+def run_cargo_test(argv, workdir, tmp):
+    proc, timed_out = run(argv, plain_env())
+    result = Result(
+        runner="cargo test",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    cargo_adapter.parse_cargo_test(proc.stdout, result)
     return result, proc
 
 
@@ -717,6 +749,8 @@ RUNNERS = {
     "shellcheck": run_shellcheck,
     "go-vet": run_go_vet,
     "go-test": run_go_test,
+    "cargo-clippy": run_cargo_clippy,
+    "cargo-test": run_cargo_test,
     "find": run_find,
     "fd": run_fd,
     "ls": run_ls,

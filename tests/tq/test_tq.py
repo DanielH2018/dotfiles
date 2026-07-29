@@ -20,6 +20,7 @@ sys.path.insert(
 import detect as detect_mod
 import digest as digest_mod
 import scope
+from adapters import cargo as cargo_adapter
 from adapters import go as go_adapter
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
@@ -691,6 +692,28 @@ class TestDetection(unittest.TestCase):
         self.assertEqual(self.cli.detect(["prek", "run", "--all-files"]), "prek")
         self.assertIsNone(self.cli.detect(["node", "x.js"]))  # no --test
 
+    def test_cargo_subcommands_are_routed_and_everything_else_passes_through(self):
+        self.assertEqual(self.cli.detect(["cargo", "clippy"]), "cargo-clippy")
+        self.assertEqual(self.cli.detect(["cargo", "test"]), "cargo-test")
+        # build, run, publish and anything else cargo grows later: never
+        # claimed, the same principle as git's "everything but log/diff
+        # passes through" — a wrapper that captures stdout must never decide
+        # a subcommand was safe to reinterpret.
+        self.assertIsNone(self.cli.detect(["cargo", "build"]))
+        self.assertIsNone(self.cli.detect(["cargo", "run"]))
+        self.assertIsNone(self.cli.detect(["cargo"]))
+
+    def test_cargo_global_options_are_skipped_to_find_the_verb(self):
+        self.assertEqual(
+            detect_mod.cargo_subcommand(
+                ["cargo", "--manifest-path", "x/Cargo.toml", "test"]
+            ),
+            "test",
+        )
+        self.assertEqual(
+            detect_mod.cargo_subcommand(["cargo", "-v", "clippy"]), "clippy"
+        )
+
     def test_drop_flag_removes_either_spelling(self):
         self.assertEqual(
             self.cli.drop_flag(
@@ -1094,6 +1117,114 @@ class TestShellcheckFields(unittest.TestCase):
         for fail in self.res.failures:
             self.assertNotIn(f"{fail.severity}:", fail.message)
             self.assertIn(fail.severity, ("error", "warning", "info", "style"))
+
+
+class TestCargoClippyAdapter(unittest.TestCase):
+    def setUp(self):
+        self.res = lint_adapter.parse_cargo_clippy(
+            read("cargo-clippy-findings.json"), blank("cargo clippy")
+        )
+
+    def test_compiler_artifact_and_build_finished_lines_are_skipped(self):
+        # Only "compiler-message" carries a diagnostic; the fixture mixes in
+        # one of each of the others to prove they never become a finding.
+        self.assertEqual(len(self.res.failures), 3)
+
+    def test_worst_level_sorts_first_so_the_digest_cap_keeps_errors(self):
+        ranks = [lint_adapter.LEVEL_RANK[f.severity] for f in self.res.failures]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(self.res.failures[0].name, "clippy::never_loop")
+
+    def test_the_primary_span_is_used_not_the_macro_expansion_site(self):
+        fail = by_name(self.res, "clippy::never_loop")
+        self.assertEqual(fail.file, "src/lib.rs")
+        self.assertEqual(fail.line, 10)
+        self.assertEqual(fail.end_line, 12)
+
+    def test_a_plain_rustc_lint_with_no_clippy_code_falls_back_to_a_name(self):
+        fail = by_name(self.res, "clippy")
+        self.assertEqual(fail.message, "unreachable code")
+        self.assertEqual(fail.severity, "warning")
+
+    def test_nothing_is_ever_claimed_as_safe_to_apply(self):
+        # A span carries a suggested_replacement, but tq does not attempt to
+        # judge its safety from the raw JSON, the same restraint ruff and
+        # mypy show.
+        self.assertTrue(all(f.fixable is None for f in self.res.failures))
+
+    def test_a_clean_build_yields_no_findings(self):
+        res = lint_adapter.parse_cargo_clippy(
+            read("cargo-clippy-clean.json"), blank("cargo clippy", exit_code=0)
+        )
+        self.assertEqual(res.failures, [])
+
+    def test_output_that_is_not_json_is_left_for_the_raw_fallback(self):
+        res = lint_adapter.parse_cargo_clippy(
+            "cargo: command not found", blank("cargo")
+        )
+        self.assertEqual(res.failures, [])
+
+
+class TestCargoTestAdapter(unittest.TestCase):
+    def test_totals_partition_the_run(self):
+        res = cargo_adapter.parse_cargo_test(
+            read("cargo-test-mixed.txt"), blank("cargo")
+        )
+        self.assertEqual(res.totals["tests"], 4)
+        self.assertEqual(res.totals["pass"], 2)
+        self.assertEqual(res.totals["fail"], 1)
+        self.assertEqual(res.totals["skip"], 1)
+
+    def test_failure_carries_the_panic_location_and_message(self):
+        res = cargo_adapter.parse_cargo_test(
+            read("cargo-test-mixed.txt"), blank("cargo")
+        )
+        fail = by_name(res, "tests::rejects_negative")
+        self.assertEqual(fail.file, "src/lib.rs")
+        self.assertEqual(fail.line, 42)
+        self.assertIn("assertion `left == right` failed", fail.message)
+        self.assertNotIn("panicked at", fail.message)
+
+    def test_a_clean_run_has_no_failures(self):
+        res = cargo_adapter.parse_cargo_test(
+            read("cargo-test-clean.txt"), blank("cargo")
+        )
+        self.assertEqual(res.failures, [])
+        self.assertEqual(res.totals["tests"], 3)
+        self.assertEqual(res.totals["pass"], 3)
+
+    def test_a_run_with_no_running_line_leaves_totals_at_zero(self):
+        # A compile error before any test runs prints cargo's usual errors
+        # instead of any test-shaped output — nothing here to parse, and the
+        # empty totals are what let digest.py's NO TESTS RAN carry the verdict.
+        res = cargo_adapter.parse_cargo_test(
+            "error: could not compile `sample`", blank("cargo")
+        )
+        self.assertEqual(res.totals["tests"], 0)
+        self.assertEqual(res.failures, [])
+
+    def test_workspace_totals_are_summed_across_binaries(self):
+        res = cargo_adapter.parse_cargo_test(
+            read("cargo-test-workspace.txt"), blank("cargo")
+        )
+        self.assertEqual(res.totals["tests"], 4)
+        self.assertEqual(res.totals["pass"], 2)
+        self.assertEqual(res.totals["fail"], 2)
+
+    def test_a_same_named_failure_in_a_later_binary_is_not_cross_attributed(self):
+        # Both binaries have a failing "tests::shared"; each must keep its own
+        # file, line and message rather than one clobbering or duplicating
+        # the other's captured stdout block.
+        res = cargo_adapter.parse_cargo_test(
+            read("cargo-test-workspace.txt"), blank("cargo")
+        )
+        shared = [f for f in res.failures if f.name == "tests::shared"]
+        self.assertEqual(len(shared), 2)
+        by_file = {f.file: f for f in shared}
+        self.assertEqual(by_file["crate_a/src/lib.rs"].line, 10)
+        self.assertIn("crate a assertion failed", by_file["crate_a/src/lib.rs"].message)
+        self.assertEqual(by_file["crate_b/src/lib.rs"].line, 20)
+        self.assertIn("crate b assertion failed", by_file["crate_b/src/lib.rs"].message)
 
 
 class TestRdjson(unittest.TestCase):

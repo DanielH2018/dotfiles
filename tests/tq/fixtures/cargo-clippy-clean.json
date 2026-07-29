@@ -1,0 +1,2 @@
+{"reason":"compiler-artifact","package_id":"sample 0.1.0 (path+file:///sample)","target":{"name":"sample","kind":["lib"]},"profile":{},"features":[],"filenames":[],"executable":null,"fresh":true}
+{"reason":"build-finished","success":true}

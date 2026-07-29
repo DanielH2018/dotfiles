@@ -1,0 +1,31 @@
+running 2 tests
+test tests::shared ... FAILED
+test tests::only_in_a ... ok
+
+failures:
+
+---- tests::shared stdout ----
+thread 'tests::shared' panicked at crate_a/src/lib.rs:10:5:
+crate a assertion failed
+
+
+failures:
+    tests::shared
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+running 2 tests
+test tests::shared ... FAILED
+test tests::only_in_b ... ok
+
+failures:
+
+---- tests::shared stdout ----
+thread 'tests::shared' panicked at crate_b/src/lib.rs:20:9:
+crate b assertion failed
+
+
+failures:
+    tests::shared
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

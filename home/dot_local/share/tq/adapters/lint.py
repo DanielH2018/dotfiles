@@ -15,7 +15,16 @@ from result import TOTAL_KEYS, Failure
 
 # Worst first, so that when a run overflows the digest's failure cap it is the
 # errors that survive and the style nits that get pushed into the json.
-LEVEL_RANK = {"error": 0, "warning": 1, "info": 2, "style": 3}
+LEVEL_RANK = {
+    "error": 0,
+    "warning": 1,
+    "info": 2,
+    "style": 3,
+    # clippy's own levels, for the rare diagnostic whose top-level message
+    # carries one of these rather than "error" or "warning".
+    "note": 4,
+    "help": 5,
+}
 
 # tsc's default (non---pretty) diagnostic line: `path(line,col): error TSxxxx: msg`.
 # The file half is non-greedy so a path holding a literal "(" still stops at the
@@ -266,6 +275,71 @@ def parse_shellcheck(stdout, result):
                 source="shellcheck",
                 fixable="safe" if note.get("fix") else None,
                 message=(note.get("message") or "").strip(),
+            )
+        )
+    return result
+
+
+def _primary_span(message):
+    """The span clippy wants a finding reported against.
+
+    A diagnostic can carry several — a macro expansion site alongside the call
+    that triggered it — and only one is marked primary. Same idea as ruff's
+    `location` vs `end_location`: everything else is context, not the finding.
+    """
+    for span in message.get("spans") or []:
+        if span.get("is_primary"):
+            return span
+    return {}
+
+
+def parse_cargo_clippy(stdout, result):
+    """cargo clippy --message-format=json -> Result. Fills `result` in place.
+
+    Also cargo build/check's own format: one JSON object per line, several
+    `reason`s mixed together. Only "compiler-message" carries a diagnostic —
+    "compiler-artifact", "build-finished" and anything else this doesn't
+    recognise are skipped without being treated as an error, since cargo may
+    grow reasons tq has never heard of.
+    """
+    messages = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue  # a line cargo did not write as JSON, or a partial one
+        if payload.get("reason") != "compiler-message":
+            continue
+        messages.append(payload.get("message") or {})
+    ordered = sorted(
+        messages,
+        key=lambda m: (
+            LEVEL_RANK.get((m.get("level") or "error").lower(), len(LEVEL_RANK)),
+            _primary_span(m).get("file_name") or "",
+            _primary_span(m).get("line_start") or 0,
+            _primary_span(m).get("column_start") or 0,
+        ),
+    )
+    for message in ordered:
+        span = _primary_span(message)
+        result.failures.append(
+            Failure(
+                name=(message.get("code") or {}).get("code") or "clippy",
+                file=span.get("file_name"),
+                line=span.get("line_start"),
+                column=span.get("column_start"),
+                end_line=span.get("line_end"),
+                end_column=span.get("column_end"),
+                severity=(message.get("level") or "error").lower(),
+                source="clippy",
+                # A span carries `suggested_replacement`, but whether applying
+                # it is safe is not something the JSON states reliably enough
+                # to claim — ruff and mypy leave the same question unanswered
+                # rather than guess.
+                message=(message.get("message") or "").strip(),
             )
         )
     return result

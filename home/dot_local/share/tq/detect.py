@@ -48,6 +48,7 @@ CANDIDATES = {
     "rg",
     "git",
     "go",
+    "cargo",
 }
 
 # git subcommands that only read. Everything else — including every subcommand
@@ -212,6 +213,42 @@ def go_subcommand(argv):
     return argv[i] if i >= 0 else ""
 
 
+# cargo subcommands tq digests. Everything else — build, run, publish, add,
+# and every subcommand cargo might grow later — passes through untouched, the
+# same principle as git's GIT_SURVEYS: a wrapper that captures stdout must
+# never be the thing that decides a subcommand was safe to reinterpret.
+CARGO_SUBCOMMANDS = {"clippy": "cargo-clippy", "test": "cargo-test"}
+
+# cargo's own global options, before the subcommand, that take a separate
+# value — the token after one of these is not the subcommand.
+CARGO_VALUE_OPTS = {"--config", "--manifest-path", "--target-dir", "-C"}
+
+
+def cargo_subcommand_index(argv):
+    """Where the verb sits in a cargo command, past cargo's own options, or -1.
+
+    Same shape as git_subcommand_index: options are skipped by name, not by
+    counting, because a value-taking one would otherwise hand back its
+    argument as the verb.
+    """
+    i = argv.index("cargo") + 1 if "cargo" in argv else 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok in CARGO_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return i
+    return -1
+
+
+def cargo_subcommand(argv):
+    i = cargo_subcommand_index(argv)
+    return argv[i] if i >= 0 else ""
+
+
 def ls_is_recursive(argv):
     """`ls -R`, in any of the spellings, and not in a long format.
 
@@ -318,6 +355,8 @@ def detect(argv):
         return "shellcheck"
     if tool == "go":
         return GO_SUBCOMMANDS.get(go_subcommand(argv))
+    if tool == "cargo":
+        return CARGO_SUBCOMMANDS.get(cargo_subcommand(argv))
     if tool == "git":
         sub = git_subcommand(argv)
         # --exit-code and --quiet make the status the answer rather than a
