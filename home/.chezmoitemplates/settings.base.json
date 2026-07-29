@@ -107,7 +107,10 @@
       "Bash(command -V:*)",
       "Bash(bash --version)",
       "Bash(/bin/bash --version)",
-      "Bash(/usr/bin/env bash *)",
+      {{/* the version probe only. `env` takes a command as its argument, so any wildcard here
+           auto-approves `/usr/bin/env bash -c '<anything>'`; a bare `Bash(env)` was the same
+           hole one level up (`env FOO=bar bash -c …`) and is deliberately absent below. */}}
+      "Bash(/usr/bin/env bash --version)",
       "Bash(cat:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
@@ -122,7 +125,6 @@
       "Bash(which:*)",
       "Bash(type:*)",
       "Bash(echo:*)",
-      "Bash(env)",
       "Bash(date)",
       "Bash(whoami)",
       "Bash(uname:*)",
@@ -135,7 +137,13 @@
       "Bash(md5:*)",
       "Bash(df:*)",
       "Bash(du:*)",
-      "Bash(timeout:*)",
+      {{/* `Bash(timeout:*)` was here to stop timeout-wrapped commands prompting (73892e2).
+           It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
+           auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
+           wrapper above, and deny globs can't cover it without enumerating every
+           interpreter. Getting the convenience back safely needs allow-compound-bash.sh to
+           unwrap a leading wrapper (timeout/env/nice/stdbuf/nohup) and match the command it
+           wraps, so `timeout 200 node --test` is allowed because `node --test` is. */}}
       "Bash(history)",
       "Bash(man:*)",
       "Bash(less:*)",
@@ -438,6 +446,21 @@
       "Bash(* | sh*)",
       "Bash(* | bash*)",
       "Bash(* | zsh*)",
+      {{/* allow-compound-bash.sh strips a trailing wildcard, so every allow rule is a bare
+           command prefix matched on "prefix + space". find/awk/xargs are everyday tools and
+           stay allow-listed, but each takes a command as an argument, so the allow rule alone
+           auto-approved `find . -exec id \;`, `awk 'BEGIN{system("id")}'` and `xargs sh -c 'id'`
+           with no prompt — the payload is an argument, so no other deny rule ever saw it.
+           Deny beats allow in the hook, so these cover the execution forms while the ordinary
+           search/print/batch forms keep working. `xargs *sh*` also catches bash and zsh. */}}
+      "Bash(find *-exec*)",
+      "Bash(find *-execdir*)",
+      "Bash(find *-ok*)",
+      "Bash(find *-delete*)",
+      "Bash(find *-fprintf*)",
+      "Bash(awk *system(*)",
+      "Bash(xargs *sh*)",
+      "Bash(xargs *bash*)",
       "Edit(.git/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(~/.config/gcloud/**)",

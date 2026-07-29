@@ -29,13 +29,13 @@ fs.writeFileSync(path.join(HOME, '.claude', 'settings.json'), JSON.stringify({
   },
 }));
 
-function allowed(command) {
+function allowed(command, home = HOME) {
   let out;
   try {
     out = execFileSync('bash', [HOOK], {
       input: JSON.stringify({ tool_input: { command } }),
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME, CLAUDE_PROJECT_DIR: '' },
+      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: '' },
     });
   } catch (e) { out = e.stdout || ''; }
   if (!out.trim()) return null; // hook deferred to normal handling
@@ -153,4 +153,111 @@ test('leaves interior wildcards in ALLOW rules inert', { skip }, () => {
   assert.strictEqual(allowed('ls && frob x --safe'), null);
 });
 
-process.on('exit', () => fs.rmSync(HOME, { recursive: true, force: true }));
+// ---------------------------------------------------------------------------
+// The interpreter-escape family.
+//
+// extract_bash_prefixes strips a trailing wildcard, so every allow rule becomes a bare
+// command prefix and matches_any grants on "prefix followed by a space". Any allow-listed
+// tool that can spawn a command therefore hands over unprompted arbitrary execution as
+// soon as it rides in a compound command — the deny list never sees it, because the
+// payload is an argument, not a command. Measured against the real allow list: `Bash(env)`
+// approved `env FOO=bar bash -c 'id'`, `Bash(/usr/bin/env bash *)` approved
+// `/usr/bin/env bash -c 'id'`, `Bash(find:*)` approved `find . -exec id \;`, `Bash(awk:*)`
+// approved `awk 'BEGIN{system("id")}'`, and `Bash(xargs:*)` approved `xargs sh -c 'id'`.
+//
+// env-as-a-wrapper is removed outright (its prefix cannot be narrowed — it takes an
+// arbitrary command as its argument). find/awk/xargs stay allow-listed, because they are
+// everyday tools, and deny globs cover the execution forms instead.
+const ESC_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-esc-'));
+fs.mkdirSync(path.join(ESC_HOME, '.claude'), { recursive: true });
+fs.writeFileSync(path.join(ESC_HOME, '.claude', 'settings.json'), JSON.stringify({
+  permissions: {
+    allow: ['Bash(echo:*)', 'Bash(ls:*)', 'Bash(find:*)', 'Bash(awk:*)', 'Bash(xargs:*)',
+      'Bash(/usr/bin/env bash --version)'],
+    deny: ['Bash(find *-exec*)', 'Bash(find *-execdir*)', 'Bash(find *-ok*)',
+      'Bash(find *-delete*)', 'Bash(find *-fprintf*)', 'Bash(awk *system(*)',
+      'Bash(xargs *sh*)', 'Bash(xargs *bash*)'],
+    ask: [],
+  },
+}));
+
+test('deny globs cover the execution forms of allow-listed spawners', { skip }, () => {
+  assert.strictEqual(allowed('echo hi && find . -maxdepth 0 -exec id \\;', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && find . -execdir id \\;', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && find . -ok rm {} \\;', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && find . -delete', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && find . -fprintf /tmp/x %p', ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi && awk 'BEGIN{system("id")}'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi | xargs -I{} sh -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi | xargs bash -c 'id'`, ESC_HOME), null);
+});
+
+// The guards are worthless if they cost the ordinary form of each tool.
+test('deny globs leave the everyday form of each spawner allowed', { skip }, () => {
+  assert.strictEqual(allowed(`echo hi && find . -name '*.ts'`, ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && find . -type f -maxdepth 2', ESC_HOME), 'allow');
+  assert.strictEqual(allowed(`echo hi && awk '{print $1}' f.txt`, ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi | xargs wc -l', ESC_HOME), 'allow');
+});
+
+// env takes a command as its argument, so no prefix of it is safe; the narrowed
+// /usr/bin/env rule must match the version probe it was written for and nothing else.
+test('env is not allow-listed as a wrapper', { skip }, () => {
+  assert.strictEqual(allowed(`echo hi && env FOO=bar bash -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi && /usr/bin/env bash -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && /usr/bin/env bash --version', ESC_HOME), 'allow');
+});
+
+// Content guard on the REAL allow list, so the rules above cannot be reintroduced.
+// Scoped to the allow array: deny and ask entries legitimately name these commands.
+const REAL_SETTINGS = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.base.json');
+// Commands that take another command as an argument. None may be an allow prefix.
+const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', 'python3',
+  'node', 'perl', 'ruby', 'eval', 'exec', 'sudo', 'ssh', 'nohup', 'setsid', 'script',
+  'entr', 'timeout', 'nice', 'stdbuf', 'watch'];
+// `fnm env` ends in the word `env` but prints shell init text; it never runs an argument.
+const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
+// Allow-listed spawners that are guarded by deny globs instead of being removed.
+const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system('], xargs: ['sh', 'bash'] };
+
+function bashPrefixes(block) {
+  // Mirror extract_bash_prefixes: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
+  return [...block.matchAll(/"Bash\(([^"]*)\)"/g)]
+    .map((m) => m[1].replace(/:\*$/, '').replace(/ \*$/, '').replace(/\*$/, ''));
+}
+
+test('no allow rule normalizes to a prefix that takes a command as its argument', () => {
+  const src = fs.readFileSync(REAL_SETTINGS, 'utf8');
+  const allowStart = src.indexOf('"allow": [');
+  const denyStart = src.indexOf('"deny": [');
+  assert.ok(allowStart > -1 && denyStart > allowStart, 'located the allow array');
+  const prefixes = bashPrefixes(src.slice(allowStart, denyStart));
+  assert.ok(prefixes.length > 100, `parsed the allow array (got ${prefixes.length} rules)`);
+  const offenders = prefixes.filter((p) => {
+    if (NOT_A_SPAWNER.includes(p) || Object.keys(GUARDED).includes(p)) return false;
+    const last = p.trim().split(/\s+/).pop().split('/').pop();
+    return SPAWNERS.includes(last);
+  });
+  assert.deepStrictEqual(offenders, [], `allow prefixes ending in a spawner: ${offenders.join(', ')}`);
+});
+
+test('each allow-listed spawner that is kept carries its deny globs', () => {
+  const src = fs.readFileSync(REAL_SETTINGS, 'utf8');
+  const denyStart = src.indexOf('"deny": [');
+  const askStart = src.indexOf('"ask": [');
+  assert.ok(denyStart > -1 && askStart > denyStart, 'located the deny array');
+  const denyBlock = src.slice(denyStart, askStart);
+  const allowPrefixes = bashPrefixes(src.slice(src.indexOf('"allow": ['), denyStart));
+  for (const [cmd, forms] of Object.entries(GUARDED)) {
+    if (!allowPrefixes.includes(cmd)) continue;   // removed from allow entirely: nothing to guard
+    for (const form of forms) {
+      assert.ok(denyBlock.includes(`"Bash(${cmd} *${form}*)"`),
+        `${cmd} is allow-listed, so deny must cover ${form}`);
+    }
+  }
+});
+
+process.on('exit', () => {
+  fs.rmSync(HOME, { recursive: true, force: true });
+  fs.rmSync(ESC_HOME, { recursive: true, force: true });
+});
