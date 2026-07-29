@@ -284,7 +284,10 @@
       "Bash(fnm list)",
       "Bash(fnm current)",
       "Bash(fnm env *)",
-      "Bash(make:*)",
+      {{/* `Bash(make:*)` was here. A make target IS arbitrary code — the recipe lives in
+           the repo's own Makefile — so `echo hi && make evil-target` was auto-approved with
+           no prompt, in whatever repo happened to be open. Unlike find/awk/xargs there is
+           no execution "form" to deny-glob, so it belongs with `env` and `timeout`. */}}
       "Bash(just:*)",
       "Bash(docker ps:*)",
       "Bash(docker images:*)",

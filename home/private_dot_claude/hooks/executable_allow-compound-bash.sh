@@ -10,7 +10,15 @@
 
 set -u
 
-SETTINGS_FILES=("$HOME/.claude/settings.json")
+# A project's own settings may only TIGHTEN what is auto-approved here. deny and ask are
+# read from every file; allow comes from the user-level settings ALONE. Otherwise any repo
+# could ship a .claude/settings.json granting itself whatever it liked, and merely opening
+# that repo would turn those grants into unprompted approvals. Measured before the split: a
+# repo allowing `Bash(frobnicate:*)` took `echo hi && frobnicate --wipe /` from a prompt to
+# an unprompted allow. Same asymmetry as the glob routing below — narrowing is a security
+# fix, widening is the owner's call, and the owner's file is the user-level one.
+USER_SETTINGS=("$HOME/.claude/settings.json")
+SETTINGS_FILES=("${USER_SETTINGS[@]}")
 if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
   for f in "$CLAUDE_PROJECT_DIR/.claude/settings.json" "$CLAUDE_PROJECT_DIR/.claude/settings.local.json"; do
     [ -f "$f" ] && SETTINGS_FILES+=("$f")
@@ -28,7 +36,8 @@ fi
 # command prefixes by stripping Bash(...) wrapper and trailing :*, *, etc.
 extract_bash_prefixes() {
   local field="$1" s
-  for s in "${SETTINGS_FILES[@]}"; do
+  shift
+  for s in "$@"; do
     jq -r --arg f "$field" \
       '.permissions[$f][]? | select(startswith("Bash(")) | ltrimstr("Bash(") | rtrimstr(")") | gsub(":\\*$";"") | gsub(" \\*$";"") | gsub("\\*$";"")' \
       "$s" 2>/dev/null
@@ -36,7 +45,7 @@ extract_bash_prefixes() {
 }
 
 ALLOW=()
-while IFS= read -r line; do [[ -n "$line" ]] && ALLOW+=("$line"); done < <(extract_bash_prefixes "allow")
+while IFS= read -r line; do [[ -n "$line" ]] && ALLOW+=("$line"); done < <(extract_bash_prefixes "allow" ${USER_SETTINGS[@]+"${USER_SETTINGS[@]}"})
 
 # Deny/ask rules split into two classes. The gsub chain above only strips a TRAILING
 # wildcard, so any `*` still present is an interior or leading one — `git commit
@@ -52,12 +61,12 @@ DENY=(); DENY_GLOB=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   case $line in *'*'*) DENY_GLOB+=("$line") ;; *) DENY+=("$line") ;; esac
-done < <(extract_bash_prefixes "deny")
+done < <(extract_bash_prefixes "deny" ${SETTINGS_FILES[@]+"${SETTINGS_FILES[@]}"})
 ASK=(); ASK_GLOB=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   case $line in *'*'*) ASK_GLOB+=("$line") ;; *) ASK+=("$line") ;; esac
-done < <(extract_bash_prefixes "ask")
+done < <(extract_bash_prefixes "ask" ${SETTINGS_FILES[@]+"${SETTINGS_FILES[@]}"})
 
 trim() {
   local s="$1"
@@ -176,6 +185,19 @@ for part in "${PARTS[@]}"; do
   redir=$(printf '%s' "$part" | sed -E 's@[0-9]*>>?[[:space:]]*/dev/null@@g; s@[0-9]*>&[0-9-]@@g')
   case $redir in
     *'>'*) exit 0 ;;
+  esac
+
+  # `tee` is the same hazard without a `>`: it writes every path it is handed, so
+  # `echo hi | tee ~/.bashrc` cleared the check above and rode in on two allow-listed
+  # commands. Bail on a tee segment that names a target; bare `tee` and `tee /dev/null`
+  # only copy to stdout and stay allowed. Options are dropped first so `tee -a f` is
+  # judged on `f`, not on the flag.
+  # Match on the command WORD, not a glob over the whole segment: `*/tee` also matches a
+  # segment whose last ARGUMENT ends in /tee, which let `tee /usr/bin/tee` look harmless.
+  teed=$(printf '%s' "$part" | sed -E 's@[[:space:]]+-[^[:space:]]+@@g; s@[[:space:]]+/dev/null@@g')
+  teecmd=${teed%%[[:space:]]*}
+  case ${teecmd##*/} in
+    tee) [ "$teed" != "$teecmd" ] && exit 0 ;;
   esac
 
   # Deny or ask list → defer to normal permission handling
