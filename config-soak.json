@@ -3,13 +3,23 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "fc1a91d190cd27a760d6cea2e42efb71ead7bfde5763f832f90fa85926def689",
-      "landed": "2026-07-26T19:22:34.070Z"
+      "hash": "b1193d4ebb5e5e29f0f98fd7a44d0ee5d055b57cbfd2dd19e64d3eafcb500872",
+      "landed": "2026-07-29T21:20:52.171Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
       "hash": "94c1f0487da14c8968f4ec6c04f2755fe54d0bc5a50faf53e480348a52cdb7d7",
       "landed": "2026-07-29T20:46:20.391Z"
+    },
+    {
+      "path": "home/private_dot_claude/agents/chore.md",
+      "hash": "c4b016150abc372e321c854e11beb2c042e549bb4b32f8aa8fae85c239f460af",
+      "landed": "2026-07-29T21:20:52.171Z"
+    },
+    {
+      "path": "home/private_dot_claude/agents/deep-review.md",
+      "hash": "30bcc7059cc3020c7bc062eb8cf6b0c624d90220aef25e1b46e8f6e3f6cc7bba",
+      "landed": "2026-07-29T21:20:52.171Z"
     },
     {
       "path": "home/private_dot_claude/agents/implementer.md",
@@ -20,6 +30,11 @@
       "path": "home/private_dot_claude/agents/migration-reviewer.md",
       "hash": "9562f16b0a6d8e249259112b6e1eafe7a2c2ef49975bab13c15655d862be4e98",
       "landed": "2026-07-26T00:05:12.535Z"
+    },
+    {
+      "path": "home/private_dot_claude/agents/root-cause.md",
+      "hash": "2772f8c4ca7e26250a76c223022e3c3bc54c4ce57150200a37269e62eef80ac3",
+      "landed": "2026-07-29T21:20:52.171Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
