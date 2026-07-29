@@ -492,6 +492,40 @@ class TestLintAdapter(unittest.TestCase):
         self.assertEqual(fatal.name, "eslint")
         self.assertEqual(fatal.severity, "error")
 
+    def test_tsc_findings_become_located_failures(self):
+        res = blank("tsc")
+        lint_adapter.parse_tsc(read("tsc-findings.txt"), res)
+        self.assertEqual(len(res.failures), 3)
+        first = by_name(res, "TS2345")
+        self.assertEqual(first.file, "src/app.ts")
+        self.assertEqual(first.line, 12)
+        self.assertEqual(first.column, 5)
+        self.assertEqual(first.severity, "error")
+
+    def test_tsc_related_information_is_folded_into_the_diagnostic_above(self):
+        res = blank("tsc")
+        lint_adapter.parse_tsc(read("tsc-findings.txt"), res)
+        overload = by_name(res, "TS2554")
+        self.assertIn("Argument specified here", overload.message)
+        self.assertEqual(len(res.failures), 3)  # the continuation adds no third
+
+    def test_tsc_worst_level_sorts_first(self):
+        res = blank("tsc")
+        lint_adapter.parse_tsc(read("tsc-findings.txt"), res)
+        ranks = [lint_adapter.LEVEL_RANK[f.severity] for f in res.failures]
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(by_name(res, "TS6133").severity, "warning")
+
+    def test_a_clean_tsc_run_yields_no_findings(self):
+        res = blank("tsc", exit_code=0)
+        lint_adapter.parse_tsc(read("tsc-clean.txt"), res)
+        self.assertEqual(res.failures, [])
+
+    def test_tsc_output_that_matches_nothing_is_left_for_the_raw_fallback(self):
+        res = blank("tsc")
+        lint_adapter.parse_tsc("tsc: command not found", res)
+        self.assertEqual(res.failures, [])
+
 
 class TestLintDigest(unittest.TestCase):
     def lint(self, exit_code=0, failures=(), notes=(), ms=100):

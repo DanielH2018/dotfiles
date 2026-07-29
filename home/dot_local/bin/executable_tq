@@ -7,6 +7,7 @@
     tq ruff check [paths...]    (also: uv run ruff check)
     tq mypy [paths...]
     tq eslint [files...]
+    tq tsc --noEmit
     tq shellcheck [files...]
 
     tq find . -name '*.py'      (also: fd, ls -R, rg --files, git ls-files)
@@ -316,6 +317,21 @@ def run_eslint(argv, workdir, tmp):
         timed_out=timed_out,
     )
     lint_adapter.parse_eslint(proc.stdout, result)
+    finish_lint(result, proc)
+    return result, proc
+
+
+def run_tsc(argv, workdir, tmp):
+    proc, timed_out = run(argv, plain_env())
+    result = Result(
+        runner="tsc",
+        kind="lint",
+        cmd=shlex.join(argv),
+        cwd=workdir,
+        exit=proc.returncode,
+        timed_out=timed_out,
+    )
+    lint_adapter.parse_tsc(proc.stdout, result)
     finish_lint(result, proc)
     return result, proc
 
@@ -659,6 +675,7 @@ RUNNERS = {
     "ruff": run_ruff,
     "mypy": run_mypy,
     "eslint": run_eslint,
+    "tsc": run_tsc,
     "shellcheck": run_shellcheck,
     "find": run_find,
     "fd": run_fd,

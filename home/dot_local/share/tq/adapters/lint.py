@@ -9,12 +9,21 @@ assertion about it — so these runs get counted, never scored.
 from __future__ import annotations
 
 import json
+import re
 
 from result import TOTAL_KEYS, Failure
 
 # Worst first, so that when a run overflows the digest's failure cap it is the
 # errors that survive and the style nits that get pushed into the json.
 LEVEL_RANK = {"error": 0, "warning": 1, "info": 2, "style": 3}
+
+# tsc's default (non---pretty) diagnostic line: `path(line,col): error TSxxxx: msg`.
+# The file half is non-greedy so a path holding a literal "(" still stops at the
+# first "(line,col)" rather than swallowing it.
+TSC_DIAGNOSTIC = re.compile(
+    r"^(?P<file>.+?)\((?P<line>\d+),(?P<column>\d+)\): "
+    r"(?P<severity>error|warning) TS(?P<code>\d+): (?P<message>.*)$"
+)
 
 
 def as_diagnostics(result):
@@ -110,6 +119,60 @@ def parse_mypy(stdout, result):
                 severity=(note.get("severity") or "error").lower(),
                 source="mypy",
                 message=(note.get("message") or "").strip(),
+            )
+        )
+    return result
+
+
+def parse_tsc(stdout, result):
+    """tsc's default stdout -> Result. Fills `result` in place.
+
+    No JSON mode exists, so this reads the one tsc actually writes when stdout
+    is not a tty: one `path(line,col): error|warning TSxxxx: message` line per
+    diagnostic. A related-information line tsc prints under an overload error
+    has no code of its own, so it is not a second finding — it is folded into
+    the message of the diagnostic above it, rather than invented into structure
+    tsc never gave it. A blank line ends nothing; it is just not itself a
+    continuation, so it is skipped without being appended.
+    """
+    findings = []
+    for line in (stdout or "").splitlines():
+        match = TSC_DIAGNOSTIC.match(line)
+        if match:
+            findings.append(
+                {
+                    "file": match.group("file"),
+                    "line": int(match.group("line")),
+                    "column": int(match.group("column")),
+                    "severity": match.group("severity"),
+                    "code": match.group("code"),
+                    "message": match.group("message").strip(),
+                }
+            )
+            continue
+        if not line.strip():
+            continue
+        if findings:
+            findings[-1]["message"] += " " + line.strip()
+    ordered = sorted(
+        findings,
+        key=lambda f: (
+            LEVEL_RANK.get(f["severity"], len(LEVEL_RANK)),
+            f["file"],
+            f["line"],
+            f["column"],
+        ),
+    )
+    for note in ordered:
+        result.failures.append(
+            Failure(
+                name=f"TS{note['code']}",
+                file=note["file"],
+                line=note["line"],
+                column=note["column"],
+                severity=note["severity"],
+                source="tsc",
+                message=note["message"],
             )
         )
     return result

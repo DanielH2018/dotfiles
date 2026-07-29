@@ -26,6 +26,7 @@ CANDIDATES = {
     "ruff",
     "mypy",
     "eslint",
+    "tsc",
     "shellcheck",
     "uv",
     "uvx",
@@ -270,6 +271,12 @@ def detect(argv):
         t in ("--version", "-h", "--help", "--print-config", "--init") for t in argv
     ):
         return "eslint"
+    # --showConfig answers with the resolved tsconfig, not diagnostics, and
+    # --init writes a new one instead of checking anything.
+    if tool == "tsc" and not any(
+        t in ("--version", "-h", "--help", "--init", "--showConfig") for t in argv
+    ):
+        return "tsc"
     if tool == "shellcheck":
         return "shellcheck"
     if tool == "git":
