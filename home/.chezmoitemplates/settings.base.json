@@ -135,6 +135,7 @@
       "Bash(md5:*)",
       "Bash(df:*)",
       "Bash(du:*)",
+      "Bash(timeout:*)",
       "Bash(history)",
       "Bash(man:*)",
       "Bash(less:*)",
@@ -991,10 +992,6 @@
 {{- end }}
     "ralph-loop@claude-plugins-official": true,
     "claude-permission-audit@daniel-tools": true
-  },
-  "skillOverrides": {
-    "incident-response": "off",
-    "git-commit-and-push": "off"
   },
   "extraKnownMarketplaces": {
     "daniel-tools": {

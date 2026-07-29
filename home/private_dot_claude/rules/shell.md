@@ -4,7 +4,7 @@ paths:
   - "**/*.bash"
   - "**/*.zsh"
 ---
-- Use `set -euo pipefail` at the top of scripts
+- Use `set -u` at minimum at the top of scripts; add `-e`/`pipefail` too unless the script is sourced by a caller, or a non-zero exit from a sub-step has meaning the script needs to handle itself (both common in Claude Code hooks)
 - Quote all variable expansions: `"$var"` not `$var`
 - Use `[[ ]]` over `[ ]` for conditionals
 - Prefer `$(command)` over backticks
