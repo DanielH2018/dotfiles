@@ -567,17 +567,26 @@
        the suffix on a pre-2.1.220 client without re-checking the model table — there
        claude-opus-5 was absent and fell through to the 200000 default. */}}
   "model": "claude-opus-5",
-  "effortLevel": "high",
+  {{/* effortLevel is deliberately absent: an absent key (equivalently `/effort auto` or
+       CLAUDE_CODE_EFFORT_LEVEL=auto) leaves effort UNPINNED, so the model sizes its own
+       reasoning per turn. A pin here overrides that for every turn, cheap ones included.
+       Per-turn escalation stays available without touching settings: `ultrathink` in a
+       prompt pins higher effort for that turn only and reverts after it; `ultracode`
+       additionally turns on the workflow/orchestration posture. Task-shaped routing lives
+       in agent frontmatter (model + effort) under private_dot_claude/agents/, not here.
+       Note this file is fully derived — modify_settings.json.sh.tmpl ignores stdin — so a
+       runtime `/effort X` persists into ~/.claude/settings.json only until the next
+       `chezmoi apply`. Reintroduce the key only to pin every turn on purpose. */}}
   "fallbackModel": [
     "claude-sonnet-5"
   ],
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
        is the UNION of every model the setup actually requests: claude-opus-5 (main,
        native 1M), "opus" alias (eval judge +
-       planner/migration-reviewer agents), "sonnet"
+       planner/migration-reviewer/root-cause/deep-review agents), "sonnet"
        (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
-       (fallbackModel), "haiku" (kept for Claude Code's internal/auxiliary calls, e.g.
-       the eval judge's helper call — no agent pins it), and "fable"/claude-fable-5
+       (fallbackModel), "haiku" (Claude Code's internal/auxiliary calls, e.g. the eval
+       judge's helper call, and the chore agent), and "fable"/claude-fable-5
        (Fable 5, opted in for manual `/model fable` selection).
        Aliases and full IDs are both listed on purpose. enforceAvailableModels snaps the
        Default to the first entry if it would resolve outside the list — a deterministic
