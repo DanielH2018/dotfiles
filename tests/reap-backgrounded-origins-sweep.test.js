@@ -144,6 +144,21 @@ test('worker whose /proc cmdline is gone is skipped without error', { skip }, ()
   assert.deepStrictEqual(killed(env), []);
 });
 
+test('a half-written session file does not stop the sweep', { skip }, () => {
+  const env = fakeEnv({
+    procs: { '111': BG('ORIGIN', 'FORK'), '222': '/x/claude' },
+    sessions: { '111': 'FORK', '222': 'ORIGIN' },
+    rows: ['ORIGIN'],
+  });
+  // The index builds with one jq over every session file, and jq aborts the whole batch on a
+  // truncated one — so the sweep must fall back to the per-file scan, not reap nothing.
+  // Named to sort FIRST: jq then dies before emitting any valid row, so only the fallback
+  // can make this pass.
+  fs.writeFileSync(path.join(env.sdir, '000.json'), '{"pid": 333, "sessi');
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), ['222'], 'origin still reaped despite the bad file');
+});
+
 // --- spare-dispatched backgrounding: origin link lives only in the daemon roster ---
 
 test('reaps the origin of a spare-dispatched backgrounding (roster path)', { skip }, () => {

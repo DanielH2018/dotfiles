@@ -26,12 +26,49 @@
 # shellcheck source=/dev/null
 . "${IDENTITY_LIB:-${BASH_SOURCE[0]%/*}/identity.sh}"
 
+# _reap_session_index
+#   Populate _REAP_INDEX with one "<sessionId>\t<pid>\t<procStart>" line per
+#   sessions/<pid>.json, using a single jq for the whole batch. Resolving an origin used to
+#   fork a jq per session file, so a sweep over N sessions carrying M backgroundings cost
+#   N*M forks — enough that the timer ran back-to-back at ~100% of a core and made a memory
+#   crunch worse.
+#
+#   procStart rides along because a pid alone is not an identity: it is the third column so
+#   the caller can verify a row without going back to disk, which would reintroduce the
+#   per-row fork this function exists to remove.
+#
+#   Memoized for the process lifetime. Both callers are short-lived (one hook invocation, one
+#   sweep), and a session file landing mid-run was already a race in either direction.
+_REAP_INDEX=""
+_REAP_INDEX_READY=""
+_reap_session_index() {
+  [ -n "$_REAP_INDEX_READY" ] && return 0
+  _REAP_INDEX_READY=1
+
+  local sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
+  local files pf
+  shopt -s nullglob
+  files=("$sessions_dir"/*.json)
+  shopt -u nullglob
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  # jq aborts the whole batch on the first half-written file, so keep the per-file scan as a
+  # fallback: slower, but a parse error stays isolated to the file that caused it.
+  if _REAP_INDEX=$(jq -r '[.sessionId // "", .pid // "", .procStart // ""] | @tsv' "${files[@]}" 2>/dev/null); then
+    return 0
+  fi
+  _REAP_INDEX=""
+  for pf in "${files[@]}"; do
+    _REAP_INDEX+="$(jq -r '[.sessionId // "", .pid // "", .procStart // ""] | @tsv' "$pf" 2>/dev/null)"$'\n'
+  done
+  return 0
+}
+
 # _reap_origin_sid <origin_sid> <fork_sid>
 #   Resolve the origin session id to a live pid and SIGTERM it. Never self, graceful only.
 #   Returns 0 if it reaped, 1 otherwise.
 _reap_origin_sid() {
   local origin_sid="$1" fork_sid="$2"
-  local sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
   local av_dir="${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"
   local killcmd="${REAP_KILLCMD:-kill}"
   local logfile="${REAP_LOG:-$HOME/.local/state/reap-origin.log}"
@@ -41,11 +78,19 @@ _reap_origin_sid() {
   [ "$origin_sid" != "$fork_sid" ] || return 1
 
   # Resolve the origin session id to a pid that is still the process we recorded.
-  # verify_session_pid checks every record naming the sid and compares each pid against
-  # its stored procStart, so a recycled pid resolves to nothing rather than to whatever
-  # now holds that number.
-  local origin_pid
-  origin_pid=$(verify_session_pid "$sessions_dir" "$origin_sid") || return 1
+  # Every row naming the sid is checked rather than the first one found: duplicate
+  # entries accumulate as pids are recycled, and the first match in the index is as
+  # likely to be the stale one as the live one. Two rows that both verify live is a
+  # state this cannot resolve safely, so it refuses rather than picking.
+  local origin_pid="" isid ipid istart live=0
+  _reap_session_index
+  while IFS="$(printf '\t')" read -r isid ipid istart; do
+    [ "$isid" = "$origin_sid" ] || continue
+    [ "$(verify_target "$ipid" "$istart")" = "live" ] || continue
+    origin_pid="$ipid"
+    live=$((live + 1))
+  done <<< "$_REAP_INDEX"
+  [ "$live" -eq 1 ] || return 1
   [ -n "$origin_pid" ] || return 1
 
   # never signal ourselves

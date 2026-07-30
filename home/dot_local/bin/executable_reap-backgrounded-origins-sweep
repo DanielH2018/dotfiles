@@ -20,21 +20,19 @@ set -u
 # shellcheck source=/dev/null
 . "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
 
-sessions_dir="${CLAUDE_SESSIONS_DIR:-$HOME/.claude/sessions}"
 proc_dir="${REAP_PROC_DIR:-/proc}"
 
-shopt -s nullglob
-for pf in "$sessions_dir"/*.json; do
-  sid=$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)
-  pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
+# One jq builds the whole sid->pid table (see _reap_session_index in the lib) and every
+# origin resolve reads it, instead of a jq fork per session file per lookup.
+_reap_session_index
+while IFS="$(printf '\t')" read -r sid pid _procstart; do
   [ -n "$sid" ] && [ -n "$pid" ] || continue
   case "$pid" in ''|*[!0-9]*) continue;; esac
   [ -r "$proc_dir/$pid/cmdline" ] || continue          # worker gone
   cmdline=" $(tr '\0' ' ' < "$proc_dir/$pid/cmdline" 2>/dev/null) "
   # delegate: no-ops unless this worker carries the backgrounding signature
   reap_origin_from_cmdline "$cmdline" "$sid"
-done
-shopt -u nullglob
+done <<< "$_REAP_INDEX"
 
 # Spare-dispatched backgroundings: the origin link lives only in the daemon roster.
 # "nothing to reap" is the normal case and returns 1 — never let it fail the timer unit.

@@ -3,7 +3,9 @@ Description=Periodically reap backgrounded Claude session origins
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=30s
+# Inactive, not Active: OnUnitActiveSec counts from when the run STARTED, so a sweep taking
+# longer than the interval retriggers the moment it finishes and the timer runs continuously.
+OnUnitInactiveSec=30s
 AccuracySec=5s
 
 [Install]

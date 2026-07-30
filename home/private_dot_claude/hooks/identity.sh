@@ -62,29 +62,3 @@ verify_target() {
   printf 'different\n'
   return 1
 }
-
-# verify_session_pid <sessions_dir> <sid>
-#   Print the pid of the one live process recorded for <sid>, or nothing.
-#   Every record naming the sid is examined rather than stopping at the first: duplicate
-#   sessionId entries accumulate as pids are recycled, and the first match encountered on
-#   disk is as likely to be the stale one as the live one. Two live processes claiming the
-#   same session id is a state this cannot resolve safely, so it refuses.
-verify_session_pid() {
-  local sessions_dir="$1" sid="$2"
-  [[ -n "$sid" ]] || return 1
-
-  local pf pid recorded found="" live=0
-  shopt -s nullglob
-  for pf in "$sessions_dir"/*.json; do
-    [[ "$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)" == "$sid" ]] || continue
-    pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
-    recorded=$(jq -r '.procStart // ""' "$pf" 2>/dev/null)
-    [[ "$(verify_target "$pid" "$recorded")" == "live" ]] || continue
-    found="$pid"
-    live=$((live + 1))
-  done
-  shopt -u nullglob
-
-  [[ "$live" -eq 1 ]] || return 1
-  printf '%s\n' "$found"
-}
