@@ -286,6 +286,10 @@ PROXY_NAME="claudebot-proxy-$RUN_ID"
 # DNS label limit, which Docker's embedded resolver silently won't serve; the
 # network is isolated per run, so a fixed alias is safe from collisions.
 PROXY_ALIAS="claudebot-proxy"
+# The body-inspecting filter sits in FRONT of the socket proxy: the sandbox talks to
+# this, it talks to the socket proxy, and only the socket proxy touches the socket.
+FILTER_NAME="claudebot-dockerfilter-$RUN_ID"
+FILTER_ALIAS="claudebot-dockerfilter"
 NETWORK_NAME="claudebot-net-$RUN_ID"
 
 # --- Shell mode: exec into a live session if one is running ---
@@ -813,7 +817,8 @@ scan_untrusted_compose() {
 
 # --- Docker socket proxy management ---
 start_proxy() {
-  # Clean up any stale proxy/network from a previous run
+  # Clean up any stale proxy/filter/network from a previous run
+  docker rm -f "$FILTER_NAME" 2>/dev/null || true
   docker rm -f "$PROXY_NAME" 2>/dev/null || true
   docker network rm "$NETWORK_NAME" 2>/dev/null || true
 
@@ -824,16 +829,17 @@ start_proxy() {
   # workflows. POST is required for container create/start. exec/build/commit
   # are blocked.
   #
-  # Blocking exec/build/commit does NOT prevent escape, and this comment used to
-  # claim it did. docker-socket-proxy filters by API PATH, never by request body,
-  # so POST=1 + ALLOW_START=1 forwards /containers/create with any HostConfig the
-  # caller asks for — `-v /:/host`, `--privileged`, `--pid=host`. A plain HTTP
-  # POST to the proxy port does it; no `docker` binary is involved, so the Bash
-  # deny-list never sees it. Treat Docker access as granting host-equivalent
-  # privilege, which is what the interactive confirmation above is really for.
-  # Closing it means either dropping POST/ALLOW_START (breaks compose) or putting
-  # a body-inspecting proxy in front that rejects
-  # Binds/Mounts/Privileged/PidMode/CapAdd/NetworkMode=host.
+  # Blocking exec/build/commit does NOT prevent escape on its own. docker-socket-proxy
+  # filters by API PATH and never reads a request BODY, so POST=1 + ALLOW_START=1
+  # forwards /containers/create with any HostConfig the caller asks for — `-v /:/host`,
+  # `--privileged`, `--pid=host`. A plain HTTP POST to the proxy port does it; no
+  # `docker` binary is involved, so the Bash deny-list never sees it.
+  #
+  # docker-create-filter.py now sits in FRONT of this and reads those bodies (see
+  # start_filter below), which is what makes Docker access here less than
+  # host-equivalent. This container keeps its path-level rules as the second layer:
+  # if the filter has a parsing bug, the worst case is the behaviour we had before it,
+  # not something weaker.
   echo "Starting Docker socket proxy ($PROXY_NAME)..."
   # $PROXY_NAME can exceed the 63-char DNS label limit (RFC 1035), in which
   # case Docker's embedded resolver (127.0.0.11) never registers it and the
@@ -883,11 +889,49 @@ start_proxy() {
     sleep 0.2
   done
 
+  start_filter
+
   echo "  Allowed: containers, networks, volumes, images (read), start/stop/restart"
   echo "  Blocked: exec, build, commit, system, secrets, auth, swarm, plugins"
+  echo "  Filtered: create bodies — no privileged, host namespaces, added caps,"
+  echo "            devices, or binds outside $WORK_PATH"
+}
+
+# Body-inspecting filter in front of the socket proxy. Runs on claudebot:base purely
+# because it is already built and already has python3 — no extra image to pull or pin.
+start_filter() {
+  echo "Starting Docker create-filter ($FILTER_NAME)..."
+  # The workspace is mounted at its own host path, read-only, so the filter can
+  # realpath a bind source. Without it a symlink planted in the repo — which the agent
+  # can write — would resolve on the host and escape a purely textual prefix check.
+  docker run -d --rm \
+    --name "$FILTER_NAME" \
+    --network "$NETWORK_NAME" \
+    --network-alias "$FILTER_ALIAS" \
+    --cap-drop all \
+    --read-only \
+    --user "$(id -u):$(id -g)" \
+    -v "$SANDBOX_DIR/docker-create-filter.py:/opt/docker-create-filter.py:ro" \
+    -v "$WORK_PATH:$WORK_PATH:ro" \
+    -e FILTER_UPSTREAM="$PROXY_ALIAS:2375" \
+    -e FILTER_WORKSPACE="$WORK_PATH" \
+    --entrypoint python3 \
+    claudebot:base /opt/docker-create-filter.py >/dev/null
+
+  local retries=0
+  while [[ "$(docker inspect -f '{{.State.Running}}' "$FILTER_NAME" 2>/dev/null)" != "true" ]]; do
+    retries=$((retries + 1))
+    if [[ $retries -ge 15 ]]; then
+      echo "Error: docker create-filter failed to start after 15 attempts" >&2
+      docker logs "$FILTER_NAME" 2>&1 | tail -20 >&2 || true
+      exit 1
+    fi
+    sleep 0.2
+  done
 }
 
 stop_proxy() {
+  docker rm -f "$FILTER_NAME" 2>/dev/null || true
   docker rm -f "$PROXY_NAME" 2>/dev/null || true
   docker network rm "$NETWORK_NAME" 2>/dev/null || true
 }
@@ -2224,10 +2268,10 @@ if [[ "$NEEDS_DOCKER" == true ]]; then
   start_proxy
   DOCKER_ARGS+=(
     --network "$NETWORK_NAME"
-    -e DOCKER_HOST="tcp://$PROXY_ALIAS:2375"
+    -e DOCKER_HOST="tcp://$FILTER_ALIAS:2375"
     -e HOST_REPO_PATH="$WORK_PATH"
   )
-  echo "  Docker: via socket proxy (exec/build/commit/system blocked)"
+  echo "  Docker: via create-filter -> socket proxy (bodies inspected; exec/build/commit blocked)"
 else
   echo "  Docker: not needed (no compose files detected)"
 fi
