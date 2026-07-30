@@ -1,12 +1,36 @@
 #!/usr/bin/env python3
-"""jsonq — query JSON with constrained Python expressions.
+"""jsonq — query JSON with a closed subset of Python syntax.
 
 Exists so JSON can be reshaped without a permission prompt. `python3 -c` is
 ask-listed (it is arbitrary code execution) and jq's language runs out of road
-quickly, so the middle ground is Python *syntax* over already-parsed JSON,
-validated against a fail-closed AST allowlist before anything runs. The result
-cannot import, open a file it was not handed, spawn a process, or reach the
-network — which is what makes a blanket `Bash(jsonq:*)` allow rule defensible.
+quickly, so the middle ground is Python *syntax* over already-parsed JSON.
+
+What makes a blanket `Bash(jsonq:*)` rule defensible is not a check, it is an
+absence: **this file contains no `eval`, no `exec` and no `compile`.**
+`ast.parse` builds a syntax tree, which executes nothing; the tree is then
+walked by `_Interp` below. The dispatch tables at the bottom of this file *are*
+the grammar — a node type with no entry cannot run, because there is nothing
+that would run it.
+
+That is a deliberate reversal of the previous design, which enumerated
+forbidden AST nodes and then handed the original source to CPython's `eval`.
+`eval` accepts a strictly larger language than any enumeration written against
+it: `statistics.sys.modules["os"]` is an ordinary non-underscore attribute
+chain, and `"{0.__class__}".format(x)` resolves attributes at runtime where no
+AST check can see them. Every escape lived in the gap between the checker and
+the second, more permissive evaluator. Removing the second evaluator removes
+the gap. Adding rules to the checker never did — that was tried twice.
+
+Two consequences, both load-bearing:
+
+* **There is no attribute access.** `ast.Attribute` has no handler, so `x.y` is
+  refused in every position — no method calls, no module namespaces, no
+  `__class__`. The reachable object graph is exactly: JSON values, the fixed
+  function table below, and lambdas defined by the query. There is no route
+  from a value to any other object, so there is nothing left to enumerate.
+* **Methods are spelled as functions.** `d.keys()` is `keys(d)`,
+  `s.startswith(p)` is `startswith(s, p)`, `re.findall(p, s)` is
+  `re_findall(p, s)`. `jsonq --functions` prints the whole table.
 
     jsonq 'sorted(d["permissions"])' settings.json
     jsonq '[r for r in d["rules"] if r["on"]]' a.json
@@ -23,27 +47,29 @@ from __future__ import annotations
 
 import argparse
 import ast
-import builtins
-import collections
-import collections.abc
 import json
+import math
+import operator
 import os
 import re
 import signal
-import sys
-
-# Pre-bound pure-stdlib modules. None can reach the filesystem, the network, or a
-# subprocess, so exposing them adds nothing for the AST walk to defend against.
-# `import` inside an expression is never allowed; these are the whole surface.
-import datetime
-import functools
-import itertools
-import math
 import statistics
+import sys
 
 PROG = "jsonq"
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 DEFAULT_TIMEOUT = 5
+
+# Resource caps. These are the residual risk of an interpreter, standing in for
+# the sandbox-escape risk of a validator: a single C-level operation cannot be
+# interrupted by SIGALRM (the handler only runs between bytecodes), so `2**10**9`
+# would sail past --timeout and take the machine's memory with it. Each cap
+# below guards an operation that turns a short expression into unbounded work.
+MAX_INT_BITS = 1 << 14  # result width of ** and <<; ~4900 digits, already absurd
+MAX_INT_DIGITS = 4300  # int("9"*n) is quadratic; CPython 3.11 picked this number
+MAX_SEQUENCE = 10_000_000  # elements produced by `seq * n` or range()
+MAX_DEPTH = 200  # interpreter nesting, kept under CPython's own recursion limit
+MAX_SOURCE_BYTES = 200_000  # ast.parse is recursive; do not hand it a novel
 
 # Mirror of SECRET_PATHS in ~/.claude/hooks/block-dangerous-bash.sh. jsonq opens
 # files directly, so without this it would be a way around that hook's guard —
@@ -63,62 +89,718 @@ class JsonqError(Exception):
     """A refusal we raise ourselves — always reported without a traceback."""
 
 
+class _Break(Exception):
+    """Internal control flow for --script. Never escapes run()."""
+
+
+class _Continue(Exception):
+    """Internal control flow for --script. Never escapes run()."""
+
+
 def _nodes(*names):
     """Resolve AST class names, skipping any this Python doesn't define.
 
     Node types come and go across versions (ast.Index died in 3.9), so building
-    the allowlist by name keeps a missing type from being an import-time crash.
-    Skipping an absent name cannot widen the allowlist: absent means unusable.
+    the set by name keeps a missing type from being an import-time crash.
+    Skipping an absent name cannot widen anything: absent means unusable.
     """
     return {getattr(ast, n) for n in names if getattr(ast, n, None) is not None}
 
 
-_EXPR_NODES = _nodes(
-    "Expression", "Expr", "Constant", "Name", "Load", "Store",
-    "Tuple", "List", "Dict", "Set",
-    "ListComp", "SetComp", "DictComp", "GeneratorExp", "comprehension",
-    "BinOp", "UnaryOp", "BoolOp", "Compare", "IfExp",
-    "Subscript", "Slice", "Index", "Call", "Attribute",
-    "JoinedStr", "FormattedValue", "Starred",
-    "Lambda", "arguments", "arg", "keyword", "NamedExpr",
-    # operators
-    "Add", "Sub", "Mult", "Div", "FloorDiv", "Mod", "Pow",
-    "LShift", "RShift", "BitOr", "BitXor", "BitAnd", "MatMult",
-    "And", "Or", "Not", "UAdd", "USub", "Invert",
-    "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "Is", "IsNot", "In", "NotIn",
+# ---------------------------------------------------------------------------
+# Guarded arithmetic
+# ---------------------------------------------------------------------------
+
+
+def _pow(base, exp, mod=None):
+    """`**`. Modular exponentiation is bounded by the modulus, so only the
+    plain form needs a width check."""
+    if mod is not None:
+        return pow(base, exp, mod)
+    if (isinstance(base, int) and isinstance(exp, int) and exp > 0
+            and exp * max(base.bit_length(), 1) > MAX_INT_BITS):
+        raise JsonqError("refusing to compute an integer that large")
+    return base**exp
+
+
+def _lshift(left, right):
+    if isinstance(left, int) and isinstance(right, int) and right > MAX_INT_BITS:
+        raise JsonqError("refusing to compute an integer that large")
+    return left << right
+
+
+def _mul(left, right):
+    """`*`. Sequence repetition is the cheap way to ask for 40 GB of string."""
+    for seq, count in ((left, right), (right, left)):
+        if (isinstance(seq, (str, bytes, list, tuple)) and isinstance(count, int)
+                and count > 0 and len(seq) * count > MAX_SEQUENCE):
+            raise JsonqError("refusing to build a sequence that large")
+    return left * right
+
+
+def _range(*args):
+    span = range(*args)
+    if len(span) > MAX_SEQUENCE:
+        raise JsonqError(f"range() of {len(span)} exceeds the {MAX_SEQUENCE} cap")
+    return list(span)
+
+
+def _int(value, *args, **kwargs):
+    """int(). Parsing a very long digit string is quadratic and happens in C,
+    where SIGALRM cannot reach it. 3.11+ refuses this itself; do it on 3.9 too."""
+    if isinstance(value, str) and len(value.strip()) > MAX_INT_DIGITS:
+        raise JsonqError("refusing to parse an integer that long")
+    return int(value, *args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Rendering helpers, defined before the table that binds them.
+# ---------------------------------------------------------------------------
+
+
+def _default(obj):
+    """Coerce the few non-JSON types a valid query can plausibly return."""
+    if isinstance(obj, (set, frozenset)):
+        try:
+            return sorted(obj)
+        except TypeError:  # mixed types have no total order
+            return sorted(obj, key=repr)
+    if isinstance(obj, tuple):
+        return list(obj)
+    if isinstance(obj, (bytes, bytearray)):
+        return obj.decode("utf-8", "replace")
+    if isinstance(obj, _Lambda):
+        raise TypeError("a lambda is not a result; call it or return its output")
+    raise TypeError(f"result of type {type(obj).__name__} is not JSON-serialisable")
+
+
+def _dumps(value, indent=None):
+    separators = None if indent else (",", ":")
+    return json.dumps(
+        value, default=_default, indent=indent,
+        separators=separators, ensure_ascii=False,
+    )
+
+
+def _text(value):
+    """String form used by f-strings and -r. JSON spelling, not Python's, so
+    `f"{x}"` on a bool gives `true` and on a dict gives `{"a":1}`."""
+    return value if isinstance(value, str) else _dumps(value)
+
+
+def _key(value):
+    """A hashable stand-in for an arbitrary JSON value."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return _dumps(value)
+
+
+# ---------------------------------------------------------------------------
+# The function table. Every entry maps JSON values to JSON values.
+#
+# Real builtins and unbound method descriptors (str.lower and friends) are
+# bound directly where the signature already reads well. That is safe for the
+# same reason everything else here is: with no attribute access a function
+# object is a thing you can call and nothing else — there is no `.__globals__`
+# to reach through, because there is no `.`.
+#
+# `type`, `getattr`, `vars`, `globals`, `dir`, `eval`, `exec`, `open`,
+# `compile`, `input` and `format` are deliberately absent. `kind()` is the
+# type-name function; `type` stays unbound so the escape suite keeps testing
+# for its absence rather than for a lookalike.
+# ---------------------------------------------------------------------------
+
+
+def _kind(value):
+    if value is None:
+        return "null"
+    for cls, name in (
+        (bool, "bool"), (int, "int"), (float, "float"), (str, "str"),
+        (dict, "dict"), ((list, tuple), "list"), ((set, frozenset), "set"),
+    ):
+        if isinstance(value, cls):
+            return name
+    return "unknown"
+
+
+def _get(container, key, default=None):
+    try:
+        return container[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def _merge(*mappings):
+    merged = {}
+    for mapping in mappings:
+        merged.update(mapping)
+    return merged
+
+
+def _join(sep, values):
+    return sep.join(_text(v) for v in values)
+
+
+def _unique(values):
+    """Order-preserving dedupe that also works on dicts and lists."""
+    seen, out = set(), []
+    for value in values:
+        marker = _key(value)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(value)
+    return out
+
+
+def _flatten(values):
+    out = []
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            out.extend(value)
+        else:
+            out.append(value)
+    return out
+
+
+def _counter(values):
+    counts = {}
+    for value in values:
+        marker = _key(value)
+        counts[marker] = counts.get(marker, 0) + 1
+    return counts
+
+
+def _groupby(values, keyfn):
+    groups = {}
+    for value in values:
+        groups.setdefault(keyfn(value), []).append(value)
+    return groups
+
+
+# Known residual: a catastrophically backtracking pattern runs inside `re`'s C
+# loop, where the SIGALRM handler never gets a turn, so --timeout cannot stop it.
+# The caps above cover the arithmetic routes to the same problem; this one has no
+# cheap fix short of a different regex engine. It costs a hung CLI you can Ctrl-C,
+# not an escape, so it is documented rather than mitigated.
+
+
+def _re_test(pattern, text):
+    return re.search(pattern, text) is not None
+
+
+def _re_search(pattern, text):
+    """The matched substring, or null. Returning a match object would be
+    useless here — with no attribute access there is no way to ask it anything."""
+    found = re.search(pattern, text)
+    return found.group(0) if found else None
+
+
+def _re_groups(pattern, text):
+    found = re.search(pattern, text)
+    return list(found.groups()) if found else None
+
+
+def _re_sub(pattern, repl, text, count=0):
+    """re.sub, minus its callable-replacement form.
+
+    `re.sub(p, fn, s)` calls fn with a *match object* — a live Python object
+    that is not a JSON value, which would put a hole in the claim that the
+    reachable graph contains nothing else. Nothing could be done with it today
+    (no attribute access, and a lambda cannot assign), but the invariant is
+    worth more than the feature.
+    """
+    if not isinstance(repl, str):
+        raise JsonqError("re_sub's replacement must be a string")
+    return re.sub(pattern, repl, text, count=count)
+
+
+_SECTIONS = (
+    ("core", {
+        "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
+        "divmod": divmod, "float": float, "int": _int, "len": len, "list": list,
+        "max": max, "min": min, "pow": _pow, "range": _range, "repr": repr,
+        "round": round, "set": set, "frozenset": frozenset, "sorted": sorted,
+        "str": str, "sum": sum, "tuple": tuple, "kind": _kind,
+        "enumerate": lambda *a: [list(p) for p in enumerate(*a)],
+        "filter": lambda f, xs: list(filter(f, xs)),
+        "map": lambda f, *xs: list(map(f, *xs)),
+        "reversed": lambda xs: list(reversed(xs)),
+        "zip": lambda *xs: [list(p) for p in zip(*xs)],
+    }),
+    ("dicts", {
+        "keys": lambda d: list(d.keys()),
+        "values": lambda d: list(d.values()),
+        "items": lambda d: [[k, v] for k, v in d.items()],
+        "get": _get, "merge": _merge,
+    }),
+    ("strings", {
+        "lower": str.lower, "upper": str.upper, "strip": str.strip,
+        "lstrip": str.lstrip, "rstrip": str.rstrip, "replace": str.replace,
+        "startswith": str.startswith, "endswith": str.endswith,
+        "split": str.split, "rsplit": str.rsplit, "splitlines": str.splitlines,
+        "find": str.find, "join": _join,
+    }),
+    ("regex", {
+        "re_test": _re_test, "re_search": _re_search, "re_groups": _re_groups,
+        "re_findall": re.findall, "re_sub": _re_sub, "re_split": re.split,
+    }),
+    ("numbers", {
+        "floor": math.floor, "ceil": math.ceil, "sqrt": math.sqrt,
+        "log": math.log, "log10": math.log10, "exp": math.exp,
+        "mean": statistics.mean, "median": statistics.median,
+    }),
+    ("collections", {
+        "unique": _unique, "flatten": _flatten, "counter": _counter,
+        "groupby": _groupby,
+    }),
+    ("json", {
+        "dumps": _dumps, "loads": json.loads,
+    }),
 )
 
-# --script only. Everything absent here — def, class, import, with, try, raise,
-# global, del, yield, await — is rejected by virtue of not being listed.
-_STMT_NODES = _nodes(
-    "Module", "Assign", "AugAssign", "AnnAssign",
-    "For", "If", "While", "Break", "Continue", "Pass",
-)
+FUNCTIONS = {name: fn for _, group in _SECTIONS for name, fn in group.items()}
 
-# `format` resolves attributes at *runtime* ("{0.__class__}".format(x)), so it
-# walks straight past an AST-only check — the one escape the node allowlist and
-# the underscore rule cannot see. f-strings are fine: JoinedStr puts the access
-# back in the tree where _validate finds it. `mro` is cheap insurance.
-_BANNED_ATTRS = {"format", "format_map", "mro"}
+# Identity, not equality: a JSON value can reach the callee position, and
+# `{...} in some_set` would raise TypeError before we could say so. Comparing
+# ids is sound here only because FUNCTIONS holds a strong reference to every
+# entry for the life of the process, so none of these ids is ever freed and
+# handed to a different object. Do not build this set from a temporary.
+_CALLABLE_IDS = frozenset(id(fn) for fn in FUNCTIONS.values())
 
-_BUILTIN_NAMES = (
-    "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter",
-    "float", "frozenset", "int", "isinstance", "len", "list", "map", "max",
-    "min", "pow", "range", "repr", "reversed", "round", "set", "slice",
-    "sorted", "str", "sum", "tuple", "zip",
-)
-SAFE_BUILTINS = {n: getattr(builtins, n) for n in _BUILTIN_NAMES}
 
-SAFE_MODULES = {
-    "json": json,
-    "re": re,
-    "math": math,
-    "datetime": datetime,
-    "collections": collections,
-    "itertools": itertools,
-    "functools": functools,
-    "statistics": statistics,
+# ---------------------------------------------------------------------------
+# The interpreter
+# ---------------------------------------------------------------------------
+
+
+class _Lambda:
+    """A lambda defined by the query.
+
+    Callable from Python so it can be handed to `sorted(key=...)` and friends,
+    but its body is run by _Interp, never by CPython.
+    """
+
+    __slots__ = ("params", "defaults", "body", "env", "interp")
+
+    def __init__(self, params, defaults, body, env, interp):
+        self.params = params
+        self.defaults = defaults
+        self.body = body
+        self.env = env
+        self.interp = interp
+
+    def __call__(self, *args, **kwargs):
+        if kwargs:
+            raise TypeError("a jsonq lambda takes positional arguments only")
+        missing = len(self.params) - len(args)
+        if missing < 0 or missing > len(self.defaults):
+            raise TypeError(
+                f"lambda takes {len(self.params)} argument(s), got {len(args)}"
+            )
+        values = list(args)
+        if missing:
+            values += self.defaults[len(self.defaults) - missing:]
+        scope = dict(self.env)
+        scope.update(zip(self.params, values))
+        return self.interp.visit(self.body, scope)
+
+
+class _Interp:
+    """Walks the tree directly. No compile step, no eval step.
+
+    `_EXPR_HANDLERS` and `_STMT_HANDLERS` below this class are the grammar. A
+    node type absent from them is refused here — not by a list that says no,
+    but because nothing exists that could run it.
+    """
+
+    def __init__(self, env):
+        self.env = env
+        self.depth = 0
+
+    # -- dispatch ----------------------------------------------------------
+
+    def visit(self, node, env):
+        handler = _EXPR_HANDLERS.get(type(node))
+        if handler is None:
+            raise JsonqError(_unsupported(node))
+        if self.depth >= MAX_DEPTH:
+            raise JsonqError("expression nests too deeply")
+        self.depth += 1
+        try:
+            return handler(self, node, env)
+        finally:
+            self.depth -= 1
+
+    def execute(self, node, env):
+        handler = _STMT_HANDLERS.get(type(node))
+        if handler is None:
+            raise JsonqError(_unsupported(node))
+        handler(self, node, env)
+
+    # -- expressions -------------------------------------------------------
+
+    def _expression(self, node, env):
+        return self.visit(node.body, env)
+
+    def _constant(self, node, env):
+        return node.value
+
+    def _name(self, node, env):
+        try:
+            return env[node.id]
+        except KeyError:
+            raise JsonqError(f"name {node.id!r} is not defined") from None
+
+    def _elements(self, items, env):
+        out = []
+        for item in items:
+            if isinstance(item, ast.Starred):
+                out.extend(self.visit(item.value, env))
+            else:
+                out.append(self.visit(item, env))
+        return out
+
+    def _list(self, node, env):
+        return self._elements(node.elts, env)
+
+    def _tuple(self, node, env):
+        return tuple(self._elements(node.elts, env))
+
+    def _set(self, node, env):
+        return set(self._elements(node.elts, env))
+
+    def _dict(self, node, env):
+        out = {}
+        for key, value in zip(node.keys, node.values):
+            if key is None:  # {**other}
+                out.update(self.visit(value, env))
+            else:
+                out[self.visit(key, env)] = self.visit(value, env)
+        return out
+
+    def _binop(self, node, env):
+        op = _BINOPS.get(type(node.op))
+        if op is None:
+            raise JsonqError(_unsupported(node.op))
+        return op(self.visit(node.left, env), self.visit(node.right, env))
+
+    def _unaryop(self, node, env):
+        op = _UNARYOPS.get(type(node.op))
+        if op is None:
+            raise JsonqError(_unsupported(node.op))
+        return op(self.visit(node.operand, env))
+
+    def _boolop(self, node, env):
+        # `and` returns the first falsey operand, `or` the first truthy one.
+        wanted = isinstance(node.op, ast.Or)
+        result = wanted
+        for value in node.values:
+            result = self.visit(value, env)
+            if bool(result) is wanted:
+                return result
+        return result
+
+    def _compare(self, node, env):
+        left = self.visit(node.left, env)
+        for op_node, right_node in zip(node.ops, node.comparators):
+            op = _CMPOPS.get(type(op_node))
+            if op is None:
+                raise JsonqError(_unsupported(op_node))
+            right = self.visit(right_node, env)
+            if not op(left, right):
+                return False
+            left = right
+        return True
+
+    def _ifexp(self, node, env):
+        chosen = node.body if self.visit(node.test, env) else node.orelse
+        return self.visit(chosen, env)
+
+    def _index(self, node, env):
+        if isinstance(node, ast.Slice):
+            return slice(
+                None if node.lower is None else self.visit(node.lower, env),
+                None if node.upper is None else self.visit(node.upper, env),
+                None if node.step is None else self.visit(node.step, env),
+            )
+        return self.visit(node, env)
+
+    def _subscript(self, node, env):
+        return self.visit(node.value, env)[self._index(node.slice, env)]
+
+    def _call(self, node, env):
+        func = self.visit(node.func, env)
+        args = self._elements(node.args, env)
+        kwargs = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                kwargs.update(self.visit(kw.value, env))
+            else:
+                kwargs[kw.arg] = self.visit(kw.value, env)
+        if not isinstance(func, _Lambda) and id(func) not in _CALLABLE_IDS:
+            raise JsonqError("only the function table and lambdas are callable")
+        return func(*args, **kwargs)
+
+    def _lambda(self, node, env):
+        spec = node.args
+        if (spec.vararg or spec.kwarg or spec.kwonlyargs
+                or getattr(spec, "posonlyargs", None)):
+            raise JsonqError("a lambda takes plain positional parameters only")
+        defaults = [self.visit(d, env) for d in spec.defaults]
+        return _Lambda([p.arg for p in spec.args], defaults, node.body, env, self)
+
+    def _comprehend(self, node, env, emit):
+        """Comprehensions get their own scope, so a loop variable does not leak
+        into --script's namespace the way a bare `for` does."""
+        scope = dict(env)
+
+        def loop(level):
+            if level == len(node.generators):
+                emit(scope)
+                return
+            gen = node.generators[level]
+            if getattr(gen, "is_async", 0):
+                raise JsonqError("async comprehensions are not supported")
+            for item in self.visit(gen.iter, scope):
+                self._bind(gen.target, item, scope)
+                if all(self.visit(cond, scope) for cond in gen.ifs):
+                    loop(level + 1)
+
+        loop(0)
+
+    def _listcomp(self, node, env):
+        out = []
+        self._comprehend(node, env, lambda s: out.append(self.visit(node.elt, s)))
+        return out
+
+    def _setcomp(self, node, env):
+        return set(self._listcomp(node, env))
+
+    def _genexp(self, node, env):
+        """Evaluated eagerly into a list. Nothing in this grammar has side
+        effects, so the only observable difference from a real generator is
+        that it is not lazy — and laziness would only hide work from the
+        wall-clock timeout."""
+        return self._listcomp(node, env)
+
+    def _dictcomp(self, node, env):
+        out = {}
+
+        def emit(scope):
+            out[self.visit(node.key, scope)] = self.visit(node.value, scope)
+
+        self._comprehend(node, env, emit)
+        return out
+
+    def _joinedstr(self, node, env):
+        return "".join(_text(self.visit(piece, env)) for piece in node.values)
+
+    def _formattedvalue(self, node, env):
+        value = self.visit(node.value, env)
+        if node.conversion == 114:  # !r
+            value = repr(value)
+        elif node.conversion == 115:  # !s
+            value = _text(value)
+        elif node.conversion == 97:  # !a
+            value = ascii(value)
+        if node.format_spec is None:
+            return _text(value)
+        spec = self.visit(node.format_spec, env)
+        if not isinstance(value, (str, int, float, bool)):
+            raise JsonqError("a format spec only applies to a string or a number")
+        # A spec's width field is an allocation request: `f"{1:>10000000000}"`
+        # asks for a ten-billion-character string, and no cap above sees it
+        # because the spec itself is twelve characters long.
+        if len(spec) > 64:
+            raise JsonqError("format spec is too long")
+        if any(int(run) > MAX_SEQUENCE for run in re.findall(r"\d+", spec)):
+            raise JsonqError("format spec width is too large")
+        # The two-argument builtin over a scalar, not str.format's template
+        # language: a format spec cannot name an attribute.
+        return format(value, spec)
+
+    # -- statements (--script only) ----------------------------------------
+
+    def _module(self, node, env):
+        for stmt in node.body:
+            self.execute(stmt, env)
+
+    def _expr_stmt(self, node, env):
+        self.visit(node.value, env)
+
+    def _bind(self, target, value, env):
+        if isinstance(target, ast.Name):
+            env[target.id] = value
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            items = list(value)
+            if len(items) != len(target.elts):
+                raise ValueError(
+                    f"cannot unpack {len(items)} values into {len(target.elts)}"
+                )
+            for sub, item in zip(target.elts, items):
+                self._bind(sub, item, env)
+        elif isinstance(target, ast.Subscript):
+            container = self.visit(target.value, env)
+            container[self._index(target.slice, env)] = value
+        else:
+            raise JsonqError(_unsupported(target))
+
+    def _assign(self, node, env):
+        value = self.visit(node.value, env)
+        for target in node.targets:
+            self._bind(target, value, env)
+
+    def _augassign(self, node, env):
+        op = _BINOPS.get(type(node.op))
+        if op is None:
+            raise JsonqError(_unsupported(node.op))
+        current = self.visit(node.target, env)
+        self._bind(node.target, op(current, self.visit(node.value, env)), env)
+
+    def _if(self, node, env):
+        body = node.body if self.visit(node.test, env) else node.orelse
+        for stmt in body:
+            self.execute(stmt, env)
+
+    def _for(self, node, env):
+        for item in self.visit(node.iter, env):
+            self._bind(node.target, item, env)
+            try:
+                for stmt in node.body:
+                    self.execute(stmt, env)
+            except _Break:
+                break
+            except _Continue:
+                continue
+        else:
+            for stmt in node.orelse:
+                self.execute(stmt, env)
+
+    def _while(self, node, env):
+        while self.visit(node.test, env):
+            try:
+                for stmt in node.body:
+                    self.execute(stmt, env)
+            except _Break:
+                break
+            except _Continue:
+                continue
+        else:
+            for stmt in node.orelse:
+                self.execute(stmt, env)
+
+    def _break(self, node, env):
+        raise _Break()
+
+    def _continue(self, node, env):
+        raise _Continue()
+
+    def _pass(self, node, env):
+        return None
+
+
+_EXPR_HANDLERS = {
+    ast.Expression: _Interp._expression,
+    ast.Constant: _Interp._constant,
+    ast.Name: _Interp._name,
+    ast.List: _Interp._list,
+    ast.Tuple: _Interp._tuple,
+    ast.Set: _Interp._set,
+    ast.Dict: _Interp._dict,
+    ast.BinOp: _Interp._binop,
+    ast.UnaryOp: _Interp._unaryop,
+    ast.BoolOp: _Interp._boolop,
+    ast.Compare: _Interp._compare,
+    ast.IfExp: _Interp._ifexp,
+    ast.Subscript: _Interp._subscript,
+    ast.Call: _Interp._call,
+    ast.Lambda: _Interp._lambda,
+    ast.ListComp: _Interp._listcomp,
+    ast.SetComp: _Interp._setcomp,
+    ast.DictComp: _Interp._dictcomp,
+    ast.GeneratorExp: _Interp._genexp,
+    ast.JoinedStr: _Interp._joinedstr,
+    ast.FormattedValue: _Interp._formattedvalue,
 }
+
+_STMT_HANDLERS = {
+    ast.Module: _Interp._module,
+    ast.Expr: _Interp._expr_stmt,
+    ast.Assign: _Interp._assign,
+    ast.AugAssign: _Interp._augassign,
+    ast.If: _Interp._if,
+    ast.For: _Interp._for,
+    ast.While: _Interp._while,
+    ast.Break: _Interp._break,
+    ast.Continue: _Interp._continue,
+    ast.Pass: _Interp._pass,
+}
+
+_BINOPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: _mul,
+    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod, ast.Pow: _pow, ast.LShift: _lshift,
+    ast.RShift: operator.rshift, ast.BitOr: operator.or_,
+    ast.BitXor: operator.xor, ast.BitAnd: operator.and_,
+}
+
+_UNARYOPS = {
+    ast.Not: operator.not_, ast.USub: operator.neg,
+    ast.UAdd: operator.pos, ast.Invert: operator.invert,
+}
+
+_CMPOPS = {
+    ast.Eq: operator.eq, ast.NotEq: operator.ne,
+    ast.Lt: operator.lt, ast.LtE: operator.le,
+    ast.Gt: operator.gt, ast.GtE: operator.ge,
+    ast.Is: operator.is_, ast.IsNot: operator.is_not,
+    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+}
+
+# Structural nodes that carry no behaviour of their own: they are consumed by
+# the handlers above rather than dispatched. Listed so _validate can recognise
+# a well-formed tree; none of them can run anything on its own.
+_INERT = (
+    _nodes("Load", "Store", "comprehension", "arguments", "arg", "keyword",
+           "Slice", "Starred", "And", "Or")
+    | set(_BINOPS) | set(_UNARYOPS) | set(_CMPOPS)
+)
+
+# Full replacement messages for the constructs people actually reach for. Every
+# other unsupported node falls back to naming itself, which is enough to look up.
+_MESSAGES = {
+    "Attribute": (
+        "attribute access (`x.y`) is not part of jsonq's grammar — there are no "
+        "methods and no modules. Use the function table instead: keys(d) for "
+        "d.keys(), startswith(s, p) for s.startswith(p), re_findall(p, s) for "
+        "re.findall(p, s). Run `jsonq --functions` for the full list"
+    ),
+    "Import": "jsonq cannot import anything",
+    "ImportFrom": "jsonq cannot import anything",
+    "FunctionDef": "jsonq has no `def`; use a lambda",
+    "AsyncFunctionDef": "jsonq has no `def`; use a lambda",
+    "ClassDef": "jsonq has no classes",
+    "NamedExpr": "jsonq has no `:=`; assign in a --script statement instead",
+    "Await": "jsonq has nothing asynchronous to await",
+    "Yield": "jsonq has no generators",
+    "Delete": "jsonq has no `del`; build the value you want instead",
+    "Try": "jsonq has no exception handling",
+    "Raise": "jsonq has no `raise`",
+    "With": "jsonq has no `with`, and nothing to open",
+    "Global": "jsonq has one scope; `global` would mean nothing",
+    "Nonlocal": "jsonq has one scope; `nonlocal` would mean nothing",
+}
+
+
+def _unsupported(node):
+    name = type(node).__name__
+    return _MESSAGES.get(name, f"{name} is not part of jsonq's grammar")
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight checks
+# ---------------------------------------------------------------------------
 
 
 def _bindings(tree):
@@ -135,27 +817,35 @@ def _bindings(tree):
 
 
 def _validate(tree, allowed_nodes, allowed_names):
-    """Fail closed: anything not explicitly permitted is an error."""
+    """A courtesy pass. It is NOT the boundary.
+
+    The boundary is _Interp: a node type with no handler cannot run, and the
+    only names in scope are the ones run() puts there. This pass exists so an
+    unsupported construct or a typo is reported up front, with a hint, rather
+    than surfacing part-way through a query. Its node set is *derived from* the
+    dispatch tables rather than written out again, so the two cannot drift.
+
+    Do not add a rule here and assume it protects anything. The way to refuse a
+    construct is to not give it a handler.
+    """
     for node in ast.walk(tree):
         if type(node) not in allowed_nodes:
-            raise JsonqError(f"{type(node).__name__} is not allowed")
+            raise JsonqError(_unsupported(node))
 
         if isinstance(node, ast.Name):
-            # The underscore ban is what closes the classic sandbox escape,
-            # ().__class__.__bases__[0].__subclasses__(), and any route back to
-            # __builtins__ or __globals__.
+            # Redundant now that there is no attribute access and nothing
+            # dunder-bearing is in scope, but it costs one comparison and keeps
+            # the error for `__builtins__` legible.
             if node.id.startswith("_"):
-                raise JsonqError(f"name {node.id!r} is not allowed (leading underscore)")
+                raise JsonqError(
+                    f"name {node.id!r} is not allowed (leading underscore)"
+                )
             if isinstance(node.ctx, ast.Load) and node.id not in allowed_names:
                 raise JsonqError(f"name {node.id!r} is not allowed")
-        elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("_"):
-                raise JsonqError(f"attribute {node.attr!r} is not allowed (leading underscore)")
-            if node.attr in _BANNED_ATTRS:
-                raise JsonqError(f"attribute {node.attr!r} is not allowed")
-        elif isinstance(node, ast.arg):
-            if node.arg.startswith("_"):
-                raise JsonqError(f"parameter {node.arg!r} is not allowed (leading underscore)")
+        elif isinstance(node, ast.arg) and node.arg.startswith("_"):
+            raise JsonqError(
+                f"parameter {node.arg!r} is not allowed (leading underscore)"
+            )
 
 
 def _check_readable(path):
@@ -184,7 +874,7 @@ def _load_lines(fh, path):
         try:
             docs.append(json.loads(line))
         except json.JSONDecodeError as exc:
-            raise JsonqError(f"{path}:{lineno}: invalid JSON ({exc.msg})")
+            raise JsonqError(f"{path}:{lineno}: invalid JSON ({exc.msg})") from None
     return docs
 
 
@@ -193,47 +883,28 @@ def _load(path, jsonl=False):
         return _load_lines(sys.stdin, "<stdin>") if jsonl else json.load(sys.stdin)
     target = _check_readable(path)
     try:
-        with open(target, "r", encoding="utf-8") as fh:
+        with open(target, encoding="utf-8") as fh:
             return _load_lines(fh, path) if jsonl else json.load(fh)
     except FileNotFoundError:
-        raise JsonqError(f"no such file: {path}")
+        raise JsonqError(f"no such file: {path}") from None
     except json.JSONDecodeError as exc:
-        raise JsonqError(f"{path}: invalid JSON ({exc})")
-
-
-def _default(obj):
-    """Coerce the few non-JSON types a valid expression can plausibly return."""
-    if isinstance(obj, (set, frozenset)):
-        try:
-            return sorted(obj)
-        except TypeError:  # mixed types have no total order
-            return sorted(obj, key=repr)
-    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
-        return obj.isoformat()
-    if isinstance(obj, (bytes, bytearray)):
-        return obj.decode("utf-8", "replace")
-    if isinstance(obj, range) or isinstance(obj, collections.abc.Iterator):
-        return list(obj)
-    raise TypeError(f"result of type {type(obj).__name__} is not JSON-serialisable")
+        raise JsonqError(f"{path}: invalid JSON ({exc})") from None
 
 
 def _render(result, raw, indent):
     if raw:
         if isinstance(result, str):
             return result
-        if isinstance(result, (list, tuple)) or isinstance(result, collections.abc.Iterator):
-            return "\n".join(
-                x if isinstance(x, str) else json.dumps(x, default=_default, ensure_ascii=False)
-                for x in result
-            )
-    separators = None if indent else (",", ":")
-    return json.dumps(result, default=_default, indent=indent,
-                      separators=separators, ensure_ascii=False)
+        if isinstance(result, (list, tuple)):
+            return "\n".join(_text(x) for x in result)
+    return _dumps(result, indent)
 
 
 def _install_timeout(seconds):
-    """Wall-clock cap. Mostly there for `while` in --script mode, but a big
-    enough comprehension can hang the tool just as well."""
+    """Wall-clock cap. Every loop in this interpreter is a Python-level loop, so
+    the handler gets a turn between bytecodes — which is what `while True: pass`
+    needs, and what a C-level `2**10**9` would never give it. Hence the
+    arithmetic caps at the top: this alarm does not cover them."""
     if not hasattr(signal, "SIGALRM") or seconds <= 0:
         return
 
@@ -244,12 +915,15 @@ def _install_timeout(seconds):
     signal.alarm(seconds)
 
 
-def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT, jsonl=False):
-    """Validate, evaluate, render. Split out from main() so tests can call it."""
+def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT,
+        jsonl=False):
+    """Parse, walk, render. Split out from main() so tests can call it."""
+    if len(source) > MAX_SOURCE_BYTES:
+        raise JsonqError("expression is too long")
+
     docs = [_load(f, jsonl) for f in files] if files else [_load("-", jsonl)]
 
-    env = dict(SAFE_MODULES)
-    env.update(SAFE_BUILTINS)
+    env = dict(FUNCTIONS)
     env["d"] = docs[0]
     env["ds"] = docs
     for i, doc in enumerate(docs, 1):
@@ -258,23 +932,29 @@ def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT, js
     try:
         tree = ast.parse(source, mode=mode)
     except SyntaxError as exc:
-        raise JsonqError(f"syntax error: {exc.msg}")
+        raise JsonqError(f"syntax error: {exc.msg}") from None
+    except (RecursionError, MemoryError):
+        raise JsonqError("expression is nested too deeply to parse") from None
 
-    allowed_nodes = _EXPR_NODES | (_STMT_NODES if mode == "exec" else set())
-    _validate(tree, allowed_nodes, set(env) | _bindings(tree))
+    allowed = set(_EXPR_HANDLERS) | _INERT
+    if mode == "exec":
+        allowed |= set(_STMT_HANDLERS)
+    _validate(tree, allowed, set(env) | _bindings(tree))
 
-    scope = {"__builtins__": {}}
-    scope.update(env)
-
+    interp = _Interp(env)
     _install_timeout(timeout)
     try:
         if mode == "eval":
-            result = eval(compile(tree, "<jsonq>", "eval"), scope)  # noqa: S307
+            result = interp.visit(tree, env)
         else:
-            exec(compile(tree, "<jsonq>", "exec"), scope)  # noqa: S102
-            if "out" not in scope:
+            interp.execute(tree, env)
+            if "out" not in env:
                 raise JsonqError("--script must assign its result to `out`")
-            result = scope["out"]
+            result = env["out"]
+    except (_Break, _Continue):
+        raise JsonqError("break outside a loop") from None
+    except RecursionError:
+        raise JsonqError("expression recursed too deeply") from None
     finally:
         if hasattr(signal, "SIGALRM"):
             signal.alarm(0)
@@ -285,11 +965,28 @@ def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT, js
     return text
 
 
+def _function_table():
+    lines = [
+        "jsonq has no attribute access, so methods are spelled as functions.",
+        "Everything callable is listed here; nothing else is reachable.",
+        "",
+    ]
+    for title, group in _SECTIONS:
+        lines.append(f"{title}:")
+        names = sorted(group)
+        for start in range(0, len(names), 6):
+            lines.append("  " + "  ".join(names[start:start + 6]))
+        lines.append("")
+    lines.append("Bound names: d (first document), d1..dN (per input), ds (all).")
+    return "\n".join(lines)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Query JSON with a constrained Python expression.",
-        epilog="Bound names: d (first document), d1..dN (per input), ds (all).",
+        description="Query JSON with a closed subset of Python syntax.",
+        epilog="Bound names: d (first document), d1..dN (per input), ds (all). "
+               "There is no attribute access — see --functions for what is callable.",
     )
     parser.add_argument("-r", "--raw", action="store_true",
                         help="print string results unquoted, one per line for a list")
@@ -300,10 +997,16 @@ def main(argv=None):
     parser.add_argument("-s", "--script", metavar="SRC",
                         help="multi-statement mode; assign the result to `out`")
     parser.add_argument("--jsonl", action="store_true",
-                        help="parse each input as JSON Lines; `d` is the list of records")
+                        help="parse each input as JSON Lines; `d` is the record list")
+    parser.add_argument("--functions", action="store_true",
+                        help="print every callable name and exit")
     parser.add_argument("args", nargs="*", metavar="EXPR [FILE...]",
                         help="expression, then input files (stdin if none)")
     ns = parser.parse_args(argv)
+
+    if ns.functions:
+        print(_function_table())
+        return 0
 
     if ns.script is not None:
         source, files, mode = ns.script, list(ns.args), "exec"
@@ -319,7 +1022,7 @@ def main(argv=None):
         return 2
     except BrokenPipeError:
         return 0
-    except Exception as exc:  # the expression itself blew up (KeyError, TypeError, ...)
+    except Exception as exc:  # the query itself blew up (KeyError, TypeError, ...)
         print(f"{PROG}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     return 0
