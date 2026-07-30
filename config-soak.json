@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "3d86109ffa92a4be4dc42242aa7ea5687a63c5219733b9cb80a2b7ce0f733dfc",
-      "landed": "2026-07-30T01:34:20.450Z"
+      "hash": "d2f72186da90f1c3f7916cc31d7663e3b28b6d6cdf1aa2ffb5977720bc627fd5",
+      "landed": "2026-07-30T14:44:36.850Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -148,8 +148,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
-      "hash": "e1a2900c75db8551bb4a9c9934e6f3a0019015ea8392bc6541bbc52379cabdfc",
-      "landed": "2026-07-26T01:29:06.860Z"
+      "hash": "564bb4fc0e37168aab7ef8d9c432094774451ac3bbb5f0badbbf8ce8855cd1af",
+      "landed": "2026-07-30T14:44:36.850Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
@@ -187,9 +187,19 @@
       "landed": "2026-07-08T20:17:05.073Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/identity.sh",
+      "hash": "91a9475a4b7d1dc80df0d781a0a06136582e930f4b05143a613fe232482db4eb",
+      "landed": "2026-07-30T14:44:36.850Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/outcome-lib.sh",
+      "hash": "d627d182c53d0dcd1710c305d35c58b708df60dfb7a1919be37b6fb53ae4c09b",
+      "landed": "2026-07-30T14:44:36.850Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
-      "hash": "7c61af65be102289a97b1235eb9681956b41c2f809c507a59c4cdc093305b46b",
-      "landed": "2026-07-25T12:13:12.887Z"
+      "hash": "56a4316200b09632ec1c09b399a38338f9c8dfe5f4ec1a37eeb6d2a59292f19a",
+      "landed": "2026-07-30T14:44:36.850Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
