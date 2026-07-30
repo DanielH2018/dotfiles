@@ -159,7 +159,18 @@
       {{/* jsonq evaluates Python expressions over JSON, but only after an AST allowlist rejects imports, underscore-prefixed names/attributes, and `format` — so it cannot import, open a file it wasn't handed, spawn a process, or reach the network. That, plus its own copy of the hook's secret-path guard, is what makes a blanket allow safe; tests/jsonq.test.js is the escape suite holding it to that. */}}
       "Bash(jsonq:*)",
       "Bash(yq:*)",
-      "Bash(xargs:*)",
+      {{/* xargs is NOT allow-listed, for the same reason env isn't: it takes a command as
+           an argument, so no prefix of it is safe. It used to be allowed with `xargs *sh*`
+           and `xargs *bash*` denies standing guard, and those were wrong in both directions
+           — they missed every non-shell interpreter (`xargs python -c`, `node -e`, `perl -e`,
+           `ruby -e` all auto-approved, measured 2026-07-29), while a substring glob also
+           matched an ordinary FILENAME, so `xargs grep foo build.sh` was refused for
+           containing "sh". A glob cannot tell the command xargs runs from a path it is
+           merely handed, and this rule is the only defence for a NON-compound command,
+           which allow-compound-bash.sh never sees.
+           The everyday pipeline is not lost: `… | xargs wc -l` is compound, so the hook
+           resolves xargs to the command it will exec and judges that instead. Bare
+           `xargs …` now prompts. */}}
       "Bash(tr:*)",
       "Bash(tee:*)",
       "Bash(basename:*)",
@@ -455,15 +466,18 @@
            auto-approved `find . -exec id \;`, `awk 'BEGIN{system("id")}'` and `xargs sh -c 'id'`
            with no prompt — the payload is an argument, so no other deny rule ever saw it.
            Deny beats allow in the hook, so these cover the execution forms while the ordinary
-           search/print/batch forms keep working. `xargs *sh*` also catches bash and zsh. */}}
+           search/print/batch forms keep working.
+
+           xargs is no longer covered here: its allow entry is gone (see above), so there is
+           no grant left for a deny glob to claw back. find and awk keep theirs because they
+           stay allow-listed — their execution forms are a named flag, which a glob CAN pin
+           down, where xargs' command word floats after any number of options. */}}
       "Bash(find *-exec*)",
       "Bash(find *-execdir*)",
       "Bash(find *-ok*)",
       "Bash(find *-delete*)",
       "Bash(find *-fprintf*)",
       "Bash(awk *system(*)",
-      "Bash(xargs *sh*)",
-      "Bash(xargs *bash*)",
       "Edit(.git/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(~/.config/gcloud/**)",

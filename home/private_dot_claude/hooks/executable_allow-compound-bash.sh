@@ -99,6 +99,110 @@ matches_glob() {
   return 1
 }
 
+# Wrapper commands take another command as an ARGUMENT and exec it. matches_any only ever
+# inspects a segment's leading words, so it judged the wrapper and never looked at what was
+# about to run: `xargs python -c '...'` rode in on the allow entry for xargs, unprompted.
+# Same family as the `env` and `find -exec` holes, one level further out.
+#
+# Resolve a segment to the command that will actually execute. Prints it and returns 0;
+# returns non-zero when the argument shape is not one we can read with confidence. A
+# wrapper we cannot read MUST prompt — never fall back to the wrapper's own allow entry,
+# which is exactly the mistake that made `xargs` a bypass. A segment that is not a wrapper
+# at all comes back unchanged, so callers can pipe everything through this.
+#
+# The flag tables below are deliberately closed: an option this does not recognise is a
+# refusal, not a skip. Guessing an option's arity is how you walk past the command word.
+unwrap_wrapper() {
+  local s="$1" depth=0 w n i tok
+  local -a t
+  while [ "$depth" -lt 4 ]; do   # `timeout 5 nohup nice cmd` nests; a bound stops a cycle
+    depth=$((depth + 1))
+    read -r -a t <<< "$s"
+    n=${#t[@]}
+    [ "$n" -eq 0 ] && return 1
+    w=${t[0]##*/}
+    case $w in
+      timeout|env|nice|nohup|setsid|stdbuf|xargs) ;;
+      *) printf '%s' "$s"; return 0 ;;
+    esac
+    i=1
+    case $w in
+      nohup|setsid) ;;
+      nice)
+        while [ "$i" -lt "$n" ]; do
+          case ${t[i]} in
+            -n) i=$((i + 2)); continue ;;
+            -[0-9]*|--adjustment=*) i=$((i + 1)); continue ;;
+            --) i=$((i + 1)); break ;;
+            -*) return 1 ;;
+          esac
+          break
+        done ;;
+      timeout)
+        while [ "$i" -lt "$n" ]; do
+          case ${t[i]} in
+            --preserve-status|--foreground|-v|--verbose) i=$((i + 1)); continue ;;
+            -s|-k) i=$((i + 2)); continue ;;
+            --signal=*|--kill-after=*) i=$((i + 1)); continue ;;
+            --) i=$((i + 1)); break ;;
+            -*) return 1 ;;
+          esac
+          break
+        done
+        # The duration is positional and mandatory; without consuming it the command word
+        # would come back as the number.
+        [ "$i" -lt "$n" ] || return 1
+        case ${t[i]} in
+          [0-9]*) i=$((i + 1)) ;;
+          *) return 1 ;;
+        esac ;;
+      env)
+        # Only the plain `env VAR=VALUE... cmd` shape. Every option is refused on purpose:
+        # -S splits a string into fresh arguments, -i and -u reshape the environment the
+        # inner command runs in. Neither is readable from the command word alone.
+        while [ "$i" -lt "$n" ]; do
+          case ${t[i]} in
+            -*) return 1 ;;
+            *=*) i=$((i + 1)); continue ;;
+          esac
+          break
+        done ;;
+      stdbuf)
+        while [ "$i" -lt "$n" ]; do
+          case ${t[i]} in
+            -[ioe]?*|--input=*|--output=*|--error=*) i=$((i + 1)); continue ;;
+            --) i=$((i + 1)); break ;;
+            -*) return 1 ;;   # includes the separated `-o L` form
+          esac
+          break
+        done ;;
+      xargs)
+        while [ "$i" -lt "$n" ]; do
+          case ${t[i]} in
+            -0|-r|-t|-x|-p|--null|--no-run-if-empty|--verbose|--interactive) i=$((i + 1)); continue ;;
+            -n|-I|-P|-d|-a|-L|-s|-E) i=$((i + 2)); continue ;;
+            -n*|-I*|-P*|-d*|-a*|-L*|-s*|-E*) i=$((i + 1)); continue ;;
+            --max-args=*|--replace=*|--max-procs=*|--delimiter=*) i=$((i + 1)); continue ;;
+            --arg-file=*|--max-lines=*|--max-chars=*|--eof=*) i=$((i + 1)); continue ;;
+            --) i=$((i + 1)); break ;;
+            -*) return 1 ;;   # -e and -l carry OPTIONAL arguments; arity is unknowable
+          esac
+          break
+        done
+        # Bare `xargs` runs echo. Harmless, but there is no command word to judge.
+        [ "$i" -lt "$n" ] || return 1 ;;
+    esac
+    [ "$i" -lt "$n" ] || return 1
+    # Word splitting above is naive, so a quote among the tokens just consumed means the
+    # real argument boundaries are not where they appear. Refuse rather than guess.
+    for tok in "${t[@]:0:$i}"; do
+      case $tok in *\'*|*\"*) return 1 ;; esac
+    done
+    s="${t[*]:$i}"
+  done
+  return 1
+}
+
 # Command substitution / process substitution can smuggle a gated or unlisted
 # command inside an otherwise-allowed segment; the split below won't see it
 # (e.g. `echo $(curl …) && ls` would auto-approve the curl). Defer to normal handling.
@@ -207,8 +311,32 @@ for part in "${PARTS[@]}"; do
     exit 0
   fi
 
+  # A rule may name a wrapper invocation exactly — `/usr/bin/env bash --version` is
+  # allow-listed as that whole string — so honour the allow list as written before
+  # unwrapping, or that narrowed rule becomes unreachable. A broad `wrapper:*` prefix
+  # cannot sneak back in this way: the content guard in tests/allow-compound-bash.test.js
+  # refuses any allow rule whose last word is a command-taking spawner.
+  if matches_any "$part" "${ALLOW[@]}"; then
+    continue
+  fi
+
+  # Otherwise judge what the segment will actually RUN, not the wrapper in front of it.
+  # Unreadable wrapper → defer; that failure mode is the whole point of the function.
+  target=$(unwrap_wrapper "$part") || exit 0
+  # Not a wrapper, and it already failed the allow list above.
+  [ "$target" = "$part" ] && exit 0
+
+  # The unwrapped command earns the same deny/ask scrutiny the segment just got. Skipping
+  # this would let a wrapper carry a denied command past its own rule: the deny prefixes
+  # are anchored at the start of a segment, so `curl` never matches `xargs curl …`.
+  if matches_any "$target" ${DENY[@]+"${DENY[@]}"} || matches_any "$target" ${ASK[@]+"${ASK[@]}"} \
+    || matches_glob "$target" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
+    || matches_glob "$target" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
+    exit 0
+  fi
+
   # Not in allow list → defer
-  if ! matches_any "$part" "${ALLOW[@]}"; then
+  if ! matches_any "$target" "${ALLOW[@]}"; then
     exit 0
   fi
 done
