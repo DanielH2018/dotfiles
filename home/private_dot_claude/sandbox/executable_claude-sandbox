@@ -291,6 +291,12 @@ PROXY_ALIAS="claudebot-proxy"
 FILTER_NAME="claudebot-dockerfilter-$RUN_ID"
 FILTER_ALIAS="claudebot-dockerfilter"
 NETWORK_NAME="claudebot-net-$RUN_ID"
+# The filter is only a chokepoint if the sandbox has no route around it. Two networks:
+# the sandbox and the filter share NETWORK_NAME, the filter and the proxy share
+# PROXY_NETWORK_NAME, and nothing is on both except the filter. The sandbox therefore
+# has no interface with a route to the proxy at all, whatever the filter does or does
+# not parse correctly.
+PROXY_NETWORK_NAME="claudebot-net-$RUN_ID-proxy"
 
 # --- Shell mode: exec into a live session if one is running ---
 # INSTANCE_ID is deterministic per repo/worktree, while the container name adds a
@@ -821,9 +827,13 @@ start_proxy() {
   docker rm -f "$FILTER_NAME" 2>/dev/null || true
   docker rm -f "$PROXY_NAME" 2>/dev/null || true
   docker network rm "$NETWORK_NAME" 2>/dev/null || true
+  docker network rm "$PROXY_NETWORK_NAME" 2>/dev/null || true
 
-  # Create isolated network for proxy <-> sandbox communication
+  # Sandbox <-> filter. The sandbox joins this one and nothing else.
   docker network create "$NETWORK_NAME" >/dev/null
+  # Filter <-> proxy. --internal keeps it off the host bridge as well; only these two
+  # containers are ever attached.
+  docker network create --internal "$PROXY_NETWORK_NAME" >/dev/null
 
   # Proxy scope: containers/networks/volumes/images are enabled for compose
   # workflows. POST is required for container create/start. exec/build/commit
@@ -847,7 +857,7 @@ start_proxy() {
   # the isolated per-run network and point DOCKER_HOST at that instead.
   docker run -d --rm \
     --name "$PROXY_NAME" \
-    --network "$NETWORK_NAME" \
+    --network "$PROXY_NETWORK_NAME" \
     --network-alias "$PROXY_ALIAS" \
     --cap-drop all \
     -v /var/run/docker.sock:/var/run/docker.sock:ro \
@@ -906,8 +916,7 @@ start_filter() {
   # can write — would resolve on the host and escape a purely textual prefix check.
   docker run -d --rm \
     --name "$FILTER_NAME" \
-    --network "$NETWORK_NAME" \
-    --network-alias "$FILTER_ALIAS" \
+    --network "$PROXY_NETWORK_NAME" \
     --cap-drop all \
     --read-only \
     --user "$(id -u):$(id -g)" \
@@ -917,6 +926,11 @@ start_filter() {
     -e FILTER_WORKSPACE="$WORK_PATH" \
     --entrypoint python3 \
     claudebot:base /opt/docker-create-filter.py >/dev/null
+
+  # Second interface, added after creation because `docker run` accepts only one
+  # --network. The proxy network comes first so FILTER_UPSTREAM resolves from the
+  # moment the process starts; this is the interface the sandbox reaches it on.
+  docker network connect --alias "$FILTER_ALIAS" "$NETWORK_NAME" "$FILTER_NAME" >/dev/null
 
   local retries=0
   while [[ "$(docker inspect -f '{{.State.Running}}' "$FILTER_NAME" 2>/dev/null)" != "true" ]]; do
@@ -934,6 +948,7 @@ stop_proxy() {
   docker rm -f "$FILTER_NAME" 2>/dev/null || true
   docker rm -f "$PROXY_NAME" 2>/dev/null || true
   docker network rm "$NETWORK_NAME" 2>/dev/null || true
+  docker network rm "$PROXY_NETWORK_NAME" 2>/dev/null || true
 }
 
 # --- Git worktree management ---
