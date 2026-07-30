@@ -8,6 +8,9 @@
  *   - @-include targets in CLAUDE.md / CLAUDE.local.md that don't exist
  *   - skill-name collisions across user skills and plugin skills
  *   - CLAUDE.md size vs a soft bloat threshold
+ *   - binary/tool deps guarded in hook scripts (run_if_installed/command -v/
+ *     which) that are absent from PATH on this host — info-only for now
+ *     (M14/M15 reference-resolver slice 1; see specs/env-modules)
  *
  * Usage: node config-lint.js [rootDir] [--strict] [--json]
  *   rootDir  config dir to audit (default: ~/.claude)
@@ -22,6 +25,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const BLOAT_MAX_BYTES = 12 * 1024; // ~12 KB
 const BLOAT_MAX_LINES = 250;
@@ -95,10 +99,83 @@ function checkBloat(text, { maxBytes = BLOAT_MAX_BYTES, maxLines = BLOAT_MAX_LIN
     return { bytes, lines, overBytes: bytes > maxBytes, overLines: lines > maxLines };
 }
 
+// Binary/tool dependency (M14/M15 reference kind #10, spec §2 row 10).
+// Deployed scripts guard optional tools with idioms like:
+//   run_if_installed prettier --write ...      (hooks/auto-format.sh's own wrapper)
+//   command -v cargo >/dev/null 2>&1 && ...    (ad-hoc guards elsewhere)
+// Both idioms name the *literal* tool at the call site; only the wrapper's own
+// definition (`command -v "$1"`) references a shell parameter, which is excluded.
+const BINARY_DEP_PATTERNS = [
+    /\brun_if_installed\s+([A-Za-z0-9_.-]+)/g,
+    /\bcommand\s+-v\s+"?([A-Za-z0-9_.-]+)"?/g,
+    /\bwhich\s+"?([A-Za-z0-9_.-]+)"?/g,
+];
+
+// Strip shell comments (naive: '#' at line start or preceded by whitespace) so
+// prose like "# which would break X" doesn't get misread as a `which` guard.
+function stripShellComments(text) {
+    return text.split("\n").map(line => {
+        const m = line.match(/(^|\s)#.*/);
+        return m ? line.slice(0, m.index) : line;
+    }).join("\n");
+}
+
+function extractBinaryDeps(files) {
+    const seen = new Set();
+    const deps = [];
+    for (const { path: filePath, text: rawText } of files) {
+        const text = stripShellComments(rawText);
+        for (const re of BINARY_DEP_PATTERNS) {
+            re.lastIndex = 0;
+            let match;
+            while ((match = re.exec(text)) !== null) {
+                const tool = match[1];
+                if (/^\$/.test(tool)) continue; // shell parameter (e.g. "$1"), not a literal tool name
+                const key = `${filePath} ${tool}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                deps.push({ file: filePath, tool });
+            }
+        }
+    }
+    return deps;
+}
+
+// hasBinary is injected so tests never depend on the real PATH; audit() wires
+// up the real `command -v` check via commandExists() below.
+function checkBinaryDeps(deps, hasBinary) {
+    const findings = [];
+    for (const { file, tool } of deps) {
+        if (!hasBinary(tool)) {
+            findings.push({ sev: "info", area: "binary-deps", msg: `${file} depends on "${tool}", not found on PATH (guarded, silently no-ops here)` });
+        }
+    }
+    return findings;
+}
+
 // ── fs wrappers ───────────────────────────────────────────────────────────────
 
 function readJSON(file) {
     try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+}
+
+function commandExists(tool) {
+    // `command` is a shell builtin (not an executable on PATH), so this needs a
+    // shell. Tool names are already constrained to [A-Za-z0-9_.-] by the
+    // extraction regexes, so a single interpolated string is safe here and
+    // avoids Node's args+shell deprecation warning (DEP0190).
+    const r = spawnSync(`command -v ${tool}`, { shell: "/bin/sh" });
+    return r.status === 0;
+}
+
+function readHookScripts(hooksDir) {
+    if (!fs.existsSync(hooksDir)) return [];
+    return fs.readdirSync(hooksDir, { withFileTypes: true })
+        .filter(d => d.isFile() && /\.(sh|bash)$/.test(d.name))
+        .map(d => {
+            const p = path.join(hooksDir, d.name);
+            return { path: p, text: fs.readFileSync(p, "utf8") };
+        });
 }
 
 function listSkillNames(skillsDir) {
@@ -171,6 +248,10 @@ function audit(root, home) {
         add("info", "skills", `skill name "${dupe.name}" defined in: ${dupe.sources.join(", ")}`);
     }
 
+    // Binary/tool dependencies (report-only: always info, see SKILL.md §Migration)
+    const binaryDeps = extractBinaryDeps(readHookScripts(path.join(root, "hooks")));
+    for (const f of checkBinaryDeps(binaryDeps, commandExists)) add(f.sev, f.area, f.msg);
+
     return findings;
 }
 
@@ -205,7 +286,7 @@ function main() {
 
 module.exports = {
     diffPlugins, extractHookCommands, extractPaths, parseIncludes,
-    findDuplicateSkills, checkBloat, audit,
+    findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 

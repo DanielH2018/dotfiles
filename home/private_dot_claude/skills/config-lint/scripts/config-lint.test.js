@@ -65,3 +65,50 @@ test("checkBloat flags over-threshold on bytes and lines", () => {
   assert.strictEqual(m.checkBloat("x".repeat(200), { maxBytes: 100, maxLines: 100 }).overBytes, true);
   assert.strictEqual(m.checkBloat("a\n".repeat(200), { maxBytes: 1e9, maxLines: 100 }).overLines, true);
 });
+
+test("extractBinaryDeps finds run_if_installed call sites but not the wrapper's own $1 param", () => {
+  const text = [
+    'run_if_installed() {',
+    '  command -v "$1" >/dev/null 2>&1 && "$@" 2>&1',
+    '}',
+    'run_if_installed prettier --write "$FILE_PATH"',
+    'run_if_installed shfmt -w "$FILE_PATH"',
+  ].join("\n");
+  const deps = m.extractBinaryDeps([{ path: "hooks/auto-format.sh", text }]);
+  const tools = deps.map(d => d.tool).sort();
+  assert.deepStrictEqual(tools, ["prettier", "shfmt"]);
+});
+
+test("extractBinaryDeps finds bare command -v and which guards, deduped per file+tool", () => {
+  const text = [
+    'command -v jq >/dev/null 2>&1 || exit 0',
+    'if command -v cygpath >/dev/null 2>&1; then :; fi',
+    'which cargo >/dev/null',
+    'command -v jq >/dev/null 2>&1 || exit 0', // repeat: should dedupe
+  ].join("\n");
+  const deps = m.extractBinaryDeps([{ path: "hooks/chezmoi-guard.sh", text }]);
+  assert.deepStrictEqual(deps.map(d => d.tool).sort(), ["cargo", "cygpath", "jq"]);
+});
+
+test("extractBinaryDeps ignores prose mentions of \"which\"/\"command\" inside comments", () => {
+  const text = [
+    "# Helps Claude remember which feature branch it is on.",
+    "# which would inject a spurious marker into every prompt.",
+    "echo hi # command -v ignored, this is trailing prose not a guard",
+  ].join("\n");
+  const deps = m.extractBinaryDeps([{ path: "hooks/worktree-context.sh", text }]);
+  assert.deepStrictEqual(deps, []);
+});
+
+test("checkBinaryDeps reports info findings only for tools the injected checker says are missing", () => {
+  const deps = [
+    { file: "hooks/x.sh", tool: "definitely-not-a-real-binary-xyz" },
+    { file: "hooks/x.sh", tool: "sh" },
+  ];
+  const hasBinary = tool => tool === "sh";
+  const findings = m.checkBinaryDeps(deps, hasBinary);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].sev, "info");
+  assert.strictEqual(findings[0].area, "binary-deps");
+  assert.match(findings[0].msg, /definitely-not-a-real-binary-xyz/);
+});
