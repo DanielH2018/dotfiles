@@ -172,4 +172,27 @@ test('the rewrite is skipped when tq cannot be resolved by name', { skip }, () =
   assert.strictEqual(r.stdout.trim(), '');
 });
 
+// TQ_LIB is derived from $TQ_HOME when that is set, and this hook runs in front of every
+// Bash call — so an importable directory here is an execution path into the hook itself,
+// chosen by whoever can set an environment variable. Both refusals must leave the command
+// untouched and still exit 0: rewrite() is called under a deliberately blind except.
+test('a world-writable TQ_HOME is refused rather than imported', { skip }, () => {
+  const hostile = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hostile-'));
+  dirs.push(hostile);
+  // If this were imported the hook would die on the SystemExit rather than return null.
+  fs.writeFileSync(path.join(hostile, 'detect.py'), 'raise SystemExit("must never be imported")\n');
+  fs.chmodSync(hostile, 0o777);
+  const r = runHook('node --test', { env: { TQ_HOME: hostile } });
+  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
+  assert.strictEqual(r.stdout.trim(), '');
+});
+
+test('a TQ_HOME with no module is refused', { skip }, () => {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-empty-'));
+  dirs.push(empty);
+  const r = runHook('node --test', { env: { TQ_HOME: empty } });
+  assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
+  assert.strictEqual(r.stdout.trim(), '');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

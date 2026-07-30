@@ -25,10 +25,12 @@ environment disables it wholesale.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shlex
 import shutil
+import stat
 import sys
 
 # Anything that makes the command more than one simple command.
@@ -50,8 +52,28 @@ def load_detect():
     while the candidates were test runners and is not now that they include git,
     ls and grep — the programs an agent runs most.
     """
+    # This hook stands in front of every Bash call, so whatever is importable here runs
+    # on every one of them. TQ_LIB comes from $TQ_HOME when set, which means without a
+    # check anything able to set an environment variable chooses the code that gets
+    # imported. Require a real directory holding a real module, both owned by this user
+    # and not writable by group or others. Raising is the safe outcome: rewrite() is
+    # called under a deliberately blind except that leaves the command untouched.
+    lib = os.stat(TQ_LIB)
+    mod = os.stat(os.path.join(TQ_LIB, "detect.py"))
+    if not stat.S_ISDIR(lib.st_mode) or not stat.S_ISREG(mod.st_mode):
+        raise ImportError(f"tq lib is not a directory holding a module: {TQ_LIB}")
+    me = os.getuid()
+    for st in (lib, mod):
+        if st.st_uid not in (me, 0) or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ImportError(f"tq lib is not exclusively ours to write: {TQ_LIB}")
+
     sys.path.insert(0, TQ_LIB)
-    import detect
+    try:
+        import detect
+    finally:
+        # Don't leave TQ_LIB on sys.path shadowing every later import in this process.
+        with contextlib.suppress(ValueError):
+            sys.path.remove(TQ_LIB)
 
     return detect.detect, detect.CANDIDATES
 
