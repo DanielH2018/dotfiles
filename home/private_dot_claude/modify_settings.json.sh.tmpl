@@ -1,11 +1,19 @@
 #!/bin/sh
 # chezmoi modify_ script (templated): regenerate ~/.claude/settings.json as
 #   merge(general base, work overlay-if-present).
-# stdin (current target content) is intentionally ignored — the file is fully derived.
+# stdin (current target content) is read for ONE purpose: the runtime-owned key allowlist in
+# claude-settings-merge (currently just effortLevel, written into the deployed file by
+# `/effort`). Everything else about the file is still fully derived from the templates — the
+# carry-forward is data only, never permission rules, hooks or code.
 set -eu
 
 BASE="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-base.XXXXXX")"
-trap 'rm -f "$BASE"' EXIT
+PRIOR="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-prior.XXXXXX")"
+trap 'rm -f "$BASE" "$PRIOR"' EXIT
+
+# Drain stdin unconditionally: leaving it unread can SIGPIPE the writer. Empty means the
+# target does not exist yet (first apply), so there is nothing to carry forward.
+cat > "$PRIOR"
 cat > "$BASE" <<'CHEZMOI_BASE_EOF'
 {{ includeTemplate "settings.base.json" . }}
 CHEZMOI_BASE_EOF
@@ -26,4 +34,12 @@ if [ -z "$NODE" ]; then
   done
 fi
 [ -n "$NODE" ] || { echo "modify_settings: node not found on PATH or common locations; cannot generate ~/.claude/settings.json" >&2; exit 1; }
-"$NODE" "{{ .chezmoi.sourceDir }}/dot_local/bin/executable_claude-settings-merge" "$BASE" "$OVERLAY"
+MERGE="{{ .chezmoi.sourceDir }}/dot_local/bin/executable_claude-settings-merge"
+# By environment, never as an argument: an older copy of the merge script ignores an unknown
+# env var, but would take an unknown flag's operand as another settings fragment and merge the
+# whole deployed file back in. Skew must cost a dropped effort pin, not a widened permission set.
+if [ -s "$PRIOR" ]; then
+  CLAUDE_SETTINGS_PRIOR="$PRIOR" "$NODE" "$MERGE" "$BASE" "$OVERLAY"
+else
+  "$NODE" "$MERGE" "$BASE" "$OVERLAY"
+fi

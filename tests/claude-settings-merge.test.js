@@ -9,6 +9,11 @@ const BIN = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_c
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-'));
 const w = (name, obj) => { const p = path.join(tmp, name); fs.writeFileSync(p, JSON.stringify(obj)); return p; };
 const run = (...args) => JSON.parse(execFileSync('node', [BIN, ...args], { encoding: 'utf8' }));
+// The prior deployed file arrives by environment, not argv - see the skew rationale in the script.
+const runWithPrior = (prior, ...args) =>
+  JSON.parse(execFileSync('node', [BIN, ...args], {
+    encoding: 'utf8', env: { ...process.env, CLAUDE_SETTINGS_PRIOR: prior },
+  }));
 // Capture a non-zero exit instead of throwing, so the status and stderr can be asserted.
 const runFail = (...args) => {
   try { execFileSync('node', [BIN, ...args], { encoding: 'utf8', stdio: 'pipe' }); return { status: 0, stderr: '' }; }
@@ -114,4 +119,64 @@ test('treats a key named after an Object.prototype member as an ordinary key', (
   const out = run(w('b12.json', { model: 'opus' }), wRaw('o12.json', '{"toString":{"type":"command"}}'));
   assert.deepStrictEqual(out.toString, { type: 'command' });
   assert.strictEqual(out.model, 'opus');
+});
+
+// Runtime-owned keys. `/effort` writes effortLevel into the deployed settings.json; the
+// templates never set it, so every `chezmoi apply` used to drop the pin — observed twice in
+// one session. CLAUDE_SETTINGS_PRIOR names the prior deployed file, read for that key alone.
+test('a runtime-owned key survives a re-derive that does not set it', () => {
+  const base = w('rt-base.json', { model: 'opus' });
+  const prior = w('rt-prior.json', { model: 'sonnet', effortLevel: 'xhigh' });
+  const out = runWithPrior(prior, base);
+  assert.strictEqual(out.effortLevel, 'xhigh', 'effortLevel must be carried forward');
+  assert.strictEqual(out.model, 'opus', 'the template still wins for everything else');
+});
+
+test('an explicit template pin beats the carried-forward value', () => {
+  const base = w('rt-base2.json', { effortLevel: 'low' });
+  const prior = w('rt-prior2.json', { effortLevel: 'xhigh' });
+  assert.strictEqual(runWithPrior(prior, base).effortLevel, 'low');
+});
+
+// The whole point of the fixed allowlist: the prior file is a deployed artifact that may
+// carry local hand-edits, so anything outside the list — above all permission rules — must
+// not survive a re-derive. Carrying those forward would make an uncommitted edit into policy.
+test('carry-forward is scoped to the allowlist and never touches permissions', () => {
+  const base = w('rt-base3.json', { permissions: { allow: ['Bash(ls:*)'] } });
+  const prior = w('rt-prior3.json', {
+    effortLevel: 'high',
+    permissions: { allow: ['Bash(LOCAL-EDIT:*)'] },
+    model: 'haiku',
+    hooks: { PreToolUse: ['injected'] },
+  });
+  const out = runWithPrior(prior, base);
+  assert.strictEqual(out.effortLevel, 'high');
+  assert.deepStrictEqual(out.permissions, { allow: ['Bash(ls:*)'] }, 'prior permissions must not survive');
+  assert.ok(!('model' in out), 'a non-allowlisted prior key must not be carried forward');
+  assert.ok(!('hooks' in out), 'a non-allowlisted prior key must not be carried forward');
+});
+
+test('a runtime key absent from the prior file stays absent', () => {
+  const out = runWithPrior(w('rt-prior4.json', { model: 'opus' }), w('rt-base4.json', { model: 'opus' }));
+  assert.ok(!('effortLevel' in out), 'nothing to carry forward means unpinned, not a default');
+});
+
+// Losing a UX pin is not worth aborting an apply that would otherwise deploy every other
+// dotfile — unlike a fragment parse failure, which is a malformed input to the derivation.
+test('an unreadable prior file warns but still generates', () => {
+  const bad = path.join(tmp, 'rt-bad.json'); fs.writeFileSync(bad, '{not json');
+  assert.strictEqual(runWithPrior(bad, w('rt-base5.json', { model: 'opus' })).model, 'opus');
+  const missing = runWithPrior(path.join(tmp, 'rt-nope.json'), w('rt-base6.json', { model: 'opus' }));
+  assert.strictEqual(missing.model, 'opus', 'a first-ever apply has no prior file at all');
+});
+
+// The template invokes this script by absolute path under .chezmoi.sourceDir (the primary
+// checkout), so a new template can meet an older script. Had the prior file been a flag
+// operand, that skew would have merged the entire deployed settings.json back in as a
+// fragment and promoted its stale permission rules to policy. Refuse flag-shaped args so
+// the failure is loud in the other direction too.
+test('a flag-shaped argument is refused, never taken as a filename', () => {
+  const r = runFail('--carry-forward', w('rt-prior8.json', { effortLevel: 'xhigh' }), w('rt-base8.json', { model: 'opus' }));
+  assert.strictEqual(r.status, 2, 'an unknown option must exit 2');
+  assert.match(r.stderr, /unknown option --carry-forward/);
 });

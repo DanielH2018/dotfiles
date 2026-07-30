@@ -15,12 +15,22 @@ const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modif
 // This test renders a chezmoi template via `includeTemplate`; skip cleanly where
 // chezmoi can't render THIS repo — the binary is absent, or its configured source
 // dir isn't this repo (e.g. a sandbox pointing at an empty default source dir).
+//
+// `.chezmoi.sourceDir` is whatever chezmoi is configured with, which is the primary
+// checkout — never a worktree. The rendered script therefore invokes the PRIMARY
+// checkout's claude-settings-merge, not this tree's. Run from a worktree, this suite
+// used to render the worktree's template against the primary checkout's binary and
+// report the result as if it had tested the worktree: false green, or a false red like
+// the one that surfaced this. Require the resolved source dir to be this tree's `home/`
+// and skip otherwise, so a worktree gets no signal rather than wrong signal.
+const REPO_SOURCE_DIR = path.join(__dirname, '..', 'home');
 function chezmoiCanRenderRepo() {
   try {
     const srcDir = execFileSync('chezmoi', ['execute-template'], {
       input: '{{ .chezmoi.sourceDir }}', encoding: 'utf8',
     }).trim();
-    return !!srcDir && fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'));
+    if (!srcDir || !fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'))) return false;
+    return fs.realpathSync(srcDir) === fs.realpathSync(REPO_SOURCE_DIR);
   } catch { return false; }
 }
 const skip = chezmoiCanRenderRepo() ? false : 'chezmoi cannot render this repo\'s templates';
@@ -49,12 +59,27 @@ test('output is valid JSON carrying the base structure', { skip }, () => {
   assert.ok(out.permissions && typeof out.permissions === 'object', 'output has a permissions object');
 });
 
-// 2. Fully derived: stdin is IGNORED. Different stdin yields identical output, and a key that
-//    exists only in stdin never appears in the result (the file is not merged with stdin).
-test('output is fully derived; stdin is ignored', { skip }, () => {
-  const withJunk = run(JSON.stringify({ model: 'sonnet', __stdin_only_key__: true }));
-  assert.strictEqual(withJunk, run(''), 'output is independent of stdin');
+// 2. Derived except for the runtime-owned key allowlist. stdin is the current target content;
+//    it is read ONLY for keys the running harness writes back (effortLevel, via `/effort`).
+//    Everything else in it — above all permission rules — must not survive a re-derive, or a
+//    hand-edited deployed file would promote itself to policy on the next apply.
+test('stdin is ignored except for runtime-owned keys', { skip }, () => {
+  const withJunk = run(JSON.stringify({
+    model: 'sonnet',
+    __stdin_only_key__: true,
+    permissions: { allow: ['Bash(STDIN-INJECTED:*)'] },
+  }));
+  assert.strictEqual(withJunk, run(''), 'output is independent of non-runtime stdin keys');
   assert.ok(!withJunk.includes('__stdin_only_key__'), 'stdin content is not merged into the output');
+  assert.ok(!withJunk.includes('STDIN-INJECTED'), 'a stdin permission rule never reaches the output');
+});
+
+// The regression this slice exists for: `/effort` writes effortLevel into the deployed file,
+// no template sets it, so every `chezmoi apply` silently dropped the pin mid-session.
+test('a runtime-owned key in stdin survives the re-derive', { skip }, () => {
+  const out = JSON.parse(run(JSON.stringify({ effortLevel: 'xhigh' })));
+  assert.strictEqual(out.effortLevel, 'xhigh', 'effortLevel must survive an apply');
+  assert.ok(!('effortLevel' in JSON.parse(run(''))), 'and stays absent when nothing set it');
 });
 
 // 3. Idempotent: feeding the output back in yields identical output.

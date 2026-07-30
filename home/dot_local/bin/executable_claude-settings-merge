@@ -61,7 +61,66 @@ const merge = (a, b, path = []) => {
   return b;
 };
 
+// Keys the *running harness* writes back into the deployed settings.json at session time
+// (`/effort` writes effortLevel). The templates don't set them, so a plain re-derive drops
+// them on every `chezmoi apply` — the pin silently vanishes mid-session. This list is a
+// fixed literal, never inferred from the prior file: carrying forward whatever happens to
+// be in the deployed copy would make an uncommitted local edit into policy, which is the
+// exact property "the file is fully derived" exists to guarantee.
+const RUNTIME_OWNED_KEYS = ['effortLevel'];
+
+// Data carry-forward only, and only for the keys above. Never permission rules, never hooks,
+// never code — so this does not reopen "settings.json is fully derived" as a general property.
+const carryForward = (acc, priorFile) => {
+  if (!priorFile || !fs.existsSync(priorFile)) return acc;
+  let prior;
+  try {
+    prior = JSON.parse(fs.readFileSync(priorFile, 'utf8'));
+  } catch (e) {
+    // A missing or corrupt prior file loses a UX pin, not a guardrail. Warn and generate
+    // anyway: aborting here would block every other dotfile in the same apply.
+    process.stderr.write(
+      `claude-settings-merge: cannot read runtime keys from ${priorFile}: ${e.message}\n`,
+    );
+    return acc;
+  }
+  if (!isObj(prior)) return acc;
+  for (const k of RUNTIME_OWNED_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(prior, k)) continue;
+    if (Object.prototype.hasOwnProperty.call(acc, k)) {
+      // An explicit pin in the template is a deliberate override and wins. Say so when it
+      // actually changes the live value, so a silently-reverted /effort is visible.
+      if (JSON.stringify(acc[k]) !== JSON.stringify(prior[k])) {
+        process.stderr.write(
+          `claude-settings-merge: template pins ${k}=${JSON.stringify(acc[k])}, ` +
+            `replacing deployed ${JSON.stringify(prior[k])}\n`,
+        );
+      }
+      continue;
+    }
+    acc[k] = prior[k];
+  }
+  return acc;
+};
+
+// The prior file arrives by environment, not as an argument, and that is deliberate.
+// modify_settings.json.sh.tmpl invokes this script by absolute path under
+// `.chezmoi.sourceDir`, which is the primary checkout — so a worktree, an interrupted
+// apply, or a mid-apply checkout can pair a new template with an older copy of this
+// script. An unrecognised *flag* would fall through to the positional file list and the
+// whole deployed settings.json would be merged back in as a fragment, promoting every
+// stale or hand-edited permission rule in it to policy. An unrecognised *env var* is
+// inert. Skew therefore costs a dropped effort pin, never a widened permission model.
+const priorFile = process.env.CLAUDE_SETTINGS_PRIOR || null;
+
 const files = process.argv.slice(2);
+// Nothing here takes flags. Refuse anything flag-shaped rather than treating it as a
+// filename that silently does not exist — same reasoning as above, other direction.
+const flagLike = files.filter((f) => f.startsWith('--'));
+if (flagLike.length) {
+  process.stderr.write(`claude-settings-merge: unknown option ${flagLike[0]}\n`);
+  process.exit(2);
+}
 if (files.length === 0) {
   process.stderr.write('usage: claude-settings-merge FILE [FILE...]\n');
   process.exit(2);
@@ -78,4 +137,5 @@ for (const f of files) {
   }
   acc = merge(acc, data);
 }
+acc = carryForward(acc, priorFile);
 process.stdout.write(JSON.stringify(acc, null, 2) + '\n');
