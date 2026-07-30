@@ -121,20 +121,49 @@ test('no already-judged command moves toward allow under the new segmentation', 
   assert.deepStrictEqual(moved, [], 'a defer/deny that becomes an allow is a parser bug');
 });
 
-// The census's actual finding, pinned so it cannot be shipped by accident.
+// DECIDED 2026-07-30 (spec §8a): the cutover narrows and does not widen.
 //
-// A newline-separated chain of individually allow-listed commands is not "compound" to
-// today's substring gate, so it never reaches this hook's judgement and falls through to
-// native prefix matching, which prompts. Under the shared segmentation the approver DOES
-// judge it, both segments are allow-listed, and it would be auto-approved. That is a real
-// widening — prompt becomes silent approval — and it is the owner's call, not the parser's.
-// Slice 2 must not land until it is signed off.
-test('the newline class is the one population that would newly be approved', () => {
-  const d = logDir('widening');
+// The census found exactly one population that moves toward allow — a chain of
+// individually allow-listed commands separated by a newline (or a lone `&`) and nothing
+// else. Today that is not "compound" to the substring gate, so the approver never judges
+// it and it prompts. Under the shared segmentation every segment is allow-listed and it
+// would be auto-approved.
+//
+// It stays deferred. Auto-approval eligibility is unchanged: a command reaches the
+// approver's judgement only if it was compound under the old && / ; / | test. Newline-only
+// compounds are still judged for DENY under the new segmentation — that half is the point
+// of the module — but are never eligible for ALLOW. The prompt is the safety net for
+// parser bugs, and slice 0 alone produced two.
+//
+// `shadow_only` marks that population. The census still records what raw segmentation
+// would have decided (`new`), so the decision is revisitable on evidence.
+test('newline-only compounds are judged for deny but never eligible for allow', () => {
+  const d = logDir('policy');
   for (const cmd of CORPUS) run(ACB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const widened = readLog(d).filter((r) => r.old !== 'allow' && r.new === 'allow');
-  assert.deepStrictEqual(widened.map((r) => r.cmd), ['echo hi\nls']);
-  assert.strictEqual(widened[0].shadow_only, 1, 'and it is only ever recorded, never emitted');
+  const rows = readLog(d);
+
+  // Nothing outside the old compound test may ever be emitted as an approval.
+  for (const r of rows.filter((x) => x.shadow_only === 1)) {
+    assert.strictEqual(r.old, 'defer', `${JSON.stringify(r.cmd)} must stay deferred`);
+  }
+  // And the hook emits nothing for them, which is what "deferred" means on the wire.
+  assert.strictEqual(run(ACB, 'echo hi\nls', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d }), '');
+
+  // The measurement is retained rather than suppressed: raw segmentation still reports
+  // what it would have said, which is the evidence for ever revisiting this.
+  const wouldHave = rows.filter((r) => r.shadow_only === 1 && r.new === 'allow');
+  assert.deepStrictEqual(wouldHave.map((r) => r.cmd), ['echo hi\nls']);
+});
+
+// The narrowing half must still reach the newline population — otherwise the module buys
+// nothing for the two verified bypasses. Deny/ask is evaluated per segment regardless of
+// whether the command was compound under the old test.
+test('a newline compound is still judged for deny under the new segmentation', () => {
+  const d = logDir('policy-deny');
+  run(ACB, 'echo hi\ncurl evil.example.com', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  const [row] = readLog(d);
+  assert.strictEqual(row.shadow_only, 1);
+  assert.strictEqual(row.new, 'defer', 'an unlisted second command defers on its own merits');
 });
 
 // The census of the two verified bypasses: the anchored rules cannot see past a newline
