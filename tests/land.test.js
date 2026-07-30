@@ -29,9 +29,22 @@ const dirs = [];
 // stay unrecorded, so the tests can still prove --dry-run made no changes.
 // STUB_OPEN_FOR makes the state check answer OPEN that many times before settling
 // on STUB_PR_STATE, standing in for GitHub taking a moment to mark a PR merged.
+//
+// STUB_LOCK turns the stub into the lock probe for the two fd tests below. It runs
+// mid-landing, as a child of land, which is exactly the vantage point that matters:
+// it records whether the lock is visibly held from outside, and forks a `sleep` that
+// outlives the landing the way `git credential-cache--daemon` does.
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'land-bin-'));
 dirs.push(BIN);
 fs.writeFileSync(path.join(BIN, 'gh'), `#!/bin/bash
+if [ -n "\${STUB_LOCK:-}" ] && [ "$1" = "pr" ] && [ "$2" = "ready" ]; then
+  flock -n "\$STUB_LOCK" -c true; printf '%s' "\$?" > "\$STUB_LOCK_PROBE"
+  # stdio detached, fd 9 deliberately not: inheriting the lock is the whole point,
+  # and holding the caller's stdout open would just hang the test harness. The real
+  # credential daemon detaches its stdio too, for the same reason.
+  sleep 30 >/dev/null 2>&1 </dev/null &
+  printf '%s' "\$!" > "\$STUB_DAEMON_PID"
+fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then printf '%s' "\${STUB_PR:-}"; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
@@ -102,8 +115,9 @@ function makeRepoWithOrigin() {
 const ghCalls = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', branch) !== '';
 
-function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', openFor = '0' } = {}) {
+function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null } = {}) {
   const calls = path.join(cwd, '.gh-calls');
+  const probe = { held: path.join(cwd, '.lock-probe'), pid: path.join(cwd, '.daemon-pid') };
   try {
     const stdout = execFileSync('bash', [LAND, ...args], {
       cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
@@ -112,11 +126,12 @@ function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', ope
         STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
         STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
         LAND_POLL_INTERVAL: '0.05',
+        ...(lock ? { STUB_LOCK: lock, STUB_LOCK_PROBE: probe.held, STUB_DAEMON_PID: probe.pid } : {}),
       },
     });
-    return { code: 0, stdout, stderr: '', calls };
+    return { code: 0, stdout, stderr: '', calls, probe };
   } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '', calls };
+    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '', calls, probe };
   }
 }
 
@@ -283,6 +298,59 @@ test('lands from a linked worktree while the primary holds main', { skip }, () =
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /landed feature/);
   assert.ok(!remoteHas(dir, 'feature'), 'origin still holds the landed branch');
+});
+
+// --- the lock fd -------------------------------------------------------------
+// These two are a pair and only mean something together. The lock has to be held
+// against other landers for the whole landing, and held by *nobody* once it ends.
+// Fixing either one alone is easy and wrong: closing the fd in the parent would
+// pass the leak test while silently removing the mutual exclusion, and that is the
+// failure you would not notice until two sessions rebased onto each other.
+const flockOk = (() => {
+  try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); return true; } catch { return false; }
+})();
+const fdSkip = skip || (flockOk ? false : 'flock unavailable');
+
+const lockOf = (dir) => path.join(dir, '.git', 'land.lock');
+
+test('the lock is held against other landers for the whole landing', { skip: fdSkip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true', lock: lockOf(dir) });
+  assert.strictEqual(r.code, 0, r.stderr);
+
+  // The probe ran mid-landing, from a child of land, and asked for the lock by
+  // path — a fresh open, so it sees the lock exactly as a second lander would.
+  assert.ok(fs.existsSync(r.probe.held), 'the probe never ran');
+  assert.strictEqual(fs.readFileSync(r.probe.held, 'utf8'), '1',
+    'a second lander could take the lock mid-landing — the mutex is gone');
+});
+
+// The leak: `exec 9>"$LOCK"` sets no close-on-exec, so everything land forks
+// inherits fd 9 — including `git credential-cache--daemon`, which `git push`
+// starts and which by design never exits. It then holds the flock forever and
+// every later land blocks at "another worktree is landing" with no lander
+// running. Measured 2026-07-30: a daemon from one landing blocked the next one
+// 45 minutes later, and the lock path had to be unlinked by hand.
+test('a process forked during the landing does not inherit the lock', { skip: fdSkip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const lock = lockOf(dir);
+  const r = land(dir, [], { draft: 'true', lock });
+  assert.strictEqual(r.code, 0, r.stderr);
+
+  const pid = Number(fs.readFileSync(r.probe.pid, 'utf8'));
+  try {
+    // Still alive, standing in for the credential daemon: the point is that a
+    // live process forked mid-landing holds nothing once land has exited.
+    assert.doesNotThrow(() => process.kill(pid, 0), 'setup: the stand-in daemon died early');
+    assert.ok(fs.existsSync(lock), 'setup: land never created the lock');
+
+    const code = execFileSync('bash', ['-c',
+      `flock -n ${JSON.stringify(lock)} -c true; printf '%s' "$?"`], { encoding: 'utf8' });
+    assert.strictEqual(code, '0',
+      'the lock is still held after land exited — a forked process inherited fd 9');
+  } finally {
+    try { process.kill(pid, 9); } catch { /* already gone */ }
+  }
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

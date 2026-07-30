@@ -174,7 +174,21 @@ if command -v flock >/dev/null 2>&1; then
     say "another worktree is landing; waiting for it to finish..."
     flock 9 || die "could not take $LOCK"
   fi
-  land
+
+  # Run the landing with fd 9 closed in the child, while this shell keeps it open
+  # and locked. A bash redirect sets no close-on-exec, so without this every
+  # process forked below inherits the lock fd — including
+  # `git credential-cache--daemon`, which `git push` starts and which by design
+  # never exits. It then holds the flock forever, and every later land blocks at
+  # "another worktree is landing" with no lander running: measured 2026-07-30, a
+  # daemon from one landing blocked the next one 45 minutes later and the lock
+  # path had to be unlinked by hand.
+  #
+  # Closing the child's copy releases nothing — the lock lives on the open file
+  # description this shell still holds — so the mutex is unchanged. Closing it
+  # *here* instead would drop the lock and quietly delete the mutual exclusion,
+  # which is why tests/land.test.js pins both halves together.
+  ( land ) 9>&-
   rc=$?
   exec 9>&-
   exit $rc
