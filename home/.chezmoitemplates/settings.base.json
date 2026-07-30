@@ -165,8 +165,7 @@
       "Bash(awk:*)",
       "Bash(sed:*)",
       "Bash(jq:*)",
-      {{/* jsonq evaluates Python expressions over JSON, but only after an AST allowlist rejects imports, underscore-prefixed names/attributes, and `format` — so it cannot import, open a file it wasn't handed, spawn a process, or reach the network. That, plus its own copy of the hook's secret-path guard, is what makes a blanket allow safe; tests/jsonq.test.js is the escape suite holding it to that. */}}
-      "Bash(jsonq:*)",
+      {{/* jsonq had a blanket allow on the strength of its AST allowlist. That allowlist is escapable — exposed pure-stdlib modules reach sys and builtins, giving arbitrary execution and arbitrary file write, and the secret-path guard goes with it. tests/jsonq.test.js is green and the tool is still escapable, so the suite was never the thing making it safe. The grant is withdrawn until the evaluator is removed or rebuilt; jq is already allow-listed and covers the observed uses. */}}
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
       "Bash(yq:*)",
