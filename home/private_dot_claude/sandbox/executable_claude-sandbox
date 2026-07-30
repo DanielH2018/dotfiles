@@ -1958,6 +1958,15 @@ if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" 
       if [[ -d "$CHEZMOI_SRC/.git/hooks" ]]; then
         DOCKER_ARGS+=(-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro")
       fi
+      # The sandbox's own definition lives here: settings.base.json (which
+      # resolve-sandbox-settings.sh takes as its base, hooks block included — only host
+      # DENIES are unioned on top, nothing is sanitised), the container hook set, the
+      # entrypoint and the Dockerfiles. Writable, a session could rewrite the boundary
+      # that the NEXT launch runs under — the same escape the :ro live-hook mounts closed
+      # inside the container, reached one level back through the source tree instead.
+      if [[ -d "$_cm_root/private_dot_claude/sandbox" ]]; then
+        DOCKER_ARGS+=(-v "$_cm_root/private_dot_claude/sandbox:$_cm_root/private_dot_claude/sandbox:ro")
+      fi
       # Point the in-container chezmoi binary at the mounted source so
       # cat/diff/managed/source-path/execute-template work. apply/add are denied
       # (settings.base.json) — their dest is the container home, not the host.

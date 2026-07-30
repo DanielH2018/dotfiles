@@ -42,7 +42,14 @@ warn() {  # $1 = optional short reason appended in brackets
 FOLDED=$(printf '%s' "$OUT" | tr '[:upper:]' '[:lower:]' | tr '103457@$' 'ioeastas')
 
 B64=""
-for tok in $(printf '%s' "$OUT" | grep -oE '[A-Za-z0-9+/]{16,}={0,2}' 2>/dev/null); do
+# Bounded on both axes. This hook runs on EVERY tool result, the regex matches any long
+# alphanumeric run — hashes, minified JS, a base64 image, a lockfile — and each iteration
+# spawns base64 + tr, so an unbounded loop paid two processes per token on output that is
+# routinely megabytes. A real payload sits near the start and needs a handful of
+# candidates, so cap the bytes scanned and the tokens tried.
+for tok in $(printf '%s' "$OUT" | head -c "${SCREEN_INJECTION_B64_BYTES:-65536}" \
+  | grep -oE '[A-Za-z0-9+/]{16,}={0,2}' 2>/dev/null \
+  | head -n "${SCREEN_INJECTION_B64_MAX:-64}"); do
   dec=$(printf '%s' "$tok" | base64 -d 2>/dev/null | tr -cd '[:print:][:space:]')
   [ -n "$dec" ] && B64="$B64
 $dec"

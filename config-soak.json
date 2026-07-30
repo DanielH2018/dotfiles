@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
-      "hash": "4bcd5f7272c210956e58ba9413629534505bb62271d7a33e972a4ed63e3f9431",
-      "landed": "2026-07-25T01:23:11.477Z"
+      "hash": "f33ea6775d3f4585a082b8e32cf3939e41847edbd494e9a5d9cc1987145a69b7",
+      "landed": "2026-07-29T23:06:42.197Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_serve-artifacts.sh",
@@ -173,8 +173,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
-      "hash": "38d90300dbaf5dc19eb802e760d085d870a94f5e1869778c73e0100463c64b2b",
-      "landed": "2026-07-25T19:40:10.100Z"
+      "hash": "9d9c448e5b97ad3c13c5456b72b6d8143bd20fae913144470799f9a74ff33460",
+      "landed": "2026-07-29T23:06:42.197Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
