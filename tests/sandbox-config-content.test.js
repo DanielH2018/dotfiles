@@ -224,6 +224,19 @@ test('the read-write chezmoi source mount re-mounts .chezmoiscripts and .git/hoo
   assert.ok(LAUNCHER_SRC.includes('-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro"'));
 });
 
+test('the read-write chezmoi source mount re-mounts the sandbox definition read-only', () => {
+  // The sandbox's own boundary lives in the source tree: settings.base.json (which
+  // resolve-sandbox-settings.sh takes as its base, hooks block and all — only host
+  // DENIES are unioned on top, nothing is sanitised), the container hook set, the
+  // entrypoint and the Dockerfiles. Writable, a session could rewrite what the NEXT
+  // launch runs under — the same escape the live :ro hook mounts closed inside the
+  // container, reached one level back through the source instead.
+  assert.match(
+    LAUNCHER_SRC,
+    /-v "\$_cm_root\/private_dot_claude\/sandbox:\$_cm_root\/private_dot_claude\/sandbox:ro"/
+  );
+});
+
 test('the read-write work-laptop-config mount re-mounts install.sh and .git/hooks read-only', () => {
   assert.ok(LAUNCHER_SRC.includes('-v "$WORK_CONFIG_SRC/install.sh:$WORK_CONFIG_SRC/install.sh:ro"'));
   assert.ok(LAUNCHER_SRC.includes('-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro"'));
