@@ -1,0 +1,211 @@
+[
+  {
+    "id": "N1",
+    "path": "~/.claude/projects/**/*.jsonl",
+    "kind": "file-glob",
+    "rule": "native",
+    "cap": "cleanupPeriodDays=30 (settings.json)",
+    "grace": null,
+    "owner": "Claude Code binary",
+    "finding": "A19-02",
+    "notes": "301M, 1431 files, 21 project dirs (measured 2026-07-30)"
+  },
+  {
+    "id": "N2",
+    "path": "~/.claude/backups/.claude.json.backup.*",
+    "kind": "file-glob",
+    "rule": "self-managed",
+    "cap": "keep-last-5",
+    "grace": null,
+    "owner": "Claude Code binary",
+    "finding": "A19-17",
+    "notes": "5 files, 84K, already works correctly"
+  },
+  {
+    "id": "G1",
+    "path": "~/.claude/session-env/*",
+    "kind": "dir-glob",
+    "rule": "prune-empty-dir",
+    "cap": "unconditional once eligible",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-09, A19-05",
+    "notes": "1180 dirs, 4.7M dirents, 0 files in any"
+  },
+  {
+    "id": "G2",
+    "path": "~/.claude/sessions/*.json",
+    "kind": "file-glob",
+    "rule": "prune-dead-pid",
+    "cap": "kill -0 fails",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-16, A19-05",
+    "notes": "55 files, ~216K"
+  },
+  {
+    "id": "G3",
+    "path": "~/.claude/shell-snapshots/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "14d",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-29, A19-05",
+    "notes": "39 files, 316K"
+  },
+  {
+    "id": "G4",
+    "path": "~/.claude/file-history/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "14d",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-05",
+    "notes": "not sized separately in audit; oldest entry 07-23"
+  },
+  {
+    "id": "G5",
+    "path": ["~/.claude/tasks/**/.lock", "~/.claude/tasks/*"],
+    "kind": "file-glob",
+    "rule": "prune-dead-pid (locks); prune-age (dirs)",
+    "cap": "kill -0 fails / 14d",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-26, A19-05",
+    "notes": "audit: 4 zero-byte stale locks; two operations on one manifest row per spec §2/§7"
+  },
+  {
+    "id": "G6",
+    "path": "~/.claude/paste-cache/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "14d",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-29",
+    "notes": "audit: 2 entries, 12K"
+  },
+  {
+    "id": "G7",
+    "path": "~/.claude/debug/*",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "14d",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-29",
+    "notes": "audit: 3 entries, 152K"
+  },
+  {
+    "id": "G8",
+    "path": "~/.claude/logs/sessions.log",
+    "kind": "file",
+    "rule": "rotate-size",
+    "cap": "1MB, keep 3 gen",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A3-16",
+    "notes": "625,900B / 5471 lines"
+  },
+  {
+    "id": "G9",
+    "path": "~/.claude/daemon.log",
+    "kind": "file",
+    "rule": "rotate-size",
+    "cap": "1MB, keep 3 gen",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A19-12",
+    "notes": "70,653B / 1065 lines"
+  },
+  {
+    "id": "G10",
+    "path": "~/.local/state/reap-origin.log",
+    "kind": "file",
+    "rule": "truncate-lines",
+    "cap": "keep last 2000",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A5-24",
+    "notes": "2,714B / 21 lines"
+  },
+  {
+    "id": "G11",
+    "path": "<cwd>/.claude/logs/permissions.json",
+    "kind": "file",
+    "rule": "rotate-size",
+    "cap": "5MB",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A19-04",
+    "notes": "live ask-log, opaque blob (single JSON doc, not JSONL); path is per-cwd, e.g. /home/daniel/dev/.claude/logs/permissions.json; 3,557,646B / 40201 \"lines\""
+  },
+  {
+    "id": "G12",
+    "path": "~/.claude/logs/permissions.json",
+    "kind": "file",
+    "rule": "prune-stale-duplicate",
+    "cap": "age>48h + mtime frozen + live sibling exists",
+    "grace": null,
+    "owner": "retention-sweep (manual, slice 2)",
+    "finding": "A19-11",
+    "notes": "stale duplicate of a per-cwd live log; 1,559,174B / 17844 lines, mtime frozen since Jul 23"
+  },
+  {
+    "id": "G13",
+    "path": "~/.claude/history.jsonl",
+    "kind": "file",
+    "rule": "truncate-lines",
+    "cap": "keep last 5000",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A19-28",
+    "notes": "230,396B / 1045 lines, mode 600 (preserve mode across truncation)"
+  },
+  {
+    "id": "G14",
+    "path": "/tmp/tq-*.json",
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "mtime+24h",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A6-14",
+    "notes": "+ .raw siblings; 0 files today (was 796 on 07-29, /tmp looks reboot-cleared); explicit /tmp prefix allowlist entry, never a bare /tmp walk"
+  },
+  {
+    "id": "G15",
+    "path": ["/tmp/remember-config-*.json", "/tmp/.claude-statusline-git-*", "/tmp/uv-*"],
+    "kind": "file-glob",
+    "rule": "prune-age",
+    "cap": "mtime+24h",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": "A19-06",
+    "notes": "daniel-owned, known prefixes only; 132 files, 860K total /tmp today (was 2339/47M on 07-29); explicit /tmp prefix allowlist, never a bare /tmp walk"
+  },
+  {
+    "id": "G16",
+    "path": "~/.agentview-fzfport.*",
+    "kind": "file-glob",
+    "rule": "prune-dead-pid",
+    "cap": "kill -0 fails",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-10, A8-42",
+    "notes": "23 files, unchanged since audit, all dead pids"
+  },
+  {
+    "id": "G17",
+    "path": "~/.claude.json.tmp.*",
+    "kind": "file-glob",
+    "rule": "prune-dead-pid",
+    "cap": "kill -0 fails (filename-only match, contents never opened)",
+    "grace": "1h",
+    "owner": "retention-sweep",
+    "finding": "A19-08",
+    "notes": "audit only, not reverified 2026-07-30 (see spec §8); 1 file, 13,630B, dead pid as of audit"
+  }
+]

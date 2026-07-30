@@ -5,16 +5,14 @@
 set -u
 
 INPUT=$(cat)
-LOG_DIR="$HOME/.claude/logs"
-mkdir -p "$LOG_DIR"
 
-# This event fires once per loaded instruction file, carrying a singular
-# `file_path` (not a `files` array — reading `.files[]` logged nothing).
+# M12/A19-05: this event's log write (session=... instructions_loaded: <path> to
+# sessions.log) was 48-49% of that file's volume with zero readers, so the write
+# itself is removed here rather than given a retention-manifest rotation row — a
+# log nobody reads needs deleting, not a cap. See M12-retention.md §5, §10 open
+# question 3 (revisit if a real reader for this data shows up later).
 FILE_PATH=$(echo "$INPUT" | jq -r '.file_path // empty' 2>/dev/null)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null)
 
 [ -z "$FILE_PATH" ] && exit 0
-
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID instructions_loaded: $FILE_PATH" >> "$LOG_DIR/sessions.log"
 
 exit 0

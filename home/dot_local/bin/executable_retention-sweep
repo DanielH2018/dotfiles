@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# retention-sweep: M12 dry-run reporter over the retention manifest (slice 1).
+#
+# Reads retention-manifest.json and, for every row, reports how many entries
+# currently match its glob and their combined size — a volume/age signal for the
+# rule that *will* apply once implemented. This slice ships with NO delete,
+# unlink, truncate, move, or rotate code path at all: rules other than
+# native/self-managed are describe-only. Real actions (rotate_by_size,
+# prune_age, prune_dead_pid, ...) are future slices (see M12-retention.md §7);
+# adding one here is a design change, not a bugfix to this file.
+#
+# Test seam: RETENTION_MANIFEST (defaults to ~/.claude/retention-manifest.json).
+set -u
+
+MANIFEST="${RETENTION_MANIFEST:-$HOME/.claude/retention-manifest.json}"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "retention-sweep: jq required" >&2
+  exit 1
+fi
+
+if [ ! -f "$MANIFEST" ]; then
+  echo "retention-sweep: manifest not found at $MANIFEST" >&2
+  exit 1
+fi
+
+echo "retention-sweep — DRY RUN ONLY (slice 1: no delete/rotate code path exists)"
+echo "manifest: $MANIFEST"
+echo
+
+shopt -s nullglob globstar dotglob
+
+row_count=$(jq 'length' "$MANIFEST")
+i=0
+while [ "$i" -lt "$row_count" ]; do
+  row=$(jq -c ".[$i]" "$MANIFEST")
+  i=$((i + 1))
+
+  id=$(printf '%s' "$row" | jq -r '.id')
+  rule=$(printf '%s' "$row" | jq -r '.rule')
+  finding=$(printf '%s' "$row" | jq -r '.finding')
+
+  if [ "$rule" = "native" ] || [ "$rule" = "self-managed" ]; then
+    echo "[dry-run] $id: rule=$rule -> no action, out of scope for this sweeper ($finding)"
+    continue
+  fi
+
+  # .path may be a single glob or an array of globs (e.g. G5, G15) sharing one row.
+  mapfile -t globs < <(printf '%s' "$row" | jq -r 'if (.path | type) == "array" then .path[] else .path end')
+
+  count=0
+  bytes=0
+  oldest_days=""
+  for g in "${globs[@]}"; do
+    expanded="${g/#\~/$HOME}"
+    [[ "$expanded" == *cwd* ]] && continue  # G11: per-cwd path, not a fixed glob
+    for f in $expanded; do
+      [ -e "$f" ] || continue
+      count=$((count + 1))
+      if [ -d "$f" ]; then
+        b=$(du -sb "$f" 2>/dev/null | cut -f1)
+      else
+        b=$(stat -c%s "$f" 2>/dev/null)
+      fi
+      bytes=$((bytes + ${b:-0}))
+      mtime=$(stat -c%Y "$f" 2>/dev/null || echo "")
+      if [ -n "$mtime" ]; then
+        age_days=$(( ( $(date +%s) - mtime ) / 86400 ))
+        if [ -z "$oldest_days" ] || [ "$age_days" -gt "$oldest_days" ]; then
+          oldest_days=$age_days
+        fi
+      fi
+    done
+  done
+
+  echo "[dry-run] $id: rule=$rule cap=$(printf '%s' "$row" | jq -r '.cap') matched=$count bytes=$bytes oldest_age_days=${oldest_days:-n/a} ($finding)"
+done
+
+echo
+echo "Reported matched/bytes/age only — reports what each row WOULD act on, deletes nothing."
