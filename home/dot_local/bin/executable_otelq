@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""otelq — query the local Loki/Prometheus telemetry stack without a prompt.
+
+Exists for the same reason as `jsonq`: the useful operation was reachable only
+through a tool that is ask-listed for good reason. `curl:*` prompts because curl
+takes an arbitrary URL and can write the response to disk — an exfiltration and
+a download primitive in one. Neither is available here. The host is not an
+argument: every request goes to 127.0.0.1 on the two ports below, the method is
+always GET, and the response only ever reaches stdout. What the caller controls
+is a LogQL/PromQL string, and neither language can execute a process, read a
+file, or reach the network. That is what makes a blanket `Bash(otelq:*)` allow
+rule defensible where `Bash(curl:*)` is not.
+
+    otelq logs 'sum by (event_name) (count_over_time({service_name="claude-code"}[19h]))'
+    otelq logs '{service_name="claude-code"} | event_name=`api_error`' --stream --limit 5
+    otelq metric 'sum by (model) (increase(claude_code_cost_usage_USD_total[19h]))'
+    otelq labels --name service_name
+    otelq ready
+
+Output is JSON on stdout so it composes with jsonq. `--rows` renders the common
+"value<TAB>labels" shape instead, which is what most ad-hoc queries wanted.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PROG = "otelq"
+
+# Not configurable, and deliberately so — see the module docstring. A --host flag
+# would turn this into the arbitrary-fetch primitive the allow rule assumes it
+# is not.
+LOKI = "http://127.0.0.1:3100"
+PROM = "http://127.0.0.1:9090"
+
+DEFAULT_TIMEOUT = 30
+MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+
+_DURATION = re.compile(r"^(\d+)([smhdw])$")
+_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+class OtelqError(Exception):
+    """A refusal we raise ourselves — reported without a traceback."""
+
+
+def parse_duration(text):
+    """'19h' -> 68400. Rejects anything else, so it can't smuggle a URL fragment."""
+    m = _DURATION.match(text)
+    if not m:
+        raise OtelqError(f"bad duration {text!r}: use forms like 90s, 30m, 19h, 7d")
+    return int(m.group(1)) * _UNITS[m.group(2)]
+
+
+def _get(base, path, params, timeout):
+    """GET only. urlencode keeps the query in the query string, so a crafted
+    query cannot climb out of `path` into another endpoint."""
+    url = f"{base}{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            body = resp.read(MAX_OUTPUT_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(2048).decode("utf-8", "replace").strip()
+        raise OtelqError(f"{base}{path}: HTTP {exc.code} {detail}")
+    except urllib.error.URLError as exc:
+        raise OtelqError(f"{base} unreachable ({exc.reason}) — is the stack up? `docker ps`")
+    except TimeoutError:
+        raise OtelqError(f"{base}{path}: timed out after {timeout}s")
+
+    if len(body) > MAX_OUTPUT_BYTES:
+        raise OtelqError("response exceeds the 10 MB cap; narrow the query or the range")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise OtelqError(f"{base}{path}: response was not JSON ({exc.msg})")
+
+
+def _window(since, now):
+    return now - parse_duration(since), now
+
+
+def cmd_logs(ns, now):
+    """Loki. Instant by default because that is what an aggregation wants;
+    --stream switches to query_range, which is what returns raw log lines."""
+    if ns.stream:
+        start, end = _window(ns.since, now)
+        params = {
+            "query": ns.query,
+            "start": str(int(start)),
+            "end": str(int(end)),
+            "limit": str(ns.limit),
+            "direction": ns.direction,
+        }
+        return _get(LOKI, "/loki/api/v1/query_range", params, ns.timeout)
+    return _get(LOKI, "/loki/api/v1/query", {"query": ns.query, "time": str(int(now))}, ns.timeout)
+
+
+def cmd_metric(ns, now):
+    if ns.stream:
+        start, end = _window(ns.since, now)
+        params = {
+            "query": ns.query,
+            "start": str(int(start)),
+            "end": str(int(end)),
+            "step": ns.step,
+        }
+        return _get(PROM, "/api/v1/query_range", params, ns.timeout)
+    return _get(PROM, "/api/v1/query", {"query": ns.query, "time": str(int(now))}, ns.timeout)
+
+
+def cmd_labels(ns, now):
+    start, end = _window(ns.since, now)
+    params = {"start": str(int(start) * 10**9), "end": str(int(end) * 10**9)}
+    if ns.name:
+        return _get(LOKI, f"/loki/api/v1/label/{urllib.parse.quote(ns.name, safe='')}/values",
+                    params, ns.timeout)
+    return _get(LOKI, "/loki/api/v1/labels", params, ns.timeout)
+
+
+def cmd_ready(ns, now):
+    """Readiness of both backends. Loki answers text, not JSON, so it is probed
+    separately — a 503 here usually means the 15s ingester grace, not a fault."""
+    out = {}
+    for name, base, path in (("loki", LOKI, "/ready"), ("prometheus", PROM, "/-/ready")):
+        url = f"{base}{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=ns.timeout) as resp:  # noqa: S310
+                out[name] = {"code": resp.status,
+                             "body": resp.read(200).decode("utf-8", "replace").strip()}
+        except urllib.error.HTTPError as exc:
+            out[name] = {"code": exc.code,
+                         "body": exc.read(200).decode("utf-8", "replace").strip()}
+        except (urllib.error.URLError, TimeoutError) as exc:
+            out[name] = {"code": None, "body": f"unreachable: {exc}"}
+    return out
+
+
+def _rows(payload):
+    """Render the vector/matrix shape every ad-hoc query ended up reformatting by
+    hand: value, then the label set, one series per line, biggest first."""
+    result = (payload.get("data") or {}).get("result") or []
+    lines = []
+    for series in result:
+        labels = series.get("metric") or series.get("stream") or {}
+        label_text = " ".join(f"{k}={v}" for k, v in sorted(labels.items()))
+        if "value" in series:
+            lines.append((series["value"][1], label_text))
+        elif "values" in series:
+            for _ts, val in series["values"]:
+                lines.append((val, label_text))
+    def sort_key(row):
+        try:
+            return (0, -float(row[0]))
+        except (TypeError, ValueError):
+            return (1, 0.0)
+    lines.sort(key=sort_key)
+    return "\n".join(f"{v}\t{lab}" for v, lab in lines)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description="Query the local Loki/Prometheus stack (127.0.0.1 only, GET only).",
+    )
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                        help=f"per-request timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--rows", action="store_true",
+                        help="render value<TAB>labels instead of raw JSON")
+    parser.add_argument("--indent", type=int, default=None,
+                        help="pretty-print JSON with N spaces")
+
+    # The same three flags again, on every subcommand. Declaring them only at the
+    # top level forces `otelq --rows logs '<query>'`, but every natural
+    # invocation puts the flag last. SUPPRESS is what makes both positions work:
+    # without it the subparser's own default would clobber a value already set
+    # before the subcommand.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--rows", action="store_true", default=argparse.SUPPRESS,
+                        help="render value<TAB>labels instead of raw JSON")
+    common.add_argument("--indent", type=int, default=argparse.SUPPRESS,
+                        help="pretty-print JSON with N spaces")
+    common.add_argument("--timeout", type=int, default=argparse.SUPPRESS,
+                        help="per-request timeout in seconds")
+
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    for name, helptext in (("logs", "LogQL against Loki"), ("metric", "PromQL against Prometheus")):
+        p = sub.add_parser(name, help=helptext, parents=[common])
+        p.add_argument("query", help="LogQL/PromQL query string")
+        p.add_argument("--stream", action="store_true",
+                       help="range query over --since instead of an instant query")
+        p.add_argument("--since", default="1h", help="range window, e.g. 30m/19h/7d (default: 1h)")
+        p.add_argument("--limit", type=int, default=100, help="max entries (logs --stream)")
+        p.add_argument("--direction", choices=("backward", "forward"), default="backward")
+        p.add_argument("--step", default="60", help="range step in seconds (metric --stream)")
+
+    p = sub.add_parser("labels", help="Loki label names, or values for one label",
+                       parents=[common])
+    p.add_argument("--name", help="label name; omit to list all label names")
+    p.add_argument("--since", default="24h", help="lookback window (default: 24h)")
+
+    sub.add_parser("ready", help="readiness of both backends", parents=[common])
+
+    ns = parser.parse_args(argv)
+    handlers = {"logs": cmd_logs, "metric": cmd_metric, "labels": cmd_labels, "ready": cmd_ready}
+
+    try:
+        payload = handlers[ns.cmd](ns, time.time())
+        print(_rows(payload) if ns.rows else json.dumps(payload, indent=ns.indent,
+                                                        ensure_ascii=False))
+    except OtelqError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 2
+    except BrokenPipeError:
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

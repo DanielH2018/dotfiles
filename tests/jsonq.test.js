@@ -237,4 +237,42 @@ test('rejects a syntax error before evaluating', { skip }, () => {
   assert.match(r.err, /syntax error/);
 });
 
+// --jsonl exists so transcript scanning stops falling back to `python3 -c`.
+const L = path.join(DIR, 'l.jsonl');
+fs.writeFileSync(L, '{"type":"user","n":1}\n\n{"type":"assistant","n":2}\n{"type":"user","n":3}\n');
+
+test('--jsonl parses one record per line and skips blanks', { skip }, () => {
+  assert.strictEqual(ok(['--jsonl', 'len(d)', L]), '3', 'blank line is not a record');
+  assert.strictEqual(ok(['--jsonl', '[x["n"] for x in d if x["type"] == "user"]', L]), '[1,3]');
+  assert.strictEqual(ok(['--jsonl', 'd[0]["n"]', L]), '1');
+});
+
+test('--jsonl reads stdin and binds d1..dN per file', { skip }, () => {
+  assert.strictEqual(ok(['--jsonl', 'len(d)'], '{"a":1}\n{"a":2}\n'), '2');
+  assert.strictEqual(ok(['--jsonl', 'len(ds)', L, L]), '2');
+  assert.strictEqual(ok(['--jsonl', 'len(d2)', L, L]), '3');
+});
+
+test('--jsonl names the offending line and refuses without a traceback', { skip }, () => {
+  const bad = path.join(DIR, 'bad.jsonl');
+  fs.writeFileSync(bad, '{"ok":1}\n{oops\n');
+  const r = jsonq(['--jsonl', 'len(d)', bad]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.err, /:2: invalid JSON/, 'error should carry the line number');
+  assert.doesNotMatch(r.err, /Traceback/);
+});
+
+test('JSONL still fails without --jsonl, and JSON still works with it off', { skip }, () => {
+  const r = jsonq(['len(d)', L]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.err, /invalid JSON/);
+  assert.strictEqual(ok(['sorted(d)', T]), '["a","b","users"]', 'plain mode unaffected');
+});
+
+test('--jsonl does not bypass the secret-path guard', { skip }, () => {
+  const r = jsonq(['--jsonl', 'len(d)', path.join(os.homedir(), '.claude.json')]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.err, /secret-path/);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
