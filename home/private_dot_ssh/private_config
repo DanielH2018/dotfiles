@@ -1,0 +1,18 @@
+# Managed by chezmoi — edit home/private_dot_ssh/private_config, not ~/.ssh/config.
+
+Host daniel-server
+    HostName 10.0.0.161
+    User ubuntu
+    IdentityFile ~/.ssh/daniel-server
+    # Renders Claude Code's artifact links. The server serves ~/.claude/artifacts on
+    # loopback:8181, which VS Code Remote-SSH forwarded automatically and a plain ssh
+    # session does not, so http://127.0.0.1:8181/... only resolves with this in place.
+    # sshd allows it via `Match User ubuntu -> AllowTcpForwarding local`; -R stays off.
+    LocalForward 127.0.0.1:8181 127.0.0.1:8181
+
+Host daniel-pi
+    HostName 10.0.0.139
+    User ubuntu
+    IdentityFile ~/.ssh/daniel-pi
+    ServerAliveInterval 60
+    ServerAliveCountMax 10

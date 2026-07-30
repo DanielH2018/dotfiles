@@ -79,3 +79,10 @@ Scripts
 # work-machine permission set into this public repo.
 .config/claude/settings.work.json
 **/*.work.json
+
+# ~/.ssh/config holds client-side Host entries (IdentityFiles, the artifact-port
+# forward) that only mean something from a workstation. The homelab hosts are what
+# those entries connect TO, and neither has the referenced keys.
+{{ if has .chezmoi.hostname (list "daniel-server" "daniel-pi") }}
+.ssh/config
+{{ end }}
