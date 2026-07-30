@@ -18,12 +18,22 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // cmdparse.sh is sourced as a sibling of the hook, which is how it lands after an apply, so
 // the hooks are exercised straight out of the source tree with no staging.
-const run = (hook, command, env = {}) =>
-  execFileSync('bash', [hook], {
+// The suite must own CMDPARSE_SHADOW and CMDPARSE absolutely, so they are stripped from the
+// inherited environment rather than merely left unset. Once the flag ships in settings.json
+// it is present in every session's env, and a spread of process.env silently handed it to
+// the cases asserting the OFF behaviour — which then passed for the wrong reason until the
+// flag was actually deployed, and failed the moment it was. A test of "off by default" that
+// inherits the ambient value is not testing anything.
+const run = (hook, command, env = {}) => {
+  const base = { ...process.env, CMDPARSE_LIB: LIB };
+  delete base.CMDPARSE_SHADOW;
+  delete base.CMDPARSE;
+  return execFileSync('bash', [hook], {
     input: JSON.stringify({ tool_input: { command } }),
     encoding: 'utf8',
-    env: { CMDPARSE_LIB: LIB, ...process.env, ...env },
+    env: { ...base, ...env },
   });
+};
 
 const logDir = (name) => {
   const d = path.join(tmp, name);
