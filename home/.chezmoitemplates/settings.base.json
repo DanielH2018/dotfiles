@@ -544,6 +544,14 @@
       "Bash(npx -c:*)",
       "Bash(npx --package:*)",
       "Bash(npx --package=*)",
+      {{/* -p is the documented short form of --package and fetches an arbitrary package the
+           same way; only the long form was listed, while Bash(npx:*) allows the rest. Same
+           short-vs-long gap as the `gh auth status -t` / `--show-token` pair above. These
+           are prefix rules, so they catch the flag in first position — `npx -y -p pkg` is
+           still reached by the -y rule, but a flag order that leads with neither is not
+           covered, which is a limit of prefix matching rather than of this entry. */}}
+      "Bash(npx -p:*)",
+      "Bash(npx -p=*)",
       "Bash(rm:*)",
       "Bash(rmdir:*)",
       "Bash(git reset --hard:*)",

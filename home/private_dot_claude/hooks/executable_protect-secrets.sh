@@ -38,19 +38,22 @@ case "$FILE_PATH" in
   */.ssh/*|*/id_rsa*|*/id_ed25519*|*/id_ecdsa*)
     deny "Blocked: SSH keys are never safe to read or modify automatically."
     ;;
-  */.aws/credentials|*/.aws/config)
+  # Each arm carries the bare form as well as the */-prefixed one. A relative path has no
+  # separator to match — `.aws/credentials` from a cwd of $HOME is the same file as
+  # /home/u/.aws/credentials, and only the .env arm handled that shape.
+  .aws/credentials|.aws/config|*/.aws/credentials|*/.aws/config)
     deny "Blocked: AWS credentials file."
     ;;
-  */.netrc|*/.pypirc|*/.npmrc)
+  .netrc|.pypirc|.npmrc|*/.netrc|*/.pypirc|*/.npmrc)
     deny "Blocked: this file commonly contains auth tokens."
     ;;
-  */.gnupg/*)
+  .gnupg/*|*/.gnupg/*)
     deny "Blocked: GPG keyring."
     ;;
   *.pem|*.key|*.p12|*.pfx)
     deny "Blocked: looks like a private key or certificate."
     ;;
-  */secrets/*)
+  secrets/*|*/secrets/*)
     deny "Blocked: files under a secrets/ directory."
     ;;
   # Everything below was denied for Bash by block-dangerous-bash.sh's SECRET_PATHS but
