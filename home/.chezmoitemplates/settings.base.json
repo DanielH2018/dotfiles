@@ -704,7 +704,7 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup",
+        "matcher": "startup|compact",
         "hooks": [
           {
             "type": "command",

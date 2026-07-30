@@ -5,10 +5,16 @@
 
 set -u
 
-# Only inject for new sessions, not resumes (which already have context).
+# New sessions, and the fresh context a compaction produces. Not resumes, which still
+# have their context. Compaction is included because nothing else re-primes after one:
+# PreCompact's payload goes to the user, not to the model, so without this branch the
+# post-compaction context has no branch, push state or dirty-file list at all.
 INPUT=$(cat)
 SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
-[ "$SOURCE" != "startup" ] && exit 0
+case "$SOURCE" in
+  startup | compact) ;;
+  *) exit 0 ;;
+esac
 
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
@@ -94,5 +100,15 @@ fi
 echo ""
 echo "Recent commits:"
 git log -5 --pretty=format:'  %h %s' 2>/dev/null
+echo ""
+
+if [ "$SOURCE" = "compact" ]; then
+  echo ""
+  echo "This context follows a compaction. The state above is ground truth, re-read just"
+  echo "now; prefer it over anything the summary asserts about branch, push state or"
+  echo "working-tree contents. Test pass/fail results, architectural decisions and next"
+  echo "steps are NOT re-derivable here — carry those across yourself, and preserve user"
+  echo "corrections and exact error strings verbatim rather than paraphrasing them."
+fi
 
 exit 0
