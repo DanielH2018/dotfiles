@@ -61,6 +61,57 @@ const merge = (a, b, path = []) => {
   return b;
 };
 
+// --- assertions -----------------------------------------------------------------------
+//
+// These run on the merged JSON in memory, before the single stdout write that becomes
+// ~/.claude/settings.json, so a failure never reaches disk in the first place.
+//
+// The safe-failure mode is free and comes from chezmoi's own modify_ contract: it only
+// overwrites the target after the script's stdout is captured successfully, so a failing
+// generator means "today's apply doesn't update settings.json and yesterday's file — which
+// passed these same checks when it was written — keeps running". Don't special-case around
+// that. The one case it does NOT cover is the first-ever apply on a new machine, where
+// there is no yesterday; see SAFE_FLOOR below.
+
+// Rules whose ABSENCE means something is badly broken. Deliberately not a copy of the deny
+// list: assertHasFloor only has to catch a corrupt or truncated BASE, because assertNoWidening
+// already catches any deny the overlay removes, generically and without naming rules. A floor
+// the size of the whole policy would have to be kept in sync with it, and every legitimate
+// rule edit would become a generator failure until both moved together. So the terraform
+// family, `git config` and `find *-exec*` are excluded on purpose — they are live policy.
+// Signed off 2026-07-30; spec §9a.
+const FLOOR_DENY = [
+  'Bash(sudo:*)', 'Bash(su:*)', 'Bash(mkfs:*)', 'Bash(dd:*)',
+  'Bash(rm -rf /*)', 'Bash(rm -rf ~*)',
+  'Bash(* | sh*)', 'Bash(* | bash*)', 'Bash(* | zsh*)',
+  'Read(**/.ssh/**)', 'Read(**/.aws/credentials)', 'Read(**/.env)',
+  'Read(**/id_rsa)', 'Read(**/id_ed25519)', 'Edit(**/.ssh/**)',
+];
+
+// Assertion 2 — a permission model is present and carries the floor. Runs before schema
+// validation because it is cheaper and catches the worst case first.
+const assertHasFloor = (merged) => {
+  const p = merged.permissions;
+  if (!isObj(p)) return 'permissions is missing or not an object';
+  if (!Array.isArray(p.deny) || p.deny.length === 0) return 'permissions.deny is missing or empty';
+  const have = new Set(p.deny);
+  const missing = FLOOR_DENY.filter((r) => !have.has(r));
+  if (missing.length) return `permissions.deny is missing floor rules: ${missing.join(', ')}`;
+  return null;
+};
+
+// Assertion 4 — the overlay may ADD denies, never cause one to disappear. This is the
+// generic half: it names no rules, so it protects every deny the base declares, including
+// ones added long after this code was written.
+const assertNoWidening = (baseDeny, merged) => {
+  if (!Array.isArray(baseDeny)) return null;
+  const have = new Set(isObj(merged.permissions) && Array.isArray(merged.permissions.deny)
+    ? merged.permissions.deny : []);
+  const dropped = baseDeny.filter((r) => !have.has(r));
+  if (dropped.length) return `the overlay removed base deny rules: ${dropped.join(', ')}`;
+  return null;
+};
+
 // Keys the *running harness* writes back into the deployed settings.json at session time
 // (`/effort` writes effortLevel). The templates don't set them, so a plain re-derive drops
 // them on every `chezmoi apply` — the pin silently vanishes mid-session. This list is a
@@ -126,6 +177,7 @@ if (files.length === 0) {
   process.exit(2);
 }
 let acc = {};
+let baseDeny = null;   // the FIRST fragment is the base; the rest are overlays
 for (const f of files) {
   if (!fs.existsSync(f)) continue;
   let data;
@@ -135,7 +187,49 @@ for (const f of files) {
     process.stderr.write(`claude-settings-merge: cannot parse ${f}: ${e.message}\n`);
     process.exit(1);
   }
+  if (baseDeny === null && isObj(data) && isObj(data.permissions) && Array.isArray(data.permissions.deny)) {
+    baseDeny = data.permissions.deny.slice();
+  }
   acc = merge(acc, data);
 }
 acc = carryForward(acc, priorFile);
+
+// Default ON: any consumer that does nothing gets the floor enforced. The single exemption
+// is the sandbox resolver, which merges fragments that legitimately carry no host floor (the
+// sandbox has its own permission model and runs --dangerously-skip-permissions), and which
+// swallows stderr and falls back silently — so an unconditional check degraded it to the
+// un-merged base with no visible error. It says so explicitly rather than this file guessing.
+const exempt = process.env.CLAUDE_SETTINGS_SKIP_FLOOR === '1';
+if (exempt) {
+  process.stderr.write('claude-settings-merge: floor assertions skipped (CLAUDE_SETTINGS_SKIP_FLOOR=1)\n');
+}
+const failure = exempt ? null : (assertHasFloor(acc) || assertNoWidening(baseDeny, acc));
+if (failure) {
+  process.stderr.write(`claude-settings-merge: refusing to write settings.json — ${failure}\n`);
+
+  // First-ever apply on a new machine: there is no previously deployed file to fall back
+  // on, so exiting here would leave the box with NO settings.json and therefore no
+  // guardrails at all — strictly worse than the degraded-but-safe file below. priorFile is
+  // set by modify_settings only when the target already existed, so its absence is exactly
+  // the bootstrap case.
+  const floorFile = process.env.CLAUDE_SETTINGS_SAFE_FLOOR;
+  const bootstrapping = !priorFile || !fs.existsSync(priorFile);
+  if (bootstrapping && floorFile && fs.existsSync(floorFile)) {
+    try {
+      const floor = JSON.parse(fs.readFileSync(floorFile, 'utf8'));
+      const stillBad = assertHasFloor(floor);
+      if (stillBad) throw new Error(`safe-floor itself fails the check: ${stillBad}`);
+      process.stderr.write(
+        'claude-settings-merge: no previously deployed settings.json to fall back on; '
+        + 'writing the deny-only safe floor instead. Fix the error above and re-apply.\n',
+      );
+      process.stdout.write(JSON.stringify(floor, null, 2) + '\n');
+      process.exit(0);
+    } catch (e) {
+      process.stderr.write(`claude-settings-merge: safe floor unusable: ${e.message}\n`);
+    }
+  }
+  process.exit(1);
+}
+
 process.stdout.write(JSON.stringify(acc, null, 2) + '\n');

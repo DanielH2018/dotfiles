@@ -9,7 +9,31 @@ set -eu
 
 BASE="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-base.XXXXXX")"
 PRIOR="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-prior.XXXXXX")"
-trap 'rm -f "$BASE" "$PRIOR"' EXIT
+FLOOR="$(mktemp "${TMPDIR:-/tmp}/chezmoi-settings-floor.XXXXXX")"
+trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
+
+# A1-29: the enforced permission model is generated from the working tree, so an uncommitted
+# edit to the base template or the merge script silently BECOMES policy — live, and invisible
+# to review or to git. Refuse rather than deploy something nobody can see the provenance of.
+#
+# Scoped to the two files that actually decide the output; an unrelated dirty file in the repo
+# is not this script's business. Set CLAUDE_SETTINGS_ALLOW_DIRTY=1 to iterate locally.
+#
+# NOTE ON BLAST RADIUS: chezmoi stops the whole run on first error, so this failing blocks
+# every other dotfile in that apply, not just settings.json. `chezmoi apply --keep-going` is
+# the escape hatch when you want the rest deployed despite a known settings issue.
+if [ "${CLAUDE_SETTINGS_ALLOW_DIRTY:-0}" != 1 ]; then
+  SRC="{{ .chezmoi.sourceDir }}"
+  DIRTY="$(git -C "$SRC" status --porcelain -- \
+    ".chezmoitemplates/settings.base.json" \
+    "dot_local/bin/executable_claude-settings-merge" 2>/dev/null || true)"
+  if [ -n "$DIRTY" ]; then
+    echo "modify_settings: refusing to generate settings.json from an uncommitted tree." >&2
+    echo "$DIRTY" >&2
+    echo "Commit the change, or set CLAUDE_SETTINGS_ALLOW_DIRTY=1 to iterate locally." >&2
+    exit 1
+  fi
+fi
 
 # Drain stdin unconditionally: leaving it unread can SIGPIPE the writer. Empty means the
 # target does not exist yet (first apply), so there is nothing to carry forward.
@@ -17,6 +41,13 @@ cat > "$PRIOR"
 cat > "$BASE" <<'CHEZMOI_BASE_EOF'
 {{ includeTemplate "settings.base.json" . }}
 CHEZMOI_BASE_EOF
+
+# The bootstrap fallback, for a first-ever apply where a failed assertion would otherwise
+# leave the machine with no settings.json at all. A committed template rather than a string
+# inside the generator, so it is visible in a diff and validated like anything else.
+cat > "$FLOOR" <<'CHEZMOI_FLOOR_EOF'
+{{ includeTemplate "settings.safe-floor.json" . }}
+CHEZMOI_FLOOR_EOF
 
 OVERLAY="$HOME/.config/claude/settings.work.json"   # absent on non-work machines
 
@@ -38,6 +69,7 @@ MERGE="{{ .chezmoi.sourceDir }}/dot_local/bin/executable_claude-settings-merge"
 # By environment, never as an argument: an older copy of the merge script ignores an unknown
 # env var, but would take an unknown flag's operand as another settings fragment and merge the
 # whole deployed file back in. Skew must cost a dropped effort pin, not a widened permission set.
+export CLAUDE_SETTINGS_SAFE_FLOOR="$FLOOR"
 if [ -s "$PRIOR" ]; then
   CLAUDE_SETTINGS_PRIOR="$PRIOR" "$NODE" "$MERGE" "$BASE" "$OVERLAY"
 else

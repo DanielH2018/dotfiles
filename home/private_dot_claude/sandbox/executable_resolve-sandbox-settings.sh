@@ -67,7 +67,13 @@ fi
 _TMP="$(mktemp "${TMPDIR:-/tmp}/sandbox-settings-XXXXXX")"
 OUT="${_TMP}.json"
 mv "$_TMP" "$OUT"
-if "$MERGE" "$CUR" "$OVERLAY" >"$OUT" 2>/dev/null; then
+# claude-settings-merge asserts the host's floor-deny list by default. That floor is a
+# property of the HOST's ~/.claude/settings.json, not of a sandbox fragment: the sandbox
+# carries its own permission model and runs --dangerously-skip-permissions, so no host hook
+# fires in there anyway. Exempt it explicitly rather than leaving the generic tool to guess —
+# and note the `2>/dev/null` below, which is why an unmet assertion here would otherwise be
+# an invisible fallback to the un-merged base rather than a visible failure.
+if CLAUDE_SETTINGS_SKIP_FLOOR=1 "$MERGE" "$CUR" "$OVERLAY" >"$OUT" 2>/dev/null; then
   # The step-1 host-fold temp is now superseded and nothing else references it.
   # Only remove it if it IS a temp we made — $CUR is $BASE when the fold was
   # skipped or failed, and $BASE is the caller's real settings.base.json.
