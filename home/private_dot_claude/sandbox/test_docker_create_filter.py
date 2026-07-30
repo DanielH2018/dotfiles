@@ -220,6 +220,90 @@ def test_a_symlink_out_of_the_workspace_is_resolved_not_trusted():
         flt.WORKSPACE = WS
 
 
+def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
+    # A11-04, and the case the realpath check above cannot reach. This link
+    # resolves to a real directory inside the workspace, so `_under_workspace` is
+    # satisfied and the bind was accepted. But the filter decides at container-
+    # CREATE and dockerd resolves again at container-START, and the agent can write
+    # to the workspace in between — so between those two moments the link can be
+    # re-pointed at /. Nothing about the create-time answer survives that.
+    #
+    # The fix denies any source with a symlink component, removing the window
+    # instead of narrowing it: a path with no link in it has nothing to swap.
+    root = tempfile.mkdtemp()
+    try:
+        ws = os.path.join(root, "repo")
+        os.makedirs(os.path.join(ws, "real"))
+        os.symlink(os.path.join(ws, "real"), os.path.join(ws, "inside"))
+        flt.WORKSPACE = ws
+        msg = ""
+        try:
+            flt.inspect(
+                "/containers/create",
+                json.dumps(create({"Binds": [f"{ws}/inside:/app"]})).encode(),
+            )
+            raise AssertionError("a swappable symlink in the workspace was accepted")
+        except flt.Denied as exc:
+            msg = str(exc)
+        assert "symlink component" in msg, msg
+
+        # The same applies one level down: the link need not be the last component.
+        try:
+            flt.inspect(
+                "/containers/create",
+                json.dumps(create({"Binds": [f"{ws}/inside/deeper:/app"]})).encode(),
+            )
+            raise AssertionError("a symlink parent component was accepted")
+        except flt.Denied:
+            pass
+
+        # A real path with no link anywhere in it is still allowed — the trade is that a
+        # legitimately symlinked workspace path now has to be named by its real path.
+        flt.inspect(
+            "/containers/create",
+            json.dumps(create({"Binds": [f"{ws}/real:/app"]})).encode(),
+        )
+    finally:
+        shutil.rmtree(root)
+        flt.WORKSPACE = WS
+
+
+def test_the_symlink_component_rule_covers_structured_mounts_too():
+    # Binds and Mounts are two spellings of one thing, and a rule applied to only one of
+    # them is a rule with a documented bypass.
+    root = tempfile.mkdtemp()
+    try:
+        ws = os.path.join(root, "repo")
+        os.makedirs(os.path.join(ws, "real"))
+        os.symlink(os.path.join(ws, "real"), os.path.join(ws, "inside"))
+        flt.WORKSPACE = ws
+        msg = ""
+        try:
+            flt.inspect(
+                "/containers/create",
+                json.dumps(
+                    create(
+                        {
+                            "Mounts": [
+                                {
+                                    "Type": "bind",
+                                    "Source": f"{ws}/inside",
+                                    "Target": "/app",
+                                }
+                            ]
+                        }
+                    )
+                ).encode(),
+            )
+            raise AssertionError("a swappable symlink reached /app via Mounts")
+        except flt.Denied as exc:
+            msg = str(exc)
+        assert "symlink component" in msg, msg
+    finally:
+        shutil.rmtree(root)
+        flt.WORKSPACE = WS
+
+
 def test_a_hostconfig_on_start_is_refused():
     # Pre-1.24 daemons honour a HostConfig on start, which would reinstate everything
     # rejected at create time. Nothing legitimate sends a body here.

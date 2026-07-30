@@ -12,9 +12,10 @@ Two families live here so far:
           the raw request-target never sees `/containers/%63reate`.
 """
 
+import os
 import re
 
-__all__ = ["CanonRejected", "cfget", "cfkeys", "canon_target"]
+__all__ = ["CanonRejected", "cfget", "cfkeys", "canon_target", "has_symlink_component"]
 
 _PERCENT = re.compile(r"%[0-9A-Fa-f]{2}")
 
@@ -87,6 +88,47 @@ def canon_target(raw):
             continue
         segments.append(segment)
     return "/" + "/".join(segments)
+
+
+def has_symlink_component(path):
+    """True if any component of `path` is a symlink, or cannot be proven not to be.
+
+    Resolving a path and judging the RESULT is only sound when nothing can
+    re-point it afterwards. A container bind is checked by the filter at create
+    time and resolved AGAIN by dockerd at start time, and the agent can write to
+    the workspace in between — so a symlink that resolved somewhere harmless at
+    create can point anywhere by start (A11-04).
+
+    Judging the components instead removes the window rather than narrowing it:
+    a source with no symlink anywhere in it has nothing left to swap. That is why
+    this returns a property of the path rather than a resolved location, and why
+    the caller denies on true rather than re-resolving later.
+
+    Deliberately NOT normpath'd first. normpath collapses `a/b/..` to `a`
+    lexically, which would skip checking whether `a/b` is a symlink — precisely
+    the component an attacker would plant. Each prefix is tested as written, so
+    `..` is resolved by the filesystem against the real parent, which is what
+    dockerd will do too.
+
+    Fails closed: an OSError on any prefix (an unreadable parent, a loop) means
+    the path cannot be proven safe, which is not the same as being safe.
+    """
+    text = os.path.expanduser(str(path))
+    if not text.startswith("/"):
+        # Join rather than abspath: abspath normpaths, and that is the collapse
+        # this function exists to avoid.
+        text = os.getcwd() + "/" + text
+    prefix = "/"
+    for part in text.split("/"):
+        if not part or part == ".":
+            continue
+        prefix = prefix.rstrip("/") + "/" + part
+        try:
+            if os.path.islink(prefix):
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def _unquote_once(text):

@@ -102,6 +102,27 @@ def _under_workspace(path):
     return target == root or target.startswith(root.rstrip("/") + "/")
 
 
+def _refuse_symlinked(source, what):
+    """Deny a bind whose source has a symlink anywhere in it (A11-04).
+
+    _under_workspace resolves the source and judges where it POINTS. That is only sound
+    if nothing can re-point it afterwards, and something can: this filter decides at
+    container-create, dockerd resolves again at container-start, and the agent can write
+    to the workspace in between. A link that resolved inside the workspace at create can
+    name / by the time it is mounted.
+
+    Re-checking at start would only narrow the window. Refusing a source with any
+    symlink component removes it — nothing is left to swap. The cost is that a
+    legitimate symlinked path inside the workspace is refused too; that is the intended
+    trade, and the message says so rather than leaving the caller to guess.
+    """
+    if canon.has_symlink_component(source):
+        raise Denied(
+            f"{what} {source!r} contains a symlink component; the target could be "
+            "re-pointed between create and start. Bind the real path instead."
+        )
+
+
 def check_bind(spec):
     """A `Binds` entry: "source:target[:opts]". Source may be a named volume."""
     parts = spec.split(":")
@@ -114,6 +135,7 @@ def check_bind(spec):
         return
     if not _under_workspace(source):
         raise Denied(f"bind source {source!r} is outside the workspace ({WORKSPACE!r})")
+    _refuse_symlinked(source, "bind source")
 
 
 def check_mount(mount):
@@ -130,6 +152,7 @@ def check_mount(mount):
             raise Denied(
                 f"bind mount {source!r} is outside the workspace ({WORKSPACE!r})"
             )
+        _refuse_symlinked(source, "bind mount")
     elif mtype == "volume":
         # A `local` volume can be a bind in disguise: DriverConfig opts o=bind,device=/
         volume_options = canon.cfget(mount, "VolumeOptions") or {}
