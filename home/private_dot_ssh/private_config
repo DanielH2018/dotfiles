@@ -5,10 +5,16 @@ Host daniel-server
     User ubuntu
     IdentityFile ~/.ssh/daniel-server
     # Renders Claude Code's artifact links. The server serves ~/.claude/artifacts on
-    # loopback:8181, which VS Code Remote-SSH forwarded automatically and a plain ssh
-    # session does not, so http://127.0.0.1:8181/... only resolves with this in place.
+    # loopback, which VS Code Remote-SSH forwarded automatically and a plain ssh
+    # session does not, so http://127.0.0.1:8182/... only resolves with this in place.
     # sshd allows it via `Match User ubuntu -> AllowTcpForwarding local`; -R stays off.
-    LocalForward 127.0.0.1:8181 127.0.0.1:8181
+    #
+    # 8182, not the 8181 default, because this machine runs its own artifact server on
+    # 8181 (the SessionStart hook is gated on linux, and WSL is linux). Sharing the port
+    # means this forward can't bind and the browser quietly hits the local server, which
+    # lists local artifacts and 404s every remote one. daniel-server sets a matching
+    # CLAUDE_ARTIFACTS_PORT=8182 in settings.base.json so the links it emits agree.
+    LocalForward 127.0.0.1:8182 127.0.0.1:8182
 
 Host daniel-pi
     HostName 10.0.0.139

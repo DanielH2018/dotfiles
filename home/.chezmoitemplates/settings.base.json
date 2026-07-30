@@ -86,7 +86,16 @@
     "OTEL_LOG_USER_PROMPTS": "1",
     "OTEL_LOG_ASSISTANT_RESPONSES": "1",
     "OTEL_LOG_TOOL_DETAILS": "1",
-    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}
+    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}{{ if eq .chezmoi.hostname "daniel-server" }},
+    {{/* serve-artifacts.sh binds this port and link-artifact.sh writes it into the
+         emitted URL, so both ends move together. It has to differ from the 8181
+         default because daniel-server is reached over plain ssh from a workstation
+         that runs its OWN artifact server on 8181 (the SessionStart hook is gated on
+         linux, and WSL is linux). With both on 8181 the client-side `ssh -L` can't
+         bind, fails with "Address already in use", and the browser silently reaches
+         the local server instead — a directory listing that renders but 404s every
+         file written here. ~/.ssh/config forwards 8182 to match. */}}
+    "CLAUDE_ARTIFACTS_PORT": "8182"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
