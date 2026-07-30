@@ -251,6 +251,31 @@ test('the conditional mounts use if/then, not && — set -e would abort the laun
   }
 });
 
+// The socket proxy filters by API path and never reads a body, so POST /containers/create
+// reached the daemon with any HostConfig the caller asked for. docker-create-filter.py is
+// what closes that, and only if the sandbox actually talks to it.
+test('the sandbox reaches Docker through the create-filter, not the socket proxy directly', () => {
+  assert.match(LAUNCHER_SRC, /-e DOCKER_HOST="tcp:\/\/\$FILTER_ALIAS:2375"/,
+    'DOCKER_HOST must point at the filter — pointing it at $PROXY_ALIAS bypasses body inspection');
+  assert.doesNotMatch(LAUNCHER_SRC, /-e DOCKER_HOST="tcp:\/\/\$PROXY_ALIAS:2375"/);
+});
+
+test('the create-filter is told the workspace, and can resolve symlinks inside it', () => {
+  const filter = extractBlock(LAUNCHER_SRC, 'start_filter() {', '\n}\n');
+  assert.match(filter, /-e FILTER_WORKSPACE="\$WORK_PATH"/, 'the filter needs the allowed bind root');
+  assert.match(filter, /-e FILTER_UPSTREAM="\$PROXY_ALIAS:2375"/, 'the filter forwards to the socket proxy');
+  // Without the workspace mounted at its own path, realpath cannot follow a symlink the
+  // agent planted in the repo, and a textual prefix check alone would pass it.
+  assert.match(filter, /-v "\$WORK_PATH:\$WORK_PATH:ro"/);
+  assert.match(filter, /--cap-drop all/);
+});
+
+test('the create-filter is torn down with the proxy, not left running', () => {
+  const stop = extractBlock(LAUNCHER_SRC, 'stop_proxy() {', '\n}\n');
+  assert.match(stop, /docker rm -f "\$FILTER_NAME"/,
+    'a leaked filter container holds the run network open and survives the session');
+});
+
 test('the resolved settings temp file is removed on exit, not leaked once per launch', () => {
   const cleanup = extractBlock(LAUNCHER_SRC, 'cleanup() {', '\n}\n');
   assert.match(cleanup, /sandbox-settings-\*\.json/,
