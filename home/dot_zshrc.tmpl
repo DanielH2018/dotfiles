@@ -70,6 +70,9 @@ fi
 fpath=("$HOME/.claude/sandbox" $fpath)
 {{- if eq .chezmoi.os "darwin" }}
 fpath=("$BREW_PREFIX/share/zsh/site-functions" $fpath)
+# Docker Desktop's CLI completions; folded in here (not appended near EOF) so the
+# single compinit call below sees the full fpath and never needs to run twice (A14-09).
+fpath=("$HOME/.docker/completions" $fpath)
 {{- end }}
 
 autoload -Uz compinit
@@ -79,6 +82,9 @@ mkdir -p "${ZCOMPDUMP:h}"
 # Run security checks once per day, otherwise skip for performance
 if [[ -n "$ZCOMPDUMP"(#qN.mh+24) ]]; then
   compinit -d "$ZCOMPDUMP"
+  # Re-arm the 24h freshness guard above; without this the full branch fires on
+  # every start instead of once a day (A14-07).
+  touch "$ZCOMPDUMP"
 else
   compinit -C -d "$ZCOMPDUMP"
 fi
@@ -202,11 +208,3 @@ ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#6c7086'
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
-{{- if eq .chezmoi.os "darwin" }}
-
-# The following lines have been added by Docker Desktop to enable Docker CLI completions.
-fpath=(${HOME}/.docker/completions $fpath)
-autoload -Uz compinit
-compinit
-# End of Docker CLI completions
-{{- end }}
