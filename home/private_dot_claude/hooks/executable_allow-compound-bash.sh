@@ -27,9 +27,35 @@ fi
 INPUT=$(cat)
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
 
-# Only act on compound commands (chains or pipes)
+# M02 shadow census. CMDPARSE_SHADOW=1 computes what the shared decomposition in
+# cmdparse.sh WOULD decide, logs old-vs-new, and returns the OLD decision unchanged. It is
+# the instrument for the cutover: the hooks run on every Bash call, so the log is a census of
+# live traffic rather than a synthetic sample, and the ship gate for the next slice is that
+# no logged command moves toward `allow`.
+#
+# Absent library => shadow silently off. It cannot fail open, because the only thing the
+# shadow can do to a decision is withhold an approval (see SHADOW_ONLY below).
+CP_SHADOW=0
+if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "${CMDPARSE:-on}" != off ]; then
+  # shellcheck source=/dev/null
+  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null; then CP_SHADOW=1; fi
+fi
+
+# Only act on compound commands (chains or pipes).
+#
+# A newline-separated command is not compound to this test, so it exits here and falls
+# through to native prefix matching (A1-16). SHADOW_ONLY exists to measure exactly that
+# population: when the shared parser says the command really is several commands, carry on
+# through the judgement below so the census can record what would have happened — but pin
+# the decision to defer, which is what exiting here already meant. The shadow can therefore
+# only ever withhold an approval, never add one.
+SHADOW_ONLY=0
 if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* && "$COMMAND" != *"|"* ]]; then
-  exit 0
+  if [ "$CP_SHADOW" = 1 ] && cmd_parse "$COMMAND" && [ "$CP_NSEG" -gt 1 ]; then
+    SHADOW_ONLY=1
+  else
+    exit 0
+  fi
 fi
 
 # Extract Bash(...) entries from a permissions list and normalize to plain
@@ -269,18 +295,24 @@ split_outside_quotes() {
 # Glob deny/ask patterns are tested against the WHOLE command before it is split, as
 # well as against each segment below. The splitter consumes `|`, so a rule written
 # across a pipe — `* | sh`, `* | bash` — is only ever intact at this point.
+# Recorded rather than exited on, so the shadow census below can log this outcome too. It
+# is a whole-command test, so it applies identically to the old and the new segmentation.
+WHOLE_GLOB_DEFER=0
 if matches_glob "$COMMAND" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
   || matches_glob "$COMMAND" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
-  exit 0
+  WHOLE_GLOB_DEFER=1
 fi
 
-SPLIT=$(split_outside_quotes "$COMMAND") || exit 0
-PARTS=()
-while IFS= read -r line; do [[ -n "$line" ]] && PARTS+=("$line"); done <<< "$SPLIT"
-
-for part in "${PARTS[@]}"; do
-  part=$(trim "$part")
-  [ -z "$part" ] && continue
+# The per-segment judgement, lifted verbatim out of the loop it used to be written inline
+# as. It reads JSEG/JSEG_N so the same code can be run over the old splitter's segments and
+# over cmdparse.sh's, which is the whole point: the census compares two SEGMENTATIONS, not
+# two policies. Returns 0 to allow, 1 to defer.
+judge() {
+  local idx=0 part redir teed teecmd target
+  while [ "$idx" -lt "$JSEG_N" ]; do
+    part=$(trim "${JSEG[idx]}")
+    idx=$((idx + 1))
+    [ -z "$part" ] && continue
 
   # Redirection turns an allow-listed reader into a writer (`jq . f.json > ~/.bashrc`),
   # and matches_any only ever looks at the command prefix. Quote-aware splitting brought
@@ -288,7 +320,7 @@ for part in "${PARTS[@]}"; do
   # /dev/null and fd dups are the harmless cases and are everywhere in diagnostics.
   redir=$(printf '%s' "$part" | sed -E 's@[0-9]*>>?[[:space:]]*/dev/null@@g; s@[0-9]*>&[0-9-]@@g')
   case $redir in
-    *'>'*) exit 0 ;;
+    *'>'*) return 1 ;;
   esac
 
   # `tee` is the same hazard without a `>`: it writes every path it is handed, so
@@ -301,14 +333,14 @@ for part in "${PARTS[@]}"; do
   teed=$(printf '%s' "$part" | sed -E 's@[[:space:]]+-[^[:space:]]+@@g; s@[[:space:]]+/dev/null@@g')
   teecmd=${teed%%[[:space:]]*}
   case ${teecmd##*/} in
-    tee) [ "$teed" != "$teecmd" ] && exit 0 ;;
+    tee) [ "$teed" != "$teecmd" ] && return 1 ;;
   esac
 
   # Deny or ask list → defer to normal permission handling
   if matches_any "$part" ${DENY[@]+"${DENY[@]}"} || matches_any "$part" ${ASK[@]+"${ASK[@]}"} \
     || matches_glob "$part" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
     || matches_glob "$part" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
-    exit 0
+    return 1
   fi
 
   # A rule may name a wrapper invocation exactly — `/usr/bin/env bash --version` is
@@ -322,9 +354,9 @@ for part in "${PARTS[@]}"; do
 
   # Otherwise judge what the segment will actually RUN, not the wrapper in front of it.
   # Unreadable wrapper → defer; that failure mode is the whole point of the function.
-  target=$(unwrap_wrapper "$part") || exit 0
+  target=$(unwrap_wrapper "$part") || return 1
   # Not a wrapper, and it already failed the allow list above.
-  [ "$target" = "$part" ] && exit 0
+  [ "$target" = "$part" ] && return 1
 
   # The unwrapped command earns the same deny/ask scrutiny the segment just got. Skipping
   # this would let a wrapper carry a denied command past its own rule: the deny prefixes
@@ -332,13 +364,63 @@ for part in "${PARTS[@]}"; do
   if matches_any "$target" ${DENY[@]+"${DENY[@]}"} || matches_any "$target" ${ASK[@]+"${ASK[@]}"} \
     || matches_glob "$target" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
     || matches_glob "$target" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
-    exit 0
+    return 1
   fi
 
   # Not in allow list → defer
   if ! matches_any "$target" "${ALLOW[@]}"; then
-    exit 0
+    return 1
   fi
-done
+  done
+  return 0
+}
 
-printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+# --- decision ------------------------------------------------------------------------------
+#
+# OLD is what this hook has always decided: today's splitter, today's judgement. NEW is the
+# same judgement over cmdparse.sh's segmentation. Only OLD is ever emitted in this slice.
+
+OLD=defer
+if [ "$SHADOW_ONLY" = 0 ] && [ "$WHOLE_GLOB_DEFER" = 0 ]; then
+  if SPLIT=$(split_outside_quotes "$COMMAND"); then
+    JSEG=(); JSEG_N=0
+    while IFS= read -r line; do
+      [ -n "$line" ] && { JSEG[JSEG_N]=$line; JSEG_N=$((JSEG_N + 1)); }
+    done <<< "$SPLIT"
+    judge && OLD=allow
+  fi
+fi
+
+if [ "$CP_SHADOW" = 1 ]; then
+  NEW=defer
+  # An unreadable command is a refusal, never a skip — so it stays `defer` here.
+  if [ "$WHOLE_GLOB_DEFER" = 0 ] && cmd_parse "$COMMAND"; then
+    JSEG=(); JSEG_N=0
+    _i=0
+    while [ "$_i" -lt "$CP_NSEG" ]; do
+      JSEG[JSEG_N]=${CP_SEG[_i]}; JSEG_N=$((JSEG_N + 1)); _i=$((_i + 1))
+    done
+    judge && NEW=allow
+  fi
+  # One line per live Bash call. The ship gate for the cutover slice reads this file and
+  # requires zero `old != allow -> new == allow` transitions; anything else is a parser bug,
+  # not acceptable friction.
+  LOGDIR="${CLAUDE_SHADOW_LOG_DIR:-$HOME/.claude/logs}"
+  mkdir -p "$LOGDIR" 2>/dev/null && jq -cn \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg hook allow-compound-bash \
+    --arg cmd "$COMMAND" \
+    --arg old "$OLD" \
+    --arg new "$NEW" \
+    --arg status "$CP_STATUS" \
+    --argjson nseg "$CP_NSEG" \
+    --argjson shadow_only "$SHADOW_ONLY" \
+    '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,new:$new,status:$status,nseg:$nseg,shadow_only:$shadow_only}' \
+    >> "$LOGDIR/cmdparse-shadow.jsonl" 2>/dev/null
+fi
+
+# The old decision, unchanged. SHADOW_ONLY commands never reach `allow` because OLD is
+# pinned to defer above, which is exactly what exiting at the compound gate already meant.
+[ "$OLD" = allow ] && \
+  printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+exit 0

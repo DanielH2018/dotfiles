@@ -30,6 +30,69 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # `\s\$HOME` anchor that catches the unquoted form.
 SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
 
+# --- M02 shadow census ----------------------------------------------------------------------
+#
+# SCAN above collapses a newline to a SPACE. That is conservative for a whole-string rule and
+# fatal for a command-position-anchored one: the rules below anchor on `(^|[;&|])`, so a
+# command after a newline is never in command position and never matched. Both verified this
+# session against a scratch copy of this file:
+#
+#   printf 'echo x\nterraform destroy'   -> no decision   (`echo x; terraform destroy` denies)
+#   printf 'echo x\nssh homelab reboot'  -> no decision   (`echo x && ssh …` denies)
+#
+# CMDPARSE_SHADOW=1 re-evaluates those two anchored families against each SEGMENT from
+# cmdparse.sh, using the same regexes, and logs which families would newly fire. It changes
+# no decision: nothing below reads BDB_NEW, and the log is written from an EXIT trap after
+# this hook has already decided.
+BDB_OLD=none
+BDB_SHADOW=0
+if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "${CMDPARSE:-on}" != off ]; then
+  # shellcheck source=/dev/null
+  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null; then BDB_SHADOW=1; fi
+fi
+
+# shellcheck disable=SC2329  # invoked indirectly, from the EXIT trap installed below
+_bdb_shadow_log() {
+  [ "$BDB_SHADOW" = 1 ] || return 0
+  local newly='' seg segscan i=0
+  local status=unreadable nseg=0
+  if cmd_parse "$COMMAND"; then
+    status=$CP_STATUS
+    nseg=$CP_NSEG
+    while [ "$i" -lt "$CP_NSEG" ]; do
+      # Same normalization this hook applies to the whole command, applied per segment.
+      segscan=$(printf '%s' "${CP_SEG[i]}" | tr '\n\t\\' '   ' | tr -d "\"'")
+      i=$((i + 1))
+      # Only count a family as NEWLY visible if the whole-string form did not already
+      # catch it — the census is of the gap, not of every match.
+      if echo "$segscan" | grep -qiE "$SSH_AT_RE" && ! echo "$SCAN" | grep -qiE "$SSH_AT_RE"; then
+        case $newly in *ssh*) ;; *) newly="$newly ssh" ;; esac
+      fi
+      if echo "$segscan" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
+        && ! echo "$SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+        case $newly in *terraform*) ;; *) newly="$newly terraform" ;; esac
+      fi
+    done
+  else
+    status=$CP_STATUS
+  fi
+  local logdir="${CLAUDE_SHADOW_LOG_DIR:-$HOME/.claude/logs}"
+  mkdir -p "$logdir" 2>/dev/null && jq -cn \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg hook block-dangerous-bash \
+    --arg cmd "$COMMAND" \
+    --arg old "$BDB_OLD" \
+    --arg status "$status" \
+    --arg newly "${newly# }" \
+    --argjson nseg "$nseg" \
+    '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,status:$status,nseg:$nseg,
+      newly_anchored:(if $newly=="" then null else ($newly|split(" ")) end)}' \
+    >> "$logdir/cmdparse-shadow.jsonl" 2>/dev/null
+  return 0
+}
+[ "$BDB_SHADOW" = 1 ] && trap _bdb_shadow_log EXIT
+
+
 # Catastrophic rm targets: root, root-with-a-glob (`rm -rf /*` erases the same tree
 # but leaves no whitespace after the slash), home tilde, and $HOME.
 #
@@ -48,6 +111,7 @@ fi
 RM_TARGET="$RM_TARGET)"
 
 deny() {
+  BDB_OLD=deny
   jq -n --arg reason "$1" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -78,7 +142,10 @@ deny() {
 # remote block (verified: plain `ssh homelab reboot` matched, those three did not).
 # Scan SCAN so quoting cannot hide the binary, and allow leading env assignments and
 # wrapper words — the same idiom TF_AT already uses further down.
-if echo "$SCAN" | grep -qiE '(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'; then
+# Held in a variable so the M02 shadow census re-uses this exact rule per segment instead
+# of a second copy of it.
+SSH_AT_RE='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'
+if echo "$SCAN" | grep -qiE "$SSH_AT_RE"; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
   REMOTE="$SCAN"
@@ -268,6 +335,7 @@ fi
 # running. Every deny now gets its say first; only a command that survives all of them
 # reaches the upgrade.
 if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
+  BDB_OLD=allow
   UPGRADED=$(echo "$COMMAND" | sed -E 's/--force([ ]|$)/--force-with-lease\1/g; s/([ ])-f([ ]|$)/\1--force-with-lease\2/g')
   jq -n --arg cmd "$UPGRADED" '{
     hookSpecificOutput: {
