@@ -198,8 +198,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/outcome-lib.sh",
-      "hash": "d627d182c53d0dcd1710c305d35c58b708df60dfb7a1919be37b6fb53ae4c09b",
-      "landed": "2026-07-30T14:44:36.850Z"
+      "hash": "3449d5d12db39504c86d45bb1088f2a7cb42b77ab6c387f74bcf832ba8200f85",
+      "landed": "2026-07-30T17:27:08.615Z"
     },
     {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
