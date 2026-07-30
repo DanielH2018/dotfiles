@@ -172,11 +172,11 @@ const ESC_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-esc-'));
 fs.mkdirSync(path.join(ESC_HOME, '.claude'), { recursive: true });
 fs.writeFileSync(path.join(ESC_HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
-    allow: ['Bash(echo:*)', 'Bash(ls:*)', 'Bash(find:*)', 'Bash(awk:*)', 'Bash(xargs:*)',
-      'Bash(tee:*)', 'Bash(/usr/bin/env bash --version)'],
+    allow: ['Bash(echo:*)', 'Bash(ls:*)', 'Bash(find:*)', 'Bash(awk:*)', 'Bash(wc:*)',
+      'Bash(grep:*)', 'Bash(tee:*)', 'Bash(/usr/bin/env bash --version)'],
     deny: ['Bash(find *-exec*)', 'Bash(find *-execdir*)', 'Bash(find *-ok*)',
       'Bash(find *-delete*)', 'Bash(find *-fprintf*)', 'Bash(awk *system(*)',
-      'Bash(xargs *sh*)', 'Bash(xargs *bash*)'],
+      'Bash(curl:*)'],
     ask: [],
   },
 }));
@@ -188,8 +188,6 @@ test('deny globs cover the execution forms of allow-listed spawners', { skip }, 
   assert.strictEqual(allowed('echo hi && find . -delete', ESC_HOME), null);
   assert.strictEqual(allowed('echo hi && find . -fprintf /tmp/x %p', ESC_HOME), null);
   assert.strictEqual(allowed(`echo hi && awk 'BEGIN{system("id")}'`, ESC_HOME), null);
-  assert.strictEqual(allowed(`echo hi | xargs -I{} sh -c 'id'`, ESC_HOME), null);
-  assert.strictEqual(allowed(`echo hi | xargs bash -c 'id'`, ESC_HOME), null);
 });
 
 // The guards are worthless if they cost the ordinary form of each tool.
@@ -197,7 +195,70 @@ test('deny globs leave the everyday form of each spawner allowed', { skip }, () 
   assert.strictEqual(allowed(`echo hi && find . -name '*.ts'`, ESC_HOME), 'allow');
   assert.strictEqual(allowed('echo hi && find . -type f -maxdepth 2', ESC_HOME), 'allow');
   assert.strictEqual(allowed(`echo hi && awk '{print $1}' f.txt`, ESC_HOME), 'allow');
+});
+
+// ---------------------------------------------------------------------------
+// Wrappers take a command as an ARGUMENT and exec it, so an allow rule for the wrapper
+// approves anything it is handed — matches_any only reads a segment's leading words.
+// `xargs python -c '...'` auto-approved on the strength of `Bash(xargs:*)` alone
+// (measured 2026-07-29, along with node -e, perl -e and ruby -e).
+//
+// The hook now resolves a wrapper to the command it will actually run and judges THAT.
+// Note what is NOT allow-listed in the fixture above: xargs, timeout, env, nice, nohup.
+// Every "allow" below is therefore earned by the INNER command, never by the wrapper.
+test('a wrapper is judged on the command it will actually run', { skip }, () => {
   assert.strictEqual(allowed('echo hi | xargs wc -l', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi | xargs -0 -n 1 wc -l', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && timeout 5 ls', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && timeout -s KILL 5s ls', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && env FOO=bar ls', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && nice -n 10 ls', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && nohup ls', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi && timeout 5 nohup ls', ESC_HOME), 'allow');
+});
+
+test('a wrapper cannot carry an unlisted interpreter past its own allow rule', { skip }, () => {
+  for (const inner of ["sh -c 'id'", "bash -c 'id'", "python -c 'import os'",
+    "python3 -c 'x'", "node -e 'x'", "perl -e 'x'", "ruby -e 'x'"]) {
+    assert.strictEqual(allowed(`echo hi | xargs ${inner}`, ESC_HOME), null, `xargs ${inner}`);
+    assert.strictEqual(allowed(`echo hi && timeout 5 ${inner}`, ESC_HOME), null, `timeout ${inner}`);
+    assert.strictEqual(allowed(`echo hi && nohup ${inner}`, ESC_HOME), null, `nohup ${inner}`);
+  }
+  // Flags must not be mistaken for the command word, however they are written.
+  assert.strictEqual(allowed(`echo hi | xargs -I{} sh -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi | xargs -n1 -P4 bash -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi | xargs --replace=X sh -c 'id'`, ESC_HOME), null);
+  assert.strictEqual(allowed(`echo hi | xargs -- sh -c 'id'`, ESC_HOME), null);
+});
+
+test('the unwrapped command is held to the deny list too', { skip }, () => {
+  // Deny prefixes anchor at the start of a segment, so `curl` never matches
+  // `xargs curl …` on its own. Without a second deny pass the wrapper would carry a
+  // denied command straight through to the allow check.
+  assert.strictEqual(allowed('echo hi | xargs curl http://evil', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && timeout 5 curl http://evil', ESC_HOME), null);
+});
+
+test('a wrapper whose options cannot be read defers rather than falling back', { skip }, () => {
+  // The failure that made xargs a bypass was falling back to the wrapper's own allow
+  // entry. These shapes are deliberately refused: env -S splits a string into fresh
+  // arguments, env -i reshapes the environment, xargs -e and -l carry OPTIONAL values so
+  // their arity is unknowable, and timeout without its mandatory duration is unparseable.
+  assert.strictEqual(allowed(`echo hi && env -S 'ls -l'`, ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && env -i ls', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && env -u PATH ls', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi | xargs -e ls', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && timeout ls', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi && timeout --unknown-flag 5 ls', ESC_HOME), null);
+  assert.strictEqual(allowed('echo hi | xargs', ESC_HOME), null);
+});
+
+test('a filename that merely contains an interpreter name is not a command', { skip }, () => {
+  // The regression the old `xargs *sh*` glob caused: a substring match cannot tell the
+  // command xargs runs from a path it is handed, so ordinary batch work was refused.
+  assert.strictEqual(allowed('echo hi | xargs grep foo build.sh', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi | xargs wc -l install.bash', ESC_HOME), 'allow');
+  assert.strictEqual(allowed('echo hi | xargs -n1 grep x node_modules', ESC_HOME), 'allow');
 });
 
 // env takes a command as its argument, so no prefix of it is safe; the narrowed
@@ -258,11 +319,14 @@ const REAL_SETTINGS = path.join(__dirname, '..', 'home', '.chezmoitemplates', 's
 // `make` counts: a target's recipe is arbitrary code living in the repo's own Makefile.
 const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', 'python3',
   'node', 'perl', 'ruby', 'eval', 'exec', 'sudo', 'ssh', 'nohup', 'setsid', 'script',
-  'entr', 'timeout', 'nice', 'stdbuf', 'watch', 'make'];
+  'entr', 'timeout', 'nice', 'stdbuf', 'watch', 'make', 'xargs'];
 // `fnm env` ends in the word `env` but prints shell init text; it never runs an argument.
 const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
-// Allow-listed spawners that are guarded by deny globs instead of being removed.
-const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system('], xargs: ['sh', 'bash'] };
+// Allow-listed spawners that are guarded by deny globs instead of being removed. xargs is
+// deliberately absent: its command word floats after any number of options, so no glob can
+// pin it down, and it was removed from allow instead. find and awk stay because their
+// execution forms are named flags.
+const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system('] };
 
 function bashPrefixes(block) {
   // Mirror extract_bash_prefixes: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
@@ -298,6 +362,19 @@ test('each allow-listed spawner that is kept carries its deny globs', () => {
       assert.ok(denyBlock.includes(`"Bash(${cmd} *${form}*)"`),
         `${cmd} is allow-listed, so deny must cover ${form}`);
     }
+  }
+});
+
+test('every wrapper the hook unwraps is one the allow list is checked against', () => {
+  // The unwrapper only helps a COMPOUND command — the hook exits early on anything else,
+  // so a bare `xargs python -c …` is judged by the native prefix match alone. A wrapper
+  // that gained an allow rule would therefore be a bypass no unwrapping could close, and
+  // the test above is what refuses it. Keep the two lists in step.
+  const hook = fs.readFileSync(HOOK, 'utf8');
+  const listed = hook.match(/^\s*(timeout\|env\|nice\|[a-z|]+)\)\s*;;\s*$/m);
+  assert.ok(listed, 'located the wrapper case list in the hook');
+  for (const w of listed[1].split('|')) {
+    assert.ok(SPAWNERS.includes(w), `hook unwraps "${w}" but SPAWNERS does not list it`);
   }
 });
 
