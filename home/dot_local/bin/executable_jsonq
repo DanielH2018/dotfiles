@@ -12,6 +12,7 @@ network — which is what makes a blanket `Bash(jsonq:*)` allow rule defensible.
     jsonq '[r for r in d["rules"] if r["on"]]' a.json
     jsonq 'set(d1) - set(d2)' a.json b.json
     jsonq --script 'out = [x["id"] for x in d if x["ok"]]' a.json
+    jsonq --jsonl 'len([x for x in d if x["type"] == "user"])' session.jsonl
 
 Invoke it by name, never as `python3 jsonq` — block-dangerous-bash.sh treats a
 line containing an interpreter keyword followed by a `.key`/`.env`/`.pem`
@@ -166,13 +167,33 @@ def _check_readable(path):
     return expanded
 
 
-def _load(path):
+def _load_lines(fh, path):
+    """One JSON value per line, blank lines skipped.
+
+    Claude Code transcripts (~/.claude/projects/*/<session>.jsonl) and most log
+    shipping formats are JSONL, which json.load rejects outright at line 2
+    ("Extra data"). That single gap is what sent transcript scanning back to
+    `python3 -c`, so the error here names the offending line number.
+    """
+    docs = []
+    for lineno, line in enumerate(fh, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            docs.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise JsonqError(f"{path}:{lineno}: invalid JSON ({exc.msg})")
+    return docs
+
+
+def _load(path, jsonl=False):
     if path == "-":
-        return json.load(sys.stdin)
+        return _load_lines(sys.stdin, "<stdin>") if jsonl else json.load(sys.stdin)
     target = _check_readable(path)
     try:
         with open(target, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            return _load_lines(fh, path) if jsonl else json.load(fh)
     except FileNotFoundError:
         raise JsonqError(f"no such file: {path}")
     except json.JSONDecodeError as exc:
@@ -222,9 +243,9 @@ def _install_timeout(seconds):
     signal.alarm(seconds)
 
 
-def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT):
+def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT, jsonl=False):
     """Validate, evaluate, render. Split out from main() so tests can call it."""
-    docs = [_load(f) for f in files] if files else [json.load(sys.stdin)]
+    docs = [_load(f, jsonl) for f in files] if files else [_load("-", jsonl)]
 
     env = dict(SAFE_MODULES)
     env.update(SAFE_BUILTINS)
@@ -277,6 +298,8 @@ def main(argv=None):
                         help=f"wall-clock cap in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("-s", "--script", metavar="SRC",
                         help="multi-statement mode; assign the result to `out`")
+    parser.add_argument("--jsonl", action="store_true",
+                        help="parse each input as JSON Lines; `d` is the list of records")
     parser.add_argument("args", nargs="*", metavar="EXPR [FILE...]",
                         help="expression, then input files (stdin if none)")
     ns = parser.parse_args(argv)
@@ -289,7 +312,7 @@ def main(argv=None):
         source, files, mode = ns.args[0], list(ns.args[1:]), "eval"
 
     try:
-        print(run(source, files, mode, ns.raw, ns.indent, ns.timeout))
+        print(run(source, files, mode, ns.raw, ns.indent, ns.timeout, ns.jsonl))
     except JsonqError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
