@@ -80,6 +80,16 @@ test('ordinary source files are allowed', { skip }, () => {
   for (const p of ALLOW) assert.notStrictEqual(decision(runHook(p)), 'deny', `should not deny: ${p}`);
 });
 
+// Only the .env arm carried a bare form. `.aws/credentials` from a cwd of $HOME is the
+// same file as /home/u/.aws/credentials, but a relative path has no separator for the
+// */-prefixed patterns to match.
+test('a relative path to a secret is denied, not just an absolute one', { skip }, () => {
+  for (const p of ['.aws/credentials', '.aws/config', '.netrc', '.npmrc', '.pypirc',
+    '.gnupg/secring.gpg', 'secrets/token.txt', '.claude.json', '.git-credentials']) {
+    assert.strictEqual(decision(runHook(p)), 'deny', `should deny relative path: ${p}`);
+  }
+});
+
 test('token stores denied to Bash are denied to Read/Edit/Write too', { skip }, () => {
   for (const p of DENY_TOKEN_STORES) {
     assert.strictEqual(decision(runHook(p)), 'deny', `should deny: ${p}`);

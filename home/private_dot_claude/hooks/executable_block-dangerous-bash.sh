@@ -100,13 +100,17 @@ if echo "$SCAN" | grep -qiE '\brm\s' && echo "$SCAN" | grep -qiE '(\s-[a-zA-Z]*r
 fi
 
 # Force-push to main / master (flag syntax and +refspec syntax) — always blocked
-# Exclude --force-with-lease which is the safe variant
-if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
-  if echo "$COMMAND" | grep -qE '(^|[[:space:]]|:)(main|master)([[:space:]]|:|$)'; then
+# Exclude --force-with-lease which is the safe variant.
+# $SCAN, not $COMMAND: both patterns anchor on whitespace, so an adjacent quote character
+# breaks them — `git push --force"" main` and `git push --force ""main` each read as a
+# non-match and rode through. The rm and terraform rules already scan quote-stripped;
+# these did not, which was the whole of the difference.
+if echo "$SCAN" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$SCAN" | grep -q '\-\-force-with-lease'; then
+  if echo "$SCAN" | grep -qE '(^|[[:space:]]|:)(main|master)([[:space:]]|:|$)'; then
     deny "Blocked: force-push to main/master. Use a feature branch."
   fi
 fi
-if echo "$COMMAND" | grep -qE 'git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b'; then
+if echo "$SCAN" | grep -qE 'git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b'; then
   deny "Blocked: force-push via +refspec to main/master. Use a feature branch."
 fi
 
@@ -189,11 +193,11 @@ while IFS= read -r seg; do
   if printf '%s' "$seg" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
     deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
   fi
-done <<< "$(printf '%s' "$COMMAND" | tr ';&|' '\n')"
+done <<< "$(printf '%s' "$SCAN" | tr ';&|' '\n')"
 set +f
 # Interpreters that can slurp a file (python -c 'open(".env")', node -e, perl, ...).
 # Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
-if echo "$COMMAND" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
+if echo "$SCAN" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
   deny "Blocked: reading a secrets file via an interpreter. Ask the user to share the specific value needed."
 fi
 

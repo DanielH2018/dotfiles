@@ -229,6 +229,25 @@ test('--force to a feature branch is upgraded to --force-with-lease', { skip }, 
 // output — the whole blocklist off, silently. Empty PATH is enough: the preflight uses
 // only shell builtins. spawnSync because the hook exits before draining stdin.
 const noJqSkip = fs.existsSync('/bin/bash') ? false : '/bin/bash unavailable';
+// $SCAN is $COMMAND with quotes stripped, built at the top of the hook for exactly this
+// evasion. Three rules still scanned $COMMAND, so an adjacent quote — which the shell
+// removes before running anything — slipped straight past them while the rm and terraform
+// rules, which do use $SCAN, caught the same trick.
+test('quote-splitting does not hide a force-push or a secret read', { skip }, async () => {
+  const evasions = [
+    'git push --force"" origin main',
+    "git push --force '' origin main",
+    'git push "--force" origin main',
+    'git push origin +"main"',
+    'cat ~/.aws/cred""entials',
+    'cat ~/.ssh/id_""rsa',
+    'python3 -c "print(1)" ~/.aws/cred""entials',
+  ];
+  const got = await decide(evasions);
+  evasions.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `quote-split evasion should be denied: ${cmd}`));
+});
+
 test('asks rather than failing open when jq is unavailable', { skip: noJqSkip }, () => {
   const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'nojq-'));
   try {
