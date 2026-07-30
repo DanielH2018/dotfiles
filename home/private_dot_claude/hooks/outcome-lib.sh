@@ -16,6 +16,21 @@
 # evaluate should fail closed at exit 0 with a permissionDecision of "ask" instead, the
 # way block-dangerous-bash.sh already does.
 #
+# WHICH PRIMITIVE — decided by your hook's OUTPUT CHANNEL, not by preference:
+#
+#   oc_cannot   marks AND exits 3. Right when the exit code IS the verdict: pre-push
+#               gates, check runners, anything whose caller reads $?.
+#   oc_mark     marks only, returns 0. Right when your hook speaks JSON on stdout,
+#               because oc_cannot's exit 3 would terminate the process BEFORE the
+#               decision is written — the marker survives and the verdict Claude was
+#               supposed to read does not.
+#
+# The distinction is easy to miss because oc_cannot reads like the headline API and
+# oc_mark reads like its internals. lint-after-edit.sh, the first consumer, found it by
+# hitting it: its only channel to Claude is a JSON `decision: "block"` with a reason, so
+# it marks and emits, and never calls oc_cannot. If you are writing the third consumer,
+# ask what reads your output before you pick.
+#
 # Seams (defaults are the real thing): OUTCOME_MARKER_DIR, UNEVAL_GATE.
 #
 # UNEVAL_GATE=warn demotes every could-not-evaluate from blocking to advisory, without
