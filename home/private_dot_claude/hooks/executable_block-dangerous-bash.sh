@@ -164,7 +164,10 @@ fi
 # Best-effort: catches common readers, not obfuscated invocations.
 # /proc/<pid>/environ and env-dumping paths belong here too — they carry exported
 # tokens just as directly as a credentials file does.
-SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem|\.key|\.p12|\.pfx)'
+# Declared in .chezmoidata/secrets.toml; tests/secret-registry.test.js fails if this
+# list drifts from it. `.claude/.credentials.json` is the OAuth token store on Linux and
+# WSL — a different file from `.claude.json`, and the one that was missing here.
+SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|\.pem|\.key|\.p12|\.pfx)'
 # Content dumpers, searchers (grep/awk/sed), pagers, editors, hashers, and
 # copy/exfil tools — any of these reading a secret path is a leak vector.
 READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar|jq|yq|gojq|jaq)'

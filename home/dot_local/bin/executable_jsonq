@@ -53,7 +53,8 @@ DEFAULT_TIMEOUT = 5
 SECRET_PATHS = (
     r"(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
     r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials"
-    r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude\.json"
+    r"|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml"
+    r"|\.claude/\.credentials\.json|\.claude\.json"
     r"|/etc/shadow|/etc/gshadow|/proc/[^/\s]+/environ|\.pem|\.key|\.p12|\.pfx)"
 )
 

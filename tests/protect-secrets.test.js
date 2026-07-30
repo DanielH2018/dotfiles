@@ -126,6 +126,7 @@ test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip 
     '\\.kube/config': '/home/u/.kube/config',
     '\\.docker/config\\.json': '/home/u/.docker/config.json',
     '\\.config/gh/hosts\\.yml': '/home/u/.config/gh/hosts.yml',
+    '\\.claude/\\.credentials\\.json': '/home/u/.claude/.credentials.json',
     '\\.claude\\.json': '/home/u/.claude.json',
     '/etc/shadow': '/etc/shadow',
     '/etc/gshadow': '/etc/gshadow',

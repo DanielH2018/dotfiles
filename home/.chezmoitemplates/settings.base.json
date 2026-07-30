@@ -499,6 +499,9 @@
            handed over the OAuth token. protect-secrets.sh is the primary gate and gives a
            reason — these are the layer that still stands if the hook is bypassed or its
            jq preflight fails open. */}}
+      {{/* The OAuth token store on Linux and WSL — a different file from ~/.claude.json below, and the one the deny list missed. Declared in .chezmoidata/secrets.toml; tests/secret-registry.test.js fails if the dialects drift apart. */}}
+      "Read(~/.claude/.credentials.json)",
+      "Edit(~/.claude/.credentials.json)",
       "Read(~/.claude.json)",
       "Edit(~/.claude.json)",
       "Read(~/.git-credentials)",
@@ -509,6 +512,9 @@
       "Edit(~/.docker/config.json)",
       "Read(/etc/shadow)",
       "Read(/etc/gshadow)",
+      {{/* Read was denied and Edit was not — surfaced by tests/secret-registry.test.js when the registry made the two dialects comparable. Root-owned, so a write would fail anyway; denied for the same reason the Read is. */}}
+      "Edit(/etc/shadow)",
+      "Edit(/etc/gshadow)",
       "Read(/proc/*/environ)",
       "Bash(terraform apply:*)",
       "Bash(terraform destroy:*)",

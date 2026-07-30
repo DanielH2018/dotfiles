@@ -41,6 +41,11 @@ case "$FILE_PATH" in
   # Each arm carries the bare form as well as the */-prefixed one. A relative path has no
   # separator to match — `.aws/credentials` from a cwd of $HOME is the same file as
   # /home/u/.aws/credentials, and only the .env arm handled that shape.
+  # The OAuth token store on Linux and WSL. A different file from ~/.claude.json below,
+  # which is where the deny list stopped — see .chezmoidata/secrets.toml.
+  .credentials.json|*/.claude/.credentials.json)
+    deny "Blocked: this is the Claude Code OAuth token store."
+    ;;
   .aws/credentials|.aws/config|*/.aws/credentials|*/.aws/config)
     deny "Blocked: AWS credentials file."
     ;;

@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "d4d67cf15ab9774b527a103b3eea2c8f237611e4055fe166cf2503f5d81f8831",
-      "landed": "2026-07-30T15:15:02.995Z"
+      "hash": "ea583bb81856e54ca35d39a9921e0f2f14850a329f93de32b792b73b9d53ebcd",
+      "landed": "2026-07-30T15:24:14.963Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -63,8 +63,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "8a71055347c3b7bb0307246a0493a21e659e1031a6dc301e9a70c87f7a5bb8e6",
-      "landed": "2026-07-30T01:34:20.450Z"
+      "hash": "2233a0c804170044e10c73a426f2b7a4b88348df75eed737f7d3a2d9f24c9124",
+      "landed": "2026-07-30T15:24:14.963Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -123,8 +123,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
-      "hash": "6ec7365d2b050e1cf86afe9a4ce19d3ec0dbe4b2adf47d6dac34bfa5e61b3371",
-      "landed": "2026-07-30T01:34:20.450Z"
+      "hash": "0e6a0fd42e850bea84f575f04fe7ea40d61936e383b8a99357c9628c89686ebe",
+      "landed": "2026-07-30T15:24:14.963Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
