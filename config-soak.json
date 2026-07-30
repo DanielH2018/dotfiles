@@ -48,8 +48,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "e44d0b9ef9dd28cef5914a9bbd701bf7f73dd7f11ca85263811bbf7b5ef81471",
-      "landed": "2026-07-30T00:19:47.402Z"
+      "hash": "464ed920bb0efa539dfaece7881be63871da6d5f4c7afc51a1677eac2cf90996",
+      "landed": "2026-07-30T16:10:15.759Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
@@ -63,8 +63,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "2233a0c804170044e10c73a426f2b7a4b88348df75eed737f7d3a2d9f24c9124",
-      "landed": "2026-07-30T15:24:14.963Z"
+      "hash": "ac2ee51912ff289a52533f04716a251c4c3c5c67003b9ad40b0f370934ba7306",
+      "landed": "2026-07-30T16:10:15.759Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -85,6 +85,11 @@
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
       "hash": "ac3cac37a21e4da771013253ed3473eb466b5805cddb12523dba6246acf8677e",
       "landed": "2026-07-08T20:17:05.073Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_cmdparse.sh",
+      "hash": "45e197835b7c9bad95a0c219c7a5f2d398f70313a911190c59c1aef17877517b",
+      "landed": "2026-07-30T16:10:15.759Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
