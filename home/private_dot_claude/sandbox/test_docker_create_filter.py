@@ -29,6 +29,13 @@ MODULE = os.path.join(HERE, "docker-create-filter.py")
 if not os.path.exists(MODULE):
     MODULE = os.path.join(HERE, "executable_docker-create-filter.py")
 
+# In the container both files are bind-mounted into /opt side by side; in the source
+# tree canon.py lives under home/dot_local/share/canon/, so point the loader at it.
+os.environ.setdefault(
+    "CANON_LIB",
+    os.path.join(HERE, "..", "..", "dot_local", "share", "canon", "canon.py"),
+)
+
 _spec = importlib.util.spec_from_file_location("docker_create_filter", MODULE)
 flt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(flt)
@@ -387,6 +394,74 @@ def test_ambiguous_framing_is_refused():
         sock.close()
     finally:
         h.close()
+
+
+# --- the decision must rest on the form dockerd will act on -------------------
+
+
+def test_lowercase_hostconfig_is_still_inspected():
+    # Go's encoding/json matches struct fields case-insensitively, so dockerd populates
+    # HostConfig.Privileged from this body while an exact-key lookup saw nothing at all.
+    body = {"Image": "alpine", "hostconfig": {"privileged": True, "binds": ["/:/host"]}}
+    assert denied("/v1.43/containers/create", body)
+
+
+def test_mixed_case_hostconfig_keys_are_still_inspected():
+    assert denied("/v1.43/containers/create", create({"PrIvIlEgEd": True}))
+    assert denied("/v1.43/containers/create", create({"BINDS": ["/etc:/etc"]}))
+    assert denied("/v1.43/containers/create", create({"pidmode": "host"}))
+
+
+def test_ambiguous_sibling_keys_are_refused_not_guessed():
+    # Two keys folding together have no single meaning: Go resolves them by struct
+    # field declaration order, which cannot be modelled here.
+    body = {"Image": "alpine", "HostConfig": {}, "hostconfig": {"privileged": True}}
+    assert denied("/v1.43/containers/create", body)
+
+
+def test_lowercase_mount_type_bind_is_checked_as_a_bind():
+    # A mount whose Type key missed the exact-case lookup fell through to the "volume"
+    # default and was never checked against the workspace.
+    mount = {"type": "bind", "source": "/", "target": "/host"}
+    assert denied("/v1.43/containers/create", create({"Mounts": [mount]}))
+
+
+def test_uppercase_mount_type_value_is_not_an_unknown_type():
+    mount = {"Type": "BIND", "Source": "/", "Target": "/host"}
+    assert denied("/v1.43/containers/create", create({"Mounts": [mount]}))
+
+
+def test_bind_mount_inside_the_workspace_still_allowed():
+    mount = {"type": "bind", "source": WS + "/sub", "target": "/x"}
+    assert denied("/v1.43/containers/create", create({"Mounts": [mount]})) is None
+
+
+def test_percent_encoded_create_path_is_inspected():
+    # /containers/%63reate reaches the create handler but never matched CREATE_RE.
+    assert denied("/v1.43/containers/%63reate", create({"Privileged": True}))
+
+
+def test_dot_segment_create_path_is_inspected():
+    assert denied("/v1.43/containers/./create", create({"Privileged": True}))
+    assert denied("/v1.43/foo/../containers/create", create({"Privileged": True}))
+
+
+def test_doubly_encoded_path_is_refused():
+    # %2563 -> %63 after one pass; decoding to a fixpoint is its own bypass class, so
+    # a target still holding an escape is refused rather than decoded again.
+    assert denied("/v1.43/containers/%2563reate", create({}))
+
+
+def test_labels_and_env_keys_are_left_alone():
+    # cfget is a lookup, not a recursive fold: these keys are user data and folding
+    # them would corrupt a legitimate request.
+    body = {
+        "Image": "alpine",
+        "Labels": {"com.example.Foo": "1", "com.example.foo": "2"},
+        "Env": ["Path=/x"],
+        "HostConfig": {"Binds": [WS + ":/w"]},
+    }
+    assert denied("/v1.43/containers/create", body) is None
 
 
 if __name__ == "__main__":

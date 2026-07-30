@@ -23,6 +23,7 @@ Env:
 """
 
 import contextlib
+import importlib.util
 import json
 import os
 import re
@@ -30,6 +31,27 @@ import socket
 import socketserver
 import sys
 import threading
+
+
+def _load_canon():
+    """Load the canonicalize module from an explicit path.
+
+    Both this file and canon.py are bind-mounted individually into the filter
+    container, so there is no package to import from and no sibling directory on
+    sys.path. CANON_LIB lets the tests point at the source tree.
+    """
+    path = os.environ.get("CANON_LIB") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "canon.py"
+    )
+    spec = importlib.util.spec_from_file_location("canon", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load canon library from {path!r}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+canon = _load_canon()
 
 LISTEN_PORT = int(os.environ.get("FILTER_LISTEN_PORT", "2375"))
 UPSTREAM = os.environ.get("FILTER_UPSTREAM", "")
@@ -98,19 +120,22 @@ def check_mount(mount):
     """A `Mounts` entry, the structured form of the same thing."""
     if not isinstance(mount, dict):
         raise Denied("Mounts entry is not an object")
-    mtype = mount.get("Type", "volume")
+    # Defaulting an unreadable Type to "volume" is how a bind used to pass as a volume:
+    # `{"type":"bind"}` missed the exact-case lookup, fell through to the default, and
+    # was checked as if it were a named volume.
+    mtype = str(canon.cfget(mount, "Type") or "volume").lower()
     if mtype == "bind":
-        source = mount.get("Source") or mount.get("source") or ""
+        source = canon.cfget(mount, "Source") or ""
         if not _under_workspace(source):
             raise Denied(
                 f"bind mount {source!r} is outside the workspace ({WORKSPACE!r})"
             )
     elif mtype == "volume":
         # A `local` volume can be a bind in disguise: DriverConfig opts o=bind,device=/
-        opts = ((mount.get("VolumeOptions") or {}).get("DriverConfig") or {}).get(
-            "Options"
-        ) or {}
-        if any(k.lower() in ("device", "o", "type") for k in opts):
+        volume_options = canon.cfget(mount, "VolumeOptions") or {}
+        driver_config = canon.cfget(volume_options, "DriverConfig") or {}
+        opts = canon.cfget(driver_config, "Options") or {}
+        if any(str(k).lower() in ("device", "o", "type") for k in opts):
             raise Denied(
                 "volume DriverConfig options may not name a device or bind type"
             )
@@ -134,35 +159,38 @@ def check_security_opt(values):
 
 
 def check_create(body):
-    cfg = body.get("HostConfig") or {}
+    # Every structural lookup goes through cfget: dockerd decodes this body with Go's
+    # encoding/json, which matches field names case-insensitively, so reading exact
+    # keys made every check below vacuous against `{"hostconfig":{"privileged":true}}`.
+    cfg = canon.cfget(body, "HostConfig") or {}
     if not isinstance(cfg, dict):
         raise Denied("HostConfig is not an object")
 
     for key in FORBIDDEN_TRUE:
-        if cfg.get(key):
+        if canon.cfget(cfg, key):
             raise Denied(f"HostConfig.{key} is not permitted in the sandbox")
     for key in FORBIDDEN_NONEMPTY:
-        if cfg.get(key):
+        if canon.cfget(cfg, key):
             raise Denied(f"HostConfig.{key} is not permitted in the sandbox")
 
     for key in HOST_MODES:
-        value = str(cfg.get(key) or "")
+        value = str(canon.cfget(cfg, key) or "")
         if value and value != "private":
             raise Denied(f"HostConfig.{key}={value!r} is not permitted in the sandbox")
 
-    net = str(cfg.get("NetworkMode") or "")
+    net = str(canon.cfget(cfg, "NetworkMode") or "")
     if net in ("host", "none:host") or net.startswith("container:"):
         raise Denied(f"HostConfig.NetworkMode={net!r} is not permitted in the sandbox")
 
-    runtime = str(cfg.get("Runtime") or "")
+    runtime = str(canon.cfget(cfg, "Runtime") or "")
     if runtime and runtime != "runc":
         raise Denied(f"HostConfig.Runtime={runtime!r} is not permitted in the sandbox")
 
-    check_security_opt(cfg.get("SecurityOpt"))
+    check_security_opt(canon.cfget(cfg, "SecurityOpt"))
 
-    for bind in cfg.get("Binds") or []:
+    for bind in canon.cfget(cfg, "Binds") or []:
         check_bind(str(bind))
-    for mount in cfg.get("Mounts") or []:
+    for mount in canon.cfget(cfg, "Mounts") or []:
         check_mount(mount)
 
 
@@ -176,6 +204,14 @@ def check_volume_create(body):
 
 def inspect(path, body_bytes):
     """Raise Denied if this request may not proceed. Unknown paths are not inspected."""
+    # Match on the path the daemon's router will resolve, not the bytes on the wire:
+    # `/v1.43/containers/%63reate` reaches the create handler but never matched
+    # CREATE_RE. A target with no single decoding is refused rather than guessed at.
+    try:
+        path = canon.canon_target(path)
+    except canon.CanonRejected as exc:
+        raise Denied(str(exc)) from exc
+
     if CREATE_RE.match(path):
         checker = check_create
     elif VOLUME_CREATE_RE.match(path):
@@ -197,7 +233,12 @@ def inspect(path, body_bytes):
         return
     if not isinstance(body, dict):
         raise Denied("request body is not an object")
-    checker(body)
+    # A body with no single canonical reading is refused, not resolved: whichever way
+    # this filter broke the tie, the daemon is free to break it the other way.
+    try:
+        checker(body)
+    except canon.CanonRejected as exc:
+        raise Denied(str(exc)) from exc
 
 
 # --- HTTP plumbing -------------------------------------------------------------

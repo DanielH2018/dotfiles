@@ -297,6 +297,9 @@ NETWORK_NAME="claudebot-net-$RUN_ID"
 # has no interface with a route to the proxy at all, whatever the filter does or does
 # not parse correctly.
 PROXY_NETWORK_NAME="claudebot-net-$RUN_ID-proxy"
+# Canonicalization the filter needs to read a create body the way dockerd will. Both
+# files are bind-mounted individually, so canon.py has to be named explicitly.
+CANON_LIB="${CANON_LIB:-$HOME/.local/share/canon/canon.py}"
 
 # --- Shell mode: exec into a live session if one is running ---
 # INSTANCE_ID is deterministic per repo/worktree, while the container name adds a
@@ -921,6 +924,7 @@ start_filter() {
     --read-only \
     --user "$(id -u):$(id -g)" \
     -v "$SANDBOX_DIR/docker-create-filter.py:/opt/docker-create-filter.py:ro" \
+    -v "$CANON_LIB:/opt/canon.py:ro" \
     -v "$WORK_PATH:$WORK_PATH:ro" \
     -e FILTER_UPSTREAM="$PROXY_ALIAS:2375" \
     -e FILTER_WORKSPACE="$WORK_PATH" \
