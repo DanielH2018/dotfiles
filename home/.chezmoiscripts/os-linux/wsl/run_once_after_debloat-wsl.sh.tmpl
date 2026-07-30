@@ -2,7 +2,7 @@
 {{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
 #!/bin/sh
 # WSL-only: strip Ubuntu Server bloat that has no purpose on a personal dev WSL, make
-# Docker socket-activated instead of always-on, and drop a swappiness tunable.
+# Docker socket-activated instead of always-on, and set the memory-pressure tunables.
 #
 #  1. Mask snapd (0 snaps installed here), landscape-client (Canonical fleet mgmt) and
 #     wsl-pro (Ubuntu Pro bridge) + silence the Pro/ESM/news MOTD ads printed on every
@@ -10,21 +10,36 @@
 #  2. (moved) Docker socket-activation now lives in install-docker-engine: this script
 #     sorts alphabetically BEFORE it, so on a fresh machine the docker.socket check here
 #     ran before Docker existed and the branch never fired.
-#  3. vm.swappiness=10 via /etc/sysctl.d (20GB RAM; no reason to page to the VHD swap).
+#  3. Memory-pressure sysctls via /etc/sysctl.d. This was vm.swappiness=10, on the
+#     reasoning that 20GB of RAM never needs the VHD swap. The 2026-07-30 wedge
+#     disproved that; see the block itself for what actually happened.
+#  4. Cap the systemd journal at 200M.
+#  5. earlyoom config: shed one process rather than let the whole VM stall.
 #
 # chezmoi manages $HOME only, so the /etc + systemctl changes need sudo here.
 # run_once_after_: a sudo-less run fails loud (exit 1 -> retries next apply) without
 # blocking deployment. Live changes apply now; disabled boot services take effect on the
 # next `wsl --shutdown`. Bump the marker to re-run after edits.
-# debloat-bump: v1
+# debloat-bump: v2
 set -u
 
 sysctl_file=/etc/sysctl.d/99-wsl-tuning.conf
 journald_file=/etc/systemd/journald.conf.d/99-wsl-cap.conf
+earlyoom_file=/etc/default/earlyoom
 
-# Converged? snapd masked + both drop-ins present. The rest is idempotent on re-run.
+# Desired contents, defined once so the converged-check and the writers can't drift apart.
+sysctl_body='vm.swappiness=60
+vm.watermark_scale_factor=100'
+
+earlyoom_body='# Managed by chezmoi (run_once_after_debloat-wsl.sh) — see that script for rationale.
+EARLYOOM_ARGS="-r 3600 -m 12,6 -s 100,100 --prefer ^(claude|[0-9]+\.[0-9]+\.[0-9]+)$ --avoid ^(systemd|systemd-journal|init|sshd|dbus-daemon|wslservice)$"'
+
+# Converged? snapd masked + journald drop-in present + sysctls matching the body above.
+# Checked on content, not existence: the file already existed with the old swappiness value,
+# so an -f test would have skipped the correction forever.
 if [ "$(systemctl is-enabled snapd.service 2>/dev/null)" = masked ] \
-   && [ -f "$sysctl_file" ] && [ -f "$journald_file" ]; then
+   && [ -f "$journald_file" ] \
+   && [ "$(cat "$sysctl_file" 2>/dev/null)" = "$sysctl_body" ]; then
   exit 0
 fi
 
@@ -58,11 +73,18 @@ command -v pro >/dev/null 2>&1 && sudo pro config set apt_news=false >/dev/null 
 
 # 2. Docker socket-activation moved to install-docker-engine (must run AFTER the install).
 
-# 3. Keep pages in RAM (20GB) instead of paging to the VHD swap file.
-if [ ! -f "$sysctl_file" ]; then
-  printf 'vm.swappiness=10\n' | sudo tee "$sysctl_file" >/dev/null \
-    && sudo sysctl -q -w vm.swappiness=10 \
-    && echo "debloat-wsl: vm.swappiness=10 ($sysctl_file)"
+# 3. Memory-pressure sysctls. On 2026-07-30 this VM stalled every task for ~6 minutes
+#    (PSI memory full total=355s) and took down the systemd user manager, without the
+#    kernel OOM killer ever firing. Two settings made that possible:
+#      swappiness=10 -> the kernel stripped the page cache to ~3MB (active_file:2976kB)
+#        rather than move any of the 14.8GB of anon memory into 8GB of untouched swap.
+#      watermark_scale_factor=10 (default) -> kswapd started reclaiming far too late, so
+#        free hit ~103MB against min_free_kbytes=44MB and order-4 allocations began failing.
+#    Paging to the VHD is slow, but it degrades gracefully where this did not.
+if [ "$(cat "$sysctl_file" 2>/dev/null)" != "$sysctl_body" ]; then
+  printf '%s\n' "$sysctl_body" | sudo tee "$sysctl_file" >/dev/null \
+    && sudo sysctl -q -p "$sysctl_file" \
+    && echo "debloat-wsl: memory tunables applied ($sysctl_file)"
 fi
 
 # 4. Cap the systemd journal (Ubuntu leaves it unbounded -> logs bloat the sparse VHD;
@@ -72,6 +94,28 @@ if [ ! -f "$journald_file" ]; then
   printf '[Journal]\nSystemMaxUse=200M\n' | sudo tee "$journald_file" >/dev/null \
     && sudo systemctl restart systemd-journald >/dev/null 2>&1 \
     && echo "debloat-wsl: journal capped at 200M ($journald_file)"
+fi
+
+# 5. earlyoom: kill one fat process before the VM wedges. The kernel would not do it — the
+#    2026-07-30 failures were order-4 GFP_NOFS allocations, which the kernel fails and warns
+#    about rather than OOM-killing. systemd-oomd is the usual answer but is useless here:
+#    it acts on cgroups, and WSL starts the login shell from its own /init, so every Claude
+#    process lands in the root /init.scope (2.5GB across 22 procs) with user.slice holding
+#    ~112MB. earlyoom picks by process instead, so the cgroup layout does not matter.
+#
+#    -s 100,100 is load-bearing. earlyoom acts only when memory AND swap are below their
+#    minimums; this box's swap sits near-idle, so the default -s 10 would have stayed silent
+#    through the very incident this is meant to prevent. The comparison is <=, so 100 is
+#    always true and both thresholds reduce to available RAM alone.
+#    --prefer matches Claude Code, which reports its version (e.g. "2.1.220") as its comm.
+#
+#    Only writes config; the package install is not managed here. On a fresh box run
+#    `sudo apt install earlyoom` or this block no-ops.
+if [ -f "$earlyoom_file" ] \
+   && [ "$(cat "$earlyoom_file" 2>/dev/null)" != "$earlyoom_body" ]; then
+  printf '%s\n' "$earlyoom_body" | sudo tee "$earlyoom_file" >/dev/null \
+    && sudo systemctl restart earlyoom >/dev/null 2>&1 \
+    && echo "debloat-wsl: earlyoom configured ($earlyoom_file)"
 fi
 {{ end -}}
 {{ end -}}
