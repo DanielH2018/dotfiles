@@ -1,13 +1,18 @@
-<?xml version="1.0" encoding="UTF-16"?>
+{{- /* Identity comes from chezmoi, not from the export. Task Scheduler wrote this file with
+this machine's account SID and its NetBIOS name baked in, which pins the task to one box and
+publishes the machine SID. Register-ScheduledTask -User overrides the Principal but NOT the
+LogonTrigger's UserId, so the trigger has to be templated for the task to register anywhere
+else. */ -}}
+<?xml version="1.0" encoding="utf-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Author>daniel-desktop\daniel</Author>
+    <Author>{{ .chezmoi.username }}</Author>
     <Description>Persistent watcher: every ~2.5s, closes the "only one auto-hide toolbar per side" popup and re-asserts taskbar auto-hide. Works around the Win11/ExplorerPatcher multi-monitor auto-hide app-bar collision that recurs on logon, unlock, resume, and display/power transitions. Companion TaskbarAutoHideFix-Poll is a 3-min backup. Runs C:\Users\daniel\bin\TaskbarAutoHideFix.exe watch (source alongside).</Description>
     <URI>\TaskbarAutoHideFix</URI>
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
-      <UserId>S-1-5-21-1385177617-3284078628-2827250211-1003</UserId>
+      <UserId>{{ .chezmoi.username }}</UserId>
       <LogonType>InteractiveToken</LogonType>
     </Principal>
   </Principals>
@@ -30,7 +35,7 @@
   <Triggers>
     <LogonTrigger>
       <Delay>PT10S</Delay>
-      <UserId>DANIEL-DESKTOP\daniel</UserId>
+      <UserId>{{ .chezmoi.username }}</UserId>
     </LogonTrigger>
   </Triggers>
   <Actions Context="Author">

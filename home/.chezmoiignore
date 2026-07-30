@@ -69,6 +69,11 @@ Scripts
 **/*.local.env
 **/local.config
 
+# Don't regenerate the terminal cheatsheet on every apply. The generator
+# (~/.local/bin/terminal-cheatsheet) is still deployed — run it by hand when the
+# WezTerm / Neovim / Yazi keybindings change.
+.chezmoiscripts/post-install/terminal-cheatsheet.sh
+
 # The work overlay merged into settings.json by modify_settings.json.sh.tmpl. It
 # doesn't match *.local.* above, so without this a `chezmoi add` would sweep a
 # work-machine permission set into this public repo.

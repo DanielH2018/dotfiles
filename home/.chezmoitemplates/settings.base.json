@@ -764,7 +764,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/tq-wrap-tests.py",
+            "command": "{{ if eq .chezmoi.os "windows" }}py -3 ~/.claude/hooks/tq-wrap-tests.py{{ else }}~/.claude/hooks/tq-wrap-tests.py{{ end }}",
             "timeout": 10
           }
         ]

@@ -89,3 +89,78 @@ test('rendered Lua parses cleanly (luac -p)', { skip: skip || (!luac && 'luac no
     fs.rmSync(tmp, { force: true });
   }
 });
+
+// --- open-uri: WSL file:// -> UNC -------------------------------------------------
+// Everything above skips off-Windows, which leaves the one piece of real logic in this
+// config unexercised on the machine that edits it. `wsl_file_uri_to_unc` takes `distro`
+// as a parameter and calls no wezterm API precisely so it can be lifted out and run
+// under plain `lua` anywhere.
+function findLua() {
+  for (const cmd of ['lua', 'lua5.4']) {
+    try { execFileSync(cmd, ['-v'], { stdio: 'ignore' }); return cmd; } catch { /* try next */ }
+  }
+  return '';
+}
+const lua = findLua();
+const luaSkip = lua ? false : 'lua not installed';
+
+function translate(uris, distro = 'Ubuntu') {
+  const fn = fs.readFileSync(TMPL, 'utf8').match(/^local function wsl_file_uri_to_unc[\s\S]*?^end$/m);
+  assert.ok(fn, 'wsl_file_uri_to_unc must be liftable from the template');
+  const harness = `${fn[0]}
+for _, uri in ipairs({ ${uris.map((u) => JSON.stringify(u)).join(', ')} }) do
+\tlocal out = wsl_file_uri_to_unc(uri, ${JSON.stringify(distro)})
+\tprint(out == nil and "<nil>" or out)
+end
+`;
+  const tmp = path.join(os.tmpdir(), `wezterm-openuri-${process.pid}.lua`);
+  fs.writeFileSync(tmp, harness);
+  try {
+    return execFileSync(lua, [tmp], { encoding: 'utf8' }).replace(/\n$/, '').split('\n');
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+test('a WSL file:// link is rewritten onto the wsl.localhost share', { skip: luaSkip }, () => {
+  assert.deepStrictEqual(translate([
+    'file:///home/daniel/.claude/artifacts/report.html',
+    'file://localhost/home/daniel/notes.md',
+    'file:///home/daniel/my%20report.html',      // spaces survive the decode
+  ]), [
+    '\\\\wsl.localhost\\Ubuntu\\home\\daniel\\.claude\\artifacts\\report.html',
+    '\\\\wsl.localhost\\Ubuntu\\home\\daniel\\notes.md',
+    '\\\\wsl.localhost\\Ubuntu\\home\\daniel\\my report.html',
+  ]);
+});
+
+test('links Windows can already resolve are left to WezTerm', { skip: luaSkip }, () => {
+  // Rewriting any of these would break a link that works today.
+  assert.deepStrictEqual(translate([
+    'file:///C:/Users/daniel/report.html',        // drive path
+    'file:///c%3A/Users/daniel/report.html',      // drive path, colon percent-encoded
+    'file://wsl.localhost/Ubuntu/home/daniel/x',  // already UNC
+    'file://otherhost/share/x',                   // another machine
+    'https://example.com/x',                      // not a file link
+    'mailto:someone@example.com',
+  ]), ['<nil>', '<nil>', '<nil>', '<nil>', '<nil>', '<nil>']);
+});
+
+test('a percent-escape cannot smuggle a separator into the rewritten path', { skip: luaSkip }, () => {
+  // %5C decodes to a backslash, so without the guard the opened path would not be the
+  // one the link displayed.
+  assert.deepStrictEqual(translate(['file:///home/daniel/a%5C..%5Cb']), ['<nil>']);
+});
+
+test('the distro is a parameter, not baked into the translation', { skip: luaSkip }, () => {
+  assert.deepStrictEqual(translate(['file:///home/daniel/x'], 'Debian'),
+    ['\\\\wsl.localhost\\Debian\\home\\daniel\\x']);
+});
+
+test('the open-uri handler is registered and suppresses the default open', () => {
+  const src = fs.readFileSync(TMPL, 'utf8');
+  assert.match(src, /wezterm\.on\("open-uri"/, 'handler is registered');
+  // Without `return false` WezTerm ALSO hands the original /home/... URI to
+  // ShellExecute, reopening the broken path behind the rewritten one.
+  assert.match(src, /wezterm\.open_with\(unc\)\s*\n\s*return false/, 'default open suppressed');
+});

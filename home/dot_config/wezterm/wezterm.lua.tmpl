@@ -194,8 +194,13 @@ local function open_agentview(window, _pane)
 		-- after a jump); if fzf is already up, activating is enough.
 		pcall(function()
 			local ap = target:active_pane()
+			-- Compare the executable's BASENAME, not a substring of its whole path.
+			-- `find("fzf")` also matched `.../fzf-tmux`, or any path with fzf in a
+			-- directory name, and a false positive here reads as a dead key: the tab
+			-- activates and the picker is never brought back.
 			local proc = (ap:get_foreground_process_name() or ""):lower()
-			if not proc:find("fzf") then
+			local base = (proc:match("([^/\\]+)$") or proc):gsub("%.exe$", "")
+			if base ~= "fzf" then
 				ap:send_text("agentview\n")
 			end
 		end)
@@ -562,6 +567,58 @@ wezterm.on("format-tab-title", function(tab)
 	end
 	local glyph = (tab.active_pane.domain_name or ""):find("WSL") and " " or " "
 	return string.format(" %d %s%s ", tab.tab_index + 1, glyph, title)
+end)
+
+-- ---------------------------------------------------------------------------
+-- OPEN-URI — make file:// links that point INTO WSL actually openable.
+-- WezTerm is a Windows process and the WSL shell is only a relay pane, so a clicked
+-- hyperlink goes to Windows ShellExecute. `file:///home/daniel/report.html` then
+-- resolves against the Windows root as C:\home\daniel\report.html and fails silently —
+-- which is every path a WSL-side tool emits, Claude's HTML artifacts included.
+-- Rewrite those onto the \\wsl.localhost share, which Windows does resolve (verified
+-- 2026-07-29 from a native process: the share root, the distro tree and a 42KB file all
+-- readable, under networkingMode=mirrored). Anything already meaningful to Windows —
+-- a drive-letter path, an explicit host, a non-file scheme — is passed through
+-- untouched rather than guessed at.
+-- ---------------------------------------------------------------------------
+local WSL_UNC_DISTRO = "Ubuntu"
+
+-- Kept as a free function taking `distro`, with no upvalues and no wezterm calls, so the
+-- test suite can lift it straight out of this template and exercise it under plain `lua`.
+-- The Windows-only render tests skip on Linux, and this is the half worth checking.
+local function wsl_file_uri_to_unc(uri, distro)
+	local host, path = uri:match("^file://([^/]*)(/.*)$")
+	if not path then
+		return nil
+	end
+	-- An explicit host is either already a UNC target (file://wsl.localhost/...) or
+	-- another machine entirely. Neither is ours to rewrite.
+	if host ~= "" and host ~= "localhost" then
+		return nil
+	end
+	local decoded = path:gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end)
+	-- Decode BEFORE this check: file:///c%3A/... is a drive path too, and Windows
+	-- already knows what to do with it.
+	if decoded:match("^/%a[:|]") then
+		return nil
+	end
+	-- A percent-escape that decodes to a separator or a NUL would let the link name one
+	-- path and open another. Refuse instead of building it.
+	if decoded:find("\\", 1, true) or decoded:find("\0", 1, true) then
+		return nil
+	end
+	return "\\\\wsl.localhost\\" .. distro .. (decoded:gsub("/", "\\"))
+end
+
+wezterm.on("open-uri", function(window, pane, uri)
+	local unc = wsl_file_uri_to_unc(uri, WSL_UNC_DISTRO)
+	if not unc then
+		return true -- not a WSL file link; let WezTerm handle it as usual
+	end
+	wezterm.open_with(unc)
+	return false -- handled here; suppress the default open
 end)
 
 return config

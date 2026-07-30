@@ -1,13 +1,13 @@
-<?xml version="1.0" encoding="UTF-16"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>2026-07-09T07:42:26</Date>
-    <Author>DANIEL-DESKTOP\daniel</Author>
+    <Author>{{ .chezmoi.username }}</Author>
     <URI>\TaskbarAutoHideFix-Poll</URI>
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
-      <UserId>S-1-5-21-1385177617-3284078628-2827250211-1003</UserId>
+      <UserId>{{ .chezmoi.username }}</UserId>
       <LogonType>InteractiveToken</LogonType>
     </Principal>
   </Principals>
