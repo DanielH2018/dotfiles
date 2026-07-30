@@ -43,11 +43,33 @@ const DENY = [
   '/srv/secrets/token.txt',
 ];
 
+// Paths block-dangerous-bash.sh has always denied to Bash, which this gate did not
+// cover: `cat ~/.claude.json` was blocked while Read(~/.claude.json) returned the
+// OAuth token. Of the set only ~/.config/gh/** had a settings deny behind it.
+const DENY_TOKEN_STORES = [
+  '/home/u/.claude.json',
+  '/home/u/.git-credentials',
+  '/home/u/.kube/config',
+  '/home/u/.docker/config.json',
+  '/home/u/.config/gh/hosts.yml',
+  '/etc/shadow',
+  '/etc/gshadow',
+  '/proc/1/environ',
+  '/proc/self/environ',
+];
+
 const ALLOW = [
   '/home/u/project/src/main.go',
   '/home/u/project/README.md',
   '/home/u/project/config.yaml',
   '/home/u/project/package.json',
+  // Neighbours of the newly-denied paths that must stay readable. ~/.claude/settings.json
+  // is a different file from ~/.claude.json, and the config work in this repo reads it
+  // constantly; a pattern sloppy enough to catch both would be unusable.
+  '/home/u/.claude/settings.json',
+  '/home/u/.claude/hooks/notify.sh',
+  '/home/u/.kube/README.md',
+  '/home/u/project/claude.json',
 ];
 
 test('sensitive file paths are denied', { skip }, () => {
@@ -56,6 +78,64 @@ test('sensitive file paths are denied', { skip }, () => {
 
 test('ordinary source files are allowed', { skip }, () => {
   for (const p of ALLOW) assert.notStrictEqual(decision(runHook(p)), 'deny', `should not deny: ${p}`);
+});
+
+test('token stores denied to Bash are denied to Read/Edit/Write too', { skip }, () => {
+  for (const p of DENY_TOKEN_STORES) {
+    assert.strictEqual(decision(runHook(p)), 'deny', `should deny: ${p}`);
+  }
+});
+
+// The two gates guard the same secrets and drifted apart once already. This is the
+// check that says so: every path in block-dangerous-bash.sh's SECRET_PATHS must be
+// denied here too, derived from that file rather than hand-copied, so adding one
+// there and forgetting this hook fails instead of passing quietly.
+test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip }, () => {
+  const bashGate = fs.readFileSync(
+    path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh'),
+    'utf8',
+  );
+  const m = /^SECRET_PATHS='\((.+)\)'$/m.exec(bashGate);
+  assert.ok(m, 'located SECRET_PATHS in block-dangerous-bash.sh');
+
+  // Turn each alternation branch into a concrete path this hook can be asked about.
+  const SAMPLE = {
+    '\\.env': '/home/u/.env',
+    '\\.ssh/': '/home/u/.ssh/id_rsa',
+    'id_rsa': '/home/u/id_rsa',
+    'id_ed25519': '/home/u/id_ed25519',
+    'id_ecdsa': '/home/u/id_ecdsa',
+    '\\.aws/credentials': '/home/u/.aws/credentials',
+    '\\.aws/config': '/home/u/.aws/config',
+    '\\.gnupg/': '/home/u/.gnupg/secring.gpg',
+    '\\.netrc': '/home/u/.netrc',
+    '\\.pypirc': '/home/u/.pypirc',
+    '\\.npmrc': '/home/u/.npmrc',
+    '/secrets/': '/srv/secrets/token.txt',
+    '\\.git-credentials': '/home/u/.git-credentials',
+    '\\.kube/config': '/home/u/.kube/config',
+    '\\.docker/config\\.json': '/home/u/.docker/config.json',
+    '\\.config/gh/hosts\\.yml': '/home/u/.config/gh/hosts.yml',
+    '\\.claude\\.json': '/home/u/.claude.json',
+    '/etc/shadow': '/etc/shadow',
+    '/etc/gshadow': '/etc/gshadow',
+    '/proc/[^/[:space:]]+/environ': '/proc/1/environ',
+    '\\.pem': '/opt/app/server.pem',
+    '\\.key': '/opt/app/tls.key',
+    '\\.p12': '/opt/app/cert.p12',
+    '\\.pfx': '/opt/app/cert.pfx',
+  };
+
+  const branches = m[1].split('|');
+  const unmapped = branches.filter((b) => !(b in SAMPLE));
+  assert.deepStrictEqual(unmapped, [],
+    `SECRET_PATHS gained ${unmapped.join(', ')} — add a sample path here and an arm in protect-secrets.sh`);
+
+  for (const branch of branches) {
+    const sample = SAMPLE[branch];
+    assert.strictEqual(decision(runHook(sample)), 'deny',
+      `block-dangerous-bash.sh denies ${branch} to Bash, but Read/Edit/Write allows ${sample}`);
+  }
 });
 
 // Every decision here is routed through jq, so a PATH without jq used to make the hook
