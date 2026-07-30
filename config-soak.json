@@ -188,8 +188,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/identity.sh",
-      "hash": "91a9475a4b7d1dc80df0d781a0a06136582e930f4b05143a613fe232482db4eb",
-      "landed": "2026-07-30T14:44:36.850Z"
+      "hash": "0dbfb3dcfc4cc3246b07edd03713dcc751639f8b647a61d2057bd88c365dbaa3",
+      "landed": "2026-07-30T14:54:44.657Z"
     },
     {
       "path": "home/private_dot_claude/hooks/outcome-lib.sh",
@@ -198,8 +198,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
-      "hash": "56a4316200b09632ec1c09b399a38338f9c8dfe5f4ec1a37eeb6d2a59292f19a",
-      "landed": "2026-07-30T14:44:36.850Z"
+      "hash": "cc1587bbb7824c575f2fe0480ff97d922d8685c83aadd5c55d320e54edbb95fb",
+      "landed": "2026-07-30T14:54:44.657Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
