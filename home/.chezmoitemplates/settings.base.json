@@ -488,7 +488,7 @@
       "Bash(find *-ok*)",
       "Bash(find *-delete*)",
       "Bash(find *-fprintf*)",
-      "Bash(awk *system(*)",
+      "Bash(awk *system*)",
       "Edit(.git/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(~/.config/gcloud/**)",

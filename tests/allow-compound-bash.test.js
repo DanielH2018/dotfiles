@@ -326,7 +326,10 @@ const NOT_A_SPAWNER = ['fnm env', 'gh run watch'];
 // deliberately absent: its command word floats after any number of options, so no glob can
 // pin it down, and it was removed from allow instead. find and awk stay because their
 // execution forms are named flags.
-const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system('] };
+// awk's form is `system` rather than `system(`: a deny glob spelled `Bash(awk *system(*)`
+// has unbalanced parens, which the rule parser drops outright — leaving `Bash(awk:*)`
+// allow-listed with nothing guarding it. The trailing `(` cannot appear here.
+const GUARDED = { find: ['-exec', '-execdir', '-ok', '-delete', '-fprintf'], awk: ['system'] };
 
 function bashPrefixes(block) {
   // Mirror extract_bash_prefixes: drop the Bash(...) wrapper, then a trailing :*, ` *` or *.
