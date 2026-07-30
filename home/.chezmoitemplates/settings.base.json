@@ -165,7 +165,8 @@
       "Bash(awk:*)",
       "Bash(sed:*)",
       "Bash(jq:*)",
-      {{/* jsonq had a blanket allow on the strength of its AST allowlist. That allowlist is escapable — exposed pure-stdlib modules reach sys and builtins, giving arbitrary execution and arbitrary file write, and the secret-path guard goes with it. tests/jsonq.test.js is green and the tool is still escapable, so the suite was never the thing making it safe. The grant is withdrawn until the evaluator is removed or rebuilt; jq is already allow-listed and covers the observed uses. */}}
+      {{/* jsonq exists so JSON parsing is available without a permission prompt, and the blanket allow was the whole point of it. It is withdrawn only because the AST allowlist turned out to be escapable — exposed pure-stdlib modules reach sys and builtins, which gives arbitrary execution and arbitrary file write and takes jsonq's own secret-path guard with it. tests/jsonq.test.js is a 20-case escape suite, it is green, and the tool is still escapable, so the suite was never what made it safe.
+           This is temporary and the tool is NOT to be deleted: restore the grant once the evaluator is rebuilt on a closed expression grammar with no attribute access, rather than an allowlist over full Python expressions. Until then jq is allow-listed and covers the same ground with a prompt-free path. */}}
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
       "Bash(yq:*)",
