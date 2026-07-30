@@ -53,6 +53,26 @@ case "$FILE_PATH" in
   */secrets/*)
     deny "Blocked: files under a secrets/ directory."
     ;;
+  # Everything below was denied for Bash by block-dangerous-bash.sh's SECRET_PATHS but
+  # reachable through Read/Edit/Write, which is the gate this hook is. `cat ~/.claude.json`
+  # was blocked while Read(~/.claude.json) returned the OAuth token into the transcript.
+  # Of the set only ~/.config/gh/** had a settings deny standing behind it. Keep this list
+  # and SECRET_PATHS in step — tests/protect-secrets.test.js fails if they drift.
+  .claude.json|*/.claude.json)
+    deny "Blocked: ~/.claude.json holds the Claude Code account OAuth token."
+    ;;
+  .git-credentials|*/.git-credentials)
+    deny "Blocked: .git-credentials stores host credentials in plaintext."
+    ;;
+  */.kube/config|*/.docker/config.json|*/.config/gh/hosts.yml)
+    deny "Blocked: this file holds cluster or registry credentials."
+    ;;
+  /etc/shadow|/etc/gshadow)
+    deny "Blocked: system password database."
+    ;;
+  /proc/*/environ)
+    deny "Blocked: /proc/<pid>/environ exposes another process's exported secrets."
+    ;;
 esac
 
 exit 0

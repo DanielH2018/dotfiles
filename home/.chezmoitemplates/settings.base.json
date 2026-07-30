@@ -485,6 +485,22 @@
       "Edit(~/.config/gcloud/**)",
       "Read(~/.config/gh/**)",
       "Edit(~/.config/gh/**)",
+      {{/* block-dangerous-bash.sh has denied these to Bash for a long time; the Read/Edit
+           side had nothing, so `cat ~/.claude.json` was blocked while Read(~/.claude.json)
+           handed over the OAuth token. protect-secrets.sh is the primary gate and gives a
+           reason — these are the layer that still stands if the hook is bypassed or its
+           jq preflight fails open. */}}
+      "Read(~/.claude.json)",
+      "Edit(~/.claude.json)",
+      "Read(~/.git-credentials)",
+      "Edit(~/.git-credentials)",
+      "Read(~/.kube/config)",
+      "Edit(~/.kube/config)",
+      "Read(~/.docker/config.json)",
+      "Edit(~/.docker/config.json)",
+      "Read(/etc/shadow)",
+      "Read(/etc/gshadow)",
+      "Read(/proc/*/environ)",
       "Bash(terraform apply:*)",
       "Bash(terraform destroy:*)",
       "Bash(terraform import:*)",
