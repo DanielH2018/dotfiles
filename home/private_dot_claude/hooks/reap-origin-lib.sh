@@ -20,7 +20,11 @@
 #   A plain spare-spawned agent (source=spare, mode=prompt, intent="") never matches.
 #
 # Test seams (defaults are the real thing): CLAUDE_SESSIONS_DIR, AGENT_VIEW_DIR,
-# REAP_KILLCMD, REAP_LOG, REAP_ROSTER.
+# REAP_KILLCMD, REAP_LOG, REAP_ROSTER, IDENTITY_LIB.
+
+# Pid-reuse verification, so the signal below can only reach the recorded process.
+# shellcheck source=/dev/null
+. "${IDENTITY_LIB:-${BASH_SOURCE[0]%/*}/identity.sh}"
 
 # _reap_origin_sid <origin_sid> <fork_sid>
 #   Resolve the origin session id to a live pid and SIGTERM it. Never self, graceful only.
@@ -36,20 +40,15 @@ _reap_origin_sid() {
   [ -n "$origin_sid" ] || return 1
   [ "$origin_sid" != "$fork_sid" ] || return 1
 
-  # resolve origin pid pid-reuse-safely: the sessions/<pid>.json whose sessionId matches
-  local pf origin_pid=""
-  shopt -s nullglob
-  for pf in "$sessions_dir"/*.json; do
-    if [ "$(jq -r '.sessionId // ""' "$pf" 2>/dev/null)" = "$origin_sid" ]; then
-      origin_pid=$(jq -r '.pid // ""' "$pf" 2>/dev/null)
-      break
-    fi
-  done
-  shopt -u nullglob
+  # Resolve the origin session id to a pid that is still the process we recorded.
+  # verify_session_pid checks every record naming the sid and compares each pid against
+  # its stored procStart, so a recycled pid resolves to nothing rather than to whatever
+  # now holds that number.
+  local origin_pid
+  origin_pid=$(verify_session_pid "$sessions_dir" "$origin_sid") || return 1
   [ -n "$origin_pid" ] || return 1
 
-  # never signal ourselves / a non-numeric pid
-  case "$origin_pid" in ''|*[!0-9]*) return 1;; esac
+  # never signal ourselves
   [ "$origin_pid" != "$$" ] && [ "$origin_pid" != "$PPID" ] || return 1
 
   # SIGTERM (graceful): transcript stays on disk, resumable

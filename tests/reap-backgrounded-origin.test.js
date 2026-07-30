@@ -32,12 +32,22 @@ function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.
 process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 // Build a fake env: sessions dir, agent-view dir, a recording kill seam, a log file.
+// Each session also gets a fake /proc/<pid>/stat whose start time matches the procStart
+// recorded for it, so the pid verifies as the process the registry claims it is. Pass a
+// [sid, procStart] pair to record a start time that does NOT match — that is pid reuse.
 function fakeEnv(sessions = {}, rows = []) {
   const home = scratch('reap-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
-  for (const [pid, sid] of Object.entries(sessions)) {
-    fs.writeFileSync(path.join(sdir, `${pid}.json`), JSON.stringify({ pid: Number(pid), sessionId: sid }));
+  const procdir = path.join(home, 'proc'); fs.mkdirSync(procdir, { recursive: true });
+  for (const [pid, spec] of Object.entries(sessions)) {
+    const [sid, recorded] = Array.isArray(spec) ? spec : [spec, '900100'];
+    fs.writeFileSync(path.join(sdir, `${pid}.json`),
+      JSON.stringify({ pid: Number(pid), sessionId: sid, procStart: recorded }));
+    // A comm containing a space and a paren: field 22 must still be read correctly.
+    const pd = path.join(procdir, pid); fs.mkdirSync(pd, { recursive: true });
+    const pad = Array.from({ length: 18 }, (_, i) => i).join(' ');
+    fs.writeFileSync(path.join(pd, 'stat'), `${pid} (claude (bg) worker) S ${pad} 900100\n`);
   }
   for (const sid of rows) fs.writeFileSync(path.join(avdir, `${sid}.json`), '{}');
   const killed = path.join(home, 'killed.txt');
@@ -45,7 +55,7 @@ function fakeEnv(sessions = {}, rows = []) {
   fs.writeFileSync(killcmd, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >> ${JSON.stringify(killed)}\n`);
   fs.chmodSync(killcmd, 0o755);
   const log = path.join(home, 'reap.log');
-  return { home, sdir, avdir, killcmd, killed, log };
+  return { home, sdir, avdir, procdir, killcmd, killed, log };
 }
 
 function run(env, cmdline, ownSid = 'FORK-SID') {
@@ -53,6 +63,8 @@ function run(env, cmdline, ownSid = 'FORK-SID') {
     ...process.env,
     REAP_CMDLINE_SOURCE: cmdline,
     REAP_LIB: LIB,
+    IDENTITY_LIB: path.join(HOOKS_DIR, 'identity.sh'),
+    IDENTITY_PROC_DIR: env.procdir,
     CLAUDE_SESSIONS_DIR: env.sdir,
     AGENT_VIEW_DIR: env.avdir,
     REAP_KILLCMD: env.killcmd,
@@ -113,6 +125,44 @@ test('re-fire with same inputs -> still a single kill (idempotent)', { skip }, (
   // and does not multiply-target beyond the still-mapped origin. Guard against a runaway.
   run(env, BG('ORIGIN-SID'));
   assert.ok(killedPids(env).every((p) => p === '203774'), 'only ever targets the origin pid');
+});
+
+// ---- pid reuse: the registry entry is stale and the number belongs to someone else ----
+test('recorded procStart does not match the running process -> no-op', { skip }, () => {
+  // Exactly the live state on this box: sessions/<pid>.json survives the process, the
+  // pid gets recycled, and without a start-time check the signal lands on the stranger.
+  const env = fakeEnv({ '203774': ['ORIGIN-SID', '1375'] }, ['ORIGIN-SID']);
+  run(env, BG('ORIGIN-SID'));
+  assert.deepStrictEqual(killedPids(env), [], 'recycled pid must never be signalled');
+  assert.ok(fs.existsSync(path.join(env.avdir, 'ORIGIN-SID.json')), 'row left alone too');
+});
+
+test('process is gone entirely -> no-op', { skip }, () => {
+  const env = fakeEnv({ '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
+  fs.rmSync(path.join(env.procdir, '203774'), { recursive: true });
+  run(env, BG('ORIGIN-SID'));
+  assert.deepStrictEqual(killedPids(env), []);
+});
+
+test('record carries no procStart -> unverifiable, no-op', { skip }, () => {
+  const env = fakeEnv({ '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
+  fs.writeFileSync(path.join(env.sdir, '203774.json'),
+    JSON.stringify({ pid: 203774, sessionId: 'ORIGIN-SID' }));
+  run(env, BG('ORIGIN-SID'));
+  assert.deepStrictEqual(killedPids(env), [], 'cannot verify is not permission to kill');
+});
+
+test('duplicate sessionId, only the live record verifies -> targets that one', { skip }, () => {
+  // A5-03: the old code took the first match on disk, which is as likely to be stale.
+  const env = fakeEnv({ '111111': ['ORIGIN-SID', '1375'], '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
+  run(env, BG('ORIGIN-SID'));
+  assert.deepStrictEqual(killedPids(env), ['203774'], 'the verifying record wins, not the first');
+});
+
+test('two live records claim one sessionId -> refuses to guess', { skip }, () => {
+  const env = fakeEnv({ '111111': 'ORIGIN-SID', '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
+  run(env, BG('ORIGIN-SID'));
+  assert.deepStrictEqual(killedPids(env), [], 'ambiguous identity must not be resolved by picking');
 });
 
 // ---- structural guards ----

@@ -53,8 +53,16 @@ function fakeEnv({ procs = {}, sessions = {}, rows = [], roster = null }) {
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const pdir = path.join(home, 'proc'); fs.mkdirSync(pdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
-  for (const [pid, sid] of Object.entries(sessions)) {
-    fs.writeFileSync(path.join(sdir, `${pid}.json`), JSON.stringify({ pid: Number(pid), sessionId: sid }));
+  // Each session pid also gets a /proc/<pid>/stat whose start time matches its recorded
+  // procStart, so it verifies as the process the registry claims. Pass [sid, procStart]
+  // to record a mismatching start time — that is a recycled pid.
+  for (const [pid, spec] of Object.entries(sessions)) {
+    const [sid, recorded] = Array.isArray(spec) ? spec : [spec, '900100'];
+    fs.writeFileSync(path.join(sdir, `${pid}.json`),
+      JSON.stringify({ pid: Number(pid), sessionId: sid, procStart: recorded }));
+    fs.mkdirSync(path.join(pdir, pid), { recursive: true });
+    const pad = Array.from({ length: 18 }, (_, i) => i).join(' ');
+    fs.writeFileSync(path.join(pdir, pid, 'stat'), `${pid} (claude (bg) worker) S ${pad} 900100\n`);
   }
   for (const [pid, cmd] of Object.entries(procs)) {
     fs.mkdirSync(path.join(pdir, pid), { recursive: true });
@@ -76,6 +84,7 @@ function runSweep(env) {
   execFileSync('bash', [SWEEP], {
     env: {
       ...process.env, REAP_LIB: LIB, CLAUDE_SESSIONS_DIR: env.sdir, REAP_PROC_DIR: env.pdir,
+      IDENTITY_LIB: path.join(HOOKS_DIR, 'identity.sh'), IDENTITY_PROC_DIR: env.pdir,
       AGENT_VIEW_DIR: env.avdir, REAP_KILLCMD: env.killcmd, REAP_LOG: env.log,
       REAP_ROSTER: env.roster,
     }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
