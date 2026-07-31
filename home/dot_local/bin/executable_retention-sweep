@@ -21,11 +21,19 @@
 # The grace floor sits under all of it: nothing younger than its row's grace is
 # eligible, whatever else is true of it.
 #
-# SCOPE: removal rules only. rotate-size (G8, G9, G11) and truncate-lines (G10, G13)
-# are deliberately absent from APPLY_ROWS and unimplemented here. They rewrite a file a
-# live process may hold open, which is a different failure mode from removing a stale
-# one, and slice 2 established that a rule earns automation by first being run under
-# supervision. They get that run in their own slice.
+# SCOPE: removal rules act under --apply, via APPLY_ROWS, same as before. rotate-size
+# and truncate-lines rewrite a file a live process may hold open, a different failure
+# mode from removing a stale one, so they do not inherit --apply's automation for free.
+# They get a second, explicit flag, --rotate, and a second source-level row set,
+# ROTATE_ROWS. --apply alone must never rotate or truncate anything: acting on a
+# ROTATE_ROWS row requires --apply AND --rotate together. The hourly timer passes
+# --apply only, so rotation stays manual until it earns its own supervised run and a
+# separate, deliberate decision to add --rotate to the timer unit.
+#
+# ROTATE_ROWS covers G8, G9, G10, G13. G11 is excluded on purpose: its glob contains the
+# literal "cwd" marker and is skipped for every rule, unconditionally, before any row set
+# is consulted (see the cwd check in the sweep loop) — it is out of scope for every
+# sweeper mode, not specifically for rotation.
 #
 # There is no log file on purpose. stdout goes to the systemd journal, which is already
 # rotated; a hand-rolled ~/.claude/logs/retention-sweep.log would be a new unbounded
@@ -49,14 +57,21 @@ MARKER="$STATE_DIR/.retention-sweep-last-run"
 LOCK="${RETENTION_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/retention-sweep.lock}"
 
 # Every row the sweeper may act on: the removal rules only. N1/N2 are native or
-# self-managed; G8/G9/G10/G11/G13 are rotate/truncate and are deferred (see SCOPE).
+# self-managed; G8/G9/G10/G11/G13 are rotate/truncate, gated separately below.
 APPLY_ROWS=" G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 "
 
+# The rotate/truncate rows. A source literal, same reasoning as APPLY_ROWS: reading it
+# from the manifest would mean a manifest edit could grant itself a rewrite path. Acting
+# on a row here additionally requires --rotate, on top of --apply.
+ROTATE_ROWS=" G8 G9 G10 G13 "
+
 APPLY=0
+ROTATE=0
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
-    -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --rotate) ROTATE=1 ;;
+    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "retention-sweep: unknown argument $arg" >&2; exit 2 ;;
   esac
 done
@@ -88,6 +103,34 @@ age_cap_seconds() {
   if [ -n "$h" ]; then h=${h#mtime+}; echo $(( ${h%h} * 3600 )); return; fi
   d=$(printf '%s' "$1" | grep -oE '[0-9]+d' | head -1)
   if [ -n "$d" ]; then echo $(( ${d%d} * 86400 )); return; fi
+  echo ""
+}
+
+# "1MB, keep 3 gen" | "5MB" -> bytes. Empty on anything not matching a leading
+# <number><MB|KB|GB> — an unparseable cap is a refusal at the call site, never a default.
+rotate_size_bytes() {
+  local m
+  m=$(printf '%s' "$1" | grep -oE '^[0-9]+GB'); [ -n "$m" ] && { echo $(( ${m%GB} * 1024 * 1024 * 1024 )); return; }
+  m=$(printf '%s' "$1" | grep -oE '^[0-9]+MB'); [ -n "$m" ] && { echo $(( ${m%MB} * 1024 * 1024 )); return; }
+  m=$(printf '%s' "$1" | grep -oE '^[0-9]+KB'); [ -n "$m" ] && { echo $(( ${m%KB} * 1024 )); return; }
+  echo ""
+}
+
+# "1MB, keep 3 gen" -> 3; "5MB" (no generation count given) -> the default, 3. Unlike the
+# size portion, a missing generation count is not a parse failure — the manifest rows
+# that omit it (G11) mean "use the default", per spec.
+rotate_gens() {
+  local g
+  g=$(printf '%s' "$1" | grep -oE 'keep [0-9]+ gen')
+  if [ -n "$g" ]; then g=${g#keep }; echo "${g% gen}"; return; fi
+  echo 3
+}
+
+# "keep last 2000" -> 2000. Empty on anything else — refusal, not a default.
+truncate_lines_n() {
+  local n
+  n=$(printf '%s' "$1" | grep -oE 'keep last [0-9]+')
+  if [ -n "$n" ]; then echo "${n#keep last }"; return; fi
   echo ""
 }
 
@@ -144,10 +187,48 @@ contained() {
   return 1
 }
 
+# --- rotate/truncate primitives ---------------------------------------------------------
+# Rotation and truncation rewrite a file a live process may hold open — a different
+# failure mode from removing a stale one. Both primitives are rename-then-create-fresh:
+# the original inode is never opened for in-place writing, so the worst case of a race
+# with a concurrent writer is a few interleaved lines landing in the old segment, never
+# data loss. These two functions are the only place `mv` or `tail -n` appear in this
+# script — a structural test pins that.
+
+# f -> f.1 -> f.2 ... -> f.$gens, dropping whatever was at f.$gens. Shifting from the
+# oldest surviving generation upward means the drop is an ordinary mv overwrite, not a
+# separate delete: mv f.$((gens-1)) onto an existing f.$gens replaces it atomically, so
+# rotation never needs its own rm call site.
+rotate_by_size() {
+  local f=$1 gens=$2 mode i
+  mode=$(stat -c%a "$f") || return 1
+  i=$((gens - 1))
+  while [ "$i" -ge 1 ]; do
+    if [ -e "$f.$i" ]; then
+      mv -f -- "$f.$i" "$f.$((i + 1))" || return 1
+    fi
+    i=$((i - 1))
+  done
+  mv -f -- "$f" "$f.1" || return 1
+  touch -- "$f" || return 1
+  chmod "$mode" "$f"
+}
+
+# Writes the last N lines to a temp file in the same directory, restores the original
+# mode on the temp file, then renames it over the original — never truncates in place.
+truncate_lines_file() {
+  local f=$1 n=$2 mode tmp
+  mode=$(stat -c%a "$f") || return 1
+  tmp="$f.tmp.$$"
+  tail -n "$n" -- "$f" > "$tmp" || return 1
+  chmod "$mode" "$tmp" || return 1
+  mv -f -- "$tmp" "$f"
+}
+
 # --- the sweep ------------------------------------------------------------------------
 
 sweep() {
-  local total_pruned=0 total_bytes=0 rows=0 errors=0
+  local total_pruned=0 total_bytes=0 total_rotated=0 total_rotated_bytes=0 rows=0 errors=0
 
   if [ "$APPLY" -eq 1 ]; then echo "retention-sweep — APPLY"; else echo "retention-sweep — DRY RUN"; fi
   echo "manifest: $MANIFEST"
@@ -155,7 +236,7 @@ sweep() {
 
   shopt -s nullglob globstar dotglob
 
-  local row_count i row id rule finding grace cap acting tag
+  local row_count i row id rule finding grace cap acting rotating tag
   row_count=$(jq 'length' "$MANIFEST")
   i=0
   while [ "$i" -lt "$row_count" ]; do
@@ -176,14 +257,16 @@ sweep() {
 
     acting=0
     case "$APPLY_ROWS" in *" $id "*) [ "$APPLY" -eq 1 ] && acting=1 ;; esac
-    if [ "$acting" -eq 1 ]; then tag='[apply]'; else tag='[dry-run]'; fi
+    rotating=0
+    case "$ROTATE_ROWS" in *" $id "*) [ "$APPLY" -eq 1 ] && [ "$ROTATE" -eq 1 ] && rotating=1 ;; esac
+    if [ "$acting" -eq 1 ]; then tag='[apply]'; elif [ "$rotating" -eq 1 ]; then tag='[rotate]'; else tag='[dry-run]'; fi
 
     local globs count bytes oldest_days pruned pruned_bytes kept_reason min_age
     mapfile -t globs < <(printf '%s' "$row" | jq -r 'if (.path | type) == "array" then .path[] else .path end')
     count=0; bytes=0; oldest_days=""; pruned=0; pruned_bytes=0; kept_reason=""
     min_age=$(grace_seconds "$grace")
 
-    local g expanded prefix f b mtime age_days pid sibling n
+    local g expanded prefix f b mtime age_days pid sibling n lc newsize
     for g in "${globs[@]}"; do
       expanded="${g/#\~/$HOME}"
       [[ "$expanded" == *cwd* ]] && continue   # G11: per-cwd, not a fixed glob
@@ -199,7 +282,7 @@ sweep() {
           if [ -z "$oldest_days" ] || [ "$age_days" -gt "$oldest_days" ]; then oldest_days=$age_days; fi
         fi
 
-        [ "$acting" -eq 1 ] || continue
+        [ "$acting" -eq 1 ] || [ "$rotating" -eq 1 ] || continue
         [ -n "$mtime" ] || { kept_reason="unreadable mtime"; continue; }
 
         # Gate 1: the grace floor, before any rule-specific reasoning.
@@ -242,6 +325,32 @@ sweep() {
             fi
             continue
             ;;
+          rotate-size)
+            [ "$rotating" -eq 1 ] || { kept_reason="rotate rows require --apply --rotate"; continue; }
+            n=$(rotate_size_bytes "$cap")
+            [ -n "$n" ] || { kept_reason="cap not understood: $cap"; continue; }
+            if [ "${b:-0}" -le "$n" ]; then kept_reason="under cap=$cap"; continue; fi
+            if rotate_by_size "$f" "$(rotate_gens "$cap")"; then
+              pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0}))
+            else
+              echo "  $id: failed to rotate $f" >&2; errors=$((errors + 1))
+            fi
+            continue
+            ;;
+          truncate-lines)
+            [ "$rotating" -eq 1 ] || { kept_reason="rotate rows require --apply --rotate"; continue; }
+            n=$(truncate_lines_n "$cap")
+            [ -n "$n" ] || { kept_reason="cap not understood: $cap"; continue; }
+            if ! lc=$(wc -l < "$f" 2>/dev/null); then kept_reason="cannot read"; continue; fi
+            if [ "$lc" -le "$n" ]; then kept_reason="under cap=$cap"; continue; fi
+            if truncate_lines_file "$f" "$n"; then
+              newsize=$(stat -c%s "$f" 2>/dev/null || echo 0)
+              pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0} - newsize))
+            else
+              echo "  $id: truncate-lines failed for $f" >&2; errors=$((errors + 1))
+            fi
+            continue
+            ;;
           *)
             kept_reason="rule $rule has no implementation in this slice"; continue
             ;;
@@ -263,6 +372,12 @@ sweep() {
       line="$line pruned=$pruned reclaimed=$pruned_bytes"
       if [ "$pruned" -lt "$count" ] && [ -n "$kept_reason" ]; then line="$line kept_example=\"$kept_reason\""; fi
       total_pruned=$((total_pruned + pruned)); total_bytes=$((total_bytes + pruned_bytes))
+    elif [ "$rotating" -eq 1 ]; then
+      # "moved" not "reclaimed": rotation relocates bytes to a numbered generation (or, for
+      # truncate-lines, drops only the trimmed lines) rather than freeing them outright.
+      line="$line rotated=$pruned moved=$pruned_bytes"
+      if [ "$pruned" -lt "$count" ] && [ -n "$kept_reason" ]; then line="$line kept_example=\"$kept_reason\""; fi
+      total_rotated=$((total_rotated + pruned)); total_rotated_bytes=$((total_rotated_bytes + pruned_bytes))
     fi
     echo "$line ($finding)"
   done
@@ -270,6 +385,9 @@ sweep() {
   echo
   if [ "$APPLY" -eq 1 ]; then
     echo "Pruned $total_pruned entries, reclaimed $total_bytes bytes, $errors error(s)."
+    if [ "$ROTATE" -eq 1 ]; then
+      echo "Rotated/truncated $total_rotated entries, moved $total_rotated_bytes bytes."
+    fi
     mkdir -p "$STATE_DIR" 2>/dev/null
     printf '{"timestamp":"%s","rows_processed":%s,"entries_pruned":%s,"bytes_reclaimed":%s,"errors":%s}\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rows" "$total_pruned" "$total_bytes" "$errors" > "$MARKER"

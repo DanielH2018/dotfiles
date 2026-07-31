@@ -84,18 +84,12 @@ const codeOf = (file) => fs.readFileSync(file, 'utf8')
   .map((line) => line.replace(/#.*/, ''))
   .join('\n');
 
-test('removal is exactly two rm forms plus rmdir, and rotate/truncate still do not exist', () => {
+test('removal is exactly two rm forms plus rmdir', () => {
   const codeOnly = codeOf(SWEEP);
 
-  // Deferred by decision: rotation and truncation rewrite a file a live process may hold
-  // open, a different failure mode from removing a stale one, and no supervised run
-  // stands behind them yet. Their absence is the guarantee, not a comment claiming it.
-  const deferred = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|\btail\s+-n\b|:>\s*\S/i;
-  const leaked = codeOnly.match(deferred);
-  assert.strictEqual(leaked, null, `found a deferred rotate/truncate primitive: ${leaked && leaked[0]}`);
-
   // Exactly two rm call sites — the file form and the directory form — both with `--`, so
-  // a dash-leading name can never be read as a flag.
+  // a dash-leading name can never be read as a flag. Rotation's generation drop is a mv
+  // overwrite, not a delete (see the next test), so this count is unaffected by it.
   const rms = codeOnly.match(/\brm\s+[^\n]*/g) || [];
   assert.strictEqual(rms.length, 2, `expected exactly two rm call sites, found ${rms.length}: ${rms.join(' | ')}`);
   assert.ok(rms.some((r) => r.startsWith('rm -rf -- "$f"')), 'the directory form must be rm -rf -- "$f"');
@@ -104,6 +98,46 @@ test('removal is exactly two rm forms plus rmdir, and rotate/truncate still do n
   // The empty-dir rule must use rmdir, which refuses a non-empty directory in the kernel
   // rather than trusting an emptiness check that could race a writer.
   assert.match(codeOnly, /\brmdir "\$f"/, 'prune-empty-dir must use rmdir, not rm -r');
+});
+
+// Slice 3 deferred rotate/truncate entirely — no `mv`/`tail -n` anywhere in the source.
+// This slice implements them, so the guarantee narrows rather than disappears: the
+// primitives may exist, but only inside the two functions that implement
+// rename-then-create-fresh, never reachable from the removal path or anywhere else.
+test('rotate/truncate primitives (mv, tail -n) exist only inside their own functions', () => {
+  const codeOnly = codeOf(SWEEP);
+
+  const extractFn = (name) => {
+    const at = codeOnly.indexOf(`${name}() {`);
+    assert.ok(at > -1, `${name} function not found`);
+    const start = codeOnly.indexOf('{', at);
+    let depth = 0, i = start;
+    for (; i < codeOnly.length; i += 1) {
+      if (codeOnly[i] === '{') depth += 1;
+      else if (codeOnly[i] === '}') { depth -= 1; if (depth === 0) break; }
+    }
+    return { body: codeOnly.slice(start, i + 1), start: at, end: i + 1 };
+  };
+
+  const rotateFn = extractFn('rotate_by_size');
+  const truncateFn = extractFn('truncate_lines_file');
+  assert.ok(rotateFn.start < truncateFn.start, 'rotate_by_size must be defined before truncate_lines_file');
+
+  assert.match(rotateFn.body, /\bmv\b/, 'rotate_by_size must use mv for rename-then-create-fresh');
+  assert.doesNotMatch(rotateFn.body, /\btail\s+-n\b/, 'rotate_by_size has no business reading lines');
+  assert.match(truncateFn.body, /\btail\s+-n\b/, 'truncate_lines_file must use tail -n to select the kept lines');
+  assert.match(truncateFn.body, /\bmv\b/, 'truncate_lines_file must rename the temp file atomically over the original');
+
+  // Outside the two functions, none of the primitives that would let a rule rewrite a
+  // file in place may appear. "truncate-lines"/"rotate-size" are rule-name literals, not
+  // the primitive itself, so they are stripped before scanning for leaks.
+  const outside = (codeOnly.slice(0, rotateFn.start)
+    + codeOnly.slice(rotateFn.end, truncateFn.start)
+    + codeOnly.slice(truncateFn.end))
+    .replace(/truncate-lines/g, '').replace(/rotate-size/g, '');
+  const primitive = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|\btail\s+-n\b|:>\s*\S/i;
+  const leaked = outside.match(primitive);
+  assert.strictEqual(leaked, null, `found a rotate/truncate primitive outside its function: ${leaked && leaked[0]}`);
 });
 
 // Recursive removal is the sharpest edge slice 3 adds, so its guard is pinned in source
@@ -117,37 +151,50 @@ test('recursive removal is gated behind the containment check', () => {
   assert.match(codeOnly, /\[ -L "\$entry" \] && return 1/, 'contained() must refuse a symlink outright');
 });
 
-test('the only file the sweeper writes is the fixed-size run marker', () => {
+test('the only files the sweeper writes are the run marker and truncate-lines\' own temp file', () => {
   const codeOnly = codeOf(SWEEP);
   const redirects = codeOnly.match(/(?<!-)\d*>>?(&\d+|\s*\S+)/g) || [];
-  // Allowed: /dev/null, an fd dup or close, the flock descriptor (a zero-byte mutex,
-  // not data), and the run marker.
+  // Allowed: /dev/null, an fd dup or close, the flock descriptor (a zero-byte mutex, not
+  // data), the run marker, and truncate_lines_file's own "$tmp" -- written once, in the
+  // same directory as the file it will atomically replace, never left behind on success.
   const bad = redirects.filter((r) => !/\/dev\/null/.test(r)
     && !/^\d*>>?&[\d-]/.test(r)
     && !/\$LOCK/.test(r)
-    && !/\$MARKER/.test(r));
-  assert.deepStrictEqual(bad, [], 'the marker is the only real file the sweeper may write');
+    && !/\$MARKER/.test(r)
+    && !/"\$tmp"/.test(r));
+  assert.deepStrictEqual(bad, [], 'the marker and the truncate temp file are the only real files the sweeper may write');
   // No append anywhere: an append is how a log grows without bound, which is the very
-  // thing this module exists to prevent. The marker is overwritten each run.
+  // thing this module exists to prevent. The marker is overwritten each run, and the
+  // temp file is written once with `>`, never `>>`.
   assert.doesNotMatch(codeOnly, />>/, 'the sweeper must never append to a file');
 });
 
 // The row set is the blast radius. Reading it from the manifest would mean adding a row
 // could grant itself a delete path; keeping it in the source means widening it is a
-// reviewable edit.
-test('the acting row set is a source literal covering the removal rules and no others', () => {
+// reviewable edit. Rotation gets its own, separate row set for the same reason, and
+// staying out of APPLY_ROWS is what keeps --apply alone from ever touching it.
+test('the acting and rotating row sets are source literals covering their rules and no others', () => {
   const src = fs.readFileSync(SWEEP, 'utf8');
+
   const m = src.match(/^APPLY_ROWS="([^"]*)"/m);
   assert.ok(m, 'APPLY_ROWS literal not found');
   const rows = m[1].trim().split(/\s+/).sort();
   assert.deepStrictEqual(rows,
     ['G1', 'G12', 'G14', 'G15', 'G16', 'G17', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'].sort());
 
-  // The rotate/truncate rows must stay out until they have had a supervised run.
+  // The rotate/truncate rows must never be reachable through --apply alone.
   for (const deferred of ['G8', 'G9', 'G10', 'G11', 'G13']) {
-    assert.ok(!rows.includes(deferred), `${deferred} is a rotate/truncate row and must not act yet`);
+    assert.ok(!rows.includes(deferred), `${deferred} is a rotate/truncate row and must not act under --apply alone`);
   }
   assert.doesNotMatch(codeOf(SWEEP), /APPLY_ROWS=\$\(|APPLY_ROWS=.*jq/, 'the row set must not be derived from the manifest');
+
+  const mr = src.match(/^ROTATE_ROWS="([^"]*)"/m);
+  assert.ok(mr, 'ROTATE_ROWS literal not found');
+  const rotateRows = mr[1].trim().split(/\s+/).sort();
+  assert.deepStrictEqual(rotateRows, ['G10', 'G13', 'G8', 'G9'].sort());
+  assert.ok(!rotateRows.includes('G11'),
+    'G11 stays cwd-skipped at runtime for every rule and must not gain a rotate row');
+  assert.doesNotMatch(codeOf(SWEEP), /ROTATE_ROWS=\$\(|ROTATE_ROWS=.*jq/, 'the rotate row set must not be derived from the manifest');
 });
 
 // --- Manifest shape ----------------------------------------------------------------
@@ -434,7 +481,11 @@ test('an unparseable cap refuses to act rather than falling back to a default', 
   assert.match(out, /cap not understood: fourteen days/);
 });
 
-test('a deferred rotate/truncate row is reported but never acted on', { skip }, () => {
+// The critical constraint on this slice: the hourly timer already passes --apply, so
+// rotate-size/truncate-lines must not become automatic just by being implemented. They
+// only earn --apply's automatic reach once they have their own supervised --rotate runs,
+// the same way the removal rules earned --apply in slice 2.
+test('--apply alone leaves a rotate-size row completely untouched, even 2x over cap', { skip }, () => {
   const root = scratch('retention-deferred-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'x'.repeat(2_000_000));
@@ -444,9 +495,170 @@ test('a deferred rotate/truncate row is reported but never acted on', { skip }, 
   }]);
 
   const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
-  assert.strictEqual(fs.statSync(log).size, 2_000_000, 'a deferred row must not rotate anything');
+  assert.strictEqual(fs.statSync(log).size, 2_000_000, '--apply alone must not rotate anything');
   assert.ok(!fs.existsSync(`${log}.1`), 'no rotation generation may be created');
   assert.match(out, /\[dry-run\] G8/);
+});
+
+// --- Slice 4: rotate-size and truncate-lines, gated behind --apply --rotate ----------
+
+const rotateRow = (id, glob, cap) => ({
+  id, path: glob, kind: 'file', rule: 'rotate-size',
+  cap, grace: null, owner: 'retention-sweep', finding: 'test',
+});
+const truncateRow = (id, glob, cap) => ({
+  id, path: glob, kind: 'file', rule: 'truncate-lines',
+  cap, grace: null, owner: 'retention-sweep', finding: 'test',
+});
+const countLines = (p) => fs.readFileSync(p, 'utf8').split('\n').filter((l) => l.length).length;
+
+test('rotate-size: --apply --rotate is required together; --rotate alone (no --apply) does nothing', { skip }, () => {
+  const root = scratch('retention-rotate-gate-');
+  const log = path.join(root, 'sessions.log');
+  fs.writeFileSync(log, 'x'.repeat(2_000_000));
+  const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
+
+  const out = runSweep(m, ['--rotate']);
+  assert.strictEqual(fs.statSync(log).size, 2_000_000, '--rotate without --apply must not rotate');
+  assert.ok(!fs.existsSync(`${log}.1`), 'no rotation generation may be created');
+  assert.match(out, /\[dry-run\] G8/);
+
+  const out2 = runSweep(m, ['--apply', '--rotate']);
+  assert.match(out2, /\[rotate\] G8/);
+  assert.strictEqual(fs.statSync(log).size, 0, 'the current file must be fresh after rotation');
+  assert.ok(fs.existsSync(`${log}.1`), 'the rotated generation must exist');
+  assert.strictEqual(fs.statSync(`${log}.1`).size, 2_000_000, 'no data lost in the rotated generation');
+});
+
+test('rotate-size leaves a file under cap untouched even with --apply --rotate', { skip }, () => {
+  const root = scratch('retention-rotate-undercap-');
+  const log = path.join(root, 'sessions.log');
+  fs.writeFileSync(log, 'small');
+  const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
+
+  const out = runSweep(m, ['--apply', '--rotate']);
+  assert.ok(!fs.existsSync(`${log}.1`), 'a file under cap must not be rotated');
+  assert.strictEqual(fs.readFileSync(log, 'utf8'), 'small');
+  assert.match(out, /under cap=1MB, keep 3 gen/);
+});
+
+test('rotate-size shifts generations and drops the oldest', { skip }, () => {
+  const root = scratch('retention-rotate-gens-');
+  const log = path.join(root, 'sessions.log');
+  fs.writeFileSync(log, 'x'.repeat(2_000_000));
+  fs.writeFileSync(`${log}.1`, 'gen1-content\n');
+  fs.writeFileSync(`${log}.2`, 'gen2-content\n');
+  fs.writeFileSync(`${log}.3`, 'gen3-content-must-be-dropped\n');
+  const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
+
+  runSweep(m, ['--apply', '--rotate']);
+  assert.strictEqual(fs.statSync(log).size, 0, 'the current file must be fresh');
+  assert.strictEqual(fs.readFileSync(`${log}.1`, 'utf8'), 'x'.repeat(2_000_000), 'the old current became .1');
+  assert.strictEqual(fs.readFileSync(`${log}.2`, 'utf8'), 'gen1-content\n', 'the old .1 shifted to .2');
+  assert.strictEqual(fs.readFileSync(`${log}.3`, 'utf8'), 'gen2-content\n', 'the old .2 shifted to .3, dropping the old .3');
+});
+
+// Mirrors the spec's own fixture (M12 spec section 6): current file is fresh/empty after
+// rotation, a .1 sibling exists, and the line count across current + .1 equals the
+// pre-rotation total exactly -- a race can only interleave lines into the old segment,
+// never lose them.
+test('rotate-size: no data loss -- line count across current + .1 equals the pre-rotation total', { skip }, () => {
+  const root = scratch('retention-rotate-nodataloss-');
+  const log = path.join(root, 'sessions.log');
+  // Padded to 50 bytes/line so 30000 lines comfortably clears the 1MB cap (short lines
+  // like "line 42" wouldn't: 30000 * ~8 bytes is well under 1MB).
+  const content = Array.from({ length: 30000 }, (_, i) => `line ${i.toString().padStart(6, '0')}`.padEnd(50, '-')).join('\n') + '\n';
+  fs.writeFileSync(log, content);
+  assert.ok(fs.statSync(log).size > 1024 * 1024, 'test setup: fixture must exceed the 1MB cap');
+  const preLineCount = countLines(log);
+  const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
+
+  runSweep(m, ['--apply', '--rotate']);
+  const curLines = fs.existsSync(log) ? countLines(log) : 0;
+  const g1Lines = countLines(`${log}.1`);
+  assert.strictEqual(curLines, 0, 'the current file must be fresh/empty after rotation');
+  assert.strictEqual(curLines + g1Lines, preLineCount, 'no line lost across current + .1');
+});
+
+test('rotate-size preserves the file mode across rotation', { skip }, () => {
+  const root = scratch('retention-rotate-mode-');
+  const log = path.join(root, 'daemon.log');
+  fs.writeFileSync(log, 'x'.repeat(1_500_000));
+  fs.chmodSync(log, 0o600);
+  const m = manifestFile(root, [rotateRow('G9', log, '1MB, keep 3 gen')]);
+
+  runSweep(m, ['--apply', '--rotate']);
+  assert.strictEqual(fs.statSync(log).mode & 0o777, 0o600, 'the fresh current file must keep the original mode');
+  assert.strictEqual(fs.statSync(`${log}.1`).mode & 0o777, 0o600, 'the rotated generation must keep the original mode');
+});
+
+test('an unparseable rotate-size cap refuses to act rather than falling back to a default', { skip }, () => {
+  const root = scratch('retention-rotate-badcap-');
+  const log = path.join(root, 'sessions.log');
+  fs.writeFileSync(log, 'x'.repeat(2_000_000));
+  const m = manifestFile(root, [rotateRow('G8', log, 'one megabyte')]);
+
+  const out = runSweep(m, ['--apply', '--rotate']);
+  assert.strictEqual(fs.statSync(log).size, 2_000_000, 'an unparseable cap must mean no rotation');
+  assert.ok(!fs.existsSync(`${log}.1`));
+  assert.match(out, /cap not understood: one megabyte/);
+});
+
+test('truncate-lines: --apply alone leaves a 2x-over-cap file untouched; --apply --rotate truncates it', { skip }, () => {
+  const root = scratch('retention-truncate-gate-');
+  const log = path.join(root, 'history.jsonl');
+  const lines = Array.from({ length: 4000 }, (_, i) => `{"n":${i}}`);
+  fs.writeFileSync(log, lines.join('\n') + '\n');
+  const before = fs.readFileSync(log, 'utf8');
+  const m = manifestFile(root, [truncateRow('G13', log, 'keep last 2000')]);
+
+  const out1 = runSweep(m, ['--apply']);
+  assert.strictEqual(fs.readFileSync(log, 'utf8'), before, '--apply alone must not truncate');
+  assert.match(out1, /\[dry-run\] G13/);
+
+  const out2 = runSweep(m, ['--apply', '--rotate']);
+  assert.match(out2, /\[rotate\] G13/);
+  assert.strictEqual(countLines(log), 2000, 'must keep exactly the last 2000 lines');
+});
+
+test('truncate-lines keeps exactly the last N lines and preserves mode', { skip }, () => {
+  const root = scratch('retention-truncate-');
+  const log = path.join(root, 'history.jsonl');
+  const lines = Array.from({ length: 6000 }, (_, i) => `{"n":${i}}`);
+  fs.writeFileSync(log, lines.join('\n') + '\n');
+  fs.chmodSync(log, 0o600);
+  const m = manifestFile(root, [truncateRow('G13', log, 'keep last 5000')]);
+
+  runSweep(m, ['--apply', '--rotate']);
+  const kept = fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.length);
+  assert.strictEqual(kept.length, 5000, 'must keep exactly the last 5000 lines');
+  assert.strictEqual(kept[0], '{"n":1000}', 'must keep the tail, not the head');
+  assert.strictEqual(kept[kept.length - 1], '{"n":5999}', 'must keep up to the very last line');
+  assert.strictEqual(fs.statSync(log).mode & 0o777, 0o600, 'mode must be preserved across truncation');
+});
+
+test('truncate-lines leaves a file under cap untouched', { skip }, () => {
+  const root = scratch('retention-truncate-undercap-');
+  const log = path.join(root, 'reap-origin.log');
+  const content = Array.from({ length: 10 }, (_, i) => `l${i}`).join('\n') + '\n';
+  fs.writeFileSync(log, content);
+  const m = manifestFile(root, [truncateRow('G10', log, 'keep last 2000')]);
+
+  const out = runSweep(m, ['--apply', '--rotate']);
+  assert.strictEqual(fs.readFileSync(log, 'utf8'), content, 'a file under cap must be untouched');
+  assert.match(out, /under cap=keep last 2000/);
+});
+
+test('an unparseable truncate-lines cap refuses to act rather than falling back to a default', { skip }, () => {
+  const root = scratch('retention-truncate-badcap-');
+  const log = path.join(root, 'history.jsonl');
+  const content = Array.from({ length: 100 }, (_, i) => `l${i}`).join('\n') + '\n';
+  fs.writeFileSync(log, content);
+  const m = manifestFile(root, [truncateRow('G13', log, 'a lot')]);
+
+  const out = runSweep(m, ['--apply', '--rotate']);
+  assert.strictEqual(fs.readFileSync(log, 'utf8'), content, 'an unparseable cap must mean no truncation');
+  assert.match(out, /cap not understood: a lot/);
 });
 
 test('the run marker records the counts and is overwritten, never appended', { skip }, () => {
