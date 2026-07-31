@@ -1220,5 +1220,7 @@
   "fileCheckpointingEnabled": true,
   "showTurnDuration": true,
   "autoConnectIde": true,
-  "autoInstallIdeExtension": true
+  "autoInstallIdeExtension": true,
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true
 }
