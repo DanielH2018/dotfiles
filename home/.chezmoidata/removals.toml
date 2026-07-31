@@ -1,0 +1,267 @@
+# Packages the Fedora KDE spin installs by default that this machine does not use — the mirror
+# image of packages.toml, consumed by os-linux/run_onchange_after_remove-bloat.sh.tmpl.
+#
+# Fedora's KDE spin is a curated *desktop* image, not a minimal one: it ships the live installer
+# it booted from, guest agents for five hypervisors, a dial-up stack, and the full KDE PIM suite
+# whether or not you ever open them. None of that is reachable from this machine's hardware or
+# workflow, and the PIM suite in particular is not free — Akonadi starts a private MySQL server
+# and ~19 helper processes at every login (measured 1.16 GB RSS on daniel-fedora, 2026-07-31)
+# to index a mail store that was never configured.
+#
+# Disk is NOT the motivation. This box runs 19 GB used of 929 GB; the win is background
+# processes, boot-time units, and attack surface.
+#
+# Fields:
+#   name     = human label, used only in log output
+#   why      = why this machine doesn't need it; kept here so the reasoning survives the next
+#              person (or model) that reads the list and wonders whether it is safe
+#   guard    = optional runtime precondition (see the GUARD section of the script). A group whose
+#              guard fails is skipped with a message rather than removed — the point is that this
+#              list is safe to apply to a machine whose hardware differs from the one it was
+#              written on, since chezmoi applies it everywhere the gate lets it run.
+#   packages = dnf package names. Removing any of these takes its dependents with it; that is
+#              intended (removing akonadi-server is what clears the ~25-package PIM stack).
+#
+# Everything here is skip-if-absent: the script only passes dnf the subset actually installed, so
+# a machine that never had these converges silently instead of erroring.
+#
+# Deliberately NOT listed, having been considered and kept:
+#   dosfstools            - fsck for the vfat EFI partition
+#   btrfs-progs/e2fsprogs - root is btrfs, /boot is ext4
+#   kleopatra             - the GPG/smartcard GUI, and this machine authenticates with a YubiKey
+#   okular/gwenview/kcalc - the only PDF viewer, image viewer and calculator on the box
+#   glibc-all-langpacks   - 227 MB, but disk is not the constraint here
+#   the 205 i686 packages - Steam needs the multilib stack
+#   cups / avahi / sane   - judgement calls left to the user, not encoded here
+#
+# Verified 2026-07-31 against Fedora 44 KDE (dnf5 5.4.2.1) on daniel-fedora.
+
+# ---------------------------------------------------------------------------------------------
+# Tier 1 — installed by the image, unreachable from this hardware.
+# ---------------------------------------------------------------------------------------------
+
+[[removals]]
+name = "Live installer"
+why = """Anaconda and the livesys scripts only do work while booted from the live ISO. A Fedora \
+Live install leaves the whole installer environment behind, with livesys.service and \
+livesys-late.service still enabled on the installed system."""
+packages = [
+  "anaconda-core",
+  "anaconda-tui",
+  "anaconda-webui",
+  "anaconda-live",
+  "anaconda-install-env-deps",
+  "kdump-anaconda-addon",
+  "libreport-anaconda",
+  "livesys-scripts",
+  "dracut-live",
+]
+
+[[removals]]
+name = "VM guest agents"
+guard = "baremetal"
+why = """Guest-side integration for QEMU/SPICE, VMware, Hyper-V and VirtualBox. All five are \
+inert on bare metal. Note virtualbox-guest-additions is the *guest* half — removing it does not \
+affect running VirtualBox as a host."""
+packages = [
+  "qemu-guest-agent",
+  "open-vm-tools-desktop",
+  "spice-vdagent",
+  "spice-webdavd",
+  "hyperv-daemons",
+  "virtualbox-guest-additions",
+]
+
+[[removals]]
+name = "Dial-up and WWAN"
+guard = "no-wwan"
+why = """PPP, ADSL and cellular-modem support, plus the serial terminal and Z-modem transfer \
+tools that came with them. ModemManager runs as a daemon regardless. Guarded on /sys/class/wwan \
+so a laptop with a built-in LTE modem keeps the stack."""
+packages = [
+  "ModemManager",
+  "ppp",
+  "minicom",
+  "lrzsz",
+  "NetworkManager-adsl",
+  "NetworkManager-ppp",
+  "NetworkManager-wwan",
+]
+
+# mdadm was in this list on the first pass and must never come back. It has no MD arrays to manage
+# here, but on Fedora it is load-bearing anyway: libblockdev-mdraid requires mdadm, and udisks2
+# requires libblockdev-mdraid. Removing it took udisks2 with it and with that every removable
+# drive stopped mounting in Dolphin. "This machine has no RAID" was true and completely beside
+# the point — see the protect list at the bottom, which now enforces it.
+
+[[removals]]
+name = "Unused storage and directory subsystems"
+why = """iSCSI initiator (no targets configured, no sessions), network teaming (deprecated in \
+favour of bonding, and unused) and realmd (AD/FreeIPA domain join on a personal workstation). \
+gssproxy was here on the first pass and was dropped: removing it takes nfs-utils and rpcbind, \
+and this machine talks to a homelab where an NFS mount is a normal thing to want."""
+packages = [
+  "iscsi-initiator-utils",
+  "teamd",
+  "realmd",
+]
+
+# ---------------------------------------------------------------------------------------------
+# Tier 2 — shipped by the KDE spin, never launched on this machine.
+#
+# LibreOffice is deliberately excluded from this tier: it is the one default app worth keeping
+# around for an occasional .docx, and it costs nothing at rest (no daemon, no autostart).
+# ---------------------------------------------------------------------------------------------
+
+[[removals]]
+name = "KDE PIM (Kontact/KMail/Akonadi)"
+why = """The single largest win on the box: ~19 processes plus a dedicated MySQL server at every \
+login, indexing a mail store that was never set up (there is no ~/.config/kmail* and no mail \
+directory).
+
+akonadi-server is deliberately NOT in this list, and that is load-bearing. The process fleet is \
+the *agents* — akonadi_maildir_resource, akonadi_ical_resource, akonadi_indexing_agent and the \
+rest — which all ship in kdepim-runtime. akonadi-server is only the daemon binary plus the \
+libraries, and it is D-Bus activated: with no agents installed nothing ever asks it to start.
+
+Removing akonadi-server as well looks tidier and is a trap. kleopatra requires akonadi-mime, \
+which requires akonadi-server, so taking the server out takes the GPG/YubiKey GUI with it — and \
+reinstalling kleopatra pulls the server straight back, so the next apply removes it again. That \
+flip-flops on every apply forever. Leaving the server installed and idle costs nothing and \
+breaks the loop.
+
+Caveat that remains: kdepim-runtime also backs the Plasma digital clock's calendar/birthday \
+agenda, which stops showing events."""
+packages = [
+  "kontact",
+  "kmail",
+  "korganizer",
+  "kaddressbook",
+  "kdepim-runtime",
+]
+
+[[removals]]
+name = "KDE games"
+why = "The three card/puzzle games the spin ships. Never launched; no config directories exist."
+packages = ["kmahjongg", "kmines", "kpat"]
+
+[[removals]]
+name = "Unused KDE utilities"
+why = """Media players, webcam/camera tools, the paint app, the remote-desktop and Matrix \
+clients, the QR scanner, the scanner front-end and the speech tool. None has ever been opened \
+(no config directory for any of them), and each is replaced by something already installed or \
+simply unwanted."""
+packages = [
+  "dragon",
+  "elisa-player",
+  "kamera",
+  "kamoso",
+  "kolourpaint",
+  "krdc",
+  "neochat",
+  "qrca",
+  "skanpage",
+  "kmouth",
+]
+
+# ---------------------------------------------------------------------------------------------
+# Tier 3 (partial) — the one judgement call the user opted into.
+# ---------------------------------------------------------------------------------------------
+
+[[removals]]
+name = "CJK input methods"
+why = """Japanese, Korean and Chinese IME engines pulled in by the `input-methods` group. ibus \
+itself is kept — Plasma uses it for emoji and compose-key input — as is ibus-typing-booster."""
+packages = [
+  "ibus-anthy",
+  "ibus-hangul",
+  "ibus-libpinyin",
+  "ibus-chewing",
+  "ibus-m17n",
+  "ibus-table-chinese-cangjie",
+]
+
+# ---------------------------------------------------------------------------------------------
+# dnf groups to unmark once their members are gone.
+#
+# Removing a package does not clear the "group installed" marker, and a group that dnf still
+# believes is installed can have its default members restored by `dnf group upgrade` or by a
+# `dnf system-upgrade` to the next Fedora release — which is exactly how kmail and kmahjongg
+# would come back. `dnf group remove --no-packages` clears the marker and touches no packages,
+# so the ones deliberately kept (kleopatra from kde-pim, okular/gwenview/kcalc from kde-apps)
+# stay installed.
+#
+# anaconda-tools is NOT unmarked: most of its members (grub2, btrfs-progs, e2fsprogs, efibootmgr)
+# are load-bearing and stay.
+# ---------------------------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------------------------
+# Packages the transaction must never take, directly or through the dependency cascade.
+#
+# This list exists because the first run of this script removed 260 packages when 52 were named.
+# The cascade is the whole problem: `dnf remove mdadm` is not a statement about mdadm, it is a
+# statement about everything that requires it. Two things went that should not have:
+#   udisks2          <- libblockdev-mdraid <- mdadm      (removable media stopped mounting)
+#   gnupg2-scdaemon  <- kleopatra <- libkleo <- KDE PIM  (YubiKey GPG stopped working)
+#
+# The script now resolves the transaction with `dnf remove --assumeno` and refuses to run it if
+# any name below appears in the plan. Checking "is this package safe to remove" was never enough;
+# the question is "what else leaves with it", and only dnf can answer that.
+#
+# Adding a name here is cheap and permanent. If a legitimate removal is ever blocked by this list,
+# the right move is to shrink the removal, not the protect list.
+[protect]
+packages = [
+  # Removable media + storage stack.
+  "udisks2",
+  "udisks2-btrfs",
+  "libblockdev",
+  "mdadm",
+  # GnuPG / YubiKey. scdaemon is the smartcard daemon — without it `gpg --card-status` fails.
+  "gnupg2",
+  "gnupg2-scdaemon",
+  "gnupg2-smime",
+  "kleopatra",
+  # NFS client, for the homelab.
+  "nfs-utils",
+  "rpcbind",
+  # Pulled out by anaconda-core, which uses tmux for its installer consoles. The chezmoi-installed
+  # ~/.local/bin/tmux covers an interactive login shell, so this looks survivable and is not:
+  # anything running with a stock PATH (system units, scripts, tests that pin /usr/bin:/bin) stops
+  # finding tmux entirely. tests/claude-tmux-wrap.test.js catches exactly this.
+  "tmux",
+  # Filesystem tooling for partitions that are actually mounted.
+  "dosfstools",
+  "btrfs-progs",
+  "e2fsprogs",
+  # The desktop itself, and the only viewer/calculator on the box.
+  "plasma-workspace",
+  "plasma-desktop",
+  "kwin",
+  "okular",
+  "gwenview",
+  "kcalc",
+  # Input: ibus stays for emoji/compose even though the CJK engines go.
+  "ibus",
+  # Explicitly excluded from the removal set when this list was agreed.
+  "libreoffice-core",
+]
+
+# Casualties of the first run that are NOT protected, having been reviewed and accepted:
+#   NetworkManager-bluetooth  - Bluetooth PAN/DUN tethering. Requires ModemManager, so protecting
+#                               it would mean keeping the whole dial-up stack. BT *audio* is
+#                               bluez/pipewire and is unaffected. Wired + wifi cover this box.
+#   NetworkManager-l2tp/pptp  - L2TP/PPTP VPN plugins, pulled by ppp. Mullvad is WireGuard.
+#   clevis*                   - TPM-backed LUKS unlock; no LUKS volume exists here.
+#   cockpit-*                 - web admin console, never used on a desktop.
+#   mariadb-server            - existed only to back Akonadi.
+
+[unmark]
+groups = [
+  "kde-pim",
+  "kde-apps",
+  "kde-media",
+  "input-methods",
+  "dial-up",
+  "guest-desktop-agents",
+]

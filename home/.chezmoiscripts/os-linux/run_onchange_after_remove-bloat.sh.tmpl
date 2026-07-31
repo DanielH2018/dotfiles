@@ -1,0 +1,196 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not .work) (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Removes the default-but-unused Fedora KDE packages listed in
+# .chezmoidata/removals.toml — the inverse of run_onchange_after_install-apps.sh.tmpl, and named
+# to sort after it so a single apply installs what's wanted before removing what isn't.
+#
+# The Fedora KDE spin is a curated desktop image, not a minimal one: it leaves the live installer
+# it booted from on disk, ships guest agents for five hypervisors, a dial-up stack, and the whole
+# KDE PIM suite. The motivation for clearing them is background processes and boot-time units,
+# NOT disk — see the header of removals.toml for the measurements.
+#
+# Gated to a personal, non-WSL workstation. The server/minimal profiles (the Pi) have no KDE spin
+# to trim, WSL has no desktop, and the work machine's package set is not this repo's business.
+# Fedora-only at runtime as well: every name in the list is an rpm name.
+#
+# Safety properties, in the order they matter:
+#   1. Skip-if-absent. Only the subset dnf actually has installed is passed to `dnf remove`, so a
+#      machine that never had these converges silently rather than erroring.
+#   2. Guarded groups. Entries whose removal depends on hardware (guest agents, cellular modem,
+#      MD RAID) declare a `guard` and are skipped where the precondition fails, because chezmoi
+#      applies this everywhere the gate above allows — not just the box it was written on.
+#   3. One transaction. Everything eligible goes to a single `dnf remove`, so the dependency
+#      cascade is resolved once and there is one sudo prompt and one reviewable summary.
+#   4. Groups are unmarked afterwards, or a later `dnf system-upgrade` restores their defaults.
+#
+# Re-runs whenever this file or the rendered list below changes (edit removals.toml -> next apply
+# reconciles). Everything is idempotent, so a re-run on a converged machine is a no-op.
+# bump-to-reinstall: fedora-bloat v1
+set -u
+TAG=remove-bloat
+{{ includeTemplate "linux-install.sh" . }}
+
+# The list is rpm names throughout; apt machines and unrecognised distros have nothing to match.
+if [ "$PM" != dnf ]; then
+  echo "$TAG: not a dnf machine; nothing to remove."
+  exit 0
+fi
+
+# --- Guards --------------------------------------------------------------------------------
+# Each is a definitive, kernel-exposed fact rather than an inference, and each is cheap enough to
+# re-check on every apply. An unknown guard name fails closed: the group is skipped, never
+# removed on a machine whose preconditions nobody checked.
+guard_ok() { # $1=guard name ("" = unconditional)
+  case "$1" in
+    "") return 0 ;;
+    baremetal)
+      # systemd-detect-virt exits 0 inside a guest. Absent systemd, assume a guest and keep the
+      # agents — the conservative direction.
+      command -v systemd-detect-virt >/dev/null 2>&1 || return 1
+      ! systemd-detect-virt --quiet
+      ;;
+    no-wwan)
+      # /sys/class/wwan is how the kernel exposes MBIM/QMI cellular modems. Missing or empty
+      # means there is no modem for ModemManager to drive.
+      [ ! -d /sys/class/wwan ] || [ -z "$(ls -A /sys/class/wwan 2>/dev/null)" ]
+      ;;
+    no-raid)
+      # An assembled array appears as an `mdN :` line in /proc/mdstat; the personalities header
+      # is always present even with none.
+      ! grep -qE '^md[0-9]' /proc/mdstat 2>/dev/null
+      ;;
+    *)
+      echo "$TAG: unknown guard '$1'; skipping the group rather than guessing" >&2
+      return 1
+      ;;
+  esac
+}
+
+# --- The removal list, rendered from .chezmoidata/removals.toml -----------------------------
+# One pipe-separated record per group: name|guard|space-separated packages. `get` (not .field)
+# because `guard` is optional and a bare .guard on an entry without it is a template error rather
+# than an empty string.
+REMOVALS='
+{{- range .removals }}
+{{ get . "name" }}|{{ get . "guard" }}|{{ join " " (get . "packages") }}
+{{- end }}
+'
+
+# --- Work out what is actually here ---------------------------------------------------------
+QUEUE=""
+# Fed by a here-doc, not a pipe: a `while read` downstream of a pipe runs in a subshell and $QUEUE
+# would be discarded — the same trap the app installer documents.
+while IFS='|' read -r name guard pkgs; do
+  [ -n "$name" ] || continue
+  if ! guard_ok "$guard"; then
+    echo "$TAG: [skip] $name — precondition '$guard' does not hold on this machine."
+    continue
+  fi
+  present=""
+  for p in $pkgs; do
+    pkg_installed "$p" && present="$present $p"
+  done
+  if [ -z "$present" ]; then
+    echo "$TAG: [skip] $name — already gone."
+    continue
+  fi
+  echo "$TAG: [queue] $name —$present"
+  QUEUE="$QUEUE$present"
+done <<EOF
+$REMOVALS
+EOF
+
+# --- Remove ---------------------------------------------------------------------------------
+removed_pim=0
+if [ -n "$QUEUE" ]; then
+  if ! have_sudo; then
+    echo "$TAG: sudo unavailable; re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
+    exit 1
+  fi
+
+  # --- Resolve the cascade before committing to it ------------------------------------------
+  # The check that was missing the first time this ran: 52 named packages resolved to 260 removals
+  # and took udisks2 (via libblockdev-mdraid <- mdadm) and gnupg2-scdaemon (via kleopatra) with
+  # them, breaking removable-media mounting and YubiKey GPG. Knowing a package is unused says
+  # nothing about what leaves alongside it — only a resolved transaction does.
+  #
+  # --assumeno prints the full plan and declines it, so this is read-only. It exits non-zero by
+  # design (it answered "no"), hence the `|| true`.
+  PROTECT='{{ join " " .protect.packages }}'
+  echo "$TAG: resolving the transaction to check what the cascade would take ..."
+  # shellcheck disable=SC2086
+  plan="$(sudo dnf remove --assumeno $QUEUE 2>/dev/null | awk '{print $1}' || true)"
+  hit=""
+  for p in $PROTECT; do
+    printf '%s\n' "$plan" | grep -qx -- "$p" && hit="$hit $p"
+  done
+  if [ -n "$hit" ]; then
+    echo "$TAG: REFUSING to remove — the cascade would also take:$hit" >&2
+    echo "$TAG: these are protected in .chezmoidata/removals.toml. Shrink the removal list (find" >&2
+    echo "$TAG: the culprit with 'dnf repoquery --whatrequires <pkg>'), don't shrink the protect" >&2
+    echo "$TAG: list. Nothing was changed." >&2
+    exit 1
+  fi
+
+  # Stop what is about to be deleted, so nothing keeps running from an unlinked path. livesys is
+  # disabled before its package goes because removing the package leaves the enabled symlinks
+  # behind as dangling units.
+  case " $QUEUE " in
+    *" livesys-scripts "*)
+      for u in livesys.service livesys-late.service; do
+        if systemctl is-enabled "$u" >/dev/null 2>&1; then
+          echo "$TAG: disabling $u (live-ISO only)"
+          sudo systemctl disable --now "$u" || true
+        fi
+      done
+      ;;
+  esac
+  # Keyed on kdepim-runtime, not akonadi-server: the agents are what run, and akonadi-server is
+  # deliberately left installed (see removals.toml — removing it takes kleopatra with it).
+  case " $QUEUE " in
+    *" kdepim-runtime "*)
+      removed_pim=1
+      # Brings down the ~19 helpers and the private MySQL server before their binaries vanish.
+      command -v akonadictl >/dev/null 2>&1 && akonadictl stop >/dev/null 2>&1 || true
+      ;;
+  esac
+
+  echo "$TAG: removing —$QUEUE"
+  # Deliberately unquoted: $QUEUE is a space-separated package list and must word-split into
+  # separate arguments. dnf takes dependents with each package, which is the intent.
+  # shellcheck disable=SC2086
+  if ! sudo dnf remove -y $QUEUE; then
+    echo "$TAG: dnf remove failed; nothing recorded, will retry on the next apply." >&2
+    exit 1
+  fi
+else
+  echo "$TAG: nothing to remove; already converged."
+fi
+
+# --- Clear the Akonadi store ------------------------------------------------------------------
+# Orphaned once the agents are gone: a ~125 MB MySQL datadir indexing a mail store that was never
+# configured. Conditioned on kdepim-runtime being absent, so re-installing KDE PIM by hand leaves
+# the data alone on the next apply. (akonadi-server stays installed by design and is not the
+# signal here — see removals.toml.)
+if [ "$removed_pim" = 1 ] && ! rpm -q kdepim-runtime >/dev/null 2>&1; then
+  for d in "$HOME/.local/share/akonadi" "$HOME"/.config/akonadi*; do
+    [ -e "$d" ] || continue
+    echo "$TAG: clearing orphaned Akonadi data $d"
+    rm -rf "$d"
+  done
+fi
+
+# --- Unmark the dnf groups ---------------------------------------------------------------------
+# Removing a package leaves the group marked installed, and a marked group has its default members
+# restored by `dnf group upgrade` or a `dnf system-upgrade` to the next release — which is exactly
+# how kmail and kmahjongg would return. `--no-packages` clears the marker only, so the members
+# kept on purpose (kleopatra, okular, gwenview, kcalc) are untouched.
+for g in {{ join " " .unmark.groups }}; do
+  if dnf group info "$g" 2>/dev/null | grep -qE '^[[:space:]]*Installed[[:space:]]*:[[:space:]]*yes'; then
+    echo "$TAG: unmarking dnf group '$g' so upgrades don't restore its defaults"
+    sudo dnf group remove --no-packages -y "$g" || true
+  fi
+done
+
+echo "$TAG: removal pass done."
+{{ end -}}
