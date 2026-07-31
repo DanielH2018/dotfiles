@@ -13,6 +13,9 @@ BIN_DIR="$HOME/.local/bin"
 VER_DIR="$BIN_DIR/.versions"   # release tag last installed per tool, so a re-apply upgrades a
                                # stale binary in place instead of skipping it (install-once).
 APP_DIR="$HOME/.local/share"   # unpacked multi-file release apps (scrcpy), symlinked into BIN_DIR
+# Overridable purely so the repo helpers below can be exercised against a throwaway directory;
+# nothing in normal operation sets it.
+: "${REPO_DIR:=/etc/yum.repos.d}"
 mkdir -p "$BIN_DIR" "$VER_DIR"
 
 # --- 1. Package-manager abstraction -------------------------------------------------------
@@ -157,13 +160,40 @@ copr_enable() { # $1=owner/project. Fedora only; dnf no-ops when the COPR is alr
   sudo dnf -y copr enable "$1"
 }
 
+# Fedora ships some vendor repos pre-installed but DISABLED — fedora-workstation-repositories
+# drops google-chrome.repo carrying enabled=0. "The file exists" is therefore NOT the same as
+# "the repo works", and treating them as equivalent is a silent failure: the writers below
+# short-circuit, dnf never sees the package, and the install dies with a bare "no match" that
+# points nowhere near the cause. Always run this after ensuring the file is present.
+# sed rather than `dnf config-manager`, whose spelling differs between dnf4 (--set-enabled) and
+# dnf5 (setopt); rewriting the line works on both and is idempotent.
+rpm_repo_enable() { # $1=repo name (file stem)
+  [ "$PM" = dnf ] || return 0
+  f="$REPO_DIR/$1.repo"
+  [ -f "$f" ] || return 0
+  grep -q '^enabled=0' "$f" || return 0
+  # Only ever rewrite a single-stanza vendor file. Fedora's own repo files bundle several stanzas
+  # and keep the source/debuginfo ones disabled on purpose — a blanket rewrite would switch those
+  # on as a side effect of enabling something unrelated.
+  if [ "$(grep -c '^\[' "$f")" -ne 1 ]; then
+    echo "$TAG: $1.repo carries multiple stanzas; enable it by hand rather than risk the others" >&2
+    return 1
+  fi
+  echo "$TAG: enabling the pre-installed but disabled $1 repo"
+  sudo sed -i 's/^enabled=0/enabled=1/' "$f"
+}
+
 rpm_repo_add() { # $1=repo name (file stem) $2=URL of a ready-made .repo definition
   [ "$PM" = dnf ] || return 0
-  [ -f "/etc/yum.repos.d/$1.repo" ] && return 0
+  if [ -f "$REPO_DIR/$1.repo" ]; then
+    rpm_repo_enable "$1"
+    return 0
+  fi
   tmp="$(mktemp)"
   if curl -fsSL "$2" -o "$tmp"; then
-    sudo install -m 0644 "$tmp" "/etc/yum.repos.d/$1.repo"
+    sudo install -m 0644 "$tmp" "$REPO_DIR/$1.repo"
     rm -f "$tmp"
+    rpm_repo_enable "$1"
   else
     echo "$TAG: failed to fetch the $1 repo definition" >&2; rm -f "$tmp"; return 1
   fi
@@ -173,10 +203,14 @@ rpm_repo_add() { # $1=repo name (file stem) $2=URL of a ready-made .repo definit
 # stanza but publish no .repo file to fetch (Google Chrome, VS Code).
 rpm_repo_write() {
   [ "$PM" = dnf ] || return 0
-  [ -f "/etc/yum.repos.d/$1.repo" ] && { cat >/dev/null; return 0; }
+  if [ -f "$REPO_DIR/$1.repo" ]; then
+    cat >/dev/null            # consume the here-doc the caller attached
+    rpm_repo_enable "$1"      # the distro may have shipped it disabled
+    return 0
+  fi
   tmp="$(mktemp)"
   cat > "$tmp"
-  sudo install -m 0644 "$tmp" "/etc/yum.repos.d/$1.repo"
+  sudo install -m 0644 "$tmp" "$REPO_DIR/$1.repo"
   rm -f "$tmp"
 }
 

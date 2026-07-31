@@ -260,6 +260,28 @@ test('Flathub-only apps take the flatpak route on a dnf host', { skip }, (t) => 
   assert.doesNotMatch(out, /DPKG WAS CALLED/);
 });
 
+test('a repo that exists but is disabled gets enabled', { skip }, (t) => {
+  if (!rendersHere()) return t.skip('renders empty on this host');
+  // The bug this pins down, found on a real apply: Fedora's fedora-workstation-repositories ships
+  // /etc/yum.repos.d/google-chrome.repo with enabled=0. Guarding the repo writer on "does the file
+  // exist" made it short-circuit, so dnf never saw the package and Chrome failed to install with a
+  // bare "no match" that pointed nowhere near the cause. Present != usable.
+  const script = render();
+  assert.match(script, /rpm_repo_enable/, 'the module must ship an enable step');
+  assert.match(script, /enabled=0/, 'it must detect the disabled marker');
+  // The writers must call it on the file-already-exists path, which is the path that broke.
+  const writer = script.match(/rpm_repo_write\(\) \{[\s\S]*?\n\}/);
+  assert.ok(writer, 'rpm_repo_write must be present');
+  assert.match(writer[0], /rpm_repo_enable/,
+    'rpm_repo_write must enable an existing repo instead of assuming it works');
+  const adder = script.match(/rpm_repo_add\(\) \{[\s\S]*?\n\}/);
+  assert.match(adder[0], /rpm_repo_enable/,
+    'rpm_repo_add must do the same — a pre-shipped file is not proof the repo is on');
+  // And it must refuse to touch Fedora's own multi-stanza files, where the disabled stanzas are
+  // source/debuginfo repos that are off deliberately.
+  assert.match(script, /multiple stanzas/, 'must refuse multi-stanza files rather than enable them all');
+});
+
 test('a sudo-less run defers packages instead of failing outright', { skip }, (t) => {
   if (!rendersHere()) return t.skip('renders empty on this host');
   const { out } = runWithStubs({
@@ -276,6 +298,90 @@ test('a sudo-less run defers packages instead of failing outright', { skip }, (t
   assert.match(out, /sudo unavailable/, 'must say why the package phase was skipped');
   assert.match(out, /re-run 'chezmoi apply'/, 'must tell the user how to retry');
   assert.doesNotMatch(out, /DPKG WAS CALLED/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Repo helpers, exercised directly against a throwaway REPO_DIR.
+//
+// Regression cover for a real failure: Google Chrome silently did not install on Fedora. Fedora
+// ships /etc/yum.repos.d/google-chrome.repo (from fedora-workstation-repositories) carrying
+// enabled=0, and the writer here guarded on "does the file exist" — so it saw the file, returned
+// early, never enabled anything, and dnf then failed with a bare "no match" pointing nowhere near
+// the cause. Existence is not usability.
+// ---------------------------------------------------------------------------------------------
+const CHROME_DISABLED = `[google-chrome]
+name=google-chrome
+baseurl=https://dl.google.com/linux/chrome/rpm/stable/x86_64
+enabled=0
+`;
+// Shape of Fedora's own repo files: one live stanza plus disabled source/debuginfo siblings.
+const MULTI_STANZA = `[fedora]
+name=Fedora
+enabled=1
+
+[fedora-source]
+name=Fedora Source
+enabled=0
+`;
+
+// Renders just the shared module and sources it, so the helpers can be called in isolation.
+function runModule(shell, { repoFiles = {} } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-mod-'));
+  dirs.push(home);
+  const repoDir = path.join(home, 'repos');
+  fs.mkdirSync(repoDir, { recursive: true });
+  for (const [name, content] of Object.entries(repoFiles)) {
+    fs.writeFileSync(path.join(repoDir, name), content);
+  }
+  const binDir = path.join(home, 'stubs');
+  fs.mkdirSync(binDir, { recursive: true });
+  for (const name of PASSTHROUGH.concat(['grep'])) {
+    let real;
+    try { real = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim(); } catch { continue; }
+    if (real && !fs.existsSync(path.join(binDir, name))) fs.symlinkSync(real, path.join(binDir, name));
+  }
+  // dnf + rpm on PATH (and no apt-get) is what makes the module resolve PM=dnf.
+  for (const [name, script] of Object.entries({ dnf: 'exit 0', rpm: 'exit 0', sudo: SUDO_OK, sed: null })) {
+    if (script === null) continue;
+    fs.writeFileSync(path.join(binDir, name), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  }
+  const modulePath = path.join(home, 'module.sh');
+  fs.writeFileSync(modulePath, renderTemplate('{{ includeTemplate "linux-install.sh" . }}'));
+  const runner = path.join(home, 'run.sh');
+  fs.writeFileSync(runner, `. ${JSON.stringify(modulePath)}\n${shell}\n`);
+  const out = execFileSync(path.join(binDir, 'sh'), ['-c', `sh ${JSON.stringify(runner)} 2>&1 || true`], {
+    encoding: 'utf8',
+    env: { HOME: home, PATH: `${binDir}:/usr/bin:/bin`, REPO_DIR: repoDir, TAG: 'test' },
+  });
+  return { out, repoDir };
+}
+
+test('a pre-installed but disabled vendor repo gets enabled', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('module targets Linux');
+  const { out, repoDir } = runModule(
+    `rpm_repo_write google-chrome <<'EOF'\n[google-chrome]\nenabled=1\nEOF`,
+    { repoFiles: { 'google-chrome.repo': CHROME_DISABLED } });
+  const after = fs.readFileSync(path.join(repoDir, 'google-chrome.repo'), 'utf8');
+  assert.match(after, /^enabled=1$/m, 'the disabled repo must be switched on');
+  assert.doesNotMatch(after, /^enabled=0$/m, 'no disabled line may survive');
+  assert.match(out, /enabling the pre-installed but disabled google-chrome repo/,
+    'the fix must announce itself — this failure was previously silent');
+});
+
+test('a multi-stanza repo file is never blanket-rewritten', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('module targets Linux');
+  const { out, repoDir } = runModule('rpm_repo_enable fedora', { repoFiles: { 'fedora.repo': MULTI_STANZA } });
+  const after = fs.readFileSync(path.join(repoDir, 'fedora.repo'), 'utf8');
+  // Enabling one thing must not quietly switch on the source/debuginfo siblings.
+  assert.match(after, /\[fedora-source\][\s\S]*enabled=0/, 'the disabled sibling stanza must be left alone');
+  assert.match(out, /multiple stanzas/, 'it must say why it declined');
+});
+
+test('a repo file that is absent is written', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('module targets Linux');
+  const { repoDir } = runModule(`rpm_repo_write vscode <<'EOF'\n[code]\nenabled=1\nEOF`);
+  assert.ok(fs.existsSync(path.join(repoDir, 'vscode.repo')), 'a missing repo file must be created');
+  assert.match(fs.readFileSync(path.join(repoDir, 'vscode.repo'), 'utf8'), /\[code\]/);
 });
 
 test.after(() => {
