@@ -49,6 +49,29 @@ group_expanded() {  # $1 = group name -> true (0) if its rows should render in f
   [ -r "$foldfile" ] && grep -qxF "$1" "$foldfile" 2>/dev/null
 }
 
+state_rank() {  # sets _sr: how much a state wants your attention (1 = most). Orders rows
+  # inside a repo group, where "newest first" alone would bury the one asking a question.
+  case "$1" in needs-input) _sr=1;; working) _sr=2;; review) _sr=3;; completed) _sr=4;; *) _sr=5;; esac
+}
+
+av_groupby() {  # sets _gb to the active grouping: "state" (default) or "repo"
+  _gb="state"
+  # shellcheck disable=SC2154  # groupbyfile is the parent script's global, like pinfile
+  [ -f "$groupbyfile" ] && IFS= read -r _gb < "$groupbyfile" 2>/dev/null
+  case "$_gb" in repo) ;; *) _gb="state";; esac
+}
+
+row_group_name() {  # $1 = cwd -> sets _gname: the row's display name, parent-prefixed when
+  # another row shares the leaf (reads NAMECNT by dynamic scope, like row_pinned).
+  local fwd="${1//\\//}" nm par
+  fwd="${fwd%/}"; nm="${fwd##*/}"; [ -z "$nm" ] && nm="$1"
+  if [ -n "$nm" ] && [ "${NAMECNT[$nm]:-0}" -gt 1 ]; then
+    par="${fwd%/*}"; par="${par##*/}"
+    [ -n "$par" ] && [ "$par" != "$nm" ] && nm="$par/$nm"
+  fi
+  _gname="$nm"
+}
+
 row_width() {  # sets _rw: usable row columns for the render + header alignment.
   # Inside a reload/execute child fzf exports FZF_COLUMNS (its own area, margin/padding
   # already excluded) — keep 2 for the pointer gutter. At the initial render (no fzf yet)
@@ -289,11 +312,44 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   if [ -f "$pinfile" ]; then
     while IFS= read -r _hp; do [ -n "$_hp" ] && PINNED_SET["$_hp"]=1; done < "$pinfile"
   fi
-  # Sort every row by ts (desc) ONCE and tally per-state counts in pure bash, so the
-  # group loop needs no per-group awk/sort — each of those was a process spawn, and
-  # spawns dominate render time on Windows.
-  local -a sorted; local -A GCNT=() NAMECNT=()
-  mapfile -t sorted < <(printf '%s' "$rows" | sort -t$'\t' -k5,5nr)
+  # Sort every row ONCE and tally per-group counts in pure bash, so the group loop needs no
+  # per-group awk/sort — each of those was a process spawn, and spawns dominate render time
+  # on Windows.
+  local -a sorted GORDER; local -A GCNT=() NAMECNT=() GURG=()
+  local GB _gb _sr _gname _gk
+  av_groupby; GB="$_gb"
+  if [ "$GB" = repo ]; then
+    # Repo grouping puts every session for a checkout together, so "what is happening in this
+    # project" reads in one place instead of scattered across five state groups. Inside a
+    # group, order by attention (a question first) then recency — ts alone would bury it.
+    # The extra spawns ride the non-default path only.
+    mapfile -t sorted < <(printf '%s' "$rows" | awk -F'\t' '
+      { r = 5
+        if ($1 == "needs-input") r = 1; else if ($1 == "working") r = 2
+        else if ($1 == "review") r = 3; else if ($1 == "completed") r = 4
+        print r "\t" $0 }' | sort -t$'\t' -k1,1n -k6,6nr | cut -f2-)
+  else
+    mapfile -t sorted < <(printf '%s' "$rows" | sort -t$'\t' -k5,5nr)
+  fi
+  # Pass 1 — leaf-name tally, so the render can tell twins apart (same-named checkout on
+  # another host / a worktree elsewhere) by prefixing the parent dir. It has to complete
+  # before any group key is formed, since in repo mode the name IS the key.
+  local -A SEENCWD=()
+  for L in "${sorted[@]}"; do
+    st="${L%%$'\t'*}"; [ -z "$st" ] && continue
+    _rest="${L#*$'\t'}"; _rest="${_rest#*$'\t'}"          # skip state, host
+    cwd="${_rest%%$'\t'*}"
+    fwd="${cwd//\\//}"; fwd="${fwd%/}"; _leaf="${fwd##*/}"; [ -z "$_leaf" ] && _leaf="$cwd"
+    # Count DISTINCT directories per leaf, not rows. The prefix exists to tell two different
+    # checkouts apart; counting rows meant two sessions in the SAME directory also tripped it,
+    # so a single repo rendered as "parent/leaf" — and under repo grouping that mangled name
+    # became the group's own title.
+    [ -n "${SEENCWD[$fwd]:-}" ] && continue
+    SEENCWD[$fwd]=1
+    [ -n "$_leaf" ] && NAMECNT[$_leaf]=$(( ${NAMECNT[$_leaf]:-0} + 1 ))
+  done
+  # Pass 2 — per-group counts, and (repo mode) the most urgent state in each group, which is
+  # what colors its header: a collapsed-looking project still says whether anything needs you.
   for L in "${sorted[@]}"; do
     st="${L%%$'\t'*}"; [ -z "$st" ] && continue
     _rest="${L#*$'\t'}"; host="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
@@ -302,14 +358,25 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     _rest="${_rest#*$'\t'}"                       # skip ts
     kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
     locator="${_rest%%$'\t'*}"
-    # Tally leaf names so the render can tell twins apart (same-named checkout on
-    # another host / a worktree elsewhere) by prefixing the parent dir.
-    fwd="${cwd//\\//}"; fwd="${fwd%/}"; _leaf="${fwd##*/}"; [ -z "$_leaf" ] && _leaf="$cwd"
-    [ -n "$_leaf" ] && NAMECNT[$_leaf]=$(( ${NAMECNT[$_leaf]:-0} + 1 ))
     row_pinned "$host" "$cwd" "$kind" "$locator"
-    if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
+    if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); continue; fi
+    if [ "$GB" = repo ]; then row_group_name "$cwd"; _gk="$_gname"; else _gk="$st"; fi
+    GCNT[$_gk]=$(( ${GCNT[$_gk]:-0} + 1 ))
+    state_rank "$st"
+    [ "$_sr" -lt "${GURG[$_gk]:-9}" ] && GURG[$_gk]="$_sr"
   done
-  for grp in pinned needs-input working review unseen completed idle; do
+  if [ "$GB" = repo ]; then
+    GORDER=(pinned)
+    if [ "${#GCNT[@]}" -gt 0 ]; then
+      mapfile -t -O "${#GORDER[@]}" GORDER < <(printf '%s\n' "${!GCNT[@]}" | sort)
+    fi
+  else
+    # `unseen` (the DONE group) must stay in this list. It postdates the branch this came
+    # from, so the incoming version silently dropped it — a completed-but-unwatched row would
+    # have rendered under COMPLETED again, quietly undoing the group it belongs in.
+    GORDER=(pinned needs-input working review unseen completed idle)
+  fi
+  for grp in "${GORDER[@]}"; do
     if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
@@ -328,6 +395,11 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     fi
     if [ "$grp" = pinned ]; then
       printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+    elif [ "$GB" = repo ]; then
+      # The header wears the group's most urgent state, so a repo with a session waiting on
+      # you is as visible as the NEEDS INPUT group used to be.
+      case "${GURG[$grp]:-5}" in 1) scol="$C_NEED";; 2) scol="$C_WORK";; 3) scol="$C_REVIEW";; *) scol="$C_DONE";; esac
+      printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "$grp" "$Z" "$C_DIM" "$cnt" "$Z"
     else
       state_color "$grp"; scol="$_scol"
       # An EXPANDED foldable group (completed/idle) still needs a landable key, the same
@@ -360,17 +432,16 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # Membership: the PINNED group takes every pinned row (in ts order); each state
       # group takes its own state MINUS anything already shown as pinned.
       row_pinned "$host" "$cwd" "$kind" "$locator"
+      # Two rows sharing a leaf name render identically — prefix the parent dir so they stay
+      # tellable apart (full path remains in the CTRL+O card). In repo mode that same name is
+      # the group key, so it is computed before the membership test, not after.
+      row_group_name "$cwd"; name="$_gname"
       if [ "$grp" = pinned ]; then
         [ "$_pinned" = 1 ] || continue
+      elif [ "$GB" = repo ]; then
+        { [ "$name" = "$grp" ] && [ "$_pinned" = 0 ]; } || continue
       else
         { [ "$st" = "$grp" ] && [ "$_pinned" = 0 ]; } || continue
-      fi
-      fwd="${cwd//\\//}"; fwd="${fwd%/}"; name="${fwd##*/}"; [ -z "$name" ] && name="$cwd"
-      # Two rows sharing a leaf name render identically — prefix the parent dir so
-      # they stay tellable apart (full path remains in the CTRL+O card).
-      if [ -n "$name" ] && [ "${NAMECNT[$name]:-0}" -gt 1 ]; then
-        _par="${fwd%/*}"; _par="${_par##*/}"
-        [ -n "$_par" ] && [ "$_par" != "$name" ] && name="$_par/$name"
       fi
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
       # mux-correlated pane title (host rows on wezterm). Tabs would split the columns.
