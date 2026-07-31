@@ -22,7 +22,12 @@ try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { too
 const skip = toolsOk ? false : 'chezmoi not on PATH';
 
 const dirs = [];
-const render = () => execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
+// Render exactly once per file. The template does not vary between these tests, and every
+// `chezmoi execute-template` opens chezmoi's bolt-backed state, so a file that shelled out
+// eleven times contended with the rest of the suite running in parallel -- this test flaked
+// twice in roughly eight full-suite runs while passing every time in isolation.
+let rendered;
+const render = () => (rendered ??= execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' }));
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 
@@ -143,7 +148,11 @@ test('dnf host installs gh and WezTerm without Debian machinery', { skip }, () =
     uname: NO_ARCH,
     unzip: 'exit 0',
   });
-  const dnfLog = fs.readFileSync(path.join(home, 'dnf.log'), 'utf8');
+  // Read defensively: a bare ENOENT here says nothing about WHY the dnf branches never ran.
+  // Surface the script's own output instead, which is what actually diagnoses it.
+  const logPath = path.join(home, 'dnf.log');
+  const dnfLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+  assert.ok(dnfLog, `the dnf branches never invoked dnf; script output was:\n${out}`);
   assert.doesNotMatch(out, /DPKG WAS CALLED/, 'the gh/wezterm branches must not reach dpkg');
   assert.doesNotMatch(out, /apt-get/, 'the gh/wezterm branches must not reach apt-get');
   assert.doesNotMatch(out, /CURL WAS CALLED/, 'no keyring fetch belongs on the dnf path');
