@@ -114,6 +114,13 @@ exit 0
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     ...seams.env,
+    // Windows rows only exist on a WSL host — they are discovered through the /mnt/c mount.
+    // Most of this file got away without saying so because focus.sh and spawn.sh invoke
+    // "$WEZTERM_WIN" directly, but av_send_rename goes through av_wezterm_bin, which picks the
+    // Windows cli only under WSL. Without this the rename test ran as a plain-Linux host,
+    // resolved `wezterm` off PATH, and silently sent nothing — passing on Daniel's WSL box and
+    // failing on every other Linux machine.
+    WSL_DISTRO_NAME: 'Ubuntu',
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     WEZWIN_ACTIVATE_LOG: activateLog, WEZWIN_SEND_LOG: sendLog,
     TASKKILL_LOG: killLog, SSH_LOG: sshLog, FZF_CAPTURE: capture,

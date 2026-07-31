@@ -39,6 +39,16 @@ const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 // the guard itself broke, turning a real regression into a green run.
 const skipWsl = skip || (/microsoft/i.test(os.release()) ? false : 'WSL-only script (renders empty off WSL)');
 
+// The two interactive-chsh tests route the rendered script through `script(1)` to hand it a pty.
+// Debian ships that in essential util-linux; Fedora splits it into a separate util-linux-script
+// package, so a stock Fedora box has none and both tests failed with a bare `1 !== 0` -- that was
+// realBin() throwing inside runSh's try, not the script under test misbehaving. tools.toml now
+// installs it on Fedora; skip cleanly where it is still absent rather than reporting a phantom
+// regression, the same way this suite already skips on a missing chezmoi.
+let haveScript = true;
+try { execFileSync('sh', ['-c', 'command -v script'], { stdio: 'ignore' }); } catch { haveScript = false; }
+const skipTty = skip || (haveScript ? false : 'script(1) unavailable (Fedora: util-linux-script)');
+
 function walk(dir) {
   let out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -181,7 +191,7 @@ const SUDO_STUB = [
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('set-default-shell.sh.tmpl: interactive + sudo available -> sudo chsh invoked with the zsh path', { skip }, () => {
+  test('set-default-shell.sh.tmpl: interactive + sudo available -> sudo chsh invoked with the zsh path', { skip: skipTty }, () => {
     const { scriptFile, env, logFile, zshPath } = sdsSandbox();
     const { status } = runSh(scriptFile, env, { tty: true });
     assert.strictEqual(status, 0);
@@ -189,7 +199,7 @@ const SUDO_STUB = [
     assert.ok(log.includes(`sudo chsh -s ${zshPath} testuser`), `expected sudo chsh call in log:\n${log}`);
   });
 
-  test('set-default-shell.sh.tmpl: interactive + sudo unavailable -> falls back to plain chsh', { skip }, () => {
+  test('set-default-shell.sh.tmpl: interactive + sudo unavailable -> falls back to plain chsh', { skip: skipTty }, () => {
     const { scriptFile, env, logFile, zshPath } = sdsSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const { status } = runSh(scriptFile, env, { tty: true });

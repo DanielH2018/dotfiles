@@ -200,3 +200,17 @@ winget = ""
 brew = "zsh-syntax-highlighting"
 apt = "zsh-syntax-highlighting"
 dnf = "zsh-syntax-highlighting"
+
+[[tools]]
+name = "script"
+cmd = "script"
+# Not a shell-experience tool -- it is what tests/chezmoi-scripts.test.js uses to hand the
+# rendered set-default-shell script a pty, so the interactive chsh branch can be exercised.
+# Debian and macOS both ship it in their base system, which is why apt and brew are empty and
+# nobody noticed it was a dependency. Fedora splits it out of util-linux into its own package,
+# so a stock Fedora box fails those tests until this lands. Windows has no equivalent and does
+# not run that suite.
+winget = ""
+brew = ""
+apt = ""
+dnf = "util-linux-script"
