@@ -401,3 +401,131 @@ test('a $remove.permissions.<kind> value that is not an array is refused', () =>
   assert.match(r.stderr, /\$remove\.permissions\.deny must be an array/);
 });
 
+// --- M20 slice 3: post-merge shape validation (assertion 1) --------------------------
+//
+// Hand-rolled, not ajv + a vendored schema: this script runs during `chezmoi apply`,
+// before any `npm install` could ever have happened, and the repo has zero dependencies
+// (no package.json, no node_modules). See the comment above assertShapes in the script.
+
+test('a valid settings object passes shape validation untouched', () => {
+  const base = w('sh1.json', withFloor({
+    model: 'opus',
+    fallbackModel: 'sonnet',
+    availableModels: ['opus', 'sonnet'],
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [] }] },
+    env: { FOO: 'bar', BAZ: 'qux' },
+    permissions: { allow: ['Bash(ls:*)'], ask: ['Bash(deploy:*)'] },
+  }));
+  const out = run(base);
+  assert.strictEqual(out.model, 'opus');
+  assert.strictEqual(out.fallbackModel, 'sonnet');
+  assert.deepStrictEqual(out.availableModels, ['opus', 'sonnet']);
+  assert.deepStrictEqual(out.env, { FOO: 'bar', BAZ: 'qux' });
+});
+
+test('an unknown top-level key with any shape is accepted', () => {
+  // Not a closed schema: Claude Code adds settings.json keys over time, and a new one
+  // must not break the generator. Even a deeply nested, oddly-shaped unknown key passes.
+  const base = w('sh2.json', withFloor({ someBrandNewFutureKey: { nested: [1, 2, { x: true }] } }));
+  const out = run(base);
+  assert.deepStrictEqual(out.someBrandNewFutureKey, { nested: [1, 2, { x: true }] });
+});
+
+test('permissions.allow with a non-string element is refused, naming the path', () => {
+  const base = w('sh3.json', withFloor({ permissions: { allow: ['Bash(ls:*)', 42] } }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /permissions\.allow must be an array of strings/);
+  assert.strictEqual(String(r.stdout || ''), '', 'nothing reaches stdout, so nothing reaches disk');
+});
+
+test('permissions.deny with a non-string element is refused, naming the path', () => {
+  const base = w('sh4.json', { permissions: { deny: [...FLOOR, { not: 'a string' }] } });
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /permissions\.deny must be an array of strings/);
+});
+
+test('permissions.ask with a non-string element is refused, naming the path', () => {
+  const base = w('sh5.json', withFloor({ permissions: { ask: [null] } }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /permissions\.ask must be an array of strings/);
+});
+
+test('hooks that is not an object is refused', () => {
+  const base = w('sh6.json', withFloor({ hooks: ['not', 'an', 'object'] }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /hooks must be an object/);
+});
+
+test('env with a non-string value is refused, naming the offending key', () => {
+  // A non-string env value is a real generation bug, not a style preference — env vars
+  // are always strings on the wire.
+  const base = w('sh7.json', withFloor({ env: { GOOD: 'ok', BAD: 5 } }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /env\.BAD must be a string/);
+});
+
+test('env that is not an object is refused', () => {
+  const base = w('sh8.json', withFloor({ env: ['not', 'an', 'object'] }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /env must be an object/);
+});
+
+// A1-36: fallbackModel could end up an array instead of a string.
+test('fallbackModel as an array is refused', () => {
+  const base = w('sh9.json', withFloor({ fallbackModel: ['sonnet', 'haiku'] }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /fallbackModel must be a string/);
+});
+
+test('model as a non-string is refused', () => {
+  const base = w('sh10.json', withFloor({ model: { name: 'opus' } }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /model must be a string/);
+});
+
+test('availableModels with a non-string element is refused', () => {
+  const base = w('sh11.json', withFloor({ availableModels: ['opus', 3] }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /availableModels must be an array of strings/);
+});
+
+test('availableModels that is not an array is refused', () => {
+  const base = w('sh12.json', withFloor({ availableModels: 'opus' }));
+  const r = runFail(base);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /availableModels must be an array of strings/);
+});
+
+// The safe-floor fallback (M20 slice 1) must itself pass the new shape checks, since the
+// bootstrap path writes it straight to stdout without going through the ordinary assertion
+// chain that guards every other output.
+test('the safe-floor template also validates clean against shape assertion 1', () => {
+  const floorPath = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
+  const floor = JSON.parse(fs.readFileSync(floorPath, 'utf8'));
+  assert.ok(isStringArrayShape(floor.permissions.allow), 'safe floor permissions.allow must be an array of strings');
+  assert.ok(isStringArrayShape(floor.permissions.deny), 'safe floor permissions.deny must be an array of strings');
+
+  // And exercise it through the real bootstrap path, not just structurally: a first-ever
+  // apply with a broken input must still fall back to a floor that clears assertShapes too.
+  const broken = w('sh13.json', { model: 'opus' });   // no permission model at all
+  const out = execFileSync('node', [BIN, broken], {
+    encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, CLAUDE_SETTINGS_SAFE_FLOOR: floorPath },
+  });
+  const parsed = JSON.parse(out);
+  assert.ok(parsed.permissions.deny.includes('Bash(sudo:*)'), 'the safe floor is what got written');
+});
+
+// Local helper for the safe-floor structural assertion above, mirroring assertShapes'
+// isStringArray without importing the script (it is a CLI entry point, not a module).
+const isStringArrayShape = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+

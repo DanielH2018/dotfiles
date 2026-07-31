@@ -204,6 +204,58 @@ const assertNoWidening = (baseDeny, merged) => {
   return null;
 };
 
+// Assertion 1 (spec §2) — targeted shape validation of the merged output. This is
+// deliberately NOT a schema (ajv + a vendored schemastore doc, as the spec originally
+// sketched): this script runs during `chezmoi apply`, before any `npm install` could ever
+// have happened, and the repo has zero dependencies today (no package.json, no
+// node_modules — every require() here is a builtin). A vendored validator library would
+// have to be present on a machine's very first apply, which is exactly the bootstrap
+// guarantee §8 exists to protect; adding one here would create the failure it prevents.
+// So the checks below are hand-written against `shape()`/`isObj()` instead.
+//
+// Deliberately NOT a closed schema: unknown top-level keys are always allowed. Claude Code
+// itself adds new settings.json keys over time, and this generator must not start refusing
+// every apply the moment upstream ships one this file doesn't know about yet. Only the
+// keys named below get their shape checked; everything else passes through untouched, same
+// as the merge itself.
+const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+const assertShapes = (merged) => {
+  const p = merged.permissions;
+  // assertHasFloor already refused a missing/non-object permissions, but this runs after
+  // that check in the caller only when the floor check passed — still guard defensively so
+  // this function stands alone.
+  if (Object.prototype.hasOwnProperty.call(merged, 'permissions') && !isObj(p)) {
+    return 'permissions must be an object';
+  }
+  if (isObj(p)) {
+    for (const kind of ['allow', 'deny', 'ask']) {
+      if (Object.prototype.hasOwnProperty.call(p, kind) && !isStringArray(p[kind])) {
+        return `permissions.${kind} must be an array of strings`;
+      }
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(merged, 'hooks') && !isObj(merged.hooks)) {
+    return 'hooks must be an object';
+  }
+  if (Object.prototype.hasOwnProperty.call(merged, 'env')) {
+    const env = merged.env;
+    if (!isObj(env)) return 'env must be an object';
+    for (const k of Object.keys(env)) {
+      if (typeof env[k] !== 'string') return `env.${k} must be a string`;
+    }
+  }
+  for (const key of ['model', 'fallbackModel']) {
+    if (Object.prototype.hasOwnProperty.call(merged, key) && typeof merged[key] !== 'string') {
+      return `${key} must be a string`;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(merged, 'availableModels') && !isStringArray(merged.availableModels)) {
+    return 'availableModels must be an array of strings';
+  }
+  return null;
+};
+
 // Keys the *running harness* writes back into the deployed settings.json at session time
 // (`/effort` writes effortLevel). The templates don't set them, so a plain re-derive drops
 // them on every `chezmoi apply` — the pin silently vanishes mid-session. This list is a
@@ -299,7 +351,7 @@ const exempt = process.env.CLAUDE_SETTINGS_SKIP_FLOOR === '1';
 if (exempt) {
   process.stderr.write('claude-settings-merge: floor assertions skipped (CLAUDE_SETTINGS_SKIP_FLOOR=1)\n');
 }
-const failure = exempt ? null : (assertHasFloor(acc) || assertNoWidening(baseDeny, acc));
+const failure = exempt ? null : (assertHasFloor(acc) || assertNoWidening(baseDeny, acc) || assertShapes(acc));
 if (failure) {
   process.stderr.write(`claude-settings-merge: refusing to write settings.json — ${failure}\n`);
 
@@ -313,7 +365,7 @@ if (failure) {
   if (bootstrapping && floorFile && fs.existsSync(floorFile)) {
     try {
       const floor = JSON.parse(fs.readFileSync(floorFile, 'utf8'));
-      const stillBad = assertHasFloor(floor);
+      const stillBad = assertHasFloor(floor) || assertShapes(floor);
       if (stillBad) throw new Error(`safe-floor itself fails the check: ${stillBad}`);
       process.stderr.write(
         'claude-settings-merge: no previously deployed settings.json to fall back on; '
