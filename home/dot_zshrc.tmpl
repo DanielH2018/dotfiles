@@ -36,6 +36,11 @@ export ARCHFLAGS="-arch $(uname -m)"
 # Plain (non-exported) var: an exported HISTFILE leaks into any bash started
 # from this zsh, overriding bash's own history file (A14-01).
 HISTFILE="$HOME/.zsh_history"
+# Assignment alone is not enough: in both zsh and bash, assigning to a variable that is
+# ALREADY exported keeps the export attribute, so an inherited HISTFILE would still be
+# passed to a bash child. typeset +x drops the attribute regardless of what we inherited.
+# zsh reads HISTFILE as its own parameter, so it never needs to be in the environment.
+typeset +x HISTFILE
 export HISTSIZE=200000
 export SAVEHIST=200000
 # SHARE_HISTORY implies INC_APPEND, so we don't set both.

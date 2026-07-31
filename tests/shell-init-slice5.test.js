@@ -168,3 +168,44 @@ test('a plain (non-exported) HISTFILE set in zsh does not leak into a bash child
   });
   assert.strictEqual(out.trim(), 'UNSET', `expected bash to see no inherited HISTFILE, got: ${out.trim()}`);
 });
+
+// The test above starts from a clean environment, which is why it passed while real
+// shells still leaked: assigning to an ALREADY-exported variable keeps the export
+// attribute in both zsh and bash. Every shell descended from a session that predates
+// the un-export inherits one, so the assignment alone fixed nothing for them.
+test('an INHERITED exported HISTFILE is dropped, not merely reassigned', { skip: skipZsh || skipBash }, () => {
+  const script = 'HISTFILE="$HOME/.zsh_history"; typeset +x HISTFILE; bash -c \'echo "${HISTFILE:-UNSET}"\'';
+  const out = execFileSync('zsh', ['-c', script], {
+    encoding: 'utf8', env: minimalEnv({ HISTFILE: '/tmp/inherited-histfile' }),
+  });
+  assert.strictEqual(out.trim(), 'UNSET',
+    `an inherited export must be dropped, but the bash child saw: ${out.trim()}`);
+});
+
+test('without the un-export, an inherited HISTFILE demonstrably still leaks', { skip: skipZsh || skipBash }, () => {
+  // Pins the mechanism itself, so the fix above cannot be mistaken for a no-op: the
+  // same script minus `typeset +x` must still leak.
+  const out = execFileSync('zsh', ['-c', 'HISTFILE="$HOME/.zsh_history"; bash -c \'echo "${HISTFILE:-UNSET}"\''], {
+    encoding: 'utf8', env: minimalEnv({ HISTFILE: '/tmp/inherited-histfile' }),
+  });
+  assert.notStrictEqual(out.trim(), 'UNSET',
+    'expected the un-fixed form to leak; if it no longer does, this fix may be unnecessary');
+});
+
+test('zsh still records history when HISTFILE is not exported', { skip: skipZsh }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'histfile-'));
+  const conf = path.join(dir, 'histconf.zsh');
+  const hist = path.join(dir, 'history');
+  fs.writeFileSync(conf, `HISTFILE="${hist}"\ntypeset +x HISTFILE\nHISTSIZE=100\nSAVEHIST=100\n`);
+  execFileSync('zsh', ['-i', '-c', `source '${conf}'; print -s 'echo marker-one'; fc -W; exit`], {
+    encoding: 'utf8', env: minimalEnv({ HISTFILE: '/tmp/inherited-histfile' }), stdio: 'pipe',
+  });
+  assert.ok(fs.existsSync(hist), 'zsh wrote no history file at all');
+  assert.match(fs.readFileSync(hist, 'utf8'), /marker-one/,
+    'dropping the export must not stop zsh recording its own history');
+});
+
+test('dot_zshrc.tmpl drops the export attribute, not just the export keyword', () => {
+  assert.match(rawTmpl, /^HISTFILE="\$HOME\/\.zsh_history"\n(?:#.*\n)*typeset \+x HISTFILE$/m,
+    'typeset +x HISTFILE must follow the assignment (A14-01)');
+});
