@@ -4,10 +4,18 @@
 #   - winget = winget package id      -> run_onchange_install-cli-tools.ps1.tmpl  (Windows)
 #   - brew   = Homebrew formula       -> Brewfile.tmpl                             (macOS)
 #   - apt    = Debian/Ubuntu package  -> run_once_after_install-cli-tools.sh.tmpl  (Linux)
+#   - dnf    = Fedora/RHEL package    -> run_once_after_install-cli-tools.sh.tmpl  (Linux)
 #   - cmd    = binary name on PATH    -> used by the winget installer to skip-if-present
 # An empty field means that installer doesn't handle this tool (it's absent there, or
 # installed by another mechanism — e.g. eza/fastfetch come from GitHub release binaries on
-# Linux, handled bespoke in the .sh script, so their apt field is empty here).
+# Linux, handled bespoke in the .sh script, so their apt/dnf fields are empty here).
+#
+# apt and dnf are deliberately kept in lockstep: a tool that comes from a GitHub release
+# binary on Debian comes from one on Fedora too, even where Fedora happens to package it
+# (eza, ripgrep, fzf, zoxide and fastfetch all exist in the Fedora repos). The same binaries
+# on every Linux beats "whatever this distro shipped", and it keeps one code path under test.
+# The dnf field therefore differs from apt only in package NAMING, never in coverage — except
+# gron, which Fedora does not package at all (see below).
 #
 # OS-UNIQUE tools stay in their own installer, NOT here: winget's nvim/yazi/zig/wezterm/uv,
 # and the Brewfile's casks / mas / vscode / brew-only (bash, chezmoi, gh, tmux, wget, ...).
@@ -18,6 +26,9 @@ cmd = "bat"
 winget = "sharkdp.bat"
 brew = "bat"
 apt = "bat"
+# Fedora ships the binary as /usr/bin/bat, not Debian's renamed `batcat`, so the real-name
+# symlink step in the installer simply no-ops here.
+dnf = "bat"
 
 [[tools]]
 name = "eza"
@@ -25,6 +36,7 @@ cmd = "eza"
 winget = "eza-community.eza"
 brew = "eza"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "fd"
@@ -32,6 +44,8 @@ cmd = "fd"
 winget = "sharkdp.fd"
 brew = "fd"
 apt = "fd-find"
+# Same package name as Debian, but Fedora installs /usr/bin/fd directly (no `fdfind`).
+dnf = "fd-find"
 
 [[tools]]
 name = "fzf"
@@ -39,6 +53,7 @@ cmd = "fzf"
 winget = "junegunn.fzf"
 brew = "fzf"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "gron"
@@ -47,6 +62,11 @@ cmd = "gron"
 winget = ""
 brew = "gron"
 apt = "gron"
+# Fedora packages no gron (checked F44). It is the one tool where apt and dnf coverage
+# genuinely diverges, so the installer falls back to the tomnomnom/gron release binary
+# whenever gron is still missing after the package step — a no-op on Debian, where apt
+# supplied it.
+dnf = ""
 
 [[tools]]
 name = "jq"
@@ -54,6 +74,7 @@ cmd = "jq"
 winget = "jqlang.jq"
 brew = "jq"
 apt = "jq"
+dnf = "jq"
 
 [[tools]]
 name = "ripgrep"
@@ -61,6 +82,7 @@ cmd = "rg"
 winget = "BurntSushi.ripgrep.MSVC"
 brew = "ripgrep"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "shellcheck"
@@ -68,6 +90,8 @@ cmd = "shellcheck"
 winget = "koalaman.shellcheck"
 brew = "shellcheck"
 apt = "shellcheck"
+# Fedora capitalises the package name (the binary stays lowercase `shellcheck`).
+dnf = "ShellCheck"
 
 [[tools]]
 name = "starship"
@@ -75,6 +99,7 @@ cmd = "starship"
 winget = "Starship.Starship"
 brew = "starship"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "zoxide"
@@ -82,6 +107,7 @@ cmd = "zoxide"
 winget = "ajeetdsouza.zoxide"
 brew = "zoxide"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "fnm"
@@ -89,6 +115,7 @@ cmd = "fnm"
 winget = "Schniz.fnm"
 brew = "fnm"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "fastfetch"
@@ -96,6 +123,7 @@ cmd = "fastfetch"
 winget = "Fastfetch-cli.Fastfetch"
 brew = "fastfetch"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "lua"
@@ -108,6 +136,9 @@ cmd = "lua"
 winget = ""
 brew = "lua"
 apt = "lua5.4"
+# Fedora's `lua` is 5.4 under unversioned names (/usr/bin/lua, /usr/bin/luac), so `luac -p`
+# resolves without the symlink shim Debian needs.
+dnf = "lua"
 
 [[tools]]
 name = "btop"
@@ -115,6 +146,7 @@ cmd = "btop"
 winget = ""
 brew = "btop"
 apt = "btop"
+dnf = "btop"
 
 [[tools]]
 name = "chafa"
@@ -122,6 +154,7 @@ cmd = "chafa"
 winget = ""
 brew = "chafa"
 apt = "chafa"
+dnf = "chafa"
 
 [[tools]]
 name = "curlie"
@@ -129,6 +162,7 @@ cmd = "curlie"
 winget = ""
 brew = "curlie"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "sd"
@@ -136,6 +170,7 @@ cmd = "sd"
 winget = ""
 brew = "sd"
 apt = ""
+dnf = ""
 
 [[tools]]
 name = "zsh"
@@ -146,6 +181,7 @@ winget = ""
 # then chsh's to it.
 brew = ""
 apt = "zsh"
+dnf = "zsh"
 
 [[tools]]
 name = "zsh-autosuggestions"
@@ -153,6 +189,9 @@ cmd = ""
 winget = ""
 brew = "zsh-autosuggestions"
 apt = "zsh-autosuggestions"
+# Fedora installs to the same /usr/share/zsh-autosuggestions/... path dot_zshrc.tmpl already
+# probes, so no shell-config change is needed.
+dnf = "zsh-autosuggestions"
 
 [[tools]]
 name = "zsh-syntax-highlighting"
@@ -160,3 +199,4 @@ cmd = ""
 winget = ""
 brew = "zsh-syntax-highlighting"
 apt = "zsh-syntax-highlighting"
+dnf = "zsh-syntax-highlighting"

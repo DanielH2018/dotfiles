@@ -24,14 +24,20 @@ if ! command -v fnm >/dev/null 2>&1 && [ ! -x "$BIN_DIR/fnm" ] && [ "$(uname -s)
   echo "install-fnm: downloading $asset ..." >&2
   curl -fsSL "$url" -o "$tmp/fnm.zip"
   # Extract without assuming unzip: a bare distro (fresh WSL Ubuntu) has neither unzip nor
-  # a populated apt cache, but does ship python3 — use it to avoid a sudo apt round-trip.
+  # a populated package cache, but does ship python3 — use it to avoid a sudo round-trip.
   if command -v unzip >/dev/null 2>&1; then
     unzip -q "$tmp/fnm.zip" -d "$tmp"
   elif command -v python3 >/dev/null 2>&1; then
     python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$tmp/fnm.zip" "$tmp"
-  else
+  elif command -v apt-get >/dev/null 2>&1; then
     echo "install-fnm: need unzip or python3 to extract fnm; installing unzip via apt" >&2
     sudo apt-get update -qq && sudo apt-get install -y unzip && unzip -q "$tmp/fnm.zip" -d "$tmp"
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "install-fnm: need unzip or python3 to extract fnm; installing unzip via dnf" >&2
+    sudo dnf install -y unzip && unzip -q "$tmp/fnm.zip" -d "$tmp"
+  else
+    echo "install-fnm: need unzip or python3 to extract fnm, and no known package manager to get one" >&2
+    exit 1
   fi
   mkdir -p "$BIN_DIR"
   install -m 0755 "$tmp/fnm" "$BIN_DIR/fnm"

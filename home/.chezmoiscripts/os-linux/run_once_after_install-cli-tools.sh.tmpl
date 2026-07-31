@@ -1,13 +1,13 @@
 {{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
 #!/bin/sh
-# Installs the shell-experience CLI tools on a Linux workstation/server (Debian/Ubuntu, amd64 or
-# arm64), mirroring the macOS Brewfile for Linux. apt for repo packages + release binaries for
-# the gaps. Gated to non-minimal profiles so a resource-constrained host (profile=minimal, e.g.
-# the Pi) opts out of the heavy apt install.
-# run_once_after_: runs AFTER file targets, so a sudo-less run that can't do apt fails loudly
-# (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT blocking dotfile
-# deployment. Bump the marker to force a refresh.
-# tools-bump: v11
+# Installs the shell-experience CLI tools on a Linux workstation/server (Debian/Ubuntu or
+# Fedora, amd64 or arm64), mirroring the macOS Brewfile for Linux. The distro package manager
+# for repo packages + release binaries for the gaps. Gated to non-minimal profiles so a
+# resource-constrained host (profile=minimal, e.g. the Pi) opts out of the heavy install.
+# run_once_after_: runs AFTER file targets, so a sudo-less run that can't reach the package
+# manager fails loudly (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT
+# blocking dotfile deployment. Bump the marker to force a refresh.
+# tools-bump: v12
 set -u
 
 BIN_DIR="$HOME/.local/bin"
@@ -15,93 +15,163 @@ VER_DIR="$BIN_DIR/.versions"   # release tag last installed per tool, so a re-ap
                                # stale binary in place instead of skipping it (install-once).
 mkdir -p "$BIN_DIR" "$VER_DIR"
 
-# 0. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
+# 0. Package-manager abstraction. Everything below speaks pkg_* instead of apt/dnf directly, so
+#    the two distro families share one code path and one set of markers. An unrecognised distro
+#    (Arch, Alpine, ...) sets PM="" — it warns once, skips the package phases, and still installs
+#    every release binary, rather than failing the apply forever over packages it has no way to
+#    install.
+if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+  PM=apt
+elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+  PM=dnf
+else
+  PM=""
+  echo "install-cli-tools: no supported package manager (want apt or dnf); installing release binaries only" >&2
+fi
+
+pkg_installed() { # $1=package -> 0 if present. Unknown PM: claim satisfied (nothing to check).
+  case "$PM" in
+    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
+    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+    *)   return 0 ;;
+  esac
+}
+
+pkg_install() { # $@=packages. dnf refreshes its own metadata, so it needs no `update` step.
+  case "$PM" in
+    apt) sudo apt-get update -qq && sudo apt-get install -y "$@" ;;
+    dnf) sudo dnf install -y "$@" ;;
+    *)   return 1 ;;
+  esac
+}
+
+# 1. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
 #    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
 #    present when the yazi step runs; nvim and the rest use tar and don't need it.
-if ! command -v unzip >/dev/null 2>&1; then
+if ! command -v unzip >/dev/null 2>&1 && [ -n "$PM" ]; then
   if sudo -v; then
-    sudo apt-get update -qq && sudo apt-get install -y unzip
+    pkg_install unzip
   else
     echo "install-cli-tools: sudo unavailable; deferring unzip (yazi extraction will be skipped)" >&2
   fi
 fi
 
-# 1. apt packages (only if any are missing; needs sudo, which prompts in an interactive
-#    terminal). The list comes from .chezmoidata/tools.toml (tools with an apt package) —
-#    the shared source of truth with the winget + Brewfile installers. Release-binary tools
-#    (eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep) have no apt field and stay in the bespoke
-#    section below.
-APT_PKGS="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}"
+# 2. Distro packages (only if any are missing; needs sudo, which prompts in an interactive
+#    terminal). The list comes from .chezmoidata/tools.toml — the shared source of truth with the
+#    winget + Brewfile installers. Both package lists are rendered so the script stays portable at
+#    runtime and PM picks one. Release-binary tools (eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep)
+#    have no apt/dnf field and stay in the bespoke section below.
+PKGS_APT="{{ range .tools }}{{ if .apt }}{{ .apt }} {{ end }}{{ end }}"
+PKGS_DNF="{{ range .tools }}{{ if .dnf }}{{ .dnf }} {{ end }}{{ end }}"
+case "$PM" in
+  apt) PKGS="$PKGS_APT" ;;
+  dnf) PKGS="$PKGS_DNF" ;;
+  *)   PKGS="" ;;
+esac
+
 missing=""
-for p in $APT_PKGS; do
-  dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
+for p in $PKGS; do
+  pkg_installed "$p" || missing="$missing $p"
 done
 if [ -n "$missing" ]; then
   if sudo -v; then
     # shellcheck disable=SC2086  # $missing is a space-separated package list; splitting intended
-    sudo apt-get update -qq && sudo apt-get install -y $missing
+    pkg_install $missing
   else
-    echo "install-cli-tools: sudo unavailable; deferring apt packages:$missing" >&2
+    echo "install-cli-tools: sudo unavailable; deferring packages:$missing" >&2
   fi
 fi
 
-# 1b. GitHub CLI from its own apt repo. Ubuntu's package is frozen at 2.45, which throws on a
+# 2b. GitHub CLI.
+#     Debian/Ubuntu: from gh's own apt repo. Ubuntu's package is frozen at 2.45, which throws on a
 #     deprecated Projects-classic GraphQL query (breaks `gh pr edit`/`gh pr merge`); cli.github.com
 #     tracks current releases. Adds the repo + keyring once, then `apt upgrade` keeps gh current.
+#     Fedora: the distro package already tracks current gh (2.94 on F44), so a plain install is
+#     enough and there is no third-party repo to add.
 GH_LIST="/etc/apt/sources.list.d/github-cli.list"
 GH_KEYRING="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
-if [ ! -f "$GH_LIST" ]; then
+gh_ready() {
+  case "$PM" in
+    apt) [ -f "$GH_LIST" ] ;;
+    dnf) rpm -q gh >/dev/null 2>&1 ;;
+    *)   return 0 ;;
+  esac
+}
+if ! gh_ready; then
   if sudo -v; then
-    sudo mkdir -p -m 755 /etc/apt/keyrings
-    tmpk="$(mktemp)"
-    if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$tmpk"; then
-      sudo install -m 0644 "$tmpk" "$GH_KEYRING"
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=$GH_KEYRING] https://cli.github.com/packages stable main" \
-        | sudo tee "$GH_LIST" >/dev/null
-      sudo apt-get update -qq && sudo apt-get install -y gh && echo "install-cli-tools: GitHub CLI repo added + gh updated"
+    if [ "$PM" = apt ]; then
+      sudo mkdir -p -m 755 /etc/apt/keyrings
+      tmpk="$(mktemp)"
+      if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$tmpk"; then
+        sudo install -m 0644 "$tmpk" "$GH_KEYRING"
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=$GH_KEYRING] https://cli.github.com/packages stable main" \
+          | sudo tee "$GH_LIST" >/dev/null
+        sudo apt-get update -qq && sudo apt-get install -y gh && echo "install-cli-tools: GitHub CLI repo added + gh updated"
+      else
+        echo "install-cli-tools: failed to fetch GitHub CLI keyring" >&2
+      fi
+      rm -f "$tmpk"
     else
-      echo "install-cli-tools: failed to fetch GitHub CLI keyring" >&2
+      pkg_install gh && echo "install-cli-tools: gh installed"
     fi
-    rm -f "$tmpk"
   else
-    echo "install-cli-tools: sudo unavailable; deferring GitHub CLI repo setup" >&2
+    echo "install-cli-tools: sudo unavailable; deferring GitHub CLI setup" >&2
   fi
 fi
 
-# 1c. WezTerm from the upstream fury.io apt repo — the mux-server + `wezterm cli` back this
-#     machine's leg of the cross-machine Claude Code session switcher (agentview) on Daniel's PC.
-#     Ubuntu ships no wezterm package; fury.io tracks releases. Adds repo + keyring once, then
-#     `apt upgrade` keeps it current. Only the headless mux-server/CLI are used (no DISPLAY).
+# 2c. WezTerm — the mux-server + `wezterm cli` back this machine's leg of the cross-machine
+#     Claude Code session switcher (agentview) on Daniel's PC. Only the headless mux-server/CLI
+#     are used (no DISPLAY). Neither distro packages it:
+#       Debian/Ubuntu — upstream's fury.io apt repo.
+#       Fedora        — upstream's own COPR (wezfurlong/wezterm-nightly), the install route
+#                       wezterm documents for Fedora. It is the only maintained RPM source: the
+#                       GitHub release RPMs are pinned to long-dead Fedora releases and the last
+#                       tagged stable is from 2024. The COPR carries an fc44 chroot.
+#     Repo added once, then the normal upgrade path keeps it current.
 WEZ_LIST="/etc/apt/sources.list.d/wezterm.list"
 WEZ_KEYRING="/usr/share/keyrings/wezterm-fury.gpg"
-if [ ! -f "$WEZ_LIST" ]; then
+wez_ready() {
+  case "$PM" in
+    apt) [ -f "$WEZ_LIST" ] ;;
+    dnf) rpm -q wezterm >/dev/null 2>&1 ;;
+    *)   return 0 ;;
+  esac
+}
+if ! wez_ready; then
   if sudo -v; then
-    tmpk="$(mktemp)"
-    if curl -fsSL https://apt.fury.io/wez/gpg.key -o "$tmpk"; then
-      sudo gpg --yes --dearmor -o "$WEZ_KEYRING" "$tmpk"
-      sudo chmod 644 "$WEZ_KEYRING"
-      echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' \
-        | sudo tee "$WEZ_LIST" >/dev/null
-      sudo apt-get update -qq && sudo apt-get install -y wezterm && echo "install-cli-tools: WezTerm repo added + installed"
+    if [ "$PM" = apt ]; then
+      tmpk="$(mktemp)"
+      if curl -fsSL https://apt.fury.io/wez/gpg.key -o "$tmpk"; then
+        sudo gpg --yes --dearmor -o "$WEZ_KEYRING" "$tmpk"
+        sudo chmod 644 "$WEZ_KEYRING"
+        echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' \
+          | sudo tee "$WEZ_LIST" >/dev/null
+        sudo apt-get update -qq && sudo apt-get install -y wezterm && echo "install-cli-tools: WezTerm repo added + installed"
+      else
+        echo "install-cli-tools: failed to fetch WezTerm gpg key" >&2
+      fi
+      rm -f "$tmpk"
+    elif sudo dnf -y copr enable wezfurlong/wezterm-nightly; then
+      pkg_install wezterm && echo "install-cli-tools: WezTerm COPR enabled + installed"
     else
-      echo "install-cli-tools: failed to fetch WezTerm gpg key" >&2
+      echo "install-cli-tools: failed to enable the WezTerm COPR" >&2
     fi
-    rm -f "$tmpk"
   else
-    echo "install-cli-tools: sudo unavailable; deferring WezTerm repo setup" >&2
+    echo "install-cli-tools: sudo unavailable; deferring WezTerm setup" >&2
   fi
 fi
 
-# 2. Real-name symlinks for Ubuntu's renamed binaries (so the shell uses bat/fd). luac is
-#    what tests/wezterm-config.test.js shells out to (luac -p); Ubuntu's lua5.4 package ships
-#    it as luac5.4, so without this alias that test silently skips on Linux.
+# 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). luac is what
+#    tests/wezterm-config.test.js shells out to (luac -p); Debian's lua5.4 package ships it as
+#    luac5.4, so without this alias that test silently skips there. Fedora installs all four
+#    under their real names already, so every pair below no-ops on it.
 for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4" "luac:luac5.4"; do
   name="${pair%%:*}"; real="${pair##*:}"
   rp="$(command -v "$real" 2>/dev/null || true)"
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
 done
 
-# 3. Release binaries for the apt gaps (no sudo). Arch-aware: amd64 + arm64.
+# 4. Release binaries for the package gaps (no sudo). Arch-aware: amd64 + arm64.
 latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (no API/ratelimit)
   curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
     | sed 's#.*/tag/##; s#[[:space:]]*$##'
@@ -144,7 +214,7 @@ install_release() {
 case "$(uname -m)" in
   x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64; rg_target=x86_64-unknown-linux-musl ;;
   aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64;  rg_target=aarch64-unknown-linux-gnu ;;
-  *) rust_arch=""; rg_target=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/nvim/yazi" >&2 ;;
+  *) rust_arch=""; rg_target=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/gron/nvim/yazi" >&2 ;;
 esac
 if [ -n "$rust_arch" ]; then
   install_release eza       eza-community/eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
@@ -153,14 +223,19 @@ if [ -n "$rust_arch" ]; then
   install_release sd        chmln/sd                "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
   install_release starship  starship/starship       "https://github.com/starship/starship/releases/download/{tag}/starship-${rust_arch}-unknown-linux-gnu.tar.gz"
   # fzf/zoxide/ripgrep back the shell init (fzf keybindings, zoxide `cd`, rg as FZF_DEFAULT_COMMAND)
-  # but have no apt field here, so install the current release binaries rather than relying on the
-  # stale copies baked into the base image. ripgrep ships only musl on x86_64 and gnu on aarch64.
+  # but have no apt/dnf field here, so install the current release binaries rather than relying on
+  # the stale copies baked into the base image. ripgrep ships only musl on x86_64 and gnu on aarch64.
   install_release fzf       junegunn/fzf            "https://github.com/junegunn/fzf/releases/download/{tag}/fzf-{ver}-linux_${go_arch}.tar.gz"
   install_release zoxide    ajeetdsouza/zoxide      "https://github.com/ajeetdsouza/zoxide/releases/download/{tag}/zoxide-{ver}-${rust_arch}-unknown-linux-musl.tar.gz"
   install_release rg        BurntSushi/ripgrep      "https://github.com/BurntSushi/ripgrep/releases/download/{tag}/ripgrep-{ver}-${rg_target}.tar.gz"
+  # gron is the one tools.toml entry whose distro coverage is uneven: apt has it, Fedora packages
+  # none. Guarded on the binary rather than on PM, so it stays a no-op wherever the package phase
+  # already supplied gron and the fallback isn't pinned to one distro's absence.
+  command -v gron >/dev/null 2>&1 \
+    || install_release gron tomnomnom/gron          "https://github.com/tomnomnom/gron/releases/download/{tag}/gron-linux-${go_arch}-{ver}.tgz"
 fi
 
-# 4. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
+# 5. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
 #    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
 #    runtime tree, yazi ships a second binary (`ya`). No sudo; both use the version-less
 #    latest/download asset form. Re-fetch when missing or the recorded tag is stale (same
@@ -209,16 +284,18 @@ if [ -n "$rust_arch" ]; then
   fi
 fi
 
-# Fail loudly (and retry next apply) if any apt package is still missing — e.g. a sudo-less run.
-# As a run_once_after_ script this does NOT block dotfile deployment.
+# Fail loudly (and retry next apply) if any distro package is still missing — e.g. a sudo-less
+# run. As a run_once_after_ script this does NOT block dotfile deployment. PM="" reports every
+# check satisfied, so an unsupported distro converges on the release binaries instead of
+# retrying a package install it can never perform.
 still=""
-for p in $APT_PKGS; do
-  dpkg -s "$p" >/dev/null 2>&1 || still="$still $p"
+for p in $PKGS; do
+  pkg_installed "$p" || still="$still $p"
 done
-if [ -n "$still" ] || [ ! -f "$GH_LIST" ] || [ ! -f "$WEZ_LIST" ]; then
-  [ -n "$still" ] && echo "install-cli-tools: apt packages still missing:$still" >&2
-  [ ! -f "$GH_LIST" ] && echo "install-cli-tools: GitHub CLI apt repo not configured yet" >&2
-  [ ! -f "$WEZ_LIST" ] && echo "install-cli-tools: WezTerm apt repo not configured yet" >&2
+if [ -n "$still" ] || ! gh_ready || ! wez_ready; then
+  [ -n "$still" ] && echo "install-cli-tools: packages still missing:$still" >&2
+  gh_ready  || echo "install-cli-tools: GitHub CLI not configured yet" >&2
+  wez_ready || echo "install-cli-tools: WezTerm not configured yet" >&2
   echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
   exit 1
 fi

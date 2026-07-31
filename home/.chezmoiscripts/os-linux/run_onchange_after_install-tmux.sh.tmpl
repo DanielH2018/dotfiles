@@ -1,14 +1,15 @@
 {{ if and (eq .chezmoi.os "linux") (ne .profile "minimal") -}}
 #!/bin/sh
-# Builds tmux from the release tarball into ~/.local, shadowing the older apt tmux (Ubuntu ships
-# 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's fullscreen
-# TUI ("tui": "fullscreen") blanks / goes stale on a tmux pane-split until you scroll: tmux only
-# implements synchronized output (DECSET 2026) from 3.7, with the end-of-update redraw fix in 3.7b.
-# The cts/av sandbox launchers are tmux-native, so upgrading tmux beats dropping to "tui":"default".
+# Builds tmux from the release tarball into ~/.local, shadowing the older distro tmux (Ubuntu
+# ships 3.6a) because ~/.local/bin is ahead of /usr/bin on PATH. Needed because Claude Code's
+# fullscreen TUI ("tui": "fullscreen") blanks / goes stale on a tmux pane-split until you scroll:
+# tmux only implements synchronized output (DECSET 2026) from 3.7, with the end-of-update redraw
+# fix in 3.7b. The cts/av sandbox launchers are tmux-native, so upgrading tmux beats dropping to
+# "tui":"default".
 # run_onchange_after_: re-runs whenever this script's rendered content changes — bump TMUX_VERSION
 # to pull a newer build. Linux + non-minimal only (the Pi opts out; macOS gets tmux via Brewfile).
-# A sudo-less run defers the apt build-deps and exits 1 so chezmoi retries next apply, but the
-# after_ placement means that does NOT block dotfile deployment.
+# A sudo-less run defers the build-deps and exits 1 so chezmoi retries next apply, but the after_
+# placement means that does NOT block dotfile deployment.
 set -u
 
 TMUX_VERSION=3.7b
@@ -26,15 +27,37 @@ if [ -x "$BIN_DIR/tmux" ]; then
   fi
 fi
 
-# Build-time deps only, so kept out of the shared tools.toml apt inventory (which lists runtime
-# tools). Needs sudo, which prompts in an interactive terminal.
-DEPS="build-essential libevent-dev libncurses-dev pkg-config bison"
+# Build-time deps only, so kept out of the shared tools.toml runtime inventory. Named per distro
+# family — Debian's build-essential/-dev split has no single Fedora equivalent, so the Fedora list
+# spells out the compiler and toolchain packages. Needs sudo, which prompts in an interactive
+# terminal. An unrecognised distro (PM="") skips straight to the build and lets ./configure be the
+# one to complain about a missing toolchain, rather than deferring on packages it cannot name.
+if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+  PM=apt
+  DEPS="build-essential libevent-dev libncurses-dev pkg-config bison"
+elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+  PM=dnf
+  DEPS="gcc make libevent-devel ncurses-devel pkgconf-pkg-config bison"
+else
+  PM=""
+  DEPS=""
+  echo "install-tmux: no supported package manager (want apt or dnf); attempting the build with whatever toolchain is present" >&2
+fi
+
 missing=""
-for p in $DEPS; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
+for p in $DEPS; do
+  case "$PM" in
+    apt) dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p" ;;
+    dnf) rpm -q "$p" >/dev/null 2>&1 || missing="$missing $p" ;;
+  esac
+done
 if [ -n "$missing" ]; then
   if sudo -v; then
     # shellcheck disable=SC2086  # $missing is a space-separated package list; splitting intended
-    sudo apt-get update -qq && sudo apt-get install -y $missing
+    case "$PM" in
+      apt) sudo apt-get update -qq && sudo apt-get install -y $missing ;;
+      dnf) sudo dnf install -y $missing ;;
+    esac
   else
     echo "install-tmux: sudo unavailable; deferring build deps:$missing — re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
     exit 1

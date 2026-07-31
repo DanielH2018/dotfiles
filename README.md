@@ -8,11 +8,21 @@ Managed with [chezmoi](https://chezmoi.io). Source lives under `home/` (see `.ch
 
 You'll be prompted whether this is a **work** machine (gates work-only config).
 
-### Linux server notes
+### Linux notes
 
-Install the interactive tools the shell expects (configs degrade gracefully without them):
+`chezmoi apply` provisions the CLI toolchain itself on **Debian/Ubuntu (apt)** and
+**Fedora (dnf)**; package names per distro live in `home/.chezmoidata/tools.toml`. Tools with
+no `apt`/`dnf` entry (eza, fzf, zoxide, ripgrep, starship, fastfetch, curlie, sd, nvim, yazi)
+come from GitHub release binaries on *every* Linux, so the two distros run one code path.
+
+On any other distro the installer warns, skips the package phase, and still lays down the
+release binaries — install these by hand for the full experience (configs degrade gracefully
+without them):
 
     zsh starship eza fzf zoxide fastfetch        # then: chsh -s "$(which zsh)"
+
+Two Fedora-specific divergences, both because Fedora packages neither tool: WezTerm comes from
+upstream's `wezfurlong/wezterm-nightly` COPR, and `gron` falls back to its GitHub release binary.
 
 ## Layout
 
