@@ -1,6 +1,6 @@
 # Managed by chezmoi — edit home/private_dot_ssh/private_config, not ~/.ssh/config.
 
-Host daniel-server
+Host daniel-server homelab
     HostName 10.0.0.161
     User ubuntu
     IdentityFile ~/.ssh/daniel-server
