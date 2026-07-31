@@ -44,8 +44,16 @@ function makeEnv() {
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
   const killLog = path.join(bin, 'kill.log'); fs.writeFileSync(killLog, '');
+  const tmuxBufLog = path.join(bin, 'tmux-buf.log'); fs.writeFileSync(tmuxBufLog, '');
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${HOST}\n`, { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n`, { mode: 0o755 });
+  // load-buffer's payload lands in a temp file the sender deletes straight after, so the stub
+  // copies it out — otherwise a paste-based send can only be asserted on its plumbing, never
+  // on the text that actually reached the pane.
+  fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
+echo "$*" >> "$TMUX_LOG"
+case " $* " in *" load-buffer "*) cat "\${@: -1}" >> "$TMUX_BUF_LOG" ;; esac
+exit 0
+`, { mode: 0o755 });
   // --body / --jump-nth run after the jq+fzf tool check, so fzf must exist (never invoked here).
   // Answers the Ctrl+X confirm chooser. An unset FZF_PICK is an empty pick — i.e. cancelled.
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash\n[ -n "\${FZF_PICK:-}" ] && printf '%s\\n' "$FZF_PICK"\nexit 0\n`, { mode: 0o755 });
@@ -59,10 +67,11 @@ function makeEnv() {
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
+    TMUX_BUF_LOG: tmuxBufLog,
     ...seams.env,
   };
   delete env.TMUX; // a bare shell -> tmux jump takes the attach path
-  return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog };
+  return { bin, home, env, tmuxLog, claudeLog, sshLog, killLog, tmuxBufLog };
 }
 
 function stateFile(home, sid, obj) {
@@ -162,13 +171,75 @@ test('the number gutter labels the first session row 1', { skip }, () => {
 });
 
 // ---- --rename (CTRL+R: send Claude's own /rename into the pane) ----------
-test('--rename types "/rename <name>" + Enter into an idle tmux pane', { skip }, () => {
-  const { env, tmuxLog } = makeEnv();
+test('--rename pastes "/rename <name>" into an idle tmux pane, then submits with a separate Enter', { skip }, () => {
+  const { env, tmuxLog, tmuxBufLog } = makeEnv();
   const key = rowKey({ cwd: '/r/c', state: 'needs-input', pane: '%3', locator: 'tmux:/s:sc:%3' });
   assert.strictEqual(run(env, ['--rename', key], { input: 'Fix the parser\n' }).code, 0);
   const log = read(tmuxLog);
-  assert.match(log, /send-keys -t %3 -l \/rename Fix the parser/, 'sends the /rename command literally');
+  assert.match(read(tmuxBufLog), /^\/rename Fix the parser$/, 'the buffer carries the /rename command');
+  assert.match(log, /paste-buffer -p -d -b \S+ -t %3/, 'pasted with bracketed-paste markers, buffer dropped after');
   assert.match(log, /send-keys -t %3 Enter/, 'then submits with Enter');
+  assert.doesNotMatch(log, /send-keys -t %3 -l/, 'never send-keys -l: it truncates at ~1024 bytes');
+});
+
+// ---- --send (CTRL+T: type a message into the session without attaching) --
+test('--send pastes the message into an idle tmux pane and submits it', { skip }, () => {
+  const { env, tmuxLog, tmuxBufLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/c', state: 'idle', pane: '%3', locator: 'tmux:/s:sc:%3' });
+  assert.strictEqual(run(env, ['--send', key], { input: 'run the tests again\n' }).code, 0);
+  assert.match(read(tmuxBufLog), /^run the tests again$/, 'the message reaches the pane verbatim');
+  assert.match(read(tmuxLog), /paste-buffer -p -d -b \S+ -t %3/);
+  assert.match(read(tmuxLog), /send-keys -t %3 Enter/);
+});
+
+test('--send carries a prompt past the ~1024-byte send-keys ceiling intact', { skip }, () => {
+  // The regression this whole path exists for: `send-keys -l` stops silently around 1024
+  // bytes, so a long prompt used to arrive cut in half with no error anywhere.
+  const { env, tmuxBufLog } = makeEnv();
+  const long = 'x'.repeat(4096);
+  const key = rowKey({ cwd: '/r/c', state: 'idle', pane: '%3', locator: 'tmux:/s:sc:%3' });
+  assert.strictEqual(run(env, ['--send', key], { input: `${long}\n` }).code, 0);
+  assert.strictEqual(read(tmuxBufLog).trim().length, 4096, 'all 4096 bytes made it into the buffer');
+});
+
+test('--send is a no-op for a none: (pane-less) session', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/none', state: 'idle', locator: 'none:' });
+  assert.strictEqual(run(env, ['--send', key], { input: 'hello\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'no pane to address -> nothing is sent');
+});
+
+test('--send refuses a working session (the keys would land mid-task)', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/busy', state: 'working', pane: '%4', locator: 'tmux:/s:sb:%4' });
+  assert.strictEqual(run(env, ['--send', key], { input: 'later\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'a working session is gated out');
+});
+
+test('--send refuses a bg row: a daemon session has no pane to type into', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/bg', state: 'idle', kind: 'bg', locator: 'bg:job-1' });
+  assert.strictEqual(run(env, ['--send', key], { input: 'hello\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'nothing is sent to a paneless bg session');
+});
+
+test('--send with an empty message sends nothing', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/c', state: 'idle', pane: '%3', locator: 'tmux:/s:sc:%3' });
+  assert.strictEqual(run(env, ['--send', key], { input: '\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'an empty prompt is a cancel, not a bare Enter');
+});
+
+test('--send drives a REMOTE tmux session over ssh, text on stdin not in the command', { skip }, () => {
+  const { env, sshLog, tmuxLog } = makeEnv();
+  const key = rowKey({ host: 'daniel-server', cwd: '/home/ubuntu/p', state: 'idle', pane: '%9', locator: 'tmux:/s:rs:%9' });
+  assert.strictEqual(run(env, ['--send', key], { input: 'deploy it\n' }).code, 0);
+  assert.strictEqual(read(tmuxLog), '', 'never touches a local pane for a remote session');
+  const log = read(sshLog);
+  assert.match(log, /daniel-server/, 'ssh targets the remote alias');
+  assert.match(log, /load-buffer/, 'the remote loads a buffer rather than send-keys -l');
+  assert.match(log, /paste-buffer -p -d -b \S+ -t %9/);
+  assert.doesNotMatch(log, /deploy it/, 'the message travels on stdin, never quoted into the remote command');
 });
 
 test('--rename is a no-op for a none: (pane-less) session', { skip }, () => {
@@ -192,8 +263,8 @@ test('--rename drives a REMOTE tmux session over ssh', { skip }, () => {
   assert.strictEqual(read(tmuxLog), '', 'never touches a local pane for a remote session');
   const log = read(sshLog);
   assert.match(log, /daniel-server/, 'ssh targets the remote alias');
-  // The name is %q-escaped for the remote shell, so match loosely across the spaces.
-  assert.match(log, /send-keys -t %9 -l [^;]*rename[^;]*Remote[^;]*name/, 'ssh sends the /rename keys on the remote');
+  assert.match(log, /load-buffer -b \S+/, 'the remote loads a buffer (send-keys -l truncates)');
+  assert.match(log, /paste-buffer -p -d -b \S+ -t %9/, 'and pastes it into the remote pane');
   assert.match(log, /send-keys -t %9 Enter/, 'then submits with Enter');
 });
 

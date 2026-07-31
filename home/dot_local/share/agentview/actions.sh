@@ -198,22 +198,44 @@ do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works f
   return 0
 }
 
-av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Enter into the
-  # session's pane so Claude runs its OWN /rename. tmux locally or over ssh; wezterm locally.
-  local host="$1" loc="$2" name="$3" backend rest sock pane cmd sshalias
+av_send_text() {  # $1=host $2=locator $3=text -> deliver text into the session's pane as ONE
+  # user message and submit it. tmux locally or over ssh; wezterm locally.
+  #
+  # Two things this deliberately does NOT do, both learned from YoanWai/agent-manager:
+  #   * `tmux send-keys -l` is not used. It silently stops at ~1024 bytes, so a long prompt
+  #     arrives truncated with no error anywhere — fine for a short /rename, wrong the moment
+  #     arbitrary text goes through the same path. load-buffer has no such limit.
+  #   * The submitting Enter is a SEPARATE call, after the paste has ended. Sent inside the
+  #     paste (the old `"$text\r"` form), a TUI doing paste-burst detection can swallow it and
+  #     leave the text sitting unsent in its composer. `paste-buffer -p` keeps the bracketed-
+  #     paste markers so the pane app knows where the burst ends; -d drops the buffer after.
+  # Bracketed paste is also what makes a multi-line message safe: typed literally, each
+  # newline would submit a partial prompt.
+  local host="$1" loc="$2" text="$3" backend rest sock pane cmd sshalias tmp buf rc=0
   backend="${loc%%:*}"; rest="${loc#*:}"
   case "$backend" in
     tmux)
       # rest = <socket>:<session>:<pane>; socket + sanitized session carry no ':'.
       pane="${rest##*:}"; rest="${rest%:*}"; sock="${rest%:*}"
       [ -n "$pane" ] && [ -n "$sock" ] || return 1
+      buf="av_send_$$"
       if [ -n "$host" ] && ! is_local_host "$host"; then
         sshalias=$(remote_alias "$host")
-        printf -v cmd 'tmux -S %q send-keys -t %q -l %q; tmux -S %q send-keys -t %q Enter' \
-          "$sock" "$pane" "/rename $name" "$sock" "$pane"
-        ssh -o ConnectTimeout=4 -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
+        # The text travels on ssh's STDIN, never inside the command string: quoting a
+        # multi-line prompt through a remote shell is exactly the kind of escaping that
+        # breaks on the first unusual character.
+        # shellcheck disable=SC2016  # $f is the REMOTE shell's variable — must not expand here
+        printf -v cmd 'f=$(mktemp) || exit 1; cat > "$f"; tmux -S %q load-buffer -b %q "$f"; tmux -S %q paste-buffer -p -d -b %q -t %q; tmux -S %q send-keys -t %q Enter; rm -f "$f"' \
+          "$sock" "$buf" "$sock" "$buf" "$pane" "$sock" "$pane"
+        printf '%s' "$text" | ssh -o ConnectTimeout=4 -o BatchMode=yes "$sshalias" "$cmd" >/dev/null 2>&1 || rc=1
       else
-        tmux -S "$sock" send-keys -t "$pane" -l "/rename $name" 2>/dev/null
+        tmp=$(mktemp "${TMPDIR:-/tmp}/av-send.XXXXXX") || return 1
+        printf '%s' "$text" > "$tmp"
+        tmux -S "$sock" load-buffer -b "$buf" "$tmp" 2>/dev/null || rc=1
+        rm -f "$tmp" 2>/dev/null
+        [ "$rc" -eq 0 ] || return 1
+        tmux -S "$sock" paste-buffer -p -d -b "$buf" -t "$pane" 2>/dev/null || {
+          tmux -S "$sock" delete-buffer -b "$buf" 2>/dev/null; return 1; }
         tmux -S "$sock" send-keys -t "$pane" Enter 2>/dev/null
       fi ;;
     wezterm)
@@ -221,9 +243,55 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
       # A Windows-host row and a WSL-host row are panes of the SAME GUI, and pane ids are
       # GUI-global — so the is_windows_host split this used to carry was answering the wrong
       # question. av_wezterm picks the cli that can actually reach that GUI from here.
-      av_wezterm send-text --no-paste --pane-id "$pane" "/rename $name"$'\r' >/dev/null 2>&1 ;;
+      # No --no-paste on the payload: that types the text as raw keystrokes, so a newline
+      # inside it acts as Enter and submits a partial message. Bracketed paste delivers it
+      # as one unit; the Enter follows as its own call, outside the burst.
+      av_wezterm send-text --pane-id "$pane" -- "$text" >/dev/null 2>&1 || return 1
+      av_wezterm send-text --no-paste --pane-id "$pane" -- $'\r' >/dev/null 2>&1 ;;
     *) return 1 ;;
   esac
+  return "$rc"
+}
+
+av_send_rename() {  # $1=host $2=locator $3=name -> run Claude's OWN /rename in the pane.
+  av_send_text "$1" "$2" "/rename $3"
+}
+
+av_row_sendable() {  # $1=state $2=locator -> 0 when text can be typed into this row's pane.
+  # Sets _why to the refusal for the caller to print. Shared by CTRL+R and CTRL+T so the two
+  # cannot drift on what counts as a reachable, safe-to-interrupt session.
+  local state="$1" locator="$2" backend
+  _why=""
+  backend="${locator%%:*}"
+  if [ -z "$locator" ] || [ -z "$backend" ] || [ "$backend" = "none" ]; then
+    _why="this session has no tmux/wezterm pane to type into"; return 1
+  fi
+  if [ "$backend" = "bg" ]; then
+    _why="a background session has no pane — <enter> attaches it first"; return 1
+  fi
+  # Never inject into a working session: the keys would land mid-task, where Claude's input
+  # box is not accepting a new message and the text is simply lost.
+  if [ "$state" = "working" ]; then
+    _why="session is working — send when it is idle so the keys land at the input prompt"; return 1
+  fi
+  return 0
+}
+
+do_send() {  # $1 = KEY -> type a message into the selected session's pane (CTRL+T), so the
+  # agent receives it as a user message without you attaching. The reply lands in the pane;
+  # the picker just delivers it.
+  local key="$1" host state locator msg
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  state=$(printf '%s' "$key" | cut -d"$US" -f3)
+  locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$locator" ] || return 0
+  if ! av_row_sendable "$state" "$locator"; then
+    printf '\n  agentview: %s.\n' "$_why" >&2; sleep 1.5; return 0
+  fi
+  printf '\n  send a message to this session:\n' >&2
+  IFS= read -r -e -p '  message> ' msg || return 0
+  [ -n "$msg" ] || return 0
+  av_send_text "$host" "$locator" "$msg"
   return 0
 }
 
@@ -231,17 +299,14 @@ do_rename() {  # $1 = KEY -> run Claude's own /rename in the session's pane (CTR
   # "/rename <name>" + Enter into the tmux/wezterm pane so Claude executes the real command
   # (writing its own custom-title). Needs an addressable pane (not none:) and an idle session
   # — never inject into a working one, where the keys would land mid-task. Remote tmux over ssh.
-  local key="$1" host state locator backend name
+  local key="$1" host state locator name
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   state=$(printf '%s' "$key" | cut -d"$US" -f3)
   locator=$(printf '%s' "$key" | cut -d"$US" -f8)
   [ -n "$locator" ] || return 0
-  backend="${locator%%:*}"
-  if [ -z "$backend" ] || [ "$backend" = "none" ]; then
-    printf '\n  agentview: this session has no tmux/wezterm pane, so Claude'\''s /rename can'\''t\n  be sent to it — rename it from inside the session instead.\n' >&2; sleep 1.5; return 0
-  fi
-  if [ "$state" = "working" ]; then
-    printf '\n  agentview: session is working — rename it when idle so the keys land at the\n  input prompt, not mid-task.\n' >&2; sleep 1.5; return 0
+  if ! av_row_sendable "$state" "$locator"; then
+    printf '\n  agentview: %s — rename it from inside the session instead.\n' "$_why" >&2
+    sleep 1.5; return 0
   fi
   printf '\n  send /rename to this session in Claude:\n' >&2
   IFS= read -r -e -p '  new name> ' name || return 0
