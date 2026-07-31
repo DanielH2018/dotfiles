@@ -9,8 +9,11 @@
  *   - skill-name collisions across user skills and plugin skills
  *   - CLAUDE.md size vs a soft bloat threshold
  *   - binary/tool deps guarded in hook scripts (run_if_installed/command -v/
- *     which) that are absent from PATH on this host — info-only for now
- *     (M14/M15 reference-resolver slice 1; see specs/env-modules)
+ *     which), permission-granted in settings.json (Bash(tool...) allow
+ *     entries), or gated by a `-f "$HOME/.local/share/<tool>/..."` existence
+ *     check before a `source` (e.g. ble.sh) — absent from PATH/disk on this
+ *     host — info-only for now (M14/M15 reference-resolver slice 1; see
+ *     specs/env-modules)
  *
  * Usage: node config-lint.js [rootDir] [--strict] [--json]
  *   rootDir  config dir to audit (default: ~/.claude)
@@ -153,6 +156,87 @@ function checkBinaryDeps(deps, hasBinary) {
     return findings;
 }
 
+// Permission-granted binary dependency (M14/M15 reference kind #10, spec §2 row
+// 10 — same "declares a tool this config expects to run" shape as
+// run_if_installed/command -v/which, just spelled as a settings.json bare
+// `Bash(<tool>)` allow entry instead of a shell guard). Matches part of
+// A1-43: settings.base.json allow-lists macOS-only bare commands (pbcopy,
+// pbpaste) and a non-interactive-only builtin (history) with no platform
+// gate, so they resolve to dead grants on this Linux host.
+//
+// Deliberately scoped to the *bare*, argument-less `Bash(tool)` shape (no
+// `:*` wildcard or subcommand) — NOT every `Bash(...)` entry. The wider
+// allow-list also carries ~250 `Bash(<tool> <subcommand>:*)` grants for a
+// whole polyglot dev toolchain (cargo, go, java, eslint, gradle, sdk, just,
+// ...) that are deliberately host/project-portable pre-approvals, not
+// same-host dependency declarations; checking those against local PATH
+// would misreport every toolchain this box doesn't happen to have installed
+// as a "missing dependency," which it isn't. `md5:*`/`sdk ...:*`/`just:*`
+// (also named in A1-43) fall in that wider, syntactically indistinguishable
+// bucket and are left to the judgment-based pass 2 review (SKILL.md §2),
+// not this deterministic check.
+const PERMISSION_DEP_PATTERN = /^Bash\(([A-Za-z0-9_.-]+)\)$/;
+
+function extractPermissionDeps(allowList, file = "settings.json (permissions.allow)") {
+    const seen = new Set();
+    const deps = [];
+    for (const entry of allowList || []) {
+        if (typeof entry !== "string") continue;
+        const m = entry.match(PERMISSION_DEP_PATTERN);
+        if (!m) continue;
+        const tool = m[1];
+        const key = `${file} ${tool}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deps.push({ file, tool });
+    }
+    return deps;
+}
+
+// File-existence guard before a `source`/`.` (M14/M15 reference kind #10, spec
+// §2 row 10) — a companion shape to run_if_installed/command -v/which for
+// tools that aren't invoked from PATH but are sourced from a fixed install
+// location under XDG_DATA_HOME. Matches A14-31's ble.sh guard:
+//   if [[ ... && -f "$HOME/.local/share/blesh/ble.sh" ]]; then
+//     source "$HOME/.local/share/blesh/ble.sh" --noattach
+//   fi
+// Scoped to `.local/share` specifically (not `.config`) so it doesn't also
+// catch optional local-override config files like
+// ~/.config/claude/local.env, which are a different, intentionally-optional
+// shape (M15 kind #5 file path, not #10 binary/tool dependency).
+const PATH_DEP_PATTERN = /-f\s+"(\$HOME\/\.local\/share\/[^"]+)"/g;
+
+function extractPathDeps(files) {
+    const seen = new Set();
+    const deps = [];
+    for (const { path: filePath, text: rawText } of files) {
+        const text = stripShellComments(rawText);
+        PATH_DEP_PATTERN.lastIndex = 0;
+        let match;
+        while ((match = PATH_DEP_PATTERN.exec(text)) !== null) {
+            const tool = match[1];
+            const key = `${filePath} ${tool}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deps.push({ file: filePath, tool });
+        }
+    }
+    return deps;
+}
+
+// hasPath is injected (fs.existsSync in production, home is expanded first)
+// so tests never depend on the real filesystem.
+function checkPathDeps(deps, home, hasPath) {
+    const findings = [];
+    for (const { file, tool } of deps) {
+        const resolved = tool.replace(/^\$HOME/, home);
+        if (!hasPath(resolved)) {
+            findings.push({ sev: "info", area: "binary-deps", msg: `${file} depends on "${tool}", not found on disk (guarded, silently no-ops here)` });
+        }
+    }
+    return findings;
+}
+
 // ── fs wrappers ───────────────────────────────────────────────────────────────
 
 function readJSON(file) {
@@ -249,8 +333,22 @@ function audit(root, home) {
     }
 
     // Binary/tool dependencies (report-only: always info, see SKILL.md §Migration)
-    const binaryDeps = extractBinaryDeps(readHookScripts(path.join(root, "hooks")));
+    const hookScripts = readHookScripts(path.join(root, "hooks"));
+    const binaryDeps = extractBinaryDeps(hookScripts)
+        .concat(extractPermissionDeps((settings.permissions || {}).allow));
     for (const f of checkBinaryDeps(binaryDeps, commandExists)) add(f.sev, f.area, f.msg);
+
+    // Path-existence-guarded dependencies (e.g. ble.sh sourced from ~/.local/share).
+    // Scanned over hook scripts plus ~/.bashrc — NOT folded into hookScripts above,
+    // since bashrc also carries unrelated `command -v` guards (fzf, a prompt-banner
+    // function) that would otherwise get swept into the PATH-binary check above and
+    // produce findings outside this change's scope.
+    const bashrcPath = path.join(home, ".bashrc");
+    const pathScanFiles = fs.existsSync(bashrcPath)
+        ? hookScripts.concat([{ path: bashrcPath, text: fs.readFileSync(bashrcPath, "utf8") }])
+        : hookScripts;
+    const pathDeps = extractPathDeps(pathScanFiles);
+    for (const f of checkPathDeps(pathDeps, home, fs.existsSync)) add(f.sev, f.area, f.msg);
 
     return findings;
 }
@@ -287,6 +385,7 @@ function main() {
 module.exports = {
     diffPlugins, extractHookCommands, extractPaths, parseIncludes,
     findDuplicateSkills, checkBloat, extractBinaryDeps, checkBinaryDeps, audit,
+    extractPermissionDeps, extractPathDeps, checkPathDeps,
     BLOAT_MAX_BYTES, BLOAT_MAX_LINES,
 };
 

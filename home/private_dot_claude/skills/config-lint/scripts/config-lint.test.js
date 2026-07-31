@@ -112,3 +112,55 @@ test("checkBinaryDeps reports info findings only for tools the injected checker 
   assert.strictEqual(findings[0].area, "binary-deps");
   assert.match(findings[0].msg, /definitely-not-a-real-binary-xyz/);
 });
+
+// A1-43: settings.json `Bash(tool)` permission entries as a binary-dep declaration shape.
+test("extractPermissionDeps matches only bare, argument-less Bash(tool) entries", () => {
+  const allow = [
+    "Bash(pbcopy)",
+    "Bash(pwd)",
+    "Bash(history)",
+    "Bash(md5:*)",              // wildcard subcommand shape — deliberately excluded
+    "Bash(sdk list:*)",         // multi-word + wildcard — deliberately excluded
+    "Bash(cargo build:*)",      // portable toolchain grant — deliberately excluded
+    "Read(**)",                 // not a Bash entry at all
+    "Bash(pbcopy)",             // repeat: should dedupe
+  ];
+  const deps = m.extractPermissionDeps(allow, "settings.json (permissions.allow)");
+  assert.deepStrictEqual(deps.map(d => d.tool).sort(), ["history", "pbcopy", "pwd"]);
+  assert.ok(deps.every(d => d.file === "settings.json (permissions.allow)"));
+});
+
+test("extractPermissionDeps tolerates a missing/empty allow list", () => {
+  assert.deepStrictEqual(m.extractPermissionDeps(undefined), []);
+  assert.deepStrictEqual(m.extractPermissionDeps([]), []);
+});
+
+// A14-31: ble.sh's `-f "$HOME/.local/share/..."` guard before `source` as a binary-dep shape.
+test("extractPathDeps matches -f \"$HOME/.local/share/...\" guards, deduped per file+path", () => {
+  const text = [
+    'if [[ $OSTYPE != msys* && -f "$HOME/.local/share/blesh/ble.sh" ]]; then',
+    '  source "$HOME/.local/share/blesh/ble.sh" --noattach',
+    'fi',
+  ].join("\n");
+  const deps = m.extractPathDeps([{ path: "dot_bashrc", text }]);
+  assert.deepStrictEqual(deps, [{ file: "dot_bashrc", tool: "$HOME/.local/share/blesh/ble.sh" }]);
+});
+
+test("extractPathDeps ignores -f guards outside .local/share (e.g. .config overrides)", () => {
+  const text = '[ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"';
+  assert.deepStrictEqual(m.extractPathDeps([{ path: "hooks/watch-paths.sh", text }]), []);
+});
+
+test("checkPathDeps expands $HOME and reports info findings only for paths the injected checker says are missing", () => {
+  const deps = [
+    { file: "dot_bashrc", tool: "$HOME/.local/share/blesh/ble.sh" },
+    { file: "dot_bashrc", tool: "$HOME/.local/share/present-tool/x" },
+  ];
+  const hasPath = p => p === "/home/d/.local/share/present-tool/x";
+  const findings = m.checkPathDeps(deps, "/home/d", hasPath);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].sev, "info");
+  assert.strictEqual(findings[0].area, "binary-deps");
+  assert.match(findings[0].msg, /blesh\/ble\.sh/);
+  assert.match(findings[0].msg, /not found on disk/);
+});
