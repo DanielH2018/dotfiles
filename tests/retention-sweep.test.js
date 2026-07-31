@@ -14,7 +14,7 @@
 // survives when the gate holds.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -26,6 +26,9 @@ const MANIFEST = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'retention-m
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
+
+let flockAvailable = true;
+try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockAvailable = false; }
 
 const dirs = [];
 function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
@@ -62,44 +65,69 @@ const codeOf = (file) => fs.readFileSync(file, 'utf8')
   .map((line) => line.replace(/#.*/, ''))
   .join('\n');
 
-test('the only delete primitive is a single guarded rm, and rotate/truncate/move still do not exist', () => {
+test('removal is exactly two rm forms plus rmdir, and rotate/truncate still do not exist', () => {
   const codeOnly = codeOf(SWEEP);
 
-  // Slice 3's verbs. Their absence is what keeps slice 2 a *deletion* slice: a rotate or
-  // truncate has to contend with a writer holding the file open, which is a different
-  // failure mode with no fixture here yet.
-  const slice3 = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|:>\s*\S/i;
-  const leaked = codeOnly.match(slice3);
-  assert.strictEqual(leaked, null, `found a slice-3 primitive: ${leaked && leaked[0]}`);
+  // Deferred by decision: rotation and truncation rewrite a file a live process may hold
+  // open, a different failure mode from removing a stale one, and no supervised run
+  // stands behind them yet. Their absence is the guarantee, not a comment claiming it.
+  const deferred = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|\btail\s+-n\b|:>\s*\S/i;
+  const leaked = codeOnly.match(deferred);
+  assert.strictEqual(leaked, null, `found a deferred rotate/truncate primitive: ${leaked && leaked[0]}`);
 
-  // Exactly one rm, and it is the guarded one. More than one means a second, unreviewed
-  // path to deletion.
+  // Exactly two rm call sites — the file form and the directory form — both with `--`, so
+  // a dash-leading name can never be read as a flag.
   const rms = codeOnly.match(/\brm\s+[^\n]*/g) || [];
-  assert.strictEqual(rms.length, 1, `expected exactly one rm, found ${rms.length}: ${rms.join(' | ')}`);
-  assert.match(rms[0], /^rm -f -- "\$f"/, 'the rm must be -f -- "$f", so a dash-leading name cannot become a flag');
+  assert.strictEqual(rms.length, 2, `expected exactly two rm call sites, found ${rms.length}: ${rms.join(' | ')}`);
+  assert.ok(rms.some((r) => r.startsWith('rm -rf -- "$f"')), 'the directory form must be rm -rf -- "$f"');
+  assert.ok(rms.some((r) => r.startsWith('rm -f -- "$f"')), 'the file form must be rm -f -- "$f"');
 
-  // No recursive removal anywhere: slice 2 has no directory rule at all.
-  assert.doesNotMatch(codeOnly, /\brm\b[^\n]*-[a-zA-Z]*[rR]/, 'slice 2 must never remove a directory tree');
+  // The empty-dir rule must use rmdir, which refuses a non-empty directory in the kernel
+  // rather than trusting an emptiness check that could race a writer.
+  assert.match(codeOnly, /\brmdir "\$f"/, 'prune-empty-dir must use rmdir, not rm -r');
 });
 
-test('sweeper has no write redirect other than to /dev/null or an fd dup', () => {
+// Recursive removal is the sharpest edge slice 3 adds, so its guard is pinned in source
+// as well as in behaviour: rm -rf must be unreachable without contained() having passed.
+test('recursive removal is gated behind the containment check', () => {
   const codeOnly = codeOf(SWEEP);
-  // Negative lookbehind excludes the literal "->" arrow used in echoed prose (e.g.
-  // "-> no action"), which is not a redirect. `>&N` (fd dup, e.g. stderr passthrough)
-  // and `>/dev/null` are the only redirect shapes this script legitimately uses.
+  const guardAt = codeOnly.indexOf('if ! contained "$prefix" "$f"');
+  const rmAt = codeOnly.indexOf('rm -rf -- "$f"');
+  assert.ok(guardAt > -1, 'the containment guard is missing');
+  assert.ok(rmAt > guardAt, 'rm -rf must come after the containment guard, not before it');
+  assert.match(codeOnly, /\[ -L "\$entry" \] && return 1/, 'contained() must refuse a symlink outright');
+});
+
+test('the only file the sweeper writes is the fixed-size run marker', () => {
+  const codeOnly = codeOf(SWEEP);
   const redirects = codeOnly.match(/(?<!-)\d*>>?(&\d+|\s*\S+)/g) || [];
-  const badRedirects = redirects.filter((r) => !/\/dev\/null/.test(r) && !/^\d*>>?&\d/.test(r));
-  assert.deepStrictEqual(badRedirects, [], 'sweeper must never redirect output to a real file');
+  // Allowed: /dev/null, an fd dup or close, the flock descriptor (a zero-byte mutex,
+  // not data), and the run marker.
+  const bad = redirects.filter((r) => !/\/dev\/null/.test(r)
+    && !/^\d*>>?&[\d-]/.test(r)
+    && !/\$LOCK/.test(r)
+    && !/\$MARKER/.test(r));
+  assert.deepStrictEqual(bad, [], 'the marker is the only real file the sweeper may write');
+  // No append anywhere: an append is how a log grows without bound, which is the very
+  // thing this module exists to prevent. The marker is overwritten each run.
+  assert.doesNotMatch(codeOnly, />>/, 'the sweeper must never append to a file');
 });
 
 // The row set is the blast radius. Reading it from the manifest would mean adding a row
 // could grant itself a delete path; keeping it in the source means widening it is a
 // reviewable edit.
-test('the acting row set is a source-level literal naming exactly the spec slice-2 rows', () => {
+test('the acting row set is a source literal covering the removal rules and no others', () => {
   const src = fs.readFileSync(SWEEP, 'utf8');
   const m = src.match(/^APPLY_ROWS="([^"]*)"/m);
   assert.ok(m, 'APPLY_ROWS literal not found');
-  assert.deepStrictEqual(m[1].trim().split(/\s+/).sort(), ['G12', 'G16', 'G17', 'G2']);
+  const rows = m[1].trim().split(/\s+/).sort();
+  assert.deepStrictEqual(rows,
+    ['G1', 'G12', 'G14', 'G15', 'G16', 'G17', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'].sort());
+
+  // The rotate/truncate rows must stay out until they have had a supervised run.
+  for (const deferred of ['G8', 'G9', 'G10', 'G11', 'G13']) {
+    assert.ok(!rows.includes(deferred), `${deferred} is a rotate/truncate row and must not act yet`);
+  }
   assert.doesNotMatch(codeOf(SWEEP), /APPLY_ROWS=\$\(|APPLY_ROWS=.*jq/, 'the row set must not be derived from the manifest');
 });
 
@@ -194,7 +222,7 @@ test('--apply prunes a dead-pid file, and each of the three filename shapes is u
   ]);
 
   const out = runSweep(m, ['--apply']);
-  assert.match(out, /APPLY \(slice 2 rows only\)/);
+  assert.match(out, /retention-sweep — APPLY/);
   for (const f of [session, fzfport, tmpjson]) {
     assert.ok(!fs.existsSync(f), `${path.basename(f)} should have been pruned`);
   }
@@ -306,6 +334,146 @@ test('a duplicate younger than 48h is kept even with a newer sibling', { skip },
   const out = runSweep(m, ['--apply'], { RETENTION_SIBLING_CANDIDATES: sibling });
   assert.ok(fs.existsSync(target), 'a duplicate inside the 48h window must survive');
   assert.match(out, /newer than 48h/);
+});
+
+// --- Slice 3: age rules, empty dirs, containment, the lock, the marker ----------------
+
+const ageRow = (id, glob, cap) => ({
+  id, path: glob, kind: 'file-glob', rule: 'prune-age',
+  cap, grace: '1h', owner: 'retention-sweep', finding: 'test',
+});
+
+test('prune-age removes an aged directory tree and keeps one inside the cap', { skip }, () => {
+  const root = scratch('retention-age-');
+  // G4's real shape: file-history/<uuid>/ holding content-addressed versions.
+  const old = path.join(root, 'hist', 'old-uuid');
+  aged(path.join(old, 'abc@v1'), 'v1', 20 * 86400 * 1000);
+  fs.utimesSync(old, ago(20 * 86400 * 1000), ago(20 * 86400 * 1000));
+  const recent = path.join(root, 'hist', 'recent-uuid');
+  aged(path.join(recent, 'def@v1'), 'v1', 3 * 86400 * 1000);
+  fs.utimesSync(recent, ago(3 * 86400 * 1000), ago(3 * 86400 * 1000));
+
+  const m = manifestFile(root, [ageRow('G4', path.join(root, 'hist', '*'), '14d')]);
+  const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+
+  assert.ok(!fs.existsSync(old), 'the 20-day-old tree should have been removed');
+  assert.ok(fs.existsSync(recent), 'the 3-day-old tree is inside the 14d cap and must survive');
+  assert.match(out, /younger than cap=14d/);
+});
+
+test('prune-empty-dir removes an empty directory and never a populated one', { skip }, () => {
+  const root = scratch('retention-empty-');
+  const week = 7 * 86400 * 1000;
+  const empty = path.join(root, 'env', 'empty-uuid');
+  fs.mkdirSync(empty, { recursive: true });
+  fs.utimesSync(empty, ago(week), ago(week));
+  const full = path.join(root, 'env', 'full-uuid');
+  aged(path.join(full, 'payload'), 'x', week);
+  fs.utimesSync(full, ago(week), ago(week));
+
+  const m = manifestFile(root, [{
+    id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
+    cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'test',
+  }]);
+  const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+
+  assert.ok(!fs.existsSync(empty), 'the empty directory should have been removed');
+  assert.ok(fs.existsSync(path.join(full, 'payload')), 'a populated directory must be untouched');
+  assert.match(out, /directory is not empty/);
+});
+
+// The guard that makes unattended recursive removal defensible.
+test('a symlink inside the swept directory is refused, so its target survives', { skip }, () => {
+  const root = scratch('retention-escape-');
+  const precious = path.join(root, 'outside');
+  aged(path.join(precious, 'keepme'), 'precious', 30 * 86400 * 1000);
+  fs.utimesSync(precious, ago(30 * 86400 * 1000), ago(30 * 86400 * 1000));
+
+  const link = path.join(root, 'hist', 'link-uuid');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(precious, link);
+  // Backdate the LINK itself, not its target: GNU stat does not follow symlinks, so a
+  // freshly-created link would be held by the grace floor and never reach the
+  // containment check this test exists to exercise.
+  fs.lutimesSync(link, ago(30 * 86400 * 1000), ago(30 * 86400 * 1000));
+
+  const m = manifestFile(root, [ageRow('G4', path.join(root, 'hist', '*'), '14d')]);
+  const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+
+  assert.ok(fs.existsSync(path.join(precious, 'keepme')), 'the symlink target must never be removed');
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the symlink itself must be left alone');
+  assert.match(out, /outside its glob prefix or a symlink/);
+});
+
+test('an unparseable cap refuses to act rather than falling back to a default', { skip }, () => {
+  const root = scratch('retention-badcap-');
+  const f = aged(path.join(root, 'hist', 'old-uuid'), 'x', 40 * 86400 * 1000);
+  const m = manifestFile(root, [ageRow('G4', path.join(root, 'hist', '*'), 'fourteen days')]);
+
+  const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+  assert.ok(fs.existsSync(f), 'a cap the sweeper cannot parse must mean no action');
+  assert.match(out, /cap not understood: fourteen days/);
+});
+
+test('a deferred rotate/truncate row is reported but never acted on', { skip }, () => {
+  const root = scratch('retention-deferred-');
+  const log = path.join(root, 'sessions.log');
+  fs.writeFileSync(log, 'x'.repeat(2_000_000));
+  const m = manifestFile(root, [{
+    id: 'G8', path: log, kind: 'file', rule: 'rotate-size', cap: '1MB, keep 3 gen',
+    grace: null, owner: 'retention-sweep', finding: 'test',
+  }]);
+
+  const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+  assert.strictEqual(fs.statSync(log).size, 2_000_000, 'a deferred row must not rotate anything');
+  assert.ok(!fs.existsSync(`${log}.1`), 'no rotation generation may be created');
+  assert.match(out, /\[dry-run\] G8/);
+});
+
+test('the run marker records the counts and is overwritten, never appended', { skip }, () => {
+  const root = scratch('retention-marker-');
+  aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
+  const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
+
+  runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+  const markerPath = path.join(root, '.retention-sweep-last-run');
+  const first = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  assert.strictEqual(first.entries_pruned, 1);
+  assert.strictEqual(first.errors, 0);
+  assert.ok(first.timestamp, 'the marker must carry a timestamp');
+
+  // A second run finds nothing; the marker must be replaced, not grown.
+  runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root });
+  const second = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  assert.strictEqual(second.entries_pruned, 0, 'the marker must reflect the latest run only');
+});
+
+// The timer and a hand-run sweep can collide. Contention must be a quiet no-op, not a
+// failed unit and not two sweeps racing over the same directories.
+test('a second sweep exits cleanly while another holds the lock', { skip: skip || !flockAvailable, timeout: 20000 }, () => {
+  const root = scratch('retention-lock-');
+  const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
+  const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
+  const lock = path.join(root, 'sweep.lock');
+
+  // Hold the lock from an unrelated process, then confirm it really is held before
+  // running the sweeper — no sleep-and-hope.
+  const holder = spawn('bash', ['-c', `exec 9>"${lock}"; flock 9; sleep 10`], { detached: true, stdio: 'ignore' });
+  try {
+    let held = false;
+    for (let i = 0; i < 100 && !held; i += 1) {
+      const r = spawnSync('bash', ['-c', `flock -n "${lock}" -c true`]);
+      held = r.status !== 0;
+      if (!held) spawnSync('bash', ['-c', 'sleep 0.05']);
+    }
+    assert.ok(held, 'setup: could not get the holder to take the lock');
+
+    const out = runSweep(m, ['--apply'], { RETENTION_STATE_DIR: root, RETENTION_LOCK: lock });
+    assert.match(out, /another sweep is running/);
+    assert.ok(fs.existsSync(f), 'the blocked sweep must not have deleted anything');
+  } finally {
+    try { process.kill(-holder.pid, 9); } catch { /* already gone */ }
+  }
 });
 
 test('an unknown argument is refused rather than ignored', { skip }, () => {

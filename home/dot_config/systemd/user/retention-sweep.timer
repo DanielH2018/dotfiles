@@ -1,0 +1,15 @@
+[Unit]
+Description=Hourly retention sweep over the Claude config manifest
+
+[Timer]
+OnCalendar=hourly
+# The box is a laptop that is off more than it is on. Without Persistent, every hour it
+# spends powered down is a sweep that simply never happens, and the paths this exists to
+# cap grow across exactly those gaps.
+Persistent=true
+# Hygiene, not a deadline: a minute of slack lets systemd batch this with other timers
+# instead of waking the machine for it.
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

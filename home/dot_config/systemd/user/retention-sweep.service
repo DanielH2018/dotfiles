@@ -1,0 +1,17 @@
+[Unit]
+Description=Prune stale Claude config state per the retention manifest
+
+[Service]
+Type=oneshot
+# --apply is what makes this the automated half of M12. The sweeper's own containment
+# (source-level row list, per-row glob prefix, grace floors) is what makes that safe;
+# this unit deliberately passes no other argument.
+ExecStart=%h/.local/bin/retention-sweep --apply
+# Hygiene must never compete with an interactive session for CPU or disk. A19-25's
+# lesson: a sweep that makes the machine feel slow gets disabled, and then caps nothing.
+Nice=10
+IOSchedulingClass=idle
+# stdout is the record. journald already rotates it, which is why the sweeper writes no
+# log file of its own.
+StandardOutput=journal
+StandardError=journal
