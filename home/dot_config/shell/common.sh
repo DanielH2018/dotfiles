@@ -368,9 +368,15 @@ fi
 # window resets home. Emitted before each prompt (so it tracks cd) via each shell's hook.
 __osc7_cwd() { printf '\033]7;file://%s%s\033\\' "${HOSTNAME:-$HOST}" "$PWD"; }
 if [ -n "$ZSH_VERSION" ]; then
-  precmd_functions+=(__osc7_cwd)
+  # Membership check first: common.sh can be re-sourced (e.g. by non-rc callers),
+  # and an unconditional append would register the hook again each time (A14-16).
+  # shellcheck disable=SC2004  # zsh array-index expansion, not arithmetic; $ is required
+  (( ${precmd_functions[(Ie)__osc7_cwd]} )) || precmd_functions+=(__osc7_cwd)
 elif [ -n "$BASH_VERSION" ]; then
-  PROMPT_COMMAND="__osc7_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+  case "$PROMPT_COMMAND" in
+    *__osc7_cwd*) ;;
+    *) PROMPT_COMMAND="__osc7_cwd${PROMPT_COMMAND:+; $PROMPT_COMMAND}" ;;
+  esac
 fi
 
 # --- WezTerm-only: OSC 133 prompt marks + command-finish notify (Ghostty is native) ---
@@ -393,10 +399,16 @@ if [ -n "${WEZTERM_PANE:-}" ]; then
     fi
   }
   if [ -n "$ZSH_VERSION" ]; then
-    preexec_functions+=(__wz_preexec)
-    precmd_functions+=(__wz_precmd)
+    # Same re-source guard as __osc7_cwd above (A14-16).
+    # shellcheck disable=SC2004  # zsh array-index expansion, not arithmetic; $ is required
+    (( ${preexec_functions[(Ie)__wz_preexec]} )) || preexec_functions+=(__wz_preexec)
+    # shellcheck disable=SC2004  # zsh array-index expansion, not arithmetic; $ is required
+    (( ${precmd_functions[(Ie)__wz_precmd]} )) || precmd_functions+=(__wz_precmd)
   elif [ -n "$BASH_VERSION" ]; then
-    PROMPT_COMMAND="__wz_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+    case "$PROMPT_COMMAND" in
+      *__wz_precmd*) ;;
+      *) PROMPT_COMMAND="__wz_precmd${PROMPT_COMMAND:+; $PROMPT_COMMAND}" ;;
+    esac
     # Timing needs a preexec; ble.sh provides one (sourced before this file in ~/.bashrc)
     # and passes the command as $1. Plain bash keeps the marks and skips the notify.
     type blehook >/dev/null 2>&1 && blehook PREEXEC+=__wz_preexec

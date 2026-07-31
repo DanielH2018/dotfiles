@@ -33,7 +33,9 @@ export ARCHFLAGS="-arch $(uname -m)"
 # =============================================================================
 # HISTORY CONFIGURATION
 # =============================================================================
-export HISTFILE="$HOME/.zsh_history"
+# Plain (non-exported) var: an exported HISTFILE leaks into any bash started
+# from this zsh, overriding bash's own history file (A14-01).
+HISTFILE="$HOME/.zsh_history"
 export HISTSIZE=200000
 export SAVEHIST=200000
 # SHARE_HISTORY implies INC_APPEND, so we don't set both.
@@ -77,7 +79,7 @@ fpath=("$HOME/.docker/completions" $fpath)
 
 autoload -Uz compinit
 ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-$ZSH_VERSION"
-mkdir -p "${ZCOMPDUMP:h}"
+[[ -d "${ZCOMPDUMP:h}" ]] || mkdir -p "${ZCOMPDUMP:h}"
 
 # Run security checks once per day, otherwise skip for performance
 if [[ -n "$ZCOMPDUMP"(#qN.mh+24) ]]; then
@@ -117,8 +119,10 @@ zstyle ':completion:*' cache-path "${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompcach
 if command -v fzf >/dev/null 2>&1; then
   # fzf >= 0.48 emits keybindings + completion directly. Preferred: our Linux fzf lives in
   # ~/.local/bin with no apt package, so /usr/share/doc/fzf integration files won't exist.
-  if fzf --zsh >/dev/null 2>&1; then
-    source <(fzf --zsh)
+  # Capture once instead of probing then re-invoking fzf --zsh (A14-19).
+  if _fzf_zsh=$(fzf --zsh 2>/dev/null); then
+    eval "$_fzf_zsh"
+    unset _fzf_zsh
   else
     [[ -r "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/key-bindings.zsh"
     [[ -r "$BREW_PREFIX/opt/fzf/shell/completion.zsh" ]] && source "$BREW_PREFIX/opt/fzf/shell/completion.zsh"

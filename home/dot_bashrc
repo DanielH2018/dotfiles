@@ -33,6 +33,10 @@ if [[ $OSTYPE != msys* && $OSTYPE != cygwin* && -f "$HOME/.local/share/blesh/ble
 fi
 
 # --- History (bash equivalents of the zsh HIST_* options) ---
+# Set explicitly (not inherited) so a bash started from zsh doesn't pick up zsh's
+# HISTFILE — zsh's is a plain, non-exported var now, but this makes bash's own
+# default self-contained regardless (A14-01).
+HISTFILE="$HOME/.bash_history"
 HISTSIZE=200000
 HISTFILESIZE=200000
 HISTCONTROL=ignoreboth:erasedups
