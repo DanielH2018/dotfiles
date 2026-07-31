@@ -243,6 +243,52 @@ if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
 if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
 if [ "$mode" = "--send" ]; then do_send "${2:-}"; exit 0; fi
 
+av_pane_tail() {  # $1=host $2=locator $3=lines -> echo the tail of that session's pane.
+  # The reason the card exists at all after this change: metadata told you a session was
+  # blocked, never WHAT it was blocked on, so the only way to read an agent's question was to
+  # switch to it. agent-manager's whole draw is that the question reaches you in the list.
+  #
+  # Cost is why this is bounded rather than clever. The preview is HIDDEN by default (CTRL+O
+  # opens it), so the capture only runs when the details were asked for — but while it is open
+  # every cursor move re-renders, so:
+  #   * local rows only. A capture over ssh is a network round-trip per row change; the homelab
+  #     tail is not worth making the picker feel remote.
+  #   * hard timeout, because wezterm.exe from WSL is a Windows process spawn.
+  #   * plain capture (no -e / no --escapes): the pane's own colors would fight the card's, and
+  #     un-sanitized escapes from an arbitrary agent's output have no business in our output.
+  local host="$1" loc="$2" want="${3:-12}" backend rest sock pane out
+  [ -n "${AGENTVIEW_NO_TAIL:-}" ] && return 0
+  [ -n "$host" ] && ! is_local_host "$host" && return 0
+  backend="${loc%%:*}"; rest="${loc#*:}"
+  local -a to=()
+  command -v timeout >/dev/null 2>&1 && to=(timeout 2)
+  case "$backend" in
+    tmux)
+      pane="${rest##*:}"; rest="${rest%:*}"; sock="${rest%:*}"
+      [ -n "$pane" ] && [ -n "$sock" ] || return 0
+      command -v tmux >/dev/null 2>&1 || return 0
+      out=$("${to[@]}" tmux -S "$sock" capture-pane -p -t "$pane" 2>/dev/null) || return 0 ;;
+    wezterm)
+      pane="$rest"; [ -n "$pane" ] || return 0
+      av_wezterm_bin || return 0
+      out=$("${to[@]}" "$_wezbin" cli --no-auto-start get-text --pane-id "$pane" 2>/dev/null) || return 0 ;;
+    *) return 0 ;;
+  esac
+  [ -n "$out" ] || return 0
+  # A captured pane is mostly trailing blank rows — dropping them is what makes the tail land
+  # on the agent's last words instead of on empty screen.
+  local -a lines=() keep=()
+  mapfile -t lines <<< "$out"
+  local i last=-1
+  for i in "${!lines[@]}"; do
+    [ -n "${lines[$i]//[[:space:]]/}" ] && last="$i"
+  done
+  [ "$last" -ge 0 ] || return 0
+  local start=$(( last - want + 1 )); [ "$start" -lt 0 ] && start=0
+  for (( i = start; i <= last; i++ )); do keep+=( "${lines[$i]}" ); done
+  printf '%s\n' "${keep[@]}"
+}
+
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
   # pane|kind|locator) — fzf passes it as {1}, single-quoted/escaped, so it's safe as
@@ -280,6 +326,22 @@ if [ "$mode" = "--card" ]; then
   printf '  %s%-9s%s%s%s\n'     "$lab" "Path" "$dim" "$k_cwd" "$z"
   [ -n "$k_title" ] && printf '  %s%-9s%s%s%s\n' "$lab" "Task" "$val" "$k_title" "$z"
   [ -n "$age" ]     && printf '  %s%-9s%s%s%s\n' "$lab" "Updated" "$dim" "$age" "$z"
+  # Pane tail: what the session is actually showing right now — a permission ask, a question,
+  # the last thing it printed. Sized to the preview fzf gives us (it exports both), so the
+  # tail fills the panel on a tall window and does not overflow a short one.
+  tw="${FZF_PREVIEW_COLUMNS:-44}"; [ "$tw" -lt 20 ] 2>/dev/null && tw=20
+  th="${FZF_PREVIEW_LINES:-24}"
+  case "$th" in ''|*[!0-9]*) th=24;; esac
+  th=$(( th - 12 )); [ "$th" -lt 4 ] && th=4; [ "$th" -gt 24 ] && th=24
+  ptail=$(av_pane_tail "$k_host" "$k_loc" "$th")
+  if [ -n "$ptail" ]; then
+    printf '\n  %s%s%s\n' "$lab" "Pane" "$z"
+    while IFS= read -r pl; do
+      pl="${pl%"${pl##*[![:space:]]}"}"          # rstrip: trailing cells pad every captured row
+      [ "${#pl}" -gt "$(( tw - 4 ))" ] && pl="${pl:0:tw-5}…"
+      printf '  %s%s%s\n' "$dim" "$pl" "$z"
+    done <<< "$ptail"
+  fi
   exit 0
 fi
 
