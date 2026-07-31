@@ -1,0 +1,101 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Installs NVIDIA's proprietary driver on Fedora when an
+# NVIDIA GPU is actually present.
+#
+# Why this exists rather than leaving the default in place: Fedora ships nouveau, and on Ampere
+# it drives the card through Mesa's NVK Vulkan driver with zink translating OpenGL on top. That
+# stack froze this workstation twice — a GPU channel fault (`gsp: rc engn ... fault_addr`) and a
+# kwin_wayland `GL_CONTEXT_LOST` flood that ended the session — and left plasma-ksplash timing
+# out on the splash screen afterwards. 9 of 10 boots logged nouveau errors. The proprietary
+# driver resolved it.
+#
+# Hardware-gated at runtime, not by hostname, so this file is safe on every machine: no NVIDIA
+# GPU means the script exits before touching anything. Non-Fedora hosts skip too — akmod-nvidia
+# is RPM Fusion packaging with no apt equivalent.
+#
+# Targets the current mainline driver, which supports Turing and newer. A pre-Turing card
+# (Fermi/Kepler/Maxwell/Pascal/Volta) needs one of RPM Fusion's legacy branches instead
+# (akmod-nvidia-470xx, -580xx, ...), so those are left alone rather than mis-provisioned.
+#
+# Deliberately NOT using akmod-nvidia-open: RPM Fusion publishes the open variant only in the
+# frozen Fedora GA repo, several driver versions behind the maintained akmod-nvidia in
+# nonfree-updates. Pairing an old kernel module with new userspace libraries is its own problem.
+#
+# Idempotent: re-runs are a no-op once the module is built for the running kernel.
+# bump-to-reinstall: gpu-driver v1
+set -u
+TAG=install-gpu-driver
+{{ includeTemplate "linux-install.sh" . }}
+
+# --- Gate: NVIDIA GPU on Fedora -------------------------------------------------------------
+if ! command -v lspci >/dev/null 2>&1; then
+  echo "$TAG: lspci unavailable; cannot identify the GPU, skipping" >&2
+  exit 0
+fi
+if ! lspci -nn 2>/dev/null | grep -iE 'VGA compatible controller|3D controller' | grep -q '\[10de:'; then
+  exit 0   # no NVIDIA GPU — nothing to do, and nothing printed on the common case
+fi
+if [ "$PM" != dnf ]; then
+  echo "$TAG: NVIDIA GPU found but this is not a dnf distro; akmod-nvidia is RPM Fusion only" >&2
+  exit 0
+fi
+
+# --- Already done? --------------------------------------------------------------------------
+# The real convergence check is "is the module built for the kernel we are running", not "is the
+# package installed" — an akmod that failed to compile leaves the rpm present but the module
+# absent, which is exactly the state worth re-running for.
+if modinfo -k "$(uname -r)" nvidia >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! have_sudo; then
+  echo "$TAG: needs sudo to install the driver — re-run 'chezmoi apply' where sudo can prompt" >&2
+  exit 1
+fi
+
+# --- RPM Fusion -----------------------------------------------------------------------------
+# Same pair of release rpms the app installer enables; adding them twice is harmless, and this
+# script must not depend on install-apps having run first.
+if ! { rpm -q rpmfusion-free-release >/dev/null 2>&1 && rpm -q rpmfusion-nonfree-release >/dev/null 2>&1; }; then
+  fed="$(rpm -E %fedora)"
+  echo "$TAG: enabling RPM Fusion"
+  sudo dnf install -y \
+    "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${fed}.noarch.rpm" \
+    "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fed}.noarch.rpm" \
+    || { echo "$TAG: could not enable RPM Fusion" >&2; exit 1; }
+fi
+
+# --- Driver ---------------------------------------------------------------------------------
+# kernel-devel must match the RUNNING kernel or akmods has no tree to build against. Installing
+# the generic `kernel-devel` can pull a newer version than the one currently booted, so pin it.
+echo "$TAG: installing akmod-nvidia for kernel $(uname -r)"
+sudo dnf install -y "kernel-devel-$(uname -r)" akmods \
+  || { echo "$TAG: could not install build prerequisites" >&2; exit 1; }
+sudo dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda \
+  || { echo "$TAG: could not install akmod-nvidia" >&2; exit 1; }
+
+# Build now instead of waiting for the akmods timer or the next boot, so a compile failure
+# surfaces during the apply — while the machine still has a working desktop to fix it from.
+echo "$TAG: building the kernel module (slow)"
+sudo akmods --kernels "$(uname -r)" --force >/dev/null 2>&1 || true
+
+if ! modinfo -k "$(uname -r)" nvidia >/dev/null 2>&1; then
+  echo "$TAG: the nvidia module did not build for $(uname -r); build log in /var/cache/akmods/nvidia/" >&2
+  echo "$TAG: the running desktop is untouched — 'sudo dnf remove akmod-nvidia xorg-x11-drv-nvidia\\*' reverts" >&2
+  exit 1
+fi
+
+# --- Nouveau handover -----------------------------------------------------------------------
+# The packages add `rd.driver.blacklist=nouveau,nova_core modprobe.blacklist=nouveau,nova_core`
+# to /etc/kernel/cmdline themselves. Verify rather than duplicate: without it nouveau still binds
+# the card first at boot and the nvidia probe never runs —
+#   NVRM: GPU 0000:xx:00.0 is already bound to nouveau.
+if [ -r /etc/kernel/cmdline ] && ! grep -q 'blacklist=nouveau' /etc/kernel/cmdline; then
+  echo "$TAG: nouveau is not blacklisted on the kernel cmdline; nvidia will not get the card" >&2
+  echo "$TAG: fix with: sudo grubby --update-kernel=ALL --args='rd.driver.blacklist=nouveau modprobe.blacklist=nouveau'" >&2
+  exit 1
+fi
+
+echo "$TAG: nvidia $(modinfo -k "$(uname -r)" -F version nvidia 2>/dev/null) built. Reboot to switch off nouveau."
+{{ end -}}
