@@ -67,11 +67,17 @@ test('flooded stdout is truncated at the byte cap, not buffered whole first', { 
   assert.strictEqual(out.OUT.length, 100, 'captured output must be capped at exactly max_bytes');
 });
 
+// SIGHUP, not SIGSEGV: a self-inflicted SEGV is a core-dumping signal, so every run of
+// this suite handed systemd-coredump a real crash and KDE's drkonqi popped a "bash closed
+// unexpectedly" notification on the desktop. `ulimit -c 0` only suppresses the core *file* —
+// the coredump handler still runs and still notifies. SIGHUP terminates without dumping,
+// is 1 on both Linux and macOS (unlike SIGUSR1, which is 10 vs 30), and stays distinct from
+// the timeout path's TERM-then-KILL, which is the whole point of this test.
 test('killed by its own signal is distinct from a timeout kill', { skip }, () => {
-  const { rb: out } = rb(`run_bounded 5 4096 -- bash -c 'kill -SEGV $$'`);
+  const { rb: out } = rb(`run_bounded 5 4096 -- bash -c 'kill -HUP $$'`);
   assert.strictEqual(out.STATUS, 'killed', 'a self-inflicted signal must not be misread as a timeout');
-  assert.strictEqual(out.SIGNAL, '11', 'SIGSEGV is signal 11');
-  assert.strictEqual(out.EXIT, '139', '128 + 11');
+  assert.strictEqual(out.SIGNAL, '1', 'SIGHUP is signal 1');
+  assert.strictEqual(out.EXIT, '129', '128 + 1');
 });
 
 test('the could-not-evaluate mapping onto outcome-lib: any non-ok status feeds oc_cannot to exit 3', { skip }, () => {
