@@ -341,6 +341,108 @@ sync_windows_rows() {  # write $windir rows for live Windows sessions that never
   return 0
 }
 
+sample_usage() {  # write pin_id<TAB>cpu%<TAB>rssMB per local session, for the card to read.
+  # Which of these agents is eating the machine is a question the picker could not answer at
+  # all, and on a box that has been OOM-killed for it that is the question. agent-manager
+  # answers it with a per-session process-tree gauge; this is the same measurement.
+  #
+  # Deliberately NOT on the render path: it reads a few hundred procfs files and sleeps to get
+  # a real interval, so it lives in --refresh-remote (detached, already the home for slow work)
+  # and the card reads its cache. Local sessions only — a Windows pid is not checkable from WSL
+  # and a homelab one would need an ssh per row.
+  #
+  # CPU is a DELTA over that interval, not ps's `pcpu`: pcpu averages over the whole process
+  # lifetime, so a session that hammered the CPU an hour ago and has been idle since still
+  # reads busy. Expressed as a share of total machine capacity, so all sessions together can
+  # be compared against the box.
+  # shellcheck disable=SC2154  # usage_cache is the parent script's global, like remote_cache
+  local tmp="$usage_cache.tmp.$$" f line rest pid ppid t1 rssp
+  local -A PARENT=() T1=() T2=() RSSP=() KIDS=()
+  local hz ncpu pagekb
+  hz=$(getconf CLK_TCK 2>/dev/null); case "$hz" in ''|*[!0-9]*) hz=100;; esac
+  ncpu=$(nproc 2>/dev/null); case "$ncpu" in ''|*[!0-9]*) ncpu=1;; esac
+  pagekb=$(( $(getconf PAGESIZE 2>/dev/null || echo 4096) / 1024 ))
+  [ -d /proc ] || return 0
+  # The comm field is parenthesised and can itself contain spaces or ')', so every field is
+  # counted from the LAST ')' — the standard way to parse /proc/pid/stat without being fooled
+  # by a process that renamed itself.
+  for f in /proc/[0-9]*/stat; do
+    IFS= read -r line < "$f" 2>/dev/null || continue
+    pid="${f#/proc/}"; pid="${pid%/stat}"
+    rest="${line##*)}"                      # " S ppid pgrp ... " — field 3 onward
+    # shellcheck disable=SC2086  # deliberate word-splitting of the fixed-width stat tail
+    set -- $rest
+    ppid="$2"; t1=$(( ${11:-0} + ${12:-0} )); rssp="${22:-0}"
+    PARENT[$pid]="$ppid"; T1[$pid]="$t1"; RSSP[$pid]="$rssp"
+    KIDS[$ppid]="${KIDS[$ppid]:-} $pid"
+  done
+  # Session pids, from the same state files the rows come from.
+  local sf jqout sid spid shost scwd skind sloc
+  shopt -s nullglob; sf=( "$statedir"/*.json ); shopt -u nullglob
+  [ "${#sf[@]}" -gt 0 ] || return 0
+  jqout=$(jq -r --arg self "$selfhost" '
+    select((.host // "") == $self and ((.pid // "") | tostring) != "") |
+    [((.pid) | tostring), (.host // ""), (.cwd // ""), (.kind // "host"), (.locator // "")]
+    | join("")' "${sf[@]}" 2>/dev/null)
+  [ -n "$jqout" ] || return 0
+  # Descendant sets first, so the second sample only re-reads pids we actually care about.
+  local -A TREE=() WANT=()
+  local -a queue
+  local p c
+  while IFS=$'\037' read -r spid shost scwd skind sloc; do
+    [ -n "$spid" ] && [ -n "${T1[$spid]:-}" ] || continue
+    queue=( "$spid" ); TREE[$spid]=""
+    while [ "${#queue[@]}" -gt 0 ]; do
+      p="${queue[0]}"; queue=( "${queue[@]:1}" )
+      TREE[$spid]="${TREE[$spid]} $p"; WANT[$p]=1
+      for c in ${KIDS[$p]:-}; do queue+=( "$c" ); done
+    done
+  done <<< "$jqout"
+  [ "${#WANT[@]}" -gt 0 ] || return 0
+  sleep 0.5
+  for p in "${!WANT[@]}"; do
+    IFS= read -r line < "/proc/$p/stat" 2>/dev/null || continue
+    rest="${line##*)}"
+    # shellcheck disable=SC2086
+    set -- $rest
+    T2[$p]=$(( ${11:-0} + ${12:-0} ))
+  done
+  : > "$tmp" 2>/dev/null || return 0
+  local dt=0 rsskb=0 cpu=0 _pid
+  local -a OUTID=() OUTCPU=() OUTMEM=()
+  local -A IDCNT=()
+  while IFS=$'\037' read -r spid shost scwd skind sloc; do
+    [ -n "${TREE[$spid]:-}" ] || continue
+    dt=0; rsskb=0
+    for p in ${TREE[$spid]}; do
+      [ -n "${T2[$p]:-}" ] && dt=$(( dt + T2[$p] - ${T1[$p]:-0} ))
+      rsskb=$(( rsskb + ${RSSP[$p]:-0} * pagekb ))
+    done
+    [ "$dt" -lt 0 ] && dt=0
+    # ticks over half a second, as a percentage of every core: dt / (hz/2) / ncpu * 100.
+    cpu=$(( dt * 200 / hz / ncpu ))
+    [ "$cpu" -gt 100 ] && cpu=100
+    compute_pin_id "$shost" "$scwd" "$skind" "$sloc"
+    OUTID+=( "$_pid" ); OUTCPU+=( "$cpu" ); OUTMEM+=( "$(( rsskb / 1024 ))" )
+    IDCNT[$_pid]=$(( ${IDCNT[$_pid]:-0} + 1 ))
+  done <<< "$jqout"
+  # A row identity is not always unique: background sessions started without a real pane all
+  # record the same locator (wezterm:0 in practice), so several live sessions can share one
+  # pin id. Keyed lookup would then hand a row its neighbour's numbers. Those entries are
+  # written under "?" instead — no card can match it, so an ambiguous row simply shows no
+  # usage, while the fleet total (which sums the file) still counts every session.
+  local i
+  for i in "${!OUTID[@]}"; do
+    if [ "${IDCNT[${OUTID[$i]}]}" -gt 1 ]; then
+      printf '?\t%s\t%s\n' "${OUTCPU[$i]}" "${OUTMEM[$i]}" >> "$tmp"
+    else
+      printf '%s\t%s\t%s\n' "${OUTID[$i]}" "${OUTCPU[$i]}" "${OUTMEM[$i]}" >> "$tmp"
+    fi
+  done
+  mv -f "$tmp" "$usage_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
 refresh_one_remote() {  # $1 = host. Pull its state, fold its live registry in, replace its cache.
   # Mirror the LOCAL live-registry override (load_session_map + merge_session_row) on the
   # homelab so cached remote rows can't go stale. A remote session's hook state
