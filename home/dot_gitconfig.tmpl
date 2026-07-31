@@ -39,8 +39,16 @@
 # which writes username+token to ~/.git-credentials in cleartext on the first HTTPS push
 # and leaves it there forever. gh where it exists, an in-memory cache otherwise; `store`
 # is never a default -- opt into it per-machine in ~/.config/git/local.config if you must.
-[credential]
+#
+# Split host-specific from generic for the same reason the WSL branch above is split: a lone
+# [credential] carrying the gh helper hands EVERY host to gh, and gh only answers for hosts it
+# is logged in to. Non-GitHub HTTPS remotes were left with a helper that declines, which is
+# indistinguishable from having no helper at all -- re-prompting every fetch. Host-specific
+# first, because git tries helpers in config order.
+[credential "https://github.com"]
 	helper = {{ if lookPath "gh" }}!gh auth git-credential{{ else }}cache --timeout=3600{{ end }}
+[credential]
+	helper = cache --timeout=3600
 {{- end }}
 [core]
 	autocrlf = {{ if eq .chezmoi.os "windows" }}true{{ else }}input{{ end }}
