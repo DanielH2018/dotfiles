@@ -21,6 +21,10 @@
 #     neovim, yazi, zig, wezterm) belongs to tools.toml + the cli-tools installers. Not here.
 #   - Games themselves are NOT listed — only launchers; libraries re-download after sign-in.
 #   - An entry with no winget field is Linux-only; one with no Linux field is Windows-only.
+#   - Some apps winget genuinely cannot provide (Office licence, GPU/chipset drivers, Ryzen
+#     Master, Samsung Magician, NVIDIA App, Elgato Game Capture, Pokemon TCG Live, Xbox
+#     Accessories msstore). They are listed here with a `manual` note and NO winget field, so the
+#     absence is recorded rather than rediscovered; the Windows steps stay in WINDOWS-SETUP.md.
 #
 # winget ids verified 2026-07-19 against `winget export` on daniel-pc.
 # Linux routes verified 2026-07-31 against Fedora 44 repos, Flathub's API, and each vendor's
@@ -157,6 +161,48 @@ name = "Piper"
 dnf = "piper"
 apt = "piper"
 
+# --- Hardware vendor tools. None of the three Windows apps is in winget (checked against the
+#     microsoft/winget-pkgs manifests 2026-07-31: the Samsung, AMD and Nvidia publisher
+#     directories carry no Magician, Ryzen Master or NVIDIA App), so each is a vendor download on
+#     Windows and carries the Linux equivalent that does exist. ---------------------------------
+
+[[apps.base]]
+name = "Samsung Magician"
+manual = "Not in winget — vendor download on Windows (see WINDOWS-SETUP.md). On Linux the same SSD health, SMART data and NVMe firmware work is covered by smartmontools + nvme-cli, both installed below."
+
+[[apps.base]]
+name = "smartmontools"
+# Linux stand-in for Samsung Magician's drive health/SMART reporting (`smartctl -a /dev/…`).
+dnf = "smartmontools"
+apt = "smartmontools"
+
+[[apps.base]]
+name = "nvme-cli"
+# Linux stand-in for Samsung Magician's NVMe-specific health and firmware commands.
+dnf = "nvme-cli"
+apt = "nvme-cli"
+
+[[apps.base]]
+name = "AMD Ryzen Master"
+manual = "Not in winget — vendor download on Windows (see WINDOWS-SETUP.md). CoreCtrl (installed below) is the closest Linux equivalent for CPU/GPU tuning and fan curves; it needs the amd_pstate driver and a kernel parameter for full control."
+
+[[apps.base]]
+name = "CoreCtrl"
+# Linux stand-in for Ryzen Master: per-profile CPU/GPU tuning and fan curves.
+dnf = "corectrl"
+apt = "corectrl"
+
+[[apps.base]]
+name = "NVIDIA App"
+manual = "Not in winget — vendor download on Windows (see WINDOWS-SETUP.md). On Linux the driver ships nvidia-settings (installed below) for the same panel; the driver itself is hardware-specific and stays a manual step, exactly as on Windows."
+
+[[apps.base]]
+name = "nvidia-settings"
+# Ships with the proprietary driver and is the Linux counterpart to the NVIDIA App's control
+# panel. Installing the driver itself is deliberately NOT automated here.
+dnf = "nvidia-settings"
+apt = "nvidia-settings"
+
 # --- Windows-only utilities. Deliberately excluded from the Linux set: each one either patches
 #     Windows itself or duplicates something the Linux desktop already provides. -------------
 
@@ -288,6 +334,13 @@ flatpak = "com.discordapp.Discord"
 name = "Prism Launcher"
 winget = "PrismLauncher.PrismLauncher"
 flatpak = "org.prismlauncher.PrismLauncher"
+
+[[apps.gaming]]
+name = "Minecraft Launcher"
+# The official Mojang launcher, alongside Prism rather than instead of it: Prism manages modded
+# instances, the official launcher is what Realms and the Bedrock/vanilla path expect.
+winget = "Mojang.MinecraftLauncher"
+flatpak = "com.mojang.Minecraft"
 
 [[apps.gaming]]
 name = "Temurin JDK"

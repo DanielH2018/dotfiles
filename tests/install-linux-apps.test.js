@@ -30,9 +30,13 @@ const skip = toolsOk ? false : 'chezmoi not on PATH';
 // opens chezmoi's bolt-backed state, and this file renders in nearly every test plus once per
 // sandbox run. Rendering each time contends with the rest of the suite running in parallel, which
 // is exactly what made that file flake.
+// Memoisation covers the default body only: callers that render a DIFFERENT template (the Windows
+// script, with its OS guard stripped) must not be served this file's cached render.
 let rendered;
-const render = () =>
-  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: body, encoding: 'utf8' }));
+const renderTemplate = (text) =>
+  execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: text, encoding: 'utf8' });
+const render = (file) =>
+  (file && file !== body ? renderTemplate(file) : (rendered ??= renderTemplate(body)));
 
 // The script is gated to a non-WSL workstation, so it renders empty on a server/minimal profile
 // or under WSL. Those hosts have nothing to assert against.

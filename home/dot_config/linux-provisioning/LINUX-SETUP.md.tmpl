@@ -9,8 +9,9 @@ curated set that have **no** Linux route, and the post-install steps nobody can 
 
 ## Apps with no automated Linux route
 
-Each entry is in `packages.toml` and installs on Windows via winget; the note says why Linux
-gets nothing and what covers the same ground.
+Each entry is in `packages.toml`; the note says why Linux gets nothing and what covers the same
+ground. Most install on Windows via winget — the hardware vendor tools (Samsung Magician, Ryzen
+Master, NVIDIA App) are not in winget either and are vendor downloads on both platforms.
 
 {{ range concat .apps.base .apps.coding .apps.gaming }}{{ $app := . }}{{ with get . "manual" }}
 ### {{ get $app "name" }}
@@ -28,6 +29,13 @@ Windows software above rather than being separate wants:
 - **Piper** — gaming-mouse DPI and button profiles via `ratbagd` (G HUB).
 - **gammastep** — f.lux's colour-temperature shifting, Wayland-native.
 - **Heroic Games Launcher** — Epic library, and the usual host for the EA app under Wine.
+- **smartmontools + nvme-cli** — Samsung Magician's SSD health, SMART and NVMe firmware work.
+- **CoreCtrl** — Ryzen Master's CPU/GPU tuning and fan curves.
+- **nvidia-settings** — the NVIDIA App's control panel (ships with the proprietary driver).
+
+Node.js and Python are **not** here on purpose: `fnm install --lts` and `uv python install 3.12`
+already provide both on every platform, and a second system-wide copy would shadow the managed
+one on PATH.
 
 ## Post-install steps that need a human
 
