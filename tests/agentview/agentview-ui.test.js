@@ -195,9 +195,10 @@ test('ctrl-r reaches the rename prompt and sends /rename to the pane', { skip },
   term.type('renamed-by-test');
   term.send('enter');
 
-  await term.waitFor(() => /send-keys .*-l \/rename renamed-by-test/.test(fs.readFileSync(tmuxLog, 'utf8')));
+  await term.waitFor(() => /paste-buffer -p -d -b \S+ -t %2/.test(fs.readFileSync(tmuxLog, 'utf8')));
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, /-S \/tmp\/s\.sock send-keys -t %2 -l \/rename renamed-by-test/);
+  assert.match(log, /-S \/tmp\/s\.sock load-buffer -b \S+ /, 'the name goes through a buffer, not send-keys -l');
+  assert.match(log, /-S \/tmp\/s\.sock send-keys -t %2 Enter/, 'and the Enter follows on its own');
 });
 
 test('a mouse click selects the row that was clicked', { skip }, async (t) => {

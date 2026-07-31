@@ -40,6 +40,9 @@
 #                         collapsed by default
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
+#   agentview --send KEY  type a message into the session's pane (CTRL+T) so the agent gets it
+#                         as a user message without attaching. Same reachability rules as
+#                         --rename; delivered as a bracketed paste, so length is not capped.
 #   agentview --skip DIR KEY [HOPS]  emit the fzf actions that carry the cursor off a group
 #                         header/spacer (armed on up/down — see the dispatch below)
 #   agentview --enter KEY  emit the fzf action for the enter/double-click keys: accept, or —
@@ -282,7 +285,7 @@ case "$mode" in
   # is normally unreached — the guard is a safety net, not the primary route). --jump-nth
   # shares the picker's actions.sh load but never exercises the guard itself: its awk
   # (below) already excludes fold: rows before one could reach jump_or_report.
-  --jump|--remove|--pin|--rename|--fold) _avmods="common focus actions" ;;
+  --jump|--remove|--pin|--rename|--fold|--send) _avmods="common focus actions" ;;
   --refresh-remote|--watch|--watch-once) _avmods="common rows" ;;
   --body)                            _avmods="common rows render" ;;
   *)                                 _avmods="common focus rows render actions" ;;   # picker + --jump-nth
@@ -301,6 +304,7 @@ if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
 if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
 if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
 if [ "$mode" = "--fold" ]; then do_fold "${2:-}"; exit 0; fi
+if [ "$mode" = "--send" ]; then do_send "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
@@ -353,6 +357,7 @@ if [ "$mode" = "--keys" ]; then
   printf '    %s⌥1 … ⌥9%s  %sjump to that session%s\n' "$k" "$z" "$dsc" "$z"
   printf '    %s↵%s        %sswitch to selected / fold a group%s\n'   "$k" "$z" "$dsc" "$z"
   printf '\n  %sManage%s\n' "$sec" "$z"
+  printf '    %s⌃t%s       %ssend a message to the session%s\n' "$k" "$z" "$dsc" "$z"
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
   printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
   printf '    %s⌃x%s       %sremove from list%s\n'     "$k" "$z" "$dsc" "$z"
@@ -518,7 +523,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch/fold · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer='  ↵ switch/fold · alt-# jump · ⌃t send · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
@@ -533,6 +538,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='page-up:page-up+transform('"'$SELF'"' --skip up {1})' \
   --bind='page-down:page-down+transform('"'$SELF'"' --skip down {1})' \
   --bind='load:transform('"'$SELF'"' --skip down {1})' \
+  --bind='ctrl-t:execute('"'$SELF'"' --send {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \

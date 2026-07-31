@@ -449,12 +449,27 @@ test('do_rename: local wezterm pane gets /rename via local wezterm cli, no tmux/
   const { env, wezSendLog, tmuxLog, sshLog, wezwinSendLog } = makeEnv();
   const key = rowKey({ cwd: '/r/w', state: 'idle', locator: 'wezterm:12' });
   assert.strictEqual(run(env, ['--rename', key], {}, 'New Title\n').code, 0);
-  const sent = read(wezSendLog);
-  assert.match(sent, /send-text.*--no-paste --pane-id 12/);
-  assert.match(sent, /\/rename New Title/);
+  const lines = read(wezSendLog).trim().split('\n');
+  // Payload and Enter are two calls, and which one carries --no-paste is the whole point:
+  // the text goes as a bracketed paste (a newline inside it must not submit early), the
+  // Enter goes as a literal keystroke AFTER the burst so paste detection cannot swallow it.
+  assert.match(lines[0], /send-text .*--pane-id 12 -- \/rename New Title/);
+  assert.doesNotMatch(lines[0], /--no-paste/, 'the message itself is pasted, not typed');
+  assert.match(lines[1], /send-text --no-paste --pane-id 12/, 'the submit is a separate literal Enter');
   assert.strictEqual(read(tmuxLog), '', 'no tmux for a wezterm-backed rename');
   assert.strictEqual(read(sshLog), '', 'no ssh for a local rename');
   assert.strictEqual(read(wezwinSendLog), '', 'never the Windows wezterm.exe for a local pane');
+});
+
+test('do_send: a wezterm-backed session takes the same paste-then-Enter shape', { skip }, () => {
+  const { env, wezSendLog, tmuxLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/w', state: 'idle', locator: 'wezterm:12' });
+  assert.strictEqual(run(env, ['--send', key], {}, 'rebase onto main\n').code, 0);
+  const lines = read(wezSendLog).trim().split('\n');
+  assert.match(lines[0], /send-text .*--pane-id 12 -- rebase onto main/);
+  assert.doesNotMatch(lines[0], /--no-paste/);
+  assert.match(lines[1], /send-text --no-paste --pane-id 12/);
+  assert.strictEqual(read(tmuxLog), '', 'no tmux for a wezterm-backed send');
 });
 
 test('do_rename: every wezterm cli call carries --no-auto-start', { skip }, () => {
