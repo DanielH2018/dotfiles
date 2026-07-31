@@ -263,6 +263,57 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   assert.doesNotMatch(body, /staleone/, 'session older than a day must be hidden');
 });
 
+// ---- CTRL+G: group by repo instead of by state --------------------------
+test('--groupby toggles the sidecar between state and repo, and back', { skip }, () => {
+  const { env, home } = makeEnv();
+  const gb = path.join(home, '.claude', 'agent-view-groupby');
+  run(env, ['--groupby']);
+  assert.strictEqual(fs.readFileSync(gb, 'utf8').trim(), 'repo', 'first press leaves state grouping');
+  run(env, ['--groupby']);
+  assert.strictEqual(fs.readFileSync(gb, 'utf8').trim(), 'state', 'second press returns');
+});
+
+test('body in repo mode groups each checkout together instead of by state', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-groupby'), 'repo\n');
+  stateFile(home, 'a1', { pane: '1', state: 'working',     cwd: '/r/alpha', session: 'a1', host: HOST, ts: now - 30 });
+  stateFile(home, 'a2', { pane: '2', state: 'needs-input', cwd: '/r/alpha', session: 'a2', host: HOST, ts: now - 10 });
+  stateFile(home, 'b1', { pane: '3', state: 'completed',   cwd: '/r/bravo', session: 'b1', host: HOST, ts: now - 20 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.doesNotMatch(body, /NEEDS INPUT/, 'state headers give way to repo headers');
+  const headers = body.split('\n').filter((l) => /●/.test(l)).map((l) => l.replace(/^\s*▎?\s*●\s*/, '').trim());
+  assert.deepStrictEqual(headers, ['alpha 2', 'bravo 1'], 'one header per repo, alphabetical, with its count');
+});
+
+test('body in repo mode puts the session that needs you at the top of its repo', { skip }, () => {
+  // Newest-first alone would bury a question under a session that merely printed something
+  // more recently — the ordering exists so a group is scannable, not chronological.
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-groupby'), 'repo\n');
+  stateFile(home, 'q', { pane: '1', state: 'needs-input', cwd: '/r/alpha', title: 'asking', session: 'q', host: HOST, ts: now - 300 });
+  stateFile(home, 'w', { pane: '2', state: 'working', cwd: '/r/alpha', title: 'busy', session: 'w', host: HOST, ts: now - 5 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.ok(body.indexOf('asking') < body.indexOf('busy'), 'the needs-input row leads its group');
+});
+
+test('body in repo mode keeps PINNED as its own group at the top', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-groupby'), 'repo\n');
+  stateFile(home, 'p1', { pane: '1', state: 'working', cwd: '/r/alpha', session: 'p1', host: HOST, ts: now - 10, locator: 'wezterm:1' });
+  stateFile(home, 'p2', { pane: '2', state: 'working', cwd: '/r/bravo', session: 'p2', host: HOST, ts: now - 20, locator: 'wezterm:2' });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-pins'), 'wezterm:2\n');
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /PINNED/);
+  assert.ok(body.indexOf('PINNED') < body.indexOf('alpha'), 'pins stay above the repo groups');
+  assert.doesNotMatch(body, /bravo 1/, 'a pinned row is not also counted under its repo');
+});
+
 test('body labels a sandbox row as "sandbox ·"', { skip }, () => {
   const { env, home, capture } = makeEnv();
   const now = nowSec();

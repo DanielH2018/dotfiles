@@ -33,6 +33,7 @@
 #                         --rename; delivered as a bracketed paste, so length is not capped.
 #   agentview --resume KEY  reopen a pane-less session (CTRL+V) in a new backend pane with
 #                         `claude --resume <sid>`, continuing the conversation in place.
+#   agentview --groupby   toggle the list between grouping by state and by repo (CTRL+G)
 #   agentview --skip DIR KEY [HOPS]  emit the fzf actions that carry the cursor off a group
 #                         header/spacer (armed on up/down — see the dispatch below)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
@@ -85,6 +86,10 @@ sessionsdir="$HOME/.claude/sessions"
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
 pinfile="$HOME/.claude/agent-view-pins"
+# Grouping sidecar: "state" (default) or "repo", toggled with CTRL+G. A file rather than an
+# env var because every fzf bind re-execs this script — the mode has to survive into the
+# reload child that actually renders the list.
+groupbyfile="$HOME/.claude/agent-view-groupby"
 # The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
 # FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
 # list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
@@ -222,7 +227,7 @@ JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|
 _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_SOURCE[0]}"
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
-  --card|--keys)           _avmods="" ;;
+  --card|--keys|--groupby) _avmods="" ;;
   --spawn)                 _avmods="spawn" ;;
   --resolve|--jump)        _avmods="common focus" ;;
   --remove|--pin|--rename|--send) _avmods="common focus actions" ;;
@@ -293,6 +298,13 @@ av_pane_tail() {  # $1=host $2=locator $3=lines -> echo the tail of that session
   printf '%s\n' "${keep[@]}"
 }
 
+if [ "$mode" = "--groupby" ]; then
+  _cur="state"; [ -f "$groupbyfile" ] && IFS= read -r _cur < "$groupbyfile" 2>/dev/null
+  case "$_cur" in repo) _nxt="state";; *) _nxt="repo";; esac
+  printf '%s\n' "$_nxt" > "$groupbyfile" 2>/dev/null
+  exit 0
+fi
+
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
   # pane|kind|locator) — fzf passes it as {1}, single-quoted/escaped, so it's safe as
@@ -362,6 +374,7 @@ if [ "$mode" = "--keys" ]; then
   printf '\n  %sManage%s\n' "$sec" "$z"
   printf '    %s⌃t%s       %ssend a message to the session%s\n' "$k" "$z" "$dsc" "$z"
   printf '    %s⌃v%s       %sresume a session whose pane is gone%s\n' "$k" "$z" "$dsc" "$z"
+  printf '    %s⌃g%s       %sgroup by state / by repo%s\n'  "$k" "$z" "$dsc" "$z"
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
   printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
   printf '    %s⌃x%s       %sremove from list%s\n'     "$k" "$z" "$dsc" "$z"
@@ -450,6 +463,9 @@ machines=${#_mh[@]}
 [ "$total" = 1 ]    && ts_s="" || ts_s="s"
 [ "$machines" = 1 ] && ms_s="" || ms_s="s"
 htext="${total} session${ts_s} · ${machines} machine${ms_s}"
+av_groupby
+# shellcheck disable=SC2154  # _gb is set by av_groupby (render module)
+[ "$_gb" = repo ] && htext="$htext · by repo"
 row_width
 printf -v hdrline '%*s' "$_rw" "$htext"
 
@@ -493,7 +509,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch · alt-# jump · ⌃t send · ⌃v resume · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer='  ↵ switch · alt-# jump · ⌃t send · ⌃v resume · ⌃r rename · ⌃p pin · ⌃g group · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
@@ -508,6 +524,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='load:transform('"'$SELF'"' --skip down {1})' \
   --bind='ctrl-t:execute('"'$SELF'"' --send {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-v:execute('"'$SELF'"' --resume {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-g:execute-silent('"'$SELF'"' --groupby)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
