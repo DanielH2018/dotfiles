@@ -1,0 +1,132 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Installs the `xone` driver so the Xbox Wireless Adapter
+# works, and caps USB enumeration retries on the hub port it sits behind.
+#
+# Two separate faults, one device:
+#
+# 1. It does not function. The adapter is built on a MediaTek MT7612U, so the in-kernel MediaTek
+#    *WiFi* driver claims it, fails MCU init and registers a dead network interface:
+#        mt76x2u 1-1.4.3:1.0: ASIC revision: 76320044
+#        mt76x2u 1-1.4.3:1.0: error: MCU resp evt:9 seq:1-0
+#        mt76x2u ... wlp2s0f0u1u4u3: renamed from wlan0
+#    xone blacklists mt76x2u and binds the dongle over Microsoft's Game Input Protocol instead.
+#
+# 2. It stalled boot. Behind a USB2 hub it failed to enumerate on every cold boot, and the
+#    kernel's four retry rounds blocked dracut-initqueue on `udevadm settle` for 68s before the
+#    root filesystem was even needed. The `early_stop` port attribute caps that at one attempt.
+#
+# The better fix for (2) is a motherboard port rather than a hub — this adapter is widely
+# reported as hub-averse. The quirk below is insurance, and only fires when the port it names
+# actually exists, so it is inert on any other machine.
+#
+# Source: github.com/dlundqvist/xone — the actively developed fork. Upstream medusalix/xone
+# declares itself in maintenance mode in its own README and points here.
+#
+# NOTE: xone blacklists `xpad` as well as mt76x2u. Modern Xbox One / Series pads are handled by
+# xone itself; wired Xbox 360-era pads need github.com/medusalix/xpad-noone as a replacement.
+#
+# Idempotent: skips once the module is built for the running kernel.
+# bump-to-reinstall: xbox-dongle v1
+set -u
+TAG=setup-xbox-dongle
+{{ includeTemplate "linux-install.sh" . }}
+
+XONE_SRC="$HOME/src/xone"
+XONE_REPO="https://github.com/dlundqvist/xone"
+
+# Xbox Wireless Adapter USB ids: 02e6 = model 1713, 02fe = model 1790.
+DONGLE_IDS='045e:02e6 045e:02fe'
+
+# Hub port that has to retry into a stall on this workstation. `sysfs port path -> early_stop`.
+# Machine-specific by nature; harmless where the path is absent.
+QUIRK_PORTS='/sys/bus/usb/devices/1-1.4:1.0/1-1.4-port3'
+
+# --- USB retry quirk ------------------------------------------------------------------------
+# Applied first and independently of xone: it costs nothing, needs no compiler, and is what
+# keeps a flaky adapter from delaying every boot even if the driver install below fails.
+#
+# The rule has to reach the initramfs, because the stall happens in the initrd — a rule that
+# only exists in the real root would run long after the damage.
+apply_usb_quirk() {
+  rule=/etc/udev/rules.d/99-usb-early-stop.rules
+  dracut_conf=/etc/dracut.conf.d/99-usb-early-stop.conf
+  found=0
+  for p in $QUIRK_PORTS; do
+    [ -e "$p/early_stop" ] && found=1
+  done
+  [ "$found" = 1 ] || return 0
+  [ -f "$rule" ] && return 0
+  have_sudo || { echo "$TAG: skipping USB quirk (needs sudo)" >&2; return 0; }
+
+  echo "$TAG: capping enumeration retries on the flaky hub port"
+  # Scoped to the known-bad port on purpose. Applying early_stop to every port would make
+  # marginal-but-recoverable devices fail outright instead of retrying into a good enumeration.
+  for p in $QUIRK_PORTS; do
+    [ -e "$p/early_stop" ] || continue
+    printf 'ACTION=="add|bind", KERNEL=="%s", ATTR{early_stop}="yes"\n' "$(basename "$p")" \
+      | sudo tee -a "$rule" >/dev/null
+    echo yes | sudo tee "$p/early_stop" >/dev/null 2>&1 || true
+  done
+  printf 'install_items+=" %s "\n' "$rule" | sudo tee "$dracut_conf" >/dev/null
+  sudo dracut --force --regenerate-all >/dev/null 2>&1 \
+    || echo "$TAG: initramfs regeneration failed; the quirk applies to the running system only" >&2
+}
+apply_usb_quirk
+
+# --- Gate: is the adapter this machine's problem? --------------------------------------------
+# Install only where the dongle has actually been seen. lsusb reflects what is plugged in right
+# now, so also treat an existing xone install as reason enough to keep it current.
+dongle_present=0
+if command -v lsusb >/dev/null 2>&1; then
+  for id in $DONGLE_IDS; do
+    lsusb -d "$id" >/dev/null 2>&1 && dongle_present=1
+  done
+fi
+[ -d "$XONE_SRC/.git" ] && dongle_present=1
+[ "$dongle_present" = 1 ] || exit 0
+
+if modinfo -k "$(uname -r)" xone-dongle >/dev/null 2>&1; then
+  exit 0
+fi
+if [ "$PM" = "" ]; then
+  echo "$TAG: no supported package manager; cannot install xone build prerequisites" >&2
+  exit 0
+fi
+if ! have_sudo; then
+  echo "$TAG: needs sudo to build xone — re-run 'chezmoi apply' where sudo can prompt" >&2
+  exit 1
+fi
+
+# --- Build ----------------------------------------------------------------------------------
+# bsdtar unpacks the Microsoft firmware cabinet; curl fetches it. `make install` pulls the
+# firmware itself, so no separate step is needed on a normal run.
+echo "$TAG: installing xone build prerequisites"
+if [ "$PM" = dnf ]; then
+  pkg_install dkms bsdtar curl git make gcc "kernel-devel-$(uname -r)" || true
+else
+  pkg_install dkms libarchive-tools curl git make gcc "linux-headers-$(uname -r)" || true
+fi
+
+if [ -d "$XONE_SRC/.git" ]; then
+  git -C "$XONE_SRC" pull --ff-only >/dev/null 2>&1 || true
+else
+  mkdir -p "$(dirname "$XONE_SRC")"
+  git clone --depth 1 "$XONE_REPO" "$XONE_SRC" >/dev/null 2>&1 \
+    || { echo "$TAG: could not clone $XONE_REPO" >&2; exit 1; }
+fi
+
+echo "$TAG: building xone (DKMS)"
+if ! ( cd "$XONE_SRC" && sudo make install >/dev/null 2>&1 ); then
+  echo "$TAG: xone failed to build against $(uname -r) — this is an out-of-tree module and a" >&2
+  echo "$TAG: kernel newer than the fork's last release will break it. Nothing was half-installed." >&2
+  exit 1
+fi
+
+if modinfo -k "$(uname -r)" xone-dongle >/dev/null 2>&1; then
+  echo "$TAG: xone installed. Plug the adapter into a motherboard port, not a hub."
+else
+  echo "$TAG: 'make install' reported success but xone-dongle is not present for $(uname -r)" >&2
+  exit 1
+fi
+{{ end -}}
