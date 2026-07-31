@@ -410,7 +410,7 @@ test('a $remove.permissions.<kind> value that is not an array is refused', () =>
 test('a valid settings object passes shape validation untouched', () => {
   const base = w('sh1.json', withFloor({
     model: 'opus',
-    fallbackModel: 'sonnet',
+    fallbackModel: ['sonnet'],
     availableModels: ['opus', 'sonnet'],
     hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [] }] },
     env: { FOO: 'bar', BAZ: 'qux' },
@@ -418,7 +418,7 @@ test('a valid settings object passes shape validation untouched', () => {
   }));
   const out = run(base);
   assert.strictEqual(out.model, 'opus');
-  assert.strictEqual(out.fallbackModel, 'sonnet');
+  assert.deepStrictEqual(out.fallbackModel, ['sonnet']);
   assert.deepStrictEqual(out.availableModels, ['opus', 'sonnet']);
   assert.deepStrictEqual(out.env, { FOO: 'bar', BAZ: 'qux' });
 });
@@ -476,12 +476,20 @@ test('env that is not an object is refused', () => {
   assert.match(r.stderr, /env must be an object/);
 });
 
-// A1-36: fallbackModel could end up an array instead of a string.
-test('fallbackModel as an array is refused', () => {
-  const base = w('sh9.json', withFloor({ fallbackModel: ['sonnet', 'haiku'] }));
+// A1-36 got this backwards and the correction cost a day of silently-inert settings:
+// Claude Code validates fallbackModel as an array, and a string makes it discard the whole
+// settings.json. A multi-element array is legitimate, so only the string is refused.
+test('fallbackModel as a string is refused', () => {
+  const base = w('sh9.json', withFloor({ fallbackModel: 'sonnet' }));
   const r = runFail(base);
   assert.strictEqual(r.status, 1);
-  assert.match(r.stderr, /fallbackModel must be a string/);
+  assert.match(r.stderr, /fallbackModel must be an array of strings/);
+});
+
+test('fallbackModel as a multi-element array passes', () => {
+  const base = w('sh9b.json', withFloor({ fallbackModel: ['sonnet', 'haiku'] }));
+  const out = run(base);
+  assert.deepStrictEqual(out.fallbackModel, ['sonnet', 'haiku']);
 });
 
 test('model as a non-string is refused', () => {

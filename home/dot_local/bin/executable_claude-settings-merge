@@ -245,10 +245,18 @@ const assertShapes = (merged) => {
       if (typeof env[k] !== 'string') return `env.${k} must be a string`;
     }
   }
-  for (const key of ['model', 'fallbackModel']) {
-    if (Object.prototype.hasOwnProperty.call(merged, key) && typeof merged[key] !== 'string') {
-      return `${key} must be a string`;
-    }
+  if (Object.prototype.hasOwnProperty.call(merged, 'model') && typeof merged.model !== 'string') {
+    return 'model must be a string';
+  }
+  // fallbackModel is an ARRAY of model names, not a string. Verified against Claude Code
+  // 2.1.220: with a string, `claude doctor` reports
+  //   settings.json > fallbackModel: Expected array, but received string
+  // and the harness then discards the ENTIRE settings.json — statusLine, hooks, permissions
+  // and enabledPlugins all silently stop applying, not just this key. This check previously
+  // asserted the opposite and was the thing enforcing the broken shape.
+  if (Object.prototype.hasOwnProperty.call(merged, 'fallbackModel')
+      && !isStringArray(merged.fallbackModel)) {
+    return 'fallbackModel must be an array of strings';
   }
   if (Object.prototype.hasOwnProperty.call(merged, 'availableModels') && !isStringArray(merged.availableModels)) {
     return 'availableModels must be an array of strings';

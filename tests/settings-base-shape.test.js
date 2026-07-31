@@ -2,10 +2,19 @@
 //
 // This exists because it did not. M20 slice 3 added post-merge shape validation to
 // claude-settings-merge, and the moment it landed every `chezmoi apply` on this machine
-// failed with `fallbackModel must be a string` — the template had been shipping a
-// one-element ARRAY (finding A1-36) for long enough that nothing noticed, because
-// nothing had ever checked. chezmoi stops on first error, so that one key blocked every
-// other dotfile in the apply, not just settings.json.
+// failed with `fallbackModel must be a string` — the template shipped a one-element ARRAY.
+//
+// The apply was unblocked (A1-36) by changing the template to a string. That was the wrong
+// half to change: the array had been right all along. Claude Code 2.1.220 validates
+// fallbackModel as an array, and on a type mismatch it rejects the ENTIRE settings.json,
+// so for the rest of that day statusLine, every hook, the permissions block and
+// enabledPlugins were all silently inert — the missing status line is what surfaced it.
+// Evidence: `claude doctor` reports "Expected array, but received string", and in a scratch
+// CLAUDE_CONFIG_DIR a SessionStart hook fires with the array but not with the string.
+//
+// So a green suite here is necessary but not sufficient: these tests prove the template
+// survives OUR generator, which is only as correct as our belief about the real harness.
+// When the two disagree, `claude doctor` is the authority, not this file.
 //
 // The suite was green throughout: every existing test fed the merge script hand-written
 // fixtures, and none fed it the actual template we ship. That is the gap this closes —
@@ -58,18 +67,20 @@ test('the rendered base template survives claude-settings-merge unchanged', { sk
   }
 });
 
-test('fallbackModel is a string, not a one-element array (A1-36)', { skip }, () => {
+test('fallbackModel is an array, not a string', { skip }, () => {
   const v = JSON.parse(render()).fallbackModel;
-  assert.strictEqual(typeof v, 'string',
-    `fallbackModel must be a string; an array is not the documented shape and is read as `
-    + `absent, so the fallback silently does nothing. Got: ${JSON.stringify(v)}`);
+  assert.ok(Array.isArray(v) && v.every((m) => typeof m === 'string'),
+    `fallbackModel must be an array of strings. Claude Code validates the key as an array `
+    + `and discards the ENTIRE settings.json on a type mismatch, so a string here silently `
+    + `disables statusLine, hooks, permissions and plugins too. Got: ${JSON.stringify(v)}`);
 });
 
 // A fallback the harness would refuse to switch to is no fallback at all.
-test('fallbackModel is itself one of availableModels', { skip }, () => {
+test('every fallbackModel entry is one of availableModels', { skip }, () => {
   const s = JSON.parse(render());
   if (!Array.isArray(s.availableModels)) return;   // key is optional
-  assert.ok(s.availableModels.includes(s.fallbackModel),
-    `fallbackModel ${JSON.stringify(s.fallbackModel)} is absent from availableModels, so `
+  const missing = [].concat(s.fallbackModel).filter((m) => !s.availableModels.includes(m));
+  assert.deepStrictEqual(missing, [],
+    `fallbackModel entries ${JSON.stringify(missing)} are absent from availableModels, so `
     + `enforceAvailableModels would reject the very model it falls back to`);
 });
