@@ -268,6 +268,80 @@ test('--rename drives a REMOTE tmux session over ssh', { skip }, () => {
   assert.match(log, /send-keys -t %9 Enter/, 'then submits with Enter');
 });
 
+// ---- --resume (CTRL+V: reopen a session whose pane is gone) --------------
+test('--resume reopens a pane-less session with claude --resume at its own cwd', { skip }, () => {
+  const { env, home, claudeLog } = makeEnv();
+  stateFile(home, 'sid-gone', {
+    session: 'sid-gone', host: HOST, cwd: '/r/lost', kind: 'host', locator: 'none:',
+    state: 'idle', ts: nowSec(),
+  });
+  const key = rowKey({ cwd: '/r/lost', state: 'idle', pane: '', locator: 'none:' });
+  run(env, ['--resume', key]);
+  const log = read(claudeLog);
+  assert.match(log, /--resume sid-gone/, 'resumes THAT session, not a fresh one');
+});
+
+test('--resume matches the record by host+cwd+kind, so a scrubbed locator still resolves', { skip }, () => {
+  // av_neutralize_locator blanks a locator the live registry could not confirm, so the row's
+  // none: and the file's recorded pane disagree by design. Matching on the locator would find
+  // nothing — exactly the row that most needs resuming.
+  const { env, home, claudeLog } = makeEnv();
+  stateFile(home, 'sid-scrub', {
+    session: 'sid-scrub', host: HOST, cwd: '/r/scrubbed', kind: 'host',
+    locator: 'tmux:/s:sc:%77', state: 'idle', ts: nowSec(),
+  });
+  const key = rowKey({ cwd: '/r/scrubbed', state: 'idle', pane: '', locator: 'none:' });
+  run(env, ['--resume', key]);
+  assert.match(read(claudeLog), /--resume sid-scrub/);
+});
+
+test('--resume inside tmux opens a new window instead of taking over the picker shell', { skip }, () => {
+  const { env, home, tmuxLog } = makeEnv();
+  stateFile(home, 'sid-tm', {
+    session: 'sid-tm', host: HOST, cwd: '/r/lost', kind: 'host', locator: 'none:',
+    state: 'idle', ts: nowSec(),
+  });
+  const key = rowKey({ cwd: '/r/lost', state: 'idle', pane: '', locator: 'none:' });
+  run(env, ['--resume', key], { extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' } });
+  assert.match(read(tmuxLog), /new-window .*claude --resume sid-tm/);
+});
+
+test('--resume refuses a row that still has a pane (that is what <enter> is for)', { skip }, () => {
+  const { env, home, claudeLog } = makeEnv();
+  stateFile(home, 'sid-live', {
+    session: 'sid-live', host: HOST, cwd: '/r/live', kind: 'host',
+    locator: 'tmux:/s:sc:%3', state: 'idle', ts: nowSec(),
+  });
+  const key = rowKey({ cwd: '/r/live', state: 'idle', pane: '%3', locator: 'tmux:/s:sc:%3' });
+  run(env, ['--resume', key]);
+  assert.strictEqual(read(claudeLog), '', 'a reachable session is never respawned');
+});
+
+test('--resume refuses a session on another machine', { skip }, () => {
+  const { env, home, claudeLog } = makeEnv();
+  stateFile(home, 'sid-rem', {
+    session: 'sid-rem', host: 'daniel-server', cwd: '/r/rem', kind: 'host', locator: 'none:',
+    state: 'idle', ts: nowSec(),
+  });
+  const key = rowKey({ host: 'daniel-server', cwd: '/r/rem', state: 'idle', pane: '', locator: 'none:' });
+  run(env, ['--resume', key]);
+  assert.strictEqual(read(claudeLog), '', 'resuming a remote session locally would run it on the wrong host');
+});
+
+test('--resume refuses a bg row: the daemon owns that session', { skip }, () => {
+  const { env, claudeLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/bg', state: 'idle', pane: '', kind: 'bg', locator: 'none:' });
+  run(env, ['--resume', key]);
+  assert.strictEqual(read(claudeLog), '');
+});
+
+test('--resume with no session record does nothing', { skip }, () => {
+  const { env, claudeLog } = makeEnv();
+  const key = rowKey({ cwd: '/r/unknown', state: 'idle', pane: '', locator: 'none:' });
+  run(env, ['--resume', key]);
+  assert.strictEqual(read(claudeLog), '', 'nothing to resume -> no guessed session id');
+});
+
 // ---- --remove (CTRL+X: REALLY delete — kill the process + claude rm) -----
 test('--remove kills the mapped pid, runs `claude rm`, deletes the row (after confirm)', { skip }, () => {
   const { env, home, killLog, claudeLog } = makeEnv();

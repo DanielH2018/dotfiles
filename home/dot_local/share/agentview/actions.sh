@@ -175,6 +175,69 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   return 0
 }
 
+av_row_sid() {  # $1=host $2=cwd $3=kind $4=locator -> echo the row's session id, or nothing.
+  # Same match predicate do_remove uses, so the two cannot disagree about which registry
+  # record a row names. Local rows only: the state dir of another machine is not ours to read.
+  local host="$1" cwd="$2" kind="$3" locator="$4" f m
+  # A none: locator names no pane, and — after av_neutralize_locator scrubs an unconfirmed one
+  # — it is not even what the FILE still records. Blank it so the match falls through to
+  # host+cwd+kind, which is the only identity a pane-less row and its record still share.
+  case "${locator%%:*}" in none|'') locator="" ;; esac
+  shopt -s nullglob
+  for f in "$statedir"/*.json; do
+    m=$(jq -r --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
+      --arg host "$host" --arg kind "$kind" "$JQ_NORM$JQ_ROWMATCH" "$f" 2>/dev/null)
+    if [ "$m" = "M" ]; then
+      jq -r '.session // .key // ""' "$f" 2>/dev/null
+      shopt -u nullglob; return 0
+    fi
+  done
+  shopt -u nullglob
+  return 1
+}
+
+do_resume() {  # $1 = KEY -> reopen a session whose pane is gone (CTRL+V), in a new pane of
+  # the active backend, with `claude --resume <sid>` so the conversation continues where it
+  # stopped rather than starting over.
+  #
+  # Scope, and why it is narrower than agent-manager's `v`: that manager owns every session it
+  # lists, in its own tmux namespace, so it can keep a dead row around and revive it. This
+  # picker adopts sessions it did not spawn, and DELIBERATELY prunes a row the moment its pid
+  # is gone (gather_local_rows) — a phantom row offering a jump nothing can serve was the bug
+  # that prune fixed. So the reachable case is not "dead", it is "alive but unreachable": a row
+  # whose locator is none: or was scrubbed by av_neutralize_locator because the registry could
+  # not confirm the pane. That is the session you would otherwise have to hunt for by hand.
+  local key="$1" host cwd state kind locator sid backend inner
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  locator=$(printf '%s' "$key" | cut -d"$US" -f8)
+  [ -n "$cwd" ] || return 0
+  backend="${locator%%:*}"
+  if [ -n "$locator" ] && [ -n "$backend" ] && [ "$backend" != "none" ]; then
+    printf '\n  agentview: this session still has a pane — press <enter> to switch to it.\n' >&2
+    sleep 1.5; return 0
+  fi
+  if [ "$host" != "$selfhost" ]; then
+    printf '\n  agentview: only a session on this machine can be resumed from here.\n' >&2
+    sleep 1.5; return 0
+  fi
+  if [ "$kind" != "host" ]; then
+    # A sandbox session lives in a container and a bg session is the daemon's to hand back;
+    # neither is resumed by running `claude --resume` in a fresh pane.
+    printf '\n  agentview: %s sessions are not resumed this way.\n' "$kind" >&2
+    sleep 1.5; return 0
+  fi
+  sid=$(av_row_sid "$host" "$cwd" "$kind" "$locator") || sid=""
+  if [ -z "$sid" ]; then
+    printf '\n  agentview: no session record for this row, so there is nothing to resume.\n' >&2
+    sleep 1.5; return 0
+  fi
+  command -v claude >/dev/null 2>&1 || { printf '\n  agentview: claude is not on PATH.\n' >&2; sleep 1.5; return 0; }
+  inner="$(printf 'cd %q 2>/dev/null || cd; claude --resume %q' "$cwd" "$sid")"
+  spawn_in_backend "$inner" "$(basename "${cwd//\\//}")" "$inner"
+}
+
 do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works for local AND
   # remote rows — the pin is keyed by identity, not by a local file. A header/spacer row
   # (empty KEY) is a no-op.
