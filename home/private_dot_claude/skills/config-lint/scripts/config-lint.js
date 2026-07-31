@@ -177,6 +177,25 @@ function checkBinaryDeps(deps, hasBinary) {
 // not this deterministic check.
 const PERMISSION_DEP_PATTERN = /^Bash\(([A-Za-z0-9_.-]+)\)$/;
 
+// Shell builtins are not on PATH and never will be, so a PATH lookup reports every one
+// of them as a missing dependency. `Bash(history)` did exactly that: it is a bash
+// builtin, always available, and the allow rule naming it is perfectly valid.
+//
+// Listed rather than probed. Asking the running shell (`type -t`) would make the lint's
+// output depend on which shell happens to be invoking it, and a builtin that IS also on
+// PATH (echo, printf, test, kill, pwd) is found by the normal check anyway — so the only
+// entries that matter here are the ones with no binary counterpart. Over-listing is
+// harmless; under-listing produces the false positive this exists to prevent.
+const SHELL_BUILTINS = new Set([
+    "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen",
+    "complete", "compopt", "continue", "declare", "dirs", "disown", "echo", "enable",
+    "eval", "exec", "exit", "export", "fc", "fg", "getopts", "hash", "help", "history",
+    "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd",
+    "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source",
+    "suspend", "test", "times", "trap", "type", "typeset", "ulimit", "umask", "unalias",
+    "unset", "wait",
+]);
+
 function extractPermissionDeps(allowList, file = "settings.json (permissions.allow)") {
     const seen = new Set();
     const deps = [];
@@ -185,6 +204,7 @@ function extractPermissionDeps(allowList, file = "settings.json (permissions.all
         const m = entry.match(PERMISSION_DEP_PATTERN);
         if (!m) continue;
         const tool = m[1];
+        if (SHELL_BUILTINS.has(tool)) continue;
         const key = `${file} ${tool}`;
         if (seen.has(key)) continue;
         seen.add(key);

@@ -126,8 +126,19 @@ test("extractPermissionDeps matches only bare, argument-less Bash(tool) entries"
     "Bash(pbcopy)",             // repeat: should dedupe
   ];
   const deps = m.extractPermissionDeps(allow, "settings.json (permissions.allow)");
-  assert.deepStrictEqual(deps.map(d => d.tool).sort(), ["history", "pbcopy", "pwd"]);
+  // pwd and history are shell builtins and are dropped — see the builtin test below.
+  assert.deepStrictEqual(deps.map(d => d.tool).sort(), ["pbcopy"]);
   assert.ok(deps.every(d => d.file === "settings.json (permissions.allow)"));
+});
+
+// The false positive this check shipped with. `Bash(history)` was reported as a missing
+// dependency because history is a bash builtin and so is never on PATH — but it is
+// always available, and the allow rule is valid. A lint that cries wolf on a correct
+// config is worse than one that misses a case.
+test("extractPermissionDeps skips shell builtins, which are never on PATH", () => {
+  const allow = ["Bash(history)", "Bash(cd)", "Bash(source)", "Bash(alias)", "Bash(pbcopy)"];
+  const deps = m.extractPermissionDeps(allow).map(d => d.tool);
+  assert.deepStrictEqual(deps, ["pbcopy"], `builtins leaked through: ${deps.join(", ")}`);
 });
 
 test("extractPermissionDeps tolerates a missing/empty allow list", () => {
