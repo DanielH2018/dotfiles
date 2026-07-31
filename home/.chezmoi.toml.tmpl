@@ -1,5 +1,8 @@
 {{- $work := promptBoolOnce . "work" "Is this a work machine" false -}}
 {{- $profile := promptStringOnce . "profile" "Machine profile (workstation/server/minimal)" "workstation" -}}
+{{- if not (has $profile (list "workstation" "server" "minimal")) -}}
+{{-   fail (printf "chezmoi: invalid profile %q (must be one of: workstation, server, minimal)" $profile) -}}
+{{- end -}}
 # Pin umask so target file modes are deterministic regardless of the login shell's
 # umask (this server runs umask 0007, which would otherwise make chezmoi want 0660).
 umask = 0o022
