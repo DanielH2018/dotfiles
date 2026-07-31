@@ -1,24 +1,40 @@
 {{- /*
 Ghostty runs on macOS and Linux, and the two platforms disagree about the modifier a terminal
-owns. On macOS cmd is the app modifier and cmd+c/cmd+v are the system clipboard. On Linux ctrl
-belongs to the shell (ctrl+c is SIGINT), so terminals conventionally take ctrl+shift — which is
-also what Ghostty itself binds by default there.
+owns. On macOS cmd is the app modifier and cmd+c/cmd+v are the system clipboard.
 
-  $mod   single-modifier actions      cmd        -> ctrl+shift
-  $mod2  the "shifted" variant        cmd+shift  -> ctrl+alt      (ctrl+shift+shift is not a
-                                                                   chord, so it needs its own)
-  $clip  clipboard + reload           cmd+shift  -> ctrl+shift    (the Linux convention, so it
-                                                                   deliberately does NOT follow
-                                                                   $mod2)
-On darwin all three keep their original values, so the rendered macOS config is byte-identical
-to what it was before Linux was added.
+On Linux ctrl belongs to the shell and to full-screen apps, and it is not merely "conventionally"
+taken — every chord these binds need is already load-bearing there:
+
+  ctrl+c  SIGINT              ctrl+d  EOF / exit
+  ctrl+w  zsh kill-word,      ctrl+[  *is* Escape — rebinding it breaks vim outright
+          vim window prefix   ctrl+t  fzf's file widget (see dot_zshrc.tmpl)
+
+super (the Meta/Win key) is the one modifier the terminal never claims, so it stands in for cmd
+and every Mac chord keeps its shape rather than being reshuffled onto ctrl+shift.
+
+  $mod   single-modifier actions      cmd        -> super
+  $mod2  the "shifted" variant        cmd+shift  -> super+shift
+  $clip  clipboard + reload           cmd+shift  -> ctrl+shift    (the Linux convention and
+                                                                   Ghostty's own default there,
+                                                                   so it deliberately does NOT
+                                                                   follow $mod2)
+
+super moves the collision from the shell to the desktop, which is the better trade because the
+desktop's bindings are configurable and the shell's are muscle memory. KWin claims a global
+shortcut before Ghostty ever sees the key, so the four it owns here — Meta+T (Edit Tiles),
+Meta+W (Overview), Meta+D (Peek at Desktop), Meta+V (Klipper) — are moved to Meta+Ctrl+* by
+.chezmoiscripts/os-linux/run_onchange_kde-free-ghostty-chords.sh.tmpl. Meta+Shift+{T,W,D,[,]}
+and Meta+{C,[,]} are unclaimed, so $mod2 and the clipboard binds need no such treatment.
+
+On darwin all three vars keep their original values and every addition below is non-darwin
+gated, so the rendered macOS config stays byte-identical to what it was before Linux was added.
 */ -}}
 {{- $mod := "cmd" -}}
 {{- $mod2 := "cmd+shift" -}}
 {{- $clip := "cmd+shift" -}}
 {{- if ne .chezmoi.os "darwin" -}}
-{{-   $mod = "ctrl+shift" -}}
-{{-   $mod2 = "ctrl+alt" -}}
+{{-   $mod = "super" -}}
+{{-   $mod2 = "super+shift" -}}
 {{-   $clip = "ctrl+shift" -}}
 {{- end -}}
 # =============================================================================
@@ -175,4 +191,16 @@ keybind = {{ $mod2 }}+]=resize_split:right,10
 # Terminal operations
 keybind = shift+enter=text:\n
 #keybind = global:{{ $mod2 }}+period=toggle_quick_terminal
+{{ if ne .chezmoi.os "darwin" }}
+# Linux extras
+# super+c/v mirror macOS's cmd+c/cmd+v, which Ghostty binds natively on darwin but not here.
+# The $clip (ctrl+shift) pair above is left in place, so both reflexes work.
+keybind = super+c=copy_to_clipboard
+keybind = super+v=paste_from_clipboard
+
+# ctrl+t is the one ctrl chord worth spending: its only occupant is fzf's file widget, which
+# dot_zshrc.tmpl moves to alt+t. The other ctrl chords these binds would want (d, w, [) are
+# terminal control codes with no escape hatch, so they stay on super alone.
+keybind = ctrl+t=new_tab
+{{ end }}
 

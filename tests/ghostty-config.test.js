@@ -51,7 +51,13 @@ test('the Linux render carries no macOS-only settings', { skip }, (t) => {
   const out = render();
   assert.doesNotMatch(out, /^macos-/m, 'macos-* keys are dead weight on Linux');
   assert.doesNotMatch(out, /display-p3/, 'display-p3 is a macOS-only colorspace');
-  assert.doesNotMatch(out, /cmd\+/, 'no cmd chord can be produced on Linux');
+  // Ghostty parses cmd as an alias for super, so a cmd chord left in the Linux render would
+  // quietly work rather than error — and hide the fact that the template failed to remap it.
+  // Scoped to the bound chords rather than the whole file, because the prose that explains the
+  // mapping has to name cmd to do so.
+  const chords = [...out.matchAll(/^keybind = ([^=]+)=/gm)].map((m) => m[1]);
+  assert.deepStrictEqual(chords.filter((c) => c.includes('cmd')), [],
+    'the Linux render must spell the modifier super, not cmd');
 });
 
 test('the Linux render uses conventional terminal chords', { skip }, (t) => {
@@ -62,7 +68,56 @@ test('the Linux render uses conventional terminal chords', { skip }, (t) => {
   assert.match(out, /keybind = ctrl\+shift\+c=copy_to_clipboard/);
   assert.match(out, /keybind = ctrl\+shift\+v=paste_from_clipboard/);
   assert.match(out, /keybind = ctrl\+shift\+r=reload_config/);
-  assert.match(out, /keybind = ctrl\+alt\+t=new_window/, 'the shifted variant needs its own modifier');
+  assert.match(out, /keybind = super\+shift\+t=new_window/, 'the shifted variant needs its own modifier');
+});
+
+test('the Linux render keeps every Mac chord on super', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  const out = render();
+  // super is the point of the Linux mapping: it is the one modifier neither the shell nor a
+  // full-screen app claims, so the Mac chords keep their shape instead of being reshuffled.
+  assert.match(out, /keybind = super\+t=new_tab/);
+  assert.match(out, /keybind = super\+w=close_surface/);
+  assert.match(out, /keybind = super\+d=new_split:right/);
+  assert.match(out, /keybind = super\+\[=goto_split:previous/);
+  assert.match(out, /keybind = super\+\]=goto_split:next/);
+  // cmd+c/cmd+v are Ghostty's own defaults on darwin but not on Linux, so the super pair has to
+  // be stated explicitly for the Mac reflex to work here.
+  assert.match(out, /keybind = super\+c=copy_to_clipboard/);
+  assert.match(out, /keybind = super\+v=paste_from_clipboard/);
+});
+
+test('no bind steals a control code the terminal needs', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  // The whole reason the mapping is super and not ctrl. Each of these is load-bearing, and
+  // Ghostty binding it means the byte never reaches the shell — ctrl+[ is the sharpest, since
+  // it *is* Escape and taking it breaks vim outright with no obvious culprit.
+  const forbidden = { d: 'EOF', w: 'zsh kill-word and vim window prefix', '[': 'Escape', ']': 'vim tag-jump', c: 'SIGINT' };
+  const bound = [...render().matchAll(/^keybind = ([^=]+)=/gm)].map((m) => m[1]);
+  for (const [key, why] of Object.entries(forbidden)) {
+    assert.ok(!bound.includes(`ctrl+${key}`), `ctrl+${key} is ${why}; it must not be bound`);
+  }
+  // ctrl+t is the deliberate exception: its only occupant is fzf's file widget, which
+  // dot_zshrc.tmpl moves to alt+t. If this bind goes, that rebind is dead weight.
+  assert.ok(bound.includes('ctrl+t'), 'ctrl+t=new_tab is the alias for Mac muscle memory');
+  const zshrc = fs.readFileSync(path.join(SOURCE, 'dot_zshrc.tmpl'), 'utf8');
+  assert.match(zshrc, /bindkey '\^\[t' fzf-file-widget/, 'fzf needs a home once ctrl+t is taken');
+});
+
+test('KDE gives up every super chord the config claims', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  // A KWin global shortcut is consumed before the focused window sees the key, so a super bind
+  // that collides with one is not a conflict Ghostty can win — it just silently does nothing.
+  const script = fs.readFileSync(path.join(SOURCE, '.chezmoiscripts', 'os-linux',
+    'run_onchange_kde-free-ghostty-chords.sh.tmpl'), 'utf8');
+  const freed = [...script.matchAll(/^\s*'[a-z]+\|([^|]+)\|Meta\+Ctrl\+/gm)].map((m) => m[1]);
+  for (const key of ['Edit Tiles', 'Overview', 'Show Desktop', 'show-on-mouse-pos']) {
+    assert.ok(freed.includes(key), `KWin's ${key} still owns a chord Ghostty needs`);
+  }
+  // The script must re-run when the keybinds change, or a newly added super chord would collide
+  // with a KDE default and nothing would prompt anyone to check.
+  assert.match(script, /include "dot_config\/ghostty\/config\.tmpl" \| sha256sum/,
+    'run_onchange must be keyed on the ghostty config it exists to support');
 });
 
 test('no two keybinds claim the same chord', { skip }, (t) => {

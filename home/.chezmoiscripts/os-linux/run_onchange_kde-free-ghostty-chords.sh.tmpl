@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Ghostty's Linux keybinds use super as the stand-in for macOS's cmd — see the header of
+# dot_config/ghostty/config.tmpl for why ctrl cannot take that job. KWin claims four of the
+# chords that leaves us wanting, and a global shortcut is swallowed before the focused window
+# ever sees the key, so super+t/w/d/v would just silently do nothing inside Ghostty. Move
+# KWin's four onto meta+ctrl+* and leave the plain chords to the terminal.
+#
+# Both writes are needed, and neither alone is sufficient:
+#   - kwriteconfig6 makes the change survive a fresh login, and reproduces it on a new machine.
+#   - setForeignShortcut makes it take effect now, and — the part that is easy to miss — stops
+#     the file edit being undone. KWin (Plasma 6 folded kglobalacceld into it) holds the
+#     shortcut table in memory and rewrites kglobalshortcutsrc on exit, so a file-only edit is
+#     reverted at logout by the running session.
+#
+# Idempotent, and a no-op wherever KDE isn't the desktop.
+#   ghostty keybinds: {{ include "dot_config/ghostty/config.tmpl" | sha256sum }}
+set -eu
+
+command -v kwriteconfig6 >/dev/null 2>&1 || exit 0
+case "${XDG_CURRENT_DESKTOP:-}" in *KDE*) ;; *) exit 0 ;; esac
+
+# Qt keycodes, because setForeignShortcut takes ints rather than the string form kwriteconfig6
+# writes: Qt::MetaModifier is 0x10000000 and Qt::ControlModifier 0x04000000, so meta+ctrl+<k>
+# is 0x14000000 | <ascii of k>. Spelled out rather than computed so the value in the D-Bus call
+# and the string in the config file can be eyeballed against each other.
+#   group | key | new chord | default chord | display name | component | friendly | keycode
+ROWS=(
+  'kwin|Edit Tiles|Meta+Ctrl+T|Meta+T|Toggle Tiles Editor|kwin|KWin|335544404'
+  'kwin|Overview|Meta+Ctrl+W|Meta+W|Toggle Overview|kwin|KWin|335544407'
+  'kwin|Show Desktop|Meta+Ctrl+D|Meta+D|Peek at Desktop|kwin|KWin|335544388'
+  'plasmashell|show-on-mouse-pos|Meta+Ctrl+V|Meta+V|Show Clipboard Items at Mouse Position|plasmashell|plasmashell|335544406'
+)
+
+for row in "${ROWS[@]}"; do
+  IFS='|' read -r group key chord default display component friendly keycode <<<"$row"
+
+  kwriteconfig6 --file kglobalshortcutsrc --group "$group" --key "$key" \
+    "${chord},${default},${display}"
+
+  # Non-fatal: on a fresh machine chezmoi may run this before a Plasma session exists, in which
+  # case the config write above is the whole job and the session picks it up at first login.
+  busctl --user call org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel \
+    setForeignShortcut asai 4 "$component" "$key" "$friendly" "$display" 1 "$keycode" \
+    >/dev/null 2>&1 || echo "kde-free-ghostty-chords: no live session for ${key}; applies at next login" >&2
+done
