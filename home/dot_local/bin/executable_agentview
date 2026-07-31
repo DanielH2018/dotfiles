@@ -90,6 +90,10 @@ pinfile="$HOME/.claude/agent-view-pins"
 # env var because every fzf bind re-execs this script — the mode has to survive into the
 # reload child that actually renders the list.
 groupbyfile="$HOME/.claude/agent-view-groupby"
+# Per-session resource sample (pin_id<TAB>cpu%<TAB>rssMB), written by the detached refresh job
+# and read by the card. A cache rather than a live measurement because a real CPU figure needs
+# an interval to measure over, and the preview cannot afford to sleep.
+usage_cache="$HOME/.agentview-usage-cache"
 # The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
 # FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
 # list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
@@ -342,6 +346,18 @@ if [ "$mode" = "--card" ]; then
   printf '  %s%-9s%s%s%s\n'     "$lab" "Path" "$dim" "$k_cwd" "$z"
   [ -n "$k_title" ] && printf '  %s%-9s%s%s%s\n' "$lab" "Task" "$val" "$k_title" "$z"
   [ -n "$age" ]     && printf '  %s%-9s%s%s%s\n' "$lab" "Updated" "$dim" "$age" "$z"
+  # Resource use for this session's whole process tree (shell + agent + children), from the
+  # cache the refresh job wrote. Stale by up to one refresh, which is the honest trade for a
+  # preview that never blocks; absent entirely until the first refresh lands.
+  if [ -s "$usage_cache" ]; then
+    compute_pin_id "$k_host" "$k_cwd" "$k_kind" "$k_loc"
+    while IFS=$'\t' read -r u_id u_cpu u_mem; do
+      if [ "$u_id" = "$_pid" ]; then
+        printf '  %s%-9s%s%s%% cpu · %s MB%s\n' "$lab" "Usage" "$dim" "$u_cpu" "$u_mem" "$z"
+        break
+      fi
+    done < "$usage_cache"
+  fi
   # Pane tail: what the session is actually showing right now — a permission ask, a question,
   # the last thing it printed. Sized to the preview fzf gives us (it exports both), so the
   # tail fills the panel on a tall window and does not overflow a short one.
@@ -413,6 +429,7 @@ if [ "$mode" = "--refresh-remote" ]; then
   reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
   sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
   refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
+  sample_usage        # per-session cpu/ram for the card, sampled here for the same reason
   _pf="${2:-}"
   if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
     for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
@@ -466,6 +483,17 @@ htext="${total} session${ts_s} · ${machines} machine${ms_s}"
 av_groupby
 # shellcheck disable=SC2154  # _gb is set by av_groupby (render module)
 [ "$_gb" = repo ] && htext="$htext · by repo"
+# Fleet total from the same cache the cards read: what every local agent is costing this
+# machine, together. Pure bash over a handful of lines — no fork on the render path.
+if [ -s "$usage_cache" ]; then
+  _tc=0; _tm=0
+  while IFS=$'\t' read -r _ _uc _um; do
+    case "$_uc" in ''|*[!0-9]*) _uc=0;; esac
+    case "$_um" in ''|*[!0-9]*) _um=0;; esac
+    _tc=$(( _tc + _uc )); _tm=$(( _tm + _um ))
+  done < "$usage_cache"
+  [ "$_tc" -gt 0 ] || [ "$_tm" -gt 0 ] && htext="$htext · ${_tc}% cpu · $(( _tm / 1024 )).$(( (_tm % 1024) * 10 / 1024 )) GB"
+fi
 row_width
 printf -v hdrline '%*s' "$_rw" "$htext"
 

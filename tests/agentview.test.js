@@ -58,6 +58,7 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
+  const fzfArgs = path.join(bin, 'fzf-args.txt'); fs.writeFileSync(fzfArgs, '');
   const paneTextFile = path.join(bin, 'pane-text.txt'); fs.writeFileSync(paneTextFile, '');
 
   // WEZ_TEXT_FILE seeds what `get-text` returns, i.e. what the pane is currently showing —
@@ -97,7 +98,10 @@ else
 fi
 exit 0
 `, { mode: 0o755 });
+  // Args as well as stdin: the list arrives on stdin, but the header/footer/binds are flags,
+  // so anything asserting on those needs the argv.
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
+printf '%s\\n' "$*" > "$FZF_ARGS"
 cat > "$FZF_CAPTURE"
 [ -n "\${FZF_PICK:-}" ] && printf '%s\\n' "$FZF_PICK"
 exit \${FZF_RC:-0}
@@ -117,12 +121,13 @@ exit 0
     ...seams.env,
     WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
+    FZF_ARGS: fzfArgs,
     WEZ_TEXT_FILE: paneTextFile, TMUX_TEXT_FILE: paneTextFile,
   };
   delete env.TMUX;          // never let the test host's tmux socket leak into detection
   delete env.WEZTERM_PANE;  // nor its WezTerm pane id — remote-attach branches on it
   delete env.WSL_DISTRO_NAME; // nor its WSL-ness, which would route the cli to the real wezterm.exe
-  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture, paneTextFile };
+  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture, paneTextFile, fzfArgs };
 }
 
 function stateFile(home, sid, obj) {
@@ -312,6 +317,66 @@ test('body in repo mode keeps PINNED as its own group at the top', { skip }, () 
   assert.match(body, /PINNED/);
   assert.ok(body.indexOf('PINNED') < body.indexOf('alpha'), 'pins stay above the repo groups');
   assert.doesNotMatch(body, /bravo 1/, 'a pinned row is not also counted under its repo');
+});
+
+// ---- per-session resource usage (sampled by the refresh job, shown on the card) ----
+const procSkip = skip || (fs.existsSync('/proc/self/stat') ? false : 'no procfs');
+test('--refresh-remote samples a live session\'s process tree into the usage cache', { skip: procSkip }, () => {
+  const { env, home } = makeEnv();
+  const child = require('node:child_process').spawn('sleep', ['5'], { stdio: 'ignore' });
+  try {
+    stateFile(home, 'u1', {
+      session: 'u1', host: HOST, cwd: '/r/measured', kind: 'host', locator: 'wezterm:42',
+      state: 'working', ts: nowSec(), pid: String(child.pid),
+    });
+    run(env, ['--refresh-remote']);
+    const cache = fs.readFileSync(path.join(home, '.agentview-usage-cache'), 'utf8');
+    const line = cache.split('\n').find((l) => l.startsWith('wezterm:42'));
+    assert.ok(line, `expected a usage line keyed by the row identity, got:\n${cache}`);
+    const [, cpu, mem] = line.split('\t');
+    assert.match(cpu, /^\d+$/, 'cpu is a whole percent');
+    assert.ok(Number(mem) >= 0, 'rss in MB');
+  } finally { child.kill(); }
+});
+
+test('usage for an AMBIGUOUS row identity is not attributed to either session', { skip: procSkip }, () => {
+  // Background sessions started without a real pane all record the same locator, so two live
+  // sessions can share one identity. Keyed lookup would hand a row its neighbour's numbers.
+  const { env, home } = makeEnv();
+  const cp = require('node:child_process');
+  const a = cp.spawn('sleep', ['5'], { stdio: 'ignore' });
+  const b = cp.spawn('sleep', ['5'], { stdio: 'ignore' });
+  try {
+    for (const [sid, pid] of [['ua', a.pid], ['ub', b.pid]]) {
+      stateFile(home, sid, {
+        session: sid, host: HOST, cwd: '/r/same', kind: 'host', locator: 'wezterm:0',
+        state: 'working', ts: nowSec(), pid: String(pid),
+      });
+    }
+    run(env, ['--refresh-remote']);
+    const cache = fs.readFileSync(path.join(home, '.agentview-usage-cache'), 'utf8').trim();
+    const lines = cache.split('\n').filter(Boolean);
+    assert.strictEqual(lines.length, 2, 'both sessions are still measured for the fleet total');
+    assert.ok(lines.every((l) => l.startsWith('?\t')), `neither is claimed by a row identity:\n${cache}`);
+  } finally { a.kill(); b.kill(); }
+});
+
+test('--card shows usage for a row the cache can identify, and omits it otherwise', { skip }, () => {
+  const { env, home } = makeEnv();
+  fs.writeFileSync(path.join(home, '.agentview-usage-cache'), 'wezterm:42\t7\t512\n?\t3\t256\n');
+  const known = cardKey([HOST, '/r/measured', 'working', String(nowSec()), '', '42', 'host', 'wezterm:42']);
+  assert.match(stripAnsi(run(env, ['--card', known]).out), /Usage\s+7% cpu · 512 MB/);
+  const unknown = cardKey([HOST, '/r/other', 'working', String(nowSec()), '', '9', 'host', 'wezterm:9']);
+  assert.doesNotMatch(stripAnsi(run(env, ['--card', unknown]).out), /Usage/);
+});
+
+test('the header carries the fleet total, including sessions no row can claim', { skip }, () => {
+  const { env, home, fzfArgs } = makeEnv();
+  fs.writeFileSync(path.join(home, '.agentview-usage-cache'), 'wezterm:42\t7\t1024\n?\t3\t1024\n');
+  stateFile(home, 'h1', { pane: '1', state: 'working', cwd: '/r/alpha', session: 'h1', host: HOST, ts: nowSec() });
+  run(env, []);
+  const args = fs.readFileSync(fzfArgs, 'utf8');
+  assert.match(args, /10% cpu · 2\.0 GB/, 'cpu and memory are summed across every sampled session');
 });
 
 test('body labels a sandbox row as "sandbox ·"', { skip }, () => {
