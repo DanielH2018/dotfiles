@@ -680,9 +680,12 @@
        Note this file is fully derived — modify_settings.json.sh.tmpl ignores stdin — so a
        runtime `/effort X` persists into ~/.claude/settings.json only until the next
        `chezmoi apply`. Reintroduce the key only to pin every turn on purpose. */}}
-  "fallbackModel": [
-    "claude-sonnet-5"
-  ],
+  {{/* A1-36: a STRING, not a one-element array. fallbackModel names the single model to
+       fall back to; an array is not the documented shape, and a key whose type the harness
+       does not expect is read as absent — so the fallback silently did nothing. It was
+       deployed as an array long enough that the generator's new shape check (M20 slice 3)
+       refused every apply the moment it landed, which is how this was finally caught. */}}
+  "fallbackModel": "claude-sonnet-5",
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
        is the UNION of every model the setup actually requests: claude-opus-5 (main,
        native 1M), "opus" alias (eval judge +

@@ -112,3 +112,66 @@ test("checkBinaryDeps reports info findings only for tools the injected checker 
   assert.strictEqual(findings[0].area, "binary-deps");
   assert.match(findings[0].msg, /definitely-not-a-real-binary-xyz/);
 });
+
+// A1-43: settings.json `Bash(tool)` permission entries as a binary-dep declaration shape.
+test("extractPermissionDeps matches only bare, argument-less Bash(tool) entries", () => {
+  const allow = [
+    "Bash(pbcopy)",
+    "Bash(pwd)",
+    "Bash(history)",
+    "Bash(md5:*)",              // wildcard subcommand shape — deliberately excluded
+    "Bash(sdk list:*)",         // multi-word + wildcard — deliberately excluded
+    "Bash(cargo build:*)",      // portable toolchain grant — deliberately excluded
+    "Read(**)",                 // not a Bash entry at all
+    "Bash(pbcopy)",             // repeat: should dedupe
+  ];
+  const deps = m.extractPermissionDeps(allow, "settings.json (permissions.allow)");
+  // pwd and history are shell builtins and are dropped — see the builtin test below.
+  assert.deepStrictEqual(deps.map(d => d.tool).sort(), ["pbcopy"]);
+  assert.ok(deps.every(d => d.file === "settings.json (permissions.allow)"));
+});
+
+// The false positive this check shipped with. `Bash(history)` was reported as a missing
+// dependency because history is a bash builtin and so is never on PATH — but it is
+// always available, and the allow rule is valid. A lint that cries wolf on a correct
+// config is worse than one that misses a case.
+test("extractPermissionDeps skips shell builtins, which are never on PATH", () => {
+  const allow = ["Bash(history)", "Bash(cd)", "Bash(source)", "Bash(alias)", "Bash(pbcopy)"];
+  const deps = m.extractPermissionDeps(allow).map(d => d.tool);
+  assert.deepStrictEqual(deps, ["pbcopy"], `builtins leaked through: ${deps.join(", ")}`);
+});
+
+test("extractPermissionDeps tolerates a missing/empty allow list", () => {
+  assert.deepStrictEqual(m.extractPermissionDeps(undefined), []);
+  assert.deepStrictEqual(m.extractPermissionDeps([]), []);
+});
+
+// A14-31: ble.sh's `-f "$HOME/.local/share/..."` guard before `source` as a binary-dep shape.
+test("extractPathDeps matches -f \"$HOME/.local/share/...\" guards, deduped per file+path", () => {
+  const text = [
+    'if [[ $OSTYPE != msys* && -f "$HOME/.local/share/blesh/ble.sh" ]]; then',
+    '  source "$HOME/.local/share/blesh/ble.sh" --noattach',
+    'fi',
+  ].join("\n");
+  const deps = m.extractPathDeps([{ path: "dot_bashrc", text }]);
+  assert.deepStrictEqual(deps, [{ file: "dot_bashrc", tool: "$HOME/.local/share/blesh/ble.sh" }]);
+});
+
+test("extractPathDeps ignores -f guards outside .local/share (e.g. .config overrides)", () => {
+  const text = '[ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"';
+  assert.deepStrictEqual(m.extractPathDeps([{ path: "hooks/watch-paths.sh", text }]), []);
+});
+
+test("checkPathDeps expands $HOME and reports info findings only for paths the injected checker says are missing", () => {
+  const deps = [
+    { file: "dot_bashrc", tool: "$HOME/.local/share/blesh/ble.sh" },
+    { file: "dot_bashrc", tool: "$HOME/.local/share/present-tool/x" },
+  ];
+  const hasPath = p => p === "/home/d/.local/share/present-tool/x";
+  const findings = m.checkPathDeps(deps, "/home/d", hasPath);
+  assert.strictEqual(findings.length, 1);
+  assert.strictEqual(findings[0].sev, "info");
+  assert.strictEqual(findings[0].area, "binary-deps");
+  assert.match(findings[0].msg, /blesh\/ble\.sh/);
+  assert.match(findings[0].msg, /not found on disk/);
+});

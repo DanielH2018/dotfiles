@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "228dfe4e8944ba9d208a5891aebf817d803197b449f40f67abdb5fc667aede4e",
-      "landed": "2026-07-30T23:14:47.491Z"
+      "hash": "b2f1ffeb351e94709b25aa13382571819985b032d1080f345ba52405eb54cb71",
+      "landed": "2026-07-31T12:56:13.700Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
@@ -273,13 +273,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.js",
-      "hash": "c71d245b984948a4c732615ed0210ffe27583714613677983d5faeeaad220d55",
-      "landed": "2026-07-30T16:20:40.986Z"
+      "hash": "31dcdefd174f2730bd66a14169bef5c3796d57f154299c02c6cdc54ba131ed11",
+      "landed": "2026-07-31T13:04:18.264Z"
     },
     {
       "path": "home/private_dot_claude/skills/config-lint/scripts/config-lint.test.js",
-      "hash": "001cc008a5def48c73c76708f0b9a9ed73362da67bb298249e727b3be97b741c",
-      "landed": "2026-07-30T16:20:40.986Z"
+      "hash": "0474a9084dcc512dbe6f87bcd9216f2c56f0fb396274fbc1a62a63afe486cb22",
+      "landed": "2026-07-31T13:04:18.264Z"
     },
     {
       "path": "home/private_dot_claude/skills/deep-understanding/SKILL.md",
