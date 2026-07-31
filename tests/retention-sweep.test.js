@@ -34,9 +34,28 @@ const dirs = [];
 function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
 process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
+// Every fixture manifest is written into its own scratch root, so that root is also the
+// right sandbox for everything else the sweeper touches.
+//
+// This isolates HOME as well as the individual seams, and the belt-and-braces is not
+// theoretical: eight --apply tests here passed RETENTION_MANIFEST but not
+// RETENTION_STATE_DIR, so the run marker was written to the developer's REAL
+// ~/.claude/.retention-sweep-last-run, and the real $XDG_RUNTIME_DIR lock was taken for
+// the duration. The second one is the dangerous half — the suite and the hourly timer
+// contend for the same lock, so running tests could make a scheduled sweep skip itself.
+// Overriding HOME means a seam added later that this helper does not know about still
+// cannot reach outside the scratch directory.
 function runSweep(manifestPath, args = [], extraEnv = {}) {
+  const home = path.dirname(manifestPath);
   return execFileSync('bash', [SWEEP, ...args], {
-    env: { ...process.env, RETENTION_MANIFEST: manifestPath, ...extraEnv },
+    env: {
+      ...process.env,
+      HOME: home,
+      RETENTION_MANIFEST: manifestPath,
+      RETENTION_STATE_DIR: home,
+      RETENTION_LOCK: path.join(home, 'sweep.lock'),
+      ...extraEnv,
+    },
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -474,6 +493,26 @@ test('a second sweep exits cleanly while another holds the lock', { skip: skip |
   } finally {
     try { process.kill(-holder.pid, 9); } catch { /* already gone */ }
   }
+});
+
+// The suite runs on the same machine the sweeper maintains, and an hourly timer runs the
+// real thing. A test that reaches the real ~/.claude does not just make a mess: it
+// contends for the sweep lock, so it can silently cause a scheduled sweep to skip.
+test('running the suite never touches the real home or the real lock', { skip }, () => {
+  const realMarker = path.join(os.homedir(), '.claude', '.retention-sweep-last-run');
+  const realLock = path.join(process.env.XDG_RUNTIME_DIR || '/tmp', 'retention-sweep.lock');
+  const stamp = (p) => (fs.existsSync(p) ? fs.statSync(p).mtimeMs : null);
+  const before = { marker: stamp(realMarker), lock: stamp(realLock) };
+
+  const root = scratch('retention-isolation-');
+  aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
+  const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
+  runSweep(m, ['--apply']);
+
+  assert.strictEqual(stamp(realMarker), before.marker, 'a test wrote the real run marker');
+  assert.strictEqual(stamp(realLock), before.lock, 'a test took the real sweep lock');
+  assert.ok(fs.existsSync(path.join(root, '.retention-sweep-last-run')),
+    'the marker should have landed inside the scratch home instead');
 });
 
 test('an unknown argument is refused rather than ignored', { skip }, () => {
