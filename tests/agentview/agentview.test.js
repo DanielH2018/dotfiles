@@ -59,10 +59,14 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const capture = path.join(bin, 'fzf-capture.txt'); fs.writeFileSync(capture, '');
+  const paneTextFile = path.join(bin, 'pane-text.txt'); fs.writeFileSync(paneTextFile, '');
 
+  // WEZ_TEXT_FILE seeds what `get-text` returns, i.e. what the pane is currently showing —
+  // the card's pane tail reads it. Absent file = a pane that captures as nothing.
   fs.writeFileSync(path.join(bin, 'wezterm'), `#!/bin/bash
 case "$*" in
   *list*) cat "$WEZ_LIST_FILE" 2>/dev/null ;;
+  *get-text*) cat "\${WEZ_TEXT_FILE:-/dev/null}" 2>/dev/null ;;
   *activate-pane*) prev=""; for a in "$@"; do [ "$prev" = "--pane-id" ] && echo "$a" >> "$WEZ_ACTIVATE_LOG"; prev="$a"; done ;;
   *spawn*) echo "$*" >> "$WEZ_SPAWN_LOG" ;;
 esac
@@ -93,6 +97,7 @@ case "$1" in
                  printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
   respawn-pane)  exit 0 ;;
 esac
+case " $* " in *" capture-pane "*) cat "\${TMUX_TEXT_FILE:-/dev/null}" 2>/dev/null ;; esac
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
@@ -127,11 +132,12 @@ exit 0
     ...seams.env,
     WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,
+    WEZ_TEXT_FILE: paneTextFile, TMUX_TEXT_FILE: paneTextFile,
   };
   delete env.TMUX;          // never let the test host's tmux socket leak into detection
   delete env.WEZTERM_PANE;  // nor its WezTerm pane id — remote-attach branches on it
   delete env.WSL_DISTRO_NAME; // nor its WSL-ness, which would route the cli to the real wezterm.exe
-  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture };
+  return { bin, home, env, listFile, remoteFile, activateLog, tmuxLog, spawnLog, sshLog, capture, paneTextFile };
 }
 
 function stateFile(home, sid, obj) {
@@ -159,6 +165,66 @@ test('--card renders a local session card with PC machine label', { skip }, () =
   assert.match(txt, /Folder\s+My_Vault/);
   assert.match(txt, /Task\s+fixing the parser/);
   assert.match(txt, /Updated\s+5m ago/);
+});
+
+// ---- --card pane tail (what the session is actually showing) ------------
+test('--card shows the tail of the pane, so a blocked agent\'s question is readable in the list', { skip }, () => {
+  const { env, paneTextFile } = makeEnv();
+  fs.writeFileSync(paneTextFile, [
+    'Reading src/parser.ts',
+    'Do you want me to rewrite the tokenizer? (y/n)',
+    '', '', '',            // captured panes are mostly trailing blank rows
+  ].join('\n'));
+  const blob = cardKey([HOST, '/r/p', 'needs-input', String(nowSec()), 'parser', '7', 'host', 'wezterm:7']);
+  const txt = stripAnsi(run(env, ['--card', blob], { FZF_PREVIEW_COLUMNS: '80' }).out);
+  assert.match(txt, /Pane/, 'the card grew a pane section');
+  assert.match(txt, /Do you want me to rewrite the tokenizer\? \(y\/n\)/, 'the question itself reaches the card');
+  assert.doesNotMatch(txt, /Pane\n\s*\n\s*\n/, 'trailing blank rows are trimmed off the tail');
+});
+
+test('--card truncates a pane line to the preview width instead of wrapping it', { skip }, () => {
+  const { env, paneTextFile } = makeEnv();
+  fs.writeFileSync(paneTextFile, `${'y'.repeat(200)}\n`);
+  const blob = cardKey([HOST, '/r/p', 'working', String(nowSec()), '', '7', 'host', 'wezterm:7']);
+  const txt = stripAnsi(run(env, ['--card', blob], { FZF_PREVIEW_COLUMNS: '40' }).out);
+  const line = txt.split('\n').find((l) => l.includes('yyy'));
+  assert.ok(line.length <= 40, `pane line must fit the preview, got ${line.length}`);
+  assert.match(line, /…$/, 'and says it was cut');
+});
+
+test('--card takes a tmux row\'s tail from capture-pane, not from wezterm', { skip }, () => {
+  const { env, paneTextFile, tmuxLog } = makeEnv();
+  fs.writeFileSync(paneTextFile, 'waiting on your answer\n');
+  const blob = cardKey([HOST, '/r/p', 'needs-input', String(nowSec()), '', '%3', 'host', 'tmux:/s:sc:%3']);
+  const txt = stripAnsi(run(env, ['--card', blob]).out);
+  assert.match(txt, /waiting on your answer/);
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /capture-pane -p -t %3/, 'plain capture: no -e, so the pane\'s own escapes stay out');
+});
+
+test('--card skips the tail for a REMOTE row: a preview must not do network I/O', { skip }, () => {
+  const { env, paneTextFile, sshLog } = makeEnv();
+  fs.writeFileSync(paneTextFile, 'remote pane content\n');
+  const blob = cardKey(['daniel-server', '/r/p', 'working', String(nowSec()), '', '%3', 'host', 'tmux:/s:sc:%3']);
+  const txt = stripAnsi(run(env, ['--card', blob]).out);
+  assert.doesNotMatch(txt, /remote pane content/, 'no tail for a session on another machine');
+  assert.strictEqual(fs.readFileSync(sshLog, 'utf8'), '', 'and no ssh was attempted');
+});
+
+test('--card tail is suppressed by AGENTVIEW_NO_TAIL', { skip }, () => {
+  const { env, paneTextFile } = makeEnv();
+  fs.writeFileSync(paneTextFile, 'should not appear\n');
+  const blob = cardKey([HOST, '/r/p', 'working', String(nowSec()), '', '7', 'host', 'wezterm:7']);
+  const txt = stripAnsi(run(env, ['--card', blob], { AGENTVIEW_NO_TAIL: '1' }).out);
+  assert.doesNotMatch(txt, /should not appear/);
+  assert.doesNotMatch(txt, /Pane/);
+});
+
+test('--card has no pane section for a session with no addressable pane', { skip }, () => {
+  const { env, paneTextFile } = makeEnv();
+  fs.writeFileSync(paneTextFile, 'stale text from some other pane\n');
+  const blob = cardKey([HOST, '/r/p', 'idle', String(nowSec()), '', '', 'host', 'none:']);
+  const txt = stripAnsi(run(env, ['--card', blob]).out);
+  assert.doesNotMatch(txt, /stale text/, 'a none: locator names no pane, so nothing is captured');
 });
 
 test('--card labels a daniel-server session as Homelab', { skip }, () => {
