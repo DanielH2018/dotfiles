@@ -170,10 +170,15 @@ const SUDO_STUB = [
     return { scriptFile, env, logFile, zshPath };
   }
 
-  test('set-default-shell.sh.tmpl: zsh not installed -> exits 0, skips, no chsh/sudo calls', { skip }, () => {
+  // Deferring rather than skipping is the whole point: run_once records success against the
+  // script's contents, so an exit 0 with zsh absent burns the marker and the login shell is
+  // never set on that machine. install-cli-tools defers whenever sudo cannot prompt, which puts
+  // an ordinary first apply here before zsh exists -- that is how a freshly provisioned Fedora
+  // box ended up stuck on bash with no error to show for it.
+  test('set-default-shell.sh.tmpl: zsh not installed -> defers with exit 1, no chsh/sudo calls', { skip }, () => {
     const { scriptFile, env, logFile } = sdsSandbox({ zshInstalled: false });
     const { status } = runSh(scriptFile, env);
-    assert.strictEqual(status, 0);
+    assert.strictEqual(status, 1, 'must defer; exit 0 would record run_once done forever');
     assert.strictEqual(readLog(logFile), '');
   });
 

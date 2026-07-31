@@ -10,13 +10,25 @@
 # `chezmoi apply` (one password prompt). A headless/CI apply defers with exit 1 so run_once
 # retries on the next interactive apply (same pattern as configure-wsl's sudo guard). Once the
 # login shell is already zsh it exits 0 and is recorded done. Bump the marker to re-run.
-# zsh-default-bump: v1
+# zsh-default-bump: v2
 set -u
 
 zsh_path="$(command -v zsh 2>/dev/null || true)"
 if [ -z "$zsh_path" ]; then
-  echo "set-default-shell: zsh not installed yet; skipping (install-cli-tools provisions it first)" >&2
+{{- if eq .profile "minimal" }}
+  # profile=minimal opts out of install-cli-tools, so nothing here will ever provision zsh and
+  # deferring would fail this script on every apply forever. Record it done instead.
+  echo "set-default-shell: zsh not installed and profile=minimal provisions none; skipping" >&2
   exit 0
+{{- else }}
+  # Defer, do NOT skip. run_once records success against this script's contents, so an exit 0
+  # here burns the marker permanently and the login shell is never set on this machine. That is
+  # reachable on a perfectly ordinary first apply: install-cli-tools provisions zsh but defers
+  # whenever sudo cannot prompt, so a headless or sudo-less first run reaches this before zsh
+  # exists. Exit non-zero so the next apply retries, exactly as the no-tty branch below does.
+  echo "set-default-shell: zsh not installed yet — deferring (install-cli-tools provisions it first)" >&2
+  exit 1
+{{- end }}
 fi
 
 # Authoritative current login shell — getent on Linux/WSL; dscl on macOS (no getent there).
