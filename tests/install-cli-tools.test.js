@@ -26,8 +26,15 @@ const dirs = [];
 // `chezmoi execute-template` opens chezmoi's bolt-backed state, so a file that shelled out
 // eleven times contended with the rest of the suite running in parallel -- this test flaked
 // twice in roughly eight full-suite runs while passing every time in isolation.
+//
+// --source pins that render to THIS checkout. Without it chezmoi resolves .chezmoidata and
+// .chezmoitemplates from ~/.local/share/chezmoi, so a branch or worktree would silently be tested
+// against main's data — and the shared linux-install.sh this script now includes would resolve to
+// whatever main happens to carry, or not at all.
+const SOURCE = path.join(__dirname, '..', 'home');
 let rendered;
-const render = () => (rendered ??= execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' }));
+const render = () =>
+  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: body, encoding: 'utf8' }));
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 

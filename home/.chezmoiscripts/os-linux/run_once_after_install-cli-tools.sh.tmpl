@@ -9,41 +9,13 @@
 # blocking dotfile deployment. Bump the marker to force a refresh.
 # tools-bump: v12
 set -u
+TAG=install-cli-tools
 
-BIN_DIR="$HOME/.local/bin"
-VER_DIR="$BIN_DIR/.versions"   # release tag last installed per tool, so a re-apply upgrades a
-                               # stale binary in place instead of skipping it (install-once).
-mkdir -p "$BIN_DIR" "$VER_DIR"
-
-# 0. Package-manager abstraction. Everything below speaks pkg_* instead of apt/dnf directly, so
-#    the two distro families share one code path and one set of markers. An unrecognised distro
-#    (Arch, Alpine, ...) sets PM="" — it warns once, skips the package phases, and still installs
-#    every release binary, rather than failing the apply forever over packages it has no way to
-#    install.
-if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
-  PM=apt
-elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
-  PM=dnf
-else
-  PM=""
-  echo "install-cli-tools: no supported package manager (want apt or dnf); installing release binaries only" >&2
-fi
-
-pkg_installed() { # $1=package -> 0 if present. Unknown PM: claim satisfied (nothing to check).
-  case "$PM" in
-    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
-    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
-    *)   return 0 ;;
-  esac
-}
-
-pkg_install() { # $@=packages. dnf refreshes its own metadata, so it needs no `update` step.
-  case "$PM" in
-    apt) sudo apt-get update -qq && sudo apt-get install -y "$@" ;;
-    dnf) sudo dnf install -y "$@" ;;
-    *)   return 1 ;;
-  esac
-}
+# The package-manager abstraction (PM/pkg_installed/pkg_install), the sudo guard, the arch
+# naming, and the GitHub-release installers live in the shared module below — the same one the
+# app installer uses, so both speak one vocabulary and a fix lands in both. Everything from here
+# on is CLI-toolchain-specific.
+{{ includeTemplate "linux-install.sh" . }}
 
 # 1. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
 #    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
@@ -171,51 +143,11 @@ for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4" "luac:luac5.4"; do
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
 done
 
-# 4. Release binaries for the package gaps (no sudo). Arch-aware: amd64 + arm64.
-latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (no API/ratelimit)
-  curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
-    | sed 's#.*/tag/##; s#[[:space:]]*$##'
-}
-recorded_tag() { cat "$VER_DIR/$1" 2>/dev/null; } # tag last installed for $1 ("" if never)
-# Version-aware release install. $1=binname  $2=owner/repo  $3=asset-URL template, where {tag} is
-# the full tag (e.g. v1.1.0) and {ver} is the tag without a leading v. Resolves the latest tag and
-# only downloads when the binary is missing or the recorded tag differs — so `chezmoi apply`
-# upgrades a stale tool in place instead of skipping anything already on PATH. We record the tag we
-# installed rather than parsing `--version`, which is unreliable per-tool (eza prints multiple
-# lines, curlie reports curl's version).
-install_release() {
-  bin="$1"; repo="$2"; tmpl="$3"
-  tag="$(latest_tag "$repo")"
-  if [ -z "$tag" ]; then echo "install-cli-tools: could not resolve latest tag for $repo" >&2; return 0; fi
-  [ -x "$BIN_DIR/$bin" ] && [ "$(recorded_tag "$bin")" = "$tag" ] && return 0
-  ver="${tag#v}"
-  url="$(printf '%s' "$tmpl" | sed "s#{tag}#$tag#g; s#{ver}#$ver#g")"
-  old="$(recorded_tag "$bin")"
-  tmp="$(mktemp -d)"
-  if curl -fsSL "$url" -o "$tmp/a.tgz" 2>/dev/null && tar xzf "$tmp/a.tgz" -C "$tmp" 2>/dev/null; then
-    found="$(find "$tmp" -type f -name "$bin" 2>/dev/null | head -1)"
-    if [ -n "$found" ]; then
-      if install -m 0755 "$found" "$BIN_DIR/$bin"; then
-        printf '%s' "$tag" > "$VER_DIR/$bin"
-        echo "install-cli-tools: installed $bin ${old:+$old -> }$tag"
-      fi
-    else
-      echo "install-cli-tools: $bin not found in archive ($url)" >&2
-    fi
-  else
-    echo "install-cli-tools: failed to fetch $bin ($url)" >&2
-  fi
-  rm -rf "$tmp"
-}
-
-# Per-tool arch naming differs: Rust target triple (eza/sd) vs fastfetch's -aarch64 vs
-# goreleaser's arm64 (curlie). Downloading the wrong arch would tar-extract cleanly but
-# Exec-format-error at first use, so skip release binaries outright on an arch we lack names for.
-case "$(uname -m)" in
-  x86_64|amd64)  rust_arch=x86_64;  ff_arch=amd64;   go_arch=amd64;  nvim_arch=x86_64; rg_target=x86_64-unknown-linux-musl ;;
-  aarch64|arm64) rust_arch=aarch64; ff_arch=aarch64; go_arch=arm64;  nvim_arch=arm64;  rg_target=aarch64-unknown-linux-gnu ;;
-  *) rust_arch=""; rg_target=""; echo "install-cli-tools: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/gron/nvim/yazi" >&2 ;;
-esac
+# 4. Release binaries for the package gaps (no sudo). install_release, latest_tag, recorded_tag
+#    and the arch names all come from the shared module; an arch it has no names for leaves
+#    rust_arch empty, which skips every download below rather than fetching a binary that would
+#    tar-extract cleanly and then Exec-format-error at first use.
+[ -n "$rust_arch" ] || echo "$TAG: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/gron/nvim/yazi" >&2
 if [ -n "$rust_arch" ]; then
   install_release eza       eza-community/eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
   install_release fastfetch fastfetch-cli/fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"

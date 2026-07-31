@@ -12,17 +12,14 @@
 
 {{ includeTemplate "winget-install.ps1" . }}
 # Package ids rendered from .chezmoidata/packages.toml. Newlines separate array elements
-# in a PowerShell @(...) literal, so no commas are needed.
+# in a PowerShell @(...) literal, so no commas are needed. Entries without a `winget` field are
+# Linux-only (OpenRGB, Solaar, Piper, Ghostty) and skipped here.
+# `get` (not .winget) because Linux-only entries omit the field entirely, and a bare .winget on a
+# map without that key is a template error rather than an empty string.
 $packages = @(
-{{- range .apps.base }}
+{{- range concat .apps.base .apps.coding .apps.gaming }}{{ with get . "winget" }}
     '{{ . }}'
-{{- end }}
-{{- range .apps.coding }}
-    '{{ . }}'
-{{- end }}
-{{- range .apps.gaming }}
-    '{{ . }}'
-{{- end }}
+{{- end }}{{ end }}
 )
 
 foreach ($id in $packages) { Install-WingetPackage $id }

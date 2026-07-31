@@ -1,0 +1,66 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Installs IosevkaTerm Nerd Font — the family
+# .chezmoidata/terminal.toml names and Ghostty/WezTerm/starship all render with — so the prompt's
+# Nerd Font glyphs resolve on a Linux desktop. The counterpart to
+# os-windows/run_onchange_install-nerd-font.ps1.tmpl.
+#
+# Per-user (~/.local/share/fonts), unlike the Windows script's system-wide install: fontconfig
+# picks up a user font directory automatically for every app in the session, so there is nothing
+# to elevate and no UAC-equivalent prompt.
+#
+# Gated to a non-WSL workstation: fonts are rendered by whatever draws the terminal, so a headless
+# server has no use for them and WSL's terminal uses the font installed on the Windows host.
+# Re-runs only when this file changes.
+# bump-to-reinstall: iosevkaterm-linux v1
+set -u
+TAG=install-nerd-font
+{{ includeTemplate "linux-install.sh" . }}
+
+FONT_DIR="$HOME/.local/share/fonts/IosevkaTermNerdFont"
+FAMILY="IosevkaTerm Nerd Font Mono"
+
+command -v unzip >/dev/null 2>&1 || {
+  echo "$TAG: unzip missing; skipping (the CLI-tools installer provides it — re-run 'chezmoi apply' after it)" >&2
+  exit 0
+}
+
+# Version-aware, matching how the CLI-tools installer treats its release binaries: re-fetch when
+# the font is absent OR the recorded nerd-fonts tag is stale, so a re-apply upgrades in place.
+tag="$(latest_tag ryanoasis/nerd-fonts)"
+if [ -z "$tag" ]; then
+  echo "$TAG: could not resolve the latest nerd-fonts tag" >&2
+  exit 0
+fi
+
+if [ -d "$FONT_DIR" ] && [ "$(recorded_tag iosevkaterm-font)" = "$tag" ]; then
+  echo "$TAG: [skip] $FAMILY already at $tag."
+  exit 0
+fi
+
+old="$(recorded_tag iosevkaterm-font)"
+tmp="$(mktemp -d)"
+echo "$TAG: [install] $FAMILY $tag ..."
+if curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip" -o "$tmp/f.zip" 2>/dev/null \
+   && unzip -q -o "$tmp/f.zip" -d "$tmp/x" 2>/dev/null; then
+  # Mono only — the same subset the Windows installer takes. The propo/variable faces in the
+  # archive would otherwise win font matching for the terminal and break cell alignment.
+  if find "$tmp/x" -type f -name '*Mono*.ttf' | head -1 | grep -q .; then
+    rm -rf "${FONT_DIR:?}"
+    mkdir -p "$FONT_DIR"
+    find "$tmp/x" -type f -name '*Mono*.ttf' -exec install -m 0644 {} "$FONT_DIR/" \;
+    if command -v fc-cache >/dev/null 2>&1; then
+      fc-cache -f "$FONT_DIR" >/dev/null 2>&1 || true
+    else
+      echo "$TAG: fc-cache not found; the font is installed but the cache was not rebuilt" >&2
+    fi
+    printf '%s' "$tag" > "$VER_DIR/iosevkaterm-font"
+    echo "$TAG: installed $FAMILY ${old:+$old -> }$tag"
+  else
+    echo "$TAG: no Mono .ttf files in the IosevkaTerm archive" >&2
+  fi
+else
+  echo "$TAG: failed to fetch the IosevkaTerm archive" >&2
+fi
+rm -rf "$tmp"
+{{ end -}}

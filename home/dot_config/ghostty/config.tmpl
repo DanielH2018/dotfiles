@@ -1,3 +1,26 @@
+{{- /*
+Ghostty runs on macOS and Linux, and the two platforms disagree about the modifier a terminal
+owns. On macOS cmd is the app modifier and cmd+c/cmd+v are the system clipboard. On Linux ctrl
+belongs to the shell (ctrl+c is SIGINT), so terminals conventionally take ctrl+shift — which is
+also what Ghostty itself binds by default there.
+
+  $mod   single-modifier actions      cmd        -> ctrl+shift
+  $mod2  the "shifted" variant        cmd+shift  -> ctrl+alt      (ctrl+shift+shift is not a
+                                                                   chord, so it needs its own)
+  $clip  clipboard + reload           cmd+shift  -> ctrl+shift    (the Linux convention, so it
+                                                                   deliberately does NOT follow
+                                                                   $mod2)
+On darwin all three keep their original values, so the rendered macOS config is byte-identical
+to what it was before Linux was added.
+*/ -}}
+{{- $mod := "cmd" -}}
+{{- $mod2 := "cmd+shift" -}}
+{{- $clip := "cmd+shift" -}}
+{{- if ne .chezmoi.os "darwin" -}}
+{{-   $mod = "ctrl+shift" -}}
+{{-   $mod2 = "ctrl+alt" -}}
+{{-   $clip = "ctrl+shift" -}}
+{{- end -}}
 # =============================================================================
 # GHOSTTY CONFIGURATION
 # =============================================================================
@@ -25,9 +48,11 @@ split-inherit-working-directory = true
 window-inherit-font-size = true
 window-decoration = true
 #window-theme = auto
-window-colorspace = display-p3
 window-new-tab-position = end
 link-previews = true
+{{ if eq .chezmoi.os "darwin" }}# display-p3 is a macOS-only colorspace; Ghostty warns about it on Linux.
+window-colorspace = display-p3
+{{ end }}
 theme = "{{ .terminal.theme }}"
 
 # Window padding
@@ -50,6 +75,7 @@ unfocused-split-opacity = 0.6
 adjust-cell-height = 1
 adjust-cell-width = 0
 
+{{ if eq .chezmoi.os "darwin" -}}
 # -----------------------------------------------------------------------------
 # MACOS SPECIFIC SETTINGS
 # -----------------------------------------------------------------------------
@@ -60,6 +86,7 @@ macos-secure-input-indication = true
 macos-icon = holographic
 macos-icon-frame = chrome
 macos-icon-ghost-color = crimson
+{{ end }}
 
 
 # -----------------------------------------------------------------------------
@@ -123,29 +150,29 @@ bell-features = system,attention,title
 # KEY BINDINGS
 # -----------------------------------------------------------------------------
 # Configuration management
-keybind = cmd+shift+r=reload_config
+keybind = {{ $clip }}+r=reload_config
 
 # Clipboard operations
-keybind = cmd+shift+c=copy_to_clipboard
-keybind = cmd+shift+v=paste_from_clipboard
+keybind = {{ $clip }}+c=copy_to_clipboard
+keybind = {{ $clip }}+v=paste_from_clipboard
 
 # Tab management
-keybind = cmd+t=new_tab
+keybind = {{ $mod }}+t=new_tab
 
 # Window management
-keybind = cmd+w=close_surface
-keybind = cmd+shift+t=new_window
-keybind = cmd+shift+w=close_all_windows
+keybind = {{ $mod }}+w=close_surface
+keybind = {{ $mod2 }}+t=new_window
+keybind = {{ $mod2 }}+w=close_all_windows
 
 # Split management
-keybind = cmd+d=new_split:right
-keybind = cmd+shift+d=new_split:down
-keybind = cmd+[=goto_split:previous
-keybind = cmd+]=goto_split:next
-keybind = cmd+shift+[=resize_split:left,10
-keybind = cmd+shift+]=resize_split:right,10
+keybind = {{ $mod }}+d=new_split:right
+keybind = {{ $mod2 }}+d=new_split:down
+keybind = {{ $mod }}+[=goto_split:previous
+keybind = {{ $mod }}+]=goto_split:next
+keybind = {{ $mod2 }}+[=resize_split:left,10
+keybind = {{ $mod2 }}+]=resize_split:right,10
 
 # Terminal operations
 keybind = shift+enter=text:\n
-#keybind = global:cmd+shift+period=toggle_quick_terminal
+#keybind = global:{{ $mod2 }}+period=toggle_quick_terminal
 

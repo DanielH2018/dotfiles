@@ -1,0 +1,201 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Installs the curated GUI/app list from
+# .chezmoidata/packages.toml — the Linux counterpart to
+# os-windows/run_onchange_after_install-apps.ps1.tmpl, driven by the same source of truth.
+#
+# Gated to a non-WSL workstation: these are desktop applications, so the server and minimal
+# profiles (e.g. the Pi) and WSL — which has no desktop of its own — skip the whole file.
+#
+# Per app the route is: distro package (dnf/apt) -> Flathub -> upstream release tarball, taking
+# the first the machine can satisfy. Distro packages come first because they get real Wayland and
+# theme integration and avoid a duplicate runtime stack; Flathub only covers what the distro
+# genuinely lacks. Apps with no Linux route at all carry a `manual` note in packages.toml and are
+# listed in ~/.config/linux-provisioning/LINUX-SETUP.md instead of being silently dropped.
+#
+# Idempotent: every step is skip-if-present, and Flathub installs are --user so a sudo-less run
+# still makes progress instead of stalling. Re-runs only when this file OR the rendered app list
+# below changes (edit packages.toml -> installs on next apply).
+# bump-to-reinstall: linux-apps v1
+set -u
+TAG=install-apps
+{{ includeTemplate "linux-install.sh" . }}
+
+# --- Third-party repositories referenced by `repo =` in packages.toml ----------------------
+# Each is added once and then maintained by the distro's normal upgrade path. Called on demand,
+# so a machine that installs none of the affected apps never grows the repo.
+repo_enable() {
+  case "$1" in
+    google-chrome)
+      apt_repo_add google-chrome https://dl.google.com/linux/linux_signing_key.pub \
+        "deb [arch=$go_arch signed-by=__KEYRING__] https://dl.google.com/linux/chrome/deb/ stable main"
+      rpm_repo_write google-chrome <<'EOF'
+[google-chrome]
+name=google-chrome
+baseurl=https://dl.google.com/linux/chrome/rpm/stable/$basearch
+enabled=1
+gpgcheck=1
+gpgkey=https://dl.google.com/linux/linux_signing_key.pub
+EOF
+      ;;
+    vscode)
+      apt_repo_add vscode https://packages.microsoft.com/keys/microsoft.asc \
+        "deb [arch=$go_arch signed-by=__KEYRING__] https://packages.microsoft.com/repos/code stable main"
+      rpm_repo_write vscode <<'EOF'
+[code]
+name=Visual Studio Code
+baseurl=https://packages.microsoft.com/yumrepos/vscode
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+      ;;
+    mullvad)
+      apt_repo_add mullvad https://repository.mullvad.net/deb/mullvad-keyring.asc \
+        "deb [arch=$go_arch signed-by=__KEYRING__] https://repository.mullvad.net/deb/stable stable main"
+      rpm_repo_add mullvad https://repository.mullvad.net/rpm/stable/mullvad.repo
+      ;;
+    rpmfusion)
+      # Fedora only: Steam lives in nonfree, Discord in free. Debian/Ubuntu have no equivalent
+      # single step (multiverse/non-free is enabled per-distro), so the apt side relies on the
+      # Flathub fallback declared alongside those two entries.
+      [ "$PM" = dnf ] || return 0
+      if rpm -q rpmfusion-free-release >/dev/null 2>&1 && rpm -q rpmfusion-nonfree-release >/dev/null 2>&1; then
+        return 0
+      fi
+      fed="$(rpm -E %fedora)"
+      sudo dnf install -y \
+        "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${fed}.noarch.rpm" \
+        "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fed}.noarch.rpm"
+      ;;
+    *) echo "$TAG: unknown repo key '$1'" >&2; return 1 ;;
+  esac
+}
+
+# --- Can this run install distro packages at all? ------------------------------------------
+# Deciding once up front (rather than per app) keeps sudo to a single prompt. When the answer is
+# no, the loop still runs: --user Flathub installs need no elevation, so a sudo-less apply
+# converges on everything Flathub can supply and only defers the packages.
+CAN_PKG=1
+if [ -z "$PM" ]; then
+  CAN_PKG=0
+elif ! have_sudo; then
+  CAN_PKG=0
+  echo "$TAG: sudo unavailable; installing what Flathub can supply and deferring distro packages" >&2
+fi
+
+# --- The app list, rendered from .chezmoidata/packages.toml --------------------------------
+# One pipe-separated record per app. Both the apt and dnf names are rendered so the deployed
+# script stays portable at runtime and $PM picks the column — the same approach the CLI-tools
+# installer takes. An empty column means "this route does not apply to this app".
+# `get` (not .field) because most entries declare only the few fields that apply to them, and a
+# bare .field on a map without that key is a template error, not an empty string.
+APPS='
+{{- range concat .apps.base .apps.coding .apps.gaming }}
+{{ get . "name" }}|{{ get . "apt" }}|{{ get . "dnf" }}|{{ get . "flatpak" }}|{{ get . "repo" }}|{{ get . "copr" }}|{{ get . "tarball" }}|{{ get . "tarball_bin" }}|{{ get . "tarball_url" }}
+{{- end }}
+'
+
+failed=""
+# Fed by a here-doc rather than a pipe: a `while read` on the right of a pipe runs in a subshell,
+# where $failed would be discarded and the summary below would always look clean.
+while IFS='|' read -r name apt_pkg dnf_pkg fp repo copr tb tb_bin tb_url; do
+  [ -n "$name" ] || continue
+  case "$PM" in
+    apt) pkg="$apt_pkg" ;;
+    dnf) pkg="$dnf_pkg" ;;
+    *)   pkg="" ;;
+  esac
+
+  # 1. Distro package.
+  if [ -n "$pkg" ] && [ "$CAN_PKG" = 1 ]; then
+    if pkg_installed "$pkg"; then
+      echo "$TAG: [skip] $name already installed ($pkg)."
+      continue
+    fi
+    [ -n "$repo" ] && { repo_enable "$repo" || true; }
+    [ -n "$copr" ] && { copr_enable "$copr" || true; }
+    echo "$TAG: [install] $name ($pkg) ..."
+    if pkg_install "$pkg"; then
+      continue
+    fi
+    echo "$TAG: distro package failed for $name; trying the remaining routes" >&2
+  fi
+
+  # 2. Flathub.
+  if [ -n "$fp" ] && flatpak_install "$fp"; then
+    continue
+  fi
+
+  # 3. Upstream release tarball (scrcpy on Fedora, which does not package it).
+  if [ -n "$tb" ] && [ -n "$rust_arch" ]; then
+    url="$(printf '%s' "$tb_url" | sed "s#{arch}#$rust_arch#g")"
+    install_tarball_app "$tb_bin" "$tb" "$url" "$tb_bin"
+    [ -x "$BIN_DIR/$tb_bin" ] && continue
+  fi
+
+  # Nothing declared for Linux: a `manual` entry, documented in LINUX-SETUP.md. Not a failure.
+  [ -n "$pkg$fp$tb" ] || continue
+  failed="$failed $name"
+done <<EOF
+$APPS
+EOF
+
+# --- Apps whose Linux route doesn't fit the table ------------------------------------------
+# Ghostty on Debian/Ubuntu: no distro package and not on Flathub. ghostty.org points at the
+# ghostty-ubuntu .deb builder, which is what this runs. Fedora took the COPR in the loop above.
+if [ "$PM" = apt ] && [ "$CAN_PKG" = 1 ] && ! command -v ghostty >/dev/null 2>&1; then
+  echo "$TAG: [install] Ghostty (ghostty-ubuntu .deb) ..."
+  if ! /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh)"; then
+    echo "$TAG: Ghostty .deb install failed" >&2
+    failed="$failed Ghostty"
+  fi
+fi
+
+# Bitwarden CLI: Bitwarden tags its CLI releases `cli-vYYYY.M.P`, so the releases/latest redirect
+# that latest_tag() follows resolves the desktop app instead. Resolve the newest cli- tag through
+# the API, then take the plain linux zip. Unauthenticated API calls are rate-limited to 60/hour,
+# which a run_onchange script comfortably fits inside.
+if ! command -v bw >/dev/null 2>&1; then
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "$TAG: unzip missing; skipping Bitwarden CLI (the CLI-tools installer provides unzip)" >&2
+  else
+    bw_tag="$(curl -fsSL 'https://api.github.com/repos/bitwarden/clients/releases?per_page=30' 2>/dev/null \
+      | sed -n 's/.*"tag_name": *"\(cli-v[^"]*\)".*/\1/p' | head -1)"
+    if [ -z "$bw_tag" ]; then
+      echo "$TAG: could not resolve a Bitwarden CLI release tag" >&2
+      failed="$failed Bitwarden-CLI"
+    else
+      bw_ver="${bw_tag#cli-v}"
+      case "$rust_arch" in aarch64) bw_asset="bw-linux-arm64-${bw_ver}.zip" ;; *) bw_asset="bw-linux-${bw_ver}.zip" ;; esac
+      tmp="$(mktemp -d)"
+      if curl -fsSL "https://github.com/bitwarden/clients/releases/download/${bw_tag}/${bw_asset}" -o "$tmp/bw.zip" 2>/dev/null \
+         && unzip -q -o "$tmp/bw.zip" -d "$tmp" 2>/dev/null && [ -f "$tmp/bw" ]; then
+        install -m 0755 "$tmp/bw" "$BIN_DIR/bw"
+        printf '%s' "$bw_tag" > "$VER_DIR/bw"
+        echo "$TAG: installed bw $bw_tag"
+      else
+        echo "$TAG: failed to fetch Bitwarden CLI ($bw_asset)" >&2
+        failed="$failed Bitwarden-CLI"
+      fi
+      rm -rf "$tmp"
+    fi
+  fi
+fi
+
+# --- Converge or retry ---------------------------------------------------------------------
+# Same policy as the CLI-tools installer: report what is still missing and exit non-zero so
+# chezmoi does NOT record success and retries on the next apply. Everything already installed
+# skips, so a retry is cheap.
+if [ "$CAN_PKG" = 0 ] && [ -n "$PM" ]; then
+  echo "$TAG: distro packages were deferred — re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
+  exit 1
+fi
+if [ -n "$failed" ]; then
+  echo "$TAG: could not install:$failed" >&2
+  echo "$TAG: re-run 'chezmoi apply'; see ~/.config/linux-provisioning/LINUX-SETUP.md for apps with no Linux route." >&2
+  exit 1
+fi
+
+echo "$TAG: app install pass done. See ~/.config/linux-provisioning/LINUX-SETUP.md for the manual checklist."
+{{ end -}}

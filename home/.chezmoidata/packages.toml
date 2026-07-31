@@ -1,69 +1,314 @@
-# Curated winget package list for full-machine provisioning.
-# Consumed by run_onchange_after_install-apps.ps1.tmpl (skip-if-present install loop).
+# Curated application list for full-machine provisioning — the single source of truth shared by
+# the Windows and Linux app installers, in the same spirit as tools.toml for the CLI toolchain.
+# One entry per application; each installer reads the field(s) for its own platform and ignores
+# the rest:
+#   winget   = winget package id        -> os-windows/run_onchange_after_install-apps.ps1.tmpl
+#   dnf      = Fedora package name      -> os-linux/run_onchange_after_install-apps.sh.tmpl
+#   apt      = Debian/Ubuntu package    -> same
+#   flatpak  = Flathub application id   -> same; the fallback when dnf/apt can't supply it
+#   copr     = Fedora COPR to enable first (dnf only)
+#   repo     = third-party repo key the Linux installer knows how to add (see its REPO section)
+#   tarball  = owner/repo of an upstream release that ships a directory rather than one binary
+#   manual   = why there is NO automated route on the other platform; rendered into
+#              LINUX-SETUP.md so an unavailable app is documented rather than silently dropped
+#
+# Resolution order on Linux is dnf/apt first, Flathub second: distro packages get better Wayland
+# and theme integration and avoid a second runtime stack. Flathub is only used where the distro
+# genuinely doesn't carry the app.
 #
 # Scope rules:
-#   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch,
-#     fnm, uv, neovim, yazi, zig, wezterm) is installed by
-#     run_onchange_install-cli-tools.ps1.tmpl. Do NOT duplicate those here.
-#   - Games themselves are NOT listed — winget installs the launchers; libraries
-#     re-download from Steam/Epic/EA/Riot after sign-in.
-#   - Apps winget can't provide (Office license, GPU/chipset drivers, Ryzen Master,
-#     Samsung Magician, NVIDIA App, Elgato Game Capture, Pokemon TCG Live, Xbox
-#     Accessories msstore) live in the manual checklist, not here.
+#   - The dev CLI toolchain (starship, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, fnm, uv,
+#     neovim, yazi, zig, wezterm) belongs to tools.toml + the cli-tools installers. Not here.
+#   - Games themselves are NOT listed — only launchers; libraries re-download after sign-in.
+#   - An entry with no winget field is Linux-only; one with no Linux field is Windows-only.
 #
-# IDs verified 2026-07-19 against `winget export` on daniel-pc (Mullvad split-tunnel).
+# winget ids verified 2026-07-19 against `winget export` on daniel-pc.
+# Linux routes verified 2026-07-31 against Fedora 44 repos, Flathub's API, and each vendor's
+# published repository.
 
-[apps]
-
+# ---------------------------------------------------------------------------------------------
 # GUI apps + utilities.
-base = [
-  "7zip.7zip",
-  "Mozilla.Firefox",              # installed outside winget on this box; id is valid
-  "Google.Chrome",
-  "Obsidian.Obsidian",
-  "Anthropic.Claude",
-  "Spotify.Spotify",
-  "Bitwarden.Bitwarden",
-  "REALiX.HWiNFO",
-  "AntibodySoftware.WizTree",
-  "Notepad++.Notepad++",
-  "AutoHotkey.AutoHotkey",
-  "WireGuard.WireGuard",
-  "MullvadVPN.MullvadVPN",         # installed outside winget on this box; id is valid
-  "Google.GoogleDrive",
-  "OBSProject.OBSStudio",
-  "Elgato.StreamDeck",
-  "Corsair.iCUE.5",
-  "SteelSeries.GG",
-  "Logitech.GHUB",
-  "Logitech.OptionsPlus",
-  "Microsoft.PowerToys",
-  "flux.flux",
-  "Microsoft.Sysinternals.Autoruns",
-  "VideoLAN.VLC",
-  "winaero.tweaker",
-  "valinet.ExplorerPatcher",
-  "Romanitho.Winget-AutoUpdate",   # scheduled-task auto-updater for winget packages
-]
+# ---------------------------------------------------------------------------------------------
 
-# Dev tooling not covered by the CLI-tools installer.
-coding = [
-  "Git.Git",
-  "GitHub.cli",
-  "Microsoft.VisualStudioCode",
-  "Microsoft.WindowsTerminal",
-  "FiloSottile.age",
-  "Genymobile.scrcpy",
-  "Bitwarden.CLI",                # `bw` — pulls the WireGuard config at provision time
-]
+[[apps.base]]
+name = "7-Zip"
+winget = "7zip.7zip"
+dnf = "7zip"
+apt = "p7zip-full"
 
+[[apps.base]]
+name = "Firefox"
+winget = "Mozilla.Firefox"   # installed outside winget on the Windows box; id is valid
+dnf = "firefox"
+apt = "firefox"
+
+[[apps.base]]
+name = "Google Chrome"
+winget = "Google.Chrome"
+repo = "google-chrome"
+dnf = "google-chrome-stable"
+apt = "google-chrome-stable"
+
+[[apps.base]]
+name = "Obsidian"
+winget = "Obsidian.Obsidian"
+flatpak = "md.obsidian.Obsidian"
+
+[[apps.base]]
+name = "Claude Desktop"
+winget = "Anthropic.Claude"
+manual = "No Linux build is published. Claude Code (the CLI) is installed by os-unix/run_once_after_install-claude.sh and covers the terminal workflow."
+
+[[apps.base]]
+name = "Spotify"
+winget = "Spotify.Spotify"
+flatpak = "com.spotify.Client"
+
+[[apps.base]]
+name = "Bitwarden"
+winget = "Bitwarden.Bitwarden"
+flatpak = "com.bitwarden.desktop"
+
+[[apps.base]]
+name = "Notepad++"
+winget = "Notepad++.Notepad++"
+manual = "Windows-only and not on Flathub. Neovim (tools.toml) and VS Code already cover editing on Linux."
+
+[[apps.base]]
+name = "WireGuard"
+winget = "WireGuard.WireGuard"
+dnf = "wireguard-tools"
+apt = "wireguard-tools"
+
+[[apps.base]]
+name = "Mullvad VPN"
+winget = "MullvadVPN.MullvadVPN"   # installed outside winget on the Windows box; id is valid
+repo = "mullvad"
+dnf = "mullvad-vpn"
+apt = "mullvad-vpn"
+
+[[apps.base]]
+name = "Google Drive"
+winget = "Google.GoogleDrive"
+manual = "Google publishes no Linux client. Use rclone (`rclone config` -> drive) or KDE's kio-gdrive for Dolphin integration."
+
+[[apps.base]]
+name = "OBS Studio"
+winget = "OBSProject.OBSStudio"
+dnf = "obs-studio"
+apt = "obs-studio"
+
+[[apps.base]]
+name = "VLC"
+winget = "VideoLAN.VLC"
+dnf = "vlc"
+apt = "vlc"
+
+[[apps.base]]
+name = "Elgato Stream Deck"
+winget = "Elgato.StreamDeck"
+# Elgato ships no Linux software; StreamController is the maintained community client and talks
+# to the same hardware. Flathub-only.
+flatpak = "com.core447.StreamController"
+
+[[apps.base]]
+name = "f.lux"
+winget = "flux.flux"
+# f.lux's Linux build is X11-only and unmaintained. gammastep is the Wayland-native equivalent;
+# KDE Plasma's built-in Night Colour covers the same ground if you prefer no extra package.
+dnf = "gammastep"
+apt = "gammastep"
+
+[[apps.base]]
+name = "Corsair iCUE"
+winget = "Corsair.iCUE.5"
+manual = "No Linux build. OpenRGB (below) drives the same Corsair lighting; fan curves and AIO control are not covered."
+
+[[apps.base]]
+name = "SteelSeries GG"
+winget = "SteelSeries.GG"
+manual = "No Linux build. OpenRGB (below) covers the lighting; Sonar's audio routing has no equivalent."
+
+[[apps.base]]
+name = "Logitech G HUB"
+winget = "Logitech.GHUB"
+manual = "No Linux build. Solaar + Piper (below) cover pairing, battery and per-device DPI/buttons."
+
+[[apps.base]]
+name = "Logitech Options+"
+winget = "Logitech.OptionsPlus"
+manual = "No Linux build. Solaar (below) handles Unifying/Bolt receivers, battery and key remapping."
+
+[[apps.base]]
+name = "OpenRGB"
+# Linux-only stand-in for iCUE + SteelSeries GG.
+dnf = "openrgb"
+apt = "openrgb"
+
+[[apps.base]]
+name = "Solaar"
+# Linux-only stand-in for Logitech G HUB / Options+ (Unifying + Bolt receivers).
+dnf = "solaar"
+apt = "solaar"
+
+[[apps.base]]
+name = "Piper"
+# Linux-only companion to Solaar: gaming-mouse DPI/button profiles via ratbagd.
+dnf = "piper"
+apt = "piper"
+
+# --- Windows-only utilities. Deliberately excluded from the Linux set: each one either patches
+#     Windows itself or duplicates something the Linux desktop already provides. -------------
+
+[[apps.base]]
+name = "HWiNFO"
+winget = "REALiX.HWiNFO"
+manual = "Windows-only. `lm_sensors` (+ `sensors-detect`) and KDE's System Monitor cover sensor readout on Linux."
+
+[[apps.base]]
+name = "WizTree"
+winget = "AntibodySoftware.WizTree"
+manual = "Windows-only (it reads the NTFS MFT directly). Use Filelight on KDE, or `ncdu` in the terminal."
+
+[[apps.base]]
+name = "AutoHotkey"
+winget = "AutoHotkey.AutoHotkey"
+manual = "Windows-only. `keyd` (system-wide remapping) or `xremap` are the closest Linux equivalents; KDE also has custom shortcuts built in."
+
+[[apps.base]]
+name = "PowerToys"
+winget = "Microsoft.PowerToys"
+manual = "Windows-only, and largely redundant on KDE: KRunner replaces Run, KWin scripts replace FancyZones, and Spectacle replaces Screen Ruler."
+
+[[apps.base]]
+name = "Sysinternals Autoruns"
+winget = "Microsoft.Sysinternals.Autoruns"
+manual = "Windows-only. `systemd-analyze blame`, `systemctl list-unit-files` and ~/.config/autostart are the Linux equivalents."
+
+[[apps.base]]
+name = "Winaero Tweaker"
+winget = "winaero.tweaker"
+manual = "Windows-only shell tweaker. KDE's System Settings covers the same ground natively."
+
+[[apps.base]]
+name = "ExplorerPatcher"
+winget = "valinet.ExplorerPatcher"
+manual = "Windows-only — it patches the Windows 11 shell. Nothing to port."
+
+[[apps.base]]
+name = "Winget-AutoUpdate"
+winget = "Romanitho.Winget-AutoUpdate"
+manual = "Windows-only updater. On Linux use `dnf-automatic` (Fedora) or `unattended-upgrades` (Debian/Ubuntu); flatpak updates come from the desktop's own updater."
+
+# ---------------------------------------------------------------------------------------------
+# Dev tooling not covered by the CLI-tools installers.
+# ---------------------------------------------------------------------------------------------
+
+[[apps.coding]]
+name = "Git"
+winget = "Git.Git"
+dnf = "git"
+apt = "git"
+
+[[apps.coding]]
+name = "GitHub CLI"
+winget = "GitHub.cli"
+manual = "Installed on Linux by os-linux/run_once_after_install-cli-tools.sh.tmpl, which also adds cli.github.com's apt repo so Ubuntu doesn't pin gh at 2.45. Deliberately not duplicated here."
+
+[[apps.coding]]
+name = "Visual Studio Code"
+winget = "Microsoft.VisualStudioCode"
+repo = "vscode"
+dnf = "code"
+apt = "code"
+
+[[apps.coding]]
+name = "Windows Terminal"
+winget = "Microsoft.WindowsTerminal"
+manual = "Windows-only by definition. Ghostty (below) is the Linux terminal; WezTerm is installed by the CLI-tools script for its headless mux-server."
+
+[[apps.coding]]
+name = "age"
+winget = "FiloSottile.age"
+dnf = "age"
+apt = "age"
+
+[[apps.coding]]
+name = "Bitwarden CLI"
+winget = "Bitwarden.CLI"   # `bw` — pulls the WireGuard config at provision time
+# Bitwarden tags its CLI releases `cli-vYYYY.M.P`, so the releases/latest redirect that
+# latest_tag() follows resolves the *desktop* release instead. Handled bespoke in the installer.
+bw_cli = true
+
+[[apps.coding]]
+name = "scrcpy"
+winget = "Genymobile.scrcpy"
+# Genymobile develops scrcpy on Linux, so it is at least as useful here as on Windows. Debian and
+# Ubuntu package it; Fedora does not (no rpms/scrcpy in dist-git, zero Bodhi updates as of
+# 2026-07-31), so Fedora takes the upstream release tarball instead.
+apt = "scrcpy"
+tarball = "Genymobile/scrcpy"
+tarball_bin = "scrcpy"
+tarball_url = "https://github.com/Genymobile/scrcpy/releases/download/{tag}/scrcpy-linux-{arch}-{tag}.tar.gz"
+
+[[apps.coding]]
+name = "Ghostty"
+# The terminal this config targets on macOS and Linux (dot_config/ghostty). Neither distro
+# packages it: Fedora uses the COPR that ghostty.org's own install docs point at; Debian/Ubuntu
+# use the .deb from mkasberg/ghostty-ubuntu, which the same docs recommend.
+copr = "scottames/ghostty"
+dnf = "ghostty"
+ghostty_deb = true
+
+# ---------------------------------------------------------------------------------------------
 # Game launchers only (never individual games).
-gaming = [
-  "Valve.Steam",
-  "EpicGames.EpicGamesLauncher",
-  "Discord.Discord",
-  "PrismLauncher.PrismLauncher",
-  "EclipseAdoptium.Temurin.25.JDK",   # Java runtime Prism needs for Minecraft
-  "ElectronicArts.EADesktop",         # verify: not winget-sourced on this box
-  "RiotGames.LeagueOfLegends.NA",     # verify: Riot bootstrapper, region-specific, may need re-run
-]
+# ---------------------------------------------------------------------------------------------
+
+[[apps.gaming]]
+name = "Steam"
+winget = "Valve.Steam"
+# Fedora keeps Steam in RPM Fusion nonfree; Debian/Ubuntu have it in multiverse/non-free.
+repo = "rpmfusion"
+dnf = "steam"
+apt = "steam-installer"
+# Fallback when the package route can't be satisfied — RPM Fusion unreachable on Fedora, or
+# multiverse/non-free not enabled on Debian/Ubuntu.
+flatpak = "com.valvesoftware.Steam"
+
+[[apps.gaming]]
+name = "Discord"
+winget = "Discord.Discord"
+# RPM Fusion free carries Discord on Fedora; Debian/Ubuntu do not package it, so Flathub covers
+# them via the fallback.
+repo = "rpmfusion"
+dnf = "discord"
+flatpak = "com.discordapp.Discord"
+
+[[apps.gaming]]
+name = "Prism Launcher"
+winget = "PrismLauncher.PrismLauncher"
+flatpak = "org.prismlauncher.PrismLauncher"
+
+[[apps.gaming]]
+name = "Temurin JDK"
+winget = "EclipseAdoptium.Temurin.25.JDK"   # Java runtime Prism needs for Minecraft
+# Fedora and Debian both ship OpenJDK 25 builds; no need for Adoptium's own repo on Linux.
+dnf = "java-25-openjdk"
+apt = "openjdk-25-jre"
+
+[[apps.gaming]]
+name = "Epic Games Launcher"
+winget = "EpicGames.EpicGamesLauncher"
+# No native Linux client. Heroic is the maintained open-source launcher for Epic (and Amazon)
+# libraries, running titles through Wine/Proton.
+flatpak = "com.heroicgameslauncher.hgl"
+
+[[apps.gaming]]
+name = "EA Desktop"
+winget = "ElectronicArts.EADesktop"   # verify: not winget-sourced on the Windows box
+manual = "No Linux client. Heroic (installed above) can add the EA app as a third-party source under Wine/Proton; expect per-title breakage."
+
+[[apps.gaming]]
+name = "League of Legends"
+winget = "RiotGames.LeagueOfLegends.NA"   # verify: Riot bootstrapper, region-specific
+manual = "Not possible on Linux. Riot's Vanguard kernel-level anti-cheat has been required for League since 2024 and blocks Wine/Proton outright; there is no workaround."
