@@ -1,0 +1,42 @@
+# Managed target paths matching /test|fixture|conftest/ — the A13-16 drift allowlist.
+# Regenerate deliberately:  chezmoi managed --source home | grep -iE 'test|fixture|conftest' | sort
+# A path appearing here means: this test file is MEANT to deploy into ~/.claude.
+# See tests/managed-test-drift.test.js for why this exists.
+.claude/hooks/tq-wrap-tests.py
+.claude/sandbox/test_compact_session.py
+.claude/sandbox/test_docker_create_filter.py
+.claude/sandbox/test_exec_stream.py
+.claude/sandbox/test_gen_vault_index.py
+.claude/sandbox/test_gh_pr_guard.py
+.claude/skills/config-lint/scripts/config-lint.test.js
+.claude/skills/pr-feedback/scripts/fixtures
+.claude/skills/pr-feedback/scripts/fixtures/comment_only.json
+.claude/skills/pr-feedback/scripts/fixtures/empty.json
+.claude/skills/pr-feedback/scripts/fixtures/failing.json
+.claude/skills/pr-feedback/scripts/fixtures/mixed.json
+.claude/skills/pr-feedback/scripts/fixtures/noise.json
+.claude/skills/pr-feedback/scripts/fixtures/rollup_fail.json
+.claude/skills/pr-feedback/scripts/test_fetch.sh
+.claude/skills/pr-feedback/scripts/test_render.sh
+.claude/skills/pr-review-prep/references/test_triage.sh
+.claude/vault-tooling/config-map/tests
+.claude/vault-tooling/config-map/tests/conftest.py
+.claude/vault-tooling/config-map/tests/test_categories.py
+.claude/vault-tooling/config-map/tests/test_determinism.py
+.claude/vault-tooling/config-map/tests/test_no_secrets.py
+.claude/vault-tooling/config-map/tests/test_provenance.py
+.claude/vault-tooling/config-map/tests/test_settings.py
+.claude/vault-tooling/config-map/tests/test_vault_optional.py
+.claude/vault-tooling/githooks/secrets-check.test.js
+.claude/vault-tooling/vault-index/tests
+.claude/vault-tooling/vault-index/tests/conftest.py
+.claude/vault-tooling/vault-index/tests/fixture_vault
+.claude/vault-tooling/vault-index/tests/fixture_vault/Ops
+.claude/vault-tooling/vault-index/tests/fixture_vault/Ops/incident_settlement_retry.md
+.claude/vault-tooling/vault-index/tests/fixture_vault/Team
+.claude/vault-tooling/vault-index/tests/fixture_vault/Team/person_alex.md
+.claude/vault-tooling/vault-index/tests/fixture_vault/Work
+.claude/vault-tooling/vault-index/tests/fixture_vault/Work/service_ledger.md
+.claude/vault-tooling/vault-index/tests/test_chunker.py
+.claude/vault-tooling/vault-index/tests/test_indexer.py
+.claude/vault-tooling/vault-index/tests/test_query.py
