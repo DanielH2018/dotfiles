@@ -80,9 +80,18 @@ manual = "Windows-only and not on Flathub. Neovim (tools.toml) and VS Code alrea
 
 [[apps.base]]
 name = "WireGuard"
+# Windows gets WireGuard's own GUI client; Linux has no equivalent and never will — upstream ships
+# a GUI for Windows/macOS/mobile only. On Linux the GUI is NetworkManager's, so there is no second
+# package to install here: NM has handled wireguard as a native device type since 1.16, and the
+# desktop's NM front-end draws the UI. Verified 2026-07-31 on Fedora 44: plasma-nm (part of the
+# KDE spin) carries the full WireGuard editor, and the applet toggles tunnels. Checked and
+# rejected as routes: nothing named wireguard in the Fedora repos beyond wireguard-tools, nothing
+# on Flathub, no desktop-GUI COPR (only server/Android projects). The one standalone is Wireguird
+# (GTK, unpackaged for Fedora) — strictly worse here than the native KDE editor.
 winget = "WireGuard.WireGuard"
 dnf = "wireguard-tools"
 apt = "wireguard-tools"
+manual = "The Linux GUI is NetworkManager's, not WireGuard's own: on KDE it is System Settings -> Network -> Connections -> + -> WireGuard (plasma-nm, installed with the KDE spin). Import an existing tunnel with `sudo nmcli connection import type wireguard file /etc/wireguard/wg0.conf` — no GUI front-end can import a .conf, only create one by hand, so import stays a one-line CLI step. Put `DNS =` in the .conf before importing; the import drops DNS otherwise and the tunnel resolves nothing. On a non-KDE desktop install nm-connection-editor for the same editor."
 
 [[apps.base]]
 name = "Mullvad VPN"
