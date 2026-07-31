@@ -1,18 +1,56 @@
 #!/usr/bin/env bash
-# retention-sweep: M12 dry-run reporter over the retention manifest (slice 1).
+# retention-sweep: M12 sweeper over the retention manifest (slices 1-2).
 #
 # Reads retention-manifest.json and, for every row, reports how many entries
 # currently match its glob and their combined size — a volume/age signal for the
-# rule that *will* apply once implemented. This slice ships with NO delete,
-# unlink, truncate, move, or rotate code path at all: rules other than
-# native/self-managed are describe-only. Real actions (rotate_by_size,
-# prune_age, prune_dead_pid, ...) are future slices (see M12-retention.md §7);
-# adding one here is a design change, not a bugfix to this file.
+# rule that applies to it.
 #
-# Test seam: RETENTION_MANIFEST (defaults to ~/.claude/retention-manifest.json).
+# Slice 2 adds the first code path capable of deleting anything, and it is
+# deliberately narrow on three independent axes:
+#
+#   1. It only runs under an explicit --apply. The default is still a pure report.
+#   2. It only acts on the four rows named in APPLY_ROWS below (the spec's slice-2
+#      set: G2, G12, G16, G17). Every other row stays describe-only even under
+#      --apply, so widening the blast radius takes a source edit, not a flag.
+#   3. It only ever removes a plain file it has already proven stale. No directory
+#      removal, no rotate, no truncate, no move — those are slice 3 (spec §7).
+#
+# The rows chosen first are the ones whose staleness is *provable* rather than
+# inferred from age: a pid that no longer exists, or a duplicate log whose mtime has
+# been frozen for days while a live sibling keeps being written. That is what makes
+# them reviewable by hand, which is the point of a manual slice before slice 3 puts
+# anything on a timer.
+#
+# On kill -0 and pid reuse: for a *deletion* decision the failure directions are
+# safe. A live same-user process always answers "alive", so a live session's file is
+# never pruned. A reused pid answers "alive" and the stale file simply survives to
+# the next run. A pid inherited by another user's process answers "dead" (EPERM), but
+# reuse means the original process exited, so the file it named really is stale.
+# This is NOT the same problem as the origin reaper's, which sends SIGTERM and
+# therefore does need identity.sh's (pid, procStart) before acting.
+#
+# Test seams: RETENTION_MANIFEST (defaults to ~/.claude/retention-manifest.json),
+# RETENTION_SIBLING_CANDIDATES (colon-separated, G12's live-sibling search list).
 set -u
 
 MANIFEST="${RETENTION_MANIFEST:-$HOME/.claude/retention-manifest.json}"
+
+# The rows slice 2 is allowed to act on. Not read from the manifest: which rules may
+# delete is a review decision, and keeping it here means adding a row to the manifest
+# can never silently grant it a delete path.
+APPLY_ROWS=" G2 G12 G16 G17 "
+
+APPLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --apply) APPLY=1 ;;
+    -h|--help)
+      sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "retention-sweep: unknown argument $arg" >&2; exit 2 ;;
+  esac
+done
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "retention-sweep: jq required" >&2
@@ -24,11 +62,84 @@ if [ ! -f "$MANIFEST" ]; then
   exit 1
 fi
 
-echo "retention-sweep — DRY RUN ONLY (slice 1: no delete/rotate code path exists)"
+NOW=$(date +%s)
+
+# "1h" / "48h" / "14d" / null -> seconds. An unparseable value is treated as an
+# effectively infinite grace rather than as zero: a typo in the manifest must not
+# turn into permission to delete sooner.
+grace_seconds() {
+  case "$1" in
+    ''|null) echo 0 ;;
+    *h) echo $(( ${1%h} * 3600 )) ;;
+    *d) echo $(( ${1%d} * 86400 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;;
+    *) echo 999999999 ;;
+  esac
+}
+
+pid_is_live() { kill -0 "$1" 2>/dev/null; }
+
+# The pid is recovered from the filename shape, not from a per-row field, so the
+# manifest stays pure policy data. Each shape below belongs to exactly one row.
+# Anything that does not match a known shape yields no pid, and a row with no pid is
+# never pruned.
+pid_from_path() {
+  local base=${1##*/} p=
+  case "$base" in
+    .agentview-fzfport.*)
+      # G16: ~/.agentview-fzfport.<pid>
+      p=${base#.agentview-fzfport.}
+      ;;
+    .claude.json.tmp.*)
+      # G17: ~/.claude.json.tmp.<pid>.<hex> — filename only; contents are never opened.
+      p=${base#.claude.json.tmp.}
+      p=${p%%.*}
+      ;;
+    *.json)
+      # G2: ~/.claude/sessions/<pid>.json
+      p=${base%.json}
+      ;;
+  esac
+  case "$p" in
+    ''|*[!0-9]*) return 1 ;;
+    *) printf '%s' "$p" ;;
+  esac
+}
+
+# G12 only: the stale duplicate is provably stale because a *different*, newer copy is
+# still being written. Candidates are an explicit, bounded list — never a filesystem
+# walk — so this can only ever consult paths named here.
+live_sibling_newer_than() {
+  local target_mtime=$1 cands=${RETENTION_SIBLING_CANDIDATES:-} c m
+  if [ -z "$cands" ]; then
+    cands="${CLAUDE_PROJECT_DIR:-}/.claude/logs/permissions.json:$PWD/.claude/logs/permissions.json"
+  fi
+  local IFS=:
+  for c in $cands; do
+    [ -n "$c" ] || continue
+    [ -f "$c" ] || continue
+    m=$(stat -c%Y "$c" 2>/dev/null) || continue
+    if [ "$m" -gt "$target_mtime" ]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [ "$APPLY" -eq 1 ]; then
+  echo "retention-sweep — APPLY (slice 2 rows only)"
+else
+  echo "retention-sweep — DRY RUN"
+fi
 echo "manifest: $MANIFEST"
+[ "$APPLY" -eq 1 ] && echo "rows eligible to act:$APPLY_ROWS(every other row stays describe-only)"
 echo
 
 shopt -s nullglob globstar dotglob
+
+total_pruned=0
+total_bytes=0
 
 row_count=$(jq 'length' "$MANIFEST")
 i=0
@@ -39,11 +150,17 @@ while [ "$i" -lt "$row_count" ]; do
   id=$(printf '%s' "$row" | jq -r '.id')
   rule=$(printf '%s' "$row" | jq -r '.rule')
   finding=$(printf '%s' "$row" | jq -r '.finding')
+  grace=$(printf '%s' "$row" | jq -r '.grace // ""')
 
   if [ "$rule" = "native" ] || [ "$rule" = "self-managed" ]; then
     echo "[dry-run] $id: rule=$rule -> no action, out of scope for this sweeper ($finding)"
     continue
   fi
+
+  # Acting requires BOTH the flag and membership of the slice-2 set.
+  acting=0
+  case "$APPLY_ROWS" in *" $id "*) [ "$APPLY" -eq 1 ] && acting=1 ;; esac
+  if [ "$acting" -eq 1 ]; then tag='[apply]'; else tag='[dry-run]'; fi
 
   # .path may be a single glob or an array of globs (e.g. G5, G15) sharing one row.
   mapfile -t globs < <(printf '%s' "$row" | jq -r 'if (.path | type) == "array" then .path[] else .path end')
@@ -51,6 +168,11 @@ while [ "$i" -lt "$row_count" ]; do
   count=0
   bytes=0
   oldest_days=""
+  pruned=0
+  pruned_bytes=0
+  kept_reason=""
+  min_age=$(grace_seconds "$grace")
+
   for g in "${globs[@]}"; do
     expanded="${g/#\~/$HOME}"
     [[ "$expanded" == *cwd* ]] && continue  # G11: per-cwd path, not a fixed glob
@@ -65,16 +187,85 @@ while [ "$i" -lt "$row_count" ]; do
       bytes=$((bytes + ${b:-0}))
       mtime=$(stat -c%Y "$f" 2>/dev/null || echo "")
       if [ -n "$mtime" ]; then
-        age_days=$(( ( $(date +%s) - mtime ) / 86400 ))
+        age_days=$(( (NOW - mtime) / 86400 ))
         if [ -z "$oldest_days" ] || [ "$age_days" -gt "$oldest_days" ]; then
           oldest_days=$age_days
         fi
       fi
+
+      [ "$acting" -eq 1 ] || continue
+
+      # --- from here down, this entry is a deletion candidate --------------------
+      # Plain files only. A directory, a symlink, or anything else is reported and
+      # left alone: slice 2 has no directory rule, and following a symlink would let
+      # a path outside the manifest's globs be removed.
+      if [ ! -f "$f" ] || [ -L "$f" ]; then
+        kept_reason="not a plain file"
+        continue
+      fi
+      [ -n "$mtime" ] || { kept_reason="unreadable mtime"; continue; }
+
+      # Gate 1, common to every rule: the grace floor. Nothing younger is eligible,
+      # whatever else is true of it.
+      if [ $((NOW - mtime)) -lt "$min_age" ]; then
+        kept_reason="younger than grace=$grace"
+        continue
+      fi
+
+      # Gate 2, per rule.
+      case "$rule" in
+        prune-dead-pid)
+          pid=$(pid_from_path "$f") || { kept_reason="no pid in filename"; continue; }
+          if pid_is_live "$pid"; then
+            kept_reason="pid $pid is alive"
+            continue
+          fi
+          ;;
+        prune-stale-duplicate)
+          # age > 48h AND a live sibling still being written. "mtime frozen" and
+          # "age > 48h" are the same measurement, so they are one check.
+          if [ $((NOW - mtime)) -lt $((48 * 3600)) ]; then
+            kept_reason="newer than 48h"
+            continue
+          fi
+          if ! sibling=$(live_sibling_newer_than "$mtime"); then
+            kept_reason="no live sibling is newer — cannot prove it is the stale copy"
+            continue
+          fi
+          echo "  $id: live sibling is $sibling"
+          ;;
+        *)
+          kept_reason="rule $rule has no slice-2 action"
+          continue
+          ;;
+      esac
+
+      if rm -f -- "$f"; then
+        pruned=$((pruned + 1))
+        pruned_bytes=$((pruned_bytes + ${b:-0}))
+      else
+        echo "  $id: failed to remove $f" >&2
+      fi
     done
   done
 
-  echo "[dry-run] $id: rule=$rule cap=$(printf '%s' "$row" | jq -r '.cap') matched=$count bytes=$bytes oldest_age_days=${oldest_days:-n/a} ($finding)"
+  line="$tag $id: rule=$rule cap=$(printf '%s' "$row" | jq -r '.cap') matched=$count bytes=$bytes oldest_age_days=${oldest_days:-n/a}"
+  if [ "$acting" -eq 1 ]; then
+    line="$line pruned=$pruned reclaimed=$pruned_bytes"
+    if [ "$pruned" -lt "$count" ] && [ -n "$kept_reason" ]; then
+      line="$line kept_example=\"$kept_reason\""
+    fi
+    total_pruned=$((total_pruned + pruned))
+    total_bytes=$((total_bytes + pruned_bytes))
+  fi
+  echo "$line ($finding)"
 done
 
 echo
-echo "Reported matched/bytes/age only — reports what each row WOULD act on, deletes nothing."
+if [ "$APPLY" -eq 1 ]; then
+  echo "Applied slice-2 rows only. Pruned $total_pruned entries, reclaimed $total_bytes bytes."
+  echo "Every other row was reported, never acted on."
+else
+  echo "Reported matched/bytes/age only — reports what each row WOULD act on, deletes nothing."
+  echo "Re-run with --apply to act on the slice-2 rows:$APPLY_ROWS"
+fi
