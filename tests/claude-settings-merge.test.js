@@ -296,3 +296,108 @@ test('the floor is enforced by default and the exemption must be explicit', () =
   assert.strictEqual(JSON.parse(exempted).model, 'opus', 'the exemption lets the merge through');
 });
 
+// --- M20 slice 4: merge-can-tighten ($remove) -----------------------------------------
+//
+// Array merging is concat + de-dupe only, so a work overlay could add a permission rule
+// but never take one away (A1-30). `$remove` is the directive that closes that gap, scoped
+// to permissions.{allow,deny,ask} only (spec §9a open question 4).
+
+// The rule being removed is added by a middle overlay, not the base — removing a
+// base-declared deny is a no-widening violation and is covered separately below.
+test('a $remove directive removes an entry from permissions.deny', () => {
+  const base = w('rm1.json', withFloor({}));
+  const addIt = w('rm1b.json', { permissions: { deny: ['Bash(frobnicate:*)'] } });
+  const over = w('rm2.json', { $remove: { permissions: { deny: ['Bash(frobnicate:*)'] } } });
+  const out = run(base, addIt, over);
+  assert.ok(!out.permissions.deny.includes('Bash(frobnicate:*)'), 'the removed rule is gone');
+  assert.ok(out.permissions.deny.includes('Bash(sudo:*)'), 'the floor survives untouched');
+});
+
+test('a $remove directive removes an entry from permissions.allow and permissions.ask', () => {
+  const base = w('rm3.json', withFloor({
+    permissions: { allow: ['Bash(ls:*)', 'Bash(rg:*)'], ask: ['Bash(deploy:*)'] },
+  }));
+  const over = w('rm4.json', {
+    $remove: { permissions: { allow: ['Bash(rg:*)'], ask: ['Bash(deploy:*)'] } },
+  });
+  const out = run(base, over);
+  assert.deepStrictEqual(out.permissions.allow, ['Bash(ls:*)']);
+  assert.deepStrictEqual(out.permissions.ask, []);
+});
+
+test('removing a non-existent entry is a silent no-op', () => {
+  const base = w('rm5.json', withFloor({ permissions: { allow: ['Bash(ls:*)'] } }));
+  const over = w('rm6.json', { $remove: { permissions: { allow: ['Bash(never-was-here:*)'] } } });
+  const out = run(base, over);
+  assert.deepStrictEqual(out.permissions.allow, ['Bash(ls:*)']);
+});
+
+test('$remove never appears in the generated output', () => {
+  const base = w('rm7.json', withFloor({}));
+  const addIt = w('rm7b.json', { permissions: { deny: ['Bash(frobnicate:*)'] } });
+  const over = w('rm8.json', { $remove: { permissions: { deny: ['Bash(frobnicate:*)'] } } });
+  const out = run(base, addIt, over);
+  assert.ok(!('$remove' in out), '$remove is a directive, never a settings.json key');
+});
+
+test('a later fragment can remove what an earlier fragment added', () => {
+  const base = w('rm9.json', withFloor({ permissions: { allow: [] } }));
+  const addIt = w('rm10.json', { permissions: { allow: ['Bash(temp:*)'] } });
+  const removeIt = w('rm11.json', { $remove: { permissions: { allow: ['Bash(temp:*)'] } } });
+  const out = run(base, addIt, removeIt);
+  assert.ok(!out.permissions.allow.includes('Bash(temp:*)'), 'the later fragment wins');
+});
+
+// A $remove that deletes a FLOOR_DENY rule must not silently produce a weakened
+// settings.json — assertHasFloor runs on the post-removal output and names the rule.
+test('a $remove that would drop a FLOOR_DENY rule is refused, naming the rule', () => {
+  const base = w('rm12.json', withFloor({ permissions: { deny: [] } }));
+  const over = w('rm13.json', { $remove: { permissions: { deny: ['Bash(sudo:*)'] } } });
+  const r = runFail(base, over);
+  assert.strictEqual(r.status, 1, 'dropping a floor rule must exit 1');
+  assert.match(r.stderr, /missing floor rules/);
+  assert.match(r.stderr, /Bash\(sudo:\*\)/, 'stderr names the rule');
+  assert.strictEqual(String(r.stdout || ''), '', 'nothing reaches stdout, so nothing reaches disk');
+});
+
+// A $remove that deletes a rule the BASE declared (but which isn't in the small named
+// floor) must also be refused — assertNoWidening runs generically on the post-removal
+// output, so no floor membership is required for this to fire.
+test('a $remove that would violate no-widening is refused, naming the rule', () => {
+  const base = w('rm14.json', withFloor({ permissions: { deny: ['Bash(vanishing:*)'] } }));
+  const over = w('rm15.json', { $remove: { permissions: { deny: ['Bash(vanishing:*)'] } } });
+  const r = runFail(base, over);
+  assert.strictEqual(r.status, 1, 'widening the base deny set must exit 1');
+  assert.match(r.stderr, /overlay removed base deny rules/);
+  assert.match(r.stderr, /Bash\(vanishing:\*\)/, 'stderr names the rule');
+});
+
+// Scope decision (spec §9a open question 4): $remove supports permissions.{allow,deny,ask}
+// only. A directive naming anything else is refused rather than silently ignored, so an
+// overlay author who typos or targets an unsupported key finds out instead of believing a
+// removal happened when nothing did.
+test('$remove outside permissions.{allow,deny,ask} is refused, not silently ignored', () => {
+  const base = w('rm16.json', withFloor({}));
+  const topLevel = runFail(base, w('rm17.json', { $remove: { hooks: ['x'] } }));
+  assert.strictEqual(topLevel.status, 1);
+  assert.match(topLevel.stderr, /\$remove only supports permissions/);
+
+  const nestedKind = runFail(base, w('rm18.json', { $remove: { permissions: { additionalDirectories: ['/tmp'] } } }));
+  assert.strictEqual(nestedKind.status, 1);
+  assert.match(nestedKind.stderr, /\$remove\.permissions only supports allow\/deny\/ask/);
+});
+
+test('a $remove directive that is not an object is refused', () => {
+  const base = w('rm19.json', withFloor({}));
+  const r = runFail(base, w('rm20.json', { $remove: 'deny everything' }));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /\$remove must be an object/);
+});
+
+test('a $remove.permissions.<kind> value that is not an array is refused', () => {
+  const base = w('rm21.json', withFloor({}));
+  const r = runFail(base, w('rm22.json', { $remove: { permissions: { deny: 'Bash(sudo:*)' } } }));
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /\$remove\.permissions\.deny must be an array/);
+});
+

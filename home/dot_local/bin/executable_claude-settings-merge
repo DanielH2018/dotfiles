@@ -61,6 +61,98 @@ const merge = (a, b, path = []) => {
   return b;
 };
 
+// --- removal directive ------------------------------------------------------------------
+//
+// Array merging above is concat + de-dupe only, so an overlay can ADD a permission rule but
+// has no way to take one away — the only way to withdraw a rule was hand-editing the base
+// template (A1-30). `$remove` closes that gap for the one place it actually matters:
+// permissions.{allow,deny,ask}. It deliberately does NOT extend to other array-valued keys
+// (availableModels, fallbackModel, ...) — those have no current widening problem, and adding
+// untested removal surface there buys nothing (spec §9a open question 4).
+//
+// Shape: { "$remove": { "permissions": { "deny": ["Bash(foo:*)"] } } } — a top-level
+// directive object mirroring the permissions shape, not a sigil prefix inside the array
+// itself (e.g. "-Bash(foo:*)"). A permission rule is an arbitrary string an overlay author
+// writes freely, so a sigil convention can collide with a real rule that happens to start
+// with the sigil, with no way to disambiguate "remove this" from "the rule literally is
+// this". A separate object cannot collide with anything, because it is never merged into
+// permissions itself — it is stripped out before permissions is written anywhere.
+//
+// $remove flows through the ordinary merge() above like any other key: a later fragment's
+// $remove.permissions.deny concatenates with an earlier one's via the same array-merge path,
+// so a later fragment can remove what an earlier fragment added, and listing the same
+// removal twice is harmless (de-duped the same way rules are). Removal is applied exactly
+// once, after every fragment has merged, and BEFORE assertHasFloor/assertNoWidening run — so
+// a $remove that deletes a floor rule or a base deny is caught by those same assertions
+// running on the post-removal output, not silently written to disk. $remove is a directive,
+// never a key in the generated settings.json — it is stripped from the accumulator here.
+const REMOVE_KEY = '$remove';
+const REMOVABLE_KINDS = ['allow', 'deny', 'ask'];
+
+// Anything under $remove outside permissions.{allow,deny,ask} is refused, not silently
+// ignored: swallowing an unsupported removal path (e.g. $remove.hooks, or
+// $remove.permissions.additionalDirectories) would let an overlay author believe a removal
+// happened when nothing did — the same "refuse rather than guess" reasoning as the
+// flag-shaped-argument and prototype-key guards above, chosen over silent-ignore because a
+// removal directive that silently does nothing is a security-relevant no-op, not a
+// convenience default.
+const applyRemovals = (acc) => {
+  if (!Object.prototype.hasOwnProperty.call(acc, REMOVE_KEY)) return acc;
+  const directive = acc[REMOVE_KEY];
+  const out = { ...acc };
+  delete out[REMOVE_KEY];
+
+  if (!isObj(directive)) {
+    process.stderr.write(`claude-settings-merge: ${REMOVE_KEY} must be an object, got ${shape(directive)}\n`);
+    process.exit(1);
+  }
+  const badTop = Object.keys(directive).filter((k) => k !== 'permissions');
+  if (badTop.length) {
+    process.stderr.write(
+      `claude-settings-merge: ${REMOVE_KEY} only supports permissions.{allow,deny,ask}, ` +
+        `got unsupported key(s): ${badTop.join(', ')}\n`,
+    );
+    process.exit(1);
+  }
+  if (!Object.prototype.hasOwnProperty.call(directive, 'permissions')) return out;
+
+  const permRemovals = directive.permissions;
+  if (!isObj(permRemovals)) {
+    process.stderr.write(
+      `claude-settings-merge: ${REMOVE_KEY}.permissions must be an object, got ${shape(permRemovals)}\n`,
+    );
+    process.exit(1);
+  }
+  const badKinds = Object.keys(permRemovals).filter((k) => !REMOVABLE_KINDS.includes(k));
+  if (badKinds.length) {
+    process.stderr.write(
+      `claude-settings-merge: ${REMOVE_KEY}.permissions only supports ${REMOVABLE_KINDS.join('/')}, ` +
+        `got unsupported key(s): ${badKinds.join(', ')}\n`,
+    );
+    process.exit(1);
+  }
+
+  const permissions = isObj(out.permissions) ? { ...out.permissions } : null;
+  for (const kind of REMOVABLE_KINDS) {
+    if (!Object.prototype.hasOwnProperty.call(permRemovals, kind)) continue;
+    const toRemove = permRemovals[kind];
+    if (!Array.isArray(toRemove)) {
+      process.stderr.write(
+        `claude-settings-merge: ${REMOVE_KEY}.permissions.${kind} must be an array, got ${shape(toRemove)}\n`,
+      );
+      process.exit(1);
+    }
+    // A missing target array, or an entry that was never there: silent no-op, not an error.
+    // A removal is a statement of intent ("this should not be granted/denied/asked"), and
+    // that intent is already satisfied if the rule was never present.
+    if (!permissions || !Array.isArray(permissions[kind])) continue;
+    const drop = new Set(toRemove.map((v) => JSON.stringify(v)));
+    permissions[kind] = permissions[kind].filter((v) => !drop.has(JSON.stringify(v)));
+  }
+  if (permissions) out.permissions = permissions;
+  return out;
+};
+
 // --- assertions -----------------------------------------------------------------------
 //
 // These run on the merged JSON in memory, before the single stdout write that becomes
@@ -192,6 +284,10 @@ for (const f of files) {
   }
   acc = merge(acc, data);
 }
+// Applied once, after every fragment has merged, so a later fragment's $remove can take away
+// what an earlier fragment added — and so assertHasFloor/assertNoWidening below run on the
+// post-removal output, never the pre-removal one.
+acc = applyRemovals(acc);
 acc = carryForward(acc, priorFile);
 
 // Default ON: any consumer that does nothing gets the floor enforced. The single exemption
