@@ -25,6 +25,22 @@ export PATH
 # agent shells) are precisely the ones that recreate the drift.
 chezmoi() { ( umask 0022; command chezmoi "$@" ); }
 
+# A shell with no controlling terminal has nowhere to prompt for a sudo password, so sudo
+# refuses outright: "sudo: a terminal is required to read the password". That covers every
+# non-interactive path — Claude Code's `!` commands, `ssh host cmd`, systemd --user units — and
+# no amount of retrying fixes it, because the failure is structural rather than transient.
+# SUDO_ASKPASS is sudo's own escape hatch, and pointing at it here is the whole fix: sudo(8)
+# uses the helper "if no terminal is available or if the -A option is specified", so callers
+# need no -A and /etc/sudoers and /etc/sudo.conf stay untouched. Nothing is weakened — the
+# password is still required, it is just typed into a Plasma dialog instead of a terminal, and
+# an interactive shell that HAS a tty keeps prompting there as before.
+# Guarded on a graphical session because ksshaskpass cannot draw without one: over plain ssh,
+# leaving SUDO_ASKPASS unset yields sudo's own clear error rather than a helper that dies
+# silently and looks like a wrong password.
+if [ -x /usr/bin/ksshaskpass ] && { [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; }; then
+  export SUDO_ASKPASS=/usr/bin/ksshaskpass
+fi
+
 # Debian's /etc/zsh/zshrc otherwise runs its own full compinit (writing ~/.zcompdump)
 # on top of ~/.zshrc's cached compinit against ~/.cache/zsh — double work every shell start.
 skip_global_compinit=1
