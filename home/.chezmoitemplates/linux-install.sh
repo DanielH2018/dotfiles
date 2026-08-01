@@ -9,7 +9,7 @@ returns non-zero rather than aborting its caller, so one unavailable app never c
 of the run. Nothing here calls `exit` — convergence checks belong to the caller. */ -}}
 : "${TAG:=linux-install}"
 
-# All four are overridable purely so the helpers below can be exercised against a throwaway
+# All six are overridable purely so the helpers below can be exercised against a throwaway
 # directory; nothing in normal operation sets any of them. Plain assignment here was an active
 # hazard rather than a style choice: it silently overwrote an exported BIN_DIR, so a test harness
 # that thought it had sandboxed itself installed straight into the real ~/.local/bin and replaced
@@ -23,6 +23,12 @@ of the run. Nothing here calls `exit` — convergence checks belong to the calle
                                     # a stale binary in place instead of skipping it (install-once).
 : "${APP_DIR:=$HOME/.local/share}"  # unpacked multi-file release apps (scrcpy), symlinked into BIN_DIR
 : "${REPO_DIR:=/etc/yum.repos.d}"
+# The apt counterparts to REPO_DIR. Named rather than written inline in apt_repo_add so both
+# package managers' repo helpers can be aimed at a throwaway directory the same way; the dnf side
+# was overridable and the apt side was not, which left half the repo code testable only by
+# stubbing sudo and asserting on the command string instead of on the file that came out.
+: "${APT_LIST_DIR:=/etc/apt/sources.list.d}"
+: "${APT_KEYRING_DIR:=/etc/apt/keyrings}"
 mkdir -p "$BIN_DIR" "$VER_DIR"
 
 # --- 1. Package-manager abstraction -------------------------------------------------------
@@ -227,14 +233,14 @@ rpm_repo_write() {
 # produces a repo apt refuses to trust).
 apt_repo_add() {
   [ "$PM" = apt ] || return 0
-  list="/etc/apt/sources.list.d/$1.list"
-  keyring="/etc/apt/keyrings/$1.gpg"
+  list="$APT_LIST_DIR/$1.list"
+  keyring="$APT_KEYRING_DIR/$1.gpg"
   [ -f "$list" ] && return 0
   tmp="$(mktemp)"
   if ! curl -fsSL "$2" -o "$tmp"; then
     echo "$TAG: failed to fetch the $1 signing key" >&2; rm -f "$tmp"; return 1
   fi
-  sudo mkdir -p -m 755 /etc/apt/keyrings
+  sudo mkdir -p -m 755 "$APT_KEYRING_DIR"
   if head -c 40 "$tmp" | grep -q 'BEGIN PGP PUBLIC KEY'; then
     sudo gpg --yes --dearmor -o "$keyring" "$tmp"
   else
