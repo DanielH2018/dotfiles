@@ -18,7 +18,7 @@ END = "<<<END_EXEC_RESULT>>>"
 
 
 def run_filter(events):
-    """Feed a list of stream-json event dicts to the filter; return (rc, stdout, stderr)."""
+    """Feed stream-json event dicts to the filter; return (rc, stdout, stderr)."""
     stdin = "".join(json.dumps(e) + "\n" for e in events)
     p = subprocess.run(
         [sys.executable, FILTER],

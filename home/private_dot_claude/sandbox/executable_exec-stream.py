@@ -7,6 +7,7 @@ and writes the final result to stdout between delimiters so an orchestrator can
 extract it without scraping the whole stream. Exit code reflects the implementer's
 success (non-zero if the run reported an error).
 """
+
 import json
 import sys
 
@@ -43,14 +44,16 @@ def main():
             continue
         etype = ev.get("type")
         if etype == "system" and ev.get("subtype") == "init":
-            eprint(f"▸ session {str(ev.get('session_id', '?'))[:8]} — model {ev.get('model', '?')}")
+            session_id = str(ev.get("session_id", "?"))[:8]
+            eprint(f"▸ session {session_id} — model {ev.get('model', '?')}")
         elif etype == "assistant":
             for block in ev.get("message", {}).get("content", []):
                 btype = block.get("type")
                 if btype == "text" and block.get("text", "").strip():
                     eprint(block["text"].rstrip())
                 elif btype == "tool_use":
-                    eprint(f"  → {summarize_tool(block.get('name'), block.get('input'))}")
+                    summary = summarize_tool(block.get("name"), block.get("input"))
+                    eprint(f"  → {summary}")
         elif etype == "result":
             saw_result = True
             is_error = bool(ev.get("is_error"))
