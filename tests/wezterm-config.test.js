@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderFile } = require('./lib/render');
 
 const REPO = path.join(__dirname, '..');
 const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
@@ -29,15 +30,7 @@ function findLuac() {
 }
 const luac = findLuac();
 
-let rendered;
-function render() {
-  if (rendered === undefined) {
-    rendered = execFileSync('chezmoi', ['execute-template'], {
-      input: fs.readFileSync(TMPL, 'utf8'), cwd: REPO, encoding: 'utf8',
-    });
-  }
-  return rendered;
-}
+const render = () => renderFile(TMPL, { source: null, cwd: REPO });
 
 test('template renders with no unexpanded chezmoi directives', { skip }, () => {
   const out = render();

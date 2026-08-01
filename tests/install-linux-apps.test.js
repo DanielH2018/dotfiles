@@ -12,6 +12,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const ROOT = path.join(__dirname, '..');
 const SOURCE = path.join(ROOT, 'home');
@@ -19,24 +20,14 @@ const SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_after
 const body = fs.readFileSync(SRC, 'utf8');
 const packages = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'packages.toml'), 'utf8');
 
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // --source pins the render to THIS checkout; without it chezmoi reads packages.toml and the
 // shared linux-install.sh from ~/.local/share/chezmoi and a branch is tested against main's data.
 //
-// Memoised for the same reason install-cli-tools.test.js is: every `chezmoi execute-template`
-// opens chezmoi's bolt-backed state, and this file renders in nearly every test plus once per
-// sandbox run. Rendering each time contends with the rest of the suite running in parallel, which
-// is exactly what made that file flake.
-// Memoisation covers the default body only: callers that render a DIFFERENT template (the Windows
-// script, with its OS guard stripped) must not be served this file's cached render.
-let rendered;
-const renderTemplate = (text) =>
-  execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: text, encoding: 'utf8' });
-const render = (file) =>
-  (file && file !== body ? renderTemplate(file) : (rendered ??= renderTemplate(body)));
+// The Windows script (rendered with its OS guard stripped) goes through the same helper: the
+// cache is keyed on the body, so it cannot be served this file's default render.
+const render = (file) => renderTemplate(file || body, { source: SOURCE });
 
 // The script is gated to a non-WSL workstation, so it renders empty on a server/minimal profile
 // or under WSL. Those hosts have nothing to assert against.

@@ -16,6 +16,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderFile } = require('./lib/render');
 
 const REPO = path.join(__dirname, '..');
 const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
@@ -103,9 +104,7 @@ function setup() {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wezterm-agentview-'));
   dirs.push(dir);
   rendered = path.join(dir, 'wezterm.lua');
-  fs.writeFileSync(rendered, execFileSync('chezmoi', ['execute-template'], {
-    input: fs.readFileSync(TMPL, 'utf8'), cwd: REPO, encoding: 'utf8',
-  }));
+  fs.writeFileSync(rendered, renderFile(TMPL, { source: null, cwd: REPO }));
   fs.writeFileSync(path.join(dir, 'harness.lua'), HARNESS);
 }
 

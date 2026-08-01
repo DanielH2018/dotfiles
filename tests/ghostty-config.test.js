@@ -3,10 +3,10 @@
 // a macOS-only key that Ghostty merely warns about on Linux, a cmd+ bind that Linux can never
 // produce, or two binds colliding on one chord because the modifier mapping collapsed them.
 const { test } = require('node:test');
-const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const ROOT = path.join(__dirname, '..');
 const SOURCE = path.join(ROOT, 'home');
@@ -14,16 +14,10 @@ const SRC = path.join(SOURCE, 'dot_config', 'ghostty', 'config.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 const ignore = fs.readFileSync(path.join(SOURCE, '.chezmoiignore'), 'utf8');
 
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
-// Memoised, and --source-pinned, for the same reasons as install-cli-tools.test.js: the template
-// does not vary between these tests, and every `chezmoi execute-template` opens chezmoi's
-// bolt-backed state, so re-rendering in each of five tests contends with the parallel suite.
-let rendered;
-const render = () =>
-  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: body, encoding: 'utf8' }));
+// --source-pinned so these five tests read this checkout's .chezmoiignore, not the deployed one.
+const render = () => renderTemplate(body, { source: SOURCE });
 
 test('the darwin branch keeps its original modifiers', () => {
   // The macOS render must be unchanged by the Linux port, so the defaults stay cmd-based and only

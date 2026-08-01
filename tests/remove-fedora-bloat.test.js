@@ -10,10 +10,10 @@
 //   3. A package deliberately kept (kleopatra, okular, LibreOffice) drifting into the list. dnf
 //      would remove it without complaint on the next apply.
 const { test } = require('node:test');
-const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const ROOT = path.join(__dirname, '..');
 const SOURCE = path.join(ROOT, 'home');
@@ -22,17 +22,10 @@ const body = fs.readFileSync(SRC, 'utf8');
 const removalsToml = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'removals.toml'), 'utf8');
 const packagesToml = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'packages.toml'), 'utf8');
 
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
-// --source pins the render to THIS checkout, and the result is memoised: `chezmoi
-// execute-template` opens chezmoi's bolt-backed state, and contending on it across a parallel
-// suite is what made install-cli-tools.test.js flake.
-let rendered;
-const render = () => (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], {
-  input: body, encoding: 'utf8',
-}));
+// --source pins the render to THIS checkout, so a branch is not tested against main's data.
+const render = () => renderTemplate(body, { source: SOURCE });
 
 // Gated to a personal non-WSL workstation, so it renders empty on a server/minimal profile, on a
 // work machine, and under WSL. Those hosts have nothing to assert against.

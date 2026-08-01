@@ -17,22 +17,18 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const ROOT = path.join(__dirname, '..');
 const SOURCE = path.join(ROOT, 'home');
 const SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-codecs.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // --source pins the render to THIS checkout, so a branch is not tested against main's copy of the
-// shared linux-install.sh. Memoised because every `chezmoi execute-template` opens chezmoi's
-// bolt-backed state, and this file renders once per sandbox run.
-let rendered;
-const render = () =>
-  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: body, encoding: 'utf8' }));
+// shared linux-install.sh.
+const render = () => renderTemplate(body, { source: SOURCE });
 
 // Gated to a non-WSL Linux workstation, so it renders empty on a server/minimal profile or under
 // WSL. Those hosts have nothing to assert against.

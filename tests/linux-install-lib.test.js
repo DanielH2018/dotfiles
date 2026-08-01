@@ -21,6 +21,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const SOURCE = path.join(__dirname, '..', 'home');
 const LIB = path.join(SOURCE, '.chezmoitemplates', 'linux-install.sh');
@@ -37,14 +38,10 @@ const HOME_DERIVED = ['BIN_DIR', 'VER_DIR', 'APP_DIR'];
 // Skip cleanly where chezmoi isn't installed (minimal CI / sandbox) rather than failing with a
 // spurious spawn ENOENT. --source pins the render to THIS checkout; without it chezmoi resolves
 // .chezmoitemplates from ~/.local/share/chezmoi and a branch would be tested against main's copy.
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
-let rendered;
 const render = () =>
-  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'],
-    { input: '{{ includeTemplate "linux-install.sh" . }}', encoding: 'utf8' }));
+  renderTemplate('{{ includeTemplate "linux-install.sh" . }}', { source: SOURCE });
 
 const dirs = [];
 const sandbox = () => {

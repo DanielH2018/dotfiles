@@ -15,6 +15,7 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderTemplate } = require('./lib/render');
 
 const REPO = path.join(__dirname, '..');
 const TASKS = path.join(REPO, 'home', 'dot_config', 'windows-provisioning', 'scheduled-tasks');
@@ -30,7 +31,7 @@ function definitions() {
   return fs.readdirSync(TASKS).filter((f) => f.endsWith('.xml') || f.endsWith('.xml.tmpl')).map((name) => {
     const raw = fs.readFileSync(path.join(TASKS, name), 'utf8');
     const xml = name.endsWith('.tmpl')
-      ? execFileSync('chezmoi', ['execute-template'], { input: raw, cwd: REPO, encoding: 'utf8' })
+      ? renderTemplate(raw, { source: null, cwd: REPO })
       : raw;
     return { name, xml };
   });

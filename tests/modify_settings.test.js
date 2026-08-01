@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, renderFile } = require('./lib/render');
 
 // modify_settings.json.sh.tmpl is a chezmoi modify_ script written as a template. Render it
 // with `chezmoi execute-template` (resolves `includeTemplate "settings.base.json"` and
@@ -26,9 +27,7 @@ const TEMPLATE = path.join(__dirname, '..', 'home', 'private_dot_claude', 'modif
 const REPO_SOURCE_DIR = path.join(__dirname, '..', 'home');
 function chezmoiCanRenderRepo() {
   try {
-    const srcDir = execFileSync('chezmoi', ['execute-template'], {
-      input: '{{ .chezmoi.sourceDir }}', encoding: 'utf8',
-    }).trim();
+    const srcDir = renderTemplate('{{ .chezmoi.sourceDir }}', { source: null }).trim();
     if (!srcDir || !fs.existsSync(path.join(srcDir, '.chezmoitemplates', 'settings.base.json'))) return false;
     return fs.realpathSync(srcDir) === fs.realpathSync(REPO_SOURCE_DIR);
   } catch { return false; }
@@ -38,10 +37,7 @@ const skip = chezmoiCanRenderRepo() ? false : 'chezmoi cannot render this repo\'
 let tmp, script, run;
 before(() => {
   if (skip) return;
-  const rendered = execFileSync('chezmoi', ['execute-template'], {
-    input: fs.readFileSync(TEMPLATE, 'utf8'),
-    encoding: 'utf8',
-  });
+  const rendered = renderFile(TEMPLATE, { source: null });
 
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'modset-'));
   script = path.join(tmp, 'modify_settings.sh');

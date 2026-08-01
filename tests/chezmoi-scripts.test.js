@@ -20,6 +20,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderFile } = require('./lib/render');
 
 const REPO = path.join(__dirname, '..');
 const SCRIPTS_DIR = path.join(REPO, 'home', '.chezmoiscripts');
@@ -66,12 +67,6 @@ const ALL_FILES = walk(SCRIPTS_DIR);
 const SH_TMPLS = ALL_FILES.filter((f) => f.endsWith('.sh.tmpl')).sort();
 const PS1_TMPLS = ALL_FILES.filter((f) => f.endsWith('.ps1.tmpl')).sort();
 
-function renderTemplate(file) {
-  return execFileSync('chezmoi', ['execute-template', '--source', REPO], {
-    input: fs.readFileSync(file, 'utf8'), encoding: 'utf8',
-  });
-}
-
 const dirs = [];
 function tmpdir(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
 
@@ -102,7 +97,7 @@ function runSh(scriptFile, env, { tty = false } = {}) {
 for (const file of SH_TMPLS) {
   const rel = path.relative(REPO, file);
   test(`renders and bash -n parses: ${rel}`, { skip }, () => {
-    const rendered = renderTemplate(file);
+    const rendered = renderFile(file);
     const dir = tmpdir('chezmoi-sh-');
     const out = path.join(dir, 'rendered.sh');
     fs.writeFileSync(out, rendered);
@@ -114,7 +109,7 @@ for (const file of PS1_TMPLS) {
   const rel = path.relative(REPO, file);
   // No pwsh on this machine -- rendering-only coverage, no syntax check.
   test(`renders: ${rel}`, { skip }, () => {
-    renderTemplate(file);
+    renderFile(file);
   });
 }
 
@@ -210,7 +205,7 @@ const SUDO_STUB = [
     fs.symlinkSync(realBin('cut'), path.join(dir, 'cut'));
     fs.symlinkSync(realBin('awk'), path.join(dir, 'awk'));
     fs.symlinkSync(realBin('grep'), path.join(dir, 'grep'));
-    const rendered = renderTemplate(SDS_SRC);
+    const rendered = renderFile(SDS_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = {
@@ -278,7 +273,7 @@ const SUDO_STUB = [
     const logFile = path.join(dir, 'log.txt');
     fs.writeFileSync(logFile, '');
     fs.writeFileSync(path.join(dir, 'sudo'), SUDO_STUB, { mode: 0o755 });
-    const rendered = renderTemplate(CW_SRC);
+    const rendered = renderFile(CW_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, SUDO_PROBE_EXIT: '1' };
@@ -323,7 +318,7 @@ const SUDO_STUB = [
     fs.writeFileSync(path.join(dir, 'sudo'), SUDO_STUB, { mode: 0o755 });
     fs.writeFileSync(path.join(dir, 'systemctl'), SYSTEMCTL_STUB, { mode: 0o755 });
     fs.symlinkSync(realBin('grep'), path.join(dir, 'grep'));
-    const rendered = renderTemplate(DW_SRC);
+    const rendered = renderFile(DW_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = {
@@ -411,7 +406,7 @@ const SUDO_STUB = [
     for (const b of ['cat', 'chmod', 'cp', 'mkdir', 'mktemp', 'rm', 'sh']) {
       fs.symlinkSync(realBin(b), path.join(dir, b));
     }
-    const rendered = renderTemplate(PT_SRC);
+    const rendered = renderFile(PT_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = {
@@ -498,7 +493,7 @@ const SUDO_STUB = [
     fs.writeFileSync(path.join(dir, 'sudo'), APT_SUDO_STUB, { mode: 0o755 });
     if (paplayPresent) fs.writeFileSync(path.join(dir, 'paplay'), '#!/bin/sh\n', { mode: 0o755 });
     fs.symlinkSync(realBin('chmod'), path.join(dir, 'chmod')); // used by the sudo stub itself
-    const rendered = renderTemplate(WA_SRC);
+    const rendered = renderFile(WA_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, STUB_DIR: dir };
@@ -589,7 +584,7 @@ const SUDO_STUB = [
     const confFile = path.join(dir, 'dnf.conf');
     fs.writeFileSync(confFile, conf);
     const scriptFile = path.join(dir, 'rendered.sh');
-    fs.writeFileSync(scriptFile, renderTemplate(DS_SRC));
+    fs.writeFileSync(scriptFile, renderFile(DS_SRC));
     const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, DNF_CONF: confFile };
     return { scriptFile, env, logFile, confFile };
   }
@@ -765,7 +760,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     }
     const actionsFile = path.join(dir, 'snapper.actions');
     const scriptFile = path.join(dir, 'rendered.sh');
-    fs.writeFileSync(scriptFile, renderTemplate(BS_SRC));
+    fs.writeFileSync(scriptFile, renderFile(BS_SRC));
     const env = {
       PATH: dir, HOME: dir, STUB_LOG: logFile, STATE_DIR: state,
       SNAPPER_ACTIONS: actionsFile, SNAPPER_CONFIG_DIR: cfgDir,

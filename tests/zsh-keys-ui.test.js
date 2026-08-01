@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { renderFile } = require('./lib/render');
 const { Term, ptyAvailable, tierB } = require('./lib/pty');
 
 const ROOT = path.join(__dirname, '..');
@@ -25,9 +26,7 @@ let rendered = null;
 let renderError = null;
 if (!gate && !missing('chezmoi')) {
   try {
-    rendered = execFileSync('chezmoi', ['execute-template'], {
-      cwd: ROOT, input: fs.readFileSync(ZSHRC_SRC), encoding: 'utf8',
-    });
+    rendered = renderFile(ZSHRC_SRC, { source: null, cwd: ROOT });
   } catch (e) { renderError = e.message; }
 }
 

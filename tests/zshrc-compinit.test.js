@@ -17,6 +17,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderTemplate } = require('./lib/render');
 
 const TMPL = path.join(__dirname, '..', 'home', 'dot_zshrc.tmpl');
 const raw = fs.readFileSync(TMPL, 'utf8');
@@ -58,7 +59,7 @@ test('the fast (-C) branch is untouched', () => {
 });
 
 test('render on this host is syntactically valid and preserves both fixes', { skip }, () => {
-  const rendered = execFileSync('chezmoi', ['execute-template'], { input: raw, encoding: 'utf8' });
+  const rendered = renderTemplate(raw, { source: null });
   assert.match(rendered, /touch "\$ZCOMPDUMP"/);
   const compinitAutoloads = rendered.match(/^autoload -Uz compinit$/gm) || [];
   assert.strictEqual(compinitAutoloads.length, 1, 'this host renders the non-darwin branch, so exactly one autoload either way');

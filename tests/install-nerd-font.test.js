@@ -1,22 +1,20 @@
 const { test } = require('node:test');
-const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const SRC = path.join(__dirname, '..', 'home', '.chezmoiscripts', 'os-windows', 'run_onchange_install-nerd-font.ps1.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
 // (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // 1. The whole script is gated to Windows: off Windows chezmoi renders it to nothing (so
 //    `chezmoi apply` never runs PowerShell there); on Windows it renders the installer.
 test('script is gated to Windows', { skip }, () => {
-  const rendered = execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
+  const rendered = renderTemplate(body, { source: null });
   if (process.platform === 'win32') {
     assert.match(rendered, /IosevkaTerm Nerd Font Mono/, 'on Windows the guard renders the installer');
   } else {
@@ -49,8 +47,7 @@ test('Linux script is gated to a non-WSL workstation', { skip }, () => {
   assert.match(gate, /eq \.chezmoi\.os "linux"/);
   assert.match(gate, /eq \.profile "workstation"/, 'a headless server renders no fonts');
   if (process.platform !== 'linux') {
-    const rendered = execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'],
-      { input: linuxBody, encoding: 'utf8' });
+    const rendered = renderTemplate(linuxBody, { source: SOURCE });
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   }
 });

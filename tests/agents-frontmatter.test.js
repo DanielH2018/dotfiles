@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { renderTemplate } = require('./lib/render');
 
 // The agents under home/private_dot_claude/agents/ are the task-routing layer: each one
 // pins a `model` and an `effort` so dispatching it *is* the model/effort selection. Two
@@ -35,10 +35,7 @@ const agentFiles = fs.readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'));
 // source dir, so the test reads the availableModels it is committed alongside — a
 // worktree's template, not the primary checkout's.
 function renderedBaseSettings() {
-  const out = execFileSync('chezmoi', ['execute-template', '--source', path.join(REPO, 'home')], {
-    input: '{{ includeTemplate "settings.base.json" . }}', encoding: 'utf8',
-  });
-  return JSON.parse(out);
+  return JSON.parse(renderTemplate('{{ includeTemplate "settings.base.json" . }}'));
 }
 
 let base = null;

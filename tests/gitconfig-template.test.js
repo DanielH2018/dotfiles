@@ -14,6 +14,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderFile } = require('./lib/render');
 
 const SOURCE = path.join(__dirname, '..', 'home');
 const TMPL = path.join(SOURCE, 'dot_gitconfig.tmpl');
@@ -33,9 +34,7 @@ function render(home) {
   // --source pins the render to THIS checkout's .chezmoitemplates (is-wsl, is-desktop-linux),
   // which the WSL branch now pulls in via includeTemplate; without it chezmoi resolves shared
   // templates from ~/.local/share/chezmoi and a branch would be tested against main's copies.
-  return execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], {
-    input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', env: { ...process.env, HOME: home },
-  });
+  return renderFile(TMPL, { source: SOURCE, env: { ...process.env, HOME: home } });
 }
 
 test('signing policy is emitted even when no signing key is present', { skip }, () => {

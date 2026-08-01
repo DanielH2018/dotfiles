@@ -4,15 +4,14 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const SRC = path.join(__dirname, '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
 // (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 const dirs = [];
 
@@ -20,7 +19,7 @@ const dirs = [];
 //    runs it there); on Linux + non-minimal it renders the builder. A minimal profile also
 //    renders empty, so on Linux only assert the shape when something rendered.
 test('script is gated to Linux', { skip }, () => {
-  const rendered = execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
+  const rendered = renderTemplate(body, { source: null });
   if (process.platform !== 'linux') {
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   } else if (rendered.trim() !== '') {
@@ -44,7 +43,7 @@ test('Linux branch carries the gate, source-build, and sudo-less defer', { skip 
 //    so `chezmoi apply` on an up-to-date host is a no-op. Drive the rendered script with a
 //    HOME whose .local/bin/tmux reports the target version and assert it skips at exit 0.
 test('idempotence: current local tmux skips the rebuild', { skip }, () => {
-  const rendered = execFileSync('chezmoi', ['execute-template'], { input: body, encoding: 'utf8' });
+  const rendered = renderTemplate(body, { source: null });
   if (process.platform === 'linux' && rendered.trim() !== '') {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-inst-'));
     dirs.push(home);

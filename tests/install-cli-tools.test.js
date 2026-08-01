@@ -9,6 +9,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const SRC = path.join(__dirname, '..', 'home', '.chezmoiscripts', 'os-linux', 'run_once_after_install-cli-tools.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -17,30 +18,18 @@ const tools = fs.readFileSync(TOOLS, 'utf8');
 
 // Renders a chezmoi template; skip cleanly where the binary isn't installed (minimal CI /
 // sandbox) rather than failing with a spurious spawn ENOENT.
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi not on PATH';
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 const dirs = [];
-// Render exactly once per file: the template does not vary between these tests, and eleven
-// subprocesses where one will do is just slower.
-//
-// This memoisation was originally credited with fixing a flake — "every `chezmoi
-// execute-template` opens chezmoi's bolt-backed state, so this file contended with the rest of
-// the suite". That diagnosis was wrong, and the flake outlived it. Thirty-two concurrent
-// renders produce zero failures; the real cause was tests/managed-test-drift.test.js planting a
-// probe file inside the shared source tree, so any concurrent `--source` walk could lstat a
-// file that had just been removed. Fixed there, at the source. Keep the memoisation for speed,
-// but do not expect it to prevent anything.
+// The memo lives in lib/render.js now, along with the correction this file's comment used to
+// carry alone: it buys speed, not freedom from the flake it was once credited with fixing.
 //
 // --source pins that render to THIS checkout. Without it chezmoi resolves .chezmoidata and
 // .chezmoitemplates from ~/.local/share/chezmoi, so a branch or worktree would silently be tested
 // against main's data — and the shared linux-install.sh this script now includes would resolve to
 // whatever main happens to carry, or not at all.
 const SOURCE = path.join(__dirname, '..', 'home');
-let rendered;
-const render = () =>
-  (rendered ??= execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], { input: body, encoding: 'utf8' }));
+const render = () => renderTemplate(body, { source: SOURCE });
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 
