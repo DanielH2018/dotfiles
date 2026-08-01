@@ -1,0 +1,8 @@
+{{/* Renders "true" on WSL, "" otherwise -- callers write {{ if includeTemplate "is-wsl" . }}.
+Two signals, not one: osrelease usually contains "microsoft", but a WSL kernel can be rebuilt
+without that substring and still be WSL, so the binfmt_misc WSLInterop mount (present only
+under real WSL) is checked too. One definition here instead of each caller re-inlining the
+substring-only test, which is what let them drift out of sync with dot_gitconfig.tmpl. */ -}}
+{{- if or (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (stat "/proc/sys/fs/binfmt_misc/WSLInterop") -}}
+true
+{{- end -}}

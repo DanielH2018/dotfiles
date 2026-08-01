@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+{{ if includeTemplate "is-desktop-linux" . -}}
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Installs NVIDIA's proprietary driver on Fedora when an
 # NVIDIA GPU is actually present.

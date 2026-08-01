@@ -1,5 +1,5 @@
 {{ if eq .chezmoi.os "linux" -}}
-{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+{{ if includeTemplate "is-wsl" . -}}
 #!/bin/sh
 # WSL-only: strip Ubuntu Server bloat that has no purpose on a personal dev WSL, make
 # Docker socket-activated instead of always-on, and set the memory-pressure tunables.

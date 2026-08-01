@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not .work) (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+{{ if and (includeTemplate "is-desktop-linux" .) (not .work) -}}
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Removes the default-but-unused Fedora KDE packages listed in
 # .chezmoidata/removals.toml — the inverse of run_onchange_after_install-apps.sh.tmpl, and named

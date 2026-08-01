@@ -71,10 +71,16 @@ const MUST_KEEP = [
 ];
 
 test('script is gated to a personal, non-WSL Linux workstation', { skip }, () => {
-  assert.match(body, /eq \.chezmoi\.os "linux"/);
-  assert.match(body, /eq \.profile "workstation"/);
+  // The linux/workstation/non-WSL checks themselves now live in the shared is-desktop-linux
+  // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
+  // `not .work` stays here: it is this script's alone, since no other desktop-only script
+  // cares whether the machine is a work one.
+  assert.match(body, /includeTemplate "is-desktop-linux"/);
   assert.match(body, /not \.work/, 'the work machine package set is not this repo to trim');
-  assert.match(body, /contains "microsoft" \(lower \.chezmoi\.kernel\.osrelease\)/,
+  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  assert.match(gate, /eq \.chezmoi\.os "linux"/);
+  assert.match(gate, /eq \.profile "workstation"/);
+  assert.match(gate, /includeTemplate "is-wsl"/,
     'WSL has no desktop of its own and must be excluded');
   if (process.platform !== 'linux') {
     assert.strictEqual(render().trim(), '', 'script must render empty off Linux');

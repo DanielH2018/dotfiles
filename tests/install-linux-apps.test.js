@@ -63,10 +63,13 @@ const EXCLUDED_FROM_LINUX = [
 ];
 
 test('script is gated to a non-WSL Linux workstation', { skip }, () => {
-  assert.match(body, /eq \.chezmoi\.os "linux"/);
-  assert.match(body, /eq \.profile "workstation"/);
-  assert.match(body, /contains "microsoft" \(lower \.chezmoi\.kernel\.osrelease\)/,
+  // The linux/workstation/non-WSL checks themselves now live in the shared is-desktop-linux
+  // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
+  assert.match(body, /includeTemplate "is-desktop-linux"/,
     'WSL has no desktop of its own and must be excluded');
+  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  assert.match(gate, /eq \.chezmoi\.os "linux"/);
+  assert.match(gate, /eq \.profile "workstation"/);
   if (process.platform !== 'linux') {
     assert.strictEqual(render().trim(), '', 'script must render empty off Linux');
   }

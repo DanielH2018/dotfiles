@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+{{ if includeTemplate "is-desktop-linux" . -}}
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Installs IosevkaTerm Nerd Font — the family
 # .chezmoidata/terminal.toml names and Ghostty/WezTerm/starship all render with — so the prompt's
@@ -27,40 +27,32 @@ command -v unzip >/dev/null 2>&1 || {
 
 # Version-aware, matching how the CLI-tools installer treats its release binaries: re-fetch when
 # the font is absent OR the recorded nerd-fonts tag is stale, so a re-apply upgrades in place.
+# install_release_files wants the tag already resolved (see linux-install.sh section 6).
 tag="$(latest_tag ryanoasis/nerd-fonts)"
 if [ -z "$tag" ]; then
   echo "$TAG: could not resolve the latest nerd-fonts tag" >&2
   exit 0
 fi
 
-if [ -d "$FONT_DIR" ] && [ "$(recorded_tag iosevkaterm-font)" = "$tag" ]; then
+# Checked here rather than left to install_release_files alone: its return code is 0 both when
+# it skips an already-current dest and when it installs fresh files, so distinguishing "no-op"
+# from "just installed" — needed below to gate the fc-cache rebuild — means pre-empting the
+# no-op case ourselves. Once we're past this, a 0 return always means files actually landed.
+old="$(recorded_tag iosevkaterm-font)"
+if [ -d "$FONT_DIR" ] && [ "$old" = "$tag" ]; then
   echo "$TAG: [skip] $FAMILY already at $tag."
   exit 0
 fi
 
-old="$(recorded_tag iosevkaterm-font)"
-tmp="$(mktemp -d)"
-echo "$TAG: [install] $FAMILY $tag ..."
-if curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip" -o "$tmp/f.zip" 2>/dev/null \
-   && unzip -q -o "$tmp/f.zip" -d "$tmp/x" 2>/dev/null; then
-  # Mono only — the same subset the Windows installer takes. The propo/variable faces in the
-  # archive would otherwise win font matching for the terminal and break cell alignment.
-  if find "$tmp/x" -type f -name '*Mono*.ttf' | head -1 | grep -q .; then
-    rm -rf "${FONT_DIR:?}"
-    mkdir -p "$FONT_DIR"
-    find "$tmp/x" -type f -name '*Mono*.ttf' -exec install -m 0644 {} "$FONT_DIR/" \;
-    if command -v fc-cache >/dev/null 2>&1; then
-      fc-cache -f "$FONT_DIR" >/dev/null 2>&1 || true
-    else
-      echo "$TAG: fc-cache not found; the font is installed but the cache was not rebuilt" >&2
-    fi
-    printf '%s' "$tag" > "$VER_DIR/iosevkaterm-font"
-    echo "$TAG: installed $FAMILY ${old:+$old -> }$tag"
+# Mono only — the same subset the Windows installer takes. The propo/variable faces in the
+# archive would otherwise win font matching for the terminal and break cell alignment.
+if install_release_files iosevkaterm-font "$tag" \
+     "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip" \
+     "$FONT_DIR" '*Mono*.ttf' 0644; then
+  if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f "$FONT_DIR" >/dev/null 2>&1 || true
   else
-    echo "$TAG: no Mono .ttf files in the IosevkaTerm archive" >&2
+    echo "$TAG: fc-cache not found; the font is installed but the cache was not rebuilt" >&2
   fi
-else
-  echo "$TAG: failed to fetch the IosevkaTerm archive" >&2
 fi
-rm -rf "$tmp"
 {{ end -}}

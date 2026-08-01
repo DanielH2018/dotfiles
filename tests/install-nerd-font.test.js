@@ -41,10 +41,13 @@ const LINUX_SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange
 const linuxBody = fs.readFileSync(LINUX_SRC, 'utf8');
 
 test('Linux script is gated to a non-WSL workstation', { skip }, () => {
-  assert.match(linuxBody, /eq \.chezmoi\.os "linux"/);
-  assert.match(linuxBody, /eq \.profile "workstation"/, 'a headless server renders no fonts');
-  assert.match(linuxBody, /contains "microsoft" \(lower \.chezmoi\.kernel\.osrelease\)/,
+  // The linux/workstation/non-WSL checks themselves now live in the shared is-desktop-linux
+  // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
+  assert.match(linuxBody, /includeTemplate "is-desktop-linux"/,
     "WSL's terminal uses the font installed on the Windows host");
+  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  assert.match(gate, /eq \.chezmoi\.os "linux"/);
+  assert.match(gate, /eq \.profile "workstation"/, 'a headless server renders no fonts');
   if (process.platform !== 'linux') {
     const rendered = execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'],
       { input: linuxBody, encoding: 'utf8' });

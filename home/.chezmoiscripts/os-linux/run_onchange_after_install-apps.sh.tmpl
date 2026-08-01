@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+{{ if includeTemplate "is-desktop-linux" . -}}
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Installs the curated GUI/app list from
 # .chezmoidata/packages.toml — the Linux counterpart to
@@ -155,7 +155,8 @@ fi
 # Bitwarden CLI: Bitwarden tags its CLI releases `cli-vYYYY.M.P`, so the releases/latest redirect
 # that latest_tag() follows resolves the desktop app instead. Resolve the newest cli- tag through
 # the API, then take the plain linux zip. Unauthenticated API calls are rate-limited to 60/hour,
-# which a run_onchange script comfortably fits inside.
+# which a run_onchange script comfortably fits inside. install_release_zip takes the tag already
+# resolved for exactly this reason (see linux-install.sh section 6).
 if ! command -v bw >/dev/null 2>&1; then
   if ! command -v unzip >/dev/null 2>&1; then
     echo "$TAG: unzip missing; skipping Bitwarden CLI (the CLI-tools installer provides unzip)" >&2
@@ -168,17 +169,8 @@ if ! command -v bw >/dev/null 2>&1; then
     else
       bw_ver="${bw_tag#cli-v}"
       case "$rust_arch" in aarch64) bw_asset="bw-linux-arm64-${bw_ver}.zip" ;; *) bw_asset="bw-linux-${bw_ver}.zip" ;; esac
-      tmp="$(mktemp -d)"
-      if curl -fsSL "https://github.com/bitwarden/clients/releases/download/${bw_tag}/${bw_asset}" -o "$tmp/bw.zip" 2>/dev/null \
-         && unzip -q -o "$tmp/bw.zip" -d "$tmp" 2>/dev/null && [ -f "$tmp/bw" ]; then
-        install -m 0755 "$tmp/bw" "$BIN_DIR/bw"
-        printf '%s' "$bw_tag" > "$VER_DIR/bw"
-        echo "$TAG: installed bw $bw_tag"
-      else
-        echo "$TAG: failed to fetch Bitwarden CLI ($bw_asset)" >&2
-        failed="$failed Bitwarden-CLI"
-      fi
-      rm -rf "$tmp"
+      install_release_zip bw "$bw_tag" "https://github.com/bitwarden/clients/releases/download/{tag}/${bw_asset}" bw \
+        || failed="$failed Bitwarden-CLI"
     fi
   fi
 fi

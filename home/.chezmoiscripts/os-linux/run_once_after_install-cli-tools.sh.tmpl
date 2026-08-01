@@ -61,7 +61,6 @@ fi
 #     Fedora: the distro package already tracks current gh (2.94 on F44), so a plain install is
 #     enough and there is no third-party repo to add.
 GH_LIST="/etc/apt/sources.list.d/github-cli.list"
-GH_KEYRING="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
 gh_ready() {
   case "$PM" in
     apt) [ -f "$GH_LIST" ] ;;
@@ -72,17 +71,9 @@ gh_ready() {
 if ! gh_ready; then
   if sudo -v; then
     if [ "$PM" = apt ]; then
-      sudo mkdir -p -m 755 /etc/apt/keyrings
-      tmpk="$(mktemp)"
-      if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$tmpk"; then
-        sudo install -m 0644 "$tmpk" "$GH_KEYRING"
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=$GH_KEYRING] https://cli.github.com/packages stable main" \
-          | sudo tee "$GH_LIST" >/dev/null
-        sudo apt-get update -qq && sudo apt-get install -y gh && echo "install-cli-tools: GitHub CLI repo added + gh updated"
-      else
-        echo "install-cli-tools: failed to fetch GitHub CLI keyring" >&2
-      fi
-      rm -f "$tmpk"
+      apt_repo_add github-cli https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        "deb [arch=$(dpkg --print-architecture) signed-by=__KEYRING__] https://cli.github.com/packages stable main" \
+        && pkg_install gh && echo "install-cli-tools: GitHub CLI repo added + gh updated"
     else
       pkg_install gh && echo "install-cli-tools: gh installed"
     fi
@@ -101,7 +92,6 @@ fi
 #                       tagged stable is from 2024. The COPR carries an fc44 chroot.
 #     Repo added once, then the normal upgrade path keeps it current.
 WEZ_LIST="/etc/apt/sources.list.d/wezterm.list"
-WEZ_KEYRING="/usr/share/keyrings/wezterm-fury.gpg"
 wez_ready() {
   case "$PM" in
     apt) [ -f "$WEZ_LIST" ] ;;
@@ -112,18 +102,10 @@ wez_ready() {
 if ! wez_ready; then
   if sudo -v; then
     if [ "$PM" = apt ]; then
-      tmpk="$(mktemp)"
-      if curl -fsSL https://apt.fury.io/wez/gpg.key -o "$tmpk"; then
-        sudo gpg --yes --dearmor -o "$WEZ_KEYRING" "$tmpk"
-        sudo chmod 644 "$WEZ_KEYRING"
-        echo 'deb [signed-by=/usr/share/keyrings/wezterm-fury.gpg] https://apt.fury.io/wez/ * *' \
-          | sudo tee "$WEZ_LIST" >/dev/null
-        sudo apt-get update -qq && sudo apt-get install -y wezterm && echo "install-cli-tools: WezTerm repo added + installed"
-      else
-        echo "install-cli-tools: failed to fetch WezTerm gpg key" >&2
-      fi
-      rm -f "$tmpk"
-    elif sudo dnf -y copr enable wezfurlong/wezterm-nightly; then
+      apt_repo_add wezterm https://apt.fury.io/wez/gpg.key \
+        "deb [signed-by=__KEYRING__] https://apt.fury.io/wez/ * *" \
+        && pkg_install wezterm && echo "install-cli-tools: WezTerm repo added + installed"
+    elif copr_enable wezfurlong/wezterm-nightly; then
       pkg_install wezterm && echo "install-cli-tools: WezTerm COPR enabled + installed"
     else
       echo "install-cli-tools: failed to enable the WezTerm COPR" >&2
@@ -169,50 +151,28 @@ fi
 
 # 5. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
 #    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
-#    runtime tree, yazi ships a second binary (`ya`). No sudo; both use the version-less
-#    latest/download asset form. Re-fetch when missing or the recorded tag is stale (same
-#    version-aware policy as install_release).
+#    runtime tree, yazi ships a second binary (`ya`). No sudo. install_release_zip/
+#    install_prefix_tarball take an already-resolved tag (see the module), so latest_tag runs here.
 if [ -n "$rust_arch" ]; then
   # Neovim: official static release. The tarball is bin/ + its runtime under one prefix; merge it
   # into ~/.local so bin/nvim resolves ../share/nvim/runtime. nvim config self-bootstraps lazy.nvim.
   nvim_tag="$(latest_tag neovim/neovim)"
-  if [ -n "$nvim_tag" ] && { [ ! -x "$BIN_DIR/nvim" ] || [ "$(recorded_tag nvim)" != "$nvim_tag" ]; }; then
-    tmp="$(mktemp -d)"
-    if curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-${nvim_arch}.tar.gz" -o "$tmp/nvim.tgz" 2>/dev/null \
-       && tar xzf "$tmp/nvim.tgz" -C "$tmp" 2>/dev/null; then
-      src="$(find "$tmp" -maxdepth 1 -type d -name 'nvim-linux-*' | head -1)"
-      if [ -n "$src" ]; then
-        old="$(recorded_tag nvim)"
-        if mkdir -p "$HOME/.local" && cp -a "$src/." "$HOME/.local/"; then
-          printf '%s' "$nvim_tag" > "$VER_DIR/nvim"
-          echo "install-cli-tools: installed nvim ${old:+$old -> }$nvim_tag"
-        fi
-      else
-        echo "install-cli-tools: nvim payload not found in archive" >&2
-      fi
-    else
-      echo "install-cli-tools: failed to fetch nvim" >&2
-    fi
-    rm -rf "$tmp"
+  if [ -n "$nvim_tag" ]; then
+    install_prefix_tarball nvim "$nvim_tag" \
+      "https://github.com/neovim/neovim/releases/download/{tag}/nvim-linux-${nvim_arch}.tar.gz" \
+      "$HOME/.local" bin/nvim
+  else
+    echo "install-cli-tools: could not resolve latest tag for neovim/neovim" >&2
   fi
   # Yazi: release zip carrying both `yazi` and its `ya` plugin manager (ya pkg install is driven
-  # by run_onchange_after_ya-pkg-install). Extract both to bin.
+  # by run_onchange_after_ya-pkg-install). yazi is listed first so it gates the recorded tag.
   yazi_tag="$(latest_tag sxyazi/yazi)"
-  if [ -n "$yazi_tag" ] && { [ ! -x "$BIN_DIR/yazi" ] || [ "$(recorded_tag yazi)" != "$yazi_tag" ]; }; then
-    tmp="$(mktemp -d)"
-    if curl -fsSL "https://github.com/sxyazi/yazi/releases/latest/download/yazi-${rust_arch}-unknown-linux-gnu.zip" -o "$tmp/yazi.zip" 2>/dev/null \
-       && unzip -q "$tmp/yazi.zip" -d "$tmp" 2>/dev/null; then
-      d="$(find "$tmp" -maxdepth 1 -type d -name 'yazi-*' | head -1)"
-      for b in yazi ya; do [ -f "$d/$b" ] && install -m 0755 "$d/$b" "$BIN_DIR/$b"; done
-      if [ -x "$BIN_DIR/yazi" ]; then
-        old="$(recorded_tag yazi)"
-        printf '%s' "$yazi_tag" > "$VER_DIR/yazi"
-        echo "install-cli-tools: installed yazi ${old:+$old -> }$yazi_tag"
-      fi
-    else
-      echo "install-cli-tools: failed to fetch yazi" >&2
-    fi
-    rm -rf "$tmp"
+  if [ -n "$yazi_tag" ]; then
+    install_release_zip yazi "$yazi_tag" \
+      "https://github.com/sxyazi/yazi/releases/download/{tag}/yazi-${rust_arch}-unknown-linux-gnu.zip" \
+      yazi ya
+  else
+    echo "install-cli-tools: could not resolve latest tag for sxyazi/yazi" >&2
   fi
 fi
 

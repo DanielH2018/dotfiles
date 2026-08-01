@@ -15,7 +15,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const TMPL = path.join(__dirname, '..', 'home', 'dot_gitconfig.tmpl');
+const SOURCE = path.join(__dirname, '..', 'home');
+const TMPL = path.join(SOURCE, 'dot_gitconfig.tmpl');
 function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
@@ -29,7 +30,10 @@ function fakeHome(keys = []) {
   return d;
 }
 function render(home) {
-  return execFileSync('chezmoi', ['execute-template'], {
+  // --source pins the render to THIS checkout's .chezmoitemplates (is-wsl, is-desktop-linux),
+  // which the WSL branch now pulls in via includeTemplate; without it chezmoi resolves shared
+  // templates from ~/.local/share/chezmoi and a branch would be tested against main's copies.
+  return execFileSync('chezmoi', ['--source', SOURCE, 'execute-template'], {
     input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8', env: { ...process.env, HOME: home },
   });
 }

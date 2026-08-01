@@ -1,5 +1,5 @@
 {{ if eq .chezmoi.os "linux" -}}
-{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+{{ if includeTemplate "is-wsl" . -}}
 #!/bin/sh
 # WSL-only: mask systemd-binfmt.service. On every boot it tries to flush binfmt_misc
 # rules and fails ("Read-only file system") because WSL owns that mount and registers

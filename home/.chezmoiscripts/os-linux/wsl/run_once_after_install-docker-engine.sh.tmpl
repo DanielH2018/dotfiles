@@ -1,5 +1,5 @@
 {{ if eq .chezmoi.os "linux" -}}
-{{ if and (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (ne .profile "minimal") -}}
+{{ if and (includeTemplate "is-wsl" .) (ne .profile "minimal") -}}
 #!/bin/sh
 # Installs Docker Engine (docker-ce) from Docker's official apt repo — WSL2 only.
 # Gated to WSL: a native Linux host (the Pi/server) manages Docker separately or not at all,

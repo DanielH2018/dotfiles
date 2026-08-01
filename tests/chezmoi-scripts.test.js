@@ -29,14 +29,17 @@ try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { too
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 
-// The os-linux/wsl/ scripts driven in Part 2 open with `{{ if contains "microsoft" (lower
-// .chezmoi.kernel.osrelease) }}`, so off WSL they render to an EMPTY string. The Part 2
-// behavior tests would then run an empty script and read exit 0 / an empty stub log --
-// failing on assertions about a script body that does not exist there, which is what the
-// homelab (plain Ubuntu, same suite) hits. Gate them on the same fact the template keys off:
-// os.release() is the same uname release chezmoi reads into .chezmoi.kernel.osrelease.
+// The os-linux/wsl/ scripts driven in Part 2 open with `{{ if includeTemplate "is-wsl" . }}`,
+// so off WSL they render to an EMPTY string. The Part 2 behavior tests would then run an empty
+// script and read exit 0 / an empty stub log -- failing on assertions about a script body that
+// does not exist there, which is what the homelab (plain Ubuntu, same suite) hits. Gate them on
+// os.release(), the same uname release chezmoi reads into .chezmoi.kernel.osrelease.
 // Deliberately NOT gated on "did it render empty?" -- that would also silently skip on WSL if
 // the guard itself broke, turning a real regression into a green run.
+// Note this checks only the substring, while is-wsl also accepts the binfmt_misc WSLInterop
+// mount. On a WSL kernel rebuilt without "microsoft" the template renders the script but this
+// skips its tests -- the conservative direction (a skip, never a false failure), and the only
+// one available here without reaching into /proc from the test process.
 const skipWsl = skip || (/microsoft/i.test(os.release()) ? false : 'WSL-only script (renders empty off WSL)');
 
 // The two interactive-chsh tests route the rendered script through `script(1)` to hand it a pty.

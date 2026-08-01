@@ -1,4 +1,4 @@
-{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (contains "microsoft" (lower .chezmoi.kernel.osrelease))) -}}
+{{ if includeTemplate "is-desktop-linux" . -}}
 #!/bin/sh
 # Managed by chezmoi (run_onchange). Installs the `xone` driver so the Xbox Wireless Adapter
 # works, and caps USB enumeration retries on the hub port it sits behind.

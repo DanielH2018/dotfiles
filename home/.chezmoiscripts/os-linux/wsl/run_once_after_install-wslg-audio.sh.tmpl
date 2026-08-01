@@ -1,5 +1,5 @@
 {{ if eq .chezmoi.os "linux" -}}
-{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+{{ if includeTemplate "is-wsl" . -}}
 #!/bin/sh
 # WSL-only: install pulseaudio-utils so private_dot_claude/hooks/play-sound.sh can reach the
 # speakers through WSLg's PulseAudio socket (/mnt/wslg/PulseServer) rather than by launching

@@ -9,12 +9,15 @@ returns non-zero rather than aborting its caller, so one unavailable app never c
 of the run. Nothing here calls `exit` — convergence checks belong to the caller. */ -}}
 : "${TAG:=linux-install}"
 
-BIN_DIR="$HOME/.local/bin"
-VER_DIR="$BIN_DIR/.versions"   # release tag last installed per tool, so a re-apply upgrades a
-                               # stale binary in place instead of skipping it (install-once).
-APP_DIR="$HOME/.local/share"   # unpacked multi-file release apps (scrcpy), symlinked into BIN_DIR
-# Overridable purely so the repo helpers below can be exercised against a throwaway directory;
-# nothing in normal operation sets it.
+# All four are overridable purely so the helpers below can be exercised against a throwaway
+# directory; nothing in normal operation sets any of them. Plain assignment here was an active
+# hazard rather than a style choice: it silently overwrote an exported BIN_DIR, so a test harness
+# that thought it had sandboxed itself installed straight into the real ~/.local/bin and replaced
+# live binaries with its fixtures.
+: "${BIN_DIR:=$HOME/.local/bin}"
+: "${VER_DIR:=$BIN_DIR/.versions}"  # release tag last installed per tool, so a re-apply upgrades
+                                    # a stale binary in place instead of skipping it (install-once).
+: "${APP_DIR:=$HOME/.local/share}"  # unpacked multi-file release apps (scrcpy), symlinked into BIN_DIR
 : "${REPO_DIR:=/etc/yum.repos.d}"
 mkdir -p "$BIN_DIR" "$VER_DIR"
 
@@ -237,4 +240,134 @@ apt_repo_add() {
   rm -f "$tmp"
   printf '%s\n' "$3" | sed "s#__KEYRING__#$keyring#" | sudo tee "$list" >/dev/null
   sudo apt-get update -qq
+}
+
+# --- 6. Zip / prefix-merge / matched-file release installers -------------------------------
+# install_release/install_tarball_app above resolve $tag themselves from an owner/repo slug via
+# latest_tag. These three instead take $tag already resolved, because Bitwarden tags its CLI
+# release "cli-vYYYY.M.P" alongside the desktop app's own tags, so the releases/latest redirect
+# lands on the desktop app rather than the CLI — that caller has to work out its own tag and
+# hands it in ready-made. The other two helpers here take a pre-resolved tag purely so all three
+# share one calling convention rather than forcing a callback into the module for one case.
+_fetch_archive() { # $1=url $2=dest-dir -> extract $1 into $2; .zip needs unzip, else tar xzf
+  case "$1" in
+    *.zip)
+      if ! command -v unzip >/dev/null 2>&1; then
+        echo "$TAG: unzip required to extract $1 but not found on PATH" >&2
+        return 1
+      fi
+      curl -fsSL "$1" -o "$2/a.zip" 2>/dev/null && unzip -q -o "$2/a.zip" -d "$2" 2>/dev/null
+      ;;
+    *)
+      curl -fsSL "$1" -o "$2/a.tgz" 2>/dev/null && tar xzf "$2/a.tgz" -C "$2" 2>/dev/null
+      ;;
+  esac
+}
+
+_report_installed() { # $1=verkey $2=tag $3=old-tag -> records $2 under $1 and prints the upgrade line
+  printf '%s' "$2" > "$VER_DIR/$1"
+  echo "$TAG: installed $1 ${3:+$3 -> }$2"
+}
+
+# Version-aware zip release install, for vendors (yazi) that ship .zip instead of .tar.gz.
+# $1=verkey $2=tag (already resolved) $3=asset-URL template $4...=binary names to install into
+# $BIN_DIR at 0755; the first name doubles as the already-current sentinel, and the tag is only
+# recorded once it has landed, so a partial extract still upgrades on the next apply.
+install_release_zip() {
+  verkey="$1"; tag="$2"; tmpl="$3"; shift 3
+  first="$1"
+  [ -x "$BIN_DIR/$first" ] && [ "$(recorded_tag "$verkey")" = "$tag" ] && return 0
+  old="$(recorded_tag "$verkey")"
+  url="$(_asset_url "$tag" "$tmpl")"
+  tmp="$(mktemp -d)"
+  status=1
+  if _fetch_archive "$url" "$tmp"; then
+    for bin in "$@"; do
+      found="$(find "$tmp" -type f -name "$bin" 2>/dev/null | head -1)"
+      if [ -n "$found" ]; then
+        if install -m 0755 "$found" "$BIN_DIR/$bin"; then
+          [ "$bin" = "$first" ] && status=0
+        else
+          echo "$TAG: failed to install $bin" >&2
+        fi
+      else
+        echo "$TAG: $bin not found in archive ($url)" >&2
+      fi
+    done
+    [ "$status" -eq 0 ] && _report_installed "$verkey" "$tag" "$old"
+  else
+    echo "$TAG: failed to fetch $verkey ($url)" >&2
+  fi
+  rm -rf "$tmp"
+  return "$status"
+}
+
+# Version-aware install for a release whose tarball is one top-level directory holding a full
+# prefix tree (Neovim: bin/nvim + share/nvim/runtime) rather than one binary or an app directory
+# of its own — so, unlike install_tarball_app, the payload gets merged INTO an existing prefix
+# ($4) rather than unpacked beside it, and bin/nvim can find ../share/nvim/runtime at the paths
+# it expects. $1=verkey $2=tag (already resolved) $3=asset-URL template $4=prefix-dir
+# $5=sentinel-bin (path under $4 that proves the merge worked, e.g. bin/nvim).
+install_prefix_tarball() {
+  verkey="$1"; tag="$2"; tmpl="$3"; prefix="$4"; sentinel="$5"
+  [ -x "$prefix/$sentinel" ] && [ "$(recorded_tag "$verkey")" = "$tag" ] && return 0
+  old="$(recorded_tag "$verkey")"
+  url="$(_asset_url "$tag" "$tmpl")"
+  tmp="$(mktemp -d)"
+  status=1
+  if _fetch_archive "$url" "$tmp"; then
+    src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
+    if [ -n "$src" ] && mkdir -p "$prefix" && cp -a "$src"/. "$prefix"/; then
+      if [ -x "$prefix/$sentinel" ]; then
+        _report_installed "$verkey" "$tag" "$old"
+        status=0
+      else
+        echo "$TAG: $sentinel missing from $prefix after merging $verkey ($url)" >&2
+      fi
+    else
+      echo "$TAG: $verkey archive did not contain a top-level directory ($url)" >&2
+    fi
+  else
+    echo "$TAG: failed to fetch $verkey ($url)" >&2
+  fi
+  rm -rf "$tmp"
+  return "$status"
+}
+
+# Version-aware install for a release where the payload is a set of loose files scattered in the
+# archive (a Nerd Font's .ttf files) rather than one binary. $1=verkey $2=tag (already resolved)
+# $3=asset-URL template $4=dest-dir $5=find -name pattern (e.g. '*.ttf') $6=install mode. Replaces
+# dest-dir wholesale on a successful match so a font upgrade never leaves a stale variant behind;
+# ${dest:?} guards that rm -rf against an empty dest-dir ever taking out more than intended.
+install_release_files() {
+  verkey="$1"; tag="$2"; tmpl="$3"; dest="$4"; pattern="$5"; mode="$6"
+  [ -d "$dest" ] && [ "$(recorded_tag "$verkey")" = "$tag" ] && return 0
+  old="$(recorded_tag "$verkey")"
+  url="$(_asset_url "$tag" "$tmpl")"
+  tmp="$(mktemp -d)"
+  status=1
+  if _fetch_archive "$url" "$tmp"; then
+    list="$tmp/.matches"
+    find "$tmp" -type f -name "$pattern" > "$list" 2>/dev/null
+    if [ -s "$list" ]; then
+      rm -rf "${dest:?}"
+      mkdir -p "$dest"
+      landed=0
+      while IFS= read -r f; do
+        install -m "$mode" "$f" "$dest/" && landed=1
+      done < "$list"
+      if [ "$landed" -eq 1 ]; then
+        _report_installed "$verkey" "$tag" "$old"
+        status=0
+      else
+        echo "$TAG: failed to install matched files for $verkey into $dest" >&2
+      fi
+    else
+      echo "$TAG: no files matching '$pattern' found in $verkey archive ($url)" >&2
+    fi
+  else
+    echo "$TAG: failed to fetch $verkey ($url)" >&2
+  fi
+  rm -rf "$tmp"
+  return "$status"
 }

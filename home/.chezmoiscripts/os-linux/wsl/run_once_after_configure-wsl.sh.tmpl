@@ -1,5 +1,5 @@
 {{ if eq .chezmoi.os "linux" -}}
-{{ if contains "microsoft" (lower .chezmoi.kernel.osrelease) -}}
+{{ if includeTemplate "is-wsl" . -}}
 #!/bin/sh
 # WSL-only: isolate the shell from the Windows PATH, keeping a native clipboard.
 #  1. Install wl-clipboard so nvim's `unnamedplus` clipboard works through WSLg's Wayland

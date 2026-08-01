@@ -17,7 +17,7 @@
 {{- if eq .chezmoi.os "windows" }}
 [credential]
 	helper = manager
-{{- else if or (contains "microsoft" (lower .chezmoi.kernel.osrelease)) (stat "/proc/sys/fs/binfmt_misc/WSLInterop") }}
+{{- else if includeTemplate "is-wsl" . }}
 # No branch here may name the Windows Git Credential Manager. Launching a .exe from WSL takes
 # the VM-mode interop path, which leaks a permanently spinning CPU thread per call once the
 # owning wsl.exe has exited (microsoft/WSL#41173, unfixed through WSL 2.9.4), and every HTTPS

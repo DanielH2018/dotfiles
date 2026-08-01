@@ -1,0 +1,8 @@
+{{/* Renders "true" on a personal, non-WSL Linux desktop, "" otherwise -- callers write
+{{ if includeTemplate "is-desktop-linux" . }}. Excludes the server/minimal profiles (the Pi has
+no desktop) and WSL (which has no desktop of its own; the Windows host's terminal renders it).
+Delegates the WSL test to is-wsl rather than re-inlining it, so there is one definition of what
+counts as WSL. */ -}}
+{{- if and (eq .chezmoi.os "linux") (eq .profile "workstation") (not (includeTemplate "is-wsl" .)) -}}
+true
+{{- end -}}
