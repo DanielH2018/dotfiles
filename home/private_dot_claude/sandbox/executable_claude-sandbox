@@ -51,6 +51,7 @@ usage() {
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
   echo "  --prune            Interactively select and delete worktrees (fzf picker)."
   echo "  --gc               Clean up worktrees whose remote branches were deleted."
+  echo "  --no-vault         Don't mount the curated read-only vault subset."
   echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
   echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
   echo "  --no-repos         Don't mount sibling repos from ~/Repositories."
@@ -1593,58 +1594,62 @@ else
 fi
 
 # --- Run container ---
-AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
-SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
-ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
-# $STATE_DIR/hooks is the parent of the per-hook :ro mount points below. Create it
-# here so Docker doesn't materialise it root-owned on the host when it makes the
-# mount points (the state dir lives under the user's real ~/.claude tree).
-mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR" "$STATE_DIR/hooks"
+resolve_session_context() {
+  AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
+  SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
+  ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
+  # $STATE_DIR/hooks is the parent of the per-hook :ro mount points below. Create it
+  # here so Docker doesn't materialise it root-owned on the host when it makes the
+  # mount points (the state dir lives under the user's real ~/.claude tree).
+  mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR" "$STATE_DIR/hooks"
 
-# --- Auto-resume: continue the most recent conversation for this instance ---
-# The container cwd is always /workspace, which Claude escapes to the "-workspace"
-# project dir; its top-level *.jsonl are prior conversations. If any exist (and
-# --fresh wasn't passed), append --continue so a re-launch of the same instance
-# picks up where it left off instead of starting cold. Only replays a transcript
-# already persisted on the host — not boundary-affecting.
-RESUME_SESSION=false
-if [[ "$FRESH_SESSION" == false ]]; then
-  if [[ -n "$(find "$SESSIONS_DIR/-workspace" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
-    RESUME_SESSION=true
+  # --- Auto-resume: continue the most recent conversation for this instance ---
+  # The container cwd is always /workspace, which Claude escapes to the "-workspace"
+  # project dir; its top-level *.jsonl are prior conversations. If any exist (and
+  # --fresh wasn't passed), append --continue so a re-launch of the same instance
+  # picks up where it left off instead of starting cold. Only replays a transcript
+  # already persisted on the host — not boundary-affecting.
+  RESUME_SESSION=false
+  if [[ "$FRESH_SESSION" == false ]]; then
+    if [[ -n "$(find "$SESSIONS_DIR/-workspace" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
+      RESUME_SESSION=true
+    fi
   fi
-fi
 
-AUTH_MARKER="$STATE_DIR/.auth-configured"
+  AUTH_MARKER="$STATE_DIR/.auth-configured"
 
-echo ""
-echo "Starting Claude Code in Pattern C sandbox for $INSTANCE_ID..."
-echo "  Workspace: $WORK_PATH -> /workspace"
-if [[ "$USE_WORKTREE" == true ]]; then
-  echo "  Branch: $WT_BRANCH"
-fi
-echo "  Audit: $AUDIT_DIR -> /audit"
-echo "  Artifacts: $ARTIFACTS_DIR -> /artifacts"
-echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
-echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
-if [[ "$RESUME_SESSION" == true ]]; then
-  echo "  Session: resuming most recent conversation (--continue) — pass --fresh to start clean"
-fi
-echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
-echo "  Commands/Agents: ~/.claude/{commands,agents} -> /home/claudebot/.claude/{commands,agents} (read-only)"
-if [[ -f "$AUTH_MARKER" ]]; then
-  echo "  Cloud MCPs: authenticated (read-only, write ops denied)"
-else
-  echo "  Cloud MCPs: not yet authenticated (login will be prompted)"
-fi
-
-# Detect installed toolchains from the generated Dockerfile
-TOOLCHAIN_LIST=""
-if [[ -f "$DOCKERFILE" ]]; then
-  TOOLCHAIN_LIST=$(grep '# ---' "$DOCKERFILE" 2>/dev/null | sed 's/# --- //;s/ ---.*//' | paste -sd ', ' - || true)
-  if grep -q 'uv/install' "$DOCKERFILE" 2>/dev/null; then
-    TOOLCHAIN_LIST="${TOOLCHAIN_LIST:+$TOOLCHAIN_LIST, }uv"
+  echo ""
+  echo "Starting Claude Code in Pattern C sandbox for $INSTANCE_ID..."
+  echo "  Workspace: $WORK_PATH -> /workspace"
+  if [[ "$USE_WORKTREE" == true ]]; then
+    echo "  Branch: $WT_BRANCH"
   fi
-fi
+  echo "  Audit: $AUDIT_DIR -> /audit"
+  echo "  Artifacts: $ARTIFACTS_DIR -> /artifacts"
+  echo "  State: $STATE_DIR -> /home/claudebot/.claude (persistent)"
+  echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
+  if [[ "$RESUME_SESSION" == true ]]; then
+    echo "  Session: resuming most recent conversation (--continue) — pass --fresh to start clean"
+  fi
+  echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
+  echo "  Commands/Agents: ~/.claude/{commands,agents} -> /home/claudebot/.claude/{commands,agents} (read-only)"
+  if [[ -f "$AUTH_MARKER" ]]; then
+    echo "  Cloud MCPs: authenticated (read-only, write ops denied)"
+  else
+    echo "  Cloud MCPs: not yet authenticated (login will be prompted)"
+  fi
+
+  # Detect installed toolchains from the generated Dockerfile
+  TOOLCHAIN_LIST=""
+  if [[ -f "$DOCKERFILE" ]]; then
+    TOOLCHAIN_LIST=$(grep '# ---' "$DOCKERFILE" 2>/dev/null | sed 's/# --- //;s/ ---.*//' | paste -sd ', ' - || true)
+    if grep -q 'uv/install' "$DOCKERFILE" 2>/dev/null; then
+      TOOLCHAIN_LIST="${TOOLCHAIN_LIST:+$TOOLCHAIN_LIST, }uv"
+    fi
+  fi
+}
+
+resolve_session_context
 
 # Build docker run args
 # Headless --exec pipes container stdout to a filter, so no TTY (-t); -i keeps stdin open.
@@ -1734,166 +1739,182 @@ DOCKER_ARGS=(
   -e SANDBOX_TOOLCHAINS="$TOOLCHAIN_LIST"
 )
 
-# Forward the 1Password agent socket only when it actually exists. A bind mount of
-# a missing path would auto-create a junk dir on the host and leave SSH_AUTH_SOCK
-# pointing at a directory; when the socket is absent, commit signing is simply
-# unavailable (entrypoint.sh detects this and warns).
-if [[ -S "$OP_SOCKET" ]]; then
-  DOCKER_ARGS+=(
-    -v "$OP_SOCKET:/run/1password/agent.sock"
-    -e SSH_AUTH_SOCK=/run/1password/agent.sock
-  )
-fi
+add_host_integration_mounts() {
+  # Forward the 1Password agent socket only when it actually exists. A bind mount of
+  # a missing path would auto-create a junk dir on the host and leave SSH_AUTH_SOCK
+  # pointing at a directory; when the socket is absent, commit signing is simply
+  # unavailable (entrypoint.sh detects this and warns).
+  if [[ -S "$OP_SOCKET" ]]; then
+    DOCKER_ARGS+=(
+      -v "$OP_SOCKET:/run/1password/agent.sock"
+      -e SSH_AUTH_SOCK=/run/1password/agent.sock
+    )
+  fi
 
-# Personal keybindings so alt+v -> chat:imagePaste works in-container too (entrypoint copies it
-# into ~/.claude). Guarded so a missing file doesn't bind-mount a junk dir at the target path.
-if [[ -f "$HOME/.claude/keybindings.json" ]]; then
-  DOCKER_ARGS+=(-v "$HOME/.claude/keybindings.json:/home/claudebot/.claude-defaults/keybindings.json:ro")
-fi
+  # Personal keybindings so alt+v -> chat:imagePaste works in-container too (entrypoint copies it
+  # into ~/.claude). Guarded so a missing file doesn't bind-mount a junk dir at the target path.
+  if [[ -f "$HOME/.claude/keybindings.json" ]]; then
+    DOCKER_ARGS+=(-v "$HOME/.claude/keybindings.json:/home/claudebot/.claude-defaults/keybindings.json:ro")
+  fi
 
-# WSL image paste: share the host WSLg Wayland clipboard so alt+v in-container reads the
-# image WSLg mirrors from the Windows clipboard as image/bmp (the container's xclip shim
-# forwards the typed read to wl-paste). Gated on the socket, so it's a no-op off
-# WSLg. The socket is world-accessible (0777) and the container uid matches the host (1000), so
-# no permission setup is needed. WAYLAND_DISPLAY is the absolute socket path, which avoids having
-# to set XDG_RUNTIME_DIR (that would point other tools at a root-owned mount point).
-if [[ -S /mnt/wslg/runtime-dir/wayland-0 ]]; then
-  DOCKER_ARGS+=(
-    -v /mnt/wslg/runtime-dir/wayland-0:/tmp/wl-clip.sock
-    -e WAYLAND_DISPLAY=/tmp/wl-clip.sock
-  )
-fi
+  # WSL image paste: share the host WSLg Wayland clipboard so alt+v in-container reads the
+  # image WSLg mirrors from the Windows clipboard as image/bmp (the container's xclip shim
+  # forwards the typed read to wl-paste). Gated on the socket, so it's a no-op off
+  # WSLg. The socket is world-accessible (0777) and the container uid matches the host (1000), so
+  # no permission setup is needed. WAYLAND_DISPLAY is the absolute socket path, which avoids having
+  # to set XDG_RUNTIME_DIR (that would point other tools at a root-owned mount point).
+  if [[ -S /mnt/wslg/runtime-dir/wayland-0 ]]; then
+    DOCKER_ARGS+=(
+      -v /mnt/wslg/runtime-dir/wayland-0:/tmp/wl-clip.sock
+      -e WAYLAND_DISPLAY=/tmp/wl-clip.sock
+    )
+  fi
+}
 
-# --- Knowledge vault (read-only, curated subset) ---
-# Mount an allowlisted subset of the vault at its real host path so the agent
-# can consult standing/task context on demand. Nothing is auto-loaded — only a
-# pointer is added to CLAUDE.md by the entrypoint (gated on SANDBOX_VAULT_DIR).
-VAULT_INDEX_TMP=""
-VAULT_DB_TMPDIR=""
-VAULT_ALLOWLIST="$SANDBOX_DIR/vault-allowlist.txt"
-vault_eligible=false
-if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && -f "$VAULT_ALLOWLIST" ]]; then
-  case "$WORK_PATH/" in
-    "$CLAUDE_VAULT_DIR"/*) : ;;   # sandboxing the vault itself — skip
-    *) vault_eligible=true ;;
-  esac
-fi
+add_host_integration_mounts
 
-if [[ "$vault_eligible" == true ]]; then
-  vault_mounted=false
-  while IFS= read -r line; do
-    entry="${line%%#*}"           # strip inline comments
-    read -r entry <<< "$entry"    # trim surrounding whitespace (paths have no spaces)
-    [[ -z "$entry" ]] && continue
-    base="$(basename "$entry")"
-    [[ "$base" == "CLAUDE.md" || "$base" == "index.md" ]] && continue
-    if [[ -e "$CLAUDE_VAULT_DIR/$entry" ]]; then
-      DOCKER_ARGS+=(-v "$CLAUDE_VAULT_DIR/$entry:$CLAUDE_VAULT_DIR/$entry:ro")
-      vault_mounted=true
-    fi
-  done < "$VAULT_ALLOWLIST"
+add_vault_mounts() {
+  # --- Knowledge vault (read-only, curated subset) ---
+  # Mount an allowlisted subset of the vault at its real host path so the agent
+  # can consult standing/task context on demand. Nothing is auto-loaded — only a
+  # pointer is added to CLAUDE.md by the entrypoint (gated on SANDBOX_VAULT_DIR).
+  VAULT_INDEX_TMP=""
+  VAULT_DB_TMPDIR=""
+  VAULT_ALLOWLIST="$SANDBOX_DIR/vault-allowlist.txt"
+  vault_eligible=false
+  if [[ "$NO_VAULT" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CLAUDE_VAULT_DIR" && -f "$VAULT_ALLOWLIST" ]]; then
+    case "$WORK_PATH/" in
+      "$CLAUDE_VAULT_DIR"/*) : ;;   # sandboxing the vault itself — skip
+      *) vault_eligible=true ;;
+    esac
+  fi
 
-  if [[ "$vault_mounted" == true ]]; then
-    VAULT_INDEX_TMP="$(mktemp "${TMPDIR:-/tmp}/vault-index-XXXXXX")"
-    if python3 "$SANDBOX_DIR/gen-vault-index.py" "$CLAUDE_VAULT_DIR" "$VAULT_ALLOWLIST" "$VAULT_INDEX_TMP" 2>/dev/null; then
-      DOCKER_ARGS+=(-v "$VAULT_INDEX_TMP:$CLAUDE_VAULT_DIR/index.md:ro")
-    fi
-    DOCKER_ARGS+=(-e SANDBOX_VAULT_DIR="$CLAUDE_VAULT_DIR")
-    echo "  Vault: curated read-only subset mounted at $CLAUDE_VAULT_DIR (--no-vault to disable)"
+  if [[ "$vault_eligible" == true ]]; then
+    vault_mounted=false
+    while IFS= read -r line; do
+      entry="${line%%#*}"           # strip inline comments
+      read -r entry <<< "$entry"    # trim surrounding whitespace (paths have no spaces)
+      [[ -z "$entry" ]] && continue
+      base="$(basename "$entry")"
+      [[ "$base" == "CLAUDE.md" || "$base" == "index.md" ]] && continue
+      if [[ -e "$CLAUDE_VAULT_DIR/$entry" ]]; then
+        DOCKER_ARGS+=(-v "$CLAUDE_VAULT_DIR/$entry:$CLAUDE_VAULT_DIR/$entry:ro")
+        vault_mounted=true
+      fi
+    done < "$VAULT_ALLOWLIST"
 
-    # Semantic search over the curated subset: build a DuckDB index host-side over
-    # ONLY the allowlisted pages (--paths-from enforces the boundary) and mount it
-    # read-only. The container queries it offline via the baked venv (vault-search).
-    # Best-effort — falls back to the markdown index above if tooling is missing.
-    # vault-index's canonical home is this chezmoi checkout (home/private_dot_claude/
-    # vault-tooling/vault-index), NOT the vault itself — the vault only supplies
-    # --root (content to index), never the code. Override with $VAULT_INDEX_PKG_DIR.
-    VAULT_INDEX_DIR="${VAULT_INDEX_PKG_DIR:-$HOME/.claude/vault-tooling/vault-index}"
-    if command -v uv &>/dev/null && [[ -f "$VAULT_INDEX_DIR/pyproject.toml" ]]; then
-      VAULT_DB_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/vault-db-XXXXXX")"
-      if (cd "$VAULT_INDEX_DIR" && uv run --quiet vault-index build \
-            --root "$CLAUDE_VAULT_DIR" --paths-from "$VAULT_ALLOWLIST" \
-            --db "$VAULT_DB_TMPDIR/vault.duckdb") >/dev/null 2>&1; then
-        DOCKER_ARGS+=(-v "$VAULT_DB_TMPDIR/vault.duckdb:/home/claudebot/.vault-index/vault.duckdb:ro")
-        DOCKER_ARGS+=(-v "$VAULT_INDEX_DIR:/opt/vault-index/code:ro")
-        DOCKER_ARGS+=(-e SANDBOX_VAULT_DB="/home/claudebot/.vault-index/vault.duckdb")
-        echo "  Vault: semantic search available (run 'vault-search') over the curated subset"
-      else
-        rm -rf "$VAULT_DB_TMPDIR"
-        VAULT_DB_TMPDIR=""
-        echo "  Vault: semantic index build skipped (markdown index.md still available)" >&2
+    if [[ "$vault_mounted" == true ]]; then
+      VAULT_INDEX_TMP="$(mktemp "${TMPDIR:-/tmp}/vault-index-XXXXXX")"
+      if python3 "$SANDBOX_DIR/gen-vault-index.py" "$CLAUDE_VAULT_DIR" "$VAULT_ALLOWLIST" "$VAULT_INDEX_TMP" 2>/dev/null; then
+        DOCKER_ARGS+=(-v "$VAULT_INDEX_TMP:$CLAUDE_VAULT_DIR/index.md:ro")
+      fi
+      DOCKER_ARGS+=(-e SANDBOX_VAULT_DIR="$CLAUDE_VAULT_DIR")
+      echo "  Vault: curated read-only subset mounted at $CLAUDE_VAULT_DIR (--no-vault to disable)"
+
+      # Semantic search over the curated subset: build a DuckDB index host-side over
+      # ONLY the allowlisted pages (--paths-from enforces the boundary) and mount it
+      # read-only. The container queries it offline via the baked venv (vault-search).
+      # Best-effort — falls back to the markdown index above if tooling is missing.
+      # vault-index's canonical home is this chezmoi checkout (home/private_dot_claude/
+      # vault-tooling/vault-index), NOT the vault itself — the vault only supplies
+      # --root (content to index), never the code. Override with $VAULT_INDEX_PKG_DIR.
+      VAULT_INDEX_DIR="${VAULT_INDEX_PKG_DIR:-$HOME/.claude/vault-tooling/vault-index}"
+      if command -v uv &>/dev/null && [[ -f "$VAULT_INDEX_DIR/pyproject.toml" ]]; then
+        VAULT_DB_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/vault-db-XXXXXX")"
+        if (cd "$VAULT_INDEX_DIR" && uv run --quiet vault-index build \
+              --root "$CLAUDE_VAULT_DIR" --paths-from "$VAULT_ALLOWLIST" \
+              --db "$VAULT_DB_TMPDIR/vault.duckdb") >/dev/null 2>&1; then
+          DOCKER_ARGS+=(-v "$VAULT_DB_TMPDIR/vault.duckdb:/home/claudebot/.vault-index/vault.duckdb:ro")
+          DOCKER_ARGS+=(-v "$VAULT_INDEX_DIR:/opt/vault-index/code:ro")
+          DOCKER_ARGS+=(-e SANDBOX_VAULT_DB="/home/claudebot/.vault-index/vault.duckdb")
+          echo "  Vault: semantic search available (run 'vault-search') over the curated subset"
+        else
+          rm -rf "$VAULT_DB_TMPDIR"
+          VAULT_DB_TMPDIR=""
+          echo "  Vault: semantic index build skipped (markdown index.md still available)" >&2
+        fi
       fi
     fi
   fi
-fi
+}
 
-# --- chezmoi dotfiles source (read-write) when the workspace is the vault ---
-# The vault is the primary sandbox; expose the chezmoi source tree so config
-# edits happen in-session. Mounted RW at its real host path so in-container git
-# (commit/diff) resolves. NOTE: `chezmoi apply` runs on the HOST — that apply is
-# the trust boundary; edits here don't affect the host until you apply them.
-CHEZMOI_SRC="${CHEZMOI_SRC_DIR:-$HOME/.local/share/chezmoi}"
-if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" ]]; then
-  case "$REPO_PATH/" in
-    "$CLAUDE_VAULT_DIR"/*)
-      DOCKER_ARGS+=(-v "$CHEZMOI_SRC:$CHEZMOI_SRC")
-      # The host `chezmoi apply` is the trust boundary for TARGET files, but two
-      # paths in this tree run on the host without any apply-time review of their
-      # contents: .chezmoiscripts/run_* (apply executes them as the user) and
-      # .git/hooks (any host git command in the repo runs them, no apply needed).
-      # Re-mount both :ro so a session can still edit every managed dotfile —
-      # which is the point of a vault session — without being able to plant
-      # host-side code execution. Nested mounts over the RW mount above.
-      _cm_root="$CHEZMOI_SRC"
-      if [[ -f "$CHEZMOI_SRC/.chezmoiroot" ]]; then
-        _cm_root="$CHEZMOI_SRC/$(tr -d '[:space:]' < "$CHEZMOI_SRC/.chezmoiroot")"
-      fi
-      if [[ -d "$_cm_root/.chezmoiscripts" ]]; then
-        DOCKER_ARGS+=(-v "$_cm_root/.chezmoiscripts:$_cm_root/.chezmoiscripts:ro")
-      fi
-      if [[ -d "$CHEZMOI_SRC/.git/hooks" ]]; then
-        DOCKER_ARGS+=(-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro")
-      fi
-      # The sandbox's own definition lives here: settings.base.json (which
-      # resolve-sandbox-settings.sh takes as its base, hooks block included — only host
-      # DENIES are unioned on top, nothing is sanitised), the container hook set, the
-      # entrypoint and the Dockerfiles. Writable, a session could rewrite the boundary
-      # that the NEXT launch runs under — the same escape the :ro live-hook mounts closed
-      # inside the container, reached one level back through the source tree instead.
-      if [[ -d "$_cm_root/private_dot_claude/sandbox" ]]; then
-        DOCKER_ARGS+=(-v "$_cm_root/private_dot_claude/sandbox:$_cm_root/private_dot_claude/sandbox:ro")
-      fi
-      # Point the in-container chezmoi binary at the mounted source so
-      # cat/diff/managed/source-path/execute-template work. apply/add are denied
-      # (settings.base.json) — their dest is the container home, not the host.
-      DOCKER_ARGS+=(-e CHEZMOI_SOURCE_DIR="$CHEZMOI_SRC")
-      echo "  chezmoi: source mounted READ-WRITE at $CHEZMOI_SRC (apply on host; --no-chezmoi to disable)"
-      ;;
-  esac
-fi
+add_vault_mounts
 
-# --- work-laptop-config source (read-write) when the workspace is the vault ---
-# Second config repo (work-machine dotfiles, deployed via install.sh on the
-# HOST). Mounted RW at its real host path so in-container git (commit/diff)
-# resolves. NOTE: install.sh runs on the HOST — that install is the trust
-# boundary; edits here don't affect the host until you run it there.
-WORK_CONFIG_SRC="${WORK_LAPTOP_CONFIG_DIR:-$HOME/work-laptop-config}"
-if [[ "$NO_WORK_CONFIG" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$WORK_CONFIG_SRC" ]]; then
-  case "$REPO_PATH/" in
-    "$CLAUDE_VAULT_DIR"/*)
-      DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC:$WORK_CONFIG_SRC")
-      # Same reasoning as the chezmoi mount: install.sh runs on the host, and
-      # .git/hooks runs on any host git command. Everything else stays writable.
-      if [[ -f "$WORK_CONFIG_SRC/install.sh" ]]; then
-        DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/install.sh:$WORK_CONFIG_SRC/install.sh:ro")
-      fi
-      if [[ -d "$WORK_CONFIG_SRC/.git/hooks" ]]; then
-        DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro")
-      fi
-      echo "  work-laptop-config: source mounted READ-WRITE at $WORK_CONFIG_SRC (install on host; --no-work-config to disable)"
-      ;;
-  esac
-fi
+add_chezmoi_mount() {
+  # --- chezmoi dotfiles source (read-write) when the workspace is the vault ---
+  # The vault is the primary sandbox; expose the chezmoi source tree so config
+  # edits happen in-session. Mounted RW at its real host path so in-container git
+  # (commit/diff) resolves. NOTE: `chezmoi apply` runs on the HOST — that apply is
+  # the trust boundary; edits here don't affect the host until you apply them.
+  CHEZMOI_SRC="${CHEZMOI_SRC_DIR:-$HOME/.local/share/chezmoi}"
+  if [[ "$NO_CHEZMOI" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$CHEZMOI_SRC" ]]; then
+    case "$REPO_PATH/" in
+      "$CLAUDE_VAULT_DIR"/*)
+        DOCKER_ARGS+=(-v "$CHEZMOI_SRC:$CHEZMOI_SRC")
+        # The host `chezmoi apply` is the trust boundary for TARGET files, but two
+        # paths in this tree run on the host without any apply-time review of their
+        # contents: .chezmoiscripts/run_* (apply executes them as the user) and
+        # .git/hooks (any host git command in the repo runs them, no apply needed).
+        # Re-mount both :ro so a session can still edit every managed dotfile —
+        # which is the point of a vault session — without being able to plant
+        # host-side code execution. Nested mounts over the RW mount above.
+        _cm_root="$CHEZMOI_SRC"
+        if [[ -f "$CHEZMOI_SRC/.chezmoiroot" ]]; then
+          _cm_root="$CHEZMOI_SRC/$(tr -d '[:space:]' < "$CHEZMOI_SRC/.chezmoiroot")"
+        fi
+        if [[ -d "$_cm_root/.chezmoiscripts" ]]; then
+          DOCKER_ARGS+=(-v "$_cm_root/.chezmoiscripts:$_cm_root/.chezmoiscripts:ro")
+        fi
+        if [[ -d "$CHEZMOI_SRC/.git/hooks" ]]; then
+          DOCKER_ARGS+=(-v "$CHEZMOI_SRC/.git/hooks:$CHEZMOI_SRC/.git/hooks:ro")
+        fi
+        # The sandbox's own definition lives here: settings.base.json (which
+        # resolve-sandbox-settings.sh takes as its base, hooks block included — only host
+        # DENIES are unioned on top, nothing is sanitised), the container hook set, the
+        # entrypoint and the Dockerfiles. Writable, a session could rewrite the boundary
+        # that the NEXT launch runs under — the same escape the :ro live-hook mounts closed
+        # inside the container, reached one level back through the source tree instead.
+        if [[ -d "$_cm_root/private_dot_claude/sandbox" ]]; then
+          DOCKER_ARGS+=(-v "$_cm_root/private_dot_claude/sandbox:$_cm_root/private_dot_claude/sandbox:ro")
+        fi
+        # Point the in-container chezmoi binary at the mounted source so
+        # cat/diff/managed/source-path/execute-template work. apply/add are denied
+        # (settings.base.json) — their dest is the container home, not the host.
+        DOCKER_ARGS+=(-e CHEZMOI_SOURCE_DIR="$CHEZMOI_SRC")
+        echo "  chezmoi: source mounted READ-WRITE at $CHEZMOI_SRC (apply on host; --no-chezmoi to disable)"
+        ;;
+    esac
+  fi
+}
+
+add_chezmoi_mount
+
+add_work_config_mount() {
+  # --- work-laptop-config source (read-write) when the workspace is the vault ---
+  # Second config repo (work-machine dotfiles, deployed via install.sh on the
+  # HOST). Mounted RW at its real host path so in-container git (commit/diff)
+  # resolves. NOTE: install.sh runs on the HOST — that install is the trust
+  # boundary; edits here don't affect the host until you run it there.
+  WORK_CONFIG_SRC="${WORK_LAPTOP_CONFIG_DIR:-$HOME/work-laptop-config}"
+  if [[ "$NO_WORK_CONFIG" == false && -n "${CLAUDE_VAULT_DIR:-}" && -d "$WORK_CONFIG_SRC" ]]; then
+    case "$REPO_PATH/" in
+      "$CLAUDE_VAULT_DIR"/*)
+        DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC:$WORK_CONFIG_SRC")
+        # Same reasoning as the chezmoi mount: install.sh runs on the host, and
+        # .git/hooks runs on any host git command. Everything else stays writable.
+        if [[ -f "$WORK_CONFIG_SRC/install.sh" ]]; then
+          DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/install.sh:$WORK_CONFIG_SRC/install.sh:ro")
+        fi
+        if [[ -d "$WORK_CONFIG_SRC/.git/hooks" ]]; then
+          DOCKER_ARGS+=(-v "$WORK_CONFIG_SRC/.git/hooks:$WORK_CONFIG_SRC/.git/hooks:ro")
+        fi
+        echo "  work-laptop-config: source mounted READ-WRITE at $WORK_CONFIG_SRC (install on host; --no-work-config to disable)"
+        ;;
+    esac
+  fi
+}
+
+add_work_config_mount
 
 # --- User skills — mounted read-only in EVERY session so general-purpose skills
 # (prep, artifact-design, gh-stack, config-lint, …) work in any sandbox, not just
@@ -1951,97 +1972,105 @@ build_repo_snapshot() {
   return 0
 }
 
-if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
-  repo_mounts=()          # "name<TAB>sha" — snapshot mode
-  live_mounts=()          # "name" — --repos-live
-  build_specs=()          # "repo|name|ref|sha" — repos needing archival
-  for repo_dir in "$REPOS_ROOT"/*/; do
-    repo_dir="${repo_dir%/}"
-    [[ -d "$repo_dir" ]] || continue
-    r_name="$(basename "$repo_dir")"
-    case "$r_name" in *-wt-*) continue ;; esac        # skip worktrees (noise)
-    [[ -e "$repo_dir/.git" ]] || continue             # git repos only
-    [[ "$repo_dir" == "$REPO_PATH" ]] && continue     # skip the workspace repo itself
-    if [[ "$REPOS_LIVE" == true ]]; then
-      live_mounts+=("$r_name")
-      continue
-    fi
-    r_ref="$(resolve_main_ref "$repo_dir" || true)"
-    [[ -n "$r_ref" ]] || continue
-    r_sha="$(git -C "$repo_dir" rev-parse -q --verify "$r_ref^{commit}" 2>/dev/null || true)"
-    [[ -n "$r_sha" ]] || continue
-    repo_mounts+=("$r_name"$'\t'"$r_sha")
-    [[ -f "$REPO_SNAPSHOT_ROOT/$r_name/$r_sha/.ok" ]] || build_specs+=("$repo_dir|$r_name|$r_ref|$r_sha")
-  done
-
-  if [[ "$REPOS_LIVE" == true ]]; then
-    if [[ ${#live_mounts[@]} -gt 0 ]]; then
-      for r_name in "${live_mounts[@]}"; do
-        DOCKER_ARGS+=(-v "$REPOS_ROOT/$r_name:$REPOS_ROOT/$r_name:ro")
-      done
-      DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT" -e SANDBOX_REPOS_LIVE=1)
-      echo "  Repos: ${#live_mounts[@]} sibling repo(s) mounted read-only at their LIVE working tree (--repos-live)"
-    fi
-  else
-    # Archive any missing snapshots in parallel (bounded). build_repo_snapshot is
-    # idempotent, so this is cheap when everything is already cached.
-    if [[ ${#build_specs[@]} -gt 0 ]]; then
-      echo "  Repos: snapshotting ${#build_specs[@]} repo(s) at main/master (first run or main moved)..."
-      export REPO_SNAPSHOT_ROOT
-      export -f build_repo_snapshot
-      # shellcheck disable=SC2016  # $1 and the _-prefixed vars belong to the xargs-spawned shell
-      printf '%s\0' "${build_specs[@]}" | xargs -0 -P4 -I{} bash -c \
-        'IFS="|" read -r _repo _name _ref _sha <<<"$1"; build_repo_snapshot "$_repo" "$_name" "$_ref" "$_sha"' _ {} \
-        2>/dev/null || true
-    fi
-    # Mount every snapshot that exists; prune older SHAs (keep newest 2 per repo).
-    repos_mounted=0
-    for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
-      r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
-      dest="$REPO_SNAPSHOT_ROOT/$r_name/$r_sha"
-      [[ -f "$dest/.ok" ]] || continue
-      DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
-      repos_mounted=$((repos_mounted + 1))
-      touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
-      # shellcheck disable=SC2012  # newest-first ordering is the point; find has no portable mtime sort
-      while IFS= read -r old; do
-        [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
-      done < <(ls -1dt "$REPO_SNAPSHOT_ROOT/$r_name"/*/ 2>/dev/null | tail -n +3)
+add_sibling_repo_mounts() {
+  if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
+    repo_mounts=()          # "name<TAB>sha" — snapshot mode
+    live_mounts=()          # "name" — --repos-live
+    build_specs=()          # "repo|name|ref|sha" — repos needing archival
+    for repo_dir in "$REPOS_ROOT"/*/; do
+      repo_dir="${repo_dir%/}"
+      [[ -d "$repo_dir" ]] || continue
+      r_name="$(basename "$repo_dir")"
+      case "$r_name" in *-wt-*) continue ;; esac        # skip worktrees (noise)
+      [[ -e "$repo_dir/.git" ]] || continue             # git repos only
+      [[ "$repo_dir" == "$REPO_PATH" ]] && continue     # skip the workspace repo itself
+      if [[ "$REPOS_LIVE" == true ]]; then
+        live_mounts+=("$r_name")
+        continue
+      fi
+      r_ref="$(resolve_main_ref "$repo_dir" || true)"
+      [[ -n "$r_ref" ]] || continue
+      r_sha="$(git -C "$repo_dir" rev-parse -q --verify "$r_ref^{commit}" 2>/dev/null || true)"
+      [[ -n "$r_sha" ]] || continue
+      repo_mounts+=("$r_name"$'\t'"$r_sha")
+      [[ -f "$REPO_SNAPSHOT_ROOT/$r_name/$r_sha/.ok" ]] || build_specs+=("$repo_dir|$r_name|$r_ref|$r_sha")
     done
-    if [[ "$repos_mounted" -gt 0 ]]; then
-      DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT")
-      echo "  Repos: $repos_mounted sibling repo(s) mounted read-only at main/master snapshot (--no-repos to disable, --repos-live for live trees)"
+
+    if [[ "$REPOS_LIVE" == true ]]; then
+      if [[ ${#live_mounts[@]} -gt 0 ]]; then
+        for r_name in "${live_mounts[@]}"; do
+          DOCKER_ARGS+=(-v "$REPOS_ROOT/$r_name:$REPOS_ROOT/$r_name:ro")
+        done
+        DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT" -e SANDBOX_REPOS_LIVE=1)
+        echo "  Repos: ${#live_mounts[@]} sibling repo(s) mounted read-only at their LIVE working tree (--repos-live)"
+      fi
+    else
+      # Archive any missing snapshots in parallel (bounded). build_repo_snapshot is
+      # idempotent, so this is cheap when everything is already cached.
+      if [[ ${#build_specs[@]} -gt 0 ]]; then
+        echo "  Repos: snapshotting ${#build_specs[@]} repo(s) at main/master (first run or main moved)..."
+        export REPO_SNAPSHOT_ROOT
+        export -f build_repo_snapshot
+        # shellcheck disable=SC2016  # $1 and the _-prefixed vars belong to the xargs-spawned shell
+        printf '%s\0' "${build_specs[@]}" | xargs -0 -P4 -I{} bash -c \
+          'IFS="|" read -r _repo _name _ref _sha <<<"$1"; build_repo_snapshot "$_repo" "$_name" "$_ref" "$_sha"' _ {} \
+          2>/dev/null || true
+      fi
+      # Mount every snapshot that exists; prune older SHAs (keep newest 2 per repo).
+      repos_mounted=0
+      for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
+        r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
+        dest="$REPO_SNAPSHOT_ROOT/$r_name/$r_sha"
+        [[ -f "$dest/.ok" ]] || continue
+        DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
+        repos_mounted=$((repos_mounted + 1))
+        touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
+        # shellcheck disable=SC2012  # newest-first ordering is the point; find has no portable mtime sort
+        while IFS= read -r old; do
+          [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
+        done < <(ls -1dt "$REPO_SNAPSHOT_ROOT/$r_name"/*/ 2>/dev/null | tail -n +3)
+      done
+      if [[ "$repos_mounted" -gt 0 ]]; then
+        DOCKER_ARGS+=(-e SANDBOX_REPOS_DIR="$REPOS_ROOT")
+        echo "  Repos: $repos_mounted sibling repo(s) mounted read-only at main/master snapshot (--no-repos to disable, --repos-live for live trees)"
+      fi
     fi
   fi
-fi
+}
+
+add_sibling_repo_mounts
 
 # --- Vault-self hardening: protect sensitive subpaths ---
 # Sandboxing the vault mounts everything RW at /workspace, which would expose
 # the exact material vault-allowlist.txt keeps out of other sandboxes. When the
 # workspace IS the vault: overlay read-only binds on the sensitive set (wiki
 # stays editable, but Team/incident/PII content can't be tampered with).
-if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
-  case "$REPO_PATH/" in
-    "$CLAUDE_VAULT_DIR"/*)
-      VAULT_SENSITIVE="$SANDBOX_DIR/vault-sensitive.txt"
-      if [[ -f "$VAULT_SENSITIVE" ]]; then
-        sensitive_ro=false
-        while IFS= read -r line; do
-          entry="${line%%#*}"           # strip inline comments
-          read -r entry <<< "$entry"    # trim whitespace (paths have no spaces)
-          [[ -z "$entry" ]] && continue
-          for match in "$WORK_PATH"/$entry; do
-            [[ -e "$match" ]] || continue
-            DOCKER_ARGS+=(-v "$match:/workspace/${match#"$WORK_PATH"/}:ro")
-            sensitive_ro=true
-          done
-        done < "$VAULT_SENSITIVE"
-        [[ "$sensitive_ro" == true ]] && \
-          echo "  Vault: sensitive subpaths mounted read-only (vault-sensitive.txt)"
-      fi
-      ;;
-  esac
-fi
+add_vault_self_hardening() {
+  if [[ -n "${CLAUDE_VAULT_DIR:-}" ]]; then
+    case "$REPO_PATH/" in
+      "$CLAUDE_VAULT_DIR"/*)
+        VAULT_SENSITIVE="$SANDBOX_DIR/vault-sensitive.txt"
+        if [[ -f "$VAULT_SENSITIVE" ]]; then
+          sensitive_ro=false
+          while IFS= read -r line; do
+            entry="${line%%#*}"           # strip inline comments
+            read -r entry <<< "$entry"    # trim whitespace (paths have no spaces)
+            [[ -z "$entry" ]] && continue
+            for match in "$WORK_PATH"/$entry; do
+              [[ -e "$match" ]] || continue
+              DOCKER_ARGS+=(-v "$match:/workspace/${match#"$WORK_PATH"/}:ro")
+              sensitive_ro=true
+            done
+          done < "$VAULT_SENSITIVE"
+          [[ "$sensitive_ro" == true ]] && \
+            echo "  Vault: sensitive subpaths mounted read-only (vault-sensitive.txt)"
+        fi
+        ;;
+    esac
+  fi
+}
+
+add_vault_self_hardening
 
 # --- Warn if the workspace looks like the vault but its features are OFF ---
 # The vault mount, chezmoi mount, and read-only overlays all key off
@@ -2082,39 +2111,43 @@ if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
   fi
 fi
 
-# GitHub CLI authentication (read-only access)
-# Token is delivered via gh config file mounted read-only, NOT as an
-# environment variable. This prevents Python/Node subprocesses from
-# reading it via os.environ and bypassing the gh deny rules.
-GH_AUTH_METHOD=""
-GH_HOSTS_TMPFILE=""
-GH_TOKEN=""
+configure_gh_auth() {
+  # GitHub CLI authentication (read-only access)
+  # Token is delivered via gh config file mounted read-only, NOT as an
+  # environment variable. This prevents Python/Node subprocesses from
+  # reading it via os.environ and bypassing the gh deny rules.
+  GH_AUTH_METHOD=""
+  GH_HOSTS_TMPFILE=""
+  GH_TOKEN=""
 
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  GH_TOKEN="$GITHUB_TOKEN"
-  GH_AUTH_METHOD="GITHUB_TOKEN"
-elif command -v gh &>/dev/null; then
-  GH_TOKEN="$(gh auth token 2>/dev/null || true)"
-  [[ -n "$GH_TOKEN" ]] && GH_AUTH_METHOD="host-keyring"
-fi
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    GH_TOKEN="$GITHUB_TOKEN"
+    GH_AUTH_METHOD="GITHUB_TOKEN"
+  elif command -v gh &>/dev/null; then
+    GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+    [[ -n "$GH_TOKEN" ]] && GH_AUTH_METHOD="host-keyring"
+  fi
 
-if [[ -n "$GH_TOKEN" ]]; then
-  GH_HOSTS_TMPFILE="$(mktemp "${TMPDIR:-/tmp}/gh-hosts-XXXXXX")"
-  chmod 600 "$GH_HOSTS_TMPFILE"
-  cat > "$GH_HOSTS_TMPFILE" <<GHEOF
+  if [[ -n "$GH_TOKEN" ]]; then
+    GH_HOSTS_TMPFILE="$(mktemp "${TMPDIR:-/tmp}/gh-hosts-XXXXXX")"
+    chmod 600 "$GH_HOSTS_TMPFILE"
+    cat > "$GH_HOSTS_TMPFILE" <<GHEOF
 github.com:
     oauth_token: ${GH_TOKEN}
     git_protocol: https
 GHEOF
-  unset GH_TOKEN
-  DOCKER_ARGS+=(
-    -v "$GH_HOSTS_TMPFILE:/home/claudebot/.gh-staging/hosts.yml:ro"
-  )
-  echo "  GitHub: authenticated via $GH_AUTH_METHOD (token in gh config, not env — write ops blocked)"
-else
-  unset GH_TOKEN
-  echo "  GitHub: no auth found — run 'gh auth login' on the host or set GITHUB_TOKEN"
-fi
+    unset GH_TOKEN
+    DOCKER_ARGS+=(
+      -v "$GH_HOSTS_TMPFILE:/home/claudebot/.gh-staging/hosts.yml:ro"
+    )
+    echo "  GitHub: authenticated via $GH_AUTH_METHOD (token in gh config, not env — write ops blocked)"
+  else
+    unset GH_TOKEN
+    echo "  GitHub: no auth found — run 'gh auth login' on the host or set GITHUB_TOKEN"
+  fi
+}
+
+configure_gh_auth
 
 # Start Docker socket proxy if needed
 if [[ "$NEEDS_DOCKER" == true ]]; then
@@ -2132,51 +2165,55 @@ fi
 
 echo ""
 
-# --- OAuth authentication for cloud MCPs ---
-# Run as a separate short-lived container so it gets its own proper TTY.
-# The auth state persists in STATE_DIR (mounted at ~/.claude/).
-# Re-authenticate if the marker is missing or older than 30 days
-AUTH_NEEDED=false
-if [[ ! -f "$AUTH_MARKER" ]]; then
-  AUTH_NEEDED=true
-elif find "$AUTH_MARKER" -mtime +30 -print -quit 2>/dev/null | grep -q .; then
-  AUTH_NEEDED=true
-  echo "OAuth session is >30 days old — re-authenticating."
-fi
-
-# A standalone bash shell doesn't need cloud MCP auth — don't force the OAuth prompt.
-[[ "$SHELL_MODE" == true ]] && AUTH_NEEDED=false
-# Headless --exec can't complete an interactive OAuth flow; skip it (base auth comes from
-# the mounted .credentials.json — cloud MCPs are simply unavailable to the implementer).
-[[ "$EXEC_MODE" == true ]] && AUTH_NEEDED=false
-
-if [[ "$AUTH_NEEDED" == true ]]; then
-  echo "================================================"
-  echo "  Cloud MCP authentication (one-time setup)"
-  echo "================================================"
-  echo ""
-  echo "Cloud MCPs (Jira, Slack, Notion, Gmail, etc.) require"
-  echo "an OAuth login with your Anthropic account."
-  echo ""
-  if docker run --rm -it \
-    --init \
-    --entrypoint "" \
-    --cap-drop all \
-    --security-opt no-new-privileges \
-    ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"} \
-    -v "$(add_mount_relabel "$STATE_DIR:/home/claudebot/.claude")" \
-    -v "$(add_mount_relabel "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro")" \
-    "$IMAGE_TAG" claude auth login; then
-    touch "$AUTH_MARKER"
-    echo ""
-    echo "Authentication saved. Future launches will skip this step."
-    echo "To re-authenticate: rm $AUTH_MARKER"
-  else
-    echo ""
-    echo "Authentication skipped. Cloud MCPs won't be available this session."
+run_oauth_if_needed() {
+  # --- OAuth authentication for cloud MCPs ---
+  # Run as a separate short-lived container so it gets its own proper TTY.
+  # The auth state persists in STATE_DIR (mounted at ~/.claude/).
+  # Re-authenticate if the marker is missing or older than 30 days
+  AUTH_NEEDED=false
+  if [[ ! -f "$AUTH_MARKER" ]]; then
+    AUTH_NEEDED=true
+  elif find "$AUTH_MARKER" -mtime +30 -print -quit 2>/dev/null | grep -q .; then
+    AUTH_NEEDED=true
+    echo "OAuth session is >30 days old — re-authenticating."
   fi
-  echo ""
-fi
+
+  # A standalone bash shell doesn't need cloud MCP auth — don't force the OAuth prompt.
+  [[ "$SHELL_MODE" == true ]] && AUTH_NEEDED=false
+  # Headless --exec can't complete an interactive OAuth flow; skip it (base auth comes from
+  # the mounted .credentials.json — cloud MCPs are simply unavailable to the implementer).
+  [[ "$EXEC_MODE" == true ]] && AUTH_NEEDED=false
+
+  if [[ "$AUTH_NEEDED" == true ]]; then
+    echo "================================================"
+    echo "  Cloud MCP authentication (one-time setup)"
+    echo "================================================"
+    echo ""
+    echo "Cloud MCPs (Jira, Slack, Notion, Gmail, etc.) require"
+    echo "an OAuth login with your Anthropic account."
+    echo ""
+    if docker run --rm -it \
+      --init \
+      --entrypoint "" \
+      --cap-drop all \
+      --security-opt no-new-privileges \
+      ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"} \
+      -v "$(add_mount_relabel "$STATE_DIR:/home/claudebot/.claude")" \
+      -v "$(add_mount_relabel "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro")" \
+      "$IMAGE_TAG" claude auth login; then
+      touch "$AUTH_MARKER"
+      echo ""
+      echo "Authentication saved. Future launches will skip this step."
+      echo "To re-authenticate: rm $AUTH_MARKER"
+    else
+      echo ""
+      echo "Authentication skipped. Cloud MCPs won't be available this session."
+    fi
+    echo ""
+  fi
+}
+
+run_oauth_if_needed
 
 # Remove stale container from a previous run (--rm only cleans up on normal exit)
 if docker inspect "claudebot-$RUN_ID" &>/dev/null; then

@@ -58,7 +58,14 @@ _claude-sandbox() {
     '--list[List all sandbox sessions for a repo]' \
     '--prune[Interactively select and delete worktrees]' \
     '--gc[Clean up worktrees with deleted remote branches]' \
-    '--shell[Open a bash shell instead of Claude (exec into live session if running)]' \
+    '(-x --exec)--shell[Open a bash shell instead of Claude (exec into live session if running)]' \
+    '(--shell)'{-x,--exec}'[Headless: run one non-interactive implementer on PROMPT]:prompt: ' \
+    '(--fresh --new)'{--fresh,--new}'[Start a new conversation instead of resuming the prior one]' \
+    '--no-vault[Do not mount the curated read-only vault]' \
+    '--no-chezmoi[Do not mount the chezmoi dotfiles source]' \
+    '--no-work-config[Do not mount the work-laptop-config source]' \
+    '(--repos-live)--no-repos[Do not mount sibling repos from ~/Repositories]' \
+    "(--no-repos)--repos-live[Mount siblings' live working trees instead of main/master snapshots]" \
     '(-w --worktree -b --branch)'{-w,--worktree}'[Run in an isolated git worktree]:worktree name:->worktree' \
     '(-b --branch -w --worktree)'{-b,--branch}'[Run in a worktree on an existing branch]:branch:->branch' \
     '--rename[Rename a worktree]:old name:->rename_old:new name:->rename_new' \
