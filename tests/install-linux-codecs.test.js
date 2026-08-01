@@ -129,7 +129,7 @@ test('a stock Fedora host swaps ffmpeg-free and installs the freeworld plugins',
     'rpmfusion-free-release', 'rpmfusion-nonfree-release',
     'ffmpeg-free', 'gstreamer1-plugins-bad-free', 'gstreamer1-plugins-ugly-free',
   ]));
-  assert.match(calls, /dnf swap -y ffmpeg-free ffmpeg --allowerasing/,
+  assert.match(calls, /dnf swap -y --allowerasing ffmpeg-free ffmpeg/,
     'ffmpeg-free shares sonames with the full build, so this must be a swap, not an install');
   assert.match(calls, /dnf install -y gstreamer1-plugins-bad-freeworld/,
     'bad-freeworld adds elements alongside bad-free and must be a plain install');
@@ -169,14 +169,15 @@ test('VA-API driver follows the GPU vendor id', { skip }, (t) => {
     'swapping Mesa VA drivers on an NVIDIA box replaces a driver the card never loads');
   assert.doesNotMatch(nvidia.calls, /intel-media-driver/, 'no Intel GPU present');
 
-  // mesa-va-drivers/mesa-vdpau-drivers installed, so the AMD path must take the swap branch.
+  // mesa-va-drivers installed, so the AMD path must take the swap branch.
   const amd = runWithStubs({
     ...nvidiaHost([...base, 'mesa-va-drivers', 'mesa-vdpau-drivers']),
     lspci: lspciStub(['1002']),
   });
-  assert.match(amd.calls, /dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld --allowerasing/,
-    'the freeworld Mesa drivers replace their counterparts, so AMD is a swap');
-  assert.match(amd.calls, /dnf swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld --allowerasing/);
+  assert.match(amd.calls, /dnf swap -y --allowerasing mesa-va-drivers mesa-va-drivers-freeworld/,
+    'the freeworld Mesa driver replaces its counterpart, so AMD is a swap');
+  assert.doesNotMatch(amd.calls, /mesa-vdpau-drivers-freeworld/,
+    'RPM Fusion does not build the VDPAU freeworld package on F44; asking for it fails every apply');
   assert.doesNotMatch(amd.calls, /libva-nvidia-driver/, 'no NVIDIA GPU present');
 
   const intel = runWithStubs({ ...nvidiaHost(base), lspci: lspciStub(['8086']) });
@@ -200,8 +201,24 @@ test('AMD host with Mesa VA drivers already erased installs freeworld directly',
     lspci: lspciStub(['1002']),
   });
   assert.match(calls, /dnf install -y mesa-va-drivers-freeworld/);
-  assert.doesNotMatch(calls, /dnf swap -y mesa-va-drivers /, 'nothing to swap away');
+  assert.doesNotMatch(calls, /dnf swap/, 'nothing to swap away');
   assert.strictEqual(exitCode, 0);
+});
+
+test('every dnf swap puts its options before the positionals', { skip }, (t) => {
+  if (!rendersHere()) return t.skip('renders empty on this host');
+  // dnf5's grammar is `dnf5 [GLOBAL OPTIONS] swap [OPTIONS] [ARGUMENTS]` — unlike dnf4 it does not
+  // accept `--allowerasing` trailing the two package names. The stubs in this file ignore their
+  // argv, so no behavioural test can catch a misordered flag; it would fail on the real box at
+  // apply time, mid-transaction, with RPM Fusion already enabled. Assert on the source instead.
+  for (const line of render().split('\n')) {
+    if (!/\bdnf swap\b/.test(line)) continue;
+    const args = line.slice(line.indexOf('dnf swap') + 'dnf swap'.length).trim().split(/\s+/);
+    const firstPositional = args.findIndex((a) => !a.startsWith('-'));
+    const trailingOption = args.slice(firstPositional).find((a) => a.startsWith('--'));
+    assert.strictEqual(trailingOption, undefined,
+      `dnf5 rejects options after the package names: ${line.trim()}`);
+  }
 });
 
 test('a non-dnf host exits early instead of half-converging', { skip }, (t) => {

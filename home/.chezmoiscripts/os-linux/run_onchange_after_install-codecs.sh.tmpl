@@ -55,9 +55,13 @@ failed=""
 # and re-satisfy its dependents from RPM Fusion's build instead of refusing the transaction.
 # Fedora installs ffmpeg-free by default, but a machine that has already been swapped, or that
 # never had it, must skip rather than fail — hence the three-way guard.
+#
+# --allowerasing goes BEFORE the two package names, not after: dnf5's grammar is
+# `dnf5 [GLOBAL OPTIONS] swap [OPTIONS] [ARGUMENTS]`, and it does not accept options trailing the
+# positionals the way dnf4 did.
 if rpm -q ffmpeg-free >/dev/null 2>&1; then
   echo "$TAG: [swap] ffmpeg-free -> ffmpeg (full codec build) ..."
-  sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing || failed="$failed ffmpeg"
+  sudo dnf swap -y --allowerasing ffmpeg-free ffmpeg || failed="$failed ffmpeg"
 elif pkg_installed ffmpeg; then
   echo "$TAG: [skip] ffmpeg already installed."
 else
@@ -114,24 +118,26 @@ for pkg in $va_add; do
 done
 
 # AMD renders through Mesa, whose Fedora build has the video codecs compiled out like everything
-# else here. These freeworld packages genuinely do replace their counterparts — same drivers,
-# codecs enabled — so unlike the GStreamer pair above they are a swap.
+# else here. This freeworld package genuinely does replace its counterpart — same driver, codecs
+# enabled — so unlike the GStreamer pair above it is a swap.
+#
+# VA-API only. RPM Fusion no longer builds mesa-vdpau-drivers-freeworld on Fedora 44 (repoquery
+# resolves the VA package alone), so listing it here would append a permanent failure and leave
+# every AMD apply exiting non-zero. VDPAU is the legacy path anyway; VA-API is what current
+# players use.
 case "$gpus" in *'[1002:'*)
-  for pkg in mesa-va-drivers mesa-vdpau-drivers; do
-    if rpm -q "${pkg}-freeworld" >/dev/null 2>&1; then
-      echo "$TAG: [skip] ${pkg}-freeworld already installed."
-      continue
-    fi
+  if pkg_installed mesa-va-drivers-freeworld; then
+    echo "$TAG: [skip] mesa-va-drivers-freeworld already installed."
+  elif pkg_installed mesa-va-drivers; then
+    echo "$TAG: [swap] mesa-va-drivers -> mesa-va-drivers-freeworld ..."
+    sudo dnf swap -y --allowerasing mesa-va-drivers mesa-va-drivers-freeworld \
+      || failed="$failed mesa-va-drivers-freeworld"
+  else
     # dnf swap needs the outgoing package present; on a machine where it was already erased,
     # install the freeworld build directly.
-    if pkg_installed "$pkg"; then
-      echo "$TAG: [swap] $pkg -> ${pkg}-freeworld ..."
-      sudo dnf swap -y "$pkg" "${pkg}-freeworld" --allowerasing || failed="$failed ${pkg}-freeworld"
-    else
-      echo "$TAG: [install] ${pkg}-freeworld ..."
-      pkg_install "${pkg}-freeworld" || failed="$failed ${pkg}-freeworld"
-    fi
-  done
+    echo "$TAG: [install] mesa-va-drivers-freeworld ..."
+    pkg_install mesa-va-drivers-freeworld || failed="$failed mesa-va-drivers-freeworld"
+  fi
   ;;
 esac
 
