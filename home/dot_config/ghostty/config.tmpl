@@ -209,5 +209,22 @@ keybind = super+v=paste_from_clipboard
 # dot_zshrc.tmpl moves to alt+t. The other ctrl chords these binds would want (d, w, [) are
 # terminal control codes with no escape hatch, so they stay on super alone.
 keybind = ctrl+t=new_tab
+
+# Tab switching by number, in the shape cmd+1..9 has on macOS: 1-8 jump to that tab, 9 jumps
+# to the last one. The digits are the second ctrl chord worth spending. ctrl+1 and ctrl+9 emit
+# nothing at all, and the control codes the rest legacy-encode each keep a dedicated key that
+# still reaches the shell: ctrl+3 ESC (esc), ctrl+4 ^\ (ctrl+backslash), ctrl+5 ^], ctrl+7 ^_,
+# ctrl+8 ^? (backspace). The one real casualty is vim's Ctrl-^ alternate-file when typed as
+# ctrl+6 — reach it as ctrl+shift+6 instead.
+# Ghostty's own alt+1..9 defaults are left registered, so the old chords keep working too.
+keybind = ctrl+1=goto_tab:1
+keybind = ctrl+2=goto_tab:2
+keybind = ctrl+3=goto_tab:3
+keybind = ctrl+4=goto_tab:4
+keybind = ctrl+5=goto_tab:5
+keybind = ctrl+6=goto_tab:6
+keybind = ctrl+7=goto_tab:7
+keybind = ctrl+8=goto_tab:8
+keybind = ctrl+9=last_tab
 {{ end }}
 
