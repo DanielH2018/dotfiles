@@ -37,14 +37,16 @@ if [ "${1:-}" = "--popup" ]; then
     exit 0
 fi
 
-if [ -z "${TMUX:-}" ]; then
-    echo "tmux-askpass: not running inside tmux — nowhere to draw the prompt" >&2
-    exit 1
-fi
-
-# A live server is not the same as someone looking at it. With no attached client the
-# popup goes nowhere, and an empty answer reads to sudo as a wrong password — so fail
-# loudly instead, for the same reason ~/.zshenv leaves SUDO_ASKPASS unset over plain ssh.
+# Deliberately not gated on $TMUX. The shell running Claude Code's `!` commands descends
+# from the Claude daemon, which outlives and often predates the tmux server hosting the
+# panes — so $TMUX is set in the pane and missing exactly where sudo runs. tmux does not
+# need it: with no $TMUX the CLI talks to the default socket and draws on the most
+# recently active client, which is the one being typed in.
+#
+# What it does need is an attached client. A live server is not the same as someone
+# looking at it: with none attached the popup goes nowhere, and an empty answer reads to
+# sudo as a wrong password — so fail loudly, for the same reason ~/.zshenv leaves
+# SUDO_ASKPASS unset where no helper can work.
 if [ -z "$(tmux list-clients -F '#{client_name}' 2>/dev/null)" ]; then
     echo "tmux-askpass: no attached tmux client to prompt on" >&2
     exit 1

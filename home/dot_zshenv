@@ -23,11 +23,13 @@ export CTS_REMOTE_ROOTS="$HOME"
 # silently and looks like a wrong password.
 if [ -x /usr/bin/ksshaskpass ] && { [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; }; then
   export SUDO_ASKPASS=/usr/bin/ksshaskpass
-elif [ -n "$TMUX" ] && [ -x "$HOME/.local/bin/tmux-askpass" ]; then
-  # Headless hosts (daniel-box, daniel-server) have no dialog to pop, but the tmux session
-  # the work already runs in can draw one — see the script for how. Gated on $TMUX at
-  # runtime rather than on hostname, so it lights up exactly where a popup can be drawn
-  # and stays out of the way (leaving sudo's own clear error) where it cannot.
+elif [ -x "$HOME/.local/bin/tmux-askpass" ] && command -v tmux >/dev/null 2>&1; then
+  # Headless hosts (daniel-box, daniel-server) have no dialog to pop, but the tmux the
+  # work already runs in can draw one — see the script for how. Deliberately NOT gated on
+  # $TMUX: the shell running Claude Code's `!` commands descends from the Claude daemon,
+  # not from the pane, so $TMUX is absent exactly where sudo runs (on daniel-box the
+  # daemon predates the tmux server by two minutes). The script itself checks for the
+  # thing that actually matters — an attached client to draw on.
   export SUDO_ASKPASS="$HOME/.local/bin/tmux-askpass"
 fi
 

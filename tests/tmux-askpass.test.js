@@ -115,12 +115,16 @@ test("passes sudo's prompt through to the popup, quotes and all", () => {
   assert.match(popupLog(), /\[sudo\] daniel's password: /);
 });
 
-test('refuses outside tmux instead of answering silently', () => {
-  const { run } = fakeEnv();
+// The shell running Claude Code's `!` commands descends from the Claude daemon, which on
+// daniel-box was started before the tmux server it now hosts panes for — so $TMUX is set
+// in the pane and absent everywhere it would have been useful. tmux itself doesn't need
+// it: with no $TMUX the CLI talks to the default socket and draws on the most recently
+// active client, which is the one being typed in.
+test('works with $TMUX unset, as in a daemon-hosted session', () => {
+  const { run } = fakeEnv({ password: 'hunter2' });
   const r = run(['Password: '], { TMUX: '' });
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /not running inside tmux/);
-  assert.equal(r.stdout, '');
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, 'hunter2\n');
 });
 
 test('refuses when the tmux server has no attached client', () => {
