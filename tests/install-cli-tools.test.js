@@ -245,4 +245,74 @@ test('an existing docker install is not fought over', { skip }, () => {
     `podman-docker must not be installed when docker already exists; output was:\n${out}`);
 });
 
+// A sudo that records instead of executing. SUDO_OK's `exec "$@"` would run the REAL install(1)
+// from the passthrough set against the REAL /etc, which is not something a test gets to do.
+const SUDO_LOG = '[ "$1" = "-v" ] && exit 0; echo "sudo $*" >> "$HOME/sudo.log"; exit 0';
+const readLog = (home, name) => {
+  const p = path.join(home, name);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+};
+
+// 11. The bug this guards: the install branch stops once `docker` is on PATH, so anything that
+//     lives inside it never runs again on a machine that installed the shim on an earlier pass.
+//     The marker and socket steps are therefore keyed on the package being installed instead.
+//     Prove it with docker already present — the install branch is skipped, the follow-up is not.
+test('the shim follow-up runs even when docker is already installed', { skip }, () => {
+  if (!rendersHere()) return;
+  const { out, home } = runWithStubs({
+    dnf: 'exit 0',
+    rpm: 'exit 0',                       // podman-docker reads as installed
+    sudo: SUDO_LOG,
+    dpkg: DPKG_TRIPWIRE,
+    curl: 'exit 1',
+    uname: NO_ARCH,
+    unzip: 'exit 0',
+    docker: 'exit 0',                    // the install branch short-circuits here
+    systemctl: `echo "systemctl $*" >> "$HOME/systemctl.log"; exit 0`,
+  });
+  assert.match(readLog(home, 'systemctl.log'), /--user enable --now podman\.socket/,
+    `the follow-up never ran with docker present; script output was:\n${out}`);
+});
+
+// 12. podman-docker does not ship /etc/containers/nodocker — its own banner asks you to create it
+//     — so the installer places it. Skipped where the host already has the file, since the script
+//     rightly does nothing then and the stub harness cannot redirect /etc.
+test('the nodocker marker is created to silence the shim banner', { skip }, (t) => {
+  if (!rendersHere()) return;
+  if (fs.existsSync('/etc/containers/nodocker')) return t.skip('host already has the marker');
+  const { out, home } = runWithStubs({
+    dnf: 'exit 0',
+    rpm: 'exit 0',
+    sudo: SUDO_LOG,
+    dpkg: DPKG_TRIPWIRE,
+    curl: 'exit 1',
+    uname: NO_ARCH,
+    unzip: 'exit 0',
+    docker: 'exit 0',
+    systemctl: 'exit 1',
+  });
+  assert.match(readLog(home, 'sudo.log'), /install -m 644 \/dev\/null \/etc\/containers\/nodocker/,
+    `the marker was never created; script output was:\n${out}`);
+});
+
+// 13. A headless, non-lingering box has no user systemd bus. Enabling there is a guaranteed error,
+//     so the show-environment probe must gate it — the same contract enable-reap-timer relies on.
+test('the podman socket is left alone without a user systemd session', { skip }, () => {
+  if (!rendersHere()) return;
+  const { home } = runWithStubs({
+    dnf: 'exit 0',
+    rpm: 'exit 0',
+    sudo: SUDO_LOG,
+    dpkg: DPKG_TRIPWIRE,
+    curl: 'exit 1',
+    uname: NO_ARCH,
+    unzip: 'exit 0',
+    docker: 'exit 0',
+    // No user bus: the probe fails, everything else would succeed if it were reached.
+    systemctl: `echo "systemctl $*" >> "$HOME/systemctl.log"; [ "$2" = show-environment ] && exit 1; exit 0`,
+  });
+  assert.doesNotMatch(readLog(home, 'systemctl.log'), /enable/,
+    'enabling podman.socket without a user bus only produces an error');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

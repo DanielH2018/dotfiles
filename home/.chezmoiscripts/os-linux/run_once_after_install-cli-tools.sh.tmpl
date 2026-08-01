@@ -118,10 +118,8 @@ fi
 {{ if includeTemplate "is-desktop-linux" . -}}
 # 2d. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
 #     out to `docker` (most container tutorials, plenty of build scripts) fails on a stock
-#     workstation. podman-docker supplies /usr/bin/docker -> podman plus the
-#     /etc/containers/nodocker marker that suppresses the "Emulate Docker CLI using podman"
-#     banner on every single call. Podman itself arrives as a package dependency where it is
-#     absent.
+#     workstation. podman-docker supplies /usr/bin/docker -> podman. Podman itself arrives as a
+#     package dependency where it is absent.
 #     Desktop-gated, and the gate is load-bearing rather than stylistic: wsl/install-docker-engine
 #     installs real docker-ce, which owns the same /usr/bin/docker path — Debian's podman-docker
 #     declares Conflicts: docker-ce, and dnf would refuse the file conflict outright. Servers are
@@ -135,6 +133,31 @@ if ! command -v docker >/dev/null 2>&1 && [ -n "$PM" ]; then
     pkg_install podman-docker && echo "install-cli-tools: podman-docker installed (docker -> podman shim)"
   else
     echo "install-cli-tools: sudo unavailable; deferring the podman-docker shim" >&2
+  fi
+fi
+
+#     Finishing the shim off, keyed on the package rather than on the install above. That branch
+#     stops once `docker` is on PATH, so a machine that installed the shim on an earlier run would
+#     never reach either step below if they lived inside it.
+if [ -n "$PM" ] && pkg_installed podman-docker; then
+  # The shim prints "Emulate Docker CLI using podman" to stderr on every invocation until this
+  # file exists. The package does not ship it — the message itself asks you to create it.
+  if [ ! -e /etc/containers/nodocker ] && sudo -v; then
+    sudo install -d -m 755 /etc/containers &&
+      sudo install -m 644 /dev/null /etc/containers/nodocker &&
+      echo "install-cli-tools: created /etc/containers/nodocker (silences the shim banner)"
+  fi
+
+  # podman.socket is what makes DOCKER_HOST mean anything. The package's /etc/profile.d snippet
+  # exports DOCKER_HOST unconditionally and its tmpfiles.d config symlinks docker.sock next to
+  # podman.sock, so leaving the socket disabled points every Docker-API client (as opposed to the
+  # CLI, which needs none of this) at a path nothing listens on — a worse failure than an unset
+  # DOCKER_HOST, because it looks configured. Socket-activated and rootless: podman starts on
+  # connect rather than running a daemon. Back out with `systemctl --user disable --now
+  # podman.socket`. The show-environment probe is the same one the reap-timer script uses to tell
+  # a real user session from a headless non-lingering one, where enabling would just error.
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user enable --now podman.socket || true
   fi
 fi
 {{ end }}
