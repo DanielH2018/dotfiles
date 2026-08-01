@@ -24,6 +24,8 @@
 # dotfile deployment. Bump the marker to force a refresh.
 # wslg-audio-bump: v1
 set -u
+TAG=install-wslg-audio
+{{ includeTemplate "linux-install.sh" . }}
 
 # Converged check mirrors what the hook actually tests for (command -v paplay), not dpkg -s,
 # so a paplay from any source counts.
@@ -31,17 +33,17 @@ if command -v paplay >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! sudo -v; then
-  echo "install-wslg-audio: sudo unavailable; deferring pulseaudio-utils (retries next apply)" >&2
+if ! have_sudo; then
+  echo "$TAG: sudo unavailable; deferring pulseaudio-utils (retries next apply)" >&2
   exit 1
 fi
 
-sudo apt-get update -qq && sudo apt-get install -y pulseaudio-utils
+pkg_install pulseaudio-utils
 
 if command -v paplay >/dev/null 2>&1; then
-  echo "install-wslg-audio: pulseaudio-utils installed (play-sound.sh now uses WSLg, not interop)"
+  echo "$TAG: pulseaudio-utils installed (play-sound.sh now uses WSLg, not interop)"
 else
-  echo "install-wslg-audio: pulseaudio-utils still missing; play-sound.sh will fall back to" >&2
+  echo "$TAG: pulseaudio-utils still missing; play-sound.sh will fall back to" >&2
   echo "  powershell.exe interop, which leaks CPU threads. Re-run 'chezmoi apply' in a" >&2
   echo "  terminal where sudo can prompt." >&2
   exit 1

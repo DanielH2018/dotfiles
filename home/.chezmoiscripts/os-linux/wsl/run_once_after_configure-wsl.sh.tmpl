@@ -13,26 +13,28 @@
 # Takes effect after a one-time `wsl --shutdown` from Windows. Bump the marker to refresh.
 # wslcfg-bump: v2
 set -u
+TAG=configure-wsl
+{{ includeTemplate "linux-install.sh" . }}
 
-if ! sudo -v; then
-  echo "configure-wsl: sudo unavailable; deferring wl-clipboard + wsl.conf interop (retries next apply)" >&2
+if ! have_sudo; then
+  echo "$TAG: sudo unavailable; deferring wl-clipboard + wsl.conf interop (retries next apply)" >&2
   exit 1
 fi
 
 # 1. Native Wayland clipboard (idempotent; WSLg bridges wl-copy/wl-paste to Windows).
 if ! command -v wl-copy >/dev/null 2>&1; then
-  sudo apt-get update -qq && sudo apt-get install -y wl-clipboard \
-    && echo "configure-wsl: installed wl-clipboard (nvim clipboard via WSLg Wayland)"
+  pkg_install wl-clipboard \
+    && echo "$TAG: installed wl-clipboard (nvim clipboard via WSLg Wayland)"
 fi
 
 # 2. Strip the Windows PATH from WSL. Idempotent; never duplicate the key.
 if [ -f /etc/wsl.conf ] && ! grep -qi 'appendWindowsPath' /etc/wsl.conf; then
   if grep -qi '^\[interop\]' /etc/wsl.conf; then
     sudo sed -i '/^\[interop\]/a appendWindowsPath=false' /etc/wsl.conf \
-      && echo "configure-wsl: appendWindowsPath=false added under existing [interop]"
+      && echo "$TAG: appendWindowsPath=false added under existing [interop]"
   else
     printf '\n[interop]\nappendWindowsPath=false\n' | sudo tee -a /etc/wsl.conf >/dev/null \
-      && echo "configure-wsl: added [interop] appendWindowsPath=false — run 'wsl --shutdown' to apply"
+      && echo "$TAG: added [interop] appendWindowsPath=false — run 'wsl --shutdown' to apply"
   fi
 fi
 
@@ -40,7 +42,7 @@ fi
 #    cross-machine session id. Hardcoded for this box; template per-machine if you add more.
 if [ -f /etc/wsl.conf ] && ! grep -qi 'hostname' /etc/wsl.conf; then
   printf '\n[network]\nhostname=daniel-wsl\n' | sudo tee -a /etc/wsl.conf >/dev/null \
-    && echo "configure-wsl: set hostname=daniel-wsl — run 'wsl --shutdown' to apply"
+    && echo "$TAG: set hostname=daniel-wsl — run 'wsl --shutdown' to apply"
 fi
 {{ end -}}
 {{ end -}}

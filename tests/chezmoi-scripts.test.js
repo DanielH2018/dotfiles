@@ -118,6 +118,53 @@ for (const file of PS1_TMPLS) {
   });
 }
 
+// --- Part 1b: WSL scripts, rendered with the is-wsl guard bypassed ---------------------------
+//
+// Part 1 renders these to an empty string off WSL, so `bash -n` on the result proves nothing and
+// a broken WSL script stays green on every non-WSL machine that runs this suite. Strip the two
+// leading `{{ if }}` guards and their two trailing `{{ end }}`s and render the body directly, so
+// the includeTemplate resolution and the shell syntax are checked everywhere.
+//
+// Only the guards are removed -- the body is rendered by the real chezmoi, so a template error
+// inside it still fails here.
+function renderWslBody(file) {
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  assert.match(lines[1], /includeTemplate "is-wsl"/, `${path.basename(file)}: expected an is-wsl guard on line 2`);
+  const body = lines.slice(2).filter((l) => l.trim() !== '{{ end -}}').join('\n');
+  return execFileSync('chezmoi', ['execute-template', '--source', REPO], { input: body, encoding: 'utf8' });
+}
+
+const WSL_TMPLS = SH_TMPLS.filter((f) => f.includes(`${path.sep}wsl${path.sep}`));
+
+test('the WSL script set is non-empty (guards against a silent glob change)', { skip }, () => {
+  assert.ok(WSL_TMPLS.length >= 7, `expected >=7 WSL scripts, found ${WSL_TMPLS.length}`);
+});
+
+for (const file of WSL_TMPLS) {
+  const rel = path.relative(REPO, file);
+  test(`renders past the is-wsl guard and bash -n parses: ${rel}`, { skip }, () => {
+    const dir = tmpdir('chezmoi-wsl-');
+    const out = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(out, renderWslBody(file));
+    execFileSync('bash', ['-n', out], { stdio: ['ignore', 'pipe', 'pipe'] });
+  });
+}
+
+// The Docker installer used to hand-roll the keyring/source/apt-get dance that apt_repo_add
+// already does for the GitHub CLI and three apps in install-apps. Pin the shared call so it does
+// not drift back: the failure it prevents is a second implementation of apt repo setup diverging
+// from the one linux-install.sh tests cover.
+test('install-docker-engine adds its apt repo via the shared helper', { skip }, () => {
+  const src = fs.readFileSync(path.join(SCRIPTS_DIR, 'os-linux', 'wsl', 'run_once_after_install-docker-engine.sh.tmpl'), 'utf8');
+  assert.match(src, /apt_repo_add docker https:\/\/download\.docker\.com/);
+  assert.match(src, /signed-by=__KEYRING__/, 'the source line must let apt_repo_add fill in the keyring path');
+  assert.doesNotMatch(src, /sudo tee "\$DOCKER_LIST"/, 'writing the .list by hand is what apt_repo_add replaced');
+  assert.doesNotMatch(src, /gpg --dearmor|install -m 0644 "\$tmpk"/, 'keyring handling belongs to apt_repo_add');
+
+  const rendered = renderWslBody(path.join(SCRIPTS_DIR, 'os-linux', 'wsl', 'run_once_after_install-docker-engine.sh.tmpl'));
+  assert.match(rendered, /^apt_repo_add\(\) \{/m, 'linux-install.sh must actually be inlined');
+});
+
 // --- Part 2: behavior tests for the three riskiest scripts ----------------------------------
 
 const SUDO_STUB = [
