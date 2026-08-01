@@ -501,19 +501,21 @@ const SUDO_STUB = [
 
   // This script's whole job is the resulting file, so unlike the sandboxes above its sudo stub
   // DOES exec what it wraps -- asserting on argv alone would prove nothing about the config that
-  // comes out. That is safe here only because the stub refuses any argv that does not stay
-  // inside the test's own temp dir, and the script's single sudo write targets $DNF_CONF, which
-  // the sandbox points at a temp file. Keep the refusal if this test grows.
+  // comes out. That is safe only because the stub execs exactly one shape: an `install` whose
+  // destination is $DNF_CONF, which the sandbox points at a temp file. Anything else is refused
+  // rather than run, so a future edit that adds a second sudo call fails loudly here instead of
+  // reaching the real system. Keep that whitelist as narrow as the script's actual writes.
   const DS_SUDO_STUB = [
     '#!/bin/sh',
     'echo "sudo $*" >> "$STUB_LOG"',
     'if [ "$1" = "-v" ] || [ "$1" = "-n" ]; then',
     '  exit "${SUDO_PROBE_EXIT:-0}"',
     'fi',
-    'case " $* " in',
-    '  *" $SANDBOX"*) exec "$@" ;;',
-    'esac',
-    'echo "stub sudo refused an argv outside $SANDBOX: $*" >&2',
+    'for dest; do :; done',      // POSIX idiom for the last positional arg
+    'if [ "$1" = install ] && [ "$dest" = "$DNF_CONF" ]; then',
+    '  exec "$@"',
+    'fi',
+    'echo "stub sudo refused: $*" >&2',
     'exit 99',
     '',
   ].join('\n');
@@ -541,7 +543,7 @@ const SUDO_STUB = [
     fs.writeFileSync(confFile, conf);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, renderTemplate(DS_SRC));
-    const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, SANDBOX: dir, DNF_CONF: confFile };
+    const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, DNF_CONF: confFile };
     return { scriptFile, env, logFile, confFile };
   }
 

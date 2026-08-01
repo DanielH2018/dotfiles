@@ -5,8 +5,8 @@
 # defaults, three of which are worth changing on a workstation:
 #
 #   max_parallel_downloads=10  default 3, max 20. Fedora's metalink hands out a set of mirrors
-#                              and dnf fetches from them serially-ish at 3 wide; a large
-#                              `dnf upgrade` is bounded by round-trips, not by link speed.
+#                              to fetch from, and a large `dnf upgrade` is a few hundred small
+#                              rpms — three at a time leaves a fast link idle.
 #   defaultyes=True            makes the transaction prompt default to Yes, so a bare Enter
 #                              accepts. Note this cuts both ways: Enter now also accepts a
 #                              `dnf remove`. Not assumeyes — the prompt still appears.
@@ -50,7 +50,7 @@ WANT='max_parallel_downloads=10 defaultyes=True keepcache=True'
 # sections too, and appending main options after the wrong header would define them on a repo.
 if [ "$(grep -c '^[[:space:]]*\[' "$DNF_CONF")" -ne 1 ] \
    || ! grep -q '^[[:space:]]*\[main\][[:space:]]*$' "$DNF_CONF"; then
-  echo "$TAG: $DNF_CONF carries stanzas other than a lone [main]; set these options by hand" >&2
+  echo "$TAG: $DNF_CONF is not the expected lone [main] stanza; set these options by hand" >&2
   exit 0
 fi
 
