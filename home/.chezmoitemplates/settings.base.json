@@ -4,7 +4,6 @@
   "env": {
     "EDITOR": "vim",
     "PAGER": "less -R",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     {{/* M02 shadow census. The three Bash guards each carry their own idea of where one
          command ends and the next begins, and cmdparse.sh is the one segmentation meant to
          replace all three. This flag makes them compute what that shared segmentation WOULD
@@ -1224,5 +1223,6 @@
   "autoConnectIde": true,
   "autoInstallIdeExtension": true,
   "agentPushNotifEnabled": true,
-  "inputNeededNotifEnabled": true
+  "inputNeededNotifEnabled": true,
+  "remoteControlAtStartup": true
 }
