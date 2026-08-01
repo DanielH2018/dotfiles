@@ -10,10 +10,13 @@ AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
+# shellcheck disable=SC1091  # deployed next to this script, not resolvable from the chezmoi source tree
 . "$SANDBOX_DIR/sandbox-lib.sh"        # resolve_repo_path()
+# shellcheck disable=SC1091  # ditto
 . "$SANDBOX_DIR/sandbox-worktree.sh"   # sanitize_repo_name(), repo_hash(), worktree enumeration
 # Machine/work-specific values (e.g. CLAUDE_VAULT_DIR) for an optional work overlay.
 if [ -f "$HOME/.config/claude/local.env" ]; then
+  # shellcheck disable=SC1091  # optional machine-local overlay; absent on most hosts
   . "$HOME/.config/claude/local.env"
 fi
 # 1Password SSH-agent socket for signed commits — the path differs by platform.
@@ -995,15 +998,10 @@ stop_proxy() {
 
 # --- Git worktree management ---
 setup_worktree() {
-  if [[ "$BRANCH_MODE" == true ]]; then
-    WT_BRANCH="$EXISTING_BRANCH"
-  else
-    WT_BRANCH="claude/$WT_NAME"
-  fi
-  WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$WT_NAME"
+  IFS=$'\t' read -r WT_BRANCH WT_PATH < <(
+    resolve_worktree_target "$REPO_PATH" "$REPO_NAME" "$WT_NAME" "$BRANCH_MODE" "$EXISTING_BRANCH")
 
-  # Check if this worktree already exists
-  if git -C "$REPO_PATH" worktree list --porcelain | grep -q "^worktree $(cd "$WT_PATH" 2>/dev/null && pwd)$" 2>/dev/null; then
+  if worktree_exists_at "$REPO_PATH" "$WT_PATH"; then
     echo "Reusing existing worktree: $WT_PATH (branch: $WT_BRANCH)"
     WORK_PATH="$(cd "$WT_PATH" && pwd)"
     return
@@ -1012,8 +1010,7 @@ setup_worktree() {
   # If the branch is already checked out in another worktree, git refuses to
   # add a second one. Reuse a tool worktree; refuse (with guidance) for main.
   local existing_wt
-  existing_wt="$(git -C "$REPO_PATH" worktree list --porcelain | awk -v b="refs/heads/$WT_BRANCH" '
-    /^worktree /{p=substr($0,10)} $0=="branch "b{print p; exit}')"
+  existing_wt="$(find_worktree_for_branch "$REPO_PATH" "$WT_BRANCH" || true)"
   if [[ -n "$existing_wt" ]]; then
     if [[ "$existing_wt" == "$REPO_PATH" ]]; then
       echo "Error: branch '$WT_BRANCH' is checked out in your main checkout:" >&2
@@ -1180,104 +1177,9 @@ compact_session() {
     vault_file="${vault_dir}/${wt_name}_${today}_${counter}.md"
   fi
 
-  python3 - "$final_json" "$repo_name" "$wt_name" "$vault_file" <<'PYEOF'
-import json, sys, re
-from datetime import datetime
-
-json_file, repo_name, wt_name, vault_file = sys.argv[1:5]
-
-with open(json_file) as f:
-    data = json.load(f)
-
-titles = data.get("titles", [])
-user_count = data.get("user_count", 0)
-assistant_count = data.get("assistant_count", 0)
-pr_links = data.get("pr_links", [])
-first_ts = data.get("first_timestamp", "")
-last_ts = data.get("last_timestamp", "")
-commits = data.get("commits")
-files_changed = data.get("files_changed")
-api_summary = data.get("api_summary")
-user_messages = data.get("user_messages", [])
-
-def ts_to_date(ts):
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d")
-    except (ValueError, AttributeError):
-        return "unknown"
-
-first_date = ts_to_date(first_ts)
-last_date = ts_to_date(last_ts)
-
-if api_summary:
-    summary_paragraph = api_summary
-    key_decisions = ""
-    problems = ""
-    parts = re.split(r'\n(?=\d\.\s|#{1,3}\s|Key [Dd]ecisions|Problems [Ee]ncountered)', api_summary)
-    if len(parts) >= 1:
-        summary_paragraph = parts[0].strip()
-    for part in parts[1:]:
-        if re.match(r'(?:#{1,3}\s*)?Key [Dd]ecisions', part, re.IGNORECASE):
-            key_decisions = re.sub(r'^(?:#{1,3}\s*)?Key [Dd]ecisions[:\s]*\n?', '', part, flags=re.IGNORECASE).strip()
-        elif re.match(r'(?:#{1,3}\s*)?Problems', part, re.IGNORECASE):
-            problems = re.sub(r'^(?:#{1,3}\s*)?Problems [Ee]ncountered[:\s]*\n?', '', part, flags=re.IGNORECASE).strip()
-else:
-    parts = []
-    if titles:
-        parts.append("Session topics: " + ", ".join(titles) + ".")
-    if commits:
-        commit_lines = commits.strip().split("\n")
-        parts.append(f"{len(commit_lines)} commit(s) on branch claude/{wt_name}.")
-    summary_paragraph = " ".join(parts) if parts else "No summary available."
-    key_decisions = ""
-    problems = ""
-
-one_line = titles[0] if titles else f"Claude session on {repo_name}/claude/{wt_name}"
-pr_formatted = ", ".join(f"[PR]({url})" for url in pr_links) if pr_links else "none"
-
-lines = []
-lines.append("---")
-lines.append(f'title: "{repo_name} / {wt_name}"')
-lines.append(f"summary: {one_line}")
-lines.append(f"tags: [sessions, {repo_name}, archived]")
-lines.append(f"created: {first_date}")
-lines.append(f"updated: {last_date}")
-lines.append("---")
-lines.append("")
-lines.append(f"- **Repo:** {repo_name}")
-lines.append(f"- **Branch:** claude/{wt_name}")
-lines.append(f"- **Dates:** {first_date} to {last_date}")
-lines.append(f"- **Messages:** {user_count} user / {assistant_count} assistant")
-lines.append(f"- **PRs:** {pr_formatted}")
-lines.append("")
-lines.append("### Summary")
-lines.append(summary_paragraph)
-
-if key_decisions:
-    lines.append("")
-    lines.append("### Key Decisions")
-    lines.append(key_decisions)
-
-if problems:
-    lines.append("")
-    lines.append("### Problems Encountered")
-    lines.append(problems)
-
-lines.append("")
-lines.append("### Files Changed")
-lines.append(files_changed if files_changed else "Branch no longer available.")
-
-lines.append("")
-lines.append("### Commits")
-lines.append(commits if commits else "Branch no longer available.")
-lines.append("")
-
-with open(vault_file, "w") as f:
-    f.write("\n".join(lines))
-
-print(vault_file)
-PYEOF
+  local one_line
+  one_line="$(python3 "$SANDBOX_DIR/compact-session.py" render \
+    "$final_json" "$repo_name" "$wt_name" "$vault_file")"
 
   # Update sessions index
   local index_file="$vault_dir/_Index.md"
@@ -1295,10 +1197,6 @@ updated: $today
 |------|----------|---------|------|
 IDXEOF
   fi
-
-  # Get one-line summary for index
-  local one_line
-  one_line="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); t=d.get('titles',[]); print(t[0] if t else 'Session on claude/$wt_name')" "$final_json")"
 
   local file_basename
   file_basename="$(basename "$vault_file" .md)"
@@ -1426,6 +1324,7 @@ prune_worktrees() {
     # {1} itself — so a repo path containing a quote can't break out of the
     # preview command string.
     local preview_cmd
+    # shellcheck disable=SC2016  # the $0..$4 are the preview shell's positionals, expanded by fzf's bash, not this one
     preview_cmd="$(printf 'bash -c %s %s {1} %s %s %s' \
       "$(printf '%q' 'source "$0"; fzf_preview_worktree "$1" "$2" "$3" "$4"')" \
       "$(printf '%q' "$SANDBOX_DIR/sandbox-worktree.sh")" \
@@ -2090,6 +1989,7 @@ if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
       echo "  Repos: snapshotting ${#build_specs[@]} repo(s) at main/master (first run or main moved)..."
       export REPO_SNAPSHOT_ROOT
       export -f build_repo_snapshot
+      # shellcheck disable=SC2016  # $1 and the _-prefixed vars belong to the xargs-spawned shell
       printf '%s\0' "${build_specs[@]}" | xargs -0 -P4 -I{} bash -c \
         'IFS="|" read -r _repo _name _ref _sha <<<"$1"; build_repo_snapshot "$_repo" "$_name" "$_ref" "$_sha"' _ {} \
         2>/dev/null || true
@@ -2103,6 +2003,7 @@ if [[ "$NO_REPOS" == false && -d "$REPOS_ROOT" ]]; then
       DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
       repos_mounted=$((repos_mounted + 1))
       touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
+      # shellcheck disable=SC2012  # newest-first ordering is the point; find has no portable mtime sort
       while IFS= read -r old; do
         [[ -n "$old" ]] && rm -rf "$old" 2>/dev/null || true
       done < <(ls -1dt "$REPO_SNAPSHOT_ROOT/$r_name"/*/ 2>/dev/null | tail -n +3)
@@ -2370,6 +2271,7 @@ fi
 # session, so neither registers. cleanup() removes the row on exit (RUN_ID-guarded).
 # Every step is guarded so a registry hiccup can never abort the launch (set -e).
 if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/agent-view-register.sh" ]]; then
+  # shellcheck disable=SC1091  # hook lives outside this tree; existence is checked above
   source "$HOME/.claude/hooks/agent-view-register.sh"
   if declare -f av_write_full >/dev/null 2>&1; then
     av_title="$REPO_NAME"

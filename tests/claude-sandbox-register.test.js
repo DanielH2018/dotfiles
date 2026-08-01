@@ -21,6 +21,30 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
+// Index of the ONLY occurrence of `needle`. The ordering asserts below used
+// indexOf/lastIndexOf, which silently retarget when a second copy of the anchor
+// appears — the assert then still passes while comparing the wrong positions.
+// There are already two `docker run "${DOCKER_ARGS[@]}" …` lines (the --exec
+// headless one and the interactive one), so this is a live hazard, not a
+// hypothetical: match the interactive run by its top-of-line position.
+function soleIndexOf(needle) {
+  const pattern = needle instanceof RegExp ? needle : null;
+  const hits = [];
+  if (pattern) {
+    for (const m of SRC.matchAll(new RegExp(pattern.source, `${pattern.flags.replace(/g/, '')}g`))) {
+      hits.push(m.index);
+    }
+  } else {
+    for (let i = SRC.indexOf(needle); i !== -1; i = SRC.indexOf(needle, i + 1)) hits.push(i);
+  }
+  assert.strictEqual(hits.length, 1, `expected exactly one \`${needle}\` in the launcher, found ${hits.length}`);
+  return hits[0];
+}
+
+// The final interactive `docker run` — top level (column 0), unlike the indented
+// --exec one inside its `if`.
+const INTERACTIVE_RUN = /^docker run "\$\{DOCKER_ARGS\[@\]\}" "\$IMAGE_TAG" "\$\{CLAUDE_ARGS\[@\]\}"$/m;
+
 // ---- (1) structural wiring ------------------------------------------------
 test('sources the shared register helper', () => {
   assert.match(SRC, /source "\$HOME\/\.claude\/hooks\/agent-view-register\.sh"/);
@@ -35,9 +59,9 @@ test('registers a sandbox row keyed by INSTANCE_ID with the RUN_ID guard', () =>
 });
 
 test('registration is ordered before the interactive docker run', () => {
-  const reg = SRC.indexOf('av_write_full "$INSTANCE_ID"');
-  const runIdx = SRC.lastIndexOf('docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"');
-  assert.ok(reg > 0 && runIdx > 0 && reg < runIdx, 'registration must precede the final docker run');
+  const reg = soleIndexOf('av_write_full "$INSTANCE_ID"');
+  const runIdx = soleIndexOf(INTERACTIVE_RUN);
+  assert.ok(reg < runIdx, 'registration must precede the final docker run');
 });
 
 test('cleanup deregisters via the RUN_ID-guarded remove (inside cleanup, no 2nd trap)', () => {
@@ -60,10 +84,10 @@ test('Phase 2: binds the registry RW + passes AGENT_VIEW_KEY, interactive-only',
   assert.match(SRC, /-e "AGENT_VIEW_KEY=\$INSTANCE_ID"/);
   // The RW mount + key live INSIDE the interactive registration block (after the row is
   // written) and before the final docker run, so exec/shell containers never get them.
-  const gate = SRC.indexOf('AV_REGISTERED=true');
-  const mount = SRC.indexOf('agent-view:/home/claudebot/.claude/agent-view');
-  const runIdx = SRC.lastIndexOf('docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"');
-  assert.ok(gate > 0 && mount > gate && mount < runIdx,
+  const gate = soleIndexOf('AV_REGISTERED=true');
+  const mount = soleIndexOf('agent-view:/home/claudebot/.claude/agent-view');
+  const runIdx = soleIndexOf(INTERACTIVE_RUN);
+  assert.ok(mount > gate && mount < runIdx,
     'RW registry mount + key must be added after register, before the interactive docker run');
 });
 

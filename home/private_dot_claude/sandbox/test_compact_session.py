@@ -19,17 +19,29 @@ def write(path, text):
         f.write(text)
 
 
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def run_extract(session_dir, extra_args=None):
-    """Invoke `compact-session.py extract <session_dir>`; return (rc, stdout, stderr)."""
+    """Invoke `compact-session.py extract <dir>`; return (rc, stdout, stderr)."""
     args = [sys.executable, SCRIPT, "extract", session_dir] + (extra_args or [])
     p = subprocess.run(args, capture_output=True, text=True, check=False)
     return p.returncode, p.stdout, p.stderr
 
 
 def run_summarize(json_file, extra_args=None, env=None):
-    """Invoke `compact-session.py summarize <json_file>`; return (rc, stdout, stderr)."""
+    """Invoke `compact-session.py summarize <file>`; return (rc, stdout, stderr)."""
     args = [sys.executable, SCRIPT, "summarize", json_file] + (extra_args or [])
     p = subprocess.run(args, capture_output=True, text=True, env=env, check=False)
+    return p.returncode, p.stdout, p.stderr
+
+
+def run_render(json_file, repo_name, wt_name, vault_file):
+    """Invoke `compact-session.py render ...`; return (rc, stdout, stderr)."""
+    args = [sys.executable, SCRIPT, "render", json_file, repo_name, wt_name, vault_file]
+    p = subprocess.run(args, capture_output=True, text=True, check=False)
     return p.returncode, p.stdout, p.stderr
 
 
@@ -153,6 +165,97 @@ def test_summarize_with_no_content_skips_network():
         assert data == original, (
             "data should pass through unchanged when there is nothing to summarize"
         )
+
+
+def test_render_writes_note_and_prints_index_line():
+    with tempfile.TemporaryDirectory() as d:
+        json_file = os.path.join(d, "session.json")
+        write(
+            json_file,
+            json.dumps(
+                {
+                    "titles": ["Fix the settlement race", "Second topic"],
+                    "user_count": 12,
+                    "assistant_count": 30,
+                    "pr_links": ["https://example.test/pull/1"],
+                    "first_timestamp": "2026-07-01T10:00:00Z",
+                    "last_timestamp": "2026-07-03T18:30:00Z",
+                    "commits": "abc123 one\ndef456 two\n",
+                    "files_changed": "a.py\nb.py",
+                }
+            ),
+        )
+        vault_file = os.path.join(d, "note.md")
+        rc, out, err = run_render(json_file, "myrepo", "mywt", vault_file)
+        assert rc == 0, f"render failed: {err}"
+        assert out.strip() == "Fix the settlement race", out
+
+        note = read(vault_file)
+        assert 'title: "myrepo / mywt"' in note
+        assert "summary: Fix the settlement race" in note
+        assert "created: 2026-07-01" in note and "updated: 2026-07-03" in note
+        assert "- **Messages:** 12 user / 30 assistant" in note
+        assert "- **PRs:** [PR](https://example.test/pull/1)" in note
+        assert "Session topics: Fix the settlement race, Second topic." in note
+        assert "2 commit(s) on branch claude/mywt." in note
+        assert "### Files Changed\na.py\nb.py" in note
+
+
+def test_render_falls_back_when_there_are_no_titles():
+    with tempfile.TemporaryDirectory() as d:
+        json_file = os.path.join(d, "session.json")
+        write(
+            json_file,
+            json.dumps({"titles": [], "commits": None, "files_changed": None}),
+        )
+        vault_file = os.path.join(d, "note.md")
+        rc, out, err = run_render(json_file, "myrepo", "mywt", vault_file)
+        assert rc == 0, f"render failed: {err}"
+        # The index line and the frontmatter summary use deliberately different
+        # fallbacks; both predate the split out of the launcher heredoc.
+        assert out.strip() == "Session on claude/mywt", out
+        note = read(vault_file)
+        assert "summary: Claude session on myrepo/claude/mywt" in note
+        assert "No summary available." in note
+        assert note.count("Branch no longer available.") == 2, note
+        assert "unknown" in note, "absent timestamps render as 'unknown'"
+
+
+def test_render_splits_an_api_summary_into_sections():
+    with tempfile.TemporaryDirectory() as d:
+        json_file = os.path.join(d, "session.json")
+        write(
+            json_file,
+            json.dumps(
+                {
+                    "titles": ["T"],
+                    "api_summary": "Did the thing.\n"
+                    "Key Decisions\n- chose X\n"
+                    "Problems Encountered\n- hit Y",
+                }
+            ),
+        )
+        vault_file = os.path.join(d, "note.md")
+        rc, _, err = run_render(json_file, "r", "w", vault_file)
+        assert rc == 0, f"render failed: {err}"
+        note = read(vault_file)
+        assert "### Summary\nDid the thing." in note
+        assert "### Key Decisions\n- chose X" in note
+        assert "### Problems Encountered\n- hit Y" in note
+
+
+def test_render_requires_all_four_arguments():
+    with tempfile.TemporaryDirectory() as d:
+        json_file = os.path.join(d, "session.json")
+        write(json_file, json.dumps({"titles": []}))
+        p = subprocess.run(
+            [sys.executable, SCRIPT, "render", json_file, "repo"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert p.returncode == 1, "render must fail closed on missing arguments"
+        assert "required" in p.stderr
 
 
 if __name__ == "__main__":

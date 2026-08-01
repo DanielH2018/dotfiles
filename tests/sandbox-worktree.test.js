@@ -220,3 +220,59 @@ test('sanitize_repo_name + repo_hash compose into the instance id the launcher u
   `).trim();
   assert.match(out, /^my\.repo-[0-9a-f]{8}$/);
 });
+
+test('resolve_worktree_target derives claude/<name> for -w and takes -b as given', { skip }, () => {
+  const out = sh(`
+    resolve_worktree_target /r/demo demo feat false ""
+    resolve_worktree_target /r/demo demo feat true release/1.2
+  `);
+  assert.deepStrictEqual(out.trim().split('\n'), [
+    'claude/feat\t/r/demo/../demo-wt-feat',
+    'release/1.2\t/r/demo/../demo-wt-feat',
+  ]);
+});
+
+test('resolve_worktree_target composes the path from repo name, not the branch', { skip }, () => {
+  // -b release/1.2 must still land in demo-wt-feat: a branch with a slash in it
+  // would otherwise create a nested directory outside the sibling layout.
+  const out = sh(`resolve_worktree_target /r/demo demo feat true release/1.2 | cut -f2`);
+  assert.strictEqual(out.trim(), '/r/demo/../demo-wt-feat');
+});
+
+test('find_worktree_for_branch locates the worktree holding a branch', { skip }, () => {
+  const { repo } = repoWithWorktrees([{ name: 'alpha', branch: 'claude/alpha' }]);
+  const out = sh(`find_worktree_for_branch "${repo}" claude/alpha`);
+  assert.strictEqual(path.basename(out.trim()), 'demo-wt-alpha');
+});
+
+test('find_worktree_for_branch reports the main checkout for its own branch', { skip }, () => {
+  const { repo } = repoWithWorktrees([]);
+  // This is the case setup_worktree refuses with guidance rather than reusing.
+  const out = sh(`find_worktree_for_branch "${repo}" main`);
+  assert.strictEqual(fs.realpathSync(out.trim()), fs.realpathSync(repo));
+});
+
+test('find_worktree_for_branch fails, silently, for a branch nobody has out', { skip }, () => {
+  const { repo } = repoWithWorktrees([{ name: 'alpha', branch: 'claude/alpha' }]);
+  const out = sh(`find_worktree_for_branch "${repo}" claude/nope && echo UNEXPECTED || echo none`);
+  assert.strictEqual(out.trim(), 'none');
+});
+
+test('worktree_exists_at resolves a /../ path before matching git porcelain', { skip }, () => {
+  const { repo, repoName } = repoWithWorktrees([{ name: 'alpha', branch: 'claude/alpha' }]);
+  // The launcher composes exactly this shape; it never matches porcelain literally.
+  const composed = `${repo}/../${repoName}-wt-alpha`;
+  const out = sh(`worktree_exists_at "${repo}" "${composed}" && echo yes || echo no`);
+  assert.strictEqual(out.trim(), 'yes');
+});
+
+test('worktree_exists_at is false for a path that is not a worktree', { skip }, () => {
+  const { repo, root } = repoWithWorktrees([]);
+  fs.mkdirSync(path.join(root, 'demo-wt-ghost'));
+  const out = sh(`
+    worktree_exists_at "${repo}" "${repo}/../demo-wt-ghost" && echo yes || echo no
+    worktree_exists_at "${repo}" "${repo}/../demo-wt-absent" && echo yes || echo no
+  `);
+  assert.deepStrictEqual(out.trim().split('\n'), ['no', 'no'],
+    'an existing non-worktree dir and a missing one must both be false');
+});

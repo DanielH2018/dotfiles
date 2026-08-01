@@ -14,18 +14,24 @@ const path = require('node:path');
 const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
 const SRC = fs.readFileSync(SANDBOX, 'utf8');
 
-// Body of <name>() { ... }, by brace depth from its definition line.
-function fn(name) {
-  const lines = SRC.split('\n');
-  const start = lines.findIndex((l) => l.startsWith(`${name}() {`));
+const LINES = SRC.split('\n');
+
+// Inclusive [start, end] line range of <name>() { ... }, by brace depth.
+function fnRange(name) {
+  const start = LINES.findIndex((l) => l.startsWith(`${name}() {`));
   assert.notStrictEqual(start, -1, `${name}() not found`);
   let depth = 0;
-  for (let i = start; i < lines.length; i++) {
-    for (const ch of lines[i]) { if (ch === '{') depth++; else if (ch === '}') depth--; }
-    if (depth === 0) return lines.slice(start, i + 1).join('\n');
+  for (let i = start; i < LINES.length; i++) {
+    for (const ch of LINES[i]) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+    if (depth === 0) return { start, end: i };
   }
   throw new Error(`unbalanced braces in ${name}()`);
 }
+
+const fn = (name) => {
+  const { start, end } = fnRange(name);
+  return LINES.slice(start, end + 1).join('\n');
+};
 
 // Argument of every `--network <x>` in a block, ignoring --network-alias.
 const networksIn = (block) =>
@@ -53,9 +59,14 @@ test('filter starts on the proxy network and joins the sandbox network after', (
 
 test('the sandbox container joins the sandbox network and nothing else', () => {
   // The sandbox `docker run` lives at top level, not in a function; take every
-  // --network outside the proxy/filter helpers.
-  const helpers = fn('start_proxy') + fn('start_filter');
-  const outside = SRC.split('\n').filter((l) => !helpers.includes(l)).join('\n');
+  // --network outside the proxy/filter helpers. Exclude by line RANGE, not by
+  // string membership: a line that merely reads the same as one inside a helper
+  // (`  fi`, a repeated flag) would otherwise be dropped from the scan too,
+  // letting a stray --network PROXY_NETWORK_NAME slip past this assert.
+  const ranges = ['start_proxy', 'start_filter'].map(fnRange);
+  const outside = LINES
+    .filter((_, i) => !ranges.some(({ start, end }) => i >= start && i <= end))
+    .join('\n');
   const names = new Set(networksIn(outside));
   assert.ok(names.has('NETWORK_NAME'), 'sandbox joins NETWORK_NAME');
   assert.ok(!names.has('PROXY_NETWORK_NAME'),

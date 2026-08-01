@@ -69,6 +69,52 @@ list_tool_worktrees() {
   done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 }
 
+# The branch and directory a launch targets, before either exists. `-b` takes the
+# branch as given; `-w NAME` derives claude/<name>. Split out of the launcher's
+# setup_worktree so the naming rule is testable without creating a worktree —
+# the rest of that function mutates the repo and exits, so it stays there.
+# Emits: <branch><TAB><path>
+resolve_worktree_target() {
+  local repo_path="$1" repo_name="$2" wt_name="$3" branch_mode="$4" existing_branch="$5"
+  local branch
+  if [[ "$branch_mode" == true ]]; then
+    branch="$existing_branch"
+  else
+    branch="claude/$wt_name"
+  fi
+  printf '%s\t%s\n' "$branch" "$repo_path/../$repo_name-wt-$wt_name"
+}
+
+# Path of the worktree that currently has <branch> checked out, empty if none.
+# git refuses to add a second worktree for a branch already checked out, so the
+# launcher consults this before deciding to reuse or create.
+find_worktree_for_branch() {
+  local repo_path="$1" branch="$2"
+  local line wt_path=""
+  while IFS= read -r line; do
+    if [[ "$line" == "worktree "* ]]; then
+      wt_path="${line#worktree }"
+    elif [[ "$line" == "branch refs/heads/$branch" ]]; then
+      printf '%s\n' "$wt_path"
+      return 0
+    fi
+  done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
+# Whether <candidate> is already a registered worktree of <repo_path>. Resolves
+# the candidate first: it is composed with a `/../` segment, which never matches
+# git's porcelain output literally. False for a path that does not exist.
+worktree_exists_at() {
+  local repo_path="$1" candidate="$2" abs line
+  abs="$(cd "$candidate" 2>/dev/null && pwd)" || return 1
+  [[ -n "$abs" ]] || return 1
+  while IFS= read -r line; do
+    [[ "$line" == "worktree $abs" ]] && return 0
+  done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
+  return 1
+}
+
 # Worktree names that have session data under $sessions_base but no live
 # worktree left — the sessions a --prune or --list should still offer. Echoes
 # one name per line.
