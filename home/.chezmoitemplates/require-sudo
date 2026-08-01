@@ -16,6 +16,9 @@ run_once_ script whose contract is to fail loud and retry on the next apply rath
 half-apply without root. */ -}}
 require_sudo() {  # $1 = what is being deferred, for the message
   sudo -v && return 0
-  echo "$TAG: sudo unavailable; deferring $1 (retries next apply)" >&2
+  # Defaulted rather than bare $1: callers run under `set -u`, and this line is reached only
+  # on the sudo-less path, so a caller that forgot the argument would trade its defer message
+  # for an "unbound variable" exactly when the message is the whole point.
+  echo "$TAG: sudo unavailable; deferring ${1:-this change} (retries next apply)" >&2
   exit 1
 }
