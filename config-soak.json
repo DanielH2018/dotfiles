@@ -58,8 +58,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
-      "hash": "bd5600958d3d9272a44212b723102e2347779c377bb6bdeb1b3f66b3ef6ce23f",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "3efaf2cd678197d84d7f410f4abdbcc5ccc8aded13e3faae56491fe4c6f3ae5a",
+      "landed": "2026-08-01T22:15:14.883Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
