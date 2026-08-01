@@ -123,6 +123,17 @@ cursor-click-to-move = true
 # MOUSE BEHAVIOR
 # -----------------------------------------------------------------------------
 mouse-hide-while-typing = true
+# Selections must reach the system CLIPBOARD, not just PRIMARY. The default (`true`) writes
+# PRIMARY only, so Ctrl+V kept pasting whatever was in the clipboard from before — measured
+# with the selection sitting in PRIMARY at 40 bytes while CLIPBOARD still held a stale newline.
+#
+# ctrl+shift+c is not a workaround for it: `copy_to_clipboard` acts on the selection that
+# exists when the key is pressed, and a full-screen TUI that repaints (Claude Code) clears the
+# selection first. `copy-on-select` captures at selection time, before anything can repaint.
+#
+# The cost is that any mouse selection now overwrites the clipboard, which is why `true` is the
+# default. Deliberate: a selection here is nearly always intended as a copy.
+copy-on-select = clipboard
 
 
 # -----------------------------------------------------------------------------

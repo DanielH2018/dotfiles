@@ -6,6 +6,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const { renderTemplate, chezmoiAvailable } = require('./lib/render');
 
 const ROOT = path.join(__dirname, '..');
@@ -147,4 +149,32 @@ test('the font family matches what the nerd-font installer provides', { skip }, 
     'the configured family must be one the installer actually installs');
   assert.match(fontScript, /IosevkaTerm Nerd Font Mono/);
   assert.match(fontScript, /Mono\*\.ttf/, 'the installer must filter to the Mono faces');
+});
+
+test('selections land in the clipboard, not only PRIMARY', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  // `copy-on-select = true` (the default) writes PRIMARY only, so Ctrl+V pastes whatever was in
+  // the clipboard beforehand. Anchored to the value, not the key: `true` would satisfy a bare
+  // presence check while reintroducing the bug.
+  assert.match(render(), /^copy-on-select = clipboard$/m);
+});
+
+test('Ghostty accepts the copy-on-select value', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
+  try {
+    execFileSync('ghostty', ['--version'], { stdio: 'ignore' });
+  } catch {
+    return t.skip('ghostty not installed');
+  }
+  // A rejected value leaves the key at its default and Ghostty only warns, so the config would
+  // look right and behave wrong. Validation goes through a file: `+validate-config` exits 1 on
+  // the `--copy-on-select=...` flag form regardless of whether the value is legal.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghostty-cfg-'));
+  try {
+    const conf = path.join(dir, 'config');
+    fs.writeFileSync(conf, `${render().match(/^copy-on-select = .*$/m)[0]}\n`);
+    execFileSync('ghostty', ['+validate-config', `--config-file=${conf}`], { stdio: 'ignore' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
