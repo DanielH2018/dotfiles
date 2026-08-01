@@ -1,0 +1,149 @@
+{{ if includeTemplate "is-desktop-linux" . -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Installs the patent-encumbered multimedia codecs Fedora
+# leaves out of its own packages, from RPM Fusion.
+#
+# Fedora's stock media stack is deliberately incomplete, and it fails quietly rather than loudly:
+# ffmpeg-free is built with the H.264/H.265/AAC/AC-3 encoders and decoders compiled out, and
+# gstreamer1-plugins-bad-free / -ugly-free are the same upstream sources with those elements
+# stripped. Nothing errors — playback just produces silence, a black frame, or "unsupported
+# format" in anything GStreamer-backed (KDE's players, Firefox on some sites), and ffmpeg refuses
+# encodes it looks like it should handle. RPM Fusion ships the unstripped builds.
+#
+# Fedora only. RPM Fusion has no apt counterpart: Debian and Ubuntu carry their codecs in
+# multiverse/non-free, which is enabled per-distro and is not something this repo provisions, so
+# an apt host exits early rather than half-converging.
+#
+# Idempotent: every step is skip-if-present, and the two `swap` steps are guarded on the package
+# being swapped away actually being installed.
+# bump-to-reinstall: linux-codecs v1
+set -u
+TAG=install-codecs
+{{ includeTemplate "linux-install.sh" . }}
+
+if [ "$PM" != dnf ]; then
+  echo "$TAG: not a dnf distro; the RPM Fusion codec packages are Fedora-only" >&2
+  exit 0
+fi
+
+# Everything below installs system packages, so there is no useful sudo-less subset to converge on
+# (unlike the app installer, where Flathub still works). Defer the whole pass instead.
+if ! have_sudo; then
+  echo "$TAG: needs sudo to install codecs — re-run 'chezmoi apply' where sudo can prompt" >&2
+  exit 1
+fi
+
+# --- RPM Fusion -----------------------------------------------------------------------------
+# Third copy of this pair — install-apps enables it for Steam and Discord, install-gpu-driver for
+# akmod-nvidia. Deliberate, for the reason the driver script gives: after-scripts run in name
+# order and this one must not depend on either having run. A machine with no NVIDIA card that
+# installs neither game launcher would otherwise arrive here with no repo to serve the codecs.
+if ! { rpm -q rpmfusion-free-release >/dev/null 2>&1 && rpm -q rpmfusion-nonfree-release >/dev/null 2>&1; }; then
+  fed="$(rpm -E %fedora)"
+  echo "$TAG: enabling RPM Fusion"
+  sudo dnf install -y \
+    "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-${fed}.noarch.rpm" \
+    "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${fed}.noarch.rpm" \
+    || { echo "$TAG: could not enable RPM Fusion" >&2; exit 1; }
+fi
+
+failed=""
+
+# --- ffmpeg ---------------------------------------------------------------------------------
+# `swap`, not `install`: ffmpeg-free owns the same libavcodec/libavformat sonames as the full
+# build, so a plain install resolves to a file conflict. --allowerasing lets dnf drop ffmpeg-free
+# and re-satisfy its dependents from RPM Fusion's build instead of refusing the transaction.
+# Fedora installs ffmpeg-free by default, but a machine that has already been swapped, or that
+# never had it, must skip rather than fail — hence the three-way guard.
+if rpm -q ffmpeg-free >/dev/null 2>&1; then
+  echo "$TAG: [swap] ffmpeg-free -> ffmpeg (full codec build) ..."
+  sudo dnf swap -y ffmpeg-free ffmpeg --allowerasing || failed="$failed ffmpeg"
+elif pkg_installed ffmpeg; then
+  echo "$TAG: [skip] ffmpeg already installed."
+else
+  echo "$TAG: [install] ffmpeg ..."
+  pkg_install ffmpeg || failed="$failed ffmpeg"
+fi
+
+# --- GStreamer ------------------------------------------------------------------------------
+# Named one by one rather than through RPM Fusion's documented `gstreamer1-plugins-{bad-*,good-*}`
+# brace glob, which also matches the -devel and -devel-docs subpackages nothing here needs.
+#
+# These ADD to Fedora's -free packages rather than replacing them, which is why this is an install
+# and not a swap like ffmpeg above: the element sets are disjoint (bad-freeworld carries the
+# patented decoders, ugly carries only libgstx264.so, ugly-free carries the a52/mpeg2/dvd
+# elements), and what Conflicts they do declare is version-bounded to releases long superseded.
+for pkg in gstreamer1-plugins-bad-freeworld gstreamer1-plugins-ugly; do
+  if pkg_installed "$pkg"; then
+    echo "$TAG: [skip] $pkg already installed."
+    continue
+  fi
+  echo "$TAG: [install] $pkg ..."
+  pkg_install "$pkg" || failed="$failed $pkg"
+done
+
+# libavcodec-freeworld is deliberately absent: it exists to bolt the missing decoders onto
+# ffmpeg-free, and installing it alongside the full ffmpeg above is redundant at best.
+
+# --- Hardware video decoding (VA-API) -------------------------------------------------------
+# Gated on the GPU's PCI vendor id, the same signal install-gpu-driver uses, because the three
+# routes are mutually exclusive per vendor and the AMD one is destructive: swapping Fedora's
+# mesa-va-drivers on a machine whose display is driven by the proprietary NVIDIA stack replaces a
+# driver that card never loads. Each vendor is tested independently rather than as one `case` with
+# three arms, so a hybrid laptop (Intel iGPU + NVIDIA dGPU) gets both of its drivers.
+gpus=""
+if command -v lspci >/dev/null 2>&1; then
+  gpus="$(lspci -nn 2>/dev/null | grep -iE 'VGA compatible controller|3D controller' || true)"
+else
+  echo "$TAG: lspci unavailable; skipping the VA-API driver (codecs above are unaffected)" >&2
+fi
+
+va_add=""
+# NVIDIA. install-gpu-driver owns the kernel module; this is the shim that lets ffmpeg, mpv and
+# Firefox reach NVDEC through it. Harmless on a nouveau machine, which ignores it.
+case "$gpus" in *'[10de:'*) va_add="$va_add libva-nvidia-driver" ;; esac
+case "$gpus" in *'[8086:'*) va_add="$va_add intel-media-driver" ;; esac
+
+for pkg in $va_add; do
+  if pkg_installed "$pkg"; then
+    echo "$TAG: [skip] $pkg already installed."
+    continue
+  fi
+  echo "$TAG: [install] $pkg ..."
+  pkg_install "$pkg" || failed="$failed $pkg"
+done
+
+# AMD renders through Mesa, whose Fedora build has the video codecs compiled out like everything
+# else here. These freeworld packages genuinely do replace their counterparts — same drivers,
+# codecs enabled — so unlike the GStreamer pair above they are a swap.
+case "$gpus" in *'[1002:'*)
+  for pkg in mesa-va-drivers mesa-vdpau-drivers; do
+    if rpm -q "${pkg}-freeworld" >/dev/null 2>&1; then
+      echo "$TAG: [skip] ${pkg}-freeworld already installed."
+      continue
+    fi
+    # dnf swap needs the outgoing package present; on a machine where it was already erased,
+    # install the freeworld build directly.
+    if pkg_installed "$pkg"; then
+      echo "$TAG: [swap] $pkg -> ${pkg}-freeworld ..."
+      sudo dnf swap -y "$pkg" "${pkg}-freeworld" --allowerasing || failed="$failed ${pkg}-freeworld"
+    else
+      echo "$TAG: [install] ${pkg}-freeworld ..."
+      pkg_install "${pkg}-freeworld" || failed="$failed ${pkg}-freeworld"
+    fi
+  done
+  ;;
+esac
+
+# --- Converge or retry ----------------------------------------------------------------------
+# Same policy as the app installer: name what is still missing and exit non-zero so chezmoi does
+# not record success and retries on the next apply. Everything already installed skips, so the
+# retry costs a handful of rpm queries.
+if [ -n "$failed" ]; then
+  echo "$TAG: could not install:$failed" >&2
+  echo "$TAG: re-run 'chezmoi apply'; a stale RPM Fusion mirror is the usual cause." >&2
+  exit 1
+fi
+
+echo "$TAG: codec pass done."
+{{ end -}}
