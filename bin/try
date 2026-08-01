@@ -38,6 +38,9 @@ set -u
 die() { printf 'try: %s\n' "$1" >&2; exit 1; }
 say() { printf '  %s\n' "$1"; }
 
+# shellcheck source=bin/lib/repo-lock.sh
+. "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+
 MODE=peek
 BRANCH=''
 DRY=0
@@ -122,6 +125,7 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
+# shellcheck disable=SC2329  # run by with_repo_lock, which invokes it via "$@"
 bench() {
   case "$MODE" in
     peek)
@@ -184,18 +188,8 @@ bench() {
 # what land's "one lander at a time" means.
 LOCK="$COMMON/try.lock"
 
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK" || die "cannot open $LOCK"
-  if ! flock -n 9; then
-    say "another worktree is using the bench; waiting for it to finish..."
-    flock 9 || die "could not take $LOCK"
-  fi
+with_repo_lock "$LOCK" \
+  "another worktree is using the bench; waiting for it to finish..." \
+  "using the bench without the cross-worktree lock" \
   bench
-  rc=$?
-  exec 9>&-
-  exit $rc
-fi
-
-# No flock (macOS): still worth doing, just without the mutual exclusion.
-say "flock unavailable — using the bench without the cross-worktree lock"
-bench
+exit $?

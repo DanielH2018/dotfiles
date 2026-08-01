@@ -29,10 +29,22 @@ const dirs = [];
 // stands in for a target that something other than chezmoi wrote.
 const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'try-bin-'));
 dirs.push(BIN);
+//
+// STUB_LOCK turns the stub into the lock probe for the fd test below. `chezmoi apply`
+// is the deepest point of a bench and runs as a child of try, which is the vantage
+// that matters: it records whether the lock is visibly held from outside, and forks a
+// `sleep` that outlives the bench the way a daemon started by a run_ script would.
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 echo "chezmoi $*" >> "$STUB_CHEZMOI_CALLS"
 if [ "$1" = status ]; then
   [ -z "\${STUB_STATUS:-}" ] || printf '%s\\n' "$STUB_STATUS"
+fi
+if [ -n "\${STUB_LOCK:-}" ] && [ "$1" = apply ]; then
+  flock -n "\$STUB_LOCK" -c true; printf '%s' "\$?" > "\$STUB_LOCK_PROBE"
+  # stdio detached, fd 9 deliberately not: inheriting the lock is the whole point,
+  # and holding the caller's stdout open would just hang the test harness.
+  sleep 30 >/dev/null 2>&1 </dev/null &
+  printf '%s' "\$!" > "\$STUB_DAEMON_PID"
 fi
 exit 0
 `, { mode: 0o755 });
@@ -310,6 +322,46 @@ test('waits for a bench another worktree is holding', { skip: skip || (flockOk ?
     assert.strictEqual(head(dir), git(dir, 'rev-parse', 'feature'));
   } finally {
     holder.kill();
+  }
+});
+
+// --- the lock fd -------------------------------------------------------------
+// The pair below is the same guard tests/land.test.js pins, asked of try. Both now
+// go through with_repo_lock, and this is what stops the fd close from being dropped
+// on one side of it: land carried `( land ) 9>&-` and try called `bench` bare, so a
+// process forked anywhere under `chezmoi apply` inherited the lock and kept holding
+// it after try exited. They only mean something together — the lock must be held for
+// the whole bench AND released the moment it ends.
+test('the lock is held against other benches for the whole bench', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+  const { dir } = makeRepo();
+  const lock = path.join(dir, '.git', 'try.lock');
+  const probe = path.join(dir, '.lock-probe');
+  const r = run(dir, ['feature'], { STUB_LOCK: lock, STUB_LOCK_PROBE: probe, STUB_DAEMON_PID: path.join(dir, '.daemon-pid') });
+  assert.strictEqual(r.code, 0, r.stderr);
+  // The probe ran mid-bench, from a child of try, and asked for the lock by path — a
+  // fresh open, so it sees the lock exactly as a second bench would.
+  assert.strictEqual(fs.readFileSync(probe, 'utf8'), '1',
+    'a second bench could take the lock mid-bench — the mutex is gone');
+});
+
+test('a process forked during the bench does not inherit the lock', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+  const { dir } = makeRepo();
+  const lock = path.join(dir, '.git', 'try.lock');
+  const pidFile = path.join(dir, '.daemon-pid');
+  const r = run(dir, ['feature'], { STUB_LOCK: lock, STUB_LOCK_PROBE: path.join(dir, '.lock-probe'), STUB_DAEMON_PID: pidFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  try {
+    // Still alive, standing in for a daemon a run_ script left behind: the point is
+    // that a live forked child does not keep the lock once try itself has exited.
+    assert.doesNotThrow(() => process.kill(pid, 0), 'setup: the stand-in daemon died early');
+    assert.ok(fs.existsSync(lock), 'setup: try never created the lock');
+    const free = execFileSync('bash', ['-c',
+      `flock -n ${JSON.stringify(lock)} -c true; printf '%s' "$?"`], { encoding: 'utf8' });
+    assert.strictEqual(free, '0',
+      'the lock is still held after try exited — a forked process inherited fd 9');
+  } finally {
+    try { process.kill(pid); } catch { /* already gone */ }
   }
 });
 

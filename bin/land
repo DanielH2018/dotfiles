@@ -41,6 +41,9 @@ done
 die() { printf 'land: %s\n' "$1" >&2; exit 1; }
 say() { printf '  %s\n' "$1"; }
 
+# shellcheck source=bin/lib/repo-lock.sh
+. "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+
 command -v gh >/dev/null 2>&1 || die "gh is required (it does the merge)"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
 
@@ -90,6 +93,7 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
+# shellcheck disable=SC2329  # run by with_repo_lock, which invokes it via "$@"
 land() {
   printf 'landing %s (PR #%s)\n' "$BRANCH" "$PR"
 
@@ -168,32 +172,8 @@ land() {
   say "worktree still holds $BRANCH; from the primary: git worktree remove <path> && git branch -D $BRANCH"
 }
 
-if command -v flock >/dev/null 2>&1; then
-  exec 9>"$LOCK" || die "cannot open $LOCK"
-  if ! flock -n 9; then
-    say "another worktree is landing; waiting for it to finish..."
-    flock 9 || die "could not take $LOCK"
-  fi
-
-  # Run the landing with fd 9 closed in the child, while this shell keeps it open
-  # and locked. A bash redirect sets no close-on-exec, so without this every
-  # process forked below inherits the lock fd — including
-  # `git credential-cache--daemon`, which `git push` starts and which by design
-  # never exits. It then holds the flock forever, and every later land blocks at
-  # "another worktree is landing" with no lander running: measured 2026-07-30, a
-  # daemon from one landing blocked the next one 45 minutes later and the lock
-  # path had to be unlinked by hand.
-  #
-  # Closing the child's copy releases nothing — the lock lives on the open file
-  # description this shell still holds — so the mutex is unchanged. Closing it
-  # *here* instead would drop the lock and quietly delete the mutual exclusion,
-  # which is why tests/land.test.js pins both halves together.
-  ( land ) 9>&-
-  rc=$?
-  exec 9>&-
-  exit $rc
-fi
-
-# No flock (macOS): still worth doing, just without the mutual exclusion.
-say "flock unavailable — landing without the cross-worktree lock"
-land
+with_repo_lock "$LOCK" \
+  "another worktree is landing; waiting for it to finish..." \
+  "landing without the cross-worktree lock" \
+  land
+exit $?
