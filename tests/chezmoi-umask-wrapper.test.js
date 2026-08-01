@@ -13,6 +13,10 @@
 // the drift). It was once in dot_zshrc.tmpl and was dropped by the bash+zsh consolidation,
 // which is what made the drift recur -- hence this test.
 //
+// The wrapper now lives in the shared ~/.config/shell/env.sh (sourced by dot_zshenv,
+// dot_bash_profile.tmpl, and dot_profile.tmpl) rather than being copy-pasted per shell, so the
+// static checks assert on env.sh directly plus the sourcing line in each consumer.
+//
 // Offline. Skips cleanly if zsh is unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -24,6 +28,7 @@ const path = require('node:path');
 const REPO = path.join(__dirname, '..');
 const ZSHENV = path.join(REPO, 'home', 'dot_zshenv');
 const BASH_PROFILE = path.join(REPO, 'home', 'dot_bash_profile.tmpl');
+const ENV_SH = path.join(REPO, 'home', 'dot_config', 'shell', 'env.sh');
 
 // Absolute path: the behavioral test replaces PATH with just the stub dir, so `zsh` itself
 // would no longer resolve by name.
@@ -36,25 +41,38 @@ function hasUmaskWrapper(src) {
   return /chezmoi\s*\(\)\s*\{[^}]*umask\s+0?022/s.test(src);
 }
 
-test('dot_zshenv defines the chezmoi umask wrapper (non-interactive zsh coverage)', () => {
+test('env.sh defines the chezmoi umask wrapper (shared non-interactive coverage)', () => {
   assert.ok(
-    hasUmaskWrapper(fs.readFileSync(ZSHENV, 'utf8')),
-    'dot_zshenv must wrap chezmoi in a 0022 umask: .zshrc/common.sh are interactive-only, so a '
-      + 'wrapper there misses cron/systemd/ssh/agent applies -- the ones that recreate the 0750 drift',
+    hasUmaskWrapper(fs.readFileSync(ENV_SH, 'utf8')),
+    '~/.config/shell/env.sh must wrap chezmoi in a 0022 umask: .zshrc/common.sh are '
+      + 'interactive-only, so a wrapper there misses cron/systemd/ssh/agent applies -- the ones '
+      + 'that recreate the 0750 drift',
   );
 });
 
-test('dot_bash_profile.tmpl keeps the chezmoi umask wrapper (bash parity)', () => {
-  assert.ok(
-    hasUmaskWrapper(fs.readFileSync(BASH_PROFILE, 'utf8')),
-    'dot_bash_profile.tmpl must keep its chezmoi 0022 wrapper so bash login shells match zsh',
+test('dot_zshenv sources env.sh (non-interactive zsh coverage)', () => {
+  assert.match(
+    fs.readFileSync(ZSHENV, 'utf8'),
+    /\.config\/shell\/env\.sh/,
+    'dot_zshenv must source ~/.config/shell/env.sh to pick up the chezmoi umask wrapper',
+  );
+});
+
+test('dot_bash_profile.tmpl sources env.sh (bash parity)', () => {
+  assert.match(
+    fs.readFileSync(BASH_PROFILE, 'utf8'),
+    /\.config\/shell\/env\.sh/,
+    'dot_bash_profile.tmpl must source ~/.config/shell/env.sh so bash login shells match zsh',
   );
 });
 
 // Behavioral: source the real dot_zshenv in a zsh started at umask 0007 and confirm the
 // wrapper actually pins 0022 for the chezmoi process. HOME is a temp dir so dot_zshenv's
 // `[ -d "$HOME/.local/bin" ]` PATH prepend finds nothing and cannot shadow the stub with the
-// real chezmoi binary; PATH is replaced outright by the stub dir.
+// real chezmoi binary; PATH is replaced outright by the stub dir. The wrapper itself now lives
+// in env.sh rather than inline in dot_zshenv, so the temp HOME needs a deployed copy at
+// .config/shell/env.sh for dot_zshenv's `[ -r ... ]` source guard to find anything, mirroring
+// what a real chezmoi apply would have put there.
 test('sourcing dot_zshenv runs chezmoi under umask 0022, and does not leak it', { skip }, () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'czumask-'));
   try {
@@ -63,6 +81,10 @@ test('sourcing dot_zshenv runs chezmoi under umask 0022, and does not leak it', 
     const stub = path.join(bin, 'chezmoi');
     fs.writeFileSync(stub, '#!/bin/sh\numask\n');
     fs.chmodSync(stub, 0o755);
+
+    const shellConfigDir = path.join(tmp, '.config', 'shell');
+    fs.mkdirSync(shellConfigDir, { recursive: true });
+    fs.copyFileSync(ENV_SH, path.join(shellConfigDir, 'env.sh'));
 
     const run = (script) => execFileSync(ZSH, ['-c', script], {
       env: { HOME: tmp, PATH: bin, SHELL: '/usr/bin/zsh' },

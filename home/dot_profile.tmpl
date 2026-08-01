@@ -1,1 +1,6 @@
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+# Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/bash — see
+# ~/.config/shell/env.sh for the WHY. ~/.profile is read by sh/dash login shells and by some
+# display managers, never by zsh or by bash when ~/.bash_profile exists (bash reads exactly
+# one of .bash_profile/.bash_login/.profile), so this never double-sources env.sh in the
+# same process — but the prepend loop inside it is idempotent regardless.
+[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"

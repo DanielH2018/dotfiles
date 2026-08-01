@@ -1,26 +1,15 @@
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
 # FNM (Fast Node Manager) — node version manager, used on all machines
 if command -v fnm >/dev/null 2>&1; then
   eval "$(fnm env --use-on-cd --shell bash)"
 fi
 
-# chezmoi creates dirs under the process umask, so pin 0022 in a subshell for
-# deterministic dir modes on hosts with a 0007 login umask (rationale in dot_zshenv, which
-# carries the zsh copy; kept per-shell rather than in common.sh because that is sourced only
-# by interactive shells, and non-interactive applies are what recreate the 0750 drift).
-chezmoi() { ( umask 0022; command chezmoi "$@" ); }
-
-# ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
-# login shells too (`ssh host cmd`, bash -lc): .bashrc returns before its PATH setup
-# when non-interactive. Idempotent, so no duplicate when common.sh also runs.
-for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
-  [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
-done
-unset _d
-export PATH
+# Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with zsh/sh — see
+# ~/.config/shell/env.sh for the WHY. Sourced here because non-interactive bash login shells
+# (`ssh host cmd`, bash -lc) read .bash_profile but never reach common.sh via .bashrc.
+[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
 # Interactive setup (prompt, aliases, tool integrations) lives in ~/.bashrc; Git Bash
 # login shells don't read it automatically, so source it here.

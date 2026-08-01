@@ -1,29 +1,13 @@
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+# Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with bash/sh —
+# see ~/.config/shell/env.sh for the WHY. Sourced here because .zshenv is read by EVERY
+# zsh, interactive or not.
+[ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
 # Read by `ctw` when this host is the target of `cts --ssh` — it lists git repos directly
 # under these roots (colon-separated). Must live in .zshenv, not .zshrc: a non-interactive
 # `ssh host ctw …` sources only .zshenv. $HOME because repos (e.g. ~/server) sit right under
 # home; the tool's own default is ~/Repositories.
 export CTS_REMOTE_ROOTS="$HOME"
-
-# ~/.local/bin (tmux 3.7b, agentview, cts…) and go/bin must resolve for NON-interactive
-# zsh too — cron, systemd --user, `ssh host cmd` — not just the interactive shells that
-# source common.sh via .zshrc. Same idempotent prepend, so no duplicate when both run.
-for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
-  [ -d "$_d" ] && case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
-done
-unset _d
-export PATH
-
-# chezmoi's `umask = 0o022` config feeds its target-mode COMPUTATION only, not the mkdir
-# syscall — new dirs are created under the *process* umask, so this host's 0007 login umask
-# lands them at 0755 &^ 0007 = 0750 and they never match the 0755 chezmoi recorded. That
-# leaves a permanent `MM` plus a "changed since chezmoi last wrote it?" TTY prompt, which
-# aborts any apply without a terminal. Pin 0022 in a subshell so the private 0007 default
-# does not leak into the shell. Must live HERE, not in .zshrc/common.sh: those are
-# interactive-only, and the non-interactive applies (cron, systemd --user, `ssh host cmd`,
-# agent shells) are precisely the ones that recreate the drift.
-chezmoi() { ( umask 0022; command chezmoi "$@" ); }
 
 # A shell with no controlling terminal has nowhere to prompt for a sudo password, so sudo
 # refuses outright: "sudo: a terminal is required to read the password". That covers every
