@@ -26,13 +26,16 @@ Host daniel-pi
 Host daniel-box
     HostName 10.0.0.215
     User ubuntu
-    # Two IdentityFiles because this file is shared and the machines authenticate here
-    # differently: Windows has a per-host key, Fedora uses the default key — that's what
-    # bring-up's ssh-copy-id installed. ssh skips an IdentityFile that doesn't exist, so
-    # each machine falls through to the one it actually holds.
+    # The machines authenticate here differently: Windows has a per-host key, Fedora uses
+    # the default key — that's what bring-up's ssh-copy-id installed. This used to list
+    # both unconditionally and rely on ssh skipping a missing IdentityFile, but ssh warns
+    # `no such identity: ~/.ssh/daniel-box` on every Fedora connection, so gate it instead.
     #
     # The `daniel-box` keypair on the shared NTFS drive is WINDOWS key material (comment
     # daniel@windows); don't copy it here. Per the fedora-homelab-keys convention,
-    # generate separate Fedora material if this host should get a per-host key.
+    # generate separate Fedora material if this host should get a per-host key — and drop
+    # the gate below if you do.
+{{- if eq .chezmoi.os "windows" }}
     IdentityFile ~/.ssh/daniel-box
+{{- end }}
     IdentityFile ~/.ssh/id_ed25519
