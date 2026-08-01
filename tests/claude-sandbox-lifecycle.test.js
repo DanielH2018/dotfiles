@@ -238,27 +238,48 @@ test('a running worktree container is reported as running', { skip }, () => {
     'an unrelated worktree stays stopped');
 });
 
-test('KNOWN DEFECT: a hex-initial worktree name marks the main session running', { skip }, () => {
-  // The main-session probe is grep "claudebot-<base>-[0-9a-f]", meant to match
-  // the hex run id appended to the bare instance. It cannot tell that run id
-  // apart from a WORKTREE whose name merely starts with a hex character, so a
-  // running `alpha` session reports the main repo as running too. Common names
-  // hit this: alpha, beta, cache, docs, edge, fix, api, db.
-  //
-  // Pinned as-is rather than asserted correct, so the suite stays honest about
-  // what the code does. Anchoring the run id — grep -E "…-[0-9a-f]+$" — fixes
-  // it; that is a behaviour change and belongs in its own commit.
+test('a hex-initial worktree name does not mark the main session running', { skip }, () => {
+  // The probe means to match the hex run id appended to the bare instance. Left
+  // unanchored it also matched a WORKTREE whose name merely starts with a hex
+  // character, so a running `alpha` reported the main repo as running too —
+  // alpha, beta, cache, docs, edge, fix, api and db all hit it.
   const f = sessionsFixture();
   const hex = listRun(f, { running: `claudebot-demo-${repoHash(f.repo)}-alpha-1a2b3c` });
-  assert.ok(hex.rows.find((l) => l.includes('(main)')).includes('running'),
-    'documents the false positive; this assert flips when the probe is anchored');
+  assert.ok(hex.rows.find((l) => l.includes('(main)')).includes('stopped'),
+    'main stays stopped while only a worktree is running');
+  assert.ok(hex.rows.find((l) => /^\s*alpha\s/.test(l)).includes('running'),
+    'the worktree that is actually running still reports running');
 
-  // A name starting with a non-hex letter takes the correct path, which is what
-  // makes this a name-dependent bug rather than a permanently-wrong status.
+  // The non-hex name always took the correct path; it must keep doing so.
   const nonHex = sessionsFixture([{ name: 'notes', branch: 'claude/notes' }]);
   const clean = listRun(nonHex, { running: `claudebot-demo-${repoHash(nonHex.repo)}-notes-1a2b3c` });
   assert.ok(clean.rows.find((l) => l.includes('(main)')).includes('stopped'),
     'main is correctly stopped when the worktree name does not start with a hex char');
+});
+
+test('a real main-session container is still detected', { skip }, () => {
+  // Anchoring must not break the case the probe exists for: the bare instance
+  // plus a run id, with no worktree segment in between.
+  const f = sessionsFixture();
+  const r = listRun(f, { running: `claudebot-demo-${repoHash(f.repo)}-1a2b3c` });
+  assert.ok(r.rows.find((l) => l.includes('(main)')).includes('running'),
+    'main reports running when its own container is up');
+  assert.ok(r.rows.filter((l) => !l.includes('(main)')).every((l) => l.includes('stopped')),
+    'no worktree is dragged along by the main session');
+});
+
+test('a worktree probe does not match a longer worktree name', { skip }, () => {
+  // The same defect class at the worktree probe, which was unanchored too: a
+  // running `alpha-beta` would have marked `alpha` running, since b is hex.
+  const f = sessionsFixture([
+    { name: 'alpha', branch: 'claude/alpha' },
+    { name: 'alpha-beta', branch: 'claude/alpha-beta' },
+  ]);
+  const r = listRun(f, { running: `claudebot-demo-${repoHash(f.repo)}-alpha-beta-1a2b3c` });
+  assert.ok(r.rows.find((l) => l.trim().startsWith('alpha-beta')).includes('running'),
+    'the worktree that is running reports running');
+  assert.ok(r.rows.find((l) => /^\s*alpha\s/.test(l)).includes('stopped'),
+    'the shorter name must not inherit the longer one\'s status');
 });
 
 test('the resume command differs for tool branches and adopted branches', { skip }, () => {

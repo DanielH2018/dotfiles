@@ -3,4 +3,4 @@ repos:
     rev: v0.16.0
     hooks:
       - id: ruff-check
-        files: ^(home/dot_local/share/tq/|home/dot_local/bin/executable_tq$|tests/tq/)
+        files: ^(home/dot_local/share/tq/|home/dot_local/bin/executable_tq$|tests/tq/|home/private_dot_claude/sandbox/)

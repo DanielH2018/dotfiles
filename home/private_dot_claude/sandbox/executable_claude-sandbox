@@ -437,9 +437,12 @@ list_sessions() {
   local running_containers
   running_containers="$(docker ps --filter "name=claudebot-${base_instance}" --format '{{.Names}}' 2>/dev/null || true)"
 
-  # Main repo session (no worktree)
+  # Main repo session (no worktree). The run id is anchored to end of line, as at
+  # the --shell probe above: unanchored, "<base>-[0-9a-f]" also matches a WORKTREE
+  # instance whose name merely starts with a hex character, so a running `alpha`
+  # would report the main repo as running too.
   local main_status="stopped"
-  if echo "$running_containers" | grep -q "claudebot-${base_instance}-[0-9a-f]"; then
+  if echo "$running_containers" | grep -qE "^claudebot-${base_instance}-[0-9a-f]+$"; then
     main_status="running"
   fi
   printf "  %-12s %-30s %-10s %s\n" "NAME" "BRANCH" "STATUS" "RESUME"
@@ -456,7 +459,7 @@ list_sessions() {
   while IFS=$'\t' read -r wt_name wt_branch wt_path; do
     wt_instance="${base_instance}-${wt_name}"
     wt_status="stopped"
-    if echo "$running_containers" | grep -q "claudebot-${wt_instance}-[0-9a-f]"; then
+    if echo "$running_containers" | grep -qE "^claudebot-${wt_instance}-[0-9a-f]+$"; then
       wt_status="running"
     fi
     if [[ "$wt_branch" == claude/* ]]; then

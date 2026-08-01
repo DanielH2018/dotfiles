@@ -7,7 +7,7 @@
 // Offline. Skips cleanly if git is unavailable.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -20,6 +20,10 @@ const LAUNCHER = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 let toolsOk = true;
 try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'git unavailable';
+
+let ruffOk = true;
+try { execFileSync('ruff', ['--version'], { stdio: 'ignore' }); } catch { ruffOk = false; }
+const ruffSkip = ruffOk ? false : 'ruff unavailable';
 
 function gitConfigGet(key) {
   try {
@@ -281,4 +285,20 @@ test('the resolved settings temp file is removed on exit, not leaked once per la
   const cleanup = extractBlock(LAUNCHER_SRC, 'cleanup() {', '\n}\n');
   assert.match(cleanup, /sandbox-settings-\*\.json/,
     'cleanup() must remove the resolved settings file (it is the mount source, so it outlives the container)');
+});
+
+test('the pre-commit ruff gate covers the sandbox, not just tq', () => {
+  const cfg = fs.readFileSync(path.join(__dirname, '..', '.pre-commit-config.yaml'), 'utf8');
+  const files = /^\s*files:\s*(\S+)\s*$/m.exec(cfg);
+  assert.ok(files, 'the ruff-check hook must keep an explicit files: allowlist');
+  assert.ok(new RegExp(files[1]).test('home/private_dot_claude/sandbox/executable_exec-stream.py'),
+    `sandbox Python must fall inside the ruff gate; files: is ${files[1]}`);
+});
+
+// The gate above only fires where pre-commit is installed, and it is wired
+// neither as a hook nor in CI here — so this is what actually holds the line,
+// since the node suite is a bin/land pre-push gate.
+test('the sandbox Python stays ruff-clean', { skip: ruffSkip }, () => {
+  const r = spawnSync('ruff', ['check', '--no-cache', SANDBOX_DIR], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `ruff check must pass on the sandbox:\n${r.stdout}${r.stderr}`);
 });
