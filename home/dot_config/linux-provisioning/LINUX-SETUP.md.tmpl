@@ -46,14 +46,84 @@ one on PATH.
    vault first (`bw login` / `bw unlock`).
 3. **OpenRGB** needs its udev rules and usually a reboot before it sees devices
    (`sudo openrgb --install-udev-rules` on Fedora, or the package's own rules on Debian).
-4. **Piper** requires the `ratbagd` service: `sudo systemctl enable --now ratbagd`.
-5. **Solaar** may need the user in a group with `hidraw` access; check `solaar --help` output if
+4. **Stream Deck (StreamController)** needs **no** udev step on Fedora. Most guides say to install
+   rules by hand; that advice predates systemd shipping its own. `70-av-production.hwdb` marks the
+   Stream Deck family as `ID_AV_PRODUCTION_CONTROLLER=1` and `70-uaccess.rules` grants the
+   logged-in user an ACL. Verified on this box (Fedora 44 / systemd 259, deck `0fd9:006d`): access
+   works with nothing in `/etc/udev/rules.d`. The hwdb covers `0060 0063 006c 006d 0080 0084 0086
+   008f 0090 009a` — Original, Mini, XL (both gens), MK.2, Plus, Pedal, Neo.
+
+   What it *does* need is its plugins: actions come from plugins, not the app. Install **OS** and
+   **Media** from the in-app store. If the store hangs (it did here), drop the repos straight in:
+
+   ```sh
+   D=~/.var/app/com.core447.StreamController/data/plugins
+   for p in OSPlugin:com_core447_OSPlugin MediaPlugin:com_core447_MediaPlugin; do
+     mkdir -p "$D/${p#*:}"
+     curl -fsSL "https://codeload.github.com/StreamController/${p%%:*}/tar.gz/refs/heads/main" \
+       | tar -xz -C "$D/${p#*:}" --strip-components=1
+   done   # then restart StreamController
+   ```
+
+   Two traps worth remembering. OSPlugin's **Run Command prepends `flatpak-spawn --host` itself**,
+   so enter plain host commands — adding the prefix double-wraps it and fails *silently*, because
+   detached mode sends stdout and stderr to `/dev/null`. And **install only one Stream Deck
+   client**: StreamController claims the deck via libusb, which detaches the kernel `usbhid` driver
+   and deletes the hidraw node, so a second client fights it for the device and leaves the hardware
+   needing a physical replug before anything can talk to it again.
+
+   **Discord mute/deafen** needs a third plugin, `oparada1988/DiscordSC` (same install method as
+   above, dir `com_oparada_DiscordSC`), plus OAuth — Discord allows no voice control without it:
+
+   1. discord.com/developers/applications -> New Application.
+   2. OAuth2 tab -> Add Redirect -> `http://localhost:9000` -> Save.
+   3. Paste the Client ID and Client Secret into the plugin's settings in StreamController.
+   4. With Discord running, click Authorize; the button becomes Re-Authorize on success.
+
+   The credentials are for an app you own and can revoke at any time. If the keys read `DISCONN`,
+   grant the socket (quote it, or zsh expands the glob):
+   `flatpak override --user "--filesystem=xdg-run/discord-ipc-*" com.core447.StreamController`.
+   Usually unnecessary — the plugin bridges to the host socket via `flatpak-spawn` on its own.
+   **Video toggle is not possible**: no plugin exposes it and Discord's RPC has no camera command.
+5. **OneDrive (onedriver)** mounts nothing until an account is added and a unit is enabled.
+   **Authenticate from a terminal, not the GUI** — onedriver's sign-in window is embedded
+   WebKit, and on this box (Wayland + NVIDIA) it dies before it draws, so you get no prompt at
+   all and the unit exits 1:
+
+       Error 71 (Protocol error) dispatching to Wayland display.
+
+   `--no-browser` skips WebKit and does the whole exchange in the terminal. Keep it in the
+   foreground: it prints a URL, you sign in, then paste the redirect back into it.
+
+   ```sh
+   mkdir -p ~/OneDrive
+   onedriver --auth-only --no-browser ~/OneDrive
+   # the unit name encodes the mountpoint, so derive it rather than typing it:
+   SVC=$(systemd-escape --template onedriver@.service --path ~/OneDrive)
+   systemctl --user enable --now "$SVC"
+   journalctl --user -u "$SVC" --since today   # where to look when the mount is empty
+   ```
+
+   Once `~/.cache/onedriver/<escaped-mountpoint>/auth_tokens.json` exists the daemon never opens
+   WebKit again, so this only bites on first auth (and again if the refresh token ever expires).
+   `WEBKIT_DISABLE_DMABUF_RENDERER=1 onedriver-launcher` is the usual workaround if you want the
+   GUI itself to work.
+
+   It is a **user** unit, so the mount goes away when you log out unless you enable lingering
+   (`loginctl enable-linger $USER`). Files are fetched on demand, so an empty-looking `~/OneDrive`
+   almost always means the unit is not running rather than that the data is gone.
+
+   Two upstream limits worth knowing: onedriver reads a file into memory to open it, so it is a
+   poor fit for multi-gigabyte files; and OneDrive exposes no Recycle Bin API, so deletions have
+   to be recovered from the web UI.
+6. **Piper** requires the `ratbagd` service: `sudo systemctl enable --now ratbagd`.
+7. **Solaar** may need the user in a group with `hidraw` access; check `solaar --help` output if
    devices don't appear.
-6. **Steam on Fedora** pulls from RPM Fusion nonfree, which the installer enables. If it fell
+8. **Steam on Fedora** pulls from RPM Fusion nonfree, which the installer enables. If it fell
    back to Flathub instead, controller and Proton paths differ — check which one you have with
    `which steam` / `flatpak list | grep -i steam`.
-7. **GPU drivers, firmware and BIOS** are out of scope here, exactly as on Windows.
-8. **KDE Night Colour** is built in and overlaps gammastep — enable one, not both.
+9. **GPU drivers, firmware and BIOS** are out of scope here, exactly as on Windows.
+10. **KDE Night Colour** is built in and overlaps gammastep — enable one, not both.
 
 ## Not possible on Linux
 

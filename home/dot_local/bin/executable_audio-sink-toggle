@@ -1,0 +1,56 @@
+#!/bin/sh
+# Cycle the default PipeWire sink and drag every playing stream along with it.
+#
+# Replaces the Ctrl+F11 AutoHotkey binding the Stream Deck "Audio" key used on Windows. Bound to
+# the same key in StreamController, whose Run Command action adds `flatpak-spawn --host` itself —
+# so the key holds this bare path, not a prefixed command.
+#
+# Setting the default sink only affects *new* streams — anything already playing stays on the old
+# device, which is what makes a naive `set-default-sink` feel broken. Moving the existing
+# sink-inputs is what makes the switch immediate.
+#
+# Sinks are matched by name, not by the numeric id, because ids are reassigned every time a device
+# suspends or reconnects. `pactl list short sinks` shows the current names.
+set -eu
+
+# Cycle order. Add a line to include another output (e.g. the HDMI or AirPlay sink).
+SINKS='alsa_output.pci-0000_0f_00.4.analog-stereo
+alsa_output.usb-SteelSeries_Arctis_Pro_Wireless-00.stereo-game'
+
+current=$(pactl get-default-sink 2>/dev/null || echo '')
+
+# Pick the entry after the current one, wrapping at the end. An unknown current sink (headset
+# powered off, say) falls through to the first entry rather than failing.
+next=$(printf '%s\n' "$SINKS" | awk -v cur="$current" '
+  { a[NR] = $0 }
+  END {
+    for (i = 1; i <= NR; i++) if (a[i] == cur) { print a[i % NR + 1]; exit }
+    print a[1]
+  }')
+
+# A sink that is listed but not currently present would leave the default pointing at nothing.
+if ! pactl list short sinks | cut -f2 | grep -qx "$next"; then
+  echo "audio-sink-toggle: '$next' is not available right now" >&2
+  exit 1
+fi
+
+pactl set-default-sink "$next"
+
+# Move what is already playing. Failures here are per-stream and non-fatal: a stream can disappear
+# between listing and moving, and that is not a reason to abort the switch.
+pactl list short sink-inputs 2>/dev/null | cut -f1 | while read -r stream; do
+  [ -n "$stream" ] || continue
+  pactl move-sink-input "$stream" "$next" 2>/dev/null || true
+done
+
+# Human-readable name for the toast, falling back to the raw sink name.
+label=$(pactl list sinks 2>/dev/null \
+  | awk -v want="$next" '
+      /^Sink #/ { desc = "" }
+      /^[[:space:]]*Name: / { name = $2 }
+      /^[[:space:]]*Description: / { sub(/^[[:space:]]*Description: /, ""); desc = $0 }
+      name == want && desc != "" { print desc; exit }')
+[ -n "${label:-}" ] || label="$next"
+
+command -v notify-send >/dev/null 2>&1 && notify-send -a "Audio" -i audio-speakers "Output" "$label"
+echo "audio-sink-toggle: $label"

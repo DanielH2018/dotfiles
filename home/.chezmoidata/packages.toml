@@ -106,6 +106,29 @@ winget = "Google.GoogleDrive"
 manual = "Google publishes no Linux client. Use rclone (`rclone config` -> drive) or KDE's kio-gdrive for Dolphin integration."
 
 [[apps.base]]
+name = "OneDrive"
+# Linux-only entry on purpose: OneDrive ships with Windows 11, so adding a winget id here would
+# start installing it on the Windows box for no gain. Microsoft publishes no Linux client at all,
+# so every option below is third-party.
+#
+# onedriver (jstaf) over the alternatives, chosen for Dolphin: it is a FUSE filesystem that pulls
+# files on demand, so Dolphin sees an ordinary mounted folder — thumbnails, previews and non-KDE
+# apps all work — instead of a synced copy of the whole drive. Compared against, 2026-07-31:
+#   - onedrive (abraunegg), the one package in Fedora proper: more mature and in-repo, but a full
+#     local sync with no Dolphin story beyond "it is a folder".
+#   - kio-onedrive (bernardogn), a native KIO worker giving onedrive:/ — the closest analogue to
+#     kio-gdrive, but its author calls it basic-usage: no thumbnails or previews, and KIO-only so
+#     nothing outside KDE can see it.
+#   - rclone / Insync: rclone needs the Dolphin side assembled by hand; Insync is proprietary and
+#     paid per account.
+# This is a COPR rather than a distro package, which cuts against the dnf-first rule at the top of
+# this file — Ghostty above sets the same precedent. jstaf's COPR builds for f44; Debian/Ubuntu
+# need his OpenSUSE Build Service repo, which has no column here, hence the empty apt field.
+# Mounting needs an escaped systemd *user* unit, so the setup step lives in LINUX-SETUP.md.
+copr = "jstaf/onedriver"
+dnf = "onedriver"
+
+[[apps.base]]
 name = "OBS Studio"
 winget = "OBSProject.OBSStudio"
 dnf = "obs-studio"
@@ -120,9 +143,28 @@ apt = "vlc"
 [[apps.base]]
 name = "Elgato Stream Deck"
 winget = "Elgato.StreamDeck"
-# Elgato ships no Linux software; StreamController is the maintained community client and talks
-# to the same hardware. Flathub-only.
+# Elgato ships no Linux software; StreamController is the community client, and the only one
+# installed here on purpose — install exactly one. It drives the deck over libusb, which detaches
+# the kernel usbhid driver and deletes the hidraw node, so any second Stream Deck client fights it
+# for the device and leaves the hardware needing a physical replug to recover. The hidraw-based
+# alternative was evaluated on 2026-07-31 and rejected: it renders to this deck (0fd9:006d) but
+# never dispatches button presses, which no amount of udev, permission or profile work fixes.
+#
+# Actions come from plugins, NOT from the app: install OS (com_core447_OSPlugin) and Media
+# (com_core447_MediaPlugin) from its store. OSPlugin's Run Command prepends `flatpak-spawn --host`
+# itself inside a Flatpak, so commands must be plain host commands — adding the prefix yourself
+# double-wraps it and fails silently, because detached mode discards stdout and stderr.
 flatpak = "com.core447.StreamController"
+
+[[apps.base]]
+name = "playerctl"
+# Linux-only. Controls any MPRIS-aware player (Spotify included) from the shell, which makes it
+# the general-purpose answer for media keys and scripts. NOT required by the Stream Deck any more:
+# StreamController's Media plugin speaks MPRIS itself, so the deck's prev/play-pause/next keys use
+# that rather than shelling out. Kept because a CLI media control is independently useful; drop
+# this entry if that stops being true.
+dnf = "playerctl"
+apt = "playerctl"
 
 [[apps.base]]
 name = "f.lux"
