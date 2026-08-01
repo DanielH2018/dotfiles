@@ -14,10 +14,17 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-function run(input) {
-  const r = spawnSync('bash', [SCRIPT], { input: JSON.stringify(input), encoding: 'utf8' });
+// COLUMNS is pinned wide so segment assertions stay on one line regardless of the runner's
+// terminal; the wrapping tests below set it themselves.
+function run(input, columns = '400') {
+  const r = spawnSync('bash', [SCRIPT], {
+    input: JSON.stringify(input), encoding: 'utf8',
+    env: { ...process.env, COLUMNS: columns },
+  });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
+
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 test('full fixture renders cwd, model, and cost/usage segments', { skip }, () => {
   const fixture = {
@@ -242,6 +249,68 @@ test('a genuinely 200k unknown model is not escalated without proof', { skip }, 
       'nothing is written when no escalation occurred');
   } finally {
     fs.rmSync(cacheHome, { recursive: true, force: true });
+  }
+});
+
+// Wrapping. Claude Code truncates any status line row wider than the terminal rather than
+// wrapping it, so segments that don't fit must be moved to a row of their own by the script.
+const WIDE_FIXTURE = {
+  workspace: { current_dir: '/tmp/fixture-project/alpha/beta/gamma' },
+  model: { id: 'claude-sonnet-4-6-20250514' },
+  context_window: { used_percentage: 42 },
+  session_name: 'my-session',
+  vim: { mode: 'NORMAL' },
+  worktree: { name: 'feature-branch' },
+  effort: { level: 'high' },
+  rate_limits: { five_hour: { used_percentage: 10 }, seven_day: { used_percentage: 20 } },
+  cost: { total_cost_usd: 1.23, total_lines_added: 10, total_lines_removed: 2, total_duration_ms: 65000 },
+};
+
+for (const columns of ['40', '60', '80', '120']) {
+  test(`no rendered row exceeds COLUMNS=${columns}`, { skip }, () => {
+    const { stdout } = run(WIDE_FIXTURE, columns);
+    for (const line of stdout.split('\n')) {
+      assert.ok(stripAnsi(line).length < Number(columns),
+        `row wider than the terminal: ${stripAnsi(line).length} >= ${columns}`);
+    }
+  });
+}
+
+test('wrapping preserves every segment and splits only between them', { skip }, () => {
+  const wide = stripAnsi(run(WIDE_FIXTURE, '400').stdout);
+  assert.ok(!wide.includes('\n'), 'a wide terminal still renders a single row');
+
+  const narrow = run(WIDE_FIXTURE, '40').stdout;
+  assert.ok(narrow.includes('\n'), 'a narrow terminal wraps onto more than one row');
+  assert.strictEqual(stripAnsi(narrow).split('\n').join(''), wide,
+    'joined rows reproduce the unwrapped line exactly — nothing dropped or reordered');
+  // A break inside a segment would leave an orphaned SGR sequence on the next row.
+  for (const line of narrow.split('\n')) {
+    assert.ok(!line.startsWith('\x1b[0m'), `row starts mid-segment: ${JSON.stringify(line)}`);
+  }
+});
+
+test('no trailing newline, which would render as a blank status row', { skip }, () => {
+  assert.ok(!run(WIDE_FIXTURE, '40').stdout.endsWith('\n'));
+});
+
+test('a segment wider than the whole terminal is truncated, not left to overflow', { skip }, () => {
+  const deep = '/tmp/' + ['a', 'b', 'c'].map((ch) => ch.repeat(30)).join('/');
+  const { stdout } = run({ workspace: { current_dir: deep }, model: { id: 'claude-opus-5' } }, '20');
+  const rows = stdout.split('\n').map(stripAnsi);
+  assert.ok(rows.every((l) => l.length < 20), `rows: ${JSON.stringify(rows)}`);
+  assert.ok(rows[0].endsWith('…'), 'the over-wide path segment is ellipsised');
+});
+
+test('an unset or garbage COLUMNS falls back to a sane width instead of one column', { skip }, () => {
+  for (const columns of [undefined, '', 'not-a-number', '0']) {
+    const env = { ...process.env };
+    if (columns === undefined) delete env.COLUMNS; else env.COLUMNS = columns;
+    const r = spawnSync('bash', [SCRIPT], { input: JSON.stringify(WIDE_FIXTURE), encoding: 'utf8', env });
+    const rows = (r.stdout || '').split('\n').map(stripAnsi);
+    assert.strictEqual(r.status, 0, `COLUMNS=${JSON.stringify(columns)} should not crash`);
+    assert.ok(rows.some((l) => l.length > 40),
+      `COLUMNS=${JSON.stringify(columns)} degraded to a tiny width: ${JSON.stringify(rows)}`);
   }
 });
 

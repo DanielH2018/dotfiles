@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # all data vars (cwd, model_id, …) are assigned by the eval'd jq block below
+shopt -s extglob  # needed before parse for the SGR-stripping pattern in put(), below
 # Claude Code status line — mirrors the Starship catppuccin_mocha theme, which is the
 # terminal's own (chezmoi `.chezmoidata/terminal.toml`). 24-bit, not 256-color: the old
 # codes were documented as "approximate", and the terminal renders truecolor, so the
@@ -68,18 +69,48 @@ if git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 # Build output
+#
+# Segments are buffered rather than printed, so the tail of the script can pack them into lines
+# that fit the terminal. The CLI truncates any status line row wider than the terminal, so an
+# unpacked line silently loses its rightmost segments; it never wraps them for us. Packing at
+# segment boundaries also means a break can't land inside an escape sequence or a glyph.
+segs=()
+seg_widths=()
+pending=""
+pending_width=0
+
+# Buffer one printf's worth of output. Width is measured on the text with SGR sequences removed —
+# each segment carries ~20 invisible bytes, so measuring the coloured string wraps at half width.
+put() {
+  local s plain
+  # shellcheck disable=SC2059  # the caller's format string is the point of the helper
+  printf -v s "$@"
+  plain="${s//$'\033'\[*([0-9;])m/}"
+  pending+="$s"
+  pending_width=$(( pending_width + ${#plain} ))
+}
+
+end_seg() {
+  [[ -n "$pending" ]] || return 0
+  segs+=("$pending")
+  seg_widths+=("$pending_width")
+  pending=""
+  pending_width=0
+}
+
+add() { put "$@"; end_seg; }
 
 # Segment: vim mode (purple) — only shown when vim mode is active
-[[ -n "$vim_mode" ]] && printf '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
+[[ -n "$vim_mode" ]] && add '\033[38;2;203;166;247m %s \033[0m' "$vim_mode"
 
 # Segment: session name (orange) — only shown when renamed
-[[ -n "$session_name" ]] && printf '\033[38;2;250;179;135m %s \033[0m' "$session_name"
+[[ -n "$session_name" ]] && add '\033[38;2;250;179;135m %s \033[0m' "$session_name"
 
 # Segment: directory (yellow)
-printf '\033[38;2;249;226;175m %s \033[0m' "$short_cwd"
+add '\033[38;2;249;226;175m %s \033[0m' "$short_cwd"
 
 # Segment: worktree name (purple) — only shown in linked worktrees
-[[ -n "$worktree_name" ]] && printf '\033[38;2;203;166;247m ⎇ %s \033[0m' "$worktree_name"
+[[ -n "$worktree_name" ]] && add '\033[38;2;203;166;247m ⎇ %s \033[0m' "$worktree_name"
 
 # Segment: git branch (aqua) + dirty indicator + ahead/behind
 # Cache git status for 3 seconds to avoid repeated forks on rapid redraws
@@ -98,18 +129,19 @@ if [[ -n "$git_branch" ]]; then
   else
     read -r dirty_count ahead behind < "$_git_cache"
   fi
-  printf '\033[38;2;166;227;161m  %s\033[0m' "$git_branch"
-  (( dirty_count > 0 )) && printf '\033[38;2;250;179;135m *%d\033[0m' "$dirty_count"
-  (( ahead > 0 )) && printf '\033[38;2;166;227;161m +%d\033[0m' "$ahead"
-  (( behind > 0 )) && printf '\033[38;2;243;139;168m -%d\033[0m' "$behind"
-  printf ' '
+  put '\033[38;2;166;227;161m  %s\033[0m' "$git_branch"
+  (( dirty_count > 0 )) && put '\033[38;2;250;179;135m *%d\033[0m' "$dirty_count"
+  (( ahead > 0 )) && put '\033[38;2;166;227;161m +%d\033[0m' "$ahead"
+  (( behind > 0 )) && put '\033[38;2;243;139;168m -%d\033[0m' "$behind"
+  put ' '
+  end_seg
 fi
 
 # Segment: model (blue) — compact label
-printf '\033[38;2;137;180;250m %s \033[0m' "$model_label"
+add '\033[38;2;137;180;250m %s \033[0m' "$model_label"
 
 # Segment: effort level (dim grey) — only shown when set and non-default (medium)
-[[ -n "$effort_level" && "$effort_level" != "medium" ]] && printf '\033[38;2;108;112;134m %s \033[0m' "$effort_level"
+[[ -n "$effort_level" && "$effort_level" != "medium" ]] && add '\033[38;2;108;112;134m %s \033[0m' "$effort_level"
 
 # Segment: context usage
 #
@@ -185,11 +217,11 @@ if [[ -n "$used_int" ]]; then
     compact_pct=$(( compact_at * 100 / ctx_window ))
   fi
   if (( used_int >= compact_pct )); then
-    printf '\033[38;2;243;139;168mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;243;139;168mctx:%d%% \033[0m' "$used_int"
   elif (( used_int >= compact_pct * 85 / 100 )); then
-    printf '\033[38;2;249;226;175mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;249;226;175mctx:%d%% \033[0m' "$used_int"
   else
-    printf '\033[38;2;166;227;161mctx:%d%% \033[0m' "$used_int"
+    add '\033[38;2;166;227;161mctx:%d%% \033[0m' "$used_int"
   fi
 fi
 
@@ -223,7 +255,7 @@ if [[ -n "$tp" && -r "$tp" ]]; then
         if (( remain >= 60 )); then cstr=$(printf '%dm%ds' $((remain/60)) $((remain%60)))
         else cstr=$(printf '%ds' "$remain"); fi
         (( remain < 60 )) && ccol='249;226;175' || ccol='166;227;161'
-        printf '\033[38;2;%sm cache %s \033[0m' "$ccol" "$cstr"
+        add '\033[38;2;%sm cache %s \033[0m' "$ccol" "$cstr"
       fi
     fi
   fi
@@ -247,25 +279,25 @@ if [[ -n "$week_pct" ]]; then
     rate_out="${rate_out}\033[38;2;249;226;175m7d:${week_int}%\033[0m "
   fi
 fi
-[[ -n "$rate_out" ]] && printf '%b' "$rate_out"
+[[ -n "$rate_out" ]] && add '%b' "$rate_out"
 
 # Segment: session cost (grey, yellow >$5, red >$15)
 if [[ -n "$total_cost" ]]; then
   cost_fmt=$(printf '$%.2f' "$total_cost")
   cost_cents=$(printf '%.0f' "$(echo "$total_cost * 100" | bc 2>/dev/null || echo 0)")
   if (( cost_cents >= 1500 )); then
-    printf '\033[38;2;243;139;168m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;243;139;168m%s \033[0m' "$cost_fmt"
   elif (( cost_cents >= 500 )); then
-    printf '\033[38;2;249;226;175m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;249;226;175m%s \033[0m' "$cost_fmt"
   else
-    printf '\033[38;2;108;112;134m%s \033[0m' "$cost_fmt"
+    add '\033[38;2;108;112;134m%s \033[0m' "$cost_fmt"
   fi
 fi
 
 # Segment: lines changed (+added aqua / -removed red) — only when non-zero
 la=${lines_added:-0}; lr=${lines_removed:-0}
 if (( la > 0 || lr > 0 )); then
-  printf '\033[38;2;166;227;161m+%d\033[0m/\033[38;2;243;139;168m-%d\033[0m ' "$la" "$lr"
+  add '\033[38;2;166;227;161m+%d\033[0m/\033[38;2;243;139;168m-%d\033[0m ' "$la" "$lr"
 fi
 
 # Segment: session duration (dim grey)
@@ -274,6 +306,36 @@ if [[ -n "$dur_ms" ]]; then
   if   (( dur_s >= 3600 )); then dstr=$(printf '%dh%dm' $((dur_s/3600)) $(((dur_s%3600)/60)))
   elif (( dur_s >= 60 ));   then dstr=$(printf '%dm' $((dur_s/60)))
   else dstr=$(printf '%ds' "$dur_s"); fi
-  printf '\033[38;2;108;112;134m%s \033[0m' "$dstr"
+  add '\033[38;2;108;112;134m%s \033[0m' "$dstr"
 fi
+
+# Pack the buffered segments into terminal-width rows. Claude Code renders every line a status
+# line command emits but truncates any single line wider than the terminal, so without this the
+# right-hand segments (rate limits, cost, duration) just fall off the edge. COLUMNS is set by the
+# CLI for status line commands; the fallback only matters when running the script by hand.
+end_seg
+width="${COLUMNS:-}"
+[[ "$width" =~ ^[0-9]+$ ]] && (( width > 1 )) || width=100
+(( width-- ))  # a spare column: packing flush to COLUMNS lets the renderer's padding re-wrap the row
+
+line=""
+line_width=0
+for i in "${!segs[@]}"; do
+  seg_width="${seg_widths[i]}"
+  if (( line_width > 0 && line_width + seg_width > width )); then
+    printf '%s\n' "$line"
+    line=""
+    line_width=0
+  fi
+  if (( seg_width > width )); then
+    # One segment wider than the whole terminal — a deep path or a long branch name. Nothing to
+    # pack against, so truncate its visible text to keep the row intact; the colour goes with it.
+    plain="${segs[i]//$'\033'\[*([0-9;])m/}"
+    line+="${plain:0:width-1}…"
+  else
+    line+="${segs[i]}"
+  fi
+  line_width=$(( line_width + seg_width ))
+done
+[[ -n "$line" ]] && printf '%s' "$line"
 exit 0
