@@ -95,3 +95,11 @@ Scripts
 {{ if has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box") }}
 .ssh/config
 {{ end }}
+
+# The sudo shim (see the script for why it exists) only makes sense where the tmux askpass
+# helper is the configured SUDO_ASKPASS — the same headless hosts settings.base.json gates
+# that on. Shadowing `sudo` in PATH is not something to deploy onto a workstation that
+# never asked for it, least of all a work machine.
+{{ if not (has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box")) }}
+.local/bin/sudo
+{{ end }}

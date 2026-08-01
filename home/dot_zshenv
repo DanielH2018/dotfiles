@@ -13,9 +13,12 @@ export CTS_REMOTE_ROOTS="$HOME"
 # refuses outright: "sudo: a terminal is required to read the password". That covers every
 # non-interactive path — Claude Code's `!` commands, `ssh host cmd`, systemd --user units — and
 # no amount of retrying fixes it, because the failure is structural rather than transient.
-# SUDO_ASKPASS is sudo's own escape hatch, and pointing at it here is the whole fix: sudo(8)
-# uses the helper "if no terminal is available or if the -A option is specified", so callers
-# need no -A and /etc/sudoers and /etc/sudo.conf stay untouched. Nothing is weakened — the
+# SUDO_ASKPASS is sudo's own escape hatch, and pointing at it here is half the fix; /etc/sudoers
+# and /etc/sudo.conf stay untouched. The other half is -A. sudo(8) claims the helper is used
+# "if no terminal is available or if the -A option is specified", but on Ubuntu 24.04 only the
+# second half is true (measured on daniel-box 2026-08-01: exported and verified in the calling
+# shell, plain sudo still refused; with -A it prompted) — which is what ~/.local/bin/sudo is
+# for on those hosts. Nothing is weakened — the
 # password is still required, it is just typed into a Plasma dialog instead of a terminal, and
 # an interactive shell that HAS a tty keeps prompting there as before.
 # Guarded on a graphical session because ksshaskpass cannot draw without one: over plain ssh,

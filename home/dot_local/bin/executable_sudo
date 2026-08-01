@@ -1,0 +1,37 @@
+#!/bin/sh
+# sudo shim — supplies -A when there is no terminal to prompt on.
+#
+# sudo(8)'s ENVIRONMENT section says SUDO_ASKPASS names the helper "used to read the
+# password if no terminal is available or if the -A option is specified". On Ubuntu 24.04
+# (sudo 1.9.15p5) only the second half holds: measured on daniel-box 2026-08-01, with
+# SUDO_ASKPASS exported and verified present in the very shell, plain `sudo ls` still
+# refused with "a terminal is required to read the password", while the same command with
+# -A drew the tmux popup and succeeded. Claude Code's `!` commands run without a terminal
+# and nothing in the environment can supply the flag, so it is supplied here.
+#
+# Everything else passes through untouched: with a terminal sudo prompts there exactly as
+# before, and an invocation that already chose its own input method (-A, -S, -n) is left
+# alone. Nothing is weakened — the password is still required either way.
+set -eu
+
+REAL=${SUDO_SHIM_REAL:-/usr/bin/sudo}
+
+# The same question sudo asks: is there a controlling terminal to prompt on?
+has_tty() { (exec 3</dev/tty) 2>/dev/null; }
+
+if [ -n "${SUDO_ASKPASS:-}" ] && ! has_tty; then
+    # Walk the leading options only; the first operand ends the search, and so does `--`.
+    for arg in "$@"; do
+        case $arg in
+            --) break ;;
+            --askpass | --stdin | --non-interactive) exec "$REAL" "$@" ;;
+            --*) continue ;;
+            -*[ASn]*) exec "$REAL" "$@" ;;
+            -*) continue ;;
+            *) break ;;
+        esac
+    done
+    exec "$REAL" -A "$@"
+fi
+
+exec "$REAL" "$@"
