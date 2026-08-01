@@ -275,24 +275,20 @@ test('the shim follow-up runs even when docker is already installed', { skip }, 
 });
 
 // 12. podman-docker does not ship /etc/containers/nodocker — its own banner asks you to create it
-//     — so the installer places it. Skipped where the host already has the file, since the script
-//     rightly does nothing then and the stub harness cannot redirect /etc.
-test('the nodocker marker is created to silence the shim banner', { skip }, (t) => {
+//     — so the installer places it. Asserted against the rendered text rather than by running it:
+//     the step is a no-op once the file exists, so a runtime check would start skipping on every
+//     machine that has applied this change and quietly stop guarding anything.
+test('the nodocker marker is created inside the package-keyed block', { skip }, () => {
   if (!rendersHere()) return;
-  if (fs.existsSync('/etc/containers/nodocker')) return t.skip('host already has the marker');
-  const { out, home } = runWithStubs({
-    dnf: 'exit 0',
-    rpm: 'exit 0',
-    sudo: SUDO_LOG,
-    dpkg: DPKG_TRIPWIRE,
-    curl: 'exit 1',
-    uname: NO_ARCH,
-    unzip: 'exit 0',
-    docker: 'exit 0',
-    systemctl: 'exit 1',
-  });
-  assert.match(readLog(home, 'sudo.log'), /install -m 644 \/dev\/null \/etc\/containers\/nodocker/,
-    `the marker was never created; script output was:\n${out}`);
+  const rendered = render();
+  const installBranch = rendered.indexOf('if ! command -v docker');
+  const keyedBlock = rendered.indexOf('pkg_installed podman-docker; then');
+  const marker = rendered.search(/sudo install -m 644 \/dev\/null \/etc\/containers\/nodocker/);
+  assert.ok(installBranch > 0, 'sanity: found the install branch');
+  assert.ok(keyedBlock > installBranch, 'sanity: found the package-keyed block after it');
+  assert.ok(marker > keyedBlock,
+    'the marker must be created in the package-keyed block; inside the install branch it is ' +
+    'unreachable on any machine that already has docker on PATH');
 });
 
 // 13. A headless, non-lingering box has no user systemd bus. Enabling there is a guaranteed error,
