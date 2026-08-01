@@ -7,11 +7,12 @@ set -u
 
 # shellcheck disable=SC1091  # optional per-host env, not present in the chezmoi tree
 [ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
-
-INPUT=$(cat)
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
 
 # Avoid loops - if we already forced Claude to continue once, let it stop now.
-ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
+ACTIVE=$(hook_field '.stop_hook_active // false')
 [ "$ACTIVE" = "true" ] && exit 0
 
 # Only care about git repos.

@@ -14,10 +14,12 @@
 set -u
 
 command -v chezmoi >/dev/null 2>&1 || exit 0
-command -v jq >/dev/null 2>&1 || exit 0
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+hook_require_jq noop || exit 0
 
-INPUT=$(cat)
-FILE=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE=$(hook_field '.tool_input.file_path // empty')
 [ -n "$FILE" ] || exit 0
 
 # Windows: Claude Code passes paths as C:/Users/... but $HOME is the MSYS form

@@ -9,8 +9,10 @@ set -u
 # have their context. Compaction is included because nothing else re-primes after one:
 # PreCompact's payload goes to the user, not to the model, so without this branch the
 # post-compaction context has no branch, push state or dirty-file list at all.
-INPUT=$(cat)
-SOURCE=$(echo "$INPUT" | jq -r '.source // "startup"')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+SOURCE=$(hook_field '.source // "startup"')
 case "$SOURCE" in
   startup | compact) ;;
   *) exit 0 ;;

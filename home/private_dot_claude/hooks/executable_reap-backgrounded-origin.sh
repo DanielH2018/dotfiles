@@ -18,11 +18,11 @@ set -u
 # REAP_LIB seam lets tests point at the in-repo copy.
 # shellcheck source=/dev/null
 . "${REAP_LIB:-$HOME/.claude/hooks/reap-origin-lib.sh}"
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
 
-own_sid=""
-if input=$(cat 2>/dev/null) && [ -n "$input" ]; then
-  own_sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
-fi
+own_sid=$(hook_field '.session_id // ""')
 
 # --- find OUR OWN session-worker cmdline. Test seam short-circuits the /proc walk. ---
 # The hook is a child of Claude's session-worker process (the one launched with

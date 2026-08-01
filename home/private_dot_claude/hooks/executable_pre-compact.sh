@@ -8,9 +8,12 @@
 
 set -u
 
-PAYLOAD=$(cat 2>/dev/null || true)
-TRIGGER=$(printf '%s' "$PAYLOAD" | jq -r '.trigger // "auto"' 2>/dev/null || echo auto)
-TRANSCRIPT=$(printf '%s' "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+TRIGGER=$(hook_field '.trigger // "auto"')
+[ -n "$TRIGGER" ] || TRIGGER=auto
+TRANSCRIPT=$(hook_field '.transcript_path // empty')
 
 case "$TRIGGER" in
   manual) MSG="Manual /compact proceeding." ;;

@@ -21,8 +21,10 @@
 
 set -u
 
-INPUT=$(cat)
-path=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_response.filePath // empty' 2>/dev/null)
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+path=$(hook_field '.tool_input.file_path // .tool_response.filePath // empty')
 [ -z "$path" ] && exit 0
 
 # In the sandbox, ~/.claude/artifacts is a symlink to the /artifacts bind-mount, so

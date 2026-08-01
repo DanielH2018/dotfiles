@@ -24,8 +24,10 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
     [ -f "$f" ] && SETTINGS_FILES+=("$f")
   done
 fi
-INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+COMMAND=$(hook_field '.tool_input.command // ""')
 
 # M02 shadow census. CMDPARSE_SHADOW=1 computes what the shared decomposition in
 # cmdparse.sh WOULD decide, logs old-vs-new, and returns the OLD decision unchanged. It is

@@ -5,13 +5,15 @@
 
 set -u
 
-INPUT=$(cat)
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
 LOG_DIR="$HOME/.claude/logs"
 mkdir -p "$LOG_DIR"
 
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"' 2>/dev/null)
-AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // "unknown"' 2>/dev/null)
-AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // "unknown"' 2>/dev/null)
+SESSION_ID=$(hook_field '.session_id // "unknown"')
+AGENT_TYPE=$(hook_field '.agent_type // "unknown"')
+AGENT_ID=$(hook_field '.agent_id // "unknown"')
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID event=subagent_stop type=$AGENT_TYPE agent_id=$AGENT_ID" >> "$LOG_DIR/sessions.log"
 

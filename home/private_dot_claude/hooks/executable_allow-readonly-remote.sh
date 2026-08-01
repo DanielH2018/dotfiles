@@ -16,8 +16,10 @@
 
 set -u
 
-INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+COMMAND=$(hook_field '.tool_input.command // ""')
 [ -z "$COMMAND" ] && exit 0
 
 # Any shell metacharacter can smuggle a second command past the verb check

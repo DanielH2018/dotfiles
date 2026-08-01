@@ -11,13 +11,12 @@ set -u
 # decision. Literal JSON so the fallback needs nothing but printf, and `ask` rather than
 # `deny` because an unparsed input tells us nothing about which file is being touched —
 # denying would block every Read/Edit/Write in the session, not just the guarded ones.
-if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"protect-secrets: jq is unavailable, so the secret-file rules could not be evaluated. Check the path yourself before allowing."}}'
-  exit 0
-fi
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+hook_require_jq ask "protect-secrets: jq is unavailable, so the secret-file rules could not be evaluated. Check the path yourself before allowing." || exit 0
 
-INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 
 deny() {

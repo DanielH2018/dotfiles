@@ -14,13 +14,12 @@ set -u
 # The fallback is a hand-written literal so it has no dependency of its own, and it asks
 # rather than denies: without jq the command cannot be parsed, so there is nothing to
 # judge, and denying every Bash call outright would be indistinguishable from a hang.
-if ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"block-dangerous-bash: jq is unavailable, so the dangerous-command rules could not be evaluated. Review this command yourself."}}'
-  exit 0
-fi
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+hook_require_jq ask "block-dangerous-bash: jq is unavailable, so the dangerous-command rules could not be evaluated. Review this command yourself." || exit 0
 
-INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+COMMAND=$(hook_field '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
 # Normalized copy for the whole-string checks below: collapse newline/tab/backslash

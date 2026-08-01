@@ -15,12 +15,16 @@
 
 set -u
 
-INPUT=$(cat)
-OUT=$(printf '%s' "$INPUT" | jq -r '
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+# shellcheck disable=SC2016  # jq's own $o, not a shell expansion; shellcheck only
+# knows to suppress this when the literal goes straight to `jq`, not through a helper.
+OUT=$(hook_field '
   (.tool_output // .tool_response) as $o
   | if ($o | type) == "string" then $o
     elif $o == null then empty
-    else ($o | tojson) end' 2>/dev/null)
+    else ($o | tojson) end')
 [ -z "$OUT" ] && exit 0
 
 # Instruction-override / role-hijack / prompt-leak / exfiltration markers.

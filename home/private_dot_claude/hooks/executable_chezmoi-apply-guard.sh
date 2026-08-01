@@ -20,10 +20,12 @@
 set -u
 
 command -v chezmoi >/dev/null 2>&1 || exit 0
-command -v jq >/dev/null 2>&1 || exit 0
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+hook_require_jq noop || exit 0
 
-INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
+COMMAND=$(hook_field '.tool_input.command // empty')
 [ -n "$COMMAND" ] || exit 0
 
 # Collapse continuations so a `\`-split can't hide the verb from the match below.

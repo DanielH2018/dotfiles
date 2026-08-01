@@ -4,8 +4,10 @@
 
 set -u
 
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+SESSION_ID=$(hook_field '.session_id // "unknown"')
 
 LOG_DIR="$HOME/.claude/logs"
 mkdir -p "$LOG_DIR"
@@ -39,7 +41,7 @@ fi
 # shell.py skips staging files whose name contains the current date, so it sits
 # untouched today and is picked up tomorrow.
 REMEMBER_BUDGET=${REMEMBER_TODAY_MAX_BYTES:-8192}
-PROJECT_DIR=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+PROJECT_DIR=$(hook_field '.cwd // empty')
 [ -n "$PROJECT_DIR" ] || PROJECT_DIR=${CLAUDE_PROJECT_DIR:-$PWD}
 TODAY_FILE="$PROJECT_DIR/.remember/today-$(date +%F).md"
 

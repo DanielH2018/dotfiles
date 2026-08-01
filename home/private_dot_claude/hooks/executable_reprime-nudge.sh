@@ -15,8 +15,10 @@
 
 set -u
 
-INPUT=$(cat)
-SID=$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+SID=$(hook_field '.session_id // empty')
 [ -z "$SID" ] && SID="nosession"
 
 EVERY="${CLAUDE_REPRIME_EVERY:-30}"

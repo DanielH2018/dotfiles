@@ -7,8 +7,11 @@ set -u
 
 # shellcheck disable=SC1091  # optional per-host env, not present in the chezmoi tree
 [ -f "$HOME/.config/claude/local.env" ] && . "$HOME/.config/claude/local.env"
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
 
-FILE_PATH=$(jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 
 # Skip if no file path (some edit variants don't include it) or file doesn't exist.
 [ -z "$FILE_PATH" ] && exit 0

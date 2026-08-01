@@ -4,9 +4,11 @@
 
 set -u
 
-INPUT=$(cat)
-ERROR_TYPE=$(echo "$INPUT" | jq -r '.error_type // "unknown"')
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+ERROR_TYPE=$(hook_field '.error_type // "unknown"')
+SESSION_ID=$(hook_field '.session_id // "unknown"')
 
 LOG_DIR="$HOME/.claude/logs"
 mkdir -p "$LOG_DIR"

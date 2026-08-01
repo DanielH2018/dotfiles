@@ -23,8 +23,10 @@ git_review_marker() {
   [ "$ahead" -gt 0 ] 2>/dev/null && mark="${mark:+$mark }↑$ahead"
   printf '%s' "$mark"
 }
-input=$(cat 2>/dev/null)
-sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+# shellcheck source=/dev/null
+source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+sid=$(hook_field '.session_id // empty')
 [ -z "$sid" ] && sid="nosession"
 file="$dir/$sid.json"
 
@@ -63,7 +65,7 @@ if [ "$state" = "start" ]; then
   esac
 fi
 
-cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+cwd=$(hook_field '.cwd // empty')
 [ -z "$cwd" ] && cwd="$PWD"
 pane="${WEZTERM_PANE:-}"
 locator=$(av_capture_locator)
@@ -82,7 +84,7 @@ fi
 # which sends /rename into the pane) WINS over the auto `ai-title`. grep each type first
 # (cheap even on a multi-MB JSONL), then jq only those and take the latest. Falls back to the
 # carried title (a sandbox repo·branch, or empty -> the picker shows the age).
-tpath=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
+tpath=$(hook_field '.transcript_path // empty')
 if [ -n "$tpath" ] && [ -f "$tpath" ]; then
   ct=$(grep -aF '"custom-title"' "$tpath" 2>/dev/null | jq -r 'select(.type=="custom-title") | .customTitle // empty' 2>/dev/null | tail -1)
   if [ -n "$ct" ]; then title="$ct"

@@ -4,9 +4,11 @@
 
 set -u
 
-INPUT=$(cat)
-MESSAGE=$(echo "$INPUT" | jq -r '.message // "Claude Code"')
-TITLE=$(echo "$INPUT" | jq -r '.title // "Claude Code"')
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_read_input
+MESSAGE=$(hook_field '.message // "Claude Code"')
+TITLE=$(hook_field '.title // "Claude Code"')
 
 if command -v osascript >/dev/null 2>&1; then
   # macOS — play the sound directly so the audible cue never depends on
