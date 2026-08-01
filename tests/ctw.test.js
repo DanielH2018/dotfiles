@@ -34,6 +34,22 @@ function gitRepo(root, name, branches = []) {
   return d;
 }
 
+// A clone under `root` whose `branch` exists only as origin/<branch> — no local ref. The
+// branch carries a commit main does not, so a checkout that forked HEAD instead of tracking
+// the remote is visible in the log.
+function clonedRepo(root, name, branch) {
+  const upstream = gitRepo(scratch(), 'upstream');
+  const g = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+  g(upstream, 'checkout', '-q', '-b', branch);
+  g(upstream, 'commit', '-q', '--allow-empty', '-m', 'only-on-remote');
+  g(upstream, 'checkout', '-q', 'main');
+  const d = path.join(root, name);
+  g(root, 'clone', '-q', upstream, d);
+  g(d, 'config', 'user.email', 't@t.t');
+  g(d, 'config', 'user.name', 't');
+  return d;
+}
+
 // Run ctw with a logging `ct` stub on PATH. Returns { code, out, err, ct } where `ct` is
 // the logged args of the final `ct` handoff (empty string if ct was never reached).
 function runCtw(args, { roots, wtRoot, env = {} } = {}) {
@@ -115,6 +131,20 @@ test('ctw REPO BRANCH (unknown branch) creates the branch on demand', { skip }, 
   assert.strictEqual(ct, path.join(wt, 'proj', 'shiny-new'));
   const branches = execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/'], { encoding: 'utf8' });
   assert.match(branches, /(^|\n)shiny-new(\n|$)/, 'branch created in the source repo');
+});
+
+test('ctw REPO BRANCH tracks a branch that exists only on origin instead of forking HEAD', { skip }, () => {
+  const root = scratch();
+  const repo = clonedRepo(root, 'proj', 'remote-only');
+  const wt = scratch();
+  const { ct, code, err } = runCtw(['proj', 'remote-only'], { roots: root, wtRoot: wt });
+  assert.strictEqual(code, 0, err);
+  const expected = path.join(wt, 'proj', 'remote-only');
+  assert.strictEqual(ct, expected);
+  const log = execFileSync('git', ['-C', expected, 'log', '--format=%s'], { encoding: 'utf8' });
+  assert.match(log, /only-on-remote/, 'worktree checked out the remote branch, not a fork of main');
+  const upstream = execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(upstream:short)', 'refs/heads/remote-only'], { encoding: 'utf8' });
+  assert.strictEqual(upstream.trim(), 'origin/remote-only', 'local branch tracks the remote');
 });
 
 test('ctw slugifies a slashed branch for the worktree dir but keeps the real branch name', { skip }, () => {

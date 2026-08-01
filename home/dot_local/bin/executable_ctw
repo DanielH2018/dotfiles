@@ -108,7 +108,13 @@ launch() {
     held="$(checkout_holding "$repo" "$branch")"
     [ -n "$held" ] && exec "$(ct_bin)" "$held"
     mkdir -p "$(dirname "$dir")"
-    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    # A branch that exists only on the remote still counts as existing: `worktree add <dir>
+    # <branch>` then DWIMs a local branch tracking origin/<branch>. Without the origin arm we
+    # fall through to `-b` and fork a NEW branch from whatever HEAD is, silently shadowing the
+    # remote branch of the same name — the case you hit naming a branch you read off a PR
+    # rather than one already checked out here.
+    if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" \
+       || git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
       git -C "$repo" worktree add "$dir" "$branch" || exit 1
     else
       git -C "$repo" worktree add -b "$branch" "$dir" || exit 1
