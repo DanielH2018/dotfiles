@@ -391,7 +391,11 @@ if [[ "$GENERATE_ONLY" == false ]]; then
     ENGINE_ARGS=(--userns="keep-id:uid=$CLAUDEBOT_UID,gid=$CLAUDEBOT_GID")
     if [[ "${CLAUDE_SANDBOX_SELINUX:-}" == "disable" ]]; then
       ENGINE_ARGS+=(--security-opt label=disable)
-    elif [[ "$(getenforce 2>/dev/null || echo Disabled)" == "Enforcing" ]]; then
+    elif [[ -d /sys/fs/selinux ]]; then
+      # selinuxfs is mounted iff SELinux is enabled, so this needs no
+      # libselinux-utils and cannot mistake a missing `getenforce` for a
+      # disabled SELinux — which would put the silent denial straight back.
+      # Permissive would not need the flag, but relabelling there is harmless.
       SANDBOX_MOUNT_RELABEL="z"
     fi
   fi
