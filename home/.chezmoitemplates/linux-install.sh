@@ -13,7 +13,11 @@ of the run. Nothing here calls `exit` — convergence checks belong to the calle
 # directory; nothing in normal operation sets any of them. Plain assignment here was an active
 # hazard rather than a style choice: it silently overwrote an exported BIN_DIR, so a test harness
 # that thought it had sandboxed itself installed straight into the real ~/.local/bin and replaced
-# live binaries with its fixtures.
+# live binaries with its fixtures. tests/linux-install-lib.test.js fails if that form comes back.
+#
+# To sandbox this module, redirect HOME — all three install destinations derive from it, so there
+# is no fourth one left pointing at the live machine when you forget it. The individual overrides
+# are for aiming a single destination somewhere else, not for containment.
 : "${BIN_DIR:=$HOME/.local/bin}"
 : "${VER_DIR:=$BIN_DIR/.versions}"  # release tag last installed per tool, so a re-apply upgrades
                                     # a stale binary in place instead of skipping it (install-once).
