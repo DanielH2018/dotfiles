@@ -273,6 +273,10 @@ for (const columns of ['40', '60', '80', '120']) {
       assert.ok(stripAnsi(line).length < Number(columns),
         `row wider than the terminal: ${stripAnsi(line).length} >= ${columns}`);
     }
+    // Rows cost viewport, and the narrowest terminals are the ones with least to spare.
+    // Pins the count so a future segment can't quietly grow the status line to a paragraph.
+    assert.ok(stdout.split('\n').length <= 4,
+      `status line grew to ${stdout.split('\n').length} rows at ${columns} columns`);
   });
 }
 
@@ -300,6 +304,22 @@ test('a segment wider than the whole terminal is truncated, not left to overflow
   const rows = stdout.split('\n').map(stripAnsi);
   assert.ok(rows.every((l) => l.length < 20), `rows: ${JSON.stringify(rows)}`);
   assert.ok(rows[0].endsWith('…'), 'the over-wide path segment is ellipsised');
+});
+
+test('truncating an over-wide segment never splits a character', { skip }, () => {
+  // Under a non-UTF-8 locale bash slices by byte, so the cut can land inside a sequence.
+  const deep = '/tmp/' + ['α', 'β', 'γ'].map((ch) => ch.repeat(20)).join('/');
+  for (const LC_ALL of ['C.UTF-8', 'C']) {
+    for (const COLUMNS of ['20', '24', '28']) {
+      const r = spawnSync('bash', [SCRIPT], {
+        input: JSON.stringify({ workspace: { current_dir: deep }, model: { id: 'claude-opus-5' } }),
+        env: { ...process.env, LC_ALL, COLUMNS },
+      });
+      const row = r.stdout.toString('binary');
+      assert.doesNotThrow(() => new TextDecoder('utf-8', { fatal: true }).decode(r.stdout),
+        `invalid UTF-8 at LC_ALL=${LC_ALL} COLUMNS=${COLUMNS}: ${JSON.stringify(row)}`);
+    }
+  }
 });
 
 test('an unset or garbage COLUMNS falls back to a sane width instead of one column', { skip }, () => {

@@ -331,7 +331,13 @@ for i in "${!segs[@]}"; do
     # One segment wider than the whole terminal — a deep path or a long branch name. Nothing to
     # pack against, so truncate its visible text to keep the row intact; the colour goes with it.
     plain="${segs[i]//$'\033'\[*([0-9;])m/}"
-    line+="${plain:0:width-1}…"
+    plain="${plain:0:width-1}"
+    # Under a non-UTF-8 locale the slice above counts bytes, so it can land inside a character
+    # and leave a dangling sequence. Back off over any trailing continuation bytes and the lead
+    # byte they belonged to. Both loops are no-ops under a UTF-8 locale, where ? is a character.
+    while [[ "$plain" =~ [$'\x80'-$'\xbf']$ ]]; do plain="${plain%?}"; done
+    [[ "$plain" =~ [$'\xc2'-$'\xf4']$ ]] && plain="${plain%?}"
+    line+="${plain}…"
   else
     line+="${segs[i]}"
   fi
