@@ -27,6 +27,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const REPO = path.join(__dirname, '..');
@@ -54,7 +55,12 @@ test('the rendered base template is valid JSON', { skip }, () => {
 
 // The load-bearing one. Not "does a fixture pass" — does the file we actually ship pass.
 test('the rendered base template survives claude-settings-merge unchanged', { skip }, () => {
-  const tmp = path.join(REPO, '.settings-base-shape.tmp.json');
+  // A temp dir, not REPO: the merge script takes its input by argv and resolves its prior
+  // and floor files from the environment, so the location was only ever convenience — and
+  // a file that appears in the checkout mid-run is visible to every other session's
+  // `git status` and to anything walking this tree in parallel.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-base-shape-'));
+  const tmp = path.join(dir, 'settings.base.json');
   fs.writeFileSync(tmp, render());
   try {
     const r = spawnSync('node', [MERGE, tmp], { encoding: 'utf8' });
@@ -63,7 +69,7 @@ test('the rendered base template survives claude-settings-merge unchanged', { sk
       + `fail and block all other dotfiles. stderr: ${r.stderr}`);
     assert.doesNotThrow(() => JSON.parse(r.stdout), 'generator emitted invalid JSON');
   } finally {
-    fs.rmSync(tmp, { force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
