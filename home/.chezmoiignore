@@ -91,7 +91,7 @@ Scripts
 
 # ~/.ssh/config holds client-side Host entries (IdentityFiles, the artifact-port
 # forward) that only mean something from a workstation. The homelab hosts are what
-# those entries connect TO, and neither has the referenced keys.
-{{ if has .chezmoi.hostname (list "daniel-server" "daniel-pi") }}
+# those entries connect TO, and none of them has the referenced keys.
+{{ if has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box") }}
 .ssh/config
 {{ end }}
