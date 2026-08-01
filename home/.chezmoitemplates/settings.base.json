@@ -4,6 +4,16 @@
   "env": {
     "EDITOR": "vim",
     "PAGER": "less -R",
+{{ if has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi") }}
+    {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
+         helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
+         read it: the Bash tool spawns its own shell per command and sudo saw nothing there
+         (measured on daniel-box — sudo's "a terminal is required ... or configure an
+         askpass helper"). This block does reach it, which is why the setting lives here
+         rather than only in the shell. Headless hosts only — a desktop keeps ksshaskpass,
+         which ~/.zshenv prefers when there is a graphical session to draw on. */}}
+    "SUDO_ASKPASS": "{{ .chezmoi.homeDir }}/.local/bin/tmux-askpass",
+{{ end }}
     {{/* M02 shadow census. The three Bash guards each carry their own idea of where one
          command ends and the next begins, and cmdparse.sh is the one segmentation meant to
          replace all three. This flag makes them compute what that shared segmentation WOULD
