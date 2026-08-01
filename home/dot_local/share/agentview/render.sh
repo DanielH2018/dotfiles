@@ -2,6 +2,10 @@
 # agentview · render — the palette and everything that turns the global `rows` into the
 # grouped, colored fzf list: pin/state bucketing, per-row layout, the group headers.
 # Sourced by ~/.local/bin/agentview; needs rows (gather_*) and common (title lookups).
+# SC2154/SC2034: globals cross the module boundary in both directions — the loader assigns
+# what this reads, and the palette below is consumed by its siblings. SC1087: `$E[` builds
+# an ANSI escape, not an array index.
+# shellcheck disable=SC2154,SC2034,SC1087
 
 # ---- palette (Catppuccin Mocha, truecolor) ----
 E=$'\033'; Z="$E[0m"

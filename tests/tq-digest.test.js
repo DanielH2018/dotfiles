@@ -40,7 +40,29 @@ function scratch(files) {
 }
 
 test('python: tq adapters + digest unit tests', { skip }, () => {
-  execFileSync('python3', [path.join(__dirname, 'tq', 'test_tq.py')], { stdio: 'pipe' });
+  // Exit code alone cannot tell a green suite from an empty one: unittest.main() exits 0
+  // whether it discovered 216 tests or none. Same reasoning python-suites.test.js applies
+  // to the sandbox suites — the guard just never reached the largest one. Capture rather
+  // than pipe, because unittest writes its summary to stderr, which is why execFileSync
+  // (it returns stdout) could not see the count.
+  //
+  // What this catches, verified by mutation: a class that stops being collected — drop the
+  // `unittest.TestCase` base off one and this reports "ran 207 of 216". What it does NOT
+  // catch, also verified: renaming a method off its `test_` prefix, which lowers the ran
+  // count and the declared count together. Guarding that needs a floor, and a floor is a
+  // ratchet someone has to maintain; the class-level case is the one that fails silently.
+  const file = path.join(__dirname, 'tq', 'test_tq.py');
+  const r = spawnSync('python3', [file], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `test_tq.py failed:\n${r.stderr}`);
+
+  const ran = /^Ran (\d+) tests?/m.exec(r.stderr);
+  assert.ok(ran, `no "Ran N tests" line in unittest output:\n${r.stderr}`);
+
+  // Every test here is a method on a TestCase, so an indented `def test_` is exactly what
+  // unittest collects; there are no module-level ones to confuse it (verified: 0).
+  const declared = (fs.readFileSync(file, 'utf8').match(/^\s+def test_/gm) || []).length;
+  assert.strictEqual(Number(ran[1]), declared,
+    `unittest ran ${ran[1]} of ${declared} declared tests — the suite is being collected incompletely`);
 });
 
 test('passing run digests to a single line and exit 0', { skip }, () => {

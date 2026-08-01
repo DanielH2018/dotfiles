@@ -5,6 +5,11 @@
 # cksum of the launch dir, each per-branch worktree is a distinct, auto-resuming session
 # that registers in Agent View for free; ctw itself never touches tmux.
 #
+# SC2088: the `"~/"*` occurrences are case PATTERNS matching a literal tilde prefix, which
+# is what an unexpanded path from the caller looks like; each branch then substitutes
+# $HOME itself. shellcheck reads them as arguments where a tilde would fail to expand.
+# shellcheck disable=SC2088
+#
 # It also answers the queries that `cts --complete-*` sends over ssh, so completion and
 # launch resolve repos/branches through the exact same code and can never disagree.
 #
@@ -24,9 +29,9 @@ wt_root="${CTS_WORKTREE_ROOT:-$HOME/.cts-worktrees}"
 # value comes from the environment, so tilde expansion hasn't happened yet).
 IFS=':' read -r -a roots <<< "$roots_raw"
 for _i in "${!roots[@]}"; do
-  case "${roots[$_i]}" in
-    "~")   roots[$_i]="$HOME" ;;
-    "~/"*) roots[$_i]="$HOME/${roots[$_i]#\~/}" ;;
+  case "${roots[_i]}" in
+    "~")   roots[_i]="$HOME" ;;
+    "~/"*) roots[_i]="$HOME/${roots[_i]#\~/}" ;;
   esac
 done
 

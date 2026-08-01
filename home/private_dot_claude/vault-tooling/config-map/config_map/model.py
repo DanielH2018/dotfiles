@@ -64,8 +64,9 @@ def semantic_payload(setup_map: SetupMap) -> dict:
     """
     return {
         "layers": [
-            {"name": l.name, "path": l.path, "present": l.present, "fields": list(l.fields)}
-            for l in setup_map.layers
+            {"name": layer.name, "path": layer.path, "present": layer.present,
+             "fields": list(layer.fields)}
+            for layer in setup_map.layers
         ],
         "cascade": [_node_to_dict(n) for n in setup_map.cascade],
         "categories": [

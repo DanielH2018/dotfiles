@@ -1,6 +1,7 @@
 #!/bin/bash
 # PostToolUse hook: auto-format files after Claude writes or edits them.
-# Dispatches based on extension. Silently skips if the formatter isn't installed.
+# Dispatches based on extension. Skips when the formatter isn't installed, saying so on
+# stderr once per tool per day.
 # Exit 0 always so formatting failures don't break Claude's flow; errors go to stderr.
 
 set -u
@@ -17,8 +18,27 @@ FILE_PATH=$(hook_field '.tool_input.file_path // empty')
 [ -z "$FILE_PATH" ] && exit 0
 [ ! -f "$FILE_PATH" ] && exit 0
 
+# Formatters stay optional — a machine with no Go toolchain should still be able to edit a
+# .go file. What was wrong is that a skip looked exactly like a successful format: prettier
+# is absent on this host, so every .js/.json/.yaml/.md edit silently went unformatted and
+# nothing said so. Report a miss once per tool per day — enough to notice, not enough to nag.
+_fmt_state="${XDG_STATE_HOME:-$HOME/.local/state}/claude-auto-format"
+
 run_if_installed() {
-  command -v "$1" >/dev/null 2>&1 && "$@" 2>&1
+  if command -v "$1" >/dev/null 2>&1; then
+    "$@" 2>&1
+    return
+  fi
+  # One marker per tool, refreshed daily, so the directory stays bounded instead of
+  # growing a file per tool per day.
+  local marker="$_fmt_state/missing-$1"
+  if [ -e "$marker" ] && [ -z "$(find "$marker" -mmin +1440 2>/dev/null)" ]; then
+    return 0
+  fi
+  mkdir -p "$_fmt_state" 2>/dev/null || return 0
+  : > "$marker" 2>/dev/null
+  printf 'auto-format: %s is not installed; %s left unformatted\n' \
+    "$1" "${FILE_PATH##*/}" >&2
 }
 
 case "$FILE_PATH" in

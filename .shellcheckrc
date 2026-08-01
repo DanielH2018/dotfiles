@@ -1,0 +1,17 @@
+# Single source of shellcheck configuration. shellcheck walks up from each checked file
+# to find this, so the pre-commit gate and the lint-after-edit hook read the same settings
+# without either passing flags — which is the point. They previously disagreed: the hook
+# ran at default severity while nothing else ran shellcheck at all.
+
+# One directive, because .shellcheckrc takes `disable=` but NOT `severity=` — severity is
+# a CLI flag only (checked against shellcheck 0.11.0). Naming codes is more precise than a
+# threshold anyway.
+#
+#   SC1091 — sourced fragments (agentview modules, hook libraries) are resolved by their
+#            loader at runtime, not by a path shellcheck can follow
+#   SC2016 — single-quoted jq/awk programs, where NOT expanding is the whole point
+#   SC2015 — `A && B || C`, used deliberately for cleanup-on-failure
+#
+# The last two are info-level and systematic across this repo. Everything else, at every
+# severity, is enforced.
+disable=SC1091,SC2016,SC2015

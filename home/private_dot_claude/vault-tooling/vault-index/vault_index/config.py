@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+
 # Vault-agnostic default fallback, consistent with the CLAUDE_VAULT_DIR contract used
 # by the rest of the vault tooling (config-map, the vault-bootstrap script): when
 # neither --root nor $VAULT_INDEX_ROOT is given, fall back to $CLAUDE_VAULT_DIR, then
@@ -90,7 +91,7 @@ class Config:
         self.index_path = Path(self.index_path)
 
     @classmethod
-    def load(cls, root: str | os.PathLike | None = None) -> "Config":
+    def load(cls, root: str | os.PathLike | None = None) -> Config:
         if root:
             resolved = Path(root).resolve()
         else:

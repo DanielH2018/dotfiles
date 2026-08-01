@@ -19,3 +19,13 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 # sys.path.insert() before the import it enables, same as executable_tq's own
 # inline noqa comments a few lines up.
 "tests/tq/test_tq.py" = ["E501", "E402"]
+
+# E501 grandfathered where it predates coverage. Until 2026-08-01 the pre-commit hook
+# carried a hardcoded `files:` allowlist and reached 23 of the repo's 51 Python files;
+# dropping it brought the rest under ruff and surfaced 125 long lines in these three
+# trees. Every other rule is enforced on them from day one — this exempts line length
+# only, so the gate still catches new problems here rather than waiting on a reflow.
+# Narrow these back down by reflowing a file, not by adding to the list.
+"home/private_dot_claude/vault-tooling/config-map/**" = ["E501"]
+"home/private_dot_claude/vault-tooling/vault-index/**" = ["E501"]
+"quality/instruction_quality.py" = ["E501"]

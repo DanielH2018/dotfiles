@@ -14,7 +14,7 @@ from pathlib import Path
 # Override with HF_HUB_OFFLINE=0 to allow an online download.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-from .config import Config, DEFAULT_EXCLUDE_FILES
+from .config import DEFAULT_EXCLUDE_FILES, Config
 from .indexer import build as build_index
 from .indexer import status as index_status
 from .query import search

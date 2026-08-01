@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from config_map import scan
 
 
@@ -70,7 +68,7 @@ def test_scan_settings_layers_order_and_presence(tmp_path, monkeypatch):
 
     layers = scan.scan_settings_layers()
 
-    assert [l.name for l in layers] == ["managed", "project-local", "project", "user"]
-    assert [l.present for l in layers] == [False, True, False, True]
+    assert [layer.name for layer in layers] == ["managed", "project-local", "project", "user"]
+    assert [layer.present for layer in layers] == [False, True, False, True]
     assert dict(layers[1].fields)["allow"] == "2"
     assert dict(layers[3].fields)["allow"] == "1"

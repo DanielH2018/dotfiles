@@ -4,7 +4,6 @@ from pathlib import Path
 
 import duckdb
 import pytest
-
 from vault_index.config import EMBED_DIM, Config
 from vault_index.indexer import build
 

@@ -2,6 +2,9 @@
 # agentview · rows — where session rows come from: Claude's live registry, the hook
 # sidecars, the Windows registry over /mnt/c, and the cached homelab snapshot. Produces
 # the global `rows`; the render module turns it into a list. Needs common (win_roster).
+# SC2154/SC2034: globals cross the module boundary in both directions — the loader assigns
+# what this reads, and `rows` and the JQ_* fragments are consumed by its siblings.
+# shellcheck disable=SC2154,SC2034
 
 # ---- shared row/prune jq fragments + homelab cache ----
 # Row = state<TAB>host<TAB>cwd<TAB>pane<TAB>ts<TAB>kind<TAB>locator<TAB>title<TAB>git. `PRUNE`

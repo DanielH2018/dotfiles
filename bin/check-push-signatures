@@ -41,6 +41,9 @@ bad=0
 warned=0
 checked=0
 
+# git's pre-push protocol supplies four fields per line, positionally; only the two sha
+# values are used here, but the refs have to be named to consume their columns.
+# shellcheck disable=SC2034
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
   is_zero "$local_sha" && continue                     # ref deletion

@@ -1,6 +1,5 @@
 import duckdb
 import pytest
-
 from vault_index.indexer import build, status
 from vault_index.query import search
 

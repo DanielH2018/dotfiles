@@ -2,6 +2,10 @@
 # agentview · actions — destructive/mutating row operations behind CTRL+X, CTRL+P and
 # CTRL+R: purge a session on any of the three hosts, toggle its pin, send /rename.
 # Sourced by ~/.local/bin/agentview; needs common (win_roster) and focus (remote_alias).
+# SC2154: the loader assigns the shared globals this module reads, and shellcheck cannot
+# follow a sourced fragment back to it. SC1087: `$E[` builds an ANSI escape, not an array
+# index. Both are properties of the module layout above, not of any one line.
+# shellcheck disable=SC2154,SC1087
 
 av_purge_local() {  # $1=sid -> REALLY stop + delete a local session. Find Claude's live
   # process via ~/.claude/sessions/<pid>.json whose sessionId == sid (authoritative, and

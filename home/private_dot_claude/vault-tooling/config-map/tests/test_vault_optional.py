@@ -3,7 +3,6 @@ is configured/present ($CLAUDE_VAULT_DIR unset or its target missing). See
 sources._resolve_vault_root / VAULT_PRESENT and generate.main()'s early-out."""
 
 import importlib
-import json
 
 from config_map import sources
 

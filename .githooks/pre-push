@@ -122,6 +122,19 @@ if [ -n "$QFILES" ]; then
     python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
 fi
 
+# 3b. Lint. Scope comes from .pre-commit-config.yaml so there is one definition of what
+#    gets linted; prek is the runner because it is what is installed here. Before this
+#    step the config had no runner attached at all — .git/hooks-safe holds only a
+#    pre-push, so nothing ever executed it, and ruff/shellcheck reached files solely via
+#    the lint-after-edit PostToolUse hook. That made coverage depend on Claude being the
+#    editor. Skips rather than fails when prek is absent, matching how tq degrades above:
+#    a missing local tool should not block a push on a machine that never installed it.
+if command -v prek >/dev/null 2>&1; then
+  run "lint (ruff + shellcheck)" prek run --all-files
+else
+  printf '%s-%s lint (ruff + shellcheck) - prek not installed, skipped\n' "$B" "$Z"
+fi
+
 # 4. Injection-hook red-team regression guard. Run through --test rather than as
 #    a bare script so the digest covers it too; the file is a node:test suite
 #    either way, and step 5's glob picks it up as well — it stays a named step so

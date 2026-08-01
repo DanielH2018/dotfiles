@@ -2,6 +2,9 @@
 # agentview · focus — everything that turns a row into a focused terminal: locator
 # activation, pane resolution, ssh attach for remote rows, Windows-side focus/respawn.
 # Sourced by ~/.local/bin/agentview; needs common (win_roster) and the JQ_* fragments.
+# SC2154: the loader assigns the shared globals this module reads, and shellcheck cannot
+# follow a sourced fragment back to it.
+# shellcheck disable=SC2154
 
 # ---- backend focus (the ONLY terminal-specific code) --------------------------
 av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, else 1
@@ -297,7 +300,8 @@ av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a pane of the
   # No tmux: the picker owns its terminal, so run the session HERE and it lands in the tab you
   # opened the picker from. No wezterm-spawn branch — see remote_attach for why that path was
   # both invisible and higher-priority than this one.
-  # shellcheck disable=SC2086 — intentional word split of the subcommand
+  # intentional word split of the subcommand
+  # shellcheck disable=SC2086
   exec claude $1
 }
 

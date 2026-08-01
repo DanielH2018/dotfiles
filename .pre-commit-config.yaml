@@ -2,5 +2,33 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0
     hooks:
+      # No `files:` filter. It used to carry a path allowlist that reached 23 of the
+      # repo's 51 Python files, so config-map, vault-index, quality/ and a hook were
+      # never gated — they only got linted when Claude happened to edit them, via the
+      # lint-after-edit PostToolUse hook. pre-commit resolves the file list itself, so
+      # letting it do that keeps coverage tied to what is in the repo rather than to a
+      # regex someone has to remember to update.
       - id: ruff-check
-        files: ^(home/dot_local/share/tq/|home/dot_local/bin/executable_tq$|tests/tq/|home/private_dot_claude/sandbox/)
+        types_or: [python]
+        files: (\.py$|^home/dot_local/bin/executable_tq$)
+
+  - repo: local
+    hooks:
+      # Nothing ran shellcheck before this except the same edit hook. Settings live in
+      # .shellcheckrc so this and the hook agree without either passing flags.
+      #
+      # `language: system` against the installed binary, NOT koalaman/shellcheck-precommit:
+      # that hook is a docker_image, and docker here is the rootless-podman shim, which
+      # re-pulls the image per batch and then cannot read the bind-mounted files
+      # ("openBinaryFile: permission denied" — the :z / --userns=keep-id problem). The
+      # system binary has none of that and is already a dependency of lint-after-edit.
+      #
+      # .chezmoitemplates/linux-install.sh is excluded because it is a Go template that
+      # happens to end in .sh — shellcheck cannot parse `{{/* ... */}}` and reports a
+      # syntax error on line 1 regardless of the shell below it.
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+        exclude: ^home/\.chezmoitemplates/

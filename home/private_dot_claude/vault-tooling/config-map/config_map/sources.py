@@ -18,7 +18,9 @@ if sys.platform == "darwin":
     )
 elif sys.platform == "win32":
     MANAGED_SETTINGS = (
-        Path(os.environ.get("ProgramData", r"C:\ProgramData"))
+        # Windows upper-cases os.environ keys on both get and set, so the mixed-case
+        # form resolves identically; it matches Microsoft's own documentation.
+        Path(os.environ.get("ProgramData", r"C:\ProgramData"))  # noqa: SIM112
         / "ClaudeCode"
         / "managed-settings.json"
     )
