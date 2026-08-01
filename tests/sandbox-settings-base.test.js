@@ -39,3 +39,39 @@ test('agent-view state hook wiring never deletes a row', () => {
   assert.ok(has('Stop', 'completed'), 'Stop -> completed');
   assert.ok(!/agent-view-state-hook\.sh end/.test(raw), 'container hook never deletes a row (no `end`)');
 });
+
+// Claude Code parses a permission rule as Bash(<pattern>) by matching parens.
+// An unbalanced pattern is not a partial match — the whole rule is DISCARDED
+// with a startup warning, so a deny that reads as present in this file enforces
+// nothing. Four process-substitution rules shipped that way: the wrapper's
+// closing paren was consumed by the one `<(` opens, leaving the rule unparseable.
+test('every Bash() permission rule has balanced parentheses', () => {
+  const broken = [];
+  for (const bucket of ['allow', 'deny', 'ask']) {
+    for (const rule of parsed.permissions[bucket] ?? []) {
+      if (!rule.startsWith('Bash(') || !rule.endsWith(')')) continue;
+      const pattern = rule.slice('Bash('.length, -1);
+      let depth = 0;
+      for (const ch of pattern) {
+        if (ch === '(') depth += 1;
+        else if (ch === ')') depth -= 1;
+        if (depth < 0) break;
+      }
+      if (depth !== 0) broken.push(`${bucket}: ${rule}`);
+    }
+  }
+  assert.deepStrictEqual(broken, [],
+    'these rules are silently skipped at startup and enforce nothing');
+});
+
+test('the process-substitution denies survive parsing', () => {
+  // Belt and braces with block-dangerous-bash.sh, which this same file wires as
+  // a PreToolUse hook and which is the control that actually stops downloaded
+  // content being fed to a shell. These rules are the declarative second layer.
+  for (const shell of ['bash', 'sh']) {
+    for (const fetcher of ['curl', 'wget']) {
+      const rule = `Bash(${shell} <(${fetcher} *)*)`;
+      assert.ok(parsed.permissions.deny.includes(rule), `${rule} is present and parseable`);
+    }
+  }
+});
