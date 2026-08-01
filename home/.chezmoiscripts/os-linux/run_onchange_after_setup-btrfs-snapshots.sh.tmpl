@@ -1,0 +1,157 @@
+{{ if eq .chezmoi.os "linux" -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Wires btrfs snapshots to package transactions and to boot,
+# and pins snapper's retention, on a Fedora box whose / is btrfs. Fedora enables snapper's
+# timeline and cleanup timers but nothing that snapshots around a `dnf` transaction, which is
+# the one moment you actually want a rollback point.
+#
+# The trap this encodes: `python3-dnf-plugin-snapper` looks like the answer and is not. It is the
+# DNF4 plugin — it installs under /usr/lib/python3.*/site-packages/dnf-plugins/ and is never
+# loaded by dnf5, which is what /usr/bin/dnf is on F41+. It installs cleanly and does nothing.
+# The dnf5 mechanism is libdnf5-plugin-actions, reading *.actions files out of
+# /etc/dnf/libdnf5-plugins/actions.d/. The hook below is upstream's own example from
+# libdnf5-actions(8) (its "emulate the DNF4 snapper plugin" block) plus `-c number` on both
+# `snapper create` calls — without that the pre/post pairs carry no cleanup algorithm and
+# accumulate forever, because NUMBER_CLEANUP only reaps snapshots tagged for it.
+#
+# Retention converges by reading `snapper get-config`, which needs root until ALLOW_USERS is set
+# — which is one of the things this script sets. So the first apply on a fresh machine cannot
+# prove convergence and will probe sudo; every apply after it reads the config unprivileged and
+# stays silent.
+#
+# Deliberately NOT done here:
+#   snapper create-config   creates a .snapshots subvolume. That is machine state, not config,
+#                           and is a larger thing than an apply should do unasked. Where the
+#                           configs are absent this warns and exits 0; create them by hand with
+#                           ~/.claude/artifacts/btrfs-snapshots/setup-btrfs-snapshots.sh.
+#   grub-btrfs              boot-to-snapshot menu. COPR only, so it puts a third-party repo on
+#                           the boot path — a deliberate choice rather than a default.
+#   off-device replication  snapshots share the device, so they are not backups. btrfs
+#                           send/receive belongs in its own script with its own target.
+#
+# bump-to-reinstall: btrfs-snapshots v1
+set -u
+TAG=btrfs-snapshots
+{{ includeTemplate "linux-install.sh" . }}
+
+# Both overridable purely so the tests can drive this against throwaway paths, the same way
+# linux-install.sh exposes REPO_DIR; nothing in normal operation sets either.
+: "${SNAPPER_ACTIONS:=/etc/dnf/libdnf5-plugins/actions.d/snapper.actions}"
+: "${SNAPPER_CONFIG_DIR:=/etc/snapper/configs}"
+
+# The actions plugin is dnf-only, and the whole script is about btrfs, so a machine that is
+# neither is not misconfigured — it simply has nothing here to do.
+[ "$PM" = dnf ] || exit 0
+command -v snapper >/dev/null 2>&1 || { echo "$TAG: snapper is not installed; skipping" >&2; exit 0; }
+findmnt -t btrfs / >/dev/null 2>&1 || { echo "$TAG: / is not btrfs; nothing to snapshot" >&2; exit 0; }
+
+# -f rather than `snapper list-configs`: the config files are 0640 root:root but /etc/snapper/
+# configs is world-traversable, so existence is readable unprivileged while the contents are not.
+for cfg in root home; do
+  if [ ! -f "$SNAPPER_CONFIG_DIR/$cfg" ]; then
+    echo "$TAG: no snapper config '$cfg'; create it before this can configure it" >&2
+    exit 0
+  fi
+done
+
+ALLOW_USER='{{ .chezmoi.username }}'
+COMMON_OPTS="TIMELINE_CREATE=yes TIMELINE_CLEANUP=yes TIMELINE_MIN_AGE=3600
+TIMELINE_LIMIT_HOURLY=8 TIMELINE_LIMIT_DAILY=7 TIMELINE_LIMIT_WEEKLY=4
+TIMELINE_LIMIT_MONTHLY=3 TIMELINE_LIMIT_YEARLY=0
+NUMBER_CLEANUP=yes NUMBER_MIN_AGE=3600
+EMPTY_PRE_POST_CLEANUP=yes EMPTY_PRE_POST_MIN_AGE=3600
+ALLOW_USERS=$ALLOW_USER SYNC_ACL=yes"
+# Only root carries the dnf pre/post pairs, so only root needs the larger NUMBER budget.
+ROOT_OPTS="$COMMON_OPTS NUMBER_LIMIT=20 NUMBER_LIMIT_IMPORTANT=10"
+
+# 0 when every option already holds the wanted value. A get-config we cannot read (no ALLOW_USERS
+# yet, or no permission) is reported as divergent rather than converged — the safe direction,
+# since the cost is one sudo probe and the alternative is never applying at all.
+config_converged() { # $1=config $2=options
+  cur="$(snapper --csvout --no-headers -c "$1" get-config 2>/dev/null)" || return 1
+  [ -n "$cur" ] || return 1
+  # get-config speaks CSV (KEY,VALUE) while the option lists are KEY=VALUE, so translate rather
+  # than compare across the two spellings — a mismatch here reads as permanently divergent and
+  # makes every apply probe sudo and rewrite a config that was already correct.
+  for kv in $2; do
+    printf '%s\n' "$cur" | grep -qxF "${kv%%=*},${kv#*=}" || return 1
+  done
+  return 0
+}
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+proposed="$work/snapper.actions"
+
+cat > "$proposed" <<'ACTIONS'
+# Snapshot the root subvolume around every dnf5 transaction.
+# Managed by chezmoi. Format: libdnf5-actions(8).
+#
+# Build a description from the invoking dnf command line.
+pre_transaction::::/usr/bin/sh -c echo\ "tmp.snapper_descr=$(ps\ -o\ command\ --no-headers\ -p\ '${pid}')"
+
+# Take the "pre" snapshot, remembering its number for the post hook.
+pre_transaction::::/usr/bin/sh -c echo\ "tmp.snapper_pre_number=$(snapper\ create\ -t\ pre\ -c\ number\ -p\ -d\ '${tmp.snapper_descr}')"
+
+# Pair it with a "post" snapshot, then clear the temporaries.
+post_transaction::::/usr/bin/sh -c [\ -n\ "${tmp.snapper_pre_number}"\ ]\ &&\ snapper\ create\ -t\ post\ -c\ number\ --pre-number\ "${tmp.snapper_pre_number}"\ -d\ "${tmp.snapper_descr}"\ ;\ echo\ tmp.snapper_pre_number\ ;\ echo\ tmp.snapper_descr
+ACTIONS
+
+# Everything below the convergence check must be decidable without root, so that a no-op apply
+# never prompts for a password.
+need_pkg=0
+need_actions=0
+need_root=0
+need_home=0
+need_timers=''
+
+rpm -q libdnf5-plugin-actions >/dev/null 2>&1 || need_pkg=1
+cmp -s "$proposed" "$SNAPPER_ACTIONS" || need_actions=1
+config_converged root "$ROOT_OPTS" || need_root=1
+config_converged home "$COMMON_OPTS" || need_home=1
+for unit in snapper-timeline.timer snapper-cleanup.timer snapper-boot.timer; do
+  systemctl is-enabled --quiet "$unit" 2>/dev/null || need_timers="$need_timers $unit"
+done
+
+if [ "$need_pkg" -eq 0 ] && [ "$need_actions" -eq 0 ] && [ "$need_root" -eq 0 ] \
+   && [ "$need_home" -eq 0 ] && [ -z "$need_timers" ]; then
+  exit 0
+fi
+
+have_sudo || { echo "$TAG: needs sudo — re-run 'chezmoi apply' where sudo can prompt" >&2; exit 1; }
+
+# The plugin goes in first: writing the hook for a plugin that is not installed would leave a
+# transaction unsnapshotted with no sign anything was wrong.
+if [ "$need_pkg" -eq 1 ]; then
+  echo "$TAG: installing libdnf5-plugin-actions"
+  sudo dnf install -y libdnf5-plugin-actions \
+    || { echo "$TAG: could not install libdnf5-plugin-actions" >&2; exit 1; }
+fi
+
+if [ "$need_actions" -eq 1 ]; then
+  echo "$TAG: writing $SNAPPER_ACTIONS"
+  sudo mkdir -p "$(dirname "$SNAPPER_ACTIONS")" \
+    || { echo "$TAG: could not create $(dirname "$SNAPPER_ACTIONS")" >&2; exit 1; }
+  sudo install -m 0644 "$proposed" "$SNAPPER_ACTIONS" \
+    || { echo "$TAG: could not write $SNAPPER_ACTIONS" >&2; exit 1; }
+fi
+
+if [ "$need_root" -eq 1 ]; then
+  echo "$TAG: setting retention on snapper config 'root'"
+  # shellcheck disable=SC2086  # deliberate word splitting: each KEY=VALUE is its own argument
+  sudo snapper -c root set-config $ROOT_OPTS \
+    || { echo "$TAG: could not set retention on 'root'" >&2; exit 1; }
+fi
+
+if [ "$need_home" -eq 1 ]; then
+  echo "$TAG: setting retention on snapper config 'home'"
+  # shellcheck disable=SC2086  # deliberate word splitting: each KEY=VALUE is its own argument
+  sudo snapper -c home set-config $COMMON_OPTS \
+    || { echo "$TAG: could not set retention on 'home'" >&2; exit 1; }
+fi
+
+for unit in $need_timers; do
+  echo "$TAG: enabling $unit"
+  sudo systemctl enable --now "$unit" || echo "$TAG: could not enable $unit" >&2
+done
+{{ end -}}

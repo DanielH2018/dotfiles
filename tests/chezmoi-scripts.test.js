@@ -630,3 +630,168 @@ const SUDO_STUB = [
 }
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
+// 2g. os-linux/run_onchange_after_setup-btrfs-snapshots.sh.tmpl ------------------------------
+{
+  const BS_SRC = path.join(SCRIPTS_DIR, 'os-linux', 'run_onchange_after_setup-btrfs-snapshots.sh.tmpl');
+
+  // This script's effect is spread over four resources (a package, a config file, two snapper
+  // configs, three timers), so unlike the sandboxes above its stubs are STATEFUL: the sudo stub
+  // records what it was asked to change under $STATE_DIR, and the rpm/systemctl/snapper stubs
+  // read that state back. That is what makes the convergence test worth anything -- it proves
+  // the script's own writes are what turn the second run into a no-op, rather than asserting
+  // against a fixture we hand-converged. The only real exec is the `install` whose destination
+  // is $SNAPPER_ACTIONS, which the sandbox points at a temp file; every other sudo shape is
+  // enumerated and recorded, and anything unrecognised is refused rather than run.
+  const BS_SUDO_STUB = [
+    '#!/bin/sh',
+    'echo "sudo $*" >> "$STUB_LOG"',
+    'if [ "$1" = "-v" ] || [ "$1" = "-n" ]; then exit "${SUDO_PROBE_EXIT:-0}"; fi',
+    'case "$1" in',
+    '  mkdir) shift; exec mkdir "$@" ;;',
+    '  install)',
+    '    for dest; do :; done',
+    '    if [ "$dest" = "$SNAPPER_ACTIONS" ]; then shift; exec install "$@"; fi',
+    '    echo "stub sudo refused: $*" >&2; exit 99 ;;',
+    '  dnf)',
+    '    [ "$2" = install ] || { echo "stub sudo refused: $*" >&2; exit 99; }',
+    '    : > "$STATE_DIR/pkg"; exit 0 ;;',
+    '  systemctl)',
+    '    [ "$2" = enable ] || { echo "stub sudo refused: $*" >&2; exit 99; }',
+    '    : > "$STATE_DIR/timer-$4"; exit 0 ;;',
+    '  snapper)',
+    // Replays `set-config KEY=VALUE ...` into the CSV the get-config stub will serve back.
+    '    cfg=""; prev=""; seen=0',
+    '    for a; do',
+    '      [ "$prev" = "-c" ] && cfg="$a"',
+    '      [ "$seen" = 1 ] && echo "$a" | tr "=" "," >> "$STATE_DIR/cfg-$cfg"',
+    '      [ "$a" = set-config ] && seen=1',
+    '      prev="$a"',
+    '    done',
+    '    exit 0 ;;',
+    'esac',
+    'echo "stub sudo refused: $*" >&2',
+    'exit 99',
+    '',
+  ].join('\n');
+
+  const BS_SNAPPER_STUB = [
+    '#!/bin/sh',
+    'cfg=""; prev=""',
+    'for a; do [ "$prev" = "-c" ] && cfg="$a"; prev="$a"; done',
+    'case " $* " in',
+    '  *" get-config "*)',
+    '    [ -f "$STATE_DIR/cfg-$cfg" ] || exit 1',
+    '    cat "$STATE_DIR/cfg-$cfg" ;;',
+    'esac',
+    'exit 0',
+    '',
+  ].join('\n');
+
+  // `rpm -q <pkg>` answers from state; every other rpm call is PM detection and just succeeds.
+  const BS_RPM_STUB = '#!/bin/sh\n[ "$1" = -q ] || exit 0\n[ -f "$STATE_DIR/pkg" ]\n';
+  const BS_SYSTEMCTL_STUB =
+    '#!/bin/sh\n[ "$1" = is-enabled ] || exit 0\nfor u; do :; done\n[ -f "$STATE_DIR/timer-$u" ]\n';
+
+  const TIMERS = ['snapper-timeline.timer', 'snapper-cleanup.timer', 'snapper-boot.timer'];
+
+  function bsSandbox({ pm = 'dnf', btrfs = true, configs = ['root', 'home'] } = {}) {
+    const dir = tmpdir('btrfs-');
+    const state = path.join(dir, 'state');
+    const cfgDir = path.join(dir, 'snapper-configs');
+    fs.mkdirSync(state);
+    fs.mkdirSync(cfgDir);
+    for (const c of configs) fs.writeFileSync(path.join(cfgDir, c), '');
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'sudo'), BS_SUDO_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'snapper'), BS_SNAPPER_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'rpm'), BS_RPM_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'systemctl'), BS_SYSTEMCTL_STUB, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'findmnt'), `#!/bin/sh\nexit ${btrfs ? 0 : 1}\n`, { mode: 0o755 });
+    const TRUE_STUB = '#!/bin/sh\nexit 0\n';
+    for (const bin of pm === 'dnf' ? ['dnf'] : ['apt-get', 'dpkg']) {
+      fs.writeFileSync(path.join(dir, bin), TRUE_STUB, { mode: 0o755 });
+    }
+    for (const bin of ['grep', 'awk', 'sed', 'mktemp', 'cmp', 'cp', 'install', 'mkdir', 'uname', 'rm', 'cat', 'dirname', 'tr']) {
+      fs.symlinkSync(realBin(bin), path.join(dir, bin));
+    }
+    const actionsFile = path.join(dir, 'snapper.actions');
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, renderTemplate(BS_SRC));
+    const env = {
+      PATH: dir, HOME: dir, STUB_LOG: logFile, STATE_DIR: state,
+      SNAPPER_ACTIONS: actionsFile, SNAPPER_CONFIG_DIR: cfgDir,
+    };
+    return { scriptFile, env, logFile, actionsFile };
+  }
+
+  test('btrfs-snapshots.sh.tmpl: fresh box -> installs the plugin, writes the hook, sets both configs, enables all three timers', { skip }, () => {
+    const { scriptFile, env, logFile, actionsFile } = bsSandbox();
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0, `expected success, log:\n${readLog(logFile)}`);
+    const log = readLog(logFile);
+    assert.ok(log.includes('sudo dnf install -y libdnf5-plugin-actions'), `plugin not installed:\n${log}`);
+    assert.ok(fs.existsSync(actionsFile), 'the actions hook should have been written');
+    const actions = fs.readFileSync(actionsFile, 'utf8');
+    assert.ok(actions.includes('pre_transaction'), `no pre_transaction hook:\n${actions}`);
+    assert.ok(actions.includes('post_transaction'), `no post_transaction hook:\n${actions}`);
+    // `-c number` on both creates is what lets NUMBER_CLEANUP reap the pairs; upstream's example
+    // omits it, and without it every dnf transaction leaves a pair behind forever.
+    assert.strictEqual(actions.split('-c\\ number').length - 1, 2, `both creates need -c number:\n${actions}`);
+    assert.ok(log.includes('sudo snapper -c root set-config'), `root retention unset:\n${log}`);
+    assert.ok(log.includes('sudo snapper -c home set-config'), `home retention unset:\n${log}`);
+    // root carries the dnf pre/post pairs, so it is the only config given the larger budget.
+    assert.ok(/sudo snapper -c root set-config[^\n]*NUMBER_LIMIT=20/.test(log), `root NUMBER_LIMIT:\n${log}`);
+    assert.ok(!/sudo snapper -c home set-config[^\n]*NUMBER_LIMIT=/.test(log), `home must keep its own:\n${log}`);
+    for (const u of TIMERS) {
+      assert.ok(log.includes(`sudo systemctl enable --now ${u}`), `${u} not enabled:\n${log}`);
+    }
+  });
+
+  test('btrfs-snapshots.sh.tmpl: second run over a converged box writes nothing and never probes sudo', { skip }, () => {
+    const { scriptFile, env, logFile, actionsFile } = bsSandbox();
+    assert.strictEqual(runSh(scriptFile, env).status, 0, `first run failed:\n${readLog(logFile)}`);
+    const afterFirst = fs.readFileSync(actionsFile, 'utf8');
+    fs.writeFileSync(logFile, '');
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.strictEqual(fs.readFileSync(actionsFile, 'utf8'), afterFirst, 'a converged hook must not be rewritten');
+    // `sudo -v` prompts for a password, so a no-op apply that probes it is a regression even
+    // though nothing downstream changed.
+    assert.strictEqual(readLog(logFile), '', 'converged run must not touch sudo at all');
+  });
+
+  test('btrfs-snapshots.sh.tmpl: / is not btrfs -> exits without writing or probing sudo', { skip }, () => {
+    const { scriptFile, env, logFile, actionsFile } = bsSandbox({ btrfs: false });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(!fs.existsSync(actionsFile), 'nothing should be written on a non-btrfs root');
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('btrfs-snapshots.sh.tmpl: a missing snapper config -> warns and exits rather than creating one', { skip }, () => {
+    const { scriptFile, env, logFile, actionsFile } = bsSandbox({ configs: ['root'] });
+    const { status } = runSh(scriptFile, env);
+    // create-config makes a .snapshots subvolume, which an apply must not do unasked.
+    assert.strictEqual(status, 0);
+    assert.ok(!fs.existsSync(actionsFile), 'must not configure a box whose configs are absent');
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('btrfs-snapshots.sh.tmpl: apt machine -> exits without touching anything', { skip }, () => {
+    const { scriptFile, env, logFile, actionsFile } = bsSandbox({ pm: 'apt' });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(!fs.existsSync(actionsFile));
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('btrfs-snapshots.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+    const { scriptFile, env, actionsFile } = bsSandbox();
+    env.SUDO_PROBE_EXIT = '1';
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1);
+    assert.ok(!fs.existsSync(actionsFile), 'nothing should be written without sudo');
+  });
+}
