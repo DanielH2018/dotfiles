@@ -130,6 +130,8 @@ test('real tmux accepts cts new-session and launches the command (skip-unless-tm
   // harmless, the detached session is already created.
   const env = { ...process.env, TMUX_TMPDIR: tmpdir, TMUX: `${sock},1,0`, CLAUDE_SANDBOX_BIN: sbin };
   const verifyEnv = { ...process.env, TMUX_TMPDIR: tmpdir };   // talk to the server, not "inside" it
+  delete verifyEnv.TMUX;   // tmux takes the socket from $TMUX ahead of TMUX_TMPDIR, so an
+                           // inherited one would aim these at whichever server we run inside
   const T = (...a) => execFileSync('tmux', a, { env: verifyEnv, encoding: 'utf8' });
   try {
     // Start the isolated server first so cts's has-session/new-session reach a real
