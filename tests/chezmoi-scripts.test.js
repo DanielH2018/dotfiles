@@ -495,4 +495,136 @@ const SUDO_STUB = [
   });
 }
 
+// 2f. os-linux/run_onchange_after_dnf-speedups.sh.tmpl ---------------------------------------
+{
+  const DS_SRC = path.join(SCRIPTS_DIR, 'os-linux', 'run_onchange_after_dnf-speedups.sh.tmpl');
+
+  // This script's whole job is the resulting file, so unlike the sandboxes above its sudo stub
+  // DOES exec what it wraps -- asserting on argv alone would prove nothing about the config that
+  // comes out. That is safe here only because the stub refuses any argv that does not stay
+  // inside the test's own temp dir, and the script's single sudo write targets $DNF_CONF, which
+  // the sandbox points at a temp file. Keep the refusal if this test grows.
+  const DS_SUDO_STUB = [
+    '#!/bin/sh',
+    'echo "sudo $*" >> "$STUB_LOG"',
+    'if [ "$1" = "-v" ] || [ "$1" = "-n" ]; then',
+    '  exit "${SUDO_PROBE_EXIT:-0}"',
+    'fi',
+    'case " $* " in',
+    '  *" $SANDBOX"*) exec "$@" ;;',
+    'esac',
+    'echo "stub sudo refused an argv outside $SANDBOX: $*" >&2',
+    'exit 99',
+    '',
+  ].join('\n');
+
+  const BEGIN = '# >>> chezmoi dnf-speedups >>>';
+  const END = '# <<< chezmoi dnf-speedups <<<';
+  const MANAGED = ['max_parallel_downloads=10', 'defaultyes=True', 'keepcache=True'];
+
+  // pm:'dnf' places dnf+rpm stubs so linux-install.sh resolves PM=dnf; pm:'apt' places
+  // apt-get+dpkg instead, which is how every Debian machine running this suite reaches the
+  // early exit.
+  function dsSandbox({ conf = '# see `man dnf.conf`\n\n[main]\n', pm = 'dnf' } = {}) {
+    const dir = tmpdir('dnf-');
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'sudo'), DS_SUDO_STUB, { mode: 0o755 });
+    const TRUE_STUB = '#!/bin/sh\nexit 0\n';
+    for (const bin of pm === 'dnf' ? ['dnf', 'rpm'] : ['apt-get', 'dpkg']) {
+      fs.writeFileSync(path.join(dir, bin), TRUE_STUB, { mode: 0o755 });
+    }
+    for (const bin of ['grep', 'awk', 'mktemp', 'cmp', 'cp', 'install', 'mkdir', 'uname', 'rm']) {
+      fs.symlinkSync(realBin(bin), path.join(dir, bin));
+    }
+    const confFile = path.join(dir, 'dnf.conf');
+    fs.writeFileSync(confFile, conf);
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, renderTemplate(DS_SRC));
+    const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, SANDBOX: dir, DNF_CONF: confFile };
+    return { scriptFile, env, logFile, confFile };
+  }
+
+  const readConf = (f) => fs.readFileSync(f, 'utf8');
+
+  test('dnf-speedups.sh.tmpl: bare [main] -> writes the managed block with all three options', { skip }, () => {
+    const { scriptFile, env, logFile, confFile } = dsSandbox();
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0, `expected success, log:\n${readLog(logFile)}`);
+    const out = readConf(confFile);
+    assert.ok(out.includes(BEGIN) && out.includes(END), `markers missing:\n${out}`);
+    for (const kv of MANAGED) assert.ok(out.includes(kv), `${kv} missing:\n${out}`);
+    // Options must land under [main], not before it, or dnf reads a file with no section header.
+    assert.ok(out.indexOf('[main]') < out.indexOf(BEGIN), `block precedes [main]:\n${out}`);
+    assert.ok(readLog(logFile).includes(`sudo install -m 0644`), 'the write should go through sudo');
+  });
+
+  test('dnf-speedups.sh.tmpl: second run over a converged file writes nothing and never probes sudo', { skip }, () => {
+    const { scriptFile, env, logFile, confFile } = dsSandbox();
+    assert.strictEqual(runSh(scriptFile, env).status, 0);
+    const afterFirst = readConf(confFile);
+    fs.writeFileSync(logFile, '');
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.strictEqual(readConf(confFile), afterFirst, 'a converged file must not be rewritten');
+    // `sudo -v` prompts for a password, so a no-op apply that probes it is a regression even
+    // though the file is unchanged.
+    assert.strictEqual(readLog(logFile), '', 'converged run must not touch sudo at all');
+  });
+
+  test('dnf-speedups.sh.tmpl: an edited block is rewritten rather than duplicated', { skip }, () => {
+    const conf = `[main]\n${BEGIN}\nmax_parallel_downloads=3\n${END}\n`;
+    const { scriptFile, env, confFile } = dsSandbox({ conf });
+    assert.strictEqual(runSh(scriptFile, env).status, 0);
+    const out = readConf(confFile);
+    assert.strictEqual(out.split(BEGIN).length - 1, 1, `exactly one block expected:\n${out}`);
+    assert.ok(out.includes('max_parallel_downloads=10'), `stale value not replaced:\n${out}`);
+    assert.ok(!out.includes('max_parallel_downloads=3'), `stale value survived:\n${out}`);
+  });
+
+  test('dnf-speedups.sh.tmpl: a hand-set option is left alone, not duplicated', { skip }, () => {
+    const { scriptFile, env, confFile } = dsSandbox({ conf: '[main]\nkeepcache=False\n' });
+    assert.strictEqual(runSh(scriptFile, env).status, 0);
+    const out = readConf(confFile);
+    assert.ok(out.includes('keepcache=False'), `the user's value must survive:\n${out}`);
+    assert.ok(!out.includes('keepcache=True'), `must not write a competing copy:\n${out}`);
+    assert.ok(out.includes('defaultyes=True'), `the other options should still apply:\n${out}`);
+  });
+
+  test('dnf-speedups.sh.tmpl: a repo stanza in dnf.conf -> refuses to touch the file', { skip }, () => {
+    const conf = '[main]\n\n[myrepo]\nbaseurl=http://example.invalid/\n';
+    const { scriptFile, env, logFile, confFile } = dsSandbox({ conf });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.strictEqual(readConf(confFile), conf, 'a multi-stanza file must be left untouched');
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('dnf-speedups.sh.tmpl: an unbalanced managed block -> exit 1 without truncating the file', { skip }, () => {
+    const conf = `[main]\n${BEGIN}\ndefaultyes=True\ninstall_weak_deps=False\n`;
+    const { scriptFile, env, confFile } = dsSandbox({ conf });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1, 'a missing end marker must fail loudly, not silently strip');
+    assert.strictEqual(readConf(confFile), conf);
+  });
+
+  test('dnf-speedups.sh.tmpl: apt machine -> exits without reading or writing dnf.conf', { skip }, () => {
+    const { scriptFile, env, logFile, confFile } = dsSandbox({ pm: 'apt' });
+    const before = readConf(confFile);
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.strictEqual(readConf(confFile), before);
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('dnf-speedups.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+    const { scriptFile, env, confFile } = dsSandbox();
+    env.SUDO_PROBE_EXIT = '1';
+    const before = readConf(confFile);
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 1);
+    assert.strictEqual(readConf(confFile), before);
+  });
+}
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -1,0 +1,109 @@
+{{ if eq .chezmoi.os "linux" -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Tunes dnf's download concurrency and prompt default in
+# /etc/dnf/dnf.conf. Fedora ships that file with a bare `[main]` and relies on compiled-in
+# defaults, three of which are worth changing on a workstation:
+#
+#   max_parallel_downloads=10  default 3, max 20. Fedora's metalink hands out a set of mirrors
+#                              and dnf fetches from them serially-ish at 3 wide; a large
+#                              `dnf upgrade` is bounded by round-trips, not by link speed.
+#   defaultyes=True            makes the transaction prompt default to Yes, so a bare Enter
+#                              accepts. Note this cuts both ways: Enter now also accepts a
+#                              `dnf remove`. Not assumeyes — the prompt still appears.
+#   keepcache=True             default False, so dnf deletes the rpms after a successful
+#                              transaction. Keeping them makes a retry, a reinstall, or a
+#                              downgrade free, at the cost of disk under /var/cache/libdnf5.
+#
+# Deliberately NOT set: `fastestmirror` (latency-probes every mirror on top of the geo-sorted
+# order the metalink already returns), `install_weak_deps=False` (changes what gets installed
+# rather than how fast, and silently drops recommended packages), and `minrate`/`timeout`
+# tightening (turns a slow-but-working mirror into a hard failure).
+#
+# Why /etc/dnf/dnf.conf and not a /etc/dnf/libdnf5.conf.d/ drop-in: per `man 5 dnf5.conf`,
+# dnf.conf is loaded LAST and "the last option wins" — the inverse of the systemd convention.
+# A drop-in is therefore the one placement that can be silently defeated, and dnf5's own
+# `dnf config-manager setopt` writes main options straight into dnf.conf. dnf.conf is also the
+# only file dnf4 reads.
+#
+# The options live in a marker block that is rewritten wholesale on every run, so this stays
+# idempotent and the diff stays readable. A key already set by hand elsewhere in the file is
+# left alone rather than duplicated. dnf.conf is %config(noreplace), so an rpm upgrade of
+# libdnf5 leaves these edits in place and drops a .rpmnew alongside.
+#
+# bump-to-reinstall: dnf-speedups v1
+set -u
+TAG=dnf-speedups
+{{ includeTemplate "linux-install.sh" . }}
+
+# Overridable purely so the tests can exercise this against a throwaway file, the same way
+# linux-install.sh exposes REPO_DIR; nothing in normal operation sets it.
+: "${DNF_CONF:=/etc/dnf/dnf.conf}"
+
+BEGIN_MARK='# >>> chezmoi dnf-speedups >>>'
+END_MARK='# <<< chezmoi dnf-speedups <<<'
+WANT='max_parallel_downloads=10 defaultyes=True keepcache=True'
+
+[ "$PM" = dnf ] || exit 0
+[ -f "$DNF_CONF" ] || { echo "$TAG: $DNF_CONF does not exist; nothing to tune" >&2; exit 0; }
+
+# Only ever touch a file whose sole stanza is [main]. dnf.conf may legally carry repository
+# sections too, and appending main options after the wrong header would define them on a repo.
+if [ "$(grep -c '^[[:space:]]*\[' "$DNF_CONF")" -ne 1 ] \
+   || ! grep -q '^[[:space:]]*\[main\][[:space:]]*$' "$DNF_CONF"; then
+  echo "$TAG: $DNF_CONF carries stanzas other than a lone [main]; set these options by hand" >&2
+  exit 0
+fi
+
+# A block missing its closing marker would make the strip below swallow the rest of the file,
+# so refuse rather than truncate someone's config on the way to a two-line edit.
+if [ "$(grep -c -F -x "$BEGIN_MARK" "$DNF_CONF")" -ne "$(grep -c -F -x "$END_MARK" "$DNF_CONF")" ]; then
+  echo "$TAG: the managed block in $DNF_CONF is unbalanced; repair its markers by hand" >&2
+  exit 1
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+stripped="$work/stripped"
+proposed="$work/proposed"
+
+# The file as it would be with any previous managed block removed. Everything below reasons
+# about this, so a re-run compares against the user's own content, not against its own output.
+awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+  $0 == b { skip = 1; next }
+  $0 == e { skip = 0; next }
+  !skip   { print }
+' "$DNF_CONF" > "$stripped"
+
+# A key the user (or `dnf config-manager setopt`) set outside the block wins on load order
+# ambiguity we have not verified, so drop it from ours instead of writing a second copy.
+opts=""
+for kv in $WANT; do
+  key=${kv%%=*}
+  if grep -qE "^[[:space:]]*$key[[:space:]]*=" "$stripped"; then
+    echo "$TAG: $key is already set in $DNF_CONF outside the managed block; leaving it alone" >&2
+    continue
+  fi
+  opts="$opts$kv
+"
+done
+
+if [ -n "$opts" ]; then
+  awk -v b="$BEGIN_MARK" -v e="$END_MARK" -v opts="$opts" '
+    { print }
+    !done && /^[[:space:]]*\[main\][[:space:]]*$/ { printf "%s\n%s%s\n", b, opts, e; done = 1 }
+  ' "$stripped" > "$proposed"
+else
+  cp "$stripped" "$proposed"
+fi
+
+# Convergence check before the sudo probe: a no-op apply must not prompt for a password.
+if cmp -s "$proposed" "$DNF_CONF"; then
+  exit 0
+fi
+
+have_sudo || { echo "$TAG: needs sudo to write $DNF_CONF — re-run 'chezmoi apply' where sudo can prompt" >&2; exit 1; }
+
+echo "$TAG: applying dnf tuning to $DNF_CONF"
+sudo install -m 0644 "$proposed" "$DNF_CONF" \
+  || { echo "$TAG: could not write $DNF_CONF" >&2; exit 1; }
+{{ end -}}
