@@ -1,0 +1,71 @@
+#!/bin/sh
+# SUDO_ASKPASS helper for hosts with no graphical session — the headless counterpart to
+# the ksshaskpass branch in ~/.zshenv, and wired up by the same `if`.
+#
+# The problem is identical: a shell with no controlling terminal (Claude Code's `!`
+# commands, `ssh host cmd`) has nowhere to prompt, so sudo refuses outright rather than
+# asking. On daniel-box there is no desktop to draw a dialog on, but the tmux session the
+# work already happens in can draw one: display-popup opens a window on the attached
+# client, reads the password with echo off, and hands it back over a FIFO. Nothing is
+# weakened — the password is still required, /etc/sudoers stays untouched, and it is typed
+# into a popup instead of a terminal.
+#
+# The password never touches disk: the FIFO lives under $XDG_RUNTIME_DIR (tmpfs, 0700),
+# and it is passed by pipe rather than argv or environment, so no other process can read
+# it out of `ps`.
+set -eu
+
+# Absolute path to this script — the popup re-executes it via `sh -c` with a different
+# cwd, and $0 is whatever sudo happened to invoke.
+case $0 in
+    /*) SELF=$0 ;;
+    *) SELF=$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0") ;;
+esac
+
+# Second entry point: this half runs INSIDE the popup, where a tty exists.
+if [ "${1:-}" = "--popup" ]; then
+    fifo=$2
+    # Escape and Ctrl-C leave the reader waiting otherwise, so write on every exit path.
+    trap 'printf "\n" >"$fifo" 2>/dev/null || true' EXIT INT TERM
+    printf '%s' "${3:-Password: }"
+    stty -echo 2>/dev/null || true
+    IFS= read -r password || password=
+    stty echo 2>/dev/null || true
+    printf '\n'
+    trap - EXIT INT TERM
+    printf '%s\n' "$password" >"$fifo"
+    exit 0
+fi
+
+if [ -z "${TMUX:-}" ]; then
+    echo "tmux-askpass: not running inside tmux — nowhere to draw the prompt" >&2
+    exit 1
+fi
+
+# A live server is not the same as someone looking at it. With no attached client the
+# popup goes nowhere, and an empty answer reads to sudo as a wrong password — so fail
+# loudly instead, for the same reason ~/.zshenv leaves SUDO_ASKPASS unset over plain ssh.
+if [ -z "$(tmux list-clients -F '#{client_name}' 2>/dev/null)" ]; then
+    echo "tmux-askpass: no attached tmux client to prompt on" >&2
+    exit 1
+fi
+
+dir=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/askpass.XXXXXX")
+trap 'rm -rf "$dir"' EXIT INT TERM
+mkfifo -m 600 "$dir/fifo"
+# Opened read-write so neither end waits on the other to show up: whether display-popup
+# returns immediately or blocks until the popup exits, this cannot deadlock. Holding the
+# write end ourselves is why the read below needs `head -n 1` rather than `cat`.
+exec 3<>"$dir/fifo"
+
+# sudo's prompt is attacker-influenced only via the user's own sudoers, but it is
+# interpolated into a shell command string, so quote it properly rather than hoping.
+prompt=$(printf '%s' "${1:-Password: }" | sed "s/'/'\\\\''/g")
+if ! tmux display-popup -E -w 60 -h 5 "$SELF --popup '$dir/fifo' '$prompt'" 2>"$dir/err"; then
+    echo "tmux-askpass: display-popup failed: $(cat "$dir/err" 2>/dev/null)" >&2
+    exit 1
+fi
+
+# Bounded so a popup nobody answers eventually releases sudo instead of wedging the
+# caller — TMUX_ASKPASS_TIMEOUT is a test seam, not something to set by hand.
+timeout "${TMUX_ASKPASS_TIMEOUT:-120}" head -n 1 <&3
