@@ -13,6 +13,8 @@
 # Takes effect immediately (daemon-reload + enable --now). Bump the marker to refresh.
 # fstrim-bump: v1
 set -u
+TAG=enable-fstrim
+{{ includeTemplate "require-sudo" . }}
 
 override=/etc/systemd/system/fstrim.timer.d/wsl-override.conf
 
@@ -21,10 +23,7 @@ if [ -f "$override" ] && systemctl is-active --quiet fstrim.timer 2>/dev/null; t
   exit 0
 fi
 
-if ! sudo -v; then
-  echo "enable-fstrim: sudo unavailable; deferring fstrim.timer arm (retries next apply)" >&2
-  exit 1
-fi
+require_sudo "fstrim.timer arm"
 
 sudo mkdir -p /etc/systemd/system/fstrim.timer.d
 sudo tee "$override" >/dev/null <<'EOF'

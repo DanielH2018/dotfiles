@@ -1,0 +1,21 @@
+{{/* Emits require_sudo — the sudo probe and defer contract that every root-touching WSL
+script repeated verbatim, differing only in the noun. Callers set TAG, include this, then
+call `require_sudo "<what is being deferred>"`.
+
+Its own template rather than a helper inside linux-install.sh: a script that needs the probe
+and nothing else would otherwise pull in a 383-line module, along with its mkdir and package-
+manager detection side effects, to save four lines. is-wsl and is-desktop-linux exist for the
+same reason — borrow one behavior without importing a module. Scripts that already include
+linux-install.sh can include both; have_sudo is itself just `sudo -v` and does not conflict.
+
+Named without an extension like the other micro-templates here, not least because the
+lint-after-edit hook shellchecks any *.sh and this file is a Go template, not shell.
+
+It exits rather than returns, unlike everything in linux-install.sh: every caller is a
+run_once_ script whose contract is to fail loud and retry on the next apply rather than
+half-apply without root. */ -}}
+require_sudo() {  # $1 = what is being deferred, for the message
+  sudo -v && return 0
+  echo "$TAG: sudo unavailable; deferring $1 (retries next apply)" >&2
+  exit 1
+}

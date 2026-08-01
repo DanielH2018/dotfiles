@@ -25,7 +25,7 @@ DOCKER_LIST="/etc/apt/sources.list.d/docker.list"
 #    Both are valid apt keyrings and each .list names the one its own run wrote, so the two
 #    generations of host both keep working — but they do not converge on the same filename.
 if ! command -v docker >/dev/null 2>&1 || [ ! -f "$DOCKER_LIST" ]; then
-  if sudo -v; then
+  if have_sudo; then
     # shellcheck disable=SC1091  # system file, present on any apt host
     . /etc/os-release
     apt_repo_add docker https://download.docker.com/linux/ubuntu/gpg \

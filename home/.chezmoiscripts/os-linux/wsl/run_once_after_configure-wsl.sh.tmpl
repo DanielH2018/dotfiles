@@ -15,11 +15,9 @@
 set -u
 TAG=configure-wsl
 {{ includeTemplate "linux-install.sh" . }}
+{{ includeTemplate "require-sudo" . }}
 
-if ! have_sudo; then
-  echo "$TAG: sudo unavailable; deferring wl-clipboard + wsl.conf interop (retries next apply)" >&2
-  exit 1
-fi
+require_sudo "wl-clipboard + wsl.conf interop"
 
 # 1. Native Wayland clipboard (idempotent; WSLg bridges wl-copy/wl-paste to Windows).
 if ! command -v wl-copy >/dev/null 2>&1; then

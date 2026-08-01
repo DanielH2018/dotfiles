@@ -10,16 +10,15 @@
 # chezmoi manages $HOME only, so masking needs sudo. run_once_after_: a sudo-less run
 # fails loud (exit 1 -> retries next apply) without blocking deployment.
 set -u
+TAG=mask-systemd-binfmt
+{{ includeTemplate "require-sudo" . }}
 
 # Already masked -> converged (no sudo needed).
 if [ "$(systemctl is-enabled systemd-binfmt.service 2>/dev/null)" = "masked" ]; then
   exit 0
 fi
 
-if ! sudo -v; then
-  echo "mask-systemd-binfmt: sudo unavailable; deferring mask (retries next apply)" >&2
-  exit 1
-fi
+require_sudo "mask"
 
 sudo systemctl mask --now systemd-binfmt.service \
   && echo "mask-systemd-binfmt: systemd-binfmt.service masked (silences boot-time binfmt flush failure)"

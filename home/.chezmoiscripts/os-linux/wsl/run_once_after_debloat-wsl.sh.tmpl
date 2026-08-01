@@ -22,6 +22,8 @@
 # next `wsl --shutdown`. Bump the marker to re-run after edits.
 # debloat-bump: v2
 set -u
+TAG=debloat-wsl
+{{ includeTemplate "require-sudo" . }}
 
 sysctl_file=/etc/sysctl.d/99-wsl-tuning.conf
 journald_file=/etc/systemd/journald.conf.d/99-wsl-cap.conf
@@ -43,10 +45,7 @@ if [ "$(systemctl is-enabled snapd.service 2>/dev/null)" = masked ] \
   exit 0
 fi
 
-if ! sudo -v; then
-  echo "debloat-wsl: sudo unavailable; deferring debloat (retries next apply)" >&2
-  exit 1
-fi
+require_sudo "debloat"
 
 # 1a. Mask unused daemons. --now stops them immediately; mask blocks any re-enable.
 #     Guard on `systemctl cat` so we never mask a phantom unit, and on is-enabled so
