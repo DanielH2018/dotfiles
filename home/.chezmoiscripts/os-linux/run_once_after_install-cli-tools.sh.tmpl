@@ -115,6 +115,29 @@ if ! wez_ready; then
   fi
 fi
 
+{{ if includeTemplate "is-desktop-linux" . -}}
+# 2d. Docker CLI shim for Podman. Fedora ships podman but no `docker`, so anything that shells
+#     out to `docker` (most container tutorials, plenty of build scripts) fails on a stock
+#     workstation. podman-docker supplies /usr/bin/docker -> podman plus the
+#     /etc/containers/nodocker marker that suppresses the "Emulate Docker CLI using podman"
+#     banner on every single call. Podman itself arrives as a package dependency where it is
+#     absent.
+#     Desktop-gated, and the gate is load-bearing rather than stylistic: wsl/install-docker-engine
+#     installs real docker-ce, which owns the same /usr/bin/docker path — Debian's podman-docker
+#     declares Conflicts: docker-ce, and dnf would refuse the file conflict outright. Servers are
+#     excluded on the same reasoning: they manage their own container runtime, not from here.
+#     The `command -v docker` test is the second line of that defence. It covers the case the
+#     template gate cannot see — a workstation where Docker was installed by hand — and doubles as
+#     the skip-if-present check on re-runs, since the shim's whole purpose is to put `docker` on
+#     PATH.
+if ! command -v docker >/dev/null 2>&1 && [ -n "$PM" ]; then
+  if sudo -v; then
+    pkg_install podman-docker && echo "install-cli-tools: podman-docker installed (docker -> podman shim)"
+  else
+    echo "install-cli-tools: sudo unavailable; deferring the podman-docker shim" >&2
+  fi
+fi
+{{ end }}
 # 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). luac is what
 #    tests/wezterm-config.test.js shells out to (luac -p); Debian's lua5.4 package ships it as
 #    luac5.4, so without this alias that test silently skips there. Fedora installs all four

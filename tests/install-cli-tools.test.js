@@ -192,4 +192,57 @@ test('unsupported distro warns once and converges', { skip }, () => {
   assert.doesNotMatch(out, /packages still missing/, 'there is no package list to be missing');
 });
 
+// 8. The podman-docker shim owns /usr/bin/docker, and so does the docker-ce that
+//    wsl/install-docker-engine puts on a WSL box. Two packages, one path: apt's podman-docker
+//    declares Conflicts: docker-ce and dnf refuses the file conflict outright. The desktop gate is
+//    what keeps them apart, so assert both halves of that — the gate here, and the WSL installer
+//    it is protecting — rather than trusting a comment to stay true.
+test('the podman-docker shim is gated away from WSL', { skip }, () => {
+  assert.match(body, /includeTemplate "is-desktop-linux"[\s\S]*podman-docker/,
+    'the shim must sit inside the is-desktop-linux gate');
+  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  assert.match(gate, /is-wsl/, 'is-desktop-linux must still exclude WSL');
+  const wslDocker = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'wsl',
+    'run_once_after_install-docker-engine.sh.tmpl');
+  assert.ok(fs.existsSync(wslDocker), 'WSL still installs real docker-ce; the gate is load-bearing');
+});
+
+// 9. A Fedora workstation with no `docker` on PATH gets the shim.
+test('dnf host without docker installs the podman-docker shim', { skip }, () => {
+  if (!rendersHere()) return;
+  const { out, home } = runWithStubs({
+    dnf: `echo "dnf $*" >> "$HOME/dnf.log"; exit 0`,
+    rpm: 'exit 0',
+    sudo: SUDO_OK,
+    dpkg: DPKG_TRIPWIRE,
+    curl: 'exit 1',
+    uname: NO_ARCH,
+    unzip: 'exit 0',
+  });
+  const logPath = path.join(home, 'dnf.log');
+  const dnfLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+  assert.match(dnfLog, /install -y podman-docker/,
+    `the shim was never installed; script output was:\n${out}`);
+});
+
+// 10. …and a host that already has `docker` is left alone. Installing over a hand-installed
+//     docker-ce is the failure this guard exists for, so it must hold even on a desktop.
+test('an existing docker install is not fought over', { skip }, () => {
+  if (!rendersHere()) return;
+  const { out, home } = runWithStubs({
+    dnf: `echo "dnf $*" >> "$HOME/dnf.log"; exit 0`,
+    rpm: 'exit 0',
+    sudo: SUDO_OK,
+    dpkg: DPKG_TRIPWIRE,
+    curl: 'exit 1',
+    uname: NO_ARCH,
+    unzip: 'exit 0',
+    docker: 'exit 0',
+  });
+  const logPath = path.join(home, 'dnf.log');
+  const dnfLog = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+  assert.doesNotMatch(dnfLog, /podman-docker/,
+    `podman-docker must not be installed when docker already exists; output was:\n${out}`);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
