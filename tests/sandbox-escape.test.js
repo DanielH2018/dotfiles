@@ -19,13 +19,24 @@ const path = require('node:path');
 
 const { findEscapes, blankLiterals } = require('./lib/sandbox-escape');
 
-const TESTS = __dirname;
-const LIB = path.join(TESTS, 'lib');
+const REPO = path.join(__dirname, '..');
 
-const sources = () => [
-  ...fs.readdirSync(TESTS).filter((f) => /\.test\.m?js$/.test(f)).map((f) => path.join(TESTS, f)),
-  ...fs.readdirSync(LIB).filter((f) => f.endsWith('.js')).map((f) => path.join(LIB, f)),
+// The suite is not only tests/. .githooks/pre-push step 5 runs `node --test` from the repo
+// root, and the evals and config-soak libraries are exercised by tests here while living
+// elsewhere. Scanning tests/ alone would report "clean" for files nobody walked, which is
+// the same silent hole the lex-failure path below refuses to leave.
+const SCANNED = [
+  ['tests', /\.test\.m?js$/],
+  ['tests/lib', /\.js$/],
+  ['evals', /\.mjs$/],
+  ['evals/lib', /\.mjs$/],
+  ['bin', /\.js$/],
 ];
+
+const sources = () => SCANNED.flatMap(([dir, pattern]) => {
+  const abs = path.join(REPO, dir);
+  return fs.readdirSync(abs).filter((f) => pattern.test(f)).map((f) => path.join(abs, f));
+});
 
 test('no test writes outside its own scratch directory', () => {
   const files = sources();
@@ -33,7 +44,7 @@ test('no test writes outside its own scratch directory', () => {
 
   const offenders = [];
   for (const file of files) {
-    const rel = path.relative(path.join(TESTS, '..'), file);
+    const rel = path.relative(REPO, file);
     let escapes;
     try {
       escapes = findEscapes(fs.readFileSync(file, 'utf8'));

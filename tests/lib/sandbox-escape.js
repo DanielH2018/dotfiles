@@ -31,6 +31,11 @@
 // Known gap, deliberately not closed: this reads node-side `fs` calls. A subprocess that
 // writes into the checkout is invisible here. No instance of that exists, and building
 // for it now would be speculative.
+//
+// Known false positive, currently hypothetical: taint spreads by name, so a scratch path
+// derived from a root — `path.join(os.tmpdir(), path.basename(__dirname))` — reads as an
+// escape even though it lands in /tmp. Nothing in the scanned set does this. If one turns
+// up, bind the temp path without mentioning the root rather than loosening the rule.
 
 // The fs mutators the suite uses, plus their obvious neighbours, and which argument names
 // the path being written. Read-side arguments are excluded on purpose: `fs.cpSync(SOURCE,
