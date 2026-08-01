@@ -2,8 +2,15 @@ name: claude-otel
 
 # Local, self-hosted observability stack for Claude Code telemetry.
 # Everything binds to 127.0.0.1 only — nothing is exposed on the network.
-# Claude Code (running on the WSL host) exports OTLP -> otel-collector:4317,
+# Claude Code (running on the host) exports OTLP -> otel-collector:4317,
 # which fans metrics out to Prometheus and event logs out to Loki; Grafana reads both.
+
+# Every bind-mounted config carries `:ro,z`. Under rootless podman on an SELinux-enforcing
+# host (fedora) these sources sit in $HOME labelled user_home_t, which container_t cannot
+# read: the container starts, fails to open its own config, and exits. `z` relabels them
+# container_file_t — shared rather than private (`Z`), since chezmoi rewrites these files
+# with the home label on every apply and several services mount the same grafana tree.
+# Docker parses and ignores the option where SELinux is off, so daniel-wsl is unaffected.
 
 # The daemon default (unrotated json-file) grows without bound on always-on services.
 x-logging: &logging
@@ -17,7 +24,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.157.0
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro,z
     ports:
       - "127.0.0.1:4317:4317"   # OTLP gRPC  <- Claude Code exports here
       - "127.0.0.1:4318:4318"   # OTLP HTTP  (alternative)
@@ -32,7 +39,7 @@ services:
       - --storage.tsdb.retention.time=90d
       - --web.enable-lifecycle
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -43,7 +50,7 @@ services:
     image: grafana/loki:3.3.0
     command: ["-config.file=/etc/loki/config.yaml"]
     volumes:
-      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro,z
       - loki-data:/loki
     ports:
       - "127.0.0.1:3100:3100"
@@ -65,7 +72,7 @@ services:
     image: grafana/tempo:2.8.1
     command: ["-config.file=/etc/tempo/config.yaml"]
     volumes:
-      - ./tempo-config.yaml:/etc/tempo/config.yaml:ro
+      - ./tempo-config.yaml:/etc/tempo/config.yaml:ro,z
       - tempo-data:/var/tempo
     ports:
       - "127.0.0.1:3200:3200"   # Tempo query API (Grafana reads here)
@@ -87,8 +94,8 @@ services:
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
       - GF_NEWS_NEWS_FEED_ENABLED=false
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro,z
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro,z
       - grafana-data:/var/lib/grafana
     ports:
       - "127.0.0.1:3000:3000"

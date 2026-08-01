@@ -62,8 +62,12 @@
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
-    "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop") }},
-    {{/* OTEL export targets the claude-otel stack on daniel-wsl (:4317); daniel-desktop reaches it via WSL2 localhost forwarding */}}
+    "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop" "fedora") }},
+    {{/* OTEL export always targets a claude-otel stack on :4317, but not the same one per
+         host: daniel-wsl and fedora each run their own local stack, and daniel-desktop
+         reaches daniel-wsl's through WSL2 localhost forwarding. Telemetry never leaves the
+         box it was produced on. A host absent from this list gets no telemetry and no
+         error — add it here, `chezmoi apply`, then bring its stack up. */}}
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",

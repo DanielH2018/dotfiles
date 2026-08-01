@@ -10,7 +10,7 @@ transcripts themselves.
 ```
                                                  ┌─ /metrics:8889 ◄─scrape─ Prometheus ─┐
 Claude Code ──OTLP/gRPC:4317──► otel-collector ──┼─ OTLP ─► Loki ───────────────────────┤► Grafana :3000
- (WSL host)                                      └─ OTLP ─► Tempo ──────────────────────┘
+   (host)                                        └─ OTLP ─► Tempo ──────────────────────┘
 ```
 
 ## What's collected
@@ -38,6 +38,14 @@ entire conversation history on each call.
 
 ## Start / stop
 
+On **fedora** the container engine is rootless podman, not Docker, and `podman-docker`
+provides `/usr/bin/docker` as a shim. Compose is not bundled with either: `podman compose`
+delegates to an external provider it expects to find at
+`~/.docker/cli-plugins/docker-compose`. Install the upstream compose v2 binary there
+(`chmod +x`, no sudo, no daemon) and both `podman compose` and the `docker` shim work.
+podman-compose is the wrong choice here — it mishandles the
+`depends_on: service_completed_successfully` that `tempo-init` relies on.
+
 ```bash
 cd ~/claude-otel
 docker compose up -d          # start
@@ -53,11 +61,13 @@ Then open **http://localhost:3000** → dashboard **“Claude Code — Usage & O
 ## Activating telemetry in Claude Code
 
 The exporter env lives in the chezmoi base template
-`home/.chezmoitemplates/settings.base.json`, but it is **gated to this machine**: the whole
-OTEL block sits inside `{{ if eq .chezmoi.hostname "daniel-wsl" }}`, so the generated
-`~/.claude/settings.json` carries it only here. A freshly onboarded machine gets **no
-telemetry and no error** until its hostname is added to that conditional. All telemetry
-data stays local on each machine — nothing leaves the box.
+`home/.chezmoitemplates/settings.base.json`, but it is **gated by hostname**: the whole OTEL
+block sits inside `{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop" "fedora") }}`,
+so the generated `~/.claude/settings.json` carries it only on those machines. A freshly
+onboarded machine gets **no telemetry and no error** until its hostname is added to that
+list. daniel-wsl and fedora each run their own stack; daniel-desktop exports into
+daniel-wsl's over WSL2 localhost forwarding. All telemetry data stays local to the box that
+produced it — nothing leaves it.
 
 **Per machine:** add its hostname to the template gate → `chezmoi apply` →
 `cd ~/claude-otel && docker compose up -d`.
