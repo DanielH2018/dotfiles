@@ -25,6 +25,9 @@ Scripts
 
 {{ if ne .chezmoi.os "linux" }}
 .config/linux-provisioning
+# environment.d is a systemd user-manager mechanism; it does nothing on Windows or macOS, and
+# the Steam UI scale it carries only makes sense next to the Linux XWayland-scale script.
+.config/environment.d
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to
