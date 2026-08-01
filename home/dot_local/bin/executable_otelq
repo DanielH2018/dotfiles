@@ -39,6 +39,7 @@ PROG = "otelq"
 # is not.
 LOKI = "http://127.0.0.1:3100"
 PROM = "http://127.0.0.1:9090"
+TEMPO = "http://127.0.0.1:3200"
 
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -126,10 +127,15 @@ def cmd_labels(ns, now):
 
 
 def cmd_ready(ns, now):
-    """Readiness of both backends. Loki answers text, not JSON, so it is probed
-    separately — a 503 here usually means the 15s ingester grace, not a fault."""
+    """Readiness of every backend the stack publishes. Loki answers text, not JSON, so it is
+    probed separately — a 503 here usually means the 15s ingester grace, not a fault.
+    Tempo is included even though no subcommand queries it yet: leaving it out reported the
+    stack healthy while traces were down, which is the one signal Grafana can reach and this
+    tool cannot."""
     out = {}
-    for name, base, path in (("loki", LOKI, "/ready"), ("prometheus", PROM, "/-/ready")):
+    for name, base, path in (("loki", LOKI, "/ready"),
+                             ("prometheus", PROM, "/-/ready"),
+                             ("tempo", TEMPO, "/ready")):
         url = f"{base}{path}"
         try:
             with urllib.request.urlopen(url, timeout=ns.timeout) as resp:  # noqa: S310

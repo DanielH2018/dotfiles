@@ -16,7 +16,7 @@
 // reporting a failure*. The guard would inflict the exact damage it exists to catch. With HOME
 // pointed at the sandbox too, even a fully reverted module can only write inside the temp dir.
 const { test } = require('node:test');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -96,6 +96,66 @@ test('with no overrides at all, every $HOME destination stays under $HOME', { sk
       `${name} resolved to ${got[name]}, outside the redirected HOME`);
   }
   assert.strictEqual(got.VER_DIR, `${got.BIN_DIR}/.versions`, 'VER_DIR should follow BIN_DIR, not $HOME directly');
+});
+
+// apt_repo_add's idempotence guard. Stubs apt-get/dpkg onto the front of PATH so the module
+// picks PM=apt on any host, and stubs curl/sudo to leave a marker: the guard holding means
+// neither is ever reached, which is the only observable difference between "already configured"
+// and "configured it again".
+const aptRepoAdd = (root, preexisting) => {
+  const bin = path.join(root, 'bin');
+  const lists = path.join(root, 'lists');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(lists, { recursive: true });
+  for (const name of ['apt-get', 'dpkg']) {
+    fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  for (const name of ['curl', 'sudo']) {
+    fs.writeFileSync(path.join(bin, name),
+      `#!/bin/sh\ntouch "${root}/reached-${name}"\nexit 1\n`, { mode: 0o755 });
+  }
+  if (preexisting) fs.writeFileSync(path.join(lists, preexisting), 'x\n');
+
+  const call = "apt_repo_add github-cli https://example.invalid/key "
+    + "'deb [signed-by=__KEYRING__] https://example.invalid stable main'";
+  const r = spawnSync('sh', ['-c', `${render()}\n${call}\necho "rc=$?"`], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${bin}:${process.env.PATH}`,
+      HOME: path.join(root, 'home'),
+      APT_LIST_DIR: lists,
+      APT_KEYRING_DIR: path.join(root, 'keyrings'),
+    },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  return {
+    rc: /rc=(\d+)/.exec(r.stdout)?.[1],
+    fetched: fs.existsSync(path.join(root, 'reached-curl'))
+      || fs.existsSync(path.join(root, 'reached-sudo')),
+    wroteList: fs.existsSync(path.join(lists, 'github-cli.list')),
+  };
+};
+
+test('a deb822 .sources counts as already configured', { skip }, () => {
+  // The daniel-box collision: ansible writes github-cli.sources and deletes the one-line
+  // .list, so a guard watching only .list rewrote it and left apt with the repo twice.
+  const r = aptRepoAdd(sandbox(), 'github-cli.sources');
+  assert.strictEqual(r.rc, '0', 'should report success without configuring anything');
+  assert.strictEqual(r.fetched, false, 'a repo already configured via deb822 must not be re-fetched');
+  assert.strictEqual(r.wroteList, false, 'writing the .list back is what double-configures apt');
+});
+
+test('an existing one-line .list still short-circuits', { skip }, () => {
+  const r = aptRepoAdd(sandbox(), 'github-cli.list');
+  assert.strictEqual(r.rc, '0');
+  assert.strictEqual(r.fetched, false);
+});
+
+test('with neither source file present it proceeds to fetch', { skip }, () => {
+  // Guards the two cases above against passing vacuously — if the module returned early
+  // regardless, they would still be green.
+  const r = aptRepoAdd(sandbox(), null);
+  assert.strictEqual(r.fetched, true, 'an unconfigured repo must still be fetched');
 });
 
 test('no destination is hardcoded past the override', { skip: false }, () => {

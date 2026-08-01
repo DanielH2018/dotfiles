@@ -243,11 +243,19 @@ fi
 # match (verified against the old regex) and degraded from denied to merely prompted.
 # Allow for a path to the interpreter and for the wrapper words that can precede it.
 # Scan SCAN, not COMMAND: quotes are stripped there, so `| "bash"` cannot hide the word.
-PIPE_TO_SHELL='\|[[:space:]]*((sudo|env|command|exec|nohup|nice|stdbuf|xargs)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)*([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash)\b'
+PIPE_WRAPPERS='((sudo|env|command|exec|nohup|nice|stdbuf|xargs)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)*'
+PIPE_TO_SHELL="\|[[:space:]]*$PIPE_WRAPPERS([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash)\b"
+
+# `curl url | python3` executes downloaded code exactly as `| bash` does, but the language
+# interpreters can't join PIPE_TO_SHELL: that regex also drives the generic rule below, and
+# `cat local.json | python3 -m json.tool` is data processing, not execution. So they get their
+# own pattern, used only on the curl/wget path, and it matches only a BARE interpreter — one
+# given no script and no -c/-m, so stdin is the program. `python3 -` spells that explicitly.
+PIPE_TO_INTERPRETER="\|[[:space:]]*$PIPE_WRAPPERS([^[:space:]|;&]*/)?(python[0-9.]*|node|deno|bun|perl|ruby|php)([[:space:]]+(-|/dev/stdin))?[[:space:]]*([;&|)]|\$)"
 
 # Curl-pipe-to-shell
-if echo "$SCAN" | grep -qE "(curl|wget)[^|]*$PIPE_TO_SHELL"; then
-  deny "Blocked: piping remote content to a shell. Download, inspect, then run."
+if echo "$SCAN" | grep -qE "(curl|wget)[^|]*($PIPE_TO_SHELL|$PIPE_TO_INTERPRETER)"; then
+  deny "Blocked: piping remote content to an interpreter. Download, inspect, then run."
 fi
 
 # Same payload as curl|sh via process or command substitution — `bash <(curl url)`,

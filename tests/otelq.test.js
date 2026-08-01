@@ -45,7 +45,7 @@ if verb == "dur":
 elif verb == "rows":
     print(m._rows(json.loads(sys.stdin.read())))
 elif verb == "bases":
-    print(json.dumps([m.LOKI, m.PROM]))
+    print(json.dumps([m.LOKI, m.PROM, m.TEMPO]))
 `);
 
 function otelq(args, input) {
@@ -67,9 +67,10 @@ function drive(args, input) {
 
 const SRC = fs.readFileSync(OTELQ, 'utf8');
 
-test('targets only loopback, on the two telemetry ports', { skip }, () => {
+test('targets only loopback, on the three telemetry ports', { skip }, () => {
   const bases = JSON.parse(drive(['bases']));
-  assert.deepStrictEqual(bases, ['http://127.0.0.1:3100', 'http://127.0.0.1:9090']);
+  assert.deepStrictEqual(bases,
+    ['http://127.0.0.1:3100', 'http://127.0.0.1:9090', 'http://127.0.0.1:3200']);
   for (const b of bases) {
     assert.match(b, /^http:\/\/127\.0\.0\.1:/, 'base must be loopback-literal, not a hostname');
   }
@@ -164,11 +165,11 @@ try {
   lokiUp = false;
 }
 
-test('ready reports both backends against the live stack', { skip: skip || !lokiUp }, () => {
+test('ready reports every backend against the live stack', { skip: skip || !lokiUp }, () => {
   const r = otelq(['ready']);
   assert.strictEqual(r.code, 0);
   const out = JSON.parse(r.out);
-  assert.ok('loki' in out && 'prometheus' in out);
+  assert.ok('loki' in out && 'prometheus' in out && 'tempo' in out);
   assert.ok(typeof out.loki.code === 'number' || out.loki.code === null);
 });
 
@@ -176,6 +177,25 @@ test('reports an unreachable backend as a refusal, not a crash', { skip }, () =>
   // Ports are fixed, so this asserts the error path's shape via the message the
   // URLError branch produces; a live stack makes it a no-op.
   assert.match(SRC, /unreachable.*docker ps/, 'unreachable path should hint at the stack');
+});
+
+// otelq hardcodes its backend ports and claude-otel/docker-compose.yml publishes them, with
+// no shared source between them. Rather than template one from the other, pin them together:
+// a port changed on either side fails here instead of surfacing as a stack that reports
+// unreachable. Tempo is in this list because `ready` probes it while nothing queries it —
+// that asymmetry is exactly the kind that rots unwatched.
+test('every otelq backend port is published by the compose stack', () => {
+  const compose = fs.readFileSync(
+    path.join(__dirname, '..', 'home', 'claude-otel', 'docker-compose.yml'), 'utf8');
+  const consts = Object.fromEntries(
+    [...SRC.matchAll(/^(LOKI|PROM|TEMPO) = "http:\/\/127\.0\.0\.1:(\d+)"$/gm)]
+      .map((m) => [m[1], m[2]]));
+  assert.deepStrictEqual(Object.keys(consts).sort(), ['LOKI', 'PROM', 'TEMPO'],
+    'otelq should define exactly the three backend constants this test knows about');
+  for (const [name, port] of Object.entries(consts)) {
+    assert.ok(compose.includes(`"127.0.0.1:${port}:${port}"`),
+      `${name} uses port ${port}, which docker-compose.yml does not publish on 127.0.0.1`);
+  }
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

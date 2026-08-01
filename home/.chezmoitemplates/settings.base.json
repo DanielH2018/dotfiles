@@ -648,6 +648,7 @@
       "Bash(wget:*)",
       "Bash(ssh:*)",
       "Bash(scp:*)",
+      "Bash(sftp:*)",
       "Bash(rsync:*)",
       {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
       "Edit(~/.claude/hooks/**)",

@@ -21,7 +21,7 @@ TAG=install-cli-tools
 #    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
 #    present when the yazi step runs; nvim and the rest use tar and don't need it.
 if ! command -v unzip >/dev/null 2>&1 && [ -n "$PM" ]; then
-  if sudo -v; then
+  if have_sudo; then
     pkg_install unzip
   else
     echo "install-cli-tools: sudo unavailable; deferring unzip (yazi extraction will be skipped)" >&2
@@ -46,7 +46,7 @@ for p in $PKGS; do
   pkg_installed "$p" || missing="$missing $p"
 done
 if [ -n "$missing" ]; then
-  if sudo -v; then
+  if have_sudo; then
     # shellcheck disable=SC2086  # $missing is a space-separated package list; splitting intended
     pkg_install $missing
   else
@@ -75,7 +75,7 @@ gh_ready() {
   esac
 }
 if ! gh_ready; then
-  if sudo -v; then
+  if have_sudo; then
     if [ "$PM" = apt ]; then
       apt_repo_add github-cli https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         "deb [arch=$(dpkg --print-architecture) signed-by=__KEYRING__] https://cli.github.com/packages stable main" \
@@ -106,7 +106,7 @@ wez_ready() {
   esac
 }
 if ! wez_ready; then
-  if sudo -v; then
+  if have_sudo; then
     if [ "$PM" = apt ]; then
       apt_repo_add wezterm https://apt.fury.io/wez/gpg.key \
         "deb [signed-by=__KEYRING__] https://apt.fury.io/wez/ * *" \
@@ -135,7 +135,7 @@ fi
 #     the skip-if-present check on re-runs, since the shim's whole purpose is to put `docker` on
 #     PATH.
 if ! command -v docker >/dev/null 2>&1 && [ -n "$PM" ]; then
-  if sudo -v; then
+  if have_sudo; then
     pkg_install podman-docker && echo "install-cli-tools: podman-docker installed (docker -> podman shim)"
   else
     echo "install-cli-tools: sudo unavailable; deferring the podman-docker shim" >&2
@@ -148,7 +148,7 @@ fi
 if [ -n "$PM" ] && pkg_installed podman-docker; then
   # The shim prints "Emulate Docker CLI using podman" to stderr on every invocation until this
   # file exists. The package does not ship it — the message itself asks you to create it.
-  if [ ! -e /etc/containers/nodocker ] && sudo -v; then
+  if [ ! -e /etc/containers/nodocker ] && have_sudo; then
     sudo install -d -m 755 /etc/containers &&
       sudo install -m 644 /dev/null /etc/containers/nodocker &&
       echo "install-cli-tools: created /etc/containers/nodocker (silences the shim banner)"
