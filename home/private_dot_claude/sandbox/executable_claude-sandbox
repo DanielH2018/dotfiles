@@ -319,8 +319,83 @@ WT_PATH=""
 WT_CREATED=false
 WT_BRANCH_CREATED=false
 
+# --- Container engine quirks (rootless podman) ---
+# `docker` here may be podman-docker: a shim that execs rootless podman. Two things
+# that come free under rootful Docker have to be asked for there, and a bind mount
+# is denied unless BOTH are present (each alone still fails — measured on F44 /
+# podman 5.8.4):
+#   * the container runs as container_t while the host dirs are user_home_t, so
+#     SELinux denies every mount until its spec carries a relabel flag (`:z`);
+#   * the container's uid 1000 maps to a subuid rather than to the invoking user,
+#     so even a relabelled mount is not writable without --userns=keep-id.
+# Missing either fails silently in the worst way: `claude auth login` inside the
+# container cannot persist ~/.claude/.credentials.json, while the host-side
+# `touch "$AUTH_MARKER"` succeeds — so the marker claims an OAuth session that
+# does not exist and every later run skips login and starts unauthenticated.
+# Set CLAUDE_SANDBOX_SELINUX=disable to drop the container's SELinux confinement
+# instead of relabelling host paths (nothing under the mounts is relabelled, but
+# the container loses that layer). Both helpers no-op under real Docker.
+CLAUDEBOT_UID=1000   # Dockerfile.base: useradd --uid 1000 claudebot
+CLAUDEBOT_GID=1000
+ENGINE_ARGS=()
+SANDBOX_MOUNT_RELABEL=""
+
+detect_container_engine() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo docker
+  elif docker --version 2>/dev/null | grep -qi podman; then
+    echo podman
+  else
+    echo docker
+  fi
+}
+
+# Appends the SELinux relabel flag to one -v spec (src:dst[:opts]). A no-op while
+# $SANDBOX_MOUNT_RELABEL is empty, and idempotent — a spec that already carries a
+# z/Z flag comes back untouched, so it is safe to run over the same array twice.
+add_mount_relabel() {
+  local spec="$1" opts
+  if [[ -z "${SANDBOX_MOUNT_RELABEL:-}" ]]; then
+    printf '%s\n' "$spec"
+    return
+  fi
+  if [[ "$spec" == *:*:* ]]; then
+    opts="${spec##*:}"
+    case ",$opts," in
+      *,z,*|*,Z,*) printf '%s\n' "$spec"; return ;;
+    esac
+    printf '%s,%s\n' "$spec" "$SANDBOX_MOUNT_RELABEL"
+  else
+    printf '%s:%s\n' "$spec" "$SANDBOX_MOUNT_RELABEL"
+  fi
+}
+
+# Rewrites DOCKER_ARGS in place so every -v spec in it carries the relabel flag.
+relabel_docker_args() {
+  local i=0 next
+  while [[ $i -lt ${#DOCKER_ARGS[@]} ]]; do
+    if [[ "${DOCKER_ARGS[$i]}" == "-v" && $((i + 1)) -lt ${#DOCKER_ARGS[@]} ]]; then
+      next=$((i + 1))
+      DOCKER_ARGS[next]="$(add_mount_relabel "${DOCKER_ARGS[$next]}")"
+      i=$((i + 2))
+      continue
+    fi
+    i=$((i + 1))
+  done
+}
+
 # --- Validate prerequisites ---
 if [[ "$GENERATE_ONLY" == false ]]; then
+  CONTAINER_ENGINE="$(detect_container_engine)"
+  if [[ "$CONTAINER_ENGINE" == podman ]]; then
+    ENGINE_ARGS=(--userns="keep-id:uid=$CLAUDEBOT_UID,gid=$CLAUDEBOT_GID")
+    if [[ "${CLAUDE_SANDBOX_SELINUX:-}" == "disable" ]]; then
+      ENGINE_ARGS+=(--security-opt label=disable)
+    elif [[ "$(getenforce 2>/dev/null || echo Disabled)" == "Enforcing" ]]; then
+      SANDBOX_MOUNT_RELABEL="z"
+    fi
+  fi
+
   # Support ANTHROPIC_ADMIN_API_KEY as an alias to avoid collisions with host claude
   if [[ -n "${ANTHROPIC_ADMIN_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
     export ANTHROPIC_API_KEY="$ANTHROPIC_ADMIN_API_KEY"
@@ -881,9 +956,10 @@ start_filter() {
     --cap-drop all \
     --read-only \
     --user "$(id -u):$(id -g)" \
-    -v "$SANDBOX_DIR/docker-create-filter.py:/opt/docker-create-filter.py:ro" \
-    -v "$CANON_LIB:/opt/canon.py:ro" \
-    -v "$WORK_PATH:$WORK_PATH:ro" \
+    ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"} \
+    -v "$(add_mount_relabel "$SANDBOX_DIR/docker-create-filter.py:/opt/docker-create-filter.py:ro")" \
+    -v "$(add_mount_relabel "$CANON_LIB:/opt/canon.py:ro")" \
+    -v "$(add_mount_relabel "$WORK_PATH:$WORK_PATH:ro")" \
     -e FILTER_UPSTREAM="$PROXY_ALIAS:2375" \
     -e FILTER_WORKSPACE="$WORK_PATH" \
     --entrypoint python3 \
@@ -1673,6 +1749,7 @@ TTY_FLAGS=(-it)
 [[ "$EXEC_MODE" == true ]] && TTY_FLAGS=(-i)
 DOCKER_ARGS=(
   --rm "${TTY_FLAGS[@]}"
+  ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"}
   --name "claudebot-$RUN_ID"
   --cap-drop all
   --security-opt no-new-privileges
@@ -2181,8 +2258,9 @@ if [[ "$AUTH_NEEDED" == true ]]; then
     --entrypoint "" \
     --cap-drop all \
     --security-opt no-new-privileges \
-    -v "$STATE_DIR:/home/claudebot/.claude" \
-    -v "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro" \
+    ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"} \
+    -v "$(add_mount_relabel "$STATE_DIR:/home/claudebot/.claude")" \
+    -v "$(add_mount_relabel "$SANDBOX_SETTINGS:/home/claudebot/.claude/settings.json:ro")" \
     "$IMAGE_TAG" claude auth login; then
     touch "$AUTH_MARKER"
     echo ""
@@ -2262,6 +2340,7 @@ elif [[ "$EXEC_MODE" == true ]]; then
   [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
   EXEC_LOG="$AUDIT_DIR/exec-$RUN_ID.jsonl"
   echo "Dispatching headless implementer (trace: $EXEC_LOG)…" >&2
+  relabel_docker_args
   if docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}" \
        | tee "$EXEC_LOG" \
        | python3 "$SANDBOX_DIR/exec-stream.py"; then
@@ -2296,6 +2375,8 @@ if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/a
     av_write_full "$INSTANCE_ID" "working" "$WORK_PATH" "$(hostname 2>/dev/null || echo '?')" \
       "$(date +%s 2>/dev/null || echo 0)" "sandbox" "$av_title" "$av_locator" "" "$RUN_ID" || true
     AV_REGISTERED=true
+    # (the agent-view mount added below is picked up by relabel_docker_args, which
+    # runs after this block — the transform is idempotent, so ordering is free)
     # Phase 2: bind the registry dir RW so the in-container UserPromptSubmit/Notification/
     # Stop hooks can flip THIS row's state (joined by AGENT_VIEW_KEY=INSTANCE_ID). Only
     # session-state JSON crosses the mount — no secrets. av_write_full just created the
@@ -2308,4 +2389,5 @@ if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/a
   fi
 fi
 
+relabel_docker_args
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"

@@ -266,7 +266,8 @@ test('the create-filter is told the workspace, and can resolve symlinks inside i
   assert.match(filter, /-e FILTER_UPSTREAM="\$PROXY_ALIAS:2375"/, 'the filter forwards to the socket proxy');
   // Without the workspace mounted at its own path, realpath cannot follow a symlink the
   // agent planted in the repo, and a textual prefix check alone would pass it.
-  assert.match(filter, /-v "\$WORK_PATH:\$WORK_PATH:ro"/);
+  // add_mount_relabel wraps the spec for rootless podman; :ro must survive it.
+  assert.match(filter, /-v "\$\(add_mount_relabel "\$WORK_PATH:\$WORK_PATH:ro"\)"/);
   assert.match(filter, /--cap-drop all/);
 });
 

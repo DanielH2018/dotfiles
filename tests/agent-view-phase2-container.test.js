@@ -26,6 +26,15 @@ const skip =
   : !have('docker', ['image', 'inspect', IMAGE]) ? `image ${IMAGE} not built`
   : false;
 
+// Under podman-docker (the shim that execs rootless podman) a bind mount is denied
+// unless it carries an SELinux relabel flag AND the run maps the container uid back
+// to the caller — the same pair the launcher adds. No-ops under real Docker.
+const PODMAN = (() => {
+  try { return /podman/i.test(execFileSync('docker', ['--version'], { encoding: 'utf8' })); } catch { return false; }
+})();
+const ENGINE_ARGS = PODMAN ? ['--userns=keep-id:uid=1000,gid=1000'] : [];
+const mnt = (spec) => (PODMAN ? (spec.split(':').length > 2 ? `${spec},z` : `${spec}:z`) : spec);
+
 const dirs = [];
 function reg() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'av-p2-'));
@@ -47,10 +56,10 @@ function seed(dir, state) {
 // (Prod copies the hook via entrypoint into ~/.claude/hooks; here we mount it straight to the
 // final path — the entrypoint copy is a generic *.sh glob, not Phase-2-specific.)
 function runInContainer(dir, stateArg, { withKey = true } = {}) {
-  const args = ['run', '--rm', '--group-add', '0',
-    '-v', `${dir}:/home/claudebot/.claude/agent-view`,
-    '-v', `${HELPER}:/home/claudebot/.claude/hooks/agent-view-register.sh:ro`,
-    '-v', `${HOOK}:/home/claudebot/.claude/hooks/agent-view-state-hook.sh:ro`];
+  const args = ['run', '--rm', '--group-add', '0', ...ENGINE_ARGS,
+    '-v', mnt(`${dir}:/home/claudebot/.claude/agent-view`),
+    '-v', mnt(`${HELPER}:/home/claudebot/.claude/hooks/agent-view-register.sh:ro`),
+    '-v', mnt(`${HOOK}:/home/claudebot/.claude/hooks/agent-view-state-hook.sh:ro`)];
   if (withKey) args.push('-e', `AGENT_VIEW_KEY=${KEY}`);
   args.push(IMAGE, 'bash', '/home/claudebot/.claude/hooks/agent-view-state-hook.sh', stateArg);
   execFileSync('docker', args, { stdio: 'ignore' });
