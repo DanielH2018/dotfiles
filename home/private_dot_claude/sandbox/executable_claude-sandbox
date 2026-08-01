@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Portable MD5: macOS ships `md5`; most Linux distros ship `md5sum`. Define a
-# drop-in `md5` shim when the BSD binary is absent so the `... | md5 | head -c 8`
-# call sites below work unchanged on both platforms.
-command -v md5 >/dev/null 2>&1 || md5() { md5sum | cut -d' ' -f1; }
 
 # claude-sandbox: Launch Claude Code in a Docker-based Pattern C sandbox.
 # Usage: claude-sandbox [--rebuild|--rebuild-base|--generate|--worktree NAME] <repo-path>
@@ -14,15 +10,12 @@ AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
-. "$SANDBOX_DIR/sandbox-lib.sh"   # resolve_repo_path()
+. "$SANDBOX_DIR/sandbox-lib.sh"        # resolve_repo_path()
+. "$SANDBOX_DIR/sandbox-worktree.sh"   # sanitize_repo_name(), repo_hash(), worktree enumeration
 # Machine/work-specific values (e.g. CLAUDE_VAULT_DIR) for an optional work overlay.
 if [ -f "$HOME/.config/claude/local.env" ]; then
   . "$HOME/.config/claude/local.env"
 fi
-# Resolve the settings file to mount: sandbox base, with a safe subset of the host
-# settings folded in (permissions.deny union + outputStyle/model/enabledPlugins),
-# then the optional work overlay merged on top — all at launch.
-SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json" "$HOME/.claude/settings.json")"
 # 1Password SSH-agent socket for signed commits — the path differs by platform.
 if [[ "${OSTYPE:-}" == darwin* ]]; then
   OP_SOCKET="$HOME/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
@@ -68,7 +61,8 @@ usage() {
   echo "                     For orchestrator-dispatched work. Cannot combine with --shell."
   echo "  --fresh, --new     Start a new conversation even if this instance has a prior"
   echo "                     session. By default an existing session auto-resumes (--continue)."
-  exit 1
+  # An asked-for --help is a success; reaching here from a bad invocation is not.
+  exit "${1:-1}"
 }
 
 # --- Parse args ---
@@ -79,8 +73,6 @@ LIST_SESSIONS=false
 COMPLETE_WORKTREES=false
 PRUNE_WORKTREES=false
 GC_WORKTREES=false
-PREVIEW_MODE=false
-PREVIEW_ARGS=()
 RENAME_WORKTREE=false
 RENAME_OLD=""
 RENAME_NEW=""
@@ -112,7 +104,6 @@ while [[ $# -gt 0 ]]; do
     --setup-worktree) SETUP_WORKTREE=true; shift ;;
     --prune) PRUNE_WORKTREES=true; shift ;;
     --gc) GC_WORKTREES=true; shift ;;
-    --_preview) PREVIEW_MODE=true; shift; PREVIEW_ARGS=("$@"); break ;;
     --rename)
       RENAME_WORKTREE=true
       shift
@@ -158,7 +149,7 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     --fresh|--new) FRESH_SESSION=true; shift ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) REPO_PATH="$1"; shift ;;
   esac
@@ -171,7 +162,7 @@ if [[ "$EXEC_MODE" == true ]]; then
 fi
 
 # --- Docker prerequisites (needed by --rebuild-base and normal runs) ---
-if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_BRANCHES" == false && "$SETUP_WORKTREE" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$PREVIEW_MODE" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
+if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_BRANCHES" == false && "$SETUP_WORKTREE" == false && "$PRUNE_WORKTREES" == false && "$GC_WORKTREES" == false && "$RENAME_WORKTREE" == false && (("$GENERATE_ONLY" == false && -n "$REPO_PATH") || "$REBUILD_BASE" == true) ]]; then
   if ! command -v docker &>/dev/null; then
     echo "Error: docker is not installed." >&2
     exit 1
@@ -229,7 +220,7 @@ REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
 
 REPO_PATH="$(cd "$REPO_PATH" && pwd)"
 # Sanitize repo name for use in Docker tags (must match [a-zA-Z0-9._-])
-REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
+REPO_NAME="$(sanitize_repo_name "$REPO_PATH")"
 if [[ -z "$REPO_NAME" ]]; then
   echo "Error: could not derive a valid repo name from path: $REPO_PATH" >&2
   exit 1
@@ -267,7 +258,7 @@ fi
 
 # Use a short hash of the full path to avoid collisions when two repos
 # share the same basename (e.g., ~/work/api vs ~/personal/api).
-REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+REPO_HASH="$(repo_hash "$REPO_PATH")"
 
 # INSTANCE_ID is deterministic per repo (or per worktree) — used for storage
 # paths (sessions, audit) so Claude can resume previous conversations.
@@ -351,10 +342,10 @@ validate_version() {
 
 # --- List sessions ---
 list_sessions() {
-  local repo_hash repo_name_safe
-  repo_name_safe="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  repo_hash="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
-  local base_instance="${repo_name_safe}-${repo_hash}"
+  local repo_name_safe rhash base_instance
+  repo_name_safe="$(sanitize_repo_name "$REPO_PATH")"
+  rhash="$(repo_hash "$REPO_PATH")"
+  base_instance="${repo_name_safe}-${rhash}"
 
   echo "Sandbox sessions for $repo_name_safe ($REPO_PATH)"
   echo ""
@@ -368,12 +359,6 @@ list_sessions() {
   if echo "$running_containers" | grep -q "claudebot-${base_instance}-[0-9a-f]"; then
     main_status="running"
   fi
-  local main_sessions="$SESSIONS_BASE/$base_instance"
-  local main_has_data="no sessions"
-  if [[ -d "$main_sessions" ]] && [[ -n "$(ls -A "$main_sessions" 2>/dev/null)" ]]; then
-    main_has_data="has sessions"
-  fi
-
   printf "  %-12s %-30s %-10s %s\n" "NAME" "BRANCH" "STATUS" "RESUME"
   printf "  %-12s %-30s %-10s %s\n" "----" "------" "------" "------"
 
@@ -384,48 +369,27 @@ list_sessions() {
 
   # Worktree sessions — scan tool-created worktrees (path: <repo>-wt-<name>),
   # regardless of branch name (claude/* or an existing branch via -b).
-  local wt_path wt_branch wt_name wt_status wt_instance wt_resume wt_base
-  while IFS= read -r line; do
-    if [[ "$line" == "worktree "* ]]; then
-      wt_path="${line#worktree }"
-    elif [[ "$line" == "branch "* ]]; then
-      wt_branch="${line#branch refs/heads/}"
-      wt_base="$(basename "$wt_path")"
-      if [[ "$wt_base" == "${repo_name_safe}-wt-"* ]]; then
-        wt_name="${wt_base#${repo_name_safe}-wt-}"
-        wt_instance="${base_instance}-${wt_name}"
-        wt_status="stopped"
-        if echo "$running_containers" | grep -q "claudebot-${wt_instance}-[0-9a-f]"; then
-          wt_status="running"
-        fi
-        if [[ "$wt_branch" == claude/* ]]; then
-          wt_resume="claude-sandbox --worktree ${wt_branch#claude/} $REPO_PATH"
-        else
-          wt_resume="claude-sandbox --branch $wt_branch $REPO_PATH"
-        fi
-        printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "$wt_status" "$wt_resume"
-      fi
-      wt_path=""
-      wt_branch=""
+  local wt_name wt_branch wt_path wt_status wt_instance wt_resume
+  while IFS=$'\t' read -r wt_name wt_branch wt_path; do
+    wt_instance="${base_instance}-${wt_name}"
+    wt_status="stopped"
+    if echo "$running_containers" | grep -q "claudebot-${wt_instance}-[0-9a-f]"; then
+      wt_status="running"
     fi
-  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+    if [[ "$wt_branch" == claude/* ]]; then
+      wt_resume="claude-sandbox --worktree ${wt_branch#claude/} $REPO_PATH"
+    else
+      wt_resume="claude-sandbox --branch $wt_branch $REPO_PATH"
+    fi
+    printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "$wt_status" "$wt_resume"
+  done < <(list_tool_worktrees "$REPO_PATH" "$repo_name_safe")
 
-  # Check for orphaned sessions (session dir exists but worktree is gone)
-  local session_dir
-  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
-    [[ -d "$session_dir" ]] || continue
-    local session_name
-    session_name="$(basename "$session_dir")"
-    # Skip the base instance (already shown as main)
-    [[ "$session_name" == "$base_instance" ]] && continue
-    # Extract the worktree name suffix
-    local suffix="${session_name#${base_instance}-}"
-    # Skip if we already listed this worktree above
-    if git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | grep -q "/${repo_name_safe}-wt-$suffix$"; then
-      continue
-    fi
+  # Sessions whose worktree is gone but whose data is still on disk
+  local suffix
+  while IFS= read -r suffix; do
+    [[ -n "$suffix" ]] || continue
     printf "  %-12s %-30s %-10s %s\n" "$suffix" "claude/$suffix (orphaned)" "no worktree" "--worktree $suffix recreates it"
-  done
+  done < <(list_orphan_sessions "$REPO_PATH" "$repo_name_safe" "$SESSIONS_BASE" "$base_instance")
 
   echo ""
 }
@@ -449,27 +413,21 @@ if [[ "$COMPLETE_WORKTREES" == true ]]; then
   REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
 
-  repo_hash="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
-  repo_name_safe="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  base_instance="${repo_name_safe}-${repo_hash}"
+  repo_name_safe="$(sanitize_repo_name "$REPO_PATH")"
+  rhash="$(repo_hash "$REPO_PATH")"
+  base_instance="${repo_name_safe}-${rhash}"
 
-  # Worktree names from git (claude/* branches)
-  while IFS= read -r line; do
-    if [[ "$line" == "branch refs/heads/claude/"* ]]; then
-      echo "${line#branch refs/heads/claude/}"
-    fi
-  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+  # Names `-w NAME` can reuse: a tool worktree at <repo>-wt-<name> that is on
+  # claude/<name>. Previously this offered every claude/* branch in the worktree
+  # list, including one checked out somewhere that is not a tool worktree — for
+  # which `-w` would go on to make a second worktree and reuse the first, not the
+  # round-trip the completion implies.
+  while IFS=$'\t' read -r wt_name wt_branch _; do
+    [[ "$wt_branch" == "claude/$wt_name" ]] && printf '%s\n' "$wt_name"
+  done < <(list_tool_worktrees "$REPO_PATH" "$repo_name_safe")
 
   # Orphaned session names (worktree gone but session data remains)
-  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
-    [[ -d "$session_dir" ]] || continue
-    suffix="$(basename "$session_dir")"
-    suffix="${suffix#${base_instance}-}"
-    # Skip if already listed from git worktrees
-    git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null \
-      | grep -q "/${repo_name_safe}-wt-$suffix$" && continue
-    echo "$suffix"
-  done
+  list_orphan_sessions "$REPO_PATH" "$repo_name_safe" "$SESSIONS_BASE" "$base_instance"
 
   exit 0
 fi
@@ -503,8 +461,8 @@ if [[ "$RENAME_WORKTREE" == true ]]; then
     exit 1
   fi
 
-  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+  REPO_NAME="$(sanitize_repo_name "$REPO_PATH")"
+  REPO_HASH="$(repo_hash "$REPO_PATH")"
 
   OLD_BRANCH="claude/$RENAME_OLD"
   NEW_BRANCH="claude/$RENAME_NEW"
@@ -1277,36 +1235,13 @@ IDXEOF
 
   echo "  Archived to $(basename "$vault_file")"
 
-  # Clean up temp files
+  # Clean up temp files. `if`, not `[[ … ]] &&`: as the last statement of the
+  # function that form returns 1 whenever no API summary was written — the common
+  # path — making a successful compaction look like a failure to any caller that
+  # doesn't already absorb it with `|| true`.
   rm -f "$extract_json"
-  [[ "$final_json" != "$extract_json" ]] && rm -f "$final_json"
-}
-
-# --- Resolve the real branch a tool worktree is on ---
-# Tool worktrees live at <repo>-wt-<name>. Worktrees made with -w are on
-# claude/<name>; those made with -b are on an arbitrary branch. Read the actual
-# branch from git for a live worktree; for an orphaned one (worktree gone, only
-# session data left) probe claude/<name> then <name>. Echoes the branch, or
-# nothing if none can be determined.
-resolve_worktree_branch() {
-  # Usage: resolve_worktree_branch <name> <repo-path> <repo-name>
-  local name="$1" repo_path="$2" repo_name="$3"
-  local wt_path abs branch
-  wt_path="$repo_path/../$repo_name-wt-$name"
-  abs="$(cd "$wt_path" 2>/dev/null && pwd)" || abs=""
-  if [[ -n "$abs" ]]; then
-    branch="$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v p="$abs" '
-      /^worktree /{cur=substr($0,10)}
-      /^branch /{if(cur==p){print substr($0,8); exit}}')"
-    if [[ -n "$branch" ]]; then
-      echo "${branch#refs/heads/}"
-      return
-    fi
-  fi
-  if git -C "$repo_path" show-ref --verify --quiet "refs/heads/claude/$name" 2>/dev/null; then
-    echo "claude/$name"
-  elif git -C "$repo_path" show-ref --verify --quiet "refs/heads/$name" 2>/dev/null; then
-    echo "$name"
+  if [[ "$final_json" != "$extract_json" ]]; then
+    rm -f "$final_json"
   fi
 }
 
@@ -1343,133 +1278,55 @@ delete_worktree() {
     git -C "$REPO_PATH" branch -D "$wt_branch" 2>/dev/null || true
   fi
 
-  # Remove session and audit data
+  # Remove session and audit data. `${instance_id:?}` rather than a bare
+  # expansion: the -d guards above are satisfied by the BASE directory when the
+  # id is empty, so the three rm -rf below would take out every instance's data
+  # rather than this one's. Both call sites build a non-empty id today; this
+  # makes a future third one fail loudly instead of destructively.
   if [[ -d "$SESSIONS_BASE/$instance_id" ]]; then
-    rm -rf "$SESSIONS_BASE/$instance_id"
+    rm -rf "${SESSIONS_BASE:?}/${instance_id:?}"
     echo "  Removed session data: $instance_id"
   fi
   if [[ -d "$AUDIT_BASE/$instance_id" ]]; then
-    rm -rf "$AUDIT_BASE/$instance_id"
+    rm -rf "${AUDIT_BASE:?}/${instance_id:?}"
     echo "  Removed audit data: $instance_id"
   fi
   if [[ -d "$ARTIFACTS_BASE/$instance_id" ]]; then
-    rm -rf "$ARTIFACTS_BASE/$instance_id"
+    rm -rf "${ARTIFACTS_BASE:?}/${instance_id:?}"
     echo "  Removed artifacts data: $instance_id"
-  fi
-}
-
-# --- fzf preview for worktree details ---
-fzf_preview_worktree() {
-  local wt_name="$1"
-  local repo_path="$2"
-  local repo_name="$3"
-  local repo_hash="$4"
-  local instance_id="${repo_name}-${repo_hash}-${wt_name}"
-  local wt_path="$repo_path/../$repo_name-wt-$wt_name"
-  local wt_branch
-  wt_branch="$(resolve_worktree_branch "$wt_name" "$repo_path" "$repo_name")"
-  [[ -z "$wt_branch" ]] && wt_branch="(unknown)"
-
-  echo "=== $wt_name ==="
-  echo ""
-  echo "Branch:   $wt_branch"
-
-  if [[ -d "$wt_path" ]]; then
-    wt_path="$(cd "$wt_path" && pwd)"
-    echo "Path:     $wt_path"
-
-    local last_commit
-    last_commit="$(git -C "$wt_path" log -1 --format='%h %ar — %s' 2>/dev/null || echo "no commits")"
-    echo "Last:     $last_commit"
-
-    local staged unstaged untracked
-    staged="$(git -C "$wt_path" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')"
-    unstaged="$(git -C "$wt_path" diff --numstat 2>/dev/null | wc -l | tr -d ' ')"
-    untracked="$(git -C "$wt_path" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')"
-    echo "Changes:  $staged staged, $unstaged unstaged, $untracked untracked"
-
-    local unpushed
-    unpushed="$(git -C "$wt_path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")"
-    echo "Unpushed: $unpushed commit(s)"
-  else
-    echo "Path:     (no worktree — orphaned session)"
-  fi
-
-  local session_dir="$HOME/.claude/sandbox/sessions/$instance_id"
-  if [[ -d "$session_dir" ]]; then
-    local session_size
-    session_size="$(du -sh "$session_dir" 2>/dev/null | cut -f1)"
-    echo "Session:  $session_size"
-  else
-    echo "Session:  no data"
-  fi
-
-  if command -v gh &>/dev/null; then
-    local pr_status
-    pr_status="$(gh pr list --repo "$(git -C "$repo_path" remote get-url origin 2>/dev/null)" --head "$wt_branch" --state all --json state,number,title --jq '.[0] | "\(.state) — #\(.number) \(.title)"' 2>/dev/null || true)"
-    if [[ -n "$pr_status" ]]; then
-      echo "PR:       $pr_status"
-    else
-      echo "PR:       none found"
-    fi
   fi
 }
 
 # --- Interactive worktree pruning ---
 prune_worktrees() {
-  local repo_hash repo_name_safe base_instance
-  repo_name_safe="$REPO_NAME"
-  repo_hash="$REPO_HASH"
-  base_instance="${repo_name_safe}-${repo_hash}"
+  local base_instance="${REPO_NAME}-${REPO_HASH}"
 
   local -a entries=()
   local -a entry_names=()
 
-  local wt_path wt_branch wt_base name
-  while IFS= read -r line; do
-    if [[ "$line" == "worktree "* ]]; then
-      wt_path="${line#worktree }"
-    elif [[ "$line" == "branch "* ]]; then
-      wt_branch="${line#branch refs/heads/}"
-      wt_base="$(basename "$wt_path")"
-      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
-        name="${wt_base#${REPO_NAME}-wt-}"
-        local status="clean"
-        if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
-          status="has changes"
-        fi
-        local unpushed
-        unpushed="$(git -C "$wt_path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "0")"
-        if [[ "$unpushed" -gt 0 ]]; then
-          status="has unpushed commits"
-        fi
-        local last_date
-        last_date="$(git -C "$wt_path" log -1 --format='%as' 2>/dev/null || echo "unknown")"
-        entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "$wt_branch" "$last_date" "$status")")
-        entry_names+=("$name")
-      fi
-      wt_path=""
-      wt_branch=""
+  local name wt_branch wt_path status unpushed last_date
+  while IFS=$'\t' read -r name wt_branch wt_path; do
+    status="clean"
+    if [[ -n "$(git -C "$wt_path" status --porcelain 2>/dev/null)" ]]; then
+      status="has changes"
     fi
-  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+    unpushed="$(git -C "$wt_path" rev-list --count HEAD --not --remotes 2>/dev/null || echo "0")"
+    if [[ "$unpushed" -gt 0 ]]; then
+      status="has unpushed commits"
+    fi
+    last_date="$(git -C "$wt_path" log -1 --format='%as' 2>/dev/null || echo "unknown")"
+    entries+=("$(printf '%-16s %-28s %-12s %s' "$name" "$wt_branch" "$last_date" "$status")")
+    entry_names+=("$name")
+  done < <(list_tool_worktrees "$REPO_PATH" "$REPO_NAME")
 
-  for session_dir in "$SESSIONS_BASE/${base_instance}-"*; do
-    [[ -d "$session_dir" ]] || continue
-    local session_name
-    session_name="$(basename "$session_dir")"
-    [[ "$session_name" == "$base_instance" ]] && continue
-    local suffix="${session_name#${base_instance}-}"
-    local already_listed=false
-    for en in "${entry_names[@]}"; do
-      [[ "$en" == "$suffix" ]] && { already_listed=true; break; }
-    done
-    [[ "$already_listed" == true ]] && continue
-    local orphan_branch
+  local suffix orphan_branch
+  while IFS= read -r suffix; do
+    [[ -n "$suffix" ]] || continue
     orphan_branch="$(resolve_worktree_branch "$suffix" "$REPO_PATH" "$REPO_NAME")"
     [[ -z "$orphan_branch" ]] && orphan_branch="(branch gone)"
     entries+=("$(printf '%-16s %-28s %-12s %s' "$suffix" "$orphan_branch" "n/a" "orphaned")")
     entry_names+=("$suffix")
-  done
+  done < <(list_orphan_sessions "$REPO_PATH" "$REPO_NAME" "$SESSIONS_BASE" "$base_instance")
 
   if [[ ${#entries[@]} -eq 0 ]]; then
     echo "No worktrees found for $REPO_NAME."
@@ -1479,17 +1336,28 @@ prune_worktrees() {
   local -a selected_names=()
 
   if command -v fzf &>/dev/null; then
-    export REPO_PATH REPO_NAME REPO_HASH SESSIONS_BASE SANDBOX_DIR
-    export -f fzf_preview_worktree 2>/dev/null || true
-
     local header
     header="$(printf '%-16s %-28s %-12s %s' "NAME" "BRANCH" "LAST COMMIT" "STATUS")"
+
+    # Preview sources the worktree lib and calls the function directly, rather
+    # than re-entering claude-sandbox with --_preview: the launcher's prelude
+    # (settings resolution, docker probes) would run on every keystroke. Values
+    # go in as positional args — printf %q on the paths, and fzf shell-quotes
+    # {1} itself — so a repo path containing a quote can't break out of the
+    # preview command string.
+    local preview_cmd
+    preview_cmd="$(printf 'bash -c %s %s {1} %s %s %s' \
+      "$(printf '%q' 'source "$0"; fzf_preview_worktree "$1" "$2" "$3" "$4"')" \
+      "$(printf '%q' "$SANDBOX_DIR/sandbox-worktree.sh")" \
+      "$(printf '%q' "$REPO_PATH")" \
+      "$(printf '%q' "$REPO_NAME")" \
+      "$(printf '%q' "$REPO_HASH")")"
 
     local selected
     selected="$(printf '%s\n' "${entries[@]}" | \
       fzf --multi \
           --header="$header" \
-          --preview="bash -c 'source $SANDBOX_DIR/claude-sandbox --_preview {1} \"$REPO_PATH\" \"$REPO_NAME\" \"$REPO_HASH\"'" \
+          --preview="$preview_cmd" \
           --preview-window=right:50%:wrap \
           --prompt="Select worktrees to delete (TAB to multi-select): " || true)"
 
@@ -1560,10 +1428,13 @@ prune_worktrees() {
 
 # --- GC: clean up worktrees with deleted remote branches ---
 gc_worktrees() {
-  local repo_hash repo_name_safe base_instance
-  repo_name_safe="$REPO_NAME"
-  repo_hash="$REPO_HASH"
-  base_instance="${repo_name_safe}-${repo_hash}"
+  local base_instance="${REPO_NAME}-${REPO_HASH}"
+
+  # Both exits below stamp $STATE_DIR/.last-gc, and --gc is reachable before any
+  # container launch has created that directory — on a fresh install the redirect
+  # failed under set -e, so gc deleted the worktrees and then died before its
+  # summary, leaving the stamp unwritten and the startup nudge firing forever.
+  mkdir -p "$STATE_DIR"
 
   echo "Fetching remote state..."
   git -C "$REPO_PATH" fetch --prune 2>/dev/null || true
@@ -1571,25 +1442,14 @@ gc_worktrees() {
   # Scan tool worktrees (dir <repo>-wt-*, any branch) whose upstream is gone.
   local -a gone_names=()
   local -a gone_branches=()
-  local wt_path wt_branch wt_base name track
-  while IFS= read -r line; do
-    if [[ "$line" == "worktree "* ]]; then
-      wt_path="${line#worktree }"
-    elif [[ "$line" == "branch "* ]]; then
-      wt_branch="${line#branch refs/heads/}"
-      wt_base="$(basename "$wt_path")"
-      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
-        name="${wt_base#${REPO_NAME}-wt-}"
-        track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
-        if [[ "$track" == "[gone]" ]]; then
-          gone_names+=("$name")
-          gone_branches+=("$wt_branch")
-        fi
-      fi
-      wt_path=""
-      wt_branch=""
+  local name wt_branch track
+  while IFS=$'\t' read -r name wt_branch _; do
+    track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
+    if [[ "$track" == "[gone]" ]]; then
+      gone_names+=("$name")
+      gone_branches+=("$wt_branch")
     fi
-  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+  done < <(list_tool_worktrees "$REPO_PATH" "$REPO_NAME")
 
   if [[ ${#gone_names[@]} -eq 0 ]]; then
     echo "No worktrees with deleted remote branches found."
@@ -1653,32 +1513,16 @@ check_gc_nudge() {
   [[ "$needs_check" == false ]] && return
 
   local gone_count=0
-  local wt_path wt_branch wt_base track
-  while IFS= read -r line; do
-    if [[ "$line" == "worktree "* ]]; then
-      wt_path="${line#worktree }"
-    elif [[ "$line" == "branch "* ]]; then
-      wt_branch="${line#branch refs/heads/}"
-      wt_base="$(basename "$wt_path")"
-      if [[ "$wt_base" == "${REPO_NAME}-wt-"* ]]; then
-        track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
-        [[ "$track" == "[gone]" ]] && gone_count=$((gone_count + 1))
-      fi
-      wt_path=""
-      wt_branch=""
-    fi
-  done < <(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null)
+  local wt_branch track
+  while IFS=$'\t' read -r _ wt_branch _; do
+    track="$(git -C "$REPO_PATH" for-each-ref --format='%(upstream:track)' "refs/heads/$wt_branch" 2>/dev/null)"
+    [[ "$track" == "[gone]" ]] && gone_count=$((gone_count + 1))
+  done < <(list_tool_worktrees "$REPO_PATH" "$REPO_NAME")
 
   if [[ "$gone_count" -gt 0 ]]; then
     echo "Note: $gone_count worktree(s) have deleted remote branches -- run 'claude-sandbox --gc $REPO_PATH' to clean up."
   fi
 }
-
-# --- Preview mode (called by fzf) ---
-if [[ "$PREVIEW_MODE" == true ]]; then
-  fzf_preview_worktree "${PREVIEW_ARGS[@]}"
-  exit 0
-fi
 
 # --- Prune worktrees (early exit) ---
 if [[ "$PRUNE_WORKTREES" == true ]]; then
@@ -1686,8 +1530,8 @@ if [[ "$PRUNE_WORKTREES" == true ]]; then
 
   REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
-  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+  REPO_NAME="$(sanitize_repo_name "$REPO_PATH")"
+  REPO_HASH="$(repo_hash "$REPO_PATH")"
 
   prune_worktrees
   exit 0
@@ -1699,8 +1543,8 @@ if [[ "$GC_WORKTREES" == true ]]; then
 
   REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
   REPO_PATH="$(cd "$REPO_PATH" && pwd)"
-  REPO_NAME="$(basename "$REPO_PATH" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//;s/-$//')"
-  REPO_HASH="$(printf '%s' "$REPO_PATH" | md5 | head -c 8)"
+  REPO_NAME="$(sanitize_repo_name "$REPO_PATH")"
+  REPO_HASH="$(repo_hash "$REPO_PATH")"
 
   gc_worktrees
   exit 0
@@ -1736,6 +1580,15 @@ if [[ ! -f "$DOCKERFILE" || "$REBUILD" == true || "$GENERATE_ONLY" == true ]]; t
 fi
 
 [[ "$GENERATE_ONLY" == true ]] && exit 0
+
+# Resolve the settings file to mount: sandbox base, with a safe subset of the host
+# settings folded in (permissions.deny union + outputStyle/model/enabledPlugins),
+# then the optional work overlay merged on top. Resolved HERE rather than at the
+# top of the script because it writes a temp file that only the cleanup trap
+# (installed further down, on the launch path) removes: every early exit above —
+# --list, --prune, --gc, --rename, and the two completion modes zsh calls on each
+# TAB — used to leak one $TMPDIR/sandbox-host-*.json per invocation.
+SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json" "$HOME/.claude/settings.json")"
 
 # --- Ensure base image exists, else refresh Claude Code once per day ---
 if ! docker image inspect claudebot:base &>/dev/null; then
