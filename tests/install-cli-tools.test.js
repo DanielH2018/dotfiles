@@ -22,10 +22,16 @@ try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { too
 const skip = toolsOk ? false : 'chezmoi not on PATH';
 
 const dirs = [];
-// Render exactly once per file. The template does not vary between these tests, and every
-// `chezmoi execute-template` opens chezmoi's bolt-backed state, so a file that shelled out
-// eleven times contended with the rest of the suite running in parallel -- this test flaked
-// twice in roughly eight full-suite runs while passing every time in isolation.
+// Render exactly once per file: the template does not vary between these tests, and eleven
+// subprocesses where one will do is just slower.
+//
+// This memoisation was originally credited with fixing a flake — "every `chezmoi
+// execute-template` opens chezmoi's bolt-backed state, so this file contended with the rest of
+// the suite". That diagnosis was wrong, and the flake outlived it. Thirty-two concurrent
+// renders produce zero failures; the real cause was tests/managed-test-drift.test.js planting a
+// probe file inside the shared source tree, so any concurrent `--source` walk could lstat a
+// file that had just been removed. Fixed there, at the source. Keep the memoisation for speed,
+// but do not expect it to prevent anything.
 //
 // --source pins that render to THIS checkout. Without it chezmoi resolves .chezmoidata and
 // .chezmoitemplates from ~/.local/share/chezmoi, so a branch or worktree would silently be tested

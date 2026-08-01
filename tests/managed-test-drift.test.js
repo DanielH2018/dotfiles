@@ -20,6 +20,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const REPO = path.join(__dirname, '..');
@@ -37,8 +38,8 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
   .filter((l) => l && !l.startsWith('#'))
   .sort();
 
-function managedMatches() {
-  const r = spawnSync('chezmoi', ['managed', '--source', SOURCE], { encoding: 'utf8' });
+function managedMatches(source = SOURCE) {
+  const r = spawnSync('chezmoi', ['managed', '--source', source], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `chezmoi managed failed: ${r.stderr}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l && PATTERN.test(l)).sort();
 }
@@ -70,22 +71,34 @@ test('no test file or fixture deploys into the home tree without being on the al
   );
 });
 
-// A guard nobody has seen fail is a guard nobody knows works. This creates a file that
-// would ship, proves the check rejects it, and removes it again.
+// A guard nobody has seen fail is a guard nobody knows works. This plants a file that would
+// ship and proves the check rejects it.
+//
+// The probe goes into a COPY of the source tree, never into the tree itself. Planting it in
+// `home/` was the cause of a long-standing flake blamed on something else entirely: roughly
+// two dozen other test files run `chezmoi execute-template --source <this tree>` and
+// `node --test` runs files in parallel, so a walk could readdir the intruder and then lstat it
+// after the `finally` had removed it. chezmoi exits non-zero — `lstat .../test_a13_16_probe.sh:
+// no such file or directory` — and the failure lands on whichever unrelated test happened to be
+// rendering, which is why it looked random and got misdiagnosed as chezmoi state contention.
+//
+// The copy costs about 5 MB and a few hundred files. `chezmoi managed` output is byte-identical
+// between the copy and the real tree, since it reports target paths under the destination dir
+// and does not care where the source lives.
 test('the guard actually catches a newly-added test file', { skip }, () => {
-  const intruder = path.join(SOURCE, 'private_dot_claude', 'test_a13_16_probe.sh');
-  assert.ok(!fs.existsSync(intruder), 'probe path already exists; refusing to clobber it');
-  fs.writeFileSync(intruder, '#!/bin/sh\n# transient fixture for tests/managed-test-drift.test.js\n');
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-drift-'));
   try {
-    const withIntruder = managedMatches();
-    const allowed = readAllowlist();
-    const added = withIntruder.filter((p) => !allowed.includes(p));
+    const copy = path.join(scratch, 'home');
+    fs.cpSync(SOURCE, copy, { recursive: true });
+    fs.writeFileSync(path.join(copy, 'private_dot_claude', 'test_a13_16_probe.sh'),
+      '#!/bin/sh\n# transient fixture for tests/managed-test-drift.test.js\n');
+
+    const added = managedMatches(copy).filter((p) => !readAllowlist().includes(p));
     assert.ok(
       added.some((p) => p.endsWith('test_a13_16_probe.sh')),
       `the drift check did not notice a new deploying test file. added=${JSON.stringify(added)}`,
     );
   } finally {
-    fs.rmSync(intruder, { force: true });
+    fs.rmSync(scratch, { recursive: true, force: true });
   }
-  assert.ok(!fs.existsSync(intruder), 'probe file was not cleaned up');
 });
