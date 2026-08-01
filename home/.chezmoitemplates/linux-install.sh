@@ -165,6 +165,17 @@ flatpak_install() { # $1=flathub application id
   echo "$TAG: [install] $1 (flatpak) ..."
   flatpak install --user --noninteractive --or-update flathub "$1"
 }
+flatpak_prune() { # $1=flathub application id, superseded by a distro package that is now present
+  flatpak info "$1" >/dev/null 2>&1 || return 0
+  echo "$TAG: [prune] $1 (flatpak) superseded by the distro package."
+  # Deliberately no --delete-data: ~/.var/app/$1 stays put, so pruning on a machine that did want
+  # the Flathub copy costs a reinstall rather than the app's config and logins.
+  # A system-wide install is not ours to remove (installs here are --user), so --user failing is
+  # reported and tolerated instead of failing the app's whole install pass.
+  flatpak uninstall --user --noninteractive "$1" \
+    || echo "$TAG: could not remove the superseded flatpak $1; leaving it installed" >&2
+  return 0
+}
 
 # --- 5. Third-party repositories -----------------------------------------------------------
 # Each is added once; the distro's normal upgrade path keeps the package current afterwards.

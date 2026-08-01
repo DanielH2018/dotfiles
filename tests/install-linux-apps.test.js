@@ -263,6 +263,61 @@ test('Flathub-only apps take the flatpak route on a dnf host', { skip }, (t) => 
   assert.doesNotMatch(out, /DPKG WAS CALLED/);
 });
 
+// Steam and Discord declare a distro package AND a Flathub id, where Flathub is the fallback for
+// hosts the package route can't serve. Nothing used to retire the fallback once the package route
+// started working, so a machine that took Flathub first and got the package later ended up with
+// both installed and two entries per app in the desktop's app grid.
+test('a flatpak fallback is pruned once the distro package is installed', { skip }, (t) => {
+  if (!rendersHere()) return t.skip('renders empty on this host');
+  const log = path.join(os.tmpdir(), `flatpak-prune-${process.pid}-${Date.now()}`);
+  const { out } = runWithStubs({
+    dnf: 'exit 0',
+    rpm: 'exit 0',                       // every distro package reads as installed
+    // `flatpak info` reports installed, so both the prune and the skip paths are reachable.
+    flatpak: `[ "$1" = "info" ] && exit 0; echo "flatpak $*" >> ${log}; exit 0`,
+    sudo: SUDO_OK,
+    dpkg: DPKG_TRIPWIRE,
+    curl: CURL_TAG_ONLY,
+    unzip: 'exit 0',
+    bw: 'exit 0',
+    uname: '[ "$1" = "-m" ] && echo x86_64 || echo Linux',
+  });
+  const flatpakLog = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+  assert.match(flatpakLog, /uninstall .*com\.valvesoftware\.Steam/, 'the Steam flatpak is superseded by the steam package');
+  assert.match(flatpakLog, /uninstall .*com\.discordapp\.Discord/, 'the Discord flatpak is superseded by the discord package');
+  assert.match(flatpakLog, /uninstall --user/, 'only the per-user install is ours to remove');
+  assert.doesNotMatch(flatpakLog, /--delete-data/,
+    'pruning must leave ~/.var/app intact — an unwanted prune should cost a reinstall, not the app config');
+  assert.doesNotMatch(flatpakLog, /uninstall .*md\.obsidian\.Obsidian/,
+    'Flathub-only apps have no distro package to supersede them and must never be pruned');
+  assert.doesNotMatch(flatpakLog, /uninstall .*com\.spotify\.Client/, 'same for Spotify');
+  assert.match(out, /\[prune\] com\.valvesoftware\.Steam/, 'the prune must be reported, not silent');
+});
+
+// The mirror image, and the one that actually protects the user's data: on a host with no distro
+// package the flatpak IS the install, not a leftover.
+test('a flatpak fallback survives when the distro package is absent', { skip }, (t) => {
+  if (!rendersHere()) return t.skip('renders empty on this host');
+  const log = path.join(os.tmpdir(), `flatpak-keep-${process.pid}-${Date.now()}`);
+  const { out } = runWithStubs({
+    // Nothing is installed and every package install fails, so no app can reach the package route.
+    dnf: 'case "$*" in *install*) exit 1 ;; *) exit 0 ;; esac',
+    rpm: 'exit 1',
+    flatpak: `[ "$1" = "info" ] && exit 0; echo "flatpak $*" >> ${log}; exit 0`,
+    sudo: SUDO_OK,
+    dpkg: DPKG_TRIPWIRE,
+    curl: CURL_TAG_ONLY,
+    unzip: 'exit 0',
+    bw: 'exit 0',
+    uname: '[ "$1" = "-m" ] && echo x86_64 || echo Linux',
+  });
+  const flatpakLog = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+  assert.doesNotMatch(flatpakLog, /uninstall/, 'no package is present, so nothing supersedes a flatpak');
+  assert.doesNotMatch(out, /\[prune\]/, 'and nothing may be pruned');
+  assert.match(out, /\[skip\] com\.valvesoftware\.Steam already installed \(flatpak\)/,
+    'the flatpak must be recognised as the live install and kept');
+});
+
 test('a repo that exists but is disabled gets enabled', { skip }, (t) => {
   if (!rendersHere()) return t.skip('renders empty on this host');
   // The bug this pins down, found on a real apply: Fedora's fedora-workstation-repositories ships

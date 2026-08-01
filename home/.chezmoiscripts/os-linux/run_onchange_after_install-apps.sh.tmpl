@@ -107,16 +107,28 @@ while IFS='|' read -r name apt_pkg dnf_pkg fp repo copr tb tb_bin tb_url; do
     *)   pkg="" ;;
   esac
 
-  # 1. Distro package.
+  # 1. Distro package. `flatpak =` on an app that also has a package name is a FALLBACK for hosts
+  # the package route can't serve, so once the package is present the Flathub copy is a redundant
+  # second install — two launcher entries for one app, two update paths. Whichever order they
+  # arrived in, prune it. Presence is checked outside the CAN_PKG guard because rpm -q / dpkg -s
+  # need no sudo: a deferred, sudo-less apply can still clean up even though it can't install.
+  pkg_present=0
+  if [ -n "$pkg" ] && pkg_installed "$pkg"; then
+    pkg_present=1
+  fi
+
+  if [ "$pkg_present" = 1 ]; then
+    echo "$TAG: [skip] $name already installed ($pkg)."
+    [ -n "$fp" ] && flatpak_prune "$fp"
+    continue
+  fi
+
   if [ -n "$pkg" ] && [ "$CAN_PKG" = 1 ]; then
-    if pkg_installed "$pkg"; then
-      echo "$TAG: [skip] $name already installed ($pkg)."
-      continue
-    fi
     [ -n "$repo" ] && { repo_enable "$repo" || true; }
     [ -n "$copr" ] && { copr_enable "$copr" || true; }
     echo "$TAG: [install] $name ($pkg) ..."
     if pkg_install "$pkg"; then
+      [ -n "$fp" ] && flatpak_prune "$fp"
       continue
     fi
     echo "$TAG: distro package failed for $name; trying the remaining routes" >&2
