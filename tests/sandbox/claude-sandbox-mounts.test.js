@@ -42,15 +42,19 @@ function extractFunction(name) {
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
-// Each entry is the bash that defines the function under test: a source line for
-// the ones sandbox-mounts.sh owns, the awked body for the one still in the launcher.
+// Each entry is the bash that defines the function under test — now a source line
+// for every one of them, since configure_gh_auth moved out of the launcher into
+// sandbox-auth.sh. Sourcing that lib is safe here even though run_oauth_if_needed
+// inside it calls a launcher function: the libs define functions and run nothing at
+// load time, so the call would only fail if this suite invoked that function.
 const SOURCE_MOUNTS = `. ${q(path.join(SANDBOX_SRC, 'executable_sandbox-mounts.sh'))}`;
+const SOURCE_AUTH = `. ${q(path.join(SANDBOX_SRC, 'executable_sandbox-auth.sh'))}`;
 const FN = skip ? {} : {
   add_vault_mounts: SOURCE_MOUNTS,
   add_chezmoi_mount: SOURCE_MOUNTS,
   add_work_config_mount: SOURCE_MOUNTS,
   add_vault_self_hardening: SOURCE_MOUNTS,
-  configure_gh_auth: extractFunction('configure_gh_auth'),
+  configure_gh_auth: SOURCE_AUTH,
 };
 
 const dirs = [];
