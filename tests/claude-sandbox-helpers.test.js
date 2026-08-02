@@ -18,7 +18,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
+const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
+// Some of the functions below (resolve_main_ref, build_repo_snapshot) live in the
+// mount-assembly lib the launcher sources, so extraction searches both files.
+const MOUNTS_LIB = path.join(SANDBOX_DIR, 'executable_sandbox-mounts.sh');
 
 let toolsOk = true;
 try {
@@ -36,7 +40,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    SANDBOX,
+    SANDBOX, MOUNTS_LIB,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
   assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);

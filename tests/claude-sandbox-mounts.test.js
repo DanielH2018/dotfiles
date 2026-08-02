@@ -6,9 +6,10 @@
 // it lands read-only or read-write — has no coverage. A gate silently ceasing
 // to fire (--no-vault ignored, a :ro dropped to :rw) passes every other test.
 //
-// Same extraction technique as claude-sandbox-launcher.test.js: awk the real
-// function body out of the script and run it in bash against real fixture
-// directories. Offline; skips cleanly without bash/awk.
+// The four mount functions now live in sandbox-mounts.sh, so the harness sources
+// that file and drives each one against real fixture directories. configure_gh_auth
+// is still launcher-resident, so it keeps the awk extraction used by
+// claude-sandbox-launcher.test.js. Offline; skips cleanly without bash/awk.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -39,10 +40,18 @@ function extractFunction(name) {
   return src;
 }
 
-const FN = skip ? {} : Object.fromEntries(
-  ['add_vault_mounts', 'add_chezmoi_mount', 'add_work_config_mount',
-    'add_vault_self_hardening', 'configure_gh_auth'].map((n) => [n, extractFunction(n)]),
-);
+const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+// Each entry is the bash that defines the function under test: a source line for
+// the ones sandbox-mounts.sh owns, the awked body for the one still in the launcher.
+const SOURCE_MOUNTS = `. ${q(path.join(SANDBOX_SRC, 'executable_sandbox-mounts.sh'))}`;
+const FN = skip ? {} : {
+  add_vault_mounts: SOURCE_MOUNTS,
+  add_chezmoi_mount: SOURCE_MOUNTS,
+  add_work_config_mount: SOURCE_MOUNTS,
+  add_vault_self_hardening: SOURCE_MOUNTS,
+  configure_gh_auth: extractFunction('configure_gh_auth'),
+};
 
 const dirs = [];
 process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
@@ -52,7 +61,6 @@ function scratch() {
   return d;
 }
 
-const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const ARGS_MARKER = '---DOCKER_ARGS---';
 
 // Drives one function and returns the DOCKER_ARGS it appended plus its stdout.

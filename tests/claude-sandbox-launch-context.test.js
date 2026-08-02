@@ -22,6 +22,9 @@ const path = require('node:path');
 
 const SANDBOX_DIR_SRC = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX_DIR_SRC, 'executable_claude-sandbox');
+// The add_*_mounts functions and their snapshot helpers live in the mount-assembly
+// lib the launcher sources, so extraction searches both files.
+const MOUNTS_LIB = path.join(SANDBOX_DIR_SRC, 'executable_sandbox-mounts.sh');
 
 let toolsOk = true;
 try {
@@ -39,7 +42,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    LAUNCHER,
+    LAUNCHER, MOUNTS_LIB,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(body), `extracted the ${name} definition`);
   assert.strictEqual(body.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);

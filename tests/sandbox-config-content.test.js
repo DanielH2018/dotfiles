@@ -121,7 +121,12 @@ function extractBlock(source, startMarker, endMarker) {
   return source.slice(start, end + endMarker.length);
 }
 
-const LAUNCHER_SRC = fs.readFileSync(LAUNCHER, 'utf8');
+// The launcher plus the mount-assembly lib it sources: the mount literals these
+// assertions check moved into sandbox-mounts.sh, but they are still one
+// configuration. Launcher text comes first, so the extractBlock() markers below
+// (DOCKER_ARGS=(, docker run -d --rm) resolve against the launcher as before.
+const LAUNCHER_SRC = fs.readFileSync(LAUNCHER, 'utf8')
+  + fs.readFileSync(path.join(SANDBOX_DIR, 'executable_sandbox-mounts.sh'), 'utf8');
 const DOCKER_ARGS_BLOCK = extractBlock(LAUNCHER_SRC, 'DOCKER_ARGS=(', '\n)\n');
 const PROXY_RUN_BLOCK = extractBlock(LAUNCHER_SRC, 'docker run -d --rm', '>/dev/null\n');
 
