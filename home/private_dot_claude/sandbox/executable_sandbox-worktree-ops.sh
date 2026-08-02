@@ -25,6 +25,11 @@
 # CALL ORDER stays in the launcher: the --prune/--gc/--setup-worktree early exits,
 # the startup nudge and the setup_worktree call all sit in the launcher's main flow,
 # where the flags that select them are parsed. Only the definitions live here.
+#
+# SC2153 fires on WT_NAME, which the launcher's arg parser assigns and this file only
+# reads; the linter cannot see across that boundary and offers the local wt_name as a
+# likely misspelling instead. The directive is file-wide, not scoped to that name.
+# shellcheck disable=SC2153
 
 # --- Git worktree management ---
 setup_worktree() {
