@@ -254,4 +254,67 @@ test('WezTerm reach-across: WSL sheet finds the Windows-side config on /mnt/c', 
   assert.match(html, /<h2>WezTerm<\/h2>/);
 });
 
+// --- the library seam ---------------------------------------------------------------
+// Everything above runs the generator as a subprocess, which is blind to how the code is
+// arranged behind the CLI. These load the modules directly: each parser has to stand on
+// its own, and each takes its config root as an argument, which is what makes a parser
+// testable without staging a whole fixture $HOME.
+
+const LIB = path.join(REPO, 'home', 'dot_local', 'share', 'terminal-cheatsheet');
+
+test('each parser module loads on its own and declines an empty config root', () => {
+  const empty = tmpdir();
+  const cases = [
+    ['wezterm', 'parseWezterm'], ['ghostty', 'parseGhostty'],
+    ['nvim', 'parseNvim'], ['yazi', 'parseYazi'],
+  ];
+  for (const [file, fn] of cases) {
+    const mod = require(path.join(LIB, 'parsers', `${file}.js`));
+    assert.strictEqual(typeof mod[fn], 'function', `${file}.js must export ${fn}`);
+    assert.strictEqual(mod[fn](empty), null, `${fn} must return null for an empty root`);
+  }
+  // Claude keys off $HOME rather than a config root, and reports nothing when ~/.claude
+  // is absent — the one card that renders from built-ins alone when the dir does exist.
+  const { parseClaude } = require(path.join(LIB, 'parsers', 'claude.js'));
+  assert.strictEqual(parseClaude(empty), null);
+});
+
+test('a parser reads a fixture root passed as an argument', () => {
+  const xdg = tmpdir();
+  fs.mkdirSync(path.join(xdg, 'ghostty'), { recursive: true });
+  fs.writeFileSync(path.join(xdg, 'ghostty', 'config'),
+    'font-family = "Test Mono"\nkeybind = ctrl+shift+t=new_tab\n# keybind = ctrl+q=quit\n');
+  const { parseGhostty } = require(path.join(LIB, 'parsers', 'ghostty.js'));
+  const card = parseGhostty(xdg);
+  assert.strictEqual(card.title, 'Ghostty');
+  assert.deepStrictEqual(card.binds, [{ combo: '⌃+⇧+T', desc: 'New tab' }], 'commented-out binds stay out');
+  assert.deepStrictEqual(card.settings.find((s) => s[0] === 'Font'), ['Font', 'Test Mono']);
+});
+
+test('assets are interpolated without their trailing newline', () => {
+  // Inline, the stylesheet and script ended at their last brace. As files they end with a
+  // newline, and emitting it would shift every byte after it in the page.
+  const { asset } = require(path.join(LIB, 'render.js'));
+  for (const name of ['page.css', 'page.js']) {
+    assert.ok(!/\n$/.test(asset(name)), `${name} must be interpolated without a trailing newline`);
+    assert.ok(fs.readFileSync(path.join(LIB, 'assets', name), 'utf8').endsWith('\n'),
+      `${name} must still be a well-formed file on disk`);
+  }
+  assert.ok(asset('page.css').startsWith(':root{'), 'page.css starts at the palette');
+});
+
+test('a missing asset fails when the page is built, not when render.js loads', () => {
+  // render.js is already loaded by the test above without throwing, which is half of this.
+  const { asset } = require(path.join(LIB, 'render.js'));
+  assert.throws(() => asset('no-such-asset.css'), /ENOENT/);
+});
+
+test('the browser asset parses as JavaScript', () => {
+  // Nothing reads this file until a browser does, so a syntax error in it would otherwise
+  // only show up as a dead filter box on the rendered page.
+  const r = require('node:child_process').spawnSync(
+    process.execPath, ['--check', path.join(LIB, 'assets', 'page.js')], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `page.js must parse: ${r.stderr}`);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
