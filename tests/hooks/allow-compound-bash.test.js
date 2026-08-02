@@ -314,7 +314,13 @@ test('tee is treated as a writer unless its target is harmless', { skip }, () =>
 
 // Content guard on the REAL allow list, so the rules above cannot be reintroduced.
 // Scoped to the allow array: deny and ask entries legitimately name these commands.
-const REAL_SETTINGS = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.base.json');
+//
+// settings.permissions.json, not settings.base.json: the permission model was split out of
+// the base template, which now only splices it in by includeTemplate. The two tests below
+// assert they located the allow and deny arrays before parsing anything, so pointing this
+// at the wrong template fails them rather than silently checking zero rules — but keep it
+// pointed at whichever template actually holds the arrays.
+const REAL_SETTINGS = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.permissions.json');
 // Commands that take another command as an argument. None may be an allow prefix.
 // `make` counts: a target's recipe is arbitrary code living in the repo's own Makefile.
 const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', 'python3',

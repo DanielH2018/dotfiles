@@ -20,15 +20,24 @@
 // fixtures, and none fed it the actual template we ship. That is the gap this closes —
 // render the real thing, run the real generator over it, and require exit 0.
 //
-// Both halves are read from THIS tree (template via stdin, merge script by explicit
-// path), so a worktree cannot accidentally assert against the primary checkout's copies
-// — the skew that made tests/modify_settings.test.js report the wrong tree's result.
+// Both halves are read from THIS tree (template through tests/lib/render.js, merge script
+// by explicit path), so a worktree cannot accidentally assert against the primary
+// checkout's copies — the skew that made tests/modify_settings.test.js report the wrong
+// tree's result.
+//
+// The render used to be a bare `chezmoi execute-template` on stdin, which was equivalent
+// while the template was self-contained. It stopped being equivalent when the permission
+// model moved into settings.permissions.json: with no --source, chezmoi resolves
+// includeTemplate against its CONFIGURED source dir, so a worktree would have spliced in
+// the primary checkout's permission rules and asserted against those — the exact skew the
+// paragraph above says cannot happen. renderFile passes --source for this tree.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { renderFile } = require('./lib/render');
 
 const REPO = path.join(__dirname, '..');
 const TMPL = path.join(REPO, 'home', '.chezmoitemplates', 'settings.base.json');
@@ -41,13 +50,29 @@ const skip = have ? false : 'chezmoi unavailable';
 let rendered = null;
 function render() {
   if (rendered) return rendered;
-  const r = spawnSync('chezmoi', ['execute-template'], {
-    input: fs.readFileSync(TMPL, 'utf8'), encoding: 'utf8',
-  });
-  assert.strictEqual(r.status, 0, `template did not render: ${r.stderr}`);
-  rendered = r.stdout;
+  try {
+    rendered = renderFile(TMPL);
+  } catch (e) {
+    assert.fail(`template did not render: ${e.stderr || e.message}`);
+  }
   return rendered;
 }
+
+// The permissions key is spliced in by includeTemplate, which carries the fragment's
+// leading and trailing newlines with it. Left alone that renders `"permissions":` with its
+// brace on the next line and the comma stranded a line below the closing one — still valid
+// JSON, so nothing downstream complains, but the generated settings.json stops looking like
+// the file everything else in this repo greps. The base template compensates with `trim`
+// and by closing its comment on the key's own line; this is what notices if either is lost.
+test('the permissions block splices in without stray whitespace', { skip }, () => {
+  assert.match(render(), /\n {2}"permissions": \{\n/,
+    'the opening brace left the key\'s line — the include lost its `trim`');
+  assert.doesNotMatch(render(), /\n\}\n,/,
+    'the closing brace and its comma split across lines — the fragment\'s last line should '
+    + 'be an indented `  }` so the base template\'s comma lands beside it');
+  assert.doesNotMatch(render(), /\n {2}\n {2}"permissions"/,
+    'a blank line precedes the permissions key — a template comment closed on its own line');
+});
 
 test('the rendered base template is valid JSON', { skip }, () => {
   assert.doesNotThrow(() => JSON.parse(render()));

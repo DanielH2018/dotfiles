@@ -16,8 +16,17 @@ trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
 # edit to the base template or the merge script silently BECOMES policy — live, and invisible
 # to review or to git. Refuse rather than deploy something nobody can see the provenance of.
 #
-# Scoped to the two files that actually decide the output; an unrelated dirty file in the repo
+# Scoped to the files that actually decide the output; an unrelated dirty file in the repo
 # is not this script's business. Set CLAUDE_SETTINGS_ALLOW_DIRTY=1 to iterate locally.
+#
+# The settings templates are matched by WILDCARD, not by name. They used to be enumerated,
+# and the enumeration named only settings.base.json — settings.safe-floor.json is spliced in
+# below and was never covered, so an uncommitted edit to the bootstrap floor was exactly the
+# unreviewable policy this refuses to deploy. Splitting the permission model out into
+# settings.permissions.json would have added a second such hole. A pattern cannot go stale
+# the way a list does, so keep it a pattern; tests/settings-templates-tracked.test.js fails
+# if it is narrowed back. git applies fnmatch to a quoted pathspec, so no :(glob) magic is
+# needed for one path segment.
 #
 # NOTE ON BLAST RADIUS: chezmoi stops the whole run on first error, so this failing blocks
 # every other dotfile in that apply, not just settings.json. `chezmoi apply --keep-going` is
@@ -25,7 +34,7 @@ trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
 if [ "${CLAUDE_SETTINGS_ALLOW_DIRTY:-0}" != 1 ]; then
   SRC="{{ .chezmoi.sourceDir }}"
   DIRTY="$(git -C "$SRC" status --porcelain -- \
-    ".chezmoitemplates/settings.base.json" \
+    ".chezmoitemplates/settings.*.json" \
     "dot_local/bin/executable_claude-settings-merge" 2>/dev/null || true)"
   if [ -n "$DIRTY" ]; then
     echo "modify_settings: refusing to generate settings.json from an uncommitted tree." >&2

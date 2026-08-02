@@ -3,8 +3,18 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "9a63d1b40d66962fa644b9a90fe9f080675151a48142837a74bfe4bc0ea41580",
-      "landed": "2026-08-02T19:12:39.054Z"
+      "hash": "41dc605e452f20944f4802100fcb2626e07c1ca8169823873eb2373932eaca06",
+      "landed": "2026-08-02T20:12:08.922Z"
+    },
+    {
+      "path": "home/.chezmoitemplates/settings.permissions.json",
+      "hash": "442b078c636b1b4a47ea869d349d4ba744affcb87c1d92f59810a50956169c6b",
+      "landed": "2026-08-02T20:12:08.922Z"
+    },
+    {
+      "path": "home/.chezmoitemplates/settings.safe-floor.json",
+      "hash": "32f01762626639289fec1698c4af813a6522a1aea692595f20c8be300b9b7e3d",
+      "landed": "2026-08-02T20:12:08.922Z"
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",

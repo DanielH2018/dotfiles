@@ -16,7 +16,10 @@ const ROOT = path.join(__dirname, '..');
 const REGISTRY = path.join(ROOT, 'home', '.chezmoidata', 'secrets.toml');
 const BDB = path.join(ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh');
 const PS = path.join(ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
-const SETTINGS = path.join(ROOT, 'home', '.chezmoitemplates', 'settings.base.json');
+// The deny rules moved out of settings.base.json when the permission model was split into
+// its own template; base now only splices it in. The assertion below requires each rule to
+// be PRESENT, so a stale path here fails loudly rather than finding nothing to complain about.
+const SETTINGS = path.join(ROOT, 'home', '.chezmoitemplates', 'settings.permissions.json');
 
 // Minimal reader for the shape this file uses: [[secretPaths.entries]] tables of
 // scalars and string arrays. Avoids adding a TOML dependency for one fixture.
@@ -84,7 +87,7 @@ test('every entry is denied to both Read and Edit in the settings template', () 
       }
     }
   }
-  assert.deepStrictEqual(missing, [], 'deny rules absent from settings.base.json');
+  assert.deepStrictEqual(missing, [], 'deny rules absent from settings.permissions.json');
 });
 
 test('the OAuth token store is covered by all four dialects', () => {

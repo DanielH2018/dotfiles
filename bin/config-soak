@@ -27,8 +27,14 @@ const MANIFEST_PATH = path.join(REPO_ROOT, 'config-soak.json');
 
 // Behavior-affecting config surface. `file` = a single path; `dir` = recurse.
 // Paths are repo-relative and use forward slashes in the ledger.
+// settings.json is generated from all three templates below, so all three are policy.
+// Listed individually rather than tracking .chezmoitemplates as a dir: the rest of that
+// directory is installer scripts and OS probes, which are not this gate's surface.
+// tests/settings-templates-tracked.test.js fails if a fourth appears without a line here.
 const TRACKED = [
   { type: 'file', path: 'home/.chezmoitemplates/settings.base.json' },
+  { type: 'file', path: 'home/.chezmoitemplates/settings.permissions.json' },
+  { type: 'file', path: 'home/.chezmoitemplates/settings.safe-floor.json' },
   { type: 'file', path: 'home/private_dot_claude/CLAUDE.md.tmpl' },
   { type: 'dir', path: 'home/private_dot_claude/hooks' },
   { type: 'dir', path: 'home/private_dot_claude/agents' },
