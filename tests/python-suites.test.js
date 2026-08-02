@@ -24,6 +24,7 @@ const SUITES = [
   'test_gh_pr_guard.py',
   'test_compact_session.py',
   'test_docker_create_filter.py',
+  'test_filter_policy.py',
 ];
 
 // `python3 test_x.py` exits 0 whether it ran every test, some of them, or none
