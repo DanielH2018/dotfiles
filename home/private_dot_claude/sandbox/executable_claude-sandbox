@@ -3,6 +3,12 @@
 # REPO_SNAPSHOT_ROOT are parsed here and read in sandbox-mounts.sh, which
 # shellcheck cannot follow (the source path resolves at runtime — the same reason
 # .shellcheckrc disables SC1091). Without this it reports all seven as unused.
+#
+# The directive below is FILE-WIDE, not scoped to those seven: SC2034 is off for
+# the whole launcher, so a genuinely dead variable added later will not be caught
+# here. The names above are documentation, not scope. Scoping this properly needs
+# external-sources=true in .shellcheckrc plus source= directives, which changes
+# analysis for every sourced fragment in the repo and wants its own change.
 # shellcheck disable=SC2034
 set -euo pipefail
 
