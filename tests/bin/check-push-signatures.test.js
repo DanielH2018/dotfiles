@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SCRIPT = path.join(__dirname, '..', 'bin', 'check-push-signatures');
+const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-push-signatures');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable'
   : !have('git') ? 'git unavailable'

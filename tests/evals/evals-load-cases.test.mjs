@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { envCaseDirs, loadCases, readCaseFiles } from '../evals/lib/load-cases.mjs';
+import { envCaseDirs, loadCases, readCaseFiles } from '../../evals/lib/load-cases.mjs';
 
 function fixtureRoot() {
   const root = mkdtempSync(join(tmpdir(), 'evalcases-'));

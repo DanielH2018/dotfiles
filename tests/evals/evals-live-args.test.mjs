@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { buildLiveArgs } from '../evals/lib/live-args.mjs';
+import { buildLiveArgs } from '../../evals/lib/live-args.mjs';
 
 test('buildLiveArgs enables real tools/dispatch (no --agent, no --tools "")', () => {
   const a = buildLiveArgs({ input: 'Review the homelab security area.' });

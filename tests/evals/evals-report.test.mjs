@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseThreshold, aggregateCase, overallExitCode } from '../evals/lib/report.mjs';
+import { parseThreshold, aggregateCase, overallExitCode } from '../../evals/lib/report.mjs';
 
 const ok = (pass) => ({ status: 'ok', pass });
 const infra = () => ({ status: 'infra_error' });

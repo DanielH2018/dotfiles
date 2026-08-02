@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { buildAgentArgs } from '../evals/lib/invoke-agent.mjs';
+import { buildAgentArgs } from '../../evals/lib/invoke-agent.mjs';
 
 test('buildAgentArgs uses -p, --agents/--agent, --tools "" and no --model/--permission-mode', () => {
   const args = buildAgentArgs({ agentsFlag: '{"x":{}}', name: 'x', input: 'go', maxBudgetUsd: 0.5 });

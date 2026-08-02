@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const CTS = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_cts');
+const CTS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_cts');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = have('bash') ? false : 'bash unavailable';
 const skipTmux = !have('bash') ? 'bash unavailable' : !have('tmux') ? 'tmux unavailable' : false;

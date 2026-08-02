@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const CT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_ct');
+const CT = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ct');
 let toolsOk = true;
 try { execFileSync('bash', ['-c', ':'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash unavailable';

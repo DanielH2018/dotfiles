@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { buildJudgeArgs, parseVerdict } from '../evals/lib/judge.mjs';
+import { buildJudgeArgs, parseVerdict } from '../../evals/lib/judge.mjs';
 
 test('buildJudgeArgs pins opus inside --agents and sets --json-schema', () => {
   const args = buildJudgeArgs({ rubric: 'R', output: 'O', maxBudgetUsd: 0.5 });

@@ -139,7 +139,7 @@ fi
 #    a bare script so the digest covers it too; the file is a node:test suite
 #    either way, and step 5's list picks it up as well — it stays a named step so
 #    a red-team regression is attributed instead of buried in the suite total.
-run "screen-injection red-team" tq_node injection tests/screen-injection.test.js
+run "screen-injection red-team" tq_node injection tests/hooks/screen-injection.test.js
 
 # 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
 #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.

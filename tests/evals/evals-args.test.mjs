@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseArgs, effectiveK } from '../evals/lib/args.mjs';
+import { parseArgs, effectiveK } from '../../evals/lib/args.mjs';
 
 test('parseArgs reads flags', () => {
   const o = parseArgs(['--agent', 'planner', '--k', '5', '--case', 'planner/001', '--json', 'out.json']);

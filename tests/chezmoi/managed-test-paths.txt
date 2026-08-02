@@ -1,7 +1,7 @@
 # Managed target paths matching /test|fixture|conftest/ — the A13-16 drift allowlist.
 # Regenerate deliberately:  chezmoi managed --source home | grep -iE 'test|fixture|conftest' | sort
 # A path appearing here means: this test file is MEANT to deploy into ~/.claude.
-# See tests/managed-test-drift.test.js for why this exists.
+# See tests/chezmoi/managed-test-drift.test.js for why this exists.
 .claude/hooks/tq-wrap-tests.py
 .claude/sandbox/test_compact_session.py
 .claude/sandbox/test_docker_create_filter.py

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { classifyRun } from '../evals/lib/classify.mjs';
+import { classifyRun } from '../../evals/lib/classify.mjs';
 
 test('clean success is ok with text', () => {
   const r = classifyRun({ is_error: false, subtype: 'success', result: 'KIWI' });

@@ -10,8 +10,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
-const TQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_tq');
+const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
+const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
 
 let python3Ok = true;
 try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }

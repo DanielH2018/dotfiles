@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { checkAssertions } from '../evals/lib/assertions.mjs';
+import { checkAssertions } from '../../evals/lib/assertions.mjs';
 
 test('passes when all must_match present and no must_not_match present', () => {
   const r = checkAssertions('Risk Level: CRITICAL\nRollback Safe: no',

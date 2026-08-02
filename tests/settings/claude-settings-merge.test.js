@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const BIN = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
+const BIN = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-'));
 const w = (name, obj) => { const p = path.join(tmp, name); fs.writeFileSync(p, JSON.stringify(obj)); return p; };
 const run = (...args) => JSON.parse(execFileSync('node', [BIN, ...args], { encoding: 'utf8' }));
@@ -237,7 +237,7 @@ test('an overlay that removes a base deny rule is refused', () => {
 
 // The floor in the generator and the floor in the shipped safe-floor template must not drift.
 test('the safe-floor template satisfies the floor it is meant to guarantee', () => {
-  const floorPath = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
+  const floorPath = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
   const floor = JSON.parse(fs.readFileSync(floorPath, 'utf8'));
   for (const rule of FLOOR) {
     assert.ok(floor.permissions.deny.includes(rule), `safe floor is missing ${rule}`);
@@ -248,7 +248,7 @@ test('the safe-floor template satisfies the floor it is meant to guarantee', () 
 // The bootstrap case: no previously deployed file, so exiting would leave the machine with
 // NO settings.json and therefore no guardrails — strictly worse than a deny-only file.
 test('a first-ever apply falls back to the safe floor instead of writing nothing', () => {
-  const floorPath = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
+  const floorPath = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
   const broken = w('bs1.json', { model: 'opus' });   // no permission model at all
   const out = execFileSync('node', [BIN, broken], {
     encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
@@ -262,7 +262,7 @@ test('a first-ever apply falls back to the safe floor instead of writing nothing
 // ...but only when bootstrapping. With a prior deployed file present, refusing is correct:
 // chezmoi leaves yesterday's richer settings.json in place, which beats the deny-only floor.
 test('with a prior deployed file, a failed assertion refuses rather than downgrading', () => {
-  const floorPath = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
+  const floorPath = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
   const prior = w('bs2.json', withFloor({ model: 'opus' }));
   const broken = w('bs3.json', { model: 'opus' });
   const r = runFail(broken);
@@ -517,7 +517,7 @@ test('availableModels that is not an array is refused', () => {
 // bootstrap path writes it straight to stdout without going through the ordinary assertion
 // chain that guards every other output.
 test('the safe-floor template also validates clean against shape assertion 1', () => {
-  const floorPath = path.join(__dirname, '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
+  const floorPath = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.safe-floor.json');
   const floor = JSON.parse(fs.readFileSync(floorPath, 'utf8'));
   assert.ok(isStringArrayShape(floor.permissions.allow), 'safe floor permissions.allow must be an array of strings');
   assert.ok(isStringArrayShape(floor.permissions.deny), 'safe floor permissions.deny must be an array of strings');

@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const REPO = path.join(__dirname, '..');
+const REPO = path.join(__dirname, '..', '..');
 const SOURCE = path.join(REPO, 'home');
 const ALLOWLIST = path.join(__dirname, 'managed-test-paths.txt');
 const PATTERN = /test|fixture|conftest/i;
@@ -58,7 +58,7 @@ test('no test file or fixture deploys into the home tree without being on the al
     '  1. It should NOT ship — exclude it in home/.chezmoiignore. Use the CONTENTS form',
     '     (`**/tests/*`, not `**/tests`): excluding a directory outright makes any',
     '     `!`-re-include inside it impossible, exactly as in gitignore.',
-    '  2. It SHOULD ship — add it to tests/managed-test-paths.txt, which records that as',
+    '  2. It SHOULD ship — add it to tests/chezmoi/managed-test-paths.txt, which records that as',
     '     a decision someone made rather than something that drifted in.',
   ].join('\n') : '';
 

@@ -30,7 +30,7 @@ const MANIFEST_PATH = path.join(REPO_ROOT, 'config-soak.json');
 // settings.json is generated from all three templates below, so all three are policy.
 // Listed individually rather than tracking .chezmoitemplates as a dir: the rest of that
 // directory is installer scripts and OS probes, which are not this gate's surface.
-// tests/settings-templates-tracked.test.js fails if a fourth appears without a line here.
+// tests/settings/settings-templates-tracked.test.js fails if a fourth appears without a line here.
 const TRACKED = [
   { type: 'file', path: 'home/.chezmoitemplates/settings.base.json' },
   { type: 'file', path: 'home/.chezmoitemplates/settings.permissions.json' },

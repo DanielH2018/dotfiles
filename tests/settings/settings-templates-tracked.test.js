@@ -4,7 +4,7 @@
 //   1. modify_settings.json.sh.tmpl refuses to generate from an uncommitted tree, so an
 //      unreviewable edit cannot become live policy;
 //   2. bin/config-soak requires review + `config-soak land` before a change ships;
-//   3. tests/allow-compound-bash.test.js and tests/secret-registry.test.js parse the
+//   3. tests/hooks/allow-compound-bash.test.js and tests/secret-registry.test.js parse the
 //      permission rules out of the template text.
 //
 // Splitting the permission model out of settings.base.json turned that set from one file
@@ -21,7 +21,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REPO = path.join(__dirname, '..');
+const REPO = path.join(__dirname, '..', '..');
 const TMPL_DIR = path.join(REPO, 'home', '.chezmoitemplates');
 const GUARD = path.join(REPO, 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
 const SOAK = path.join(REPO, 'bin', 'config-soak');
@@ -102,7 +102,7 @@ test('the rule-parsing tests read the template that actually holds the rules', (
 
   // Named by path rather than searched for: if one of them moves, this should fail and be
   // repointed, not quietly find nothing to check.
-  for (const t of ['hooks/allow-compound-bash.test.js', 'secret-registry.test.js']) {
+  for (const t of ['../hooks/allow-compound-bash.test.js', '../secret-registry.test.js']) {
     const abs = path.join(__dirname, t);
     assert.ok(fs.existsSync(abs), `${t} has moved — repoint this test at it`);
     assert.match(fs.readFileSync(abs, 'utf8'), /settings\.permissions\.json/,

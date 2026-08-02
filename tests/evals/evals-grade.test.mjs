@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { gradeFromParts } from '../evals/lib/grade.mjs';
+import { gradeFromParts } from '../../evals/lib/grade.mjs';
 
 // gradeFromParts is the pure decision function given already-fetched pieces.
 test('assertion failure short-circuits to failed run, no judge', () => {

@@ -65,7 +65,7 @@ Scripts
 
 # The tools-inventory suite resolves the generator by a source-tree relative path
 # (../../bin/executable_tools-inventory), so a deployed copy could not run even if it
-# were there. It stays in the checkout rather than joining tests/managed-test-paths.txt,
+# were there. It stays in the checkout rather than joining tests/chezmoi/managed-test-paths.txt,
 # which is for tests that genuinely travel with ~/.claude.
 .local/share/tools-inventory/tools-inventory.test.js
 

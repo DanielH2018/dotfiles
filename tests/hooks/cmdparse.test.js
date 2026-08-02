@@ -6,7 +6,7 @@ const path = require('node:path');
 // cmdparse.sh is sourced by the guards on the hot path; `--json` is the test/linter entry
 // point and is never used there. Driving the library through it keeps these fixtures cheap
 // to assert against from node --test.
-const LIB = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_cmdparse.sh');
+const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_cmdparse.sh');
 const parse = (cmd) =>
   JSON.parse(execFileSync('bash', [LIB, '--json'], { input: cmd, encoding: 'utf8' }));
 

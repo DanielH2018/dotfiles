@@ -24,7 +24,7 @@ trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
 # below and was never covered, so an uncommitted edit to the bootstrap floor was exactly the
 # unreviewable policy this refuses to deploy. Splitting the permission model out into
 # settings.permissions.json would have added a second such hole. A pattern cannot go stale
-# the way a list does, so keep it a pattern; tests/settings-templates-tracked.test.js fails
+# the way a list does, so keep it a pattern; tests/settings/settings-templates-tracked.test.js fails
 # if it is narrowed back.
 #
 # A plain quoted pathspec is already a wildmatch, so no :(glob) magic is wanted here — and

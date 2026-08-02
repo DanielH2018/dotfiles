@@ -25,16 +25,27 @@ const REPO = path.join(__dirname, '..', '..');
 // root, and the evals and config-soak libraries are exercised by tests here while living
 // elsewhere. Scanning tests/ alone would report "clean" for files nobody walked, which is
 // the same silent hole the lex-failure path below refuses to leave.
+// tests/ is walked recursively because the suite is filed into subdirectories
+// (hooks/, sandbox/, settings/, ...). A flat readdir here covered only the files
+// still loose at tests/ root, so filing one into a subdirectory silently dropped it
+// from this scan — the same blind spot the lex-failure path below refuses to leave.
 const SCANNED = [
-  ['tests', /\.test\.m?js$/],
+  ['tests', /\.test\.m?js$/, 'recurse'],
   ['tests/lib', /\.js$/],
   ['evals', /\.mjs$/],
   ['evals/lib', /\.mjs$/],
   ['bin', /\.js$/],
 ];
 
-const sources = () => SCANNED.flatMap(([dir, pattern]) => {
+const walk = (abs, pattern) => fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
+  const p = path.join(abs, e.name);
+  if (e.isDirectory()) return e.name === '__pycache__' ? [] : walk(p, pattern);
+  return pattern.test(e.name) ? [p] : [];
+});
+
+const sources = () => SCANNED.flatMap(([dir, pattern, recurse]) => {
   const abs = path.join(REPO, dir);
+  if (recurse) return walk(abs, pattern);
   return fs.readdirSync(abs).filter((f) => pattern.test(f)).map((f) => path.join(abs, f));
 });
 

@@ -37,9 +37,9 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { renderFile } = require('./lib/render');
+const { renderFile } = require('../lib/render');
 
-const REPO = path.join(__dirname, '..');
+const REPO = path.join(__dirname, '..', '..');
 const TMPL = path.join(REPO, 'home', '.chezmoitemplates', 'settings.base.json');
 const MERGE = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
 

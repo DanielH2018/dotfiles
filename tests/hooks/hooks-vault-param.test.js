@@ -14,7 +14,7 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
   delete process.env[v];
 }
 
-const HOOKS = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
 const WATCH = path.join(HOOKS, 'executable_watch-paths.sh');

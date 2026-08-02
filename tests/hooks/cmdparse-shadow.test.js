@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const HOOKS = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const ACB = path.join(HOOKS, 'executable_allow-compound-bash.sh');
 const BDB = path.join(HOOKS, 'executable_block-dangerous-bash.sh');
 // In the source tree the library is still `executable_cmdparse.sh`; chezmoi drops the prefix

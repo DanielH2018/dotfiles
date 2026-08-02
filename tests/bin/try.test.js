@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const TRY = path.join(__dirname, '..', 'bin', 'try');
+const TRY = path.join(__dirname, '..', '..', 'bin', 'try');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
