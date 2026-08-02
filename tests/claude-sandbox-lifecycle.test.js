@@ -24,6 +24,13 @@ const path = require('node:path');
 const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX, 'executable_claude-sandbox');
 const WORKTREE_LIB = path.join(SANDBOX, 'executable_sandbox-worktree.sh');
+// The launcher plus every lib it sources — compact_session lives in
+// sandbox-compact.sh now. Globbed rather than named, so the next function to move
+// out does not break extraction here.
+const SOURCES = [LAUNCHER, ...fs.readdirSync(SANDBOX)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX, f))];
 
 let toolsOk = true;
 try {
@@ -38,7 +45,7 @@ function extractFunction(name) {
   const body = execFileSync('awk', [
     `/^${name}\\(\\) \\{/ { started=1 }\n` +
     'started {\n  print\n  depth += gsub(/{/,"{") - gsub(/}/,"}")\n  if (started && depth==0) exit\n}',
-    LAUNCHER,
+    ...SOURCES,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(body), `extracted the ${name} definition`);
   assert.strictEqual(body.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);
