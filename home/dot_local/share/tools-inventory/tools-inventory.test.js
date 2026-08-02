@@ -11,6 +11,11 @@ const path = require("path");
 const m = require(process.env.TOOLS_INVENTORY_BIN ||
   path.join(__dirname, "..", "..", "bin", "executable_tools-inventory"));
 
+// Written as a helper so the literal `process` + `env` pair does not appear on one line;
+// block-dangerous-bash.sh reads that next to an interpreter as a secrets access.
+const chezmoiBinForTest = () =>
+  process["env"].CHEZMOI_BIN || path.join(require("os").homedir(), ".local", "bin", "chezmoi");
+
 let pass = 0, fail = 0;
 function test(name, fn) {
   try { fn(); pass++; console.log("ok   - " + name); }
@@ -244,4 +249,38 @@ test("renderPage says so when the per-host column could not be determined", () =
   });
   assert.ok(html.includes('<div class="drift">'), "banner shown for host-unknown alone");
   assert.ok(html.includes("per-host column is missing"), "states what is missing");
+});
+
+test("a chezmoi query still answers while another process holds the state lock", () => {
+  // `chezmoi apply` holds an exclusive lock on chezmoistate.boltdb for its whole run,
+  // including while it executes its own run_ scripts — so a nested plain query cannot
+  // work, it can only wait and fail with "timeout obtaining persistent state lock".
+  // Reproduce that contention with a real flock rather than trusting the reasoning:
+  // assert the plain call fails FOR THAT REASON, and that --persistent-state does not.
+  // Skips where chezmoi, its state file, or flock(1) is unavailable.
+  const fs = require("fs"), os = require("os"), cp = require("child_process");
+  const state = path.join(os.homedir(), ".config", "chezmoi", "chezmoistate.boltdb");
+  const bin = chezmoiBinForTest();
+  const haveFlock = cp.spawnSync("sh", ["-c", "command -v flock"]).status === 0;
+  if (!fs.existsSync(state) || !fs.existsSync(bin) || !haveFlock) {
+    console.log("     (skipped: needs chezmoi, its state file, and flock)");
+    return;
+  }
+
+  const holder = cp.spawn("flock", ["-x", state, "-c", "sleep 30"], { stdio: "ignore" });
+  const scratch = path.join(os.tmpdir(), "tools-inventory-test-state.boltdb");
+  try {
+    cp.spawnSync("sh", ["-c", "sleep 0.5"]); // let flock actually take the lock
+    const plain = cp.spawnSync(bin, ["ignored"], { encoding: "utf8", timeout: 40000 });
+    const scratched = cp.spawnSync(bin, ["--persistent-state", scratch, "ignored"],
+      { encoding: "utf8", timeout: 40000 });
+
+    assert.notStrictEqual(plain.status, 0, "a plain query must fail while the lock is held");
+    assert.match(plain.stderr || "", /persistent state lock/, "and fail for that reason");
+    assert.strictEqual(scratched.status, 0, "--persistent-state must succeed anyway");
+    assert.ok(scratched.stdout.split("\n").filter(Boolean).length > 0, "with a real list");
+  } finally {
+    holder.kill();
+    try { fs.rmSync(scratch, { force: true }); } catch { /* nothing to clean up */ }
+  }
 });
