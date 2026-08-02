@@ -20,7 +20,7 @@ MAX_BUCKETS = 12
 MAX_DIR_DEPTH = 4
 SAMPLE = 8
 MAX_ROW_TEXT = 120
-SURVEY_KINDS = ("paths", "matches", "diff", "commits")
+SURVEY_KINDS = ("paths", "matches", "diff", "commits", "records")
 # A ceiling on the whole digest, not just on each part of it. Ten failures each
 # allowed a capped message plus two capped streams is ~40KB, and the tool result
 # tq's output lands in is capped again below that — so without a total the
@@ -130,6 +130,21 @@ def survey_headline(result):
         dates = sorted(i.date[:10] for i in result.items if i.date)
         if dates and dates[0] != dates[-1]:
             body = f"{body}  {dates[0]}..{dates[-1]}"
+    elif result.kind == "records":
+        # Exit 1 is how coredumpctl says "no coredumps", which for a crash list
+        # is the healthy answer and by far the commonest one. Reporting it as a
+        # failed enumeration would raise an alarm on every clean machine — the
+        # same distinction the matches branch above draws for grep.
+        if not n and result.exit > 1:
+            return f"NO RECORDS PARSED  (exited {result.exit})  {seconds:.1f}s"
+        if not n:
+            return f"no records  {seconds:.1f}s"
+        body = f"{n:,} {plural(n, 'record')}"
+        dates = sorted(i.date for i in result.items if i.date)
+        if dates and dates[0][:10] != dates[-1][:10]:
+            body = f"{body}  {dates[0][:10]}..{dates[-1][:10]}"
+        elif dates:
+            body = f"{body}  {dates[0][:10]}"
     else:
         if not n and result.exit != 0:
             return f"NO PATHS PARSED  (exited {result.exit})  {seconds:.1f}s"
@@ -231,6 +246,13 @@ def _row(item, kind):
     if kind == "commits":
         text, _ = cap((item.text or "").strip(), MAX_ROW_TEXT)
         return f"{item.sha[:7]} {item.date[:10]} {text}".rstrip()
+    if kind == "records":
+        # Time first, because a record is read in sequence with its neighbours
+        # and the severity is what decides whether it is read at all.
+        when = item.date[11:] if len(item.date) > 11 else item.date
+        text, _ = cap((item.text or "").strip(), MAX_ROW_TEXT)
+        head = " ".join(part for part in (when, item.status, item.path) if part)
+        return f"{head}  {text}".rstrip()
     return item.path or "?"
 
 
@@ -241,6 +263,7 @@ ROW_NOUN = {
     "matches": "matching line",
     "diff": "file",
     "commits": "commit",
+    "records": "record",
 }
 
 JQ_HINTS = {
@@ -248,6 +271,7 @@ JQ_HINTS = {
     "matches": '.items[] | "\\(.path):\\(.line)  \\(.text)"',
     "diff": '.items[] | "\\(.added)\\t\\(.deleted)\\t\\(.path)"',
     "commits": '.items[] | "\\(.sha[0:7]) \\(.text)"',
+    "records": '.items[] | "\\(.date) \\(.status) \\(.path)  \\(.text)"',
 }
 
 
@@ -274,6 +298,23 @@ def survey_shape(result, out):
             "match",
             out,
         )
+        return
+    if result.kind == "records":
+        drawn = _histogram(
+            _tally([(i.path or "?", 1) for i in result.items]),
+            "source",
+            "record",
+            out,
+        )
+        # Severity second, and only when it separates anything. A query already
+        # narrowed to one priority — `journalctl -p err` — would spend the line
+        # restating its own flag, which is the same rule the extension histogram
+        # follows for a sweep that asked for one suffix.
+        severities = _tally([(i.status or "?", 1) for i in result.items])
+        if len(severities) > 1:
+            if drawn:
+                out.append("")
+            _histogram(severities, "severity", "record", out)
         return
     paths = [i.path or "" for i in result.items]
     depth = _dir_depth(paths)

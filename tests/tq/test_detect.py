@@ -215,5 +215,68 @@ class TestBundledShortFlags(unittest.TestCase):
         self.assertEqual(detect_mod.detect(["grep", "--", "-l", "src"]), "grep")
 
 
+class TestRecordDetection(unittest.TestCase):
+    """journalctl and coredumpctl: claimed only where wrapping is an improvement."""
+
+    def test_a_journal_query_is_claimed_only_once_it_is_bounded(self):
+        # tq buffers what it wraps, and the journal is unbounded by default, so
+        # an unnarrowed query under tq reads the whole archive into memory as
+        # JSON where the bare command would have paged the tail.
+        self.assertIsNone(detect_mod.detect(["journalctl"]))
+        for bound in (
+            ["-n", "50"],
+            ["-n50"],
+            ["--lines=50"],
+            ["--since", "today"],
+            ["-u", "sshd"],
+            ["-b"],
+            ["-p", "err"],
+            ["-k"],
+        ):
+            self.assertEqual(
+                detect_mod.detect(["journalctl", *bound]), "journalctl", bound
+            )
+
+    def test_a_journal_command_that_writes_or_never_ends_is_left_alone(self):
+        # --follow never returns and tq builds its digest only after the process
+        # exits, so wrapping one hangs where the bare command streams.
+        for unsafe in (
+            ["-f", "-u", "sshd"],
+            ["--follow", "-n", "10"],
+            ["--vacuum-time=2d"],
+            ["--vacuum-size=1G"],
+            ["--rotate"],
+            ["--disk-usage"],
+            ["--list-boots"],
+            ["--verify"],
+        ):
+            self.assertIsNone(detect_mod.detect(["journalctl", *unsafe]), unsafe)
+
+    def test_a_journal_command_that_picked_its_own_format_keeps_it(self):
+        # tq would overwrite -o with its own; a command that named a shape is
+        # asking for that shape, the same rule --null gives grep.
+        self.assertIsNone(detect_mod.detect(["journalctl", "-n", "5", "-o", "cat"]))
+        self.assertIsNone(detect_mod.detect(["journalctl", "-n", "5", "--output=cat"]))
+
+    def test_coredumpctl_lists_by_default_and_only_list_is_claimed(self):
+        # A bare `coredumpctl` lists, which is the opposite of a bare `git`.
+        self.assertEqual(detect_mod.detect(["coredumpctl"]), "coredumpctl")
+        self.assertEqual(detect_mod.detect(["coredumpctl", "list"]), "coredumpctl")
+        self.assertEqual(
+            detect_mod.detect(["coredumpctl", "-n", "5", "list"]), "coredumpctl"
+        )
+        # info reports per core, dump writes the core out, debug goes interactive.
+        for verb in ("dump", "debug", "info"):
+            self.assertIsNone(detect_mod.detect(["coredumpctl", verb]), verb)
+
+    def test_coredumpctl_output_flag_writes_a_core_and_is_not_a_listing(self):
+        # -o is an output *file* here, not a format — a mutation wearing the
+        # name of the flag that is harmless everywhere else in tq.
+        self.assertIsNone(detect_mod.detect(["coredumpctl", "-o", "/tmp/core", "list"]))
+        self.assertIsNone(detect_mod.detect(["coredumpctl", "--output=/tmp/c", "list"]))
+        self.assertIsNone(detect_mod.detect(["coredumpctl", "--json=pretty", "list"]))
+        self.assertIsNone(detect_mod.detect(["coredumpctl", "-F", "exe", "list"]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

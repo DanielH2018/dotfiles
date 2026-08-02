@@ -1,4 +1,5 @@
-"""Path and match sweeps: find, fd, ls -R, rg, grep.
+"""Path, match and record sweeps: find, fd, ls -R, rg, grep, journalctl,
+coredumpctl.
 
 These do not fail or pass, so nothing here builds failures — the digest reads
 result.items and reports the shape of the answer. What each runner has to get
@@ -97,6 +98,39 @@ def run_rg(argv, workdir, tmp):
     result = survey("rg", "matches", argv, workdir, proc, timed_out)
     survey_adapter.parse_rg_json(proc.stdout, result)
     limit, spelling = cmdline.count_limit(argv, ("--max-count", "-m"))
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_journalctl(argv, workdir, tmp):
+    """A bounded journal query, digested as records rather than printed.
+
+    --no-pager alongside the format: journalctl pages when stdout is a terminal,
+    and while tq's capture means it is not one here, the flag costs nothing and
+    makes the command tq built runnable by hand from the digest.
+    """
+    proc, timed_out = process.run(
+        cmdline.inject(argv, ["-o", "json", "--no-pager"]), process.plain_env()
+    )
+    result = survey("journalctl", "records", argv, workdir, proc, timed_out)
+    survey_adapter.parse_journal(proc.stdout, result)
+    limit, spelling = cmdline.count_limit(argv, ("-n", "--lines"))
+    note_limit(result, limit, spelling)
+    finish_survey(result, proc)
+    return result, proc
+
+
+def run_coredumpctl(argv, workdir, tmp):
+    """The crash list as records. --json=short is one array rather than the
+    line-per-field long form, which is the same listing at several times the
+    size."""
+    proc, timed_out = process.run(
+        cmdline.inject(argv, ["--json=short", "--no-pager"]), process.plain_env()
+    )
+    result = survey("coredumpctl", "records", argv, workdir, proc, timed_out)
+    survey_adapter.parse_coredumps(proc.stdout, result)
+    limit, spelling = cmdline.count_limit(argv, ("-n",))
     note_limit(result, limit, spelling)
     finish_survey(result, proc)
     return result, proc

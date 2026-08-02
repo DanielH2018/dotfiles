@@ -21,6 +21,9 @@
     tq git diff main
     tq git log --oneline -200
 
+    tq journalctl -u sshd -n 200   (a bounding flag is required — see below)
+    tq coredumpctl list
+
 tq's own flags come before the command; the first token that is not one of
 them starts the runner's argv, which is passed on untouched.
 
@@ -66,6 +69,14 @@ A sweep small enough to print is printed whole and nothing is written about its
 shape: a histogram of nine paths is worse than the nine paths. A command that
 runs something or writes something — `find -delete`, `find -exec`, `git commit`
 — is never claimed, whatever it would have printed.
+
+Records — journal entries, coredumps — are surveys too: a count, the sources
+they came from, the severities they carry, and a sample. journalctl is claimed
+only when the command already bounded itself (-n, --since, -u, -b, -p, -k and
+the like), because tq buffers what it wraps and the journal is unbounded by
+default; an unbounded query is left to stream as it would have. `--follow`
+never terminates and is never claimed. coredumpctl is claimed for `list` alone:
+`dump` writes a core out and `debug` launches a debugger.
 """
 
 from __future__ import annotations
@@ -182,6 +193,8 @@ RUNNERS = {
     "git-diff": git_runner.run_git_diff,
     "git-log": git_runner.run_git_log,
     "git-ls-files": git_runner.run_git_ls_files,
+    "journalctl": survey_runner.run_journalctl,
+    "coredumpctl": survey_runner.run_coredumpctl,
 }
 
 TQ_FLAGS = ("--scope", "--diff-base", "--ingest", "--flaky-result")

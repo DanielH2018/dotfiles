@@ -420,5 +420,64 @@ class TestVerdictAgainstRecordedFailures(unittest.TestCase):
         self.assertTrue(digest(result, "/x").startswith("PASS 3/3"))
 
 
+class TestRecordDigest(unittest.TestCase):
+    def records(self, exit_code=0, items=()):
+        res = survey_blank("records", "coredumpctl", exit_code=exit_code)
+        res.items = list(items)
+        return res
+
+    def test_an_empty_crash_list_is_an_answer_not_a_failed_enumeration(self):
+        # coredumpctl exits 1 when there are no coredumps, which on a healthy
+        # machine is every run. Reporting that as NO RECORDS PARSED would raise
+        # an alarm on precisely the case worth being quiet about.
+        self.assertTrue(
+            digest(self.records(exit_code=1), "/x").startswith("no records")
+        )
+
+    def test_a_real_failure_above_exit_1_still_says_so(self):
+        self.assertTrue(
+            digest(self.records(exit_code=2), "/x").startswith("NO RECORDS PARSED")
+        )
+
+    def test_the_span_a_record_set_covers_is_in_the_headline(self):
+        res = self.records(
+            items=[
+                Item(path="a", status="SIGSEGV", date="2026-07-31 09:00:00"),
+                Item(path="b", status="SIGABRT", date="2026-08-02 10:00:00"),
+            ]
+        )
+        self.assertIn("2 records", digest(res, "/x"))
+        self.assertIn("2026-07-31..2026-08-02", digest(res, "/x"))
+
+    def test_severity_is_only_broken_out_when_it_separates_anything(self):
+        # Past MAX_ROWS, where the digest stands in for the rows rather than
+        # printing them — under it there is no histogram of anything to test.
+        # `journalctl -p err` already said every record is an err; a histogram
+        # of it spends a line restating the flag.
+        same = self.records(
+            items=[
+                Item(path=f"u{i}", status="err", date="2026-08-02 09:00:00")
+                for i in range(60)
+            ]
+        )
+        self.assertIsNone(
+            re.search(r"^\s+err\s+60$", digest(same, "/x"), re.M),
+            "a single severity is the query restating itself",
+        )
+        mixed = self.records(
+            items=[
+                Item(
+                    path=f"u{i}",
+                    status="err" if i % 2 else "info",
+                    date="2026-08-02 09:00:00",
+                )
+                for i in range(60)
+            ]
+        )
+        text = digest(mixed, "/x")
+        self.assertRegex(text, r"(?m)^\s+err\s+30$")
+        self.assertRegex(text, r"(?m)^\s+info\s+30$")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

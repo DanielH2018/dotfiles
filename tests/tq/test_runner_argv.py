@@ -265,6 +265,33 @@ class TestRunnerArgv(unittest.TestCase):
                             result.failures, f"{kind} should not read {candidate}"
                         )
 
+    # The format flags the record runners splice in, and where they land. On
+    # TestRunnerArgv rather than a subclass of it: unittest collects inherited
+    # methods too, so a subclass would run the whole parent suite a second time
+    # — which tq-digest.test.js catches as more tests run than declared.
+    def test_journalctl_asks_for_json_ahead_of_the_operands(self):
+        self.assertEqual(
+            self.built("journalctl", ["journalctl", "-u", "sshd", "-n", "20"]),
+            ["journalctl", "-o", "json", "--no-pager", "-u", "sshd", "-n", "20"],
+        )
+
+    def test_coredumpctl_json_lands_before_the_verb(self):
+        # coredumpctl takes its options ahead of the subcommand; appending
+        # --json past `list` is not where it is read.
+        self.assertEqual(
+            self.built("coredumpctl", ["coredumpctl", "list"]),
+            ["coredumpctl", "--json=short", "--no-pager", "list"],
+        )
+
+    def test_a_self_capped_query_is_reported_as_capped(self):
+        # The count is what the command was allowed to find, not what is there.
+        self.addCleanup(setattr, process, "run", process.run)
+        process.run = lambda argv, env: (self.Proc(), False)
+        result, _ = self.cli.RUNNERS["journalctl"](
+            ["journalctl", "-n", "0"], "/s", "/s/tmp"
+        )
+        self.assertEqual(result.limited, "-n 0")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

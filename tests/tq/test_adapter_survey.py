@@ -107,5 +107,102 @@ class TestSurveyParsers(unittest.TestCase):
         self.assertEqual(res.items[1].matches, 1)
 
 
+class TestRecordParsers(unittest.TestCase):
+    """journalctl -o json and coredumpctl --json=short."""
+
+    def journal(self, *events):
+        raw = "\n".join(json.dumps(e) for e in events)
+        return survey_adapter.parse_journal(raw, survey_blank("records", "journalctl"))
+
+    def test_priority_is_named_rather_than_numbered(self):
+        # "3" is a severity only to someone holding the syslog table.
+        res = self.journal({"MESSAGE": "boom", "PRIORITY": "3", "_COMM": "app"})
+        self.assertEqual(res.items[0].status, "err")
+
+    def test_an_unknown_priority_is_passed_through_not_guessed_at(self):
+        res = self.journal({"MESSAGE": "x", "PRIORITY": "9", "_COMM": "app"})
+        self.assertEqual(res.items[0].status, "9")
+
+    def test_the_user_manager_is_skipped_for_the_identifier_beneath_it(self):
+        # Every process in a desktop session reports the same _SYSTEMD_UNIT, so
+        # grouping on it puts nearly the whole journal in one bucket.
+        res = self.journal(
+            {
+                "MESSAGE": "hi",
+                "_SYSTEMD_UNIT": "user@1000.service",
+                "SYSLOG_IDENTIFIER": "discord",
+            }
+        )
+        self.assertEqual(res.items[0].path, "discord")
+
+    def test_a_real_unit_is_kept_over_the_identifier(self):
+        res = self.journal(
+            {
+                "MESSAGE": "hi",
+                "_SYSTEMD_UNIT": "sshd.service",
+                "SYSLOG_IDENTIFIER": "sshd",
+            }
+        )
+        self.assertEqual(res.items[0].path, "sshd.service")
+
+    def test_a_record_with_no_unit_falls_back_to_the_identifier_then_comm(self):
+        # Kernel messages belong to no unit and are exactly what -k asks for.
+        self.assertEqual(
+            self.journal({"MESSAGE": "x", "SYSLOG_IDENTIFIER": "kernel"}).items[0].path,
+            "kernel",
+        )
+        self.assertEqual(
+            self.journal({"MESSAGE": "x", "_COMM": "systemd"}).items[0].path, "systemd"
+        )
+
+    def test_a_non_utf8_message_arrives_as_bytes_not_as_a_list_of_ints(self):
+        # journald exports an undecodable MESSAGE as an integer array; str() on
+        # that would put "[104, 105]" in the digest.
+        res = self.journal({"MESSAGE": [104, 105], "_COMM": "app"})
+        self.assertEqual(res.items[0].text, "hi")
+
+    def test_a_partial_last_line_from_a_killed_run_is_not_a_record(self):
+        raw = json.dumps({"MESSAGE": "one", "_COMM": "app"}) + '\n{"MESSAGE": "tw'
+        res = survey_adapter.parse_journal(raw, survey_blank("records", "journalctl"))
+        self.assertEqual(len(res.items), 1)
+
+    def test_coredumps_are_keyed_on_the_executable_not_the_pid(self):
+        # A histogram over pids has one bucket per row; the question a crash
+        # list answers is which program keeps failing.
+        raw = json.dumps(
+            [
+                {"exe": "/usr/bin/bash", "pid": 1, "sig": 11, "corefile": "present"},
+                {"exe": "/usr/bin/bash", "pid": 2, "sig": 11, "corefile": "present"},
+            ]
+        )
+        res = survey_adapter.parse_coredumps(
+            raw, survey_blank("records", "coredumpctl")
+        )
+        self.assertEqual({i.path for i in res.items}, {"/usr/bin/bash"})
+        self.assertEqual([i.status for i in res.items], ["SIGSEGV", "SIGSEGV"])
+
+    def test_an_unnamed_signal_is_numbered_rather_than_guessed(self):
+        raw = json.dumps([{"exe": "/x", "pid": 1, "sig": 5, "corefile": "present"}])
+        res = survey_adapter.parse_coredumps(
+            raw, survey_blank("records", "coredumpctl")
+        )
+        self.assertEqual(res.items[0].status, "sig 5")
+
+    def test_a_missing_core_is_said_because_the_count_cannot_show_it(self):
+        # A listed crash whose core was never written cannot be debugged.
+        raw = json.dumps([{"exe": "/x", "pid": 7, "sig": 6, "corefile": "missing"}])
+        res = survey_adapter.parse_coredumps(
+            raw, survey_blank("records", "coredumpctl")
+        )
+        self.assertIn("core missing", res.items[0].text)
+
+    def test_output_that_is_not_the_listing_claims_nothing(self):
+        for raw in ("", "not json", "{}", "null"):
+            res = survey_adapter.parse_coredumps(
+                raw, survey_blank("records", "coredumpctl")
+            )
+            self.assertEqual(res.items, [], raw)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

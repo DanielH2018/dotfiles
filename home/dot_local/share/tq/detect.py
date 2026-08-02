@@ -52,6 +52,8 @@ CANDIDATES = {
     "gradle",
     "gradlew",
     "mvn",
+    "journalctl",
+    "coredumpctl",
 }
 
 # git subcommands that only read. Everything else — including every subcommand
@@ -139,6 +141,157 @@ FD_VALUE_LETTERS = set("detESj")
 # ls modes that are not a recursive name listing: the long formats carry
 # permissions and sizes per line, which is not a path.
 LS_OTHER_OUTPUT = {"l", "g", "o", "n", "i", "s", "m", "x", "C"}
+
+# journalctl flags that narrow the journal to something bounded. tq buffers the
+# whole of what it wraps — process.run captures rather than streams — and the
+# journal is unbounded by default, so a bare `journalctl` under tq reads the
+# entire archive into memory as JSON, several times the size of the text the
+# bare command would have paged. Declining is the same answer FIND_UNSAFE gives:
+# where wrapping is worse than not wrapping, tq does not claim the command.
+JOURNAL_BOUNDS = {
+    "-n",
+    "--lines",
+    "-S",
+    "--since",
+    "-U",
+    "--until",
+    "-u",
+    "--unit",
+    "--user-unit",
+    "-b",
+    "--boot",
+    "-p",
+    "--priority",
+    "-k",
+    "--dmesg",
+    "-t",
+    "--identifier",
+    "-g",
+    "--grep",
+    "-e",
+    "--pager-end",
+}
+
+# journalctl modes that mutate the journal, never terminate, or answer a
+# different question than "which records". --vacuum-* and --rotate delete;
+# --follow never returns, and tq builds its digest only once the process exits,
+# so wrapping one would hang where the bare command streams.
+JOURNAL_UNSAFE = {
+    "-f",
+    "--follow",
+    "--rotate",
+    "--flush",
+    "--sync",
+    "--relinquish-var",
+    "--smart-relinquish-var",
+    "--setup-keys",
+    "--verify",
+    "--header",
+    "--disk-usage",
+    "--list-boots",
+    "--list-catalog",
+    "--dump-catalog",
+    "--update-catalog",
+    "--new-id128",
+    "--version",
+    "-h",
+    "--help",
+}
+
+# Prefix forms of the above, for the flags that carry their value attached.
+JOURNAL_UNSAFE_PREFIXES = ("--vacuum-",)
+
+# The output format is tq's to choose, the same way --json is for rg. A command
+# that already names one is asking for a shape tq would overwrite, so it is left
+# to say what it was asked to say.
+JOURNAL_FORMAT = ("-o", "--output")
+
+# coredumpctl verbs. `list` is the only one that enumerates; `info` prints a
+# report per core, `dump` writes the core out and `debug` launches a debugger —
+# the last two mutate or go interactive, which no wrapper capturing stdout may
+# claim.
+COREDUMP_SURVEYS = {"list": "coredumpctl"}
+
+# coredumpctl options that take a separate value, so the token after them is not
+# the verb.
+COREDUMP_VALUE_OPTS = {
+    "-o",
+    "--output",
+    "-n",
+    "-S",
+    "--since",
+    "-U",
+    "--until",
+    "-D",
+    "--directory",
+    "-F",
+    "--field",
+    "--file",
+    "--debugger",
+    "--root",
+    "--image",
+}
+
+# `-o`/`--output` writes the core to a file, which is a mutation wearing an
+# output flag's name. --field prints one field per line and --json picks the
+# shape tq is about to pick, both of which are a different answer than the
+# listing this digests.
+COREDUMP_UNSAFE = {"-o", "--output", "-F", "--field"}
+COREDUMP_UNSAFE_PREFIXES = ("--json", "--field=", "--output=")
+
+
+def _has(argv, names, prefixes=()):
+    """Whether argv carries any of these flags, attached value or not."""
+    for tok in argv:
+        if tok == "--":
+            break  # past the separator a token is an operand, not a flag
+        if tok in names:
+            return True
+        if any(tok.startswith(f"{name}=") for name in names):
+            return True
+        if prefixes and tok.startswith(prefixes):
+            return True
+        # A short flag may carry its value in the same token: `-n50`, `-u ssh`.
+        if any(
+            len(name) == 2 and name.startswith("-") and tok.startswith(name)
+            for name in names
+        ):
+            return True
+    return False
+
+
+def journalctl_is_survey(argv):
+    """A bounded, read-only journal query — anything else passes through."""
+    if _has(argv, JOURNAL_UNSAFE, JOURNAL_UNSAFE_PREFIXES):
+        return False
+    if _has(argv, JOURNAL_FORMAT):
+        return False
+    return _has(argv, JOURNAL_BOUNDS)
+
+
+def coredumpctl_subcommand(argv):
+    """The verb in a coredumpctl command, past its own options.
+
+    A bare `coredumpctl` lists, so an absent verb is "list" rather than nothing —
+    which is the opposite of git, where a bare `git` is not a survey of anything.
+    """
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok in COREDUMP_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return argv[i]
+    return "list"
+
+
+def coredumpctl_is_survey(argv):
+    if _has(argv, COREDUMP_UNSAFE, COREDUMP_UNSAFE_PREFIXES):
+        return False
+    return coredumpctl_subcommand(argv) in COREDUMP_SURVEYS
 
 
 def tool_name(argv):
@@ -389,4 +542,8 @@ def detect(argv):
         return "rg-files" if "--files" in argv else "rg"
     if tool in ("grep", "egrep", "fgrep", "ugrep") and grep_is_survey(argv):
         return "grep"
+    if tool == "journalctl" and journalctl_is_survey(argv):
+        return "journalctl"
+    if tool == "coredumpctl" and coredumpctl_is_survey(argv):
+        return "coredumpctl"
     return None

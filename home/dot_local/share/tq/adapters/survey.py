@@ -1,4 +1,5 @@
-"""The four surveys: paths swept, matches found, files changed, commits listed.
+"""The five surveys: paths swept, matches found, files changed, commits listed,
+and records logged.
 
 None of these has a verdict to report. A test run answers "did it hold"; a
 sweep answers "how much is there and where", and the digest that serves it is a
@@ -8,6 +9,7 @@ question after "how many" is almost always "which ones".
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 
@@ -132,6 +134,149 @@ def parse_grep(stdout, result):
                 path=path,
                 line=int(number) if number.isdigit() else None,
                 text=text if number.isdigit() else rest,
+                matches=1,
+            )
+        )
+    return result
+
+
+# The per-user systemd manager, which owns every process in a desktop session
+# and so groups nothing. See parse_journal.
+USER_MANAGER = re.compile(r"^user@\d+\.service$")
+
+# syslog severities, by the number journald actually stores. Rendered by name
+# because "3" is only a severity to someone who has the table memorised, and the
+# whole point of the digest is that it can be read without one.
+PRIORITY_NAMES = {
+    "0": "emerg",
+    "1": "alert",
+    "2": "crit",
+    "3": "err",
+    "4": "warning",
+    "5": "notice",
+    "6": "info",
+    "7": "debug",
+}
+
+# The signals a core dump is actually attributable to. Anything else is reported
+# by number rather than guessed at — the list is platform-specific below these,
+# and a wrong name on a crash report is worse than a bare number.
+SIGNAL_NAMES = {
+    3: "SIGQUIT",
+    4: "SIGILL",
+    6: "SIGABRT",
+    7: "SIGBUS",
+    8: "SIGFPE",
+    11: "SIGSEGV",
+    31: "SIGSYS",
+}
+
+
+def _stamp(micros):
+    """journald's microseconds-since-epoch as something a reader can place.
+
+    Local time, because that is what `journalctl` and `coredumpctl` print
+    themselves — a digest that silently switched to UTC would put every record
+    an hour or several from where the bare command just said it was.
+    """
+    try:
+        seconds = int(micros) / 1_000_000
+    except (TypeError, ValueError):
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _journal_text(field):
+    """journald's MESSAGE, which is not always a string.
+
+    A message whose bytes are not valid UTF-8 is exported as an array of
+    integers rather than text. Rendering that list with str() would put
+    "[72, 105]" in the digest, so the bytes are decoded the same lossy way the
+    rest of tq reads a subprocess.
+    """
+    if isinstance(field, str):
+        return field
+    if isinstance(field, list):
+        try:
+            return bytes(bytearray(field)).decode("utf-8", "replace")
+        except (TypeError, ValueError):
+            return ""
+    return "" if field is None else str(field)
+
+
+def parse_journal(stdout, result):
+    """`journalctl -o json`: one JSON object per line, one line per record.
+
+    The grouping key falls back through _SYSTEMD_UNIT, SYSLOG_IDENTIFIER and
+    _COMM because the first is absent on exactly the records most worth
+    grouping — kernel messages belong to no unit, and bucketing them all under
+    "?" would collapse the one histogram a boot-time query is asked for.
+
+    USER_MANAGER is skipped for the same reason in reverse. Every process in a
+    desktop session — each app, each helper — reports _SYSTEMD_UNIT as the one
+    `user@1000.service` that manages them all, so on a workstation journal it is
+    a bucket holding nearly every record, which is no grouping at all. The
+    identifier underneath it names the actual program.
+    """
+    for line in lines(stdout):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue  # a partial last line from a killed run is not a record
+        if not isinstance(event, dict):
+            continue
+        unit = event.get("_SYSTEMD_UNIT") or ""
+        if USER_MANAGER.match(unit):
+            unit = ""
+        source = unit or event.get("SYSLOG_IDENTIFIER") or event.get("_COMM") or "?"
+        priority = str(event.get("PRIORITY", ""))
+        result.items.append(
+            Item(
+                path=source,
+                text=_journal_text(event.get("MESSAGE")).rstrip("\n"),
+                date=_stamp(event.get("__REALTIME_TIMESTAMP")),
+                status=PRIORITY_NAMES.get(priority, priority),
+                matches=1,
+            )
+        )
+    return result
+
+
+def parse_coredumps(stdout, result):
+    """`coredumpctl list --json=short`: one JSON array of crash records.
+
+    Keyed on the executable rather than the pid: the pid is unique per crash and
+    a histogram over it would have one bucket per row, where the question a
+    crash list is asked is which program is failing repeatedly.
+    """
+    try:
+        rows = json.loads(stdout or "[]")
+    except ValueError:
+        return result  # not the listing tq asked for: claim nothing
+    if not isinstance(rows, list):
+        return result
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        signal = row.get("sig")
+        name = SIGNAL_NAMES.get(signal, f"sig {signal}" if signal is not None else "?")
+        # "missing" is worth carrying: a listed crash whose core was never
+        # written cannot be debugged, and that is not visible from the count.
+        core = row.get("corefile") or "?"
+        detail = f"pid {row['pid']}" if row.get("pid") is not None else ""
+        if core != "present":
+            detail = f"{detail}, core {core}".lstrip(", ")
+        result.items.append(
+            Item(
+                path=row.get("exe") or "?",
+                text=detail,
+                date=_stamp(row.get("time")),
+                status=name,
                 matches=1,
             )
         )
