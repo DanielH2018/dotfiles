@@ -16,8 +16,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
-const SRC = fs.readFileSync(SANDBOX, 'utf8');
+const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
+// The launcher plus the libs it sources. Both checks below count across the whole
+// launch path, and parts of it have moved out: the create-filter run that carries
+// ENGINE_ARGS is in sandbox-proxy.sh, and the inline -v mounts that must go through
+// add_mount_relabel are split between the proxy and mount libs.
+const SRC = [SANDBOX, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))]
+  .map((f) => fs.readFileSync(f, 'utf8'))
+  .join('\n');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }

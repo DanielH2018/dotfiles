@@ -11,8 +11,18 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
-const SRC = fs.readFileSync(SANDBOX, 'utf8');
+const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
+// The launcher plus the libs it sources, concatenated: start_proxy/start_filter/
+// stop_proxy now live in sandbox-proxy.sh while the sandbox's own `docker run` stays
+// at top level in the launcher, and the assertions below only mean anything when
+// both are in view. Launcher first, so line numbers inside it are unchanged.
+const SRC = [SANDBOX, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))]
+  .map((f) => fs.readFileSync(f, 'utf8'))
+  .join('\n');
 
 const LINES = SRC.split('\n');
 

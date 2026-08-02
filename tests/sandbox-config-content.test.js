@@ -125,8 +125,12 @@ function extractBlock(source, startMarker, endMarker) {
 // assertions check moved into sandbox-mounts.sh, but they are still one
 // configuration. Launcher text comes first, so the extractBlock() markers below
 // (DOCKER_ARGS=(, docker run -d --rm) resolve against the launcher as before.
-const LAUNCHER_SRC = fs.readFileSync(LAUNCHER, 'utf8')
-  + fs.readFileSync(path.join(SANDBOX_DIR, 'executable_sandbox-mounts.sh'), 'utf8');
+const LAUNCHER_SRC = [LAUNCHER, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))]
+  .map((f) => fs.readFileSync(f, 'utf8'))
+  .join('');
 const DOCKER_ARGS_BLOCK = extractBlock(LAUNCHER_SRC, 'DOCKER_ARGS=(', '\n)\n');
 const PROXY_RUN_BLOCK = extractBlock(LAUNCHER_SRC, 'docker run -d --rm', '>/dev/null\n');
 
