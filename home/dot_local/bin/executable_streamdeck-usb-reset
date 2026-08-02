@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""streamdeck-usb-reset: issue a USBDEVFS_RESET to the Elgato Stream Deck.
+
+Why this exists at all: when StreamController dies from the libdbus
+`dbus_watch_handle()` assertion it aborts *inside* libusb's transaction, so the
+device is left mid-transfer while staying enumerated. That combination is the
+trap -- the deck still shows up in lsusb, so a plain relaunch looks like it
+should work, and instead fails with
+
+    StreamDeck.Transport.Transport.TransportError: Failed to write feature report (-1)
+
+which upstream does not treat as fatal. The process keeps running with no page
+loaded, squatting the USB handle, and every further relaunch stacks another
+deckless instance behind it. Resetting the device between the crash and the
+relaunch is what turns "relaunch and hope" into a deterministic recovery; it is
+the step that was missing when this was diagnosed by hand.
+
+Exits 0 whenever there is nothing to do, so this is safe as an unconditional
+ExecStartPre= -- most starts are ordinary logins, not recoveries.
+"""
+
+import fcntl
+import os
+import sys
+from pathlib import Path
+
+VENDOR = "0fd9"
+PRODUCT = "006d"  # Stream Deck original V2
+
+# /proc/<pid>/comm is truncated to 15 characters; this is the whole name.
+APP_COMM = "StreamControlle"
+
+# _IO('U', 20) -- ioctl number for USBDEVFS_RESET. The `+` ACL that logind puts on
+# the device node is enough to issue it; this deliberately has no root path, because
+# if the ACL is ever missing the honest answer is "unplug it", not a privilege climb.
+USBDEVFS_RESET = 0x5514
+
+
+def find_deck() -> Path | None:
+    """Return the deck's sysfs directory, or None if it is not attached."""
+    for id_product in Path("/sys/bus/usb/devices").glob("*/idProduct"):
+        base = id_product.parent
+        try:
+            if (
+                id_product.read_text().strip() == PRODUCT
+                and (base / "idVendor").read_text().strip() == VENDOR
+            ):
+                return base
+        except OSError:
+            # Device yanked mid-scan. Not our problem -- keep looking.
+            continue
+    return None
+
+
+def device_node(base: Path) -> str:
+    """Build the /dev/bus/usb path. Re-derived every run, never cached: the devnum
+    changes on re-enumeration, and a stale path is how you reset the wrong device."""
+    busnum = int((base / "busnum").read_text())
+    devnum = int((base / "devnum").read_text())
+    return "/dev/bus/usb/%03d/%03d" % (busnum, devnum)
+
+
+def holders(node: str) -> list[tuple[int, str]]:
+    """(pid, comm) for every process with the node open."""
+    found = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            for fd in (proc / "fd").iterdir():
+                if os.readlink(fd) == node:
+                    comm = (proc / "comm").read_text().strip()
+                    found.append((int(proc.name), comm))
+                    break
+        except OSError:
+            # Process exited, or it is not ours to inspect.
+            continue
+    return found
+
+
+def main() -> int:
+    base = find_deck()
+    if base is None:
+        print("no Stream Deck attached; nothing to reset")
+        return 0
+
+    node = device_node(base)
+
+    # Refuse only if StreamController itself still has the device. A reset yanks the
+    # node out from under whoever holds it, so doing that to a live instance would
+    # create the very zombie this script exists to prevent -- it means the caller
+    # skipped the kill step.
+    #
+    # Other holders are explicitly not a reason to stop. winedevice.exe opens every
+    # USB device on the box whenever a Wine prefix is running, and treating that as
+    # "busy" would block recovery for as long as a game was open.
+    busy = [(pid, comm) for pid, comm in holders(node) if comm == APP_COMM]
+    if busy:
+        pids = ", ".join(str(pid) for pid, _ in busy)
+        print(f"{node} still held by StreamController (pid {pids}); refusing to reset")
+        return 0
+
+    try:
+        fd = os.open(node, os.O_WRONLY)
+    except OSError as e:
+        print(f"cannot open {node}: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+    except OSError as e:
+        print(f"reset of {node} failed: {e}", file=sys.stderr)
+        return 1
+    finally:
+        os.close(fd)
+
+    print(f"reset {node}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

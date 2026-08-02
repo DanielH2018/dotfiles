@@ -1,0 +1,17 @@
+[Unit]
+Description=Periodic check that StreamController still holds the Stream Deck
+
+[Timer]
+# First check a minute after login: the app needs to get through its ~6s page load,
+# and a check that fires into a cold session only ever produces a false strike.
+OnStartupSec=1min
+OnUnitActiveSec=2min
+# Two strikes at this interval means a real fault is caught in ~4 minutes. Tightening
+# it does not help -- the strike counter, not the period, is what avoids restarting
+# during a legitimate startup.
+AccuracySec=10s
+# Deliberately no Persistent=: this recovers a *currently* running desktop session.
+# A missed check while the box was off is not work to catch up on.
+
+[Install]
+WantedBy=timers.target

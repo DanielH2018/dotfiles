@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# streamcontroller-health: restart StreamController when it is alive but has lost the deck.
+#
+# StreamController fails in two shapes, and systemd only sees one of them:
+#
+#   1. It aborts outright (libdbus `dbus_watch_handle()` assertion, SIGABRT). The
+#      process exits, so Restart=on-failure in the unit's drop-in handles it. Nothing
+#      here is involved.
+#
+#   2. It fails to grab the deck (TransportError writing a feature report) and then
+#      *keeps running* with no page loaded. Upstream logs "Reached end of main.py"
+#      and leaves the process up. To systemd that is a perfectly healthy service; to
+#      the user it is a dark Stream Deck. Only case 2 needs this script.
+#
+# So the health signal deliberately is not "is the process alive" -- that is exactly
+# the state being detected. It is "does *StreamController* hold the deck's USB node".
+#
+# The emphasis is load-bearing and was found the hard way: `fuser` on the node reports
+# it busy whenever a Wine prefix is running, because winedevice.exe opens every USB
+# device it can see. Asking "is anything holding it" would therefore report a healthy
+# deck for as long as a game was open -- precisely when nobody is looking at the log
+# to notice otherwise.
+#
+# Everything here converges on one instance. Stacked instances are the documented way
+# this gets permanently stuck: the one holding the handle is the broken one, and each
+# relaunch adds another that cannot grab it.
+
+set -uo pipefail
+
+UNIT="app-com.core447.StreamController@autostart.service"
+APP_ID="com.core447.StreamController"
+COMM="StreamControlle" # /proc comm is truncated to 15 chars; this is the whole name
+VENDOR="0fd9"
+PRODUCT="006d"
+
+# Two strikes before acting. The timer runs every 2 minutes and a healthy start takes
+# ~6s to write its key images, so a single strike can land inside a legitimate startup;
+# two consecutive ones, four minutes apart, cannot.
+STRIKES_BEFORE_ACTING=2
+
+# A deck that is broken in some way this script cannot fix must not get restarted
+# forever. After this many restarts in an hour it gives up and says so.
+MAX_RESTARTS_PER_HOUR=3
+
+# Seams, so the tests can drive this against fixture trees instead of the real machine.
+# Nothing but the test suite ever sets them.
+SYSFS_USB="${SC_HEALTH_SYSFS:-/sys/bus/usb/devices}"
+PROC="${SC_HEALTH_PROC:-/proc}"
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+STRIKE_FILE="$STATE_DIR/streamcontroller-health.strikes"
+RESTART_FILE="$STATE_DIR/streamcontroller-health.restarts"
+
+log() { printf '%s\n' "$*"; }
+
+find_deck() {
+	local id_product base
+	for id_product in "$SYSFS_USB"/*/idProduct; do
+		base="${id_product%/idProduct}"
+		[[ -r $id_product && -r $base/idVendor ]] || continue
+		if [[ $(<"$id_product") == "$PRODUCT" && $(<"$base/idVendor") == "$VENDOR" ]]; then
+			printf '%s\n' "$base"
+			return 0
+		fi
+	done
+	return 1
+}
+
+deck_node() {
+	# Re-derived each run: devnum changes on every re-enumeration.
+	printf '/dev/bus/usb/%03d/%03d' "$(<"$1/busnum")" "$(<"$1/devnum")"
+}
+
+app_processes() { pgrep -x -c "$COMM" 2>/dev/null || printf '0'; }
+
+deck_held_by_app() {
+	# Only StreamController's own file descriptors count -- see the note at the top
+	# about winedevice.exe holding the same node.
+	local node="$1" pid fd
+	for pid in $(pgrep -x "$COMM" 2>/dev/null); do
+		for fd in "$PROC/$pid"/fd/*; do
+			[[ $(readlink "$fd" 2>/dev/null) == "$node" ]] && return 0
+		done
+	done
+	return 1
+}
+
+read_strikes() { [[ -r $STRIKE_FILE ]] && cat "$STRIKE_FILE" 2>/dev/null || printf '0'; }
+clear_strikes() { rm -f "$STRIKE_FILE"; }
+
+# Restarts inside the last hour, one epoch timestamp per line.
+recent_restarts() {
+	local cutoff now
+	now=$(date +%s)
+	cutoff=$((now - 3600))
+	[[ -r $RESTART_FILE ]] || return 0
+	awk -v c="$cutoff" '$1 > c' "$RESTART_FILE" 2>/dev/null
+}
+
+record_restart() {
+	local kept
+	kept=$(recent_restarts)
+	{
+		[[ -n $kept ]] && printf '%s\n' "$kept"
+		date +%s
+	} >"$RESTART_FILE"
+}
+
+recover() {
+	local node="$1"
+
+	local used
+	used=$(recent_restarts | wc -l)
+	if ((used >= MAX_RESTARTS_PER_HOUR)); then
+		# Exits 0 deliberately: declining to retry is this script working as designed,
+		# not a failure of it. A non-zero exit would park the oneshot in `failed` and
+		# re-fail it every two minutes, which buries the one line worth reading.
+		log "deck down but already restarted ${used}x in the last hour; not retrying (needs a look)"
+		return 0
+	fi
+
+	log "deck not held by any process; recovering"
+
+	# Kill first, and confirm. "Beta resume mode" means a surviving instance re-grabs
+	# the deck the moment it reconnects, so resetting while one is still alive hands
+	# the device straight back to the broken process.
+	flatpak kill "$APP_ID" 2>/dev/null
+	local waited=0
+	while (($(app_processes) > 0)) && ((waited < 15)); do
+		sleep 1
+		((waited++))
+	done
+	if (($(app_processes) > 0)); then
+		log "instances still alive after ${waited}s; aborting recovery rather than stacking another"
+		return 1
+	fi
+
+	"$HOME/.local/bin/streamdeck-usb-reset" || log "usb reset reported a problem; starting anyway"
+
+	# The unit may have exhausted its start limit on the way here; without this the
+	# start below is refused and the deck stays dark.
+	systemctl --user reset-failed "$UNIT" 2>/dev/null
+	systemctl --user start "$UNIT" || {
+		log "failed to start $UNIT"
+		return 1
+	}
+
+	record_restart
+	log "restarted $UNIT"
+}
+
+main() {
+	local deck
+	if ! deck=$(find_deck); then
+		# Deck unplugged. Not a fault, and the strike count must not survive it --
+		# otherwise plugging back in gets one free restart it never earned.
+		clear_strikes
+		log "no Stream Deck attached"
+		return 0
+	fi
+
+	local node
+	node=$(deck_node "$deck")
+
+	if deck_held_by_app "$node"; then
+		clear_strikes
+		return 0
+	fi
+
+	# Nothing holds the deck. Whether that is a fault depends on why nothing is running.
+	if (($(app_processes) == 0)); then
+		if systemctl --user is-failed --quiet "$UNIT"; then
+			log "no instance running and $UNIT is failed"
+		else
+			# Quitting the app sends SIGTERM, which the drop-in treats as success. A
+			# deliberate quit must stay quit -- restarting it here would make the app
+			# impossible to close.
+			clear_strikes
+			return 0
+		fi
+	fi
+
+	local strikes
+	strikes=$(($(read_strikes) + 1))
+	if ((strikes < STRIKES_BEFORE_ACTING)); then
+		printf '%s' "$strikes" >"$STRIKE_FILE"
+		log "deck not held (strike ${strikes}/${STRIKES_BEFORE_ACTING}); waiting for confirmation"
+		return 0
+	fi
+
+	clear_strikes
+	recover "$node"
+}
+
+main "$@"

@@ -1,0 +1,15 @@
+[Unit]
+Description=Restart StreamController if it is running but has lost the Stream Deck
+# Pointless without a graphical session -- the unit it recovers is part of one.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/streamcontroller-health
+# The check reads sysfs and /proc and usually does nothing at all; it must never
+# compete with whatever is on screen.
+Nice=10
+# stdout is the record of why a restart happened. journald already rotates it, which
+# is why the script writes no log of its own.
+StandardOutput=journal
+StandardError=journal
