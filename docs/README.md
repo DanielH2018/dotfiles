@@ -19,9 +19,7 @@ A spec and its plan share a date prefix and stem, so they sort next to each othe
 
 A spec or plan is a record of *why*, so landing the work does not retire the doc — it stays
 as the rationale a future reader needs. Delete one only when it describes something that no
-longer exists, or when it was never executed and the idea has been dropped. Two docs were
-deleted on that basis (the 2026-07-17 nvim IDE design and plan, both fully executed and
-referenced by nothing); the rest of the July record is deliberately kept.
+longer exists, or when it was never executed and the idea has been dropped.
 
 If a doc is superseded rather than obsolete, say so in a line at the top of the old one and
 link the replacement, rather than deleting it.
