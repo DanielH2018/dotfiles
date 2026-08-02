@@ -231,3 +231,17 @@ test("codeFiles sums a card's real sources and skips symlinks", () => {
   );
   assert.deepStrictEqual(m.codeFiles({ name: "no source" }), []);
 });
+
+test("renderPage says so when the per-host column could not be determined", () => {
+  // Regression: `chezmoi ignored` failing left every host badge absent, which reads as
+  // "nothing is gated" rather than "unknown". Silence is the wrong answer here.
+  const html = m.renderPage({
+    page: { title: "T", lede: "L", scopeIn: "in", scopeOut: "out" },
+    groups: [{ id: "g", title: "G" }],
+    tools: [], tiles: [],
+    drift: { uncurated: [], missing: [], hostUnknown: true },
+    host: { label: "linux / test", sourceDisplay: "~/src" },
+  });
+  assert.ok(html.includes('<div class="drift">'), "banner shown for host-unknown alone");
+  assert.ok(html.includes("per-host column is missing"), "states what is missing");
+});

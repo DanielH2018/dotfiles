@@ -69,6 +69,7 @@
       "private_dot_claude/sandbox/executable_resolve-sandbox-settings.sh",
       "private_dot_claude/sandbox/executable_sandbox-lib.sh",
       "private_dot_claude/sandbox/executable_sandbox-worktree.sh",
+      "private_dot_claude/sandbox/executable_sandbox-mounts.sh",
       "private_dot_claude/sandbox/executable_vault-search"
     ],
     "reason": "Claude Code hooks and sourced libraries — the config surface, not commands. vault-search is listed here because it has its own curated entry keyed to the sandbox image rather than the host."
@@ -773,7 +774,7 @@
       "plat": ["mac", "linux", "wsl"],
       "platLabel": "macOS · Linux · WSL",
       "role": ["library"],
-      "desc": "<code>sandbox-lib.sh</code>, <code>sandbox-worktree.sh</code>, <code>resolve-sandbox-settings.sh</code>. The worktree helpers are pure functions of their arguments with no <code>exit</code> calls, which is what lets the launcher and the tests both source the file."
+      "desc": "<code>sandbox-lib.sh</code>, <code>sandbox-worktree.sh</code>, <code>sandbox-mounts.sh</code>, <code>resolve-sandbox-settings.sh</code>. The worktree helpers are pure functions of their arguments with no <code>exit</code> calls, which is what lets the launcher and the tests both source the file. <code>sandbox-mounts.sh</code> deliberately is not pure — its functions append to the launcher's <code>DOCKER_ARGS</code> and read its globals, so sourcing it requires the launcher's variable context."
     },
     {
       "id": "claude-otel",

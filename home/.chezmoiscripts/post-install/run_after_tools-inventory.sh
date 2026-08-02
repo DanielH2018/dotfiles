@@ -19,6 +19,12 @@ set -eu
 fnm_bin="${FNM_DIR:-$HOME/.local/share/fnm}/aliases/default/bin"
 [ -d "$fnm_bin" ] && PATH="$fnm_bin:$PATH"
 
+# Same problem, second binary: the generator shells out to `chezmoi ignored` for the
+# per-host column, and chezmoi's own installer puts it in ~/.local/bin, which this
+# environment need not carry either. Measured on the first real apply: the spawn failed
+# with ENOENT and the page rendered with no host column at all.
+[ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH"
+
 command -v node >/dev/null 2>&1 || { echo "tools-inventory: node not found, skipping"; exit 0; }
 gen="$HOME/.local/bin/tools-inventory"
 [ -f "$gen" ] || { echo "tools-inventory: generator not deployed yet, skipping"; exit 0; }

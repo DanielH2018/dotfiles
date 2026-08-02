@@ -209,8 +209,15 @@ function renderCompact(t) {
 }
 
 function renderDrift(drift) {
-  if (!drift.uncurated.length && !drift.missing.length) return '';
+  if (!drift.uncurated.length && !drift.missing.length && !drift.hostUnknown) return '';
   const bits = [];
+  if (drift.hostUnknown) {
+    bits.push(
+      '<p><b>The per-host column is missing.</b> <code>chezmoi ignored</code> could not be run, so ' +
+        'this page cannot say which tools this machine actually got — every "deployed here" badge is ' +
+        'absent rather than false. Everything else below is still accurate.</p>'
+    );
+  }
   if (drift.uncurated.length) {
     bits.push(
       `<p><b>${drift.uncurated.length} script${drift.uncurated.length === 1 ? '' : 's'} in the source tree ` +
@@ -401,11 +408,25 @@ function listSources(sourceDir, readdir, isDir) {
   return found.sort();
 }
 
+// chezmoi is not necessarily on PATH: `chezmoi apply` runs its scripts with a
+// non-interactive environment that need not carry ~/.local/bin, which is where the
+// installer puts the binary. A bare spawn therefore failed with ENOENT during the very
+// apply this generator exists to run in, and the page silently rendered with no host
+// column at all — every gated tool losing its "not deployed here" badge and the tile
+// reading 0. Resolve it explicitly instead, and let the caller override.
+function chezmoiBin() {
+  if (process.env.CHEZMOI_BIN) return process.env.CHEZMOI_BIN;
+  for (const c of [path.join(HOME, '.local', 'bin', 'chezmoi'), '/usr/bin/chezmoi', '/usr/local/bin/chezmoi']) {
+    if (fs.existsSync(c)) return c;
+  }
+  return 'chezmoi';
+}
+
 function chezmoiIgnored(sourceDir) {
   if (process.env.TOOLS_INVENTORY_IGNORED != null) {
     return new Set(process.env.TOOLS_INVENTORY_IGNORED.split('\n').map((s) => s.trim()).filter(Boolean));
   }
-  const r = spawnSync('chezmoi', ['ignored'], { encoding: 'utf8', cwd: sourceDir });
+  const r = spawnSync(chezmoiBin(), ['ignored'], { encoding: 'utf8', cwd: sourceDir });
   if (r.status !== 0 || !r.stdout) return null;
   return new Set(r.stdout.split('\n').map((s) => s.trim()).filter(Boolean));
 }
@@ -441,6 +462,7 @@ function build(opts) {
   const drift = driftOf(found, data.tools, (data.excluded || {}).paths, inSource);
 
   const ignored = chezmoiIgnored(sourceDir);
+  drift.hostUnknown = !ignored;
   const exists = (rel) => fs.existsSync(path.join(HOME, rel));
   const gateNote = ignored ? null : 'ignore list unavailable';
 
@@ -546,6 +568,9 @@ function main(argv) {
   const drift = driftOf(found, data.tools, (data.excluded || {}).paths, (rel) =>
     fs.existsSync(path.join(sourceDir, rel))
   );
+  if (!chezmoiIgnored(sourceDir)) {
+    process.stderr.write('tools-inventory: `chezmoi ignored` unavailable — page rendered without the per-host column\n');
+  }
   for (const p of drift.uncurated) process.stderr.write(`tools-inventory: no tools.json entry for ${p}\n`);
   for (const m of drift.missing) process.stderr.write(`tools-inventory: curated entry has no file: ${m}\n`);
 
