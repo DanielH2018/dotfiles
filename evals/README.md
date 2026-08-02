@@ -26,7 +26,7 @@ Exit code is non-zero if any case is `FAIL` or `INCONCLUSIVE`, so this is CI-rea
 The deterministic library pieces have unit tests (no API calls):
 
 ```bash
-node --test tests/evals-*.test.mjs
+node --test "tests/evals/*.test.mjs"
 ```
 
 ## How a run is graded
