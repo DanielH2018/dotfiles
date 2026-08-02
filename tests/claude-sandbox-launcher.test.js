@@ -1,6 +1,7 @@
-// Regression guard for two pure-ish helpers inside the 2000+ line
-// executable_claude-sandbox launcher, picked as the highest-value slice
-// testable without docker:
+// Regression guard for two pure-ish helpers behind executable_claude-sandbox,
+// picked as the highest-value slice testable without docker. validate_version is
+// still launcher-resident; detect_docker_need moved out to sandbox-image.sh, which
+// is why extraction globs the libs rather than reading one file:
 //   - validate_version(): the only gate between untrusted repo content
 //     (.sdkmanrc/.nvmrc/go.mod/.terraform-version version strings) and a
 //     shell command / curl URL built from it in generate_dockerfile() —
@@ -20,7 +21,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
+const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
+// The launcher plus every lib it sources — detect_docker_need now lives in the image
+// lib. Globbed rather than listed, so the next function to move out does not break
+// extraction here.
+const SOURCES = [SANDBOX, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))];
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -36,7 +45,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    SANDBOX,
+    ...SOURCES,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
   assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);

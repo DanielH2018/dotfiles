@@ -20,9 +20,14 @@ const path = require('node:path');
 
 const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
-// Some of the functions below (resolve_main_ref, build_repo_snapshot) live in the
-// mount-assembly lib the launcher sources, so extraction searches both files.
-const MOUNTS_LIB = path.join(SANDBOX_DIR, 'executable_sandbox-mounts.sh');
+// The launcher plus every lib it sources: functions keep moving out of it into
+// sandbox-*.sh (resolve_main_ref and build_repo_snapshot into the mount lib,
+// detect_uv_need into the image lib), and awking a fixed list of files means the
+// next move silently breaks extraction here. Globbing tracks it instead.
+const SOURCES = [SANDBOX, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))];
 
 let toolsOk = true;
 try {
@@ -40,7 +45,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    SANDBOX, MOUNTS_LIB,
+    ...SOURCES,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
   assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);
