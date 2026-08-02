@@ -99,7 +99,18 @@ def _load():
     sys.modules[PACKAGE] = package
 
     for name in MODULES:
-        importlib.import_module(f"{PACKAGE}.{name}")
+        try:
+            importlib.import_module(f"{PACKAGE}.{name}")
+        except ModuleNotFoundError as exc:
+            # Every other way this tool fails reports one line and no traceback.
+            # A half-deployed tree is a broken install rather than a bad query,
+            # but it should not be the one path that dumps a stack.
+            print(
+                f"{os.path.basename(__file__)}: broken install — {exc.name} is "
+                f"missing from {share}; re-run `chezmoi apply`",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from None
     return sys.modules[f"{PACKAGE}.cli"]
 
 

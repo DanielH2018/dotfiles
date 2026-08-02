@@ -166,6 +166,33 @@ test('the share directory holds exactly the modules the shim loads', { skip }, (
     'share/jsonq and the shim\'s MODULES tuple disagree');
 });
 
+test('a half-deployed tree is reported without a traceback', { skip }, () => {
+  // Splitting the tool created a failure mode it did not have as one file: a
+  // chezmoi apply that lands the shim but not every module. Every other way
+  // jsonq fails is one line and no stack, and this must not be the exception.
+  // Broken on a copy, so a failure here cannot leave the source tree damaged.
+  const broken = fs.mkdtempSync(path.join(os.tmpdir(), 'jsonq-broken-'));
+  dirs.push(broken);
+  fs.mkdirSync(path.join(broken, 'bin'));
+  fs.cpSync(SHARE, path.join(broken, 'share', 'jsonq'), { recursive: true });
+  fs.copyFileSync(JSONQ, path.join(broken, 'bin', 'jsonq'));
+  fs.rmSync(path.join(broken, 'share', 'jsonq', 'guards.py'));
+
+  let code = 0;
+  let err = '';
+  try {
+    execFileSync(python, [path.join(broken, 'bin', 'jsonq'), '1 + 1', T],
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (e) {
+    code = e.status;
+    err = e.stderr || '';
+  }
+  assert.strictEqual(code, 2, 'a broken install should exit 2, like every other refusal');
+  assert.doesNotMatch(err, /Traceback/, 'jsonq never shows a traceback');
+  assert.match(err, /broken install/);
+  assert.match(err, /guards/, 'the message should name the module that is missing');
+});
+
 test('running jsonq leaves no bytecode cache in the share directory', { skip }, () => {
   ok(['1 + 1', T]);
   assert.ok(!fs.existsSync(path.join(SHARE, '__pycache__')),
