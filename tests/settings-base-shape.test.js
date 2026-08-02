@@ -81,6 +81,48 @@ test('fallbackModel is an array, not a string', { skip }, () => {
     + `disables statusLine, hooks, permissions and plugins too. Got: ${JSON.stringify(v)}`);
 });
 
+// The artifact-link chain is three files agreeing on one number per host: the box serves
+// ~/.claude/artifacts on CLAUDE_ARTIFACTS_PORT, link-artifact.sh writes that port into the
+// http:// link, and ~/.ssh/config forwards it so the link resolves on the workstation.
+// Every failure mode here is silent rather than loud — a duplicate port means the second
+// `ssh -L` cannot bind and the browser renders the FIRST host's artifacts, and 8181 is the
+// workstation's own server, so it 404s every remote file while still returning a page.
+// Read from the template source, not a render: the gates are per-hostname and the test only
+// ever runs on one machine.
+const HOST_PORTS = (() => {
+  const src = fs.readFileSync(TMPL, 'utf8');
+  const re = /\.chezmoi\.hostname\s+"([^"]+)"[\s\S]*?"CLAUDE_ARTIFACTS_PORT":\s*"(\d+)"/g;
+  return [...src.matchAll(re)].map(([, host, port]) => ({ host, port }));
+})();
+
+test('each host that serves artifacts gets its own port, never the workstation 8181', () => {
+  assert.ok(HOST_PORTS.length > 0,
+    'no CLAUDE_ARTIFACTS_PORT gates found — either they were removed or the pattern drifted');
+  const ports = HOST_PORTS.map((h) => h.port);
+  assert.strictEqual(new Set(ports).size, ports.length,
+    `two hosts share an artifact port: ${JSON.stringify(HOST_PORTS)}`);
+  assert.deepStrictEqual(HOST_PORTS.filter((h) => h.port === '8181'), [],
+    'a remote host claims 8181, which is the local default the workstation already serves');
+});
+
+test('every artifact port is forwarded by that host\'s ssh stanza', () => {
+  const ssh = fs.readFileSync(
+    path.join(REPO, 'home', 'private_dot_ssh', 'private_config.tmpl'), 'utf8');
+  const stanzas = new Map();
+  let current = null;
+  for (const line of ssh.split('\n')) {
+    const m = line.match(/^Host\s+(.+)$/);
+    if (m) { current = m[1].trim().split(/\s+/); current.forEach((h) => stanzas.set(h, [])); }
+    else if (current) current.forEach((h) => stanzas.get(h).push(line));
+  }
+  for (const { host, port } of HOST_PORTS) {
+    const body = (stanzas.get(host) || []).join('\n');
+    assert.match(body, new RegExp(`LocalForward\\s+127\\.0\\.0\\.1:${port}\\s+127\\.0\\.0\\.1:${port}`),
+      `${host} serves artifacts on ${port} but its ssh stanza does not forward it, so every `
+      + `artifact link it emits is dead from the workstation`);
+  }
+});
+
 // A fallback the harness would refuse to switch to is no fallback at all.
 test('every fallbackModel entry is one of availableModels', { skip }, () => {
   const s = JSON.parse(render());

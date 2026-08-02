@@ -39,3 +39,12 @@ Host daniel-box
     IdentityFile ~/.ssh/daniel-box
 {{- end }}
     IdentityFile ~/.ssh/id_ed25519
+    # Renders Claude Code's artifact links, same arrangement as daniel-server above:
+    # the box serves ~/.claude/artifacts on loopback and a plain ssh session forwards
+    # nothing on its own, so http://127.0.0.1:8183/... only resolves with this in place.
+    #
+    # 8183 because 8181 is this workstation's own artifact server and 8182 is the
+    # daniel-server forward; a shared port can't bind twice, and the browser then
+    # quietly renders the OTHER host's artifacts. settings.base.json sets a matching
+    # CLAUDE_ARTIFACTS_PORT=8183 on daniel-box so the links it emits agree.
+    LocalForward 127.0.0.1:8183 127.0.0.1:8183

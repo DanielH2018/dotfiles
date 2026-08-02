@@ -125,8 +125,17 @@
          linux, and WSL is linux). With both on 8181 the client-side `ssh -L` can't
          bind, fails with "Address already in use", and the browser silently reaches
          the local server instead — a directory listing that renders but 404s every
-         file written here. ~/.ssh/config forwards 8182 to match. */}}
-    "CLAUDE_ARTIFACTS_PORT": "8182"{{ end }}
+         file written here. ~/.ssh/config forwards 8182 to match.
+
+         The invariant this creates: EVERY ssh-reached host gets its own port, and none
+         of them may be 8181, the client's own. Next free one goes to the next host —
+         daniel-pi has no server today, so 8184 when it needs one. */}}
+    "CLAUDE_ARTIFACTS_PORT": "8182"{{ else if eq .chezmoi.hostname "daniel-box" }},
+    {{/* Same arrangement as daniel-server, one port over: ~/.ssh/config forwards 8183
+         to match, and 8182 is already the daniel-server forward — two hosts on one port
+         means whichever session connects second silently reads the first one's
+         artifacts. */}}
+    "CLAUDE_ARTIFACTS_PORT": "8183"{{ end }}
   },
   "attribution": {
     "commit": "🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
