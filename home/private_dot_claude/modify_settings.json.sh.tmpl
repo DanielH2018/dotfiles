@@ -25,8 +25,16 @@ trap 'rm -f "$BASE" "$PRIOR" "$FLOOR"' EXIT
 # unreviewable policy this refuses to deploy. Splitting the permission model out into
 # settings.permissions.json would have added a second such hole. A pattern cannot go stale
 # the way a list does, so keep it a pattern; tests/settings-templates-tracked.test.js fails
-# if it is narrowed back. git applies fnmatch to a quoted pathspec, so no :(glob) magic is
-# needed for one path segment.
+# if it is narrowed back.
+#
+# A plain quoted pathspec is already a wildmatch, so no :(glob) magic is wanted here — and
+# it would be the wrong tool if reached for. Adding :(glob) makes `*` stop at a `/`, which
+# is NARROWER than the default: bare `home/*settings.base.json` matches
+# home/.chezmoitemplates/settings.base.json AND the sandbox's own copy under
+# private_dot_claude/, while the :(glob) form matches neither. The pattern below is anchored
+# on a literal .chezmoitemplates/ prefix, so the loose `*` costs nothing: the only paths it
+# can reach are inside that directory, and over-matching there would mean refusing on an
+# extra file rather than deploying an unreviewed one.
 #
 # NOTE ON BLAST RADIUS: chezmoi stops the whole run on first error, so this failing blocks
 # every other dotfile in that apply, not just settings.json. `chezmoi apply --keep-going` is

@@ -40,9 +40,13 @@ test('the settings templates are found at all', () => {
     'expected the base template plus at least the safe floor');
 });
 
-// The guard passes its paths to `git status --porcelain --`, where git applies fnmatch to a
-// quoted pathspec. Only `*` is used and only within one path segment, so that is all this
-// translates; a pathspec needing more than that should be read by a human, not matched here.
+// The guard passes its paths to `git status --porcelain --`, where a quoted pathspec is a
+// wildmatch. `*` there crosses `/` — verified: `git ls-files -- "home/*settings.base.json"`
+// returns both .chezmoitemplates/settings.base.json and the sandbox's own copy. This uses
+// `[^/]*`, which is deliberately STRICTER: it can only report a template as uncovered that
+// git would in fact cover, never the reverse, so the failure mode is a false alarm a human
+// reads rather than a gap that ships. A pathspec needing more than one `*` should be read
+// by a human anyway, not matched here.
 function pathspecMatches(spec, rel) {
   const re = new RegExp(`^${spec.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
   return re.test(rel);
