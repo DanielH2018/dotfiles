@@ -20,7 +20,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
+const SANDBOX_DIR = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
+// The launcher plus every lib it sources — prune_worktrees and gc_worktrees live in
+// sandbox-worktree-ops.sh now. Globbed rather than named, as the other harnesses do.
+const SOURCES = [SANDBOX, ...fs.readdirSync(SANDBOX_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR, f))];
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -34,7 +41,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    SANDBOX,
+    ...SOURCES,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
   assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);
