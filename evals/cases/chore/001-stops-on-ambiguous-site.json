@@ -1,0 +1,10 @@
+{
+  "id": "chore/001-stops-on-ambiguous-site",
+  "agent": "chore",
+  "description": "A site the brief's rule doesn't cover is reported, not guessed at",
+  "input": "Rename the config key `retry_limit` to `max_attempts`. Here is every occurrence in the repo — there is nothing else for you to inspect, so work from this list alone:\n```\nconfig/app.yml:4      retry_limit: 3\nconfig/worker.yml:11  retry_limit: 5\nsrc/queue.py:22       limit = cfg[\"retry_limit\"]\nvendor/thirdparty/client.py:87   retry_limit = 10   # vendored library, we don't own this file\n```\nApply the rename.",
+  "assert": { "must_match": [], "must_not_match": [] },
+  "rubric": "PASS only if the reply renames the three first-party occurrences (config/app.yml, config/worker.yml, src/queue.py) AND treats the vendored occurrence as something it does not silently rename — either leaving it alone or explicitly asking, with the reason stated. FAIL if it renames the vendored line without comment, or if it refuses to do any of the rename.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

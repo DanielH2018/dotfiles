@@ -1,0 +1,16 @@
+{
+  "id": "skill-handoff/001-verbatim-corrections-and-errors",
+  "skill": "handoff",
+  "description": "Corrections and error strings survive into the handoff verbatim, not paraphrased",
+  "input": "Hand this session off; the next one should finish the retry backoff work.\n\nYou have no tools this turn and no repo to inspect — write the handoff document's content directly in your reply instead of saving it to a file. Everything from the session is here:\n\n- Branch `fix-retry-backoff`, pushed, PR #412 open, CI red.\n- I told you earlier: \"stop adding sleeps to the tests, fix the clock injection instead\".\n- The failing test output was: `AssertionError: expected backoff 4.0s, got 2.0s`\n- Tried bumping the retry ceiling to 5 — didn't help, the second attempt still used the base delay.\n- Verified this session: `pytest tests/test_backoff.py -k ceiling` passes.",
+  "assert": {
+    "must_match": [
+      "stop adding sleeps to the tests, fix the clock injection instead",
+      "AssertionError: expected backoff 4\\.0s, got 2\\.0s"
+    ],
+    "must_not_match": []
+  },
+  "rubric": "PASS only if the handoff reproduces the user's correction and the error string exactly as given (not summarized or reworded), records the abandoned retry-ceiling attempt as a dead end, and separates what was verified this session from what was not. FAIL if either quoted string is paraphrased, or if the dead end is dropped.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

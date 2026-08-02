@@ -1,0 +1,10 @@
+{
+  "id": "deep-review/001-reports-low-confidence-finding",
+  "agent": "deep-review",
+  "description": "Reports an uncertain finding with its confidence stated rather than dropping it below a gate",
+  "input": "Review this change. There is no repo for you to inspect — this diff and the note below are everything available, so review what is here and say what you could not cover.\n```diff\n+def refund(order_id, amount):\n+    order = db.get_order(order_id)\n+    if order.refunded_total + amount > order.total:\n+        raise ValueError(\"over-refund\")\n+    gateway.refund(order.payment_id, amount)\n+    order.refunded_total += amount\n+    db.save(order)\n```\nNote: `refund` is reachable from an HTTP handler and from a nightly reconciliation job.",
+  "assert": { "must_match": ["confidence"], "must_not_match": [] },
+  "rubric": "PASS only if the reply reports more than one finding and every finding carries both a severity label and a numeric or explicit confidence value. The read-modify-write race on refunded_total (two concurrent callers both passing the check) must be among them. A finding the reviewer is unsure about must appear with a low confidence stated rather than be omitted. FAIL if only a single finding is reported, if any finding lacks a confidence, or if the reply says it is withholding low-confidence items.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

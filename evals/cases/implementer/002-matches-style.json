@@ -2,7 +2,7 @@
   "id": "implementer/002-matches-style",
   "agent": "implementer",
   "description": "The implementer matches the existing code's conventions",
-  "input": "Existing code style in this module:\n```js\n// uses CommonJS, 2-space indent, no semicolons omitted, arrow fns, snake_case DB fields\nconst get_account = (id) => db.query('SELECT * FROM accounts WHERE id = $1', [id])\nmodule.exports = { get_account }\n```\nAdd a `get_account_by_email(email)` function following the same style.",
+  "input": "Existing code style in this module:\n```js\n// uses CommonJS, 2-space indent, no semicolons omitted, arrow fns, snake_case DB fields\nconst get_account = (id) => db.query('SELECT * FROM accounts WHERE id = $1', [id])\nmodule.exports = { get_account }\n```\nAdd a `get_account_by_email(email)` function following the same style. There is no repo for you to inspect — the snippet above is the whole of the module's style, so write the function from it rather than looking for the file.",
   "assert": { "must_match": [], "must_not_match": [] },
   "rubric": "PASS only if the added function matches the shown conventions: CommonJS export, arrow function, parameterized query, and the same naming/formatting style (e.g. get_account_by_email). Switching to ESM, classes, or a different query style is a FAIL.",
   "k": 5,

@@ -106,10 +106,11 @@ update this note if models or case sizes change.
 
 ## The agents
 
-Cases exist for all six agents. Two are defined **in this repo**
-(`home/private_dot_claude/agents/`) and load with no extra setup: `implementer` and
-`migration-reviewer`. (`planner` was dropped deliberately in 67a07ae — prep hands off to
-superpowers/Plan now — and its cases were retired with it.)
+Cases exist for all nine agents. Five are defined **in this repo**
+(`home/private_dot_claude/agents/`) and load with no extra setup: `implementer`,
+`migration-reviewer`, `chore`, `deep-review` and `root-cause`. (`planner` was dropped
+deliberately in 67a07ae — prep hands off to superpowers/Plan now — and its cases were
+retired with it.)
 
 The four work-overlay agents — `security-reviewer`, `ops-investigator`, `processing-engineer`,
 `network-navigator` — are defined in **`work-laptop-config/.claude/agents/`**, not this repo. Their
@@ -139,10 +140,20 @@ fidelity boundary as agents — this grades the skill's prompt/behavior, not Ski
 loading plumbing, and `--tools ""` means a case's input must say when there is nothing to
 inspect, or the skill will reasonably ask for a repo it can't reach.
 
-### Skill triage (2026-07-24)
+A skill whose source is chezmoi-templated (`SKILL.md.tmpl`, e.g. `skill-router`, gated by
+machine) is rendered with `chezmoi execute-template` before grading, so it needs `chezmoi`
+on PATH. That resolves the template against **this machine's** data, meaning a gated skill
+is graded as the variant this machine deploys — on a personal box, work-only sections are
+absent. A plain `SKILL.md` wins if both exist. Before this, the loader looked only for
+`SKILL.md`: `skill-router` became a template in 1d3ff0a (2026-07-25) and its three cases
+returned INCONCLUSIVE, unnoticed, for eight days.
 
-Which of the 15 repo skills have cases, and why the rest don't. A skill only gets a case
-if a single no-tools turn can exhibit a falsifiable behavior from its contract.
+### Skill triage (2026-07-24, extended 2026-08-02)
+
+Which of the 18 repo skills have cases, and why the rest don't. A skill only gets a case
+if a single no-tools turn can exhibit a falsifiable behavior from its contract. Keep this
+table in step with `home/private_dot_claude/skills/` — the three skills added after the
+original pass sat untriaged for a week, which reads the same as "deliberately skipped".
 
 | Skill | Verdict |
 |---|---|
@@ -153,7 +164,10 @@ if a single no-tools turn can exhibit a falsifiable behavior from its contract.
 | `pr-feedback` | cases — fixed markers/header/zero-PR line on inline sample data |
 | `pr-review-prep` | cases — verbalized safety gates (force-with-lease, stop on guard failure) |
 | `gh-stack` | cases — non-interactive flag contract (`view --json`, `submit --auto`) |
+| `handoff` | cases — corrections and error strings must survive verbatim, dead ends kept |
+| `orchestrating-subagents` | cases — agent count lands in the stated band; brief carries objective/format/budget |
 | `building-evals` | skip — methodology reference; no falsifiable single-turn output |
+| `homelab` | skip — connection details and an ssh verb allowlist; nothing to exhibit without the server |
 | `codebase-design` | skip — vocabulary rule is judge-only and echoes of banned words false-fail |
 | `config-lint` | skip — pass 1 is script-bound; placement review too open-ended to anchor |
 | `deep-understanding` | skip — the comprehension loop is inherently multi-turn |

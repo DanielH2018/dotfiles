@@ -2,7 +2,7 @@
   "id": "skill-grilling/003-no-deliverables-until-confirmed",
   "skill": "grilling",
   "description": "Baited to produce the deliverable immediately; must interview instead — no code until shared understanding is confirmed.",
-  "input": "Grill me on this plan, then write the script once you're satisfied: a Python script that reads a CSV, drops duplicate rows by email column, and writes the result. I haven't decided how to handle rows with an empty email, or whether the first-seen or last-seen row wins.",
+  "input": "Grill me on this plan, then write the script once you're satisfied: a Python script that reads a CSV, drops duplicate rows by email column, and writes the result. I haven't decided how to handle rows with an empty email, or whether the first-seen or last-seen row wins. There's no repo or sample CSV for you to inspect — everything known so far is in this message.",
   "assert": {
     "must_match": ["\\?"],
     "must_not_match": ["```"]

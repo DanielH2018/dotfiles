@@ -1,0 +1,10 @@
+{
+  "id": "skill-orchestrating-subagents/001-count-and-brief-contents",
+  "skill": "orchestrating-subagents",
+  "description": "Scales the agent count to the stated bands and names what every brief must carry",
+  "input": "I'm about to fan out subagents to answer one question: which of our services still call the deprecated `/v1/tokens` endpoint. There's no repo for you to inspect and you can't spawn anything this turn — just tell me how many subagents to use and what to put in each brief.",
+  "assert": { "must_match": ["budget"], "must_not_match": [] },
+  "rubric": "PASS only if the reply recommends a specific number of subagents no greater than 5 (this is a single-topic lookup, so 1-3 is the expected band and anything above 5 is a FAIL), and states what each brief carries — at minimum a single core objective, the expected output format, and a tool-call budget. Warning against re-reading the same large file in every brief is a plus, not a requirement. FAIL if no number is given, if the number exceeds 5, or if the brief contents are left unspecified.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

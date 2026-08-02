@@ -30,3 +30,15 @@ test('empty or missing assert object passes', () => {
   assert.strictEqual(checkAssertions('anything').pass, true);
   assert.strictEqual(checkAssertions('anything', { must_match: [], must_not_match: [] }).pass, true);
 });
+
+test('an invalid regex fails its own case instead of throwing out of the sweep', () => {
+  const r = checkAssertions('some output', { must_match: ['(?i)confidence'] });
+  assert.strictEqual(r.pass, false);
+  assert.match(r.failures[0], /invalid regex/);
+});
+
+test('an invalid must_not_match pattern is reported, not silently passed', () => {
+  const r = checkAssertions('some output', { must_not_match: ['a(b'] });
+  assert.strictEqual(r.pass, false);
+  assert.match(r.failures[0], /invalid regex/);
+});

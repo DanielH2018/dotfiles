@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const FM = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
@@ -75,15 +76,30 @@ const SKILL_PREAMBLE =
   'The skill below has just been invoked in a live session. Its instructions govern ' +
   'your reply: follow them exactly, starting with your next turn.\n\n';
 
-export function loadSkillFromRepo(name, repoRoot) {
-  const p = join(repoRoot, 'home', 'private_dot_claude', 'skills', name, 'SKILL.md');
-  if (!existsSync(p)) throw new Error(`skill "${name}" not found at ${p}`);
-  return parseAgent(readFileSync(p, 'utf8'));
+// A skill whose source is chezmoi-templated (SKILL.md.tmpl) has to be rendered before it
+// can be graded. skill-router became a template in 1d3ff0a and, because this loader only
+// looked for SKILL.md, its three cases returned INCONCLUSIVE for eight days. Rendering
+// resolves the template against *this machine's* chezmoi data, so a gated skill is graded
+// as the variant this machine actually deploys.
+export function renderChezmoiTemplate(path) {
+  return execFileSync('chezmoi', ['execute-template'], {
+    input: readFileSync(path, 'utf8'),
+    encoding: 'utf8',
+  });
 }
 
-export function loadSkillFlagOrError(name, repoRoot) {
+export function loadSkillFromRepo(name, repoRoot, render = renderChezmoiTemplate) {
+  const dir = join(repoRoot, 'home', 'private_dot_claude', 'skills', name);
+  const plain = join(dir, 'SKILL.md');
+  if (existsSync(plain)) return parseAgent(readFileSync(plain, 'utf8'));
+  const templated = join(dir, 'SKILL.md.tmpl');
+  if (existsSync(templated)) return parseAgent(render(templated));
+  throw new Error(`skill "${name}" not found at ${plain} or ${templated}`);
+}
+
+export function loadSkillFlagOrError(name, repoRoot, render = renderChezmoiTemplate) {
   try {
-    const parsed = loadSkillFromRepo(name, repoRoot);
+    const parsed = loadSkillFromRepo(name, repoRoot, render);
     return { flag: buildAgentsFlag(parsed, {
       name: `skill-${name}`,
       model: parsed.model || SKILL_EVAL_MODEL,

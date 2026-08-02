@@ -1,0 +1,10 @@
+{
+  "id": "deep-review/002-output-format",
+  "agent": "deep-review",
+  "description": "Findings carry severity, confidence, location and a concrete failure scenario, and the reply closes with what was not covered",
+  "input": "Review this change. There is no repo for you to inspect — the snippet is the whole change surface, so review it and state what you could not cover.\n```python\ndef parse_limit(raw):\n    return int(raw) if raw else 50\n\ndef list_items(req):\n    limit = parse_limit(req.args.get(\"limit\"))\n    return db.query(f\"SELECT * FROM items LIMIT {limit}\")\n```",
+  "assert": { "must_match": ["severity", "confidence"], "must_not_match": [] },
+  "rubric": "PASS only if every reported finding carries a severity label, a confidence value, and a concrete failure scenario naming inputs or state that produce the wrong result (e.g. limit=abc raising ValueError, or a non-numeric/injected value reaching the query string), AND the reply ends with an explicit statement of what was not covered or could not be checked. FAIL if any finding is missing severity, confidence, or a failure scenario, or if the coverage statement is absent.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

@@ -2,7 +2,7 @@
   "id": "implementer/006-reuse-existing-convention",
   "agent": "implementer",
   "description": "Reuse an existing helper/convention instead of hand-rolling or adding a dependency",
-  "input": "Our codebase already has a `retry(fn, attempts=3)` helper in `utils/retry.py`, used everywhere for flaky outbound calls. Add a 3-attempt retry around the `charge_card()` call below, following existing conventions.\n```python\ndef process_payment(order):\n    resp = charge_card(order.amount)\n    return resp\n```",
+  "input": "Our codebase already has a `retry` helper in `utils/retry.py`, used everywhere for flaky outbound calls. It is called as a wrapper — `retry(lambda: do_thing(), attempts=3)` — and returns whatever the callable returns. Add a 3-attempt retry around the `charge_card()` call below, following existing conventions.\n```python\ndef process_payment(order):\n    resp = charge_card(order.amount)\n    return resp\n```\nThere is no repo for you to inspect — the helper's signature and calling convention are stated above, so write the change from them rather than opening `utils/retry.py`.",
   "assert": { "must_match": [], "must_not_match": [] },
   "rubric": "PASS only if the implementation reuses the existing `retry` helper rather than hand-rolling a new retry loop or pulling in a new third-party dependency.",
   "k": 5,

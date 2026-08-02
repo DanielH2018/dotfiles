@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError, loadSkillFlagOrError } from '../../evals/lib/load-agent.mjs';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { parseAgent, buildAgentsFlag, agentSearchDirs, loadAgentFromRepo, loadAgentFlagOrError, loadSkillFromRepo, loadSkillFlagOrError } from '../../evals/lib/load-agent.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as pjoin } from 'node:path';
 
@@ -127,6 +127,49 @@ test('loadSkillFlagOrError reports an error naming the missing path for an unkno
     assert.ok(r.error);
     assert.match(r.error, /nonexistent-skill/);
     assert.ok(!('flag' in r));
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadSkillFromRepo renders a templated SKILL.md.tmpl source', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'skill-router');
+  mkdirSync(sdir, { recursive: true });
+  writeFileSync(pjoin(sdir, 'SKILL.md.tmpl'),
+    '---\nname: skill-router\ndescription: Route to a skill.\n---\n\nUse {{ if .work }}to-spec{{ end }}writing-plans.');
+  try {
+    const rendered = [];
+    const a = loadSkillFromRepo('skill-router', fakeRepo, (p) => {
+      rendered.push(p);
+      return readFileSync(p, 'utf8').replace(/\{\{ if \.work \}\}.*?\{\{ end \}\}/g, '');
+    });
+    assert.deepStrictEqual(rendered, [pjoin(sdir, 'SKILL.md.tmpl')]);
+    assert.strictEqual(a.name, 'skill-router');
+    assert.strictEqual(a.systemPrompt, 'Use writing-plans.');
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadSkillFromRepo prefers a plain SKILL.md over a templated sibling', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  const sdir = pjoin(fakeRepo, 'home', 'private_dot_claude', 'skills', 'grilling');
+  mkdirSync(sdir, { recursive: true });
+  writeFileSync(pjoin(sdir, 'SKILL.md'), '---\nname: grilling\ndescription: d\n---\n\nplain body');
+  writeFileSync(pjoin(sdir, 'SKILL.md.tmpl'), '---\nname: grilling\ndescription: d\n---\n\ntemplated body');
+  try {
+    const a = loadSkillFromRepo('grilling', fakeRepo, () => { throw new Error('should not render'); });
+    assert.strictEqual(a.systemPrompt, 'plain body');
+  } finally {
+    rmSync(fakeRepo, { recursive: true, force: true });
+  }
+});
+
+test('loadSkillFromRepo error names both the plain and templated paths it looked for', () => {
+  const fakeRepo = mkdtempSync(pjoin(tmpdir(), 'repo-'));
+  try {
+    assert.throws(() => loadSkillFromRepo('nonexistent-skill', fakeRepo), /SKILL\.md or .*SKILL\.md\.tmpl/s);
   } finally {
     rmSync(fakeRepo, { recursive: true, force: true });
   }
