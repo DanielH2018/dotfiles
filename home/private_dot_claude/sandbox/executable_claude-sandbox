@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # NO_VAULT, NO_CHEZMOI, NO_WORK_CONFIG, NO_REPOS, REPOS_LIVE, REPOS_ROOT and
-# REPO_SNAPSHOT_ROOT are parsed here and read in sandbox-mounts.sh, which
-# shellcheck cannot follow (the source path resolves at runtime — the same reason
-# .shellcheckrc disables SC1091). Without this it reports all seven as unused.
+# REPO_SNAPSHOT_ROOT are parsed here and read in sandbox-mounts.sh, a source path
+# that resolves at runtime and so cannot be followed by the linter — the same
+# reason .shellcheckrc disables SC1091. Without the directive below, all seven
+# are reported as unused.
+#
+# (Kept off the start of a comment line on purpose: a line beginning "# shell"
+# followed by "check" is parsed as a directive and errors with SC1073.)
 #
 # The directive below is FILE-WIDE, not scoped to those seven: SC2034 is off for
 # the whole launcher, so a genuinely dead variable added later will not be caught
