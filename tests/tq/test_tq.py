@@ -1945,8 +1945,8 @@ class TestRunnerArgv(unittest.TestCase):
 
         self.addCleanup(setattr, process, "run", process.run)
         process.run = fake_run
-        result, _ = lint_runner.run_go_vet(
-            ["go", "vet", "./..."], "/sample", "/sample/tmp"
+        result, _ = lint_runner.run_lint(
+            "go-vet", ["go", "vet", "./..."], "/sample", "/sample/tmp"
         )
         self.assertEqual(len(result.failures), 1)
         self.assertEqual(result.failures[0].file, "main.go")

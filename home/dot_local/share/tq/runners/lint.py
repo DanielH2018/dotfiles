@@ -1,14 +1,22 @@
 """Linters and type checkers: ask for a machine format, parse it, note stderr.
 
-Each of these runs the tool with its own `--format`-alike stripped and tq's
-put on, because a repeated format flag is resolved differently by each tool
-and the digest must not depend on where in the command the user wrote theirs.
+Every tool here is run the same way, and the seven of them differ only in the
+five fields of Tool below. They were seven near-identical functions until the
+duplication started hiding things — a stream read from the wrong attribute or a
+format flag dropped with the wrong arity looks like the other six at a glance.
+As a table the differences are the only thing on the page.
+
+A tool tq has never heard of goes through run_ingested instead, which takes the
+format from --ingest rather than from a row here.
 """
 
 from __future__ import annotations
 
+import functools
 import os
 import shlex
+from dataclasses import dataclass
+from typing import Callable
 
 import cmdline
 import process
@@ -16,6 +24,62 @@ from adapters import lint as lint_adapter
 from adapters import rdjson as rdjson_adapter
 from adapters import sarif as sarif_adapter
 from result import Result
+
+
+@dataclass(frozen=True)
+class Tool:
+    """What one linter needs that the others do not. No behaviour lives here.
+
+    `drop` is the tool's own format flag, taken off the command because each
+    tool resolves a repeated one differently — by position for some, by
+    precedence for others — and a digest must not change shape when the user
+    reorders their command. `add` is tq's, put on in its place.
+    """
+
+    runner: str
+    parse: Callable[[str, Result], None]
+    drop: tuple[str, ...] = ()
+    add: str = ""
+    stream: str = "stdout"
+
+
+TOOLS = {
+    "ruff": Tool(
+        runner="ruff",
+        parse=lint_adapter.parse_ruff,
+        drop=("--output-format", "--output-file", "-o"),
+        add="--output-format=json",
+    ),
+    "mypy": Tool(
+        runner="mypy",
+        parse=lint_adapter.parse_mypy,
+        drop=("--output",),
+        add="--output=json",
+    ),
+    "eslint": Tool(
+        runner="eslint",
+        parse=lint_adapter.parse_eslint,
+        drop=("--format", "-f", "--output-file", "-o"),
+        add="--format=json",
+    ),
+    # tsc has no machine format to ask for; adapters/lint.py reads its text.
+    "tsc": Tool(runner="tsc", parse=lint_adapter.parse_tsc),
+    "shellcheck": Tool(
+        runner="shellcheck",
+        parse=lint_adapter.parse_shellcheck,
+        drop=("--format", "-f"),
+        add="--format=json1",
+    ),
+    # go vet writes its findings to stderr, not stdout — get this backwards
+    # and every real run digests as clean.
+    "go-vet": Tool(runner="go", parse=lint_adapter.parse_go_vet, stream="stderr"),
+    "cargo-clippy": Tool(
+        runner="cargo clippy",
+        parse=lint_adapter.parse_cargo_clippy,
+        drop=("--message-format",),
+        add="--message-format=json",
+    ),
+}
 
 
 def finish_lint(result, proc):
@@ -32,116 +96,28 @@ def finish_lint(result, proc):
         result.notes.append(note)
 
 
-def run_ruff(argv, workdir, tmp):
-    cmd = cmdline.drop_flag(argv, ("--output-format", "--output-file", "-o"))
-    proc, timed_out = process.run(cmd + ["--output-format=json"], process.plain_env())
+def run_lint(name, argv, workdir, tmp):
+    tool = TOOLS[name]
+    cmd = cmdline.drop_flag(argv, tool.drop)
+    if tool.add:
+        cmd = cmd + [tool.add]
+    proc, timed_out = process.run(cmd, process.plain_env())
     result = Result(
-        runner="ruff",
+        runner=tool.runner,
         kind="lint",
         cmd=shlex.join(argv),
         cwd=workdir,
         exit=proc.returncode,
         timed_out=timed_out,
     )
-    lint_adapter.parse_ruff(proc.stdout, result)
+    tool.parse(getattr(proc, tool.stream), result)
     finish_lint(result, proc)
     return result, proc
 
 
-def run_mypy(argv, workdir, tmp):
-    cmd = cmdline.drop_flag(argv, ("--output",))
-    proc, timed_out = process.run(cmd + ["--output=json"], process.plain_env())
-    result = Result(
-        runner="mypy",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    lint_adapter.parse_mypy(proc.stdout, result)
-    finish_lint(result, proc)
-    return result, proc
-
-
-def run_eslint(argv, workdir, tmp):
-    cmd = cmdline.drop_flag(argv, ("--format", "-f", "--output-file", "-o"))
-    proc, timed_out = process.run(cmd + ["--format=json"], process.plain_env())
-    result = Result(
-        runner="eslint",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    lint_adapter.parse_eslint(proc.stdout, result)
-    finish_lint(result, proc)
-    return result, proc
-
-
-def run_tsc(argv, workdir, tmp):
-    proc, timed_out = process.run(argv, process.plain_env())
-    result = Result(
-        runner="tsc",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    lint_adapter.parse_tsc(proc.stdout, result)
-    finish_lint(result, proc)
-    return result, proc
-
-
-def run_shellcheck(argv, workdir, tmp):
-    cmd = cmdline.drop_flag(argv, ("--format", "-f"))
-    proc, timed_out = process.run(cmd + ["--format=json1"], process.plain_env())
-    result = Result(
-        runner="shellcheck",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    lint_adapter.parse_shellcheck(proc.stdout, result)
-    finish_lint(result, proc)
-    return result, proc
-
-
-def run_go_vet(argv, workdir, tmp):
-    proc, timed_out = process.run(argv, process.plain_env())
-    result = Result(
-        runner="go",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    # go vet writes its findings to stderr, not stdout — get this backwards
-    # and every real run digests as clean.
-    lint_adapter.parse_go_vet(proc.stderr, result)
-    finish_lint(result, proc)
-    return result, proc
-
-
-def run_cargo_clippy(argv, workdir, tmp):
-    cmd = cmdline.drop_flag(argv, ("--message-format",))
-    proc, timed_out = process.run(cmd + ["--message-format=json"], process.plain_env())
-    result = Result(
-        runner="cargo clippy",
-        kind="lint",
-        cmd=shlex.join(argv),
-        cwd=workdir,
-        exit=proc.returncode,
-        timed_out=timed_out,
-    )
-    lint_adapter.parse_cargo_clippy(proc.stdout, result)
-    finish_lint(result, proc)
-    return result, proc
+def runner_for(name):
+    """One tool's entry for the CLI's RUNNERS table, bound to its row above."""
+    return functools.partial(run_lint, name)
 
 
 INGESTORS = {
@@ -156,7 +132,9 @@ def run_ingested(argv, workdir, tmp, fmt):
     """Any command at all, as long as its stdout speaks a format tq reads.
 
     The escape hatch from tq's fixed list of runners: a linter tq has never
-    heard of still gets digested, and one it cannot be taught still runs.
+    heard of still gets digested, and one it cannot be taught still runs. It
+    stays outside TOOLS because the runner name comes from the command and the
+    parser from --ingest, so there is no row to look up.
     """
     proc, timed_out = process.run(argv, process.plain_env())
     result = Result(
