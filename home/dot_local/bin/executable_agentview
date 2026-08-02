@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# statedir, sessionsdir, pinfile, remote_cache, windir, win_spawn_dir, HOST_SSH,
+# WSL_DOMAIN, WIN_GITBASH, WIN_CLAUDE and _rw are set here and read in the six
+# modules loaded from $AV_LIB below. That source path resolves at runtime, so the
+# linter cannot follow it and reports every one of them as unused.
+#
+# The directive is FILE-WIDE, not scoped to those names: SC2034 and SC2154 are off
+# for the whole script, so a genuinely dead variable added later will not be caught
+# here. The names above are documentation, not scope.
+# shellcheck disable=SC2034,SC2154
 # Agent View — grouped, switchable list of Claude Code sessions across machines and
 # backends (host + claude-sandbox). Terminal-agnostic: focus is delegated to whichever
 # backend a session captured at start (tmux / wezterm / none).
@@ -246,14 +255,14 @@ if [ "$mode" = "--card" ]; then
   # state-load/SSH — fzf calls this on every keystroke, so it must be instant.
   [ -z "${2:-}" ] && exit 0
   IFS=$'\037' read -r k_host k_cwd k_state k_ts k_title k_pane k_kind k_loc <<< "${2:-}"
-  e=$'\033'; z="$e[0m"
-  dim="$e[38;2;127;132;156m"; lab="$e[38;2;147;153;178m"; val="$e[38;2;205;214;244m"
+  e=$'\033'; z="${e}[0m"
+  dim="${e}[38;2;127;132;156m"; lab="${e}[38;2;147;153;178m"; val="${e}[38;2;205;214;244m"
   case "$k_state" in
-    needs-input) sc="$e[38;2;249;226;175m"; sn="needs input";;
-    working)     sc="$e[38;2;166;227;161m"; sn="working";;
-    review)      sc="$e[38;2;250;179;135m"; sn="review";;
-    completed)   sc="$e[38;2;108;112;134m"; sn="completed";;
-    *)           sc="$e[38;2;108;112;134m"; sn="idle";;
+    needs-input) sc="${e}[38;2;249;226;175m"; sn="needs input";;
+    working)     sc="${e}[38;2;166;227;161m"; sn="working";;
+    review)      sc="${e}[38;2;250;179;135m"; sn="review";;
+    completed)   sc="${e}[38;2;108;112;134m"; sn="completed";;
+    *)           sc="${e}[38;2;108;112;134m"; sn="idle";;
   esac
   case "$k_kind" in sandbox) klabel="sandbox";; bg) klabel="background";; *) klabel="claude";; esac
   host_label "$k_host"
@@ -282,8 +291,8 @@ fi
 if [ "$mode" = "--keys" ]; then
   # The shortcut cheatsheet shown in the preview pane when the user presses `?`. Self-
   # contained (own colors, no state load) so it renders instantly like --card.
-  e=$'\033'; z="$e[0m"
-  ttl="$e[1m$e[38;2;180;190;254m"; sec="$e[38;2;203;166;247m"; k="$e[38;2;166;227;161m"; dsc="$e[38;2;205;214;244m"
+  e=$'\033'; z="${e}[0m"
+  ttl="${e}[1m${e}[38;2;180;190;254m"; sec="${e}[38;2;203;166;247m"; k="${e}[38;2;166;227;161m"; dsc="${e}[38;2;205;214;244m"
   printf '\n  %s✳ agent view · shortcuts%s\n' "$ttl" "$z"
   printf '\n  %sNavigate%s\n' "$sec" "$z"
   printf '    %s↑ ↓%s      %smove%s\n'                 "$k" "$z" "$dsc" "$z"

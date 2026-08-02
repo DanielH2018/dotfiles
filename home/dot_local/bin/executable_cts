@@ -41,6 +41,11 @@ _cts_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 # and quoting it wholesale would silently start passing a literal tilde to ctw.
 _cts_shq() {
   local v="${1:-}" pre=""
+  # The literal string $HOME is the point below — it is emitted for the REMOTE shell
+  # to expand, so it must not expand here, and the '~/' patterns are matching a tilde
+  # rather than using one. SC2088 has to sit on the case statement: directives are not
+  # valid in front of an individual case branch (SC1124).
+  # shellcheck disable=SC2088
   case "$v" in
     '~')   printf '%s' '$HOME'; return 0 ;;
     '~/'*) pre='$HOME/'; v="${v#'~/'}" ;;
