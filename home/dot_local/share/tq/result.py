@@ -203,3 +203,16 @@ class Result:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(self.to_dict(), fh, indent=2)
         return path
+
+
+def plural(count, noun):
+    if count == 1:
+        return noun
+    # "matchs" and "directorys" are what appending an s alone produced, and a
+    # digest that cannot spell what it counted reads as a broken tool whatever
+    # the number to the left of it says.
+    if noun.endswith(("ch", "sh", "s", "x")):
+        return noun + "es"
+    if noun.endswith("y") and not noun.endswith(("ay", "ey", "oy", "uy")):
+        return noun[:-1] + "ies"
+    return noun + "s"

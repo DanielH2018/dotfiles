@@ -12,7 +12,7 @@ sys.path.insert(
     0, os.path.join(HERE, os.pardir, os.pardir, "home", "dot_local", "share", "tq")
 )
 
-import digest as digest_mod
+import rollup
 from adapters import junit as junit_adapter
 from adapters import lint as lint_adapter
 from digest import MAX_DIGEST, digest
@@ -375,22 +375,22 @@ class TestSampleReachesBothEnds(unittest.TestCase):
         # never showed the tail — the end a truncated answer is most often
         # wrong about, and the one a reader checks to see how far it got.
         items = list(range(1412))
-        shown = digest_mod._sample(items, 8)
+        shown = rollup._sample(items, 8)
         self.assertEqual(len(shown), 8)
         self.assertEqual(shown[0], 0)
         self.assertEqual(shown[-1], 1411)
 
     def test_a_short_list_is_shown_whole(self):
-        self.assertEqual(digest_mod._sample([1, 2, 3], 8), [1, 2, 3])
-        self.assertEqual(digest_mod._sample([1, 2, 3], 3), [1, 2, 3])
+        self.assertEqual(rollup._sample([1, 2, 3], 8), [1, 2, 3])
+        self.assertEqual(rollup._sample([1, 2, 3], 3), [1, 2, 3])
 
     def test_the_rows_stay_in_order_and_do_not_repeat(self):
-        shown = digest_mod._sample(list(range(50)), 8)
+        shown = rollup._sample(list(range(50)), 8)
         self.assertEqual(shown, sorted(shown))
         self.assertEqual(len(set(shown)), 8)
 
     def test_a_sample_of_one_does_not_divide_by_zero(self):
-        self.assertEqual(digest_mod._sample([1, 2, 3], 1), [1])
+        self.assertEqual(rollup._sample([1, 2, 3], 1), [1])
 
 
 class TestVerdictAgainstRecordedFailures(unittest.TestCase):
