@@ -113,8 +113,10 @@ test('fnm fallback', { skip }, () => {
   }
 });
 
-// 5. log-permission.js is fully removed (superseded by the permission-audit plugin). The
-//    hooks block remains, but no merged setting references the retired script.
+// 5. log-permission.js is fully removed. It logged permission decisions until the
+//    permission-audit plugin took over, and the plugin until Claude Code's own OTEL
+//    tool_decision events did. The hooks block remains; no merged setting references
+//    the retired script.
 test('log-permission.js is fully removed', { skip }, () => {
   const base = JSON.parse(run(''));
   assert.ok(base.hooks && typeof base.hooks === 'object', 'hooks block is present');

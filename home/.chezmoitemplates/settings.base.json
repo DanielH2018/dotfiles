@@ -614,17 +614,7 @@
     "commit-commands@claude-plugins-official": false,
     "pr-review-toolkit@claude-plugins-official": false,
 {{- end }}
-    "ralph-loop@claude-plugins-official": true,
-    "claude-permission-audit@daniel-tools": true
-  },
-  "extraKnownMarketplaces": {
-    "daniel-tools": {
-      "source": {
-        "source": "github",
-        "repo": "DanielH2018/claude-permission-audit"
-      },
-      "autoUpdate": true
-    }
+    "ralph-loop@claude-plugins-official": true
   },
   "sandbox": {{/* macOS-only: the block below is macOS-tuned (1Password agent socket, /System, allowUnixSockets) and Linux lacks bwrap/socat, so an enabled sandbox there just runs unsandboxed and warns about glob Read/Edit rules it can't enforce */}}{{ if eq .chezmoi.os "darwin" }}{
     "enabled": true,
