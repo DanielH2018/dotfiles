@@ -11,11 +11,11 @@ is a LogQL/PromQL string, and neither language can execute a process, read a
 file, or reach the network. That is what makes a blanket `Bash(otelq:*)` allow
 rule defensible where `Bash(curl:*)` is not.
 
-    otelq logs 'sum by (event_name) (count_over_time({service_name="claude-code"}[19h]))'
-    otelq logs '{service_name="claude-code"} | event_name=`api_error`' --stream --limit 5
-    otelq metric 'sum by (model) (increase(claude_code_cost_usage_USD_total[19h]))'
-    otelq labels --name service_name
-    otelq ready
+  otelq logs 'sum by (event_name) (count_over_time({service_name="claude-code"}[19h]))'
+  otelq logs '{service_name="claude-code"} | event_name=`api_error`' --stream --limit 5
+  otelq metric 'sum by (model) (increase(claude_code_cost_usage_USD_total[19h]))'
+  otelq labels --name service_name
+  otelq ready
 
 Output is JSON on stdout so it composes with jsonq. `--rows` renders the common
 "value<TAB>labels" shape instead, which is what most ad-hoc queries wanted.
@@ -70,18 +70,22 @@ def _get(base, path, params, timeout):
             body = resp.read(MAX_OUTPUT_BYTES + 1)
     except urllib.error.HTTPError as exc:
         detail = exc.read(2048).decode("utf-8", "replace").strip()
-        raise OtelqError(f"{base}{path}: HTTP {exc.code} {detail}")
+        raise OtelqError(f"{base}{path}: HTTP {exc.code} {detail}") from None
     except urllib.error.URLError as exc:
-        raise OtelqError(f"{base} unreachable ({exc.reason}) — is the stack up? `docker ps`")
+        raise OtelqError(
+            f"{base} unreachable ({exc.reason}) — is the stack up? `docker ps`"
+        ) from None
     except TimeoutError:
-        raise OtelqError(f"{base}{path}: timed out after {timeout}s")
+        raise OtelqError(f"{base}{path}: timed out after {timeout}s") from None
 
     if len(body) > MAX_OUTPUT_BYTES:
-        raise OtelqError("response exceeds the 10 MB cap; narrow the query or the range")
+        raise OtelqError(
+            "response exceeds the 10 MB cap; narrow the query or the range"
+        )
     try:
         return json.loads(body)
     except json.JSONDecodeError as exc:
-        raise OtelqError(f"{base}{path}: response was not JSON ({exc.msg})")
+        raise OtelqError(f"{base}{path}: response was not JSON ({exc.msg})") from None
 
 
 def _window(since, now):
@@ -101,7 +105,8 @@ def cmd_logs(ns, now):
             "direction": ns.direction,
         }
         return _get(LOKI, "/loki/api/v1/query_range", params, ns.timeout)
-    return _get(LOKI, "/loki/api/v1/query", {"query": ns.query, "time": str(int(now))}, ns.timeout)
+    return _get(LOKI, "/loki/api/v1/query",
+                {"query": ns.query, "time": str(int(now))}, ns.timeout)
 
 
 def cmd_metric(ns, now):
@@ -114,24 +119,26 @@ def cmd_metric(ns, now):
             "step": ns.step,
         }
         return _get(PROM, "/api/v1/query_range", params, ns.timeout)
-    return _get(PROM, "/api/v1/query", {"query": ns.query, "time": str(int(now))}, ns.timeout)
+    return _get(PROM, "/api/v1/query",
+                {"query": ns.query, "time": str(int(now))}, ns.timeout)
 
 
 def cmd_labels(ns, now):
     start, end = _window(ns.since, now)
     params = {"start": str(int(start) * 10**9), "end": str(int(end) * 10**9)}
     if ns.name:
-        return _get(LOKI, f"/loki/api/v1/label/{urllib.parse.quote(ns.name, safe='')}/values",
-                    params, ns.timeout)
+        label = urllib.parse.quote(ns.name, safe="")
+        return _get(LOKI, f"/loki/api/v1/label/{label}/values", params, ns.timeout)
     return _get(LOKI, "/loki/api/v1/labels", params, ns.timeout)
 
 
 def cmd_ready(ns, now):
-    """Readiness of every backend the stack publishes. Loki answers text, not JSON, so it is
-    probed separately — a 503 here usually means the 15s ingester grace, not a fault.
-    Tempo is included even though no subcommand queries it yet: leaving it out reported the
-    stack healthy while traces were down, which is the one signal Grafana can reach and this
-    tool cannot."""
+    """Readiness of every backend the stack publishes. Loki answers text, not
+    JSON, so it is probed separately — a 503 here usually means the 15s
+    ingester grace, not a fault. Tempo is included even though no subcommand
+    queries it yet: leaving it out reported the stack healthy while traces
+    were down, which is the one signal Grafana can reach and this tool
+    cannot."""
     out = {}
     for name, base, path in (("loki", LOKI, "/ready"),
                              ("prometheus", PROM, "/-/ready"),
@@ -176,8 +183,9 @@ def main(argv=None):
         prog=PROG,
         description="Query the local Loki/Prometheus stack (127.0.0.1 only, GET only).",
     )
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help=f"per-request timeout in seconds (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument(
+        "--timeout", type=int, default=DEFAULT_TIMEOUT,
+        help=f"per-request timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--rows", action="store_true",
                         help="render value<TAB>labels instead of raw JSON")
     parser.add_argument("--indent", type=int, default=None,
@@ -198,15 +206,20 @@ def main(argv=None):
 
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    for name, helptext in (("logs", "LogQL against Loki"), ("metric", "PromQL against Prometheus")):
+    for name, helptext in (("logs", "LogQL against Loki"),
+                           ("metric", "PromQL against Prometheus")):
         p = sub.add_parser(name, help=helptext, parents=[common])
         p.add_argument("query", help="LogQL/PromQL query string")
         p.add_argument("--stream", action="store_true",
                        help="range query over --since instead of an instant query")
-        p.add_argument("--since", default="1h", help="range window, e.g. 30m/19h/7d (default: 1h)")
-        p.add_argument("--limit", type=int, default=100, help="max entries (logs --stream)")
-        p.add_argument("--direction", choices=("backward", "forward"), default="backward")
-        p.add_argument("--step", default="60", help="range step in seconds (metric --stream)")
+        p.add_argument("--since", default="1h",
+                       help="range window, e.g. 30m/19h/7d (default: 1h)")
+        p.add_argument("--limit", type=int, default=100,
+                       help="max entries (logs --stream)")
+        p.add_argument("--direction", choices=("backward", "forward"),
+                       default="backward")
+        p.add_argument("--step", default="60",
+                       help="range step in seconds (metric --stream)")
 
     p = sub.add_parser("labels", help="Loki label names, or values for one label",
                        parents=[common])
@@ -216,7 +229,8 @@ def main(argv=None):
     sub.add_parser("ready", help="readiness of both backends", parents=[common])
 
     ns = parser.parse_args(argv)
-    handlers = {"logs": cmd_logs, "metric": cmd_metric, "labels": cmd_labels, "ready": cmd_ready}
+    handlers = {"logs": cmd_logs, "metric": cmd_metric,
+                "labels": cmd_labels, "ready": cmd_ready}
 
     try:
         payload = handlers[ns.cmd](ns, time.time())

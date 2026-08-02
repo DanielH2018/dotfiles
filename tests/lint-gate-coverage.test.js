@@ -73,16 +73,11 @@ test('every extensionless script is executable in git, or its linter cannot see 
 // ruff additionally narrows by path, so +x alone is not enough for Python: `files:`
 // and `types_or:` are ANDed. A new extensionless Python script needs both.
 //
-// These three are outstanding debt, not an exemption. Each carries real ruff findings
-// (otelq 21, mostly E501; wl-bmp2png 3; streamdeck-usb-reset 1 — all style, no bugs)
-// that have to be cleaned up before it can join the gate, and that cleanup did not
-// belong in the change that found them. Deleting a name from this list is the last
-// step of fixing it; adding one is how coverage is lost, so do not.
-const RUFF_BACKLOG = [
-  'home/dot_local/bin/executable_otelq',
-  'home/dot_local/bin/executable_streamdeck-usb-reset',
-  'home/dot_local/bin/executable_wl-bmp2png',
-];
+// Empty, and worth keeping that way. It once held otelq, streamdeck-usb-reset and
+// wl-bmp2png, which were carrying 25 findings between them at the point the gate
+// first saw them. Deleting a name from this list is the last step of fixing one;
+// adding one is how coverage is lost, so do not.
+const RUFF_BACKLOG = [];
 
 test('no extensionless Python script falls outside the ruff hook unnoticed',
   { skip }, () => {

@@ -18,7 +18,7 @@ repos:
       # `git update-index --chmod=+x`.
       - id: ruff-check
         types_or: [python]
-        files: (\.py$|^home/dot_local/bin/executable_(tq|jsonq)$)
+        files: (\.py$|^home/dot_local/bin/executable_(tq|jsonq|otelq|streamdeck-usb-reset|wl-bmp2png)$)
 
   - repo: local
     hooks:

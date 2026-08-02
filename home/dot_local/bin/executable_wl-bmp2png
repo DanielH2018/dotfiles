@@ -7,7 +7,9 @@ not bmp. The xclip shim pipes WSLg's bmp through this so a pasted screenshot
 arrives as image/png. Handles the 24- and 32-bit BITMAPINFOHEADER bitmaps WSLg
 emits; exits non-zero on anything it can't read so the shim falls back cleanly.
 """
-import sys, struct, zlib
+import struct
+import sys
+import zlib
 
 d = sys.stdin.buffer.read()
 if d[:2] != b'BM':
@@ -19,7 +21,7 @@ bpp = struct.unpack_from('<H', d, 28)[0]
 topdown = h < 0
 h = abs(h)
 if bpp not in (24, 32) or w <= 0 or h <= 0:
-    sys.exit('unsupported BMP (bpp=%d w=%d h=%d)' % (bpp, w, h))
+    sys.exit(f'unsupported BMP (bpp={bpp} w={w} h={h})')
 
 stride = ((bpp * w + 31) // 32) * 4  # rows are padded to a 4-byte boundary
 raw = bytearray()

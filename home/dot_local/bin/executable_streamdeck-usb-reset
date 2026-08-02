@@ -57,7 +57,7 @@ def device_node(base: Path) -> str:
     changes on re-enumeration, and a stale path is how you reset the wrong device."""
     busnum = int((base / "busnum").read_text())
     devnum = int((base / "devnum").read_text())
-    return "/dev/bus/usb/%03d/%03d" % (busnum, devnum)
+    return f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
 
 
 def holders(node: str) -> list[tuple[int, str]]:
