@@ -106,7 +106,9 @@ update this note if models or case sizes change.
 
 ## The agents
 
-Cases exist for all nine agents. Five are defined **in this repo**
+Case *files* exist for all nine agents, but only five of them can be measured on a personal
+box — the four work-overlay agents below need `EVAL_AGENT_DIRS` and come back INCONCLUSIVE
+without it. Five are defined **in this repo**
 (`home/private_dot_claude/agents/`) and load with no extra setup: `implementer`,
 `migration-reviewer`, `chore`, `deep-review` and `root-cause`. (`planner` was dropped
 deliberately in 67a07ae — prep hands off to superpowers/Plan now — and its cases were
