@@ -89,9 +89,16 @@ test('fallbackModel is an array, not a string', { skip }, () => {
 // workstation's own server, so it 404s every remote file while still returning a page.
 // Read from the template source, not a render: the gates are per-hostname and the test only
 // ever runs on one machine.
+// Anchored on `eq`, which is what the artifact gates are — an if/else-if chain of
+// `eq .chezmoi.hostname "..."`. Matching a bare `.chezmoi.hostname "..."` instead paired
+// the host named by whatever *other* gate happened to sit above the block: the OTEL gate
+// became `ne .chezmoi.hostname "daniel-pi"` and this read daniel-pi as serving 8182, then
+// failed because the pi's ssh stanza does not forward a port it never served. The old
+// spelling only escaped because `has .chezmoi.hostname (list ...)` puts `(list` where the
+// quote had to be, so the mispairing was luck rather than design.
 const HOST_PORTS = (() => {
   const src = fs.readFileSync(TMPL, 'utf8');
-  const re = /\.chezmoi\.hostname\s+"([^"]+)"[\s\S]*?"CLAUDE_ARTIFACTS_PORT":\s*"(\d+)"/g;
+  const re = /\beq\s+\.chezmoi\.hostname\s+"([^"]+)"[\s\S]*?"CLAUDE_ARTIFACTS_PORT":\s*"(\d+)"/g;
   return [...src.matchAll(re)].map(([, host, port]) => ({ host, port }));
 })();
 

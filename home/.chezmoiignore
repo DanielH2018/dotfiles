@@ -109,3 +109,27 @@ Scripts
 {{ if not (has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box")) }}
 .local/bin/sudo
 {{ end }}
+
+# The claude-otel compose stack goes only to machines that have to provide their own
+# collector — which is fewer than the machines that report telemetry. Everywhere else the
+# files are not merely useless, they are a loaded gun: every one of these hosts already has
+# something listening on 4317, or depends on something that does, and `docker compose up`
+# here would bind that port out from under it.
+#
+#   daniel-server, daniel-box   already run an observability stack whose collector holds
+#                               127.0.0.1:4317 — verified on daniel-server, where it is the
+#                               one port of this stack's seven already bound. Claude Code
+#                               plugs into that collector instead; see claude-otel/README.md.
+#   daniel-desktop              exports into daniel-wsl's collector over WSL2 localhost
+#                               forwarding. A collector bound on the Windows side would
+#                               shadow the very forward its telemetry travels through.
+#   daniel-pi                   out of telemetry altogether (settings.base.json), so it has
+#                               nothing to export and no reason to carry a stack.
+#
+# otelq is deliberately NOT ignored. On a server it queries localhost:3100/9090, which is
+# not where that stack's Loki and Prometheus answer — but a query tool that returns nothing
+# is a smaller problem than one that is missing when someone reaches for it, and the shape
+# of the server stacks is changing anyway.
+{{ if has .chezmoi.hostname (list "daniel-server" "daniel-box" "daniel-desktop" "daniel-pi") }}
+claude-otel
+{{ end }}

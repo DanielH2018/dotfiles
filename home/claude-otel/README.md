@@ -61,21 +61,60 @@ Then open **http://localhost:3000** → dashboard **“Claude Code — Usage & O
 ## Activating telemetry in Claude Code
 
 The exporter env lives in the chezmoi base template
-`home/.chezmoitemplates/settings.base.json`, but it is **gated by hostname**: the whole OTEL
-block sits inside `{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop" "fedora") }}`,
-so the generated `~/.claude/settings.json` carries it only on those machines. A freshly
-onboarded machine gets **no telemetry and no error** until its hostname is added to that
-list. daniel-wsl and fedora each run their own stack; daniel-desktop exports into
-daniel-wsl's over WSL2 localhost forwarding. All telemetry data stays local to the box that
-produced it — nothing leaves it.
+`home/.chezmoitemplates/settings.base.json`, gated as
+`{{ if ne .chezmoi.hostname "daniel-pi" }}` — **on everywhere except daniel-pi**. It is
+written as an exclusion so a newly onboarded machine reports from day one instead of
+waiting for someone to remember to add it; being outside the gate is silent by design, no
+telemetry and no error.
 
-**Per machine:** add its hostname to the template gate → `chezmoi apply` →
-`cd ~/claude-otel && docker compose up -d`.
-Until the stack is running, Claude Code retries OTLP exports to `localhost:4317` in the
+Every host exports to `localhost:4317` and every host keeps its own data — nothing leaves
+the box that produced it. What differs is **who is listening on 4317**, which is a property
+of the machine, not of this repo:
+
+| Host | Collector on `:4317` | Runs this stack? |
+|---|---|---|
+| `fedora`, `daniel-wsl` | its own `claude-otel` | **yes** — `docker compose up -d` |
+| `daniel-desktop` | `daniel-wsl`'s, via WSL2 localhost forwarding | no |
+| `daniel-server`, `daniel-box` | the one their existing observability stack already runs | **no — see below** |
+| `daniel-pi` | — | no, and no exporter env either |
+
+**Servers must not bring this stack up.** A server already runs its own Grafana/Loki/
+Prometheus, and its collector already holds `127.0.0.1:4317` — on `daniel-server` that is
+the one port of this stack's seven already bound, so a second collector would collide on
+exactly the port Claude Code exports to. `.chezmoiignore` keeps the compose files off
+those hosts for that reason. Claude Code there plugs into the existing collector by
+pointing at the same address it always does.
+
+That collector still has to *route* what it now receives — Claude Code's metrics, logs and
+spans have to reach that stack's Prometheus/Loki/Tempo. That is the server's own collector
+config, not this repo's, and it is the thing to check first if a server reports nothing.
+
+**Per workstation:** `chezmoi apply` → `cd ~/claude-otel && docker compose up -d`.
+Until something is listening, Claude Code retries OTLP exports to `localhost:4317` in the
 background (harmless connection-refused noise, no user-visible impact).
 
 **Env changes only apply to _new_ Claude Code sessions** — restart Claude Code after the
-stack is up, then metrics/logs start flowing within ~10s.
+stack is up, then metrics/logs start flowing within ~10s. A session that predates the
+change carries no `OTEL_*` at all, which looks identical to a broken stack.
+
+### Telling the hosts apart
+
+Once more than one machine reports, no query is complete without saying which host it is
+about. Discriminate on the resource attributes rather than guessing:
+
+| | `fedora` | `daniel-wsl` | `daniel-desktop` |
+|---|---|---|---|
+| `os_type` | `linux` | `linux` | `windows` |
+| `os_version` | `7.1.5-201.fc44.x86_64` | `…-microsoft-standard-WSL2` | `10.0.26200` |
+| `wsl_version` | absent | `2` | absent |
+| `terminal_type` | `xterm-ghostty` | `wsl-Ubuntu` | `xterm-256color` |
+| `user_id` | one hash | another | another again |
+
+Two traps that follow from this. `daniel-desktop` writes no transcript under
+`~/.claude/projects` — its sessions live in `/mnt/c/Users/daniel/.claude/projects/`; a hook
+that looks "broken 10×" has before turned out to be 100% Windows and 0% WSL. And each
+workstation's stack holds only its own data, so `localhost:3100` means a different Loki
+depending on where you are sitting.
 
 ## Verifying the pipeline
 
@@ -95,6 +134,40 @@ curl -sG localhost:3200/api/search --data-urlencode 'q={resource.service.name="c
 If a dashboard panel is empty, the metric/label name likely has a unit suffix the query's
 regex didn't match. Confirm exact names in Grafana **Explore → Prometheus**:
 `{__name__=~"claude_code_.*"}`, and in **Explore → Loki**: `{service_name=~".+"}`.
+
+## Diagnosing a hole in the data
+
+Work down this list — it is ordered by how often each has actually been the answer, and
+the first two both produce *silent* multi-day gaps.
+
+1. **Does the session even carry the env?** Env changes only reach new sessions, and a host
+   outside the gate gets no telemetry and no error. `env | grep OTEL_` in the session that
+   looks unreported; nothing at all there is the answer, not a symptom.
+2. **Is dockerd actually up, or merely socket-activated?** `docker.service` must be
+   *enabled*, not just `docker.socket`. With only the socket enabled, dockerd waits for a
+   human to run a `docker` command, so after each reboot the stack stays dark until someone
+   touches it — this produced a three-day hole (07-26 to 07-28) with zero `claude_code_*`
+   series. `sudo systemctl enable docker.service`, and on WSL `/etc/wsl.conf` needs
+   `systemd=true`.
+3. **Was a bind-mounted config edited without a restart?** See the note below — `up -d`
+   alone does not reload one.
+4. **On a server, is its collector routing Claude Code's signals anywhere?** It will accept
+   the OTLP and quietly drop it if no pipeline exports it.
+
+Two things that are *not* the answer, both of which have cost time:
+
+- **Retention never is,** at these windows: Prometheus 90d, Loki 31d, Tempo 30d.
+- **Events older than a container's `StartedAt` do not prove the stack was up then.** The
+  OTLP exporter buffers and flushes on reconnect, so events timestamped well before a
+  collector started will legitimately land on it.
+
+Note also that the collector loses its Prometheus *exposition* state across a restart:
+`curl -s localhost:8889/metrics | grep -c claude_code` returning 0 right after a restart
+means no session has exported since — the historical samples are still in Prometheus.
+
+Since PR #181 the collector's own health is scraped as well (`otelcol_exporter_send_failed_*`,
+queue depth, on `:8888`), so a batch dropped en route to Loki or Tempo is a series you can
+query rather than a hole you notice days later.
 
 ## If Claude Code later runs inside a container
 

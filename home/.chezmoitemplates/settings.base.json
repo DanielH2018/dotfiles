@@ -62,12 +62,34 @@
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
-    "CTS_REMOTE_ROOTS": "~/server"{{ if has .chezmoi.hostname (list "daniel-wsl" "daniel-desktop" "fedora") }},
-    {{/* OTEL export always targets a claude-otel stack on :4317, but not the same one per
-         host: daniel-wsl and fedora each run their own local stack, and daniel-desktop
-         reaches daniel-wsl's through WSL2 localhost forwarding. Telemetry never leaves the
-         box it was produced on. A host absent from this list gets no telemetry and no
-         error — add it here, `chezmoi apply`, then bring its stack up. */}}
+    "CTS_REMOTE_ROOTS": "~/server"{{ if ne .chezmoi.hostname "daniel-pi" }},
+    {{/* Telemetry is on everywhere except daniel-pi, and the exclusion is deliberately
+         written as one rather than as a list of the machines that have it: a new host
+         should start reporting the day it is onboarded, not the day someone remembers
+         to add it here. The old inclusion list is why daniel-server had no telemetry —
+         nothing was broken, it had simply never been added.
+
+         Every host exports to localhost:4317 and every host keeps its own data. What
+         differs is who is listening there, and that is a property of the machine rather
+         than of this file:
+
+           workstations (fedora, daniel-wsl)  their own claude-otel stack, from
+                                              home/claude-otel — see its README
+           daniel-desktop                     daniel-wsl's, over WSL2 localhost forwarding
+           servers (daniel-server, ...)       the collector their existing observability
+                                              stack already runs. They must NOT bring up
+                                              claude-otel: its collector wants the same
+                                              4317 and would collide. .chezmoiignore
+                                              keeps the compose files off them for that
+                                              reason.
+
+         daniel-pi is out because the stack is five containers with 90d/31d/30d retention,
+         which is not what that machine is for. Being absent from the gate is silent by
+         design — no telemetry and no error.
+
+         A server's collector still has to route what it now receives; that is its own
+         config, not this repo's. Until something listens on 4317 the exporter just
+         retries in the background, which is harmless. */}}
     "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
     "OTEL_METRICS_EXPORTER": "otlp",
     "OTEL_LOGS_EXPORTER": "otlp",
