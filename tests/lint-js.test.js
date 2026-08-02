@@ -60,7 +60,21 @@ test('an extensionless node script is linted and reported at its real path', { s
   const r = runLint([f]);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /some-tool:2:7/, 'findings must point at the original path, not the temp copy');
-  assert.doesNotMatch(r.stdout, /\.js:/, 'the temp *.js copy must not appear in the output');
+  // Assert the temp DIRECTORY is absent rather than that no ".js:" appears anywhere: a mixed
+  // batch legitimately prints real .js paths, which is the normal case under --all-files.
+  assert.doesNotMatch(r.stdout, /\/tmp\/tmp\./, 'the temp copy path must not survive into the output');
+});
+
+test('several mapped files in one batch each map back to their own path', { skip }, () => {
+  // The rewrite loop runs once per mapped file over the whole output, so a batch is the case
+  // where one substitution could clobber another's path. One-file tests cannot catch that.
+  const a = fixture('tool-alpha', '#!/usr/bin/env node\nconst alpha = 1;\n');
+  const b = fixture('tool-beta', '#!/usr/bin/env node\nconst beta = 1;\n');
+  const r = runLint([a, b]);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, new RegExp(`${a}:2:7`));
+  assert.match(r.stdout, new RegExp(`${b}:2:7`));
+  assert.doesNotMatch(r.stdout, /\/tmp\/tmp\./);
 });
 
 test('a clean file passes', { skip }, () => {
