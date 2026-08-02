@@ -15,7 +15,7 @@
 //      landed on whichever unrelated test happened to be rendering, which is why it read
 //      as random and got misdiagnosed as chezmoi state contention.
 //
-// (1) and (2) are fixed at the module and guarded by tests/linux-install-lib.test.js.
+// (1) and (2) are fixed at the module and guarded by tests/install/linux-install-lib.test.js.
 // This covers the part that was still open: the suite itself.
 //
 // Why static rather than snapshotting the tree before and after a run: the probe in (3)
@@ -26,7 +26,7 @@
 // findEscapes is pure over text and never touches the filesystem. That is load-bearing
 // rather than fastidious: the obvious way to prove a guard like this works is to plant a
 // file in the tree it protects, which is exactly bug (3). A pure checker makes that trap
-// unreachable — tests/sandbox-escape.test.js proves it fires using a synthetic string.
+// unreachable — tests/sandbox/sandbox-escape.test.js proves it fires using a synthetic string.
 //
 // Known gap, deliberately not closed: this reads node-side `fs` calls. A subprocess that
 // writes into the checkout is invisible here. No instance of that exists, and building
@@ -157,7 +157,7 @@ function blankLiterals(src) {
     if (c === '/') {
       // A slash starts a regex only where a value may begin; after an identifier, a
       // closing bracket or a literal it is division. The keyword check is not decoration:
-      // `return /chezmoi.../s.test(src)` in tests/chezmoi-umask-wrapper.test.js ends in a
+      // `return /chezmoi.../s.test(src)` in tests/chezmoi/chezmoi-umask-wrapper.test.js ends in a
       // letter, so the punctuation test alone reads it as division and scans the pattern
       // as code — one apostrophe in such a regex blanks the rest of the file.
       if (prev === '' || '(,=:[!&|?{};+-*%~^<>'.includes(prev)

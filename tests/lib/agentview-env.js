@@ -17,7 +17,7 @@
 // AGENT_VIEW_WIN_GITBASH is deliberately NOT here: its default is a native C:\ path handed
 // to wezterm.exe as an argument, never executed from WSL, so pinning wezterm covers it.
 //
-// tests/agentview-seams.test.js re-derives this list from the script and fails if a new
+// tests/agentview/agentview-seams.test.js re-derives this list from the script and fails if a new
 // /mnt/ seam appears without landing here.
 const fs = require('node:fs');
 const path = require('node:path');

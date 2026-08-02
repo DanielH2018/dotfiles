@@ -64,7 +64,7 @@ case "$FILE_PATH" in
   # reachable through Read/Edit/Write, which is the gate this hook is. `cat ~/.claude.json`
   # was blocked while Read(~/.claude.json) returned the OAuth token into the transcript.
   # Of the set only ~/.config/gh/** had a settings deny standing behind it. Keep this list
-  # and SECRET_PATHS in step — tests/protect-secrets.test.js fails if they drift.
+  # and SECRET_PATHS in step — tests/hooks/protect-secrets.test.js fails if they drift.
   .claude.json|*/.claude.json)
     deny "Blocked: ~/.claude.json holds the Claude Code account OAuth token."
     ;;

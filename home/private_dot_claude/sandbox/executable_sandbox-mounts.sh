@@ -18,7 +18,7 @@
 #   * prints progress to stdout.
 #
 # So sourcing this file requires the launcher's variable context — it is not a
-# standalone library. tests/claude-sandbox-mounts.test.js supplies that context
+# standalone library. tests/sandbox/claude-sandbox-mounts.test.js supplies that context
 # explicitly (fixture dirs + DOCKER_ARGS=()) and drives each function directly.
 #
 # CALL ORDER IS LOAD-BEARING and stays in the launcher, not here: the functions

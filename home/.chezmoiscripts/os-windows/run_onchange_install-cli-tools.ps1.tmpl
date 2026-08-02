@@ -23,7 +23,7 @@ $packages = @(
     @{ id = 'sxyazi.yazi';   cmd = 'ya'      },
     @{ id = 'zig.zig';       cmd = 'zig'     },
     @{ id = 'wez.wezterm';   cmd = 'wezterm' },
-    # Lua parser used only by tests/wezterm-config.test.js to syntax-check the rendered
+    # Lua parser used only by tests/terminal/wezterm-config.test.js to syntax-check the rendered
     # WezTerm config (luac -p). DEVCOM.Lua drops luac.exe under
     # %LOCALAPPDATA%\Programs\Lua\bin and does NOT add it to PATH, so Get-Command below
     # won't find it — the winget-list check handles the skip, and the test locates luac

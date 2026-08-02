@@ -22,7 +22,7 @@
 # Why two networks: the filter is created on the proxy network so FILTER_UPSTREAM
 # resolves immediately, then connected to the sandbox network under FILTER_ALIAS.
 # Nothing outside these functions may join PROXY_NETWORK_NAME —
-# tests/claude-sandbox-network.test.js asserts exactly that by line range.
+# tests/sandbox/claude-sandbox-network.test.js asserts exactly that by line range.
 
 # --- Docker socket proxy management ---
 start_proxy() {

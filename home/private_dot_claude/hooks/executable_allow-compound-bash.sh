@@ -348,7 +348,7 @@ judge() {
   # A rule may name a wrapper invocation exactly — `/usr/bin/env bash --version` is
   # allow-listed as that whole string — so honour the allow list as written before
   # unwrapping, or that narrowed rule becomes unreachable. A broad `wrapper:*` prefix
-  # cannot sneak back in this way: the content guard in tests/allow-compound-bash.test.js
+  # cannot sneak back in this way: the content guard in tests/hooks/allow-compound-bash.test.js
   # refuses any allow rule whose last word is a command-taking spawner.
   if matches_any "$part" "${ALLOW[@]}"; then
     continue

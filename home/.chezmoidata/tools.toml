@@ -128,7 +128,7 @@ dnf = ""
 [[tools]]
 name = "lua"
 cmd = "lua"
-# Here for tests/wezterm-config.test.js, which syntax-checks the rendered WezTerm config
+# Here for tests/terminal/wezterm-config.test.js, which syntax-checks the rendered WezTerm config
 # with `luac -p`. Ubuntu's package installs /usr/bin/{lua5.4,luac5.4} and no bare names, so
 # the installer symlinks both lua -> lua5.4 and luac -> luac5.4 into ~/.local/bin. No winget
 # id: Windows gets Lua from the hardcoded DEVCOM.Lua entry in the ps1 installer instead,
@@ -204,7 +204,7 @@ dnf = "zsh-syntax-highlighting"
 [[tools]]
 name = "script"
 cmd = "script"
-# Not a shell-experience tool -- it is what tests/chezmoi-scripts.test.js uses to hand the
+# Not a shell-experience tool -- it is what tests/chezmoi/chezmoi-scripts.test.js uses to hand the
 # rendered set-default-shell script a pty, so the interactive chsh branch can be exercised.
 # Debian and macOS both ship it in their base system, which is why apt and brew are empty and
 # nobody noticed it was a dependency. Fedora splits it out of util-linux into its own package,

@@ -28,7 +28,14 @@ upstream's `wezfurlong/wezterm-nightly` COPR, and `gron` falls back to its GitHu
 
 - `home/` — chezmoi source (dot_ files, templates)
 - `docs/` — specs, plans, and decisions (not deployed); see `docs/README.md` for the layout
-- `tests/` — unit tests (not deployed); run the full suite with `node --test`
+- `tests/` — unit tests (not deployed); run the full suite with `node --test`, which
+  discovers them recursively. Grouped by subject (`agentview/`, `sandbox/`, `hooks/`,
+  `install/`, `chezmoi/`, `terminal/`, `shell/`, `tmux/`, `dotsync/`, `tq/`), with shared
+  helpers in `lib/`. A suite one level down reaches the repo with
+  `path.join(__dirname, '..', '..')`; the files still at the root use a single `'..'`.
+  Some stay at the root deliberately — `screen-injection.test.js` is invoked by explicit
+  path from `.githooks/pre-push`, and `managed-test-drift.test.js` reads a sibling
+  allowlist.
 
 ### Windows notes
 

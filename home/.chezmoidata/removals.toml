@@ -228,7 +228,7 @@ packages = [
   # Pulled out by anaconda-core, which uses tmux for its installer consoles. The chezmoi-installed
   # ~/.local/bin/tmux covers an interactive login shell, so this looks survivable and is not:
   # anything running with a stock PATH (system units, scripts, tests that pin /usr/bin:/bin) stops
-  # finding tmux entirely. tests/claude-tmux-wrap.test.js catches exactly this.
+  # finding tmux entirely. tests/tmux/claude-tmux-wrap.test.js catches exactly this.
   "tmux",
   # Filesystem tooling for partitions that are actually mounted.
   "dosfstools",

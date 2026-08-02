@@ -168,7 +168,7 @@ if [ -n "$PM" ] && pkg_installed podman-docker; then
 fi
 {{ end }}
 # 3. Real-name symlinks for Debian's renamed binaries (so the shell uses bat/fd). luac is what
-#    tests/wezterm-config.test.js shells out to (luac -p); Debian's lua5.4 package ships it as
+#    tests/terminal/wezterm-config.test.js shells out to (luac -p); Debian's lua5.4 package ships it as
 #    luac5.4, so without this alias that test silently skips there. Fedora installs all four
 #    under their real names already, so every pair below no-ops on it.
 for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4" "luac:luac5.4"; do
