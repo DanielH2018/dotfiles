@@ -2,15 +2,23 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0
     hooks:
-      # No `files:` filter. It used to carry a path allowlist that reached 23 of the
-      # repo's 51 Python files, so config-map, vault-index, quality/ and a hook were
-      # never gated — they only got linted when Claude happened to edit them, via the
-      # lint-after-edit PostToolUse hook. pre-commit resolves the file list itself, so
-      # letting it do that keeps coverage tied to what is in the repo rather than to a
-      # regex someone has to remember to update.
+      # `files:` is a WIDENER here, not an allowlist. It once was an allowlist, reaching
+      # only 23 of the repo's 51 Python files, so config-map, vault-index, quality/ and a
+      # hook went ungated; that is gone, and `\.py$` now admits every Python file in the
+      # repo the way pre-commit resolving the list itself would.
+      #
+      # The named alternatives are maintained by hand, and naming one is only HALF of what
+      # it takes. `files:` and `types_or:` are ANDed, and `types_or: [python]` types a file
+      # by extension, or by shebang only if the file is EXECUTABLE. An extensionless script
+      # therefore needs BOTH: a name here AND a +x bit in git. That is easy to get wrong,
+      # because chezmoi's executable_ prefix sets the DEPLOYED mode, so a 100644 source
+      # still deploys as 0755 and nothing looks broken — executable_jsonq sat at 100644 and
+      # went unlinted for its whole existence. It passes ruff today, which is luck, not
+      # evidence. Adding an extensionless Python script means naming it below and
+      # `git update-index --chmod=+x`.
       - id: ruff-check
         types_or: [python]
-        files: (\.py$|^home/dot_local/bin/executable_tq$)
+        files: (\.py$|^home/dot_local/bin/executable_(tq|jsonq)$)
 
   - repo: local
     hooks:
