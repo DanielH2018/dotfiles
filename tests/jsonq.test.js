@@ -80,6 +80,46 @@ test('ast.Attribute has no handler, so `x.y` cannot run at all', { skip }, () =>
     + 'and module namespaces, which is the escape route the rewrite removed');
 });
 
+test('the tool is one self-contained file, so the grant covers one file', { skip }, () => {
+  // `Bash(jsonq:*)` never prompts, and settings.permissions.json justifies that
+  // with a property scoped to a single file: no eval, and an interpreter "in
+  // that same file" whose tables are the grammar. The two structure tests above
+  // check that property — but they read only executable_jsonq, so splitting the
+  // tool into modules would leave them asserting it about the shim while the
+  // interpreter moved somewhere they never look. They would stay green and
+  // cover less. This is what stops that: depend on nothing but the standard
+  // library, and the file the tests read is the whole tool.
+  const stdlib = new Set(JSON.parse(execFileSync(python, ['-c',
+    'import json,sys; print(json.dumps(sorted(sys.stdlib_module_names)))'],
+  { encoding: 'utf8' })));
+
+  const imported = [];
+  for (const line of SOURCE.split('\n')) {
+    const from = /^from\s+([.\w]+)\s+import\s/.exec(line);
+    if (from) { imported.push(from[1]); continue; }
+    const plain = /^import\s+(.+)$/.exec(line);
+    if (plain) imported.push(...plain[1].split(',').map((m) => m.trim().split(/\s+as\s+/)[0]));
+  }
+  assert.ok(imported.length > 5, 'the import block should have been found');
+  for (const mod of imported) {
+    // A relative import ("from . import core") fails here too: it is not a
+    // stdlib name, which is the answer we want for a sibling module.
+    assert.ok(mod === '__future__' || stdlib.has(mod.split('.')[0]),
+      `executable_jsonq imports ${mod}, which is not in the standard library — `
+      + 'the tool must stay one file, because the permission grant that lets it '
+      + 'run without a prompt is written against one file');
+  }
+
+  assert.ok(!/sys\.path/.test(SOURCE),
+    'touching sys.path would make the code jsonq runs depend on a directory '
+    + 'outside the audited file');
+
+  const share = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'jsonq');
+  assert.ok(!fs.existsSync(share),
+    `${share} exists — a module directory under a blanket Bash allow means `
+    + 'anything that can write there runs unprompted');
+});
+
 test('the escape-prone builtins are absent from the function table', { skip }, () => {
   const table = ok(['--functions']);
   for (const name of ['type', 'getattr', 'setattr', 'vars', 'globals', 'locals',
