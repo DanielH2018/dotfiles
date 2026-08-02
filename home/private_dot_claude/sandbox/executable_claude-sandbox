@@ -41,10 +41,14 @@ STATE_DIR="$SANDBOX_DIR/state"
 # shellcheck disable=SC1091  # ditto
 . "$SANDBOX_DIR/sandbox-compact.sh"    # compact_session(); takes its inputs as arguments
 # shellcheck disable=SC1091  # ditto
-. "$SANDBOX_DIR/sandbox-worktree-ops.sh"  # setup_worktree(), the prune/gc/delete
-                                       # operations, and the --complete-*/--rename CLI
-                                       # paths — these SET WT_BRANCH, WT_PATH,
-                                       # WT_CREATED and WORK_PATH, and exit on failure
+. "$SANDBOX_DIR/sandbox-worktree-ops.sh"  # setup_worktree(), cleanup/delete, and the
+                                       # --complete-*/--rename CLI paths — these SET
+                                       # WT_BRANCH, WT_PATH, WT_CREATED and WORK_PATH,
+                                       # and exit on failure
+# shellcheck disable=SC1091  # ditto
+. "$SANDBOX_DIR/sandbox-worktree-gc.sh"  # --prune, --gc and the startup nudge; calls
+                                       # delete_worktree, so it must follow the line
+                                       # above
 # shellcheck disable=SC1091  # ditto
 . "$SANDBOX_DIR/sandbox-auth.sh"       # configure_gh_auth()/run_oauth_if_needed(); append
                                        # to DOCKER_ARGS and SET GH_HOSTS_TMPFILE, which
