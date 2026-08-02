@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# lint-sh-templates — shellcheck the chezmoi shell templates, by RENDERING them first.
+#
+# Every *.sh.tmpl was outside every gate. prek types files by extension, and `.sh.tmpl` is
+# not `.sh`, so `types: [shell]` never matched one; lint-after-edit.sh dispatches on
+# `*.sh|*.bash` and misses them for the same reason. That left the privileged half of the
+# tree unchecked -- these are the run_once_/run_onchange_ scripts chezmoi executes during
+# `apply`, the ones that call sudo, dnf, and systemctl.
+#
+# Pointing shellcheck straight at a template does not work and never will: the file is a Go
+# template, so `{{ if eq .chezmoi.os "linux" -}}` on line 1 is a syntax error (SC1054)
+# regardless of the shell underneath. The same reasoning already excludes
+# .chezmoitemplates/ from the shellcheck hook in .pre-commit-config.yaml. So: render through
+# chezmoi, then lint what chezmoi would actually run.
+#
+# --source is load-bearing, not decoration. `includeTemplate "is-wsl"` and friends resolve
+# against chezmoi's CONFIGURED source dir -- ~/.local/share/chezmoi, the primary checkout --
+# not against the working directory. Without it, a run inside .claude/worktrees/* renders
+# this branch's scripts against MAIN's fragments: the gate silently lints a hybrid that
+# exists nowhere, and an edit to a fragment is never checked at all. Verified by probe:
+# a marker added to a worktree's linux-install.sh appears in the render only with --source.
+# (chezmoi still honours .chezmoiroot=home under an explicit --source, so this stays a
+# one-flag fix rather than needing home/ spelled out.)
+#
+# Kept bash-3.2 clean (macOS default bash), matching the rest of bin/: no mapfile, no
+# associative arrays, no [[ ]].
+
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+# Degrade the way tq and prek do in .githooks/pre-push: a missing local tool should not
+# block a push on a machine that never installed it. Announced rather than silent -- an
+# unannounced skip is indistinguishable from a pass, which is the exact failure
+# auto-format.sh already documents for its absent prettier.
+for tool in chezmoi shellcheck; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'lint-sh-templates: %s not installed, skipped (templates NOT checked)\n' "$tool"
+    exit 0
+  fi
+done
+
+if [ "$#" -gt 0 ]; then
+  set -- "$@"
+else
+  # No arguments means a manual run; prek always passes the matched files.
+  # shellcheck disable=SC2046  # word-split intended; no path in this repo has spaces
+  set -- $(git ls-files '*.sh.tmpl')
+fi
+
+WORK="$(mktemp -d)" || exit 1
+trap 'rm -rf "$WORK"' EXIT
+
+fail=0
+skipped=0
+checked=0
+
+for f in "$@"; do
+  out="$WORK/$(printf '%s' "$f" | tr / _)"
+
+  if ! chezmoi execute-template --source "$ROOT" <"$f" >"$out" 2>"$out.err"; then
+    printf '%s: template did not render\n' "$f"
+    sed 's/^/    /' <"$out.err"
+    fail=1
+    continue
+  fi
+
+  # A template guarded on another OS renders to nothing here -- the 9 WSL/Windows scripts do
+  # exactly this on Linux. Linting the empty result would report SC2148 (no shebang) on every
+  # one of them, so they have to be passed over; saying so is the point. Rendering covers the
+  # branch this host takes and nothing else, which is a real limit of this gate: those scripts
+  # are checked only on a host whose chezmoi data selects them.
+  if [ ! -s "$out" ]; then
+    printf '%s: rendered empty on this host (inapplicable OS/profile branch) -- NOT checked\n' "$f"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  if ! shellcheck "$out" >"$out.lint" 2>&1; then
+    # Line numbers below are the RENDERED script's, which is what shellcheck saw and not
+    # what the editor shows -- the template's own preamble and any include expand first.
+    printf '%s: shellcheck findings (line numbers refer to the rendered script)\n' "$f"
+    sed 's/^/    /' <"$out.lint"
+    fail=1
+    continue
+  fi
+
+  checked=$((checked + 1))
+done
+
+printf 'lint-sh-templates: %d checked, %d skipped (rendered empty on this host)\n' \
+  "$checked" "$skipped"
+
+exit "$fail"

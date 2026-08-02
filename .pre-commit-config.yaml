@@ -40,3 +40,33 @@ repos:
         language: system
         types: [shell]
         exclude: ^home/\.chezmoitemplates/
+
+      # dot_bashrc and dot_zshenv are shell and were checked by nothing. An rc file is
+      # sourced, never executed, so it carries no shebang and (correctly) no +x bit; with no
+      # extension either, `types: [shell]` above cannot identify one and skipped both
+      # silently -- verified with `prek run shellcheck --files home/dot_bashrc`, which
+      # answers "(no files to check)".
+      #
+      # A second hook rather than a wider `files:` on the one above, because `files` and
+      # `types` are ANDed: naming them there would ALSO require them to type as shell, and
+      # for an extensionless file that means a +x bit, which is the one thing an rc file
+      # must not have. Omitting `types` here defaults it to `[file]`, so the name alone
+      # decides. Each file declares its own dialect with an in-file `# shellcheck shell=`
+      # directive -- there is no shebang to infer it from.
+      - id: shellcheck-rc
+        name: shellcheck (rc files)
+        entry: shellcheck
+        language: system
+        files: ^home/(dot_bashrc|dot_zshenv)$
+
+      # The *.sh.tmpl scripts -- the run_once_/run_onchange_ ones chezmoi executes during
+      # apply, which are also the ones that call sudo -- were outside every gate for the
+      # same extension reason: `.sh.tmpl` is not `.sh`. They cannot be linted in place
+      # (Go template syntax is a shell parse error, the same reason .chezmoitemplates/ is
+      # excluded above), so bin/lint-sh-templates renders each one through chezmoi and
+      # lints the result. See that file for why --source matters in a worktree.
+      - id: shellcheck-templates
+        name: shellcheck (rendered chezmoi templates)
+        entry: bin/lint-sh-templates
+        language: system
+        files: \.sh\.tmpl$

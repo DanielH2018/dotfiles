@@ -7,6 +7,12 @@
 # bash-specific pieces: history, shell options, completion, readline, ble.sh, and the
 # fastfetch login banner. Every integration is guarded, so it's a clean no-op when a tool
 # is absent.
+#
+# shellcheck shell=bash
+#
+# No extension and no shebang (an rc file is sourced, never executed), so nothing typed
+# this as shell and it sat outside both prek and lint-after-edit. The directive is what
+# puts it under the gate.
 
 # Interactive shells only.
 case $- in
@@ -17,8 +23,10 @@ esac
 # Git Bash / Cygwin doesn't set $USER or $HOSTNAME (Windows uses $USERNAME), which trips
 # ble.sh's environment sanity check ("insane environment: $USER is empty"). Set them before
 # sourcing ble.sh below. No-op where they're already set (macOS/Linux).
-[ -n "${USER:-}" ] || export USER="$(id -un 2>/dev/null)"
-[ -n "${HOSTNAME:-}" ] || export HOSTNAME="$(hostname 2>/dev/null)"
+# Assigned then exported on separate statements: `export USER="$(id -un)"` makes the
+# export the command whose status the shell sees, hiding a failing id/hostname (SC2155).
+if [ -z "${USER:-}" ]; then USER="$(id -un 2>/dev/null)"; export USER; fi
+if [ -z "${HOSTNAME:-}" ]; then HOSTNAME="$(hostname 2>/dev/null)"; export HOSTNAME; fi
 
 # --- ble.sh (Bash Line Editor): fish-style autosuggestions + syntax highlighting, the bash
 #     analog of zsh-autosuggestions + zsh-syntax-highlighting. Source with --noattach here
@@ -65,6 +73,7 @@ command -v fzf >/dev/null 2>&1 && { eval "$(fzf --bash 2>/dev/null)" 2>/dev/null
 # --- bash-completion (the bash counterpart to zsh's compinit) ---
 if ! shopt -oq posix; then
   for _bc in /usr/share/bash-completion/bash_completion /etc/bash_completion; do
+    # shellcheck source=/dev/null  # distro-provided, path varies by distro and isn't in this tree
     [ -r "$_bc" ] && { . "$_bc"; break; }
   done
   unset _bc

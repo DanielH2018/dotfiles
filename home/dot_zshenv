@@ -1,6 +1,17 @@
 # Non-interactive layer (PATH, chezmoi umask wrapper, cargo env) shared with bash/sh —
 # see ~/.config/shell/env.sh for the WHY. Sourced here because .zshenv is read by EVERY
 # zsh, interactive or not.
+#
+# shellcheck shell=sh
+#
+# The directive is what puts this file under the gate at all: it has no extension and no
+# shebang, so nothing types it as shell and both prek and lint-after-edit skipped it
+# entirely. `sh` rather than `zsh` because ShellCheck has no zsh support (SC1071), and
+# because the header above already commits this layer to being sh-compatible — the file is
+# read by zsh but deliberately written in the subset bash and sh also accept. That makes
+# the directive a real constraint, not just an annotation: zsh-native syntax added here
+# later (setopt, ${(f)...}, typeset -A) will fail the gate rather than parse. Move such
+# code to ~/.zshrc, which is zsh-only and correspondingly ungated.
 [ -r "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
 
 # Read by `ctw` when this host is the target of `cts --ssh` — it lists git repos directly
@@ -38,4 +49,5 @@ fi
 
 # Debian's /etc/zsh/zshrc otherwise runs its own full compinit (writing ~/.zcompdump)
 # on top of ~/.zshrc's cached compinit against ~/.cache/zsh — double work every shell start.
+# shellcheck disable=SC2034  # read by /etc/zsh/zshrc, not by this file — assigning it IS the effect
 skip_global_compinit=1

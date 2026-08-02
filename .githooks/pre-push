@@ -137,13 +137,34 @@ fi
 
 # 4. Injection-hook red-team regression guard. Run through --test rather than as
 #    a bare script so the digest covers it too; the file is a node:test suite
-#    either way, and step 5's glob picks it up as well — it stays a named step so
+#    either way, and step 5's list picks it up as well — it stays a named step so
 #    a red-team regression is attributed instead of buried in the suite total.
 run "screen-injection red-team" tq_node injection tests/screen-injection.test.js
 
 # 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
 #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
-run "unit tests (node --test)" tq_node unit
+#
+#    The file list comes from git, NOT from `node --test`'s own discovery. Node's default
+#    discovery skips every directory whose name starts with a dot, at any depth — verified
+#    on node 24.18.1 with a fixture: a *.test.js under sub/.hidden/deep/ is not collected.
+#    Two real suites live under vault-tooling/claude-audit-portable/pkg/.claude/ and were
+#    therefore never run by this gate, and nothing said so: the run just reported a smaller
+#    total, and a total nobody has a baseline for looks exactly like a passing one. (Both
+#    pass — this had hidden no failure, only the fact that it was hiding.)
+#
+#    Deriving the list from `git ls-files` also makes the covered set the TRACKED set, so a
+#    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,
+#    .chezmoidata/ are all invisible to node's walk — is picked up by construction rather
+#    than by remembering this constraint.
+TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs')
+if [ -z "$TEST_FILES" ]; then
+  # Bare `node --test` would silently fall back to its own discovery, i.e. the bug above.
+  printf '%s✗ unit tests: git ls-files matched no test files%s\n' "$R" "$Z" >&2
+  fail=1
+else
+  # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
+  run "unit tests (node --test)" tq_node unit $TEST_FILES
+fi
 
 if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2

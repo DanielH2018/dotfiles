@@ -79,7 +79,11 @@ awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
 opts=""
 for kv in $WANT; do
   key=${kv%%=*}
-  if grep -qE "^[[:space:]]*$key[[:space:]]*=" "$stripped"; then
+  # Braced: `$key[[:space:]]*` reads as an array subscript on $key rather than an expansion
+  # followed by a bracket expression (SC1087). It happens to expand as intended here, but
+  # only because bash treats the unbraced form as a plain name — one character's difference
+  # from a construct that would not.
+  if grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$stripped"; then
     echo "$TAG: $key is already set in $DNF_CONF outside the managed block; leaving it alone" >&2
     continue
   fi
