@@ -87,13 +87,14 @@ from detect import detect  # noqa: E402
 from digest import SURVEY_KINDS, digest  # noqa: E402
 from runners import git as git_runner  # noqa: E402
 from runners import lint as lint_runner  # noqa: E402
+from runners import suite as suite_runner  # noqa: E402
 from runners import survey as survey_runner  # noqa: E402
-from runners import tests as test_runner  # noqa: E402
 from runners.lint import INGESTORS, run_ingested  # noqa: E402
 
 PYTEST_HOOK_ID = "pytest"
 HOOK_ID = re.compile(r"^- hook id: (?P<id>\S+)\s*$")
 RAW_TAIL = 4000
+
 
 def splice_prek(text, digest_text):
     """Swap the pytest hook's indented output dump for the digest. Every other
@@ -158,20 +159,20 @@ def json_target():
 
 
 RUNNERS = {
-    "node": test_runner.run_node,
-    "pytest": test_runner.run_pytest,
-    "prek": test_runner.run_prek,
+    "node": suite_runner.run_node,
+    "pytest": suite_runner.run_pytest,
+    "prek": suite_runner.run_prek,
     "ruff": lint_runner.runner_for("ruff"),
     "mypy": lint_runner.runner_for("mypy"),
     "eslint": lint_runner.runner_for("eslint"),
     "tsc": lint_runner.runner_for("tsc"),
     "shellcheck": lint_runner.runner_for("shellcheck"),
     "go-vet": lint_runner.runner_for("go-vet"),
-    "go-test": test_runner.run_go_test,
+    "go-test": suite_runner.run_go_test,
     "cargo-clippy": lint_runner.runner_for("cargo-clippy"),
-    "cargo-test": test_runner.run_cargo_test,
-    "gradle-test": test_runner.run_gradle_test,
-    "mvn-test": test_runner.run_mvn_test,
+    "cargo-test": suite_runner.run_cargo_test,
+    "gradle-test": suite_runner.run_gradle_test,
+    "mvn-test": suite_runner.run_mvn_test,
     "find": survey_runner.run_find,
     "fd": survey_runner.run_fd,
     "ls": survey_runner.run_ls,
@@ -202,9 +203,9 @@ def failure_key(fail):
 
 def attempt(kind, argv, workdir, tmp, state, last_failed=False):
     if kind == "node":
-        return test_runner.run_node(argv, workdir, tmp, rerun_state=state)
+        return suite_runner.run_node(argv, workdir, tmp, rerun_state=state)
     if kind == "pytest":
-        return test_runner.run_pytest(argv, workdir, tmp, last_failed=last_failed)
+        return suite_runner.run_pytest(argv, workdir, tmp, last_failed=last_failed)
     return RUNNERS[kind](argv, workdir, tmp)
 
 

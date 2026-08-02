@@ -34,8 +34,8 @@ from digest import MAX_DIGEST, digest
 from result import Failure, Item, Result, strip_ansi
 from runners import git as git_runner
 from runners import lint as lint_runner
+from runners import suite as suite_runner
 from runners import survey as survey_runner
-from runners import tests as test_runner
 
 
 def fixture(name):
@@ -1308,7 +1308,7 @@ class TestJunitReportMerging(unittest.TestCase):
             fixture("gradle-test-results.xml"),
             fixture("maven-surefire-report.xml"),
         ]
-        test_runner.parse_junit_reports(paths, result)
+        suite_runner.parse_junit_reports(paths, result)
         self.assertEqual(result.totals["tests"], 5)
         self.assertEqual(result.totals["pass"], 3)
         self.assertEqual(result.totals["fail"], 2)
@@ -1319,7 +1319,7 @@ class TestJunitReportMerging(unittest.TestCase):
             fixture("gradle-test-results.xml"),
             fixture("maven-surefire-report.xml"),
         ]
-        test_runner.parse_junit_reports(paths, result)
+        suite_runner.parse_junit_reports(paths, result)
         self.assertEqual(
             {f.name for f in result.failures}, {"testDivideByZero", "testWeight"}
         )
@@ -1330,13 +1330,13 @@ class TestJunitReportMerging(unittest.TestCase):
         # file must not cost the whole merge.
         result = blank("gradle", exit_code=0)
         paths = ["/no/such/file.xml", fixture("gradle-test-results.xml")]
-        test_runner.parse_junit_reports(paths, result)
+        suite_runner.parse_junit_reports(paths, result)
         self.assertEqual(result.totals["tests"], 3)
         self.assertEqual(len(result.failures), 1)
 
     def test_no_paths_leaves_totals_at_zero(self):
         result = blank("gradle", exit_code=0)
-        test_runner.parse_junit_reports([], result)
+        suite_runner.parse_junit_reports([], result)
         self.assertEqual(result.totals["tests"], 0)
         self.assertEqual(result.failures, [])
 
@@ -1365,9 +1365,9 @@ class TestGradleAndMvnRunners(unittest.TestCase):
 
     def test_no_flags_are_injected(self):
         with tempfile.TemporaryDirectory() as workdir:
-            test_runner.run_gradle_test(["gradle", "test"], workdir, workdir)
+            suite_runner.run_gradle_test(["gradle", "test"], workdir, workdir)
             self.assertEqual(self.cmds[-1], ["gradle", "test"])
-            test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
+            suite_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(self.cmds[-1], ["mvn", "test"])
 
     def test_gradle_reports_are_found_across_multiple_modules(self):
@@ -1379,7 +1379,7 @@ class TestGradleAndMvnRunners(unittest.TestCase):
                 dest = os.path.join(workdir, module, "build", "test-results", "test")
                 os.makedirs(dest)
                 shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
-            result, _ = test_runner.run_gradle_test(
+            result, _ = suite_runner.run_gradle_test(
                 ["gradle", "test"], workdir, workdir
             )
             self.assertEqual(result.totals["tests"], 5)
@@ -1395,7 +1395,7 @@ class TestGradleAndMvnRunners(unittest.TestCase):
                 dest = os.path.join(workdir, module, "target", "surefire-reports")
                 os.makedirs(dest)
                 shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
-            result, _ = test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
+            result, _ = suite_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(result.totals["tests"], 5)
             self.assertEqual(result.totals["fail"], 2)
 
@@ -1409,7 +1409,7 @@ class TestGradleAndMvnRunners(unittest.TestCase):
             shutil.copy(
                 fixture("gradle-test-results.xml"), os.path.join(dest, "TEST-a.xml")
             )
-            result, _ = test_runner.run_gradle_test(
+            result, _ = suite_runner.run_gradle_test(
                 ["gradle", "test"], workdir, workdir
             )
             self.assertEqual(
@@ -1422,12 +1422,12 @@ class TestGradleAndMvnRunners(unittest.TestCase):
         # digest.py's NO TESTS RAN carry the verdict, the same as every
         # other test runner's "collected nothing" case.
         with tempfile.TemporaryDirectory() as workdir:
-            result, _ = test_runner.run_gradle_test(
+            result, _ = suite_runner.run_gradle_test(
                 ["gradle", "test"], workdir, workdir
             )
             self.assertEqual(result.totals["tests"], 0)
             self.assertEqual(result.failures, [])
-            result, _ = test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
+            result, _ = suite_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(result.totals["tests"], 0)
             self.assertEqual(result.failures, [])
 
