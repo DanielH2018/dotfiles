@@ -125,6 +125,7 @@ start_filter() {
     --user "$(id -u):$(id -g)" \
     ${ENGINE_ARGS[@]+"${ENGINE_ARGS[@]}"} \
     -v "$(add_mount_relabel "$SANDBOX_DIR/docker-create-filter.py:/opt/docker-create-filter.py:ro")" \
+    -v "$(add_mount_relabel "$SANDBOX_DIR/filter_policy.py:/opt/filter_policy.py:ro")" \
     -v "$(add_mount_relabel "$CANON_LIB:/opt/canon.py:ro")" \
     -v "$(add_mount_relabel "$WORK_PATH:$WORK_PATH:ro")" \
     -e FILTER_UPSTREAM="$PROXY_ALIAS:2375" \

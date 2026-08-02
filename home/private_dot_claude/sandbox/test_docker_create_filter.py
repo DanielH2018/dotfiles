@@ -45,7 +45,7 @@ WS = "/workspace/repo"
 
 def denied(path, body):
     """Run one request through the checks; return the message, or None if allowed."""
-    flt.WORKSPACE = WS
+    flt.policy.WORKSPACE = WS
     payload = body if isinstance(body, bytes) else json.dumps(body).encode()
     try:
         flt.inspect(path, payload)
@@ -200,7 +200,7 @@ def test_a_symlink_out_of_the_workspace_is_resolved_not_trusted():
         ws = os.path.join(root, "repo")
         os.makedirs(ws)
         os.symlink("/", os.path.join(ws, "escape"))
-        flt.WORKSPACE = ws
+        flt.policy.WORKSPACE = ws
         try:
             flt.inspect(
                 "/containers/create",
@@ -217,7 +217,7 @@ def test_a_symlink_out_of_the_workspace_is_resolved_not_trusted():
         )
     finally:
         shutil.rmtree(root)
-        flt.WORKSPACE = WS
+        flt.policy.WORKSPACE = WS
 
 
 def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
@@ -235,7 +235,7 @@ def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
         ws = os.path.join(root, "repo")
         os.makedirs(os.path.join(ws, "real"))
         os.symlink(os.path.join(ws, "real"), os.path.join(ws, "inside"))
-        flt.WORKSPACE = ws
+        flt.policy.WORKSPACE = ws
         msg = ""
         try:
             flt.inspect(
@@ -265,7 +265,7 @@ def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
         )
     finally:
         shutil.rmtree(root)
-        flt.WORKSPACE = WS
+        flt.policy.WORKSPACE = WS
 
 
 def test_the_symlink_component_rule_covers_structured_mounts_too():
@@ -276,7 +276,7 @@ def test_the_symlink_component_rule_covers_structured_mounts_too():
         ws = os.path.join(root, "repo")
         os.makedirs(os.path.join(ws, "real"))
         os.symlink(os.path.join(ws, "real"), os.path.join(ws, "inside"))
-        flt.WORKSPACE = ws
+        flt.policy.WORKSPACE = ws
         msg = ""
         try:
             flt.inspect(
@@ -301,7 +301,7 @@ def test_the_symlink_component_rule_covers_structured_mounts_too():
         assert "symlink component" in msg, msg
     finally:
         shutil.rmtree(root)
-        flt.WORKSPACE = WS
+        flt.policy.WORKSPACE = WS
 
 
 def test_a_hostconfig_on_start_is_refused():
@@ -368,7 +368,7 @@ class Harness:
         self.upstream.seen = []
         threading.Thread(target=self.upstream.serve_forever, daemon=True).start()
         flt.UPSTREAM = f"127.0.0.1:{self.upstream.server_address[1]}"
-        flt.WORKSPACE = WS
+        flt.policy.WORKSPACE = WS
         self.proxy = flt.Server(("127.0.0.1", 0), flt.Handler)
         threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
         self.port = self.proxy.server_address[1]

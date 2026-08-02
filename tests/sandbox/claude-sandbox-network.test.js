@@ -95,3 +95,28 @@ test('stale networks from a previous run are cleared before create', () => {
   const createAt = body.indexOf('docker network create --internal');
   assert.ok(rmAt !== -1 && rmAt < createAt, 'rm must precede create');
 });
+
+// The filter is split across files that it loads by explicit path rather than
+// import, because /opt holds no package. Each one therefore needs its own bind
+// mount, and a module that is loaded but not mounted fails only at runtime, in a
+// container, as an unreachable filter — which fails open onto the socket proxy's
+// path-only rules. Derive the list from the loaders instead of restating it, so a
+// third module is covered the moment someone adds one.
+test('every module the filter loads by path is mounted into its container', () => {
+  // Both files, because the loaders chain: the filter loads filter_policy.py and
+  // filter_policy.py loads canon.py, so reading only the entrypoint would miss the
+  // module one hop down and assert nothing about the mount it needs.
+  const loaded = ['executable_docker-create-filter.py', 'filter_policy.py']
+    .flatMap((f) => [...fs.readFileSync(path.join(SANDBOX_DIR, f), 'utf8').matchAll(
+      /os\.path\.dirname\(os\.path\.abspath\(__file__\)\),\s*"([\w.-]+\.py)"/g)]
+      .map((m) => m[1]));
+
+  assert.deepStrictEqual(loaded.sort(), ['canon.py', 'filter_policy.py'],
+    'the set of path-loaded modules changed; the mounts below must follow');
+  const body = fn('start_filter');
+  for (const name of loaded) {
+    assert.ok(body.includes(`:/opt/${name}:ro`),
+      `${name} is loaded by the filter but start_filter never mounts it — the `
+      + 'filter would die on startup and leave only the path-level proxy rules');
+  }
+});
