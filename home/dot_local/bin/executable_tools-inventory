@@ -10,9 +10,11 @@
 //
 // Three sources of truth, kept apart on purpose:
 //
-//   prose      tools.json, in this script's library dir. What a tool is for, why it
-//              exists, its flags, and which platforms it actually works on. None of that
-//              is derivable, so it is curated and reviewed like any other content.
+//   prose      tools.json, read from ~/.local/share/tools-inventory — the deployed copy,
+//              not one resolved beside this script, so a source-tree run still reads the
+//              data this machine has. What a tool is for, why it exists, its flags, and
+//              which platforms it actually works on. None of that is derivable, so it is
+//              curated and reviewed like any other content.
 //   structure  the source tree. Which scripts exist, how long they are, what interpreter
 //              they use, whether their tests are present.
 //   this host  `chezmoi ignored` + a filesystem check. NOT a second parser for
