@@ -17,8 +17,10 @@ sys.path.insert(
     0, os.path.join(HERE, os.pardir, os.pardir, "home", "dot_local", "share", "tq")
 )
 
+import cmdline
 import detect as detect_mod
 import digest as digest_mod
+import process
 import scope
 from adapters import cargo as cargo_adapter
 from adapters import go as go_adapter
@@ -30,6 +32,10 @@ from adapters import sarif as sarif_adapter
 from adapters import survey as survey_adapter
 from digest import MAX_DIGEST, digest
 from result import Failure, Item, Result, strip_ansi
+from runners import git as git_runner
+from runners import lint as lint_runner
+from runners import survey as survey_runner
+from runners import tests as test_runner
 
 
 def fixture(name):
@@ -716,13 +722,13 @@ class TestDetection(unittest.TestCase):
 
     def test_drop_flag_removes_either_spelling(self):
         self.assertEqual(
-            self.cli.drop_flag(
+            cmdline.drop_flag(
                 ["ruff", "check", "--output-format=json", "x"], ("--output-format",)
             ),
             ["ruff", "check", "x"],
         )
         self.assertEqual(
-            self.cli.drop_flag(["shellcheck", "-f", "json", "x"], ("-f",)),
+            cmdline.drop_flag(["shellcheck", "-f", "json", "x"], ("-f",)),
             ["shellcheck", "x"],
         )
 
@@ -893,10 +899,15 @@ class TestRunTimeout(unittest.TestCase):
             "import sys, time; print('ran a bit'); sys.stdout.flush(); time.sleep(30)",
         ]
 
+    def setUp(self):
+        self.timeout = process.TIMEOUT
+
+    def tearDown(self):
+        process.TIMEOUT = self.timeout
+
     def test_a_killed_runner_yields_its_partial_output_as_text(self):
-        tq = load_cli()
-        tq.TIMEOUT = 1
-        proc, timed_out = tq.run(self.sleeper(), os.environ.copy())
+        process.TIMEOUT = 1
+        proc, timed_out = process.run(self.sleeper(), os.environ.copy())
         self.assertTrue(timed_out)
         self.assertEqual(proc.returncode, 124)
         # TimeoutExpired carries bytes even under text=True, and no returncode
@@ -905,9 +916,8 @@ class TestRunTimeout(unittest.TestCase):
         self.assertIn("ran a bit", proc.stdout)
 
     def test_a_runner_that_finishes_is_not_marked_timed_out(self):
-        tq = load_cli()
-        tq.TIMEOUT = 30
-        proc, timed_out = tq.run(
+        process.TIMEOUT = 30
+        proc, timed_out = process.run(
             [sys.executable, "-c", "print('done')"], os.environ.copy()
         )
         self.assertFalse(timed_out)
@@ -1298,7 +1308,7 @@ class TestJunitReportMerging(unittest.TestCase):
             fixture("gradle-test-results.xml"),
             fixture("maven-surefire-report.xml"),
         ]
-        self.cli.parse_junit_reports(paths, result)
+        test_runner.parse_junit_reports(paths, result)
         self.assertEqual(result.totals["tests"], 5)
         self.assertEqual(result.totals["pass"], 3)
         self.assertEqual(result.totals["fail"], 2)
@@ -1309,7 +1319,7 @@ class TestJunitReportMerging(unittest.TestCase):
             fixture("gradle-test-results.xml"),
             fixture("maven-surefire-report.xml"),
         ]
-        self.cli.parse_junit_reports(paths, result)
+        test_runner.parse_junit_reports(paths, result)
         self.assertEqual(
             {f.name for f in result.failures}, {"testDivideByZero", "testWeight"}
         )
@@ -1320,13 +1330,13 @@ class TestJunitReportMerging(unittest.TestCase):
         # file must not cost the whole merge.
         result = blank("gradle", exit_code=0)
         paths = ["/no/such/file.xml", fixture("gradle-test-results.xml")]
-        self.cli.parse_junit_reports(paths, result)
+        test_runner.parse_junit_reports(paths, result)
         self.assertEqual(result.totals["tests"], 3)
         self.assertEqual(len(result.failures), 1)
 
     def test_no_paths_leaves_totals_at_zero(self):
         result = blank("gradle", exit_code=0)
-        self.cli.parse_junit_reports([], result)
+        test_runner.parse_junit_reports([], result)
         self.assertEqual(result.totals["tests"], 0)
         self.assertEqual(result.failures, [])
 
@@ -1350,13 +1360,14 @@ class TestGradleAndMvnRunners(unittest.TestCase):
             self.cmds.append(list(argv))
             return self.Proc(), False
 
-        self.cli.run = fake_run
+        self.addCleanup(setattr, process, "run", process.run)
+        process.run = fake_run
 
     def test_no_flags_are_injected(self):
         with tempfile.TemporaryDirectory() as workdir:
-            self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            test_runner.run_gradle_test(["gradle", "test"], workdir, workdir)
             self.assertEqual(self.cmds[-1], ["gradle", "test"])
-            self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(self.cmds[-1], ["mvn", "test"])
 
     def test_gradle_reports_are_found_across_multiple_modules(self):
@@ -1368,7 +1379,9 @@ class TestGradleAndMvnRunners(unittest.TestCase):
                 dest = os.path.join(workdir, module, "build", "test-results", "test")
                 os.makedirs(dest)
                 shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
-            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            result, _ = test_runner.run_gradle_test(
+                ["gradle", "test"], workdir, workdir
+            )
             self.assertEqual(result.totals["tests"], 5)
             self.assertEqual(result.totals["fail"], 2)
             self.assertEqual(len(result.failures), 2)
@@ -1382,7 +1395,7 @@ class TestGradleAndMvnRunners(unittest.TestCase):
                 dest = os.path.join(workdir, module, "target", "surefire-reports")
                 os.makedirs(dest)
                 shutil.copy(fixture(src), os.path.join(dest, f"TEST-{module}.xml"))
-            result, _ = self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            result, _ = test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(result.totals["tests"], 5)
             self.assertEqual(result.totals["fail"], 2)
 
@@ -1396,7 +1409,9 @@ class TestGradleAndMvnRunners(unittest.TestCase):
             shutil.copy(
                 fixture("gradle-test-results.xml"), os.path.join(dest, "TEST-a.xml")
             )
-            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            result, _ = test_runner.run_gradle_test(
+                ["gradle", "test"], workdir, workdir
+            )
             self.assertEqual(
                 [f.name for f in result.failures], ["testDivideByZero", "testWeight"]
             )
@@ -1407,10 +1422,12 @@ class TestGradleAndMvnRunners(unittest.TestCase):
         # digest.py's NO TESTS RAN carry the verdict, the same as every
         # other test runner's "collected nothing" case.
         with tempfile.TemporaryDirectory() as workdir:
-            result, _ = self.cli.run_gradle_test(["gradle", "test"], workdir, workdir)
+            result, _ = test_runner.run_gradle_test(
+                ["gradle", "test"], workdir, workdir
+            )
             self.assertEqual(result.totals["tests"], 0)
             self.assertEqual(result.failures, [])
-            result, _ = self.cli.run_mvn_test(["mvn", "test"], workdir, workdir)
+            result, _ = test_runner.run_mvn_test(["mvn", "test"], workdir, workdir)
             self.assertEqual(result.totals["tests"], 0)
             self.assertEqual(result.failures, [])
 
@@ -1553,45 +1570,45 @@ class TestSurveyFlags(unittest.TestCase):
         # drop_flag() assumes a flag takes a value and skips the token after it.
         # These take none, so the same helper would swallow the pathspec.
         self.assertEqual(
-            self.cli.drop_switches(
-                ["git", "log", "--oneline", "-40", "src"], self.cli.LOG_FORMATS
+            cmdline.drop_switches(
+                ["git", "log", "--oneline", "-40", "src"], git_runner.LOG_FORMATS
             ),
             ["git", "log", "-40", "src"],
         )
         self.assertEqual(
-            self.cli.drop_switches(
-                ["git", "diff", "--stat", "HEAD"], self.cli.DIFF_FORMATS
+            cmdline.drop_switches(
+                ["git", "diff", "--stat", "HEAD"], git_runner.DIFF_FORMATS
             ),
             ["git", "diff", "HEAD"],
         )
 
     def test_a_pathspec_past_the_separator_is_a_path_not_a_flag(self):
         self.assertEqual(
-            self.cli.drop_switches(
-                ["git", "log", "--oneline", "--", "--stat"], self.cli.LOG_FORMATS
+            cmdline.drop_switches(
+                ["git", "log", "--oneline", "--", "--stat"], git_runner.LOG_FORMATS
             ),
             ["git", "log", "--", "--stat"],
         )
 
     def test_a_limit_is_recorded_only_when_the_command_reached_it(self):
         self.assertEqual(
-            self.cli.count_limit(["git", "log", "-n", "50"], ("-n",)), (50, "-n 50")
+            cmdline.count_limit(["git", "log", "-n", "50"], ("-n",)), (50, "-n 50")
         )
         self.assertEqual(
-            self.cli.count_limit(["git", "log", "-5"], ("-n",), bare=True), (5, "-5")
+            cmdline.count_limit(["git", "log", "-5"], ("-n",), bare=True), (5, "-5")
         )
-        self.assertEqual(self.cli.count_limit(["git", "log"], ("-n",)), (None, ""))
+        self.assertEqual(cmdline.count_limit(["git", "log"], ("-n",)), (None, ""))
 
         # A log capped at 50 that found 12 was not capped by anything: there
         # were 12. Saying "there may be more" then would invent a tail.
         short = survey_blank("commits")
         short.items = [Item(sha="a")] * 12
-        self.cli.note_limit(short, 50, "-n 50")
+        survey_runner.note_limit(short, 50, "-n 50")
         self.assertEqual(short.limited, "")
 
         at_cap = survey_blank("commits")
         at_cap.items = [Item(sha="a")] * 50
-        self.cli.note_limit(at_cap, 50, "-n 50")
+        survey_runner.note_limit(at_cap, 50, "-n 50")
         self.assertEqual(at_cap.limited, "-n 50")
 
 
@@ -1809,7 +1826,8 @@ class TestRunnerArgv(unittest.TestCase):
             self.cmds.append(list(argv))
             return self.Proc(), False
 
-        self.cli.run = fake_run
+        self.addCleanup(setattr, process, "run", process.run)
+        process.run = fake_run
 
     def built(self, kind, argv):
         self.cli.RUNNERS[kind](argv, "/sample", "/sample/tmp")
@@ -1818,7 +1836,7 @@ class TestRunnerArgv(unittest.TestCase):
     def test_git_flags_land_after_the_subcommand_not_after_the_pathspec(self):
         self.assertEqual(
             self.built("git-log", ["git", "log", "-3", "--", "home"]),
-            ["git", "log", self.cli.COMMIT_FORMAT, "--no-color", "-3", "--", "home"],
+            ["git", "log", git_runner.COMMIT_FORMAT, "--no-color", "-3", "--", "home"],
         )
         self.assertEqual(
             self.built("git-diff", ["git", "diff", "HEAD", "--", "home"]),
@@ -1853,7 +1871,7 @@ class TestRunnerArgv(unittest.TestCase):
             [
                 "git",
                 "log",
-                self.cli.COMMIT_FORMAT,
+                git_runner.COMMIT_FORMAT,
                 "--no-color",
                 "--numstat",
                 "--",
@@ -1925,8 +1943,9 @@ class TestRunnerArgv(unittest.TestCase):
         def fake_run(argv, env):
             return VetProc(), False
 
-        self.cli.run = fake_run
-        result, _ = self.cli.run_go_vet(
+        self.addCleanup(setattr, process, "run", process.run)
+        process.run = fake_run
+        result, _ = lint_runner.run_go_vet(
             ["go", "vet", "./..."], "/sample", "/sample/tmp"
         )
         self.assertEqual(len(result.failures), 1)
