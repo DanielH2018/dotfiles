@@ -83,7 +83,7 @@ location, so a worktree must run its own copy, and that compound form is the sha
 `allow-compound-bash.sh` auto-approves.
 
 It is the deterministic complement to the LLM-driven `/review-setup` skill. See
-`docs/superpowers/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
+`docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
 
 ## pre-push gate — one-time install per clone
 

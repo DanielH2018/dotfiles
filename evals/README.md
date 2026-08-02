@@ -4,8 +4,8 @@ Regression tests for the custom Claude Code subagents. Each **case** feeds a fix
 one agent, grades the output with a deterministic assertion gate plus an LLM judge, and runs
 the case `k` times to measure consistency.
 
-Design spec: `docs/superpowers/specs/2026-07-08-subagent-evals-design.md`.
-Plan: `docs/superpowers/plans/2026-07-08-subagent-evals.md`.
+Design spec: `docs/specs/2026-07-08-subagent-evals-design.md`.
+Plan: `docs/plans/2026-07-08-subagent-evals.md`.
 
 ## Running
 
