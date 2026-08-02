@@ -18,7 +18,7 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 [tool.ruff.lint.per-file-ignores]
 # sys.path.insert() before the import it enables, same as executable_tq's own
 # inline noqa comments a few lines up.
-"tests/tq/test_tq.py" = ["E501", "E402"]
+"tests/tq/*.py" = ["E501", "E402"]
 
 # E501 grandfathered where it predates coverage. Until 2026-08-01 the pre-commit hook
 # carried a hardcoded `files:` allowlist and reached 23 of the repo's 51 Python files;

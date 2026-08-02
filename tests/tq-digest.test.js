@@ -40,27 +40,43 @@ function scratch(files) {
 }
 
 test('python: tq adapters + digest unit tests', { skip }, () => {
-  // Exit code alone cannot tell a green suite from an empty one: unittest.main() exits 0
-  // whether it discovered 216 tests or none. Same reasoning python-suites.test.js applies
-  // to the sandbox suites — the guard just never reached the largest one. Capture rather
-  // than pipe, because unittest writes its summary to stderr, which is why execFileSync
-  // (it returns stdout) could not see the count.
+  // Exit code alone cannot tell a green suite from an empty one: unittest exits 0 whether
+  // it discovered every test or none. Same reasoning python-suites.test.js applies to the
+  // sandbox suites — the guard just never reached the largest one. Capture rather than
+  // pipe, because unittest writes its summary to stderr, which is why execFileSync (it
+  // returns stdout) could not see the count.
   //
-  // What this catches, verified by mutation: a class that stops being collected — drop the
-  // `unittest.TestCase` base off one and this reports "ran 207 of 216". What it does NOT
-  // catch, also verified: renaming a method off its `test_` prefix, which lowers the ran
-  // count and the declared count together. Guarding that needs a floor, and a floor is a
-  // ratchet someone has to maintain; the class-level case is the one that fails silently.
-  const file = path.join(__dirname, 'tq', 'test_tq.py');
-  const r = spawnSync('python3', [file], { encoding: 'utf8' });
-  assert.strictEqual(r.status, 0, `test_tq.py failed:\n${r.stderr}`);
+  // What this catches, both verified by mutation: a class that stops being collected —
+  // drop the `unittest.TestCase` base off one and this reports "ran 215 of 219" — and a
+  // whole module that stops being discovered, which since the suite was split per subject
+  // is the same silent shortfall, only bigger (206 of 219 when one is renamed off the
+  // glob). What it does NOT catch, also verified: renaming a method off its `test_`
+  // prefix, which lowers the ran count and the declared count together. Guarding that
+  // needs a floor, and a floor is a ratchet someone has to maintain.
+  //
+  // Not named `dir`: scratch() below binds that to a mkdtemp path, and
+  // sandbox-escape.test.js reads the two as one variable and calls the repo path a write
+  // target.
+  const suiteDir = path.join(__dirname, 'tq');
+  const r = spawnSync('python3', [path.join(suiteDir, 'run.py')], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `tq unit tests failed:\n${r.stderr}`);
 
   const ran = /^Ran (\d+) tests?/m.exec(r.stderr);
   assert.ok(ran, `no "Ran N tests" line in unittest output:\n${r.stderr}`);
 
+  const discovered = fs.readdirSync(suiteDir).filter((f) => /^test_.*\.py$/.test(f));
+  assert.ok(discovered.length > 1, `expected several test modules, found ${discovered.length}`);
+
+  // Declared is counted over every .py here, not just the ones run.py's `test_*.py` glob
+  // discovers. Counting only the glob would let a module renamed off it drop out of both
+  // numbers at once and stay silent — the split's own version of the collection bug this
+  // guard exists to catch. helpers.py and run.py contribute nothing, and a test that ends
+  // up in one of them is a real shortfall worth failing on.
+  //
   // Every test here is a method on a TestCase, so an indented `def test_` is exactly what
   // unittest collects; there are no module-level ones to confuse it (verified: 0).
-  const declared = (fs.readFileSync(file, 'utf8').match(/^\s+def test_/gm) || []).length;
+  const declared = fs.readdirSync(suiteDir).filter((f) => f.endsWith('.py')).reduce((n, f) =>
+    n + (fs.readFileSync(path.join(suiteDir, f), 'utf8').match(/^\s+def test_/gm) || []).length, 0);
   assert.strictEqual(Number(ran[1]), declared,
     `unittest ran ${ran[1]} of ${declared} declared tests — the suite is being collected incompletely`);
 });
