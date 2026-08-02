@@ -84,10 +84,13 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
       PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
       rel="${path#*/.claude/artifacts/}"
       url="http://127.0.0.1:${PORT}/${rel}"
-      # The TUI captures the mouse (alt screen since v2.1.89), so a plain click goes to
-      # the app; a modifier lets the terminal's own link handler fire. WezTerm/Ghostty
-      # use Shift (the xterm bypass-mouse-reporting modifier); VS Code's terminal uses Ctrl.
-      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+click it (Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
+      # Two modifiers, not one, and the message used to name only the first: Shift is the
+      # xterm bypass-mouse-reporting modifier, needed because the TUI captures the mouse
+      # (alt screen since v2.1.89), and Ctrl is Ghostty's own open-link modifier on Linux
+      # — the counterpart of Cmd in the macOS branch above. Measured on daniel-box
+      # 2026-08-01: Shift+click alone does nothing at all, Shift+Ctrl+click opens Firefox.
+      # VS Code's terminal does not capture the mouse the same way and wants plain Ctrl.
+      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+Ctrl+click it (plain Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
       ;;
   esac
 fi

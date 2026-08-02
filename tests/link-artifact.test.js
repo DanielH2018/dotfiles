@@ -51,8 +51,10 @@ test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link
   assert.ok(ctx.includes(hostLink('/Users/d/.claude/artifacts/local.html', 'local.html')),
     `host path emitted as the platform's clickable link; got: ${ctx}`);
   if (process.platform === 'linux') {
-    // WezTerm/Ghostty need Shift to bypass the TUI's mouse capture; Ctrl is VS Code-only.
-    assert.match(ctx, /Shift\+click/, `linux message names the Shift+click gesture; got: ${ctx}`);
+    // Both modifiers, or the instruction is unfollowable: Shift bypasses the TUI's mouse
+    // capture, Ctrl is Ghostty's open-link modifier on Linux. Shift alone does nothing.
+    assert.match(ctx, /Shift\+Ctrl\+click/,
+      `linux message names the full Shift+Ctrl+click gesture; got: ${ctx}`);
   }
 });
 
