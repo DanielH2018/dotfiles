@@ -48,8 +48,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "1b5842b86e4d5f7e971588d29df91178c4e031d553c789e8215da761a1b83f6f",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "59223240c8ce4fb22612ec02dfe92d5de3529ca5a747f505710ad436b6fd5302",
+      "landed": "2026-08-02T19:58:03.633Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
@@ -128,8 +128,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
-      "hash": "552d624bf553371e28c2ac84d14f2d0e846018ca25c8077753c03abf8e744b18",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "f7e3606d5af59f6ed3117b16db470a1c9ef8c17448e6fff9e96dfa5b63fd3cd4",
+      "landed": "2026-08-02T19:58:03.633Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
