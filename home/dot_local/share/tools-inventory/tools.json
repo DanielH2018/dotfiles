@@ -320,7 +320,7 @@
       "why": "Cross-platform by parsing whatever is present: WezTerm on Windows, Ghostty on macOS/Linux, Neovim and Yazi everywhere, Claude keybinds wherever <code>~/.claude/keybindings.json</code> exists. Under WSL it also probes <code>/mnt/c/Users/*/.config/wezterm/wezterm.lua</code>, so the Linux sheet still shows the binds you type in the host terminal. Dependency-free; the parsers are format-driven rather than entry-driven, so new keybinds flow through automatically.",
       "pre": "terminal-cheatsheet [output.html]     <span class=\"c\"># or TERMINAL_CHEATSHEET_OUT=…</span>\n<span class=\"c\"># honors $XDG_CONFIG_HOME and $YAZI_CONFIG_HOME</span>",
       "flags": [
-        { "label": "Note:", "html": "its <code>run_after_terminal-cheatsheet.sh</code> exists but is listed in <code>.chezmoiignore</code>, so it does not run on apply — unlike this inventory, which does." }
+        { "label": "Note:", "html": "its <code>run_after_terminal-cheatsheet.sh</code> exists but is listed in <code>.chezmoiignore</code>, so it does not run on apply." }
       ]
     },
     {
@@ -334,13 +334,13 @@
       "langLabel": "node",
       "plat": ["mac", "linux", "wsl", "win"],
       "platLabel": "macOS · Linux · WSL · Windows",
-      "role": ["typed", "timer"],
-      "badges": [{ "cls": "b-how", "text": "run_after_tools-inventory.sh, on every chezmoi apply" }],
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "run by hand — its run_after script is chezmoi-ignored" }],
       "desc": "Generates this page. Discovers the tool roster from the chezmoi <em>source</em> tree, merges it with the curated prose in <code>tools.json</code>, and derives every volatile fact — line counts, which platform column applies, whether each tool is deployed on this host — at render time.",
       "why": "It reads the source rather than the deployed tree because the roster has to include tools this machine does not get: a Fedora box would otherwise render an inventory with the Windows scripts silently missing. The per-host column comes from <code>chezmoi ignored</code>, which is chezmoi evaluating its own templates, plus a filesystem check — never from a second parser for <code>.chezmoiignore</code>. A script in the source tree with no <code>tools.json</code> entry is still rendered from its own header comment and reported in a drift banner, so adding a tool cannot silently leave the page incomplete.",
       "pre": "tools-inventory [output.html]      <span class=\"c\"># or TOOLS_INVENTORY_OUT=…</span>\ntools-inventory --check            <span class=\"c\"># report drift, write nothing; exit 1 if any</span>\n<span class=\"c\"># TOOLS_INVENTORY_SOURCE=…  chezmoi source dir (default: `chezmoi source-path`)</span>",
       "flags": [
-        { "label": "Idempotent:", "html": "the rendered page carries no timestamp, so an unchanged inventory produces a byte-identical file and the generator skips the write. That is what makes running it on every apply cheap enough to leave enabled." }
+        { "label": "Idempotent:", "html": "the rendered page carries no timestamp, so an unchanged inventory produces a byte-identical file and the generator skips the write. Re-running it costs nothing when nothing has changed." }
       ]
     },
 

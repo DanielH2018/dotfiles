@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Regenerate the tools inventory after every `chezmoi apply`, so the HTML page always
-# reflects the just-deployed set of commands — including which of them this host actually
-# got. The generator (~/.local/bin/tools-inventory) and its data (~/.local/share/
-# tools-inventory/tools.json) are applied before this "after" script runs.
+# Regenerate the tools inventory, so the HTML page reflects the deployed set of commands —
+# including which of them this host actually got. The generator (~/.local/bin/tools-inventory)
+# and its data (~/.local/share/tools-inventory/tools.json) are applied before this "after"
+# script would run.
 #
-# Cheap enough to leave enabled, unlike the terminal-cheatsheet script next to it (which
-# is listed in .chezmoiignore and so never runs): the rendered page carries no timestamp,
-# so an unchanged inventory produces a byte-identical file and the generator skips the
-# write entirely. A no-op run is a few dozen small reads.
+# Would, because it is listed in .chezmoiignore alongside the terminal-cheatsheet script
+# next to it, and so doesn't run on apply. Not for cost — the rendered page carries no
+# timestamp, so an unchanged inventory produces a byte-identical file and the generator
+# skips the write entirely. It's that an unconditional after-script shows up in
+# `chezmoi status` on every invocation, and a status line that is always there is one
+# nobody reads. Run `tools-inventory` by hand instead, or drop the .chezmoiignore entry to
+# put it back on every apply.
 #
 # Drift — a script in the source tree with no tools.json entry — is reported on stderr
 # here and in a banner on the page itself, but never fails the apply. A stale inventory is
