@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # sandbox-worktree-ops.sh — the worktree lifecycle: create, clean up, delete, prune,
-# GC, and the passive startup nudge. Sourced by claude-sandbox (lives in
-# ~/.claude/sandbox). Sourced, not executed: define functions only, never run
-# anything at load time or set shell options here.
+# GC, the passive startup nudge, and the three CLI paths that act on a worktree by
+# name (--complete-worktrees, --complete-branches, --rename). Sourced by
+# claude-sandbox (lives in ~/.claude/sandbox). Sourced, not executed: define
+# functions only, never run anything at load time or set shell options here.
 #
 # NOT sandbox-worktree.sh. That file holds the pure helpers these operations are
 # built from — sanitize_repo_name, repo_hash, resolve_worktree_target,
@@ -20,7 +21,8 @@
 #     WT_PATH, WT_CREATED and WORK_PATH — setup_worktree exists to set those;
 #   * call into sandbox-worktree.sh for the pure helpers, and compact_session from
 #     sandbox-compact.sh when deleting a worktree;
-#   * call `exit` on failure, in eight places.
+#   * call `exit` on failure, and the three CLI paths exit on their error branches
+#     too — rename_worktree() also calls usage(), which the launcher defines.
 #
 # CALL ORDER stays in the launcher: the --prune/--gc/--setup-worktree early exits,
 # the startup nudge and the setup_worktree call all sit in the launcher's main flow,
@@ -414,4 +416,131 @@ check_gc_nudge() {
   if [[ "$gone_count" -gt 0 ]]; then
     echo "Note: $gone_count worktree(s) have deleted remote branches -- run 'claude-sandbox --gc $REPO_PATH' to clean up."
   fi
+}
+
+# --- Worktree CLI paths (each ends in an early exit; see CALL ORDER above) ---
+complete_worktree_names() {
+  [[ -z "$REPO_PATH" ]] && exit 0
+
+  # Resolve short repo names
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
+  REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
+
+  repo_name_safe="$(sanitize_repo_name "$REPO_PATH")"
+  rhash="$(repo_hash "$REPO_PATH")"
+  base_instance="${repo_name_safe}-${rhash}"
+
+  # Names `-w NAME` can reuse: a tool worktree at <repo>-wt-<name> that is on
+  # claude/<name>. Previously this offered every claude/* branch in the worktree
+  # list, including one checked out somewhere that is not a tool worktree — for
+  # which `-w` would go on to make a second worktree and reuse the first, not the
+  # round-trip the completion implies.
+  while IFS=$'\t' read -r wt_name wt_branch _; do
+    [[ "$wt_branch" == "claude/$wt_name" ]] && printf '%s\n' "$wt_name"
+  done < <(list_tool_worktrees "$REPO_PATH" "$repo_name_safe")
+
+  # Orphaned session names (worktree gone but session data remains)
+  list_orphan_sessions "$REPO_PATH" "$repo_name_safe" "$SESSIONS_BASE" "$base_instance"
+}
+
+complete_branch_names() {
+  [[ -z "$REPO_PATH" ]] && exit 0
+
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
+  REPO_PATH="$(cd "$REPO_PATH" 2>/dev/null && pwd)" || exit 0
+
+  # Local branches only (refs/heads). -b still accepts a remote-only branch
+  # name typed manually; this just keeps completion to a manageable subset.
+  git -C "$REPO_PATH" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | sort -u
+}
+
+rename_worktree() {
+  [[ -z "$REPO_PATH" ]] && usage
+
+  # Resolve short repo names
+  REPO_PATH="$(resolve_repo_path "$REPO_PATH")"
+  REPO_PATH="$(cd "$REPO_PATH" && pwd)"
+
+  # Validate new name
+  if [[ ! "$RENAME_NEW" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "Error: new name must be alphanumeric (hyphens/underscores allowed): '$RENAME_NEW'" >&2
+    exit 1
+  fi
+
+  REPO_NAME="$(sanitize_repo_name "$REPO_PATH")"
+  REPO_HASH="$(repo_hash "$REPO_PATH")"
+
+  OLD_BRANCH="claude/$RENAME_OLD"
+  NEW_BRANCH="claude/$RENAME_NEW"
+  OLD_WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$RENAME_OLD"
+  NEW_WT_PATH="$REPO_PATH/../$REPO_NAME-wt-$RENAME_NEW"
+  OLD_INSTANCE="${REPO_NAME}-${REPO_HASH}-${RENAME_OLD}"
+  NEW_INSTANCE="${REPO_NAME}-${REPO_HASH}-${RENAME_NEW}"
+
+  # Determine if the worktree/branch actually exist (vs orphaned session data)
+  OLD_WT_PATH_ABS="$(cd "$OLD_WT_PATH" 2>/dev/null && pwd)" || true
+  HAS_WORKTREE=false
+  HAS_BRANCH=false
+  [[ -n "$OLD_WT_PATH_ABS" ]] && HAS_WORKTREE=true
+  git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$OLD_BRANCH" 2>/dev/null && HAS_BRANCH=true
+
+  # Must have at least a worktree, branch, or session data
+  if [[ "$HAS_WORKTREE" == false && "$HAS_BRANCH" == false \
+        && ! -d "$SESSIONS_BASE/$OLD_INSTANCE" && ! -d "$AUDIT_BASE/$OLD_INSTANCE" \
+        && ! -d "$ARTIFACTS_BASE/$OLD_INSTANCE" ]]; then
+    echo "Error: nothing found for '$RENAME_OLD' (no worktree, branch, or session data)" >&2
+    exit 1
+  fi
+
+  # Check new name isn't already taken
+  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$NEW_BRANCH" 2>/dev/null; then
+    echo "Error: branch '$NEW_BRANCH' already exists" >&2
+    exit 1
+  fi
+  if [[ -d "$NEW_WT_PATH" ]]; then
+    echo "Error: worktree path already exists: $NEW_WT_PATH" >&2
+    exit 1
+  fi
+
+  # Check no running container for this worktree
+  if docker ps --filter "name=claudebot-${OLD_INSTANCE}-" --format '{{.Names}}' 2>/dev/null | grep -q .; then
+    echo "Error: a sandbox session is running for '$RENAME_OLD' — stop it first" >&2
+    exit 1
+  fi
+
+  echo "Renaming worktree: $RENAME_OLD -> $RENAME_NEW"
+
+  # 1. Rename branch (skip if none)
+  if [[ "$HAS_BRANCH" == true ]]; then
+    echo "  Branch: $OLD_BRANCH -> $NEW_BRANCH"
+    git -C "$REPO_PATH" branch -m "$OLD_BRANCH" "$NEW_BRANCH"
+  fi
+
+  # 2. Move worktree directory (skip if none)
+  if [[ "$HAS_WORKTREE" == true ]]; then
+    echo "  Path: $OLD_WT_PATH_ABS -> $NEW_WT_PATH"
+    git -C "$REPO_PATH" worktree move "$OLD_WT_PATH_ABS" "$NEW_WT_PATH"
+  fi
+
+  # 3. Move session data
+  if [[ -d "$SESSIONS_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Sessions: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$SESSIONS_BASE/$OLD_INSTANCE" "$SESSIONS_BASE/$NEW_INSTANCE"
+  fi
+
+  # 4. Move audit data
+  if [[ -d "$AUDIT_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Audit: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$AUDIT_BASE/$OLD_INSTANCE" "$AUDIT_BASE/$NEW_INSTANCE"
+  fi
+
+  # 5. Move artifacts data
+  if [[ -d "$ARTIFACTS_BASE/$OLD_INSTANCE" ]]; then
+    echo "  Artifacts: $OLD_INSTANCE -> $NEW_INSTANCE"
+    mv "$ARTIFACTS_BASE/$OLD_INSTANCE" "$ARTIFACTS_BASE/$NEW_INSTANCE"
+  fi
+
+  echo ""
+  echo "Done. Resume with:"
+  echo "  claude-sandbox -w $RENAME_NEW $REPO_PATH"
 }
