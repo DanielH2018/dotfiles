@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from config_map import scan
+from conftest import patch_roots
 
 
 def _base_paths(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -13,11 +14,20 @@ def _base_paths(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     )
 
 
-def _patch_roots(monkeypatch: pytest.MonkeyPatch, claude_dir: Path, chezmoi_root: Path, work_root: Path, vault_root: Path) -> None:
-    monkeypatch.setattr(scan, "CLAUDE_DIR", claude_dir)
-    monkeypatch.setattr(scan, "CHEZMOI_ROOT", chezmoi_root)
-    monkeypatch.setattr(scan, "WORK_CONFIG_ROOT", work_root)
-    monkeypatch.setattr(scan, "VAULT_ROOT", vault_root)
+def _patch_roots(
+    monkeypatch: pytest.MonkeyPatch,
+    claude_dir: Path,
+    chezmoi_root: Path,
+    work_root: Path,
+    vault_root: Path,
+) -> None:
+    patch_roots(
+        monkeypatch,
+        CLAUDE_DIR=claude_dir,
+        CHEZMOI_ROOT=chezmoi_root,
+        WORK_CONFIG_ROOT=work_root,
+        VAULT_ROOT=vault_root,
+    )
 
 
 def test_symlink_into_work_laptop_config_is_work(tmp_path, monkeypatch):
@@ -82,7 +92,13 @@ def test_executable_prefix_alone_is_still_real_not_generated(tmp_path, monkeypat
 
 @pytest.mark.parametrize(
     "source_name",
-    ["CLAUDE.md.tmpl", "modify_settings.json.sh.tmpl", "create_foo.tmpl", "run_bar.tmpl", "symlink_baz.tmpl"],
+    [
+        "CLAUDE.md.tmpl",
+        "modify_settings.json.sh.tmpl",
+        "create_foo.tmpl",
+        "run_bar.tmpl",
+        "symlink_baz.tmpl",
+    ],
 )
 def test_templating_prefixes_are_generated(tmp_path, monkeypatch, source_name):
     claude_dir, chezmoi_root, work_root, vault_root = _base_paths(tmp_path)
