@@ -27,7 +27,7 @@ upstream's `wezfurlong/wezterm-nightly` COPR, and `gron` falls back to its GitHu
 ## Layout
 
 - `home/` — chezmoi source (dot_ files, templates)
-- `docs/` — design + implementation docs (not deployed)
+- `docs/` — specs, plans, and decisions (not deployed); see `docs/README.md` for the layout
 - `tests/` — unit tests (not deployed); run the full suite with `node --test`
 
 ### Windows notes
