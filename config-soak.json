@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "2ceeed91acb81b51060f7faede5f011443036edda6f894a37cf29edd30ba6db2",
-      "landed": "2026-08-02T20:37:31.709Z"
+      "hash": "a6ef314819815a16ea29f38ed0aaa5cf53539f1d6f26499b3dd8507f367382cc",
+      "landed": "2026-08-02T21:17:22.436Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -338,8 +338,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
-      "hash": "8acb40e475ae9da188c2051751f321291672cc349b299da0bb18b04eb0ba59ed",
-      "landed": "2026-07-26T13:29:20.904Z"
+      "hash": "85b9645719b35766771c9a925a41c386abe687ab4373556d41e1881eb76bb229",
+      "landed": "2026-08-02T21:17:22.436Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
