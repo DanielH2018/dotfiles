@@ -60,6 +60,34 @@ function jsonq(args, input) {
 const ok = (args, input) => jsonq(args, input).out;
 const SOURCE = fs.readFileSync(JSONQ, 'utf8');
 
+// The tool is the shim plus the modules it loads, so every structural assertion
+// below runs over all of them. Reading only the shim would be the whole failure
+// mode: the interpreter moved to share/jsonq, and "contains no eval" is trivially
+// true of a shim, so these would stay green while covering nothing that matters.
+// They are discovered from disk rather than listed, so a new module is covered
+// the moment it exists.
+const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'jsonq');
+const MODULE_FILES = fs.readdirSync(SHARE).filter((f) => f.endsWith('.py')).sort();
+const SOURCES = [
+  ['executable_jsonq', SOURCE],
+  ...MODULE_FILES.map((f) => [f, fs.readFileSync(path.join(SHARE, f), 'utf8')]),
+];
+
+// Structural greps run over code with comments and string literals removed.
+// These files explain at length what they deliberately do NOT do — the shim
+// docstring spells out the sys.path.insert it refuses to use — so grepping the
+// raw text makes an assertion about prose, and tightening the prose to appease
+// a regex is the wrong repair. Tokenizing first means the tests read what runs.
+const CODE = skip ? [] : SOURCES.map(([name, src]) => [name, execFileSync(python, ['-c', `
+import io, sys, tokenize
+src = sys.stdin.read()
+keep = []
+for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+    if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+        keep.append(tok.string)
+print(" ".join(keep))
+`], { encoding: 'utf8', input: src })]);
+
 // ---------------------------------------------------------------------------
 // Structure. These assert the safety property itself rather than a sample of
 // its consequences — they are what the escape suite used to pretend to be.
@@ -67,57 +95,82 @@ const SOURCE = fs.readFileSync(JSONQ, 'utf8');
 test('the interpreter never hands anything to CPython to run', { skip }, () => {
   // Comments and docstrings name eval/exec/compile to explain why they are
   // gone, so match call syntax rather than the bare word.
-  for (const bad of ['eval(', 'exec(', 'compile(', '__import__(']) {
-    assert.ok(!SOURCE.includes(bad),
-      `executable_jsonq must not contain ${bad} — the whole design is that the `
-      + 'tree is walked, not compiled');
+  assert.ok(CODE.length > 1, 'the module sources should have been found');
+  for (const [name, code] of CODE) {
+    for (const bad of ['eval', 'exec', 'compile', '__import__']) {
+      assert.doesNotMatch(code, new RegExp(`\\b${bad}\\s*\\(`),
+        `${name} must not call ${bad}() — the whole design is that the tree is `
+        + 'walked, not compiled');
+    }
   }
 });
 
 test('ast.Attribute has no handler, so `x.y` cannot run at all', { skip }, () => {
-  assert.ok(!/ast\.Attribute\s*:/.test(SOURCE),
-    'an entry for ast.Attribute in a dispatch table would reintroduce methods '
-    + 'and module namespaces, which is the escape route the rewrite removed');
+  for (const [name, code] of CODE) {
+    assert.doesNotMatch(code, /ast\s*\.\s*Attribute\s*:/,
+      `an entry for ast.Attribute in a dispatch table (${name}) would reintroduce `
+      + 'methods and module namespaces, which is the escape route the rewrite removed');
+  }
 });
 
-test('the tool is one self-contained file, so the grant covers one file', { skip }, () => {
-  // `Bash(jsonq:*)` never prompts, and settings.permissions.json justifies that
-  // with a property scoped to a single file: no eval, and an interpreter "in
-  // that same file" whose tables are the grammar. The two structure tests above
-  // check that property — but they read only executable_jsonq, so splitting the
-  // tool into modules would leave them asserting it about the shim while the
-  // interpreter moved somewhere they never look. They would stay green and
-  // cover less. This is what stops that: depend on nothing but the standard
-  // library, and the file the tests read is the whole tool.
+test('every module depends on nothing but the standard library', { skip }, () => {
+  // `Bash(jsonq:*)` never prompts. What earns that is a property of the whole
+  // tool, so it has to hold module by module: if any of them could pull in code
+  // from outside the standard library, the audited set would no longer be the
+  // set that runs.
   const stdlib = new Set(JSON.parse(execFileSync(python, ['-c',
     'import json,sys; print(json.dumps(sorted(sys.stdlib_module_names)))'],
   { encoding: 'utf8' })));
 
-  const imported = [];
-  for (const line of SOURCE.split('\n')) {
-    const from = /^from\s+([.\w]+)\s+import\s/.exec(line);
-    if (from) { imported.push(from[1]); continue; }
-    const plain = /^import\s+(.+)$/.exec(line);
-    if (plain) imported.push(...plain[1].split(',').map((m) => m.trim().split(/\s+as\s+/)[0]));
+  for (const [name, src] of SOURCES) {
+    const imported = [];
+    for (const line of src.split('\n')) {
+      const from = /^from\s+([.\w]+)\s+import\s/.exec(line);
+      if (from) { imported.push(from[1]); continue; }
+      const plain = /^import\s+(.+)$/.exec(line);
+      if (plain) imported.push(...plain[1].split(',').map((m) => m.trim().split(/\s+as\s+/)[0]));
+    }
+    for (const mod of imported) {
+      const head = mod.split('.')[0];
+      assert.ok(head === '__future__' || head === '_jsonq' || stdlib.has(head),
+        `${name} imports ${mod}, which is neither a sibling module nor part of `
+        + 'the standard library');
+    }
   }
-  assert.ok(imported.length > 5, 'the import block should have been found');
-  for (const mod of imported) {
-    // A relative import ("from . import core") fails here too: it is not a
-    // stdlib name, which is the answer we want for a sibling module.
-    assert.ok(mod === '__future__' || stdlib.has(mod.split('.')[0]),
-      `executable_jsonq imports ${mod}, which is not in the standard library — `
-      + 'the tool must stay one file, because the permission grant that lets it '
-      + 'run without a prompt is written against one file');
+});
+
+test('the modules are loaded without putting their directory on sys.path', { skip }, () => {
+  // The reason this matters is specific, not hygienic. With share/jsonq on
+  // sys.path, an unmanaged json.py dropped there would shadow the standard
+  // library for every later import and run under a rule that never prompts.
+  // Binding the directory to a package __path__ instead scopes it to _jsonq.*,
+  // so an unexpected file is inert rather than a shadow.
+  for (const [name, code] of CODE) {
+    assert.doesNotMatch(code, /sys\s*\.\s*path\b/,
+      `${name} touches sys.path, which would make the code jsonq runs depend on `
+      + 'a directory outside the audited set');
   }
+  assert.match(CODE[0][1], /__path__\s*=\s*\[\s*share\s*\]/,
+    'the shim should still scope resolution with a package __path__');
+});
 
-  assert.ok(!/sys\.path/.test(SOURCE),
-    'touching sys.path would make the code jsonq runs depend on a directory '
-    + 'outside the audited file');
+test('the share directory holds exactly the modules the shim loads', { skip }, () => {
+  // An extra file there is never imported, so it cannot shadow anything — but
+  // it is also unreviewed code sitting inside the tool's own directory, which
+  // is worth failing on rather than tolerating.
+  const listed = /MODULES = \(([\s\S]*?)\)/.exec(SOURCE);
+  assert.ok(listed, 'could not find the MODULES tuple in the shim');
+  const expected = [...listed[1].matchAll(/'([^']+)'|"([^"]+)"/g)]
+    .map((m) => `${m[1] || m[2]}.py`).sort();
+  assert.deepStrictEqual(MODULE_FILES, expected,
+    'share/jsonq and the shim\'s MODULES tuple disagree');
+});
 
-  const share = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'jsonq');
-  assert.ok(!fs.existsSync(share),
-    `${share} exists — a module directory under a blanket Bash allow means `
-    + 'anything that can write there runs unprompted');
+test('running jsonq leaves no bytecode cache in the share directory', { skip }, () => {
+  ok(['1 + 1', T]);
+  assert.ok(!fs.existsSync(path.join(SHARE, '__pycache__')),
+    'a writable __pycache__ inside the tool directory would be read back by '
+    + 'later runs; the shim sets sys.dont_write_bytecode to prevent it');
 });
 
 test('the escape-prone builtins are absent from the function table', { skip }, () => {
@@ -445,8 +498,9 @@ test('jsonq SECRET_PATHS matches the hook it mirrors', { skip }, () => {
   // POSIX bracket classes are the one permitted divergence — Python's re has no [:space:].
   const fromHook = hookMatch[1].replace(/\[:space:\]/g, '\\s');
 
-  const block = SOURCE.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
-  assert.ok(block, 'could not find SECRET_PATHS in jsonq');
+  const limits = fs.readFileSync(path.join(SHARE, 'limits.py'), 'utf8');
+  const block = limits.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
+  assert.ok(block, 'could not find SECRET_PATHS in limits.py');
   const fromJsonq = [...block[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
 
   assert.strictEqual(fromJsonq, fromHook,
