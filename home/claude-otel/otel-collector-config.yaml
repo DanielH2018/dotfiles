@@ -42,6 +42,19 @@ service:
   telemetry:
     logs:
       level: info
+    # The collector's own metrics — queue depth, and the send_failed_* counters that
+    # are the only evidence a batch was dropped on the way to Loki/Tempo/Prometheus.
+    # Without these a silent export failure looks identical to "Claude Code was idle".
+    # The default binds this endpoint to localhost, which inside the container means
+    # nothing else can reach it; 0.0.0.0 lets Prometheus scrape it over the compose
+    # network. The port stays unpublished, so it is not reachable from the host.
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   pipelines:
     metrics:
       receivers: [otlp]

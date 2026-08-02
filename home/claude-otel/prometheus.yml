@@ -7,3 +7,11 @@ scrape_configs:
   - job_name: otel-collector
     static_configs:
       - targets: ["otel-collector:8889"]
+
+  # Scrape the collector's own health (otelcol_exporter_send_failed_*, queue size).
+  # Separate job because :8889 carries the converted Claude Code metrics and :8888
+  # carries the collector's internals — they are different endpoints, not one target
+  # with two ports.
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
