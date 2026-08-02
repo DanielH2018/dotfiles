@@ -1258,7 +1258,17 @@
   "preferredNotifChannel": "terminal_bell",
 {{- end }}
   "advisorModel": "opus",
-  "awaySummaryEnabled": true,
+  {{/* Off on measured cost, not on principle. Over 16h of OTEL telemetry
+       (2026-08-01/02) away_summary was 28 firings, $23.96, and 40% of every
+       cache-write token spent — for 2.3k output tokens, 0.4% of the total. Each
+       firing writes a fresh ~84k-token cache entry it then never reads, so it
+       costs ~$0.86 a time and amortises across nothing. Both it and
+       prompt_suggestion reconciled to $0.00 against list price at the 1h
+       cache TTL, which is how that rate was confirmed rather than assumed.
+       The tradeoff is real — this is the summary of what happened while you
+       were away, and background jobs are the case it exists for. Flip back to
+       true to buy it again; the price is the number above. */}}
+  "awaySummaryEnabled": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
   "skipWorkflowUsageWarning": true,
