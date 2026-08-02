@@ -22,11 +22,14 @@ const path = require('node:path');
 
 const SANDBOX_DIR_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX_DIR_SRC, 'executable_claude-sandbox');
-// The add_*_mounts functions and their snapshot helpers live in the mount-assembly
-// lib the launcher sources, and run_oauth_if_needed in the auth lib, so extraction
-// searches all three files.
-const MOUNTS_LIB = path.join(SANDBOX_DIR_SRC, 'executable_sandbox-mounts.sh');
-const AUTH_LIB = path.join(SANDBOX_DIR_SRC, 'executable_sandbox-auth.sh');
+// The functions under test are spread across the launcher and the libs it sources, and
+// which lib owns which keeps changing as the launcher is decomposed. Globbed rather
+// than named, the way the other sandbox harnesses do it: naming them meant this file
+// broke on each extraction, once for the mounts lib and again for the auth lib.
+const SOURCES = [LAUNCHER, ...fs.readdirSync(SANDBOX_DIR_SRC)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_DIR_SRC, f))];
 
 let toolsOk = true;
 try {
@@ -44,7 +47,7 @@ function extractFunction(name) {
     '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
     '  if (started && depth==0) exit\n' +
     '}',
-    LAUNCHER, MOUNTS_LIB, AUTH_LIB,
+    ...SOURCES,
   ], { encoding: 'utf8' });
   assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(body), `extracted the ${name} definition`);
   assert.strictEqual(body.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);

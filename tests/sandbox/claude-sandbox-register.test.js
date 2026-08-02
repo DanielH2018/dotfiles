@@ -16,6 +16,16 @@ const path = require('node:path');
 const SANDBOX = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
 const HELPER = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_agent-view-register.sh');
 const SRC = fs.readFileSync(SANDBOX, 'utf8');
+// The launcher plus every lib it sources. SRC stays the launcher alone, because the
+// assertions below count occurrences and widening it would change those counts; this is
+// for the one claim that is about the sourced tree rather than the launcher file —
+// cleanup() now lives in sandbox-session.sh.
+const SANDBOX_LIB_DIR = path.dirname(SANDBOX);
+const SOURCED_SRC = [SANDBOX, ...fs.readdirSync(SANDBOX_LIB_DIR)
+  .filter((f) => /^executable_sandbox-.*\.sh$/.test(f))
+  .sort()
+  .map((f) => path.join(SANDBOX_LIB_DIR, f))]
+  .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -65,7 +75,7 @@ test('registration is ordered before the interactive docker run', () => {
 });
 
 test('cleanup deregisters via the RUN_ID-guarded remove (inside cleanup, no 2nd trap)', () => {
-  assert.match(SRC, /av_guarded_remove "\$INSTANCE_ID" "\$RUN_ID"/);
+  assert.match(SOURCED_SRC, /av_guarded_remove "\$INSTANCE_ID" "\$RUN_ID"/);
   // Exactly one EXIT trap — a second would clobber cleanup() and leak resources.
   const traps = SRC.match(/trap cleanup EXIT/g) || [];
   assert.strictEqual(traps.length, 1, 'must keep the single existing cleanup EXIT trap');
