@@ -10,11 +10,11 @@
         new fragment is covered on creation; do not narrow it back to a list.
       * bin/config-soak tracks this path, so a change here needs review + `config-soak
         land` before it can ship.
-      * tests/allow-compound-bash.test.js and tests/secret-registry.test.js read this
-        file's RAW TEXT and parse the allow/deny arrays out of it. They anchor on
+      * tests/hooks/allow-compound-bash.test.js and tests/secret-registry.test.js read
+        this file's RAW TEXT and parse the allow/deny arrays out of it. They anchor on
         finding the arrays first, so moving rules out of here fails them loudly.
-      * tests/settings-templates-tracked.test.js asserts the three above still point
-        at every fragment.
+      * tests/settings/settings-templates-tracked.test.js asserts the three above still
+        point at every fragment.
 
     Rendered as a bare object, so it starts with { and ends with } — not a fragment of
     one. Keep it that way: the base template supplies the key name and the comma. */}}
