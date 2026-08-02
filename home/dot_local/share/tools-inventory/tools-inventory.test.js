@@ -284,3 +284,65 @@ test("a chezmoi query still answers while another process holds the state lock",
     try { fs.rmSync(scratch, { force: true }); } catch { /* nothing to clean up */ }
   }
 });
+
+// --- the library seam -------------------------------------------------------------------
+// Everything above reaches the code through the CLI's re-export. These reach the modules
+// directly, so a module and the facade in front of it cannot drift apart unnoticed.
+
+test("the CLI facade re-exports the library rather than a second copy", () => {
+  const core = require("./core");
+  const sources = require("./sources");
+  const render = require("./render");
+  const { build } = require("./build");
+
+  const fromCore = ["esc", "langOf", "countLines", "headerComment", "coveredPaths",
+    "codeFiles", "driftOf", "hostState", "humanCount"];
+  for (const k of [...fromCore, "listSources", "renderPage", "build"]) {
+    assert.strictEqual(typeof m[k], "function", `${k} must stay on the CLI's exports`);
+  }
+  // Identity only holds when the module under test is this tree's CLI. Pointed at a
+  // deployed copy it loads that tree's library, which is a different instance by design.
+  if (process["env"].TOOLS_INVENTORY_BIN) {
+    console.log("     (identity check skipped: TOOLS_INVENTORY_BIN set)");
+    return;
+  }
+  for (const k of fromCore) assert.strictEqual(m[k], core[k], `${k} must come from core.js`);
+  assert.strictEqual(m.listSources, sources.listSources, "listSources must come from sources.js");
+  assert.strictEqual(m.renderPage, render.renderPage, "renderPage must come from render.js");
+  assert.strictEqual(m.build, build, "build must come from build.js");
+});
+
+test("assets are interpolated without their trailing newline", () => {
+  // The stylesheet and browser block used to be template literals ending at their last
+  // brace. As files they end with a newline, and emitting it would shift every byte after
+  // it — the page would no longer match the one on disk and every apply would rewrite it.
+  const render = require("./render");
+  const fs = require("fs");
+  for (const name of ["page.css", "page.js"]) {
+    const used = render.asset(name);
+    assert.ok(!/\n$/.test(used), `${name} must be interpolated without a trailing newline`);
+    assert.ok(fs.readFileSync(path.join(__dirname, "assets", name), "utf8").endsWith("\n"),
+      `${name} must still be a well-formed file on disk`);
+  }
+  assert.ok(render.asset("page.css").startsWith(":root{"), "page.css starts at the palette");
+});
+
+test("a missing asset fails when the page is built, not when render.js loads", () => {
+  // render.js has already been required by the test above without throwing, which is the
+  // first half of this. The second: the failure still arrives, as an error main() catches
+  // and reports while leaving the previous page in place.
+  const render = require("./render");
+  assert.throws(() => render.asset("no-such-asset.css"), /ENOENT/);
+});
+
+test("the browser asset parses as JavaScript", () => {
+  // Nothing else reads this file until a browser does. It also carries the one regex that
+  // needed a doubled backslash while it lived in a template literal, so a bad round trip
+  // through that escaping shows up here rather than as a silently dead search box.
+  const cp = require("child_process");
+  const asset = path.join(__dirname, "assets", "page.js");
+  const r = cp.spawnSync(process.execPath, ["--check", asset], { encoding: "utf8" });
+  assert.strictEqual(r.status, 0, `page.js must parse: ${r.stderr}`);
+  assert.match(require("fs").readFileSync(asset, "utf8"), /raw\.split\(\/\\s\+\/\)/,
+    "the whitespace split must use the single-backslash spelling a real .js file needs");
+});
