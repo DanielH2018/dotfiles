@@ -4,8 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const lib = require("../hooks/log-permission.js");
 
-const STORE_PATH = lib.STORE_PATH;
-
 function parseArgs(argv) {
   const out = { since: null, prune: null, json: false, error: null };
   for (let i = 0; i < argv.length; i++) {

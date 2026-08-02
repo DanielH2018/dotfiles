@@ -47,7 +47,7 @@ test('cmdSync --dry-run performs NO mutating runner calls', () => {
   const rc = cmdSync({ home: HOME, manifestDir: MAN, runner: recRunner, force: false, dryRun: true });
   console.log = origLog;
   assert.strictEqual(rc, 0, 'dry-run with everything ignored -> no orphans -> 0');
-  assert.ok(!calls.some(([c, ...a]) => a.some((x) => MUTATING.has(x))), 'no mutating calls issued in dry-run');
+  assert.ok(!calls.some(([, ...a]) => a.some((x) => MUTATING.has(x))), 'no mutating calls issued in dry-run');
   assert.ok(fs.existsSync(path.join(HOME, '.config/dotsync/INVENTORY.md')), 'dry-run still regenerates inventory');
 });
 

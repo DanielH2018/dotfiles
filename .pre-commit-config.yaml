@@ -70,3 +70,37 @@ repos:
         entry: bin/lint-sh-templates
         language: system
         files: \.sh\.tmpl$
+
+      # JavaScript is the largest language here (153 .js + 26 .mjs) and nothing linted it.
+      # oxlint rather than eslint because this repo has no package.json and no node_modules
+      # on purpose -- the suite is plain `node --test` -- so the linter has to be a single
+      # binary run as `language: system`, exactly like ruff and shellcheck above. Rules and
+      # the reasoning behind the three that are off live in .oxlintrc.json, which oxlint
+      # discovers from the repo root on its own.
+      #
+      # It runs through bin/lint-js rather than calling oxlint directly, for two reasons that
+      # both make a bare `entry: oxlint` silently useless. oxlint selects files by EXTENSION
+      # and refuses anything else ("No files found to lint"), which would exclude the five
+      # extensionless `#!/usr/bin/env node` scripts -- among them bin/config-soak, itself a
+      # push gate. And every rule in the default correctness category reports at WARNING
+      # severity, where oxlint exits 0: without --deny-warnings the hook would print findings
+      # and pass. See that script for how both are handled.
+      #
+      # `files:` is a WIDENER, the same way it is on ruff-check: it is ANDed with types_or,
+      # so it admits those extensionless scripts, which `javascript` cannot type by
+      # extension. They need the +x bit in git as well, since a shebang only types a file
+      # that is executable -- four of the five sat at 100644 and were set executable in the
+      # commit that added this hook. Adding another extensionless node script means doing
+      # both: name it here AND `git update-index --chmod=+x`.
+      #
+      # Deliberately NOT skip-if-absent, unlike bin/lint-sh-templates: chezmoi is already a
+      # hard dependency of working in this repo, but oxlint is new and installed nowhere
+      # until `chezmoi apply` runs post-install/run_onchange_after_install-js-lint.sh.tmpl.
+      # A hook that quietly skips when its tool is missing would be a no-op on every machine
+      # -- which is the failure this whole change exists to fix.
+      - id: oxlint
+        name: oxlint (javascript)
+        entry: bin/lint-js
+        language: system
+        types_or: [javascript]
+        files: (\.(js|mjs)$|^(bin/config-soak|home/dot_local/bin/executable_(claude-settings-merge|dotsync|terminal-cheatsheet|tools-inventory))$)

@@ -28,7 +28,7 @@ const ruffSkip = ruffOk ? false : 'ruff unavailable';
 function gitConfigGet(key) {
   try {
     return execFileSync('git', ['config', '--file', GITCONFIG, '--get', key], { encoding: 'utf8' }).trim();
-  } catch (e) {
+  } catch {
     return null;
   }
 }

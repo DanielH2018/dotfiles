@@ -66,7 +66,7 @@ function parseNvim(xdg = XDG) {
       for (const line of kb[1].split('\n')) {
         const lhs = (line.match(/\{\s*"([^"]+)"/) || [])[1];
         if (!lhs) continue;
-        const d = (line.match(/desc\s*=\s*"([^"]*)"/) || [, ''])[1];
+        const d = (line.match(/desc\s*=\s*"([^"]*)"/) || ['', ''])[1];
         const mode = nvimMode((line.match(/mode\s*=\s*("[^"]*"|\{[^}]*\})/) || [])[1]);
         add(group, lhs, mode, d);
       }
@@ -81,8 +81,7 @@ function parseNvim(xdg = XDG) {
       .map((h) => h[1]);
     for (const h of new Set(helpers)) {
       const call = new RegExp('[^.\\w]' + h + '\\s*\\(', 'g');
-      let c;
-      while ((c = call.exec(src))) {
+      while (call.exec(src)) {
         const strs = callStrings(src, call.lastIndex - 1);
         if (strs.length >= 2 && strs[0] !== strs[strs.length - 1]) add(group, strs[0], 'n', strs[strs.length - 1]);
       }
@@ -90,7 +89,7 @@ function parseNvim(xdg = XDG) {
   }
 
   const o = read(path.join(xdg, 'nvim', 'lua', 'config', 'options.lua'));
-  const og = (re) => (o.match(re) || [, ''])[1];
+  const og = (re) => (o.match(re) || ['', ''])[1];
   const lead = og(/mapleader\s*=\s*"([^"]*)"/);
   const leader = lead === ' ' ? 'Space' : (lead || '\\');
   const settings = [

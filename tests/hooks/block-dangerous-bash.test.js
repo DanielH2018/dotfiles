@@ -39,7 +39,7 @@ function decision(stdout) {
 const LANES = Math.min(8, os.availableParallelism());
 // Decisions for `commands`, indexed to match, so callers assert in list order.
 async function decide(commands) {
-  const out = new Array(commands.length);
+  const out = Array.from({ length: commands.length });
   let next = 0;
   await Promise.all(Array.from({ length: LANES }, async () => {
     while (next < commands.length) {

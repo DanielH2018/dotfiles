@@ -37,7 +37,7 @@ function parseEntries(src, table) {
     const [, key, rhs] = m;
     cur[key] = rhs.startsWith('[')
       ? [...rhs.matchAll(/"([^"]*)"|'([^']*)'/g)].map((x) => x[1] ?? x[2])
-      : (rhs.match(/^"([^"]*)"$|^'([^']*)'$/) || [, rhs])[1] ?? rhs.replace(/^'|'$/g, '');
+      : (rhs.match(/^"([^"]*)"$|^'([^']*)'$/) || [rhs, rhs])[1] ?? rhs.replace(/^'|'$/g, '');
   }
   return out;
 }

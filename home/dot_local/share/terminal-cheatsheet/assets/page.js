@@ -2,7 +2,7 @@ const q=document.getElementById('q'),count=document.getElementById('count');
 const rows=[...document.querySelectorAll('tr.bind')];
 const grps=[...document.querySelectorAll('.grp')];
 const cards=[...document.querySelectorAll('.card')];
-q&&q.addEventListener('input',()=>{
+if(q)q.addEventListener('input',()=>{
   const t=q.value.trim().toLowerCase();let n=0;
   for(const r of rows){const hit=!t||r.textContent.toLowerCase().includes(t);r.style.display=hit?'':'none';if(hit)n++;}
   for(const g of grps){g.style.display=[...g.querySelectorAll('tr.bind')].some(r=>r.style.display!=='none')?'':'none';}

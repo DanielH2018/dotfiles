@@ -1,0 +1,22 @@
+#!/bin/sh
+# Install oxlint, the JavaScript linter the chezmoi repo's prek hook and pre-push gate run.
+#
+# Its own script rather than a line in run_onchange_after_install-node-lsps.sh.tmpl, which
+# already does this fnm dance: that one installs the language servers nvim enables, and its
+# re-run key is that package list. Bumping the LSP set should not reinstall the linter, and
+# bumping the linter should not reinstall four language servers, so they stay separate — the
+# same split as install-python-tools, which owns ruff for the same reason.
+#
+# npm rather than a GitHub release binary: oxlint's releases live in the oxc monorepo, whose
+# /releases/latest currently resolves to an oxfmt tag, so install_release's latest_tag helper
+# would build a URL for a tag that carries no oxlint asset. The npm package pulls the right
+# platform binary through optional deps and puts `oxlint` on PATH.
+#
+# js-lint-bump: v1
+# chezmoi runs this non-interactively; ~/.local/bin (where fnm lives) is only added to PATH
+# by the interactive shell rc, so prepend it here before probing for fnm.
+PATH="$HOME/.local/bin:$PATH"
+command -v fnm >/dev/null 2>&1 || { echo "install-js-lint: fnm not on PATH; skipping (re-run 'chezmoi apply' once fnm is installed)" >&2; exit 0; }
+eval "$(fnm env --shell bash)" 2>/dev/null || true
+command -v npm >/dev/null 2>&1 || { echo "install-js-lint: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
+npm install -g oxlint

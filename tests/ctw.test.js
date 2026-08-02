@@ -16,7 +16,6 @@ const path = require('node:path');
 const CTW = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_ctw');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ctw-')); dirs.push(d); return fs.realpathSync(d); }

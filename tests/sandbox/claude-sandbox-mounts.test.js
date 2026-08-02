@@ -18,27 +18,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const SANDBOX_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
-const LAUNCHER = path.join(SANDBOX_SRC, 'executable_claude-sandbox');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
   : toolsOk ? false : 'bash/awk unavailable';
-
-function extractFunction(name) {
-  const src = execFileSync('awk', [
-    `/^${name}\\(\\) \\{/ { started=1 }\n` +
-    'started {\n' +
-    '  print\n' +
-    '  depth += gsub(/{/,"{") - gsub(/}/,"}")\n' +
-    '  if (started && depth==0) exit\n' +
-    '}',
-    LAUNCHER,
-  ], { encoding: 'utf8' });
-  assert.ok(new RegExp(`^${name}\\(\\) \\{`).test(src), `extracted the ${name} definition`);
-  assert.strictEqual(src.trimEnd().split('\n').pop(), '}', `extracted ${name} body ends at its matching closing brace`);
-  return src;
-}
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
@@ -216,12 +200,13 @@ test('the vault dir is advertised to the container only when something mounted',
 
 // --- add_chezmoi_mount -------------------------------------------------------
 
-// The cm/wc prefixes on the fixture paths below are load-bearing, not style.
-// sandbox-escape.test.js taints by NAME across the whole file, and
-// extractFunction above binds `src` to a path built from __dirname — so a
-// fixture variable also called `src` inherits that taint and every write to it
-// is reported as writing into the repo checkout. Renaming these back will fail
-// the suite with a message that points at the wrong thing.
+// The cm/wc prefixes on the fixture paths below are defensive, not style.
+// sandbox-escape.test.js taints by NAME across the whole file, so any local called
+// `src` inherits the taint of any other `src` bound to a __dirname-derived path, and
+// every write to it is then reported as writing into the repo checkout. The binding
+// that caused that here (an extractFunction helper reading the launcher) is gone —
+// it went dead when those functions moved out into sandbox-auth.sh — but the naming
+// stays, because reintroducing a `src` above would re-create the collision silently.
 function chezmoiFixture({ root: cmRoot = null, hooks = true, sandbox = true } = {}) {
   const f = vaultFixture();
   const cmSrc = path.join(f.root, 'chezmoi');

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+
+  // JavaScript was the largest language in this repo (153 .js + 26 .mjs) and nothing linted
+  // it. There is no package.json and no node_modules by design -- the test suite is plain
+  // `node --test` -- so the linter had to be a single binary invoked as `language: system`,
+  // the same shape as ruff and shellcheck. oxlint fits that; eslint would have required a
+  // dependency tree this repo deliberately does not have.
+  //
+  // Only oxlint's default `correctness` category is on. The three rules turned off below
+  // account for 50 of the 69 findings the default set produced on first run, and none of
+  // them indicated a defect.
+
+  "rules": {
+    // The codebase already marks a deliberately-unused binding by naming it `_` — 15 of the
+    // first run's findings were `catch (_) {}`, which is the convention working as intended.
+    // Teaching the rule that convention beats rewriting those sites, most of which are in the
+    // portable audit package that ships elsewhere.
+    "no-unused-vars": [
+      "warn",
+      {
+        "caughtErrorsIgnorePattern": "^_",
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+
+    // Matching ANSI/VT escape sequences IS the domain here -- agentview, the terminal
+    // cheatsheet parsers, and the statusline tests all parse terminal output, and a control
+    // character in those regexes is the intended literal. This rule fired 17 times and would
+    // have been wrong every time. Not a ratchet: it should stay off.
+    "no-control-regex": "off",
+
+    // 22 findings, all redundant backslashes inside regex literals (mostly `\$`). Left off
+    // rather than mass-rewritten: changing escapes in 22 regexes across files this change
+    // does not otherwise touch is a semantic edit that a passing test suite would not catch
+    // if one of them widened a pattern. Narrow this back by fixing a file's escapes and
+    // adding an `overrides` entry that re-enables the rule for it -- not by leaving it off
+    // forever.
+    "no-useless-escape": "off",
+
+    // 11 findings, purely stylistic (`/^foo/.test(s)` vs `s.startsWith('foo')`). Same
+    // reasoning as above: worth doing, not worth doing blind in this change.
+    "unicorn/prefer-string-starts-ends-with": "off"
+  }
+}

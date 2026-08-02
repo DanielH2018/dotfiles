@@ -32,7 +32,7 @@ const FLOOR = [
 ];
 const withFloor = (obj = {}) => ({
   ...obj,
-  permissions: { ...(obj.permissions || {}), deny: [...FLOOR, ...((obj.permissions || {}).deny || [])] },
+  permissions: { ...obj.permissions, deny: [...FLOOR, ...((obj.permissions || {}).deny || [])] },
 });
 
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));

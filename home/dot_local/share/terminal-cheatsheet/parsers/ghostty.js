@@ -48,7 +48,7 @@ function parseGhostty(xdg = XDG) {
     if (eq < 0) continue;
     binds.push({ combo: ghosttyCombo(m[1].slice(0, eq).trim()), desc: ghosttyLabel(m[1].slice(eq + 1).trim()) });
   }
-  const g = (re) => (src.match(re) || [, ''])[1];
+  const g = (re) => (src.match(re) || ['', ''])[1];
   const scroll = g(/^scrollback-limit\s*=\s*(\d+)/m);
   const settings = [
     ['Font', g(/^font-family\s*=\s*"?([^"\n]+?)"?\s*$/m)],

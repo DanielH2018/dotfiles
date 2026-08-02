@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# lint-js — run oxlint over the repo's JavaScript, including the files it cannot open itself.
+#
+# oxlint selects files by EXTENSION and refuses anything else outright ("No files found to
+# lint", exit 1). That would leave the five `#!/usr/bin/env node` scripts with no extension
+# unchecked — bin/config-soak, which is itself a push gate, plus claude-settings-merge, which
+# generates ~/.claude/settings.json. Skipping exactly the load-bearing files is the shape of
+# gap this gate was added to close, so they are linted through a temp copy named *.js and the
+# findings are reported against their real paths.
+#
+# Copy rather than symlink: oxlint resolves a symlink and reports the target path, which puts
+# the original path back in the output but also makes it follow into the repo for its config
+# lookup in a way that differs from the plain case. A copy keeps both predictable.
+#
+# No skip-if-absent, unlike bin/lint-sh-templates. chezmoi is already a hard dependency of
+# working in this repo; oxlint is new and is installed by
+# post-install/run_onchange_after_install-js-lint.sh.tmpl, so on a machine that has not run
+# `chezmoi apply` since it landed, the honest answer is to fail and say what to run — a hook
+# that skipped instead would be a silent no-op everywhere, which is the bug being fixed.
+#
+# --deny-warnings on both calls is load-bearing: every rule in oxlint's default correctness
+# category reports at WARNING severity, and oxlint exits 0 on warnings. Without the flag the
+# gate reports findings and passes anyway — it would have printed problems for as long as it
+# existed while never once failing a push.
+#
+# Kept bash-3.2 clean (macOS default bash), matching the rest of bin/.
+
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+if ! command -v oxlint >/dev/null 2>&1; then
+  printf 'lint-js: oxlint is not installed.\n' >&2
+  printf '  Install it with:  chezmoi apply   (post-install/run_onchange_after_install-js-lint.sh.tmpl)\n' >&2
+  printf '  or directly:      npm install -g oxlint\n' >&2
+  exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+  # No arguments means a manual run; prek always passes the matched files. Extensionless
+  # scripts are found by shebang rather than by name, so this stays correct as they are
+  # added or renamed — the hook's own `files:` list still has to be updated by hand, which
+  # is why the two disagree only in the direction of this one checking more.
+  extra=""
+  for f in $(git ls-files); do
+    case "${f##*/}" in
+      *.*) continue ;;
+    esac
+    [ -f "$f" ] || continue
+    case "$(head -1 "$f")" in
+      '#!/usr/bin/env node' | '#!'*/node) extra="$extra $f" ;;
+    esac
+  done
+  # shellcheck disable=SC2046,SC2086  # word-split intended; no path in this repo has spaces
+  set -- $(git ls-files '*.js' '*.mjs') $extra
+fi
+
+WORK="$(mktemp -d)" || exit 1
+trap 'rm -rf "$WORK"' EXIT
+
+direct=""
+mapped=""
+
+for f in "$@"; do
+  case "$f" in
+    *.js | *.mjs | *.cjs)
+      direct="$direct $f"
+      ;;
+    *)
+      # Flatten the path into the copy's name so two scripts with the same basename in
+      # different directories cannot collide inside the temp dir.
+      copy="$WORK/$(printf '%s' "$f" | tr / _).js"
+      cp "$f" "$copy" || exit 1
+      mapped="$mapped $copy"
+      printf '%s\t%s\n' "$copy" "$f" >>"$WORK/.map"
+      ;;
+  esac
+done
+
+fail=0
+
+if [ -n "$direct" ]; then
+  # shellcheck disable=SC2086  # word-split intended
+  oxlint --deny-warnings $direct || fail=1
+fi
+
+if [ -n "$mapped" ]; then
+  # Rewrite each temp path back to the real one so the output is clickable and so a reader
+  # is never told about a file in /tmp that does not exist by the time they look.
+  # shellcheck disable=SC2086  # word-split intended
+  out="$(oxlint --deny-warnings $mapped 2>&1)" || fail=1
+  if [ -n "$out" ]; then
+    while IFS="$(printf '\t')" read -r copy orig; do
+      out="${out//$copy/$orig}"
+    done <"$WORK/.map"
+    printf '%s\n' "$out"
+  fi
+fi
+
+exit "$fail"

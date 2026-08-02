@@ -33,7 +33,6 @@ function build(opts) {
 
   for (const t of tools) {
     const files = codeFiles(t);
-    const text = t.source ? read(path.join(sourceDir, t.source)) : '';
     const lines = files.reduce((n, p) => n + countLines(read(path.join(sourceDir, p))), 0);
     if (!t.noLines && lines) lineTotal += lines;
     t.metaLine = t.langLabel

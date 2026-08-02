@@ -107,7 +107,7 @@ test('buildOwnership + computeCheck', { skip }, () => {
 });
 
 test('conflict: two repos claim the same path', { skip }, () => {
-  const dupRunner = (cmd, args) => {
+  const dupRunner = (cmd) => {
     if (cmd === 'chezmoi') return { code: 0, stdout: '.config/zsh/local.zsh\n', stderr: '' };
     if (cmd === 'git') return { code: 0, stdout: '.config/zsh/local.zsh\n', stderr: '' };
     return { code: 1, stdout: '', stderr: '' };

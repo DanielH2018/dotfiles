@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(__dirname, '..', 'home', 'private_dot_claude', 'scripts', 'check-runner.mjs');
 
 let bashOk = true;
-try { spawnSync('bash', ['-c', 'true']).status === 0 || (bashOk = false); } catch { bashOk = false; }
+try { if (spawnSync('bash', ['-c', 'true']).status !== 0) bashOk = false; } catch { bashOk = false; }
 const skip = bashOk ? false : 'bash unavailable';
 
 const dirs = [];

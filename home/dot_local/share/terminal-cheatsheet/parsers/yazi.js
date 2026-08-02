@@ -21,7 +21,7 @@ function parseYazi(yaziRoot = YAZI) {
     binds.push({ keys: on, desc: d || run || '—' });
   }
   const yc = read(path.join(yaziRoot, 'yazi.toml'));
-  const yg = (re) => (yc.match(re) || [, ''])[1];
+  const yg = (re) => (yc.match(re) || ['', ''])[1];
   const settings = [
     ['Ratio', yg(/ratio\s*=\s*(\[[^\]]*\])/)],
     ['Sort', yg(/sort_by\s*=\s*"([^"]*)"/)],

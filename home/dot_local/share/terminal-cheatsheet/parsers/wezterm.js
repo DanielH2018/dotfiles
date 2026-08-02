@@ -89,11 +89,11 @@ function parseWezterm(xdg = XDG) {
   const src = read(file);
   if (!src.trim()) return null;
   const binds = [];
-  const block = (src.match(/config\.keys\s*=\s*\{([\s\S]*?)\n\}/) || [, ''])[1];
+  const block = (src.match(/config\.keys\s*=\s*\{([\s\S]*?)\n\}/) || ['', ''])[1];
   for (const entry of weztEntries(block)) {
     if (!/\bkey\s*=/.test(entry) || !/\baction\s*=/.test(entry)) continue;
     const key = (entry.match(/key\s*=\s*"([^"]+)"/) || [])[1];
-    const mods = (entry.match(/mods\s*=\s*"([^"]+)"/) || [, ''])[1];
+    const mods = (entry.match(/mods\s*=\s*"([^"]+)"/) || ['', ''])[1];
     const action = (entry.match(/action\s*=\s*act\.(\w+)/) || [])[1];
     if (!key) continue;
     binds.push({ combo: weztCombo(mods, key), desc: weztLabel(action, entry) });
@@ -101,7 +101,7 @@ function parseWezterm(xdg = XDG) {
   const loop = src.match(/for\s+i\s*=\s*1\s*,\s*(\d+)[\s\S]*?ActivateTab\(i\s*-\s*1\)/);
   if (loop) binds.push({ combo: `Ctrl+1…${loop[1]}`, desc: `Jump straight to tab 1…${loop[1]}` });
 
-  const g = (re) => (src.match(re) || [, ''])[1];
+  const g = (re) => (src.match(re) || ['', ''])[1];
   const shell = g(/default_prog\s*=\s*\{\s*"([^"]+)"/).replace(/\\\\/g, '\\').split(/[\\/]/).pop();
   const scroll = g(/scrollback_lines\s*=\s*(\d+)/);
   const settings = [
