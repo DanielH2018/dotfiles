@@ -63,6 +63,12 @@ Scripts
 **/.venv
 **/.pytest_cache
 
+# The tools-inventory suite resolves the generator by a source-tree relative path
+# (../../bin/executable_tools-inventory), so a deployed copy could not run even if it
+# were there. It stays in the checkout rather than joining tests/managed-test-paths.txt,
+# which is for tests that genuinely travel with ~/.claude.
+.local/share/tools-inventory/tools-inventory.test.js
+
 # claude artifacts: ~/.claude/artifacts is local scratch for plan/spec renders.
 # Don't manage the dir by default — blocks `chezmoi add` on ad-hoc artifacts so
 # scratch can't be swept upstream. Track only the specific plan files kept here.

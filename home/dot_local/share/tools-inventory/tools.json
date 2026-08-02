@@ -1,0 +1,792 @@
+{
+  "_readme": [
+    "Curated metadata for the chezmoi tools inventory, rendered by ~/.local/bin/tools-inventory.",
+    "Everything here is prose a generator cannot derive: what a tool is for, why it exists, its",
+    "flags, and which platforms it actually works on. Everything the generator CAN derive is",
+    "deliberately absent — line counts, whether a tool is deployed on this host, and whether its",
+    "tests exist are all read from disk at render time, so they cannot go stale here.",
+    "",
+    "Platform sets are curated rather than parsed out of .chezmoiignore on purpose: that file is a",
+    "chezmoi template with hostname lists and an includeTemplate call, and a second parser for it",
+    "would drift silently and produce a confidently wrong platform column. The per-host column is",
+    "not curated — it comes from `chezmoi ignored` plus a filesystem check.",
+    "",
+    "A script in the source tree with no entry here is still rendered, from its own header comment,",
+    "and reported in a drift banner at the top of the page. Add it here to give it a real card."
+  ],
+
+  "page": {
+    "title": "Tools in chezmoi",
+    "lede": "Every command the dotfiles repo installs — what it does, why it exists, how it is invoked, and which platforms it runs on. Descriptions paraphrase each script's own header comment.",
+    "scopeIn": "things you type. The <code>~/.local/bin</code> commands, the sandbox-side commands, the Windows-only host scripts, and the packages behind them.",
+    "scopeOut": "the Claude Code hooks under <code>~/.claude/hooks</code> and the sandbox hooks (<code>audit.sh</code>, <code>gh-pr-guard.sh</code>) — that is the config surface, and <code>/config-map</code> renders it."
+  },
+
+  "groups": [
+    { "id": "session", "title": "Claude session tooling" },
+    {
+      "id": "query",
+      "title": "Query & digest",
+      "note": "Three tools that exist for the same structural reason: the useful operation was reachable only through something correctly ask-listed (<code>python3 -c</code>, <code>curl</code>, a raw test runner). Each narrows the capability far enough that a blanket allow rule becomes defensible."
+    },
+    { "id": "config", "title": "Config & dotfiles" },
+    {
+      "id": "housekeeping",
+      "title": "Scheduled housekeeping",
+      "note": "Both run unattended on systemd-user timers, which is why containment is written into the scripts rather than into how they are called."
+    },
+    { "id": "desktop", "title": "Desktop & system" },
+    {
+      "id": "shims",
+      "title": "Platform shims",
+      "note": "Compat layers, not tools with a UI. Each shadows a real name earlier on <code>PATH</code> and forwards; they exist because a platform quirk broke something upstream."
+    },
+    {
+      "id": "windows",
+      "title": "Windows host scripts",
+      "note": "Deployed only on Windows (<code>bin/</code> and <code>Scripts/</code> are ignored everywhere else). Each fixes a defect in something that is not going to fix itself."
+    },
+    {
+      "id": "sandbox",
+      "title": "Sandbox-side helpers",
+      "note": "Invoked by <code>claude-sandbox</code> rather than typed, but they are programs with their own CLIs and their own tests. All live in <code>~/.claude/sandbox/</code>, which chezmoi skips on Windows."
+    },
+    {
+      "id": "libs",
+      "title": "Packages & libraries behind the commands",
+      "note": "Not commands themselves — listed so the inventory accounts for where the code actually lives.",
+      "compact": true
+    }
+  ],
+
+  "excluded": {
+    "_why": "Real scripts in the source tree that are deliberately not inventory entries. Listed so drift detection stays quiet about them instead of reporting them every run.",
+    "paths": [
+      "private_dot_claude/sandbox/executable_audit.sh",
+      "private_dot_claude/sandbox/executable_gh-pr-guard.sh",
+      "private_dot_claude/sandbox/executable_agent-view-state-hook.sh",
+      "private_dot_claude/sandbox/executable_entrypoint.sh",
+      "private_dot_claude/sandbox/executable_resolve-sandbox-settings.sh",
+      "private_dot_claude/sandbox/executable_sandbox-lib.sh",
+      "private_dot_claude/sandbox/executable_sandbox-worktree.sh",
+      "private_dot_claude/sandbox/executable_vault-search"
+    ],
+    "reason": "Claude Code hooks and sourced libraries — the config surface, not commands. vault-search is listed here because it has its own curated entry keyed to the sandbox image rather than the host."
+  },
+
+  "tools": [
+    {
+      "id": "agentview",
+      "name": "agentview",
+      "alias": "→ av",
+      "group": "session",
+      "source": "dot_local/bin/executable_agentview",
+      "alsoCovers": ["dot_local/bin/symlink_av"],
+      "deployed": ".local/bin/agentview",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["keybind", "typed"],
+      "badges": [{ "cls": "b-how", "text": "CTRL+SHIFT+S (WezTerm) · tmux prefix+g" }],
+      "desc": "Grouped, switchable list of Claude Code sessions across machines and backends (host + <code>claude-sandbox</code>). Terminal-agnostic: focus is delegated to whichever backend a session captured at start — tmux, wezterm, or none.",
+      "why": "Also spawns sessions: <code>--spawn</code> picks a repo + branch and launches <code>claude-sandbox</code> in a new pane of the active backend, falling back to in-place when neither tmux nor wezterm is usable. Removing a row (<code>CTRL+X</code>) really stops the process — pid-reuse-guarded — and <code>claude rm</code>s its record, acting over ssh for remote rows, so a live session cannot reappear.",
+      "pre": "<span class=\"c\"># picker keys</span>\nALT+1..9  jump to Nth    CTRL+R  rename     CTRL+P  pin to top\nCTRL+N    new session    CTRL+X  remove     CTRL+F  refresh\nCTRL+O    details        ?       cheatsheet\n\n<span class=\"c\"># modes</span>\nagentview --spawn | --jump KEY | --jump-nth N | --resolve KEY\n          --card KEY | --keys | --remove KEY | --pin KEY | --rename KEY",
+      "flags": [
+        { "label": "Libraries:", "html": "<code>~/.local/share/agentview/{actions,common,focus,render,rows,spawn}.sh</code> · pins in <code>~/.claude/agent-view-pins</code>" }
+      ]
+    },
+    {
+      "id": "ct",
+      "name": "ct",
+      "group": "session",
+      "source": "dot_local/bin/executable_ct",
+      "deployed": ".local/bin/ct",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [
+        { "cls": "b-how", "text": "typed" },
+        { "cls": "b-off", "text": "chezmoi skips it on Windows" }
+      ],
+      "desc": "Launch Claude Code in its <em>own</em> named tmux session — one session per Claude — so the Agent View picker can attach to it from another machine with <code>tmux attach -t &lt;name&gt;</code>.",
+      "why": "The session name is the sanitized basename plus the last six digits of a <code>cksum</code> of the launch path, so same-basename repos stay distinct and re-running <code>ct</code> in a directory resumes rather than duplicates (<code>new-session -A</code>).",
+      "pre": "ct [dir]          <span class=\"c\"># dir defaults to $PWD</span>\nCT_CLAUDE_BIN=…   <span class=\"c\"># override the resolved claude binary</span>"
+    },
+    {
+      "id": "cts",
+      "name": "cts",
+      "group": "session",
+      "source": "dot_local/bin/executable_cts",
+      "deployed": ".local/bin/cts",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [
+        { "cls": "b-how", "text": "typed" },
+        { "cls": "b-off", "text": "chezmoi skips it on Windows" }
+      ],
+      "desc": "Sibling to <code>ct</code>: runs <code>claude-sandbox</code> in its own named tmux session, so Agent View captures a real <code>tmux:</code> locator — which survives a pane id going stale, where a <code>wezterm:</code> one does not.",
+      "why": "Names are deterministic per repo (+branch), so re-running attaches instead of duplicating and each worktree stays independently jumpable. The <code>_cts</code> zsh completion calls <code>ctw --list-*</code> over ssh with fail-fast flags and caches results under <code>$XDG_CACHE_HOME/cts</code>, so an unreachable host fails fast instead of hanging the shell.",
+      "pre": "cts [dir] [claude-sandbox args…]        <span class=\"c\"># local</span>\ncts --ssh[=HOST] [REPO] [-b BRANCH]     <span class=\"c\"># native claude on HOST over ssh</span>\n<span class=\"c\"># HOST defaults to daniel-server ($CTS_REMOTE_HOST); also -H/--host</span>\n<span class=\"c\"># CTS_CACHE_TTL=45  completion cache lifetime, seconds</span>"
+    },
+    {
+      "id": "ctw",
+      "name": "ctw",
+      "group": "session",
+      "source": "dot_local/bin/executable_ctw",
+      "deployed": ".local/bin/ctw",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called", "typed"],
+      "badges": [
+        { "cls": "b-how", "text": "invoked over ssh by cts" },
+        { "cls": "b-off", "text": "chezmoi skips it on Windows" }
+      ],
+      "desc": "Remote companion to <code>cts --ssh</code>. Resolves a repo name under <code>$CTS_REMOTE_ROOTS</code>, optionally into a per-branch git worktree, then hands off to <code>ct</code>. It never touches tmux itself.",
+      "why": "Because <code>ct</code> names its session from a cksum of the launch dir, every per-branch worktree becomes a distinct auto-resuming session that registers in Agent View for free. <code>ctw</code> also answers the queries <code>cts --complete-*</code> sends, so completion and launch resolve through the exact same code and cannot disagree.",
+      "pre": "ctw &lt;repo|path&gt; [branch]     <span class=\"c\"># resolve, then exec ct &lt;dir&gt;</span>\nctw --list-repos             ctw --list-branches &lt;repo&gt;\n<span class=\"c\"># CTS_REMOTE_ROOTS=~/Repositories  CTS_WORKTREE_ROOT=~/.cts-worktrees  CTW_CT_BIN=…</span>"
+    },
+    {
+      "id": "claude-sandbox",
+      "name": "claude-sandbox",
+      "group": "session",
+      "source": "private_dot_claude/sandbox/executable_claude-sandbox",
+      "alsoCovers": ["dot_local/bin/symlink_claude-sandbox.tmpl"],
+      "deployed": ".local/bin/claude-sandbox",
+      "tests": "private_dot_claude/sandbox/test_docker_create_filter.py",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed", "called"],
+      "badges": [
+        { "cls": "b-how", "text": "typed · spawned by agentview and cts" },
+        { "cls": "b-off", "text": "chezmoi skips it on Windows" }
+      ],
+      "desc": "Launch Claude Code in a Docker-based \"Pattern C\" sandbox: per-repo image, audited tool use, a socket-proxy'd Docker socket, an optional read-only vault subset, and sibling repos mounted as clean <code>main</code> snapshots by default.",
+      "why": "On PATH as a symlink to <code>~/.claude/sandbox/claude-sandbox</code>. Sources <code>sandbox-lib.sh</code> and <code>sandbox-worktree.sh</code>; picks up machine-specific values (e.g. <code>CLAUDE_VAULT_DIR</code>) from an optional <code>~/.config/claude/local.env</code>, and forwards the 1Password SSH-agent socket — whose path differs on macOS — so commits inside the container stay signed.",
+      "pre": "claude-sandbox [OPTIONS] &lt;repo-path&gt;\n\n<span class=\"c\">isolation</span>   -w/--worktree [NAME]   branch claude/&lt;NAME&gt;, random suffix if omitted\n             -b/--branch BRANCH     keep the branch's own name (cannot combine with -w)\n             --fresh/--new          new conversation instead of auto --continue\n<span class=\"c\">sessions</span>    --list  --rename OLD NEW  --prune (fzf)  --gc (remote branch deleted)\n<span class=\"c\">images</span>      --rebuild  --rebuild-base  --generate\n<span class=\"c\">mounts</span>      --no-vault  --no-chezmoi  --no-work-config  --no-repos  --repos-live\n<span class=\"c\">modes</span>       --shell                interactive bash (execs into a live container if\n                                    one is running); unaudited\n             -x/--exec PROMPT       headless implementer: progress → stderr, result →\n                                    stdout between &lt;&lt;&lt;EXEC_RESULT&gt;&gt;&gt; markers"
+    },
+    {
+      "id": "spares",
+      "name": "spares",
+      "group": "session",
+      "source": "dot_local/bin/executable_spares",
+      "deployed": ".local/bin/spares",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Tell claimed Claude sessions apart from idle pre-warmed spares.",
+      "why": "<code>ps</code> cannot do this: a session dispatched onto a spare <em>keeps</em> its <code>--bg-spare</code> argv, so every argv scan reports live working sessions as idle. The daemon roster is the only oracle, and its <code>pid</code> is the bg-pty-host rather than the worker underneath — so the join runs through the spare id shared by <code>&lt;id&gt;.pty.sock</code> and <code>&lt;id&gt;.claim.sock</code>. An unreadable roster exits 2 rather than defaulting to \"spare\", which is exactly the wrong answer this tool exists to prevent.",
+      "pre": "spares [--json]\n<span class=\"c\"># test seams: SPARES_PROC_DIR  SPARES_ROSTER  SPARES_SESSIONS_DIR</span>"
+    },
+    {
+      "id": "vault-search",
+      "name": "vault-search",
+      "group": "session",
+      "source": "private_dot_claude/sandbox/executable_vault-search",
+      "deployed": null,
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [
+        { "cls": "b-off", "text": "inside the sandbox only — not a host command" },
+        { "cls": "b-how", "text": "typed, in-container" }
+      ],
+      "desc": "Query the curated, read-only vault index mounted into a sandbox. The launcher builds a DuckDB index over only the allowlisted vault pages and mounts it at <code>$SANDBOX_VAULT_DB</code>; the embedding model and the FTS extension are baked into the image, so this runs fully offline.",
+      "pre": "vault-search \"&lt;natural-language query&gt;\" [-k N] [--json]"
+    },
+
+    {
+      "id": "jsonq",
+      "name": "jsonq",
+      "group": "query",
+      "source": "dot_local/bin/executable_jsonq",
+      "deployed": ".local/bin/jsonq",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed · blanket-allowed in permissions" }],
+      "desc": "Query JSON with a closed subset of Python syntax — Python <em>syntax</em> over already-parsed JSON, sitting between jq (which runs out of road quickly) and arbitrary code execution.",
+      "why": "What makes <code>Bash(jsonq:*)</code> defensible is not a check, it is an absence: the file contains no <code>eval</code>, no <code>exec</code>, no <code>compile</code>. <code>ast.parse</code> builds a tree that executes nothing; the dispatch tables <em>are</em> the grammar, so a node type with no entry cannot run. There is no <code>ast.Attribute</code> handler at all, so <code>x.y</code> is refused in every position — no method calls, no module namespaces, no <code>__class__</code>. The reachable object graph is exactly JSON values, the fixed function table, and lambdas defined by the query. This deliberately reverses an earlier design that enumerated forbidden nodes and then handed the source to <code>eval</code>; every escape lived in the gap between the checker and the more permissive second evaluator.",
+      "pre": "jsonq 'sorted(d[\"permissions\"])' settings.json\njsonq '[r for r in d[\"rules\"] if r[\"on\"]]' a.json\njsonq 'set(d1) - set(d2)' a.json b.json\njsonq --script 'out = [x[\"id\"] for x in d if x[\"ok\"]]' a.json\njsonq --jsonl 'len([x for x in d if x[\"type\"] == \"user\"])' session.jsonl",
+      "flags": [
+        { "label": "Flags:", "html": "<code>-r/--raw</code> · <code>--indent N</code> · <code>-s/--script</code> · <code>--jsonl</code> · <code>--functions</code> (print the grammar) · <code>--timeout</code>" },
+        { "label": "Function table:", "html": "builtins (<code>len sorted sum min max zip enumerate map filter</code>) · dict/list helpers (<code>keys values items get merge unique flatten counter groupby</code>) · strings (<code>lower upper strip split join replace startswith</code>) · regex (<code>re_test re_search re_groups re_findall re_sub re_split</code>) · math &amp; stats (<code>floor ceil sqrt log mean median</code>) · <code>dumps</code> / <code>loads</code>" },
+        { "label": "Gotcha:", "html": "invoke by name, never as <code>python3 jsonq</code> — <code>block-dangerous-bash.sh</code> reads an interpreter keyword next to a <code>.key</code>/<code>.env</code>/<code>.pem</code> substring as a secrets read, and JSON field names trip it." }
+      ]
+    },
+    {
+      "id": "otelq",
+      "name": "otelq",
+      "group": "query",
+      "source": "dot_local/bin/executable_otelq",
+      "deployed": ".local/bin/otelq",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed · blanket-allowed in permissions" }],
+      "desc": "Query the local Loki / Prometheus telemetry stack without a permission prompt. Output is JSON on stdout so it composes with <code>jsonq</code>; <code>--rows</code> renders the common \"value&nbsp;⇥&nbsp;labels\" shape instead.",
+      "why": "<code>curl:*</code> prompts because curl takes an arbitrary URL and can write the response to disk — an exfiltration and a download primitive in one. Neither is available here: the host is not an argument, every request is a GET to 127.0.0.1 on two fixed ports, and the response only ever reaches stdout. The caller controls a LogQL/PromQL string, and neither language can execute a process, read a file, or reach the network.",
+      "pre": "otelq logs 'sum by (event_name) (count_over_time({service_name=\"claude-code\"}[19h]))'\notelq logs '{service_name=\"claude-code\"} | event_name=`api_error`' --stream --limit 5\notelq metric 'sum by (model) (increase(claude_code_cost_usage_USD_total[19h]))'\notelq labels --name service_name\notelq ready",
+      "flags": [
+        { "label": "Subcommands:", "html": "<code>logs</code> · <code>metric</code> · <code>labels</code> · <code>ready</code> &nbsp;— <b>flags:</b> <code>--stream</code> · <code>--since 30m|19h|7d</code> · <code>--limit</code> · <code>--direction</code> · <code>--step</code> · <code>--rows</code> · <code>--indent</code> · <code>--timeout</code>" },
+        { "label": "Backends:", "html": "the <code>claude-otel</code> docker-compose stack in the same repo — OTel collector, Loki, Prometheus, Tempo, Grafana." }
+      ]
+    },
+    {
+      "id": "tq",
+      "name": "tq",
+      "group": "query",
+      "source": "dot_local/bin/executable_tq",
+      "deployed": ".local/bin/tq",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed", "hook"],
+      "badges": [{ "cls": "b-how", "text": "typed · PreToolUse hook (tq-wrap-tests.py)" }],
+      "desc": "Run a command, print a compact digest, keep the full result as JSON. The runner's exit code is always preserved and its argv is passed through untouched.",
+      "why": "Linters are digested as findings rather than a pass rate — silence about a line is not an assertion that the line is good, so there is no denominator to report. Sweeps get a count, a histogram and an evenly spaced sample, plus the two ways a count misleads stated in the headline: it is a floor when the command capped itself (<code>git log -n 50</code> returning 50), and it is not a count of anything when the command failed part-way. A sweep small enough to print is printed whole. A command that <em>does</em> something — <code>find -delete</code>, <code>git commit</code> — is never claimed.",
+      "pre": "<span class=\"c\">tests</span>    node --test · pytest (uv run / python -m) · go test · cargo test\n         gradle test · mvn test · prek run --all-files\n<span class=\"c\">linters</span>  ruff check · mypy · eslint · tsc --noEmit · shellcheck · go vet · cargo clippy\n<span class=\"c\">sweeps</span>   find · fd · ls -R · rg --files · git ls-files · rg/grep · git diff · git log",
+      "flags": [
+        { "label": "Flags", "html": "(before the command): <code>--scope=all|file|added</code> — which findings reach the digest · <code>--diff-base=&lt;ref&gt;</code> (default HEAD) · <code>--retry</code> — one more go, survivors marked FLAKY (node/pytest only, skipped above 10 failures) · <code>--flaky-result=pass</code> · <code>--ingest=rdjson|sarif|ruff-json|shellcheck-json1</code>" },
+        { "label": "Env:", "html": "<code>TQ_JSON</code> (where the structured result lands) · <code>TQ_TIMEOUT</code> (0 = unbounded; a run past it is killed and reported TIMED OUT) · <code>TQ_SCOPE</code> · <code>TQ_DIFF_BASE</code> · <code>TQ_RETRY</code> · <code>TQ_RETRY_MAX_FAILURES</code>. A failed run also leaves the runner's unparsed output at <code>&lt;json&gt;.raw</code>." },
+        { "label": "The hook's reason:", "html": "a <code>node --test</code> run prints ~65&nbsp;KB nobody reads when nothing is wrong. In a git hook that is noise; in an agent's Bash call it is context, spent at the same rate whether or not anything failed, and spent again by every parallel agent running the same suite." },
+        { "label": "Library:", "html": "<code>~/.local/share/tq/</code> — <code>detect.py</code>, <code>digest.py</code>, <code>result.py</code>, <code>scope.py</code>, <code>node-reporter.mjs</code>, plus its <code>adapters/</code> and <code>runners/</code> packages." }
+      ]
+    },
+
+    {
+      "id": "dotsync",
+      "name": "dotsync",
+      "group": "config",
+      "source": "dot_local/bin/executable_dotsync",
+      "deployed": ".local/bin/dotsync",
+      "lang": "node",
+      "langLabel": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Manifest-driven dotfiles preservation subsystem. Zero dependencies — node builtins only — with the pure core separated from IO behind an injectable <code>runner</code>, so it is unit-testable against fixtures.",
+      "pre": "dotsync &lt;check|status|inventory|sync&gt; [--force] [--dry-run]\n<span class=\"c\"># manifests: ~/.config/dotsync/manifest.d   inventory: ~/.config/dotsync/INVENTORY.md</span>"
+    },
+    {
+      "id": "claude-settings-merge",
+      "name": "claude-settings-merge",
+      "group": "config",
+      "source": "dot_local/bin/executable_claude-settings-merge",
+      "deployed": ".local/bin/claude-settings-merge",
+      "lang": "node",
+      "langLabel": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "modify_settings.json.sh.tmpl · resolve-sandbox-settings.sh · Windows install script" }],
+      "desc": "Deep-merge JSON fragments left→right: objects merge by key, arrays concat and de-dupe by JSON value, a later scalar wins, a missing file is treated as <code>{}</code>.",
+      "why": "Two refusals are load-bearing. A shape conflict is refused rather than resolved by guesswork — taking the overlay is how <code>{\"permissions\": null}</code> silently produced a settings file with no permission model at all, at exit 0. And <code>__proto__</code> is handled explicitly: <code>JSON.parse</code> makes it an own property, but <code>out[k] = …</code> hits <code>Object.prototype</code>'s setter, so a fragment carrying <code>__proto__</code> once set the accumulator's prototype and produced permission rules present in no visible key of any input."
+    },
+    {
+      "id": "terminal-cheatsheet",
+      "name": "terminal-cheatsheet",
+      "group": "config",
+      "source": "dot_local/bin/executable_terminal-cheatsheet",
+      "deployed": ".local/bin/terminal-cheatsheet",
+      "lang": "node",
+      "langLabel": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "run by hand — its run_after script is chezmoi-ignored" }],
+      "desc": "Regenerate a single-page HTML cheatsheet of this machine's terminal, Neovim, Yazi and Claude Code keybinds — parsed from the <em>deployed</em> config files, so it reflects what is actually running after template rendering.",
+      "why": "Cross-platform by parsing whatever is present: WezTerm on Windows, Ghostty on macOS/Linux, Neovim and Yazi everywhere, Claude keybinds wherever <code>~/.claude/keybindings.json</code> exists. Under WSL it also probes <code>/mnt/c/Users/*/.config/wezterm/wezterm.lua</code>, so the Linux sheet still shows the binds you type in the host terminal. Dependency-free; the parsers are format-driven rather than entry-driven, so new keybinds flow through automatically.",
+      "pre": "terminal-cheatsheet [output.html]     <span class=\"c\"># or TERMINAL_CHEATSHEET_OUT=…</span>\n<span class=\"c\"># honors $XDG_CONFIG_HOME and $YAZI_CONFIG_HOME</span>",
+      "flags": [
+        { "label": "Note:", "html": "its <code>run_after_terminal-cheatsheet.sh</code> exists but is listed in <code>.chezmoiignore</code>, so it does not run on apply — unlike this inventory, which does." }
+      ]
+    },
+    {
+      "id": "tools-inventory",
+      "name": "tools-inventory",
+      "group": "config",
+      "source": "dot_local/bin/executable_tools-inventory",
+      "deployed": ".local/bin/tools-inventory",
+      "tests": "dot_local/share/tools-inventory/tools-inventory.test.js",
+      "lang": "node",
+      "langLabel": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "macOS · Linux · WSL · Windows",
+      "role": ["typed", "timer"],
+      "badges": [{ "cls": "b-how", "text": "run_after_tools-inventory.sh, on every chezmoi apply" }],
+      "desc": "Generates this page. Discovers the tool roster from the chezmoi <em>source</em> tree, merges it with the curated prose in <code>tools.json</code>, and derives every volatile fact — line counts, which platform column applies, whether each tool is deployed on this host — at render time.",
+      "why": "It reads the source rather than the deployed tree because the roster has to include tools this machine does not get: a Fedora box would otherwise render an inventory with the Windows scripts silently missing. The per-host column comes from <code>chezmoi ignored</code>, which is chezmoi evaluating its own templates, plus a filesystem check — never from a second parser for <code>.chezmoiignore</code>. A script in the source tree with no <code>tools.json</code> entry is still rendered from its own header comment and reported in a drift banner, so adding a tool cannot silently leave the page incomplete.",
+      "pre": "tools-inventory [output.html]      <span class=\"c\"># or TOOLS_INVENTORY_OUT=…</span>\ntools-inventory --check            <span class=\"c\"># report drift, write nothing; exit 1 if any</span>\n<span class=\"c\"># TOOLS_INVENTORY_SOURCE=…  chezmoi source dir (default: `chezmoi source-path`)</span>",
+      "flags": [
+        { "label": "Idempotent:", "html": "the rendered page carries no timestamp, so an unchanged inventory produces a byte-identical file and the generator skips the write. That is what makes running it on every apply cheap enough to leave enabled." }
+      ]
+    },
+
+    {
+      "id": "retention-sweep",
+      "name": "retention-sweep",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_retention-sweep",
+      "deployed": ".local/bin/retention-sweep",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux", "wsl"],
+      "platLabel": "Linux · WSL (systemd)",
+      "role": ["timer", "typed"],
+      "badges": [{ "cls": "b-how", "text": "hourly systemd-user timer (--apply)" }],
+      "desc": "Sweeper over <code>retention-manifest.json</code>: for every row, report how many entries currently match its glob and their combined size. With <code>--apply</code> it also acts.",
+      "why": "Five containment rules, plus a floor. Acting requires <code>--apply</code>; a row acts only if it is in the source-literal <code>APPLY_ROWS</code>, never derived from the manifest, so adding a manifest row cannot grant itself a delete path; every removal must resolve underneath its own glob's literal prefix, and symlinks are refused outright; an unparseable cap is a refusal, not a default; and <code>flock</code> means a hook-fired run colliding with the timer exits quietly. Under all of it, nothing younger than its row's grace is ever eligible. Rotation is separate on purpose — rewriting a file a live process holds open is a different failure mode, so <code>rotate-size</code> and <code>truncate-lines</code> rows need <code>--apply</code> <em>and</em> <code>--rotate</code> together, and the hourly timer passes only <code>--apply</code>.",
+      "pre": "retention-sweep                <span class=\"c\"># pure report (default)</span>\nretention-sweep --apply        <span class=\"c\"># removal rows in APPLY_ROWS</span>\nretention-sweep --apply --rotate   <span class=\"c\"># plus ROTATE_ROWS; manual only</span>",
+      "flags": [
+        { "label": "Portability:", "html": "the script itself is portable; only its scheduling is systemd-specific — it runs by hand anywhere." }
+      ]
+    },
+    {
+      "id": "reap-backgrounded-origins-sweep",
+      "name": "reap-backgrounded-origins-sweep",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_reap-backgrounded-origins-sweep",
+      "deployed": ".local/bin/reap-backgrounded-origins-sweep",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux", "wsl"],
+      "platLabel": "Linux · WSL (reads /proc)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "systemd-user timer" }],
+      "desc": "Reap the redundant interactive origin left running behind every backgrounded Claude session. For each live session it reads the worker cmdline by pid and, only on the exact backgrounding signature, SIGTERMs the origin.",
+      "why": "Deliberately independent of the Claude daemon's hook config, which goes stale until the daemon restarts — this is the daemon-independent supplement to the <code>reap-backgrounded-origin.sh</code> hook, sharing <code>reap-origin-lib.sh</code> so detection and guards are identical. Since Claude Code 2.1 a backgrounded session is dispatched onto a pre-warmed spare whose argv keeps no <code>--resume</code> link, so the cmdline scan alone silently stopped reaping; a roster pass covers that dispatch.",
+      "flags": [
+        { "label": "Test seams:", "html": "<code>CLAUDE_SESSIONS_DIR</code> · <code>AGENT_VIEW_DIR</code> · <code>REAP_KILLCMD</code> · <code>REAP_LOG</code> · <code>REAP_LIB</code> · <code>REAP_PROC_DIR</code> · <code>REAP_ROSTER</code>" }
+      ]
+    },
+
+    {
+      "id": "audio-sink-toggle",
+      "name": "audio-sink-toggle",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_audio-sink-toggle",
+      "deployed": ".local/bin/audio-sink-toggle",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux"],
+      "platLabel": "Linux (PipeWire)",
+      "role": ["keybind"],
+      "badges": [
+        { "cls": "b-how", "text": "StreamController \"Audio\" key" },
+        { "cls": "b-inert", "text": "chezmoi deploys it everywhere; inert without pactl" }
+      ],
+      "desc": "Cycle the default PipeWire sink and drag every playing stream along with it.",
+      "why": "Setting the default sink only affects <em>new</em> streams — anything already playing stays on the old device, which is what makes a naive <code>set-default-sink</code> feel broken. Moving the existing sink-inputs is what makes the switch immediate. Sinks are matched by name rather than numeric id, because ids are reassigned whenever a device suspends or reconnects; an unknown current sink (headset powered off) falls through to the first entry rather than failing. Replaces the Ctrl+F11 AutoHotkey binding the Stream Deck \"Audio\" key used on Windows."
+    },
+    {
+      "id": "streamcontroller-health",
+      "name": "streamcontroller-health",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_streamcontroller-health",
+      "deployed": ".local/bin/streamcontroller-health",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (systemd + udev)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "systemd health check" }],
+      "desc": "Restart StreamController when it is alive but has lost the deck.",
+      "why": "It fails in two shapes and systemd only sees one. If it aborts outright (the libdbus <code>dbus_watch_handle()</code> assertion, SIGABRT) the process exits and <code>Restart=on-failure</code> handles it. The other shape is the problem: it fails to grab the deck with a TransportError and then <em>keeps running</em> with no page loaded — a perfectly healthy service to systemd, a dark Stream Deck to you. So the health signal is deliberately not \"is the process alive\", which is exactly the state being detected; it is \"does <em>StreamController</em> hold the deck's USB node\". That emphasis was found the hard way: <code>fuser</code> reports the node busy whenever a Wine prefix is running, because winedevice.exe opens every USB device it can see — so asking \"is anything holding it\" reported a healthy deck for as long as a game was open."
+    },
+    {
+      "id": "streamdeck-usb-reset",
+      "name": "streamdeck-usb-reset",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_streamdeck-usb-reset",
+      "deployed": ".local/bin/streamdeck-usb-reset",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["linux"],
+      "platLabel": "Linux (usbdevfs)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "systemd ExecStartPre=" }],
+      "desc": "Issue a <code>USBDEVFS_RESET</code> to the Elgato Stream Deck.",
+      "why": "When StreamController dies from the libdbus assertion it aborts <em>inside</em> libusb's transaction, leaving the device mid-transfer while still enumerated. That combination is the trap: the deck still shows up in <code>lsusb</code>, so a plain relaunch looks like it should work and instead fails with <code>Failed to write feature report (-1)</code>, which upstream does not treat as fatal. The process keeps running with no page loaded, squatting the USB handle, and every further relaunch stacks another deckless instance behind it. Resetting the device between the crash and the relaunch turns \"relaunch and hope\" into deterministic recovery. Exits 0 whenever there is nothing to do, so it is safe as an unconditional <code>ExecStartPre=</code> — most starts are ordinary logins, not recoveries."
+    },
+    {
+      "id": "wezterm-pane-ssh",
+      "name": "wezterm-pane-ssh",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_wezterm-pane-ssh",
+      "deployed": ".local/bin/wezterm-pane-ssh",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux", "wsl"],
+      "platLabel": "Linux · WSL (reads /proc)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "called by agentview" }],
+      "desc": "Print the argv of the ssh client backing a WezTerm pane, one argument per line, or nothing when the pane is not ssh'd anywhere.",
+      "why": "WezTerm cannot answer this for a WSL pane — it only ever sees <code>wslhost.exe</code>, and OSC 7 is swallowed by tmux, so an Agent View homelab jump is invisible from the Windows side. <code>$WEZTERM_PANE</code> is the one handle that crosses, and it is readable from <code>/proc</code>. Two layouts are resolved: <em>direct</em> (ssh is a descendant of the pane shell) and <em>tmux</em> (ssh is a child of the tmux <em>server</em>, with a stale inherited <code>$WEZTERM_PANE</code>, so the pane's tmux client is mapped to its session instead).",
+      "pre": "wezterm-pane-ssh &lt;wezterm-pane-id&gt;   <span class=\"c\"># exit status advisory; no output = not remote</span>"
+    },
+    {
+      "id": "tmux-askpass",
+      "name": "tmux-askpass",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_tmux-askpass",
+      "deployed": ".local/bin/tmux-askpass",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "invoked by sudo via SUDO_ASKPASS" }],
+      "desc": "<code>SUDO_ASKPASS</code> helper for hosts with no graphical session — the headless counterpart to the ksshaskpass branch in <code>~/.zshenv</code>.",
+      "why": "A shell with no controlling terminal (Claude Code's <code>!</code> commands, <code>ssh host cmd</code>) has nowhere to prompt, so sudo refuses rather than asking. There is no desktop to draw a dialog on, but the tmux session the work already happens in can: <code>display-popup</code> reads the password with echo off and hands it back over a FIFO. Nothing is weakened — the password is still required and <code>/etc/sudoers</code> is untouched. The password never touches disk: the FIFO lives under <code>$XDG_RUNTIME_DIR</code> (tmpfs, 0700) and is passed by pipe rather than argv or environment, so no other process can read it out of <code>ps</code>."
+    },
+
+    {
+      "id": "jq",
+      "name": "jq",
+      "group": "shims",
+      "source": "dot_local/bin/executable_jq",
+      "deployed": ".local/bin/jq",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["shim"],
+      "badges": [{ "cls": "b-how", "text": "PATH shadowing" }],
+      "desc": "LF shim for the winget/official Windows jq, which opens stdout in text mode so every <code>\\n</code> becomes <code>\\r\\n</code>. The trailing CR corrupts values in bash pipelines — agentview's <code>@tsv</code> rows split wrong, hook captures keep a stray CR. <code>-b</code> opens jq's streams in binary mode. Named <code>jq</code> (no extension) so it shadows <code>jq.exe</code> without recursing; <code>exec</code> means no extra fork and exit codes, streaming and binary output are preserved.",
+      "flags": [
+        { "label": "Gating:", "html": "native jq on macOS and Linux already emits LF, so the shim would be pure overhead there — it is gated off in <code>.chezmoiignore</code>." }
+      ]
+    },
+    {
+      "id": "sudo",
+      "name": "sudo",
+      "group": "shims",
+      "source": "dot_local/bin/executable_sudo",
+      "deployed": ".local/bin/sudo",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux"],
+      "platLabel": "Linux — daniel-server · daniel-pi · daniel-box only",
+      "role": ["shim"],
+      "badges": [{ "cls": "b-how", "text": "PATH shadowing" }],
+      "desc": "Supplies <code>-A</code> when there is no terminal to prompt on.",
+      "why": "sudo(8)'s ENVIRONMENT section says <code>SUDO_ASKPASS</code> names the helper used \"if no terminal is available <em>or</em> if <code>-A</code> is specified\" — on Ubuntu 24.04 (sudo 1.9.15p5) only the second half holds. Measured on daniel-box 2026-08-01: with <code>SUDO_ASKPASS</code> exported and verified present, plain <code>sudo ls</code> still refused with \"a terminal is required to read the password\", while <code>-A</code> drew the tmux popup and succeeded. Everything else passes through untouched, and an invocation that already chose its own input method (<code>-A</code>, <code>-S</code>, <code>-n</code>) is left alone.",
+      "flags": [
+        { "label": "Gating:", "html": "deliberate — shadowing <code>sudo</code> in PATH is not something to deploy onto a workstation that never asked for it, least of all a work machine." }
+      ]
+    },
+    {
+      "id": "xclip",
+      "name": "xclip",
+      "alias": "· xsel",
+      "group": "shims",
+      "source": "dot_local/bin/executable_xclip",
+      "alsoCovers": ["dot_local/bin/executable_xsel"],
+      "deployed": ".local/bin/xclip",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["wsl"],
+      "platLabel": "WSL (WSLg)",
+      "role": ["shim"],
+      "badges": [
+        { "cls": "b-how", "text": "PATH shadowing" },
+        { "cls": "b-inert", "text": "no ignore rule, so it lands everywhere; needs wl-copy to do anything" }
+      ],
+      "desc": "Forward X11 clipboard calls to WSLg's <code>wl-copy</code>/<code>wl-paste</code>, which bridge to the Windows clipboard. Needed because <code>/etc/wsl.conf</code> sets <code>appendWindowsPath=false</code> (so <code>clip.exe</code> is off PATH) and the real xclip/xsel are not installed.",
+      "why": "Two extras beyond a plain forward, both for Claude Code's image paste: the <code>TARGETS</code> probe is answered with <code>wl-paste -l</code> (the old shim ignored <code>-t</code> and dumped raw bytes, so Claude's <code>grep image/*</code> matched nothing), and a request for <code>image/png</code> with only a bmp present is converted on the fly."
+    },
+    {
+      "id": "wl-bmp2png",
+      "name": "wl-bmp2png",
+      "group": "shims",
+      "source": "dot_local/bin/executable_wl-bmp2png",
+      "deployed": ".local/bin/wl-bmp2png",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["wsl"],
+      "platLabel": "WSL (WSLg)",
+      "role": ["shim", "called"],
+      "badges": [
+        { "cls": "b-how", "text": "piped from the xclip shim" },
+        { "cls": "b-inert", "text": "deployed everywhere; only WSLg produces the bmp it converts" }
+      ],
+      "desc": "Convert a BMP on stdin to a PNG on stdout, stdlib only, no Pillow. WSLg mirrors the Windows clipboard image only as <code>image/bmp</code>, but Claude Code and the API accept png/jpeg/gif/webp. Handles the 24- and 32-bit <code>BITMAPINFOHEADER</code> bitmaps WSLg emits and exits non-zero on anything else, so the xclip shim falls back cleanly."
+    },
+    {
+      "id": "tasklist",
+      "name": "tasklist.exe",
+      "alias": "· taskkill.exe",
+      "group": "shims",
+      "source": "dot_local/bin/symlink_tasklist.exe",
+      "alsoCovers": ["dot_local/bin/symlink_taskkill.exe"],
+      "deployed": ".local/bin/tasklist.exe",
+      "lang": "bash",
+      "langLabel": "symlinks",
+      "noLines": true,
+      "plat": ["wsl"],
+      "platLabel": "WSL only",
+      "role": ["shim"],
+      "badges": [{ "cls": "b-how", "text": "called by agentview" }],
+      "desc": "Symlinks into <code>/mnt/c/Windows/System32</code> — <code>taskkill</code> is how agentview ends a Windows pane. Deployed only on WSL (a Linux kernel reporting \"microsoft\"); anywhere else they would be dangling."
+    },
+
+    {
+      "id": "TaskbarAutoHideFix",
+      "name": "TaskbarAutoHideFix",
+      "group": "windows",
+      "source": "bin/TaskbarAutoHideFix.cs",
+      "alsoCovers": ["bin/TaskbarAutoHideFix.exe"],
+      "deployed": "bin/TaskbarAutoHideFix.exe",
+      "lang": "win",
+      "langLabel": "C# · winexe",
+      "noLines": true,
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["timer"],
+      "badges": [
+        { "cls": "b-how", "text": "triggered on resume / unlock" },
+        { "cls": "b-lang", "text": "build: csc /target:winexe" }
+      ],
+      "desc": "Fixes the Windows 11 taskbar auto-hide breakage after resume/unlock that ExplorerPatcher's per-monitor taskbars amplify. On wake, Windows recreates the taskbar and its auto-hide app-bar registration collides with a stale one, which both pops a \"you can have only one auto-hide toolbar per side\" dialog and flips auto-hide back off.",
+      "why": "The collision can land a second or two <em>after</em> the trigger fires, so a single re-assert gets clobbered — hence a short retry window. Each pass closes any <code>#32770</code> dialog that is the auto-hide popup and, if auto-hide is off (or a popup was present), re-asserts it off→on to force a clean app-bar re-registration."
+    },
+    {
+      "id": "wsl-shutdown",
+      "name": "wsl-shutdown.cmd",
+      "group": "windows",
+      "source": "bin/wsl-shutdown.cmd",
+      "deployed": "bin/wsl-shutdown.cmd",
+      "lang": "win",
+      "langLabel": "cmd",
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["keybind"],
+      "badges": [{ "cls": "b-how", "text": "Stream Deck key (System > Open)" }],
+      "desc": "Instantly stop the WSL2 VM to free all its RAM and CPU — e.g. before launching a game. WSL relaunches on next use; everyday cache give-back is already automatic via <code>autoMemoryReclaim</code> in <code>.wslconfig</code>."
+    },
+    {
+      "id": "streamdeck-watcher",
+      "name": "streamdeck-watcher",
+      "group": "windows",
+      "source": "Scripts/streamdeck-watcher/streamdeck-watcher.ps1",
+      "alsoCovers": [
+        "Scripts/streamdeck-watcher/install.ps1",
+        "Scripts/streamdeck-watcher/streamdeck-watcher-hidden.vbs"
+      ],
+      "deployed": "Scripts/streamdeck-watcher/streamdeck-watcher.ps1",
+      "lang": "win",
+      "langLabel": "PowerShell + VBS + install.ps1",
+      "noLines": true,
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "scheduled task (install.ps1)" }],
+      "desc": "Restarts the Elgato Stream Deck app whenever the device (re)appears on USB. Elgato's software will not reconnect on its own after the device drops and comes back, which leaves it stuck on the Elgato logo with no buttons after boot, resume from hibernate, a KVM switch back, or a monitor USB hub dropping power when the panel sleeps."
+    },
+    {
+      "id": "wslhost-interop-reaper",
+      "name": "wslhost-interop-reaper",
+      "group": "windows",
+      "source": "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1",
+      "alsoCovers": [
+        "Scripts/wslhost-interop-reaper/install.ps1",
+        "Scripts/wslhost-interop-reaper/wslhost-interop-reaper-hidden.vbs"
+      ],
+      "deployed": "Scripts/wslhost-interop-reaper/wslhost-interop-reaper.ps1",
+      "lang": "win",
+      "langLabel": "PowerShell + VBS + install.ps1",
+      "noLines": true,
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "scheduled task (install.ps1)" }],
+      "desc": "Kills <code>wslhost.exe</code> processes that have leaked spinning interop threads.",
+      "why": "microsoft/WSL#41173 — open, and present in every release through 2.9.4. <code>ProcessInteropMessages</code> re-issues its <code>ReadFile</code> forever when the read completes <em>synchronously</em> with zero bytes; all three loop exits sit inside <code>if (!Success)</code>, and a gracefully-closed hvsocket returns success with <code>BytesRead == 0</code>, so the thread spins at a full core inside <code>NtReadFile</code>."
+    },
+
+    {
+      "id": "compact-session",
+      "name": "compact-session.py",
+      "group": "sandbox",
+      "source": "private_dot_claude/sandbox/executable_compact-session.py",
+      "deployed": ".claude/sandbox/compact-session.py",
+      "tests": "private_dot_claude/sandbox/test_compact_session.py",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "launcher-invoked" }],
+      "desc": "Compact a Claude Code sandbox session into structured data. <code>extract</code> parses the session JSONL to JSON; <code>summarize</code> calls the Claude API for a summary; <code>render</code> writes the vault note and prints its index one-liner."
+    },
+    {
+      "id": "exec-stream",
+      "name": "exec-stream.py",
+      "group": "sandbox",
+      "source": "private_dot_claude/sandbox/executable_exec-stream.py",
+      "deployed": ".claude/sandbox/exec-stream.py",
+      "tests": "private_dot_claude/sandbox/test_exec_stream.py",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "launcher-invoked" }],
+      "desc": "Filter for <code>claude-sandbox --exec</code>: reads <code>--output-format stream-json</code> events, emits human-readable progress to stderr as it goes, and writes the final result to stdout between <code>&lt;&lt;&lt;EXEC_RESULT&gt;&gt;&gt;</code> markers so an orchestrator can extract it without scraping the stream. Exit code reflects the implementer's success."
+    },
+    {
+      "id": "gen-vault-index",
+      "name": "gen-vault-index.py",
+      "alias": "· docker-create-filter.py",
+      "group": "sandbox",
+      "source": "private_dot_claude/sandbox/executable_gen-vault-index.py",
+      "alsoCovers": ["private_dot_claude/sandbox/executable_docker-create-filter.py"],
+      "deployed": ".claude/sandbox/gen-vault-index.py",
+      "tests": "private_dot_claude/sandbox/test_gen_vault_index.py",
+      "lang": "python",
+      "langLabel": "python3",
+      "noLines": true,
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "launcher-invoked" }],
+      "desc": "Build the DuckDB index over the allowlisted vault subset that <code>vault-search</code> queries; and the socket-proxy filter that decides which container-create requests the sandbox's Docker socket will pass."
+    },
+
+    {
+      "id": "vault-index",
+      "noLines": true,
+      "name": "vault-index",
+      "group": "libs",
+      "source": "private_dot_claude/vault-tooling/vault-index/pyproject.toml",
+      "deployed": ".claude/vault-tooling/vault-index",
+      "tests": "private_dot_claude/vault-tooling/vault-index/tests/test_query.py",
+      "lang": "python",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "local hybrid-search index over the Markdown vault, retrieving by meaning + keyword instead of routing through <code>index.md</code> summaries. Vault-agnostic; <code>build</code>/<code>query</code> find nothing rather than erroring when no vault is configured. Backs <code>vault-search</code>."
+    },
+    {
+      "id": "config-map",
+      "noLines": true,
+      "name": "config-map",
+      "group": "libs",
+      "source": "private_dot_claude/vault-tooling/config-map/pyproject.toml",
+      "deployed": ".claude/vault-tooling/config-map",
+      "tests": "private_dot_claude/vault-tooling/config-map/tests/test_determinism.py",
+      "lang": "python",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "deterministic generator for the Claude Setup Map, one self-contained collapsible HTML page at <code>$CLAUDE_VAULT_DIR/Meta/Claude_Setup_Map.html</code>. Vault-optional. Driven by the <code>/config-map</code> skill."
+    },
+    {
+      "id": "githooks",
+      "name": "githooks",
+      "group": "libs",
+      "source": "private_dot_claude/vault-tooling/githooks/secrets-check.js",
+      "deployed": ".claude/vault-tooling/githooks",
+      "tests": "private_dot_claude/vault-tooling/githooks/secrets-check.test.js",
+      "lang": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "<code>pre-commit</code>, <code>pre-push</code>, and <code>secrets-check.js</code>."
+    },
+    {
+      "id": "claude-audit-portable",
+      "name": "claude-audit-portable",
+      "group": "libs",
+      "source": "private_dot_claude/vault-tooling/claude-audit-portable/gen-install.js",
+      "deployed": ".claude/vault-tooling/claude-audit-portable",
+      "lang": "node",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "<code>gen-install.js</code> + <code>install.sh</code> + package, for carrying the audit tooling to another machine."
+    },
+    {
+      "id": "agentview-libs",
+      "name": "agentview libs",
+      "group": "libs",
+      "source": "dot_local/share/agentview/common.sh",
+      "deployed": ".local/share/agentview",
+      "lang": "bash",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "<code>~/.local/share/agentview/{actions,common,focus,render,rows,spawn}.sh</code>"
+    },
+    {
+      "id": "tq-libs",
+      "name": "tq libs",
+      "group": "libs",
+      "source": "dot_local/share/tq/digest.py",
+      "deployed": ".local/share/tq",
+      "lang": "python",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "<code>~/.local/share/tq/</code> — <code>detect.py</code>, <code>digest.py</code>, <code>result.py</code>, <code>scope.py</code>, <code>node-reporter.mjs</code>, plus the <code>adapters/</code> and <code>runners/</code> packages."
+    },
+    {
+      "id": "canon",
+      "name": "canon.py",
+      "group": "libs",
+      "source": "dot_local/share/canon/canon.py",
+      "deployed": ".local/share/canon",
+      "lang": "python",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "canonicalize an input before deciding on it. \"A guard that inspects one form of an input while its consumer acts on another is not a guard.\" Two families: <em>keys</em> (Go's <code>encoding/json</code> matches struct fields case-insensitively, so a filter reading Python dict keys exactly is vacuous against <code>{\"hostconfig\": …}</code>) and <em>target</em> (an HTTP router decodes percent-escapes before routing, so a filter matching the raw request-target never sees <code>/containers/%63reate</code>)."
+    },
+    {
+      "id": "sandbox-libs",
+      "name": "sandbox libs",
+      "group": "libs",
+      "source": "private_dot_claude/sandbox/executable_sandbox-worktree.sh",
+      "deployed": ".claude/sandbox/sandbox-worktree.sh",
+      "lang": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["library"],
+      "desc": "<code>sandbox-lib.sh</code>, <code>sandbox-worktree.sh</code>, <code>resolve-sandbox-settings.sh</code>. The worktree helpers are pure functions of their arguments with no <code>exit</code> calls, which is what lets the launcher and the tests both source the file."
+    },
+    {
+      "id": "claude-otel",
+      "noLines": true,
+      "name": "claude-otel",
+      "group": "libs",
+      "source": "claude-otel/docker-compose.yml",
+      "deployed": ".claude-otel",
+      "lang": "other",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["library"],
+      "desc": "the docker-compose stack <code>otelq</code> queries: OTel collector, Loki, Prometheus, Tempo, Grafana."
+    }
+  ]
+}
