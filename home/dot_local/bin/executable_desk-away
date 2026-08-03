@@ -1,0 +1,48 @@
+#!/bin/sh
+# Lock the session and blank every display — the "leaving the desk" key — and wake them on a
+# second press.
+#
+# Bound to a StreamController key, whose Run Command action adds `flatpak-spawn --host` itself —
+# so the key holds this bare path, not a prefixed command.
+#
+# Blanking rather than disabling outputs. Measured on the 3080 Ti 2026-08-03: DPMS-off takes the
+# GPU from 9501 MHz / P0 / 92 W to 405 MHz / P8 / 12.6 W within 15s. Disabling outputs saves no
+# more than that and costs a window reshuffle, because KWin moves windows off a disabled output
+# and does not reliably put them back.
+#
+# KDE already blanks after 600s, so this is the "now" version of something that happens anyway —
+# it buys the ten minutes in between, at ~80 W.
+#
+# The direction comes from the live DPMS state rather than a state file: any mouse movement wakes
+# the displays without telling us, and a file would then have the toggle backwards on the next
+# press. A Stream Deck press is not a libinput event, so pressing this key while blanked does not
+# itself wake the displays — which is what makes the second press meaningful.
+set -eu
+
+# `loginctl lock-session` with no argument resolves the caller's session, and the portal spawns
+# this outside the sandbox but not necessarily inside the login session — so fall back to the
+# screensaver bus name, which is what KDE's own lock shortcut calls.
+lock_session() {
+  loginctl lock-session 2>/dev/null && return 0
+  dbus-send --session --dest=org.freedesktop.ScreenSaver --type=method_call \
+    /ScreenSaver org.freedesktop.ScreenSaver.Lock 2>/dev/null
+}
+
+if kscreen-doctor --dpms show 2>/dev/null | grep -q ': off'; then
+  kscreen-doctor --dpms on
+  echo "desk-away: displays on"
+  exit 0
+fi
+
+# Lock before blanking, not after: the lock screen appearing wakes the display, which would undo
+# the blank we just asked for.
+#
+# A failed lock aborts rather than blanking anyway. Dark screens read as "locked" from across the
+# room, so blanking an unlocked session is the one outcome worse than doing nothing.
+if ! lock_session; then
+  echo "desk-away: could not lock the session; leaving the displays on" >&2
+  exit 1
+fi
+
+kscreen-doctor --dpms off
+echo "desk-away: locked and blanked"
