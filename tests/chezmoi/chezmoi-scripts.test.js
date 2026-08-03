@@ -837,3 +837,128 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.ok(!fs.existsSync(actionsFile), 'nothing should be written without sudo');
   });
 }
+
+// 2h. os-linux/run_onchange_after_setup-bt-hid-recovery.sh.tmpl ------------------------------
+{
+  const BT_SRC = path.join(SCRIPTS_DIR, 'os-linux', 'run_onchange_after_setup-bt-hid-recovery.sh.tmpl');
+
+  // This script's entire effect is four files written through `sudo tee` plus a systemd and a
+  // udev reload, so unlike the sandboxes above its sudo stub execs a REAL tee, redirected under
+  // $FAKE_ROOT. Asserting on argv alone would prove almost nothing here: every interesting
+  // detail (the --no-block restart, the rate limit, the VID/PID) lives inside a heredoc, so the
+  // tests need the bytes that would have landed in /etc. Any sudo verb the stub does not
+  // recognise is logged as REFUSED rather than run, so a later `sudo mv` added to the script
+  // fails these tests instead of silently escaping the sandbox.
+  const BT_SUDO_STUB = [
+    '#!/bin/sh',
+    'echo "sudo $*" >> "$STUB_LOG"',
+    'if [ "$1" = "-v" ] || [ "$1" = "-n" ]; then exit "${SUDO_PROBE_EXIT:-0}"; fi',
+    'case "$1" in',
+    '  tee)',
+    '    out="$FAKE_ROOT$2"',
+    '    mkdir -p "$(dirname "$out")"',
+    '    exec tee "$out" ;;',
+    '  chmod|systemctl|udevadm|restorecon) exit 0 ;;',
+    'esac',
+    'echo "sudo REFUSED $*" >> "$STUB_LOG"',
+    'exit 99',
+    '',
+  ].join('\n');
+
+  const BT_PATHS = {
+    script: 'usr/local/bin/bt-hid-health',
+    service: 'etc/systemd/system/bt-hid-health.service',
+    timer: 'etc/systemd/system/bt-hid-health.timer',
+    udev: 'etc/udev/rules.d/50-bt500-no-autosuspend.rules',
+  };
+
+  function btSandbox({ bluetoothctl = true, btUnit = true } = {}) {
+    const dir = tmpdir('bt-hid-');
+    const fakeRoot = path.join(dir, 'root');
+    fs.mkdirSync(fakeRoot);
+    const logFile = path.join(dir, 'log.txt');
+    fs.writeFileSync(logFile, '');
+    fs.writeFileSync(path.join(dir, 'sudo'), BT_SUDO_STUB, { mode: 0o755 });
+    // Only `list-unit-files` decides the gate; every other systemctl call here is unprivileged
+    // and irrelevant, so it just succeeds.
+    fs.writeFileSync(
+      path.join(dir, 'systemctl'),
+      `#!/bin/sh\n[ "$1" = list-unit-files ] || exit 0\nexit ${btUnit ? 0 : 1}\n`,
+      { mode: 0o755 },
+    );
+    if (bluetoothctl) fs.writeFileSync(path.join(dir, 'bluetoothctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'restorecon'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    // dnf+rpm so linux-install.sh detects a PM and the run matches the Fedora box it targets.
+    for (const bin of ['dnf', 'rpm']) {
+      fs.writeFileSync(path.join(dir, bin), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
+    for (const bin of ['tee', 'mkdir', 'dirname', 'grep', 'sed', 'awk', 'cat', 'rm', 'uname', 'tr', 'mktemp', 'cp', 'install', 'chmod']) {
+      fs.symlinkSync(realBin(bin), path.join(dir, bin));
+    }
+    const scriptFile = path.join(dir, 'rendered.sh');
+    fs.writeFileSync(scriptFile, renderFile(BT_SRC));
+    const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, FAKE_ROOT: fakeRoot };
+    return { scriptFile, env, logFile, fakeRoot };
+  }
+
+  const btRead = (fakeRoot, key) => fs.readFileSync(path.join(fakeRoot, BT_PATHS[key]), 'utf8');
+
+  test('bt-hid-recovery.sh.tmpl: fresh box -> writes all four artifacts, enables the timer, reloads udev', { skip }, () => {
+    const { scriptFile, env, logFile, fakeRoot } = btSandbox();
+    const { status } = runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.strictEqual(status, 0, `expected success, log:\n${log}`);
+    assert.ok(!log.includes('REFUSED'), `an unrecognised sudo verb escaped the sandbox:\n${log}`);
+
+    for (const key of Object.keys(BT_PATHS)) {
+      assert.ok(fs.existsSync(path.join(fakeRoot, BT_PATHS[key])), `${BT_PATHS[key]} was not written`);
+    }
+
+    // The watchdog is ordered After=bluetooth.service, so a blocking restart of that unit from
+    // inside its own Type=oneshot can deadlock until TimeoutStartSec. --no-block is the fix and
+    // dropping it would reintroduce a hang that only shows up during a real recovery.
+    const watchdog = btRead(fakeRoot, 'script');
+    assert.match(watchdog, /systemctl restart --no-block bluetooth/, 'the restart must not block');
+    assert.match(watchdog, /MIN_RESTART_INTERVAL=600/, 'the restart-loop guard must survive');
+    assert.match(watchdog, /00001812-0000-1000-8000-00805f9b34fb/, 'the HoG UUID filter must survive');
+
+    const service = btRead(fakeRoot, 'service');
+    assert.match(service, /After=bluetooth\.service/);
+    assert.match(service, /StateDirectory=bt-hid-health/, 'systemd must own the stamp directory');
+    assert.match(service, /TimeoutStartSec=/, 'the unit needs a bound so it can never hang forever');
+    assert.match(btRead(fakeRoot, 'timer'), /OnUnitActiveSec=2min/);
+    // One VID/PID keeps the rule inert on any machine without this dongle.
+    assert.match(btRead(fakeRoot, 'udev'), /idVendor}=="0b05".*idProduct}=="190e"/);
+
+    assert.ok(log.includes('sudo chmod 0755 /usr/local/bin/bt-hid-health'), `watchdog left non-executable:\n${log}`);
+    assert.ok(log.includes('sudo systemctl daemon-reload'), `units not reloaded:\n${log}`);
+    assert.ok(log.includes('sudo systemctl enable --now bt-hid-health.timer'), `timer not enabled:\n${log}`);
+    assert.ok(log.includes('sudo udevadm control --reload'), `udev not reloaded:\n${log}`);
+  });
+
+  test('bt-hid-recovery.sh.tmpl: no bluetoothctl -> exits without writing or probing sudo', { skip }, () => {
+    const { scriptFile, env, logFile, fakeRoot } = btSandbox({ bluetoothctl: false });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(!fs.existsSync(path.join(fakeRoot, BT_PATHS.service)), 'nothing should be written without a BT stack');
+    assert.strictEqual(readLog(logFile), '', 'the gate must run before sudo is probed');
+  });
+
+  test('bt-hid-recovery.sh.tmpl: systemd does not know bluetooth.service -> exits without probing sudo', { skip }, () => {
+    const { scriptFile, env, logFile, fakeRoot } = btSandbox({ btUnit: false });
+    const { status } = runSh(scriptFile, env);
+    assert.strictEqual(status, 0);
+    assert.ok(!fs.existsSync(path.join(fakeRoot, BT_PATHS.service)));
+    assert.strictEqual(readLog(logFile), '');
+  });
+
+  test('bt-hid-recovery.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+    const { scriptFile, env, fakeRoot } = btSandbox();
+    env.SUDO_PROBE_EXIT = '1';
+    const { status } = runSh(scriptFile, env);
+    // exit 0 here would be worse than a failed apply: run_onchange records success by hash, so
+    // the watchdog would stay uninstalled until this script next changes.
+    assert.strictEqual(status, 1);
+    assert.ok(!fs.existsSync(path.join(fakeRoot, BT_PATHS.service)), 'nothing should be written without sudo');
+  });
+}
