@@ -1,0 +1,38 @@
+#!/bin/sh
+# Toggle the mute state of the default PipeWire *source* (the microphone).
+#
+# Bound to a StreamController key, whose Run Command action adds `flatpak-spawn --host` itself —
+# so the key holds this bare path, not a prefixed command. Same convention as audio-sink-toggle.
+#
+# The Discord plugin already has a mute key, but that one only silences Discord. This mutes the
+# capture device itself, so it covers Meet/Zoom/OBS and anything else holding the mic.
+#
+# The default source is toggled by the `@DEFAULT_SOURCE@` alias rather than by name: the headset
+# and the webcam swap places whenever one of them powers off, and a hardcoded name would then
+# mute a device nobody is recording from.
+set -eu
+
+pactl set-source-mute @DEFAULT_SOURCE@ toggle
+
+# Read the state back instead of tracking it — the toggle can race with another client (Discord,
+# a hotkey), and a toast that reports the intended state rather than the real one is worse than
+# no toast at all.
+state=$(pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null || echo '')
+case "$state" in
+  *yes*) status='Muted'; icon='microphone-sensitivity-muted' ;;
+  *no*)  status='Live';  icon='microphone-sensitivity-high' ;;
+  *)     status='Unknown'; icon='microphone-sensitivity-medium' ;;
+esac
+
+# Human-readable name for the toast, falling back to the raw source name.
+current=$(pactl get-default-source 2>/dev/null || echo '')
+label=$(pactl list sources 2>/dev/null \
+  | awk -v want="$current" '
+      /^Source #/ { desc = "" }
+      /^[[:space:]]*Name: / { name = $2 }
+      /^[[:space:]]*Description: / { sub(/^[[:space:]]*Description: /, ""); desc = $0 }
+      name == want && desc != "" { print desc; exit }')
+[ -n "${label:-}" ] || label="$current"
+
+command -v notify-send >/dev/null 2>&1 && notify-send -a "Microphone" -i "$icon" "$status" "$label"
+echo "mic-mute-toggle: $status ($label)"
