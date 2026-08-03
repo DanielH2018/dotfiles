@@ -167,6 +167,14 @@ dnf = "playerctl"
 apt = "playerctl"
 
 [[apps.base]]
+name = "pavucontrol"
+# Linux-only. Per-application volume and per-stream output routing — the bits KDE's own audio
+# applet doesn't expose. Works against PipeWire through pipewire-pulse, which Fedora ships by
+# default, so no PulseAudio daemon is involved despite the name.
+dnf = "pavucontrol"
+apt = "pavucontrol"
+
+[[apps.base]]
 name = "f.lux"
 winget = "flux.flux"
 # f.lux's Linux build is X11-only and unmaintained. gammastep is the Wayland-native equivalent;
