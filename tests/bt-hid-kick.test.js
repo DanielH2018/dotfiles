@@ -20,9 +20,10 @@ const path = require('node:path');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_bt-hid-kick');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+// Absolute, because one case below runs with PATH set to the stub dir alone -- a bare 'bash'
+// would then fail to resolve the interpreter itself and look like a script failure.
+const BASH = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
+const skip = BASH ? false : 'bash unavailable';
 
 const dirs = [];
 
@@ -32,7 +33,7 @@ function mkdtemp(prefix) {
   return d;
 }
 
-function run({ started = true } = {}) {
+function run({ started = true, notify = true } = {}) {
   const bin = mkdtemp('bhk-bin-');
   const marks = mkdtemp('bhk-marks-');
   const log = path.join(marks, 'calls');
@@ -42,16 +43,21 @@ printf 'systemctl %s\\n' "$*" >> "${log}"
 exit ${started ? 0 : 1}
 `, { mode: 0o755 });
 
-  fs.writeFileSync(path.join(bin, 'notify-send'), `#!/bin/bash
+  if (notify) {
+    fs.writeFileSync(path.join(bin, 'notify-send'), `#!/bin/bash
 printf 'notify %s\\n' "$*" >> "${log}"
 `, { mode: 0o755 });
+  }
 
   const res = { status: 0, out: '' };
   try {
-    res.out = execFileSync('bash', [SCRIPT], {
+    res.out = execFileSync(BASH, [SCRIPT], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { PATH: `${bin}:${process.env.PATH}`, HOME: mkdtemp('bhk-home-') },
+      // With notify:false the stub dir is the WHOLE path, so notify-send is genuinely absent
+      // rather than merely unstubbed -- inheriting the real PATH would find /usr/bin/notify-send
+      // and the case would never be exercised. The script needs no other external command.
+      env: { PATH: notify ? `${bin}:${process.env.PATH}` : bin, HOME: mkdtemp('bhk-home-') },
     });
   } catch (e) {
     res.status = e.status;
@@ -80,6 +86,14 @@ test('a refused start is surfaced and exits non-zero', { skip }, () => {
   assert.match(calls, /notify .*Could not kick Bluetooth/);
   assert.match(calls, /dialog-error/);
   assert.match(out, /Could not kick/);
+});
+
+// `set -e` plus a trailing `command -v notify-send && notify-send ...` is a shape that can eat the
+// script's own exit status: if the AND-list aborted the script on a box with no notify-send, a
+// refused start would exit 0 and the button would lie about having worked.
+test('the exit status survives a box with no notify-send', { skip }, () => {
+  assert.notStrictEqual(run({ started: false, notify: false }).status, 0, 'refusal must still fail');
+  assert.strictEqual(run({ started: true, notify: false }).status, 0, 'success must still succeed');
 });
 
 process.on('exit', () => {
