@@ -28,6 +28,11 @@ Scripts
 # environment.d is a systemd user-manager mechanism; it does nothing on Windows or macOS, and
 # the Steam UI scale it carries only makes sense next to the Linux XWayland-scale script.
 .config/environment.d
+# powerdevilrc is read by PowerDevil, which is part of KDE Plasma and ships nowhere but
+# Linux. The modify_ script that maintains it asserts a single display-blank timeout and
+# passes the rest of the file through, so on a headless Linux host it is inert rather than
+# wrong -- which is why this is gated on the OS and not on the hostname.
+.config/powerdevilrc
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to
