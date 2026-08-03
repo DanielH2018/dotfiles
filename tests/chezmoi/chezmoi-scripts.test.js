@@ -868,6 +868,8 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
   const BT_PATHS = {
     script: 'usr/local/bin/bt-hid-health',
     service: 'etc/systemd/system/bt-hid-health.service',
+    forceService: 'etc/systemd/system/bt-hid-health-force.service',
+    polkit: 'etc/polkit-1/rules.d/49-bt-hid-health-force.rules',
     timer: 'etc/systemd/system/bt-hid-health.timer',
     udev: 'etc/udev/rules.d/50-bt500-no-autosuspend.rules',
   };
@@ -903,7 +905,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 
   const btRead = (fakeRoot, key) => fs.readFileSync(path.join(fakeRoot, BT_PATHS[key]), 'utf8');
 
-  test('bt-hid-recovery.sh.tmpl: fresh box -> writes all four artifacts, enables the timer, reloads udev', { skip }, () => {
+  test('bt-hid-recovery.sh.tmpl: fresh box -> writes every artifact, enables the timer, reloads udev', { skip }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox();
     const { status } = runSh(scriptFile, env);
     const log = readLog(logFile);
@@ -929,6 +931,23 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.match(btRead(fakeRoot, 'timer'), /OnUnitActiveSec=2min/);
     // One VID/PID keeps the rule inert on any machine without this dongle.
     assert.match(btRead(fakeRoot, 'udev'), /idVendor}=="0b05".*idProduct}=="190e"/);
+
+    // The manual path. The plain unit honours MIN_RESTART_INTERVAL, so a key bound to it no-ops
+    // for up to ten minutes in exactly the situation it would be pressed -- the forced unit is
+    // what makes the Stream Deck key mean anything, and --force is the whole of the difference.
+    const forceService = btRead(fakeRoot, 'forceService');
+    assert.match(forceService, /ExecStart=\/usr\/local\/bin\/bt-hid-health --force/);
+    assert.match(watchdog, /FORCE=1/, 'the watchdog must understand --force');
+    assert.match(watchdog, /\[ "\$FORCE" -eq 0 \] && \[ -r "\$STAMP" \]/, '--force must bypass the rate limit');
+
+    // The grant is permanent and authorises restarting a system service, so its scope is the
+    // thing to pin: one unit, one verb, one named user. Widening any of those hands out control
+    // of every unit on the box.
+    const polkit = btRead(fakeRoot, 'polkit');
+    assert.match(polkit, /action\.lookup\("unit"\) == "bt-hid-health-force\.service"/);
+    assert.match(polkit, /action\.lookup\("verb"\) == "start"/);
+    assert.match(polkit, /subject\.user == "[^"{}]+"/, 'the username must be rendered, not left as a template');
+    assert.doesNotMatch(polkit, /isInGroup|subject\.user == "root"/, 'the grant must not widen past one user');
 
     assert.ok(log.includes('sudo chmod 0755 /usr/local/bin/bt-hid-health'), `watchdog left non-executable:\n${log}`);
     assert.ok(log.includes('sudo systemctl daemon-reload'), `units not reloaded:\n${log}`);

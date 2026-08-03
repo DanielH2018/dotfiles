@@ -20,7 +20,14 @@
 # Rare — one occurrence in 14 days across a 24-boot journal — so this is a watchdog, not a fix.
 # Unlike the reap timer these are *system* units restarting a *system* service, which is why they
 # are written here rather than deployed as files under home/: chezmoi's source root is $HOME.
-# Running as root also avoids granting the login user a polkit or sudoers rule over bluetoothd.
+# Running as root keeps the automatic path free of any polkit or sudoers grant.
+#
+# The manual path costs exactly one narrow grant, and it is not avoidable. When the mouse wedges
+# there is no pointer, so a hardware key is the one control surface left — but MIN_RESTART_INTERVAL
+# below makes `systemctl start bt-hid-health.service` a no-op for up to 10 minutes, which is
+# precisely when someone would press it. That limit exists to bound an *automatic* retry loop, not
+# a deliberate human press, so the button gets its own unit running the watchdog with --force, and
+# a polkit rule scoped to that one unit and that one verb.
 #
 # The udev rule is a second, weaker mitigation. btusb sets enable_autosuspend=Y and the adapter
 # idles after 2s, so the radio is reliably asleep exactly when a HID peripheral reconnects.
@@ -29,7 +36,7 @@
 #
 # Idempotent: rewrites the same bytes and reloads; run_onchange retriggers whenever this file
 # changes, which covers the payloads below since they are inlined.
-# bump-to-reinstall: bt-hid-recovery v1
+# bump-to-reinstall: bt-hid-recovery v2
 set -u
 TAG=setup-bt-hid-recovery
 {{ includeTemplate "linux-install.sh" . }}
@@ -51,7 +58,17 @@ sudo tee /usr/local/bin/bt-hid-health >/dev/null <<'BT_HID_HEALTH'
 #!/usr/bin/env bash
 # Recover Bluetooth HID devices wedged by a failed HoG report-map read.
 # Installed by chezmoi (setup-bt-hid-recovery) — edit the source there, not here.
+#
+# --force is the Stream Deck key's path (via bt-hid-health-force.service). It skips the confirm
+# delay and the rate limit, and restarts regardless of what the detector sees: both guards exist
+# to bound an automatic retry loop, and a human pressing a key already knows the mouse is dead —
+# possibly in a shape the detector misses, such as a device that dropped out of Connected
+# entirely. It still writes the stamp, so the timer cannot pile a second restart on top of a
+# manual one two minutes later.
 set -uo pipefail
+
+FORCE=0
+[[ ${1:-} == --force ]] && FORCE=1
 
 MIN_RESTART_INTERVAL=600 # seconds between restarts, guards against a restart loop
 CONFIRM_DELAY=10         # seconds, to ignore the transient window during a normal connect
@@ -74,16 +91,18 @@ wedged_devices() {
 }
 
 mapfile -t wedged < <(wedged_devices)
-[ "${#wedged[@]}" -gt 0 ] || exit 0
+if [ "$FORCE" -eq 0 ]; then
+	[ "${#wedged[@]}" -gt 0 ] || exit 0
 
-# A device is briefly "connected with no input node" during any normal connect,
-# so only act once the condition survives a recheck.
-sleep "$CONFIRM_DELAY"
-mapfile -t wedged < <(wedged_devices)
-[ "${#wedged[@]}" -gt 0 ] || exit 0
+	# A device is briefly "connected with no input node" during any normal connect,
+	# so only act once the condition survives a recheck.
+	sleep "$CONFIRM_DELAY"
+	mapfile -t wedged < <(wedged_devices)
+	[ "${#wedged[@]}" -gt 0 ] || exit 0
+fi
 
 now=$(date +%s)
-if [ -r "$STAMP" ]; then
+if [ "$FORCE" -eq 0 ] && [ -r "$STAMP" ]; then
 	last=$(cat "$STAMP" 2>/dev/null || echo 0)
 	[[ $last =~ ^[0-9]+$ ]] || last=0
 	if [ $((now - last)) -lt "$MIN_RESTART_INTERVAL" ]; then
@@ -94,7 +113,7 @@ fi
 
 install -d -m 0755 "$STATE_DIR"
 printf '%s\n' "$now" >"$STAMP"
-log "restarting bluetooth.service to recover: ${wedged[*]}"
+log "restarting bluetooth.service to recover: ${wedged[*]:-none detected (forced)}"
 # --no-block: this unit is ordered After=bluetooth.service, so waiting on a restart job for it
 # from inside a oneshot risks a job conflict that would hang until TimeoutStartSec.
 systemctl restart --no-block bluetooth
@@ -120,6 +139,48 @@ PrivateTmp=yes
 NoNewPrivileges=yes
 BT_HID_SERVICE
 
+# The Stream Deck key's unit. Separate from bt-hid-health.service rather than an argument on it,
+# because `systemctl start` cannot pass one — and because the polkit grant below has to name a
+# single unit, so the forced path must be nameable on its own.
+sudo tee /etc/systemd/system/bt-hid-health-force.service >/dev/null <<'BT_HID_FORCE_SERVICE'
+[Unit]
+Description=Restart bluetoothd now to recover a wedged Bluetooth HID device (manual trigger)
+After=bluetooth.service
+ConditionPathExists=/usr/local/bin/bt-hid-health
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bt-hid-health --force
+# --force skips the 10s confirm delay, so this should return almost immediately.
+TimeoutStartSec=30
+StateDirectory=bt-hid-health
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+BT_HID_FORCE_SERVICE
+
+# One user, one unit, one verb. Scoped this tightly because the grant is permanent and the thing
+# it authorises restarts a system service: anything broader (the whole action id, or wheel) would
+# hand out control of every unit on the box to buy one key.
+#
+# Matching on the username rather than subject.active/local on purpose. The Stream Deck runs the
+# trigger through the Flatpak portal, whose spawned process is not reliably attached to the login
+# session, so an active-session test would fail exactly when the button is pressed.
+sudo tee /etc/polkit-1/rules.d/49-bt-hid-health-force.rules >/dev/null <<'BT_HID_POLKIT'
+// Managed by chezmoi (setup-bt-hid-recovery). Lets the desktop user start the manual Bluetooth
+// HID recovery unit without a password prompt -- there is no pointer to answer one with, which
+// is the entire situation this recovers from.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "bt-hid-health-force.service" &&
+        action.lookup("verb") == "start" &&
+        subject.user == "{{ .chezmoi.username }}") {
+        return polkit.Result.YES;
+    }
+});
+BT_HID_POLKIT
+
 sudo tee /etc/systemd/system/bt-hid-health.timer >/dev/null <<'BT_HID_TIMER'
 [Unit]
 Description=Periodically check for Bluetooth HID devices wedged with no input node
@@ -144,7 +205,9 @@ BT_UDEV
 command -v restorecon >/dev/null 2>&1 && sudo restorecon -F \
 	/usr/local/bin/bt-hid-health \
 	/etc/systemd/system/bt-hid-health.service \
+	/etc/systemd/system/bt-hid-health-force.service \
 	/etc/systemd/system/bt-hid-health.timer \
+	/etc/polkit-1/rules.d/49-bt-hid-health-force.rules \
 	/etc/udev/rules.d/50-bt500-no-autosuspend.rules 2>/dev/null
 
 sudo systemctl daemon-reload

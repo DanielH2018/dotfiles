@@ -1,0 +1,32 @@
+#!/bin/sh
+# Recover a wedged Bluetooth mouse right now, from a hardware key.
+#
+# Bound to a StreamController key, whose Run Command action adds `flatpak-spawn --host` itself —
+# so the key holds this bare path, not a prefixed command.
+#
+# When a HID-over-GATT peripheral wedges (see the bt-hid-recovery chezmoi script) the device reads
+# Connected with a live battery but has no input node, so there is no pointer — a hardware key is
+# the only control surface left. The bt-hid-health timer already recovers this on its own, but on
+# a 2-minute cycle, and up to 10 minutes if a restart already fired inside MIN_RESTART_INTERVAL.
+# This is the "don't wait" path.
+#
+# It starts bt-hid-health-force.service rather than bt-hid-health.service: `systemctl start` takes
+# no arguments, and the --force behaviour needs its own unit so the polkit grant can name exactly
+# one. That grant is what makes this work with no TTY to answer a password prompt with.
+set -eu
+
+if systemctl start bt-hid-health-force.service 2>/dev/null; then
+  status='Restarting bluetoothd'
+  body='The mouse should come back in a few seconds'
+  icon='input-mouse'
+else
+  # Almost always the polkit rule missing or not reloaded — the manual path is the only thing that
+  # needs it, so it can rot unnoticed until the day it is pressed.
+  status='Could not kick Bluetooth'
+  body='bt-hid-health-force.service was refused; check the polkit rule'
+  icon='dialog-error'
+fi
+
+command -v notify-send >/dev/null 2>&1 && notify-send -a "Bluetooth" -i "$icon" "$status" "$body"
+echo "bt-hid-kick: $status"
+[ "$icon" != 'dialog-error' ]
