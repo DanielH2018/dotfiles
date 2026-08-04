@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Id": "windows-screen-move",
+        "Name": "Windows-style Move Window to Screen",
+        "Description": "Meta+Shift+Arrow moves the active window to the adjacent monitor in that direction, choosing the monitor that actually overlaps on the perpendicular axis.",
+        "Version": "1.0",
+        "License": "MIT",
+        "EnabledByDefault": true
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}
