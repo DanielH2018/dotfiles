@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
+const { ptyAvailable } = require('../lib/pty');
 
 const REPO = path.join(__dirname, '..', '..');
 const SCRIPTS_DIR = path.join(REPO, 'home', '.chezmoiscripts');
@@ -43,15 +44,30 @@ const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 // one available here without reaching into /proc from the test process.
 const skipWsl = skip || (/microsoft/i.test(os.release()) ? false : 'WSL-only script (renders empty off WSL)');
 
+// The same argument one OS up, for the os-linux/ scripts driven in parts 2f-2h. dnf-speedups and
+// setup-btrfs-snapshots open with `{{ if eq .chezmoi.os "linux" }}` and setup-bt-hid-recovery with
+// `{{ if includeTemplate "is-desktop-linux" . }}`, so all three render to an EMPTY string on a Mac
+// -- verified by rendering them: 0 bytes each. Their behavior tests then drove an empty script and
+// read exit 0 with an empty stub log, which failed the ones asserting a write or a deferral and,
+// worse, PASSED the ones asserting that nothing was written or that sudo was never probed. A
+// vacuous pass is the failure mode this skip exists to remove, so the whole group is gated, not
+// just the red half. Part 1b still renders past the guard for syntax, the same split the WSL
+// scripts already use: guard bypassed for `bash -n`, behavior tests skipped off the target OS.
+const skipLinux = skip || (process.platform === 'linux' ? false : 'Linux-only script (renders empty off Linux)');
+
 // The two interactive-chsh tests route the rendered script through `script(1)` to hand it a pty.
 // Debian ships that in essential util-linux; Fedora splits it into a separate util-linux-script
 // package, so a stock Fedora box has none and both tests failed with a bare `1 !== 0` -- that was
 // realBin() throwing inside runSh's try, not the script under test misbehaving. tools.toml now
 // installs it on Fedora; skip cleanly where it is still absent rather than reporting a phantom
 // regression, the same way this suite already skips on a missing chezmoi.
-let haveScript = true;
-try { execFileSync('sh', ['-c', 'command -v script'], { stdio: 'ignore' }); } catch { haveScript = false; }
-const skipTty = skip || (haveScript ? false : 'script(1) unavailable (Fedora: util-linux-script)');
+//
+// ptyAvailable(), not `command -v script`: macOS HAS a script(1), but it is the BSD one, which
+// takes a different command form AND tcgetattr's its own stdin -- from a node child with piped
+// stdio it cannot allocate a pty at all and exits 1 before the rendered script runs. Presence
+// was the wrong question; the flavour is the one that decides. Same probe the TUI suites use,
+// and the same bare `1 !== 0` symptom the Fedora note above describes.
+const skipTty = skip || (ptyAvailable() ? false : 'no util-linux script(1) for a pty (macOS ships the BSD one)');
 
 function walk(dir) {
   let out = [];
@@ -591,7 +607,7 @@ const SUDO_STUB = [
 
   const readConf = (f) => fs.readFileSync(f, 'utf8');
 
-  test('dnf-speedups.sh.tmpl: bare [main] -> writes the managed block with all three options', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: bare [main] -> writes the managed block with all three options', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, confFile } = dsSandbox();
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0, `expected success, log:\n${readLog(logFile)}`);
@@ -603,7 +619,7 @@ const SUDO_STUB = [
     assert.ok(readLog(logFile).includes(`sudo install -m 0644`), 'the write should go through sudo');
   });
 
-  test('dnf-speedups.sh.tmpl: second run over a converged file writes nothing and never probes sudo', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: second run over a converged file writes nothing and never probes sudo', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, confFile } = dsSandbox();
     assert.strictEqual(runSh(scriptFile, env).status, 0);
     const afterFirst = readConf(confFile);
@@ -616,7 +632,7 @@ const SUDO_STUB = [
     assert.strictEqual(readLog(logFile), '', 'converged run must not touch sudo at all');
   });
 
-  test('dnf-speedups.sh.tmpl: an edited block is rewritten rather than duplicated', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: an edited block is rewritten rather than duplicated', { skip: skipLinux }, () => {
     const conf = `[main]\n${BEGIN}\nmax_parallel_downloads=3\n${END}\n`;
     const { scriptFile, env, confFile } = dsSandbox({ conf });
     assert.strictEqual(runSh(scriptFile, env).status, 0);
@@ -626,7 +642,7 @@ const SUDO_STUB = [
     assert.ok(!out.includes('max_parallel_downloads=3'), `stale value survived:\n${out}`);
   });
 
-  test('dnf-speedups.sh.tmpl: a hand-set option is left alone, not duplicated', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: a hand-set option is left alone, not duplicated', { skip: skipLinux }, () => {
     const { scriptFile, env, confFile } = dsSandbox({ conf: '[main]\nkeepcache=False\n' });
     assert.strictEqual(runSh(scriptFile, env).status, 0);
     const out = readConf(confFile);
@@ -635,7 +651,7 @@ const SUDO_STUB = [
     assert.ok(out.includes('defaultyes=True'), `the other options should still apply:\n${out}`);
   });
 
-  test('dnf-speedups.sh.tmpl: a repo stanza in dnf.conf -> refuses to touch the file', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: a repo stanza in dnf.conf -> refuses to touch the file', { skip: skipLinux }, () => {
     const conf = '[main]\n\n[myrepo]\nbaseurl=http://example.invalid/\n';
     const { scriptFile, env, logFile, confFile } = dsSandbox({ conf });
     const { status } = runSh(scriptFile, env);
@@ -644,7 +660,7 @@ const SUDO_STUB = [
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('dnf-speedups.sh.tmpl: an unbalanced managed block -> exit 1 without truncating the file', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: an unbalanced managed block -> exit 1 without truncating the file', { skip: skipLinux }, () => {
     const conf = `[main]\n${BEGIN}\ndefaultyes=True\ninstall_weak_deps=False\n`;
     const { scriptFile, env, confFile } = dsSandbox({ conf });
     const { status } = runSh(scriptFile, env);
@@ -652,7 +668,7 @@ const SUDO_STUB = [
     assert.strictEqual(readConf(confFile), conf);
   });
 
-  test('dnf-speedups.sh.tmpl: apt machine -> exits without reading or writing dnf.conf', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: apt machine -> exits without reading or writing dnf.conf', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, confFile } = dsSandbox({ pm: 'apt' });
     const before = readConf(confFile);
     const { status } = runSh(scriptFile, env);
@@ -661,7 +677,7 @@ const SUDO_STUB = [
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('dnf-speedups.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+  test('dnf-speedups.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip: skipLinux }, () => {
     const { scriptFile, env, confFile } = dsSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const before = readConf(confFile);
@@ -768,7 +784,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     return { scriptFile, env, logFile, actionsFile };
   }
 
-  test('btrfs-snapshots.sh.tmpl: fresh box -> installs the plugin, writes the hook, sets both configs, enables all three timers', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: fresh box -> installs the plugin, writes the hook, sets both configs, enables all three timers', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, actionsFile } = bsSandbox();
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0, `expected success, log:\n${readLog(logFile)}`);
@@ -791,7 +807,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     }
   });
 
-  test('btrfs-snapshots.sh.tmpl: second run over a converged box writes nothing and never probes sudo', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: second run over a converged box writes nothing and never probes sudo', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, actionsFile } = bsSandbox();
     assert.strictEqual(runSh(scriptFile, env).status, 0, `first run failed:\n${readLog(logFile)}`);
     const afterFirst = fs.readFileSync(actionsFile, 'utf8');
@@ -804,7 +820,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '', 'converged run must not touch sudo at all');
   });
 
-  test('btrfs-snapshots.sh.tmpl: / is not btrfs -> exits without writing or probing sudo', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: / is not btrfs -> exits without writing or probing sudo', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, actionsFile } = bsSandbox({ btrfs: false });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -812,7 +828,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('btrfs-snapshots.sh.tmpl: a missing snapper config -> warns and exits rather than creating one', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: a missing snapper config -> warns and exits rather than creating one', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, actionsFile } = bsSandbox({ configs: ['root'] });
     const { status } = runSh(scriptFile, env);
     // create-config makes a .snapshots subvolume, which an apply must not do unasked.
@@ -821,7 +837,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('btrfs-snapshots.sh.tmpl: apt machine -> exits without touching anything', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: apt machine -> exits without touching anything', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, actionsFile } = bsSandbox({ pm: 'apt' });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -829,7 +845,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('btrfs-snapshots.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+  test('btrfs-snapshots.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip: skipLinux }, () => {
     const { scriptFile, env, actionsFile } = bsSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const { status } = runSh(scriptFile, env);
@@ -905,7 +921,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 
   const btRead = (fakeRoot, key) => fs.readFileSync(path.join(fakeRoot, BT_PATHS[key]), 'utf8');
 
-  test('bt-hid-recovery.sh.tmpl: fresh box -> writes every artifact, enables the timer, reloads udev', { skip }, () => {
+  test('bt-hid-recovery.sh.tmpl: fresh box -> writes every artifact, enables the timer, reloads udev', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox();
     const { status } = runSh(scriptFile, env);
     const log = readLog(logFile);
@@ -955,7 +971,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.ok(log.includes('sudo udevadm control --reload'), `udev not reloaded:\n${log}`);
   });
 
-  test('bt-hid-recovery.sh.tmpl: no bluetoothctl -> exits without writing or probing sudo', { skip }, () => {
+  test('bt-hid-recovery.sh.tmpl: no bluetoothctl -> exits without writing or probing sudo', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox({ bluetoothctl: false });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -963,7 +979,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '', 'the gate must run before sudo is probed');
   });
 
-  test('bt-hid-recovery.sh.tmpl: systemd does not know bluetooth.service -> exits without probing sudo', { skip }, () => {
+  test('bt-hid-recovery.sh.tmpl: systemd does not know bluetooth.service -> exits without probing sudo', { skip: skipLinux }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox({ btUnit: false });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -971,7 +987,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('bt-hid-recovery.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip }, () => {
+  test('bt-hid-recovery.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip: skipLinux }, () => {
     const { scriptFile, env, fakeRoot } = btSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const { status } = runSh(scriptFile, env);

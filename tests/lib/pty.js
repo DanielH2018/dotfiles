@@ -166,6 +166,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // `node --test` remains fast enough to sit in a pre-commit hook.
 const tierB = () => (process.env.UI_TIER_B ? false : 'tier B (set UI_TIER_B=1)');
 
+// True only for util-linux script(1): BSD/macOS script has no --version and exits 1 on it.
+// Term above is util-linux-only (-qfc, and it drives stty from inside the -c string), so this
+// stays the availability probe for the TUI suites.
 function ptyAvailable() {
   try {
     require('node:child_process').execFileSync('script', ['--version'], { stdio: 'ignore' });
@@ -173,4 +176,12 @@ function ptyAvailable() {
   } catch { return false; }
 }
 
+// Why every pty suite here is gated on the util-linux flavour rather than on `script` merely
+// being on PATH, which is what BSD/macOS has: the two share no command form (util-linux takes
+// the command as a -c string, BSD takes it as trailing argv after the typescript file), and
+// more importantly BSD script tcgetattr's its OWN stdin and exits 1 with
+// "tcgetattr/ioctl: Operation not supported on socket" when that stdin is a pipe. Every caller
+// here is a node child_process with piped stdio, so on macOS it cannot allocate the pty at all
+// -- not a quoting difference that could be papered over per flavour. A macOS run reads exit 1
+// from the harness, which is indistinguishable from the script under test failing.
 module.exports = { Term, encode, ptyAvailable, tierB, sleep };

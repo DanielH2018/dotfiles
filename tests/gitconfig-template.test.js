@@ -37,7 +37,14 @@ function render(home) {
   return renderFile(TMPL, { source: SOURCE, env: { ...process.env, HOME: home } });
 }
 
-test('signing policy is emitted even when no signing key is present', { skip }, () => {
+// The key-detection probe and the credential helpers both live inside the template's
+// non-darwin branch: macOS short-circuits at the top to a hardcoded block that names the
+// 1Password signer and an inline public key, so a render on this OS never reaches them and
+// a fake HOME cannot change that (chezmoi resolves .chezmoi.os from the running machine,
+// with no override). Skipped off Linux for the same reason ghostty-config.test.js skips
+// its Linux keybind assertions on a Mac, and in the same shape.
+test('signing policy is emitted even when no signing key is present', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   const out = render(fakeHome([]));
   assert.match(out, /^\s*format = ssh$/m, 'gpg.format survives a missing key');
   assert.match(out, /^\s*gpgsign = true$/m, 'commit.gpgsign survives a missing key');
@@ -46,20 +53,23 @@ test('signing policy is emitted even when no signing key is present', { skip }, 
   // quietly producing an unsigned one.
 });
 
-test('picks up ~/.ssh/id_ed25519 when it exists', { skip }, () => {
+test('picks up ~/.ssh/id_ed25519 when it exists', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   const out = render(fakeHome(['id_ed25519']));
   assert.match(out, /signingkey = ~\/\.ssh\/id_ed25519\.pub/);
   assert.match(out, /^\s*gpgsign = true$/m);
 });
 
-test('falls back to the Windows signing key name', { skip }, () => {
+test('falls back to the Windows signing key name', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   // Windows has no id_ed25519 — it signs with github-signing, which the old single
   // probe missed entirely.
   const out = render(fakeHome(['github-signing']));
   assert.match(out, /signingkey = ~\/\.ssh\/github-signing\.pub/);
 });
 
-test('prefers id_ed25519 when both keys exist', { skip }, () => {
+test('prefers id_ed25519 when both keys exist', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   const out = render(fakeHome(['id_ed25519', 'github-signing']));
   assert.match(out, /signingkey = ~\/\.ssh\/id_ed25519\.pub/);
   assert.doesNotMatch(out, /signingkey = ~\/\.ssh\/github-signing/, 'only one key is claimed');
@@ -87,7 +97,8 @@ test('never reaches for the Windows credential manager .exe', { skip }, () => {
   assert.deepStrictEqual(configLines(render(fakeHome([]))).filter((l) => /\.exe\b/.test(l)), [], 'nor does a render');
 });
 
-test('non-GitHub hosts still get a credential helper', { skip }, () => {
+test('non-GitHub hosts still get a credential helper', { skip }, (t) => {
+  if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   // Dropping the manager without a replacement would leave non-GitHub HTTPS remotes with no
   // helper at all — gh only answers for hosts it is logged in to.
   const out = render(fakeHome([]));
