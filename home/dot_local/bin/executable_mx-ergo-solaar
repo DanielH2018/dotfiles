@@ -1,25 +1,53 @@
 #!/usr/bin/env bash
-# Put the MX Ergo S into the state the hold-to-precision rules expect.
+# Assert the full MX Ergo S button and wheel state that hold-to-precision needs.
 #
-# None of this can live on the device: the Ergo S reports neither
-# onboard_profiles nor persistent-remappable-keys, so every button setting is
-# volatile and has to be re-asserted by software on each connect. Solaar does
-# that from its own config.yaml; this script exists so a machine that has never
-# seen the trackball converges without anyone opening the GUI.
+# None of it can live on the device: the Ergo S reports neither onboard_profiles
+# nor persistent-remappable-keys, so every setting is volatile and re-applied by
+# software on each connect.
 #
-# Values must be given by NAME. Passing the integer from config.yaml is silently
-# coerced -- `divert-keys 82 1` sets Regular, not Diverted, and the rules then
-# never fire.
+# Solaar restores its *saved* config when the trackball reconnects, so this
+# script earns its keep in two cases: a machine that has never seen the device,
+# and live drift. Drift is real -- Solaar's device-panel diversion toggles apply
+# to the hardware immediately without being written to config.yaml, and a
+# diverted wheel emits HID++ notifications that nothing consumes, so scrolling
+# stops dead. The tilts do the same to horizontal scroll.
+#
+# Values must be given by NAME. Passing the integer that config.yaml stores is
+# silently coerced -- `divert-keys 82 1` sets Regular, not Diverted, and the
+# rules then never fire.
+#
+# Every call is idempotent, so re-running on each connect is safe. DPI is
+# deliberately absent: this runs on every device-add event, and writing dpi
+# would kick you out of precision mode mid-hold.
 
 set -uo pipefail
 
 SERIAL=${MX_ERGO_SERIAL:-BD092C51}
 
-# Middle button stops sending clicks; rules.yaml turns press/release into a
-# precision-DPI hold. Its own action stays identity so that if Solaar is not
-# running the button degrades to a plain middle click rather than something odd.
-solaar config "$SERIAL" divert-keys        "Middle Button" Diverted            || exit 1
-solaar config "$SERIAL" reprogrammable-keys "Middle Button" "Mouse Middle Button" || exit 1
+# Quiet on success. On failure, print what solaar said minus its unconditional
+# Wayland banner, which would otherwise put nine lines in the journal every time
+# any input device appears -- then stop, because if one call cannot reach the
+# trackball the remaining eight cannot either.
+cfg() {
+    local out
+    if ! out=$(solaar config "$SERIAL" "$@" 2>&1); then
+        printf '%s\n' "$out" | grep -v '^rules cannot access modifier keys' >&2
+        exit 1
+    fi
+}
 
-# The clicks the middle button gave up reappear on the precision button, natively.
-solaar config "$SERIAL" reprogrammable-keys "DPI Switch"   "Mouse Middle Button" || exit 1
+# The wheel must stay undiverted or vertical scrolling dies.
+cfg lowres-scroll-mode false
+
+# Only the middle button is diverted; rules.yaml turns its press and release
+# into the precision hold. Everything else has to keep sending its normal HID
+# event -- the tilts in particular are horizontal scroll.
+cfg divert-keys "Middle Button" Diverted
+for k in "Back Button" "Forward Button" "Left Tilt" "Right Tilt" "DPI Switch"; do
+    cfg divert-keys "$k" Regular
+done
+
+# Middle keeps its own action so it degrades to a plain middle click when Solaar
+# is not running; the clicks it gives up reappear on the precision button.
+cfg reprogrammable-keys "Middle Button" "Mouse Middle Button"
+cfg reprogrammable-keys "DPI Switch"    "Mouse Middle Button"
