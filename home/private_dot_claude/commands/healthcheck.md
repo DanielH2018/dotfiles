@@ -15,8 +15,20 @@ STEP 1 — Execute /lint
 
 Run all steps of the /lint skill as defined in `~/.claude/commands/lint.md` (or the
 vault-local copy at `$VAULT/.claude/commands/lint.md` if one exists). This performs
-index verification, frontmatter compliance, broken wikilink detection, contradiction
-flagging, and auto-fixes safe issues.
+index verification, frontmatter compliance, broken wikilink detection, and
+contradiction flagging. /lint is read-only and applies nothing on its own.
+
+This command is that authorization, and it is deliberately narrow. When /lint
+reaches STEP 9, apply **only** these two classes:
+
+1. Broken wikilinks that resolved to exactly one candidate page (STEP 4b).
+2. `updated:` fields dated after today, reset to today (STEP 6).
+
+Both are mechanical and reversible from git. Everything else /lint reports —
+contradictions, stale or superseded notes, orphans, style flags, missing
+frontmatter — is carried into the summary for review and left untouched, no
+matter how safe a fix looks. This runs unattended; widening the list here is how
+an unattended job starts rewriting prose.
 
 STEP 2 — Monthly checks
 
@@ -40,7 +52,7 @@ apply) are **injected**, not hard-coded here, so this command stays vault-agnost
 
 STEP 2.5 — Refresh the search index
 
-Update the semantic search index so any pages changed by /lint auto-fixes (or since the last run) are re-indexed:
+Update the semantic search index so any pages changed by the STEP 1 repairs (or since the last run) are re-indexed:
 ```
 cd ~/.claude/vault-tooling/vault-index && uv run vault-index build --root "$VAULT"
 ```

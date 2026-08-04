@@ -1,8 +1,15 @@
 ---
-description: "Lint: health-check the LLM Wiki (index, frontmatter, wikilinks, contradictions) and fix safe issues."
+description: "Lint: read-only health check of the LLM Wiki (index, frontmatter, wikilinks, contradictions). Proposes repairs; applies none without approval."
 ---
 
-Lint: Health check the LLM Wiki vault and fix safe issues automatically.
+Lint: Health check the LLM Wiki vault and report what is wrong.
+
+**Lint observes; it does not repair.** Every step below is read-only — no page
+edits, no log entry, no new files. Steps that can identify a mechanical fix
+record it as a *proposal* and move on. STEP 9 presents the proposals; nothing is
+written until the caller approves them. This split exists so "safe fix" cannot
+quietly widen into "fix I did not ask for", and so a lint run is always safe to
+execute against a vault you have not looked at yet.
 
 STEP 0 — Resolve the vault
 
@@ -46,15 +53,15 @@ Flag any missing fields. If `created` or `updated` are missing and can be inferr
 
 Flag only — never auto-fill `sources` or `confidence`; a human sets them. When the `§ Source discipline` section is absent, skip these checks entirely (zero output).
 
-STEP 4 — Link integrity (broken links, single-match auto-fix, orphans)
+STEP 4 — Link integrity (broken links, single-match repair proposal, orphans)
 
 **4a. Find broken links.** Scan all pages for `[[wikilink]]` / `[[wikilink|alias]]` patterns (and any markdown relative-path links). For each, verify the target resolves to an existing page.
 
-**4b. Auto-fix — only on an unambiguous single match.** When a link does not resolve, look for the intended target:
+**4b. Propose a fix — only on an unambiguous single match.** When a link does not resolve, look for the intended target:
 - Wikilink `[[X]]`: normalize (spaces↔underscores, case-insensitive) and match against existing page names.
 - Markdown path link: search the vault for a file with that basename.
 
-If **exactly one** page matches → auto-fix the link to the canonical name/path (this heals renames and spacing/case drift). If **zero or multiple** match → do NOT guess; report source file + broken link text for human review (may need a new page created).
+If **exactly one** page matches → record a proposed rewrite of the link to that canonical name/path (this heals renames and spacing/case drift). Do not apply it here. If **zero or multiple** match → do NOT guess; report source file + broken link text for human review (may need a new page created).
 
 **4c. Orphan pages (report only).** Build the wikilink graph and flag any wiki page with **zero inbound `[[wikilinks]]`** from other pages (exclude index.md, log.md, log_archive_*, and self-links). Note: being listed in index.md does **not** count as an inbound link — an indexed page can still be a graph orphan. Report orphans as candidates to cross-link or retire; do not auto-fix.
 
@@ -67,9 +74,9 @@ Cross-check key facts across pages:
 
 Report contradictions. Do not auto-fix — flag for human review.
 
-STEP 6 — Fix future-dated `updated` fields
+STEP 6 — Flag future-dated `updated` fields
 
-Flag any page with `updated:` set to a date after `today`. Auto-fix: reset to `today`.
+Flag any page with `updated:` set to a date after `today`. Record a proposed reset to `today`. Do not apply it here.
 
 STEP 7 — Flag stale / superseded notes (temporal validity)
 
@@ -85,22 +92,41 @@ Scan wiki-page prose (skip frontmatter, code blocks, tables, and wikilinks) for 
 
 Keep this a lightweight signal, not a witch-hunt — flag clear cases, and a short count ("3 style flags across 2 pages") is enough.
 
-STEP 9 — Auto-fix safe issues
+STEP 9 — Present the repair proposal
 
-Apply the auto-fixes identified above.
+Report every finding, grouped by impact: broken navigation, ambiguous
+resolution, metadata quality, then maintainability. Preserve exact paths, line
+numbers, and counts — do not summarize them away, and do not claim a check ran
+that did not.
 
-STEP 10 — Prepend to log
+Then list the proposed repairs from STEP 4b and STEP 6 as a numbered set, each
+showing file, line, current text, and replacement. Only these two classes are
+ever proposable; contradictions (STEP 5), stale/superseded notes (STEP 7), and
+style flags (STEP 8) need human judgment and are report-only.
+
+**Stop here.** Do not apply anything, and do not write the log entry. If the
+caller has already authorized specific repair classes — `/healthcheck` does this
+for its unattended run — apply exactly those and continue to STEP 10. Otherwise
+wait for the user to choose, then apply only what they selected.
+
+If nothing was applied, say so and end the run: an observation leaves no trace
+in the vault.
+
+STEP 10 — Prepend to log (only if repairs were applied)
+
+Skip this step entirely when STEP 9 applied nothing — a read-only run does not
+write history.
 
 Prepend a new entry to `$VAULT/log.md` (insert below the `---` separator, above the previous top entry — newest first):
 ## YYYY-MM-DD — lint (health check)
 - Index completeness: <result>
 - Frontmatter compliance: <result>
-- Link integrity (broken / auto-fixed): <result>
+- Link integrity (broken / repaired): <result>
 - Orphan pages: <result>
 - Contradictions: <result>
 - Future-dated fields: <result>
 - Stale / superseded notes: <result>
 - Writing-style flags: <result>
 - Source discipline (only if enabled): <result>
-- Auto-fixed: <list or "none">
+- Repaired (approved): <list or "none">
 - Needs human review: <list or "none">
