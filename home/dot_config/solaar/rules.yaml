@@ -1,0 +1,17 @@
+%YAML 1.3
+---
+- Rule:
+  - Device: BD092C51
+  - Key: [Middle Button, pressed]
+  - Set:
+    - null
+    - dpi
+    - 200
+- Rule:
+  - Device: BD092C51
+  - Key: [Middle Button, released]
+  - Set:
+    - null
+    - dpi
+    - '375'
+...

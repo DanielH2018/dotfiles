@@ -1,0 +1,13 @@
+[Unit]
+Description=Apply MX Ergo S pointer tuning when the trackball connects
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/mx-ergo-watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

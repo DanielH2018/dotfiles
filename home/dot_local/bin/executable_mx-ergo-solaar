@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Put the MX Ergo S into the state the hold-to-precision rules expect.
+#
+# None of this can live on the device: the Ergo S reports neither
+# onboard_profiles nor persistent-remappable-keys, so every button setting is
+# volatile and has to be re-asserted by software on each connect. Solaar does
+# that from its own config.yaml; this script exists so a machine that has never
+# seen the trackball converges without anyone opening the GUI.
+#
+# Values must be given by NAME. Passing the integer from config.yaml is silently
+# coerced -- `divert-keys 82 1` sets Regular, not Diverted, and the rules then
+# never fire.
+
+set -uo pipefail
+
+SERIAL=${MX_ERGO_SERIAL:-BD092C51}
+
+# Middle button stops sending clicks; rules.yaml turns press/release into a
+# precision-DPI hold. Its own action stays identity so that if Solaar is not
+# running the button degrades to a plain middle click rather than something odd.
+solaar config "$SERIAL" divert-keys        "Middle Button" Diverted            || exit 1
+solaar config "$SERIAL" reprogrammable-keys "Middle Button" "Mouse Middle Button" || exit 1
+
+# The clicks the middle button gave up reappear on the precision button, natively.
+solaar config "$SERIAL" reprogrammable-keys "DPI Switch"   "Mouse Middle Button" || exit 1

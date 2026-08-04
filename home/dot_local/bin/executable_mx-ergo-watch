@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Re-assert MX Ergo S tuning whenever it (re)appears.
+#
+# Needed only on a machine that has never seen the trackball: once the KWin
+# settings are written they live in kcminputrc and are reapplied automatically.
+# The trackball is Bluetooth, so it can show up long after login.
+
+set -uo pipefail
+BIN=$(dirname "$(readlink -f "$0")")
+
+# deviceAdded fires for every input device, not just ours -- a keyboard, a KVM
+# flip, any Bluetooth wakeup. mx-ergo-pointer exits non-zero when the trackball
+# is absent, so it doubles as the filter: no trackball, no solaar call.
+apply() { "$BIN/mx-ergo-pointer" && "$BIN/mx-ergo-solaar"; }
+
+apply
+gdbus monitor --session --dest org.kde.KWin --object-path /org/kde/KWin/InputDevice \
+  | while read -r line; do
+        case "$line" in *deviceAdded*) sleep 2; apply ;; esac
+    done

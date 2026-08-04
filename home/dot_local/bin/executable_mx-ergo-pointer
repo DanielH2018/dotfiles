@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Apply pointer acceleration to the Logitech MX Ergo S and nothing else.
+#
+# Matches the device by USB/BT vendor+product rather than by name, so it works
+# on any machine without knowing what libinput ended up calling the trackball.
+# KWin persists whatever we set here into kcminputrc, keyed by device identity,
+# so the setting survives reboots and follows the device to any KDE host.
+
+set -euo pipefail
+
+VID=${MX_ERGO_VID:-1133}    # 0x046d Logitech
+# 0xc548 -- the Bolt RECEIVER, not the trackball. The kernel gives Bolt a single
+# shared "Logitech USB Receiver Mouse" node; the Ergo S gets no node of its own,
+# so there is nothing more specific to match on. Harmless today because the Bolt
+# has exactly one device paired, but anything else paired to it later inherits
+# this acceleration. (A Lightspeed receiver behaves differently and does expose
+# per-device nodes -- the PRO 2 shows up as 1133/16552 on its own.)
+PID=${MX_ERGO_PID:-50504}
+
+# -1.0 .. 1.0 -- this is pointer *speed*, not the accel curve.
+# The Bolt receiver publishes several pointer-capable nodes; only the one whose
+# name ends in "Mouse" carries actual trackball motion.
+NAME_SUFFIX=${MX_ERGO_NAME_SUFFIX:-Mouse}
+
+ACCEL=${MX_ERGO_ACCEL:-0.4}
+# adaptive = libinput's accelerating curve; flat = 1:1, no acceleration.
+PROFILE=${MX_ERGO_PROFILE:-adaptive}
+
+SVC=org.kde.KWin
+IFACE=org.kde.KWin.InputDevice
+MGR_PATH=/org/kde/KWin/InputDevice
+
+prop() { busctl --user get-property "$SVC" "$1" "$IFACE" "$2" 2>/dev/null | cut -d' ' -f2-; }
+setp() { busctl --user set-property "$SVC" "$1" "$IFACE" "$2" "$3" "$4"; }
+
+sysnames=$(busctl --user get-property "$SVC" "$MGR_PATH" \
+             org.kde.KWin.InputDeviceManager devicesSysNames 2>/dev/null \
+           | sed 's/^as [0-9]* //' | tr -d '"')
+
+found=0
+for sysname in $sysnames; do
+    path="$MGR_PATH/$sysname"
+    [ "$(prop "$path" pointer)" = "true" ]  || continue
+    [ "$(prop "$path" vendor)"  = "$VID" ]  || continue
+    [ "$(prop "$path" product)" = "$PID" ]  || continue
+    case "$(prop "$path" name)" in *"$NAME_SUFFIX"\") ;; *) continue ;; esac
+    [ "$(prop "$path" supportsPointerAcceleration)" = "true" ] || {
+        echo "$sysname: no pointer-acceleration support, skipping" >&2; continue; }
+
+    setp "$path" pointerAcceleration d "$ACCEL"
+    case "$PROFILE" in
+        adaptive) setp "$path" pointerAccelerationProfileAdaptive b true ;;
+        flat)     setp "$path" pointerAccelerationProfileFlat     b true ;;
+        *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
+    esac
+
+    echo "$sysname $(prop "$path" name): accel=$ACCEL profile=$PROFILE"
+    found=1
+done
+
+[ "$found" = 1 ] || { echo "MX Ergo S ($VID/$PID) not attached" >&2; exit 1; }
