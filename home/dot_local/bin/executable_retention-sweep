@@ -81,6 +81,30 @@ command -v jq >/dev/null 2>&1 || { echo "retention-sweep: jq required" >&2; exit
 
 NOW=$(date +%s)
 
+# --- stat/du portability --------------------------------------------------------------
+# `stat -c` and `du -sb` are GNU spellings. Only the systemd timer that drives this is
+# Linux-only; the script itself deploys to every machine (nothing in .chezmoiignore holds
+# it back), so on a Mac without coreutils every one of these calls failed and the whole
+# sweeper degraded silently: mtime came back empty, so each entry was kept as "unreadable
+# mtime", and both rewrite primitives returned 1 before touching a file. A report that
+# prunes nothing and blames the filesystem looks exactly like a converged box.
+#
+# Probed once rather than branched on uname: what matters is which stat is first on PATH,
+# and a Mac with coreutils installed gets the GNU one.
+if stat -c%Y . >/dev/null 2>&1; then
+  file_mtime() { stat -c%Y "$1"; }
+  file_size()  { stat -c%s "$1"; }
+  file_mode()  { stat -c%a "$1"; }
+  dir_bytes()  { du -sb "$1" 2>/dev/null | cut -f1; }
+else
+  file_mtime() { stat -f%m "$1"; }
+  file_size()  { stat -f%z "$1"; }
+  file_mode()  { stat -f%Lp "$1"; }
+  # BSD du has no apparent-size flag, so this reports allocated KiB rather than the sum of
+  # file sizes. It feeds the report's byte totals only — no decision reads it.
+  dir_bytes()  { local k; k=$(du -sk "$1" 2>/dev/null | cut -f1) && echo $(( k * 1024 )); }
+fi
+
 # --- cap and grace parsing ------------------------------------------------------------
 # Caps in the manifest are prose ("14d", "mtime+24h", "kill -0 fails / 14d"). Each
 # parser returns empty when it cannot understand its input, and an empty parse is always
@@ -158,7 +182,7 @@ live_sibling_newer_than() {
   local IFS=:
   for c in $cands; do
     [ -n "$c" ] && [ -f "$c" ] || continue
-    m=$(stat -c%Y "$c" 2>/dev/null) || continue
+    m=$(file_mtime "$c" 2>/dev/null) || continue
     [ "$m" -gt "$target_mtime" ] && { printf '%s' "$c"; return 0; }
   done
   return 1
@@ -201,7 +225,7 @@ contained() {
 # rotation never needs its own rm call site.
 rotate_by_size() {
   local f=$1 gens=$2 mode i
-  mode=$(stat -c%a "$f") || return 1
+  mode=$(file_mode "$f") || return 1
   i=$((gens - 1))
   while [ "$i" -ge 1 ]; do
     if [ -e "$f.$i" ]; then
@@ -218,7 +242,7 @@ rotate_by_size() {
 # mode on the temp file, then renames it over the original — never truncates in place.
 truncate_lines_file() {
   local f=$1 n=$2 mode tmp
-  mode=$(stat -c%a "$f") || return 1
+  mode=$(file_mode "$f") || return 1
   tmp="$f.tmp.$$"
   tail -n "$n" -- "$f" > "$tmp" || return 1
   chmod "$mode" "$tmp" || return 1
@@ -274,9 +298,9 @@ sweep() {
       for f in $expanded; do
         [ -e "$f" ] || continue
         count=$((count + 1))
-        if [ -d "$f" ]; then b=$(du -sb "$f" 2>/dev/null | cut -f1); else b=$(stat -c%s "$f" 2>/dev/null); fi
+        if [ -d "$f" ]; then b=$(dir_bytes "$f"); else b=$(file_size "$f" 2>/dev/null); fi
         bytes=$((bytes + ${b:-0}))
-        mtime=$(stat -c%Y "$f" 2>/dev/null || echo "")
+        mtime=$(file_mtime "$f" 2>/dev/null || echo "")
         if [ -n "$mtime" ]; then
           age_days=$(( (NOW - mtime) / 86400 ))
           if [ -z "$oldest_days" ] || [ "$age_days" -gt "$oldest_days" ]; then oldest_days=$age_days; fi
@@ -344,7 +368,7 @@ sweep() {
             if ! lc=$(wc -l < "$f" 2>/dev/null); then kept_reason="cannot read"; continue; fi
             if [ "$lc" -le "$n" ]; then kept_reason="under cap=$cap"; continue; fi
             if truncate_lines_file "$f" "$n"; then
-              newsize=$(stat -c%s "$f" 2>/dev/null || echo 0)
+              newsize=$(file_size "$f" 2>/dev/null || echo 0)
               pruned=$((pruned + 1)); pruned_bytes=$((pruned_bytes + ${b:-0} - newsize))
             else
               echo "  $id: truncate-lines failed for $f" >&2; errors=$((errors + 1))
