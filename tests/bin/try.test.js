@@ -294,15 +294,19 @@ test('a source-only change does not count as a conflict', { skip }, () => {
   assert.match(calls(r.file), /chezmoi apply/);
 });
 
-test('takes a lock, so two benches cannot interleave', { skip }, () => {
+let flockOk = true;
+try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockOk = false; }
+
+// The lock file is created by with_repo_lock's `exec 9>"$_lock"`, which lives in the flock
+// branch: where there is no flock (a stock macOS) try deliberately runs the bench unlocked and
+// says so, creating no file. So this asserts something only a flock machine has -- the same
+// condition the contention test below already gates on.
+test('takes a lock, so two benches cannot interleave', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
   const { dir } = makeRepo();
   const r = run(dir, ['feature']);
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(fs.existsSync(path.join(dir, '.git', 'try.lock')));
 });
-
-let flockOk = true;
-try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockOk = false; }
 
 test('waits for a bench another worktree is holding', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
   const { dir } = makeRepo();

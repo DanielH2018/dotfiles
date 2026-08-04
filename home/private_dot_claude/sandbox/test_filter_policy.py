@@ -61,6 +61,18 @@ policy = _load("filter_policy.py", "filter_policy")
 WS = "/workspace/repo"
 
 
+def scratch_root():
+    """A temp dir with no symlink component anywhere in its path.
+
+    The symlink tests below each assert both halves of the rule: a link is refused AND a
+    real path under the same workspace is still allowed. On macOS tempfile.mkdtemp() returns
+    /var/folders/..., and /var is itself a symlink to /private/var, so every path built from
+    it carries a symlink component and the "still allowed" half was denied. The rule under
+    test is about links inside the workspace; the fixture must not smuggle one in above it.
+    """
+    return os.path.realpath(tempfile.mkdtemp())
+
+
 def denied(path, body):
     """Run one request through the rules; return the message, or None if allowed."""
     policy.WORKSPACE = WS
@@ -213,7 +225,7 @@ def test_a_local_volume_may_not_be_a_bind_in_disguise():
 def test_a_symlink_out_of_the_workspace_is_resolved_not_trusted():
     # The agent can write to the workspace, so it can drop a symlink to / and bind
     # that. Only realpath catches it — a prefix compare on the literal string does not.
-    root = tempfile.mkdtemp()
+    root = scratch_root()
     try:
         ws = os.path.join(root, "repo")
         os.makedirs(ws)
@@ -248,7 +260,7 @@ def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
     #
     # The fix denies any source with a symlink component, removing the window
     # instead of narrowing it: a path with no link in it has nothing to swap.
-    root = tempfile.mkdtemp()
+    root = scratch_root()
     try:
         ws = os.path.join(root, "repo")
         os.makedirs(os.path.join(ws, "real"))
@@ -289,7 +301,7 @@ def test_a_symlink_resolving_INSIDE_the_workspace_is_still_refused():
 def test_the_symlink_component_rule_covers_structured_mounts_too():
     # Binds and Mounts are two spellings of one thing, and a rule applied to only one of
     # them is a rule with a documented bypass.
-    root = tempfile.mkdtemp()
+    root = scratch_root()
     try:
         ws = os.path.join(root, "repo")
         os.makedirs(os.path.join(ws, "real"))
@@ -411,6 +423,7 @@ def test_labels_and_env_keys_are_left_alone():
         "HostConfig": {"Binds": [WS + ":/w"]},
     }
     assert denied("/v1.43/containers/create", body) is None
+
 
 if __name__ == "__main__":
     ran = 0

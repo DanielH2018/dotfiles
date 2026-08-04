@@ -20,10 +20,14 @@ const skip = process.platform === 'win32' ? 'sandbox-worktree is Unix-only'
 
 const dirs = [];
 process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+// realpath'd, the way check-push-signatures.test.js does it: on macOS os.tmpdir() is
+// /var/folders/..., a symlink to /private/var/folders/..., and git's porcelain always reports
+// the physical path. Three assertions here compare a path git printed against one built from
+// this directory, so without resolving it first they diff two spellings of the same place.
 function scratch() {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sbwt-'));
   dirs.push(d);
-  return d;
+  return fs.realpathSync(d);
 }
 
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };

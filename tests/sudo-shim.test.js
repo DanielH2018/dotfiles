@@ -21,8 +21,15 @@ const dirs = [];
 function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
 process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
-let hasScript = true;
-try { execFileSync('sh', ['-c', 'command -v script'], { stdio: 'ignore' }); } catch { hasScript = false; }
+// runTty below needs util-linux script(1), not just any script(1): macOS ships the BSD one,
+// which takes a different command form and tcgetattr's its own stdin, so from a node child with
+// piped stdio it cannot allocate a pty at all -- `script: illegal option -- c` followed by an
+// exit the assertion reads as the shim mangling argv. ptyAvailable() is the flavour probe the
+// TUI suites already gate on. (The shim itself is Linux-only anyway: .chezmoiignore deploys
+// .local/bin/sudo to the three headless hosts and nowhere else.)
+const { ptyAvailable } = require('./lib/pty');
+
+const hasScript = ptyAvailable();
 
 // Records argv one per line, so the assertions read like the command line.
 const RECORDER = `#!/bin/sh
@@ -92,6 +99,6 @@ test('preserves arguments containing spaces', () => {
   assert.deepEqual(shim().run(['sh', '-c', 'echo a b']), ['-A', 'sh', '-c', 'echo a b']);
 });
 
-test('passes through untouched when a terminal is available', { skip: hasScript ? false : 'script(1) unavailable' }, () => {
+test('passes through untouched when a terminal is available', { skip: hasScript ? false : 'no util-linux script(1) for a pty (macOS ships the BSD one)' }, () => {
   assert.deepEqual(shim().runTty(['ls']), ['ls']);
 });

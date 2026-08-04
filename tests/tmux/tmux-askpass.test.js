@@ -17,6 +17,20 @@ const path = require('node:path');
 
 const ASKPASS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tmux-askpass');
 
+// The helper's last line is `timeout ... head -n 1 <&3`, and timeout(1) is GNU coreutils, which
+// a stock Mac does not have and this repo never asks for (not in Brewfile.tmpl, not a row in
+// .chezmoidata/tools.toml). Every path that reaches the bounded read therefore exits 127 there,
+// which is the harness reporting a missing tool, not the helper misbehaving.
+//
+// Gated rather than made portable because the helper only ever runs on the headless Linux hosts:
+// settings.base.json sets SUDO_ASKPASS to it for those hosts only, ~/.zshenv prefers ksshaskpass
+// wherever a graphical session exists, and .chezmoiignore keeps the sudo shim that pairs with it
+// off every other machine. A BSD fallback would be code for a call site that does not exist.
+// Four tests stay live everywhere and keep this from being a blanket file skip: the two
+// loud-exit paths return before the read, and the FIFO-cleanup and absolute-path ones assert
+// state the helper leaves behind whatever the read's exit status was.
+const skipTimeout = process.platform === 'linux' ? false : 'bounded read needs GNU timeout(1); helper targets headless Linux';
+
 const dirs = [];
 function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
 process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
@@ -92,14 +106,14 @@ function fakeEnv({ clients = 'client-0', password = 'hunter2', ...flags } = {}) 
   return { run, runtime, popupLog: () => fs.readFileSync(popupLog, 'utf8'), cmdLog: () => fs.readFileSync(cmdLog, 'utf8') };
 }
 
-test('hands back the password typed into the popup', () => {
+test('hands back the password typed into the popup', { skip: skipTimeout }, () => {
   const { run } = fakeEnv({ password: 'hunter2' });
   const r = run(['[sudo] password for ubuntu: ']);
   assert.equal(r.code, 0);
   assert.equal(r.stdout, 'hunter2\n');
 });
 
-test('preserves a password containing spaces and shell metacharacters', () => {
+test('preserves a password containing spaces and shell metacharacters', { skip: skipTimeout }, () => {
   const pw = 'a b$c "d" `e` \\f';
   const { run } = fakeEnv({ password: pw });
   const r = run(['Password: ']);
@@ -107,7 +121,7 @@ test('preserves a password containing spaces and shell metacharacters', () => {
   assert.equal(r.stdout, `${pw}\n`);
 });
 
-test("passes sudo's prompt through to the popup, quotes and all", () => {
+test("passes sudo's prompt through to the popup, quotes and all", { skip: skipTimeout }, () => {
   const { run, popupLog } = fakeEnv();
   const prompt = "[sudo] daniel's password: ";
   const r = run([prompt]);
@@ -120,7 +134,7 @@ test("passes sudo's prompt through to the popup, quotes and all", () => {
 // in the pane and absent everywhere it would have been useful. tmux itself doesn't need
 // it: with no $TMUX the CLI talks to the default socket and draws on the most recently
 // active client, which is the one being typed in.
-test('works with $TMUX unset, as in a daemon-hosted session', () => {
+test('works with $TMUX unset, as in a daemon-hosted session', { skip: skipTimeout }, () => {
   const { run } = fakeEnv({ password: 'hunter2' });
   const r = run(['Password: '], { TMUX: '' });
   assert.equal(r.code, 0);
@@ -142,7 +156,7 @@ test('surfaces display-popup failure on stderr rather than hanging', () => {
   assert.match(r.stderr, /display-popup failed: no client to draw on/);
 });
 
-test('a cancelled popup returns an empty answer promptly', () => {
+test('a cancelled popup returns an empty answer promptly', { skip: skipTimeout }, () => {
   const { run } = fakeEnv({ FAKE_TMUX_CANCEL: '1' });
   const started = Date.now();
   const r = run(['Password: ']);
@@ -150,7 +164,7 @@ test('a cancelled popup returns an empty answer promptly', () => {
   assert.ok(Date.now() - started < 3000, 'should not wait out the read timeout');
 });
 
-test('an unanswered popup releases the caller at the timeout', () => {
+test('an unanswered popup releases the caller at the timeout', { skip: skipTimeout }, () => {
   const { run } = fakeEnv({ FAKE_TMUX_UNANSWERED: '1' });
   const r = run(['Password: '], { TMUX_ASKPASS_TIMEOUT: '1' });
   assert.equal(r.stdout, '');

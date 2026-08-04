@@ -22,6 +22,10 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
+const PAGE_SIZE = (() => {
+  try { return Number(execFileSync('getconf', ['PAGESIZE'], { encoding: 'utf8' }).trim()) || 4096; } catch { return 4096; }
+})();
+
 const dirs = [];
 function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
 process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
@@ -64,7 +68,11 @@ function fakeEnv({ procs = {}, roster = {}, sessions = {} }) {
     fs.mkdirSync(d, { recursive: true });
     fs.writeFileSync(path.join(d, 'cmdline'), spec.cmd.split(' ').join('\0') + '\0');
     // statm: size resident shared text lib data dt — resident is field 2, in pages.
-    const pages = Math.round((spec.rssKb ?? 4) * 1024 / 4096);
+    // Sized with the page size the script will multiply back by (`getconf PAGESIZE`), not a
+    // hardcoded 4096: on a real Linux box those agree, but this fixture runs anywhere, and on
+    // a 16K-page host (arm64 macOS, and Linux built with CONFIG_ARM64_16K_PAGES) a 4096 fixture
+    // reports 4x the rss the test asked for.
+    const pages = Math.round((spec.rssKb ?? 4) * 1024 / PAGE_SIZE);
     fs.writeFileSync(path.join(d, 'statm'), `99999 ${pages} 0 0 0 0 0\n`);
   }
   const rosterPath = path.join(home, 'roster.json');

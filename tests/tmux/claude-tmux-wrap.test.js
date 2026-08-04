@@ -138,9 +138,26 @@ test('against real tmux: the session exists, runs claude, and hides its status',
   const claudeOnly = scratch('cwrap-claude-');
   fs.copyFileSync(path.join(bin, 'claude'), path.join(claudeOnly, 'claude'));
   fs.chmodSync(path.join(claudeOnly, 'claude'), 0o755);
-  realTmux.PATH = `${claudeOnly}:/usr/bin:/bin:/usr/local/bin:${path.dirname(process.execPath)}`;
+  // The real tmux's own directory, resolved rather than assumed: Homebrew puts it in
+  // /opt/homebrew/bin, which none of the hardcoded entries below cover. Without it the wrap's
+  // `command -v tmux` guard failed, so the function fell through to the real claude and this
+  // test asserted against a server that was never asked to exist -- and then died on ENOENT
+  // spawning tmux itself. The stub tmux stays off PATH, which is the point of claudeOnly.
+  const tmuxDir = path.dirname(execFileSync('bash', ['-c', 'command -v tmux'], { encoding: 'utf8' }).trim());
+  realTmux.PATH = `${claudeOnly}:${tmuxDir}:/usr/bin:/bin:/usr/local/bin:${path.dirname(process.execPath)}`;
   try {
-    execFileSync('bash', ['-c', `${FN}\nclaude || true`], { env: realTmux, stdio: 'ignore', timeout: 15000 });
+    try {
+      execFileSync('bash', ['-c', `${FN}\nclaude || true`], {
+        env: realTmux, stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL',
+      });
+    } catch {
+      // The wrap ends in `tmux attach-session`, and there is no TTY to attach to. Linux tmux
+      // gives up ("open terminal failed") and the shell exits, which is what this used to
+      // rely on; macOS tmux blocks instead, so the call sat there until execFileSync's own
+      // timeout fired and the test failed with ETIMEDOUT before asserting anything. Killing
+      // the attach at the timeout is fine either way: the detached session and its status
+      // option are both set before it, and they are what the assertions below read.
+    }
     const T = (...a) => execFileSync('tmux', a, { env: realTmux, encoding: 'utf8' });
     const ls = T('ls');
     assert.match(ls, /^claude-\d+:/, 'the wrapped session exists on the isolated server');
