@@ -29,7 +29,10 @@ export CTS_REMOTE_ROOTS="$HOME"
 # "if no terminal is available or if the -A option is specified", but on Ubuntu 24.04 only the
 # second half is true (measured on daniel-box 2026-08-01: exported and verified in the calling
 # shell, plain sudo still refused; with -A it prompted) — which is what ~/.local/bin/sudo is
-# for on those hosts. Nothing is weakened — the
+# for on those hosts. macOS is the same: measured on this laptop 2026-08-04 (sudo 1.9.17p2),
+# plain sudo refused with SUDO_ASKPASS exported and valid, and `sudo -A -v` drew the dialog
+# and authenticated. So -A is required here too; the shim is excluded on this host by
+# .chezmoiignore, so it has to be typed. Nothing is weakened — the
 # password is still required, it is just typed into a Plasma dialog instead of a terminal, and
 # an interactive shell that HAS a tty keeps prompting there as before.
 # Guarded on a graphical session because ksshaskpass cannot draw without one: over plain ssh,
