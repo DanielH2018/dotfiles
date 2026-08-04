@@ -31,7 +31,7 @@ function sameOutput(a, b) {
 function workArea(output) {
     try {
         return workspace.clientArea(MAXIMIZE_AREA, output, workspace.currentDesktop);
-    } catch (e) {
+    } catch (_e) {
         return output.geometry;
     }
 }
