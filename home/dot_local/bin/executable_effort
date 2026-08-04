@@ -1,0 +1,44 @@
+#!/bin/bash
+# Get/set Claude Code's effortLevel in ~/.claude/settings.json without opening a session.
+# effortLevel is a runtime-owned key (see claude-settings-merge's RUNTIME_OWNED_KEYS) that
+# `/effort` writes live and chezmoi carries forward across `apply` — editing it here directly
+# is equivalent, and lets a fresh `claude-sandbox` launch pick it up via resolve-sandbox-settings.sh.
+set -euo pipefail
+
+SETTINGS="$HOME/.claude/settings.json"
+LEVELS=(low medium high xhigh max)
+
+current() {
+  jq -r '.effortLevel // "unset"' "$SETTINGS"
+}
+
+set_level() {
+  local level="$1" valid=false l
+  for l in "${LEVELS[@]}"; do
+    [[ "$level" == "$l" ]] && valid=true && break
+  done
+  if [[ "$valid" != true ]]; then
+    echo "Invalid effort level: $level" >&2
+    echo "Valid options: ${LEVELS[*]}" >&2
+    exit 1
+  fi
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"
+  jq --arg level "$level" '.effortLevel = $level' "$SETTINGS" >"$tmp"
+  mv "$tmp" "$SETTINGS"
+  echo "effortLevel: $level"
+}
+
+if [[ $# -eq 0 ]]; then
+  echo "Current effort level: $(current)"
+  echo "Options: ${LEVELS[*]}"
+  choice=""
+  read -rp "Set to: " choice || true
+  if [[ -z "$choice" ]]; then
+    echo "No value given, leaving unchanged."
+    exit 0
+  fi
+  set_level "$choice"
+else
+  set_level "$1"
+fi
