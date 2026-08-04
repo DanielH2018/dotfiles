@@ -114,11 +114,16 @@ Scripts
 .ssh/config
 {{ end }}
 
-# The sudo shim (see the script for why it exists) only makes sense where the tmux askpass
-# helper is the configured SUDO_ASKPASS — the same headless hosts settings.base.json gates
-# that on. Shadowing `sudo` in PATH is not something to deploy onto a workstation that
-# never asked for it, least of all a work machine.
-{{ if not (has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box")) }}
+# The sudo shim (see the script for why it exists) belongs wherever SUDO_ASKPASS is configured
+# and sudo refuses to use it without -A. That was the headless hosts, and it now includes this
+# work laptop: measured 2026-08-04 (sudo 1.9.17p2) the same way daniel-box was, plain sudo
+# refused with the helper exported and valid. Running `! sudo …` inside a Claude Code session is
+# the whole reason the flag has to come from somewhere other than the person typing.
+#
+# Shadowing `sudo` in PATH is still not a default — hosts that never asked for it keep the real
+# binary first. Where it does deploy, it engages only when there is no tty, so an interactive
+# terminal gets a byte-identical invocation (asserted in tests/sudo-shim.test.js).
+{{ if not (has .chezmoi.hostname (list "daniel-server" "daniel-pi" "daniel-box" "MacBook-Pro-2")) }}
 .local/bin/sudo
 {{ end }}
 
