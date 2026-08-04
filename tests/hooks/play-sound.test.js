@@ -45,9 +45,14 @@ function sandbox({ paplay = true, aplay = true } = {}) {
 
 // Playback is backgrounded and the hook exits immediately, so the stub may not have written
 // yet when the script returns. Poll briefly rather than sleeping a fixed amount.
+//
+// The ceiling is 10s, not the 0.5s it was: the stub is an orphaned /bin/sh racing ~1600 tests
+// across every core, and under the full `node --test` run it lost often enough that this file
+// passed on its own and failed in the suite. Only a test that genuinely fails pays the
+// ceiling -- the loop returns as soon as the log has content.
 function readLogSettled(log) {
   const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 1000; i++) {
     if (fs.existsSync(log) && fs.readFileSync(log, 'utf8').trim()) break;
     nap(10);
   }

@@ -64,11 +64,12 @@ WS = "/workspace/repo"
 def scratch_root():
     """A temp dir with no symlink component anywhere in its path.
 
-    The symlink tests below each assert both halves of the rule: a link is refused AND a
-    real path under the same workspace is still allowed. On macOS tempfile.mkdtemp() returns
-    /var/folders/..., and /var is itself a symlink to /private/var, so every path built from
-    it carries a symlink component and the "still allowed" half was denied. The rule under
-    test is about links inside the workspace; the fixture must not smuggle one in above it.
+    The symlink tests below each assert both halves of the rule: a link is
+    refused AND a real path under the same workspace is still allowed. On macOS
+    tempfile.mkdtemp() returns /var/folders/..., and /var is itself a symlink to
+    /private/var, so every path built from it carries a symlink component and
+    the "still allowed" half was denied. The rule under test is about links
+    inside the workspace; the fixture must not smuggle one in above it.
     """
     return os.path.realpath(tempfile.mkdtemp())
 

@@ -17,7 +17,25 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 
 let shellcheckOk = true;
 try { execFileSync('bash', ['-c', 'command -v shellcheck'], { stdio: 'ignore' }); } catch { shellcheckOk = false; }
-const skipLintCase = toolsOk && shellcheckOk ? false : 'no supported linter installed';
+
+// The hook runs every linter through run_bounded, which is built on coreutils timeout(1) --
+// see run-bounded.test.js, whose whole suite skips on the same probe. Where timeout is absent
+// (a stock macOS: no coreutils in Brewfile.tmpl or tools.toml) run_bounded emits
+// "timeout: command not found" and the hook reports THAT as the lint failure, so every case
+// below sees a block decision whose reason is the missing tool rather than the linter's
+// verdict. It was invisible until shellcheck arrived on this machine: with no linter for .sh
+// at all the hook returned before reaching run_bounded, and these four passed without
+// exercising it.
+//
+// NOT a test-only gap: the deployed PostToolUse hook has the same hole, and on this host it
+// now blocks real edits with that message. Closing it means either putting a timeout(1) on
+// the hook's PATH or giving run_bounded a fallback, both of which are decisions about
+// run_bounded rather than about this suite.
+let timeoutOk = true;
+try { execFileSync('bash', ['-c', 'command -v timeout'], { stdio: 'ignore' }); } catch { timeoutOk = false; }
+
+const skipLintCase = !(toolsOk && shellcheckOk) ? 'no supported linter installed'
+  : timeoutOk ? false : 'coreutils timeout unavailable (run_bounded cannot run)';
 
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-after-edit-')); dirs.push(d); return d; }
