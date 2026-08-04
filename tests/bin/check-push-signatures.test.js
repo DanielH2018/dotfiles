@@ -40,6 +40,12 @@ function repo({ trustKey = true } = {}) {
     ['user.email', 'test@example.com'], ['user.name', 'Test'],
     ['gpg.format', 'ssh'], ['user.signingkey', `${key}.pub`],
     ['gpg.ssh.allowedSignersFile', signers], ['commit.gpgsign', 'true'],
+    // Pinned, not inherited: this machine's global gitconfig points gpg.ssh.program at
+    // 1Password's op-ssh-sign, which routes signing to the agent and then correctly
+    // refuses a key it does not hold ("No SSH private key found for the specified public
+    // key"), so every commit here fails to be written. The throwaway repo must sign with
+    // the throwaway key file it just generated, which is what plain ssh-keygen does.
+    ['gpg.ssh.program', 'ssh-keygen'],
   ]) git('config', k, v);
 
   return {
