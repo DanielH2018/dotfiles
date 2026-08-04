@@ -1,0 +1,44 @@
+#!/bin/sh
+# SUDO_ASKPASS helper for macOS — the Aqua counterpart to the ksshaskpass branch (Plasma)
+# and tmux-askpass (headless) in ~/.zshenv, wired up by the same `if`.
+#
+# The problem is identical on every host: a shell with no controlling terminal (Claude
+# Code's `!` commands, `ssh host cmd`, launchd agents) has nowhere to prompt, so sudo
+# refuses rather than asking. Measured on this laptop: `! tty` reports "not a tty".
+# A Mac in a graphical session has somewhere better to draw than either alternative —
+# osascript's own secure dialog. Nothing is weakened: the password is still required,
+# /etc/sudoers and /etc/sudo.conf stay untouched, and it is typed into a native dialog
+# with echo off instead of a terminal.
+#
+# The password never touches disk, argv, or the environment: osascript writes it to stdout,
+# which is already sudo's pipe, so `exec` hands the pipe over rather than round-tripping it
+# through a shell variable where `ps` or a trace could see it.
+set -eu
+
+# sudo's prompt reaches AppleScript through argv (`on run argv`), never string-interpolated
+# into the script body — so a prompt containing quotes or backslashes cannot alter it.
+#
+# `giving up after` mirrors tmux-askpass's timeout, for the same reason: a dialog nobody
+# answers eventually releases sudo instead of wedging the caller. Both the cancel path
+# (error -128) and the timeout path exit non-zero and print nothing, because sudo reads an
+# empty answer as a wrong password — a silent auth failure — where a failed helper is
+# reported as one.
+#
+# MAC_ASKPASS_TIMEOUT is a test seam, not something to set by hand — same as its counterpart
+# in tmux-askpass. It goes through argv rather than being interpolated into the script body.
+exec osascript - "${1:-Password:}" "${MAC_ASKPASS_TIMEOUT:-120}" <<'APPLESCRIPT'
+on run argv
+	try
+		set answer to display dialog (item 1 of argv) ¬
+			with title "sudo" ¬
+			default answer "" ¬
+			with hidden answer ¬
+			with icon caution ¬
+			giving up after (item 2 of argv as number)
+	on error number -128
+		error "cancelled" number 1
+	end try
+	if gave up of answer then error "timed out" number 1
+	return text returned of answer
+end run
+APPLESCRIPT

@@ -35,7 +35,19 @@ export CTS_REMOTE_ROOTS="$HOME"
 # Guarded on a graphical session because ksshaskpass cannot draw without one: over plain ssh,
 # leaving SUDO_ASKPASS unset yields sudo's own clear error rather than a helper that dies
 # silently and looks like a wrong password.
-if [ -x /usr/bin/ksshaskpass ] && { [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; }; then
+if [ -x "$HOME/.local/bin/mac-askpass" ] && [ "$(launchctl managername 2>/dev/null)" = Aqua ]; then
+  # macOS draws its own secure dialog via osascript — see the script. Gated on the launchd
+  # manager rather than on uname for the same reason the branch below is gated on a graphical
+  # session: `ssh mac cmd` lands in a Background manager where no dialog can appear, and there
+  # an unset SUDO_ASKPASS yields sudo's clear error instead of a helper that dies opaquely and
+  # reads to sudo as a wrong password. The `-x` test comes first so non-Macs, where the script
+  # does not exist, never pay for the launchctl fork.
+  #
+  # Ordered ahead of the tmux branch deliberately: that branch gates on tmux being *installed*,
+  # and Homebrew tmux is installed on this laptop, so it would otherwise claim the Mac and then
+  # pop nothing whenever no client is attached.
+  export SUDO_ASKPASS="$HOME/.local/bin/mac-askpass"
+elif [ -x /usr/bin/ksshaskpass ] && { [ -n "$WAYLAND_DISPLAY" ] || [ -n "$DISPLAY" ]; }; then
   export SUDO_ASKPASS=/usr/bin/ksshaskpass
 elif [ -x "$HOME/.local/bin/tmux-askpass" ] && command -v tmux >/dev/null 2>&1; then
   # Headless hosts (daniel-box, daniel-server) have no dialog to pop, but the tmux the
