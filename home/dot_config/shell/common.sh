@@ -278,6 +278,15 @@ alias ..='cd ..'
 alias ...='cd ../..'
 command -v ncdu >/dev/null 2>&1 && alias duu='ncdu .'
 mkcd() { mkdir -p -- "$1" && cd -- "$1" || return; }
+# Jump to the Obsidian vault. Not CLAUDE_VAULT_DIR: that points at the LLM Wiki that /lint and
+# /healthcheck rewrite in place (index.md + frontmatter), a different tree from the personal
+# vault — pointing it here would aim those commands at the wrong notes. Override with
+# OBSIDIAN_VAULT_DIR on a machine that keeps the vault elsewhere.
+vault() {
+  local _v="${OBSIDIAN_VAULT_DIR:-$HOME/My_Vault}"
+  [ -d "$_v" ] || { echo "vault: no vault at $_v" >&2; return 1; }
+  cd "$_v" || return
+}
 # Drift checks that ignore run_ scripts. run_after_terminal-cheatsheet.sh regenerates on
 # EVERY apply by design (it parses the just-deployed wezterm/nvim/yazi/ghostty configs), so
 # it is permanently "pending" — plain `chezmoi verify` therefore always exits 1 and plain
