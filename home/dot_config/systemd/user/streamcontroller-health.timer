@@ -1,10 +1,19 @@
 [Unit]
 Description=Periodic check that StreamController still holds the Stream Deck
+# The unit this recovers is PartOf=graphical-session.target, so this timer must be too.
+# Bound to timers.target instead, it starts with the *user manager* -- which lingering
+# brings up at boot -- and the recovery it triggers then launches a GTK app against no
+# display, which segfaults on the spot.
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Timer]
-# First check a minute after login: the app needs to get through its ~6s page load,
-# and a check that fires into a cold session only ever produces a false strike.
-OnStartupSec=1min
+# First check a minute after the graphical session is up: the app needs to get through
+# its ~6s page load, and a check that fires into a cold session only ever produces a
+# false strike. OnActiveSec, not OnStartupSec -- the latter counts from user-manager
+# start, which under lingering is hours before anyone logs in, so it would fire
+# immediately on login instead of a minute into it.
+OnActiveSec=1min
 OnUnitActiveSec=2min
 # Two strikes at this interval means a real fault is caught in ~4 minutes. Tightening
 # it does not help -- the strike counter, not the period, is what avoids restarting
@@ -14,4 +23,4 @@ AccuracySec=10s
 # A missed check while the box was off is not work to catch up on.
 
 [Install]
-WantedBy=timers.target
+WantedBy=graphical-session.target

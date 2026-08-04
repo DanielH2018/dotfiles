@@ -1,6 +1,9 @@
 [Unit]
 Description=Restart StreamController if it is running but has lost the Stream Deck
 # Pointless without a graphical session -- the unit it recovers is part of one.
+# After= alone is ordering only: it does nothing when the target is inactive, which is
+# how this ran from boot under lingering. PartOf= is what actually ties it to a session.
+PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]

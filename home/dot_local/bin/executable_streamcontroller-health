@@ -71,7 +71,14 @@ deck_node() {
 	printf '/dev/bus/usb/%03d/%03d' "$(<"$1/busnum")" "$(<"$1/devnum")"
 }
 
-app_processes() { pgrep -x -c "$COMM" 2>/dev/null || printf '0'; }
+# `pgrep -c` prints its count *and* exits 1 when that count is zero, so a `|| printf '0'`
+# fallback emitted "0\n0" -- every (( )) on the result was then a syntax error, which
+# silently skipped the deliberate-quit guard in main() and the wait loop in recover().
+app_processes() {
+	local n
+	n=$(pgrep -x -c "$COMM" 2>/dev/null) || n=0
+	printf '%s' "${n:-0}"
+}
 
 deck_held_by_app() {
 	# Only StreamController's own file descriptors count -- see the note at the top
@@ -150,6 +157,17 @@ recover() {
 }
 
 main() {
+	# Everything this recovers is PartOf=graphical-session.target. With lingering enabled
+	# the user manager -- and so this timer -- starts at boot, hours before anyone logs
+	# in, and `systemctl start` on the app then launches GTK against no display: it
+	# segfaults ~2s in, five times, every timer tick until the real login. The deck being
+	# unheld before login is the expected state, not a fault.
+	if ! systemctl --user is-active --quiet graphical-session.target; then
+		clear_strikes
+		log "no graphical session; nothing to recover"
+		return 0
+	fi
+
 	local deck
 	if ! deck=$(find_deck); then
 		# Deck unplugged. Not a fault, and the strike count must not survive it --

@@ -63,11 +63,22 @@ function makeStubs() {
   const bin = mkdtemp('sch-bin-');
   const marks = mkdtemp('sch-marks-');
 
+  // -c matches real pgrep: it prints the count even when that count is zero, and still
+  // exits 1. A stub that stayed silent on no-match is what let the script's
+  // `|| printf '0'` fallback append a second 0 without any test noticing.
   fs.writeFileSync(path.join(bin, 'pgrep'), `#!/bin/bash
-[ -e "${marks}/killed" ] && exit 1
 pids="\${STUB_PIDS:-}"
+[ -e "${marks}/killed" ] && pids=""
+for a in "$@"; do
+  if [ "$a" = "-c" ]; then
+    n=0
+    [ -n "$pids" ] && n=$(printf '%s\\n' $pids | wc -l)
+    printf '%s\\n' "$n"
+    [ "$n" -gt 0 ] || exit 1
+    exit 0
+  fi
+done
 [ -z "$pids" ] && exit 1
-for a in "$@"; do [ "$a" = "-c" ] && { printf '%s\\n' $(printf '%s\\n' $pids | wc -l); exit 0; }; done
 printf '%s\\n' $pids
 `, { mode: 0o755 });
 
@@ -79,6 +90,7 @@ exit 0
   fs.writeFileSync(path.join(bin, 'systemctl'), `#!/bin/bash
 for a in "$@"; do
   case "$a" in
+    is-active) [ -n "\${STUB_NO_SESSION:-}" ] && exit 1 || exit 0 ;;
     is-failed) [ -n "\${STUB_UNIT_FAILED:-}" ] && exit 0 || exit 1 ;;
     start) echo "start" >> "${marks}/systemctl"; exit 0 ;;
   esac
@@ -89,7 +101,7 @@ exit 0
   return { bin, marks };
 }
 
-function run({ attached = true, pids = [], holders = [], unitFailed = false, state, home }) {
+function run({ attached = true, pids = [], holders = [], unitFailed = false, noSession = false, state, home }) {
   const { bin, marks } = makeStubs();
   const fakeHome = home || mkdtemp('sch-home-');
   const resetBin = path.join(fakeHome, '.local', 'bin');
@@ -109,6 +121,7 @@ echo reset >> "${marks}/reset"
       XDG_RUNTIME_DIR: state,
       STUB_PIDS: pids.join(' '),
       ...(unitFailed ? { STUB_UNIT_FAILED: '1' } : {}),
+      ...(noSession ? { STUB_NO_SESSION: '1' } : {}),
     },
   });
 
@@ -142,9 +155,31 @@ test('a non-StreamController holder does not count as healthy', { skip }, () => 
 
 test('a deliberate quit stays quit', { skip }, () => {
   // Nothing running and the unit is not failed: the user closed the app. Restarting
-  // here would make it impossible to turn off.
-  const r = run({ pids: [], unitFailed: false, state: mkdtemp('sch-state-') });
-  assert.equal(r.restarted, false);
+  // here would make it impossible to turn off. Asserting only "did not restart" on a
+  // single run proves nothing -- one run can never get past strike 1. The guard is
+  // working only if no strike accrues at all, so a second check still does nothing.
+  const state = mkdtemp('sch-state-');
+  const first = run({ pids: [], unitFailed: false, state });
+  assert.equal(first.restarted, false);
+  assert.doesNotMatch(first.out, /strike/);
+
+  const second = run({ pids: [], unitFailed: false, state });
+  assert.equal(second.restarted, false);
+});
+
+test('no graphical session is a no-op, however broken the deck looks', { skip }, () => {
+  // The pre-login incident exactly: deck attached, nothing holding it, unit already
+  // failed from an earlier burst. Every signal says "recover", but starting the app
+  // here launches GTK against no display and it segfaults. Two runs, so a strike
+  // accrued by the first would show up as a restart in the second.
+  const state = mkdtemp('sch-state-');
+  const first = run({ pids: [], holders: [], unitFailed: true, noSession: true, state });
+  assert.match(first.out, /no graphical session/);
+  assert.equal(first.restarted, false);
+
+  const second = run({ pids: [], holders: [], unitFailed: true, noSession: true, state });
+  assert.equal(second.restarted, false);
+  assert.equal(second.didReset, false, 'must not touch USB before anyone has logged in');
 });
 
 test('two consecutive strikes trigger a reset-then-restart', { skip }, () => {
