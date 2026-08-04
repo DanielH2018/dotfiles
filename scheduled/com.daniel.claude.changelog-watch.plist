@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Definition only — this file is outside `home/`, so chezmoi never deploys it.
+  Kept out of the source root on purpose: it must NOT land in ~/Library/LaunchAgents,
+  because work-laptop-config's catch-up.sh globs that directory and would replay the
+  job even while it is unloaded.
+
+  Activate on a machine that wants the daily /changelog-watch run:
+
+    ln -sfn ~/.local/share/chezmoi/scheduled/com.daniel.claude.changelog-watch.plist \
+            ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
+    launchctl bootstrap "gui/$(id -u)" \
+            ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
+
+  Deactivate:
+
+    launchctl bootout "gui/$(id -u)/com.daniel.claude.changelog-watch"
+    rm ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
+
+  The `/changelog-watch` command itself lives in this repo at
+  home/private_dot_claude/commands/changelog-watch.md and stays available to run by
+  hand regardless of whether this agent is loaded.
+
+  Runner dependency: run-skill.sh is provided by the work-laptop-config repo
+  (symlinked to ~/.claude/scheduled/run-skill.sh), so activation needs that repo
+  installed. It runs the skill headless with --dangerously-skip-permissions and
+  renders an HTML artifact in `shown` mode.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.daniel.claude.changelog-watch</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /Users/daniel/.claude/scheduled/run-skill.sh changelog-watch shown</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>37</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/Users/daniel/.claude/logs/scheduled/changelog-watch.launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/daniel/.claude/logs/scheduled/changelog-watch.launchd.log</string>
+</dict>
+</plist>

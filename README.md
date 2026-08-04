@@ -28,6 +28,10 @@ upstream's `wezfurlong/wezterm-nightly` COPR, and `gron` falls back to its GitHu
 
 - `home/` — chezmoi source (dot_ files, templates)
 - `docs/` — specs, plans, and decisions (not deployed); see `docs/README.md` for the layout
+- `scheduled/` — launchd job definitions (not deployed). Deliberately outside `home/`: these
+  must not be copied into `~/Library/LaunchAgents` by an apply, since the catch-up agent
+  globs that directory and would replay a job that is meant to be inactive. Each plist
+  documents its own activate/deactivate commands.
 - `tests/` — unit tests (not deployed); run the full suite with `node --test`, which
   discovers them recursively. Grouped by subject (`agentview/`, `sandbox/`, `hooks/`,
   `install/`, `chezmoi/`, `terminal/`, `shell/`, `tmux/`, `dotsync/`, `tq/`, `evals/`,
