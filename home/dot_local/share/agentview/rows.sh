@@ -344,7 +344,8 @@ refresh_remote() {  # pull homelab state over ssh, fold its live registry in, re
   # pre-registry homelab still renders. One-shot ssh (NO ControlMaster) bounded by
   # ConnectTimeout — we KEEP the old snapshot only when ssh itself can't connect (rc 255),
   # not when there simply are no remote sessions.
-  out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
+  av_ssh_opts
+  out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob
 declare -A M UPD
 # sid -> "state<TAB>ts<TAB>kind<TAB>jobId" from live, non-sdk, alive-pid sessions (newest

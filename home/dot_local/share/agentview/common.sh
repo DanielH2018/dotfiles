@@ -1,4 +1,4 @@
-# shellcheck shell=bash
+# shellcheck shell=bash disable=SC2034
 # agentview · common — helpers shared by more than one module: the pane cwd->title map
 # and the Windows daemon roster. Kept separate so a mode that needs one of them does not
 # drag in the whole focus or rows module. Sourced by ~/.local/bin/agentview.
@@ -57,4 +57,26 @@ win_roster() {  # echo the Windows daemon's roster as a JSON array; nonzero when
   printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
   _win_roster_memo=$out
   printf '%s' "$out"
+}
+
+# Control sockets for the multiplexed ssh below. Under $HOME deliberately: a /mnt default
+# would be a new absolute seam, and tests/agentview/agentview-seams.test.js fails on one that
+# the shared helper does not cover.
+AV_SSH_CTLDIR="${AGENT_VIEW_SSH_CTLDIR:-$HOME/.ssh/agentview}"
+declare -a AV_SSH_OPTS=()
+
+av_ssh_opts() {  # populate AV_SSH_OPTS; callers splat "${AV_SSH_OPTS[@]}" into their ssh call
+  # %C is a hash of (host, port, user, address) rather than %r@%h:%p spelled out. Unix socket
+  # paths cap at ~104 bytes and the literal form overflows it on long hostnames, at which
+  # point ssh silently declines to multiplex and every call pays a full handshake again.
+  mkdir -p "$AV_SSH_CTLDIR" 2>/dev/null || true
+  chmod 700 "$AV_SSH_CTLDIR" 2>/dev/null || true
+  # ConnectTimeout belongs here, not at the call site: a master socket pointing at a host that
+  # has gone away must fail fast, or the picker's background refresh hangs holding its pipes.
+  AV_SSH_OPTS=(
+    -o ControlMaster=auto
+    -o "ControlPath=$AV_SSH_CTLDIR/%C"
+    -o ControlPersist=300
+    -o ConnectTimeout=3
+  )
 }
