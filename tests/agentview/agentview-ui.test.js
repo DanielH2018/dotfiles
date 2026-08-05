@@ -433,3 +433,66 @@ test('a fresh ok host adds no chrome', { skip }, async (t) => {
   // bare substring 'old' inside 'fold', which a fresh host's silence does not disprove.
   assert.strictEqual(lineIndex(term, ' old'), -1, 'a fresh host should carry no age chrome');
 });
+
+// ---- the EXIT trap ----
+// The picker detaches two children before fzf starts: --refresh-remote (short-lived) and
+// --watch (loops forever -- nothing about fzf closing makes it exit). A survivor holds the
+// picker's pty open, which is the shape of the old CTRL+W hang. The trap is the only thing
+// that reaps them.
+//
+// The obvious test does not work. Quitting closes the pty, and the kernel SIGHUPs the
+// foreground process group -- so the children die whether or not the trap exists. The first
+// version of this test asserted "the watcher is gone afterwards" and stayed GREEN with the
+// trap's kill deleted: it was measuring process-group teardown, not the code under test.
+//
+// So the --watch child is intercepted by a stub that IGNORES SIGHUP and records SIGTERM.
+// Once teardown cannot reap it, the trap's explicit kill is the only thing that can.
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
+const until = async (fn, tries = 120) => {
+  for (let i = 0; i < tries; i++) { if (fn()) return true; await sleepMs(50); }
+  return false;
+};
+
+test('the EXIT trap signals the picker\'s background children and clears its portfile', { skip }, async (t) => {
+  const { env, home, bin, self } = makeEnv();
+  seed(home);
+
+  const marker = path.join(home, 'watch-signalled');
+  const pidfile = path.join(home, 'watch-pid');
+  // Stands in for $SELF everywhere but only changes behaviour for --watch; every other
+  // invocation (the picker itself, previews, --body reloads) execs the real script, so the
+  // code under test is unmodified.
+  const stub = path.join(bin, 'agentview-selfstub');
+  fs.writeFileSync(stub, `#!/bin/bash
+if [ "\${1:-}" = "--watch" ]; then
+  trap '' HUP
+  trap 'printf term > ${JSON.stringify(marker)}; exit 0' TERM
+  echo $$ > ${JSON.stringify(pidfile)}
+  while :; do sleep 0.05; done
+fi
+exec ${JSON.stringify(self)} "$@"
+`, { mode: 0o755 });
+
+  const term = new Term(['bash', stub], { cols: 110, rows: 30, env: { ...env, AGENTVIEW_SELF: stub } });
+  t.after(() => {
+    term.stop();
+    // SIGKILL, not the stub's ignorable signals: a failed assertion must not leak a spinner.
+    try { process.kill(Number(fs.readFileSync(pidfile, 'utf8').trim()), 'SIGKILL'); } catch { /* gone */ }
+  });
+
+  await term.waitFor('alpha');
+  assert.ok(await until(() => fs.existsSync(pidfile)), 'the picker should spawn a --watch child');
+  const watchPid = fs.readFileSync(pidfile, 'utf8').trim();
+  const portfiles = () => fs.readdirSync(home).filter((f) => f.startsWith('.agentview-fzfport.'));
+  assert.ok(portfiles().length, 'the picker should write a portfile while open');
+
+  // Natural exit. term.stop() would SIGKILL the group and prove nothing.
+  term.send('esc');
+  assert.notStrictEqual(await term.waitForExit({ timeout: 8000 }), null, 'the picker should exit');
+
+  assert.ok(await until(() => fs.existsSync(marker)),
+    'the trap must send SIGTERM to the watch child (pty teardown alone cannot reap it here)');
+  assert.ok(await until(() => !alive(watchPid)), `the watch child ${watchPid} outlived the picker`);
+  assert.deepStrictEqual(portfiles(), [], 'the trap must remove the portfile');
+});
