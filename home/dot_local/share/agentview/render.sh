@@ -16,7 +16,12 @@ C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
+C_ERR="$E[38;2;243;139;168m"           # red — host unreachable / fetch failed
+C_STALE="$C_NEED"                      # stale remote data reads as attention, not failure
 GBAR=$'▎'                         # ▎ left accent rule — state-colored, runs down each group
+# Foldable group headers (COMPLETED/IDLE) swap this glyph in place of the ● the other
+# headers carry, so the header itself says which way <enter> will move it.
+FOLD_COLLAPSED=$'▸'; FOLD_EXPANDED=$'▾'
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's rounded end-caps
 PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
@@ -89,15 +94,15 @@ host_status_rows() {  # print one keyless row per host that isn't currently heal
     IFS=$'\t' read -r outcome when < "$status" || continue
     host_label "$host"; lbl="$_hl"
     case "$outcome" in
-      unreachable) printf '\t  %s · unreachable\n' "$lbl" ;;
-      failed)      printf '\t  %s · fetch failed\n' "$lbl" ;;
+      unreachable) printf '\t  %s%s · unreachable%s\n' "$C_ERR" "$lbl" "$Z" ;;
+      failed)      printf '\t  %s%s · fetch failed%s\n' "$C_ERR" "$lbl" "$Z" ;;
       ok)
         # A corrupt status file (partial write, disk error) can carry a non-numeric epoch;
         # under `set -u` the bare arithmetic below would abort the whole render. Mirror
         # fmt_age's own guard and treat garbage as maximally stale, so it still surfaces.
         case "$when" in ''|*[!0-9]*) when=0;; esac
         age=$(( now - when ))
-        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s · %s old\n' "$lbl" "$_age"; }
+        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s%s · %s old%s\n' "$C_STALE" "$lbl" "$_age" "$Z"; }
         ;;
     esac
   done < <(remote_hosts)
@@ -192,7 +197,7 @@ collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into 
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key L _rest
+  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key glyph L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
   local PINCNT=0 idx=0 g1 gutc _pinned _hp _leaf _par
   row_width; W=$_rw
@@ -233,8 +238,12 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # Collapsed: this landable fold row REPLACES the usual keyless header (never reached
       # for "pinned" — group_expanded always returns true for it). A fold header must be
       # selectable to be expandable, so it carries a sentinel key (fold:<group>) rather than
-      # an empty one — see the --skip dispatch in executable_agentview.
-      printf 'fold:%s\t  %s (%s)\n' "$grp" "${GN[$grp]}" "$cnt"
+      # an empty one — see the --skip dispatch in executable_agentview. It is styled exactly
+      # like the expanded header apart from the glyph and the parenthesized count, so folding
+      # a group changes the affordance rather than reflowing the line.
+      state_color "$grp"; scol="$_scol"
+      printf 'fold:%s\t%s%s%s %s%s%s %s%s%s%s %s(%s)%s\n' "$grp" "$scol" "$GBAR" "$Z" \
+        "$scol" "$FOLD_COLLAPSED" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
       continue
     fi
     if [ "$grp" = pinned ]; then
@@ -243,9 +252,14 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       state_color "$grp"; scol="$_scol"
       # An EXPANDED foldable group (completed/idle) still needs a landable key, the same
       # fold:<group> sentinel the collapsed header carries, so <enter> can re-collapse it.
-      # The other three state headers can't be folded at all and stay keyless like spacers.
-      case "$grp" in completed|idle) key="fold:$grp";; *) key="";; esac
-      printf '%s\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$key" "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      # The other three state headers can't be folded at all and stay keyless like spacers,
+      # and keep the ● bullet — the fold glyph is reserved for headers <enter> can act on.
+      case "$grp" in
+        completed|idle) key="fold:$grp"; glyph="$FOLD_EXPANDED";;
+        *)              key="";         glyph='●';;
+      esac
+      printf '%s\t%s%s%s %s%s%s %s%s%s%s %s%s%s\n' "$key" "$scol" "$GBAR" "$Z" \
+        "$scol" "$glyph" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     fi
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an

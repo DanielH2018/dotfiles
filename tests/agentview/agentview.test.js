@@ -589,8 +589,9 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\nproj', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
-  // completed collapses behind a fold line by default (task 6), which carries no color at
-  // all — expand it so the real, state-colored header prints instead.
+  // completed collapses behind a fold line by default (task 6); expand it so this asserts
+  // the expanded header. The collapsed one is state-colored too, so color alone no longer
+  // tells the two apart — the fold-glyph test below is what discriminates.
   fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
@@ -598,6 +599,65 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.need}mNEEDS INPUT`), 'NEEDS INPUT header is bold yellow');
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.done}mCOMPLETED`), 'COMPLETED header is bold grey');
   assert.doesNotMatch(raw, /38;2;180;190;254/, 'header no longer uses the old lavender');
+});
+
+// ---- fold affordance + host-status color ----
+// These assert on `--body`, not the picker: --body is the pure render path, while the picker
+// detaches a --refresh-remote child that rewrites the very status files seeded below.
+const SC_ERR = '38;2;243;139;168';   // red — unreachable / fetch failed
+const lineOf = (raw, needle) => {
+  const l = raw.split('\n').find((x) => x.includes(needle));
+  assert.ok(l, `expected a line containing ${JSON.stringify(needle)}, got:\n${raw}`);
+  return l;
+};
+
+test('a foldable header shows ▸ collapsed and ▾ expanded; other headers keep ●', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working',   cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
+  stateFile(home, 'c', { pane: '3', state: 'completed', cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
+
+  // Collapsed is the default — no foldfile.
+  const shut = lineOf(run(env, ['--body']).out, 'COMPLETED');
+  assert.match(shut, /▸/, 'a collapsed COMPLETED header carries the collapsed glyph');
+  assert.doesNotMatch(shut, /▾/, 'and never the expanded one');
+  assert.match(shut, new RegExp(`\\x1b\\[${SC.done}m▸`), 'the glyph is tinted by the group state');
+
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  const open = run(env, ['--body']).out;
+  const shown = lineOf(open, 'COMPLETED');
+  assert.match(shown, /▾/, 'an expanded COMPLETED header carries the expanded glyph');
+  assert.doesNotMatch(shown, /▸/, 'and never the collapsed one');
+
+  // WORKING cannot be folded, so the affordance would be a lie there.
+  const fixed = lineOf(open, 'WORKING');
+  assert.match(fixed, /●/, 'a non-foldable header keeps the plain bullet');
+  assert.doesNotMatch(fixed, /[▸▾]/, 'a non-foldable header carries no fold glyph');
+});
+
+test('an unhealthy host status row is colored by kind, and a healthy host adds none', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\wproj', host: HOST, ts: now });
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-box'), `unreachable\t${now}\n`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-server'), `ok\t${now - 3600}\n`);
+
+  const raw = run(env, ['--body']).out;
+  assert.match(lineOf(raw, 'unreachable'), new RegExp(`\\x1b\\[${SC_ERR}m`), 'unreachable reads red');
+  const stale = lineOf(raw, ' old');
+  assert.match(stale, new RegExp(`\\x1b\\[${SC.need}m`), 'a stale-but-reachable host reads yellow');
+  assert.doesNotMatch(stale, new RegExp(`\\x1b\\[${SC_ERR}m`), 'stale data is not a failure');
+});
+
+test('a healthy host puts no red anywhere in the body', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\wproj', host: HOST, ts: now });
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-box'), `ok\t${now}\n`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-server'), `ok\t${now}\n`);
+
+  // Red is used for nothing else, so its absence is the whole assertion.
+  assert.doesNotMatch(run(env, ['--body']).out, new RegExp(`\\x1b\\[${SC_ERR}m`));
 });
 
 test('session names are tinted by their state color', { skip }, () => {
