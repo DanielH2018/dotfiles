@@ -353,4 +353,36 @@ test('a process forked during the landing does not inherit the lock', { skip: fd
   }
 });
 
+// ---- "landing is not deploying" ----
+// land pushes <branch>:main, which moves ORIGIN's main and leaves the local one where it
+// was. chezmoi deploys from the primary checkout's working tree, so an apply right after a
+// land redeploys the pre-merge file and silently reverts what landed. That was missed three
+// times in one day off a header comment alone, hence a line in the output.
+
+test('a successful land reports that local main is behind', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /local main is behind/, `no sync reminder in:\n${r.stdout}`);
+  assert.match(r.stdout, /merge --ff-only origin\/main/, 'the reminder must name the fix');
+});
+
+test('a land that leaves local main current says nothing', { skip }, () => {
+  // Only fires when true -- a reminder printed unconditionally is one that gets ignored.
+  const { dir } = makeRepoWithOrigin();
+  git(dir, 'branch', '-f', 'main', 'feature');
+  const r = land(dir, [], { draft: 'true' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /local main is behind/, 'main was already at the landed tip');
+});
+
+test('--help still reaches the usage block', { skip }, () => {
+  // The help text is a line-numbered slice of the header (sed -n '2,Np'), so growing the
+  // header silently truncates the usage lines off the end. That nearly shipped.
+  const r = land(makeRepo(), ['--help']);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /land --dry-run/, 'the slice must still include the usage lines');
+  assert.match(r.stdout, /LOCAL main is NOT moved/, 'and the local-main warning it was widened for');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

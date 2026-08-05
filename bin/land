@@ -10,10 +10,17 @@
 # exactly that state before it was closed. Nothing serialises this either, so two
 # sessions landing at once rebase onto a main the other is still moving.
 #
-# So: rebase, push the rebased branch, then fast-forward main onto that same ref.
-# Same linear history, the PR is still the record, your signatures survive because
-# main ends up on the very objects you signed, and the flock means the second
-# lander waits for a settled main instead of racing it.
+# So: rebase, push the rebased branch, then fast-forward ORIGIN's main onto that
+# same ref (git push origin <branch>:main). Same linear history, the PR is still the
+# record, your signatures survive because main ends up on the very objects you
+# signed, and the flock means the second lander waits for a settled main instead of
+# racing it.
+#
+# Your LOCAL main is NOT moved — that push updates origin/main only. This matters
+# more here than in most repos: chezmoi reads its source from the primary checkout's
+# working tree, so an apply straight after a land redeploys the pre-merge file and
+# silently reverts what just landed. Landing is not deploying. Sync first, from the
+# primary checkout:  git merge --ff-only origin/main
 #
 # Background jobs must not run this — they open draft PRs and stop there. This is
 # the operator half: it is the only thing here that force-pushes, takes a PR out
@@ -31,7 +38,7 @@ BRANCH=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) printf 'land: unknown flag %s\n' "$1" >&2; exit 2 ;;
     *) BRANCH=$1 ;;
   esac
@@ -166,9 +173,16 @@ land() {
   fi
 
   printf 'landed %s (PR #%s)\n' "$BRANCH" "$PR"
+  # The push moved origin/main; local main is untouched, and chezmoi deploys from the
+  # primary checkout's working tree. A header comment did not stop this being missed
+  # three times in one day, so say it here, where it is read — but only when it is
+  # actually true. HEAD is the rebased tip, i.e. exactly what became origin/main.
+  if [ "$(git rev-parse main 2>/dev/null)" != "$(git rev-parse HEAD)" ]; then
+    say "local main is behind — from the primary: git merge --ff-only origin/main (landing is not deploying)"
+  fi
   # The local branch is checked out right here, so it cannot delete itself — even
-  # though main now points at exactly these commits, which is new: before the
-  # fast-forward the landed SHAs differed and -d would have refused them too.
+  # though ORIGIN's main now points at exactly these commits, which is new: before
+  # the fast-forward the landed SHAs differed and -d would have refused them too.
   say "worktree still holds $BRANCH; from the primary: git worktree remove <path> && git branch -D $BRANCH"
 }
 
