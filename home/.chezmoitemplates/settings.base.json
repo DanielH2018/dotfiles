@@ -268,6 +268,15 @@
             "command": "~/.claude/hooks/allow-readonly-remote.sh",
             "timeout": 10
           },
+          {{/* Same shape as allow-readonly-remote.sh, for the other ask-listed command
+               that takes an arbitrary target: auto-approves a plain GET/HEAD curl against
+               loopback or one of the three LAN hosts. The option table is an allowlist, so
+               an unnamed option is not a decision and the Bash(curl:*) ask rule stands. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-safe-curl.sh",
+            "timeout": 10
+          },
           {{/* Picks up where allow-readonly-remote.sh stops: the homelab calls are wrapped in
                a local filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook
                refuses any metacharacter or option. Defers to the server repo's tested pipeline

@@ -544,6 +544,7 @@
       "Bash(docker compose build:*)",
       "Bash(docker compose restart:*)",
       "Bash(docker compose exec:*)",
+      {{/* curl stays ask-listed, and a prefix rule could not narrow it: `Bash(curl http://10.0.0.161/:*)` constrains nothing after the URL, so `curl http://10.0.0.161/x -o ~/.ssh/authorized_keys` would match it. The narrowing lives in allow-safe-curl.sh instead, which parses the whole line and auto-approves only a plain GET/HEAD against loopback or one of the three LAN hosts. wget has no such hook — it writes to disk by default, so the read-only shape curl has (stdout unless told otherwise) isn't there to check for. */}}
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(ssh:*)",
