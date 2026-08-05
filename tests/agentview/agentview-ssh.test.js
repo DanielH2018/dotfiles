@@ -21,7 +21,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 
 // Builds a HOME, a PATH dir, and an ssh stub that appends its argv to argvLog, one call per
 // line. `body` is the stub's exit behaviour: default succeeds and prints nothing.
-function env({ sshBody = 'exit 0' } = {}) {
+function env({ sshBody = 'exit 0', watchInterval = '1' } = {}) {
   const home = scratch('av-home-');
   const bin = scratch('av-bin-');
   const argvLog = path.join(home, 'ssh-argv.log');
@@ -40,7 +40,7 @@ function env({ sshBody = 'exit 0' } = {}) {
           ...process.env, ...seams.env,
           HOME: home, AV_LIB: LIB,
           PATH: `${bin}:${process.env.PATH}`,
-          AGENT_VIEW_WATCH_INTERVAL: '1',
+          AGENT_VIEW_WATCH_INTERVAL: watchInterval,
         },
       });
     },
@@ -283,6 +283,22 @@ test('an inotifywait error does not busy-spin -- the loop still waits a full int
   assert.ok(e.sshCalls().length > 0, 'an error iteration is treated as a timeout and refreshes');
   const argv = fs.readFileSync(log, 'utf8');
   assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
+});
+
+test('AGENT_VIEW_WATCH_INTERVAL=0 does not defeat the floor sleep', () => {
+  // "0" is all-digits, so the interval validation lets it through as a normal value -- and
+  // `sleep 0` returns in about 1ms. Without a floor of 1, that breaks two things at once: the
+  // fallback's own `sleep "$AV_WATCH_INTERVAL"` timeout returns instantly (busy-spin), and the
+  // floor-sleep backstop for a bad inotifywait exit is `sleep "$AV_WATCH_INTERVAL"` too, so the
+  // same value that broke the first path also disarms the thing meant to catch it.
+  const e = env({ watchInterval: '0' });
+  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
+  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
+  const started = Date.now();
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(Date.now() - started >= 900,
+    'a requested interval of 0 must still be raised to the 1s floor, not spin');
+  assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
 });
 
 module.exports = { env };

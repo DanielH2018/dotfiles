@@ -450,9 +450,14 @@ post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into
 # How long a quiet picker waits before re-fetching the remote hosts. Local changes do not
 # wait for this -- they arrive as inotify events. Validated once here, not just defaulted: a
 # non-numeric override would make every `sleep`/`inotifywait -t` below fail or return
-# instantly, turning the loop into a busy-spin (see av_watch_once).
+# instantly, turning the loop into a busy-spin (see av_watch_once). A floor of 1, not a reject
+# of 0: "0" is all-digits and would otherwise sail through as a valid interval, and `sleep 0`
+# returns in about 1ms -- which also defeats the floor-sleep backstop below, since that backstop
+# IS a `sleep "$AV_WATCH_INTERVAL"`. Raising instead of rejecting also reads "as responsive as
+# possible" the way someone setting 0 probably meant it, rather than silently landing on 30.
 AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
 case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
+[ "$AV_WATCH_INTERVAL" -ge 1 ] || AV_WATCH_INTERVAL=1
 
 av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
   # The blocking wait runs BACKGROUNDED + `wait`ed on, not as a plain foreground command: bash
