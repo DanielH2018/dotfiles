@@ -35,10 +35,15 @@
 #                         registry row. Remote rows act on their host over ssh, then filter
 #                         the cache. So a live session can't reappear.
 #   agentview --pin KEY   toggle this row's pin (CTRL+P); pins live in ~/.claude/agent-view-pins
+#   agentview --fold KEY  toggle a completed/idle group's fold (enter/double-click on its
+#                         fold: header); expanded groups live in ~/.claude/agent-view-folds,
+#                         collapsed by default
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --skip DIR KEY [HOPS]  emit the fzf actions that carry the cursor off a group
 #                         header/spacer (armed on up/down — see the dispatch below)
+#   agentview --enter KEY  emit the fzf action for the enter/double-click keys: accept, or —
+#                         for a fold: header — the toggle-and-reload (see the dispatch below)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 #   agentview --refresh-remote PF  reconcile Windows rows against the daemon roster (reap the
 #                         ones it no longer runs, synthesize the live ones no hook registered)
@@ -77,13 +82,15 @@ if [ "$mode" = "--skip" ]; then
   exit 0
 fi
 
-# --enter KEY: the picker's enter key arms this as an fzf `transform`, same shape as
-# --skip above — a single flat call with no literal parens in the argument. fzf's --bind
-# parser finds a transform(...) action's extent by naive paren counting; a conditional
-# INLINED directly in the --bind string (echoing "execute-silent(...)+reload(...)" from
-# one branch) plants literal parens inside that argument and truncates it there, so the
-# decision has to live in a dispatch like this one instead. A fold header's key has no
-# session behind it — enter must toggle + repaint it rather than fall through to accept.
+# --enter KEY: the picker's enter AND double-click keys both arm this as an fzf
+# `transform`, same shape as --skip above — a single flat call with no literal parens in
+# the argument. fzf's --bind parser finds a transform(...) action's extent by naive paren
+# counting; a conditional INLINED directly in the --bind string (echoing
+# "execute-silent(...)+reload(...)" from one branch) plants literal parens inside that
+# argument and truncates it there, so the decision has to live in a dispatch like this one
+# instead. A fold header's key has no session behind it — accepting it (fzf's default for
+# both enter and a double-click) would just exit the picker on a dead key, so both must
+# toggle + repaint it instead.
 if [ "$mode" = "--enter" ]; then
   case "${2:-}" in
     fold:*) printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
@@ -247,10 +254,12 @@ case "$mode" in
   --card|--keys)                     _avmods="" ;;
   --spawn)                           _avmods="spawn" ;;
   --resolve)                         _avmods="common focus" ;;
-  # jump_or_report (focus.sh) routes a fold: key to do_fold instead of jumping, so every
-  # mode that can reach it — a direct --jump, --jump-nth (a fold row counts toward the
-  # gutter now that its key isn't empty), and the interactive picker's own fallback — needs
-  # actions.sh loaded too.
+  # jump_or_report (focus.sh) has a defensive fold: guard before do_jump — reachable via a
+  # direct `agentview --jump fold:<group>`, and, in principle, the interactive picker's own
+  # accept fallback (enter and double-click both route through --enter first, so that path
+  # is normally unreached — the guard is a safety net, not the primary route). --jump-nth
+  # shares the picker's actions.sh load but never exercises the guard itself: its awk
+  # (below) already excludes fold: rows before one could reach jump_or_report.
   --jump|--remove|--pin|--rename|--fold) _avmods="common focus actions" ;;
   --refresh-remote)                  _avmods="common rows" ;;
   --body)                            _avmods="common rows render" ;;
@@ -374,11 +383,13 @@ fi
 # --jump-nth N: focus the Nth session in the rendered order (pinned first, then by state,
 # ts desc) — the target of ALT+1..9. fzf fires this via `become`, so we inherit its pipes;
 # reconnect the real terminal (guarded — absent under the tests) so a tmux/ssh attach gets
-# a tty. Counts the same non-empty-KEY rows the number gutter labels, so ALT+K == gutter K.
+# a tty. Counts the same rows the number gutter labels, so ALT+K == gutter K — which means
+# skipping fold: rows too: they carry a non-empty key (see the --skip dispatch above) but
+# the gutter (render.sh) never numbers one, since it's never reached by the member-row loop.
 if [ "$mode" = "--jump-nth" ]; then
   if { : < /dev/tty; } 2>/dev/null; then exec < /dev/tty > /dev/tty 2>/dev/tty; fi
   render_body
-  key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} { c++; if (c==n) { print $1; exit } }')
+  key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} $1 ~ /^fold:/ {next} { c++; if (c==n) { print $1; exit } }')
   [ -n "$key" ] && jump_or_report "$key"
   exit $?
 fi
@@ -447,9 +458,9 @@ if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
 # and never re-fits it, so rows the reloads above push in would overflow into scrolling
 # while the terminal below the box sat empty.
 #
-# enter bind: dispatched to the --enter mode above, which decides accept vs. fold-toggle —
-# see that block for why the decision can't be inlined here. A plain accept lands the row's
-# KEY on fzf's stdout, read as $sel below.
+# enter/double-click binds: both dispatch to the --enter mode above, which decides accept
+# vs. fold-toggle — see that block for why the decision can't be inlined here. A plain
+# accept lands the row's KEY on fzf's stdout, read as $sel below.
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
@@ -463,6 +474,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --preview-label=' session ' \
   --listen=0 \
   --bind='enter:transform('"'$SELF'"' --enter {1})' \
+  --bind='double-click:transform('"'$SELF'"' --enter {1})' \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='up:up+transform('"'$SELF'"' --skip up {1})' \
   --bind='down:down+transform('"'$SELF'"' --skip down {1})' \

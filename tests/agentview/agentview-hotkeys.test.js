@@ -310,6 +310,21 @@ test('--jump-nth counts a pinned session as #1', { skip }, () => {
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %2/, 'the pinned session is jump target #1');
 });
 
+test('--jump-nth skips a collapsed fold row instead of mis-numbering past it', { skip }, () => {
+  const { env, home, tmuxLog } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: now - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: 'alpha' });
+  stateFile(home, 'c', { host: HOST, cwd: '/r/charlie', state: 'completed', ts: now - 10, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'charlie' });
+  stateFile(home, 'd', { host: HOST, cwd: '/r/delta', state: 'idle', ts: now - 20, kind: 'host', locator: 'tmux:/s:sd:%4', pane: '%4', title: 'delta' });
+  // completed stays collapsed (default); idle is explicitly expanded. Render order is fixed
+  // by group (working, then completed, then idle), so this is: alpha (gutter 1), fold:completed
+  // (a row with no gutter number), delta (gutter 2). --jump-nth 2 must land on delta, not on
+  // whatever the fold row's position in the fold: KEY count would otherwise put there.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
+  run(env, ['--jump-nth', '2']);
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %4/, 'jump #2 is the row gutter 2 actually numbers (delta), not the fold row before it');
+});
+
 // ---- --skip (up/down step over the group headers + spacers) -------------
 test('--skip leaves the cursor on a real session row', { skip }, () => {
   const { env } = makeEnv();
