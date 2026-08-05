@@ -177,7 +177,14 @@ US=$'\037'
 # the WSL mount; `WEZTERM_WIN` is the Windows wezterm binary (WSL's PATH excludes it,
 # appendWindowsPath=false) used to focus/rename/spawn Windows panes.
 winhost="daniel-desktop"
-declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="Homelab" [daniel-box]="Box" )
+# The badge for THIS machine. Hardcoding "WSL" against $selfhost meant the label tracked
+# nothing: it named whatever host agentview ran on, so every session on a native Linux box
+# rendered as WSL. WSL_DISTRO_NAME is the signal the spawn paths already branch on (the
+# wezterm routing below, spawn.sh's --domain-name), so the badge now agrees with them.
+# Two-way on purpose: agentview has no macOS path anywhere, so a Darwin branch would be
+# dead code rather than caution.
+selflabel="Linux"; [ -n "${WSL_DISTRO_NAME:-}" ] && selflabel="WSL"
+declare -A HOST_LABEL=( ["$selfhost"]="$selflabel" ["$winhost"]="PC" [daniel-server]="Homelab" [daniel-box]="Box" )
 declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
 declare -A HOST_SSH=( [daniel-server]="daniel-server" [daniel-box]="daniel-box" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"

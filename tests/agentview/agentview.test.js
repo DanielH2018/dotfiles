@@ -707,6 +707,36 @@ test('machine source badges render as rounded pills (boxed)', { skip }, () => {
   assert.match(raw, /\x1b\[38;2;137;180;250mPC\x1b\[0m/, 'PC pill hugs the label tight');
 });
 
+// ---- the local machine's badge ----
+// This was HOST_LABEL[$selfhost]="WSL", hardcoded, so the badge named whatever host agentview
+// happened to run on: every session on a native Linux box rendered as WSL.
+//
+// These re-stub the hostname on purpose. makeEnv reports daniel-desktop, which IS winhost, so
+// the "PC" entry overwrites the self entry and the local label cannot be observed there --
+// which is why the suite never caught this.
+const localHost = (bin, name) =>
+  fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${name}\n`, { mode: 0o755 });
+
+test('a native Linux box badges its own sessions Linux, not WSL', { skip }, () => {
+  const { env, home, bin } = makeEnv();
+  localHost(bin, 'fedora');
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/home/d/wproj', host: 'fedora', ts: nowSec() - 5 });
+  const body = stripAnsi(run(env, ['--body']).out);
+  assert.match(body, /Linux/, `expected a Linux badge, got:\n${body}`);
+  assert.doesNotMatch(body, /WSL/, 'nothing about this host is WSL');
+});
+
+test('the same box badges WSL when it really is WSL', { skip }, () => {
+  // WSL_DISTRO_NAME is the signal the spawn paths already branch on; the badge follows it
+  // rather than asserting a machine identity of its own.
+  const { env, home, bin } = makeEnv();
+  localHost(bin, 'fedora');
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/home/d/wproj', host: 'fedora', ts: nowSec() - 5 });
+  const body = stripAnsi(run(env, ['--body'], { WSL_DISTRO_NAME: 'Ubuntu' }).out);
+  assert.match(body, /WSL/, `expected a WSL badge, got:\n${body}`);
+  assert.doesNotMatch(body, /Linux/, 'the badge is one or the other, never both');
+});
+
 // ---- per-group left accent rule (\u258e, state-colored) ----------------------
 test('each group carries a state-colored left accent rule', { skip }, () => {
   const { env, home, capture } = makeEnv();
