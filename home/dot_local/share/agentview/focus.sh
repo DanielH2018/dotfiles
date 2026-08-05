@@ -104,7 +104,8 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
   else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents"; fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux select-window -t "=$wname" 2>/dev/null && return 0
-    tmux new-window -n "$wname" "ssh -t $sshalias '$rcmd'"
+    av_ssh_opts_str
+    tmux new-window -n "$wname" "ssh $AV_SSH_OPTS_STR-t $sshalias '$rcmd'"
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
     return 0
   fi
@@ -131,7 +132,8 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
     # REUSING the one already attached to this remote session, or repeat jumps leak one each.
     # Same reuse trick av_open_claude_cmd applies to bg sessions.
     tmux select-window -t "=$session" 2>/dev/null && return 0
-    tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
+    av_ssh_opts_str
+    tmux new-window -n "$session" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
     return 0
   fi

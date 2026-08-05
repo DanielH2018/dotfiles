@@ -50,7 +50,8 @@ av_purge_remote() {  # $1=alias $2=sid -> the same stop+delete on the remote ove
   local alias="$1" sid="$2" script
   [ -n "$sid" ] || return 0
   printf -v script 's=%q; for pf in "$HOME/.claude/sessions/"*.json; do [ -f "$pf" ] || continue; if [ "$(jq -r ".sessionId // \"\"" "$pf" 2>/dev/null)" = "$s" ]; then p="$(jq -r ".pid // \"\"" "$pf" 2>/dev/null)"; [ -n "$p" ] && kill "$p" 2>/dev/null; fi; done; command -v claude >/dev/null 2>&1 && claude rm "$s" </dev/null >/dev/null 2>&1; rm -f "$HOME/.claude/agent-view/$s.json" 2>/dev/null' "$sid"
-  ssh -o ConnectTimeout=4 -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
+  av_ssh_opts
+  ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
 }
 
 # Does THIS registry record describe the row CTRL+X selected? Emits M/N, and every do_remove
@@ -215,7 +216,8 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
         sshalias=$(remote_alias "$host")
         printf -v cmd 'tmux -S %q send-keys -t %q -l %q; tmux -S %q send-keys -t %q Enter' \
           "$sock" "$pane" "/rename $name" "$sock" "$pane"
-        ssh -o ConnectTimeout=4 -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
+        av_ssh_opts
+        ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
       else
         tmux -S "$sock" send-keys -t "$pane" -l "/rename $name" 2>/dev/null
         tmux -S "$sock" send-keys -t "$pane" Enter 2>/dev/null

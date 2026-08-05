@@ -247,7 +247,9 @@ const jumpScenarios = [
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
       assert.match(l.tmuxLog, /new-window -n rsess/);
-      assert.match(l.tmuxLog, /ssh -t daniel-server/);
+      assert.match(l.tmuxLog, /ssh -o ControlMaster=auto/);
+      assert.match(l.tmuxLog, /ControlPath=/, 'attach command must include multiplexing ControlPath');
+      assert.match(l.tmuxLog, /-t daniel-server/);
       assert.match(l.tmuxLog, /attach -t 'rsess'/);
       assert.strictEqual(l.sshLog, '', 'the ssh call is a string argument to tmux, not exec\'d by this process');
       assert.strictEqual(l.spawnLog, ''); assert.strictEqual(l.activateLog, '');
