@@ -77,13 +77,20 @@ exit 0
 `, { mode: 0o755 });
   // Stateful tmux stub (mirrors agentview-bg-sessions.test.js): select-window only "succeeds"
   // (exit 0) for a window new-window has already created, so the bg-jump reuse-vs-spawn branch
-  // is real, not always-true.
+  // is real, not always-true. new-window actually executes its command string through sh
+  // so we can verify quoting survives the shell reparse.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
 case "$1" in
   select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
-  new-window)    echo "$3" >> "$wins" ;;
+  new-window)
+    echo "$3" >> "$wins"
+    # Execute the command string through sh to test quoting post-reparse
+    if [ -n "\${4:-}" ]; then
+      sh -c "$4" 2>/dev/null
+    fi
+    ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -247,11 +254,17 @@ const jumpScenarios = [
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
       assert.match(l.tmuxLog, /new-window -n rsess/);
+      // The command string should be logged by tmux before reparse
       assert.match(l.tmuxLog, /ssh -o ControlMaster=auto/);
-      assert.match(l.tmuxLog, /ControlPath=/, 'attach command must include multiplexing ControlPath');
+      // But the critical test: post-reparse ssh argv must have -o and ControlPath as separate args
+      const sshLine = l.sshLog.trim().split('\n')[0];
+      assert.ok(sshLine && sshLine.includes('-o'), 'post-reparse ssh must receive -o as separate arg');
+      assert.ok(sshLine.includes('ControlPath='), 'post-reparse ssh must receive ControlPath= value');
+      // The quoting test: ControlPath value should be intact, not mangled
+      const controlPathMatch = sshLine.match(/ControlPath=(\S+)/);
+      assert.ok(controlPathMatch && controlPathMatch[1].includes('.ssh/agentview'), 'ControlPath value must be intact post-reparse');
       assert.match(l.tmuxLog, /-t daniel-server/);
       assert.match(l.tmuxLog, /attach -t 'rsess'/);
-      assert.strictEqual(l.sshLog, '', 'the ssh call is a string argument to tmux, not exec\'d by this process');
       assert.strictEqual(l.spawnLog, ''); assert.strictEqual(l.activateLog, '');
     },
   },

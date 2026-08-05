@@ -86,7 +86,7 @@ av_ssh_opts() {  # populate AV_SSH_OPTS; callers splat "${AV_SSH_OPTS[@]}" into 
   )
 }
 
-AV_SSH_OPTS_STR=""
+declare AV_SSH_OPTS_STR=""
 av_ssh_opts_str() {  # flatten AV_SSH_OPTS for embedding in a command STRING (tmux new-window)
   # An array cannot be splatted into a string argument, and these options reach ssh through
   # tmux's shell, so each one is quoted rather than pasted raw.

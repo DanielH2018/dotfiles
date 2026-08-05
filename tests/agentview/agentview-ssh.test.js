@@ -72,7 +72,9 @@ test('the ConnectTimeout bound survives alongside multiplexing', () => {
 test('the control socket path stays under HOME, not /mnt', () => {
   const e = env();
   e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
-  const c = e.sshCalls()[0];
+  const calls = e.sshCalls();
+  assert.ok(calls.length > 0, 'expected at least one ssh call');
+  const c = calls[0];
   const m = /ControlPath=(\S+)/.exec(c);
   assert.ok(m, `no ControlPath in: ${c}`);
   assert.ok(!m[1].startsWith('/mnt/'), `control socket must not live on /mnt: ${m[1]}`);
@@ -84,7 +86,9 @@ test('keepalive options detect dead peers on established connections', () => {
   // master whose peer has gone away. Both are necessary to fail fast.
   const e = env();
   e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
-  for (const c of e.sshCalls()) {
+  const calls = e.sshCalls();
+  assert.ok(calls.length > 0, 'expected at least one ssh call');
+  for (const c of calls) {
     assert.match(c, /ServerAliveInterval=/, `no ServerAliveInterval in: ${c}`);
     assert.match(c, /ServerAliveCountMax=/, `no ServerAliveCountMax in: ${c}`);
   }
@@ -116,7 +120,9 @@ test('the attach does not inherit BatchMode', () => {
   } catch {
     // Jump may fail with "no pane found", which is expected. We care about ssh being called.
   }
-  assert.doesNotMatch(e.sshCalls()[0], /BatchMode/, 'attach must not set BatchMode');
+  const calls = e.sshCalls();
+  assert.ok(calls.length > 0, 'expected an ssh call for a remote jump');
+  assert.doesNotMatch(calls[0], /BatchMode/, 'attach must not set BatchMode');
 });
 
 module.exports = { env };
