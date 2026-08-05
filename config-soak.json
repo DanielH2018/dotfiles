@@ -313,13 +313,23 @@
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/SKILL.md",
-      "hash": "a33b8b4cd0363686da336b47c28476449a62a5d4eec960cf8478edae61612c6c",
-      "landed": "2026-07-25T23:57:40.952Z"
+      "hash": "1ff5a23a7f66a3f5853ef411e48ae66ebe0b47d98d248a3a41ee0de8e237a796",
+      "landed": "2026-08-05T18:07:11.569Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/references/commands.md",
-      "hash": "76a94d17412870fd112561636bf9b0ebca1411e3942ca38ad0035c16704d69c6",
-      "landed": "2026-07-25T23:57:40.952Z"
+      "hash": "362bca643fa84aae90627c4d1797c2343aaf5427713e6aa8572e04454c555fa9",
+      "landed": "2026-08-05T18:07:11.569Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/gh-stack/references/stack-design.md",
+      "hash": "4a61e3065ce61a5d129a30f5dcbebe73bfde250e34c382277facdc31d2c4e5ce",
+      "landed": "2026-08-05T18:07:11.569Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/gh-stack/references/troubleshooting.md",
+      "hash": "fe1958036e663c7471a0d3efdf1fefe47ee65e06713b13a96e3db95becccdc47",
+      "landed": "2026-08-05T18:07:11.569Z"
     },
     {
       "path": "home/private_dot_claude/skills/gh-stack/references/workflows.md",
