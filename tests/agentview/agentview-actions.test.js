@@ -56,6 +56,7 @@ function makeEnv() {
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const wezSendLog = path.join(bin, 'wez-send.log'); fs.writeFileSync(wezSendLog, '');
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
+  const sshArgvLog = path.join(bin, 'ssh-argv.log'); fs.writeFileSync(sshArgvLog, '');
   const wezwinActivateLog = path.join(bin, 'wezwin-activate.log'); fs.writeFileSync(wezwinActivateLog, '');
   const wezwinSendLog = path.join(bin, 'wezwin-send.log'); fs.writeFileSync(wezwinSendLog, '');
   const taskkillLog = path.join(bin, 'taskkill.log'); fs.writeFileSync(taskkillLog, '');
@@ -96,6 +97,12 @@ exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
 echo "$*" >> "$SSH_LOG"
+# "$*" above joins argv with spaces and can't tell a correctly-quoted multi-word
+# ControlPath from one split by a broken quoting scheme (both flatten to the same
+# text). Also record one argv element per line, with a record-separator line
+# between calls, so tests can recover exact argument boundaries.
+printf '%s\\n' "$@" >> "$SSH_ARGV_LOG"
+printf '\\x1e\\n' >> "$SSH_ARGV_LOG"
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
@@ -142,7 +149,7 @@ exit 0
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     AV_KILLCMD: killStub,
     TMUX_LOG: tmuxLog, WEZ_ACTIVATE_LOG: activateLog, WEZ_SPAWN_LOG: spawnLog, WEZ_SEND_LOG: wezSendLog,
-    WEZ_LIST_FILE: wezListFile, SSH_LOG: sshLog, WEZWIN_ACTIVATE_LOG: wezwinActivateLog,
+    WEZ_LIST_FILE: wezListFile, SSH_LOG: sshLog, SSH_ARGV_LOG: sshArgvLog, WEZWIN_ACTIVATE_LOG: wezwinActivateLog,
     WEZWIN_SEND_LOG: wezwinSendLog, TASKKILL_LOG: taskkillLog, CLAUDE_LOG: claudeLog, KILL_LOG: killLog,
     FZF_CAPTURE: capture,
   };
@@ -152,7 +159,7 @@ exit 0
   // it. The WSL routing gets its own tests further down.
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
   return {
-    bin, home, windir, env, tmuxLog, activateLog, spawnLog, wezSendLog, wezListFile, sshLog,
+    bin, home, windir, env, tmuxLog, activateLog, spawnLog, wezSendLog, wezListFile, sshLog, sshArgvLog,
     wezwinActivateLog, wezwinSendLog, taskkillLog, claudeLog, killLog, capture,
   };
 }
@@ -485,20 +492,18 @@ test('remote tmux new-window embeds ssh with proper quoting for ControlPath cont
     TMUX: '/tmp/tmux-1000/default,1,0',
     AGENT_VIEW_SSH_CTLDIR: ctldir,
   };
-  const r = run(env, ['--jump', key], {});
-  // Jump fails (no pane), but ssh was called
-  const sshLog = read(paths.sshLog);
-  const sshLine = sshLog.trim().split('\n')[0];
-  assert.ok(sshLine, 'expected an ssh call through tmux');
-  // With correct quoting (%q), the ControlPath arg is a single token even with a space
-  // The assertion: ControlPath= must appear exactly once as a contiguous string
-  const ctlpathMatches = (sshLine.match(/ControlPath=/g) || []).length;
-  assert.strictEqual(ctlpathMatches, 1, 'ControlPath= should appear exactly once (not split by space)');
-  // If quoting was broken (plain $var without %q), the space would cause shell split,
-  // and we'd see /tmp/av-ctl as one token and %C as the next argument (broken)
-  assert.ok(!sshLine.includes(' %C'), 'space should not appear before %C (would indicate split)');
-  assert.ok(sshLine.includes('av-ctl'), 'ControlPath must contain directory name with space');
-  assert.ok(sshLine.includes('%C'), 'ControlPath format (%C hash) must be intact');
+  run(env, ['--jump', key], {});
+  // Jump fails (no pane), but ssh was called. Read argv with boundaries preserved
+  // (one element per line, calls separated by \x1e) rather than the space-joined
+  // sshLog: a ControlPath split by the space in `ctldir` and a ControlPath kept
+  // intact as one argument both flatten to identical text once joined with "$*",
+  // so only the unflattened argv can tell correct quoting from broken quoting.
+  const calls = read(paths.sshArgvLog).split('\x1e\n').map((c) => c.split('\n').filter(Boolean)).filter((c) => c.length);
+  assert.ok(calls.length, 'expected an ssh call through tmux');
+  const argv = calls[0];
+  const controlPathArgs = argv.filter((a) => a.startsWith('ControlPath='));
+  assert.strictEqual(controlPathArgs.length, 1, 'ControlPath= should appear as exactly one argv element');
+  assert.strictEqual(controlPathArgs[0], `ControlPath=${ctldir}/%C`, 'ControlPath must survive as a single intact argv element, not split by the space in the directory name');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
