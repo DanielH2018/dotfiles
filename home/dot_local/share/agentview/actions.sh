@@ -204,6 +204,25 @@ do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works f
   return 0
 }
 
+do_fold() {  # $1 = "fold:<group>" -> toggle that group's presence in the fold sidecar
+  # ($foldfile — the groups currently EXPANDED; collapsed is the default). Same
+  # add/remove-a-line shape as do_pin above, just keyed on a bare group name.
+  local grp="${1#fold:}" tmp="$foldfile.tmp.$$"
+  [ -n "$grp" ] || return 0
+  if [ -f "$foldfile" ] && grep -qxF -- "$grp" "$foldfile" 2>/dev/null; then
+    # grep -v exits 1 (not an error) when it filters out the ONLY line — accept 0 and 1 so
+    # collapsing the last expanded group still writes the now-empty file; only a real error
+    # (>=2) aborts.
+    local rc
+    grep -vxF -- "$grp" "$foldfile" > "$tmp" 2>/dev/null; rc=$?
+    if [ "$rc" -le 1 ]; then mv -f "$tmp" "$foldfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else rm -f "$tmp" 2>/dev/null; fi
+  else
+    printf '%s\n' "$grp" >> "$foldfile" 2>/dev/null
+  fi
+  return 0
+}
+
 av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Enter into the
   # session's pane so Claude runs its OWN /rename. tmux locally or over ssh; wezterm locally.
   local host="$1" loc="$2" name="$3" backend rest sock pane cmd sshalias

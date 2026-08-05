@@ -1,7 +1,9 @@
 # shellcheck shell=bash
 # agentview · focus — everything that turns a row into a focused terminal: locator
 # activation, pane resolution, ssh attach for remote rows, Windows-side focus/respawn.
-# Sourced by ~/.local/bin/agentview; needs common (win_roster) and the JQ_* fragments.
+# Sourced by ~/.local/bin/agentview; needs common (win_roster), the JQ_* fragments, and
+# actions (do_fold, for jump_or_report's fold: case) — every mode that loads this module
+# loads actions too.
 # SC2154: the loader assigns the shared globals this module reads, and shellcheck cannot
 # follow a sourced fragment back to it.
 # shellcheck disable=SC2154
@@ -347,6 +349,10 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
 jump_or_report() {  # $1 = KEY -> jump, or say why not. Every entry point that focuses a session
   # goes through here: a jump that fails silently is indistinguishable from a dead keybinding,
   # so the failure must reach the terminal AND the exit status.
+  # A fold header has no session behind it — --jump-nth counts it like any other landable
+  # row now that its key isn't empty, so toggling here (rather than falling into do_jump,
+  # which would report "no pane found") is what makes that land correctly.
+  case "$1" in fold:*) do_fold "$1"; return 0 ;; esac
   do_jump "$1" && return 0
   printf 'agentview: no pane found for that session\n' >&2
   return 1

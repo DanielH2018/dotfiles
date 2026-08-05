@@ -77,6 +77,26 @@ function session(home, sid, obj) {
   fs.writeFileSync(path.join(home, '.claude', 'agent-view', `${sid}.json`), JSON.stringify(obj));
 }
 
+// N completed + M idle sessions, named so their leaf dir (what the row renders) is
+// distinctive. ts stays within the last day: gather_local_rows (rows.sh) HIDES a row
+// aged 1-7 days and PRUNES it past 7, so anything older would silently vanish from
+// both the collapsed count and the expanded rows.
+function seedFinished(home, { completed = 0, idle = 0 } = {}) {
+  const ts = nowSec();
+  for (let i = 1; i <= completed; i++) {
+    session(home, `completed-session-${i}`, {
+      pane: `%c${i}`, state: 'completed', cwd: `/home/daniel/dev/completed-session-${i}`, host: HOST,
+      ts: ts - 100 - i, kind: 'host', title: '', locator: `tmux:/tmp/s.sock:main:%c${i}`,
+    });
+  }
+  for (let i = 1; i <= idle; i++) {
+    session(home, `idle-session-${i}`, {
+      pane: `%i${i}`, state: 'idle', cwd: `/home/daniel/dev/idle-session-${i}`, host: HOST,
+      ts: ts - 500 - i, kind: 'host', title: '', locator: `tmux:/tmp/s.sock:main:%i${i}`,
+    });
+  }
+}
+
 // Two rows, one per state: 'working' also exercises the rename guard.
 function seed(home) {
   const ts = nowSec();
@@ -88,6 +108,9 @@ function seed(home) {
     pane: '%2', state: 'idle', cwd: '/home/daniel/dev/beta', host: HOST,
     ts: ts - 60, kind: 'host', title: 'beta task', locator: `tmux:/tmp/s.sock:main:%2`,
   });
+  // idle collapses behind a fold line by default (task 6); every test below drives beta
+  // directly by keystroke/click, so pre-expand it here rather than in each caller.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
 }
 
 function open(env) {
@@ -236,6 +259,30 @@ test('ctrl-p pins the row into the PINNED group', { skip }, async (t) => {
   await term.waitFor('PINNED');   // the bind's reload re-renders with the new group
 
   assert.match(fs.readFileSync(pinfile(home), 'utf8'), /\S/);
+});
+
+test('completed and idle collapse to one line each by default', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  seedFinished(home, { completed: 3, idle: 2 });
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('COMPLETED');
+  assert.ok(lineIndex(term, 'COMPLETED (3)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.ok(lineIndex(term, 'IDLE (2)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.strictEqual(lineIndex(term, 'completed-session-1'), -1, 'collapsed rows must not render');
+});
+
+test('an expanded group renders its rows', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  seedFinished(home, { completed: 3, idle: 2 });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('completed-session-1');
+  assert.ok(lineIndex(term, 'completed-session-1') >= 0, 'an expanded group renders its rows');
+  assert.strictEqual(lineIndex(term, 'idle-session-1'), -1, 'idle stays collapsed');
 });
 
 test('ctrl-o toggles the preview card', { skip }, async (t) => {

@@ -65,12 +65,31 @@ mode="${1:-fzf}"
 # nothing but keyless rows — the "no active sessions" placeholder — can't spin forever.
 # Dispatched above every other setup line: this runs on each arrow keypress.
 if [ "$mode" = "--skip" ]; then
-  [ -n "${3:-}" ] && exit 0                  # a real session row — stay on it
+  # A fold header carries a sentinel key (fold:<group>) rather than an empty one precisely so
+  # this early return catches it: it has to be landable to be expandable, which is the exact
+  # inverse of what a plain header needs.
+  [ -n "${3:-}" ] && exit 0                  # a real session row, or a fold header — stay on it
   hops="${4:-4}"; case "$hops" in ''|*[!0-9]*) hops=0;; esac
   [ "$hops" -gt 0 ] || exit 0
   dir="${2:-down}"
   printf "%s+transform('%s' --skip %s {1} %s)" \
     "$dir" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$dir" "$(( hops - 1 ))"
+  exit 0
+fi
+
+# --enter KEY: the picker's enter key arms this as an fzf `transform`, same shape as
+# --skip above — a single flat call with no literal parens in the argument. fzf's --bind
+# parser finds a transform(...) action's extent by naive paren counting; a conditional
+# INLINED directly in the --bind string (echoing "execute-silent(...)+reload(...)" from
+# one branch) plants literal parens inside that argument and truncates it there, so the
+# decision has to live in a dispatch like this one instead. A fold header's key has no
+# session behind it — enter must toggle + repaint it rather than fall through to accept.
+if [ "$mode" = "--enter" ]; then
+  case "${2:-}" in
+    fold:*) printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
+              "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$2" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" ;;
+    *)      printf accept ;;
+  esac
   exit 0
 fi
 
@@ -84,6 +103,10 @@ sessionsdir="$HOME/.claude/sessions"
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
 pinfile="$HOME/.claude/agent-view-pins"
+# Fold sidecar: newline-delimited names of the (foldable) groups currently EXPANDED —
+# collapsed is the default, so an empty/missing file means everything folds. do_fold
+# (actions.sh) toggles a line; group_expanded (render.sh) reads it.
+foldfile="$HOME/.claude/agent-view-folds"
 # The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
 # FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
 # list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
@@ -221,13 +244,17 @@ JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|
 _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_SOURCE[0]}"
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
-  --card|--keys)           _avmods="" ;;
-  --spawn)                 _avmods="spawn" ;;
-  --resolve|--jump)        _avmods="common focus" ;;
-  --remove|--pin|--rename) _avmods="common focus actions" ;;
-  --refresh-remote)        _avmods="common rows" ;;
-  --body)                  _avmods="common rows render" ;;
-  *)                       _avmods="common focus rows render" ;;   # picker + --jump-nth
+  --card|--keys)                     _avmods="" ;;
+  --spawn)                           _avmods="spawn" ;;
+  --resolve)                         _avmods="common focus" ;;
+  # jump_or_report (focus.sh) routes a fold: key to do_fold instead of jumping, so every
+  # mode that can reach it — a direct --jump, --jump-nth (a fold row counts toward the
+  # gutter now that its key isn't empty), and the interactive picker's own fallback — needs
+  # actions.sh loaded too.
+  --jump|--remove|--pin|--rename|--fold) _avmods="common focus actions" ;;
+  --refresh-remote)                  _avmods="common rows" ;;
+  --body)                            _avmods="common rows render" ;;
+  *)                                 _avmods="common focus rows render actions" ;;   # picker + --jump-nth
 esac
 # Sourced at TOP LEVEL, never from inside a helper function: the modules carry
 # `declare -A` globals (SMAP, GN), and declare inside a function makes them local,
@@ -242,6 +269,7 @@ if [ "$mode" = "--jump" ]; then jump_or_report "${2:-}"; exit $?; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
 if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
 if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
+if [ "$mode" = "--fold" ]; then do_fold "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
@@ -418,6 +446,10 @@ if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
 # Height must stay FIXED (no ~ adaptive): fzf sizes an adaptive window once at start
 # and never re-fits it, so rows the reloads above push in would overflow into scrolling
 # while the terminal below the box sat empty.
+#
+# enter bind: dispatched to the --enter mode above, which decides accept vs. fold-toggle —
+# see that block for why the decision can't be inlined here. A plain accept lands the row's
+# KEY on fzf's stdout, read as $sel below.
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
@@ -430,6 +462,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \
+  --bind='enter:transform('"'$SELF'"' --enter {1})' \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='up:up+transform('"'$SELF'"' --skip up {1})' \
   --bind='down:down+transform('"'$SELF'"' --skip down {1})' \

@@ -37,6 +37,12 @@ LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [completed]="COMPLETED" [idle]="IDLE" )
 
+group_expanded() {  # $1 = group name -> true (0) if its rows should render in full.
+  # completed/idle are the only foldable groups: the rest are what the picker exists to show.
+  case "$1" in completed|idle) ;; *) return 0 ;; esac
+  [ -r "$foldfile" ] && grep -qxF "$1" "$foldfile" 2>/dev/null
+}
+
 row_width() {  # sets _rw: usable row columns for the render + header alignment.
   # Inside a reload/execute child fzf exports FZF_COLUMNS (its own area, margin/padding
   # already excluded) — keep 2 for the pointer gutter. At the initial render (no fzf yet)
@@ -219,6 +225,14 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     [ "$cnt" -eq 0 ] && continue
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
+    if ! group_expanded "$grp"; then
+      # Collapsed: this landable fold row REPLACES the usual keyless header (never reached
+      # for "pinned" — group_expanded always returns true for it). A fold header must be
+      # selectable to be expandable, so it carries a sentinel key (fold:<group>) rather than
+      # an empty one — see the --skip dispatch in executable_agentview.
+      printf 'fold:%s\t  %s (%s)\n' "$grp" "${GN[$grp]}" "$cnt"
+      continue
+    fi
     if [ "$grp" = pinned ]; then
       printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     else

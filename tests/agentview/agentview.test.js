@@ -189,6 +189,9 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   stateFile(home, 'b', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\bravo',  session: 'b', host: HOST, ts: now - 20 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\charlie',session: 'c', host: HOST, ts: now - 30 });
   stateFile(home, 'old', { pane: '4', state: 'working',   cwd: 'C:\\d\\staleone', session: 'old', host: HOST, ts: now - 200000 });
+  // completed collapses behind a fold line by default (task 6); expand it so charlie's
+  // row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []); // fzf stub exits 0 with no pick -> agentview exits after capture
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /WORKING/);
@@ -586,6 +589,9 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\nproj', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
+  // completed collapses behind a fold line by default (task 6), which carries no color at
+  // all — expand it so the real, state-colored header prints instead.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.work}mWORKING`), 'WORKING header is bold green');
@@ -600,6 +606,9 @@ test('session names are tinted by their state color', { skip }, () => {
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\greenname',  host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\yellowname', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\greyname',   host: HOST, ts: now - 7 });
+  // completed collapses behind a fold line by default (task 6); expand it so greyname's
+  // row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.work}mgreenname`), 'working session name is green');
@@ -645,6 +654,9 @@ test('each group carries a state-colored left accent rule', { skip }, () => {
   stateFile(home, 'n', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\nbar', host: HOST, ts: now - 5 });
   stateFile(home, 'w', { pane: '2', state: 'working',     cwd: 'C:\\a\\wbar', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\a\\cbar', host: HOST, ts: now - 3600 });
+  // completed collapses behind a fold line by default (task 6); expand it so cbar's row
+  // still renders for the accent-rule assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.need}m\u258e`), 'needs-input rows carry a yellow accent rule');

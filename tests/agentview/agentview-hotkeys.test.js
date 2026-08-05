@@ -74,6 +74,7 @@ function sessionProc(home, pid, sid) {
 }
 const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
 const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
+const foldFile = (home) => path.join(home, '.claude', 'agent-view-folds');
 const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
 
 function run(env, args, { input, extraEnv = {} } = {}) {
@@ -121,6 +122,46 @@ test('--pin with an empty KEY (header/spacer row) is a no-op', { skip }, () => {
   assert.strictEqual(run(env, ['--pin', '']).code, 0);
   assert.ok(!fs.existsSync(pinFile(home)) || fs.readFileSync(pinFile(home), 'utf8').trim() === '',
     'an empty KEY never writes a pin');
+});
+
+// ---- --fold (enter on a fold header: toggle the sidecar, collapsed by default) ----
+test('--fold expands a group by adding it to the sidecar, and --fold again collapses it', { skip }, () => {
+  const { env, home } = makeEnv();
+  assert.strictEqual(run(env, ['--fold', 'fold:completed']).code, 0);
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), 'completed', 'expanding adds the bare group name');
+  assert.strictEqual(run(env, ['--fold', 'fold:completed']).code, 0);
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), '', 'toggling again re-collapses it');
+});
+
+test('--fold keeps other expanded groups when collapsing one', { skip }, () => {
+  const { env, home } = makeEnv();
+  run(env, ['--fold', 'fold:completed']);
+  run(env, ['--fold', 'fold:idle']);
+  run(env, ['--fold', 'fold:completed']); // re-collapse completed
+  const lines = fs.readFileSync(foldFile(home), 'utf8').split('\n').filter(Boolean);
+  assert.deepStrictEqual(lines, ['idle'], 'only the toggled group is removed');
+});
+
+test('--fold with an empty group is a no-op', { skip }, () => {
+  const { env, home } = makeEnv();
+  assert.strictEqual(run(env, ['--fold', 'fold:']).code, 0);
+  // Not the looser "empty-or-missing" check: without the guard, appending "" still
+  // creates the sidecar (as a single blank line, which .trim() also reads as empty) —
+  // this must fail if that guard is removed, so it asserts the file was never created.
+  assert.ok(!fs.existsSync(foldFile(home)), 'an empty group never creates the fold sidecar');
+});
+
+// A "tidy" that reverts the fold header back to an empty key (matching every other
+// header/spacer row) would pass every other test in this file — the render still shows
+// "COMPLETED (1)", and --skip would just deflect off it like any other header. Only
+// checking the KEY itself catches that regression.
+test('a collapsed group carries a landable fold: sentinel, not an empty key', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
+  assert.ok(line, `expected a collapsed COMPLETED line, got:\n${body}`);
+  assert.strictEqual(line.split('\t')[0], 'fold:completed', 'the fold row carries the sentinel key, not an empty one');
 });
 
 // ---- render: PINNED group + exclusion + gutter --------------------------
@@ -297,6 +338,21 @@ test('--skip re-arms with AGENTVIEW_SELF, so an undeployed copy drives its own p
   const { env } = makeEnv();
   const out = run(env, ['--skip', 'down', ''], { extraEnv: { AGENTVIEW_SELF: '/tmp/av-copy' } }).out;
   assert.match(out, /transform\('\/tmp\/av-copy' --skip down/, 'the recursion points back at the same copy');
+});
+
+// --skip exists so the cursor never rests on a keyless row. A fold header has to be
+// selectable to be expandable, so it carries a sentinel key (fold:<group>) rather than an
+// empty one — and the dispatch's early return on any non-empty key catches it unmodified.
+test('a fold header is landable, unlike a plain group header', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', 'fold:completed', '4']).out;
+  assert.strictEqual(out.trim(), '', 'a fold header must stop the cursor, not deflect it');
+});
+
+test('a plain header still deflects the cursor', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', '', '4']).out;
+  assert.match(out, /^down\+transform/, 'a keyless header must still be skipped');
 });
 
 // ---- --keys (the ? shortcut cheatsheet) ---------------------------------
