@@ -87,6 +87,11 @@ host_status_rows() {  # print one keyless row per host that isn't currently heal
   # (or is healthy but stale), so a dead/slow remote reads as signage, not silence.
   # Keyless: `printf '\t...'` gives every row an empty KEY, the same treatment group
   # headers get, so the --skip cursor logic steps over these rather than landing on them.
+  # No ▎ accent rule, deliberately: that bar marks group membership, and these rows belong
+  # to no group — they print after the last one, so a bar would read as "more IDLE rows",
+  # and every other barred non-header row in the list is selectable while these cannot be.
+  # The two-space indent puts the label in the glyph column (where ●/▸ and the alt-N digits
+  # sit): row level, outside any group. Colour alone carries the escalation.
   local host status outcome when age lbl
   while IFS= read -r host; do
     status="$(remote_status_for "$host")"
