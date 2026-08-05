@@ -205,6 +205,26 @@
        CLAUDE_CONFIG_DIR in which a SessionStart hook fired with the array and not with the
        string. Keep every entry present in availableModels. */}}
   "fallbackModel": ["claude-sonnet-5"],
+  {{/* Selects private_dot_claude/output-styles/daniel-voice.md — the conversational half of
+       what used to be CLAUDE.md's "Communication style". The value must equal the style's
+       `name` frontmatter, and that file deliberately sets name == its own file name so there
+       is only one string to keep in sync. The style sets keep-coding-instructions: true;
+       dropping that field would REMOVE Claude Code's built-in software-engineering
+       instructions rather than add to them, since it defaults to false.
+
+       Read once at session start like `model`: an edit here lands on `/clear` or a new
+       session, not immediately, and switching styles rewrites the system prompt and so
+       invalidates the prompt cache. Set it and leave it — this is not a per-task knob.
+
+       Do NOT set this through `/config`'s Output style picker. The picker writes to the
+       PROJECT-level .claude/settings.local.json, which with cwd ~ means
+       ~/.claude/settings.local.json: untracked by chezmoi, invisible to this repo, and never
+       deployed to the other hosts. Here it rides settings.json to every machine.
+
+       User scope for this key follows ordinary settings precedence but is not spelled out in
+       the docs, which only describe the picker's project-local write. If a fresh session ever
+       comes up on Default, check `/config` before assuming the style file is at fault. */}}
+  "outputStyle": "daniel-voice",
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
        is the UNION of every model the setup actually requests: claude-opus-5 (main,
        native 1M), "opus" alias (eval judge +

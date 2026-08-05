@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "a6ef314819815a16ea29f38ed0aaa5cf53539f1d6f26499b3dd8507f367382cc",
-      "landed": "2026-08-02T21:17:22.436Z"
+      "hash": "aed7ab54f040de7cf7638d662d479f4cbaa7a3707de27a3874b58e5d0af58817",
+      "landed": "2026-08-05T19:21:14.409Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "2cd90059678d661d3ed3e172f738ac3572bfaa3e1265b1af3054a06c5cf8d60f",
-      "landed": "2026-07-29T21:38:43.529Z"
+      "hash": "d9c6cc1e2bcd1f9ac41b7a523b580d232aabdefc721d7d75af6b32167f6810de",
+      "landed": "2026-08-05T19:21:14.409Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -225,6 +225,11 @@
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
       "hash": "1e2474af4ef736d0cae2aec305937b33b7301d633894a8348628f196b46d4e88",
       "landed": "2026-07-30T16:17:07.035Z"
+    },
+    {
+      "path": "home/private_dot_claude/output-styles/daniel-voice.md",
+      "hash": "8d210d2bbff1ccaf890c4eacd28386018ffd8c1f07e77dc0edc57f5ac0950b7e",
+      "landed": "2026-08-05T19:21:14.409Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",

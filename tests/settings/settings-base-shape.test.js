@@ -106,6 +106,32 @@ test('fallbackModel is an array, not a string', { skip }, () => {
     + `disables statusLine, hooks, permissions and plugins too. Got: ${JSON.stringify(v)}`);
 });
 
+// outputStyle names a file by its `name:` frontmatter, and every way of getting that wrong
+// fails the same silent way: Claude Code falls back to the Default style and the session just
+// sounds generic. Nothing errors, `chezmoi apply` still succeeds, and the tone rules that moved
+// out of CLAUDE.md are simply gone. keep-coding-instructions is checked here for the same
+// reason — its default is false, so a style file that omits it REMOVES the built-in
+// software-engineering instructions instead of adding to them, which is a much worse silent
+// failure than the wrong voice.
+test('outputStyle names a style file that exists and keeps the coding instructions', { skip }, () => {
+  const name = JSON.parse(render()).outputStyle;
+  if (!name) return;
+  // Not `dir`/`tmp`: tests/sandbox/sandbox-escape.test.js tracks bindings by name across the
+  // whole file, so reusing a name the merge test above binds to a temp dir makes its
+  // fs.writeFileSync/fs.rmSync calls resolve to this REPO path and read as escapes.
+  const stylesDir = path.join(REPO, 'home', 'private_dot_claude', 'output-styles');
+  const match = fs.readdirSync(stylesDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => ({ f, body: fs.readFileSync(path.join(stylesDir, f), 'utf8') }))
+    .find(({ f, body }) => (body.match(/^name:\s*(.+?)\s*$/m)?.[1] ?? f.replace(/\.md$/, '')) === name);
+  assert.ok(match, `outputStyle "${name}" matches no style in ${stylesDir} — the session silently `
+    + `falls back to the Default style. Style names come from the \`name:\` frontmatter, or `
+    + `the file name when that is absent.`);
+  assert.match(match.body, /^keep-coding-instructions:\s*true\s*$/m,
+    `${match.f} does not set keep-coding-instructions: true. The field defaults to FALSE, so `
+    + `without it this style drops Claude Code's built-in software-engineering instructions.`);
+});
+
 // The artifact-link chain is three files agreeing on one number per host: the box serves
 // ~/.claude/artifacts on CLAUDE_ARTIFACTS_PORT, link-artifact.sh writes that port into the
 // http:// link, and ~/.ssh/config forwards it so the link resolves on the workstation.
