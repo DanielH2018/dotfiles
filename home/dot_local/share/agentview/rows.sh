@@ -497,7 +497,6 @@ refresh_remote() {  # fan out across every configured host, concurrently
     pids+=("$!")
   done < <(remote_hosts)
   for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
-  gc_orphan_files   # after the fan-out, so this pass never races the writes it just made
 }
 
 post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into the live picker.

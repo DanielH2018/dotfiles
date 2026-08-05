@@ -399,6 +399,21 @@ test('a freshly written tmp file survives even when its writer is gone', () => {
   assert.ok(fs.existsSync(fresh), 'the age gate spares a recent tmp file');
 });
 
+test('a watch tick refreshes without sweeping', () => {
+  // Placement guard. The watch loop calls refresh_remote on every timer tick, so a GC living
+  // inside that function would spawn a find pair per interval for as long as a picker is open
+  // -- the cost this was moved off the render path to avoid. It belongs to the
+  // --refresh-remote dispatch, which runs at startup and on CTRL+F.
+  const e = env();
+  const legacy = path.join(e.home, '.agentview-remote-cache');
+  fs.writeFileSync(legacy, '');
+  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });   // force the timer path
+  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0, 'the tick should still refresh the hosts');
+  assert.ok(fs.existsSync(legacy), 'a watch tick must not run the sweep');
+});
+
 test('an empty host table collects nothing', () => {
   // The load-order guard. If HOST_SSH is somehow unpopulated, every per-host cache looks
   // retired and the sweep would delete the lot -- so the whole pass refuses instead. Driven by

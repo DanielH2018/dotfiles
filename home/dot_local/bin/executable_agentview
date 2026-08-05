@@ -376,6 +376,11 @@ if [ "$mode" = "--refresh-remote" ]; then
   reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
   sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
   refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
+  # Deliberately HERE and not inside refresh_remote: the watch loop calls that function on
+  # every timer tick, which would spawn a find pair per interval for as long as a picker is
+  # open. This dispatch runs once at startup and once per CTRL+F, which is often enough for
+  # litter that nothing reads.
+  gc_orphan_files
   post_reload "${2:-}"
   exit 0
 fi
