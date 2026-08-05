@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily Claude Code CHANGELOG review
+
+[Timer]
+# 07:37 mirrors the macOS plist's StartCalendarInterval, so the two halves of this job fire at
+# the same local time on whichever machine is running it. Off the hour and off the half-hour on
+# purpose: nothing here needs a round number, and the fleet is better off spread out.
+OnCalendar=*-*-* 07:37:00
+# A desktop is not guaranteed to be up at 07:37. Without this, every powered-down morning is a
+# review that simply never happens; with it the run lands shortly after the next boot instead.
+# Safe to catch up because the command is incremental — a late run reviews the versions a missed
+# one would have, not the same ones twice.
+Persistent=true
+# Minutes of slack on a job with no deadline, so systemd can batch it rather than wake the
+# machine for it. The randomization also keeps a catch-up run from landing exactly on boot,
+# where the keyring the runner needs is least likely to be unlocked yet.
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

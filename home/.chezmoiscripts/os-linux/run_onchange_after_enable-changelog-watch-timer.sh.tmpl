@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Enable the daily /changelog-watch timer. run_onchange re-runs (and reloads systemd) whenever
+# the unit files below change — their hashes are embedded so edits retrigger it.
+# Idempotent; a no-op where user systemd isn't running (macOS, a non-lingering headless box).
+#   service: {{ include "dot_config/systemd/user/claude-changelog-watch.service" | sha256sum }}
+#   timer:   {{ include "dot_config/systemd/user/claude-changelog-watch.timer" | sha256sum }}
+set -eu
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+  systemctl --user enable --now claude-changelog-watch.timer || true
+fi

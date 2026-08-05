@@ -21,6 +21,12 @@
   home/private_dot_claude/commands/changelog-watch.md and stays available to run by
   hand regardless of whether this agent is loaded.
 
+  Linux boxes schedule the same job through systemd instead, and need no manual
+  activation — the units deploy with chezmoi and a run_onchange script enables the
+  timer:
+    home/dot_config/systemd/user/claude-changelog-watch.{service,timer}
+    home/dot_local/bin/executable_claude-changelog-watch   (runner; no run-skill.sh)
+
   Runner dependency: run-skill.sh is provided by the work-laptop-config repo
   (symlinked to ~/.claude/scheduled/run-skill.sh), so activation needs that repo
   installed. It runs the skill headless with --dangerously-skip-permissions and

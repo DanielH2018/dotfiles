@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# claude-changelog-watch: unattended daily /changelog-watch run, Linux side.
+#
+# The macOS half of this job is scheduled/com.daniel.claude.changelog-watch.plist, which shells
+# out to work-laptop-config's run-skill.sh. Neither travels here: launchd is macOS-only, and
+# run-skill.sh ships from a work-laptop repo that isn't installed on a personal box. So this is a
+# purpose-built runner for the one command rather than a port of the general skill runner — it
+# owes nothing to run-skill.sh's `headless`/`shown` modes and takes no arguments.
+#
+# Every precondition below is a skip (exit 0), not a failure. The command's state is a version
+# number in the output note's frontmatter, so a run that never happens costs nothing: the next
+# one just reviews a wider range of the changelog. A missed morning is self-healing, which makes
+# "skip quietly, retry tomorrow" strictly better than a failed unit and a timer stuck red.
+
+set -euo pipefail
+
+STATE_DEFAULT="${XDG_STATE_HOME:-$HOME/.local/state}/claude-changelog-watch"
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-changelog-watch.lock"
+
+log()  { printf '%s %s\n' "$(date -Is)" "$*"; }
+skip() { log "skip: $*"; exit 0; }
+
+# One run at a time. A hand-run colliding with the timer exits quietly rather than leaving two
+# sessions prepending to the same note and racing each other's last_processed_version write.
+exec 9>"$LOCK"
+flock -n 9 || skip "another run holds $LOCK"
+
+# Where the proposals note and last_processed_version live. The three arms exist so that a
+# hand-run and a timer-run resolve identically on any box: systemd services don't source
+# common.sh, so relying on the exported CLAUDE_VAULT_DIR alone would silently give the timer a
+# different destination than an interactive run on the same machine.
+#
+# The last arm is the interesting one. common.sh exports CLAUDE_VAULT_DIR only where the LLM Wiki
+# actually exists, precisely so wiki-less boxes stay clean — and stubbing a fake vault here to
+# satisfy one command would also wake /lint, /healthcheck, /rebuild and /retract on a machine
+# with no wiki for them to operate on. A private state dir keeps this job self-contained; the
+# command treats absent Meta/ grounding notes as "skip that step", which is the right read here.
+if [ -n "${CLAUDE_VAULT_DIR:-}" ]; then
+  VAULT="$CLAUDE_VAULT_DIR"
+  [ -d "$VAULT" ] || skip "CLAUDE_VAULT_DIR=$VAULT does not exist"
+elif [ -d "$HOME/Documents/My_Vault" ]; then
+  VAULT="$HOME/Documents/My_Vault"
+else
+  VAULT="$STATE_DEFAULT"
+fi
+export CLAUDE_VAULT_DIR="$VAULT"
+NOTE="$VAULT/Meta/Claude_Code_Changelog_Watch.md"
+
+command -v claude >/dev/null 2>&1 || skip "claude CLI not on PATH"
+
+# gh is how the command fetches the changelog (WebFetch on github.com is denied), and its token
+# lives in the login keyring. A timer that fires before the graphical session has unlocked that
+# keyring fails at STEP 2 with an auth error, having already spent a session getting there — so
+# probe it up front and let the next run have it. See also: After= is ordering, not a gate.
+gh auth status >/dev/null 2>&1 || skip "gh not authenticated (keyring locked, or a pre-login run)"
+
+# Seed the private state dir on first use. Only ever the fallback dir — a real vault is the
+# user's, and this must not conjure structure inside one. The note is seeded rather than left to
+# the command because STEP 5 prepends *below a marker*, so the marker has to exist first; an
+# empty last_processed_version is the documented bootstrap (review the most recent 5 versions).
+if [ "$VAULT" = "$STATE_DEFAULT" ] && [ ! -f "$NOTE" ]; then
+  log "seeding state dir at $VAULT"
+  mkdir -p "$VAULT/Meta"
+  git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1 || git -C "$VAULT" init -q
+  cat >"$NOTE" <<'SEED'
+---
+name: Claude Code Changelog Watch
+last_processed_version: ""
+updated: ""
+---
+
+# Claude Code Changelog Watch
+
+Proposals from the daily `/changelog-watch` run, newest first. Proposals only — the command
+never edits config, and any change it suggests targets the chezmoi source, not the deployed copy.
+
+## Proposals (newest first)
+
+<!-- /changelog-watch prepends new dated sections directly below this marker -->
+SEED
+fi
+
+# Reached only when pointed at a real vault that has never run this command. Seeding is left to
+# whoever owns the wiki — the note's shape is theirs to choose — so say what is missing rather
+# than skipping mutely every morning.
+[ -f "$NOTE" ] || skip "no output note at $NOTE (seed it with a '## Proposals (newest first)' heading and the prepend marker)"
+
+hash_note() { sha256sum "$NOTE" | cut -d' ' -f1; }
+before="$(hash_note)"
+
+log "running /changelog-watch against $VAULT"
+claude --dangerously-skip-permissions -p "/changelog-watch"
+
+# The command prepends nothing on a no-op run, so the note is byte-identical when there were no
+# new versions. That, not the exit code, is what distinguishes "reviewed and found nothing" from
+# "reviewed and had something to say" — and it's the only thing worth interrupting anyone over.
+if [ "$before" = "$(hash_note)" ]; then
+  log "no new changelog entries"
+  exit 0
+fi
+
+log "new proposals in $NOTE"
+if command -v notify-send >/dev/null 2>&1; then
+  headline="$(grep -m1 '^### ' "$NOTE" 2>/dev/null | sed 's/^### //' || true)"
+  notify-send -a "Claude Code" "Changelog watch" "${headline:-New proposals available}" || true
+fi

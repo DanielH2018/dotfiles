@@ -1,0 +1,26 @@
+[Unit]
+Description=Review new Claude Code CHANGELOG entries against this setup (/changelog-watch)
+Documentation=file:%h/.local/bin/claude-changelog-watch
+# Ordering only — it does not gate, and a timer-triggered start with the target inactive still
+# runs. The runner's own `gh auth status` probe is what actually keeps a pre-login firing from
+# burning a session against a locked keyring; this just avoids racing session startup when both
+# are coming up together.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+# systemd's user manager does not source a login shell, so ~/.local/bin — where both the runner
+# and the claude CLI live — is absent from the default PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/claude-changelog-watch
+# A model session reading a changelog is neither urgent nor entitled to make the desktop feel
+# slow; the same reasoning as retention-sweep, and for the same reason (a background job that
+# costs you responsiveness gets disabled, and then reviews nothing).
+Nice=10
+IOSchedulingClass=idle
+# A bounded ceiling, not a deadline. A wedged session must not sit spending tokens all day —
+# and because state only advances on a completed run, a kill costs nothing but the retry.
+TimeoutStartSec=20min
+# stdout is the record; journald already rotates it, so the runner keeps no log file of its own.
+StandardOutput=journal
+StandardError=journal
