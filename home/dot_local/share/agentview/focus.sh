@@ -49,24 +49,57 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
   esac
 }
 
-av_focus_window() {  # $1 = window name -> 0 if an existing window (in ANY session) was focused
+av_find_window() {  # $1 = window name -> echoes "<session>\t<window id>", or nothing
   # `select-window -t "=name"` is SESSION-relative: it only ever matches inside the client's
   # own session. Every jump made from a different session therefore missed the window it was
   # meant to reuse and opened another one, so a machine collected one duplicate per session.
   # Search every session, preferring the current one so a match here never moves the client.
-  local name="$1" cur target
+  # Window ids (@N) rather than session:index: an index shifts when a lower window closes.
+  local name="$1" cur
   [ -n "$name" ] || return 1
   cur=$(tmux display-message -p '#{session_name}' 2>/dev/null)
-  target=$(tmux list-windows -a -F '#{session_name}:#{window_index}	#{window_name}' 2>/dev/null |
+  tmux list-windows -a -F '#{session_name}	#{window_id}	#{window_name}' 2>/dev/null |
     awk -F'\t' -v n="$name" -v s="$cur" '
-      $2 != n { next }
-      { split($1, p, ":"); if (p[1] == s) { here = $1; exit } if (!other) other = $1 }
-      END { print (here ? here : other) }')
-  [ -n "$target" ] || return 1
-  tmux select-window -t "$target" 2>/dev/null || return 1
+      $3 != n { next }
+      { if ($1 == s) { here = $1 "\t" $2; exit } if (!other) other = $1 "\t" $2 }
+      END { print (here ? here : other) }'
+}
+
+av_host_window() {  # $1 = host -> sets $_avwin to that host's one window name
+  # One window per host, not per agent: jumping between two agents on the same machine
+  # re-points this window instead of adding another. The "av:" prefix keeps the global
+  # name search from ever matching — and respawning — a window the user named themselves.
+  host_label "$1"
+  _avwin="av:$_hl"
+}
+
+av_open_in_host_window() {  # $1 = host, $2 = shell command -> run it in that host's window
+  local host="$1" cmd="$2" wname cur found wsess wid shown
+  av_host_window "$host"; wname="$_avwin"
+  cur=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  found=$(av_find_window "$wname")
+  if [ -n "$found" ]; then
+    wsess="${found%%	*}"; wid="${found##*	}"
+    shown=$(tmux show-options -w -v -t "$wid" @av_cmd 2>/dev/null)
+    # Only respawn when the window points somewhere else — re-running the command it is
+    # already showing would kill a live attach and drop its scrollback for no gain. An
+    # untagged window reads as empty and IS respawned: we cannot know what it holds, and
+    # showing the wrong agent is a worse failure than losing scrollback.
+    if [ "$shown" != "$cmd" ]; then
+      tmux respawn-pane -k -t "$wid" "$cmd" 2>/dev/null || return 1
+      tmux set-option -w -t "$wid" @av_cmd "$cmd" 2>/dev/null
+    fi
+    tmux select-window -t "$wid" 2>/dev/null
+  else
+    tmux new-window -n "$wname" "$cmd" || return 1
+    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    wsess=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+    wid=$(tmux display-message -p '#{window_id}' 2>/dev/null)
+    tmux set-option -w -t "$wid" @av_cmd "$cmd" 2>/dev/null
+  fi
   # Cross-session match: select-window moved the window server-side, switch-client brings
   # this client to it. Same session needs neither, and switching would be a no-op anyway.
-  case "$target" in "$cur:"*) : ;; *) tmux switch-client -t "$target" 2>/dev/null ;; esac
+  [ "$wsess" = "$cur" ] || tmux switch-client -t "$wsess" 2>/dev/null
   return 0
 }
 
@@ -124,15 +157,11 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
   # the login shell we don't get — so extend PATH remotely. Written WITHOUT double quotes so
   # the string survives the tmux `sh -c` layer below with $HOME/$PATH still unexpanded, i.e.
   # resolved on the remote and not against this machine's environment.
-  # Job ids are unique across hosts; "agents" is not, and the lookup now spans every session,
-  # so an unqualified name would let one host's window answer for another's.
-  if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"; wname="cc-$job"
-  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents@$host"; fi
+  if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"
+  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    av_focus_window "$wname" && return 0
     av_ssh_opts_str
-    tmux new-window -n "$wname" "ssh $AV_SSH_OPTS_STR-t $sshalias '$rcmd'"
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    av_open_in_host_window "$host" "ssh $AV_SSH_OPTS_STR-t $sshalias '$rcmd'"
     return 0
   fi
   av_ssh_opts
@@ -155,15 +184,9 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     # Popup entry point (prefix+g): the picker is a display-popup that dies with its command,
     # so attaching in place would strand the session in a 90%x90% overlay. Use a window —
-    # REUSING the one already attached to this remote session, or repeat jumps leak one each.
-    # Same reuse trick av_open_claude_cmd applies to bg sessions.
-    # Qualified by host: remote session names are only unique per host ("main", "server"),
-    # and av_focus_window searches every session, so a bare name could match another host's.
-    wname="$session@$host"
-    av_focus_window "$wname" && return 0
+    # this host's one window, which av_open_in_host_window re-points at the target session.
     av_ssh_opts_str
-    tmux new-window -n "$wname" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    av_open_in_host_window "$host" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
     return 0
   fi
   # No tmux: the picker owns its terminal — the dedicated "Agent View" WezTerm tab runs
@@ -315,19 +338,13 @@ av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus
 }
 
 av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a pane of the active
-  # backend, REUSING a window that already targets the same session so repeated jumps
-  # don't leak a ~400MB pane each (`claude attach` keeps the session alive after its
-  # client exits). One window per bg session (cc-<short-sid>), one shared roster window.
+  # backend. This machine gets ONE window, re-pointed per jump rather than one window per
+  # session — repeated jumps used to leak a ~400MB pane each, and a window per agent still
+  # grew without bound. `claude attach` keeps the session alive when its client exits, so
+  # re-pointing the window costs a viewer, never the agent.
   command -v claude >/dev/null 2>&1 || return 1
-  local wname sid
-  case "$1" in
-    "attach "*) sid="${1#attach }"; wname="cc-${sid:0:8}";;
-    *)          wname="agents";;
-  esac
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    av_focus_window "$wname" && return 0   # reuse -> no window leak
-    tmux new-window -n "$wname" "claude $1"
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name stable for reuse
+    av_open_in_host_window "$selfhost" "claude $1"
     return 0
   fi
   # No tmux: the picker owns its terminal, so run the session HERE and it lands in the tab you

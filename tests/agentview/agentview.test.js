@@ -79,11 +79,17 @@ exit 0
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
 sess="\${AV_TMUX_SESSION:-0}"
+opts="$TMUX_LOG.opts"; touch "$opts"
 case "$1" in
-  display-message) echo "$sess"; exit 0 ;;
-  list-windows)    cat "$wins"; exit 0 ;;
-  select-window)   cut -f1 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
-  new-window)      printf '%s:%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins" ;;
+  display-message)
+    case "$3" in *window_id*) tail -n1 "$wins" | cut -f2 ;; *) echo "$sess" ;; esac; exit 0 ;;
+  list-windows)  cat "$wins"; exit 0 ;;
+  select-window) cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  new-window)    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins" ;;
+  show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
+  set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"
+                 printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
+  respawn-pane)  exit 0 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -422,7 +428,7 @@ test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', 
   // a WezTerm tab (works under Ghostty / WSL / bare ssh — the unification lever).
   run(env, [], { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' });
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  const line = log.split('\n').find((l) => l.startsWith('new-window -n airflow')) || '';
+  const line = log.split('\n').find((l) => l.startsWith('new-window -n av:Homelab')) || '';
   assert.ok(line, 'opens a new tmux window for the attach');
   // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
   // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits
@@ -441,15 +447,15 @@ test('REMOTE tmux row jumped twice reuses its window instead of stacking a secon
   const inTmux = { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' };
   run(env, [], inTmux);
   run(env, [], inTmux);
-  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n airflow'));
+  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n av:Homelab'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t \d+:\d+/,
-    'and gets there by selecting the session-qualified target the lookup resolved');
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t @\d+/,
+    'and gets there by selecting the window id the lookup resolved');
 });
 
-// Remote session names are unique per host, not globally — "main" and "server" are the
-// obvious collisions. Since the reuse lookup now spans every tmux session, an unqualified
-// window name would let one host's window answer a jump meant for another's.
+// Windows are per host, and the lookup spans every tmux session, so the name has to carry
+// the host or one machine's window would answer a jump meant for another's. Two hosts each
+// running a session called "main" is the case that catches it.
 test('two hosts running an identically-named session get separate windows', { skip }, () => {
   const { env, tmuxLog } = makeEnv({ list: '[]' });
   const row = (host) => [cardKey([host, '/home/ubuntu/main', 'working', '0', 'main', '%3', 'host', 'tmux:/tmp/tmux-1000/default:main:%3']), 'display'].join('\t');
@@ -458,8 +464,8 @@ test('two hosts running an identically-named session get separate windows', { sk
   run(env, [], { ...inTmux, FZF_PICK: row('daniel-box') });
   const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n '));
   assert.deepStrictEqual(opened.map((l) => l.split(' ')[2]).sort(),
-    ['main@daniel-box', 'main@daniel-server'],
-    'each host gets a window named for its own session, so neither jump lands on the other');
+    ['av:Box', 'av:Homelab'],
+    'each host gets its own window, so neither jump lands on the other');
 });
 
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
@@ -492,7 +498,7 @@ test('a REMOTE bg row INSIDE tmux opens one reusable per-session window', { skip
   run(env, [], inTmux);
   run(env, [], inTmux);
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  const opened = log.split('\n').filter((l) => l.startsWith('new-window -n cc-eeee5555'));
+  const opened = log.split('\n').filter((l) => l.startsWith('new-window -n av:Homelab'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
   // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
   // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits

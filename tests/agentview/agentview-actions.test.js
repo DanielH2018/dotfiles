@@ -84,12 +84,22 @@ exit 0
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
 sess="\${AV_TMUX_SESSION:-0}"
+opts="$TMUX_LOG.opts"; touch "$opts"
 case "$1" in
-  display-message) echo "$sess"; exit 0 ;;
-  list-windows)    cat "$wins"; exit 0 ;;
-  select-window)   cut -f1 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  display-message)
+    case "$3" in *window_id*) tail -n1 "$wins" | cut -f2 ;; *) echo "$sess" ;; esac; exit 0 ;;
+  list-windows)  cat "$wins"; exit 0 ;;
+  select-window) cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
+  set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"
+                 printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
+  # respawn-pane re-runs the command in place, so execute it the same way new-window does —
+  # the quoting-survives-reparse tests must cover the respawn path too, not just first open.
+  respawn-pane)
+    if [ -n "\${5:-}" ]; then sh -c "$5" 2>/dev/null; fi
+    exit 0 ;;
   new-window)
-    printf '%s:%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"
+    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"
     # Execute the command string through sh to test quoting post-reparse
     if [ -n "\${4:-}" ]; then
       sh -c "$4" 2>/dev/null
@@ -269,7 +279,7 @@ const jumpScenarios = [
     key: rowKey({ host: REMOTE1, cwd: '/home/ubuntu/r', kind: 'host', locator: 'tmux:/tmp/tmux-1000/default:rsess:%4' }),
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
-      assert.match(l.tmuxLog, /new-window -n rsess/);
+      assert.match(l.tmuxLog, /new-window -n av:Homelab/);
       // The command string should be logged by tmux before reparse
       assert.match(l.tmuxLog, /ssh -o ControlMaster=auto/);
       // But the critical test: post-reparse ssh argv must have -o and ControlPath as separate args
@@ -313,7 +323,7 @@ const jumpScenarios = [
     key: rowKey({ cwd: '/home/x', kind: 'bg', locator: 'bg:jobxyz' }),
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
-      assert.match(l.tmuxLog, /new-window -n cc-jobxyz claude attach jobxyz/);
+      assert.match(l.tmuxLog, new RegExp(`new-window -n av:Linux claude attach jobxyz`));
       assert.strictEqual(l.sshLog, ''); assert.strictEqual(l.activateLog, ''); assert.strictEqual(l.wezwinActivateLog, '');
     },
   },
