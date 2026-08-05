@@ -14,6 +14,11 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
   delete process.env[v];
 }
 
+// Same leakage risk from the host's own exported CLAUDE_VAULT_DIR: runHook()
+// spreads process.env into the child, so a "no vault configured" fixture
+// would otherwise still see the real vault.
+delete process.env.CLAUDE_VAULT_DIR;
+
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');

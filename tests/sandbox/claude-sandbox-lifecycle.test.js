@@ -365,7 +365,9 @@ function compactRun({ transcript = CONVERSATION, instance = 'demo-abc-alpha', va
   }
   const r = drive('compact_session', {
     env,
-    pre: 'unset ANTHROPIC_API_KEY ANTHROPIC_ADMIN_API_KEY || true',
+    // vault:false must not inherit the host's own exported CLAUDE_VAULT_DIR
+    // (drive() spawns without an env override, so process.env leaks through).
+    pre: `unset ANTHROPIC_API_KEY ANTHROPIC_ADMIN_API_KEY${vault ? '' : ' CLAUDE_VAULT_DIR'} || true`,
     args: `${q(instance)} demo alpha`,
   });
   const written = fs.existsSync(outDir) ? fs.readdirSync(outDir).sort() : [];
