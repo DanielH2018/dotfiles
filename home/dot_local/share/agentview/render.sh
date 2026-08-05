@@ -66,9 +66,11 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag (from HOST_LABEL)
   host_label "$1"; _bn="$_hl"
 }
 
-# Matches REAP_GRACE (rows.sh) so the picker has one staleness threshold rather
-# than two that can drift apart.
-AV_STALE_AFTER=120
+# Bound to REAP_GRACE (rows.sh), not a second 120 -- one staleness constant for the
+# whole picker. Every render-capable mode's _avmods sources rows before render, so
+# REAP_GRACE is already set; the :-120 fallback only guards a future load-order change,
+# it is not the normal path. Do not replace this with a literal.
+AV_STALE_AFTER="${REAP_GRACE:-120}"
 
 host_status_rows() {  # print one keyless row per host that isn't currently healthy
   # (or is healthy but stale), so a dead/slow remote reads as signage, not silence.
