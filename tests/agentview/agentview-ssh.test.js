@@ -326,4 +326,94 @@ test('AGENT_VIEW_WATCH_INTERVAL=0 does not defeat the floor sleep', () => {
   assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
 });
 
+// ---- orphan collection ----
+// Nothing else in the picker ever removes these files, so before this they accumulated for
+// the life of the machine. The dev box was carrying a 0-byte ~/.agentview-remote-cache from
+// before the snapshot was split per host.
+//
+// The age gate matters to every test below: gc_orphan_files only condemns a tmp/portfile that
+// is BOTH written by a dead pid and older than REAP_GRACE, so fixtures have to be backdated
+// or they are correctly left alone.
+const GRACE_S = 120;
+const backdate = (p) => {
+  const t = Math.floor(Date.now() / 1000) - (GRACE_S * 5);
+  fs.utimesSync(p, t, t);
+};
+// A pid that was real a moment ago and is now gone -- `kill -0` on it fails. Picking a large
+// constant instead would be a guess about pid_max that could collide with a live process.
+const deadPid = () => execFileSync('bash', ['-c', 'echo $$'], { encoding: 'utf8' }).trim();
+
+test('the retired pre-split cache file is collected', () => {
+  const e = env();
+  const legacy = path.join(e.home, '.agentview-remote-cache');
+  fs.writeFileSync(legacy, '');
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(!fs.existsSync(legacy), 'the suffix-less cache can never be a live per-host file');
+});
+
+test('a cache and status for a host no longer configured are collected, live hosts are not', () => {
+  const e = env();
+  const retiredCache = path.join(e.home, '.agentview-remote-cache.oldbox');
+  const retiredStatus = path.join(e.home, '.agentview-remote-status.oldbox');
+  fs.writeFileSync(retiredCache, '{"session":"gone"}\n');
+  fs.writeFileSync(retiredStatus, `ok\t${Math.floor(Date.now() / 1000)}\n`);
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(!fs.existsSync(retiredCache), 'a retired host keeps no cache');
+  assert.ok(!fs.existsSync(retiredStatus), 'a retired host keeps no status');
+  // The same sweep must leave the configured hosts alone -- this is the predicate whose
+  // false positive blanks the picker's remote rows rather than just leaving litter.
+  assert.ok(fs.existsSync(path.join(e.home, '.agentview-remote-status.daniel-server')),
+    'a configured host keeps its status file');
+});
+
+test('a tmp file whose writer is gone and which has aged out is collected', () => {
+  const e = env();
+  const orphan = path.join(e.home, `.agentview-remote-cache.daniel-box.tmp.${deadPid()}`);
+  fs.writeFileSync(orphan, 'half-written');
+  backdate(orphan);
+  const port = path.join(e.home, `.agentview-fzfport.${deadPid()}`);
+  fs.writeFileSync(port, '1234\n');
+  backdate(port);
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(!fs.existsSync(orphan), 'a dead writer\'s aged tmp file is litter');
+  assert.ok(!fs.existsSync(port), 'a SIGKILLed picker\'s portfile is litter');
+});
+
+test('a tmp file whose writer is still alive is left alone', () => {
+  const e = env();
+  // process.pid is this test runner -- alive by definition for the duration of the run.
+  const live = path.join(e.home, `.agentview-remote-cache.daniel-box.tmp.${process.pid}`);
+  fs.writeFileSync(live, 'mid-write');
+  backdate(live);   // old enough to pass the age gate, so only liveness can save it
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(fs.existsSync(live), 'a live writer must never have its tmp file deleted mid-mv');
+});
+
+test('a freshly written tmp file survives even when its writer is gone', () => {
+  const e = env();
+  // Not backdated: pids recycle, so liveness alone is not a safe condemnation. A tmp younger
+  // than a refresh cycle is spared regardless of what its pid now resolves to.
+  const fresh = path.join(e.home, `.agentview-remote-cache.daniel-box.tmp.${deadPid()}`);
+  fs.writeFileSync(fresh, 'just written');
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(fs.existsSync(fresh), 'the age gate spares a recent tmp file');
+});
+
+test('an empty host table collects nothing', () => {
+  // The load-order guard. If HOST_SSH is somehow unpopulated, every per-host cache looks
+  // retired and the sweep would delete the lot -- so the whole pass refuses instead. Driven by
+  // sourcing the modules directly, because the script itself always populates HOST_SSH.
+  const e = env();
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  const legacy = path.join(e.home, '.agentview-remote-cache');
+  fs.writeFileSync(cache, '{"session":"live"}\n');
+  fs.writeFileSync(legacy, '');
+  execFileSync('bash', ['-c',
+    `HOST_SSH=(); . ${JSON.stringify(path.join(LIB, 'common.sh'))}; ` +
+    `. ${JSON.stringify(path.join(LIB, 'rows.sh'))}; gc_orphan_files`,
+  ], { env: { ...process.env, HOME: e.home }, encoding: 'utf8' });
+  assert.ok(fs.existsSync(cache), 'an unloaded host table must not condemn a live cache');
+  assert.ok(fs.existsSync(legacy), 'the pass refuses wholesale, not just its per-host branch');
+});
+
 module.exports = { env };

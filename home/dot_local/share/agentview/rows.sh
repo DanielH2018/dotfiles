@@ -437,6 +437,56 @@ REMOTE_FOLD
   fi
 }
 
+gc_orphan_files() {  # remove agentview litter that nothing else ever collects:
+  #   ~/.agentview-remote-cache               the single pre-split snapshot, retired when the
+  #                                           remote cache became one file per host
+  #   <file>.tmp.<pid>                        an atomic write whose writer died before its mv
+  #   ~/.agentview-fzfport.<pid>              the picker's --listen port; the EXIT trap removes
+  #                                           it normally, a SIGKILLed picker does not
+  #   .agentview-remote-{cache,status}.<host> for a host no longer in HOST_SSH
+  # Runs once per --refresh-remote, deliberately NOT on the render path: none of this changes
+  # what the picker shows, and the render is what the freshness work spent its effort keeping
+  # fast. Every rm is best-effort — losing a race to another refresh is not an error.
+  local hosts f pid host mins dirs
+  hosts="$(remote_hosts)"
+  # An empty host table means the caller never loaded one, NOT that every host retired. Acting
+  # on that reading would delete the cache of every live host and blank the picker's remote
+  # rows, so refuse the whole pass rather than the per-host branch alone.
+  [ -n "$hosts" ] || return 0
+
+  rm -f "$HOME/.agentview-remote-cache" 2>/dev/null
+
+  # A dead writer alone is not enough to condemn a tmp file: pids recycle, so one whose number
+  # got reused would never be collected, and a live writer mid-mv must never be touched. Require
+  # both — a writer that is gone AND a file that has sat unchanged longer than a refresh cycle.
+  mins=$(( REAP_GRACE / 60 )); [ "$mins" -lt 1 ] && mins=1
+  dirs=( "$HOME" "$HOME/.claude" )
+  [ -n "${windir:-}" ] && [ -d "$windir" ] && dirs+=( "$windir" )
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    pid="${f##*.}"
+    case "$pid" in ''|*[!0-9]*) continue;; esac
+    kill -0 "$pid" 2>/dev/null && continue
+    rm -f "$f" 2>/dev/null
+  done < <(find "${dirs[@]}" -maxdepth 1 -type f \
+             \( -name '.agentview-*.tmp.*' -o -name 'agent-view-*.tmp.*' \
+                -o -name '*.json.tmp.*' -o -name '.agentview-fzfport.*' \) \
+             -mmin "+$mins" 2>/dev/null)
+
+  # Retired hosts. Gated hardest of the four: this is the only predicate whose false positive
+  # deletes live data rather than litter. Host names carrying a dot would mis-split here; the
+  # HOST_SSH keys do not, and a new one with a dot would break remote_cache_for's readers too.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    host="${f##*.}"
+    [ -n "$host" ] || continue
+    printf '%s\n' "$hosts" | grep -qxF "$host" && continue
+    rm -f "$f" 2>/dev/null
+  done < <(find "$HOME" -maxdepth 1 -type f \
+             \( -name '.agentview-remote-cache.*' -o -name '.agentview-remote-status.*' \) \
+             ! -name '*.tmp.*' 2>/dev/null)
+}
+
 refresh_remote() {  # fan out across every configured host, concurrently
   # Serial would cost the sum of the handshakes on a cold start. This runs off the render
   # path already, but the picker live-reloads when it finishes, so the wait is visible.
@@ -447,6 +497,7 @@ refresh_remote() {  # fan out across every configured host, concurrently
     pids+=("$!")
   done < <(remote_hosts)
   for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
+  gc_orphan_files   # after the fan-out, so this pass never races the writes it just made
 }
 
 post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into the live picker.
