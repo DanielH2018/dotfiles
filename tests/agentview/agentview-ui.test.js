@@ -321,3 +321,39 @@ test('esc closes the picker', { skip }, async (t) => {
 
   assert.equal(await term.waitForExit(), 0);
 });
+
+const statusfile = (home, host) => path.join(home, `.agentview-remote-status.${host}`);
+
+test('an unreachable host renders a status row instead of going quiet', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  fs.writeFileSync(statusfile(home, 'daniel-box'), `unreachable\t${nowSec()}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('unreachable');
+  assert.ok(lineIndex(term, 'Box · unreachable') >= 0,
+    `expected an unreachable row for Box, got:\n${term.text()}`);
+});
+
+test('a stale-but-ok host is labelled with its age', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec() - 360}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor((s) => s.contains('old'));
+  assert.ok(lineIndex(term, 'Homelab · 6m old') >= 0,
+    `expected a 6m age on Homelab, got:\n${term.text()}`);
+});
+
+test('a fresh ok host adds no chrome', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec()}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('no active Claude sessions');
+  assert.strictEqual(lineIndex(term, 'unreachable'), -1, 'a healthy host should be silent');
+  assert.strictEqual(lineIndex(term, 'fetch failed'), -1, 'a healthy host should be silent');
+  assert.strictEqual(lineIndex(term, 'old'), -1, 'a fresh host should carry no age chrome');
+});

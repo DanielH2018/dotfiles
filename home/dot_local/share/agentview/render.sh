@@ -66,6 +66,31 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag (from HOST_LABEL)
   host_label "$1"; _bn="$_hl"
 }
 
+# Matches REAP_GRACE (rows.sh) so the picker has one staleness threshold rather
+# than two that can drift apart.
+AV_STALE_AFTER=120
+
+host_status_rows() {  # print one keyless row per host that isn't currently healthy
+  # (or is healthy but stale), so a dead/slow remote reads as signage, not silence.
+  # Keyless: `printf '\t...'` gives every row an empty KEY, the same treatment group
+  # headers get, so the --skip cursor logic steps over these rather than landing on them.
+  local host status outcome when age lbl
+  while IFS= read -r host; do
+    status="$(remote_status_for "$host")"
+    [ -r "$status" ] || continue
+    IFS=$'\t' read -r outcome when < "$status" || continue
+    host_label "$host"; lbl="$_hl"
+    case "$outcome" in
+      unreachable) printf '\t  %s · unreachable\n' "$lbl" ;;
+      failed)      printf '\t  %s · fetch failed\n' "$lbl" ;;
+      ok)
+        age=$(( now - ${when:-0} ))
+        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s · %s old\n' "$lbl" "$_age"; }
+        ;;
+    esac
+  done < <(remote_hosts)
+}
+
 gc_pins() {  # drop pins whose session no longer exists anywhere (a local file OR the remote
   # cache) — orphans left when a session ends, is pruned (7-day / dead-pid), or is CTRL+X'd,
   # plus the "a new session in the same cwd inherits a stale locator-less pin" mispin. Runs each
@@ -283,6 +308,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       printf '%s\t%s%s%s%s%s\n' "$key" "$left_c" "$sp" "$scol" "$stext" "$Z"
     done
   done
+  host_status_rows                            # unreachable/failed/stale hosts, appended last
 }
 
 render_body() {  # sets global `body` from local + cached-remote rows (the fzf list)
