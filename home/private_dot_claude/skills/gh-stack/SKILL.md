@@ -1,204 +1,183 @@
 ---
-description: |
-    Manage stacked branches and pull requests with the gh-stack GitHub CLI extension. Use when the user wants to create, push, rebase, sync, navigate, or view stacks of dependent PRs. Triggers on tasks involving stacked diffs, dependent pull requests, branch chains, or incremental code review workflows.
-metadata:
-    author: github
-    github-path: skills/gh-stack
-    github-ref: refs/tags/v0.0.6
-    github-repo: https://github.com/github/gh-stack
-    github-tree-sha: d690ac020267120882a2851d4a10404030565db5
-    version: 0.0.6
 name: gh-stack
+description: >
+  Manages stacked PRs and splits multi-part work into reviewable branches with gh-stack.
+  Use for stack creation, viewing, edits, push, submit, sync, rebase, merge, or checkout;
+  when asked to split or isolate work for review; whenever a user mentions a stack,
+  branch layers, dependent PRs, or gh stack; or when a stack is checked out.
+metadata:
+  author: github
+  version: "0.1.0"
 ---
+
 # gh-stack
 
-`gh stack` is a [GitHub CLI](https://cli.github.com/) extension for managing **stacked branches and pull requests**. A stack is an ordered list of branches where each branch builds on the one below it, rooted on a trunk branch (typically the repo's default branch). Each branch maps to one PR whose base is the branch below it, so reviewers see only the diff for that layer.
+`gh stack` is a [GitHub CLI](https://cli.github.com/) extension for stacked branches and pull
+requests. A stack is an ordered chain of branches rooted on a trunk, where each branch has one PR
+based on the branch below it, so a reviewer sees only that layer's diff.
+
+`gh stack` prints a stack trunk-first, left to right:
 
 ```
-main (trunk)
- └── feat/auth-layer     → PR #1 (base: main)               - bottom (closest to trunk)
-  └── feat/api-endpoints → PR #2 (base: feat/auth-layer)
-   └── feat/frontend     → PR #3 (base: feat/api-endpoints) - top (furthest from trunk)
+(main) <- auth <- api <- frontend
 ```
 
-The **bottom** of the stack is the branch closest to the trunk, and the **top** is the branch furthest from the trunk. Each branch inherits from the one below it. Navigation commands (`up`, `down`, `top`, `bottom`) follow this model: `up` moves away from trunk, `down` moves toward it.
+Left is the **bottom**, right is the **top**. `auth` is based on `main` and merges first;
+`frontend` merges last. `up` moves toward the top, away from trunk; `down` moves toward it.
+Foundational work belongs at the bottom, code that depends on it above. For how to choose the
+layers, read `references/stack-design.md`.
 
-## When to use this skill
-
-Use this skill when the user wants to:
-
-- Break a large change into a chain of small, reviewable PRs
-- Create, rebase, push, or sync a stack of dependent branches
-- Navigate between layers of a branch stack
-- View the status of stacked PRs
-- Tear down and rebuild a stack to remove, reorder, or rename branches
-
-## Prerequisites
-
-The GitHub CLI (`gh`) v2.0+ must be installed and authenticated. Install the extension with:
+## Setup
 
 ```bash
 gh extension install github/gh-stack
+git config rerere.enabled true         # remember conflict resolutions
+git config remote.pushDefault origin   # required if the repo has more than one remote
 ```
 
-Before using `gh stack`, configure git to prevent interactive prompts:
+## Non-interactive use
+
+`gh stack` branches on whether **stdout is a TTY**. Piped, most commands error cleanly or print
+static text; under a PTY the same commands open a prompt or a full-screen TUI and block forever.
+Agent harnesses differ, so always pass the flags below instead of relying on that detection.
+
+**Multiple remotes:** never run `push`, `submit`, `sync`, `rebase`, or `link` without
+`--remote <name>` unless `remote.pushDefault` is configured. `checkout` and `trunk` have no
+`--remote` flag and require the config.
+
+| Always run | Never run bare | Why |
+|---|---|---|
+| `gh stack view --json` | `gh stack view` | opens a TUI under a PTY |
+| `gh stack submit --auto` | `gh stack submit` | prompts for a title per new PR |
+| `gh stack merge <target> --yes` | `gh pr merge` | `gh pr merge` cannot merge a stack |
+| `gh stack init <branch>...` | `gh stack init` | prompts for branch names |
+| `gh stack add <branch>` | `gh stack add` | prompts for a name, and fails even when piped |
+| `gh stack checkout <target>` | `gh stack checkout` | opens a selection menu |
+| `gh stack up` / `down` / `top` / `bottom` | `gh stack switch` | `switch` is menu-only |
+| — | `gh stack modify` | TUI-only, no non-interactive path |
+
+- `view --short` is safe in both modes, but it is formatted for humans. Use `--json` to parse.
+- **`checkout <pr>` when a different local stack already covers those branches** cannot be forced.
+  Run `gh stack unstack --local` first (this keeps the stack on GitHub), then retry.
+
+## Branch placement
+
+- **Starting multi-part work:** create the stack before writing files. Do not implement every
+  concern on trunk and split it later. Put one dependent concern in each layer, bottom to top.
+- **Editing an existing stack:** check out the layer that owns the change before editing. Never
+  commit a lower layer's concern on the current top branch. Run `gh stack view --json`; if
+  ownership is unclear, inspect `git log --all -- <path>`. Then check out the owner, edit, commit,
+  rebase upstack, and return to top.
 
 ```bash
-git config rerere.enabled true           # remember conflict resolutions (skips prompt on init)
-git config remote.pushDefault origin     # if multiple remotes exist (skips remote picker)
+gh stack down                   # or: gh stack checkout api
+git add ... && git commit -m "Add get-user endpoint"
+gh stack rebase --upstack       # replay every branch above onto the change
+gh stack top                    # return to where you were
+gh stack push
 ```
 
-## Agent rules
-
-**Every `gh stack` command must run non-interactively** — anything that would prompt hangs the session indefinitely. The flags that matter:
-
-- `view` → always `--json`. Bare `view` and `--short` both launch a TUI an agent cannot drive.
-- `submit` → always `--auto`, or it prompts for a title on each new PR.
-- `init`, `add`, `checkout` → pass branch names or PR numbers positionally; bare invocations prompt.
-- `--remote <name>` when multiple remotes exist (or set `git config remote.pushDefault origin`), otherwise `push`, `submit`, `sync`, `link`, and `checkout` open a remote picker.
-
-Two hangs that aren't about flags:
-
-- With a prefix set, pass only the suffix to `add` — under prefix `feat`, `gh stack add auth` gives `feat/auth`, while `gh stack add feat/auth` gives `feat/feat/auth`.
-- `checkout <pr-number>` against branches that already hold a different local stack triggers an unbypassable conflict prompt. Run `gh stack unstack` first, then retry. (A branch shared across stacks exits with code 6 instead — check out a non-shared branch.)
-
-## Working in a stack
-
-- Stage with standard `git add` / `git commit` rather than the `-Am` shortcut — stacked PRs work best when each branch holds a deliberate, logical change set.
-- To change a lower layer, navigate to it (`gh stack down`, `checkout`, or `bottom`), commit there, run `gh stack rebase --upstack`, then come back up. Don't work around a missing lower-layer change at the layer you happen to be on.
-- For branches managed by an external tool (jj, Sapling), use `gh stack link branch-a branch-b` — it doesn't rely on local tracking state. Needs at least 2 branches or PR numbers.
-
-## Thinking about stack structure
-
-Each branch in a stack should represent a **discrete, logical unit of work** that can be reviewed independently. The changes within a branch should be cohesive—they belong together and make sense as a single PR.
-
-### Dependency chain
-
-Stacked branches form a dependency chain: each branch builds on the one below it. This means **foundational changes must go in lower (earlier) branches**, and code that depends on them goes in higher (later) branches.
-
-**Plan your layers before writing code.** For example, a full-stack feature might be structured like this (use branch names relevant to your actual task, not these generic ones):
-
-```
-main (trunk)
- └── feat/data-models    ← shared types, database schema
-  └── feat/api-endpoints ← API routes that use the models
-   └── feat/frontend-ui  ← UI components that call the APIs
-    └── feat/integration ← tests that exercise the full stack
-```
-
-This is illustrative — choose branch names and layer boundaries that reflect the specific work you're doing. The key principle is: if code in one layer depends on code in another, the dependency must be in the same branch or a lower one.
-
-### Branch naming
-
-Prefer initializing stacks with a prefix (`-p`). Prefixes group branches under a namespace (e.g., `feat/auth`, `feat/api`) and keep branch names clean and consistent. When a prefix is set, pass only the suffix to subsequent `add` calls — the prefix is applied automatically. Without a prefix, you'll need to pass the full branch name each time.
-
-### Staging changes deliberately
-
-The main reason to use `git add` and `git commit` directly is to control **which changes go into which branch**. When you have multiple files in your working tree, you can stage a subset for the current branch, commit them, then create a new branch and stage the rest there:
+## Core loop
 
 ```bash
-# You're on feat/data-models with several new files in your working tree.
-# Stage only the model files for this branch:
-git add internal/models/user.go internal/models/session.go
-git commit -m "Add user and session models"
-
-git add db/migrations/001_create_users.sql
-git commit -m "Add user table migration"
-
-# Now create a new branch for the API layer and stage the API files there:
-gh stack add api-routes # created & switched to feat/api-routes branch
-git add internal/api/routes.go internal/api/handlers.go
-git commit -m "Add user API routes"
+gh stack init auth              # create the stack and check out its branch
+git add ... && git commit -m "Add auth middleware"
+gh stack add api                # next layer, branched from the current one
+git add ... && git commit -m "Add API routes"
+gh stack submit --auto          # push every branch and open draft PRs
+gh stack view --json            # confirm
 ```
 
-This keeps each branch focused on one concern. Multiple commits per branch are fine — the key is that all commits in a branch relate to the same logical concern, and changes that belong to a different concern go in a different branch.
+Add `--open` to `submit` to create PRs ready for review instead of drafts. Branch names are
+verbatim — `gh stack add refactor/foo` creates `refactor/foo`.
 
-### When to create a new branch
+## Staying in sync
 
-Create a new branch (`gh stack add`) when you're starting a **different concern** that depends on what you've built so far. Signs it's time for a new branch:
+```bash
+gh stack sync                   # fetch, reconcile with GitHub, rebase, push, refresh PR state
+gh stack sync --prune           # also delete local branches for merged PRs
+```
 
-- You're switching from backend to frontend work
-- You're moving from core logic to tests or documentation
-- The next set of changes has a different reviewer audience
-- The current branch's PR is already large enough to review
+Pruning never happens without `--prune` when non-interactive. If the local and remote stacks have
+diverged, `sync` prints both chains, makes no changes, and exits 0 with `Sync aborted` — see
+`references/troubleshooting.md`.
 
-### One stack, one story
+## Merging
 
-Think of a stack from the reviewer's perspective: the stack of PRs should **tell a cohesive story** about a feature or project. A reviewer should be able to read the PRs in sequence and understand the progression of changes, with each PR being a small, logical piece of the whole.
+Scope the merge with an argument:
 
-**When to use a single stack:** All the branches are part of the same feature, project, or closely related effort. Even if the work spans multiple concerns (models, API, frontend), they're all building toward the same goal.
+```bash
+gh stack merge 42 --yes          # PR #42 plus every unmerged PR below it
+gh stack merge 7 --yes           # every unmerged PR in stack #7
+gh stack merge 42 --yes --squash # or --merge, --rebase, --merge-method <method>
+```
 
-**When to create a separate stack:** The work is unrelated to your current stack — a different feature, a bug fix in an unrelated area, or an independent refactor. Don't mix unrelated work into a single stack just because you happen to be working on both. Start a new stack with `gh stack init` or switch to an existing stack with `gh stack checkout` for each distinct effort.
+Pass a PR number to merge that PR and every unmerged PR below it, or a stack number to merge every
+unmerged PR in that stack. The operation is all-or-nothing: if any PR in that set cannot merge,
+none do.
 
-Small, incidental fixes (e.g., fixing a typo you noticed) can go in the current stack if they're trivial. But if a change grows into its own project, it deserves its own stack.
+Without a method flag the last-used method is reused. If the base branch uses a merge queue, the
+stack is queued instead and the queue picks the method, ignoring any flag you passed with a
+warning; queued PRs may land in separate groups.
 
-## Quick reference
+## Reading state
 
-| Task | Command |
-|------|---------|
-| Create a stack (recommended) | `gh stack init -p feat auth` |
-| Create a stack without prefix | `gh stack init auth` |
-| Create a stack of multiple branches | `gh stack init auth api frontend` |
-| Adopt existing branches | `gh stack init existing-branch-a existing-branch-b` |
-| Set custom trunk | `gh stack init --base develop branch-a` |
-| Add a branch to stack (suffix only if prefix set) | `gh stack add api-routes` |
-| Add branch + stage all + commit | `gh stack add -Am "message" api-routes` |
-| Push branches to remote | `gh stack push` |
-| Push to specific remote | `gh stack push --remote origin` |
-| Push branches + create draft PRs | `gh stack submit --auto` |
-| Create PRs as ready for review | `gh stack submit --auto --open` |
-| Sync (fetch, rebase, push) | `gh stack sync` |
-| Sync with specific remote | `gh stack sync --remote origin` |
-| Sync and prune merged branches | `gh stack sync --prune` |
-| Rebase entire stack | `gh stack rebase` |
-| Rebase upstack only | `gh stack rebase --upstack` |
-| Rebase without trunk | `gh stack rebase --no-trunk` |
-| Continue after conflict | `gh stack rebase --continue` |
-| Abort rebase | `gh stack rebase --abort` |
-| View stack details (JSON) | `gh stack view --json` |
-| Switch branches up/down in stack | `gh stack up [n]` / `gh stack down [n]` |
-| Switch to top/bottom branch | `gh stack top` / `gh stack bottom` |
-| Check out by PR | `gh stack checkout 42` |
-| Check out by branch (local only) | `gh stack checkout feature-auth` |
-| Tear down a stack to restructure it | `gh stack unstack` |
+`gh stack view --json` writes JSON to **stdout**. Status messages go to **stderr** — do not parse
+them, branch on exit codes instead.
 
----
+```
+trunk           string
+currentBranch   string
+branches[]      name, head, base, isCurrent, isMerged, isQueued, needsRebase
+branches[].pr   number, url, state ("OPEN" | "MERGED" | "QUEUED"); absent when no PR exists
+```
 
-## Workflows and command reference
+`base` is the saved SHA of the parent branch that this branch was last known to contain. It may be
+older than the parent's current tip. `needsRebase` is true when the current parent tip is no longer
+an ancestor of the branch.
 
-Both live alongside this file and are read on demand — don't load them until the task needs them:
+## Exit codes
 
-- **`references/workflows.md`** — worked end-to-end examples: creating a stack, adding a layer, rebasing after trunk moves, syncing, navigating, and recovering from conflicts.
-- **`references/commands.md`** — the full per-subcommand reference: every flag, argument, and JSON schema.
+| Code | Meaning | Recovery |
+|---|---|---|
+| 0 | Success | — |
+| 1 | Generic error | Read stderr |
+| 2 | Not in a stack | `gh stack init`, or `gh stack checkout <target>` |
+| 3 | Rebase conflict | Follow the Exit 3 recovery below |
+| 4 | GitHub API failure | Check `gh auth status`, retry |
+| 5 | Invalid arguments | Fix the invocation; see `<command> --help` |
+| 6 | Disambiguation required | Branch is in several stacks; check out a non-shared branch |
+| 7 | Rebase already in progress | `gh stack rebase --continue` or `--abort` |
+| 8 | Stack file locked | Another `gh stack` process is writing; retry after ~5s |
+| 9 | Stacked PRs unavailable | Not enabled on the repository; tell the user |
+| 10 | Modify recovery required | `gh stack modify --abort` |
 
-The quick-reference table above covers the common path; reach for `commands.md` when you need a flag it doesn't list.
+**Exit 3 recovery:**
 
-## Output conventions
+- After `gh stack rebase`: resolve the files, run `git add`, then
+  `gh stack rebase --continue`; use `gh stack rebase --abort` to restore the stack.
+- After `gh stack sync`: the stack has already been restored. Run `gh stack rebase` to recreate the
+  conflict, then resolve and continue as above.
 
-- **Status messages** go to **stderr** with emoji prefixes: `✓` (success), `✗` (error), `⚠` (warning), `ℹ` (info).
-- **Data output** (e.g., `view --json`) goes to **stdout**.
-- When piping output, use `2>/dev/null` to suppress status messages if only data output is needed.
+## Constraints
 
-## Exit codes and error recovery
+- Stacks are strictly linear: one parent, at most one child. Use separate stacks for parallel work.
+- There is no non-interactive reorder or removal. Errors may suggest `gh stack modify`, but it is
+  TUI-only — restructure with `unstack` then `init` instead.
+- PR titles and bodies are auto-generated. Use `gh pr edit` afterwards to change them.
+- `checkout <branch-name>` resolves against local stacks only. Use a stack or PR number to pull a
+  stack down from GitHub.
 
-| Code | Meaning | Agent action |
-|------|---------|-------------|
-| 0 | Success | Proceed normally |
-| 1 | Generic error | Read stderr for details; may indicate commit/push failure |
-| 2 | Not in a stack | Run `gh stack init` to create a stack first |
-| 3 | Rebase conflict | Parse stderr for conflicted file paths, resolve conflicts, run `gh stack rebase --continue` |
-| 4 | GitHub API failure | Check `gh auth status`, retry the command |
-| 5 | Invalid arguments | Fix the command invocation (check flags and arguments) |
-| 6 | Disambiguation required | A branch belongs to multiple stacks. Run `gh stack checkout <specific-branch>` to switch to a non-shared branch first |
-| 7 | Rebase already in progress | Run `gh stack rebase --continue` (after resolving conflicts) or `gh stack rebase --abort` to start over |
-| 8 | Stack is locked | Another `gh stack` process is writing the stack file. Wait and retry — the lock times out after 5 seconds |
-| 9 | Stacked PRs unavailable | The repository does not have stacked PRs enabled. `submit` will offer to create regular (unstacked) PRs in interactive mode |
+## More detail
 
-## Known limitations
+`gh stack <command> --help` is authoritative for flags and arguments. Note that
+`gh stack help <command>` does **not** work — it prints the top-level help.
 
-1. **Stacks are strictly linear.** Branching stacks (multiple children on a single parent) are not supported. Each branch has exactly one parent and at most one child. If you need parallel workstreams, use separate stacks.
-2. **Stack disambiguation cannot be bypassed.** If the current branch is the trunk of multiple stacks, commands error with code 6. Check out a non-shared branch first.
-3. **Multiple remotes require `--remote` or config.** If more than one remote is configured, pass `--remote <name>` or set `remote.pushDefault` in git config before running `push`, `sync`, or `rebase`.
-4. **Merging PRs:** Merging Stacked PRs from the CLI is not supported yet. Direct users to open the PR URL in a browser to merge PRs.
-5. **Remote stack checkout requires a PR number.** `checkout` with a branch name only works with locally tracked stacks. Use a PR number (e.g. `gh stack checkout 123`) to pull stacks from GitHub.
-6. **PR title and body are auto-generated.** There is no flag to set a custom PR title or body during `submit`. The title and body are generated from commit messages plus a footer. Use `gh pr edit` to modify PR title and body after creation.
+Open the reference whose trigger matches the task; no need to preload all three.
+
+- `references/stack-design.md` — read before creating a stack, when deciding how many layers to
+  use, what belongs in each one, or whether work belongs in a new stack.
+- `references/commands.md` — read when a command fails unexpectedly or you need its preconditions,
+  side effects, atomicity, or ordering guarantees.
+- `references/troubleshooting.md` — read on a rebase conflict, after a squash-merge, on local and
+  remote divergence, when restructuring a stack, or when driving stacks from another tool.
