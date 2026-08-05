@@ -210,6 +210,28 @@ test('one host failing does not blank the other', () => {
   assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-server'), 'utf8'), /"session":"s"/);
 });
 
+test('a cache write that fails does not record ok, so a stale cache reads as stale', () => {
+  // ssh succeeds and the temp cache write succeeds, but the final `mv` into place fails --
+  // the ENOSPC / read-only-$HOME case. A PATH-shadowing `mv` stub forces that deterministically,
+  // the same technique the suite already uses to shadow ssh. Without the fix, `ok\t<now>` gets
+  // written unconditionally right after this, so the host would read fresh while its cache is
+  // still the old snapshot -- the same "failure indistinguishable from emptiness" bug this
+  // branch exists to remove, just on the write side instead of the read side.
+  const e = env({ sshBody: `printf '%s\\n' '{"session":"new","state":"working","ts":9,"kind":"host"}'` });
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  const status = path.join(e.home, '.agentview-remote-status.daniel-server');
+  fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
+  fs.writeFileSync(status, 'ok\t111\n');
+  fs.writeFileSync(path.join(e.bin, 'mv'), '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  assert.strictEqual(fs.readFileSync(status, 'utf8'), 'ok\t111\n',
+    'status must be left at its old epoch, not overwritten with a fresh "ok", when the cache mv failed');
+  assert.match(fs.readFileSync(cache, 'utf8'), /"session":"old"/,
+    'the cache itself is untouched when its own mv failed');
+});
+
 // Writes an inotifywait stub that logs its argv (one call per line, like the ssh stub above)
 // before exiting with `exitCode`. Lets a test prove inotifywait was actually pointed at the
 // right directory with the right timeout, not just that SOME exit code was produced.

@@ -27,6 +27,15 @@ REAP_GRACE=120
 # can reach it.
 rows=""
 
+av_write_status() {  # $1=status path $2=outcome -> atomic tmp+mv write of "<outcome>\t<epoch>"
+  # Same tmp+mv shape as the cache write below: a reader (host_status_rows) reads this file
+  # with a plain `read`, and a `>` truncate landing mid-write would hand it an empty line —
+  # an unreachable host rendering as silence, which is the exact bug this file exists to fix.
+  local status="$1" outcome="$2" stmp="$1.tmp.$$"
+  printf '%s\t%s\n' "$outcome" "$(date +%s)" > "$stmp" 2>/dev/null && mv -f "$stmp" "$status" 2>/dev/null \
+    || rm -f "$stmp" 2>/dev/null
+}
+
 # Claude's own per-process registry (~/.claude/sessions/<pid>.json) is the authoritative
 # live view. Daemon-hosted background jobs (`claude agents`) never fire UserPromptSubmit
 # for daemon-mediated replies or --reply-on-resume launches, so their hook rows go stale
@@ -409,15 +418,23 @@ REMOTE_FOLD
   #   non-zero the host answered but its side failed
   #   0 + empty output is a LEGITIMATE empty roster and does replace the cache
   if [ "$rc" -eq 255 ]; then
-    printf 'unreachable\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+    av_write_status "$status" unreachable
     return
   fi
   if [ "$rc" -ne 0 ]; then
-    printf 'failed\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+    av_write_status "$status" failed
     return
   fi
-  printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
-  printf 'ok\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+  # `ok` is gated on the mv actually landing: if it fails (ENOSPC, a read-only $HOME) the
+  # cache stays whatever it was while the status would otherwise claim "ok" -- a host that
+  # reads fresh while its data is stale, the same lie this file exists to remove, just local.
+  # Leaving the status untouched on failure is deliberate: its epoch keeps aging, which
+  # self-signals staleness correctly, where writing a fresh unreachable/failed row would not.
+  if printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null; then
+    av_write_status "$status" ok
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
 }
 
 refresh_remote() {  # fan out across every configured host, concurrently

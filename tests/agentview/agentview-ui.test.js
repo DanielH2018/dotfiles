@@ -170,6 +170,11 @@ test('arrow keys move the selection', { skip }, async (t) => {
 
   await term.waitFor((s) => selectedLine(s).includes('alpha'));
   term.send('down');
+  // idle is pre-expanded (seed() above), and its header now carries a landable fold: key
+  // (Important 1) so it can be re-collapsed -- the first down lands there, same as any other
+  // real row would, and a second down continues on to beta.
+  await term.waitFor((s) => selectedLine(s).includes('IDLE'));
+  term.send('down');
   await term.waitFor((s) => selectedLine(s).includes('beta'));
   assert.ok(selectedLine(term.screen).includes('beta'));
 });
@@ -248,9 +253,13 @@ test('ctrl-p pins the row into the PINNED group', { skip }, async (t) => {
   const term = open(env);
   t.after(() => term.stop());
 
-  // No query here: the group headers are rows with an empty key, so any filter hides
+  // No query here: a plain group header is a row with an empty key, so any filter hides
   // the very header this asserts on.
   await term.waitFor((s) => selectedLine(s).includes('alpha'));
+  term.send('down');
+  // idle is pre-expanded (seed()), so its header is now landable (Important 1) and the
+  // first down stops there; a second down continues on to beta.
+  await term.waitFor((s) => selectedLine(s).includes('IDLE'));
   term.send('down');
   await term.waitFor((s) => selectedLine(s).includes('beta'));
   assert.ok(!term.screen.contains('PINNED'), `nothing should be pinned yet:\n${term.text()}`);
@@ -371,8 +380,18 @@ test('esc closes the picker', { skip }, async (t) => {
 
 const statusfile = (home, host) => path.join(home, `.agentview-remote-status.${host}`);
 
+// makeEnv()'s ssh stub exits 0 immediately, which the picker's background refresh reads as a
+// real (if empty) roster -- it legitimately overwrites the status/cache it just fetched. That
+// races a test that pre-seeds a status file and asserts on ITS content: the seed can lose to
+// the background rewrite before the assertion runs. Sleeping instead of exiting keeps the ssh
+// call outstanding for the test's lifetime, so the seeded fixture is the only thing rendered.
+function stubSlowSsh(bin) {
+  fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nsleep 2\n', { mode: 0o755 });
+}
+
 test('an unreachable host renders a status row instead of going quiet', { skip }, async (t) => {
-  const { home, env } = makeEnv();
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
   fs.writeFileSync(statusfile(home, 'daniel-box'), `unreachable\t${nowSec()}\n`);
   const term = open(env);
   t.after(() => term.stop());
@@ -383,18 +402,24 @@ test('an unreachable host renders a status row instead of going quiet', { skip }
 });
 
 test('a stale-but-ok host is labelled with its age', { skip }, async (t) => {
-  const { home, env } = makeEnv();
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
   fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec() - 360}\n`);
   const term = open(env);
   t.after(() => term.stop());
 
-  await term.waitFor((s) => s.contains('old'));
+  // Wait for the EXACT string the assertion checks, not a weaker prefix: waiting on a looser
+  // match (even a specific-enough substring like ' old') can resolve on a transient partial
+  // repaint that hasn't finished laying out the row yet, so the assert right after can lose to
+  // a reflow that hasn't settled -- this test was flaky against that looser probe.
+  await term.waitFor((s) => s.contains('Homelab · 6m old'));
   assert.ok(lineIndex(term, 'Homelab · 6m old') >= 0,
     `expected a 6m age on Homelab, got:\n${term.text()}`);
 });
 
 test('a fresh ok host adds no chrome', { skip }, async (t) => {
-  const { home, env } = makeEnv();
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
   fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec()}\n`);
   const term = open(env);
   t.after(() => term.stop());
@@ -402,5 +427,7 @@ test('a fresh ok host adds no chrome', { skip }, async (t) => {
   await term.waitFor('no active Claude sessions');
   assert.strictEqual(lineIndex(term, 'unreachable'), -1, 'a healthy host should be silent');
   assert.strictEqual(lineIndex(term, 'fetch failed'), -1, 'a healthy host should be silent');
-  assert.strictEqual(lineIndex(term, 'old'), -1, 'a fresh host should carry no age chrome');
+  // ' old' (leading space), not bare 'old': the footer's '↵ switch/fold' hint contains the
+  // bare substring 'old' inside 'fold', which a fresh host's silence does not disprove.
+  assert.strictEqual(lineIndex(term, ' old'), -1, 'a fresh host should carry no age chrome');
 });

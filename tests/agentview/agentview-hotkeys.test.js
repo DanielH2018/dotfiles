@@ -164,6 +164,45 @@ test('a collapsed group carries a landable fold: sentinel, not an empty key', { 
   assert.strictEqual(line.split('\t')[0], 'fold:completed', 'the fold row carries the sentinel key, not an empty one');
 });
 
+// ---- fold round trip: an EXPANDED foldable header must stay landable ----
+// build_pretty's COLLAPSED header carries a landable fold:<group> key (tested above); the
+// EXPANDED header used to fall through to a bare empty key instead, so re-collapsing was
+// unreachable from the keyboard (--skip bounces the cursor off any empty key) and a mouse
+// click that DID land there hit --enter's accept fallback, silently exiting the picker.
+// Drive the render for real, rather than hand-typing 'fold:completed', so a regression that
+// puts the sentinel on the wrong branch (or only for one of the two foldable groups) shows up
+// here instead of passing two separately-mocked tests the way this branch's own gap did.
+test('an expanded foldable group header carries a landable fold: key end to end', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
+  fs.writeFileSync(foldFile(home), 'completed\n');   // expand it -- collapsed is the default
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
+  assert.ok(line, `expected an expanded COMPLETED line, got:\n${body}`);
+  const key = line.split('\t')[0];
+  assert.strictEqual(key, 'fold:completed', 'the EXPANDED header still carries the fold sentinel, not an empty key');
+
+  // Feed that real KEY through --skip: a landable row must not deflect the cursor.
+  assert.strictEqual(run(env, ['--skip', 'down', key, '4']).out.trim(), '',
+    'the expanded header must stop the cursor (landable), not bounce it like a plain header');
+
+  // Feed it through --enter: it must toggle the fold, not fall through to accept.
+  const action = run(env, ['--enter', key]).out;
+  assert.match(action, /--fold fold:completed/, 'enter on the expanded header toggles the fold, not accept');
+  run(env, ['--fold', key]);   // perform the toggle --enter's transform would have triggered
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), '', 'the round trip re-collapses the group');
+});
+
+test('a non-foldable group header stays keyless even though a foldable one is now landable', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: nowSec() - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: 'alpha' });
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('WORKING'));
+  assert.ok(line, `expected a WORKING line, got:\n${body}`);
+  assert.strictEqual(line.split('\t')[0], '', 'a non-foldable state header keeps the empty key');
+  assert.match(run(env, ['--skip', 'down', '', '4']).out, /^down\+transform/, 'a keyless header still deflects the cursor');
+});
+
 // ---- render: PINNED group + exclusion + gutter --------------------------
 test('a pinned session renders in a PINNED group above its state group', { skip }, () => {
   const { env, home } = makeEnv();

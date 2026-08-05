@@ -1001,6 +1001,7 @@ Recorded rather than rewritten into the tasks above, so the original intent and 
 | 9 | (unanticipated) | Watch loop needs a floor: `mkdir -p "$statedir"`, any rc outside {0,2} treated as timeout, interval floored at 1s | `inotifywait` exits 1 *immediately* on error, and `sleep 0` returns in ~1ms — either turns the loop hot. Installing `inotify-tools` is what moves a machine off the safe fallback onto that branch. |
 | 10 | `inotify-tools` goes in `packages.toml` | `home/.chezmoidata/tools.toml` | Matches the existing `script` entry — a distro package with empty `winget`/`brew`. |
 | 11 | Test with `node --test tests/` | `node --test 'tests/**/*.test.js'` (quoted glob or explicit file list) | The bare-directory form does not work on Node v24.18.1. |
+| 12 | `ControlPath` named per-user/host/port (`%r@%h:%p`) | Uses `%C`, a hash of (host, port, user, address) | Unix socket paths cap near 104 bytes and the literal form overflows it on long hostnames, at which point ssh silently declines to multiplex and every call pays a full handshake again (`common.sh:81-83`). |
 
 **Behaviour change worth knowing:** the Ctrl+X purge and Ctrl+R rename ssh calls dropped their own `-o ConnectTimeout=4` and now inherit the shared builder's 3s.
 

@@ -92,7 +92,11 @@ host_status_rows() {  # print one keyless row per host that isn't currently heal
       unreachable) printf '\t  %s · unreachable\n' "$lbl" ;;
       failed)      printf '\t  %s · fetch failed\n' "$lbl" ;;
       ok)
-        age=$(( now - ${when:-0} ))
+        # A corrupt status file (partial write, disk error) can carry a non-numeric epoch;
+        # under `set -u` the bare arithmetic below would abort the whole render. Mirror
+        # fmt_age's own guard and treat garbage as maximally stale, so it still surfaces.
+        case "$when" in ''|*[!0-9]*) when=0;; esac
+        age=$(( now - when ))
         [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s · %s old\n' "$lbl" "$_age"; }
         ;;
     esac
@@ -237,7 +241,11 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     else
       state_color "$grp"; scol="$_scol"
-      printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      # An EXPANDED foldable group (completed/idle) still needs a landable key, the same
+      # fold:<group> sentinel the collapsed header carries, so <enter> can re-collapse it.
+      # The other three state headers can't be folded at all and stay keyless like spacers.
+      case "$grp" in completed|idle) key="fold:$grp";; *) key="";; esac
+      printf '%s\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$key" "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     fi
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an

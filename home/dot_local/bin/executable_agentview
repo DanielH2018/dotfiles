@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# statedir, sessionsdir, pinfile, windir, win_spawn_dir, HOST_SSH,
+# statedir, sessionsdir, pinfile, foldfile, windir, win_spawn_dir, HOST_SSH,
 # WSL_DOMAIN, WIN_GITBASH, WIN_CLAUDE and _rw are set here and read in the six
 # modules loaded from $AV_LIB below. That source path resolves at runtime, so the
 # linter cannot follow it and reports every one of them as unused.
@@ -100,6 +100,8 @@ if [ "$mode" = "--enter" ]; then
   case "${2:-}" in
     fold:*) printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
               "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$2" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" ;;
+    '')     ;;   # keyless row (header/spacer/status line) -- no-op, not accept: accepting an
+                 # empty KEY exits the picker on a dead click, same bug a fold: key exists to avoid.
     *)      printf accept ;;
   esac
   exit 0
@@ -107,7 +109,7 @@ fi
 
 statedir="$HOME/.claude/agent-view"
 # Claude's own per-process registry (see the load_session_map block below for what the render
-# does with it). Defined here — like remote_cache_for — because do_remove needs it: the render
+# does with it). Defined here because do_remove needs it: the render
 # rewrites a daemon session's locator to bg:<jobId>, and only this registry maps that job back
 # to the session id the on-disk row is keyed by.
 sessionsdir="$HOME/.claude/sessions"
@@ -131,7 +133,7 @@ foldfile="$HOME/.claude/agent-view-folds"
 # temp file instead of stdout.
 #
 # With no tmux there is no popup substrate at all, so fall back to a small inline box on the
-# screen execute() already cleared. Defined here — like remote_cache_for — because the Ctrl+X
+# screen execute() already cleared. Defined here because the Ctrl+X
 # confirm runs from the --remove dispatch, well above where the spawn pickers are defined.
 
 # The terminal runs Catppuccin Mocha (chezmoi `.chezmoidata/terminal.toml`), so every box this
@@ -334,7 +336,7 @@ if [ "$mode" = "--keys" ]; then
   printf '\n  %sNavigate%s\n' "$sec" "$z"
   printf '    %s↑ ↓%s      %smove%s\n'                 "$k" "$z" "$dsc" "$z"
   printf '    %s⌥1 … ⌥9%s  %sjump to that session%s\n' "$k" "$z" "$dsc" "$z"
-  printf '    %s↵%s        %sswitch to selected%s\n'   "$k" "$z" "$dsc" "$z"
+  printf '    %s↵%s        %sswitch to selected / fold a group%s\n'   "$k" "$z" "$dsc" "$z"
   printf '\n  %sManage%s\n' "$sec" "$z"
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
   printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
@@ -482,7 +484,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer='  ↵ switch/fold · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
