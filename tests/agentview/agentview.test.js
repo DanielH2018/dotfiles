@@ -447,6 +447,21 @@ test('REMOTE tmux row jumped twice reuses its window instead of stacking a secon
     'and gets there by selecting the session-qualified target the lookup resolved');
 });
 
+// Remote session names are unique per host, not globally — "main" and "server" are the
+// obvious collisions. Since the reuse lookup now spans every tmux session, an unqualified
+// window name would let one host's window answer a jump meant for another's.
+test('two hosts running an identically-named session get separate windows', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });
+  const row = (host) => [cardKey([host, '/home/ubuntu/main', 'working', '0', 'main', '%3', 'host', 'tmux:/tmp/tmux-1000/default:main:%3']), 'display'].join('\t');
+  const inTmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, [], { ...inTmux, FZF_PICK: row('daniel-server') });
+  run(env, [], { ...inTmux, FZF_PICK: row('daniel-box') });
+  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n '));
+  assert.deepStrictEqual(opened.map((l) => l.split(' ')[2]).sort(),
+    ['main@daniel-box', 'main@daniel-server'],
+    'each host gets a window named for its own session, so neither jump lands on the other');
+});
+
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
   const { env, spawnLog, activateLog } = makeEnv({ list: '[]' });
   const pick = [cardKey(['daniel-server', '/x', 'working', '0', 't', '1', 'host', 'none:']), 'display'].join('\t');

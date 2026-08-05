@@ -124,8 +124,10 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
   # the login shell we don't get — so extend PATH remotely. Written WITHOUT double quotes so
   # the string survives the tmux `sh -c` layer below with $HOME/$PATH still unexpanded, i.e.
   # resolved on the remote and not against this machine's environment.
+  # Job ids are unique across hosts; "agents" is not, and the lookup now spans every session,
+  # so an unqualified name would let one host's window answer for another's.
   if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"; wname="cc-$job"
-  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents"; fi
+  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents@$host"; fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     av_focus_window "$wname" && return 0
     av_ssh_opts_str
@@ -138,7 +140,7 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
 }
 
 remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
-  local host="$1" loc="$2" backend rest session pane sshalias rcmd
+  local host="$1" loc="$2" backend rest session pane sshalias rcmd wname
   backend="${loc%%:*}"; rest="${loc#*:}"
   [ "$backend" = "bg" ] && { remote_attach_bg "$host" "$rest"; return $?; }
   [ "$backend" = "tmux" ] || return 1        # only tmux remotes attach; others list-only
@@ -155,9 +157,12 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
     # so attaching in place would strand the session in a 90%x90% overlay. Use a window —
     # REUSING the one already attached to this remote session, or repeat jumps leak one each.
     # Same reuse trick av_open_claude_cmd applies to bg sessions.
-    av_focus_window "$session" && return 0
+    # Qualified by host: remote session names are only unique per host ("main", "server"),
+    # and av_focus_window searches every session, so a bare name could match another host's.
+    wname="$session@$host"
+    av_focus_window "$wname" && return 0
     av_ssh_opts_str
-    tmux new-window -n "$session" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
+    tmux new-window -n "$wname" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
     return 0
   fi
