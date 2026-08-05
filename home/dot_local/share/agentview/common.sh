@@ -71,12 +71,17 @@ av_ssh_opts() {  # populate AV_SSH_OPTS; callers splat "${AV_SSH_OPTS[@]}" into 
   # point ssh silently declines to multiplex and every call pays a full handshake again.
   mkdir -p "$AV_SSH_CTLDIR" 2>/dev/null || true
   chmod 700 "$AV_SSH_CTLDIR" 2>/dev/null || true
-  # ConnectTimeout belongs here, not at the call site: a master socket pointing at a host that
-  # has gone away must fail fast, or the picker's background refresh hangs holding its pipes.
+  # ConnectTimeout bounds the initial TCP handshake when establishing a NEW connection.
+  # ServerAliveInterval + ServerAliveCountMax detect a stalled read against an already-
+  # established ControlPersist master whose peer has gone away. They are NOT redundant:
+  # losing either reopens a hang where the picker's background refresh blocks for minutes
+  # on the OS TCP timeout instead of failing in ~10s.
   AV_SSH_OPTS=(
     -o ControlMaster=auto
     -o "ControlPath=$AV_SSH_CTLDIR/%C"
     -o ControlPersist=300
     -o ConnectTimeout=3
+    -o ServerAliveInterval=5
+    -o ServerAliveCountMax=2
   )
 }

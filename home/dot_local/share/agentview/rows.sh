@@ -341,9 +341,10 @@ refresh_remote() {  # pull homelab state over ssh, fold its live registry in, re
   # waiting->needs-input, idle/else->completed), newest updatedAt winning per session, dead
   # pids skipped, sdk/spare processes ignored. A session with no live registry entry (older
   # claude, or a genuinely gone process) passes its raw hook row through unchanged, so a
-  # pre-registry homelab still renders. One-shot ssh (NO ControlMaster) bounded by
-  # ConnectTimeout — we KEEP the old snapshot only when ssh itself can't connect (rc 255),
-  # not when there simply are no remote sessions.
+  # pre-registry homelab still renders. Multiplexed ssh reuses a persistent master socket
+  # (ControlPersist) with fast detection of dead peers (ServerAliveInterval + ServerAliveCountMax),
+  # and initial connections fail fast (ConnectTimeout) — we KEEP the old snapshot only when
+  # ssh itself can't connect (rc 255), not when there simply are no remote sessions.
   av_ssh_opts
   out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob

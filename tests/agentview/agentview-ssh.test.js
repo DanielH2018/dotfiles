@@ -78,4 +78,16 @@ test('the control socket path stays under HOME, not /mnt', () => {
   assert.ok(!m[1].startsWith('/mnt/'), `control socket must not live on /mnt: ${m[1]}`);
 });
 
+test('keepalive options detect dead peers on established connections', () => {
+  // ConnectTimeout covers establishing a NEW connection. ServerAliveInterval +
+  // ServerAliveCountMax detect a stalled read against an already-established ControlPersist
+  // master whose peer has gone away. Both are necessary to fail fast.
+  const e = env();
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  for (const c of e.sshCalls()) {
+    assert.match(c, /ServerAliveInterval=/, `no ServerAliveInterval in: ${c}`);
+    assert.match(c, /ServerAliveCountMax=/, `no ServerAliveCountMax in: ${c}`);
+  }
+});
+
 module.exports = { env };
