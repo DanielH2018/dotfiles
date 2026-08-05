@@ -83,10 +83,13 @@ exit 0
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
+sess="\${AV_TMUX_SESSION:-0}"
 case "$1" in
-  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
+  display-message) echo "$sess"; exit 0 ;;
+  list-windows)    cat "$wins"; exit 0 ;;
+  select-window)   cut -f1 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
   new-window)
-    echo "$3" >> "$wins"
+    printf '%s:%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"
     # Execute the command string through sh to test quoting post-reparse
     if [ -n "\${4:-}" ]; then
       sh -c "$4" 2>/dev/null

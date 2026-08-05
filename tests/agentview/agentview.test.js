@@ -72,12 +72,18 @@ exit 0
   // only succeeds for a window some earlier `new-window` created. The picker's reuse paths
   // are built on that failure, so a stub that exits 0 unconditionally would report reuse for
   // windows that never existed and hide whether a window is ever actually opened.
+  // Registry rows are `<session>:<index>\t<name>` — the same shape real tmux prints for the
+  // `list-windows -a -F` the reuse lookup runs. A flat name-only registry cannot model the
+  // session scoping that made `-t "=name"` miss, so it would pass either implementation.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
+sess="\${AV_TMUX_SESSION:-0}"
 case "$1" in
-  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
-  new-window)    echo "$3" >> "$wins" ;;
+  display-message) echo "$sess"; exit 0 ;;
+  list-windows)    cat "$wins"; exit 0 ;;
+  select-window)   cut -f1 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  new-window)      printf '%s:%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins" ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -437,7 +443,8 @@ test('REMOTE tmux row jumped twice reuses its window instead of stacking a secon
   run(env, [], inTmux);
   const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n airflow'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t =airflow/, 'and gets there by selecting it');
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t \d+:\d+/,
+    'and gets there by selecting the session-qualified target the lookup resolved');
 });
 
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {

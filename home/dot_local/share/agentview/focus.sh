@@ -49,6 +49,27 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
   esac
 }
 
+av_focus_window() {  # $1 = window name -> 0 if an existing window (in ANY session) was focused
+  # `select-window -t "=name"` is SESSION-relative: it only ever matches inside the client's
+  # own session. Every jump made from a different session therefore missed the window it was
+  # meant to reuse and opened another one, so a machine collected one duplicate per session.
+  # Search every session, preferring the current one so a match here never moves the client.
+  local name="$1" cur target
+  [ -n "$name" ] || return 1
+  cur=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  target=$(tmux list-windows -a -F '#{session_name}:#{window_index}	#{window_name}' 2>/dev/null |
+    awk -F'\t' -v n="$name" -v s="$cur" '
+      $2 != n { next }
+      { split($1, p, ":"); if (p[1] == s) { here = $1; exit } if (!other) other = $1 }
+      END { print (here ? here : other) }')
+  [ -n "$target" ] || return 1
+  tmux select-window -t "$target" 2>/dev/null || return 1
+  # Cross-session match: select-window moved the window server-side, switch-client brings
+  # this client to it. Same session needs neither, and switching would be a no-op anyway.
+  case "$target" in "$cur:"*) : ;; *) tmux switch-client -t "$target" 2>/dev/null ;; esac
+  return 0
+}
+
 resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or nothing)
   # Legacy cwd-correlation for rows with no locator: the stored pane id is only valid
   # in the mux where it was recorded, so it can't be trusted across the local vs.
@@ -106,7 +127,7 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
   if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"; wname="cc-$job"
   else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents"; fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux select-window -t "=$wname" 2>/dev/null && return 0
+    av_focus_window "$wname" && return 0
     av_ssh_opts_str
     tmux new-window -n "$wname" "ssh $AV_SSH_OPTS_STR-t $sshalias '$rcmd'"
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
@@ -134,7 +155,7 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
     # so attaching in place would strand the session in a 90%x90% overlay. Use a window —
     # REUSING the one already attached to this remote session, or repeat jumps leak one each.
     # Same reuse trick av_open_claude_cmd applies to bg sessions.
-    tmux select-window -t "=$session" 2>/dev/null && return 0
+    av_focus_window "$session" && return 0
     av_ssh_opts_str
     tmux new-window -n "$session" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
@@ -299,7 +320,7 @@ av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a pane of the
     *)          wname="agents";;
   esac
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux select-window -t "=$wname" 2>/dev/null && return 0   # reuse -> no window leak
+    av_focus_window "$wname" && return 0   # reuse -> no window leak
     tmux new-window -n "$wname" "claude $1"
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name stable for reuse
     return 0
