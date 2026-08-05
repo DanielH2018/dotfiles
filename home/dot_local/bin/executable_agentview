@@ -145,9 +145,9 @@ US=$'\037'
 # the WSL mount; `WEZTERM_WIN` is the Windows wezterm binary (WSL's PATH excludes it,
 # appendWindowsPath=false) used to focus/rename/spawn Windows panes.
 winhost="daniel-desktop"
-declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="Homelab" )
+declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="Homelab" [daniel-box]="Box" )
 declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
-declare -A HOST_SSH=( [daniel-server]="daniel-server" )
+declare -A HOST_SSH=( [daniel-server]="daniel-server" [daniel-box]="daniel-box" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
 # The wezterm domain a WSL-side tab must be pinned to (config.wsl_domains in wezterm.lua).

@@ -125,4 +125,12 @@ test('the attach does not inherit BatchMode', () => {
   assert.doesNotMatch(calls[0], /BatchMode/, 'attach must not set BatchMode');
 });
 
+test('daniel-box is registered with the display label Box', () => {
+  // host_label() falls back to ${1#daniel-}, which would render a lowercase "box" without an
+  // explicit entry. The label is the visible half of this task.
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  assert.match(src, /HOST_SSH=\([^)]*\[daniel-box\]/, 'daniel-box missing from HOST_SSH');
+  assert.match(src, /HOST_LABEL=\([^)]*\[daniel-box\]="Box"/, 'daniel-box must be labelled Box');
+});
+
 module.exports = { env };
