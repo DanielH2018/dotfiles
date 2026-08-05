@@ -202,6 +202,17 @@ apt = "zsh-syntax-highlighting"
 dnf = "zsh-syntax-highlighting"
 
 [[tools]]
+name = "inotify-tools"
+cmd = "inotifywait"
+# Backs agentview's picker-open watch loop (rows.sh: av_watch_once) on WSL and both servers.
+# Linux-only kernel feature -- no winget/brew equivalent, so the watch falls back to a plain
+# timer wherever this package is missing (see AV_WATCH_INTERVAL in rows.sh).
+winget = ""
+brew = ""
+apt = "inotify-tools"
+dnf = "inotify-tools"
+
+[[tools]]
 name = "script"
 cmd = "script"
 # Not a shell-experience tool -- it is what tests/chezmoi/chezmoi-scripts.test.js uses to hand the

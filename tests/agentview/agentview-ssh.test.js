@@ -40,6 +40,7 @@ function env({ sshBody = 'exit 0' } = {}) {
           ...process.env, ...seams.env,
           HOME: home, AV_LIB: LIB,
           PATH: `${bin}:${process.env.PATH}`,
+          AGENT_VIEW_WATCH_INTERVAL: '1',
         },
       });
     },
@@ -207,6 +208,39 @@ test('one host failing does not blank the other', () => {
 
   assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-box'), 'utf8'), /boxrow/);
   assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-server'), 'utf8'), /"session":"s"/);
+});
+
+test('a watch timeout also refreshes the remote hosts', () => {
+  // inotifywait exits 2 on timeout, meaning "no local change happened". That is exactly when
+  // the remote hosts are worth re-fetching -- an event means local state moved, and the
+  // local read is free.
+  const e = env();
+  fs.writeFileSync(path.join(e.bin, 'inotifywait'), '#!/bin/bash\nexit 2\n', { mode: 0o755 });
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0, 'a timeout iteration must refresh the remote hosts');
+});
+
+test('a local file event repaints without touching the network', () => {
+  // The whole point of watching: a local state change must not cost an ssh round-trip.
+  const e = env();
+  fs.writeFileSync(path.join(e.bin, 'inotifywait'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.strictEqual(e.sshCalls().length, 0, 'a local event must not trigger an ssh fetch');
+});
+
+test('the watcher falls back to a timer when inotifywait is absent', () => {
+  // chezmoi deploys these dotfiles to WSL and both servers; inotify-tools is not everywhere.
+  // Without a fallback the picker would silently stop repainting on those machines.
+  const e = env();
+  // post_reload polls this file for up to 2s waiting for fzf's port; writing it up front lets
+  // that poll return on its first check, so the elapsed time below measures only the fallback
+  // sleep, not the poll.
+  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
+  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
+  const started = Date.now();
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(Date.now() - started >= 900, 'the fallback must actually wait, not spin');
+  assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
 });
 
 module.exports = { env };

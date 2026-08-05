@@ -50,6 +50,11 @@
 #                         + pull the homelab cache over ssh, then reload the live picker via the
 #                         fzf --listen port stored in portfile PF (used by the startup background
 #                         job and CTRL+F). Detached: this is where the slow off-render work goes.
+#   agentview --watch PF  repaint the picker while it's open: loops waiting for a local state
+#                         change (inotifywait) or a timeout, re-fetching the remote hosts on
+#                         timeout. Started detached alongside --refresh-remote and killed by the
+#                         EXIT trap when the picker closes.
+#   agentview --watch-once PF  a single --watch iteration, then returns (test seam).
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
 # one direct backend command with no discovery step. Rows lacking a locator (legacy /
@@ -261,7 +266,7 @@ case "$mode" in
   # shares the picker's actions.sh load but never exercises the guard itself: its awk
   # (below) already excludes fold: rows before one could reach jump_or_report.
   --jump|--remove|--pin|--rename|--fold) _avmods="common focus actions" ;;
-  --refresh-remote)                  _avmods="common rows" ;;
+  --refresh-remote|--watch|--watch-once) _avmods="common rows" ;;
   --body)                            _avmods="common rows render" ;;
   *)                                 _avmods="common focus rows render actions" ;;   # picker + --jump-nth
 esac
@@ -369,16 +374,18 @@ if [ "$mode" = "--refresh-remote" ]; then
   reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
   sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
   refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
-  _pf="${2:-}"
-  if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
-    for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
-    p=$(cat "$_pf" 2>/dev/null)
-    self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
-    [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
-        --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
-  fi
+  post_reload "${2:-}"
   exit 0
 fi
+
+# --watch PORTFILE: repaint the picker while it's open, not just at startup/CTRL+F. Each
+# iteration waits for either a local state-file change (inotifywait) or a timeout; a timeout
+# also re-fetches the remote hosts, since nothing local moved to explain the wait. Runs
+# detached, same as --refresh-remote, and dies with the picker via the EXIT trap below.
+# --watch-once runs a single iteration and returns -- the test seam for both branches and
+# the no-inotifywait fallback.
+if [ "$mode" = "--watch" ]; then av_watch_loop "${2:-}"; exit 0; fi
+if [ "$mode" = "--watch-once" ]; then av_watch_once "${2:-}"; exit 0; fi
 
 # --jump-nth N: focus the Nth session in the rendered order (pinned first, then by state,
 # ts desc) — the target of ALT+1..9. fzf fires this via `become`, so we inherit its pipes;
@@ -443,7 +450,14 @@ rm -f "$portfile" 2>/dev/null
 "$SELF" --refresh-remote "$portfile" \
   >/dev/null 2>&1 &   # detach stdio so the job never holds the picker's pipes open
 poster_pid=$!
-trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
+# Repaints the picker while it's open (see --watch above) -- a survivor here would hold the
+# picker's ConPTY open the same way the old CTRL+W hang did, so the trap kills it too. Closed
+# stdin too, not just redirected stdout/stderr: an inherited tty fd is exactly what kept the
+# old CTRL+W hang alive.
+"$SELF" --watch "$portfile" \
+  </dev/null >/dev/null 2>&1 &
+watch_pid=$!
+trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
 # How CTRL+N / CTRL+X hand off to their chooser. execute() ALWAYS clears fzf's window first
 # — even `execute(echo hi)` wipes the list — so under it the chooser can only ever replace

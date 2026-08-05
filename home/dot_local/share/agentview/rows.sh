@@ -431,3 +431,45 @@ refresh_remote() {  # fan out across every configured host, concurrently
   done < <(remote_hosts)
   for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
 }
+
+post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into the live picker.
+  # Shared by --refresh-remote (startup + CTRL+F) and the watch loop below, so there is one
+  # curl call to keep working instead of two copies drifting apart. Missing curl or an empty
+  # port degrades quietly -- the picker just keeps showing what it already has.
+  local pf="$1" p self
+  command -v curl >/dev/null 2>&1 || return 0
+  [ -n "$pf" ] || return 0
+  for _ in $(seq 1 40); do [ -s "$pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
+  p=$(cat "$pf" 2>/dev/null)
+  self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
+      --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
+  return 0
+}
+
+# How long a quiet picker waits before re-fetching the remote hosts. Local changes do not
+# wait for this -- they arrive as inotify events.
+AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
+
+av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
+  local rc
+  if command -v inotifywait >/dev/null 2>&1; then
+    # -qq stays silent; the trailing $? capture avoids tripping set -e style callers. 2 means
+    # "timed out with no event", which is the cue to look at the remote hosts.
+    inotifywait -qq -t "$AV_WATCH_INTERVAL" \
+      -e close_write -e create -e delete -e moved_to "$statedir" >/dev/null 2>&1
+    rc=$?
+  else
+    # No inotify-tools on this machine. Degrade to a plain timer rather than stopping: a
+    # picker that silently never repaints is the bug this task exists to fix.
+    sleep "$AV_WATCH_INTERVAL"
+    rc=2
+  fi
+  [ "$rc" -eq 2 ] && refresh_remote
+  post_reload "$1"
+  return 0
+}
+
+av_watch_loop() {  # $1 = portfile. Runs until the picker's EXIT trap kills it.
+  while :; do av_watch_once "$1"; done
+}
