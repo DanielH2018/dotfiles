@@ -448,28 +448,58 @@ post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into
 }
 
 # How long a quiet picker waits before re-fetching the remote hosts. Local changes do not
-# wait for this -- they arrive as inotify events.
+# wait for this -- they arrive as inotify events. Validated once here, not just defaulted: a
+# non-numeric override would make every `sleep`/`inotifywait -t` below fail or return
+# instantly, turning the loop into a busy-spin (see av_watch_once).
 AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
+case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
 
 av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
+  # The blocking wait runs BACKGROUNDED + `wait`ed on, not as a plain foreground command: bash
+  # forwards a signal to a shell blocked in `wait` immediately, but does NOT forward one to a
+  # shell blocked on a synchronous foreground child -- that child would keep running as an
+  # orphan for up to the full interval after the picker's EXIT trap tries to kill this loop.
+  # _av_watch_child is deliberately NOT local: av_watch_loop's TERM trap has to reach it.
   local rc
+  # A freshly-provisioned box has no statedir until the register hook's first write --
+  # inotifywait can't watch a path that doesn't exist, and would error out (rc 1) rather than
+  # time out (rc 2), which is exactly the busy-spin case handled below.
+  mkdir -p "$statedir" 2>/dev/null
   if command -v inotifywait >/dev/null 2>&1; then
-    # -qq stays silent; the trailing $? capture avoids tripping set -e style callers. 2 means
-    # "timed out with no event", which is the cue to look at the remote hosts.
+    # -qq stays silent. 2 means "timed out with no event", which is the cue to look at the
+    # remote hosts; 0 means a real event fired.
     inotifywait -qq -t "$AV_WATCH_INTERVAL" \
-      -e close_write -e create -e delete -e moved_to "$statedir" >/dev/null 2>&1
+      -e close_write -e create -e delete -e moved_to "$statedir" >/dev/null 2>&1 &
+    _av_watch_child=$!
+    wait "$_av_watch_child"
     rc=$?
   else
     # No inotify-tools on this machine. Degrade to a plain timer rather than stopping: a
     # picker that silently never repaints is the bug this task exists to fix.
-    sleep "$AV_WATCH_INTERVAL"
-    rc=2
+    sleep "$AV_WATCH_INTERVAL" &
+    _av_watch_child=$!
+    wait "$_av_watch_child"
+    rc=$?
+    [ "$rc" -eq 0 ] && rc=2   # a completed sleep normalizes to "timeout", same as inotifywait's own
   fi
+  # 0 (a real event) and 2 (a clean timeout, from either path above) both already took roughly
+  # the interval. Anything else -- inotifywait erroring out (an exhausted inotify watch/instance
+  # limit, the target vanishing mid-run) or `sleep` itself failing -- returns near-instantly, so
+  # without this floor wait the loop would busy-spin: post_reload's curl and, every iteration,
+  # refresh_remote's ssh calls firing as fast as the CPU allows instead of once per interval.
+  case "$rc" in
+    0|2) : ;;
+    *) sleep "$AV_WATCH_INTERVAL" & _av_watch_child=$!; wait "$_av_watch_child"; rc=2 ;;
+  esac
   [ "$rc" -eq 2 ] && refresh_remote
   post_reload "$1"
   return 0
 }
 
 av_watch_loop() {  # $1 = portfile. Runs until the picker's EXIT trap kills it.
+  # `kill "$watch_pid"` (executable_agentview's EXIT trap) sends TERM to this process. Trapping
+  # it here and killing the in-flight child is what makes that kill take effect immediately
+  # instead of after up to a full AV_WATCH_INTERVAL -- see the comment in av_watch_once.
+  trap 'kill "${_av_watch_child:-}" 2>/dev/null; exit 0' TERM
   while :; do av_watch_once "$1"; done
 }

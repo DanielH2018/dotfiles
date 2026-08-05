@@ -210,22 +210,44 @@ test('one host failing does not blank the other', () => {
   assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-server'), 'utf8'), /"session":"s"/);
 });
 
+// Writes an inotifywait stub that logs its argv (one call per line, like the ssh stub above)
+// before exiting with `exitCode`. Lets a test prove inotifywait was actually pointed at the
+// right directory with the right timeout, not just that SOME exit code was produced.
+function writeInotifyStub(e, exitCode) {
+  const log = path.join(e.home, 'inotify-argv.log');
+  fs.writeFileSync(path.join(e.bin, 'inotifywait'),
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nexit ${exitCode}\n`,
+    { mode: 0o755 });
+  return log;
+}
+
 test('a watch timeout also refreshes the remote hosts', () => {
   // inotifywait exits 2 on timeout, meaning "no local change happened". That is exactly when
   // the remote hosts are worth re-fetching -- an event means local state moved, and the
   // local read is free.
   const e = env();
-  fs.writeFileSync(path.join(e.bin, 'inotifywait'), '#!/bin/bash\nexit 2\n', { mode: 0o755 });
+  const log = writeInotifyStub(e, 2);
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.ok(e.sshCalls().length > 0, 'a timeout iteration must refresh the remote hosts');
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'agent-view')),
+    `expected the statedir as the watch target in: ${argv}`);
 });
 
 test('a local file event repaints without touching the network', () => {
   // The whole point of watching: a local state change must not cost an ssh round-trip.
   const e = env();
-  fs.writeFileSync(path.join(e.bin, 'inotifywait'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  const log = writeInotifyStub(e, 0);
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.strictEqual(e.sshCalls().length, 0, 'a local event must not trigger an ssh fetch');
+  // Proves this is "an event fired on the right watch", not "inotifywait was never invoked" --
+  // a stub-not-found path would also produce zero ssh calls (it falls to the sleep fallback)
+  // and pass the assertion above for the wrong reason.
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'agent-view')),
+    `expected the statedir as the watch target in: ${argv}`);
 });
 
 test('the watcher falls back to a timer when inotifywait is absent', () => {
@@ -241,6 +263,26 @@ test('the watcher falls back to a timer when inotifywait is absent', () => {
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.ok(Date.now() - started >= 900, 'the fallback must actually wait, not spin');
   assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
+});
+
+test('an inotifywait error does not busy-spin -- the loop still waits a full interval', () => {
+  // rc 1 is inotifywait's own error path (an exhausted watch/instance limit, a target that
+  // vanished mid-run, bad args) -- distinct from rc 2 (clean timeout) and rc 0 (event). Without
+  // a floor wait on this branch, av_watch_once returns near-instantly and the loop hammers
+  // post_reload's curl + refresh_remote's ssh as fast as the CPU allows.
+  const e = env();
+  const log = writeInotifyStub(e, 1);
+  // Same confound as the fallback test above: post_reload polls this file for up to 2s, which
+  // would mask a missing floor-wait behind its own delay. Pre-writing it makes that poll return
+  // immediately, so the elapsed time below measures only the floor sleep (or its absence).
+  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
+  const started = Date.now();
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(Date.now() - started >= 900,
+    'an inotifywait error must still wait a full interval before returning, not spin');
+  assert.ok(e.sshCalls().length > 0, 'an error iteration is treated as a timeout and refreshes');
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
 });
 
 module.exports = { env };
