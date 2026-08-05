@@ -413,9 +413,14 @@ test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', 
   // a WezTerm tab (works under Ghostty / WSL / bare ssh — the unification lever).
   run(env, [], { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' });
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, /new-window -n airflow/, 'opens a new tmux window for the attach');
-  assert.match(log, /ssh -t daniel-server/, 'the window runs the ssh-attach');
-  assert.match(log, /attach -t 'airflow'/, 'attaches the target session');
+  const line = log.split('\n').find((l) => l.startsWith('new-window -n airflow')) || '';
+  assert.ok(line, 'opens a new tmux window for the attach');
+  // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
+  // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits
+  // between and keeps growing (Task 1 added keepalives after this test was first written).
+  assert.match(line, /\bssh\b/, 'the window runs ssh');
+  assert.match(line, /-t daniel-server\b/, 'ssh targets daniel-server with -t');
+  assert.match(line, /attach -t 'airflow'/, 'attaches the target session');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'must NOT use wezterm spawn when inside tmux');
 });
 
@@ -462,10 +467,14 @@ test('a REMOTE bg row INSIDE tmux opens one reusable per-session window', { skip
   run(env, [], inTmux);
   run(env, [], inTmux);
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, /new-window -n cc-eeee5555 ssh -t daniel-server/, 'the window runs the remote attach');
-  assert.match(log, /claude attach eeee5555/, 'attaching the job, not a tmux session');
   const opened = log.split('\n').filter((l) => l.startsWith('new-window -n cc-eeee5555'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
+  // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
+  // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits
+  // between and keeps growing (Task 1 added keepalives after this test was first written).
+  assert.match(opened[0], /\bssh\b/, 'the window runs ssh');
+  assert.match(opened[0], /-t daniel-server\b/, 'ssh targets daniel-server with -t');
+  assert.match(opened[0], /claude attach eeee5555/, 'attaching the job, not a tmux session');
 });
 
 test('a REMOTE bg row with no jobId falls back to the remote agents roster', { skip }, () => {
