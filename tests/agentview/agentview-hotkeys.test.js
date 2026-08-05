@@ -201,6 +201,11 @@ test('a non-foldable group header stays keyless even though a foldable one is no
   assert.ok(line, `expected a WORKING line, got:\n${body}`);
   assert.strictEqual(line.split('\t')[0], '', 'a non-foldable state header keeps the empty key');
   assert.match(run(env, ['--skip', 'down', '', '4']).out, /^down\+transform/, 'a keyless header still deflects the cursor');
+  // A mouse click or enter on this same keyless row must not fall through to --enter's
+  // accept fallback -- that would silently exit the picker on a dead key.
+  const entered = run(env, ['--enter', '']);
+  assert.strictEqual(entered.out, '', 'enter on a keyless row must emit nothing, not accept');
+  assert.strictEqual(entered.code, 0);
 });
 
 // ---- render: PINNED group + exclusion + gutter --------------------------

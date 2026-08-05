@@ -213,16 +213,19 @@ test('one host failing does not blank the other', () => {
 test('a cache write that fails does not record ok, so a stale cache reads as stale', () => {
   // ssh succeeds and the temp cache write succeeds, but the final `mv` into place fails --
   // the ENOSPC / read-only-$HOME case. A PATH-shadowing `mv` stub forces that deterministically,
-  // the same technique the suite already uses to shadow ssh. Without the fix, `ok\t<now>` gets
-  // written unconditionally right after this, so the host would read fresh while its cache is
-  // still the old snapshot -- the same "failure indistinguishable from emptiness" bug this
-  // branch exists to remove, just on the write side instead of the read side.
+  // the same technique the suite already uses to shadow ssh. The stub only fails the
+  // remote-cache mv: av_write_status (rows.sh) does its own tmp+mv for the status file, so a
+  // blanket-failing stub would block that write too and the test would pass regardless of
+  // whether the `ok` write is actually gated on the cache mv succeeding. Goes red if
+  // `av_write_status ok` is called unconditionally again: status would then read
+  // `ok\t<fresh epoch>` instead of staying at the seeded `ok\t111`.
   const e = env({ sshBody: `printf '%s\\n' '{"session":"new","state":"working","ts":9,"kind":"host"}'` });
   const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
   const status = path.join(e.home, '.agentview-remote-status.daniel-server');
   fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
   fs.writeFileSync(status, 'ok\t111\n');
-  fs.writeFileSync(path.join(e.bin, 'mv'), '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(e.bin, 'mv'),
+    '#!/bin/bash\ncase "$*" in *remote-cache*) exit 1;; esac\nexec /usr/bin/mv "$@"\n', { mode: 0o755 });
 
   e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
 

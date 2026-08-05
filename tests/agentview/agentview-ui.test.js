@@ -147,7 +147,7 @@ test('picker renders the seeded sessions', { skip }, async (t) => {
   assert.ok(screen.contains('beta'), `beta row missing:\n${term.text()}`);
   assert.ok(screen.contains('WORKING'), `working state missing:\n${term.text()}`);
   assert.ok(screen.contains('IDLE'), `idle state missing:\n${term.text()}`);
-  assert.ok(screen.contains('switch'), `footer hints missing:\n${term.text()}`);
+  assert.ok(screen.contains('switch/fold'), `footer hints missing:\n${term.text()}`);
 });
 
 test('typing filters the list down to the match', { skip }, async (t) => {
@@ -385,8 +385,10 @@ const statusfile = (home, host) => path.join(home, `.agentview-remote-status.${h
 // races a test that pre-seeds a status file and asserts on ITS content: the seed can lose to
 // the background rewrite before the assertion runs. Sleeping instead of exiting keeps the ssh
 // call outstanding for the test's lifetime, so the seeded fixture is the only thing rendered.
+// 300s, well past any waitFor budget in this suite -- term.stop() SIGKILLs the process group,
+// so nothing is left running past the test.
 function stubSlowSsh(bin) {
-  fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nsleep 2\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nsleep 300\n', { mode: 0o755 });
 }
 
 test('an unreachable host renders a status row instead of going quiet', { skip }, async (t) => {
