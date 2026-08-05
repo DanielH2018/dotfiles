@@ -108,7 +108,8 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
     tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
     return 0
   fi
-  exec ssh -t "$sshalias" "$rcmd"
+  av_ssh_opts
+  exec ssh "${AV_SSH_OPTS[@]}" -t "$sshalias" "$rcmd"
 }
 
 remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
@@ -142,7 +143,8 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   # ABOVE this line, so whenever WezTerm exported that var it outranked the path that works and
   # the jump became a silent no-op. Errors (host down, session gone) surface here instead.
   command -v ssh >/dev/null 2>&1 || return 1
-  exec ssh -t "$sshalias" "$rcmd"
+  av_ssh_opts
+  exec ssh "${AV_SSH_OPTS[@]}" -t "$sshalias" "$rcmd"
 }
 
 resolve_windows_pane() {  # $1 = the row's cwd -> echo a live Windows pane id serving it (or nothing)

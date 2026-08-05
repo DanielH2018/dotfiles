@@ -90,4 +90,33 @@ test('keepalive options detect dead peers on established connections', () => {
   }
 });
 
+test('the interactive attach reuses the same control socket', () => {
+  // The jump is the latency the user actually reported. It must share the master the refresh
+  // opened, or the first jump after a refresh still pays a handshake.
+  const e = env();
+  const US = '\x1f';
+  const key = ['daniel-server', '/home/daniel/x', 'working', '0', 't', '', 'host', 'tmux:%1'].join(US);
+  try {
+    e.run(['--jump', key]);
+  } catch {
+    // Jump may fail with "no pane found", which is expected. We care about ssh being called.
+  }
+  const calls = e.sshCalls();
+  assert.ok(calls.length > 0, 'expected an ssh call for a remote jump');
+  assert.match(calls[0], /ControlPath=/, `attach did not multiplex: ${calls[0]}`);
+});
+
+test('the attach does not inherit BatchMode', () => {
+  // BatchMode on an interactive attach turns "ask for the passphrase" into "fail".
+  const e = env();
+  const US = '\x1f';
+  const key = ['daniel-server', '/home/daniel/x', 'working', '0', 't', '', 'host', 'tmux:%1'].join(US);
+  try {
+    e.run(['--jump', key]);
+  } catch {
+    // Jump may fail with "no pane found", which is expected. We care about ssh being called.
+  }
+  assert.doesNotMatch(e.sshCalls()[0], /BatchMode/, 'attach must not set BatchMode');
+});
+
 module.exports = { env };
