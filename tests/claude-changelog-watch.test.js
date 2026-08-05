@@ -34,7 +34,15 @@ const NOTE_REL = path.join('Meta', 'Claude_Code_Changelog_Watch.md');
 
 let bashOk = true;
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+
+// The script is Linux-side (see its header) and locks via flock(1), which util-linux ships on
+// Linux but macOS does not have out of the box. Without it every run's `flock -n 9` fails for
+// "command not found", indistinguishable from real contention, so every test would skip on
+// "another run holds" the lock rather than exercising anything.
+let flockOk = true;
+try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockOk = false; }
+
+const skip = !bashOk ? 'bash unavailable' : !flockOk ? 'flock unavailable' : false;
 
 const dirs = [];
 
