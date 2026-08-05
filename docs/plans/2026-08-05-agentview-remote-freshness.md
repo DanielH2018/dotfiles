@@ -548,31 +548,35 @@ which rendered identically to having no sessions."
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/agentview/agentview-ui.test.js`, matching that file's existing env/render helper:
+Append to `tests/agentview/agentview-ui.test.js`. **Use that suite's existing helpers** — `makeEnv()`, `open(env)`, `lineIndex(term, needle)`, `nowSec()`, `scratch()` — and mirror the structure of an adjacent test in the file for driving the picker. That suite opens a real terminal and asserts against `term.text()`; it does not have a function that returns a render string.
+
+The status sidecar is a plain file, so seeding it is the only new fixture step:
 
 ```js
+const statusfile = (home, host) => path.join(home, `.agentview-remote-status.${host}`);
+
 test('an unreachable host renders a status row instead of going quiet', () => {
-  const e = renderEnv();
-  fs.writeFileSync(path.join(e.home, '.agentview-remote-status.daniel-box'),
-    `unreachable\t${Math.floor(Date.now() / 1000)}\n`);
-  const out = e.render();
-  assert.match(out, /Box.*unreachable/, `expected an unreachable row for Box, got:\n${out}`);
+  const env = makeEnv();
+  fs.writeFileSync(statusfile(env.home, 'daniel-box'), `unreachable\t${nowSec()}\n`);
+  const term = open(env);
+  assert.ok(lineIndex(term, 'Box · unreachable') >= 0,
+    `expected an unreachable row for Box, got:\n${term.text()}`);
 });
 
 test('a stale-but-ok host is labelled with its age', () => {
-  const e = renderEnv();
-  fs.writeFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'),
-    `ok\t${Math.floor(Date.now() / 1000) - 360}\n`);
-  const out = e.render();
-  assert.match(out, /Homelab.*6m/, `expected a 6m age on Homelab, got:\n${out}`);
+  const env = makeEnv();
+  fs.writeFileSync(statusfile(env.home, 'daniel-server'), `ok\t${nowSec() - 360}\n`);
+  const term = open(env);
+  assert.ok(lineIndex(term, 'Homelab · 6m old') >= 0,
+    `expected a 6m age on Homelab, got:\n${term.text()}`);
 });
 
 test('a fresh ok host adds no chrome', () => {
-  const e = renderEnv();
-  fs.writeFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'),
-    `ok\t${Math.floor(Date.now() / 1000)}\n`);
-  const out = e.render();
-  assert.doesNotMatch(out, /unreachable|fetch failed/, 'a healthy host should be silent');
+  const env = makeEnv();
+  fs.writeFileSync(statusfile(env.home, 'daniel-server'), `ok\t${nowSec()}\n`);
+  const term = open(env);
+  assert.strictEqual(lineIndex(term, 'unreachable'), -1, 'a healthy host should be silent');
+  assert.strictEqual(lineIndex(term, 'fetch failed'), -1, 'a healthy host should be silent');
 });
 ```
 
@@ -642,43 +646,49 @@ picker now says which it is."
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/agentview/agentview-hotkeys.test.js`:
+Append to `tests/agentview/agentview-hotkeys.test.js`, using that suite's `makeEnv()` and its existing pattern for invoking the script directly (`--skip` is a pure stdout dispatch, so it needs no terminal):
 
 ```js
 test('a fold header is landable, unlike a plain group header', () => {
   // --skip exists so the cursor never rests on a keyless row. A fold header has to be
   // selectable to be expandable, so it carries a sentinel key rather than an empty one.
-  const e = hotkeyEnv();
-  const out = e.run(['--skip', 'down', 'fold:completed', '4']);
+  const env = makeEnv();
+  const out = runScript(env, ['--skip', 'down', 'fold:completed', '4']);
   assert.strictEqual(out.trim(), '', 'a fold header must stop the cursor, not deflect it');
 });
 
 test('a plain header still deflects the cursor', () => {
-  const e = hotkeyEnv();
-  const out = e.run(['--skip', 'down', '', '4']);
+  const env = makeEnv();
+  const out = runScript(env, ['--skip', 'down', '', '4']);
   assert.match(out, /^down\+transform/, 'a keyless header must still be skipped');
 });
 ```
 
-Append to `tests/agentview/agentview-ui.test.js`:
+`runScript` stands for whatever this suite already uses to run the script and capture stdout — reuse it rather than adding another. If the suite has no such helper, add one alongside `makeEnv()` following its `execFileSync` conventions.
+
+Append to `tests/agentview/agentview-ui.test.js`, again using `makeEnv()` / `open()` / `lineIndex()` and the suite's `seed()` / `session()` fixtures to create the completed and idle sessions:
 
 ```js
 test('completed and idle collapse to one line each by default', () => {
-  const e = renderEnv({ completed: 3, idle: 2 });
-  const out = e.render();
-  assert.match(out, /COMPLETED \(3\)/, `expected a collapsed completed line, got:\n${out}`);
-  assert.match(out, /IDLE \(2\)/, `expected a collapsed idle line, got:\n${out}`);
-  assert.doesNotMatch(out, /completed-session-1/, 'collapsed rows must not render');
+  const env = makeEnv();
+  seedFinished(env.home, { completed: 3, idle: 2 });
+  const term = open(env);
+  assert.ok(lineIndex(term, 'COMPLETED (3)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.ok(lineIndex(term, 'IDLE (2)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.strictEqual(lineIndex(term, 'completed-session-1'), -1, 'collapsed rows must not render');
 });
 
 test('an expanded group renders its rows', () => {
-  const e = renderEnv({ completed: 3, idle: 2 });
-  fs.writeFileSync(path.join(e.home, '.claude', 'agent-view-folds'), 'completed\n');
-  const out = e.render();
-  assert.match(out, /completed-session-1/, 'an expanded group should render its rows');
-  assert.doesNotMatch(out, /idle-session-1/, 'idle stays collapsed');
+  const env = makeEnv();
+  seedFinished(env.home, { completed: 3, idle: 2 });
+  fs.writeFileSync(path.join(env.home, '.claude', 'agent-view-folds'), 'completed\n');
+  const term = open(env);
+  assert.ok(lineIndex(term, 'completed-session-1') >= 0, 'an expanded group renders its rows');
+  assert.strictEqual(lineIndex(term, 'idle-session-1'), -1, 'idle stays collapsed');
 });
 ```
+
+`seedFinished` is a new local fixture: write N state files with `state: "completed"` and M with `state: "idle"`, named `completed-session-<i>` / `idle-session-<i>`, using the suite's existing `session()` / `statefile()` helpers.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -889,7 +899,7 @@ Expected: PASS (14 tests)
 
 - [ ] **Step 6: Add inotify-tools to the tools inventory**
 
-`inotifywait` is not installed on this box. Add `inotify-tools` to the repo's package inventory so a fresh machine gets it; the fallback in Step 3 keeps the picker working where it is missing.
+`inotifywait` is not installed on this box. Add `inotify-tools` to `home/.chezmoidata/packages.toml`, following the entries already there (check whether that file or `home/.chezmoidata/tools.toml` is the right home for a distro package before editing — match the existing convention rather than inventing a section). The fallback in Step 3 keeps the picker working wherever the package is missing.
 
 - [ ] **Step 7: Commit**
 
