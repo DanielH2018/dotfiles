@@ -472,4 +472,33 @@ test('title_for_cwd fills a titleless row from the wezterm pane title, skipping 
   assert.doesNotMatch(body, /\bbash\b/, 'the shell pane title never leaks into a row');
 });
 
+// ==========================================================================
+// ssh quoting through tmux: %q protection must survive shell reparse with spaces
+// ==========================================================================
+test('remote tmux new-window embeds ssh with proper quoting for ControlPath containing space', { skip }, () => {
+  const paths = makeEnv();
+  // Create a control directory with a space to test quoting
+  const ctldir = scratch('av-ctl ');
+  const key = rowKey({ host: REMOTE1, cwd: '/home/ubuntu/r', kind: 'host', locator: 'tmux:/tmp/tmux-1000/default:rsess:%4' });
+  const env = {
+    ...paths.env,
+    TMUX: '/tmp/tmux-1000/default,1,0',
+    AGENT_VIEW_SSH_CTLDIR: ctldir,
+  };
+  const r = run(env, ['--jump', key], {});
+  // Jump fails (no pane), but ssh was called
+  const sshLog = read(paths.sshLog);
+  const sshLine = sshLog.trim().split('\n')[0];
+  assert.ok(sshLine, 'expected an ssh call through tmux');
+  // With correct quoting (%q), the ControlPath arg is a single token even with a space
+  // The assertion: ControlPath= must appear exactly once as a contiguous string
+  const ctlpathMatches = (sshLine.match(/ControlPath=/g) || []).length;
+  assert.strictEqual(ctlpathMatches, 1, 'ControlPath= should appear exactly once (not split by space)');
+  // If quoting was broken (plain $var without %q), the space would cause shell split,
+  // and we'd see /tmp/av-ctl as one token and %C as the next argument (broken)
+  assert.ok(!sshLine.includes(' %C'), 'space should not appear before %C (would indicate split)');
+  assert.ok(sshLine.includes('av-ctl'), 'ControlPath must contain directory name with space');
+  assert.ok(sshLine.includes('%C'), 'ControlPath format (%C hash) must be intact');
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
