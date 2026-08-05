@@ -981,3 +981,27 @@ Do not run `bin/land`. Landing is the operator's call.
 **Type consistency.** `remote_cache_for` / `remote_status_for` / `remote_hosts` are defined in Task 4 Step 3 and used in Steps 4-5 and Task 5. `av_ssh_opts` / `AV_SSH_OPTS` are defined in Task 1 and used in Tasks 2 and 4. `do_fold` is defined in Task 6 Step 5 and called from both the dispatch and `jump_or_report`. `_hl` (set by `host_label`) and `_age` (set by `fmt_age`) follow the existing out-parameter convention in this codebase.
 
 **Known risk.** Task 6 Step 5's `enter` bind uses an fzf `transform` to branch between toggle and accept. If the installed fzf rejects that form, the fallback is a separate binding (e.g. `space`) for expand, leaving `enter` as accept — a smaller change with the same outcome.
+
+---
+
+## Deviations from this plan, as executed
+
+Recorded rather than rewritten into the tasks above, so the original intent and what actually shipped stay separately readable.
+
+| # | Plan said | Reality | Why it changed |
+| --- | --- | --- | --- |
+| 1 | Task 2 multiplexes one ssh call site (`focus.sh:111`) | **Six** call sites, all multiplexed | An audit found `remote_attach()`, two `tmux new-window` command strings, and the Ctrl+X / Ctrl+R paths. Leaving four unmultiplexed would have made jumps fast only sometimes. |
+| 2 | `ConnectTimeout` alone bounds a dead host | `ServerAliveInterval=5` + `ServerAliveCountMax=2` added | `ConnectTimeout` bounds only *establishing* a connection. A `ControlPersist` master whose peer vanished with no RST blocks for the OS TCP timeout — minutes. Multiplexing introduced the very hang the option existed to prevent. |
+| 3 | The two tmux-string sites can splat the option array | They cannot — arrays don't splat into a string argument | Added `av_ssh_opts_str`, flattening via `printf '%q '`. The quoting is reparsed by tmux's shell, so a boundary-preserving argv test was required to prove it. |
+| 4 | The outcome field lives in the cache | It lives in a **sidecar** (`~/.agentview-remote-status.<host>`) | The cache is JSONL and three consumers run `jq` straight over it; a metadata row would break all three. |
+| 5 | `rc == 255` means "could not connect" | It also covers a keepalive kill on an established connection | Consequence of deviation 2. Both map to `unreachable` — in each case the host stopped answering. |
+| 6 | `do_fold` uses `grep -v … && mv \|\| rm` | Uses `do_pin`'s `rc <= 1` guard | `grep -v` exits non-zero when it matches nothing, so removing the sidecar's last entry would have dropped the file. |
+| 7 | `enter:transform([[ {1} == fold:* ]] …)` inline bind | A `--enter KEY` dispatch mirroring `--skip` | The inline form breaks fzf's `--bind` paren-parser (confirmed empirically). fzf here is 0.74.2, so `transform` itself is supported — the parser, not the version, was the problem. |
+| 8 | (unanticipated) | `--jump-nth`'s awk needed `$1 ~ /^fold:/ {next}` | The fold sentinel's non-empty key silently enrolled it in `alt-N`'s count while the visible gutter skipped collapsed groups, so `alt-N` mis-targeted every row after one — and, being bound with `become`, exited the picker. |
+| 9 | (unanticipated) | Watch loop needs a floor: `mkdir -p "$statedir"`, any rc outside {0,2} treated as timeout, interval floored at 1s | `inotifywait` exits 1 *immediately* on error, and `sleep 0` returns in ~1ms — either turns the loop hot. Installing `inotify-tools` is what moves a machine off the safe fallback onto that branch. |
+| 10 | `inotify-tools` goes in `packages.toml` | `home/.chezmoidata/tools.toml` | Matches the existing `script` entry — a distro package with empty `winget`/`brew`. |
+| 11 | Test with `node --test tests/` | `node --test 'tests/**/*.test.js'` (quoted glob or explicit file list) | The bare-directory form does not work on Node v24.18.1. |
+
+**Behaviour change worth knowing:** the Ctrl+X purge and Ctrl+R rename ssh calls dropped their own `-o ConnectTimeout=4` and now inherit the shared builder's 3s.
+
+**Three of this plan's own tests could not fail as written** and were caught during execution: two asserted against values captured before the code under test ran, and one was masked by an unrelated 2-second poll. Each was fixed and verified red-before/green-after.
