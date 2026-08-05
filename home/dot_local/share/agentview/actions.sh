@@ -85,7 +85,7 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   # (pid-reuse-guarded) + `claude rm` its record/worktree + drop the registry row, so a live
   # session can't reappear. Local rows act locally; remote rows act on their host over ssh,
   # then the row is filtered from the ssh cache. An empty KEY (header/spacer) is a no-op.
-  local key="$1" host cwd kind locator f m sid rowsid ans name tmp="$remote_cache.tmp.$$"
+  local key="$1" host cwd kind locator f m sid rowsid ans name tmp cache
   local state ts title agetxt sname disp l1 l2 r2 hdr w d e z cdim cfg cred
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
@@ -147,17 +147,18 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
     return 0
   fi
   if [ -n "$host" ] && ! is_local_host "$host"; then
-    [ -s "$remote_cache" ] || return 0
+    cache="$(remote_cache_for "$host")"; tmp="$cache.tmp.$$"
+    [ -s "$cache" ] || return 0
     # Pull the row's sid so we can stop it on the remote, then filter it from the cache.
     sid=$(MSYS_NO_PATHCONV=1 jq -r --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
       --arg host "$host" --arg kind "$kind" \
       "$JQ_NORM select(($JQ_ROWMATCH) == \"M\") | (.session // .key // \"\")" \
-      < "$remote_cache" 2>/dev/null | head -1)
+      < "$cache" 2>/dev/null | head -1)
     [ -n "$sid" ] && av_purge_remote "$(remote_alias "$host")" "$sid"
     MSYS_NO_PATHCONV=1 jq -c --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
       --arg host "$host" --arg kind "$kind" \
       "$JQ_NORM select((($JQ_ROWMATCH) == \"M\") | not)" \
-      < "$remote_cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+      < "$cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
     return 0
   fi
   # Local (this host). A bg:<jobId> locator is a RENDER-TIME identity no row stores — resolve it

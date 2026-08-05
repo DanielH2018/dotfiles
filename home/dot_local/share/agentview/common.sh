@@ -95,3 +95,15 @@ av_ssh_opts_str() {  # flatten AV_SSH_OPTS for embedding in a command STRING (tm
   AV_SSH_OPTS_STR=""
   for o in "${AV_SSH_OPTS[@]}"; do AV_SSH_OPTS_STR+="$(printf '%q ' "$o")"; done
 }
+
+# One cache per host. A single shared file meant the last host to finish a refresh decided
+# what every other host's rows looked like -- an unreachable host blanked a healthy one.
+# Kept out of $statedir and without a .json suffix so the local session glob never sees them.
+remote_cache_for()  { printf '%s/.agentview-remote-cache.%s' "$HOME" "$1"; }
+
+# Sidecar, not a line inside the cache: three consumers run jq straight over the cache as
+# JSONL (rows.sh, render.sh, actions.sh) and a metadata row would break all three.
+# Format is one line -- "<outcome>\t<epoch>" -- with outcome in ok|unreachable|failed.
+remote_status_for() { printf '%s/.agentview-remote-status.%s' "$HOME" "$1"; }
+
+remote_hosts() { printf '%s\n' "${!HOST_SSH[@]}"; }

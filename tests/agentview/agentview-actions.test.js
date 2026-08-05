@@ -174,12 +174,18 @@ function winFile(windir, sid, obj) {
 function sessionProc(home, pid, sid) {
   fs.writeFileSync(path.join(home, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: sid }));
 }
+// One cache file per host now. Each fixture object carries its own `host`, so this splits
+// them into their host's file (defaulting to REMOTE1, since most fixtures only use one host).
 function remoteCache(home, objs) {
-  fs.writeFileSync(path.join(home, '.agentview-remote-cache'), objs.map((o) => JSON.stringify(o)).join('\n'));
+  const byHost = {};
+  for (const o of objs) { const h = o.host || REMOTE1; (byHost[h] ||= []).push(o); }
+  for (const [h, list] of Object.entries(byHost)) {
+    fs.writeFileSync(cacheFile(home, h), list.map((o) => JSON.stringify(o)).join('\n'));
+  }
 }
 const localAvFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
 const winAvFile = (windir, sid) => path.join(windir, `${sid}.json`);
-const cacheFile = (home) => path.join(home, '.agentview-remote-cache');
+const cacheFile = (home, host = REMOTE1) => path.join(home, `.agentview-remote-cache.${host}`);
 const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
 const pane = (id, cwd, title) => ({ pane_id: id, cwd, title, window_id: 0, tab_id: 0 });
 
@@ -387,9 +393,8 @@ test('do_remove (remote): two hosts sharing a cwd — removing one never sshes o
   assert.match(ssh, /s=sida/);
   assert.doesNotMatch(ssh, /other-remote-host/, 'never sshes to the OTHER host sharing the cwd');
   assert.doesNotMatch(ssh, /s=sidb/, 'never purges the other host\'s sid');
-  const after = read(cacheFile(home));
-  assert.doesNotMatch(after, /"sida"/, 'the targeted host\'s row leaves the cache');
-  assert.match(after, /"sidb"/, 'the other host\'s row (same cwd) survives');
+  assert.doesNotMatch(read(cacheFile(home, REMOTE1)), /"sida"/, 'the targeted host\'s row leaves its cache');
+  assert.match(read(cacheFile(home, REMOTE2)), /"sidb"/, 'the other host\'s cache (a separate file) is untouched');
 });
 
 // ==========================================================================

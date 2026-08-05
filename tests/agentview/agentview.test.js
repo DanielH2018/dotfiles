@@ -50,9 +50,10 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   const listFile = path.join(bin, 'list.json'); fs.writeFileSync(listFile, list);
   const remoteFile = path.join(bin, 'remote.json'); fs.writeFileSync(remoteFile, remote);
-  // The picker reads homelab sessions from the cache file (the background ssh refreshes
-  // it + live-reloads fzf); seed it directly so the initial render sees them.
-  const cacheFile = path.join(home, '.agentview-remote-cache');
+  // The picker reads homelab sessions from a per-host cache file (the background ssh
+  // refreshes it + live-reloads fzf); seed daniel-server's so the initial render sees them.
+  // Fixtures below all use host: 'daniel-server'.
+  const cacheFile = path.join(home, '.agentview-remote-cache.daniel-server');
   if (remote) fs.writeFileSync(cacheFile, remote);
   const activateLog = path.join(bin, 'activate.log'); fs.writeFileSync(activateLog, '');
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
@@ -243,7 +244,7 @@ test('--refresh-remote folds the homelab live registry over a stale needs-input 
     JSON.stringify({ pid: process.pid, sessionId: sid, status: 'busy', entrypoint: 'cli',
       updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.state, 'working', 'live busy status overrides the stale needs-input hook state');
   assert.strictEqual(row.locator, 'tmux:/tmp/t:main:%2', 'hook identity fields (locator) survive the fold');
@@ -264,7 +265,7 @@ test('--refresh-remote ignores a dead-pid registry entry and keeps the hook stat
   fs.writeFileSync(path.join(rhome, '.claude', 'sessions', `33554432.json`),   // pid beyond pid_max -> dead
     JSON.stringify({ pid: 33554432, sessionId: sid, status: 'busy', entrypoint: 'cli', updatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.state, 'needs-input', 'a dead-pid registry entry does not override the hook state');
 });
@@ -289,7 +290,7 @@ test('--refresh-remote marks a remote DAEMON session bg and gives it a bg:<jobId
     JSON.stringify({ pid: process.pid, sessionId: sid, status: 'waiting', entrypoint: 'cli',
       kind: 'bg', jobId: 'eeee5555', updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.kind, 'bg', 'kind routes <enter> to the remote bg attach');
   assert.strictEqual(row.locator, 'bg:eeee5555', 'locator carries the JOB id, not the session uuid');
@@ -528,7 +529,7 @@ test('--remove of a remote row filters it out of the ssh-snapshot cache, keeping
   const gone = JSON.stringify({ kind: 'host', cwd: '/r/rgone', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rgone:%2' });
   const keep = JSON.stringify({ kind: 'host', cwd: '/r/rkeep', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rkeep:%1' });
   const { env, home } = makeEnv({ remote: `${gone}\n${keep}` });
-  const cache = path.join(home, '.agentview-remote-cache');
+  const cache = path.join(home, '.agentview-remote-cache.daniel-server');
   const key = cardKey(['daniel-server', '/r/rgone', 'working', String(now), 'rgone', '%2', 'host', 'tmux:/s:rgone:%2']);
   assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   const after = fs.readFileSync(cache, 'utf8');

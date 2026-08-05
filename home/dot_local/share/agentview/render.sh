@@ -73,11 +73,14 @@ gc_pins() {  # drop pins whose session no longer exists anywhere (a local file O
   # nothing is pinned. jq over valid session JSON doesn't error, so a wrongly-emptied set is only
   # reachable when there genuinely are no sessions — in which case every pin IS an orphan.
   [ -s "$pinfile" ] || return
-  local live tmp="$pinfile.tmp.$$" lf
+  local live tmp="$pinfile.tmp.$$" lf host cache
   shopt -s nullglob; lf=( "$statedir"/*.json ); shopt -u nullglob
   live=""
   [ "${#lf[@]}" -gt 0 ] && live=$(jq -r "$JQ_PINID" "${lf[@]}" 2>/dev/null)
-  [ -s "$remote_cache" ] && live="$live"$'\n'"$(MSYS_NO_PATHCONV=1 jq -r "$JQ_PINID" < "$remote_cache" 2>/dev/null)"
+  while IFS= read -r host; do
+    cache="$(remote_cache_for "$host")"
+    [ -s "$cache" ] && live="$live"$'\n'"$(MSYS_NO_PATHCONV=1 jq -r "$JQ_PINID" < "$cache" 2>/dev/null)"
+  done < <(remote_hosts)
   if [ -n "$live" ]; then printf '%s\n' "$live" | grep -Fxf - "$pinfile" > "$tmp" 2>/dev/null
   else : > "$tmp"; fi
   mv -f "$tmp" "$pinfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null

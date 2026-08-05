@@ -234,12 +234,12 @@ test('--remove of a REMOTE row purges over ssh and filters the cache', { skip },
   const gone = JSON.stringify({ session: 'rg', cwd: '/r/rgone', state: 'working', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rg:%2' });
   const keep = JSON.stringify({ session: 'rk', cwd: '/r/rkeep', state: 'idle', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rk:%1' });
   const { env, home, sshLog } = makeEnv();
-  fs.writeFileSync(path.join(home, '.agentview-remote-cache'), `${gone}\n${keep}`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), `${gone}\n${keep}`);
   const key = rowKey({ host: 'daniel-server', cwd: '/r/rgone', state: 'working', locator: 'tmux:/s:rg:%2' });
   assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Remove' } }).code, 0);
   assert.match(read(sshLog), /claude rm/, 'runs the purge on the remote over ssh');
   assert.match(read(sshLog), /s=rg/, 'for the selected session id');
-  const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   assert.doesNotMatch(cache, /rgone/, 'the removed remote row leaves the cache');
   assert.match(cache, /rkeep/, 'other remote rows stay');
 });
@@ -371,7 +371,7 @@ test('--refresh-remote pulls over ssh and posts a reload to the fzf port', { ski
   const pf = path.join(home, 'portfile'); fs.writeFileSync(pf, '61234\n');
   assert.strictEqual(run(env, ['--refresh-remote', pf], { extraEnv: { CURL_LOG: curlLog } }).code, 0);
   assert.match(read(sshLog), /daniel-server/, 'refreshes the homelab snapshot over ssh');
-  assert.ok(fs.existsSync(path.join(home, '.agentview-remote-cache')), 'rewrites the remote cache');
+  assert.ok(fs.existsSync(path.join(home, '.agentview-remote-cache.daniel-server')), 'rewrites the remote cache');
   const curl = read(curlLog);
   assert.match(curl, /127\.0\.0\.1:61234/, 'posts to the port read from the portfile');
   assert.match(curl, /reload\(/, 'the POST body is a reload action');

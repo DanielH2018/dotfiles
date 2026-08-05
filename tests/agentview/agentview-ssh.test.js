@@ -133,4 +133,80 @@ test('daniel-box is registered with the display label Box', () => {
   assert.match(src, /HOST_LABEL=\([^)]*\[daniel-box\]="Box"/, 'daniel-box must be labelled Box');
 });
 
+test('each host gets its own cache file', () => {
+  const e = env({ sshBody: `printf '%s\\n' '{"session":"s1","state":"working","ts":1,"kind":"host"}'` });
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  for (const h of ['daniel-server', 'daniel-box']) {
+    assert.ok(fs.existsSync(path.join(e.home, `.agentview-remote-cache.${h}`)), `no cache for ${h}`);
+  }
+});
+
+test('a host that cannot be reached is recorded unreachable and keeps its rows', () => {
+  // rc 255 is ssh's "could not connect". The previous snapshot is the best data we have.
+  const e = env();
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
+  const bin = e.bin;
+  fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nexit 255\n', { mode: 0o755 });
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  const status = fs.readFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'), 'utf8');
+  assert.match(status, /^unreachable\t\d+/, `expected unreachable, got: ${status}`);
+  assert.match(fs.readFileSync(cache, 'utf8'), /"session":"old"/, 'rows must survive an unreachable host');
+});
+
+test('a host that connects but returns nothing is recorded failed, not empty', () => {
+  // The silent bug: rc != 255 with empty output used to overwrite the cache with nothing, so
+  // the rows vanished and the UI said the same thing it says when there genuinely are none.
+  const e = env();
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
+  fs.writeFileSync(path.join(e.bin, 'ssh'), '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  const status = fs.readFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'), 'utf8');
+  assert.match(status, /^failed\t\d+/, `expected failed, got: ${status}`);
+  assert.match(fs.readFileSync(cache, 'utf8'), /"session":"old"/, 'rows must survive a failed fetch');
+});
+
+test('a successful fetch records ok and replaces the rows', () => {
+  const e = env({ sshBody: `printf '%s\\n' '{"session":"new","state":"working","ts":9,"kind":"host"}'` });
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'), 'utf8'), /^ok\t\d+/);
+  const body = fs.readFileSync(cache, 'utf8');
+  assert.match(body, /"session":"new"/);
+  assert.doesNotMatch(body, /"session":"old"/, 'a successful fetch replaces the snapshot');
+});
+
+test('a successful fetch with an empty roster replaces the cache, not just a nonempty one', () => {
+  // The distinction the outcome split exists for: rc 0 + no output is a genuinely empty
+  // roster, not a failure, and must overwrite the old snapshot the same as a nonempty one.
+  const e = env({ sshBody: 'exit 0' });
+  const cache = path.join(e.home, '.agentview-remote-cache.daniel-server');
+  fs.writeFileSync(cache, '{"session":"old","state":"working","ts":1,"kind":"host"}\n');
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-status.daniel-server'), 'utf8'), /^ok\t\d+/);
+  assert.doesNotMatch(fs.readFileSync(cache, 'utf8'), /"session":"old"/, 'an empty successful fetch replaces the snapshot');
+});
+
+test('one host failing does not blank the other', () => {
+  // The reason the cache had to split. A shared file meant the last writer won.
+  const e = env({ sshBody: `case "$*" in *daniel-box*) exit 255 ;; esac\nprintf '%s\\n' '{"session":"s","state":"working","ts":1,"kind":"host"}'` });
+  fs.writeFileSync(path.join(e.home, '.agentview-remote-cache.daniel-box'),
+    '{"session":"boxrow","state":"working","ts":1,"kind":"host"}\n');
+
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+
+  assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-box'), 'utf8'), /boxrow/);
+  assert.match(fs.readFileSync(path.join(e.home, '.agentview-remote-cache.daniel-server'), 'utf8'), /"session":"s"/);
+});
+
 module.exports = { env };

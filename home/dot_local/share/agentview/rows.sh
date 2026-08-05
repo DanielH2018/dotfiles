@@ -23,7 +23,8 @@ PRUNE=$(( 7 * 86400 ))
 # briefly on disk yet absent from the roster; without this it could be reaped mid-birth. Only ever
 # delays reaping a genuinely dead row by one refresh.
 REAP_GRACE=120
-# remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
+# remote_cache_for (homelab ssh snapshot, one per host) is defined in common.sh so do_remove
+# can reach it.
 rows=""
 
 # Claude's own per-process registry (~/.claude/sessions/<pid>.json) is the authoritative
@@ -202,14 +203,17 @@ gather_local_rows() {  # append local session rows to global `rows`, prune >7d +
 }
 
 gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered, never pruned)
-  local rrows
-  [ -s "$remote_cache" ] || return
-  # Read via stdin, not a path arg, so native jq.exe isn't handed an MSYS path it
-  # can't open. Default mode applies the filter to each object in the concatenated
-  # per-session stream (the cache is a `cat` of every remote *.json).
-  rrows=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
-    $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" < "$remote_cache" 2>/dev/null)
-  [ -n "$rrows" ] && rows+="$rrows"$'\n'
+  local host cache rrows
+  while IFS= read -r host; do
+    cache="$(remote_cache_for "$host")"
+    [ -s "$cache" ] || continue
+    # Read via stdin, not a path arg, so native jq.exe isn't handed an MSYS path it
+    # can't open. Default mode applies the filter to each object in the concatenated
+    # per-session stream (the cache is a `cat` of every remote *.json).
+    rrows=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
+      $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" < "$cache" 2>/dev/null)
+    [ -n "$rrows" ] && rows+="$rrows"$'\n'
+  done < <(remote_hosts)
 }
 
 gather_windows_rows() {  # append Windows-side rows (same machine, via /mnt/c). No dead-pid
@@ -328,8 +332,7 @@ sync_windows_rows() {  # write $windir rows for live Windows sessions that never
   return 0
 }
 
-refresh_remote() {  # pull homelab state over ssh, fold its live registry in, replace the cache
-  local out rc tmp="$remote_cache.tmp.$$"
+refresh_one_remote() {  # $1 = host. Pull its state, fold its live registry in, replace its cache.
   # Mirror the LOCAL live-registry override (load_session_map + merge_session_row) on the
   # homelab so cached remote rows can't go stale. A remote session's hook state
   # (~/.claude/agent-view/<sid>.json) LAGS: an idle/permission Notification writes
@@ -343,10 +346,13 @@ refresh_remote() {  # pull homelab state over ssh, fold its live registry in, re
   # claude, or a genuinely gone process) passes its raw hook row through unchanged, so a
   # pre-registry homelab still renders. Multiplexed ssh reuses a persistent master socket
   # (ControlPersist) with fast detection of dead peers (ServerAliveInterval + ServerAliveCountMax),
-  # and initial connections fail fast (ConnectTimeout) — we KEEP the old snapshot only when
-  # ssh itself can't connect (rc 255), not when there simply are no remote sessions.
+  # and initial connections fail fast (ConnectTimeout).
+  local host="$1" out rc cache status tmp
+  cache="$(remote_cache_for "$host")"
+  status="$(remote_status_for "$host")"
+  tmp="$cache.tmp.$$"
   av_ssh_opts
-  out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
+  out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "${HOST_SSH[$host]}" bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob
 declare -A M UPD
 # sid -> "state<TAB>ts<TAB>kind<TAB>jobId" from live, non-sdk, alive-pid sessions (newest
@@ -394,6 +400,34 @@ done
 REMOTE_FOLD
 )
   rc=$?
-  [ "$rc" -eq 255 ] && return
-  printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  # Three outcomes, because two of them used to look identical to "no sessions":
+  #   255      ssh could not connect, OR connected and then went silent long enough for the
+  #            keepalive (ServerAliveInterval/ServerAliveCountMax) to kill it -- OpenSSH exits
+  #            255 for "Timeout, server not responding" too, not just a failed connect. Both
+  #            cases mean the host isn't answering right now, so both map to unreachable: the
+  #            previous snapshot is the best data available either way.
+  #   non-zero the host answered but its side failed
+  #   0 + empty output is a LEGITIMATE empty roster and does replace the cache
+  if [ "$rc" -eq 255 ]; then
+    printf 'unreachable\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+    return
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf 'failed\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+    return
+  fi
+  printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  printf 'ok\t%s\n' "$(date +%s)" > "$status" 2>/dev/null
+}
+
+refresh_remote() {  # fan out across every configured host, concurrently
+  # Serial would cost the sum of the handshakes on a cold start. This runs off the render
+  # path already, but the picker live-reloads when it finishes, so the wait is visible.
+  local host p pids=()
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    refresh_one_remote "$host" &
+    pids+=("$!")
+  done < <(remote_hosts)
+  for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
 }
