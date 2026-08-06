@@ -31,10 +31,18 @@ if (python3Ok) {
 
 function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
   const input = raw !== null ? raw : JSON.stringify({ tool_name: tool, tool_input: { command } });
+  // TQ_OFF must not reach the hook from the ambient environment. `.githooks/pre-push`
+  // documents `TQ_OFF=1 git push` as the supported way to get raw runner output, and because
+  // rewrite() returns None on TQ_OFF, inheriting it turned the three rewrite assertions below
+  // red on exactly the runs that used that escape hatch — a red gate caused by the bypass
+  // rather than by anything under test. Cases that mean to exercise the off switch pass it
+  // through `env`, which is spread last and still wins.
+  const base = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ };
+  delete base.TQ_OFF;
   const r = spawnSync('python3', [HOOK], {
     input,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ, ...env },
+    env: { ...base, ...env },
   });
   return r;
 }
