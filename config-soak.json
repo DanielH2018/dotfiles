@@ -8,8 +8,8 @@
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "29d70f5dfc64e217a4cd71d63352fa4981d63eb81ddd13a9cc5c7d4019e6bb56",
-      "landed": "2026-08-05T21:01:37.762Z"
+      "hash": "78d30247fe200c5cf616f9c3c0f1d8716b8a8f8c7d97992061268936f7ab7038",
+      "landed": "2026-08-06T00:37:13.548Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -365,6 +365,11 @@
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
       "hash": "10949e44bf6a6e80f5b05c874509a2098ca6698a2788c7a599d5befec4c022bc",
       "landed": "2026-07-25T23:12:01.504Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
+      "hash": "875d0a607912345f2a8ea255d1ab8710e7ddb249d5e42b10da831435a807e892",
+      "landed": "2026-08-06T00:37:13.548Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
