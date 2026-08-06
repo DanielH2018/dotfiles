@@ -208,6 +208,22 @@ TF_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)
 # cmdparse.sh, using the same regexes, and logs which families would newly fire. It changes
 # no decision: nothing below reads BDB_NEW, and the log is written from an EXIT trap after
 # this hook has already decided.
+#
+# It also walks CP_SUBSEG — the contents of every $( ), `...` and <( )/>( ), flattened
+# across nesting depth — the same way this walks CP_SEG, into two more fields:
+# newly_anchored_sub (SCAN-gated, same "gap the decision missed" semantics as
+# newly_anchored) and sub_anchored (ungated: any family found inside a substitution,
+# whether or not SCAN already caught it elsewhere). Both are needed because SCAN's quote
+# handling is blind to structure: it is one unconditional quote-strip over the whole
+# command, so a substitution's content is sometimes ALREADY exposed to it by accident —
+# `echo "$(ls; terraform apply)"` denies today because the stripped `;` puts terraform
+# in SCAN's command position too, so newly_anchored_sub is null there even though the
+# match came from inside a substitution; sub_anchored still names it. `echo "$(terraform
+# apply)"` is the case where SCAN's anchor genuinely cannot reach in — `(` never precedes
+# a command position the way `;`/`&`/`|`/^ do — so newly_anchored_sub fires too. Neither
+# field is merged into newly_anchored: the newline gap (segmentation) and the
+# substitution gap (looking inside an opaque atom) call for different fixes, and
+# collapsing them would erase which one a given row is evidence of.
 BDB_OLD=none
 BDB_SHADOW=0
 if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "${CMDPARSE:-on}" != off ]; then
@@ -218,11 +234,12 @@ fi
 # shellcheck disable=SC2329  # invoked indirectly, from the EXIT trap installed below
 _bdb_shadow_log() {
   [ "$BDB_SHADOW" = 1 ] || return 0
-  local newly='' seg segscan i=0
-  local status=unreadable nseg=0
+  local newly='' newly_sub='' found_sub='' seg segscan i=0
+  local status=unreadable nseg=0 nsubseg=0
   if cmd_parse "$COMMAND"; then
     status=$CP_STATUS
     nseg=$CP_NSEG
+    nsubseg=$CP_NSUBSEG
     while [ "$i" -lt "$CP_NSEG" ]; do
       # Same normalization this hook applies to the whole command, applied per segment —
       # via the same function, so the two sides of the `match && ! match` below cannot drift.
@@ -239,6 +256,51 @@ _bdb_shadow_log() {
         case $newly in *terraform*) ;; *) newly="$newly terraform" ;; esac
       fi
     done
+    # Same census, walked over the contents of $( ), `...` and <( )/>( ) instead of the
+    # top-level segments — CP_NSUBSEG is 0 and CP_SUBSEG unset for a command with no
+    # substitution, so this loop is a no-op there, same as the CP_NSEG one above.
+    #
+    # Two fields, not one, and neither merged into newly_anchored:
+    #
+    # newly_anchored_sub keeps the same "gap the decision path missed" gate the top-level
+    # loop uses (matched inside the substitution, NOT matched by whole-string SCAN). That
+    # gate is frequently already satisfied for a substitution without this change: SCAN
+    # is a single blind quote-strip over the whole command, so `echo "$(ls; terraform
+    # apply)"` already exposes the `;` and denies today (verified) — the substitution's
+    # content was accidentally visible to SCAN, not genuinely invisible to it. Gating this
+    # field on SCAN keeps it measuring the same thing newly_anchored measures: a gap, not
+    # every match, which is what makes the corpus count of it mean something.
+    #
+    # sub_anchored is ungated: it records a family found inside a substitution regardless
+    # of whether SCAN already caught it elsewhere. This is what makes the driven case in
+    # the PR (`echo "$(ls; terraform apply)"`) show terraform at all — it is old:deny and
+    # newly_anchored_sub:null there (SCAN already denies it), but sub_anchored still names
+    # it as substitution-sourced.
+    #
+    # SSH_AT_RE and TF_AT both now include `(` and a backtick in their own leading anchor
+    # (a real decision-path bypass, fixed separately — see those two definitions above).
+    # That fix closes the gap newly_anchored_sub exists to measure for exactly the two
+    # families this census covers: every CP_SUBSEG entry is, by construction, immediately
+    # preceded in SCAN by `(` or a backtick, so whenever the subseg walk below finds ssh or
+    # terraform, SCAN finds it too — `echo "$(terraform apply)"` now denies directly
+    # (old:deny) and newly_anchored_sub is null there, same shape as the ls-then-terraform
+    # case above. Expect its corpus count to be at or near zero; sub_anchored stays
+    # informative regardless.
+    i=0
+    while [ "$i" -lt "$CP_NSUBSEG" ]; do
+      _bdb_normalize "${CP_SUBSEG[i]}"
+      segscan=$_BDB_NORM
+      i=$((i + 1))
+      if echo "$segscan" | grep -qiE "$SSH_AT_RE"; then
+        case $found_sub in *ssh*) ;; *) found_sub="$found_sub ssh" ;; esac
+        echo "$SCAN" | grep -qiE "$SSH_AT_RE" || case $newly_sub in *ssh*) ;; *) newly_sub="$newly_sub ssh" ;; esac
+      fi
+      if echo "$segscan" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+        case $found_sub in *terraform*) ;; *) found_sub="$found_sub terraform" ;; esac
+        echo "$SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
+          || case $newly_sub in *terraform*) ;; *) newly_sub="$newly_sub terraform" ;; esac
+      fi
+    done
   else
     status=$CP_STATUS
   fi
@@ -250,9 +312,14 @@ _bdb_shadow_log() {
     --arg old "$BDB_OLD" \
     --arg status "$status" \
     --arg newly "${newly# }" \
+    --arg newly_sub "${newly_sub# }" \
+    --arg found_sub "${found_sub# }" \
     --argjson nseg "$nseg" \
-    '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,status:$status,nseg:$nseg,
-      newly_anchored:(if $newly=="" then null else ($newly|split(" ")) end)}' \
+    --argjson nsubseg "$nsubseg" \
+    '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,status:$status,nseg:$nseg,nsubseg:$nsubseg,
+      newly_anchored:(if $newly=="" then null else ($newly|split(" ")) end),
+      newly_anchored_sub:(if $newly_sub=="" then null else ($newly_sub|split(" ")) end),
+      sub_anchored:(if $found_sub=="" then null else ($found_sub|split(" ")) end)}' \
     >> "$logdir/cmdparse-shadow.jsonl" 2>/dev/null
   return 0
 }

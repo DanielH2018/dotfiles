@@ -250,3 +250,95 @@ test('a missing library disables the shadow instead of failing the hook', () => 
   assert.match(out, /"behavior":"allow"/, 'the hook still decides normally');
   assert.deepStrictEqual(readLog(d), [], 'and simply does not census');
 });
+
+// --- CP_SUBSEG census (block-dangerous-bash.sh only) ---------------------------------------
+//
+// The rewrite that added CP_SUBSEG made a substitution's interior visible to cmdparse, but
+// the shadow census still only walked CP_SEG — so `terraform apply` genuinely running inside
+// `echo "$(ls; terraform apply)"` was invisible to it. These cases census CP_SUBSEG too.
+//
+// Two fields, not one, because SCAN's quote handling is blind to structure: it is one
+// unconditional quote-strip over the whole command, so a substitution's content is
+// SOMETIMES already exposed to SCAN by accident (verified: the `;` inside the quoted
+// substitution above puts terraform in SCAN's command position too, and the command denies
+// today on that coincidence, not because anything here changed). newly_anchored_sub keeps
+// the same "gap the decision missed" gate as newly_anchored (SCAN did not already match) so
+// its count means the same thing across both fields; sub_anchored is ungated and names a
+// family found inside a substitution regardless of whether SCAN already caught it elsewhere.
+//
+// This suite also fixes the SSH_AT_RE/TF_AT anchor bug the census exposed (both were
+// missing `(` and/or a backtick, a genuine decision-path bypass -- see
+// tests/hooks/block-dangerous-bash.test.js). That fix structurally closes the exact gap
+// newly_anchored_sub measures for ssh/terraform, the two families this census covers:
+// every CP_SUBSEG entry's text is, by construction, immediately preceded in SCAN by `(`
+// or a backtick, and the anchor now includes both -- so whenever the subseg walk finds a
+// family, SCAN finds it too. Expect newly_anchored_sub's corpus count to be at or near
+// zero; sub_anchored stays informative regardless, since it still names WHERE a match
+// originated even when SCAN independently catches it.
+
+// The exact case from the measurement that motivated this change. old is deny already —
+// SCAN's blind quote-strip happens to expose the `;` — so newly_anchored_sub is correctly
+// null (SCAN already matched); sub_anchored still names terraform as substitution-sourced.
+// Do not "fix" this into a newly_anchored_sub hit: that would mean gating on something
+// other than SCAN, which breaks what makes the corpus count of newly_anchored_sub meaningful.
+test('a substitution match already exposed by SCAN is named, but not double-counted as newly', () => {
+  const d = logDir('sub-already-exposed');
+  const cmd = 'echo "$(ls; terraform apply)"';
+  const off = run(BDB, cmd);
+  const on = run(BDB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  assert.strictEqual(on, off, 'shadow mode must not change this decision');
+  assert.strictEqual(JSON.parse(off).hookSpecificOutput.permissionDecision, 'deny', 'the real rule already denies this');
+  const [row] = readLog(d);
+  assert.strictEqual(row.nsubseg, 2);
+  assert.strictEqual(row.newly_anchored_sub, null, 'SCAN already matched, so this is not a gap');
+  assert.deepStrictEqual(row.sub_anchored, ['terraform']);
+});
+
+// UPDATED: this used to be the genuine None -> ['terraform'] case -- TF_AT's anchor was
+// missing `(`, so SCAN's blind quote-strip could not put `terraform` in command position
+// here. That anchor gap was a real bypass (terraform ran with no decision at all) and was
+// fixed separately, at the decision-path level, in the same change that added this
+// census (see TF_AT in the hook and tests/hooks/block-dangerous-bash.test.js). Fixing the
+// anchor closes the exact gap newly_anchored_sub existed to measure for this command: SCAN
+// now denies it directly, same as the already-exposed case above. sub_anchored still names
+// terraform as substitution-sourced regardless.
+test('a substitution match now caught by the fixed anchor is named, not newly (post-fix)', () => {
+  const d = logDir('sub-newly');
+  const cmd = 'echo "$(terraform apply)"';
+  const off = run(BDB, cmd);
+  const on = run(BDB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  assert.strictEqual(on, off, 'shadow mode must not change this decision');
+  assert.strictEqual(JSON.parse(off).hookSpecificOutput.permissionDecision, 'deny', 'the fixed anchor now denies this directly');
+  const [row] = readLog(d);
+  assert.strictEqual(row.nsubseg, 1);
+  assert.strictEqual(row.newly_anchored_sub, null, 'SCAN catches it too, post-fix');
+  assert.deepStrictEqual(row.sub_anchored, ['terraform']);
+});
+
+// SSH_AT_RE's anchor class includes `(`, unlike TF_AT, so a bare ssh substitution is
+// already caught by the live ssh-payload rescan below in this same hook (deny), same shape
+// as the terraform-already-exposed case above: sub_anchored names it, newly_anchored_sub
+// does not, because SCAN already matched.
+test('an ssh substitution already denied by the live rule is named but not newly', () => {
+  const d = logDir('sub-ssh');
+  const cmd = 'x=$(ssh homelab reboot)';
+  const off = run(BDB, cmd);
+  const on = run(BDB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  assert.strictEqual(on, off, 'shadow mode must not change this decision');
+  assert.strictEqual(JSON.parse(off).hookSpecificOutput.permissionDecision, 'deny');
+  const [row] = readLog(d);
+  assert.strictEqual(row.newly_anchored_sub, null);
+  assert.deepStrictEqual(row.sub_anchored, ['ssh']);
+});
+
+// A command with no substitution at all must not report a phantom nsubseg or sub hit —
+// the newline-gap census (newly_anchored) is untouched by this change.
+test('a command with no substitution reports nsubseg 0 and leaves the newline census alone', () => {
+  const d = logDir('sub-none');
+  run(BDB, 'echo x\nterraform destroy', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  const [row] = readLog(d);
+  assert.strictEqual(row.nsubseg, 0);
+  assert.deepStrictEqual(row.newly_anchored, ['terraform'], 'the newline gap this hook already caught');
+  assert.strictEqual(row.newly_anchored_sub, null);
+  assert.strictEqual(row.sub_anchored, null);
+});
