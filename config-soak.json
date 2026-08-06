@@ -113,8 +113,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_cmdparse.sh",
-      "hash": "45e197835b7c9bad95a0c219c7a5f2d398f70313a911190c59c1aef17877517b",
-      "landed": "2026-07-30T16:10:15.759Z"
+      "hash": "a5f43e2546b32da91fe2f7d2d4583eb0246e4f0a5d643ee73e872971f49a3ae4",
+      "landed": "2026-08-06T21:58:19.622Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
