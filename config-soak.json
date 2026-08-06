@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "49ae7314010269aefc1d4e53290fb232d6b965aa9b451179ec209b53d32ca9a3",
-      "landed": "2026-08-05T21:01:37.762Z"
+      "hash": "c781f5fc7361cd217c4844a43872feec2a117eb6a1d7fce7fe6abe4e1d0fe9a3",
+      "landed": "2026-08-06T14:23:58.984Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -47,6 +47,11 @@
       "landed": "2026-07-29T21:20:52.171Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/artifact-state.sh",
+      "hash": "5b04fe867ab0f41e8138389f726e538bf43e62f3e595a2ccf24f10d93a7e5704",
+      "landed": "2026-08-06T14:23:58.984Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
       "hash": "491bec5c4a906482d5454f7eccd43912a4fa12c4fdeb79985291a3f0412aa071",
       "landed": "2026-07-25T01:23:11.477Z"
@@ -70,6 +75,11 @@
       "path": "home/private_dot_claude/hooks/executable_allow-safe-curl.sh",
       "hash": "188cd9ef3fd2d51673971d80723b239eb37bb5b684caec28b4479ae79eda93cc",
       "landed": "2026-08-05T21:01:37.762Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
+      "hash": "315f8c7e902428ef3b57f4b22ccf4179ebae470fdf0acaa54181276b92d2f87f",
+      "landed": "2026-08-06T14:23:58.984Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
@@ -113,8 +123,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "a1d496b9fe945824f0a27ce8aa7490b72593e7e7f04eb6e14193358d5a9c6a48",
-      "landed": "2026-08-06T13:40:45.228Z"
+      "hash": "cf1225074dbd68e80fbf6a1e09dff23f32bbdfdd7861a222896894dd2137cb07",
+      "landed": "2026-08-06T14:23:58.984Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -145,6 +155,11 @@
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
       "hash": "f7e3606d5af59f6ed3117b16db470a1c9ef8c17448e6fff9e96dfa5b63fd3cd4",
       "landed": "2026-08-02T19:58:03.633Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_prune-artifacts.sh",
+      "hash": "1c7182508b1efbec11b3b6be3581851a0ff94d6f943663cc9923cc8f2ee2ab02",
+      "landed": "2026-08-06T14:23:58.984Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
@@ -278,8 +293,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "de034bcc9510f8f556b5ec8febe07415c4ddd429f4202d14f43e8684243e13c9",
-      "landed": "2026-07-26T13:17:32.064Z"
+      "hash": "f7368c17ebe18a3e27c8402d04fc4c687ba1ba3905965567e81c81219787be4d",
+      "landed": "2026-08-06T14:23:58.984Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
