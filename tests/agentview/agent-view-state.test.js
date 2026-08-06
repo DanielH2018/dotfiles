@@ -167,7 +167,10 @@ try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { gitOk =
 const gitSkip = skip || (gitOk ? false : 'git unavailable');
 
 const repos = [];
-const GITENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+const GITENV = {
+  GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
+};
 // Build a temp repo in one of four shapes: 'clean' (committed+pushed), 'dirty' (uncommitted
 // change), 'unpushed' (a commit ahead of upstream), 'nonrepo' (a plain dir). Returns its cwd.
 function makeRepo(shape) {
@@ -176,10 +179,6 @@ function makeRepo(shape) {
   if (shape === 'nonrepo') return d;
   const git = (...a) => execFileSync('git', ['-C', d, ...a], { stdio: 'ignore', env: { ...process.env, ...GITENV } });
   git('init', '-q', '-b', 'main');
-  // Fixture commits must not be signed: the machine's global commit.gpgsign sends them to the
-  // 1Password agent, which needs an approval nobody is there to give, so the commit fails after
-  // tens of seconds. Same reason tests/bin/try.test.js sets this on its own fixtures.
-  git('config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(d, 'f'), '1\n');
   git('add', '.'); git('commit', '-qm', 'init');
   if (shape === 'dirty') { fs.writeFileSync(path.join(d, 'f'), '2\n'); return d; }

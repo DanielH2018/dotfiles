@@ -11,8 +11,10 @@ const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
 
 const dirs = [];
 
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+
 function sh(cmd, cwd) {
-  const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8' });
+  const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', env: GIT_ENV });
   assert.strictEqual(r.status, 0, `${cmd} (stderr: ${r.stderr})`);
   return (r.stdout || '').trim();
 }
@@ -26,9 +28,7 @@ function repoWithOrigin() {
   const work = path.join(root, 'work');
   sh(`git init -q --bare -b main ${remote}`);
   sh(`git clone -q ${remote} ${work}`);
-  // commit.gpgsign false: the machine's global setting routes fixture commits to the 1Password
-  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
-  sh('git config user.email t@t && git config user.name t && git config commit.gpgsign false', work);
+  sh('git config user.email t@t && git config user.name t', work);
   sh('echo one > f && git add f && git commit -qm one && git push -q origin main', work);
   return { root, work };
 }

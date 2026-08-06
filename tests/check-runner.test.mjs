@@ -17,15 +17,15 @@ try { if (spawnSync('bash', ['-c', 'true']).status !== 0) bashOk = false; } catc
 const skip = bashOk ? false : 'bash unavailable';
 
 const dirs = [];
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+const git = (dir, ...args) => spawnSync('git', args, { cwd: dir, env: GIT_ENV });
+
 function mkrepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cr-'));
   dirs.push(dir);
-  spawnSync('git', ['init', '-q'], { cwd: dir });
-  spawnSync('git', ['config', 'user.email', 't@t.t'], { cwd: dir });
-  spawnSync('git', ['config', 'user.name', 't'], { cwd: dir });
-  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
-  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+  git(dir, 'init', '-q');
+  git(dir, 'config', 'user.email', 't@t.t');
+  git(dir, 'config', 'user.name', 't');
   return dir;
 }
 function write(dir, name, body) {
@@ -94,16 +94,16 @@ test('--frozen on an uncommitted file -> exit 2', { skip }, () => {
 test('--frozen on a committed, unmodified file -> exit 0', { skip }, () => {
   const dir = mkrepo();
   write(dir, 'c.checks', '- RUN: `echo hi` -> exit:0\n');
-  spawnSync('git', ['add', 'c.checks'], { cwd: dir });
-  spawnSync('git', ['commit', '-qm', 'freeze'], { cwd: dir });
+  git(dir, 'add', 'c.checks');
+  git(dir, 'commit', '-qm', 'freeze');
   assert.equal(run(dir, ['c.checks', '--frozen']).code, 0);
 });
 
 test('--frozen detects edits made after commit -> exit 2', { skip }, () => {
   const dir = mkrepo();
   const p = write(dir, 'c.checks', '- RUN: `echo hi` -> exit:0\n');
-  spawnSync('git', ['add', 'c.checks'], { cwd: dir });
-  spawnSync('git', ['commit', '-qm', 'freeze'], { cwd: dir });
+  git(dir, 'add', 'c.checks');
+  git(dir, 'commit', '-qm', 'freeze');
   fs.appendFileSync(p, '- RUN: `echo tampered` -> exit:0\n');
   assert.equal(run(dir, ['c.checks', '--frozen']).code, 2);
 });

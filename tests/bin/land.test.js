@@ -18,9 +18,15 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/git unavailable';
 
-const CLEAN_ENV = Object.fromEntries(
-  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
-);
+// Strip every GIT_* var, then point git at no global or system config. Both the fixtures and
+// bin/land's own rebase run under this, so nothing here inherits the machine's identity, hooks,
+// templates or commit signing — the signing in particular would send each commit to an agent
+// for an approval no test can give.
+const CLEAN_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
 
 const dirs = [];
 
@@ -77,9 +83,6 @@ function makeRepo() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
-  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
-  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
-  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');
@@ -102,9 +105,6 @@ function makeRepoWithOrigin() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
-  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
-  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
-  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');

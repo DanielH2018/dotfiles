@@ -19,10 +19,14 @@ try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } cat
 const skip = toolsOk ? false : 'bash/git unavailable';
 
 // Strip every GIT_* var: inheriting GIT_DIR here would point the fixture repos at
-// whatever repo is running the suite, which is precisely the bug under test.
-const CLEAN_ENV = Object.fromEntries(
-  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
-);
+// whatever repo is running the suite, which is precisely the bug under test. The two put
+// back cut the fixtures off from the machine's git config for the same kind of reason —
+// a global core.hooksPath or commit signing would decide what these tests observe.
+const CLEAN_ENV = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+};
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV }).trim();
@@ -49,9 +53,6 @@ function makeRepo() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
-  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
-  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
-  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.mkdirSync(path.join(dir, '.githooks'));
   fs.writeFileSync(path.join(dir, '.githooks', 'pre-push'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
