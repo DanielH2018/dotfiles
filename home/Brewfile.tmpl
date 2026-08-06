@@ -3,6 +3,15 @@ tap "pulumi/tap", trusted: true
 brew "bash"
 brew "chezmoi"
 brew "gh"
+# Both fill gaps the Linux hosts do not have, which is why they are here rather than in
+# tools.toml: gawk and flock are base-system on Linux and simply absent on macOS. Without them
+# 24 tests in the pre-push suite self-skip on this machine — 9 on gawk, 15 on flock — and a
+# skipped test is indistinguishable from a passing one in the totals. util-linux is keg-only, so
+# .zshrc appends its bin to PATH; see the comment there for why appended and not prepended.
+# It does NOT ship script(1) on macOS, so the pty tests that want the util-linux one stay
+# skipped regardless.
+brew "gawk"
+brew "util-linux"
 brew "mas"
 brew "pipx"
 brew "pre-commit"

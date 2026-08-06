@@ -67,6 +67,19 @@ export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$PATH"
 if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
+
+# util-linux is keg-only, so brew never links it into $BREW_PREFIX/bin. APPENDED rather than
+# prepended, unlike gnubin above, and that direction is deliberate: the only tool in this keg
+# that macOS does not already provide is flock — which retention-sweep's lock and bin/land's
+# cross-worktree lock both want — while the keg also ships column, getopt, hexdump, logger,
+# rename, rev, look and ul, all of which would shadow the BSD versions that scripts on this
+# machine already expect. Appending resolves flock and changes nothing that already works.
+#
+# Note it does NOT supply script(1): brew omits it on macOS because the base system has BSD
+# script, so the agentview pty tests that want the util-linux one stay skipped here.
+if [[ -d "$BREW_PREFIX/opt/util-linux/bin" ]]; then
+  export PATH="$PATH:$BREW_PREFIX/opt/util-linux/bin"
+fi
 {{- end }}
 
 # =============================================================================
