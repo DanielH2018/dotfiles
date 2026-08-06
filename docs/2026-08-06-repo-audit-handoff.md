@@ -26,6 +26,32 @@ where everything interesting came from.
 
 Both repos are level with `origin/main` and `chezmoi status --exclude=scripts` is empty.
 
+## Status — updated 2026-08-06, from Linux
+
+The open threads below were worked in a follow-up session on the Fedora box.
+**dotfiles [#282](https://github.com/DanielH2018/dotfiles/pull/282)** closes items 1, 4, 5, 6, 7
+and 8, plus the lint rule proposed in the GNU-on-BSD section.
+**work-laptop-config [#6](https://github.com/DanielH2018/work-laptop-config/pull/6)** (draft)
+closes item 10.
+
+Still open, and why: **3** (CI) was out of scope by request. **2** stays as recorded —
+re-signing rewrites shared history. **9** needs coordination or CI, not a lock. **11** cannot be
+done from Linux: `repo-test-audit-2026-08-06.md`/`.html` are not in this box's
+`~/.claude/artifacts/`, so they exist only on the Mac and will be pruned there.
+
+Two things that session learned which change what is written below:
+
+- **Item 7's `31db88a` claim is false.** Corrected in place at the item itself.
+- **A fourth silent failure existed in `.githooks/pre-push` that this audit missed.** When the
+  `QFILES` glob matched no files, the `ls` building it sent its own error to `/dev/null`, so the
+  instruction-quality **security** gate was dropped entirely — printing nothing and still exiting
+  0. It belongs in the "silent-failure patterns" list below as the sharpest instance of the
+  pattern, and it was sitting inside the gate meant to catch them.
+
+The numbers below are **macOS** numbers. On Linux the same tree gives 1887/1918 with **31** skips,
+not 127 — the difference is the Windows/WSL/darwin-only sets, not anything installable. After
+#282: 1902/1933, 31 skipped, and 1912/1933 with 21 skipped under `UI_TIER_B=1`.
+
 ## The one finding worth carrying forward
 
 **Four separate bugs this session came from assuming GNU behaviour on a BSD userland.** All four
@@ -112,8 +138,17 @@ word-split, so `node --test $TEST_FILES` passes all 158 paths as one argument; u
      nobody has confirmed they still pass.
    - **1 live integration test** needing `daniel-box` and `daniel-server` — never runs locally.
 7. **`agentview-dwell-log.test.js` is still flaky** — one-second boundary (`'43' !== '42'`). It
-   blocked one land attempt and passed on retry, *after* `31db88a` had already landed a fix for
-   it. Passes 3/3 in isolation, fails only under parallel load. It will block a land again.
+   blocked one land attempt and passed on retry. Passes 3/3 in isolation, fails only under
+   parallel load. It will block a land again.
+
+   **Correction (see status above).** The first draft of this item said the failure came *after*
+   `31db88a` had already landed a fix for it, implying a fix that did not work. That is wrong, and
+   it is a false lead worth killing: `31db88a` is "Compare the dwell fingerprint against the
+   settled snapshot, not the open one". It fixed a different race — the startup-refresh
+   contaminating the fingerprint baseline, column 3 — and never touched the clock read or the
+   seconds-open assertion. There was no earlier fix for this to fail. The race has been present
+   since `e2cbcb2` introduced the test, and `31db88a`'s only contact with it was *copying* the
+   racy `_av_open_ts=$(( $(date +%s) - 42 ))` idiom into its new `driveSettled` helper.
 8. **agentview is deployed but inert on macOS.** `~/.claude/hooks/agent-view-state.sh` and
    `~/.local/bin/agentview` are both deployed and executable here, yet a rendered `settings.json`
    wires **zero** `agent-view-state` hooks on darwin and `~/.claude/agent-view` has never held
