@@ -36,9 +36,17 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 # `... |bash` and hit the pipe-to-shell rule; `grep "a\;rm -rf / " notes.txt` and
 # `grep "x\&\& terraform apply" plan.md` both denied on the rule behind the separator.
 # Deleting the two characters rather than substituting a space keeps the surrounding
-# tokens joined, so no rule below sees a new word boundary either — which is also what
-# keeps `find . -name '*.tmp' -exec rm {} \;` clear of the rm anchors.
-SCAN_SRC=${COMMAND//\\|/}
+# tokens joined, so no rule below sees a new word boundary either.
+#
+# An escaped BACKSLASH has to be neutralized first, because it does not escape what
+# follows it: in `echo a\\& terraform apply` the `&` is a real separator and terraform
+# really does run. Pairing that second backslash with the separator would delete a real
+# one and drop the binary out of command position — deny silently became allow, verified
+# for all three characters (`\\|` was already reachable this way before `\;` and `\&`
+# joined it). Two spaces is exactly what the tr below turns `\\` into, so neutralizing it
+# here only moves that substitution earlier.
+SCAN_SRC=${COMMAND//\\\\/  }
+SCAN_SRC=${SCAN_SRC//\\|/}
 SCAN_SRC=${SCAN_SRC//\\;/}
 SCAN_SRC=${SCAN_SRC//\\&/}
 SCAN=$(printf '%s' "$SCAN_SRC" | tr '\n\t\\' '   ' | tr -d "\"'")
