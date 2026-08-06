@@ -681,6 +681,7 @@
         "~/.cache",
         "~/.sdkman",
         "~/.local/share/fnm",
+        "~/Library/Caches/pyapp/locks",
         "/tmp"
       ],
       "denyWrite": [
