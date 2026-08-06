@@ -43,6 +43,8 @@ DIVERSIONS=(
 
 solaar_q() { timeout 25 solaar config "$SERIAL" "$@" 2>&1 | grep -v '^rules cannot'; }
 
+indent() { while IFS= read -r line; do printf '  %s\n' "$line"; done; }
+
 state() {
     solaar_q lowres-scroll-mode | grep -E '^lowres-scroll-mode'
     solaar_q divert-keys        | grep -E '^divert-keys'
@@ -57,7 +59,7 @@ if [ -z "$before" ]; then
     exit 1
 fi
 
-echo "before:"; echo "$before" | sed 's/^/  /'
+echo "before:"; echo "$before" | indent
 
 # Scroll wheel back to plain HID reports. This is the one that kills scrolling.
 solaar_q lowres-scroll-mode false >/dev/null
@@ -70,7 +72,7 @@ for pair in "${DIVERSIONS[@]}"; do
 done
 
 after=$(state)
-echo "after:"; echo "$after" | sed 's/^/  /'
+echo "after:"; echo "$after" | indent
 
 if [ "$before" = "$after" ]; then
     echo "(no drift -- already in the intended state)"
