@@ -52,6 +52,23 @@ else
 fi
 
 fail=0
+
+# Steps below degrade to a skip rather than a failure when a local tool is absent, which is
+# deliberate — a machine that never installed prek should still be able to push. What was not
+# deliberate is the closing verdict saying "pre-push checks passed." either way, so a run that
+# checked less than the header advertises is indistinguishable from a full one. Every degrade
+# site records itself here and the verdict names them.
+#
+# Plain string + counter, not an array: this file is bash-3.2 clean (see header) and `set -u`
+# above makes "${arr[@]}" an error there when the array is empty.
+skipped=""
+nskipped=0
+note_skip() { # note_skip "<short-name>" "<printed message>"
+  skipped="${skipped:+$skipped, }$1"
+  nskipped=$((nskipped + 1))
+  printf '%s-%s %s\n' "$B" "$Z" "$2"
+}
+
 run() { # run "<label>" <cmd...>
   label="$1"; shift
   printf '\n%s▶ %s%s\n' "$B" "$label" "$Z"
@@ -95,6 +112,13 @@ if [ -z "${TQ_OFF:-}" ] && [ -f "$TQ" ] && command -v python3 >/dev/null 2>&1; t
 else
   # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
   tq_node() { shift; node --test "$@"; }
+  # NOT a skipped step, so it stays out of note_skip: the raw runner executes the same tests
+  # and `run` still branches on node's own exit code, so coverage is identical — only the
+  # digest is lost. Said out loud anyway, or the sudden wall of per-test output reads as
+  # something having gone wrong. TQ_OFF=1 is a deliberate opt-out and needs no notice.
+  if [ -z "${TQ_OFF:-}" ]; then
+    printf '%s-%s tq digest unavailable (tq or python3 missing) - raw node --test output, same coverage\n' "$B" "$Z"
+  fi
 fi
 
 # 1. Commit signatures. Reads git's pre-push protocol from stdin, so it has to come
@@ -120,6 +144,10 @@ if [ -n "$QFILES" ]; then
   # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
   run "instruction quality (security>=70; composite>=${QUALITY_MIN_SCORE})" \
     python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
+else
+  # The `ls` above eats its own error, so an empty match dropped the security gate entirely
+  # and printed nothing at all — the one degrade site with no trace in the log.
+  note_skip "instruction quality" "instruction quality - no instruction files matched, skipped"
 fi
 
 # 3b. Lint. Scope comes from .pre-commit-config.yaml so there is one definition of what
@@ -132,7 +160,7 @@ fi
 if command -v prek >/dev/null 2>&1; then
   run "lint (ruff + shellcheck)" prek run --all-files
 else
-  printf '%s-%s lint (ruff + shellcheck) - prek not installed, skipped\n' "$B" "$Z"
+  note_skip "lint" "lint (ruff + shellcheck) - prek not installed, skipped"
 fi
 
 # 4. Injection-hook red-team regression guard. Run through --test rather than as
@@ -176,5 +204,12 @@ if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2
   exit 1
 fi
-printf '\n%spre-push checks passed.%s\n' "$G" "$Z"
+if [ "$nskipped" -eq 0 ]; then
+  printf '\n%spre-push checks passed.%s\n' "$G" "$Z"
+else
+  noun="steps"
+  [ "$nskipped" -eq 1 ] && noun="step"
+  printf '\n%spre-push checks passed, %d %s skipped (%s).%s\n' \
+    "$G" "$nskipped" "$noun" "$skipped" "$Z"
+fi
 exit 0
