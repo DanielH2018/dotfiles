@@ -80,18 +80,58 @@ word-split, so `node --test $TEST_FILES` passes all 158 paths as one argument; u
 1. **19 pty skips are permanent on macOS.** brew's `util-linux` omits `script(1)` because the
    base system ships BSD `script`. No install fixes it. Decide whether to build it from source
    or gate those tests to Linux outright, so the number stops reading as a recoverable gap.
-2. **`agentview-dwell-log.test.js` is still flaky** — one-second boundary (`'43' !== '42'`).
-   It blocked one land attempt and passed on retry, *after* `31db88a` had already landed a fix
-   for it. Passes 3/3 in isolation; fails only under parallel load.
-3. **Two unsigned commits are published** on work-laptop-config `main` (`ea6fa1f`, `81a75ec`).
+2. **Two unsigned commits are published** on work-laptop-config `main` (`ea6fa1f`, `81a75ec`).
    Left alone deliberately — re-signing means rewriting shared history. The new gate stops the
-   next one.
-4. **Landing races another machine.** `bin/land` reported
-   `flock unavailable — landing without the cross-worktree lock` and `origin/main` genuinely
-   moved under it mid-attempt, three times. `flock` is now installed, which restores the lock
-   *locally* — but the commits were coming from a second machine, which no file lock can
-   serialize. If that recurs, the fix is on the coordination side, not the lock.
-5. **The CLAUDE.local.md correction** in the section above.
+   next one *from this machine* — see the CI item below.
+3. **Neither repo has CI.** No `.github/workflows` in either. Every gate above — signatures,
+   soak, quality, lint, the unit suite — is a *local* pre-push hook. Two consequences: a fresh
+   clone that never runs `install.sh` or never sets `core.hooksPath` has **no gate at all**, and
+   nothing server-side notices. Given that commits during this session arrived from a second
+   machine, the signature gate's real coverage is "whichever machines happen to have it
+   installed". Branch protection, or a CI job that reruns `check-push-signatures`, would close
+   that; a local hook cannot.
+4. **Tool-absent gate steps degrade to a skip, not a failure.** `.githooks/pre-push` prints
+   `lint (ruff + shellcheck) - prek not installed, skipped` and still exits 0, and `tq` falls
+   back to the raw runner when `python3` or `tq` is missing. Both are deliberate — a missing local
+   tool should not block a push on a machine that never installed it — but the effect is a green
+   gate that checked less than it appears to. Worth folding the degradation into the final verdict
+   line, so it reads "passed, 1 step skipped" rather than "passed".
+5. **Converge the fixture-isolation convention.** Two coexist. Five files
+   (`tests/sandbox/*.test.js`, `tests/tmux/ctw.test.js`) set
+   `GIT_CONFIG_GLOBAL=/dev/null` + `GIT_CONFIG_SYSTEM=/dev/null`, cutting fixtures off from the
+   machine's config entirely — signing, hooks, templates, identity, aliases. The five fixed in
+   [#277](https://github.com/DanielH2018/dotfiles/pull/277) use per-repo `commit.gpgsign false`,
+   following `tests/bin/try.test.js`. **The env-var form is the stronger one** and would have made
+   this whole class impossible; the fix that landed removes the symptom only. Evidence for
+   preferring it: those five isolated files run 108 tests in 6.7s with no signing stalls.
+6. **Of the 127 skips, only ~11 are addressable.** The rest are structural here — Linux-only
+   scripts, WSL-only paths, Windows-only config, darwin-branch-renders-empty, host-conditional
+   config that renders empty, and the 19 `script(1)` tests above. The skip count is not a
+   to-do list and treating it as one wastes time. The addressable set:
+   - **10 tests behind `UI_TIER_B=1`** — an opt-in env gate, never exercised this session, so
+     nobody has confirmed they still pass.
+   - **1 live integration test** needing `daniel-box` and `daniel-server` — never runs locally.
+7. **`agentview-dwell-log.test.js` is still flaky** — one-second boundary (`'43' !== '42'`). It
+   blocked one land attempt and passed on retry, *after* `31db88a` had already landed a fix for
+   it. Passes 3/3 in isolation, fails only under parallel load. It will block a land again.
+8. **agentview is deployed but inert on macOS.** `~/.claude/hooks/agent-view-state.sh` and
+   `~/.local/bin/agentview` are both deployed and executable here, yet a rendered `settings.json`
+   wires **zero** `agent-view-state` hooks on darwin and `~/.claude/agent-view` has never held
+   state. `executable_agentview:190` says a Darwin branch there would be dead code — the right
+   call, but the binary ships to macOS anyway. Consider `.chezmoiignore`-ing it for darwin so dead
+   code is not deployed. This is why `settings-base-shape.test.js:205` needed a host gate rather
+   than a config fix.
+9. **Landing can still race another machine.** `bin/land` reported
+    `flock unavailable — landing without the cross-worktree lock` and `origin/main` moved under it
+    mid-attempt, three times. `flock` is now installed, restoring the lock *locally* — but the
+    commits came from a second machine, which no file lock can serialize. If it recurs the fix is
+    coordination, or the CI item above, not the lock.
+10. **Correct the `CLAUDE.local.md` PATH claim** — see the GNU-on-BSD section above. It is the
+    reason these forms keep being written.
+11. **This doc is the durable record.** The audit's working artifacts are in
+    `~/.claude/artifacts/` (`repo-test-audit-2026-08-06.md` and `.html`), which is **not**
+    chezmoi-managed and is pruned after 7 days without an update. Anything there worth keeping
+    should move here.
 
 ## Re-establishing state
 
