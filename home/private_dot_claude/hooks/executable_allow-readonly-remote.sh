@@ -22,20 +22,49 @@ hook_read_input
 COMMAND=$(hook_field '.tool_input.command // ""')
 [ -z "$COMMAND" ] && exit 0
 
-# Any shell metacharacter can smuggle a second command past the verb check
-# (`hl uptime; rm -rf /`) or redirect output (`hl cat x > y`); a pipe/subst can
-# hide an unlisted command. Glob chars (*?[]) let a literal that doesn't match
-# SECRET_RE below (e.g. `/proc/self/enviro?`) expand into a secret path once
-# the remote shell glob-expands it. Refuse to auto-approve if the raw command
-# carries one — it just falls through to a normal prompt.
+# --- outer command: shared cmd_parse library ---------------------------------------------
+#
+# Chaining/substitution/heredoc in the OUTER (local) command used to be ruled out by a raw
+# character ban on the whole string (`;`/`&`/`|`/`` ` ``/`$`/`(`/`)`/newline). cmd_parse
+# replaces that: it is quote- and escape-aware, where the raw ban was not (an unbalanced
+# quote fell through to the strip-and-split below with no check at all). A `hl`/`ssh`
+# invocation must locally be exactly one command, with no local substitution and no
+# heredoc — no consumer here reads CP_SUBSEG or a heredoc body, so either is an automatic
+# defer, same as the raw ban treated them.
+#
+# CMDPARSE=off is the rollback lever: with it set, or if the library cannot be sourced,
+# this hook always defers.
+if [ "${CMDPARSE:-on}" = off ]; then
+  exit 0
+fi
+# shellcheck source=/dev/null
+. "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null || exit 0
+cmd_parse "$COMMAND" || exit 0
+[ "$CP_NSEG" -eq 1 ] || exit 0
+[ "$CP_NSUBSEG" -eq 0 ] || exit 0
+[ -z "${CP_HEREDOC[0]}" ] || exit 0
+
+# What is left is out of cmd_parse's scope by design (its own header: "this slice
+# deliberately stops at segmentation") and stays a raw character ban on the whole command,
+# unchanged: redirection (`<`/`>` — cmd_parse does not model redirects, and an unquoted `>`
+# is consumed by the LOCAL shell, not passed to the remote command, so treating it as a
+# remote argument would be a correctness bug, not just a policy one), glob chars (`*?[]` —
+# the remote shell expands these, see SECRET_RE below), backslash (kept out of the
+# tokenizer's scope entirely, for simplicity), and a literal newline. A newline is
+# genuinely a local separator to cmd_parse (correctly inert when quoted, same as `;`), but
+# it cannot be deferred to the remote-text recheck below the way `;`/`&`/`|` are: `read -ra`
+# a few lines down splits on IFS, which treats a newline exactly like a space, so a quoted
+# newline is gone by the time `$rest` exists to check it. A quoted newline is exactly the
+# same hazard as a quoted `;` once ssh joins argv into one string for the remote shell to
+# reparse (`hl echo "a<NEWLINE>rm -rf /"` sends `echo a` and `rm -rf /` as two remote
+# commands) — so it stays banned here instead, unconditionally, same as today.
 case $COMMAND in
-  *';'* | *'&'* | *'|'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'* | *'{'* | *'}'* | \
-  *'*'* | *'?'* | *'['* | *']'* | *\\* | *$'\n'* )
+  *'<'* | *'>'* | *'{'* | *'}'* | *'*'* | *'?'* | *'['* | *']'* | *\\* | *$'\n'* )
     exit 0 ;;
 esac
 
-# Metachars are ruled out, so quotes are pure grouping — strip them and split on
-# whitespace (`hl journalctl -u "my svc"` -> tokens hl journalctl -u my svc).
+# cmd_parse confirmed the quoting balances, so stripping quote characters and splitting on
+# whitespace is now safe (`hl journalctl -u "my svc"` -> tokens hl journalctl -u my svc).
 STRIPPED=${COMMAND//\"/}
 STRIPPED=${STRIPPED//\'/}
 read -ra TOK <<<"$STRIPPED"
@@ -60,6 +89,17 @@ REMOTE=("${TOK[@]:$start}")
 verb=${REMOTE[0]}
 sub=${REMOTE[1]:-}
 rest="${REMOTE[*]}"
+
+# The remote command TEXT gets the same ban the whole command used to carry, even though
+# cmd_parse already proved these characters are locally quoted (harmless to THIS shell).
+# ssh concatenates argv and hands the string to a remote shell that reparses it from
+# scratch, ignoring how it was quoted here -- `ssh host "ls; rm -rf /"` is one local
+# argument but two remote commands. $rest is built from TOK, already quote-stripped above,
+# so this sees exactly the dequoted content the remote shell would.
+case $rest in
+  *';'* | *'&'* | *'|'* | *'`'* | *'$'* | *'('* | *')'* )
+    exit 0 ;;
+esac
 
 allow() {
   printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'

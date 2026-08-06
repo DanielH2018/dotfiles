@@ -10,6 +10,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_allow-compound-bash.sh');
+// The library is still `executable_cmdparse.sh` in the source tree; chezmoi drops the
+// prefix on apply, which is the hook's default sibling path. CMDPARSE_LIB points the hook
+// at the source copy so the suite runs straight out of the tree, same idiom as
+// cmdparse-shadow.test.js.
+const CMDPARSE_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_cmdparse.sh');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -35,7 +40,7 @@ function allowed(command, home = HOME, projectDir = '') {
     out = execFileSync('bash', [HOOK], {
       input: JSON.stringify({ tool_input: { command } }),
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: projectDir },
+      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: projectDir, CMDPARSE_LIB },
     });
   } catch (e) { out = e.stdout || ''; }
   if (!out.trim()) return null; // hook deferred to normal handling
@@ -51,6 +56,32 @@ test('defers (no decision) for non-compound commands', { skip }, () => {
   assert.strictEqual(allowed('git status'), null);
 });
 
+// DECIDED 2026-07-30: a newline-only or lone-`&`-only compound is not eligible for
+// allow, even now that cmd_parse can see it is genuinely multi-segment. The eligibility
+// gate is the literal && / ; / | substring test, unchanged from before this hook adopted
+// cmd_parse -- widening eligibility to the newline population is a policy call for a
+// later slice, not a side effect of swapping the segmenter (see cmdparse.sh's own header
+// for why a newline was never a separator to the old splitter either).
+test('a newline-only compound is not eligible for allow even when every part is allow-listed', { skip }, () => {
+  assert.strictEqual(allowed('echo hi\nls'), null);
+});
+
+// The hook has no segmentation of its own to fall back to now -- a missing library means
+// it cannot judge any sub-command, so it must defer everything rather than approve
+// anything on the strength of a splitter that no longer exists.
+test('a missing cmd_parse library disables auto-approval entirely', { skip }, () => {
+  const out = (() => {
+    try {
+      return execFileSync('bash', [HOOK], {
+        input: JSON.stringify({ tool_input: { command: 'echo hi && ls' } }),
+        encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, HOME, CMDPARSE_LIB: '/does/not/exist/cmdparse.sh' },
+      });
+    } catch (e) { return e.stdout || ''; }
+  })();
+  assert.strictEqual(out, '', 'defers rather than approving without any segmentation');
+});
+
 test('defers when any part is denied, ask-listed, or unlisted', { skip }, () => {
   assert.strictEqual(allowed('ls && rm -rf build'), null);          // deny
   assert.strictEqual(allowed('git status && git push origin main'), null); // ask
@@ -61,6 +92,17 @@ test('defers when a command substitution could smuggle a segment', { skip }, () 
   assert.strictEqual(allowed('echo $(whoami) && ls'), null);        // command substitution
   assert.strictEqual(allowed('echo `whoami` && ls'), null);         // backticks
   assert.strictEqual(allowed('cat <(curl example.com) && ls'), null); // process substitution
+});
+
+// cmd_parse lifts a heredoc body out whole and never scans it for a substitution, so an
+// unquoted delimiter could carry a live `$(...)` this hook cannot see. And a bare newline
+// was never a separator to the old splitter, so a command that only becomes multi-segment
+// via one is outside the population that has ever reached judge(). Both stay deferred even
+// though every segment shown here is individually allow-listed and the command is eligible
+// (it contains a literal `&&`).
+test('defers on a heredoc or an internal newline even when every segment is allow-listed', { skip }, () => {
+  assert.strictEqual(allowed("git commit -F - <<'EOF' && ls\nmy message\nEOF\n"), null);
+  assert.strictEqual(allowed('echo hi && ls\ncat file.txt'), null);
 });
 
 // A quoted delimiter used to force a prompt: the hook bailed rather than risk a naive
@@ -111,6 +153,10 @@ test('treats a bare & as a separator rather than gluing the next command on', { 
   // fd dups contain a `&` but are not separators, and must keep working.
   assert.strictEqual(allowed('cat a.json 2>&1 && ls'), 'allow');
   assert.strictEqual(allowed('echo "a & b" && ls'), 'allow');
+  // Same case in COMPOUND form (the eligibility gate is satisfied by the `&&`, so this
+  // reaches cmd_parse's segmentation): every segment is allow-listed, but the lone `&`
+  // must still force a defer, not just when it is the only separator in the command.
+  assert.strictEqual(allowed('git status && ls & echo hi'), null);
 });
 
 // The matcher has three branches (exact, prefix-plus-space, prefix-slash) and nothing

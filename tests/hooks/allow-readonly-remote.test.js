@@ -9,6 +9,11 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_allow-readonly-remote.sh');
+// The library is still `executable_cmdparse.sh` in the source tree; chezmoi drops the
+// prefix on apply, which is the hook's default sibling path. CMDPARSE_LIB points the hook
+// at the source copy so the suite runs straight out of the tree, same idiom as
+// cmdparse-shadow.test.js.
+const CMDPARSE_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_cmdparse.sh');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -20,6 +25,7 @@ function behavior(command) {
     out = execFileSync('bash', [HOOK], {
       input: JSON.stringify({ tool_input: { command } }),
       encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, CMDPARSE_LIB },
     });
   } catch (e) { out = e.stdout || ''; }
   if (!out.trim()) return null; // hook deferred to normal handling
@@ -145,7 +151,24 @@ const DEFER = [
   'ls -la',
   'git status',
   'hlfoo uptime',                             // must be exactly `hl`, not a prefix
+  // a metacharacter smuggled inside a QUOTED remote argument is still live once ssh joins
+  // argv into one string for the remote shell to reparse -- local quoting doesn't survive
+  // that trip, so these must defer exactly like their unquoted equivalents above.
+  'hl systemctl status "app; id"',
+  "ssh host 'uptime; rm -rf /'",
+  'hl echo "a $(id)"',
+  // an unbalanced quote: the old strip-and-split had no balance check at all and would
+  // have silently mis-tokenized this; cmd_parse's refusal must reach here as a defer.
+  'hl echo "unterminated',
 ];
+
+// A literal newline embedded in a quoted argument is the same remote-reparsing hazard as
+// a quoted `;` (see the case above), but JSON is the only way to get a real newline
+// character into a command string here rather than the literal backslash-n the other
+// DEFER cases use.
+test('defers on a newline smuggled inside a quoted remote argument', { skip }, () => {
+  assert.strictEqual(behavior('hl echo "a\nrm -rf /"'), null);
+});
 
 test('auto-allows provably read-only hl/ssh remote commands', { skip }, () => {
   for (const cmd of ALLOW) {

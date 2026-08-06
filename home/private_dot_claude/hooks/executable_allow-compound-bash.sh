@@ -29,35 +29,33 @@ fi
 hook_read_input
 COMMAND=$(hook_field '.tool_input.command // ""')
 
-# M02 shadow census. CMDPARSE_SHADOW=1 computes what the shared decomposition in
-# cmdparse.sh WOULD decide, logs old-vs-new, and returns the OLD decision unchanged. It is
-# the instrument for the cutover: the hooks run on every Bash call, so the log is a census of
-# live traffic rather than a synthetic sample, and the ship gate for the next slice is that
-# no logged command moves toward `allow`.
+# --- segmentation: shared cmd_parse library ---------------------------------------------
 #
-# Absent library => shadow silently off. It cannot fail open, because the only thing the
-# shadow can do to a decision is withhold an approval (see SHADOW_ONLY below).
-CP_SHADOW=0
-if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "${CMDPARSE:-on}" != off ]; then
-  # shellcheck source=/dev/null
-  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null; then CP_SHADOW=1; fi
+# Segmentation used to be hand-rolled here (split_outside_quotes, since removed). cmd_parse
+# is now the single source of truth for where one command ends and the next begins -- see
+# its CONTRACT comment. This hook's own splitter didn't treat a newline as a separator and
+# re-split heredoc bodies on \n, prompting on every ordinary `gh pr create --body-file -
+# <<EOF`. A shadow census run against ~11,900 real Bash calls (M02, since retired now that
+# this is the real decision) found the swap decision-neutral once the two guards below are
+# in place; see the PR body for the count.
+#
+# CMDPARSE=off is the rollback lever: with it set, or if the library cannot be sourced,
+# this hook always defers. It has no segmentation of its own to fall back to now, and a
+# hook that cannot judge every sub-command must not approve any of them.
+if [ "${CMDPARSE:-on}" = off ]; then
+  exit 0
 fi
+# shellcheck source=/dev/null
+. "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null || exit 0
 
-# Only act on compound commands (chains or pipes).
-#
-# A newline-separated command is not compound to this test, so it exits here and falls
-# through to native prefix matching (A1-16). SHADOW_ONLY exists to measure exactly that
-# population: when the shared parser says the command really is several commands, carry on
-# through the judgement below so the census can record what would have happened — but pin
-# the decision to defer, which is what exiting here already meant. The shadow can therefore
-# only ever withhold an approval, never add one.
-SHADOW_ONLY=0
+# Only act on compound commands (chains or pipes). Literal substring test, deliberately --
+# the auto-approval population is unchanged from before this migration. A newline-only or
+# lone-`&`-only command was never eligible for allow (DECIDED, see the "newline-only
+# compounds" test in cmdparse-shadow.test.js), and widening eligibility to that population
+# is a policy call for a later slice, not a side effect of swapping the segmenter. What
+# moves here is the JUDGMENT within the already-eligible population, not who is eligible.
 if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* && "$COMMAND" != *"|"* ]]; then
-  if [ "$CP_SHADOW" = 1 ] && cmd_parse "$COMMAND" && [ "$CP_NSEG" -gt 1 ]; then
-    SHADOW_ONLY=1
-  else
-    exit 0
-  fi
+  exit 0
 fi
 
 # Extract Bash(...) entries from a permissions list and normalize to plain
@@ -231,69 +229,6 @@ unwrap_wrapper() {
   return 1
 }
 
-# Command substitution / process substitution can smuggle a gated or unlisted
-# command inside an otherwise-allowed segment; the split below won't see it
-# (e.g. `echo $(curl …) && ls` would auto-approve the curl). Defer to normal handling.
-if printf '%s' "$COMMAND" | grep -qE '\$\(|`|<\(|>\('; then
-  exit 0
-fi
-
-# Split on &&, ||, ; and | that fall OUTSIDE quotes.
-#
-# This used to bail whenever a delimiter appeared anywhere inside quotes, so that a
-# naive splitter never mangled `echo "a && b" && ls`. The regex it used could not tell
-# a delimiter *inside* one quoted string from one *between* two separately quoted
-# arguments, so it also fired on `jq '.a' f.json; jq '.b' f.json` and on every jq filter
-# containing a pipe — i.e. on most real JSON work, which then prompted every time.
-# Tracking quote state costs a character loop and lets those through, while a quoted
-# delimiter stays inert because it never ends a segment.
-#
-# Bash 3.2 clean (macOS default bash): no mapfile, no associative arrays.
-split_outside_quotes() {
-  local s="$1"
-  local n=${#s}   # separate `local`: ${#s} would read the *outer* s in a combined one
-  local i=0 q='' cur='' c next prev
-  while [ "$i" -lt "$n" ]; do
-    c=${s:i:1}
-    if [ -n "$q" ]; then
-      # Inside quotes. Only "..." honours a backslash escape; '...' is literal.
-      if [ "$q" = '"' ] && [ "$c" = $'\\' ]; then
-        cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue
-      fi
-      [ "$c" = "$q" ] && q=''
-      cur="$cur$c"; i=$((i + 1)); continue
-    fi
-    case $c in
-      \'|\") q=$c; cur="$cur$c"; i=$((i + 1)); continue ;;
-      \\)    cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue ;;
-    esac
-    next=${s:i+1:1}
-    if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
-      printf '%s\n' "$cur"; cur=''; i=$((i + 2)); continue
-    fi
-    # A lone `&` backgrounds the command to its left and starts a new one, so it is a
-    # separator too. Falling through to the append below glued everything after it onto
-    # the previous segment, and matches_any only ever inspects a segment's prefix — so
-    # `git status && ls & <anything>` inherited `ls`'s approval and auto-allowed.
-    # `>&`/`<&` are fd dups rather than separators; leave those to the redirection check.
-    if [ "$c" = '&' ]; then
-      prev=''
-      [ -n "$cur" ] && prev=${cur:$((${#cur} - 1)):1}
-      if [ "$prev" != '>' ] && [ "$prev" != '<' ]; then
-        return 1
-      fi
-    fi
-    if [ "$c" = ';' ] || [ "$c" = '|' ]; then
-      printf '%s\n' "$cur"; cur=''; i=$((i + 1)); continue
-    fi
-    cur="$cur$c"; i=$((i + 1))
-  done
-  # Unbalanced quote — we cannot reason about the shape, so refuse to split it.
-  [ -n "$q" ] && return 1
-  printf '%s\n' "$cur"
-  return 0
-}
-
 # Glob deny/ask patterns are tested against the WHOLE command before it is split, as
 # well as against each segment below. The splitter consumes `|`, so a rule written
 # across a pipe — `* | sh`, `* | bash` — is only ever intact at this point.
@@ -306,9 +241,8 @@ if matches_glob "$COMMAND" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
 fi
 
 # The per-segment judgement, lifted verbatim out of the loop it used to be written inline
-# as. It reads JSEG/JSEG_N so the same code can be run over the old splitter's segments and
-# over cmdparse.sh's, which is the whole point: the census compares two SEGMENTATIONS, not
-# two policies. Returns 0 to allow, 1 to defer.
+# as. Reads JSEG/JSEG_N, populated below from cmd_parse's CP_SEG. Returns 0 to allow, 1 to
+# defer.
 judge() {
   local idx=0 part redir teed teecmd target
   while [ "$idx" -lt "$JSEG_N" ]; do
@@ -379,50 +313,47 @@ judge() {
 
 # --- decision ------------------------------------------------------------------------------
 #
-# OLD is what this hook has always decided: today's splitter, today's judgement. NEW is the
-# same judgement over cmdparse.sh's segmentation. Only OLD is ever emitted in this slice.
+# cmd_parse's own refusal (unbalanced quote or substitution, CP_STATUS != ok) gets the same
+# response split_outside_quotes's failure return used to: defer. A non-zero return is a
+# REFUSAL per the library's contract, never a skip.
+DECISION=defer
+if [ "$WHOLE_GLOB_DEFER" = 0 ] && cmd_parse "$COMMAND"; then
+  # Two things stay conservative on purpose, matching what the removed splitter already
+  # refused on -- this migration moves the SEGMENTATION, not the policy:
+  #
+  # - A bare `&` or a newline separator: split_outside_quotes returned failure outright on
+  #   a lone `&` (backgrounding glued the next command onto the previous one's approval),
+  #   and a newline was never a separator to it at all, so a command that only becomes
+  #   multi-segment via one of these never reached judge() before. Preserve that.
+  # - Any substitution (CP_NSUBSEG -gt 0): a substitution's content is an opaque atom in
+  #   CP_SEG (per the library's contract) -- judge() has no way to vet what runs inside
+  #   it, so it must not silently pass on the strength of the segment that CONTAINS it.
+  #   A heredoc body is the same blind spot for a different reason: cmd_parse lifts it out
+  #   whole and never scans it for a substitution, so an unquoted heredoc delimiter could
+  #   carry a live `$(...)` this hook cannot see. Treat carrying either as unjudgeable.
+  UNJUDGEABLE=0
+  [ "$CP_NSUBSEG" -gt 0 ] && UNJUDGEABLE=1
+  _i=0
+  while [ "$_i" -lt "$CP_NSEG" ]; do
+    [ -n "${CP_HEREDOC[_i]}" ] && UNJUDGEABLE=1
+    if [ "$_i" -lt "$((CP_NSEG - 1))" ]; then
+      case ${CP_SEP[_i]} in
+        '&' | newline) UNJUDGEABLE=1 ;;
+      esac
+    fi
+    _i=$((_i + 1))
+  done
 
-OLD=defer
-if [ "$SHADOW_ONLY" = 0 ] && [ "$WHOLE_GLOB_DEFER" = 0 ]; then
-  if SPLIT=$(split_outside_quotes "$COMMAND"); then
-    JSEG=(); JSEG_N=0
-    while IFS= read -r line; do
-      [ -n "$line" ] && { JSEG[JSEG_N]=$line; JSEG_N=$((JSEG_N + 1)); }
-    done <<< "$SPLIT"
-    judge && OLD=allow
-  fi
-fi
-
-if [ "$CP_SHADOW" = 1 ]; then
-  NEW=defer
-  # An unreadable command is a refusal, never a skip — so it stays `defer` here.
-  if [ "$WHOLE_GLOB_DEFER" = 0 ] && cmd_parse "$COMMAND"; then
+  if [ "$UNJUDGEABLE" = 0 ]; then
     JSEG=(); JSEG_N=0
     _i=0
     while [ "$_i" -lt "$CP_NSEG" ]; do
       JSEG[JSEG_N]=${CP_SEG[_i]}; JSEG_N=$((JSEG_N + 1)); _i=$((_i + 1))
     done
-    judge && NEW=allow
+    judge && DECISION=allow
   fi
-  # One line per live Bash call. The ship gate for the cutover slice reads this file and
-  # requires zero `old != allow -> new == allow` transitions; anything else is a parser bug,
-  # not acceptable friction.
-  LOGDIR="${CLAUDE_SHADOW_LOG_DIR:-$HOME/.claude/logs}"
-  mkdir -p "$LOGDIR" 2>/dev/null && jq -cn \
-    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg hook allow-compound-bash \
-    --arg cmd "$COMMAND" \
-    --arg old "$OLD" \
-    --arg new "$NEW" \
-    --arg status "$CP_STATUS" \
-    --argjson nseg "$CP_NSEG" \
-    --argjson shadow_only "$SHADOW_ONLY" \
-    '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,new:$new,status:$status,nseg:$nseg,shadow_only:$shadow_only}' \
-    >> "$LOGDIR/cmdparse-shadow.jsonl" 2>/dev/null
 fi
 
-# The old decision, unchanged. SHADOW_ONLY commands never reach `allow` because OLD is
-# pinned to defer above, which is exactly what exiting at the compound gate already meant.
-[ "$OLD" = allow ] && \
+[ "$DECISION" = allow ] && \
   printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
 exit 0

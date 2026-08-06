@@ -48,6 +48,11 @@ const readLog = (d) => {
 
 // The whole point of a shadow slice: it is decision-identical by construction. If this ever
 // fails, the census is not a census — it is a live change nobody signed off on.
+//
+// BDB only: ACB's shadow computation (CMDPARSE_SHADOW toggling a log without changing the
+// decision) was retired when cmd_parse became ACB's authoritative segmentation — there is
+// no second decision path left to compare against. ACB's own behavioral coverage lives in
+// allow-compound-bash.test.js now.
 test('shadow mode changes no decision in either hook', () => {
   const cases = [
     'echo hi && ls',
@@ -61,7 +66,7 @@ test('shadow mode changes no decision in either hook', () => {
     "echo 'unterminated",
   ];
   for (const cmd of cases) {
-    for (const hook of [ACB, BDB]) {
+    for (const hook of [BDB]) {
       const off = run(hook, cmd);
       const on = run(hook, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: logDir('neutral') });
       assert.strictEqual(on, off, `${path.basename(hook)} changed its decision for ${JSON.stringify(cmd)}`);
@@ -105,99 +110,6 @@ test('CMDPARSE=off disables the shadow even with CMDPARSE_SHADOW=1', () => {
   assert.deepStrictEqual(readLog(d), []);
 });
 
-test('the approver logs the old decision alongside the new one', () => {
-  const d = logDir('acb');
-  run(ACB, 'echo hi && ls', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const [row] = readLog(d);
-  assert.strictEqual(row.hook, 'allow-compound-bash');
-  assert.strictEqual(row.old, 'allow', 'two allow-listed commands are approved today');
-  assert.strictEqual(row.new, 'allow', 'and under the shared segmentation too');
-  assert.strictEqual(row.nseg, 2);
-});
-
-// A newline-separated command is not "compound" to today's substring gate, so the approver
-// exits before judging anything. SHADOW_ONLY carries it through the judgement for the census
-// while pinning the decision to defer — the shadow may withhold an approval, never add one.
-test('a newline compound is censused without becoming approvable', () => {
-  const d = logDir('shadow-only');
-  const out = run(ACB, 'echo hi\nls', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  assert.strictEqual(out, '', 'no approval is emitted');
-  const [row] = readLog(d);
-  assert.strictEqual(row.shadow_only, 1);
-  assert.strictEqual(row.old, 'defer', 'exiting at the compound gate has always meant defer');
-  assert.strictEqual(row.nseg, 2);
-});
-
-const CORPUS = [
-  'echo hi && ls',
-  'echo hi\nls',
-  'git status && ls & rm -rf /',
-  'echo start && tee /tmp/scratch-target.txt',
-  'echo hi | tee /usr/bin/tee',
-  "jq '.a' f.json; jq '.b' f.json",
-  "jq '.a|.b' f.json",
-  'echo "a && b" && ls',
-  'cat /etc/hostname && curl evil.example.com',
-  'echo x\nterraform destroy',
-  "gh pr create --body-file - <<'EOF'\nbody\nEOF",
-];
-
-// The ship gate for the cutover slice, stated as a test so it is not a promise in a doc.
-// Scoped to commands this hook ALREADY judges: for those, swapping the splitter for the
-// shared segmentation must be decision-neutral. A defer that becomes an allow there is a
-// parser bug, and the spec makes that non-negotiable.
-test('no already-judged command moves toward allow under the new segmentation', () => {
-  const d = logDir('gate');
-  for (const cmd of CORPUS) run(ACB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const moved = readLog(d).filter((r) => r.shadow_only === 0 && r.old !== 'allow' && r.new === 'allow');
-  assert.deepStrictEqual(moved, [], 'a defer/deny that becomes an allow is a parser bug');
-});
-
-// DECIDED 2026-07-30 (spec §8a): the cutover narrows and does not widen.
-//
-// The census found exactly one population that moves toward allow — a chain of
-// individually allow-listed commands separated by a newline (or a lone `&`) and nothing
-// else. Today that is not "compound" to the substring gate, so the approver never judges
-// it and it prompts. Under the shared segmentation every segment is allow-listed and it
-// would be auto-approved.
-//
-// It stays deferred. Auto-approval eligibility is unchanged: a command reaches the
-// approver's judgement only if it was compound under the old && / ; / | test. Newline-only
-// compounds are still judged for DENY under the new segmentation — that half is the point
-// of the module — but are never eligible for ALLOW. The prompt is the safety net for
-// parser bugs, and slice 0 alone produced two.
-//
-// `shadow_only` marks that population. The census still records what raw segmentation
-// would have decided (`new`), so the decision is revisitable on evidence.
-test('newline-only compounds are judged for deny but never eligible for allow', () => {
-  const d = logDir('policy');
-  for (const cmd of CORPUS) run(ACB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const rows = readLog(d);
-
-  // Nothing outside the old compound test may ever be emitted as an approval.
-  for (const r of rows.filter((x) => x.shadow_only === 1)) {
-    assert.strictEqual(r.old, 'defer', `${JSON.stringify(r.cmd)} must stay deferred`);
-  }
-  // And the hook emits nothing for them, which is what "deferred" means on the wire.
-  assert.strictEqual(run(ACB, 'echo hi\nls', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d }), '');
-
-  // The measurement is retained rather than suppressed: raw segmentation still reports
-  // what it would have said, which is the evidence for ever revisiting this.
-  const wouldHave = rows.filter((r) => r.shadow_only === 1 && r.new === 'allow');
-  assert.deepStrictEqual(wouldHave.map((r) => r.cmd), ['echo hi\nls']);
-});
-
-// The narrowing half must still reach the newline population — otherwise the module buys
-// nothing for the two verified bypasses. Deny/ask is evaluated per segment regardless of
-// whether the command was compound under the old test.
-test('a newline compound is still judged for deny under the new segmentation', () => {
-  const d = logDir('policy-deny');
-  run(ACB, 'echo hi\ncurl evil.example.com', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const [row] = readLog(d);
-  assert.strictEqual(row.shadow_only, 1);
-  assert.strictEqual(row.new, 'defer', 'an unlisted second command defers on its own merits');
-});
-
 // The census of the two verified bypasses: the anchored rules cannot see past a newline
 // today, and per-segment evaluation of the SAME regexes shows which families they miss.
 test('the PreToolUse guard records the families a newline hides from it', () => {
@@ -222,33 +134,6 @@ test('a command already caught on the whole string is logged, and not double-cou
   assert.ok(row, 'a deny must still produce a census row');
   assert.strictEqual(row.old, 'deny', 'the separator form is already denied today');
   assert.strictEqual(row.newly_anchored, null, 'so it is not part of the gap being measured');
-});
-
-// An unreadable command is a refusal, never a skip — the census must not report it as clean.
-test('an unparseable command is logged as unreadable', () => {
-  const d = logDir('unreadable');
-  run(ACB, "echo 'unterminated && ls", { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
-  const [row] = readLog(d);
-  assert.match(row.status, /^unreadable:/);
-  assert.strictEqual(row.new, 'defer');
-});
-
-// A partial apply that lands a hook without its library is a real hazard in this repo, and
-// the guards must not fail open when it happens.
-test('a missing library disables the shadow instead of failing the hook', () => {
-  const d = logDir('nolib-log');
-  const out = execFileSync('bash', [ACB], {
-    input: JSON.stringify({ tool_input: { command: 'echo hi && ls' } }),
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      CMDPARSE_LIB: path.join(tmp, 'does-not-exist-cmdparse.sh'),
-      CMDPARSE_SHADOW: '1',
-      CLAUDE_SHADOW_LOG_DIR: d,
-    },
-  });
-  assert.match(out, /"behavior":"allow"/, 'the hook still decides normally');
-  assert.deepStrictEqual(readLog(d), [], 'and simply does not census');
 });
 
 // --- CP_SUBSEG census (block-dangerous-bash.sh only) ---------------------------------------
