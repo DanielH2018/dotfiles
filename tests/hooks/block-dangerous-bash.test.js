@@ -485,9 +485,37 @@ test('the re-parse veto keeps over-denying, and that cost is deliberate', { skip
     'echo "a| ssh homelab sudo reboot"',
     'grep "deploy; terraform apply" runbook.md | sh',
   ];
+  // Not vetoed, and must not be: `-c` means "count" here, not "command". The veto used to
+  // match a space-delimited `-c`, which caught wc/grep/sort and made the fix miss most real
+  // commands. Interpreters are matched by name instead — see the test below.
+  const notVetoed = [
+    'echo "step 1; terraform apply"; wc -c /etc/hostname',
+    'echo "step 1; terraform apply"; grep -c x /etc/hosts',
+    'echo "step 1; terraform apply"; sort -c /etc/hosts',
+  ];
+  const inert = await decide(notVetoed);
+  notVetoed.forEach((cmd, i) =>
+    assert.notStrictEqual(inert[i], 'deny', `-c as an ordinary flag must not veto: ${cmd}`));
   const got = await decide(cmds);
   cmds.forEach((cmd, i) =>
     assert.strictEqual(got[i], 'deny', `veto narrowed — confirm this is not a bypass: ${cmd}`));
+});
+
+test('every interpreter that re-parses is vetoed by name', { skip }, async () => {
+  // This list is what replaced the bare `-c` clause, so it is the only thing standing between
+  // `mksh -c "echo a; terraform apply"` and a neutralized separator. Each is invoked as
+  // `<name> -c"…"` — no space after the flag — so nothing but the NAME can be what matches.
+  // Dropping a name from BDB_REPARSE reopens a bypass, and fails here.
+  const interpreters = [
+    'sh', 'bash', 'zsh', 'ksh', 'dash', 'csh', 'tcsh', 'fish',
+    'ash', 'mksh', 'pdksh', 'yash', 'osh', 'xonsh', 'elvish', 'nu',
+    'python', 'python3', 'perl', 'ruby', 'node', 'deno', 'bun',
+    'lua', 'php', 'tclsh', 'Rscript', 'julia', 'expect', 'osascript',
+  ];
+  const cmds = interpreters.map((bin) => `${bin} -c"echo a; terraform apply"`);
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `interpreter not vetoed by name: ${interpreters[i]}`));
 });
 
 // The generator above varies backslash counts and quoting style, but every case it builds is

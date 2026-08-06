@@ -105,7 +105,15 @@ _bdb_drop_quoted_separators() {  # -> _BDB_UNQ; returns 1 if nothing can be prov
 # broad: everything it catches falls back to today's over-denial, which costs a false positive
 # and never a bypass. The reported symptom — a sentence in an `echo` or a `git commit -m` —
 # contains none of these.
-BDB_REPARSE='(\$\(|`|<\(|>\(|<<|[[:space:]]-c[[:space:]]|\b(eval|exec|source|xargs|env|sudo|doas|nohup|timeout|watch|nice|parallel|make|find|ssh|hl|scp|sh|bash|zsh|ksh|dash|csh|tcsh|fish|python|python2|python3|perl|ruby|node|deno|bun|awk|gawk|mawk|busybox)\b)'
+#
+# Interpreters are matched by NAME, never by a bare `-c`. The flag was only ever a proxy for
+# "an interpreter is being invoked", and it is a bad one: `-c` means "count" in wc, grep and
+# sort at least as often as it means "command", so a space-delimited `-c` vetoed `echo "a;
+# terraform apply"; wc -c f` — the first real command run after this shipped. Requiring a
+# quoted argument after the flag does not rescue it either, since `grep -c "pat" f` has one.
+# The names below cover every interpreter the flag was catching; measured by invoking each as
+# `<name> -c"…"`, so the removed clause could not be what matched.
+BDB_REPARSE='(\$\(|`|<\(|>\(|<<|\b(eval|exec|source|xargs|env|sudo|doas|nohup|timeout|watch|nice|parallel|make|find|ssh|hl|scp|sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|xonsh|elvish|nu|python|python2|python3|perl|ruby|node|deno|bun|lua|php|tclsh|Rscript|julia|expect|osascript|awk|gawk|mawk|busybox)\b)'
 
 # One function rather than a run of assignments because the shadow census below has to
 # normalize its segments identically. It used to do only the `tr` half, so a segment kept
