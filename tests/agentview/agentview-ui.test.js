@@ -77,6 +77,26 @@ function session(home, sid, obj) {
   fs.writeFileSync(path.join(home, '.claude', 'agent-view', `${sid}.json`), JSON.stringify(obj));
 }
 
+// N completed + M idle sessions, named so their leaf dir (what the row renders) is
+// distinctive. ts stays within the last day: gather_local_rows (rows.sh) HIDES a row
+// aged 1-7 days and PRUNES it past 7, so anything older would silently vanish from
+// both the collapsed count and the expanded rows.
+function seedFinished(home, { completed = 0, idle = 0 } = {}) {
+  const ts = nowSec();
+  for (let i = 1; i <= completed; i++) {
+    session(home, `completed-session-${i}`, {
+      pane: `%c${i}`, state: 'completed', cwd: `/home/daniel/dev/completed-session-${i}`, host: HOST,
+      ts: ts - 100 - i, kind: 'host', title: '', locator: `tmux:/tmp/s.sock:main:%c${i}`,
+    });
+  }
+  for (let i = 1; i <= idle; i++) {
+    session(home, `idle-session-${i}`, {
+      pane: `%i${i}`, state: 'idle', cwd: `/home/daniel/dev/idle-session-${i}`, host: HOST,
+      ts: ts - 500 - i, kind: 'host', title: '', locator: `tmux:/tmp/s.sock:main:%i${i}`,
+    });
+  }
+}
+
 // Two rows, one per state: 'working' also exercises the rename guard.
 function seed(home) {
   const ts = nowSec();
@@ -88,6 +108,9 @@ function seed(home) {
     pane: '%2', state: 'idle', cwd: '/home/daniel/dev/beta', host: HOST,
     ts: ts - 60, kind: 'host', title: 'beta task', locator: `tmux:/tmp/s.sock:main:%2`,
   });
+  // idle collapses behind a fold line by default (task 6); every test below drives beta
+  // directly by keystroke/click, so pre-expand it here rather than in each caller.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
 }
 
 function open(env) {
@@ -124,7 +147,7 @@ test('picker renders the seeded sessions', { skip }, async (t) => {
   assert.ok(screen.contains('beta'), `beta row missing:\n${term.text()}`);
   assert.ok(screen.contains('WORKING'), `working state missing:\n${term.text()}`);
   assert.ok(screen.contains('IDLE'), `idle state missing:\n${term.text()}`);
-  assert.ok(screen.contains('switch'), `footer hints missing:\n${term.text()}`);
+  assert.ok(screen.contains('switch/fold'), `footer hints missing:\n${term.text()}`);
 });
 
 test('typing filters the list down to the match', { skip }, async (t) => {
@@ -146,6 +169,11 @@ test('arrow keys move the selection', { skip }, async (t) => {
   t.after(() => term.stop());
 
   await term.waitFor((s) => selectedLine(s).includes('alpha'));
+  term.send('down');
+  // idle is pre-expanded (seed() above), and its header now carries a landable fold: key
+  // (Important 1) so it can be re-collapsed -- the first down lands there, same as any other
+  // real row would, and a second down continues on to beta.
+  await term.waitFor((s) => selectedLine(s).includes('IDLE'));
   term.send('down');
   await term.waitFor((s) => selectedLine(s).includes('beta'));
   assert.ok(selectedLine(term.screen).includes('beta'));
@@ -225,9 +253,13 @@ test('ctrl-p pins the row into the PINNED group', { skip }, async (t) => {
   const term = open(env);
   t.after(() => term.stop());
 
-  // No query here: the group headers are rows with an empty key, so any filter hides
+  // No query here: a plain group header is a row with an empty key, so any filter hides
   // the very header this asserts on.
   await term.waitFor((s) => selectedLine(s).includes('alpha'));
+  term.send('down');
+  // idle is pre-expanded (seed()), so its header is now landable (Important 1) and the
+  // first down stops there; a second down continues on to beta.
+  await term.waitFor((s) => selectedLine(s).includes('IDLE'));
   term.send('down');
   await term.waitFor((s) => selectedLine(s).includes('beta'));
   assert.ok(!term.screen.contains('PINNED'), `nothing should be pinned yet:\n${term.text()}`);
@@ -236,6 +268,30 @@ test('ctrl-p pins the row into the PINNED group', { skip }, async (t) => {
   await term.waitFor('PINNED');   // the bind's reload re-renders with the new group
 
   assert.match(fs.readFileSync(pinfile(home), 'utf8'), /\S/);
+});
+
+test('completed and idle collapse to one line each by default', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  seedFinished(home, { completed: 3, idle: 2 });
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('COMPLETED');
+  assert.ok(lineIndex(term, 'COMPLETED (3)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.ok(lineIndex(term, 'IDLE (2)') >= 0, `expected a collapsed line, got:\n${term.text()}`);
+  assert.strictEqual(lineIndex(term, 'completed-session-1'), -1, 'collapsed rows must not render');
+});
+
+test('an expanded group renders its rows', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  seedFinished(home, { completed: 3, idle: 2 });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('completed-session-1');
+  assert.ok(lineIndex(term, 'completed-session-1') >= 0, 'an expanded group renders its rows');
+  assert.strictEqual(lineIndex(term, 'idle-session-1'), -1, 'idle stays collapsed');
 });
 
 test('ctrl-o toggles the preview card', { skip }, async (t) => {
@@ -320,4 +376,123 @@ test('esc closes the picker', { skip }, async (t) => {
   term.send('esc');
 
   assert.equal(await term.waitForExit(), 0);
+});
+
+const statusfile = (home, host) => path.join(home, `.agentview-remote-status.${host}`);
+
+// makeEnv()'s ssh stub exits 0 immediately, which the picker's background refresh reads as a
+// real (if empty) roster -- it legitimately overwrites the status/cache it just fetched. That
+// races a test that pre-seeds a status file and asserts on ITS content: the seed can lose to
+// the background rewrite before the assertion runs. Sleeping instead of exiting keeps the ssh
+// call outstanding for the test's lifetime, so the seeded fixture is the only thing rendered.
+// 300s, well past any waitFor budget in this suite -- term.stop() SIGKILLs the process group,
+// so nothing is left running past the test.
+function stubSlowSsh(bin) {
+  fs.writeFileSync(path.join(bin, 'ssh'), '#!/bin/bash\nsleep 300\n', { mode: 0o755 });
+}
+
+test('an unreachable host renders a status row instead of going quiet', { skip }, async (t) => {
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
+  fs.writeFileSync(statusfile(home, 'daniel-box'), `unreachable\t${nowSec()}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('unreachable');
+  assert.ok(lineIndex(term, 'Box · unreachable') >= 0,
+    `expected an unreachable row for Box, got:\n${term.text()}`);
+});
+
+test('a stale-but-ok host is labelled with its age', { skip }, async (t) => {
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
+  fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec() - 360}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  // Wait for the EXACT string the assertion checks, not a weaker prefix: waiting on a looser
+  // match (even a specific-enough substring like ' old') can resolve on a transient partial
+  // repaint that hasn't finished laying out the row yet, so the assert right after can lose to
+  // a reflow that hasn't settled -- this test was flaky against that looser probe.
+  await term.waitFor((s) => s.contains('Homelab · 6m old'));
+  assert.ok(lineIndex(term, 'Homelab · 6m old') >= 0,
+    `expected a 6m age on Homelab, got:\n${term.text()}`);
+});
+
+test('a fresh ok host adds no chrome', { skip }, async (t) => {
+  const { bin, home, env } = makeEnv();
+  stubSlowSsh(bin);
+  fs.writeFileSync(statusfile(home, 'daniel-server'), `ok\t${nowSec()}\n`);
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('no active Claude sessions');
+  assert.strictEqual(lineIndex(term, 'unreachable'), -1, 'a healthy host should be silent');
+  assert.strictEqual(lineIndex(term, 'fetch failed'), -1, 'a healthy host should be silent');
+  // ' old' (leading space), not bare 'old': the footer's '↵ switch/fold' hint contains the
+  // bare substring 'old' inside 'fold', which a fresh host's silence does not disprove.
+  assert.strictEqual(lineIndex(term, ' old'), -1, 'a fresh host should carry no age chrome');
+});
+
+// ---- the EXIT trap ----
+// The picker detaches two children before fzf starts: --refresh-remote (short-lived) and
+// --watch (loops forever -- nothing about fzf closing makes it exit). A survivor holds the
+// picker's pty open, which is the shape of the old CTRL+W hang. The trap is the only thing
+// that reaps them.
+//
+// The obvious test does not work. Quitting closes the pty, and the kernel SIGHUPs the
+// foreground process group -- so the children die whether or not the trap exists. The first
+// version of this test asserted "the watcher is gone afterwards" and stayed GREEN with the
+// trap's kill deleted: it was measuring process-group teardown, not the code under test.
+//
+// So the --watch child is intercepted by a stub that IGNORES SIGHUP and records SIGTERM.
+// Once teardown cannot reap it, the trap's explicit kill is the only thing that can.
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
+const until = async (fn, tries = 120) => {
+  for (let i = 0; i < tries; i++) { if (fn()) return true; await sleepMs(50); }
+  return false;
+};
+
+test('the EXIT trap signals the picker\'s background children and clears its portfile', { skip }, async (t) => {
+  const { env, home, bin, self } = makeEnv();
+  seed(home);
+
+  const marker = path.join(home, 'watch-signalled');
+  const pidfile = path.join(home, 'watch-pid');
+  // Stands in for $SELF everywhere but only changes behaviour for --watch; every other
+  // invocation (the picker itself, previews, --body reloads) execs the real script, so the
+  // code under test is unmodified.
+  const stub = path.join(bin, 'agentview-selfstub');
+  fs.writeFileSync(stub, `#!/bin/bash
+if [ "\${1:-}" = "--watch" ]; then
+  trap '' HUP
+  trap 'printf term > ${JSON.stringify(marker)}; exit 0' TERM
+  echo $$ > ${JSON.stringify(pidfile)}
+  while :; do sleep 0.05; done
+fi
+exec ${JSON.stringify(self)} "$@"
+`, { mode: 0o755 });
+
+  const term = new Term(['bash', stub], { cols: 110, rows: 30, env: { ...env, AGENTVIEW_SELF: stub } });
+  t.after(() => {
+    term.stop();
+    // SIGKILL, not the stub's ignorable signals: a failed assertion must not leak a spinner.
+    try { process.kill(Number(fs.readFileSync(pidfile, 'utf8').trim()), 'SIGKILL'); } catch { /* gone */ }
+  });
+
+  await term.waitFor('alpha');
+  assert.ok(await until(() => fs.existsSync(pidfile)), 'the picker should spawn a --watch child');
+  const watchPid = fs.readFileSync(pidfile, 'utf8').trim();
+  const portfiles = () => fs.readdirSync(home).filter((f) => f.startsWith('.agentview-fzfport.'));
+  assert.ok(portfiles().length, 'the picker should write a portfile while open');
+
+  // Natural exit. term.stop() would SIGKILL the group and prove nothing.
+  term.send('esc');
+  assert.notStrictEqual(await term.waitForExit({ timeout: 8000 }), null, 'the picker should exit');
+
+  assert.ok(await until(() => fs.existsSync(marker)),
+    'the trap must send SIGTERM to the watch child (pty teardown alone cannot reap it here)');
+  assert.ok(await until(() => !alive(watchPid)), `the watch child ${watchPid} outlived the picker`);
+  assert.deepStrictEqual(portfiles(), [], 'the trap must remove the portfile');
 });

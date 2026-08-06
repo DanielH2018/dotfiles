@@ -205,6 +205,26 @@
        CLAUDE_CONFIG_DIR in which a SessionStart hook fired with the array and not with the
        string. Keep every entry present in availableModels. */}}
   "fallbackModel": ["claude-sonnet-5"],
+  {{/* Selects private_dot_claude/output-styles/daniel-voice.md — the conversational half of
+       what used to be CLAUDE.md's "Communication style". The value must equal the style's
+       `name` frontmatter, and that file deliberately sets name == its own file name so there
+       is only one string to keep in sync. The style sets keep-coding-instructions: true;
+       dropping that field would REMOVE Claude Code's built-in software-engineering
+       instructions rather than add to them, since it defaults to false.
+
+       Read once at session start like `model`: an edit here lands on `/clear` or a new
+       session, not immediately, and switching styles rewrites the system prompt and so
+       invalidates the prompt cache. Set it and leave it — this is not a per-task knob.
+
+       Do NOT set this through `/config`'s Output style picker. The picker writes to the
+       PROJECT-level .claude/settings.local.json, which with cwd ~ means
+       ~/.claude/settings.local.json: untracked by chezmoi, invisible to this repo, and never
+       deployed to the other hosts. Here it rides settings.json to every machine.
+
+       User scope for this key follows ordinary settings precedence but is not spelled out in
+       the docs, which only describe the picker's project-local write. If a fresh session ever
+       comes up on Default, check `/config` before assuming the style file is at fault. */}}
+  "outputStyle": "daniel-voice",
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
        is the UNION of every model the setup actually requests: claude-opus-5 (main,
        native 1M), "opus" alias (eval judge +
@@ -248,6 +268,15 @@
             "command": "~/.claude/hooks/allow-readonly-remote.sh",
             "timeout": 10
           },
+          {{/* Same shape as allow-readonly-remote.sh, for the other ask-listed command
+               that takes an arbitrary target: auto-approves a plain GET/HEAD curl against
+               loopback or one of the three LAN hosts. The option table is an allowlist, so
+               an unnamed option is not a decision and the Bash(curl:*) ask rule stands. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-safe-curl.sh",
+            "timeout": 10
+          },
           {{/* Picks up where allow-readonly-remote.sh stops: the homelab calls are wrapped in
                a local filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook
                refuses any metacharacter or option. Defers to the server repo's tested pipeline
@@ -269,6 +298,17 @@
             "type": "command",
             "command": "~/.claude/hooks/session-context.sh",
             "timeout": 5
+          }
+        ]
+      },
+      {{/* artifacts are working docs, not an archive: drop anything untouched for a week */}}
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/prune-artifacts.sh",
+            "timeout": 10
           }
         ]
       },
@@ -514,6 +554,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {{/* refresh the tracked HTML artifact once work has landed on the default branch */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact-refresh.sh",
             "timeout": 10
           }
         ]

@@ -2,6 +2,11 @@
 Brewfile
 {{ end }}
 
+# Generated plans and reports, not config. They are per-machine working documents with
+# a 7-day lifetime (prune-artifacts.sh), so tracking them would commit churn and fight
+# the sweep — chezmoi would restore whatever the sweep deleted.
+.claude/artifacts
+
 {{ if eq .chezmoi.os "windows" }}
 .local/bin/ct
 .local/bin/cts

@@ -2,13 +2,16 @@
 
 ## Communication style
 
-- Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself.
+Conversational tone — terseness, outcome first, no preamble, no hedging, one focused question,
+when to correct yourself — moved to the `daniel-voice` output style
+(`private_dot_claude/output-styles/daniel-voice.md`, selected by `outputStyle` in
+`settings.base.json`). Those rules decay over a long session, and an output style is part of the
+system prompt and gets re-asserted during the conversation, where a CLAUDE.md rule is injected
+once and doesn't. What stays here is what has to reach **subagents** as well, which an output
+style never does: everything below governs text written to disk, not just my replies.
+
 - No emojis unless I ask. Reference code as `file:line`.
 - Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links — `[label](file:///abs/path)`, never raw. Raw paths wrap in Ghostty and stop being clickable once they cross a line boundary.
-- Say in one sentence what you're about to do before the first tool call. After that, surface findings and changes of direction, not each step.
-- When something is ambiguous, ask one focused question rather than listing all the possibilities.
-- Correct an earlier statement only when the error would change my code, conclusions, or decisions — state it plainly and continue.
-- Lead with the answer or the recommendation; add a caveat only when it changes what I'd do. Skip hedging-theater and faux-balance openers.
 - Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
 ## Config & dotfiles management (chezmoi)
@@ -46,6 +49,8 @@ You already sanity-check your work as you go, so don't bolt a second pass on top
 
 What doesn't relax is **evidence before claims**. If you tell me tests pass, the linter is clean, the build succeeds, or a bug is fixed, you ran that command in this session and read its output. Don't extrapolate from an earlier run or from "the code looks right" — when you haven't run it, say the status is unverified.
 
+Scope the proof to the change while you work: the tests covering what you touched, plus targeted lint and typecheck. The full suite runs before a change is merged or landed — where a pre-push or CI gate already runs it, that gate is the one that runs it, not a hand-rolled repeat.
+
 ## Code review
 
 Ask review agents for **everything** they find, each finding carrying a confidence or severity score. "Only report high-confidence issues", "only high-severity", or "be conservative" get followed literally and real bugs go unreported; filtering is a separate pass, by an arbiter or by me, after seeing the full list. This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` agent — state the override in the dispatch prompt when you spawn it.
@@ -56,6 +61,8 @@ Deliver what was asked, at the scope intended, and finish the whole thing. Make 
 
 Spotting an unrelated improvement is not a reason to make it — note it in your summary and leave the code alone. Two habits worth naming, because they read as thoroughness rather than scope creep: adding error handling for failure modes that aren't reachable from the real call sites, and creating a new file where editing an existing one would do.
 
+Finishing the whole thing has two failure modes that look finished. **Reverse states:** if you added a way in, add the way out and the way to see it — snooze needs unsnooze, close needs reopen, enable needs disable. A one-way door is a bug. **Entry points:** a behavior reachable from one place is usually also reachable from a command, a keybinding, and a settings toggle, so fixing the path you tested is not fixing the feature. When a change adds a state, a mode, or a new path through a feature, say which of the two applied; on anything smaller, just do them.
+
 ## Source quality & epistemic honesty
 
 Applies to every session — answers, summaries, research, and anything written to a durable store:
@@ -63,9 +70,9 @@ Applies to every session — answers, summaries, research, and anything written 
 - Prefer primary sources over aggregators; attribute secondhand claims.
 - On conflicting sources, favor recency + consistency and flag the discrepancy rather than silently picking one.
 
-## Specs & implementation plans
+## Specs, plans & written deliverables
 
-- When you produce an implementation plan or a spec for my review — in plan mode or in normal chat — also render it as an HTML artifact for readability, in addition to the written plan, not instead of it. Load the `artifact-design` skill first.
+- When you produce a document for me to read — an implementation plan, a spec, a findings or review write-up, an audit, a handoff meant for me rather than for a successor agent — also render it as an HTML artifact for readability, in addition to the written version, not instead of it. Load the `artifact-design` skill first. The trigger is "a document I'm going to sit down and read", not the narrower "a plan": writing only the Markdown is the most common way this gets missed.
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
 - **The link is the last thing in your reply.** Written plan first, then the artifact, then the path as the closing line — otherwise I have to scroll back up past the plan to open it.
 - Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.
@@ -90,7 +97,7 @@ Before fanning out subagents or building a Workflow, load the `orchestrating-sub
 
 `pre-compact.sh` re-injects branch and push state, files modified, test commands run, and the "preserve corrections and error strings verbatim" reminder — all from ground truth, so don't restate them. What the hook *cannot* derive, and you must carry across yourself: test **pass/fail results**, architectural decisions, and next steps. Never paraphrase an error string or a user correction into a summary of it. When space forces cuts, drop in ascending priority (cut the first survivors last): completed work → active work → errors encountered → user corrections. A user correction is the last thing to go.
 
-Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Auto-compaction reuses a summary precomputed in the background; a manual one preempts it and pays full price. Measured 2026-07-25: 52 of 52 compactions were manual and *none* hit the precompute (47 `miss_not_ready`), costing $48 in 24h at a 0.27 cacheRead:cacheCreation ratio — the only tool-call class that writes more cache than it reads back.
+Don't reach for `/compact` yourself — let the 85% auto-threshold fire. Not for the reason recorded on 2026-07-25 (52 of 52 manual, 47 `miss_not_ready`, $48 in 24h): that reading described a precompute that was merely *late*, and the mechanism is different. The background precompute is consulted **only** on the manual path, and `pre-compact.sh` is a `PreCompact` hook matching `auto|manual`, so the lookup short-circuits to `miss_hook` before it happens — a manual compaction can never hit the precompute while that hook exists. Keep the hook: it costs nothing on the auto path, which consults no precompute at all. Measured 2026-08-05 over 7 days: 3 of 5 compactions were auto (605k / 702k / 841k pre-tokens) and the 2 manual ones fired at 152k and 227k. The waste is compacting at a quarter of the threshold and throwing away half a million tokens of headroom — not the miss.
 
 {{ if .work }}
 @~/.claude/CLAUDE.local.md

@@ -89,6 +89,10 @@
       "Bash(jsonq:*)",
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
+      {{/* otel-sweep is otelq's question asked of every machine, and it earns the same grant the same way — by absence. ssh is ask-listed because it takes a destination and a command, both arbitrary; otel-sweep exposes neither. The destinations are a three-entry dict of literals and --only validates against that dict, so no argument names a host. The program that runs on each machine is PROBE, one module-level constant delivered on stdin to `python3 -`; nothing is ever interpolated into it or into any argv, so there is no position where caller data becomes a command. subprocess is always given an argv list and never shell=True, so there is no shell to escape. There is no --host, --url, --query or --output flag, every request is a GET, and PROBE writes no files — output is JSON on stdout.
+           The weak link is worth naming rather than hiding: on daniel-server Loki is not published on the host, so PROBE resolves the container's bridge address out of `docker inspect` and builds a URL from it. That is the one place remote data selects a network target. It is constrained by construction — the value must match an RFC1918 literal or it is discarded, and the port is a constant — so the reachable set is private addresses on that machine's own docker bridge and nothing else.
+           tests/otel-sweep.test.js pins the properties rather than sampling bad inputs: the destination enum, the absence of every redirecting flag, no shell=True or bare eval/exec/compile, PROBE never concatenated or formatted, the ssh argv built from constants with BatchMode=yes, the RFC1918 gate, and that the probe opens no files and sends no request body. If a --host flag or an interpolated command ever lands, this rule comes out in the same commit. */}}
+      "Bash(otel-sweep:*)",
       "Bash(yq:*)",
       {{/* xargs is NOT allow-listed, for the same reason env isn't: it takes a command as
            an argument, so no prefix of it is safe. It used to be allowed with `xargs *sh*`
@@ -544,6 +548,7 @@
       "Bash(docker compose build:*)",
       "Bash(docker compose restart:*)",
       "Bash(docker compose exec:*)",
+      {{/* curl stays ask-listed, and a prefix rule could not narrow it: `Bash(curl http://10.0.0.161/:*)` constrains nothing after the URL, so `curl http://10.0.0.161/x -o ~/.ssh/authorized_keys` would match it. The narrowing lives in allow-safe-curl.sh instead, which parses the whole line and auto-approves only a plain GET/HEAD against loopback or one of the three LAN hosts. wget has no such hook — it writes to disk by default, so the read-only shape curl has (stdout unless told otherwise) isn't there to check for. */}}
       "Bash(curl:*)",
       "Bash(wget:*)",
       "Bash(ssh:*)",

@@ -40,6 +40,7 @@ const TRACKED = [
   { type: 'dir', path: 'home/private_dot_claude/agents' },
   { type: 'dir', path: 'home/private_dot_claude/skills' },
   { type: 'dir', path: 'home/private_dot_claude/rules' },
+  { type: 'dir', path: 'home/private_dot_claude/output-styles' },
 ];
 
 function walk(absDir, acc) {

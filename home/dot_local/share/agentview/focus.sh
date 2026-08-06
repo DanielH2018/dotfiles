@@ -1,7 +1,10 @@
 # shellcheck shell=bash
 # agentview · focus — everything that turns a row into a focused terminal: locator
 # activation, pane resolution, ssh attach for remote rows, Windows-side focus/respawn.
-# Sourced by ~/.local/bin/agentview; needs common (win_roster) and the JQ_* fragments.
+# Sourced by ~/.local/bin/agentview; needs common (win_roster), the JQ_* fragments, and
+# actions (do_fold, for jump_or_report's fold: case) — every mode that calls jump_or_report
+# loads actions too. The one mode that loads this module without it is --resolve, which
+# only calls resolve_key and never jump_or_report.
 # SC2154: the loader assigns the shared globals this module reads, and shellcheck cannot
 # follow a sourced fragment back to it.
 # shellcheck disable=SC2154
@@ -44,6 +47,60 @@ av_activate_locator() {  # $1 = "backend:rest"; returns 0 if it handled focus, e
       return 0 ;;
     *) return 1 ;;   # none / unknown -> caller falls back to cwd-correlation
   esac
+}
+
+av_find_window() {  # $1 = window name -> echoes "<session>\t<window id>", or nothing
+  # `select-window -t "=name"` is SESSION-relative: it only ever matches inside the client's
+  # own session. Every jump made from a different session therefore missed the window it was
+  # meant to reuse and opened another one, so a machine collected one duplicate per session.
+  # Search every session, preferring the current one so a match here never moves the client.
+  # Window ids (@N) rather than session:index: an index shifts when a lower window closes.
+  local name="$1" cur
+  [ -n "$name" ] || return 1
+  cur=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  tmux list-windows -a -F '#{session_name}	#{window_id}	#{window_name}' 2>/dev/null |
+    awk -F'\t' -v n="$name" -v s="$cur" '
+      $3 != n { next }
+      { if ($1 == s) { here = $1 "\t" $2; exit } if (!other) other = $1 "\t" $2 }
+      END { print (here ? here : other) }'
+}
+
+av_host_window() {  # $1 = host -> sets $_avwin to that host's one window name
+  # One window per host, not per agent: jumping between two agents on the same machine
+  # re-points this window instead of adding another. The "av:" prefix keeps the global
+  # name search from ever matching — and respawning — a window the user named themselves.
+  host_label "$1"
+  _avwin="av:$_hl"
+}
+
+av_open_in_host_window() {  # $1 = host, $2 = shell command -> run it in that host's window
+  local host="$1" cmd="$2" wname cur found wsess wid shown
+  av_host_window "$host"; wname="$_avwin"
+  cur=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  found=$(av_find_window "$wname")
+  if [ -n "$found" ]; then
+    wsess="${found%%	*}"; wid="${found##*	}"
+    shown=$(tmux show-options -w -v -t "$wid" @av_cmd 2>/dev/null)
+    # Only respawn when the window points somewhere else — re-running the command it is
+    # already showing would kill a live attach and drop its scrollback for no gain. An
+    # untagged window reads as empty and IS respawned: we cannot know what it holds, and
+    # showing the wrong agent is a worse failure than losing scrollback.
+    if [ "$shown" != "$cmd" ]; then
+      tmux respawn-pane -k -t "$wid" "$cmd" 2>/dev/null || return 1
+      tmux set-option -w -t "$wid" @av_cmd "$cmd" 2>/dev/null
+    fi
+    tmux select-window -t "$wid" 2>/dev/null
+  else
+    tmux new-window -n "$wname" "$cmd" || return 1
+    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    wsess=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+    wid=$(tmux display-message -p '#{window_id}' 2>/dev/null)
+    tmux set-option -w -t "$wid" @av_cmd "$cmd" 2>/dev/null
+  fi
+  # Cross-session match: select-window moved the window server-side, switch-client brings
+  # this client to it. Same session needs neither, and switching would be a no-op anyway.
+  [ "$wsess" = "$cur" ] || tmux switch-client -t "$wsess" 2>/dev/null
+  return 0
 }
 
 resolve_key() {  # $1 = KEY -> echoes the CLIENT-side pane id to jump to (or nothing)
@@ -100,19 +157,19 @@ remote_attach_bg() {  # $1=host $2=job id -> `claude attach` a REMOTE daemon ses
   # the login shell we don't get — so extend PATH remotely. Written WITHOUT double quotes so
   # the string survives the tmux `sh -c` layer below with $HOME/$PATH still unexpanded, i.e.
   # resolved on the remote and not against this machine's environment.
-  if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"; wname="cc-$job"
-  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; wname="agents"; fi
+  if [ -n "$job" ]; then rcmd="PATH=\$HOME/.local/bin:\$PATH claude attach $job"
+  else rcmd="PATH=\$HOME/.local/bin:\$PATH claude agents"; fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux select-window -t "=$wname" 2>/dev/null && return 0
-    tmux new-window -n "$wname" "ssh -t $sshalias '$rcmd'"
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    av_ssh_opts_str
+    av_open_in_host_window "$host" "ssh $AV_SSH_OPTS_STR-t $sshalias '$rcmd'"
     return 0
   fi
-  exec ssh -t "$sshalias" "$rcmd"
+  av_ssh_opts
+  exec ssh "${AV_SSH_OPTS[@]}" -t "$sshalias" "$rcmd"
 }
 
 remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the pane
-  local host="$1" loc="$2" backend rest session pane sshalias rcmd
+  local host="$1" loc="$2" backend rest session pane sshalias rcmd wname
   backend="${loc%%:*}"; rest="${loc#*:}"
   [ "$backend" = "bg" ] && { remote_attach_bg "$host" "$rest"; return $?; }
   [ "$backend" = "tmux" ] || return 1        # only tmux remotes attach; others list-only
@@ -127,11 +184,9 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     # Popup entry point (prefix+g): the picker is a display-popup that dies with its command,
     # so attaching in place would strand the session in a 90%x90% overlay. Use a window —
-    # REUSING the one already attached to this remote session, or repeat jumps leak one each.
-    # Same reuse trick av_open_claude_cmd applies to bg sessions.
-    tmux select-window -t "=$session" 2>/dev/null && return 0
-    tmux new-window -n "$session" "ssh -t $sshalias \"$rcmd\""
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name matchable
+    # this host's one window, which av_open_in_host_window re-points at the target session.
+    av_ssh_opts_str
+    av_open_in_host_window "$host" "ssh $AV_SSH_OPTS_STR-t $sshalias \"$rcmd\""
     return 0
   fi
   # No tmux: the picker owns its terminal — the dedicated "Agent View" WezTerm tab runs
@@ -142,7 +197,8 @@ remote_attach() {  # $1=host $2=locator -> open a fresh view ssh-attached at the
   # ABOVE this line, so whenever WezTerm exported that var it outranked the path that works and
   # the jump became a silent no-op. Errors (host down, session gone) surface here instead.
   command -v ssh >/dev/null 2>&1 || return 1
-  exec ssh -t "$sshalias" "$rcmd"
+  av_ssh_opts
+  exec ssh "${AV_SSH_OPTS[@]}" -t "$sshalias" "$rcmd"
 }
 
 resolve_windows_pane() {  # $1 = the row's cwd -> echo a live Windows pane id serving it (or nothing)
@@ -282,19 +338,13 @@ av_activate_windows() {  # $1 = "wezterm:<pane_id>", $2 = the row's cwd -> focus
 }
 
 av_open_claude_cmd() {  # $1=claude subcommand string -> run it in a pane of the active
-  # backend, REUSING a window that already targets the same session so repeated jumps
-  # don't leak a ~400MB pane each (`claude attach` keeps the session alive after its
-  # client exits). One window per bg session (cc-<short-sid>), one shared roster window.
+  # backend. This machine gets ONE window, re-pointed per jump rather than one window per
+  # session — repeated jumps used to leak a ~400MB pane each, and a window per agent still
+  # grew without bound. `claude attach` keeps the session alive when its client exits, so
+  # re-pointing the window costs a viewer, never the agent.
   command -v claude >/dev/null 2>&1 || return 1
-  local wname sid
-  case "$1" in
-    "attach "*) sid="${1#attach }"; wname="cc-${sid:0:8}";;
-    *)          wname="agents";;
-  esac
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux select-window -t "=$wname" 2>/dev/null && return 0   # reuse -> no window leak
-    tmux new-window -n "$wname" "claude $1"
-    tmux set-window-option automatic-rename off 2>/dev/null   # keep the name stable for reuse
+    av_open_in_host_window "$selfhost" "claude $1"
     return 0
   fi
   # No tmux: the picker owns its terminal, so run the session HERE and it lands in the tab you
@@ -340,10 +390,41 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   return 0
 }
 
+mark_seen() {  # $1 = KEY -> record this row's ts as the last time you actually LOOKED at it.
+  # Called only from jump_or_report, so only a real focus counts. `--resolve` prints a pane id
+  # without coming through here, and that is deliberate rather than incidental: reading a
+  # session is not seeing it, and keeping the two apart is what makes the DONE group mean
+  # "finished while you were away" instead of "untouched by any tool".
+  # KEY is host US cwd US state US ts US title US pane US kind US locator (render.sh).
+  local key="$1" host cwd kind ts tmp="$seenfile.tmp.$$"
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  ts=$(printf '%s' "$key" | cut -d"$US" -f4)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  [ -n "$cwd" ] || return 0                 # header/spacer row: no session behind it
+  compute_seen_id "$host" "$cwd" "$kind"
+  if [ -f "$seenfile" ]; then
+    # Drop any previous stamp for this identity. awk on an exact field-1 match rather than a
+    # grep pattern: the id embeds a cwd, and a path is full of regex metacharacters.
+    if awk -F'\t' -v id="$_sid" '$1 != id' "$seenfile" > "$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$seenfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else rm -f "$tmp" 2>/dev/null; fi
+  fi
+  printf '%s\t%s\n' "$_sid" "$ts" >> "$seenfile" 2>/dev/null
+  return 0
+}
+
 jump_or_report() {  # $1 = KEY -> jump, or say why not. Every entry point that focuses a session
   # goes through here: a jump that fails silently is indistinguishable from a dead keybinding,
   # so the failure must reach the terminal AND the exit status.
-  do_jump "$1" && return 0
+  # A fold header has no session behind it, so toggling it (rather than falling into
+  # do_jump, which would report "no pane found") is what a fold: key needs. --jump-nth's
+  # awk (executable_agentview) already excludes fold: rows from its count, so this guard is
+  # a safety net for a direct `agentview --jump fold:<group>`, not the normal path there.
+  case "$1" in fold:*) do_fold "$1"; return 0 ;; esac
+  # Stamp only on a jump that actually landed: a failed focus never showed you anything, so
+  # clearing DONE there would hide the row you were trying to reach.
+  do_jump "$1" && { mark_seen "$1"; return 0; }
   printf 'agentview: no pane found for that session\n' >&2
   return 1
 }

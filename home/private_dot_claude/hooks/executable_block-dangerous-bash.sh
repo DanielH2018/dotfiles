@@ -27,7 +27,61 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 # target) and drop quote characters, which are grouping rather than content —
 # without this, `rm -rf "$HOME"` reads as `rm -rf "$HOME"` and slips past the
 # `\s\$HOME` anchor that catches the unquoted form.
-SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+#
+# Backslash-escaped separators are dropped BEFORE that collapse. `\|`, `\;` and `\&` are
+# never command separators in any quoting context — they are regex alternation, a literal,
+# or an escape inside an argument — but the collapse turned each into a real one and the
+# whole-string rules then matched across it, denying text ABOUT a dangerous command as if
+# it were one. Verified before the fix: `ls | grep -i 'danger\|bash'` normalized to
+# `... |bash` and hit the pipe-to-shell rule; `grep "a\;rm -rf / " notes.txt` and
+# `grep "x\&\& terraform apply" plan.md` both denied on the rule behind the separator.
+# Deleting the two characters rather than substituting a space keeps the surrounding
+# tokens joined, so no rule below sees a new word boundary either.
+#
+# An escaped BACKSLASH has to be neutralized first, because it does not escape what
+# follows it: in `echo a\\& terraform apply` the `&` is a real separator and terraform
+# really does run. Pairing that second backslash with the separator would delete a real
+# one and drop the binary out of command position — deny silently became allow, verified
+# for all three characters (`\\|` was already reachable this way before `\;` and `\&`
+# joined it). Two spaces is exactly what the tr below turns `\\` into, so neutralizing it
+# here only moves that substitution earlier.
+SCAN_SRC=${COMMAND//\\\\/  }
+SCAN_SRC=${SCAN_SRC//\\|/}
+SCAN_SRC=${SCAN_SRC//\\;/}
+SCAN_SRC=${SCAN_SRC//\\&/}
+SCAN=$(printf '%s' "$SCAN_SRC" | tr '\n\t\\' '   ' | tr -d "\"'")
+
+# Command-position anchors, shared by the rules further down and by the shadow census.
+#
+# They live up here rather than beside their rules because the census EXIT trap installed
+# below reads both. A command that denies early — a gh api mutation, curl-pipe-to-shell,
+# the fork bomb, a secret read, a kill rule — used to exit before the rules' own
+# definitions were reached, leaving the trap to expand them unset.
+#
+# The failure was quieter than it looks. Under `set -u` an unset expansion aborts only the
+# pipeline subshell running that `grep`, not the trap, so a census record was still written
+# — with `newly_anchored` always null. The census reported "nothing newly anchored here"
+# for exactly the early denies it exists to measure, and the only outward sign was an
+# unbound-variable line on stderr. Verified across the move: a gh api mutation followed by
+# a newline and `terraform destroy` censused null before, ["terraform"] after. A
+# `${TF_AT:-}` guard would have silenced the stderr line and kept the blindness.
+
+# The wrapper must be in command position. Matching it after any whitespace treated
+# every command that merely mentions ssh as a remote invocation, then scanned the whole
+# string — so `sudo systemctl status ssh` was denied as "sudo inside an ssh command".
+# Matched on COMMAND with nothing allowed before the binary, so `TERM=x ssh homelab
+# reboot`, `command ssh homelab reboot` and `"ssh" homelab reboot` all slipped the whole
+# remote block (verified: plain `ssh homelab reboot` matched, those three did not).
+# Scan SCAN so quoting cannot hide the binary, and allow leading env assignments and
+# wrapper words — the same idiom TF_AT uses just below.
+SSH_AT_RE='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'
+
+# Same anchor for the terraform family: the binary must be at the start or after a
+# separator, allowing leading env assignments. Matching it anywhere meant quote stripping
+# exposed the words inside strings, so `git commit -m "document terraform apply steps"`
+# was denied.
+TF_BIN='(terraform|tofu|terragrunt)'
+TF_AT='(^|[;&|])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*'
 
 # --- M02 shadow census ----------------------------------------------------------------------
 #
@@ -132,18 +186,7 @@ deny() {
 # `hl` is covered too: allow-readonly-remote.sh auto-approves read-only `hl` verbs and
 # leans on this block as its deny backstop, but the backstop only ever matched `ssh`,
 # so a destructive `hl` payload degraded from denied to merely prompted.
-#
-# The wrapper must be in command position. Matching it after any whitespace treated
-# every command that merely mentions ssh as a remote invocation, then scanned the whole
-# string — so `sudo systemctl status ssh` was denied as "sudo inside an ssh command".
-# Matched on COMMAND with nothing allowed before the binary, so `TERM=x ssh homelab
-# reboot`, `command ssh homelab reboot` and `"ssh" homelab reboot` all slipped the whole
-# remote block (verified: plain `ssh homelab reboot` matched, those three did not).
-# Scan SCAN so quoting cannot hide the binary, and allow leading env assignments and
-# wrapper words — the same idiom TF_AT already uses further down.
-# Held in a variable so the M02 shadow census re-uses this exact rule per segment instead
-# of a second copy of it.
-SSH_AT_RE='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?(ssh|hl)([[:space:]]|$)'
+# The anchor itself, and why it is anchored, are defined near the top of the file.
 if echo "$SCAN" | grep -qiE "$SSH_AT_RE"; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
@@ -282,6 +325,30 @@ if echo "$COMMAND" | grep -qE ':\(\)\{.*\};:'; then
   deny "Blocked: fork bomb detected."
 fi
 
+# Killing a process selected by matching its name or command line. This box runs several
+# background agent jobs at once, and an agent's own argv carries both the `claude` binary
+# and its worktree path — so `pkill -f <worktree>` or `kill $(pgrep -f node)` puts the
+# caller in its own kill list, and the session dies mid-command with no error to read.
+# `pgrep`/`ps` on their own stay allowed: detection is not the hazard, and
+# serve-artifacts.sh depends on `pgrep -f` to decide whether to start its server.
+KILL_HINT="Kill a PID you captured at spawn, or resolve one and confirm it first (ss -H -ltnp for a port owner, then check /proc/<pid>/cwd)."
+# Same command-position anchor as SSH_AT_RE/GH_API_AT: leading env assignments and wrapper
+# words allowed, but the binary must start a command. Matching anywhere would deny
+# `git commit -m 'add pkill guard'`, which is how the terraform rule broke once already.
+KILL_AT='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?'
+if echo "$SCAN" | grep -qE "$KILL_AT(pkill|killall)([[:space:]]|$)"; then
+  deny "Blocked: pkill/killall selects processes by name or command line, which can include this agent session. $KILL_HINT"
+fi
+if echo "$SCAN" | grep -qE '\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?kill([[:space:]]|$)'; then
+  deny "Blocked: piping matched PIDs into kill. $KILL_HINT"
+fi
+# Command substitution instead of a pipe — `kill $(pgrep -f x)`, `kill \`ps ... \``.
+# Matched on COMMAND: SCAN keeps `$(` but the raw string is what the other substitution
+# rule reads, and there is no quoting trick here for SCAN to undo.
+if echo "$COMMAND" | grep -qE '\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b'; then
+  deny "Blocked: kill of a PID found by pattern matching (pgrep/ps). $KILL_HINT"
+fi
+
 # Generic pipe-to-shell (belt-and-suspenders with permissions.deny)
 if echo "$SCAN" | grep -qE "$PIPE_TO_SHELL"; then
   deny "Blocked: piping output to a shell interpreter. Download, inspect, then run."
@@ -360,12 +427,8 @@ fi
 # indirection (xargs/eval/$VAR) or write-a-script-then-run — see review notes.
 # Read-only ops stay allowed: plan, validate, fmt, show, output, providers,
 # graph, init, get, state list/show, workspace list/select.
-TF_BIN='(terraform|tofu|terragrunt)'
 TF_SCAN="$SCAN"
-# The binary must be in command position (start, or after a separator, allowing leading
-# env assignments). Matching it anywhere meant quote stripping exposed the words inside
-# strings, so `git commit -m "document terraform apply steps"` was denied.
-TF_AT='(^|[;&|])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*'
+# TF_BIN and the TF_AT command-position anchor are defined near the top of the file.
 # Destructive verb as the first token after the binary (optional global flags
 # like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
 # since the verb still appears as a whole word.

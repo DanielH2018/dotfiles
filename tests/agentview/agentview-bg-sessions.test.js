@@ -66,10 +66,28 @@ if [ "$1" = "display-popup" ]; then
   bash -c "$cmd"
   exit $?
 fi
+sess="\${AV_TMUX_SESSION:-0}"
+opts="$TMUX_LOG.opts"; touch "$opts"
+# Registry rows are "<session>\\t<window id>\\t<name>", matching the -F the lookup asks for.
+# $opts holds per-window user options as "<window id>\\t<value>", so the @av_cmd guard that
+# decides respawn-vs-focus is exercised rather than assumed.
 case "$1" in
-  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
-  new-window)    echo "$3" >> "$wins"; exit 0 ;;
-  kill-window)   name="\${3#=}"; grep -vxF "$name" "$wins" > "$wins.t" 2>/dev/null; mv "$wins.t" "$wins"; exit 0 ;;
+  display-message)
+    case "$3" in *window_id*) tail -n1 "$wins" | cut -f2 ;; *) echo "$sess" ;; esac; exit 0 ;;
+  list-windows)  cat "$wins"; exit 0 ;;
+  select-window)
+    # Both real target forms: "=name" resolves ONLY within the client's own session, a
+    # window id resolves anywhere. A stub that treats them alike proves nothing.
+    case "$3" in
+      =*) awk -F'\\t' -v n="\${3#=}" -v s="$sess" '$3==n && $1==s{f=1} END{exit !f}' "$wins" && exit 0; exit 1 ;;
+      *)  cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+    esac ;;
+  new-window)    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"; exit 0 ;;
+  kill-window)   awk -F'\\t' -v n="\${3#=}" '$3!=n' "$wins" > "$wins.t" 2>/dev/null; mv "$wins.t" "$wins"; exit 0 ;;
+  show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
+  set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"
+                 printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
+  respawn-pane)  exit 0 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -264,34 +282,71 @@ test('sandbox rows are not touched by the registry merge', { skip }, () => {
 const BG_JOB = 'dddd4444';
 const bgKey = cardKey([HOST, '/home/daniel', 'working', '0', 'Some Job', 'none', 'bg', `bg:${BG_JOB}`]);
 
-test('--jump on a bg row inside tmux runs `claude attach <jobId>` in a per-session window', { skip }, () => {
+// This machine's window. HOST is also what the `hostname` stub reports, so the local label
+// and the winhost label are the same entry — "PC" — in the fixture's HOST_LABEL map.
+const LOCAL_WIN = 'av:PC';
+
+test('--jump on a bg row inside tmux runs `claude attach <jobId>` in this machine\'s window', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const r = run(env, ['--jump', bgKey], { TMUX: '/tmp/tmux-1000/default,1,0' });
   assert.strictEqual(r.code, 0);
   assert.match(fs.readFileSync(tmuxLog, 'utf8'),
-    new RegExp(`new-window -n cc-${BG_JOB} claude attach ${BG_JOB}`));
+    new RegExp(`new-window -n ${LOCAL_WIN} claude attach ${BG_JOB}`));
 });
 
-test('a second --jump to the same bg session reuses its window (no per-jump leak)', { skip }, () => {
+test('a second --jump to the SAME bg session neither adds nor respawns a window', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const tmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
   run(env, ['--jump', bgKey], tmux);
   run(env, ['--jump', bgKey], tmux);          // jump to the SAME live session again
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  const spawns = (log.match(new RegExp(`new-window -n cc-${BG_JOB}`, 'g')) || []).length;
+  const spawns = (log.match(new RegExp(`new-window -n ${LOCAL_WIN}`, 'g')) || []).length;
   assert.strictEqual(spawns, 1, 'the window is spawned once, then reused — this is the leak fix');
-  assert.match(log, new RegExp(`select-window -t =cc-${BG_JOB}`), 'the reuse path checks for an existing window');
+  // The @av_cmd guard: the window already shows this agent, so re-running the attach would
+  // kill a live client and drop its scrollback for nothing.
+  assert.ok(!log.includes('respawn-pane'), 'a window already showing this agent is left alone');
+  assert.match(log, /select-window -t @\d+/, 'the reuse path checks for an existing window');
 });
 
-test('--jump to two different bg sessions opens two distinct windows', { skip }, () => {
+// The bug this pins: `select-window -t "=name"` only ever matched inside the client's own
+// session, so jumping from a second tmux session missed the window and opened another one —
+// one duplicate per session the user had open. Both assertions must survive the mutation
+// back to the bare `=name` form.
+test('a jump from a DIFFERENT tmux session reuses the window instead of duplicating it', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const tmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, ['--jump', bgKey], { ...tmux, AV_TMUX_SESSION: '0' });   // window lands in session 0
+  run(env, ['--jump', bgKey], { ...tmux, AV_TMUX_SESSION: '9' });   // picker now runs in session 9
+  const log = fs.readFileSync(tmuxLog, 'utf8');
+  const spawns = (log.match(new RegExp(`new-window -n ${LOCAL_WIN}`, 'g')) || []).length;
+  assert.strictEqual(spawns, 1, 'the window in session 0 is found from session 9, not duplicated');
+  assert.match(log, /switch-client -t 0\b/, 'and the client is moved to the session holding it');
+});
+
+test('reuse inside the SAME session does not move the client', { skip }, () => {
+  const { env, tmuxLog } = makeEnv();
+  const tmux = { TMUX: '/tmp/tmux-1000/default,1,0', AV_TMUX_SESSION: '0' };
+  run(env, ['--jump', bgKey], tmux);
+  run(env, ['--jump', bgKey], tmux);
+  assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('switch-client'),
+    'a match in the current session is already where the client is');
+});
+
+// The per-host model, and the inverse of what this file asserted before it: two agents on
+// one machine share one window, re-pointed on each jump, rather than accumulating a window
+// each. `claude attach` leaves the session running when its client exits, so the agent that
+// was showing survives being replaced — only the viewer is swapped.
+test('--jump to two different bg sessions re-points the one window instead of adding another', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
   const tmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
   const other = cardKey([HOST, '/home/daniel', 'working', '0', 'Other Job', 'none', 'bg', 'bg:eeee5555']);
   run(env, ['--jump', bgKey], tmux);
   run(env, ['--jump', other], tmux);
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, new RegExp(`new-window -n cc-${BG_JOB}`), 'first session gets its window');
-  assert.match(log, /new-window -n cc-eeee5555/, 'a distinct session gets a separate window');
+  const spawns = (log.match(new RegExp(`new-window -n ${LOCAL_WIN}`, 'g')) || []).length;
+  assert.strictEqual(spawns, 1, 'the machine gets one window, not one per agent');
+  assert.match(log, /respawn-pane -k -t @\d+ claude attach eeee5555/,
+    'the second agent takes over that window rather than opening its own');
 });
 
 test('--jump on a bg row from a bare shell execs `claude attach <jobId>` in place', { skip }, () => {

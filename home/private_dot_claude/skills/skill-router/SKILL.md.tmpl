@@ -27,7 +27,8 @@ It does no work itself; it orients, then hands off to the skill that does the jo
 {{ end -}}
 4. **Build** — the `implementer` agent, `superpowers:executing-plans`, or
    `superpowers:test-driven-development` for a single behaviour test-first.
-5. **Check** — `/review` (a PR); `/security-review` +
+5. **Check** — `/code-review high` (the current diff, or `<pr#>` for a PR) — always with a level,
+   since a bare `/code-review` reuses whatever level you last typed; `/security-review` +
    `security-sweep` before merging anything touching auth/crypto/data/PCI; `/simplify` for
    cleanup-only{{ if .work }}; `/verify` to drive the change end-to-end{{ end }}.
 

@@ -23,8 +23,18 @@ PRUNE=$(( 7 * 86400 ))
 # briefly on disk yet absent from the roster; without this it could be reaped mid-birth. Only ever
 # delays reaping a genuinely dead row by one refresh.
 REAP_GRACE=120
-# remote_cache (homelab ssh snapshot) is defined near the top so do_remove can reach it.
+# remote_cache_for (homelab ssh snapshot, one per host) is defined in common.sh so do_remove
+# can reach it.
 rows=""
+
+av_write_status() {  # $1=status path $2=outcome -> atomic tmp+mv write of "<outcome>\t<epoch>"
+  # Same tmp+mv shape as the cache write below: a reader (host_status_rows) reads this file
+  # with a plain `read`, and a `>` truncate landing mid-write would hand it an empty line —
+  # an unreachable host rendering as silence, which is the exact bug this file exists to fix.
+  local status="$1" outcome="$2" stmp="$1.tmp.$$"
+  printf '%s\t%s\n' "$outcome" "$(date +%s)" > "$stmp" 2>/dev/null && mv -f "$stmp" "$status" 2>/dev/null \
+    || rm -f "$stmp" 2>/dev/null
+}
 
 # Claude's own per-process registry (~/.claude/sessions/<pid>.json) is the authoritative
 # live view. Daemon-hosted background jobs (`claude agents`) never fire UserPromptSubmit
@@ -202,14 +212,17 @@ gather_local_rows() {  # append local session rows to global `rows`, prune >7d +
 }
 
 gather_remote_rows() {  # append cached homelab rows to `rows` (display-filtered, never pruned)
-  local rrows
-  [ -s "$remote_cache" ] || return
-  # Read via stdin, not a path arg, so native jq.exe isn't handed an MSYS path it
-  # can't open. Default mode applies the filter to each object in the concatenated
-  # per-session stream (the cache is a `cat` of every remote *.json).
-  rrows=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
-    $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" < "$remote_cache" 2>/dev/null)
-  [ -n "$rrows" ] && rows+="$rrows"$'\n'
+  local host cache rrows
+  while IFS= read -r host; do
+    cache="$(remote_cache_for "$host")"
+    [ -s "$cache" ] || continue
+    # Read via stdin, not a path arg, so native jq.exe isn't handed an MSYS path it
+    # can't open. Default mode applies the filter to each object in the concatenated
+    # per-session stream (the cache is a `cat` of every remote *.json).
+    rrows=$(MSYS_NO_PATHCONV=1 jq -r --argjson now "$now" "
+      $JQ_TS | if \$ts > 0 and \$age > 86400 then empty else $JQ_ROW end" < "$cache" 2>/dev/null)
+    [ -n "$rrows" ] && rows+="$rrows"$'\n'
+  done < <(remote_hosts)
 }
 
 gather_windows_rows() {  # append Windows-side rows (same machine, via /mnt/c). No dead-pid
@@ -328,8 +341,7 @@ sync_windows_rows() {  # write $windir rows for live Windows sessions that never
   return 0
 }
 
-refresh_remote() {  # pull homelab state over ssh, fold its live registry in, replace the cache
-  local out rc tmp="$remote_cache.tmp.$$"
+refresh_one_remote() {  # $1 = host. Pull its state, fold its live registry in, replace its cache.
   # Mirror the LOCAL live-registry override (load_session_map + merge_session_row) on the
   # homelab so cached remote rows can't go stale. A remote session's hook state
   # (~/.claude/agent-view/<sid>.json) LAGS: an idle/permission Notification writes
@@ -341,10 +353,15 @@ refresh_remote() {  # pull homelab state over ssh, fold its live registry in, re
   # waiting->needs-input, idle/else->completed), newest updatedAt winning per session, dead
   # pids skipped, sdk/spare processes ignored. A session with no live registry entry (older
   # claude, or a genuinely gone process) passes its raw hook row through unchanged, so a
-  # pre-registry homelab still renders. One-shot ssh (NO ControlMaster) bounded by
-  # ConnectTimeout — we KEEP the old snapshot only when ssh itself can't connect (rc 255),
-  # not when there simply are no remote sessions.
-  out=$(ssh -o ConnectTimeout=3 -o BatchMode=yes daniel-server bash -s <<'REMOTE_FOLD' 2>/dev/null
+  # pre-registry homelab still renders. Multiplexed ssh reuses a persistent master socket
+  # (ControlPersist) with fast detection of dead peers (ServerAliveInterval + ServerAliveCountMax),
+  # and initial connections fail fast (ConnectTimeout).
+  local host="$1" out rc cache status tmp
+  cache="$(remote_cache_for "$host")"
+  status="$(remote_status_for "$host")"
+  tmp="$cache.tmp.$$"
+  av_ssh_opts
+  out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "${HOST_SSH[$host]}" bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob
 declare -A M UPD
 # sid -> "state<TAB>ts<TAB>kind<TAB>jobId" from live, non-sdk, alive-pid sessions (newest
@@ -392,6 +409,169 @@ done
 REMOTE_FOLD
 )
   rc=$?
-  [ "$rc" -eq 255 ] && return
-  printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  # Three outcomes, because two of them used to look identical to "no sessions":
+  #   255      ssh could not connect, OR connected and then went silent long enough for the
+  #            keepalive (ServerAliveInterval/ServerAliveCountMax) to kill it -- OpenSSH exits
+  #            255 for "Timeout, server not responding" too, not just a failed connect. Both
+  #            cases mean the host isn't answering right now, so both map to unreachable: the
+  #            previous snapshot is the best data available either way.
+  #   non-zero the host answered but its side failed
+  #   0 + empty output is a LEGITIMATE empty roster and does replace the cache
+  if [ "$rc" -eq 255 ]; then
+    av_write_status "$status" unreachable
+    return
+  fi
+  if [ "$rc" -ne 0 ]; then
+    av_write_status "$status" failed
+    return
+  fi
+  # `ok` is gated on the mv actually landing: if it fails (ENOSPC, a read-only $HOME) the
+  # cache stays whatever it was while the status would otherwise claim "ok" -- a host that
+  # reads fresh while its data is stale, the same lie this file exists to remove, just local.
+  # Leaving the status untouched on failure is deliberate: its epoch keeps aging, which
+  # self-signals staleness correctly, where writing a fresh unreachable/failed row would not.
+  if printf '%s' "$out" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null; then
+    av_write_status "$status" ok
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+}
+
+gc_orphan_files() {  # remove agentview litter that nothing else ever collects:
+  #   ~/.agentview-remote-cache               the single pre-split snapshot, retired when the
+  #                                           remote cache became one file per host
+  #   <file>.tmp.<pid>                        an atomic write whose writer died before its mv
+  #   ~/.agentview-fzfport.<pid>              the picker's --listen port; the EXIT trap removes
+  #                                           it normally, a SIGKILLed picker does not
+  #   .agentview-remote-{cache,status}.<host> for a host no longer in HOST_SSH
+  # Runs once per --refresh-remote, deliberately NOT on the render path: none of this changes
+  # what the picker shows, and the render is what the freshness work spent its effort keeping
+  # fast. Every rm is best-effort — losing a race to another refresh is not an error.
+  local hosts f pid host mins dirs
+  hosts="$(remote_hosts)"
+  # An empty host table means the caller never loaded one, NOT that every host retired. Acting
+  # on that reading would delete the cache of every live host and blank the picker's remote
+  # rows, so refuse the whole pass rather than the per-host branch alone.
+  [ -n "$hosts" ] || return 0
+
+  rm -f "$HOME/.agentview-remote-cache" 2>/dev/null
+
+  # A dead writer alone is not enough to condemn a tmp file: pids recycle, so one whose number
+  # got reused would never be collected, and a live writer mid-mv must never be touched. Require
+  # both — a writer that is gone AND a file that has sat unchanged longer than a refresh cycle.
+  mins=$(( REAP_GRACE / 60 )); [ "$mins" -lt 1 ] && mins=1
+  dirs=( "$HOME" "$HOME/.claude" )
+  [ -n "${windir:-}" ] && [ -d "$windir" ] && dirs+=( "$windir" )
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    pid="${f##*.}"
+    case "$pid" in ''|*[!0-9]*) continue;; esac
+    kill -0 "$pid" 2>/dev/null && continue
+    rm -f "$f" 2>/dev/null
+  done < <(find "${dirs[@]}" -maxdepth 1 -type f \
+             \( -name '.agentview-*.tmp.*' -o -name 'agent-view-*.tmp.*' \
+                -o -name '*.json.tmp.*' -o -name '.agentview-fzfport.*' \) \
+             -mmin "+$mins" 2>/dev/null)
+
+  # Retired hosts. Gated hardest of the four: this is the only predicate whose false positive
+  # deletes live data rather than litter. Host names carrying a dot would mis-split here; the
+  # HOST_SSH keys do not, and a new one with a dot would break remote_cache_for's readers too.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    host="${f##*.}"
+    [ -n "$host" ] || continue
+    printf '%s\n' "$hosts" | grep -qxF "$host" && continue
+    rm -f "$f" 2>/dev/null
+  done < <(find "$HOME" -maxdepth 1 -type f \
+             \( -name '.agentview-remote-cache.*' -o -name '.agentview-remote-status.*' \) \
+             ! -name '*.tmp.*' 2>/dev/null)
+}
+
+refresh_remote() {  # fan out across every configured host, concurrently
+  # Serial would cost the sum of the handshakes on a cold start. This runs off the render
+  # path already, but the picker live-reloads when it finishes, so the wait is visible.
+  local host p pids=()
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    refresh_one_remote "$host" &
+    pids+=("$!")
+  done < <(remote_hosts)
+  for p in "${pids[@]}"; do wait "$p" 2>/dev/null || true; done
+}
+
+post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into the live picker.
+  # Shared by --refresh-remote (startup + CTRL+F) and the watch loop below, so there is one
+  # curl call to keep working instead of two copies drifting apart. Missing curl or an empty
+  # port degrades quietly -- the picker just keeps showing what it already has.
+  local pf="$1" p self
+  command -v curl >/dev/null 2>&1 || return 0
+  [ -n "$pf" ] || return 0
+  for _ in $(seq 1 40); do [ -s "$pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
+  p=$(cat "$pf" 2>/dev/null)
+  self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
+      --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
+  return 0
+}
+
+# How long a quiet picker waits before re-fetching the remote hosts. Local changes do not
+# wait for this -- they arrive as inotify events. Validated once here, not just defaulted: a
+# non-numeric override would make every `sleep`/`inotifywait -t` below fail or return
+# instantly, turning the loop into a busy-spin (see av_watch_once). A floor of 1, not a reject
+# of 0: "0" is all-digits and would otherwise sail through as a valid interval, and `sleep 0`
+# returns in about 1ms -- which also defeats the floor-sleep backstop below, since that backstop
+# IS a `sleep "$AV_WATCH_INTERVAL"`. Raising instead of rejecting also reads "as responsive as
+# possible" the way someone setting 0 probably meant it, rather than silently landing on 30.
+AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
+case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
+[ "$AV_WATCH_INTERVAL" -ge 1 ] || AV_WATCH_INTERVAL=1
+
+av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
+  # The blocking wait runs BACKGROUNDED + `wait`ed on, not as a plain foreground command: bash
+  # forwards a signal to a shell blocked in `wait` immediately, but does NOT forward one to a
+  # shell blocked on a synchronous foreground child -- that child would keep running as an
+  # orphan for up to the full interval after the picker's EXIT trap tries to kill this loop.
+  # _av_watch_child is deliberately NOT local: av_watch_loop's TERM trap has to reach it.
+  local rc
+  # A freshly-provisioned box has no statedir until the register hook's first write --
+  # inotifywait can't watch a path that doesn't exist, and would error out (rc 1) rather than
+  # time out (rc 2), which is exactly the busy-spin case handled below.
+  mkdir -p "$statedir" 2>/dev/null
+  if command -v inotifywait >/dev/null 2>&1; then
+    # -qq stays silent. 2 means "timed out with no event", which is the cue to look at the
+    # remote hosts; 0 means a real event fired.
+    inotifywait -qq -t "$AV_WATCH_INTERVAL" \
+      -e close_write -e create -e delete -e moved_to "$statedir" >/dev/null 2>&1 &
+    _av_watch_child=$!
+    wait "$_av_watch_child"
+    rc=$?
+  else
+    # No inotify-tools on this machine. Degrade to a plain timer rather than stopping: a
+    # picker that silently never repaints is the bug this task exists to fix.
+    sleep "$AV_WATCH_INTERVAL" &
+    _av_watch_child=$!
+    wait "$_av_watch_child"
+    rc=$?
+    [ "$rc" -eq 0 ] && rc=2   # a completed sleep normalizes to "timeout", same as inotifywait's own
+  fi
+  # 0 (a real event) and 2 (a clean timeout, from either path above) both already took roughly
+  # the interval. Anything else -- inotifywait erroring out (an exhausted inotify watch/instance
+  # limit, the target vanishing mid-run) or `sleep` itself failing -- returns near-instantly, so
+  # without this floor wait the loop would busy-spin: post_reload's curl and, every iteration,
+  # refresh_remote's ssh calls firing as fast as the CPU allows instead of once per interval.
+  case "$rc" in
+    0|2) : ;;
+    *) sleep "$AV_WATCH_INTERVAL" & _av_watch_child=$!; wait "$_av_watch_child"; rc=2 ;;
+  esac
+  [ "$rc" -eq 2 ] && refresh_remote
+  post_reload "$1"
+  return 0
+}
+
+av_watch_loop() {  # $1 = portfile. Runs until the picker's EXIT trap kills it.
+  # `kill "$watch_pid"` (executable_agentview's EXIT trap) sends TERM to this process. Trapping
+  # it here and killing the in-flight child is what makes that kill take effect immediately
+  # instead of after up to a full AV_WATCH_INTERVAL -- see the comment in av_watch_once.
+  trap 'kill "${_av_watch_child:-}" 2>/dev/null; exit 0' TERM
+  while :; do av_watch_once "$1"; done
 }

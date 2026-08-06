@@ -12,11 +12,17 @@ E=$'\033'; Z="$E[0m"
 C_NEED="$E[38;2;249;226;175m"          # yellow  — needs input
 C_WORK="$E[38;2;166;227;161m"          # green   — working
 C_REVIEW="$E[38;2;250;179;135m"        # peach   — review (stopped, but dirty/unpushed)
-C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
+C_UNSEEN="$E[38;2;148;226;213m"        # teal    — DONE: finished while you weren't looking
+C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle (i.e. seen)
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
+C_ERR="$E[38;2;243;139;168m"           # red — host unreachable / fetch failed
+C_STALE="$C_NEED"                      # stale remote data reads as attention, not failure
 GBAR=$'▎'                         # ▎ left accent rule — state-colored, runs down each group
+# Foldable group headers (COMPLETED/IDLE) swap this glyph in place of the ● the other
+# headers carry, so the header itself says which way <enter> will move it.
+FOLD_COLLAPSED=$'▸'; FOLD_EXPANDED=$'▾'
 BADGEBG="$E[48;2;69;71;90m"            # surface1 — machine chip background
 BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's rounded end-caps
 PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
@@ -24,7 +30,7 @@ PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source b
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
 # tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
 state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
-  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; *) _scol="$C_DONE";; esac
+  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; unseen) _scol="$C_UNSEEN";; *) _scol="$C_DONE";; esac
 }
 row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads PINNED_SET
   # via dynamic scope from build_pretty). No fork — runs per row on the render path.
@@ -35,7 +41,13 @@ row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads
 NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
-declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [completed]="COMPLETED" [idle]="IDLE" )
+declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [unseen]="DONE" [completed]="COMPLETED" [idle]="IDLE" )
+
+group_expanded() {  # $1 = group name -> true (0) if its rows should render in full.
+  # completed/idle are the only foldable groups: the rest are what the picker exists to show.
+  case "$1" in completed|idle) ;; *) return 0 ;; esac
+  [ -r "$foldfile" ] && grep -qxF "$1" "$foldfile" 2>/dev/null
+}
 
 row_width() {  # sets _rw: usable row columns for the render + header alignment.
   # Inside a reload/execute child fzf exports FZF_COLUMNS (its own area, margin/padding
@@ -66,6 +78,42 @@ badge_name() {  # $1 = host -> sets _bn: friendly machine tag (from HOST_LABEL)
   host_label "$1"; _bn="$_hl"
 }
 
+# Bound to REAP_GRACE (rows.sh), not a second 120 -- one staleness constant for the
+# whole picker. Every render-capable mode's _avmods sources rows before render, so
+# REAP_GRACE is already set; the :-120 fallback only guards a future load-order change,
+# it is not the normal path. Do not replace this with a literal.
+AV_STALE_AFTER="${REAP_GRACE:-120}"
+
+host_status_rows() {  # print one keyless row per host that isn't currently healthy
+  # (or is healthy but stale), so a dead/slow remote reads as signage, not silence.
+  # Keyless: `printf '\t...'` gives every row an empty KEY, the same treatment group
+  # headers get, so the --skip cursor logic steps over these rather than landing on them.
+  # No ▎ accent rule, deliberately: that bar marks group membership, and these rows belong
+  # to no group — they print after the last one, so a bar would read as "more IDLE rows",
+  # and every other barred non-header row in the list is selectable while these cannot be.
+  # The two-space indent puts the label in the glyph column (where ●/▸ and the alt-N digits
+  # sit): row level, outside any group. Colour alone carries the escalation.
+  local host status outcome when age lbl
+  while IFS= read -r host; do
+    status="$(remote_status_for "$host")"
+    [ -r "$status" ] || continue
+    IFS=$'\t' read -r outcome when < "$status" || continue
+    host_label "$host"; lbl="$_hl"
+    case "$outcome" in
+      unreachable) printf '\t  %s%s · unreachable%s\n' "$C_ERR" "$lbl" "$Z" ;;
+      failed)      printf '\t  %s%s · fetch failed%s\n' "$C_ERR" "$lbl" "$Z" ;;
+      ok)
+        # A corrupt status file (partial write, disk error) can carry a non-numeric epoch;
+        # under `set -u` the bare arithmetic below would abort the whole render. Mirror
+        # fmt_age's own guard and treat garbage as maximally stale, so it still surfaces.
+        case "$when" in ''|*[!0-9]*) when=0;; esac
+        age=$(( now - when ))
+        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s%s · %s old%s\n' "$C_STALE" "$lbl" "$_age" "$Z"; }
+        ;;
+    esac
+  done < <(remote_hosts)
+}
+
 gc_pins() {  # drop pins whose session no longer exists anywhere (a local file OR the remote
   # cache) — orphans left when a session ends, is pruned (7-day / dead-pid), or is CTRL+X'd,
   # plus the "a new session in the same cwd inherits a stale locator-less pin" mispin. Runs each
@@ -73,11 +121,14 @@ gc_pins() {  # drop pins whose session no longer exists anywhere (a local file O
   # nothing is pinned. jq over valid session JSON doesn't error, so a wrongly-emptied set is only
   # reachable when there genuinely are no sessions — in which case every pin IS an orphan.
   [ -s "$pinfile" ] || return
-  local live tmp="$pinfile.tmp.$$" lf
+  local live tmp="$pinfile.tmp.$$" lf host cache
   shopt -s nullglob; lf=( "$statedir"/*.json ); shopt -u nullglob
   live=""
   [ "${#lf[@]}" -gt 0 ] && live=$(jq -r "$JQ_PINID" "${lf[@]}" 2>/dev/null)
-  [ -s "$remote_cache" ] && live="$live"$'\n'"$(MSYS_NO_PATHCONV=1 jq -r "$JQ_PINID" < "$remote_cache" 2>/dev/null)"
+  while IFS= read -r host; do
+    cache="$(remote_cache_for "$host")"
+    [ -s "$cache" ] && live="$live"$'\n'"$(MSYS_NO_PATHCONV=1 jq -r "$JQ_PINID" < "$cache" 2>/dev/null)"
+  done < <(remote_hosts)
   if [ -n "$live" ]; then printf '%s\n' "$live" | grep -Fxf - "$pinfile" > "$tmp" 2>/dev/null
   else : > "$tmp"; fi
   mv -f "$tmp" "$pinfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
@@ -91,6 +142,80 @@ loc_rank() {  # sets _lr = jump quality of locator $1: real pane 2 > bg attach 1
   esac
 }
 
+fold_title_states() {  # upgrade `rows` from the mux pane title's state glyph. Runs after load_titles.
+  # The hook registry stays authoritative; this only reaches what it cannot see — a hook row
+  # that went stale (rows.sh: daemon-hosted jobs never fire UserPromptSubmit, so they stick).
+  # Asymmetric on purpose, mirroring herdr's own rule priorities. A braille spinner is proof a
+  # turn is RUNNING, so it may upgrade a row (herdr ranks it 1100, above everything). ✳ only
+  # means "not mid-turn" and cannot tell idle from blocked, so it is parsed but never folded:
+  # herdr ranks it 250, below every other rule, and every row here already carries a state, so
+  # acting on it could only overwrite a better-sourced one.
+  # needs-input IS overridden by a spinner, and that was measured rather than assumed. Sampling
+  # #{pane_title} twice a second across a live turn on 2.1.223: a session blocked on a tool
+  # permission prompt holds ✳ (30 stable samples), while a running turn cycles braille. So
+  # braille cannot be a blocked session, and a needs-input row whose pane is mid-turn is stale
+  # rather than waiting on Daniel. ✳ still never folds, which is the half that protects a row
+  # genuinely waiting on him. Local host rows only: the title map is this machine's mux.
+  local out="" L st host cwd rest kind
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    st="${L%%$'\t'*}"; rest="${L#*$'\t'}"
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
+    kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
+    if [[ "$host" == "$selfhost" && "$kind" == "host" ]]; then
+      title_for_cwd "$cwd"; state_from_title "$_title"
+      [[ "$_tstate" == "working" ]] && st="working"
+    fi
+    out+="$st"$'\t'"$host"$'\t'"$cwd"$'\t'"$rest"$'\n'
+  done <<< "$rows"
+  rows="$out"
+}
+fold_seen_states() {  # completed -> unseen, when the work landed while you were looking away.
+  # herdr splits one underlying state in two: idle is ready AND you have seen it; done is the
+  # same state where the work finished unwatched. Across a dozen rows that is the difference
+  # between a list you scan and a list you act on.
+  #
+  # The marker stores the row's ts as of the last focus, NOT a boolean. A boolean would latch on
+  # first focus and the row could never be DONE again, which makes the feature work exactly once
+  # per session.
+  #
+  # Keyed on host+cwd+kind rather than compute_pin_id, which prefers the locator. A pin names a
+  # PANE; a pane dying is precisely when a daemon-hosted job finishes, so a pane-keyed marker
+  # would evaporate at the one moment this exists for.
+  #
+  # Refines "completed" only. A review row (stopped with a dirty tree) keeps REVIEW: it is the
+  # more actionable label and already has its own group.
+  # An ABSENT sidecar means dormant, not "nothing seen". Treating it as nothing-seen would put
+  # every completed row in DONE on a fresh setup, so the group would be the whole list at exactly
+  # the moment you are deciding whether it is useful. The file appears the first time you focus
+  # anything, which arms the feature; from then on an unfocused completed row is DONE, which is
+  # the case this exists for. Deleting the sidecar disarms it again.
+  [ -r "$seenfile" ] || return 0
+  local -A SEEN=()
+  local _k _v
+  while IFS=$'\t' read -r _k _v; do
+    [ -n "$_k" ] && SEEN["$_k"]="$_v"
+  done < "$seenfile"
+  local out="" L st host cwd rest kind ts mark
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    st="${L%%$'\t'*}"; rest="${L#*$'\t'}"
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
+    ts="${rest#*$'\t'}"; ts="${ts%%$'\t'*}"
+    kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
+    if [ "$st" = completed ]; then
+      compute_seen_id "$host" "$cwd" "$kind"
+      mark="${SEEN[$_sid]:-}"
+      # Compared as strings, not numbers: any ts the marker did not capture means the session
+      # has moved since you looked, and a ts format change can never turn into a silent -gt.
+      [ "$ts" != "$mark" ] && st=unseen
+    fi
+    out+="$st"$'\t'"$host"$'\t'"$cwd"$'\t'"$rest"$'\n'
+  done <<< "$rows"
+  rows="$out"
+}
 collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into one row.
   # Backgrounding a session spawns a bg job that inherits the task title but gets a fresh
   # session id with NO lineage link (session files carry no parent field), so the origin and
@@ -152,7 +277,7 @@ collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into 
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key L _rest
+  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key glyph L _rest
   local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
   local PINCNT=0 idx=0 g1 gutc _pinned _hp _leaf _par
   row_width; W=$_rw
@@ -184,16 +309,37 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     row_pinned "$host" "$cwd" "$kind" "$locator"
     if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
   done
-  for grp in pinned needs-input working review completed idle; do
+  for grp in pinned needs-input working review unseen completed idle; do
     if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
+    if ! group_expanded "$grp"; then
+      # Collapsed: this landable fold row REPLACES the usual keyless header (never reached
+      # for "pinned" — group_expanded always returns true for it). A fold header must be
+      # selectable to be expandable, so it carries a sentinel key (fold:<group>) rather than
+      # an empty one — see the --skip dispatch in executable_agentview. It is styled exactly
+      # like the expanded header apart from the glyph and the parenthesized count, so folding
+      # a group changes the affordance rather than reflowing the line.
+      state_color "$grp"; scol="$_scol"
+      printf 'fold:%s\t%s%s%s %s%s%s %s%s%s%s %s(%s)%s\n' "$grp" "$scol" "$GBAR" "$Z" \
+        "$scol" "$FOLD_COLLAPSED" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      continue
+    fi
     if [ "$grp" = pinned ]; then
       printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     else
       state_color "$grp"; scol="$_scol"
-      printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      # An EXPANDED foldable group (completed/idle) still needs a landable key, the same
+      # fold:<group> sentinel the collapsed header carries, so <enter> can re-collapse it.
+      # The other three state headers can't be folded at all and stay keyless like spacers,
+      # and keep the ● bullet — the fold glyph is reserved for headers <enter> can act on.
+      case "$grp" in
+        completed|idle) key="fold:$grp"; glyph="$FOLD_EXPANDED";;
+        *)              key="";         glyph='●';;
+      esac
+      printf '%s\t%s%s%s %s%s%s %s%s%s%s %s%s%s\n' "$key" "$scol" "$GBAR" "$Z" \
+        "$scol" "$glyph" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     fi
     for L in "${sorted[@]}"; do
       # Split on tab WITHOUT read's IFS-whitespace collapsing: sandbox rows have an
@@ -228,7 +374,9 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       fi
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
       # mux-correlated pane title (host rows on wezterm). Tabs would split the columns.
-      if [ -n "$title_reg" ]; then title="$title_reg"; else title_for_cwd "$cwd"; title="$_title"; fi
+      # The mux title carries the state glyph as its first rune; strip it so only the session
+      # name reaches the column (fold_title_states has already read it).
+      if [ -n "$title_reg" ]; then title="$title_reg"; else title_for_cwd "$cwd"; state_from_title "$_title"; title="$_tname"; fi
       title="${title//$'\t'/ }"
       [ "$kind" = "sandbox" ] && clabel="sandbox" || clabel="claude"
       badge_name "$host"; bn="$_bn"
@@ -280,6 +428,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       printf '%s\t%s%s%s%s%s\n' "$key" "$left_c" "$sp" "$scol" "$stext" "$Z"
     done
   done
+  host_status_rows                            # unreachable/failed/stale hosts, appended last
 }
 
 render_body() {  # sets global `body` from local + cached-remote rows (the fzf list)

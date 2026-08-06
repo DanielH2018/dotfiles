@@ -2,6 +2,8 @@ const { test } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 const dirs = [];
 
@@ -16,6 +18,13 @@ const PORT = process.env.CLAUDE_ARTIFACTS_PORT || '8181';
 const hostLink = (absPath, rel) =>
   process.platform === 'linux' ? `http://127.0.0.1:${PORT}/${rel}` : `file://${absPath}`;
 
+// The hook registers every .html it links as the repo's tracked artifact. Without an
+// override that lands in the real ~/.claude/logs/artifact-state, so a test run would
+// point the live registry at a /tmp fixture that is deleted moments later — and
+// clobber a genuine entry for whichever repo the suite ran in.
+const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'la-state-'));
+dirs.push(STATE_DIR);
+
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
 function run(filePath, env = {}) {
@@ -24,6 +33,7 @@ function run(filePath, env = {}) {
   // Start from a clean slate for the two vars the hook keys off of.
   delete e.CLAUDE_ARTIFACTS_HOST_DIR;
   delete e.CLAUDE_STATE_HOST_DIR;
+  e.CLAUDE_ARTIFACT_STATE_DIR = STATE_DIR;
   Object.assign(e, env);
   const r = spawnSync('bash', [HOOK], { input, env: e, encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `hook exits 0 (stderr: ${r.stderr})`);
@@ -93,4 +103,55 @@ test('symlink resolution gated to in-container', () => {
   }
 });
 
-process.on('exit', () => { const fs = require('node:fs'); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+// A Markdown artifact with no HTML companion gets an extra nudge appended after the
+// link. suggest-artifact.sh was meant to cover this but is gated on ExitPlanMode, which
+// is never called here, so this hook is the only trigger that actually fires.
+// Builds a real ~/.claude/artifacts dir because the hook stats the companion on disk.
+function artifactsDir(files) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-nudge-'));
+  dirs.push(home);
+  const dir = path.join(home, '.claude', 'artifacts');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of files) fs.writeFileSync(path.join(dir, f), 'x');
+  return dir;
+}
+
+test('.md artifact with no .html companion -> nudge to render one', () => {
+  const dir = artifactsDir(['findings.md']);
+  const ctx = run(path.join(dir, 'findings.md'));
+  assert.match(ctx, /AUTO-ARTIFACT/, `nudges when the companion is missing; got: ${ctx}`);
+  assert.match(ctx, /artifact-design/, 'names the skill to load');
+  assert.match(ctx, /not instead of it/, 'keeps the Markdown as well as the HTML');
+  assert.match(ctx, /do not publish to claude\.ai/i, 'keeps the artifact local');
+});
+
+test('.md artifact that already has its .html companion -> no nudge', () => {
+  const dir = artifactsDir(['plan.md', 'plan.html']);
+  const ctx = run(path.join(dir, 'plan.md'));
+  assert.ok(ctx.length > 0, 'still emits the link');
+  assert.ok(!ctx.includes('AUTO-ARTIFACT'), `stays quiet once the companion exists; got: ${ctx}`);
+});
+
+test('.html artifact write -> no nudge', () => {
+  const dir = artifactsDir(['review.html']);
+  const ctx = run(path.join(dir, 'review.html'));
+  assert.ok(ctx.length > 0, 'still emits the link');
+  assert.ok(!ctx.includes('AUTO-ARTIFACT'), `nudge is Markdown-only; got: ${ctx}`);
+});
+
+// Guards the isolation above: if CLAUDE_ARTIFACT_STATE_DIR ever stops being set here,
+// the suite starts writing into the developer's live registry and nothing else notices.
+test('registration is confined to the test state dir', () => {
+  const dir = artifactsDir(['reg.html']);
+  run(path.join(dir, 'reg.html'));
+
+  // Drop the override and the entry lands in the real registry instead, leaving this
+  // empty — which is exactly the regression, verified by mutating the line away.
+  const written = fs.readdirSync(STATE_DIR);
+  assert.ok(written.some((f) => f.endsWith('.current')),
+    `registration landed in the test state dir; got: ${JSON.stringify(written)}`);
+});
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

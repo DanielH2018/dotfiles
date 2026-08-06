@@ -50,9 +50,10 @@ function makeEnv({ list = '[]', remote = '' } = {}) {
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
   const listFile = path.join(bin, 'list.json'); fs.writeFileSync(listFile, list);
   const remoteFile = path.join(bin, 'remote.json'); fs.writeFileSync(remoteFile, remote);
-  // The picker reads homelab sessions from the cache file (the background ssh refreshes
-  // it + live-reloads fzf); seed it directly so the initial render sees them.
-  const cacheFile = path.join(home, '.agentview-remote-cache');
+  // The picker reads homelab sessions from a per-host cache file (the background ssh
+  // refreshes it + live-reloads fzf); seed daniel-server's so the initial render sees them.
+  // Fixtures below all use host: 'daniel-server'.
+  const cacheFile = path.join(home, '.agentview-remote-cache.daniel-server');
   if (remote) fs.writeFileSync(cacheFile, remote);
   const activateLog = path.join(bin, 'activate.log'); fs.writeFileSync(activateLog, '');
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
@@ -71,12 +72,24 @@ exit 0
   // only succeeds for a window some earlier `new-window` created. The picker's reuse paths
   // are built on that failure, so a stub that exits 0 unconditionally would report reuse for
   // windows that never existed and hide whether a window is ever actually opened.
+  // Registry rows are `<session>:<index>\t<name>` — the same shape real tmux prints for the
+  // `list-windows -a -F` the reuse lookup runs. A flat name-only registry cannot model the
+  // session scoping that made `-t "=name"` miss, so it would pass either implementation.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
+sess="\${AV_TMUX_SESSION:-0}"
+opts="$TMUX_LOG.opts"; touch "$opts"
 case "$1" in
-  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
-  new-window)    echo "$3" >> "$wins" ;;
+  display-message)
+    case "$3" in *window_id*) tail -n1 "$wins" | cut -f2 ;; *) echo "$sess" ;; esac; exit 0 ;;
+  list-windows)  cat "$wins"; exit 0 ;;
+  select-window) cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  new-window)    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins" ;;
+  show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
+  set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"
+                 printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
+  respawn-pane)  exit 0 ;;
 esac
 exit 0
 `, { mode: 0o755 });
@@ -188,6 +201,9 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   stateFile(home, 'b', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\bravo',  session: 'b', host: HOST, ts: now - 20 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\charlie',session: 'c', host: HOST, ts: now - 30 });
   stateFile(home, 'old', { pane: '4', state: 'working',   cwd: 'C:\\d\\staleone', session: 'old', host: HOST, ts: now - 200000 });
+  // completed collapses behind a fold line by default (task 6); expand it so charlie's
+  // row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []); // fzf stub exits 0 with no pick -> agentview exits after capture
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /WORKING/);
@@ -243,7 +259,7 @@ test('--refresh-remote folds the homelab live registry over a stale needs-input 
     JSON.stringify({ pid: process.pid, sessionId: sid, status: 'busy', entrypoint: 'cli',
       updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.state, 'working', 'live busy status overrides the stale needs-input hook state');
   assert.strictEqual(row.locator, 'tmux:/tmp/t:main:%2', 'hook identity fields (locator) survive the fold');
@@ -264,7 +280,7 @@ test('--refresh-remote ignores a dead-pid registry entry and keeps the hook stat
   fs.writeFileSync(path.join(rhome, '.claude', 'sessions', `33554432.json`),   // pid beyond pid_max -> dead
     JSON.stringify({ pid: 33554432, sessionId: sid, status: 'busy', entrypoint: 'cli', updatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.state, 'needs-input', 'a dead-pid registry entry does not override the hook state');
 });
@@ -289,7 +305,7 @@ test('--refresh-remote marks a remote DAEMON session bg and gives it a bg:<jobId
     JSON.stringify({ pid: process.pid, sessionId: sid, status: 'waiting', entrypoint: 'cli',
       kind: 'bg', jobId: 'eeee5555', updatedAt: (now - 5) * 1000, statusUpdatedAt: (now - 5) * 1000 }));
   run(env, ['--refresh-remote'], { SSH_REMOTE_HOME: rhome });
-  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const folded = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   const row = JSON.parse(folded.trim().split('\n').filter(Boolean)[0]);
   assert.strictEqual(row.kind, 'bg', 'kind routes <enter> to the remote bg attach');
   assert.strictEqual(row.locator, 'bg:eeee5555', 'locator carries the JOB id, not the session uuid');
@@ -412,9 +428,14 @@ test('REMOTE tmux row, INSIDE tmux -> portable `tmux new-window` (no wezterm)', 
   // a WezTerm tab (works under Ghostty / WSL / bare ssh — the unification lever).
   run(env, [], { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' });
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, /new-window -n airflow/, 'opens a new tmux window for the attach');
-  assert.match(log, /ssh -t daniel-server/, 'the window runs the ssh-attach');
-  assert.match(log, /attach -t 'airflow'/, 'attaches the target session');
+  const line = log.split('\n').find((l) => l.startsWith('new-window -n av:Homelab')) || '';
+  assert.ok(line, 'opens a new tmux window for the attach');
+  // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
+  // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits
+  // between and keeps growing (Task 1 added keepalives after this test was first written).
+  assert.match(line, /\bssh\b/, 'the window runs ssh');
+  assert.match(line, /-t daniel-server\b/, 'ssh targets daniel-server with -t');
+  assert.match(line, /attach -t 'airflow'/, 'attaches the target session');
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'must NOT use wezterm spawn when inside tmux');
 });
 
@@ -426,9 +447,25 @@ test('REMOTE tmux row jumped twice reuses its window instead of stacking a secon
   const inTmux = { FZF_PICK: pick, TMUX: '/tmp/tmux-1000/default,1,0' };
   run(env, [], inTmux);
   run(env, [], inTmux);
-  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n airflow'));
+  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n av:Homelab'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t =airflow/, 'and gets there by selecting it');
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-window -t @\d+/,
+    'and gets there by selecting the window id the lookup resolved');
+});
+
+// Windows are per host, and the lookup spans every tmux session, so the name has to carry
+// the host or one machine's window would answer a jump meant for another's. Two hosts each
+// running a session called "main" is the case that catches it.
+test('two hosts running an identically-named session get separate windows', { skip }, () => {
+  const { env, tmuxLog } = makeEnv({ list: '[]' });
+  const row = (host) => [cardKey([host, '/home/ubuntu/main', 'working', '0', 'main', '%3', 'host', 'tmux:/tmp/tmux-1000/default:main:%3']), 'display'].join('\t');
+  const inTmux = { TMUX: '/tmp/tmux-1000/default,1,0' };
+  run(env, [], { ...inTmux, FZF_PICK: row('daniel-server') });
+  run(env, [], { ...inTmux, FZF_PICK: row('daniel-box') });
+  const opened = fs.readFileSync(tmuxLog, 'utf8').split('\n').filter((l) => l.startsWith('new-window -n '));
+  assert.deepStrictEqual(opened.map((l) => l.split(' ')[2]).sort(),
+    ['av:Box', 'av:Homelab'],
+    'each host gets its own window, so neither jump lands on the other');
 });
 
 test('a REMOTE row with a non-tmux locator does not activate locally', { skip }, () => {
@@ -461,10 +498,14 @@ test('a REMOTE bg row INSIDE tmux opens one reusable per-session window', { skip
   run(env, [], inTmux);
   run(env, [], inTmux);
   const log = fs.readFileSync(tmuxLog, 'utf8');
-  assert.match(log, /new-window -n cc-eeee5555 ssh -t daniel-server/, 'the window runs the remote attach');
-  assert.match(log, /claude attach eeee5555/, 'attaching the job, not a tmux session');
-  const opened = log.split('\n').filter((l) => l.startsWith('new-window -n cc-eeee5555'));
+  const opened = log.split('\n').filter((l) => l.startsWith('new-window -n av:Homelab'));
   assert.strictEqual(opened.length, 1, 'the second jump reuses the window the first opened');
+  // Checks the meaningful shape (ssh, targeting daniel-server with -t, the remote command) —
+  // not the literal adjacency of "ssh" and "-t", which the mux option list (AV_SSH_OPTS) sits
+  // between and keeps growing (Task 1 added keepalives after this test was first written).
+  assert.match(opened[0], /\bssh\b/, 'the window runs ssh');
+  assert.match(opened[0], /-t daniel-server\b/, 'ssh targets daniel-server with -t');
+  assert.match(opened[0], /claude attach eeee5555/, 'attaching the job, not a tmux session');
 });
 
 test('a REMOTE bg row with no jobId falls back to the remote agents roster', { skip }, () => {
@@ -528,7 +569,7 @@ test('--remove of a remote row filters it out of the ssh-snapshot cache, keeping
   const gone = JSON.stringify({ kind: 'host', cwd: '/r/rgone', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rgone:%2' });
   const keep = JSON.stringify({ kind: 'host', cwd: '/r/rkeep', state: 'working', host: 'daniel-server', ts: now, locator: 'tmux:/s:rkeep:%1' });
   const { env, home } = makeEnv({ remote: `${gone}\n${keep}` });
-  const cache = path.join(home, '.agentview-remote-cache');
+  const cache = path.join(home, '.agentview-remote-cache.daniel-server');
   const key = cardKey(['daniel-server', '/r/rgone', 'working', String(now), 'rgone', '%2', 'host', 'tmux:/s:rgone:%2']);
   assert.strictEqual(run(env, ['--remove', key], { FZF_PICK: 'Remove' }).code, 0);
   const after = fs.readFileSync(cache, 'utf8');
@@ -576,6 +617,10 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\nproj', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
+  // completed collapses behind a fold line by default (task 6); expand it so this asserts
+  // the expanded header. The collapsed one is state-colored too, so color alone no longer
+  // tells the two apart — the fold-glyph test below is what discriminates.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.work}mWORKING`), 'WORKING header is bold green');
@@ -584,12 +629,74 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   assert.doesNotMatch(raw, /38;2;180;190;254/, 'header no longer uses the old lavender');
 });
 
+// ---- fold affordance + host-status color ----
+// These assert on `--body`, not the picker: --body is the pure render path, while the picker
+// detaches a --refresh-remote child that rewrites the very status files seeded below.
+const SC_ERR = '38;2;243;139;168';   // red — unreachable / fetch failed
+const lineOf = (raw, needle) => {
+  const l = raw.split('\n').find((x) => x.includes(needle));
+  assert.ok(l, `expected a line containing ${JSON.stringify(needle)}, got:\n${raw}`);
+  return l;
+};
+
+test('a foldable header shows ▸ collapsed and ▾ expanded; other headers keep ●', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working',   cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
+  stateFile(home, 'c', { pane: '3', state: 'completed', cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
+
+  // Collapsed is the default — no foldfile.
+  const shut = lineOf(run(env, ['--body']).out, 'COMPLETED');
+  assert.match(shut, /▸/, 'a collapsed COMPLETED header carries the collapsed glyph');
+  assert.doesNotMatch(shut, /▾/, 'and never the expanded one');
+  assert.match(shut, new RegExp(`\\x1b\\[${SC.done}m▸`), 'the glyph is tinted by the group state');
+
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  const open = run(env, ['--body']).out;
+  const shown = lineOf(open, 'COMPLETED');
+  assert.match(shown, /▾/, 'an expanded COMPLETED header carries the expanded glyph');
+  assert.doesNotMatch(shown, /▸/, 'and never the collapsed one');
+
+  // WORKING cannot be folded, so the affordance would be a lie there.
+  const fixed = lineOf(open, 'WORKING');
+  assert.match(fixed, /●/, 'a non-foldable header keeps the plain bullet');
+  assert.doesNotMatch(fixed, /[▸▾]/, 'a non-foldable header carries no fold glyph');
+});
+
+test('an unhealthy host status row is colored by kind, and a healthy host adds none', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\wproj', host: HOST, ts: now });
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-box'), `unreachable\t${now}\n`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-server'), `ok\t${now - 3600}\n`);
+
+  const raw = run(env, ['--body']).out;
+  assert.match(lineOf(raw, 'unreachable'), new RegExp(`\\x1b\\[${SC_ERR}m`), 'unreachable reads red');
+  const stale = lineOf(raw, ' old');
+  assert.match(stale, new RegExp(`\\x1b\\[${SC.need}m`), 'a stale-but-reachable host reads yellow');
+  assert.doesNotMatch(stale, new RegExp(`\\x1b\\[${SC_ERR}m`), 'stale data is not a failure');
+});
+
+test('a healthy host puts no red anywhere in the body', { skip }, () => {
+  const { env, home } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: 'C:\\a\\wproj', host: HOST, ts: now });
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-box'), `ok\t${now}\n`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-status.daniel-server'), `ok\t${now}\n`);
+
+  // Red is used for nothing else, so its absence is the whole assertion.
+  assert.doesNotMatch(run(env, ['--body']).out, new RegExp(`\\x1b\\[${SC_ERR}m`));
+});
+
 test('session names are tinted by their state color', { skip }, () => {
   const { env, home, capture } = makeEnv();
   const now = nowSec();
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\greenname',  host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\yellowname', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\greyname',   host: HOST, ts: now - 7 });
+  // completed collapses behind a fold line by default (task 6); expand it so greyname's
+  // row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.work}mgreenname`), 'working session name is green');
@@ -628,6 +735,36 @@ test('machine source badges render as rounded pills (boxed)', { skip }, () => {
   assert.match(raw, /\x1b\[38;2;137;180;250mPC\x1b\[0m/, 'PC pill hugs the label tight');
 });
 
+// ---- the local machine's badge ----
+// This was HOST_LABEL[$selfhost]="WSL", hardcoded, so the badge named whatever host agentview
+// happened to run on: every session on a native Linux box rendered as WSL.
+//
+// These re-stub the hostname on purpose. makeEnv reports daniel-desktop, which IS winhost, so
+// the "PC" entry overwrites the self entry and the local label cannot be observed there --
+// which is why the suite never caught this.
+const localHost = (bin, name) =>
+  fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${name}\n`, { mode: 0o755 });
+
+test('a native Linux box badges its own sessions Linux, not WSL', { skip }, () => {
+  const { env, home, bin } = makeEnv();
+  localHost(bin, 'fedora');
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/home/d/wproj', host: 'fedora', ts: nowSec() - 5 });
+  const body = stripAnsi(run(env, ['--body']).out);
+  assert.match(body, /Linux/, `expected a Linux badge, got:\n${body}`);
+  assert.doesNotMatch(body, /WSL/, 'nothing about this host is WSL');
+});
+
+test('the same box badges WSL when it really is WSL', { skip }, () => {
+  // WSL_DISTRO_NAME is the signal the spawn paths already branch on; the badge follows it
+  // rather than asserting a machine identity of its own.
+  const { env, home, bin } = makeEnv();
+  localHost(bin, 'fedora');
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/home/d/wproj', host: 'fedora', ts: nowSec() - 5 });
+  const body = stripAnsi(run(env, ['--body'], { WSL_DISTRO_NAME: 'Ubuntu' }).out);
+  assert.match(body, /WSL/, `expected a WSL badge, got:\n${body}`);
+  assert.doesNotMatch(body, /Linux/, 'the badge is one or the other, never both');
+});
+
 // ---- per-group left accent rule (\u258e, state-colored) ----------------------
 test('each group carries a state-colored left accent rule', { skip }, () => {
   const { env, home, capture } = makeEnv();
@@ -635,6 +772,9 @@ test('each group carries a state-colored left accent rule', { skip }, () => {
   stateFile(home, 'n', { pane: '1', state: 'needs-input', cwd: 'C:\\a\\nbar', host: HOST, ts: now - 5 });
   stateFile(home, 'w', { pane: '2', state: 'working',     cwd: 'C:\\a\\wbar', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\a\\cbar', host: HOST, ts: now - 3600 });
+  // completed collapses behind a fold line by default (task 6); expand it so cbar's row
+  // still renders for the accent-rule assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.need}m\u258e`), 'needs-input rows carry a yellow accent rule');

@@ -50,7 +50,8 @@ av_purge_remote() {  # $1=alias $2=sid -> the same stop+delete on the remote ove
   local alias="$1" sid="$2" script
   [ -n "$sid" ] || return 0
   printf -v script 's=%q; for pf in "$HOME/.claude/sessions/"*.json; do [ -f "$pf" ] || continue; if [ "$(jq -r ".sessionId // \"\"" "$pf" 2>/dev/null)" = "$s" ]; then p="$(jq -r ".pid // \"\"" "$pf" 2>/dev/null)"; [ -n "$p" ] && kill "$p" 2>/dev/null; fi; done; command -v claude >/dev/null 2>&1 && claude rm "$s" </dev/null >/dev/null 2>&1; rm -f "$HOME/.claude/agent-view/$s.json" 2>/dev/null' "$sid"
-  ssh -o ConnectTimeout=4 -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
+  av_ssh_opts
+  ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "$alias" "$script" </dev/null >/dev/null 2>&1
 }
 
 # Does THIS registry record describe the row CTRL+X selected? Emits M/N, and every do_remove
@@ -84,7 +85,7 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
   # (pid-reuse-guarded) + `claude rm` its record/worktree + drop the registry row, so a live
   # session can't reappear. Local rows act locally; remote rows act on their host over ssh,
   # then the row is filtered from the ssh cache. An empty KEY (header/spacer) is a no-op.
-  local key="$1" host cwd kind locator f m sid rowsid ans name tmp="$remote_cache.tmp.$$"
+  local key="$1" host cwd kind locator f m sid rowsid ans name tmp cache
   local state ts title agetxt sname disp l1 l2 r2 hdr w d e z cdim cfg cred
   host=$(printf '%s' "$key" | cut -d"$US" -f1)
   cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
@@ -146,17 +147,18 @@ do_remove() {  # $1 = KEY -> REALLY remove the session (CTRL+X, confirmed): stop
     return 0
   fi
   if [ -n "$host" ] && ! is_local_host "$host"; then
-    [ -s "$remote_cache" ] || return 0
+    cache="$(remote_cache_for "$host")"; tmp="$cache.tmp.$$"
+    [ -s "$cache" ] || return 0
     # Pull the row's sid so we can stop it on the remote, then filter it from the cache.
     sid=$(MSYS_NO_PATHCONV=1 jq -r --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
       --arg host "$host" --arg kind "$kind" \
       "$JQ_NORM select(($JQ_ROWMATCH) == \"M\") | (.session // .key // \"\")" \
-      < "$remote_cache" 2>/dev/null | head -1)
+      < "$cache" 2>/dev/null | head -1)
     [ -n "$sid" ] && av_purge_remote "$(remote_alias "$host")" "$sid"
     MSYS_NO_PATHCONV=1 jq -c --arg sid "" --arg loc "$locator" --arg cwd "$cwd" \
       --arg host "$host" --arg kind "$kind" \
       "$JQ_NORM select((($JQ_ROWMATCH) == \"M\") | not)" \
-      < "$remote_cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$remote_cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+      < "$cache" > "$tmp" 2>/dev/null && mv -f "$tmp" "$cache" 2>/dev/null || rm -f "$tmp" 2>/dev/null
     return 0
   fi
   # Local (this host). A bg:<jobId> locator is a RENDER-TIME identity no row stores — resolve it
@@ -202,6 +204,25 @@ do_pin() {  # $1 = KEY -> toggle this row's pin in the sidecar (CTRL+P). Works f
   return 0
 }
 
+do_fold() {  # $1 = "fold:<group>" -> toggle that group's presence in the fold sidecar
+  # ($foldfile — the groups currently EXPANDED; collapsed is the default). Same
+  # add/remove-a-line shape as do_pin above, just keyed on a bare group name.
+  local grp="${1#fold:}" tmp="$foldfile.tmp.$$"
+  [ -n "$grp" ] || return 0
+  if [ -f "$foldfile" ] && grep -qxF -- "$grp" "$foldfile" 2>/dev/null; then
+    # grep -v exits 1 (not an error) when it filters out the ONLY line — accept 0 and 1 so
+    # collapsing the last expanded group still writes the now-empty file; only a real error
+    # (>=2) aborts.
+    local rc
+    grep -vxF -- "$grp" "$foldfile" > "$tmp" 2>/dev/null; rc=$?
+    if [ "$rc" -le 1 ]; then mv -f "$tmp" "$foldfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else rm -f "$tmp" 2>/dev/null; fi
+  else
+    printf '%s\n' "$grp" >> "$foldfile" 2>/dev/null
+  fi
+  return 0
+}
+
 av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Enter into the
   # session's pane so Claude runs its OWN /rename. tmux locally or over ssh; wezterm locally.
   local host="$1" loc="$2" name="$3" backend rest sock pane cmd sshalias
@@ -215,7 +236,8 @@ av_send_rename() {  # $1=host $2=locator $3=name -> type "/rename <name>" + Ente
         sshalias=$(remote_alias "$host")
         printf -v cmd 'tmux -S %q send-keys -t %q -l %q; tmux -S %q send-keys -t %q Enter' \
           "$sock" "$pane" "/rename $name" "$sock" "$pane"
-        ssh -o ConnectTimeout=4 -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
+        av_ssh_opts
+        ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "$sshalias" "$cmd" </dev/null >/dev/null 2>&1
       else
         tmux -S "$sock" send-keys -t "$pane" -l "/rename $name" 2>/dev/null
         tmux -S "$sock" send-keys -t "$pane" Enter 2>/dev/null

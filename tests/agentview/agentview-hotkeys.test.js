@@ -74,6 +74,7 @@ function sessionProc(home, pid, sid) {
 }
 const avFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
 const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
+const foldFile = (home) => path.join(home, '.claude', 'agent-view-folds');
 const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
 
 function run(env, args, { input, extraEnv = {} } = {}) {
@@ -121,6 +122,90 @@ test('--pin with an empty KEY (header/spacer row) is a no-op', { skip }, () => {
   assert.strictEqual(run(env, ['--pin', '']).code, 0);
   assert.ok(!fs.existsSync(pinFile(home)) || fs.readFileSync(pinFile(home), 'utf8').trim() === '',
     'an empty KEY never writes a pin');
+});
+
+// ---- --fold (enter on a fold header: toggle the sidecar, collapsed by default) ----
+test('--fold expands a group by adding it to the sidecar, and --fold again collapses it', { skip }, () => {
+  const { env, home } = makeEnv();
+  assert.strictEqual(run(env, ['--fold', 'fold:completed']).code, 0);
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), 'completed', 'expanding adds the bare group name');
+  assert.strictEqual(run(env, ['--fold', 'fold:completed']).code, 0);
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), '', 'toggling again re-collapses it');
+});
+
+test('--fold keeps other expanded groups when collapsing one', { skip }, () => {
+  const { env, home } = makeEnv();
+  run(env, ['--fold', 'fold:completed']);
+  run(env, ['--fold', 'fold:idle']);
+  run(env, ['--fold', 'fold:completed']); // re-collapse completed
+  const lines = fs.readFileSync(foldFile(home), 'utf8').split('\n').filter(Boolean);
+  assert.deepStrictEqual(lines, ['idle'], 'only the toggled group is removed');
+});
+
+test('--fold with an empty group is a no-op', { skip }, () => {
+  const { env, home } = makeEnv();
+  assert.strictEqual(run(env, ['--fold', 'fold:']).code, 0);
+  // Not the looser "empty-or-missing" check: without the guard, appending "" still
+  // creates the sidecar (as a single blank line, which .trim() also reads as empty) —
+  // this must fail if that guard is removed, so it asserts the file was never created.
+  assert.ok(!fs.existsSync(foldFile(home)), 'an empty group never creates the fold sidecar');
+});
+
+// A "tidy" that reverts the fold header back to an empty key (matching every other
+// header/spacer row) would pass every other test in this file — the render still shows
+// "COMPLETED (1)", and --skip would just deflect off it like any other header. Only
+// checking the KEY itself catches that regression.
+test('a collapsed group carries a landable fold: sentinel, not an empty key', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
+  assert.ok(line, `expected a collapsed COMPLETED line, got:\n${body}`);
+  assert.strictEqual(line.split('\t')[0], 'fold:completed', 'the fold row carries the sentinel key, not an empty one');
+});
+
+// ---- fold round trip: an EXPANDED foldable header must stay landable ----
+// build_pretty's COLLAPSED header carries a landable fold:<group> key (tested above); the
+// EXPANDED header used to fall through to a bare empty key instead, so re-collapsing was
+// unreachable from the keyboard (--skip bounces the cursor off any empty key) and a mouse
+// click that DID land there hit --enter's accept fallback, silently exiting the picker.
+// Drive the render for real, rather than hand-typing 'fold:completed', so a regression that
+// puts the sentinel on the wrong branch (or only for one of the two foldable groups) shows up
+// here instead of passing two separately-mocked tests the way this branch's own gap did.
+test('an expanded foldable group header carries a landable fold: key end to end', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
+  fs.writeFileSync(foldFile(home), 'completed\n');   // expand it -- collapsed is the default
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
+  assert.ok(line, `expected an expanded COMPLETED line, got:\n${body}`);
+  const key = line.split('\t')[0];
+  assert.strictEqual(key, 'fold:completed', 'the EXPANDED header still carries the fold sentinel, not an empty key');
+
+  // Feed that real KEY through --skip: a landable row must not deflect the cursor.
+  assert.strictEqual(run(env, ['--skip', 'down', key, '4']).out.trim(), '',
+    'the expanded header must stop the cursor (landable), not bounce it like a plain header');
+
+  // Feed it through --enter: it must toggle the fold, not fall through to accept.
+  const action = run(env, ['--enter', key]).out;
+  assert.match(action, /--fold fold:completed/, 'enter on the expanded header toggles the fold, not accept');
+  run(env, ['--fold', key]);   // perform the toggle --enter's transform would have triggered
+  assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), '', 'the round trip re-collapses the group');
+});
+
+test('a non-foldable group header stays keyless even though a foldable one is now landable', { skip }, () => {
+  const { env, home } = makeEnv();
+  stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: nowSec() - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: 'alpha' });
+  const body = run(env, ['--body']).out;
+  const line = body.split('\n').find((l) => l.includes('WORKING'));
+  assert.ok(line, `expected a WORKING line, got:\n${body}`);
+  assert.strictEqual(line.split('\t')[0], '', 'a non-foldable state header keeps the empty key');
+  assert.match(run(env, ['--skip', 'down', '', '4']).out, /^down\+transform/, 'a keyless header still deflects the cursor');
+  // A mouse click or enter on this same keyless row must not fall through to --enter's
+  // accept fallback -- that would silently exit the picker on a dead key.
+  const entered = run(env, ['--enter', '']);
+  assert.strictEqual(entered.out, '', 'enter on a keyless row must emit nothing, not accept');
+  assert.strictEqual(entered.code, 0);
 });
 
 // ---- render: PINNED group + exclusion + gutter --------------------------
@@ -234,12 +319,12 @@ test('--remove of a REMOTE row purges over ssh and filters the cache', { skip },
   const gone = JSON.stringify({ session: 'rg', cwd: '/r/rgone', state: 'working', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rg:%2' });
   const keep = JSON.stringify({ session: 'rk', cwd: '/r/rkeep', state: 'idle', host: 'daniel-server', kind: 'host', ts: now, locator: 'tmux:/s:rk:%1' });
   const { env, home, sshLog } = makeEnv();
-  fs.writeFileSync(path.join(home, '.agentview-remote-cache'), `${gone}\n${keep}`);
+  fs.writeFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), `${gone}\n${keep}`);
   const key = rowKey({ host: 'daniel-server', cwd: '/r/rgone', state: 'working', locator: 'tmux:/s:rg:%2' });
   assert.strictEqual(run(env, ['--remove', key], { extraEnv: { FZF_PICK: 'Remove' } }).code, 0);
   assert.match(read(sshLog), /claude rm/, 'runs the purge on the remote over ssh');
   assert.match(read(sshLog), /s=rg/, 'for the selected session id');
-  const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache'), 'utf8');
+  const cache = fs.readFileSync(path.join(home, '.agentview-remote-cache.daniel-server'), 'utf8');
   assert.doesNotMatch(cache, /rgone/, 'the removed remote row leaves the cache');
   assert.match(cache, /rkeep/, 'other remote rows stay');
 });
@@ -267,6 +352,21 @@ test('--jump-nth counts a pinned session as #1', { skip }, () => {
   run(env, ['--pin', rowKey({ cwd: '/r/bravo', state: 'working', ts: now - 9, locator: 'tmux:/s:sb:%2', title: 'bravo' })]);
   run(env, ['--jump-nth', '1']);
   assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %2/, 'the pinned session is jump target #1');
+});
+
+test('--jump-nth skips a collapsed fold row instead of mis-numbering past it', { skip }, () => {
+  const { env, home, tmuxLog } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: now - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: 'alpha' });
+  stateFile(home, 'c', { host: HOST, cwd: '/r/charlie', state: 'completed', ts: now - 10, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'charlie' });
+  stateFile(home, 'd', { host: HOST, cwd: '/r/delta', state: 'idle', ts: now - 20, kind: 'host', locator: 'tmux:/s:sd:%4', pane: '%4', title: 'delta' });
+  // completed stays collapsed (default); idle is explicitly expanded. Render order is fixed
+  // by group (working, then completed, then idle), so this is: alpha (gutter 1), fold:completed
+  // (a row with no gutter number), delta (gutter 2). --jump-nth 2 must land on delta, not on
+  // whatever the fold row's position in the fold: KEY count would otherwise put there.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
+  run(env, ['--jump-nth', '2']);
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /select-pane -t %4/, 'jump #2 is the row gutter 2 actually numbers (delta), not the fold row before it');
 });
 
 // ---- --skip (up/down step over the group headers + spacers) -------------
@@ -297,6 +397,21 @@ test('--skip re-arms with AGENTVIEW_SELF, so an undeployed copy drives its own p
   const { env } = makeEnv();
   const out = run(env, ['--skip', 'down', ''], { extraEnv: { AGENTVIEW_SELF: '/tmp/av-copy' } }).out;
   assert.match(out, /transform\('\/tmp\/av-copy' --skip down/, 'the recursion points back at the same copy');
+});
+
+// --skip exists so the cursor never rests on a keyless row. A fold header has to be
+// selectable to be expandable, so it carries a sentinel key (fold:<group>) rather than an
+// empty one — and the dispatch's early return on any non-empty key catches it unmodified.
+test('a fold header is landable, unlike a plain group header', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', 'fold:completed', '4']).out;
+  assert.strictEqual(out.trim(), '', 'a fold header must stop the cursor, not deflect it');
+});
+
+test('a plain header still deflects the cursor', { skip }, () => {
+  const { env } = makeEnv();
+  const out = run(env, ['--skip', 'down', '', '4']).out;
+  assert.match(out, /^down\+transform/, 'a keyless header must still be skipped');
 });
 
 // ---- --keys (the ? shortcut cheatsheet) ---------------------------------
@@ -371,7 +486,7 @@ test('--refresh-remote pulls over ssh and posts a reload to the fzf port', { ski
   const pf = path.join(home, 'portfile'); fs.writeFileSync(pf, '61234\n');
   assert.strictEqual(run(env, ['--refresh-remote', pf], { extraEnv: { CURL_LOG: curlLog } }).code, 0);
   assert.match(read(sshLog), /daniel-server/, 'refreshes the homelab snapshot over ssh');
-  assert.ok(fs.existsSync(path.join(home, '.agentview-remote-cache')), 'rewrites the remote cache');
+  assert.ok(fs.existsSync(path.join(home, '.agentview-remote-cache.daniel-server')), 'rewrites the remote cache');
   const curl = read(curlLog);
   assert.match(curl, /127\.0\.0\.1:61234/, 'posts to the port read from the portfile');
   assert.match(curl, /reload\(/, 'the POST body is a reload action');

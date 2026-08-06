@@ -56,6 +56,7 @@ function makeEnv() {
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const wezSendLog = path.join(bin, 'wez-send.log'); fs.writeFileSync(wezSendLog, '');
   const sshLog = path.join(bin, 'ssh.log'); fs.writeFileSync(sshLog, '');
+  const sshArgvLog = path.join(bin, 'ssh-argv.log'); fs.writeFileSync(sshArgvLog, '');
   const wezwinActivateLog = path.join(bin, 'wezwin-activate.log'); fs.writeFileSync(wezwinActivateLog, '');
   const wezwinSendLog = path.join(bin, 'wezwin-send.log'); fs.writeFileSync(wezwinSendLog, '');
   const taskkillLog = path.join(bin, 'taskkill.log'); fs.writeFileSync(taskkillLog, '');
@@ -77,18 +78,44 @@ exit 0
 `, { mode: 0o755 });
   // Stateful tmux stub (mirrors agentview-bg-sessions.test.js): select-window only "succeeds"
   // (exit 0) for a window new-window has already created, so the bg-jump reuse-vs-spawn branch
-  // is real, not always-true.
+  // is real, not always-true. new-window actually executes its command string through sh
+  // so we can verify quoting survives the shell reparse.
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "$TMUX_LOG"
 wins="$TMUX_LOG.wins"; touch "$wins"
+sess="\${AV_TMUX_SESSION:-0}"
+opts="$TMUX_LOG.opts"; touch "$opts"
 case "$1" in
-  select-window) name="\${3#=}"; grep -qxF "$name" "$wins" && exit 0; exit 1 ;;
-  new-window)    echo "$3" >> "$wins" ;;
+  display-message)
+    case "$3" in *window_id*) tail -n1 "$wins" | cut -f2 ;; *) echo "$sess" ;; esac; exit 0 ;;
+  list-windows)  cat "$wins"; exit 0 ;;
+  select-window) cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
+  show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
+  set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"
+                 printf '%s\\t%s\\n' "$4" "$6" >> "$opts"; exit 0 ;;
+  # respawn-pane re-runs the command in place, so execute it the same way new-window does —
+  # the quoting-survives-reparse tests must cover the respawn path too, not just first open.
+  respawn-pane)
+    if [ -n "\${5:-}" ]; then sh -c "$5" 2>/dev/null; fi
+    exit 0 ;;
+  new-window)
+    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"
+    # Execute the command string through sh to test quoting post-reparse
+    if [ -n "\${4:-}" ]; then
+      sh -c "$4" 2>/dev/null
+    fi
+    ;;
 esac
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
 echo "$*" >> "$SSH_LOG"
+# "$*" above joins argv with spaces and can't tell a correctly-quoted multi-word
+# ControlPath from one split by a broken quoting scheme (both flatten to the same
+# text). Also record one argv element per line, with a record-separator line
+# between calls, so tests can recover exact argument boundaries.
+printf '%s\\n' "$@" >> "$SSH_ARGV_LOG"
+printf '\\x1e\\n' >> "$SSH_ARGV_LOG"
 exit 0
 `, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
@@ -135,7 +162,7 @@ exit 0
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     AV_KILLCMD: killStub,
     TMUX_LOG: tmuxLog, WEZ_ACTIVATE_LOG: activateLog, WEZ_SPAWN_LOG: spawnLog, WEZ_SEND_LOG: wezSendLog,
-    WEZ_LIST_FILE: wezListFile, SSH_LOG: sshLog, WEZWIN_ACTIVATE_LOG: wezwinActivateLog,
+    WEZ_LIST_FILE: wezListFile, SSH_LOG: sshLog, SSH_ARGV_LOG: sshArgvLog, WEZWIN_ACTIVATE_LOG: wezwinActivateLog,
     WEZWIN_SEND_LOG: wezwinSendLog, TASKKILL_LOG: taskkillLog, CLAUDE_LOG: claudeLog, KILL_LOG: killLog,
     FZF_CAPTURE: capture,
   };
@@ -145,7 +172,7 @@ exit 0
   // it. The WSL routing gets its own tests further down.
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
   return {
-    bin, home, windir, env, tmuxLog, activateLog, spawnLog, wezSendLog, wezListFile, sshLog,
+    bin, home, windir, env, tmuxLog, activateLog, spawnLog, wezSendLog, wezListFile, sshLog, sshArgvLog,
     wezwinActivateLog, wezwinSendLog, taskkillLog, claudeLog, killLog, capture,
   };
 }
@@ -160,12 +187,18 @@ function winFile(windir, sid, obj) {
 function sessionProc(home, pid, sid) {
   fs.writeFileSync(path.join(home, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: sid }));
 }
+// One cache file per host now. Each fixture object carries its own `host`, so this splits
+// them into their host's file (defaulting to REMOTE1, since most fixtures only use one host).
 function remoteCache(home, objs) {
-  fs.writeFileSync(path.join(home, '.agentview-remote-cache'), objs.map((o) => JSON.stringify(o)).join('\n'));
+  const byHost = {};
+  for (const o of objs) { const h = o.host || REMOTE1; (byHost[h] ||= []).push(o); }
+  for (const [h, list] of Object.entries(byHost)) {
+    fs.writeFileSync(cacheFile(home, h), list.map((o) => JSON.stringify(o)).join('\n'));
+  }
 }
 const localAvFile = (home, sid) => path.join(home, '.claude', 'agent-view', `${sid}.json`);
 const winAvFile = (windir, sid) => path.join(windir, `${sid}.json`);
-const cacheFile = (home) => path.join(home, '.agentview-remote-cache');
+const cacheFile = (home, host = REMOTE1) => path.join(home, `.agentview-remote-cache.${host}`);
 const pinFile = (home) => path.join(home, '.claude', 'agent-view-pins');
 const pane = (id, cwd, title) => ({ pane_id: id, cwd, title, window_id: 0, tab_id: 0 });
 
@@ -246,10 +279,18 @@ const jumpScenarios = [
     key: rowKey({ host: REMOTE1, cwd: '/home/ubuntu/r', kind: 'host', locator: 'tmux:/tmp/tmux-1000/default:rsess:%4' }),
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
-      assert.match(l.tmuxLog, /new-window -n rsess/);
-      assert.match(l.tmuxLog, /ssh -t daniel-server/);
+      assert.match(l.tmuxLog, /new-window -n av:Homelab/);
+      // The command string should be logged by tmux before reparse
+      assert.match(l.tmuxLog, /ssh -o ControlMaster=auto/);
+      // But the critical test: post-reparse ssh argv must have -o and ControlPath as separate args
+      const sshLine = l.sshLog.trim().split('\n')[0];
+      assert.ok(sshLine && sshLine.includes('-o'), 'post-reparse ssh must receive -o as separate arg');
+      assert.ok(sshLine.includes('ControlPath='), 'post-reparse ssh must receive ControlPath= value');
+      // The quoting test: ControlPath value should be intact, not mangled
+      const controlPathMatch = sshLine.match(/ControlPath=(\S+)/);
+      assert.ok(controlPathMatch && controlPathMatch[1].includes('.ssh/agentview'), 'ControlPath value must be intact post-reparse');
+      assert.match(l.tmuxLog, /-t daniel-server/);
       assert.match(l.tmuxLog, /attach -t 'rsess'/);
-      assert.strictEqual(l.sshLog, '', 'the ssh call is a string argument to tmux, not exec\'d by this process');
       assert.strictEqual(l.spawnLog, ''); assert.strictEqual(l.activateLog, '');
     },
   },
@@ -282,7 +323,7 @@ const jumpScenarios = [
     key: rowKey({ cwd: '/home/x', kind: 'bg', locator: 'bg:jobxyz' }),
     extraEnv: { TMUX: '/tmp/tmux-1000/default,1,0' },
     check: (l) => {
-      assert.match(l.tmuxLog, /new-window -n cc-jobxyz claude attach jobxyz/);
+      assert.match(l.tmuxLog, new RegExp(`new-window -n av:Linux claude attach jobxyz`));
       assert.strictEqual(l.sshLog, ''); assert.strictEqual(l.activateLog, ''); assert.strictEqual(l.wezwinActivateLog, '');
     },
   },
@@ -365,9 +406,8 @@ test('do_remove (remote): two hosts sharing a cwd — removing one never sshes o
   assert.match(ssh, /s=sida/);
   assert.doesNotMatch(ssh, /other-remote-host/, 'never sshes to the OTHER host sharing the cwd');
   assert.doesNotMatch(ssh, /s=sidb/, 'never purges the other host\'s sid');
-  const after = read(cacheFile(home));
-  assert.doesNotMatch(after, /"sida"/, 'the targeted host\'s row leaves the cache');
-  assert.match(after, /"sidb"/, 'the other host\'s row (same cwd) survives');
+  assert.doesNotMatch(read(cacheFile(home, REMOTE1)), /"sida"/, 'the targeted host\'s row leaves its cache');
+  assert.match(read(cacheFile(home, REMOTE2)), /"sidb"/, 'the other host\'s cache (a separate file) is untouched');
 });
 
 // ==========================================================================
@@ -455,6 +495,33 @@ test('title_for_cwd fills a titleless row from the wezterm pane title, skipping 
   const lines = body.split('\n').filter((l) => l.includes('Fixing bug'));
   assert.strictEqual(lines.length, 2, 'both the exact-cwd row and the subdirectory row pick up the pane title');
   assert.doesNotMatch(body, /\bbash\b/, 'the shell pane title never leaks into a row');
+});
+
+// ==========================================================================
+// ssh quoting through tmux: %q protection must survive shell reparse with spaces
+// ==========================================================================
+test('remote tmux new-window embeds ssh with proper quoting for ControlPath containing space', { skip }, () => {
+  const paths = makeEnv();
+  // Create a control directory with a space to test quoting
+  const ctldir = scratch('av-ctl ');
+  const key = rowKey({ host: REMOTE1, cwd: '/home/ubuntu/r', kind: 'host', locator: 'tmux:/tmp/tmux-1000/default:rsess:%4' });
+  const env = {
+    ...paths.env,
+    TMUX: '/tmp/tmux-1000/default,1,0',
+    AGENT_VIEW_SSH_CTLDIR: ctldir,
+  };
+  run(env, ['--jump', key], {});
+  // Jump fails (no pane), but ssh was called. Read argv with boundaries preserved
+  // (one element per line, calls separated by \x1e) rather than the space-joined
+  // sshLog: a ControlPath split by the space in `ctldir` and a ControlPath kept
+  // intact as one argument both flatten to identical text once joined with "$*",
+  // so only the unflattened argv can tell correct quoting from broken quoting.
+  const calls = read(paths.sshArgvLog).split('\x1e\n').map((c) => c.split('\n').filter(Boolean)).filter((c) => c.length);
+  assert.ok(calls.length, 'expected an ssh call through tmux');
+  const argv = calls[0];
+  const controlPathArgs = argv.filter((a) => a.startsWith('ControlPath='));
+  assert.strictEqual(controlPathArgs.length, 1, 'ControlPath= should appear as exactly one argv element');
+  assert.strictEqual(controlPathArgs[0], `ControlPath=${ctldir}/%C`, 'ControlPath must survive as a single intact argv element, not split by the space in the directory name');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

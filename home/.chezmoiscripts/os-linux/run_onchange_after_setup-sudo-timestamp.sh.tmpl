@@ -1,0 +1,78 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Gives sudo a *global* credential timestamp, so one
+# authentication is reused across Claude Code shell-mode (`!`) commands instead of every
+# single one re-prompting for a password.
+#
+# Measured here 2026-08-06. sudo's default timestamp_type=tty falls back to ppid scoping
+# when there is no terminal, and Claude's shells have none (`tty` -> "not a tty"). Each
+# shell-mode command runs under a fresh, short-lived parent, so every sudo writes a ppid
+# record that is orphaned before the next command can reuse it: `sudo -v` immediately
+# followed by `sudo -n true` reported NOT CACHED. `global` is the only timestamp_type that
+# survives this, because it is the only one keyed on neither tty nor ppid. After: CACHED.
+#
+# Do not confuse this with the *other* sudo-in-Claude annoyance. ksshaskpass (which
+# dot_zshenv wires up as SUDO_ASKPASS under a graphical session) draws a "Remember password"
+# checkbox on that prompt which silently does nothing: it shows the box whenever KWallet is
+# up, but only writes to the keychain for prompts its regexes parse, and sudo's is not one.
+# Nothing here changes that, deliberately — the only way to make that checkbox honest is to
+# put the sudo password in a wallet that kwallet-pam unlocks at login, which hands root to
+# anything running as this user.
+#
+# The cost of `global`, stated plainly: after one authentication EVERY process running as
+# this user can sudo unprompted until the timeout, not just the terminal that authenticated
+# — Claude's own Bash tool and any subagent included. So timestamp_timeout is pinned to
+# sudo's default of 5 minutes rather than widened, and the `Bash(sudo:*)` deny rule in
+# settings.permissions.json is what holds the agent path. Both halves matter; keep them.
+#
+# workstation-only on purpose. A `server` or `minimal` profile has no interactive operator
+# being re-prompted, so it gets none of the benefit while carrying all of the widened window.
+#
+# bump-to-reinstall: sudo-timestamp v1
+set -u
+TAG=sudo-timestamp
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against a throwaway directory; nothing in
+# normal operation sets it.
+: "${SUDOERS_D:=/etc/sudoers.d}"
+
+FINAL="$SUDOERS_D/10-timestamp-global"
+# Staged under a name containing a '.' on purpose: sudo ignores those, so a half-written or
+# malformed drop-in is inert for the entire window between write and rename. There is no
+# moment at which a bad file is live, which is what makes this safe to run unattended.
+STAGE="$SUDOERS_D/.10-timestamp-global.new"
+
+DESIRED='Defaults timestamp_type=global
+Defaults timestamp_timeout=5'
+
+# run_onchange already gives idempotence — chezmoi re-runs this only when the rendered text
+# changes — so there is no convergence probe here. Re-running it simply rewrites an identical
+# file. A probe would cost a sudo prompt on every apply to save nothing, because
+# /etc/sudoers.d is 0750 root:root and cannot be read unprivileged to check.
+require_sudo "the sudo credential-timestamp policy"
+
+echo "$TAG: installing $FINAL"
+printf '%s\n' "$DESIRED" | sudo tee "$STAGE" >/dev/null
+sudo chown root:root "$STAGE"
+sudo chmod 0440 "$STAGE"
+
+if ! sudo visudo -cf "$STAGE"; then
+  sudo rm -f "$STAGE"
+  echo "$TAG: staged file failed validation; nothing changed" >&2
+  exit 1
+fi
+
+sudo mv "$STAGE" "$FINAL"
+
+# Check the whole config, not just the new file: a drop-in can parse standalone and still
+# collide once the rest of sudoers is in play. Roll back rather than leave sudo unusable —
+# a broken /etc/sudoers.d locks every subsequent sudo out, including the one that would fix it.
+if ! sudo visudo -c >/dev/null; then
+  sudo rm -f "$FINAL"
+  echo "$TAG: full sudoers check failed after install; rolled back" >&2
+  exit 1
+fi
+
+echo "$TAG: done — one authentication now covers 5 minutes across all shells"
+{{ end -}}

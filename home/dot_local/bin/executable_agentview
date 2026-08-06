@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# statedir, sessionsdir, pinfile, remote_cache, windir, win_spawn_dir, HOST_SSH,
+# statedir, sessionsdir, pinfile, foldfile, windir, win_spawn_dir, HOST_SSH,
 # WSL_DOMAIN, WIN_GITBASH, WIN_CLAUDE and _rw are set here and read in the six
 # modules loaded from $AV_LIB below. That source path resolves at runtime, so the
 # linter cannot follow it and reports every one of them as unused.
@@ -35,16 +35,26 @@
 #                         registry row. Remote rows act on their host over ssh, then filter
 #                         the cache. So a live session can't reappear.
 #   agentview --pin KEY   toggle this row's pin (CTRL+P); pins live in ~/.claude/agent-view-pins
+#   agentview --fold KEY  toggle a completed/idle group's fold (enter/double-click on its
+#                         fold: header); expanded groups live in ~/.claude/agent-view-folds,
+#                         collapsed by default
 #   agentview --rename KEY  send Claude's own /rename into the session's pane (CTRL+R); needs
 #                         a tmux/wezterm pane + an idle session (remote tmux driven over ssh)
 #   agentview --skip DIR KEY [HOPS]  emit the fzf actions that carry the cursor off a group
 #                         header/spacer (armed on up/down — see the dispatch below)
+#   agentview --enter KEY  emit the fzf action for the enter/double-click keys: accept, or —
+#                         for a fold: header — the toggle-and-reload (see the dispatch below)
 #   agentview --body      emit just the grouped fzf list (used for the live reload)
 #   agentview --refresh-remote PF  reconcile Windows rows against the daemon roster (reap the
 #                         ones it no longer runs, synthesize the live ones no hook registered)
 #                         + pull the homelab cache over ssh, then reload the live picker via the
 #                         fzf --listen port stored in portfile PF (used by the startup background
 #                         job and CTRL+F). Detached: this is where the slow off-render work goes.
+#   agentview --watch PF  repaint the picker while it's open: loops waiting for a local state
+#                         change (inotifywait) or a timeout, re-fetching the remote hosts on
+#                         timeout. Started detached alongside --refresh-remote and killed by the
+#                         EXIT trap when the picker closes.
+#   agentview --watch-once PF  a single --watch iteration, then returns (test seam).
 # KEY fields are US-separated (0x1f): host|cwd|state|ts|title|pane|kind|locator.
 # A session's `locator` (captured at start) is the concrete focus target, so a jump is
 # one direct backend command with no discovery step. Rows lacking a locator (legacy /
@@ -65,7 +75,10 @@ mode="${1:-fzf}"
 # nothing but keyless rows — the "no active sessions" placeholder — can't spin forever.
 # Dispatched above every other setup line: this runs on each arrow keypress.
 if [ "$mode" = "--skip" ]; then
-  [ -n "${3:-}" ] && exit 0                  # a real session row — stay on it
+  # A fold header carries a sentinel key (fold:<group>) rather than an empty one precisely so
+  # this early return catches it: it has to be landable to be expandable, which is the exact
+  # inverse of what a plain header needs.
+  [ -n "${3:-}" ] && exit 0                  # a real session row, or a fold header — stay on it
   hops="${4:-4}"; case "$hops" in ''|*[!0-9]*) hops=0;; esac
   [ "$hops" -gt 0 ] || exit 0
   dir="${2:-down}"
@@ -74,14 +87,29 @@ if [ "$mode" = "--skip" ]; then
   exit 0
 fi
 
+# --enter KEY: the picker's enter AND double-click keys both arm this as an fzf
+# `transform`, same shape as --skip above — a single flat call with no literal parens in
+# the argument. fzf's --bind parser finds a transform(...) action's extent by naive paren
+# counting; a conditional INLINED directly in the --bind string (echoing
+# "execute-silent(...)+reload(...)" from one branch) plants literal parens inside that
+# argument and truncates it there, so the decision has to live in a dispatch like this one
+# instead. A fold header's key has no session behind it — accepting it (fzf's default for
+# both enter and a double-click) would just exit the picker on a dead key, so both must
+# toggle + repaint it instead.
+if [ "$mode" = "--enter" ]; then
+  case "${2:-}" in
+    fold:*) printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
+              "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$2" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" ;;
+    '')     ;;   # keyless row (header/spacer/status line) -- no-op, not accept: accepting an
+                 # empty KEY exits the picker on a dead click, same bug a fold: key exists to avoid.
+    *)      printf accept ;;
+  esac
+  exit 0
+fi
+
 statedir="$HOME/.claude/agent-view"
-# Homelab snapshot cache: the picker renders from THIS file instantly (no network on
-# open); a background job refreshes it over ssh and live-reloads fzf. Kept OUT of the
-# state dir and without a .json suffix so the local glob never mistakes it for a local
-# session file. Defined here (above do_remove) so Ctrl+X on a remote row can filter it.
-remote_cache="$HOME/.agentview-remote-cache"
 # Claude's own per-process registry (see the load_session_map block below for what the render
-# does with it). Defined here — like remote_cache — because do_remove needs it: the render
+# does with it). Defined here because do_remove needs it: the render
 # rewrites a daemon session's locator to bg:<jobId>, and only this registry maps that job back
 # to the session id the on-disk row is keyed by.
 sessionsdir="$HOME/.claude/sessions"
@@ -89,6 +117,16 @@ sessionsdir="$HOME/.claude/sessions"
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.
 pinfile="$HOME/.claude/agent-view-pins"
+# Fold sidecar: newline-delimited names of the (foldable) groups currently EXPANDED —
+# collapsed is the default, so an empty/missing file means everything folds. do_fold
+# (actions.sh) toggles a line; group_expanded (render.sh) reads it.
+foldfile="$HOME/.claude/agent-view-folds"
+# Seen sidecar: "<host US cwd US kind>\t<ts>" per line — the row ts as of the last time you
+# FOCUSED that session. fold_seen_states (render.sh) promotes a completed row whose ts has
+# moved past its marker into the DONE group; jump_or_report (focus.sh) restamps it, which is
+# the way back out. A ts rather than a flag, so the row can go DONE again the next time work
+# lands unwatched. Deliberately not written by `--resolve`: reading a session is not seeing it.
+seenfile="$HOME/.claude/agent-view-seen"
 # The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
 # FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
 # list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
@@ -101,7 +139,7 @@ pinfile="$HOME/.claude/agent-view-pins"
 # temp file instead of stdout.
 #
 # With no tmux there is no popup substrate at all, so fall back to a small inline box on the
-# screen execute() already cleared. Defined here — like remote_cache — because the Ctrl+X
+# screen execute() already cleared. Defined here because the Ctrl+X
 # confirm runs from the --remove dispatch, well above where the spawn pickers are defined.
 
 # The terminal runs Catppuccin Mocha (chezmoi `.chezmoidata/terminal.toml`), so every box this
@@ -145,9 +183,16 @@ US=$'\037'
 # the WSL mount; `WEZTERM_WIN` is the Windows wezterm binary (WSL's PATH excludes it,
 # appendWindowsPath=false) used to focus/rename/spawn Windows panes.
 winhost="daniel-desktop"
-declare -A HOST_LABEL=( ["$selfhost"]="WSL" ["$winhost"]="PC" [daniel-server]="Homelab" )
+# The badge for THIS machine. Hardcoding "WSL" against $selfhost meant the label tracked
+# nothing: it named whatever host agentview ran on, so every session on a native Linux box
+# rendered as WSL. WSL_DISTRO_NAME is the signal the spawn paths already branch on (the
+# wezterm routing below, spawn.sh's --domain-name), so the badge now agrees with them.
+# Two-way on purpose: agentview has no macOS path anywhere, so a Darwin branch would be
+# dead code rather than caution.
+selflabel="Linux"; [ -n "${WSL_DISTRO_NAME:-}" ] && selflabel="WSL"
+declare -A HOST_LABEL=( ["$selfhost"]="$selflabel" ["$winhost"]="PC" [daniel-server]="Homelab" [daniel-box]="Box" )
 declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
-declare -A HOST_SSH=( [daniel-server]="daniel-server" )
+declare -A HOST_SSH=( [daniel-server]="daniel-server" [daniel-box]="daniel-box" )
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
 # The wezterm domain a WSL-side tab must be pinned to (config.wsl_domains in wezterm.lua).
@@ -202,6 +247,8 @@ compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind
   if [ -n "$4" ] && [ "${4%%:*}" != "none" ]; then _pid="$4"
   else _pid="$1$US$2$US$3"; fi
 }
+# compute_seen_id is the sibling of the above and lives in common.sh instead, so the fold that
+# uses it can be exercised by sourcing the libs alone — see agentview-seen-state.test.js.
 
 # Shared jq fragments (were copy-pasted three times). `norm` makes Windows and Unix
 # cwds comparable; JQ_NONSHELL keeps only panes whose title isn't a bare shell/mux
@@ -226,13 +273,19 @@ JQ_NONSHELL='(.title|ascii_downcase|test("^(-?(zsh|bash|fish|sh|pwsh|powershell|
 _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_SOURCE[0]}"
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
-  --card|--keys)           _avmods="" ;;
-  --spawn)                 _avmods="spawn" ;;
-  --resolve|--jump)        _avmods="common focus" ;;
-  --remove|--pin|--rename) _avmods="common focus actions" ;;
-  --refresh-remote)        _avmods="common rows" ;;
-  --body)                  _avmods="common rows render" ;;
-  *)                       _avmods="common focus rows render" ;;   # picker + --jump-nth
+  --card|--keys)                     _avmods="" ;;
+  --spawn)                           _avmods="spawn" ;;
+  --resolve)                         _avmods="common focus" ;;
+  # jump_or_report (focus.sh) has a defensive fold: guard before do_jump — reachable via a
+  # direct `agentview --jump fold:<group>`, and, in principle, the interactive picker's own
+  # accept fallback (enter and double-click both route through --enter first, so that path
+  # is normally unreached — the guard is a safety net, not the primary route). --jump-nth
+  # shares the picker's actions.sh load but never exercises the guard itself: its awk
+  # (below) already excludes fold: rows before one could reach jump_or_report.
+  --jump|--remove|--pin|--rename|--fold) _avmods="common focus actions" ;;
+  --refresh-remote|--watch|--watch-once) _avmods="common rows" ;;
+  --body)                            _avmods="common rows render" ;;
+  *)                                 _avmods="common focus rows render actions" ;;   # picker + --jump-nth
 esac
 # Sourced at TOP LEVEL, never from inside a helper function: the modules carry
 # `declare -A` globals (SMAP, GN), and declare inside a function makes them local,
@@ -247,6 +300,7 @@ if [ "$mode" = "--jump" ]; then jump_or_report "${2:-}"; exit $?; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
 if [ "$mode" = "--pin" ]; then do_pin "${2:-}"; exit 0; fi
 if [ "$mode" = "--rename" ]; then do_rename "${2:-}"; exit 0; fi
+if [ "$mode" = "--fold" ]; then do_fold "${2:-}"; exit 0; fi
 
 if [ "$mode" = "--card" ]; then
   # Render the fzf preview card from the row KEY (US-delimited host|cwd|state|ts|title|
@@ -297,7 +351,7 @@ if [ "$mode" = "--keys" ]; then
   printf '\n  %sNavigate%s\n' "$sec" "$z"
   printf '    %s↑ ↓%s      %smove%s\n'                 "$k" "$z" "$dsc" "$z"
   printf '    %s⌥1 … ⌥9%s  %sjump to that session%s\n' "$k" "$z" "$dsc" "$z"
-  printf '    %s↵%s        %sswitch to selected%s\n'   "$k" "$z" "$dsc" "$z"
+  printf '    %s↵%s        %sswitch to selected / fold a group%s\n'   "$k" "$z" "$dsc" "$z"
   printf '\n  %sManage%s\n' "$sec" "$z"
   printf '    %s⌃r%s       %srename label%s\n'         "$k" "$z" "$dsc" "$z"
   printf '    %s⌃p%s       %spin / unpin to top%s\n'   "$k" "$z" "$dsc" "$z"
@@ -337,25 +391,34 @@ if [ "$mode" = "--refresh-remote" ]; then
   reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
   sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
   refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
-  _pf="${2:-}"
-  if [ -n "$_pf" ] && command -v curl >/dev/null 2>&1; then
-    for _ in $(seq 1 40); do [ -s "$_pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
-    p=$(cat "$_pf" 2>/dev/null)
-    self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
-    [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
-        --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
-  fi
+  # Deliberately HERE and not inside refresh_remote: the watch loop calls that function on
+  # every timer tick, which would spawn a find pair per interval for as long as a picker is
+  # open. This dispatch runs once at startup and once per CTRL+F, which is often enough for
+  # litter that nothing reads.
+  gc_orphan_files
+  post_reload "${2:-}"
   exit 0
 fi
+
+# --watch PORTFILE: repaint the picker while it's open, not just at startup/CTRL+F. Each
+# iteration waits for either a local state-file change (inotifywait) or a timeout; a timeout
+# also re-fetches the remote hosts, since nothing local moved to explain the wait. Runs
+# detached, same as --refresh-remote, and dies with the picker via the EXIT trap below.
+# --watch-once runs a single iteration and returns -- the test seam for both branches and
+# the no-inotifywait fallback.
+if [ "$mode" = "--watch" ]; then av_watch_loop "${2:-}"; exit 0; fi
+if [ "$mode" = "--watch-once" ]; then av_watch_once "${2:-}"; exit 0; fi
 
 # --jump-nth N: focus the Nth session in the rendered order (pinned first, then by state,
 # ts desc) — the target of ALT+1..9. fzf fires this via `become`, so we inherit its pipes;
 # reconnect the real terminal (guarded — absent under the tests) so a tmux/ssh attach gets
-# a tty. Counts the same non-empty-KEY rows the number gutter labels, so ALT+K == gutter K.
+# a tty. Counts the same rows the number gutter labels, so ALT+K == gutter K — which means
+# skipping fold: rows too: they carry a non-empty key (see the --skip dispatch above) but
+# the gutter (render.sh) never numbers one, since it's never reached by the member-row loop.
 if [ "$mode" = "--jump-nth" ]; then
   if { : < /dev/tty; } 2>/dev/null; then exec < /dev/tty > /dev/tty 2>/dev/tty; fi
   render_body
-  key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} { c++; if (c==n) { print $1; exit } }')
+  key=$(printf '%s\n' "$body" | awk -F'\t' -v n="${2:-0}" '$1=="" {next} $1 ~ /^fold:/ {next} { c++; if (c==n) { print $1; exit } }')
   [ -n "$key" ] && jump_or_report "$key"
   exit $?
 fi
@@ -374,7 +437,12 @@ collapse_bg_forks                        # one row per task: fold a bg fork into
 if [ "$HAVE_WEZTERM" = 1 ]; then
   PANELIST=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null); prof wezterm_list
   load_titles;      prof load_titles
+  fold_title_states;  prof fold_title_states  # spinner in the pane title un-sticks a stale row
 fi
+# Runs for every row, not just local ones: the seen sidecar is keyed by host, so a remote
+# session that finished unwatched reaches the DONE group too. After the title fold, so a row
+# the spinner just moved back to "working" is not also called finished.
+fold_seen_states;     prof fold_seen_states
 
 # header line (right-aligned totals). Counted in pure bash — the old grep|awk|sort|grep
 # chain was 4 process spawns, and spawns dominate render time on Windows.
@@ -409,7 +477,14 @@ rm -f "$portfile" 2>/dev/null
 "$SELF" --refresh-remote "$portfile" \
   >/dev/null 2>&1 &   # detach stdio so the job never holds the picker's pipes open
 poster_pid=$!
-trap 'kill "$poster_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
+# Repaints the picker while it's open (see --watch above) -- a survivor here would hold the
+# picker's ConPTY open the same way the old CTRL+W hang did, so the trap kills it too. Closed
+# stdin too, not just redirected stdout/stderr: an inherited tty fd is exactly what kept the
+# old CTRL+W hang alive.
+"$SELF" --watch "$portfile" \
+  </dev/null >/dev/null 2>&1 &
+watch_pid=$!
+trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
 
 # How CTRL+N / CTRL+X hand off to their chooser. execute() ALWAYS clears fzf's window first
 # — even `execute(echo hi)` wipes the list — so under it the chooser can only ever replace
@@ -423,6 +498,10 @@ if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
 # Height must stay FIXED (no ~ adaptive): fzf sizes an adaptive window once at start
 # and never re-fits it, so rows the reloads above push in would overflow into scrolling
 # while the terminal below the box sat empty.
+#
+# enter/double-click binds: both dispatch to the --enter mode above, which decides accept
+# vs. fold-toggle — see that block for why the decision can't be inlined here. A plain
+# accept lands the row's KEY on fzf's stdout, read as $sel below.
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
@@ -430,11 +509,13 @@ sel=$(printf '%s\n' "$body" | fzf \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer='  ↵ switch/fold · alt-# jump · ⌃r rename · ⌃p pin · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \
   --listen=0 \
+  --bind='enter:transform('"'$SELF'"' --enter {1})' \
+  --bind='double-click:transform('"'$SELF'"' --enter {1})' \
   --bind='start:execute-silent(echo $FZF_PORT > '"$portfile"')' \
   --bind='up:up+transform('"'$SELF'"' --skip up {1})' \
   --bind='down:down+transform('"'$SELF'"' --skip down {1})' \

@@ -1,0 +1,26 @@
+[Unit]
+Description=Check that every machine is still exporting Claude Code telemetry
+Documentation=file:%h/.local/bin/otel-sweep-watch
+# Ordering only. The sweep reaches daniel-box and daniel-server over ssh, which needs no
+# graphical session — but notify-send does, and a finding raised before the desktop exists
+# would be dropped silently.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+# systemd's user manager does not source a login shell, so ~/.local/bin — where otel-sweep
+# and its runner live — is absent from the default PATH. ssh, python3 and notify-send come
+# from /usr/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/otel-sweep-watch
+# Exit 1 means "findings", which is the whole point of the check — surface it in
+# `systemctl --user --failed` rather than letting systemd log it as a crash.
+SuccessExitStatus=1
+# Three machines, a per-session Loki query each on the deep pass. Nowhere near this in
+# practice; it exists so an unreachable host cannot leave the unit hanging until tomorrow.
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle
+# stdout is the record; journald already rotates it, so the runner keeps no log of its own.
+StandardOutput=journal
+StandardError=journal

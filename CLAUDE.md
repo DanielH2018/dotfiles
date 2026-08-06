@@ -40,8 +40,15 @@ Assume other Claude sessions are in this repo right now, in worktrees under
   `chezmoi-apply-guard.sh` hook denies this case, but it only covers what chezmoi manages.
 
 Integrate with `bin/land`, which rebases, pushes, and merges the PR under a repo-wide lock so
-two sessions can't land onto a main the other is still moving. Background jobs don't run it —
-they open a draft PR and stop there.
+two sessions can't land onto a main the other is still moving. Nothing runs it unasked: a
+session that finishes work opens a draft PR and stops there, background jobs included.
+
+But when you *are* asked to land something, run `bin/land` yourself — don't print the command
+for the operator to paste back. It is yours to run, not to recommend. The general rule you
+carry ("never push to main, force-push, or merge") is about doing those by hand to a branch
+you were not asked to integrate; `land` is exactly how this repo does them safely — under the
+lock, through the PR, on request. If a permission prompt fires on the invocation, that is the
+confirmation step — let it, instead of pre-empting it with a command to paste.
 
 To *test* a branch, don't go to its worktree — bring it to the primary checkout with
 `bin/try <branch>`, and `bin/try --back` when you're done. It detaches onto the branch, which
@@ -52,6 +59,12 @@ needs `--source`, and a plain apply from the primary checkout deploys main rathe
 branch you meant to test. `try` holds its own lock and makes the same refusal
 `chezmoi-apply-guard.sh` does, since that hook matches the Bash command string and never sees
 the apply inside a script.
+
+Same rule as `land` on who runs it, for a different reason: `try` moves the primary checkout's
+HEAD and deploys to `$HOME`, which is the operator's live config, so don't put a branch on the
+bench on your own initiative. Asked to, though, you run it — `bin/try --dry-run` and
+`bin/try --diff` are there for showing what a bench would do, which is a better answer than
+handing over a command to paste.
 
 ## Two different "sandboxes" — don't conflate
 
