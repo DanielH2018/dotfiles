@@ -77,7 +77,11 @@ function runClipimg(shell, sb) {
     encoding: 'utf8',
     env: {
       // env -i equivalent: common.sh guards every integration on `command -v`, so a stripped
-      // PATH makes the rest of the file a no-op and leaves only the stubs reachable.
+      // PATH leaves the stubs as the only reachable version of the tools clipimg calls.
+      // It does NOT make the rest of the file inert — /usr/bin stays on PATH, so anything
+      // shipped by the OS still resolves. The ssh-agent block used to spawn a detached agent
+      // here on every case (no SSH_AUTH_SOCK inherited, throwaway HOME) and leak it; that is
+      // now gated on an interactive shell, and pinned by shell-ssh-agent-guard.test.js.
       HOME: sb.home, PATH: `${sb.bin}:/usr/bin:/bin`, CLIP_LOG: sb.clipLog, SHELL: shell,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
