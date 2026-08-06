@@ -69,6 +69,28 @@ test('shadow mode changes no decision in either hook', () => {
   }
 });
 
+// The census EXIT trap reads SSH_AT_RE and TF_AT, which used to be defined hundreds of lines
+// below the trap install. A command denying before them expanded both unset, and under
+// `set -u` that aborts only the pipeline subshell running each `grep` — not the trap. So a
+// record was still written, with `newly_anchored` silently null, which is why asserting that
+// a record exists proves nothing here. Each case below denies on an early rule while hiding a
+// second segment behind a newline that the whole-string rules cannot anchor on, so a census
+// that can see past the early deny must name that family.
+test('an early deny still censuses the family the whole-string rules missed', () => {
+  const cases = [
+    ['gh api -XPOST repos/o/r/issues\nterraform destroy', ['terraform']],
+    ['gh api -XPOST repos/o/r/issues\nssh homelab reboot', ['ssh']],
+  ];
+  for (const [cmd, expected] of cases) {
+    const d = logDir(`early-deny-${expected[0]}`);
+    const out = run(BDB, cmd, { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+    assert.strictEqual(JSON.parse(out).hookSpecificOutput.permissionDecision, 'deny', cmd);
+    const log = readLog(d);
+    assert.strictEqual(log.length, 1, cmd);
+    assert.deepStrictEqual(log[0].newly_anchored, expected, cmd);
+  }
+});
+
 test('shadow is off unless CMDPARSE_SHADOW=1, and writes nothing when off', () => {
   const d = logDir('off');
   run(ACB, 'echo hi && ls', { CLAUDE_SHADOW_LOG_DIR: d });

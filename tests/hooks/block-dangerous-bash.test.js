@@ -297,11 +297,16 @@ const ALLOW = [
   // its binary anywhere, so pin that these read as prose, not as invocations.
   "git commit -m 'add pkill guard'",
   'echo "use killall as a last resort" >> notes.md',
-  // A backslash-escaped pipe is regex alternation, not a command separator. SCAN used to
-  // collapse the backslash and read these as piping into an interpreter.
+  // A backslash-escaped separator is regex alternation or an argument escape, never a
+  // command separator. SCAN used to collapse the backslash into a real one and the rule
+  // behind it matched, denying text ABOUT a dangerous command as if it were the command.
   "ls -1 tests | grep -i 'danger\\|bash'",
   "grep -n 'interpreter\\|/bin/sh\\|xargs' hook.sh",
-  // Escaped separators other than `|` still flow through the same normalization.
+  'grep "a\\;rm -rf / " notes.txt',
+  'grep "x\\&\\& terraform apply" plan.md',
+  // The common legitimate escaped separator. Already allowed before `\;` was stripped, but
+  // only because no rule happened to match after the separator it created — pin it so it
+  // stays allowed for the right reason.
   "find . -name '*.tmp' -exec rm {} \\;",
 ];
 
