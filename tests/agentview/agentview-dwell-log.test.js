@@ -27,6 +27,22 @@ const dirs = [];
 const scratch = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; };
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
+// A frozen clock, and the one reason this file needs one. av_log_dwell reads `date +%s` for
+// `now` and subtracts the open timestamp the fixture captured -- two clock reads a fork apart,
+// so a second boundary landing between them logs 43 where the fixture meant 42. That is how the
+// duration test below failed a land while passing every time in isolation: under parallel load
+// the gap between the two forks widens until it straddles a tick. Shadowing `date` on PATH is
+// the same technique this suite's siblings use for ssh and mv, and it only freezes `+%s` --
+// anything else is handed to the real date, so the stub can't quietly answer a question nobody
+// asked it. The fixtures name CLOCK as a literal rather than reading the stub back through
+// `date`, so if the stub ever falls off PATH the duration test fails loudly on a nine-digit
+// number instead of going flaky again.
+const CLOCK = 1700000000;
+const clockBin = scratch('dwell-clock-');
+fs.writeFileSync(path.join(clockBin, 'date'),
+  `#!/bin/bash\n[ "$1" = '+%s' ] && { printf '%s\\n' ${CLOCK}; exit 0; }\ncommand -p date "$@"\n`,
+  { mode: 0o755 });
+
 // Drives the two functions against a scratch HOME holding the given per-host caches. `after`
 // runs between the open-time capture and the close-time log, standing in for whatever happened
 // while the picker was up.
@@ -40,6 +56,7 @@ function drive(caches, after = () => {}) {
     set -u
     US=$'\\037'
     export HOME=${JSON.stringify(home)}
+    export PATH=${JSON.stringify(clockBin)}:$PATH
     declare -A HOST_SSH=( [alpha]="alpha" [beta]="beta" )
     source ${JSON.stringify(LIB)}/common.sh
   `;
@@ -53,7 +70,7 @@ function drive(caches, after = () => {}) {
 
   execFileSync('bash', ['-c', `${preamble}
     _av_fp_open=$(cat ${JSON.stringify(stamp)})
-    _av_open_ts=$(( $(date +%s) - 42 ))
+    _av_open_ts=${CLOCK - 42}
     av_log_dwell
   `], { encoding: 'utf8' });
 
@@ -77,6 +94,7 @@ function driveSettled(atOpen, atSettled, atClose, { writeBaseline = true } = {})
     set -u
     US=$'\\037'
     export HOME=${JSON.stringify(home)}
+    export PATH=${JSON.stringify(clockBin)}:$PATH
     declare -A HOST_SSH=( [alpha]="alpha" [beta]="beta" )
     source ${JSON.stringify(LIB)}/common.sh
   `;
@@ -97,7 +115,7 @@ function driveSettled(atOpen, atSettled, atClose, { writeBaseline = true } = {})
   write(atClose);
   execFileSync('bash', ['-c', `${preamble}
     _av_fp_open=$(cat ${JSON.stringify(stamp)})
-    _av_open_ts=$(( $(date +%s) - 42 ))
+    _av_open_ts=${CLOCK - 42}
     av_log_dwell ${JSON.stringify(portfile)}
   `], { encoding: 'utf8' });
 
