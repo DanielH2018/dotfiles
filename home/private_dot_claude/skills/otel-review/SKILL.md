@@ -29,8 +29,13 @@ otelq labels                                           # label names, or values 
 Never `curl` the Loki or Prometheus HTTP API. `otelq` covers every query shape those
 endpoints take, and `curl` stays ask-listed on purpose — a prefix rule cannot constrain what
 follows a URL, so each call costs a prompt. A real run of this skill spent six prompts, all
-of them curl, every one expressible as `otelq`. Summarize sweep JSON with `jq`, which is also
-allowlisted; a `python3 -` heredoc is not, and the secrets hook blocks it outright.
+of them curl, every one expressible as `otelq`.
+
+Summarize sweep JSON with `jsonq`, or `jq` for a plain path extraction. Both are allowlisted.
+A `python3 -` heredoc is not, and the secrets hook blocks it outright — `jsonq` is the tool
+that exists to absorb that reflex, being a closed subset of Python syntax. Its one surprise
+is that there is no attribute access: `items(d)` not `d.items()`, `get(d, k, default)` not
+`d.get(...)`, `values(d)` not `d.values()`. `jsonq --functions` prints everything callable.
 
 There is no unprompted ad-hoc query path to the other two machines, and that is deliberate —
 see the grant comment in `settings.permissions.json`.
