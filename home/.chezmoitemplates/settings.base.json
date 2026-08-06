@@ -763,6 +763,24 @@
         "~/.netrc",
         "~/.pypirc",
         "~/.npmrc"
+      ],
+      {{/* One exact path re-opened inside the ~/.config/gh deny above, which is left as it is.
+           chezmoi manages ~/.config/gh/config.yml, so every status/diff/apply lstats it — and a
+           single unreadable managed file makes chezmoi abort the whole command with
+           `lstat: operation not permitted` rather than reporting its other entries. That is worse
+           than noisy: executable_chezmoi-apply-guard.sh runs `chezmoi status 2>/dev/null || exit 0`,
+           so inside the sandbox the guard silently degraded to a no-op, and an empty parse of an
+           aborted status is indistinguishable from "no drift".
+
+           Safe because the secret is not in this file. The GitHub token lives in
+           ~/.config/gh/hosts.yml — stated in sandbox/sandbox-CLAUDE.md and Dockerfile.base, and
+           consistent with this file's source contents (git_protocol, editor, pager, aliases,
+           colours). hosts.yml and everything else under the directory stay denied: this is an
+           exact-path carve-out, not a directory reopen. The Read()/Edit() denies on
+           ~/.config/gh/** in settings.permissions.json are a separate layer, left alone, so the
+           agent's own file tools still cannot read any of it. */}}
+      "allowRead": [
+        "~/.config/gh/config.yml"
       ]
     },
     "credentials": {
