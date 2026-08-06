@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""otel-sweep — read the Claude Code telemetry stack on every machine, without a prompt.
+"""otel-sweep — read the Claude Code telemetry stack on every machine, unprompted.
 
 Exists for the same reason as `otelq`, one layer out. `otelq` already carries a
 blanket allow because its host is a hardcoded constant; the moment the question
 became "and what about daniel-box and daniel-server?", the only tools that could
-answer were `ssh` and `curl`, both ask-listed for good reason. This closes that
-gap without widening either.
+answer were ssh and curl, both ask-listed for good reason. This closes that gap
+without widening either.
 
-The confinement is structural, not a check. There is no --host, --url, --query or
---output flag: the destinations are a fixed enum below, and the program that runs
-on each machine is PROBE, one module-level constant, delivered on stdin to
-`python3 -`. No element of any command is ever built from an argument — no
-f-string, no %, no .format, no concatenation — so there is no position where a
-caller-supplied string could become a command. subprocess is always called with an
-argv list and never shell=True, so there is no shell to escape from either. Output
-is JSON on stdout and nothing is written to disk.
+The confinement is structural, not a check. There is no --host, --url, --query
+or --output flag: the destinations are a fixed enum below, and the program that
+runs on each machine is PROBE, one module-level constant delivered on stdin to
+`python3 -`. No element of any command is ever built from an argument, so there
+is no position where a caller-supplied string could become a command. subprocess
+is always called with an argv list and never with a shell, so there is nothing
+to escape from either. Output is JSON on stdout; nothing is written to disk.
 
-PROBE reaches only loopback. Its one exception is daniel-server, where Loki is not
-published on the host, so PROBE resolves the container's bridge address and refuses
-anything that is not RFC1918 — the discovered value can select a private host on
-that machine's own docker bridge and nothing else.
+PROBE reaches only loopback. Its one exception is daniel-server, where Loki is
+not published on the host, so PROBE resolves the container's bridge address and
+refuses anything that is not RFC1918 — the discovered value can select a private
+address on that machine's own docker bridge and nothing else.
 
   otel-sweep                 # fast sweep of all three machines
-  otel-sweep --deep          # adds silent-session detection and start-time correlation
+  otel-sweep --deep          # adds sessions that are exporting nowhere
   otel-sweep --only box      # one machine
   otel-sweep --rows          # compact text instead of JSON
 
-Read-only by construction: every request is a GET, and PROBE never writes a file.
+Read-only by construction: every request is a GET, and PROBE writes no files.
 """
 
 from __future__ import annotations
@@ -38,28 +37,43 @@ import sys
 
 PROG = "otel-sweep"
 
-# Not configurable, and deliberately so — see the module docstring. A --host flag
-# would turn this into the arbitrary-ssh primitive the allow rule assumes it is not.
-# "local" runs PROBE here; the other two dial a fixed destination.
+# Not configurable, and deliberately so — see the module docstring. A --host
+# flag would turn this into the arbitrary-ssh primitive the allow rule assumes
+# it is not. "local" runs PROBE here; the others dial a fixed destination.
 HOSTS = {
     "local": None,
     "box": "daniel-box",
     "server": "daniel-server",
 }
 
-SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new"]
+SSH_OPTS = [
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=5",
+    "-o", "StrictHostKeyChecking=accept-new",
+]
 
 DEFAULT_TIMEOUT = 120
 
 # The whole remote side, as a constant. Nothing is substituted into it; the mode
-# arrives as argv so that this string stays fixed at every call site.
+# arrives as argv so this string stays fixed at every call site.
 PROBE = r'''
-import json, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import json
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "fast"
-BACKENDS = (("loki", 3100, "/ready"), ("prometheus", 9090, "/-/ready"), ("tempo", 3200, "/ready"))
+BACKENDS = (
+    ("loki", 3100, "/ready"),
+    ("prometheus", 9090, "/-/ready"),
+    ("tempo", 3200, "/ready"),
+)
 RFC1918 = re.compile(r"^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)[0-9.]+$")
-out = {"backends": {}, "notes": []}
+out = {"backends": {}}
 
 
 def get(url, timeout=15):
@@ -68,15 +82,16 @@ def get(url, timeout=15):
 
 
 def container_ip(name):
-    """Loki is unpublished on daniel-server; its bridge address is the only way in."""
+    """Loki is unpublished on daniel-server; the bridge address is the way in."""
+    fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}"
     try:
-        raw = subprocess.run(
-            ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", name],
+        found = subprocess.run(
+            ["docker", "inspect", "-f", fmt, name],
             capture_output=True, text=True, timeout=15,
         ).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return None
-    for candidate in raw:
+    for candidate in found:
         if RFC1918.match(candidate):
             return candidate
     return None
@@ -117,28 +132,45 @@ CC = '{service_name="claude-code"}'
 
 
 def tally(query, label):
-    """One-label aggregations only; the label is named so a missing one is visible."""
-    return {r.get("metric", {}).get(label, "?"): int(float(r["value"][1])) for r in loki(query)}
+    """One-label aggregations; the label is named so a missing one is visible."""
+    return {
+        r.get("metric", {}).get(label, "?"): int(float(r["value"][1]))
+        for r in loki(query)
+    }
 
 
-out["events_24h"] = tally(
-    "sum by (event_name) (count_over_time(" + CC + " | event_name != `` [24h]))", "event_name")
-out["sessions_24h"] = len(loki("sum by (session_id) (count_over_time(" + CC + " [24h]))"))
-out["errors_24h"] = tally(
-    "sum by (event_name) (count_over_time(" + CC + " | event_name=~`api_error|api_refusal` [24h]))", "event_name")
-out["hook_errors_24h"] = tally(
-    "sum by (hook_event) (count_over_time(" + CC + " | event_name=`hook_execution_complete` | num_non_blocking_error != `0` [24h]))",
-    "hook_event")
-out["mcp_24h"] = tally(
-    "sum by (status) (count_over_time(" + CC + " | event_name=`mcp_server_connection` [24h]))", "status")
-out["tool_failures_24h"] = tally(
-    "sum by (tool_name) (count_over_time(" + CC + " | event_name=`tool_result` | success=`false` [24h]))", "tool_name")
+def count(inner, label, window="24h"):
+    return tally(
+        "sum by (" + label + ") (count_over_time(" + CC + inner + " [" + window + "]))",
+        label,
+    )
+
+
+out["events_24h"] = count(" | event_name != ``", "event_name")
+out["errors_24h"] = count(" | event_name=~`api_error|api_refusal`", "event_name")
+out["hook_errors_24h"] = count(
+    " | event_name=`hook_execution_complete` | num_non_blocking_error != `0`",
+    "hook_event",
+)
+out["mcp_24h"] = count(" | event_name=`mcp_server_connection`", "status")
+out["tool_failures_24h"] = count(
+    " | event_name=`tool_result` | success=`false`", "tool_name"
+)
+out["sessions_24h"] = len(
+    loki("sum by (session_id) (count_over_time(" + CC + " [24h]))")
+)
 
 # query_range without an explicit start silently returns empty — see the role's
 # CLAUDE.md on daniel-box, where that cost an afternoon.
 DAY_NS = str(int((time.time() - 86400) * 1e9))
 out["compactions_24h"] = []
-for r in loki(CC + " | event_name=`compaction`", "/loki/api/v1/query_range", start=DAY_NS, limit="20"):
+rows = loki(
+    CC + " | event_name=`compaction`",
+    "/loki/api/v1/query_range",
+    start=DAY_NS,
+    limit="20",
+)
+for r in rows:
     stream = r.get("stream", {})
     out["compactions_24h"].append({
         "at": stream.get("event_timestamp"),
@@ -148,36 +180,38 @@ for r in loki(CC + " | event_name=`compaction`", "/loki/api/v1/query_range", sta
         "post_tokens": stream.get("post_tokens"),
     })
 
-newest = loki(CC, "/loki/api/v1/query_range", start=DAY_NS, limit="1", direction="backward")
+newest = loki(
+    CC, "/loki/api/v1/query_range", start=DAY_NS, limit="1", direction="backward"
+)
 stamps = [v[0] for r in newest for v in r.get("values", [])]
 out["newest_event_ns"] = max(stamps) if stamps else None
 
 if MODE == "deep":
     import pathlib
 
-    # A session whose transcript is being written while Loki has none of its events
-    # is exporting nowhere. That is the failure this whole tool exists to surface.
+    # A session whose transcript is being written while Loki has none of its
+    # events is exporting nowhere. That is the failure this tool exists for.
     seen = set()
     for r in loki("sum by (session_id) (count_over_time(" + CC + " [720h]))"):
-        sid = r["metric"].get("session_id")
+        sid = r.get("metric", {}).get("session_id")
         if sid:
             seen.add(sid)
     silent = []
-    root = pathlib.Path.home() / ".claude" / "projects"
     cutoff = time.time() - 48 * 3600
-    for path in root.glob("*/*.jsonl"):
+    for path in (pathlib.Path.home() / ".claude" / "projects").glob("*/*.jsonl"):
         try:
             st = path.stat()
         except OSError:
             continue
-        if st.st_mtime < cutoff:
+        if st.st_mtime < cutoff or path.stem in seen:
             continue
-        if path.stem not in seen:
-            silent.append({
-                "session": path.stem,
-                "mb": round(st.st_size / 1048576, 1),
-                "modified": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)),
-            })
+        silent.append({
+            "session": path.stem,
+            "mb": round(st.st_size / 1048576, 1),
+            "modified": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
+            ),
+        })
     out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)[:10]
     out["known_sessions"] = len(seen)
 
@@ -186,16 +220,22 @@ print(json.dumps(out))
 
 
 def probe(dest, mode, timeout):
-    """Run PROBE on one machine. argv is a list of constants; there is no shell."""
-    argv = ["python3", "-", mode] if dest is None else ["ssh", *SSH_OPTS, dest, "python3", "-", mode]
+    """Run PROBE on one machine. argv is constants; there is no shell."""
+    if dest is None:
+        argv = ["python3", "-", mode]
+    else:
+        argv = ["ssh", *SSH_OPTS, dest, "python3", "-", mode]
     try:
-        done = subprocess.run(argv, input=PROBE, capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run(
+            argv, input=PROBE, capture_output=True, text=True, timeout=timeout
+        )
     except subprocess.TimeoutExpired:
-        return {"error": "timed out after %ds" % timeout}
+        return {"error": f"timed out after {timeout}s"}
     except OSError as exc:
         return {"error": str(exc)}
     if done.returncode != 0:
-        return {"error": (done.stderr or "exit %d" % done.returncode).strip()[:400]}
+        detail = (done.stderr or f"exit {done.returncode}").strip()
+        return {"error": detail[:400]}
     try:
         return json.loads(done.stdout)
     except ValueError:
@@ -205,22 +245,41 @@ def probe(dest, mode, timeout):
 def render_rows(results):
     for name, data in results.items():
         if "error" in data:
-            print("%-8s UNREACHABLE  %s" % (name, data["error"]))
+            print(f"{name:<8} UNREACHABLE  {data['error']}")
             continue
-        backends = ",".join(k for k, v in data.get("backends", {}).items() if v == "ready") or "none"
-        print("%-8s ready=%-28s events=%-6d sessions=%d" % (
-            name, backends, sum(data.get("events_24h", {}).values()), data.get("sessions_24h", 0)))
+        ready = [k for k, v in data.get("backends", {}).items() if v == "ready"]
+        events = sum(data.get("events_24h", {}).values())
+        print(
+            f"{name:<8} ready={','.join(ready) or 'none':<26} "
+            f"events={events:<6} sessions={data.get('sessions_24h', 0)}"
+        )
+        for bad, n in sorted(data.get("errors_24h", {}).items()):
+            print(f"         {bad}={n}")
         for entry in data.get("silent_sessions", []):
-            print("         SILENT %s (%sMB, %s)" % (entry["session"][:8], entry["mb"], entry["modified"]))
+            print(
+                f"         SILENT {entry['session'][:8]} "
+                f"({entry['mb']}MB, {entry['modified']})"
+            )
 
 
 def main():
-    ap = argparse.ArgumentParser(prog=PROG, description="Read the Claude Code telemetry stack on every machine.")
-    ap.add_argument("--deep", action="store_true",
-                    help="add silent-session detection and start-time correlation")
-    ap.add_argument("--only", choices=sorted(HOSTS), help="sweep a single machine")
-    ap.add_argument("--rows", action="store_true", help="compact text instead of JSON")
-    ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="per-machine timeout in seconds")
+    ap = argparse.ArgumentParser(
+        prog=PROG,
+        description="Read the Claude Code telemetry stack on every machine.",
+    )
+    ap.add_argument(
+        "--deep", action="store_true", help="add silent-session detection"
+    )
+    ap.add_argument(
+        "--only", choices=sorted(HOSTS), help="sweep a single machine"
+    )
+    ap.add_argument(
+        "--rows", action="store_true", help="compact text instead of JSON"
+    )
+    ap.add_argument(
+        "--timeout", type=int, default=DEFAULT_TIMEOUT,
+        help="per-machine timeout in seconds",
+    )
     ns = ap.parse_args()
 
     mode = "deep" if ns.deep else "fast"
