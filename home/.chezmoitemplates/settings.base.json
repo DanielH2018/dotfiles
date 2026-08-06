@@ -301,6 +301,17 @@
           }
         ]
       },
+      {{/* artifacts are working docs, not an archive: drop anything untouched for a week */}}
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/prune-artifacts.sh",
+            "timeout": 10
+          }
+        ]
+      },
       {{/* reap the redundant interactive origin left running when a session is backgrounded; /proc-based, so non-Windows only. No-ops unless the daemon's ancestor cmdline carries the fork signature */}}{{ if ne .chezmoi.os "windows" }}{
         "matcher": "startup",
         "hooks": [
@@ -543,6 +554,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {{/* refresh the tracked HTML artifact once work has landed on the default branch */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact-refresh.sh",
             "timeout": 10
           }
         ]

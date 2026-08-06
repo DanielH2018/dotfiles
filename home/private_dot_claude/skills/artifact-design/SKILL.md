@@ -14,6 +14,35 @@ Render plans / specs / design docs as a readable, self-contained HTML file **in 
 - Only render when the deliverable is a plan or spec for review. A status update, a quick answer, or a single-file diff isn't a plan and doesn't need one.
 - Skip when the plan is trivial (a one-liner or single obvious step), or when Daniel said not to.
 
+## Slice status — required whenever the doc has phases
+
+An artifact that plans work in slices gets refreshed automatically as those slices land
+(a Stop hook watches for commits on the default branch and asks for an update), so the
+status has to live somewhere a later session can find and edit surgically. Freehand
+prose can't be updated without rewriting the doc and losing content.
+
+Mark every slice on its container element:
+
+```html
+<section data-slice="2" data-status="done">
+  <h2>Slice 2 — wire the service layer <span class="chip chip-done">done</span></h2>
+  <p class="meta">PR #245 · <code>5b00c01</code></p>
+```
+
+- `data-status` is one of `planned`, `active`, `done`. The visible chip must agree with it.
+- A `done` slice carries its PR number and short SHA — that's the evidence it shipped.
+- Chip colors from the palette below: `planned` overlay0, `active` yellow, `done` green.
+  Chip text is crust `#11111b`, never white.
+- Put `data-updated="<YYYY-MM-DD HH:MM>"` on `<body>` and show it in the footer, so a
+  stale artifact is obvious on sight.
+
+When refreshing: change only the slices whose state actually changed, plus the summary
+line and `data-updated`. Leave everything else byte-identical. If the landed commits
+have nothing to do with the artifact, say so and change nothing — never invent status.
+
+Artifacts are pruned after 7 days without an update, so a doc that keeps getting
+refreshed as work lands stays put and an abandoned one clears itself out.
+
 ## Output rules
 
 - **Local by default.** Write one self-contained `.html` file to `~/.claude/artifacts/` and tell Daniel the path.

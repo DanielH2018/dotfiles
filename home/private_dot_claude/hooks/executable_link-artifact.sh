@@ -95,6 +95,21 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   esac
 fi
 
+# Register the .html as this project's tracked artifact so artifact-refresh.sh can
+# offer to bring it up to date once work lands. The baseline SHA is re-seeded on every
+# write, including the rewrite that answers a refresh nudge — that is what stops the
+# nudge repeating, and what makes the next landed slice trigger a fresh one.
+if [[ "$path" == *.html ]]; then
+  # shellcheck source=/dev/null
+  . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+  if slug=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
+    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$slug.current" 2>/dev/null
+    if ref=$(artifact_upstream_ref); then
+      git rev-parse "$ref" 2>/dev/null > "$ARTIFACT_STATE_DIR/$slug.sha"
+    fi
+  fi
+fi
+
 # A Markdown artifact with no HTML companion is the standing preference going unmet.
 # suggest-artifact.sh was supposed to catch this, but it is gated on ExitPlanMode and
 # plan mode is never used here — measured 2026-08-06: zero ExitPlanMode calls across
