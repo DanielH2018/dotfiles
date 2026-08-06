@@ -50,9 +50,13 @@ pass by construction.
 |---|---|---|
 | this PC | docker compose | 127.0.0.1 |
 | daniel-box | k3s, `observability` ns | 127.0.0.1 via hostPort |
-| daniel-server | docker | container bridge IP — Loki is **not** published on the host |
+| daniel-server | docker | container bridge IP — Loki and Tempo are **not** published on the host |
 
-`daniel-server` has no Tempo. `tempo: unreachable` there is the correct answer, not a finding.
+`daniel-server` gained Tempo on 2026-08-06, so `tempo: unreachable` there is now a finding
+rather than the expected answer. Its 3200 answers only on the container bridge IP —
+`curl 127.0.0.1:3200/ready` on that host returns `000`, which is not an outage. Readiness
+alone proves the endpoint answers, not that traces land; for that, read
+`tempo_distributor_spans_received_total` from its metrics endpoint.
 
 For anything deeper on daniel-box, the authority is
 `~/server/ansible/roles/k8s/claude-otel/CLAUDE.md` **on that host** — read it rather than
