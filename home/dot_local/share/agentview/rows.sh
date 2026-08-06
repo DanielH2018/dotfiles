@@ -536,12 +536,19 @@ av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or ti
   # A freshly-provisioned box has no statedir until the register hook's first write --
   # inotifywait can't watch a path that doesn't exist, and would error out (rc 1) rather than
   # time out (rc 2), which is exactly the busy-spin case handled below.
-  mkdir -p "$statedir" 2>/dev/null
+  # Both, and for the same reason: inotifywait against a missing path exits 1 (an error), not 2
+  # (a timeout), and rc 1 falls into the floor-sleep branch below -- which would quietly turn
+  # the whole loop into a plain timer on a box that has not written either directory yet.
+  mkdir -p "$statedir" "$sessionsdir" 2>/dev/null
   if command -v inotifywait >/dev/null 2>&1; then
     # -qq stays silent. 2 means "timed out with no event", which is the cue to look at the
     # remote hosts; 0 means a real event fired.
+    # $sessionsdir is Claude's own live registry. Daemon-hosted bg jobs never fire the hook that
+    # writes $statedir, so without this a local bg job changing state waited for the remote
+    # timer. Measured 2026-08-06: 0.74 events/min across the whole registry, against the two
+    # repaints a minute the interval already causes -- no debounce needed.
     inotifywait -qq -t "$AV_WATCH_INTERVAL" \
-      -e close_write -e create -e delete -e moved_to "$statedir" >/dev/null 2>&1 &
+      -e close_write -e create -e delete -e moved_to "$statedir" "$sessionsdir" >/dev/null 2>&1 &
     _av_watch_child=$!
     wait "$_av_watch_child"
     rc=$?

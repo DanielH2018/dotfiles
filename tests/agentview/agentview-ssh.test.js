@@ -275,6 +275,32 @@ test('a local file event repaints without touching the network', () => {
     `expected the statedir as the watch target in: ${argv}`);
 });
 
+test('the watcher watches the live session registry, not just the hook sidecars', () => {
+  // Daemon-hosted bg jobs never fire UserPromptSubmit, so their hook rows go stale or never
+  // exist (rows.sh:39-45). They are recovered from ~/.claude/sessions, which nothing watched --
+  // so a local bg job finishing took up to a full interval to reach the picker.
+  const e = env();
+  const log = writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'sessions')),
+    `expected the sessions registry as a watch target in: ${argv}`);
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'agent-view')),
+    `the statedir must still be watched too, not replaced, in: ${argv}`);
+});
+
+test('a missing sessions registry is created before the watch, not watched blindly', () => {
+  // inotifywait against a path that does not exist returns rc 1, not rc 2. rc 1 lands in the
+  // floor-sleep branch, which silently degrades the whole loop to a plain timer with no error
+  // surfaced -- local event-driven updates would just stop on a freshly provisioned box.
+  const e = env();
+  fs.rmSync(path.join(e.home, '.claude', 'sessions'), { recursive: true, force: true });
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(fs.existsSync(path.join(e.home, '.claude', 'sessions')),
+    'the watcher must mkdir -p the sessions registry the same way it does the statedir');
+});
+
 test('the watcher falls back to a timer when inotifywait is absent', () => {
   // chezmoi deploys these dotfiles to WSL and both servers; inotify-tools is not everywhere.
   // Without a fallback the picker would silently stop repainting on those machines.
