@@ -63,13 +63,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "59223240c8ce4fb22612ec02dfe92d5de3529ca5a747f505710ad436b6fd5302",
-      "landed": "2026-08-02T19:58:03.633Z"
+      "hash": "e5136f07fc7df33e3fa5c2bb46dbb489193f7d4914cd15635a4a014a02432aeb",
+      "landed": "2026-08-06T23:13:29.582Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
-      "hash": "98ed968480ab4c1eb7e1a070df272a7d26a5e8ee6cb46c960fdaf2f738a48cba",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "5980d728bec25de54f9eb6c7ae593d3d210a34f7665e63cb2b67dadd489858ed",
+      "landed": "2026-08-06T23:13:29.582Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-safe-curl.sh",
