@@ -370,3 +370,76 @@ test('asks rather than failing open when jq is unavailable', { skip: noJqSkip },
     fs.rmSync(emptyPath, { recursive: true, force: true });
   }
 });
+
+// ---- separator-survival property ------------------------------------------------
+//
+// The hand-picked cases above are the reason two separator bugs shipped: `\|` normalized
+// into a real pipe (fixed in #240), and `\;`/`\&` did the same until #246 — whose fix then
+// ate a REAL separator after `\\`, which only a targeted question caught. Three bugs in one
+// function that a list of examples did not cover.
+//
+// So assert the property instead. It is one-directional: normalization may INVENT a
+// separator (over-denies — annoying, safe) but must never DELETE a real one (a bypass).
+//
+// Deciding whether a given `;` is real would need a shell-accurate oracle, and a bug in that
+// oracle would propagate here silently. These inputs are CONSTRUCTED so ground truth falls
+// out of the construction rules instead:
+//
+//   unquoted, preceded by N backslashes -> even N leaves the separator REAL, odd N escapes it
+//   inside quotes                       -> never a real separator, whatever the escaping
+//   a doubled form (`&&`, `||`, `;;`)   -> always real: escaping the first leaves the second
+//
+// `terraform apply` / `ssh homelab sudo reboot` follow each separator because both rules
+// anchor on (^|[;&|]). They fire if and only if a separator reaches command position, which
+// makes the hook's own decision the observable — no seam is added to the hook to read SCAN.
+const BS = (n) => '\\'.repeat(n);
+const TAILS = ['terraform apply', 'ssh homelab sudo reboot'];
+
+function separatorCases() {
+  const real = [];
+  const notReal = [];
+  for (const tail of TAILS) {
+    for (const sep of [';', '&', '|']) {
+      for (let n = 0; n <= 3; n++) {
+        const bare = `echo a${BS(n)}${sep} ${tail}`;
+        (n % 2 === 0 ? real : notReal).push(bare);
+        // Same bytes inside quotes: a separator can never be real there.
+        notReal.push(`echo "a${BS(n)}${sep} ${tail}"`);
+      }
+    }
+    for (const sep of ['&&', '||', ';;']) {
+      for (let n = 0; n <= 2; n++) real.push(`echo a${BS(n)}${sep} ${tail}`);
+    }
+  }
+  return { real, notReal };
+}
+
+test('normalization never deletes a real command separator', { skip }, async () => {
+  const { real } = separatorCases();
+  const got = await decide(real);
+  real.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `real separator lost, rule no longer anchors: ${cmd}`));
+});
+
+test('the only false positives are quoted separators', { skip }, async () => {
+  // Over-denial is the safe direction, so this does not demand zero. It pins the SHAPE: every
+  // command denied without a real separator must be one where quote-stripping exposed it.
+  // SCAN drops quotes on purpose — otherwise quoting hides the binary — so `echo "a; terraform
+  // apply"` reads as a real separator and denies. That is a known cost of quote-stripping, not
+  // of the backslash handling, and fixing it needs quote-aware splitting like the one
+  // allow-compound-bash.sh already uses. A false positive arising any OTHER way fails here.
+  const { notReal } = separatorCases();
+  const got = await decide(notReal);
+  const unexplained = notReal.filter((cmd, i) => got[i] === 'deny' && !cmd.includes('"'));
+  assert.deepStrictEqual(unexplained, [], 'denied with no real separator and no quoting to blame');
+});
+
+test('a newline is the one real separator normalization drops', { skip }, async () => {
+  // Not a lapse — SCAN collapses a newline to a space, which is what blinds the anchored rules
+  // to it, and the M02 shadow census exists to measure exactly this gap. Pinned so that the day
+  // it is closed, this test says so rather than passing quietly.
+  const cmds = TAILS.map((t) => `echo a\n${t}`);
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.notStrictEqual(got[i], 'deny', `newline gap closed — update the census notes: ${cmd}`));
+});
