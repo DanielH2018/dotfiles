@@ -49,6 +49,9 @@ function makeRepo() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
+  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
+  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
+  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.mkdirSync(path.join(dir, '.githooks'));
   fs.writeFileSync(path.join(dir, '.githooks', 'pre-push'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');

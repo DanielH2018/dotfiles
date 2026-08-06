@@ -26,7 +26,9 @@ function repoWithOrigin() {
   const work = path.join(root, 'work');
   sh(`git init -q --bare -b main ${remote}`);
   sh(`git clone -q ${remote} ${work}`);
-  sh('git config user.email t@t && git config user.name t', work);
+  // commit.gpgsign false: the machine's global setting routes fixture commits to the 1Password
+  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
+  sh('git config user.email t@t && git config user.name t && git config commit.gpgsign false', work);
   sh('echo one > f && git add f && git commit -qm one && git push -q origin main', work);
   return { root, work };
 }

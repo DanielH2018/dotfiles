@@ -176,6 +176,10 @@ function makeRepo(shape) {
   if (shape === 'nonrepo') return d;
   const git = (...a) => execFileSync('git', ['-C', d, ...a], { stdio: 'ignore', env: { ...process.env, ...GITENV } });
   git('init', '-q', '-b', 'main');
+  // Fixture commits must not be signed: the machine's global commit.gpgsign sends them to the
+  // 1Password agent, which needs an approval nobody is there to give, so the commit fails after
+  // tens of seconds. Same reason tests/bin/try.test.js sets this on its own fixtures.
+  git('config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(d, 'f'), '1\n');
   git('add', '.'); git('commit', '-qm', 'init');
   if (shape === 'dirty') { fs.writeFileSync(path.join(d, 'f'), '2\n'); return d; }

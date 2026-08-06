@@ -77,6 +77,9 @@ function makeRepo() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
+  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
+  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
+  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');
@@ -99,6 +102,9 @@ function makeRepoWithOrigin() {
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
+  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
+  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
+  git(dir, 'config', 'commit.gpgsign', 'false');
   fs.writeFileSync(path.join(dir, 'README'), 'x\n');
   git(dir, 'add', '-A');
   git(dir, 'commit', '-qm', 'init');

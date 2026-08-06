@@ -23,6 +23,9 @@ function mkrepo() {
   spawnSync('git', ['init', '-q'], { cwd: dir });
   spawnSync('git', ['config', 'user.email', 't@t.t'], { cwd: dir });
   spawnSync('git', ['config', 'user.name', 't'], { cwd: dir });
+  // Unsigned fixtures: the machine's global commit.gpgsign routes these to the 1Password
+  // agent, which stalls on an approval no test can give. Same as tests/bin/try.test.js.
+  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
   return dir;
 }
 function write(dir, name, body) {
