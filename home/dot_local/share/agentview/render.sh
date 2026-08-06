@@ -141,6 +141,32 @@ loc_rank() {  # sets _lr = jump quality of locator $1: real pane 2 > bg attach 1
   esac
 }
 
+fold_title_states() {  # upgrade `rows` from the mux pane title's state glyph. Runs after load_titles.
+  # The hook registry stays authoritative; this only reaches what it cannot see — a hook row
+  # that went stale (rows.sh: daemon-hosted jobs never fire UserPromptSubmit, so they stick).
+  # Asymmetric on purpose, mirroring herdr's own rule priorities. A braille spinner is proof a
+  # turn is RUNNING, so it may upgrade a row (herdr ranks it 1100, above everything). ✳ only
+  # means "not mid-turn" and cannot tell idle from blocked, so it is parsed but never folded:
+  # herdr ranks it 250, below every other rule, and every row here already carries a state, so
+  # acting on it could only overwrite a better-sourced one.
+  # needs-input is never overridden either — nothing in this session confirmed whether a
+  # session blocked on a permission prompt keeps spinning, and recolouring a row that is
+  # waiting on Daniel would hide it. Local host rows only: the title map is this machine's mux.
+  local out="" L st host cwd rest kind
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    st="${L%%$'\t'*}"; rest="${L#*$'\t'}"
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
+    kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
+    if [[ "$host" == "$selfhost" && "$kind" == "host" && "$st" != "needs-input" ]]; then
+      title_for_cwd "$cwd"; state_from_title "$_title"
+      [[ "$_tstate" == "working" ]] && st="working"
+    fi
+    out+="$st"$'\t'"$host"$'\t'"$cwd"$'\t'"$rest"$'\n'
+  done <<< "$rows"
+  rows="$out"
+}
 collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into one row.
   # Backgrounding a session spawns a bg job that inherits the task title but gets a fresh
   # session id with NO lineage link (session files carry no parent field), so the origin and
@@ -299,7 +325,9 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       fi
       # Prefer a registry-supplied title (sandbox rows carry repo·branch); else the
       # mux-correlated pane title (host rows on wezterm). Tabs would split the columns.
-      if [ -n "$title_reg" ]; then title="$title_reg"; else title_for_cwd "$cwd"; title="$_title"; fi
+      # The mux title carries the state glyph as its first rune; strip it so only the session
+      # name reaches the column (fold_title_states has already read it).
+      if [ -n "$title_reg" ]; then title="$title_reg"; else title_for_cwd "$cwd"; state_from_title "$_title"; title="$_tname"; fi
       title="${title//$'\t'/ }"
       [ "$kind" = "sandbox" ] && clabel="sandbox" || clabel="claude"
       badge_name "$host"; bn="$_bn"

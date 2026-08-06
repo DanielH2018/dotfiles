@@ -40,6 +40,24 @@ title_for_cwd() {  # $1 = cwd -> sets _title to the Claude pane title at that cw
     fi
   done
 }
+# Claude Code puts its state in the FIRST rune of the OSC title: a braille spinner frame
+# (U+2800..U+28FF) while a turn runs, ✳ (U+2733) once it is ready for input. The rest of the
+# title is the session name, and other writers own that too — a `claude agents` pane titles
+# itself, a rename replaces the name outright — so a title with no glyph carries NO signal
+# and must never be read as "not working".
+# Matched as literal UTF-8 byte prefixes, not a character range, so the answer does not
+# depend on the caller's locale (verified identical under LC_ALL=C and en_US.UTF-8). ✳ can
+# demand the trailing space herdr's manifest does; braille cannot, because its third byte
+# varies per frame and a glob `?` matches a character rather than a byte.
+state_from_title() {  # $1 = title -> _tstate = working|idle|"" (never blocked); _tname = title minus the glyph
+  _tstate=""; _tname="$1"
+  case "$1" in
+    $'\xe2\xa0'*|$'\xe2\xa1'*|$'\xe2\xa2'*|$'\xe2\xa3'*) _tstate="working" ;;
+    $'\xe2\x9c\xb3 '*)                                   _tstate="idle" ;;
+  esac
+  # The glyph is always followed by a space, so this strips exactly it and nothing else.
+  [[ -n "$_tstate" ]] && _tname="${1#* }"
+}
 win_roster() {  # echo the Windows daemon's roster as a JSON array; nonzero when we cannot ask.
   # `agents --json` is documented as printing "active sessions (interactive and background)",
   # which makes it the one oracle that can see a Windows session WSL has no checkable pid for.

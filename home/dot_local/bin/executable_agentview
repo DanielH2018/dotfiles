@@ -429,6 +429,7 @@ collapse_bg_forks                        # one row per task: fold a bg fork into
 if [ "$HAVE_WEZTERM" = 1 ]; then
   PANELIST=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null); prof wezterm_list
   load_titles;      prof load_titles
+  fold_title_states;  prof fold_title_states  # spinner in the pane title un-sticks a stale row
 fi
 
 # header line (right-aligned totals). Counted in pure bash — the old grep|awk|sort|grep
