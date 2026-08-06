@@ -149,9 +149,12 @@ fold_title_states() {  # upgrade `rows` from the mux pane title's state glyph. R
   # means "not mid-turn" and cannot tell idle from blocked, so it is parsed but never folded:
   # herdr ranks it 250, below every other rule, and every row here already carries a state, so
   # acting on it could only overwrite a better-sourced one.
-  # needs-input is never overridden either — nothing in this session confirmed whether a
-  # session blocked on a permission prompt keeps spinning, and recolouring a row that is
-  # waiting on Daniel would hide it. Local host rows only: the title map is this machine's mux.
+  # needs-input IS overridden by a spinner, and that was measured rather than assumed. Sampling
+  # #{pane_title} twice a second across a live turn on 2.1.223: a session blocked on a tool
+  # permission prompt holds ✳ (30 stable samples), while a running turn cycles braille. So
+  # braille cannot be a blocked session, and a needs-input row whose pane is mid-turn is stale
+  # rather than waiting on Daniel. ✳ still never folds, which is the half that protects a row
+  # genuinely waiting on him. Local host rows only: the title map is this machine's mux.
   local out="" L st host cwd rest kind
   while IFS= read -r L; do
     [ -z "$L" ] && continue
@@ -159,7 +162,7 @@ fold_title_states() {  # upgrade `rows` from the mux pane title's state glyph. R
     host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
     cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
     kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
-    if [[ "$host" == "$selfhost" && "$kind" == "host" && "$st" != "needs-input" ]]; then
+    if [[ "$host" == "$selfhost" && "$kind" == "host" ]]; then
       title_for_cwd "$cwd"; state_from_title "$_title"
       [[ "$_tstate" == "working" ]] && st="working"
     fi

@@ -107,11 +107,22 @@ test('a spinner upgrades a stale row to working', () => {
   );
 });
 
-test('a spinner never overrides needs-input', () => {
-  // Deliberate: nothing has confirmed whether a session blocked on a permission prompt keeps
-  // spinning. Recolouring it to working would bury the one row that wants Daniel's attention.
+test('a spinner overrides needs-input', () => {
+  // This used to assert the opposite, because nobody had established what a blocked session
+  // emits. Measured on 2.1.223: a session blocked on a tool permission prompt holds ✳ across
+  // 30 stable samples, while a running turn cycles braille. Braille therefore cannot be a
+  // blocked session, so a needs-input row whose pane is mid-turn is stale, not waiting.
   assert.deepStrictEqual(
     fold({ rows: ROW('needs-input', 'fedora', '/home/daniel/p'), cwd: '/home/daniel/p', title: `${SPIN} Task` }),
+    ['working'],
+  );
+});
+
+test('the asterisk is what protects a genuinely waiting row', () => {
+  // The other half of the asymmetry, and the one that matters for not burying a row that
+  // wants Daniel. A blocked session emits ✳, and ✳ never folds — so the row stays put.
+  assert.deepStrictEqual(
+    fold({ rows: ROW('needs-input', 'fedora', '/home/daniel/p'), cwd: '/home/daniel/p', title: `${READY} Task` }),
     ['needs-input'],
   );
 });
