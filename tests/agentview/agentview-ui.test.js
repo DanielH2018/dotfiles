@@ -79,7 +79,7 @@ function makeEnv() {
   delete env.TMUX;          // a bare pty: binds use execute, not execute-silent
   delete env.WEZTERM_PANE;
   delete env.FZF_DEFAULT_OPTS; // ambient opts from the user's shell would skew the render
-  return { bin, home, env, self, tmuxLog };
+  return { bin, home, env, self, lib, tmuxLog };
 }
 
 function session(home, sid, obj) {
@@ -548,4 +548,53 @@ exec ${JSON.stringify(self)} "$@"
     'the trap must send SIGTERM to the watch child (pty teardown alone cannot reap it here)');
   assert.ok(await until(() => !alive(watchPid)), `the watch child ${watchPid} outlived the picker`);
   assert.deepStrictEqual(portfiles(), [], 'the trap must remove the portfile');
+});
+
+test('a picker whose row format changes under it restarts instead of skewing', { skip }, async (t) => {
+  // The failure this prevents, exactly: a493a71 added a column and moved --with-nth from
+  // 2.. to 3.., and every picker already open rendered the new field 2 -- the \x1f-joined
+  // host/cwd/kind identity -- as display text. Asserting that --repaint prints "become("
+  // would pass while the screen still showed that, so this drives the real picker and
+  // reads the real screen.
+  const env = makeEnv();
+  seed(env.home);
+  const term = open(env.env);
+  t.after(() => term.stop());
+
+  await term.waitFor('alpha');
+
+  // Model a REAL upgrade, which moves both halves at once: the rows gain a leading field
+  // AND the launcher's --with-nth moves to match. Changing only the rows would skew the
+  // restarted picker too, so it could never tell a restart from a reload.
+  const render = path.join(env.lib, 'render.sh');
+  fs.appendFileSync(render, [
+    '',
+    '# test-only: shift every row one field to the right',
+    'eval "orig_build_pretty() $(declare -f build_pretty | sed \'1d\')"',
+    'build_pretty() { orig_build_pretty "$@" | sed \'s/^/EXTRA\\t/\'; }',
+    '',
+  ].join('\n'));
+
+  // The border label is read from render.sh but baked into fzf's ARGV at launch, so it can
+  // only change in a process that started after the edit. That makes it the proof that a
+  // restart actually happened -- a reload cannot produce it however the rows come out.
+  const MARK = 'UPGRADED-PICKER';
+  fs.writeFileSync(render, fs.readFileSync(render, 'utf8').replace(/^LABEL=.*$/m, `LABEL=' ${MARK} '`));
+  fs.writeFileSync(env.self, fs.readFileSync(env.self, 'utf8').replace('--with-nth=3..', '--with-nth=4..'));
+
+  term.send('ctrl-f');
+
+  // Waiting on the marker is what makes this test able to fail: with the fingerprint
+  // pinned no restart happens, the label never changes, and this times out.
+  await term.waitFor(MARK);
+  const screen = term.text();
+
+  // And the restarted picker reads the new format correctly. The full cwd is display text
+  // ONLY when the columns have skewed -- an intact row shows the leaf name, and the full
+  // path lives in the CTRL+O card.
+  assert.ok(
+    !screen.includes('/home/daniel/dev/alpha'),
+    `an identity field leaked into the display:\n${screen}`,
+  );
+  assert.ok(screen.includes('alpha'), 'the session row must still be there after the restart');
 });
