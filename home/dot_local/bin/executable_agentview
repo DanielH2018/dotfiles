@@ -119,6 +119,9 @@ statedir="$HOME/.claude/agent-view"
 # rewrites a daemon session's locator to bg:<jobId>, and only this registry maps that job back
 # to the session id the on-disk row is keyed by.
 sessionsdir="$HOME/.claude/sessions"
+# One directory per live background job. Its presence is the only liveness signal a
+# backgrounded conversation has: see the parkedJobId handling in load_session_map.
+jobsdir="$HOME/.claude/jobs"
 # Pin sidecar: newline-delimited row identities the user pinned with CTRL+P. Kept OUT of
 # the per-session state files so it survives the hook's full-record rewrites AND can pin
 # remote rows (which have no local file). The render reads it into a PINNED group up top.

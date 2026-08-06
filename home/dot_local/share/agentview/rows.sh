@@ -63,11 +63,31 @@ load_session_map() {  # SMAP[sid] = state<TAB>ts<TAB>kind<TAB>job<TAB>cwd<TAB>na
       (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
       ((.updatedAt // .startedAt // 0) | tostring),
       (if (.kind // "") == "bg" then "bg" else "host" end),
-      (.jobId // ""), (.cwd // ""), (.name // "") ] | join("\u001f")' "${sf[@]}" 2>/dev/null)
+      (.jobId // ""), (.cwd // ""), (.name // ""),
+      (if ((now - ((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000)) > 600)
+       then (.parkedJobId // "") else "" end) ] | join("\u001f")' "${sf[@]}" 2>/dev/null)
   [ -n "$jqout" ] || return 0
-  while IFS="$US" read -r pid sid st ts upd kind job cwd name; do
+  while IFS="$US" read -r pid sid st ts upd kind job cwd name parked; do
     [ -n "$pid" ] && [ -n "$sid" ] || continue
     kill -0 "$pid" 2>/dev/null || continue
+    # Moving a conversation to the background hands its work to a job and leaves this process
+    # sitting on the session list. Claude stamps "busy" at the handoff; if that job is later
+    # killed rather than finishing, nothing writes a terminal status back, so the entry reads
+    # busy forever — and `kill -0` keeps passing, because the TUI really is alive. Measured:
+    # one session read WORKING for 100 minutes at 0% CPU on the list screen.
+    #
+    # The job directory is the liveness marker — present for every running job, gone once it
+    # is killed or removed. Gone means nothing is working on this session's behalf.
+    #
+    # idle, NOT completed. The registry's own idle already folds to "completed", and a git
+    # marker can lift that to REVIEW or DONE; all three assert an outcome, and a killed job
+    # produced none. Only the observation is reportable: nothing is happening here.
+    #
+    # jq gates `parked` on a stale status so a park still settling — the job directory appears
+    # as the job starts — is not flickered through IDLE on its way to running. The park is the
+    # signal, not the staleness: an ordinary busy session is never downgraded however old its
+    # status, because nothing here measures how long one tool call may legitimately take.
+    if [ -n "$parked" ] && [ ! -d "$jobsdir/$parked" ]; then st="idle"; fi
     if [ -n "${SMAP_UPD[$sid]:-}" ] && [ "${SMAP_UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
     SMAP_UPD[$sid]="$upd"
     SMAP[$sid]="$st"$'\t'"$ts"$'\t'"$kind"$'\t'"$job"$'\t'"$cwd"$'\t'"$name"

@@ -243,6 +243,85 @@ test('stale needs-input hook row is overridden to WORKING by a live busy status'
   assert.strictEqual(k[7], 'bg:bbbb2222', 'merged daemon row swaps the locator for the job id');
 });
 
+// ---- merge: a backgrounded conversation whose job is gone --------------------
+//
+// Moving a conversation to the background hands its work to a job and leaves the process
+// sitting on the session list. Claude stamps `status: busy` at the handoff and, if that job
+// is later killed rather than finishing, never writes a terminal status — so the entry says
+// busy forever while `kill -0` keeps passing, because the TUI really is alive. Observed:
+// session 4eb821f3 read WORKING for 100 minutes on a process idling at 0% on the list screen.
+//
+// The job directory is the liveness marker. Every running job has one; it goes when the job
+// is killed or removed.
+function parkedRow(home, sid, { parkedJobId, statusAgeMs, state = 'working' }) {
+  hookRow(home, sid, {
+    key: sid, session: sid, kind: 'host', cwd: '/home/daniel', title: 'Artifact Design Review',
+    state, host: HOST, ts: nowSec() - Math.floor(statusAgeMs / 1000), backend: 'none',
+    locator: 'none:', pane: '', pid: String(ALIVE_PID),
+  });
+  sessFile(home, ALIVE_PID, {
+    sessionId: sid, kind: 'interactive', status: 'busy', name: 'Artifact Design Review',
+    cwd: '/home/daniel', statusUpdatedAt: nowMs() - statusAgeMs, parkedJobId,
+  });
+}
+
+test('a backgrounded session whose job is gone stops reading WORKING', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  parkedRow(home, 'cccc3333-0000-0000-0000-000000000001',
+    { parkedJobId: 'cac10720', statusAgeMs: 5_400_000 });
+  const txt = stripAnsi(body(env, capture));
+  assert.doesNotMatch(txt, /WORKING/, 'nothing is working on a killed job\'s behalf');
+  assert.match(txt, /IDLE/, 'idle is the honest state for a TUI back on the session list');
+});
+
+test('the downgrade never claims the backgrounded work finished', { skip }, () => {
+  // COMPLETED and DONE both assert an outcome. Only the observation is reportable here:
+  // nothing is happening. Getting this wrong is worse than the stale WORKING it replaces.
+  const { env, home, capture } = makeEnv();
+  parkedRow(home, 'cccc3333-0000-0000-0000-000000000002',
+    { parkedJobId: 'cac10720', statusAgeMs: 5_400_000 });
+  const txt = stripAnsi(body(env, capture));
+  assert.doesNotMatch(txt, /COMPLETED/, 'a killed job did not complete');
+  assert.doesNotMatch(txt, /DONE/, 'nor did it finish while the user was away');
+});
+
+test('a backgrounded session whose job is still running stays WORKING', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  fs.mkdirSync(path.join(home, '.claude', 'jobs', 'cac10720'), { recursive: true });
+  parkedRow(home, 'cccc3333-0000-0000-0000-000000000003',
+    { parkedJobId: 'cac10720', statusAgeMs: 5_400_000 });
+  const txt = stripAnsi(body(env, capture));
+  assert.match(txt, /WORKING/, 'the job is alive, so the session is working through it');
+});
+
+test('an ordinary busy session is not downgraded, however stale its status', { skip }, () => {
+  // The park is the signal; staleness alone is not. A long single tool call can leave
+  // statusUpdatedAt untouched for minutes, and there is no measurement here saying how long.
+  const { env, home, capture } = makeEnv();
+  const sid = 'cccc3333-0000-0000-0000-000000000004';
+  hookRow(home, sid, {
+    key: sid, session: sid, kind: 'host', cwd: '/home/daniel', title: 'Long Build',
+    state: 'working', host: HOST, ts: nowSec() - 5400, backend: 'none', locator: 'none:',
+    pane: '', pid: String(ALIVE_PID),
+  });
+  sessFile(home, ALIVE_PID, {
+    sessionId: sid, kind: 'interactive', status: 'busy', name: 'Long Build',
+    cwd: '/home/daniel', statusUpdatedAt: nowMs() - 5_400_000,
+  });
+  const txt = stripAnsi(body(env, capture));
+  assert.match(txt, /WORKING/, 'no parkedJobId — nothing proves this one is not working');
+});
+
+test('a freshly parked session is left alone while the handoff settles', { skip }, () => {
+  // The job directory appears as the job starts. Downgrading in that window would flicker
+  // every backgrounded conversation through IDLE on its way to running.
+  const { env, home, capture } = makeEnv();
+  parkedRow(home, 'cccc3333-0000-0000-0000-000000000005',
+    { parkedJobId: 'cac10720', statusAgeMs: 5_000 });
+  const txt = stripAnsi(body(env, capture));
+  assert.match(txt, /WORKING/, 'a seconds-old park has not had time to be orphaned');
+});
+
 test('merge keeps hook locator and a /rename custom title', { skip }, () => {
   const { env, home, capture } = makeEnv();
   const sid = 'bbbb2222-0000-0000-0000-000000000002';
