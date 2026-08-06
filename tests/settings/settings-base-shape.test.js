@@ -214,3 +214,24 @@ test('the agentview needs-input hook does not fire on the idle reminder', { skip
       'a genuine permission prompt must still mark the row needs-input');
   }
 });
+
+// The audible cue follows the same rule as the state hook above.
+//
+// The two were split deliberately when the state hook was narrowed: what the picker RECORDS and
+// what makes a noise are different questions, so the sound was left on idle_prompt pending a
+// call. The call came back "noise" — a session that merely went idle is not asking for anything,
+// and a cue that fires 60s after every finished turn trains you to ignore the cue that matters.
+// Now both fire only on a genuine permission prompt, which is the one event where a session is
+// actually blocked on you.
+test('the audible cue does not fire on the idle reminder', { skip }, () => {
+  const cfg = JSON.parse(render());
+  const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
+    (e.hooks || []).some((h) => /notify\.sh/.test(h.command || '')));
+  assert.ok(entries.length, 'no Notification entry runs the audible cue');
+  for (const e of entries) {
+    assert.doesNotMatch(e.matcher, /idle_prompt/,
+      `the audible cue still fires on idle_prompt: ${e.matcher}`);
+    assert.match(e.matcher, /permission_prompt/,
+      'a genuine permission prompt must still make a sound');
+  }
+});

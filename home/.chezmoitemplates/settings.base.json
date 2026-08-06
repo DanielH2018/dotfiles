@@ -489,11 +489,14 @@
       }
     ],
     "Notification": [
-      {{/* audible cue only when a session genuinely needs you; task_complete
-           (fires on every turn end, incl. unfocused background sessions) is
-           intentionally excluded so working sessions stay silent */}}
+      {{/* audible cue only when a session genuinely needs you. task_complete (fires on every
+           turn end, incl. unfocused background sessions) is intentionally excluded so working
+           sessions stay silent, and idle_prompt is excluded for the same reason: a session that
+           merely went idle is not asking for anything, and a cue 60s after every finished turn
+           trains you to ignore the cue that matters. A permission prompt is the one event where
+           a session is genuinely blocked on you. */}}
       {
-        "matcher": "permission_prompt|idle_prompt",
+        "matcher": "permission_prompt",
         "hooks": [
           {
             "type": "command",
