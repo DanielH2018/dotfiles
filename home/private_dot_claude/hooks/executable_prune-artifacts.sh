@@ -19,7 +19,10 @@ DAYS="${CLAUDE_ARTIFACT_RETENTION_DAYS:-7}"
 [[ "$DAYS" == "0" ]] && exit 0
 
 if [[ -d "$DIR" ]]; then
-  find "$DIR" -type f -mtime "+$DAYS" -delete 2>/dev/null
+  # Executables are tools, not reports — nvidia-install.sh and usb-early-stop.sh both
+  # live here alongside the docs. They are not regenerable from a conversation the way
+  # a findings page is, so the sweep leaves anything with the user-execute bit alone.
+  find "$DIR" -type f ! -perm -u+x -mtime "+$DAYS" -delete 2>/dev/null
   # Sweeping files out of a subdirectory leaves the directory behind; drop the empties
   # so the artifacts dir does not silently fill with husks.
   find "$DIR" -mindepth 1 -type d -empty -delete 2>/dev/null

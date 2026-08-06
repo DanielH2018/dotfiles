@@ -41,7 +41,9 @@ line and `data-updated`. Leave everything else byte-identical. If the landed com
 have nothing to do with the artifact, say so and change nothing — never invent status.
 
 Artifacts are pruned after 7 days without an update, so a doc that keeps getting
-refreshed as work lands stays put and an abandoned one clears itself out.
+refreshed as work lands stays put and an abandoned one clears itself out. Executable
+files in the artifacts directory are never pruned — a generated script is a tool, not
+a report. If you write one there, `chmod +x` it or it will age out with the docs.
 
 ## Output rules
 

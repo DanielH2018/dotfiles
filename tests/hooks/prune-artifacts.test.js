@@ -51,6 +51,33 @@ test('deletes artifacts untouched for more than a week, keeps the rest', () => {
   assert.ok(!fs.existsSync(path.join(s.art, 'stale.html')), 'nine days old goes');
 });
 
+test('executables are kept however old — they are tools, not reports', () => {
+  const s = sandbox();
+  const script = path.join(s.art, 'nvidia-install.sh');
+  const doc = path.join(s.art, 'notes.sh');
+  write(script, 30);
+  write(doc, 30);
+  fs.chmodSync(script, 0o755);
+  fs.chmodSync(doc, 0o644);
+  run(s);
+
+  assert.ok(fs.existsSync(script), 'the +x bit is what spares it, not the extension');
+  assert.ok(!fs.existsSync(doc), 'a non-executable .sh is still just a stale file');
+});
+
+test('an executable inside a subdirectory keeps that directory alive', () => {
+  const s = sandbox();
+  const script = path.join(s.art, 'mx-ergo', 'setup.sh');
+  write(script, 30);
+  fs.chmodSync(script, 0o755);
+  write(path.join(s.art, 'mx-ergo', 'report.html'), 30);
+  run(s);
+
+  assert.ok(fs.existsSync(script), 'spared');
+  assert.ok(!fs.existsSync(path.join(s.art, 'mx-ergo', 'report.html')), 'its stale neighbour goes');
+  assert.ok(fs.existsSync(path.join(s.art, 'mx-ergo')), 'dir is not empty, so it survives the -empty sweep');
+});
+
 test('a refreshed artifact survives regardless of when it was created', () => {
   const s = sandbox();
   // Created long ago, rewritten yesterday as a slice landed — mtime is what counts.
