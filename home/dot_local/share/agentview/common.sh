@@ -143,6 +143,24 @@ av_remote_fingerprint() {  # -> _av_fp
   done < <(remote_hosts)
 }
 
+# The picker's field selection (--with-nth, --id-nth) is argv, read once at launch, but its
+# rows come from a separate `--body` process reading these files off disk at repaint time.
+# An upgrade landing between the two renders correct rows into the wrong columns, silently,
+# until the picker is closed (a493a71 did exactly that). This is what the two are compared on.
+#
+# CONTENT, like av_remote_fingerprint above and for a second reason: `chezmoi apply` rewrites
+# a managed file whether or not its bytes moved, so size+mtime would restart the picker on
+# every apply, including one that changed nothing here.
+av_script_fingerprint() {  # -> _av_sfp
+  local f h
+  _av_sfp=""
+  for f in "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$AV_LIB"/*.sh; do
+    [ -f "$f" ] || continue
+    h=$(cksum < "$f" 2>/dev/null) || h=NA
+    _av_sfp="$_av_sfp$h|"
+  done
+}
+
 # The baseline the EXIT trap compares against, written by the startup --refresh-remote pass
 # rather than at picker open. executable_agentview launches that pass DETACHED, so a
 # fingerprint taken at open is taken while the ssh fetch is still in flight: whatever the fetch

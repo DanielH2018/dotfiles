@@ -291,6 +291,7 @@ _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_S
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
   --card|--keys|--groupby)           _avmods="" ;;
+  --fingerprint)                     _avmods="common" ;;
   --spawn)                           _avmods="spawn" ;;
   --resolve)                         _avmods="common focus" ;;
   # jump_or_report (focus.sh) has a defensive fold: guard before do_jump — reachable via a
@@ -313,6 +314,7 @@ for _m in $_avmods; do
   . "$AV_LIB/$_m.sh" || { printf 'agentview: cannot load %s/%s.sh\n' "$AV_LIB" "$_m" >&2; exit 1; }
 done
 
+if [ "$mode" = "--fingerprint" ]; then av_script_fingerprint; printf '%s\n' "$_av_sfp"; exit 0; fi
 if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
 if [ "$mode" = "--jump" ]; then jump_or_report "${2:-}"; exit $?; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
