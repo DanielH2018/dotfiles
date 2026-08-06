@@ -9,10 +9,11 @@
 #
 # Solaar only re-applies its saved settings when a device reconnects. If the
 # Bolt receiver never left its port there is no reconnect and nothing heals on
-# its own, so this is a button rather than a daemon. Restarting Solaar fixes it
-# too; this is the same repair without dropping every other device's session.
+# its own, so this is a one-shot command rather than a daemon. Restarting Solaar
+# repairs it too; this is the same repair without dropping every other device's
+# session.
 #
-# Deliberately does NOT touch dpi. The hold-to-precision rules own that value at
+# Reports dpi but never writes it. The hold-to-precision rules own that value at
 # runtime, and asserting it here would fight them mid-press.
 
 set -uo pipefail
@@ -46,20 +47,29 @@ solaar_q() { timeout 25 solaar config "$SERIAL" "$@" 2>&1 | grep -v '^rules cann
 indent() { while IFS= read -r line; do printf '  %s\n' "$line"; done; }
 
 state() {
-    solaar_q lowres-scroll-mode | grep -E '^lowres-scroll-mode'
-    solaar_q divert-keys        | grep -E '^divert-keys'
-    solaar_q reprogrammable-keys| grep -E '^reprogrammable-keys'
+    solaar_q lowres-scroll-mode  | grep -E '^lowres-scroll-mode'
+    solaar_q divert-keys         | grep -E '^divert-keys'
+    solaar_q reprogrammable-keys | grep -E '^reprogrammable-keys'
 }
 
-# `solaar config` only reaches active devices; on a sleeping trackball every
-# write below is a silent no-op, so fail loudly instead of reporting success.
+# `solaar config` pings the device and errors out with "no online device found"
+# when it cannot reach it, so an empty read means unreachable rather than
+# healthy. Writes against a sleeping trackball would silently no-op and the
+# read-back would agree with them, so this has to fail rather than report a
+# repair that never happened.
 before=$(state)
 if [ -z "$before" ]; then
     echo "mx-ergo-resync: MX Ergo S ($SERIAL) not reachable -- move the trackball to wake it, then retry" >&2
     exit 1
 fi
 
-echo "before:"; echo "$before" | indent
+# Informational only, and kept out of the drift comparison: the rules move dpi
+# on every press and release, so it is legitimately different from one moment to
+# the next. Worth showing because a value the rules never write (they use 100
+# and 400) is a sign something outside this machine has been setting it.
+dpi_before=$(solaar_q dpi | grep -E '^dpi')
+
+echo "before:"; { echo "$before"; echo "$dpi_before"; } | indent
 
 # Scroll wheel back to plain HID reports. This is the one that kills scrolling.
 solaar_q lowres-scroll-mode false >/dev/null
@@ -72,7 +82,30 @@ for pair in "${DIVERSIONS[@]}"; do
 done
 
 after=$(state)
-echo "after:"; echo "$after" | indent
+echo "after:"; { echo "$after"; solaar_q dpi | grep -E '^dpi'; } | indent
+
+# Confirm the writes actually took. Individual `solaar config` calls can fail --
+# the reprogrammable-keys TypeError above is the known one -- and none of them
+# is fatal on its own, so without this the script would print a still-broken
+# after-state and exit 0. As a keybinding nobody reads stdout, hence the notify.
+failed=()
+grep -q '^lowres-scroll-mode = False$' <<<"$after" || failed+=("scroll wheel still diverted")
+for pair in "${DIVERSIONS[@]}"; do
+    grep -q "${pair%%:*}:${pair#*:}" <<<"$(grep '^divert-keys' <<<"$after")" \
+        || failed+=("divert-keys ${pair%%:*} != ${pair#*:}")
+done
+for pair in "${ACTIONS[@]}"; do
+    grep -q "${pair%%:*}:${pair#*:}" <<<"$(grep '^reprogrammable-keys' <<<"$after")" \
+        || failed+=("reprogrammable-keys ${pair%%:*} != ${pair#*:}")
+done
+
+if [ ${#failed[@]} -gt 0 ]; then
+    printf 'mx-ergo-resync: FAILED to apply:\n' >&2
+    printf '  - %s\n' "${failed[@]}" >&2
+    command -v notify-send >/dev/null \
+        && notify-send -u critical "MX Ergo resync failed" "${#failed[@]} setting(s) did not apply"
+    exit 1
+fi
 
 if [ "$before" = "$after" ]; then
     echo "(no drift -- already in the intended state)"

@@ -17,8 +17,12 @@
 //  - Middle Button stays Diverted while everything else goes Regular. Assert Middle Button
 //    Regular and the precision hold dies; leave the tilts Diverted and horizontal scroll stays
 //    dead. It is the asymmetry that is easy to get wrong, so it is pinned in both directions.
-//  - dpi is never written. The hold-to-precision rules own that value at runtime and a resync
-//    landing mid-press would fight them.
+//  - dpi is reported but never written. The hold-to-precision rules own that value at runtime
+//    and a resync landing mid-press would fight them -- but a dpi the rules never write is a
+//    fingerprint of an outside writer, so the run has to surface it.
+//  - A write that does not take must exit non-zero. Individual solaar calls can fail (the
+//    reprogrammable-keys TypeError is the known one) without being fatal, so the script has to
+//    read back and check rather than trust the writes.
 //
 // Skips without bash.
 const { test } = require('node:test');
@@ -45,6 +49,9 @@ const HEALTHY = [
   'lowres-scroll-mode = False',
   'divert-keys = {Middle Button:Diverted, Back Button:Regular, Forward Button:Regular, Left Tilt:Regular, Right Tilt:Regular, DPI Switch:Regular}',
   'reprogrammable-keys = {Middle Button:Mouse Middle Button, Back Button:Mouse Back Button, Forward Button:Mouse Forward Button, Left Tilt:Mouse Scroll Left Button, Right Tilt:Mouse Scroll Right Button, DPI Switch:Mouse Middle Button}',
+  // 200 is what the real device was found holding: a value neither rule writes (they use 100
+  // and 400), so it is evidence of an outside writer rather than of this setup misbehaving.
+  'dpi = 200',
 ].join('\n');
 
 // What the box actually looked like when Options+ had been round-tripped: wheel diverted and
@@ -53,11 +60,17 @@ const DRIFTED = [
   'lowres-scroll-mode = True',
   'divert-keys = {Middle Button:Diverted, Back Button:Diverted, Forward Button:Diverted, Left Tilt:Diverted, Right Tilt:Diverted, DPI Switch:Diverted}',
   'reprogrammable-keys = {Middle Button:Mouse Middle Button, Back Button:Mouse Back Button, Forward Button:Mouse Forward Button, Left Tilt:Mouse Scroll Left Button, Right Tilt:Mouse Scroll Right Button, DPI Switch:Mouse Middle Button}',
+  'dpi = 200',
 ].join('\n');
 
-// `reachable: false` omits the state file entirely, so the stub prints nothing for every query --
-// which is exactly how a real solaar behaves against a device it cannot reach.
-function run({ state = HEALTHY, reachable = true } = {}) {
+// `reachable: false` omits the state file entirely, so the stub prints nothing for every query.
+// That is exactly how the real CLI behaves against a device it cannot reach: solaar/cli/config.py
+// pings first and raises "no online device found matching ...", which goes to stderr and leaves
+// no parseable setting line -- verified against the installed solaar.
+//
+// `refuse` names a setting whose WRITES silently do nothing, reproducing a solaar call that fails
+// without being fatal.
+function run({ state = HEALTHY, reachable = true, refuse = '' } = {}) {
   const bin = mkdtemp('mer-bin-');
   const work = mkdtemp('mer-work-');
   const log = path.join(work, 'calls');
@@ -70,6 +83,7 @@ printf 'solaar %s\\n' "$*" >> "${log}"
 [ -f "${statePath}" ] || exit 0
 setting=$3
 if [ $# -eq 3 ]; then grep "^\${setting} = " "${statePath}"; exit 0; fi
+[ "\${setting}" = "${refuse}" ] && exit 1
 if [ $# -eq 4 ]; then
     val=$4
     case "\$val" in false) val=False ;; true) val=True ;; esac
@@ -80,6 +94,13 @@ else
     # lines, and an unanchored sed would clobber the other one.
     sed -i "/^\${setting} = /s/\$4:[^,}]*/\$4:\$5/" "${statePath}"
 fi
+`, { mode: 0o755 });
+
+  // Stub notify-send too. The failure path calls it, and with only solaar stubbed the real
+  // /usr/bin/notify-send would resolve and draw an actual desktop banner on every test run --
+  // which is how a previous suite ended up firing notifications on every git push.
+  fs.writeFileSync(path.join(bin, 'notify-send'), `#!/bin/bash
+printf 'notify %s\\n' "$*" >> "${log}"
 `, { mode: 0o755 });
 
   const res = { status: 0, out: '' };
@@ -131,8 +152,38 @@ test('keeps middle click on the precision button', { skip }, () => {
 });
 
 test('never writes dpi -- the hold rules own it at runtime', { skip }, () => {
-  const { calls } = run({ state: DRIFTED });
-  assert.doesNotMatch(calls, /\bdpi\b/);
+  const { calls, state } = run({ state: DRIFTED });
+  // Queries are `config <serial> dpi` and nothing more; a write would carry a value after it.
+  assert.doesNotMatch(calls, /config \S+ dpi \S/);
+  assert.match(state, /^dpi = 200$/m);
+});
+
+test('reports dpi, so an outside writer is visible in the run', { skip }, () => {
+  const { out } = run({ state: DRIFTED });
+  assert.match(out, /dpi = 200/);
+});
+
+test('exits non-zero when a write does not take', { skip }, () => {
+  const { status, out, calls } = run({ state: DRIFTED, refuse: 'lowres-scroll-mode' });
+  assert.strictEqual(status, 1);
+  assert.match(out, /FAILED to apply/);
+  assert.match(out, /scroll wheel still diverted/);
+  // Visible without a terminal -- this is meant to be bound to a key.
+  assert.match(calls, /^notify .*MX Ergo resync failed/m);
+});
+
+test('names the specific control that failed', { skip }, () => {
+  const { status, out } = run({ state: DRIFTED, refuse: 'divert-keys' });
+  assert.strictEqual(status, 1);
+  assert.match(out, /divert-keys Left Tilt != Regular/);
+});
+
+test('does not claim no-drift when a write failed', { skip }, () => {
+  const { out } = run({ state: HEALTHY, refuse: 'lowres-scroll-mode' });
+  // HEALTHY already satisfies every assertion, so a refused write changes nothing and the
+  // read-back still passes. The point is that the check is on observed state, not on write
+  // status -- a no-op write against an already-correct device is not a failure.
+  assert.match(out, /no drift/);
 });
 
 test('reports drift when it repaired something', { skip }, () => {
