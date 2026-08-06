@@ -28,6 +28,28 @@ Scripts
 .local/bin/jq
 {{ end }}
 
+# agentview has no macOS path anywhere and never had one: the picker declares associative
+# arrays (`declare -A`, bash 4) against a stock /bin/bash 3.2, and its host tables are keyed on
+# WSL / the Windows side over /mnt/c / the ssh'd homelab boxes. executable_agentview says so
+# itself where it picks the self-label -- "a Darwin branch would be dead code rather than
+# caution". Nothing feeds it there either: settings.base.json wires every agent-view-state hook
+# behind `windows or linux`, so a rendered macOS settings.json has zero of them and the registry
+# it reads stays empty. This deploys nothing that worked.
+#
+# agent-view-register.sh is deliberately NOT here: claude-sandbox sources it and mounts it into
+# the container, and .claude/sandbox deploys on macOS (claude-sandbox has a real darwin branch).
+#
+# Ignoring only stops future applies. Existing Macs keep an unmanaged orphan at each of these
+# paths -- chezmoi will not remove them, and this repo has no .chezmoiremove to do it. Delete by
+# hand there: ~/.local/bin/agentview, ~/.local/bin/av, ~/.local/share/agentview,
+# ~/.claude/hooks/agent-view-state.sh
+{{ if eq .chezmoi.os "darwin" }}
+.local/bin/agentview
+.local/bin/av
+.local/share/agentview
+.claude/hooks/agent-view-state.sh
+{{ end }}
+
 {{ if ne .chezmoi.os "linux" }}
 .config/linux-provisioning
 # environment.d is a systemd user-manager mechanism; it does nothing on Windows or macOS, and
