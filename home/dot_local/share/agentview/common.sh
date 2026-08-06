@@ -126,6 +126,37 @@ remote_status_for() { printf '%s/.agentview-remote-status.%s' "$HOME" "$1"; }
 
 remote_hosts() { printf '%s\n' "${!HOST_SSH[@]}"; }
 
+# --- slice 1b instrumentation. TEMPORARY: remove with the push-vs-poll decision. ---
+# One question only: does a remote row ever change while a picker is open? refresh_one_remote
+# rewrites a host's cache only when its content changed, so a moved fingerprint is a moved row --
+# no parsing, no diffing, two stats and a comparison.
+av_remote_fingerprint() {  # -> _av_fp
+  local host
+  _av_fp=""
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    _av_fp="$_av_fp$(stat -c '%s:%Y' "$(remote_cache_for "$host")" 2>/dev/null || printf 'NA')|"
+  done < <(remote_hosts)
+}
+
+# Never fails the picker: this runs from the EXIT trap, so every step degrades to a recorded
+# "unknown" rather than to a non-zero exit on the way out.
+av_log_dwell() {
+  local now changed
+  now=$(date +%s)
+  av_remote_fingerprint 2>/dev/null || _av_fp='unknown'
+  if [ "${_av_fp:-unknown}" = unknown ] || [ "${_av_fp_open:-unknown}" = unknown ]; then
+    changed=unknown
+  elif [ "$_av_fp" = "$_av_fp_open" ]; then
+    changed=no
+  else
+    changed=yes
+  fi
+  mkdir -p "$HOME/.claude" 2>/dev/null
+  printf '%s\t%s\t%s\n' "$now" "$(( now - ${_av_open_ts:-$now} ))" "$changed" \
+    >> "$HOME/.claude/agent-view-dwell.log" 2>/dev/null || true
+}
+
 # Seen identity for the DONE group: $1=host $2=cwd $3=kind -> _sid.
 # Deliberately NOT compute_pin_id (executable_agentview), which prefers the locator. A pin
 # names a PANE, and a pane dying is exactly when a daemon-hosted job finishes — a pane-keyed

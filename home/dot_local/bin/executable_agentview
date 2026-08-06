@@ -484,7 +484,9 @@ poster_pid=$!
 "$SELF" --watch "$portfile" \
   </dev/null >/dev/null 2>&1 &
 watch_pid=$!
-trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null' EXIT
+# av_log_dwell goes LAST: the kills and the portfile removal are what matter for correctness,
+# and the slice 1b instrumentation must never delay or displace them.
+trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null; av_log_dwell' EXIT
 
 # How CTRL+N / CTRL+X hand off to their chooser. execute() ALWAYS clears fzf's window first
 # — even `execute(echo hi)` wipes the list — so under it the chooser can only ever replace
@@ -502,6 +504,13 @@ if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
 # enter/double-click binds: both dispatch to the --enter mode above, which decides accept
 # vs. fold-toggle — see that block for why the decision can't be inlined here. A plain
 # accept lands the row's KEY on fzf's stdout, read as $sel below.
+# Slice 1b: the remote snapshot's shape at open, compared again in the EXIT trap. Temporary --
+# it exists to decide whether streaming remote changes is worth building, and comes out with
+# that decision.
+_av_open_ts=$(date +%s)
+av_remote_fingerprint || _av_fp='unknown'
+_av_fp_open="$_av_fp"
+
 sel=$(printf '%s\n' "$body" | fzf \
   --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
