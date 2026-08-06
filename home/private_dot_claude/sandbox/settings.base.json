@@ -166,6 +166,7 @@
   },
   "tui": "fullscreen",
   "editorMode": "normal",
+  "skipDangerousModePermissionPrompt": true,
   "hooks": {
     "PreToolUse": [
       {
