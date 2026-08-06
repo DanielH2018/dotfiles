@@ -681,7 +681,9 @@ test('the run marker records the counts and is overwritten, never appended', { s
 
 // The timer and a hand-run sweep can collide. Contention must be a quiet no-op, not a
 // failed unit and not two sweeps racing over the same directories.
-test('a second sweep exits cleanly while another holds the lock', { skip: skip || !flockAvailable, timeout: 20000 }, () => {
+// `skip` carries a reason string; `!flockAvailable` needs its own, or this reports as a bare
+// "# SKIP" — the only one of the suite's skips that never said why it sat out.
+test('a second sweep exits cleanly while another holds the lock', { skip: skip || (flockAvailable ? false : 'flock unavailable'), timeout: 20000 }, () => {
   const root = scratch('retention-lock-');
   const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
