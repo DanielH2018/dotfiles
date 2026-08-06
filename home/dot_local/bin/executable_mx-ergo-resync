@@ -7,11 +7,14 @@
 # scrolling outright: a diverted wheel sends LOWRES_WHEEL HID++ notifications
 # that nothing here consumes.
 #
-# Solaar only re-applies its saved settings when a device reconnects. If the
-# Bolt receiver never left its port there is no reconnect and nothing heals on
-# its own, so this is a one-shot command rather than a daemon. Restarting Solaar
-# repairs it too; this is the same repair without dropping every other device's
-# session.
+# This is a manual fallback, NOT the primary defence. mx-ergo-watch already
+# asserts the same state on every KWin deviceAdded, and the Bolt dongle lives in
+# the KVM, so every flip back re-enumerates it and fires that event -- 62 clean
+# applies in the three days to 2026-08-06. Reach for this when the automatic
+# path has visibly not taken, or when you want the state printed.
+#
+# Restarting Solaar repairs it too; this is the same repair without dropping
+# every other device's session.
 #
 # Reports dpi but never writes it. The hold-to-precision rules own that value at
 # runtime, and asserting it here would fight them mid-press.
