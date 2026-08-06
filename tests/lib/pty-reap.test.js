@@ -14,10 +14,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
-const { ptyAvailable, sleep } = require('./pty');
+const { ptySkip, sleep } = require('./pty');
 
 const PTY_LIB = path.join(__dirname, 'pty.js');
-const skip = !ptyAvailable() ? 'script(1) unavailable' : false;
+const skip = ptySkip();
 
 // The marker rides in the pty'd command so ps can tell this test's tree from any other
 // suite's -- suites run in parallel, and `sleep` alone would match half of them.

@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { renderFile } = require('../lib/render');
-const { Term, ptyAvailable, tierB } = require('../lib/pty');
+const { Term, ptySkip, tierB } = require('../lib/pty');
 
 const ROOT = path.join(__dirname, '..', '..');
 const ZSHRC_SRC = path.join(ROOT, 'home', 'dot_zshrc.tmpl');
@@ -31,11 +31,11 @@ if (!gate && !missing('chezmoi')) {
 }
 
 const skip = gate
-  || (!ptyAvailable() ? 'script(1) unavailable'
-    : missing('zsh') ? 'zsh unavailable'
-      : missing('fzf') ? 'fzf unavailable'
-        : missing('chezmoi') ? 'chezmoi unavailable'
-          : !rendered ? `chezmoi execute-template failed: ${renderError}` : false);
+  || ptySkip()
+  || (missing('zsh') ? 'zsh unavailable'
+    : missing('fzf') ? 'fzf unavailable'
+      : missing('chezmoi') ? 'chezmoi unavailable'
+        : !rendered ? `chezmoi execute-template failed: ${renderError}` : false);
 
 const dirs = [];
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { Term, ptyAvailable } = require('../lib/pty');
+const { Term, ptySkip } = require('../lib/pty');
 const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
@@ -21,9 +21,9 @@ const LIB = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agen
 const HOST = 'testbox';
 
 const missing = (t) => { try { execFileSync('sh', ['-c', `command -v ${t}`], { stdio: 'ignore' }); return false; } catch { return true; } };
-const skip = !ptyAvailable() ? 'script(1) unavailable'
-  : missing('fzf') ? 'fzf unavailable'
-    : missing('jq') ? 'jq unavailable' : false;
+const skip = ptySkip()
+  || (missing('fzf') ? 'fzf unavailable'
+    : missing('jq') ? 'jq unavailable' : false);
 
 const dirs = [];
 const scratch = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; };

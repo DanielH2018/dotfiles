@@ -196,4 +196,14 @@ function ptyAvailable() {
 // here is a node child_process with piped stdio, so on macOS it cannot allocate the pty at all
 // -- not a quoting difference that could be papered over per flavour. A macOS run reads exit 1
 // from the harness, which is indistinguishable from the script under test failing.
-module.exports = { Term, encode, ptyAvailable, tierB, sleep };
+//
+// Hence one shared reason string, shaped like tierB(): false when the suite can run, else the
+// text to print. On macOS this gate is permanently false -- brew's util-linux omits script(1)
+// on purpose because the base system ships the BSD one, and the paragraph above is why that
+// one can never work here. A bare "script(1) unavailable" reads as an install away from fixed,
+// which sent people looking for a package that does not exist.
+const ptySkip = () => (ptyAvailable()
+  ? false
+  : 'util-linux script(1) unavailable (permanent on macOS: BSD script cannot pty a piped stdin)');
+
+module.exports = { Term, encode, ptyAvailable, ptySkip, tierB, sleep };

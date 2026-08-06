@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
-const { ptyAvailable } = require('../lib/pty');
+const { ptySkip } = require('../lib/pty');
 
 const REPO = path.join(__dirname, '..', '..');
 const SCRIPTS_DIR = path.join(REPO, 'home', '.chezmoiscripts');
@@ -62,12 +62,12 @@ const skipLinux = skip || (process.platform === 'linux' ? false : 'Linux-only sc
 // installs it on Fedora; skip cleanly where it is still absent rather than reporting a phantom
 // regression, the same way this suite already skips on a missing chezmoi.
 //
-// ptyAvailable(), not `command -v script`: macOS HAS a script(1), but it is the BSD one, which
+// ptySkip(), not `command -v script`: macOS HAS a script(1), but it is the BSD one, which
 // takes a different command form AND tcgetattr's its own stdin -- from a node child with piped
 // stdio it cannot allocate a pty at all and exits 1 before the rendered script runs. Presence
 // was the wrong question; the flavour is the one that decides. Same probe the TUI suites use,
 // and the same bare `1 !== 0` symptom the Fedora note above describes.
-const skipTty = skip || (ptyAvailable() ? false : 'no util-linux script(1) for a pty (macOS ships the BSD one)');
+const skipTty = skip || ptySkip();
 
 function walk(dir) {
   let out = [];

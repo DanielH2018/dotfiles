@@ -10,15 +10,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { Term, ptyAvailable, tierB, sleep } = require('../lib/pty');
+const { Term, ptySkip, tierB, sleep } = require('../lib/pty');
 
 const CONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
 
 const missing = (t) => { try { execFileSync('sh', ['-c', `command -v ${t}`], { stdio: 'ignore' }); return false; } catch { return true; } };
 const skip = tierB()
-  || (!ptyAvailable() ? 'script(1) unavailable'
-    : missing('tmux') ? 'tmux unavailable'
-      : missing('zsh') ? 'zsh unavailable' : false);
+  || ptySkip()
+  || (missing('tmux') ? 'tmux unavailable'
+    : missing('zsh') ? 'zsh unavailable' : false);
 
 const dirs = [];
 const socks = [];
