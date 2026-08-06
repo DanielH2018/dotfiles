@@ -49,6 +49,60 @@ SCAN_SRC=${COMMAND//\\\\/  }
 SCAN_SRC=${SCAN_SRC//\\|/}
 SCAN_SRC=${SCAN_SRC//\\;/}
 SCAN_SRC=${SCAN_SRC//\\&/}
+
+# A separator inside quotes is text, and for the same reason as the escaped forms above it
+# has to go before the quote characters do. `echo "step 1; terraform apply"` normalized to
+# `echo step 1; terraform apply`, which put terraform in command position for the anchored
+# rules below and denied a sentence ABOUT the command as if it were the command.
+#
+# This deliberately does NOT decide which quoting is real the way a shell would — it only
+# neutralizes separators it can prove are enclosed. Every ambiguous case returns 1 and
+# leaves SCAN_SRC untouched, which is today's behaviour: over-denial, the safe direction.
+# The failure that matters is the other one, and all three rules here exist to avoid it:
+#
+#   `\"` is an escaped quote, not an opener. Treated as one it swallows the real separator
+#   in `echo \" ; terraform apply` and the deny becomes an allow.
+#
+#   Inside `'…'` a backslash escapes nothing, so `echo 'a\' ; terraform apply` closes at the
+#   second quote and the `;` after it is real. Consuming `\'` as a pair would hide it.
+#
+#   An unbalanced quote has nowhere to close, so a tracker that runs to the end of the
+#   string neutralizes every separator after it — a general bypass, not an edge case.
+# awk rather than a bash character loop: `${s:i:1}` costs O(i) per call, so scanning a
+# command in bash is quadratic. Measured on a 16KB heredoc — the shape `gh pr create
+# --body-file - <<EOF` produces routinely — the bash version added ~2s to every Bash tool
+# call. awk does it in one linear pass and one fork, alongside the two `tr` forks below.
+# If awk is missing the substitution fails, the caller keeps the un-neutralized SCAN_SRC,
+# and the hook behaves exactly as it did before this function existed.
+_bdb_drop_quoted_separators() {  # -> _BDB_UNQ; returns 1 if nothing can be proven
+  _BDB_UNQ=$(printf '%s' "$1" | awk -v sq="'" '
+    { lines[NR] = $0 }
+    END {
+      for (j = 1; j <= NR; j++) s = s (j > 1 ? "\n" : "") lines[j]
+      n = length(s); q = ""; out = ""; last = 1
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") { if (q != sq) i++; continue }
+        if (c == "\"" || c == sq) {
+          if (q == "") q = c; else if (q == c) q = ""
+          continue
+        }
+        if ((c == ";" || c == "&" || c == "|") && q != "") {
+          out = out substr(s, last, i - last); last = i + 1
+        }
+      }
+      if (q != "") exit 1
+      printf "%s", out substr(s, last)
+    }
+  ') || return 1
+  return 0
+}
+case $SCAN_SRC in
+  *[\"\']*)
+    if _bdb_drop_quoted_separators "$SCAN_SRC"; then SCAN_SRC=$_BDB_UNQ; fi
+    ;;
+esac
+
 SCAN=$(printf '%s' "$SCAN_SRC" | tr '\n\t\\' '   ' | tr -d "\"'")
 
 # Command-position anchors, shared by the rules further down and by the shadow census.
