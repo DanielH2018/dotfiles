@@ -190,3 +190,27 @@ test('every fallbackModel entry is one of availableModels', { skip }, () => {
     `fallbackModel entries ${JSON.stringify(missing)} are absent from availableModels, so `
     + `enforceAvailableModels would reject the very model it falls back to`);
 });
+
+// The idle reminder is not a request for input.
+//
+// `idle_prompt` is Claude's 60-second "waiting for your input" nudge, which fires long AFTER a
+// session has finished. agent-view-state.sh writes its state unconditionally, so that reminder
+// overwrote a completed/review row with needs-input — and because the review downgrade only runs
+// for "completed", it also wiped the dirty-tree marker Stop had just stamped. The result was that
+// an unattended finished session, the exact case the DONE group exists to surface, got painted as
+// blocked a minute later and never reached that group.
+//
+// The audible cue on the SAME event is left alone deliberately: whether a 60-second nudge is
+// worth a sound is a separate question from what state the picker records.
+test('the agentview needs-input hook does not fire on the idle reminder', { skip }, () => {
+  const cfg = JSON.parse(render());
+  const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
+    (e.hooks || []).some((h) => (h.command || '').includes('agent-view-state.sh needs-input')));
+  assert.ok(entries.length, 'no Notification entry writes the agentview needs-input state');
+  for (const e of entries) {
+    assert.doesNotMatch(e.matcher, /idle_prompt/,
+      `the agentview state hook still fires on idle_prompt: ${e.matcher}`);
+    assert.match(e.matcher, /permission_prompt/,
+      'a genuine permission prompt must still mark the row needs-input');
+  }
+});

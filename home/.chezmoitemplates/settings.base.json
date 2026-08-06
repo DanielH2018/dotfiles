@@ -502,9 +502,13 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
-      {{/* agentview: needs-input on permission/idle prompts */}}
+      {{/* agentview: needs-input on a permission prompt ONLY. idle_prompt is the 60-second
+           "waiting for your input" nudge, which fires long after a session has finished —
+           and agent-view-state.sh writes unconditionally, so it overwrote a completed/review
+           row with needs-input and wiped the dirty-tree marker Stop had just stamped. The
+           audible cue above still takes both; what the picker records is a separate call. */}}
       {
-        "matcher": "permission_prompt|idle_prompt",
+        "matcher": "permission_prompt",
         "hooks": [
           {
             "type": "command",

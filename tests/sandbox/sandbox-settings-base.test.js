@@ -75,3 +75,20 @@ test('the process-substitution denies survive parsing', () => {
     }
   }
 });
+
+// Same defect as the host template, same fix: `idle_prompt` is Claude's 60-second "waiting for
+// your input" nudge, which fires long after a session has finished. The agentview state hook
+// writes unconditionally, so that reminder overwrote a completed/review row with needs-input and
+// wiped the dirty-tree marker Stop had just stamped. Fixed in one place only, the container's
+// rows would still lie — the host and the sandbox feed the same picker.
+test('the agentview needs-input hook does not fire on the idle reminder', () => {
+  const entries = ((parsed.hooks || {}).Notification || []).filter((e) =>
+    (e.hooks || []).some((h) => (h.command || '').includes('agent-view-state-hook.sh needs-input')));
+  assert.ok(entries.length, 'no Notification entry writes the agentview needs-input state');
+  for (const e of entries) {
+    assert.doesNotMatch(e.matcher, /idle_prompt/,
+      `the agentview state hook still fires on idle_prompt: ${e.matcher}`);
+    assert.match(e.matcher, /permission_prompt/,
+      'a genuine permission prompt must still mark the row needs-input');
+  }
+});
