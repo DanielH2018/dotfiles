@@ -227,7 +227,6 @@ keybind = ctrl+t=new_tab
 # still reaches the shell: ctrl+3 ESC (esc), ctrl+4 ^\ (ctrl+backslash), ctrl+5 ^], ctrl+7 ^_,
 # ctrl+8 ^? (backspace). The one real casualty is vim's Ctrl-^ alternate-file when typed as
 # ctrl+6 — reach it as ctrl+shift+6 instead.
-# Ghostty's own alt+1..9 defaults are left registered, so the old chords keep working too.
 keybind = ctrl+1=goto_tab:1
 keybind = ctrl+2=goto_tab:2
 keybind = ctrl+3=goto_tab:3
@@ -237,5 +236,31 @@ keybind = ctrl+6=goto_tab:6
 keybind = ctrl+7=goto_tab:7
 keybind = ctrl+8=goto_tab:8
 keybind = ctrl+9=last_tab
+
+# ...and Ghostty's own alt+1..9 tab chords are given up in exchange, because they are not free
+# to leave registered. A keybind Ghostty matches is consumed before the running program sees
+# the key — only `performable:` binds fall through, and the tab defaults are not performable —
+# so alt+<digit> can never reach a full-screen TUI. Claude Code's session switcher
+# (`claude agents`, "alt+1-N to open") is the case that surfaced it: the tab changed instead.
+# Both spellings are registered by default and both have to go; alt+9 is last_tab, not
+# goto_tab:9. ctrl+1..9 above already covers tab switching, so nothing is lost.
+keybind = alt+1=unbind
+keybind = alt+2=unbind
+keybind = alt+3=unbind
+keybind = alt+4=unbind
+keybind = alt+5=unbind
+keybind = alt+6=unbind
+keybind = alt+7=unbind
+keybind = alt+8=unbind
+keybind = alt+9=unbind
+keybind = alt+digit_1=unbind
+keybind = alt+digit_2=unbind
+keybind = alt+digit_3=unbind
+keybind = alt+digit_4=unbind
+keybind = alt+digit_5=unbind
+keybind = alt+digit_6=unbind
+keybind = alt+digit_7=unbind
+keybind = alt+digit_8=unbind
+keybind = alt+digit_9=unbind
 {{ end }}
 
