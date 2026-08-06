@@ -3,13 +3,15 @@
 # (lives in ~/.claude/sandbox). Sourced, not executed: define functions only, never
 # run anything at load time or set shell options here.
 #
-# Two unrelated-looking flows that are the same concern — the sandbox has no
-# credentials of its own, and both of these hand it some:
+# Unrelated-looking flows that are the same concern — the sandbox has no
+# credentials of its own, and each of these hands it some:
 #
-#   configure_gh_auth      a GitHub token, staged into a mounted gh config file
-#   run_oauth_if_needed    an Anthropic OAuth session for the cloud MCPs
+#   configure_gh_auth             a GitHub token, staged into a mounted gh config file
+#   configure_snowflake_auth      mount/env wiring for Snowflake SSO (work-only)
+#   run_oauth_if_needed           an Anthropic OAuth session for the cloud MCPs
+#   run_snowflake_oauth_if_needed a fresh Snowflake SSO login when the cache is stale
 #
-# CONTRACT — both read and write launcher globals; neither is pure.
+# CONTRACT — all four read and write launcher globals; none is pure.
 #
 # configure_gh_auth reads GITHUB_TOKEN from the environment, APPENDS to DOCKER_ARGS,
 # and sets two globals. GH_HOSTS_TMPFILE in particular must stay a global and must
@@ -18,14 +20,29 @@
 # every run. GH_AUTH_METHOD is only read back inside this file, and is left global
 # to keep the extraction a straight move.
 #
+# configure_snowflake_auth and run_snowflake_oauth_if_needed ship only via
+# work-laptop-config (Lithic-specific) — same "no-op off this laptop" shape as
+# op-ssh-ensure in the launcher. Sourced from there if present. Uses the SAME
+# externalbrowser/SSO auth as the host's own Snowflake connection rather than a
+# Programmatic Access Token — PATs need a network policy attached to the user
+# before they can authenticate (Snowflake requirement, not something fixable
+# here), and no such policy exists on this account. SSO has no such requirement.
+# configure_snowflake_auth sets SNOWFLAKE_CONFIG_TMPFILE, which cleanup() also
+# deletes on exit, same reasoning as GH_HOSTS_TMPFILE — it isn't secret (no
+# token embedded, unlike the old PAT design) but is still per-run.
+# run_snowflake_oauth_if_needed mirrors run_oauth_if_needed exactly: runs a
+# short-lived side container (fixed port published for the SSO callback) to
+# refresh the persisted token cache when it's stale (~4h lifetime), skipped in
+# SHELL_MODE/EXEC_MODE for the same reason cloud MCP auth is.
+#
 # run_oauth_if_needed reads AUTH_MARKER, SHELL_MODE, EXEC_MODE, ENGINE_ARGS,
 # STATE_DIR, SANDBOX_SETTINGS and IMAGE_TAG, sets AUTH_NEEDED, and calls
 # add_mount_relabel(), which is defined in the launcher rather than here — this file
 # is sourced, so that resolves at call time, but it does mean sandbox-auth.sh cannot
 # be sourced on its own.
 #
-# Both print to stdout as they go. Their two call sites sit either side of the Docker
-# proxy block in the launcher, and the interleaving is the launch banner the user
+# All print to stdout as they go. Their call sites sit around the Docker proxy
+# block in the launcher, and the interleaving is the launch banner the user
 # reads — keep the calls where they are.
 
 # --- GitHub CLI authentication (read-only access) ---
@@ -111,3 +128,10 @@ run_oauth_if_needed() {
     echo ""
   fi
 }
+
+# --- Snowflake auth (work-only, no-op if work-laptop-config isn't present) ---
+WORK_SNOWFLAKE_AUTH="${WORK_LAPTOP_CONFIG_DIR:-$HOME/work-laptop-config}/.claude/sandbox/configure-snowflake-auth.sh"
+if [[ -f "$WORK_SNOWFLAKE_AUTH" ]]; then
+  # shellcheck source=/dev/null
+  source "$WORK_SNOWFLAKE_AUTH"
+fi

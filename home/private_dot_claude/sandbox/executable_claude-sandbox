@@ -861,6 +861,7 @@ if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
 fi
 
 configure_gh_auth
+declare -f configure_snowflake_auth >/dev/null && configure_snowflake_auth
 
 # Start Docker socket proxy if needed
 if [[ "$NEEDS_DOCKER" == true ]]; then
@@ -879,6 +880,7 @@ fi
 echo ""
 
 run_oauth_if_needed
+declare -f run_snowflake_oauth_if_needed >/dev/null && run_snowflake_oauth_if_needed
 
 # Remove stale container from a previous run (--rm only cleans up on normal exit)
 if docker inspect "claudebot-$RUN_ID" &>/dev/null; then

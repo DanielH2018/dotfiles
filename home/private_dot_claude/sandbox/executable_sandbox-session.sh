@@ -89,6 +89,10 @@ cleanup() {
   if [[ -n "${GH_HOSTS_TMPFILE:-}" && -f "$GH_HOSTS_TMPFILE" ]]; then
     rm -f "$GH_HOSTS_TMPFILE"
   fi
+  # Remove temporary generated Snowflake config (not secret, but per-run)
+  if [[ -n "${SNOWFLAKE_CONFIG_TMPFILE:-}" && -f "$SNOWFLAKE_CONFIG_TMPFILE" ]]; then
+    rm -f "$SNOWFLAKE_CONFIG_TMPFILE"
+  fi
   if [[ -n "${VAULT_INDEX_TMP:-}" && -f "$VAULT_INDEX_TMP" ]]; then
     rm -f "$VAULT_INDEX_TMP"
   fi

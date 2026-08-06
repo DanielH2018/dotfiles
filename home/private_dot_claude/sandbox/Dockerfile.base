@@ -98,6 +98,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY vault-search /usr/local/bin/vault-search
 RUN chmod +x /usr/local/bin/vault-search
 USER claudebot
+
+# Snowflake CLI (`snow`) for the query-snowflake skill (privacy-com/claude-skills,
+# analytics-tools plugin). Own venv, same pattern as vault-index below, so it
+# doesn't fight the system Python.
+ENV SNOWFLAKE_CLI_VENV=/opt/snowflake-cli/venv
+USER root
+RUN mkdir -p /opt/snowflake-cli && chown claudebot:claudebot /opt/snowflake-cli
+USER claudebot
+RUN python3 -m venv "$SNOWFLAKE_CLI_VENV" \
+    && "$SNOWFLAKE_CLI_VENV/bin/pip" install --no-cache-dir snowflake-cli
+USER root
+RUN ln -s "$SNOWFLAKE_CLI_VENV/bin/snow" /usr/local/bin/snow
+# Pre-create with correct ownership: bind-mounting config.toml into a
+# directory that doesn't exist yet in the image makes Docker auto-create it
+# as root, and claudebot then can't write its own logs/ subdir.
+RUN mkdir -p /home/claudebot/.snowflake && chown claudebot:claudebot /home/claudebot/.snowflake
+USER claudebot
 ENV VAULT_INDEX_VENV=/opt/vault-index/venv
 ENV VAULT_INDEX_MODEL_CACHE=/opt/vault-index/models
 ARG VAULT_INDEX_MODEL="BAAI/bge-small-en-v1.5"
