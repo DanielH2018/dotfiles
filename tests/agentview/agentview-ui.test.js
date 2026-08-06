@@ -590,7 +590,10 @@ test('a picker whose row format changes under it restarts instead of skewing', {
 
   // Waiting on the marker is what makes this test able to fail: with the fingerprint
   // pinned no restart happens, the label never changes, and this times out.
-  await term.waitFor(MARK);
+  // The row has to be in the same wait: the border is drawn at startup but the rows arrive
+  // with the first --body, so under a full parallel run the marker alone let the assertions
+  // fire against a picker that had restarted but not yet listed anything.
+  await term.waitFor((s) => s.contains(MARK) && s.contains('alpha'));
   const screen = term.text();
 
   // And the restarted picker reads the new format correctly. The full cwd is display text
