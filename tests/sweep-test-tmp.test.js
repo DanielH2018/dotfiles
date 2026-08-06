@@ -6,6 +6,11 @@
 //     unrelated /tmp entry cannot be swept even if it looks like scratch;
 //   - it only takes dirs older than the age threshold, so a suite running in the next
 //     session over -- several run at once here -- is never swept out from under itself.
+//
+// The last test here is about the suites rather than the sweep: it holds the line that
+// made the sweep a backstop instead of the cleanup. Seven suites made scratch and never
+// removed it, leaking on every clean run -- the sweep would have hidden that indefinitely,
+// collecting the same dirs six hours late, forever.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -117,6 +122,26 @@ test('SWEEP_AGE_MIN moves the threshold', () => {
   );
   assert.strictEqual(r.status, 0);
   assert.ok(!fs.existsSync(hourOld), 'an hour-old dir should go once the threshold drops to 30m');
+});
+
+test('every suite that makes scratch in $TMPDIR also removes it', () => {
+  // Not named `repo`: fakeRepo() above binds that to a temp dir, and the write-escape
+  // guard reads these files statically -- one name for both would make its every
+  // `path.join(repo, …)` look like a write into the real checkout.
+  const checkout = path.join(__dirname, '..');
+  const tracked = execFileSync('git', ['ls-files', '*.test.js', '*.test.mjs'], { cwd: checkout, encoding: 'utf8' })
+    .split('\n').filter(Boolean);
+
+  const leaky = tracked.filter((f) => {
+    const src = fs.readFileSync(path.join(checkout, f), 'utf8');
+    return src.includes('mkdtempSync(path.join(os.tmpdir()') && !src.includes('rmSync');
+  });
+
+  assert.deepStrictEqual(
+    leaky, [],
+    'these suites leave scratch in $TMPDIR on every clean run; remove it on exit rather '
+    + 'than leaving it to bin/sweep-test-tmp, which only collects it six hours later',
+  );
 });
 
 test('the pre-push gate runs the sweep without letting it block a push', () => {

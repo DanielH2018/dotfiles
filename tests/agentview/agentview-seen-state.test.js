@@ -26,6 +26,7 @@ const sh = (script, ...args) =>
   execFileSync('bash', ['-c', script, 'bash', ...args], { encoding: 'utf8' });
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'seen-'));
+process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 let n = 0;
 const seenFileWith = (lines) => {
   const p = path.join(tmp, `seen-${n++}`);

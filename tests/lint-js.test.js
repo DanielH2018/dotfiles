@@ -29,8 +29,12 @@ function runLint(args) {
   return spawnSync('bash', [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
 }
 
+const dirs = [];
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function fixture(name, body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-js-'));
+  dirs.push(dir);
   const file = path.join(dir, name);
   fs.writeFileSync(file, body);
   return file;

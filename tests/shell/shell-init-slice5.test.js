@@ -30,6 +30,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const dirs = [];
+const scratch = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; };
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 const REPO = path.join(__dirname, '..', '..');
 const COMMON = path.join(REPO, 'home', 'dot_config', 'shell', 'common.sh');
 const TMPL = path.join(REPO, 'home', 'dot_zshrc.tmpl');
@@ -92,7 +96,7 @@ function fzfBlock() {
 }
 
 test('fzf --zsh is invoked exactly once (capture-once, not probe-then-reinvoke)', { skip: skipZsh }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fzf-fake-'));
+  const dir = scratch('fzf-fake-');
   const counter = path.join(dir, 'calls.log');
   fs.writeFileSync(path.join(dir, 'fzf'), '#!/usr/bin/env bash\necho "$*" >> "' + counter + '"\n[ "$1" = "--zsh" ] && echo "true"\n');
   fs.chmodSync(path.join(dir, 'fzf'), 0o755);
@@ -115,12 +119,12 @@ test('no remaining probe-then-reinvoke pattern (`fzf --zsh` invoked once, ignori
 // --- A14-20: mkdir guard ------------------------------------------------------
 
 test('mkdir is not invoked when the zcompdump cache dir already exists', { skip: skipZsh }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkdir-fake-'));
+  const dir = scratch('mkdir-fake-');
   const counter = path.join(dir, 'calls.log');
   fs.writeFileSync(path.join(dir, 'mkdir'), '#!/usr/bin/env bash\necho "$*" >> "' + counter + '"\n/bin/mkdir "$@"\n');
   fs.chmodSync(path.join(dir, 'mkdir'), 0o755);
 
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zcompdump-home-'));
+  const home = scratch('zcompdump-home-');
   fs.mkdirSync(path.join(home, '.cache', 'zsh'), { recursive: true });
 
   execFileSync('zsh', ['-c', 'ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-test"; [[ -d "${ZCOMPDUMP:h}" ]] || mkdir -p "${ZCOMPDUMP:h}"'], {
@@ -131,12 +135,12 @@ test('mkdir is not invoked when the zcompdump cache dir already exists', { skip:
 });
 
 test('mkdir still runs (once) when the zcompdump cache dir is absent', { skip: skipZsh }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mkdir-fake2-'));
+  const dir = scratch('mkdir-fake2-');
   const counter = path.join(dir, 'calls.log');
   fs.writeFileSync(path.join(dir, 'mkdir'), '#!/usr/bin/env bash\necho "$*" >> "' + counter + '"\n/bin/mkdir "$@"\n');
   fs.chmodSync(path.join(dir, 'mkdir'), 0o755);
 
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zcompdump-home2-'));
+  const home = scratch('zcompdump-home2-');
 
   execFileSync('zsh', ['-c', 'ZCOMPDUMP="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/zcompdump-test"; [[ -d "${ZCOMPDUMP:h}" ]] || mkdir -p "${ZCOMPDUMP:h}"'], {
     encoding: 'utf8', env: minimalEnv({ HOME: home, PATH: `${dir}:${process.env.PATH}` }),
@@ -193,7 +197,7 @@ test('without the un-export, an inherited HISTFILE demonstrably still leaks', { 
 });
 
 test('zsh still records history when HISTFILE is not exported', { skip: skipZsh }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'histfile-'));
+  const dir = scratch('histfile-');
   const conf = path.join(dir, 'histconf.zsh');
   const hist = path.join(dir, 'history');
   fs.writeFileSync(conf, `HISTFILE="${hist}"\ntypeset +x HISTFILE\nHISTSIZE=100\nSAVEHIST=100\n`);

@@ -30,7 +30,9 @@ const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 const WORK_PROMPT = 'Is this a work machine';
 const PROFILE_PROMPT = 'Machine profile (workstation/server/minimal)';
 
-const isolatedConfig = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-toml-')), 'nonexistent-chezmoi.toml');
+const isolatedConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-toml-'));
+process.on('exit', () => fs.rmSync(isolatedConfigDir, { recursive: true, force: true }));
+const isolatedConfig = path.join(isolatedConfigDir, 'nonexistent-chezmoi.toml');
 
 function render(profile) {
   return execFileSync('chezmoi', [

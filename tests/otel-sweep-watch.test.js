@@ -21,6 +21,8 @@ try {
 }
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'otel-sweep-watch-'));
+// Every other scratch here is made inside DIR, so removing it covers them all.
+process.on('exit', () => fs.rmSync(DIR, { recursive: true, force: true }));
 
 // A stub standing in for otel-sweep: prints the fixture handed to it, ignores its flags.
 function stub(payload) {

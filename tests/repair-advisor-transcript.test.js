@@ -53,8 +53,12 @@ function transcript(reminderCount) {
   return rows;
 }
 
+const dirs = [];
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function write(rows) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'advisor-repair-'));
+  dirs.push(dir);
   const file = path.join(dir, '11111111-2222-3333-4444-555555555555.jsonl');
   fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
   return file;

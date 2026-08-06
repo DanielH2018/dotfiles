@@ -29,8 +29,12 @@ function run(args, env) {
   });
 }
 
+const dirs = [];
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function fixture(name, body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-sh-tmpl-'));
+  dirs.push(dir);
   const file = path.join(dir, name);
   fs.writeFileSync(file, body);
   return file;
@@ -76,6 +80,7 @@ test('a missing tool announces the skip instead of reporting success quietly', (
   // the point is to remove chezmoi/shellcheck specifically rather than to break the script.
   // (Emptying PATH outright would take bash and git with it and prove nothing.)
   const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-sh-nopath-'));
+  dirs.push(fakeBin);
   const gitPath = spawnSync('command', ['-v', 'git'], { shell: true, encoding: 'utf8' }).stdout.trim();
   fs.symlinkSync(gitPath, path.join(fakeBin, 'git'));
 
