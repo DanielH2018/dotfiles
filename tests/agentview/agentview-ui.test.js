@@ -247,7 +247,11 @@ test('ctrl-r reaches the rename prompt and sends /rename to the pane', { skip },
   term.type('renamed-by-test');
   term.send('enter');
 
-  await term.waitFor(() => /paste-buffer -p -d -b \S+ -t %2/.test(fs.readFileSync(tmuxLog, 'utf8')));
+  // Wait for the LAST of the three tmux calls do_rename makes, not the middle one. It writes
+  // load-buffer, then paste-buffer, then send-keys Enter (actions.sh:323-328); waiting on
+  // paste-buffer let the assertions below run in the gap before the Enter was logged, which
+  // failed under the parallel load of a full-suite run and passed on its own.
+  await term.waitFor(() => /send-keys -t %2 Enter/.test(fs.readFileSync(tmuxLog, 'utf8')));
   const log = fs.readFileSync(tmuxLog, 'utf8');
   assert.match(log, /-S \/tmp\/s\.sock load-buffer -b \S+ /, 'the name goes through a buffer, not send-keys -l');
   assert.match(log, /-S \/tmp\/s\.sock send-keys -t %2 Enter/, 'and the Enter follows on its own');
