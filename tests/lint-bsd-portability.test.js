@@ -12,7 +12,7 @@
 //
 // This file is itself on the linter's exclusion list -- it holds known-bad samples by
 // construction -- which is why the literals below do not fail the repo-wide scan.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -27,8 +27,12 @@ function run(args) {
   return spawnSync('bash', [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
 }
 
+const scratch = [];
+after(() => scratch.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+
 function fixture(name, body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-bsd-'));
+  scratch.push(dir);
   const file = path.join(dir, name);
   fs.writeFileSync(file, body);
   return file;
