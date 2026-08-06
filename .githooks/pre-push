@@ -166,6 +166,12 @@ else
   run "unit tests (node --test)" tq_node unit $TEST_FILES
 fi
 
+# Reap scratch dirs from runs that were killed before their cleanup handlers could run.
+# After the suite, not before: this is the run most likely to have just made some, and a
+# sweep here cannot race the tests it follows. Never gates — a push does not fail over
+# housekeeping, so its status is deliberately ignored.
+"$(git rev-parse --show-toplevel)/bin/sweep-test-tmp" || true
+
 if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2
   exit 1

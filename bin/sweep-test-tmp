@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+#
+# sweep-test-tmp — reap temp dirs that test runs left behind in $TMPDIR.
+#
+# Every suite here makes its scratch with mkdtemp and removes it from a
+# `process.on('exit')` handler. That handler does not run when node dies by SIGKILL —
+# a worktree torn down mid-run, a test runner reaped by the job that spawned it — so
+# each such death leaks every dir that run had made. One agentview run left 33.
+#
+# The prefixes are not a hand-kept list. They are read out of the tracked test files
+# themselves, the same way .githooks/pre-push derives its test list from git rather
+# than trusting node's discovery: a suite added tomorrow is swept without anyone
+# remembering to add it here, and a prefix no suite uses cannot be swept at all. That
+# is also the safety property — this only ever matches names some test actually makes,
+# never an arbitrary /tmp entry.
+#
+# Age is the other guard. Suites here run in about a minute and several sessions run
+# them at once, so anything younger than the threshold is presumed live and left alone.
+#
+#   sweep-test-tmp              sweep dirs older than 6h
+#   sweep-test-tmp --dry-run    list what would go, remove nothing
+#   SWEEP_AGE_MIN=60 …          override the age threshold, in minutes
+#
+# Kept bash-3.2 clean, like the gate that calls it.
+set -u
+
+DRY=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'sweep-test-tmp: unknown argument: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+AGE_MIN=${SWEEP_AGE_MIN:-360}
+TMP=${TMPDIR:-/tmp}
+TMP=${TMP%/}
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  printf 'sweep-test-tmp: not in a git repository\n' >&2
+  exit 1
+}
+
+FILES=$(git -C "$ROOT" ls-files '*.test.js' '*.test.mjs')
+[ -n "$FILES" ] || exit 0
+
+# Only the os.tmpdir() form: a mkdtemp rooted in another scratch dir (path.join(DIR, …))
+# is swept along with the parent it lives in, and matching its prefix loose in $TMPDIR
+# would be matching a name no test puts there.
+PREFIXES=$(
+  printf '%s\n' "$FILES" | sed "s|^|$ROOT/|" \
+    | xargs grep -ho "os\.tmpdir(), *'[^']*'" 2>/dev/null \
+    | sed "s/.*'\\(.*\\)'/\\1/" | sort -u
+)
+
+removed=0
+skipped_short=''
+for p in $PREFIXES; do
+  # A prefix this short would match names no test wrote; report them rather than
+  # silently narrowing the sweep.
+  case "$p" in
+    */*|*..*) continue ;;
+    ?|??)     skipped_short="$skipped_short $p"; continue ;;
+  esac
+  # -maxdepth 0 on the glob keeps this to the dir itself; the mmin test is what makes
+  # a run in flight next to this one safe.
+  for d in "$TMP/$p"*; do
+    [ -d "$d" ] || continue
+    [ -n "$(find "$d" -maxdepth 0 -mmin +"$AGE_MIN" 2>/dev/null)" ] || continue
+    if [ "$DRY" -eq 1 ]; then
+      printf 'would remove %s\n' "$d"
+    else
+      rm -rf "$d"
+    fi
+    removed=$((removed + 1))
+  done
+done
+
+[ -n "$skipped_short" ] && printf 'sweep-test-tmp: prefix too short to sweep safely:%s\n' "$skipped_short" >&2
+
+if [ "$removed" -gt 0 ]; then
+  if [ "$DRY" -eq 1 ]; then
+    printf 'sweep-test-tmp: %d stale test dir(s) would be removed\n' "$removed"
+  else
+    printf 'sweep-test-tmp: removed %d stale test dir(s)\n' "$removed"
+  fi
+fi
+exit 0

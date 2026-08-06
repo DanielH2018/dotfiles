@@ -23,7 +23,13 @@ const skip = !have('tmux') ? 'tmux unavailable' : false;
 
 const socks = [];
 process.on('exit', () => {
-  for (const s of socks) { try { execFileSync('tmux', ['-S', s, 'kill-server'], { stdio: 'ignore' }); } catch { /* already down */ } }
+  for (const s of socks) {
+    try { execFileSync('tmux', ['-S', s, 'kill-server'], { stdio: 'ignore' }); } catch { /* already down */ }
+    // The socket lives one level down in its own mkdtemp dir; killing the server unlinks
+    // the socket but leaves that dir, so a clean run still leaked one per test -- 340 of
+    // them had built up before anyone looked.
+    fs.rmSync(path.dirname(s), { recursive: true, force: true });
+  }
 });
 
 const tmux = (sock, ...args) => execFileSync('tmux', ['-S', sock, ...args], { encoding: 'utf8' });
