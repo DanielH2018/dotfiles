@@ -88,6 +88,14 @@ fi
 hash_note() { sha256sum "$NOTE" | cut -d' ' -f1; }
 before="$(hash_note)"
 
+# The command renders the run's proposals to this exact path (STEP 6) rather than choosing its
+# own name. The path is computed here, not by the session, because the session's date lookup can
+# come back permission-denied — and a runner left globbing for the newest artifact would then
+# open *yesterday's* proposals as if they were this morning's.
+ARTIFACT="$HOME/.claude/artifacts/changelog-watch_$(date +%F).html"
+mkdir -p "$(dirname "$ARTIFACT")"
+export CLAUDE_CHANGELOG_ARTIFACT="$ARTIFACT"
+
 log "running /changelog-watch against $VAULT"
 claude --dangerously-skip-permissions -p "/changelog-watch"
 
@@ -100,7 +108,27 @@ if [ "$before" = "$(hash_note)" ]; then
 fi
 
 log "new proposals in $NOTE"
-if command -v notify-send >/dev/null 2>&1; then
+
+# Open the rendered proposals rather than announcing them. A notification only says there is
+# something to read; the artifact is the thing to read, and a morning run is exactly when it's
+# worth putting on screen.
+#
+# systemd-run puts the browser in its own transient unit. Launched directly it would be a child
+# of this oneshot service, and systemd tears the service's cgroup down the moment the runner
+# exits — a browser that wasn't already running would be killed on sight. (KillMode=process on
+# the unit would fix that too, and break the 20-minute timeout's hold on a wedged claude child.)
+if [ -f "$ARTIFACT" ]; then
+  log "opening $ARTIFACT"
+  if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --user --quiet --collect --unit=claude-changelog-artifact-open \
+      xdg-open "$ARTIFACT" || xdg-open "$ARTIFACT" || true
+  else
+    xdg-open "$ARTIFACT" || true
+  fi
+# No artifact means the session prepended proposals but never rendered them. Rare, but the
+# proposals still exist and are still worth surfacing, so keep the notification for that case.
+elif command -v notify-send >/dev/null 2>&1; then
+  log "no artifact at $ARTIFACT — notifying instead"
   headline="$(grep -m1 '^### ' "$NOTE" 2>/dev/null | sed 's/^### //' || true)"
   notify-send -a "Claude Code" "Changelog watch" "${headline:-New proposals available}" || true
 fi

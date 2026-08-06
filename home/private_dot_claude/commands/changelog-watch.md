@@ -90,3 +90,18 @@ git -C "$VAULT" add -- Meta/Claude_Code_Changelog_Watch.md
 git -C "$VAULT" commit -m "changelog-watch: review through <newest_version>"
 ```
 If the commit fails (GPG signing unavailable, nothing to commit), skip silently. Never pass `--no-gpg-sign` or `--no-verify`.
+
+STEP 6 — Render the artifact (scheduled runs only)
+
+Only when `$CLAUDE_CHANGELOG_ARTIFACT` is set **and** STEP 5 actually prepended a section. An
+interactive run renders nothing, and a no-op run must leave no file behind — the scheduled runner
+opens that exact path if it exists, so a stale artifact would be presented as this morning's
+proposals.
+
+Load the `artifact-design` skill, then write the section you just prepended as a self-contained
+HTML page to `$CLAUDE_CHANGELOG_ARTIFACT` with the Write tool. Same content, no new analysis:
+the reviewed version range, and the Adopt/Consider/Skip verdicts with their config targets and
+reasoning. Link each config target as `[label](file:///abs/path)`, and link the output note.
+
+Use the Write tool only — never the Artifact tool. This runs headless with permissions skipped,
+and publishing your own config's weak points to claude.ai is not a thing to do unattended.

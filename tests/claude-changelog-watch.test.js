@@ -17,9 +17,11 @@
 //     a missed morning is self-healing, but a failed unit leaves a red timer that gets disabled;
 //   * an unauthenticated gh must skip BEFORE claude runs, or the session burns tokens only to
 //     fail at STEP 2 against a locked keyring;
-//   * the notification must fire on a changed note and stay silent on an unchanged one -- the
-//     command prepends nothing when there are no new versions, and that byte-identity is the
-//     only signal worth interrupting anyone over.
+//   * a changed note must open the rendered artifact, and an unchanged one must do nothing at
+//     all -- the command prepends nothing when there are no new versions, and that byte-identity
+//     is the only signal worth interrupting anyone over;
+//   * a changed note with no artifact must still notify -- the proposals exist either way, and
+//     silence would be the one outcome that loses them.
 //
 // Skips without bash.
 const { test } = require('node:test');
@@ -54,7 +56,8 @@ function mkdtemp(prefix) {
 
 // `claudeWrites` simulates the command having prepended a proposals section: the runner decides
 // whether to notify by hashing the note either side of the session, not by reading its output.
-function makeStubs({ ghOk, claudeWrites }) {
+// `claudeRenders` simulates STEP 6 writing the HTML to the path the runner exported.
+function makeStubs({ ghOk, claudeWrites, claudeRenders }) {
   const bin = mkdtemp('cw-bin-');
   const marks = mkdtemp('cw-marks-');
   const log = path.join(marks, 'calls');
@@ -69,19 +72,27 @@ printf 'claude %s\\n' "$*" >> "${log}"
 if [ -n "\${CW_NOTE:-}" ] && [ "${claudeWrites ? 1 : 0}" = 1 ]; then
   printf '### 2026-08-05 — reviewed 2.1.220..2.1.222\\n' >> "$CW_NOTE"
 fi
+if [ -n "\${CLAUDE_CHANGELOG_ARTIFACT:-}" ] && [ "${claudeRenders ? 1 : 0}" = 1 ]; then
+  printf '<h1>proposals</h1>\\n' > "$CLAUDE_CHANGELOG_ARTIFACT"
+fi
 exit 0
 `, { mode: 0o755 });
 
-  fs.writeFileSync(path.join(bin, 'notify-send'), `#!/bin/bash
-printf 'notify-send %s\\n' "$*" >> "${log}"
+  for (const name of ['notify-send', 'xdg-open', 'systemd-run']) {
+    // systemd-run is stubbed rather than left to the real one: unstubbed it would try to reach a
+    // user manager that a test environment need not have, and on a box that does have one it
+    // would genuinely launch a browser.
+    fs.writeFileSync(path.join(bin, name), `#!/bin/bash
+printf '${name} %s\\n' "$*" >> "${log}"
 exit 0
 `, { mode: 0o755 });
+  }
 
   return { bin, log };
 }
 
-function run({ ghOk = true, claudeWrites = false, vaultDir = null } = {}) {
-  const { bin, log } = makeStubs({ ghOk, claudeWrites });
+function run({ ghOk = true, claudeWrites = false, claudeRenders = false, vaultDir = null } = {}) {
+  const { bin, log } = makeStubs({ ghOk, claudeWrites, claudeRenders });
   const home = mkdtemp('cw-home-');
   const state = mkdtemp('cw-state-');
   const runtime = mkdtemp('cw-run-');
@@ -166,13 +177,33 @@ test('an unchanged note reports no new entries and stays silent', { skip }, () =
   assert.match(calls, /^claude /m, 'the session must actually have run');
   assert.match(out, /no new changelog entries/);
   assert.doesNotMatch(calls, /notify-send/, 'a no-op run is not worth interrupting anyone over');
+  assert.doesNotMatch(calls, /xdg-open/, 'nor worth putting a browser window on screen for');
 });
 
-test('a changed note notifies with the new section headline', { skip }, () => {
-  const { status, out, calls } = run({ claudeWrites: true });
+test('a changed note opens the rendered artifact', { skip }, () => {
+  const { status, out, calls } = run({ claudeWrites: true, claudeRenders: true });
   assert.strictEqual(status, 0);
   assert.match(out, /new proposals in/);
-  assert.match(calls, /notify-send .*reviewed 2\.1\.220\.\.2\.1\.222/);
+  assert.match(calls, /systemd-run .*xdg-open .*changelog-watch_/, 'a browser launched inside the oneshot cgroup dies when the unit exits');
+  assert.doesNotMatch(calls, /notify-send/, 'the artifact is on screen; a notification about it is noise');
+});
+
+test('the opened path is the one the runner exported, never a glob of the newest', { skip }, () => {
+  // en-CA is YYYY-MM-DD in *local* time, which is what the runner's `date +%F` gives it;
+  // toISOString would be UTC and disagree either side of midnight.
+  const today = new Date().toLocaleDateString('en-CA');
+  const { calls, home } = run({ claudeWrites: true, claudeRenders: true });
+  const expected = path.join(home, '.claude', 'artifacts', `changelog-watch_${today}.html`);
+  assert.ok(fs.existsSync(expected), 'the session writes to CLAUDE_CHANGELOG_ARTIFACT');
+  assert.ok(calls.includes(expected), 'a stale artifact must never be opened as this morning\'s proposals');
+});
+
+test('a changed note with no artifact falls back to the notification', { skip }, () => {
+  const { status, out, calls } = run({ claudeWrites: true, claudeRenders: false });
+  assert.strictEqual(status, 0);
+  assert.match(out, /notifying instead/);
+  assert.match(calls, /notify-send .*reviewed 2\.1\.220\.\.2\.1\.222/, 'the proposals exist whether or not they were rendered');
+  assert.doesNotMatch(calls, /xdg-open/);
 });
 
 process.on('exit', () => {
