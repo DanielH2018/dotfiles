@@ -93,4 +93,42 @@ test('symlink resolution gated to in-container', () => {
   }
 });
 
+// A Markdown artifact with no HTML companion gets an extra nudge appended after the
+// link. suggest-artifact.sh was meant to cover this but is gated on ExitPlanMode, which
+// is never called here, so this hook is the only trigger that actually fires.
+// Builds a real ~/.claude/artifacts dir because the hook stats the companion on disk.
+function artifactsDir(files) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-nudge-'));
+  dirs.push(home);
+  const dir = path.join(home, '.claude', 'artifacts');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of files) fs.writeFileSync(path.join(dir, f), 'x');
+  return dir;
+}
+
+test('.md artifact with no .html companion -> nudge to render one', () => {
+  const dir = artifactsDir(['findings.md']);
+  const ctx = run(path.join(dir, 'findings.md'));
+  assert.match(ctx, /AUTO-ARTIFACT/, `nudges when the companion is missing; got: ${ctx}`);
+  assert.match(ctx, /artifact-design/, 'names the skill to load');
+  assert.match(ctx, /not instead of it/, 'keeps the Markdown as well as the HTML');
+  assert.match(ctx, /do not publish to claude\.ai/i, 'keeps the artifact local');
+});
+
+test('.md artifact that already has its .html companion -> no nudge', () => {
+  const dir = artifactsDir(['plan.md', 'plan.html']);
+  const ctx = run(path.join(dir, 'plan.md'));
+  assert.ok(ctx.length > 0, 'still emits the link');
+  assert.ok(!ctx.includes('AUTO-ARTIFACT'), `stays quiet once the companion exists; got: ${ctx}`);
+});
+
+test('.html artifact write -> no nudge', () => {
+  const dir = artifactsDir(['review.html']);
+  const ctx = run(path.join(dir, 'review.html'));
+  assert.ok(ctx.length > 0, 'still emits the link');
+  assert.ok(!ctx.includes('AUTO-ARTIFACT'), `nudge is Markdown-only; got: ${ctx}`);
+});
+
 process.on('exit', () => { const fs = require('node:fs'); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

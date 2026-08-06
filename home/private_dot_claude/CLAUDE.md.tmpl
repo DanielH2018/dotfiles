@@ -70,9 +70,9 @@ Applies to every session — answers, summaries, research, and anything written 
 - Prefer primary sources over aggregators; attribute secondhand claims.
 - On conflicting sources, favor recency + consistency and flag the discrepancy rather than silently picking one.
 
-## Specs & implementation plans
+## Specs, plans & written deliverables
 
-- When you produce an implementation plan or a spec for my review — in plan mode or in normal chat — also render it as an HTML artifact for readability, in addition to the written plan, not instead of it. Load the `artifact-design` skill first.
+- When you produce a document for me to read — an implementation plan, a spec, a findings or review write-up, an audit, a handoff meant for me rather than for a successor agent — also render it as an HTML artifact for readability, in addition to the written version, not instead of it. Load the `artifact-design` skill first. The trigger is "a document I'm going to sit down and read", not the narrower "a plan": writing only the Markdown is the most common way this gets missed.
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
 - **The link is the last thing in your reply.** Written plan first, then the artifact, then the path as the closing line — otherwise I have to scroll back up past the plan to open it.
 - Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.

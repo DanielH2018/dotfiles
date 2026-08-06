@@ -95,10 +95,21 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   esac
 fi
 
-jq -n --arg url "$url" --arg msg "$msg" '{
+# A Markdown artifact with no HTML companion is the standing preference going unmet.
+# suggest-artifact.sh was supposed to catch this, but it is gated on ExitPlanMode and
+# plan mode is never used here — measured 2026-08-06: zero ExitPlanMode calls across
+# 653 transcripts, so that hook has never once fired. This is the trigger that does.
+# Only nudge when the companion is genuinely absent, so a doc that already has one,
+# or an .md written after its .html, stays quiet.
+nudge=""
+if [[ "$path" == *.md && ! -e "${path%.md}.html" ]]; then
+  nudge=$'\n\nAUTO-ARTIFACT (standing preference): that Markdown artifact has no HTML companion. Render the same content as a self-contained HTML page as well — in addition to the Markdown, not instead of it. Load the artifact-design skill first, write it alongside as the same filename with a .html extension, and make THAT link the last line of your reply instead of the Markdown one. Keep it local: do not publish to claude.ai or call the Artifact tool unless the user explicitly asks. Skip if the doc is trivial or the user opted out.'
+fi
+
+jq -n --arg url "$url" --arg msg "$msg" --arg nudge "$nudge" '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
-    additionalContext: ($msg + $url)
+    additionalContext: ($msg + $url + $nudge)
   }
 }'
 exit 0
