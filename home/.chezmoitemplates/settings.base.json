@@ -780,7 +780,25 @@
            ~/.config/gh/** in settings.permissions.json are a separate layer, left alone, so the
            agent's own file tools still cannot read any of it. */}}
       "allowRead": [
-        "~/.config/gh/config.yml"
+        "~/.config/gh/config.yml",
+        {{/* The second file chezmoi manages inside a denied directory, and the reason the gh
+             carve-out alone did not finish the job: status/diff/apply lstat every managed entry,
+             so with this one unreadable chezmoi aborted here instead — one file further along,
+             the same failure, and the same silently-inert chezmoi-apply-guard.sh behind it.
+
+             A narrower exposure than the deny it sits in, but not a nil one, so stating it
+             plainly: the source (home/private_dot_ssh/private_config.tmpl) carries Host,
+             HostName, User, IdentityFile, LocalForward, ControlMaster/Path/Persist and
+             ServerAlive* — internal hostnames, usernames, forwarded ports, and the PATHS of key
+             files. It carries no key material and no passphrase; IdentityFile names where a key
+             lives, never its contents.
+
+             Exact path, so everything that makes ~/.ssh worth denying stays denied: id_*,
+             known_hosts, authorized_keys and the agent socket are all still unreadable. The
+             Read()/Edit() permission denies are a separate layer and still apply, so the agent's
+             own file tools cannot open this either — only the sandboxed Bash filesystem policy
+             changes, and that is what chezmoi runs under. */}}
+        "~/.ssh/config"
       ]
     },
     "credentials": {
