@@ -731,7 +731,9 @@
         "~/.cache",
         "~/.sdkman",
         "~/.local/share/fnm",
-        "/tmp"
+        "~/Library/Caches/pyapp/locks",
+        "/tmp",
+        "~/work-laptop-config"
       ],
       "denyWrite": [
         "~/.ssh",

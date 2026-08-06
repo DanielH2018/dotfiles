@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Definition only — this file is outside `home/`, so chezmoi never deploys it. Activation is
+  deliberately manual: this is a workaround for a fault whose trigger is not yet understood, and
+  it should not appear on a machine that has never hit it.
+
+  What it does: runs `logi-dev-mgr-kick --if-idle` every 10 minutes, which restarts Logi Options+'s
+  device manager only when the Options+ window is closed and no kick has fired in the last 15
+  minutes. The script itself explains the fault it clears.
+
+  Why idleness and not a smarter trigger: when this was diagnosed on 2026-08-06 the broken daemon
+  was externally indistinguishable from a healthy one — the receiver's open HID++ userclient count
+  was identical before and after the fix — so there is no state to test for. Kicking while the app
+  is closed needs no theory about the cause: it is free when nothing is wrong, and it leaves a
+  fresh daemon for the next time the app is opened. Read ~/.cache/logi-dev-mgr-kick/kicks.log
+  before replacing this with anything that claims to detect the fault.
+
+  Activate:
+
+    ln -sfn ~/.local/share/chezmoi/scheduled/com.daniel.logi-dev-mgr-kick.plist \
+            ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
+    launchctl bootstrap "gui/$(id -u)" \
+            ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
+
+  Deactivate:
+
+    launchctl bootout "gui/$(id -u)/com.daniel.logi-dev-mgr-kick"
+    rm ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
+
+  The script stays runnable by hand either way — with no arguments it kicks unconditionally, which
+  is the path to use while actually looking at an empty device list.
+
+  ProgramArguments calls the script by absolute path rather than through a login shell: it needs
+  nothing from the environment but `launchctl`, `pgrep` and `date`, all of which are on the default
+  PATH, and skipping `zsh -lc` keeps a 10-minute timer from sourcing the whole shell profile.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.daniel.logi-dev-mgr-kick</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/daniel/.local/bin/logi-dev-mgr-kick</string>
+    <string>--if-idle</string>
+  </array>
+  <key>StartInterval</key><integer>600</integer>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>/Users/daniel/.cache/logi-dev-mgr-kick/launchd.log</string>
+  <key>StandardErrorPath</key><string>/Users/daniel/.cache/logi-dev-mgr-kick/launchd.log</string>
+</dict>
+</plist>

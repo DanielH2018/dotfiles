@@ -1,0 +1,96 @@
+#!/bin/sh
+# logi-dev-mgr-kick: restart Logi Options+'s device manager so it re-finds the trackball.
+#
+# The failure this recovers: the MX Ergo keeps working perfectly while disappearing from the Logi
+# Options+ device list, so there is no way to reach its buttons or scroll settings. Pointer input
+# survives because macOS drives it from the receiver's boot-protocol mouse interface, which has
+# nothing to do with Options+ -- only the configuration UI goes blank. That split is the trap: the
+# mouse still moving reads as proof the stack is healthy, so the hunt goes to Options+'s
+# permissions, or to a reinstall, instead of to the daemon sitting behind it.
+#
+# Everything else checks out when this happens, which is the part worth writing down. Observed
+# 2026-08-06 with the receiver behind the KVM: both Logitech receivers enumerated (0xc543 and the
+# Bolt 0xc548), both exposing the HID++ vendor interface on usage page 0xff00 that Options+
+# configures devices through, both with open IOHIDLibUserClient handles, and both Accessibility
+# and Input Monitoring granted to com.logi.cp-dev-mgr in TCC. The device manager had simply been
+# running since its own installer started it two days earlier and no longer listed the trackball.
+# Restarting it brought the device back immediately.
+#
+# Why a restart is safe to reach for: cp-dev-mgr is not in the input path, so bouncing it cannot
+# cost you the pointer. The worst case is a few seconds with no Options+ connection, and nothing
+# here needs root or a reinstall.
+#
+# With no arguments this kicks unconditionally -- the "I am staring at an empty device list right
+# now" path. --if-idle is the scheduled form; see scheduled/com.daniel.logi-dev-mgr-kick.plist in
+# the chezmoi repo for how it is activated and why it is opt-in.
+set -eu
+
+LABEL='com.logi.cp-dev-mgr'
+
+# The app's main binary is named exactly this; the Helper processes are not, so an exact-name
+# match distinguishes "the window is open" from "some XPC child is alive".
+GUI_APP='logioptionsplus'
+
+STATE="${XDG_CACHE_HOME:-$HOME/.cache}/logi-dev-mgr-kick"
+STAMP="$STATE/last-kick"
+LOG="$STATE/kicks.log"
+
+# --if-idle only. Generous because the fault took two days to appear once, and a kick is only ever
+# useful for the *next* time the app is opened -- there is nothing to gain from a tight cycle.
+MIN_INTERVAL=900
+
+if_idle=false
+how='manual'
+case "${1-}" in
+  '') ;;
+  --if-idle) if_idle=true; how='--if-idle' ;;
+  *) echo "usage: ${0##*/} [--if-idle]" >&2; exit 2 ;;
+esac
+
+# The epoch seconds are stored in the file rather than read off its mtime: `stat` needs opposite
+# flags on GNU and BSD, and this script has to behave the same run by hand as it does under
+# launchd, which does not get the login shell's GNU-first PATH.
+now=$(date +%s)
+
+note() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >>"$LOG"; }
+
+mkdir -p "$STATE"
+
+# Exit 0 on every "nothing to do" branch, so this stays safe as an unattended timer job: a
+# machine with Options+ uninstalled, or a run that is simply too soon, is not a failure.
+if ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+  echo "$LABEL is not loaded; nothing to kick"
+  exit 0
+fi
+
+if $if_idle; then
+  # Never restart the daemon under a window that is currently open: the user is mid-change, and
+  # the reconnect would blank the device list they are working in -- the exact symptom this
+  # script exists to clear. Leaving it for later costs nothing, because a stale daemon only
+  # matters at the moment the app is next opened.
+  if pgrep -x "$GUI_APP" >/dev/null 2>&1; then
+    echo "Options+ is open; leaving the daemon alone"
+    exit 0
+  fi
+
+  last=$(cat "$STAMP" 2>/dev/null || echo 0)
+  if [ "$((now - last))" -lt "$MIN_INTERVAL" ]; then
+    echo "kicked $((now - last))s ago; within the ${MIN_INTERVAL}s floor"
+    exit 0
+  fi
+fi
+
+if launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null; then
+  printf '%s' "$now" >"$STAMP"
+  # Logged because the trigger for this fault is still unknown: no external signal distinguished
+  # the broken daemon from a healthy one, so the kick history is the only evidence that will show
+  # whether it correlates with KVM switches, sleep, or app updates. Read it before automating
+  # anything cleverer than a timer.
+  note "kicked $LABEL ($how)"
+  echo "restarted $LABEL; reopen Options+ if it is already running"
+  exit 0
+fi
+
+note "FAILED to kick $LABEL"
+echo "could not restart $LABEL" >&2
+exit 1
