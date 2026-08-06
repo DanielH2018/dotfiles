@@ -113,7 +113,19 @@ _bdb_drop_quoted_separators() {  # -> _BDB_UNQ; returns 1 if nothing can be prov
 # quoted argument after the flag does not rescue it either, since `grep -c "pat" f` has one.
 # The names below cover every interpreter the flag was catching; measured by invoking each as
 # `<name> -c"…"`, so the removed clause could not be what matched.
-BDB_REPARSE='(\$\(|`|<\(|>\(|<<|\b(eval|exec|source|xargs|env|sudo|doas|nohup|timeout|watch|nice|parallel|make|find|ssh|hl|scp|sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|xonsh|elvish|nu|python|python2|python3|perl|ruby|node|deno|bun|lua|php|tclsh|Rscript|julia|expect|osascript|awk|gawk|mawk|busybox)\b)'
+# Word boundaries are spelled out rather than written `\b`, and that is load-bearing. This
+# regex is consumed by bash's [[ =~ ]], which compiles it with the system regcomp, and on
+# Darwin's libc `\b` is not an ERE word boundary. The entire name alternation therefore never
+# matched on macOS: every interpreter below was dead and only the $( ` <( >( << vectors vetoed
+# anything. That is a bypass rather than a cosmetic bug — `bash -c "echo a; terraform apply"`
+# had its quoted separator neutralized and stopped denying, which is the exact deny-to-allow
+# direction the veto exists to prevent.
+#
+# Measured on bash 5.3.15 / Darwin: `\b(bash)\b` does not match `bash -c "q"`; the form below
+# does. The `grep -E` rules elsewhere in this file keep their `\b` deliberately — that is a
+# different engine which implements it. Only a regex reaching [[ =~ ]] needs this treatment,
+# and this is the only one in the file.
+BDB_REPARSE='(\$\(|`|<\(|>\(|<<|(^|[^[:alnum:]_])(eval|exec|source|xargs|env|sudo|doas|nohup|timeout|watch|nice|parallel|make|find|ssh|hl|scp|sh|bash|zsh|ksh|dash|csh|tcsh|fish|ash|mksh|pdksh|yash|osh|xonsh|elvish|nu|python|python2|python3|perl|ruby|node|deno|bun|lua|php|tclsh|Rscript|julia|expect|osascript|awk|gawk|mawk|busybox)([^[:alnum:]_]|$))'
 
 # One function rather than a run of assignments because the shadow census below has to
 # normalize its segments identically. It used to do only the `tr` half, so a segment kept
