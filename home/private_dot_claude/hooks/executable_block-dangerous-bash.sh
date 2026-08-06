@@ -45,11 +45,6 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 # for all three characters (`\\|` was already reachable this way before `\;` and `\&`
 # joined it). Two spaces is exactly what the tr below turns `\\` into, so neutralizing it
 # here only moves that substitution earlier.
-SCAN_SRC=${COMMAND//\\\\/  }
-SCAN_SRC=${SCAN_SRC//\\|/}
-SCAN_SRC=${SCAN_SRC//\\;/}
-SCAN_SRC=${SCAN_SRC//\\&/}
-
 # A separator inside quotes is text, and for the same reason as the escaped forms above it
 # has to go before the quote characters do. `echo "step 1; terraform apply"` normalized to
 # `echo step 1; terraform apply`, which put terraform in command position for the anchored
@@ -97,13 +92,38 @@ _bdb_drop_quoted_separators() {  # -> _BDB_UNQ; returns 1 if nothing can be prov
   ') || return 1
   return 0
 }
-case $SCAN_SRC in
-  *[\"\']*)
-    if _bdb_drop_quoted_separators "$SCAN_SRC"; then SCAN_SRC=$_BDB_UNQ; fi
-    ;;
-esac
+# "Inside quotes" only means "not a separator to the OUTER shell". The moment the quoted
+# text reaches something that parses shell again, the separator is live and the command
+# really runs — all of these deny today and must keep denying:
+#
+#   echo "$(ls; terraform apply)"        bash -c "echo a; terraform apply"
+#   eval "echo a; terraform apply"       ssh host "echo a; terraform apply"
+#
+# Neutralizing there turns a deny into an allow, so a re-parse vector ANYWHERE in the command
+# vetoes the whole thing — not just in the segment that contains it, because `echo "a; b" &&
+# bash -c "c; terraform apply"` has to be judged as one string. The veto is deliberately
+# broad: everything it catches falls back to today's over-denial, which costs a false positive
+# and never a bypass. The reported symptom — a sentence in an `echo` or a `git commit -m` —
+# contains none of these.
+BDB_REPARSE='(\$\(|`|<\(|>\(|<<|[[:space:]]-c[[:space:]]|\b(eval|exec|source|xargs|env|sudo|doas|nohup|timeout|watch|nice|parallel|make|find|ssh|hl|scp|sh|bash|zsh|ksh|dash|csh|tcsh|fish|python|python2|python3|perl|ruby|node|deno|bun|awk|gawk|mawk|busybox)\b)'
 
-SCAN=$(printf '%s' "$SCAN_SRC" | tr '\n\t\\' '   ' | tr -d "\"'")
+# One function rather than a run of assignments because the shadow census below has to
+# normalize its segments identically. It used to do only the `tr` half, so a segment kept
+# separators this transform removes and the census compared unlike against unlike.
+_bdb_normalize() {  # -> _BDB_NORM
+  local s=$1
+  s=${s//\\\\/  }
+  s=${s//\\|/}
+  s=${s//\\;/}
+  s=${s//\\&/}
+  if [[ $s == *[\"\']* ]] && [[ ! $s =~ $BDB_REPARSE ]]; then
+    if _bdb_drop_quoted_separators "$s"; then s=$_BDB_UNQ; fi
+  fi
+  _BDB_NORM=$(printf '%s' "$s" | tr '\n\t\\' '   ' | tr -d "\"'")
+}
+
+_bdb_normalize "$COMMAND"
+SCAN=$_BDB_NORM
 
 # Command-position anchors, shared by the rules further down and by the shadow census.
 #
@@ -167,8 +187,10 @@ _bdb_shadow_log() {
     status=$CP_STATUS
     nseg=$CP_NSEG
     while [ "$i" -lt "$CP_NSEG" ]; do
-      # Same normalization this hook applies to the whole command, applied per segment.
-      segscan=$(printf '%s' "${CP_SEG[i]}" | tr '\n\t\\' '   ' | tr -d "\"'")
+      # Same normalization this hook applies to the whole command, applied per segment —
+      # via the same function, so the two sides of the `match && ! match` below cannot drift.
+      _bdb_normalize "${CP_SEG[i]}"
+      segscan=$_BDB_NORM
       i=$((i + 1))
       # Only count a family as NEWLY visible if the whole-string form did not already
       # catch it — the census is of the gap, not of every match.

