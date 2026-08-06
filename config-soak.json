@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "81ea2b7c1980d8e870f3b0e60570936eba98b998a2dcab53c4fdb1219e4e0787",
-      "landed": "2026-08-06T12:49:42.138Z"
+      "hash": "55c1f0f55ddf1ca01d90571745dccd329e1c16441508ff79e4f91c86a278caa5",
+      "landed": "2026-08-06T13:40:45.228Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -113,8 +113,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "9368a7e9bdc11fa85946c9e5093510129c06bfa8043f1d44100b07f6d9ec8562",
-      "landed": "2026-08-02T01:07:38.354Z"
+      "hash": "a1d496b9fe945824f0a27ce8aa7490b72593e7e7f04eb6e14193358d5a9c6a48",
+      "landed": "2026-08-06T13:40:45.228Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
