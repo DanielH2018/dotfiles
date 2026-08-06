@@ -634,7 +634,8 @@ av_remote_fingerprint || _av_fp='unknown'
 _av_fp_open="$_av_fp"
 
 sel=$(printf '%s\n' "$body" | fzf \
-  --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=2.. \
+  --ansi --no-sort --cycle --layout=reverse --delimiter='\t' --with-nth=3.. \
+  --track --id-nth=2 \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
   --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \

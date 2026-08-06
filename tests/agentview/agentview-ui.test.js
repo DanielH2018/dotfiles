@@ -179,6 +179,49 @@ test('arrow keys move the selection', { skip }, async (t) => {
   assert.ok(selectedLine(term.screen).includes('beta'));
 });
 
+// --track: the cursor must follow the SESSION across a repaint, not its row index.
+// Parking the tracked row LAST would make this pass whether or not tracking works --
+// fzf clamps a shorter/reordered list to the end regardless -- so this targets a
+// genuine MIDDLE row (rows above and below it, in both expanded groups) and forces a
+// real REORDER (not just a text change), so a plain index-based reload lands on a
+// different session than the one that was selected.
+test('the cursor follows the tracked session across a reload, not its row index', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  seedFinished(home, { completed: 3, idle: 2 });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\nidle\n');
+  const term = open(env);
+  t.after(() => term.stop());
+
+  // The first landable row is COMPLETED's own header (a landable fold: key) -- two downs
+  // land on completed-session-2, which has a header and a sibling above it, and a sibling
+  // plus the whole IDLE group below it.
+  await term.waitFor((s) => selectedLine(s).includes('COMPLETED'));
+  term.send('down');
+  await term.waitFor((s) => selectedLine(s).includes('completed-session-1'));
+  term.send('down');
+  await term.waitFor((s) => selectedLine(s).includes('completed-session-2'));
+
+  // Age session-2 past session-3, so the ts-desc sort sinks it below its sibling -- the
+  // KEY changes (it embeds ts) but the session's identity (host+cwd+kind) does not. Stays
+  // well under a day: gather_local_rows HIDES anything 1-7 days old (seedFinished's own
+  // comment), and a hidden row would vanish instead of reordering.
+  const sf = statefile(home, 'completed-session-2');
+  const state = JSON.parse(fs.readFileSync(sf, 'utf8'));
+  state.ts = nowSec() - 1000;
+  fs.writeFileSync(sf, JSON.stringify(state));
+
+  term.send('ctrl-f');   // fires reload('...' --body), the same action the live --watch loop posts
+  await term.waitFor((s) => {
+    const lines = s.text().split('\n');
+    const i2 = lines.findIndex((l) => l.includes('completed-session-2'));
+    const i3 = lines.findIndex((l) => l.includes('completed-session-3'));
+    return i2 >= 0 && i3 >= 0 && i3 < i2;   // the reorder has actually landed
+  });
+
+  assert.ok(selectedLine(term.screen).includes('completed-session-2'),
+    `cursor should stay on session-2 after it moved rows, got:\n${term.text()}`);
+});
+
 test('ctrl-r reaches the rename prompt and sends /rename to the pane', { skip }, async (t) => {
   const { home, env, tmuxLog } = makeEnv();
   seed(home);

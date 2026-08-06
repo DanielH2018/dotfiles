@@ -250,7 +250,8 @@ test('the number gutter labels the first session row 1', { skip }, () => {
   const body = stripAnsi(run(env, ['--body']).out);
   const line = body.split('\n').find((l) => l.includes('alpha') && l.split('\t')[0] !== '');
   assert.ok(line, 'the session row rendered');
-  const display = line.split('\t').slice(1).join('\t');
+  // Field 2 is the fzf --track SID (host+cwd+kind identity); display starts at field 3.
+  const display = line.split('\t').slice(2).join('\t');
   // Display is "<accent-bar> <N> <pill> …"; the first session's gutter number is 1.
   assert.match(display, /^▎ 1 /, 'the first session shows the "1" jump gutter after the accent bar');
 });
@@ -599,7 +600,7 @@ test('--body row width tracks FZF_COLUMNS instead of a fixed 72', { skip }, () =
     const body = stripAnsi(run(env, ['--body'], { extraEnv: { FZF_COLUMNS: String(cols) } }).out);
     const line = body.split('\n').find((l) => l.includes('alpha') && l.split('\t')[0] !== '');
     assert.ok(line, `session row rendered at ${cols} cols`);
-    return line.split('\t').slice(1).join('\t');
+    return line.split('\t').slice(2).join('\t');   // field 2 is the track SID, display is field 3+
   };
   const narrow = rowAt(50);
   const wide = rowAt(120);
@@ -616,7 +617,7 @@ test('rows sharing a leaf dir name get a parent-dir prefix', { skip }, () => {
   stateFile(home, 'c', { host: HOST, cwd: '/repos/one/solo', state: 'working', ts: now - 3, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: '' });
   const body = stripAnsi(run(env, ['--body']).out);
   // Judge only the DISPLAY halves — the KEY field carries the full cwd either way.
-  const displays = body.split('\n').map((l) => l.split('\t').slice(1).join('\t'));
+  const displays = body.split('\n').map((l) => l.split('\t').slice(2).join('\t'));
   assert.ok(displays.some((d) => d.includes('one/proj')), 'first twin carries its parent dir');
   assert.ok(displays.some((d) => d.includes('two/proj')), 'second twin carries its parent dir');
   const solo = displays.find((d) => d.includes('solo'));

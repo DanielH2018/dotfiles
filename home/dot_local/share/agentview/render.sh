@@ -28,7 +28,7 @@ BADGEFG="$E[38;2;69;71;90m"            # surface1 as FG — colors the pill's ro
 PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source badge into a box
 # Single-source the state→accent map and the empty-state row so the two render paths
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
-# tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
+# tab, mis-offsetting the "no sessions" row against fzf's --with-nth=3.. delimiter.
 state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
   case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; unseen) _scol="$C_UNSEEN";; *) _scol="$C_DONE";; esac
 }
@@ -38,7 +38,7 @@ row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads
   compute_pin_id "$1" "$2" "$3" "$4"
   [ -n "${PINNED_SET[$_pid]:-}" ] && _pinned=1 || _pinned=0
 }
-NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
+NO_SESSIONS_ROW=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [unseen]="DONE" [completed]="COMPLETED" [idle]="IDLE" )
@@ -109,8 +109,9 @@ AV_STALE_AFTER="${REAP_GRACE:-120}"
 
 host_status_rows() {  # print one keyless row per host that isn't currently healthy
   # (or is healthy but stale), so a dead/slow remote reads as signage, not silence.
-  # Keyless: `printf '\t...'` gives every row an empty KEY, the same treatment group
-  # headers get, so the --skip cursor logic steps over these rather than landing on them.
+  # Keyless: `printf '\t\t...'` gives every row an empty KEY (and empty track SID, field 2 —
+  # see build_pretty), the same treatment group headers get, so the --skip cursor logic
+  # steps over these rather than landing on them.
   # No ▎ accent rule, deliberately: that bar marks group membership, and these rows belong
   # to no group — they print after the last one, so a bar would read as "more IDLE rows",
   # and every other barred non-header row in the list is selectable while these cannot be.
@@ -123,15 +124,15 @@ host_status_rows() {  # print one keyless row per host that isn't currently heal
     IFS=$'\t' read -r outcome when < "$status" || continue
     host_label "$host"; lbl="$_hl"
     case "$outcome" in
-      unreachable) printf '\t  %s%s · unreachable%s\n' "$C_ERR" "$lbl" "$Z" ;;
-      failed)      printf '\t  %s%s · fetch failed%s\n' "$C_ERR" "$lbl" "$Z" ;;
+      unreachable) printf '\t\t  %s%s · unreachable%s\n' "$C_ERR" "$lbl" "$Z" ;;
+      failed)      printf '\t\t  %s%s · fetch failed%s\n' "$C_ERR" "$lbl" "$Z" ;;
       ok)
         # A corrupt status file (partial write, disk error) can carry a non-numeric epoch;
         # under `set -u` the bare arithmetic below would abort the whole render. Mirror
         # fmt_age's own guard and treat garbage as maximally stale, so it still surfaces.
         case "$when" in ''|*[!0-9]*) when=0;; esac
         age=$(( now - when ))
-        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t  %s%s · %s old%s\n' "$C_STALE" "$lbl" "$_age" "$Z"; }
+        [ "$age" -gt "$AV_STALE_AFTER" ] && { fmt_age "$when"; printf '\t\t  %s%s · %s old%s\n' "$C_STALE" "$lbl" "$_age" "$Z"; }
         ;;
     esac
   done < <(remote_hosts)
@@ -379,7 +380,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   for grp in "${GORDER[@]}"; do
     if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
-    [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)
+    [ "$first" -eq 0 ] && printf '\t\t\n'   # blank spacer between groups (empty KEY = no-op on select)
     first=0
     if ! group_expanded "$grp"; then
       # Collapsed: this landable fold row REPLACES the usual keyless header (never reached
@@ -389,17 +390,17 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # like the expanded header apart from the glyph and the parenthesized count, so folding
       # a group changes the affordance rather than reflowing the line.
       state_color "$grp"; scol="$_scol"
-      printf 'fold:%s\t%s%s%s %s%s%s %s%s%s%s %s(%s)%s\n' "$grp" "$scol" "$GBAR" "$Z" \
+      printf 'fold:%s\tfold:%s\t%s%s%s %s%s%s %s%s%s%s %s(%s)%s\n' "$grp" "$grp" "$scol" "$GBAR" "$Z" \
         "$scol" "$FOLD_COLLAPSED" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
       continue
     fi
     if [ "$grp" = pinned ]; then
-      printf '\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
+      printf '\t\t%s%s%s %s★%s %s%s%s%s %s%s%s\n' "$C_PIN" "$GBAR" "$Z" "$C_PIN" "$Z" "$C_BOLD" "$C_PIN" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     elif [ "$GB" = repo ]; then
       # The header wears the group's most urgent state, so a repo with a session waiting on
       # you is as visible as the NEEDS INPUT group used to be.
       case "${GURG[$grp]:-5}" in 1) scol="$C_NEED";; 2) scol="$C_WORK";; 3) scol="$C_REVIEW";; *) scol="$C_DONE";; esac
-      printf '\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "$grp" "$Z" "$C_DIM" "$cnt" "$Z"
+      printf '\t\t%s%s%s %s●%s %s%s%s%s %s%s%s\n' "$scol" "$GBAR" "$Z" "$scol" "$Z" "$C_BOLD" "$scol" "$grp" "$Z" "$C_DIM" "$cnt" "$Z"
     else
       state_color "$grp"; scol="$_scol"
       # An EXPANDED foldable group (completed/idle) still needs a landable key, the same
@@ -410,7 +411,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
         completed|idle) key="fold:$grp"; glyph="$FOLD_EXPANDED";;
         *)              key="";         glyph='●';;
       esac
-      printf '%s\t%s%s%s %s%s%s %s%s%s%s %s%s%s\n' "$key" "$scol" "$GBAR" "$Z" \
+      printf '%s\t%s\t%s%s%s %s%s%s %s%s%s%s %s%s%s\n' "$key" "$key" "$scol" "$GBAR" "$Z" \
         "$scol" "$glyph" "$Z" "$C_BOLD" "$scol" "${GN[$grp]}" "$Z" "$C_DIM" "$cnt" "$Z"
     fi
     for L in "${sorted[@]}"; do
@@ -496,7 +497,13 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # preview reads the whole thing via {1} — so no per-row fork is needed.
       printf -v key '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s' \
         "$host" "$US" "$cwd" "$US" "$st" "$US" "$ts" "$US" "$title" "$US" "${pane:-none}" "$US" "$kind" "$US" "$locator"
-      printf '%s\t%s%s%s%s%s\n' "$key" "$left_c" "$sp" "$scol" "$stext" "$Z"
+      # Field 2 is the fzf --track identity: KEY embeds state/ts, which change on every
+      # repaint, so tracking on KEY would lose the row the instant its own state changed.
+      # compute_seen_id (host+cwd+kind) is what the DONE group already keys a session on
+      # for the same reason — deliberately not the pane/locator, since a pane dying is
+      # exactly when a daemon-hosted job finishes.
+      compute_seen_id "$host" "$cwd" "$kind"
+      printf '%s\t%s\t%s%s%s%s%s\n' "$key" "$_sid" "$left_c" "$sp" "$scol" "$stext" "$Z"
     done
   done
   host_status_rows                            # unreachable/failed/stale hosts, appended last
