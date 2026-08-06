@@ -99,7 +99,9 @@ case "$1" in
     if [ -n "\${5:-}" ]; then sh -c "$5" 2>/dev/null; fi
     exit 0 ;;
   new-window)
-    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"
+    # $(( )) strips the leading pad BSD wc -l writes. An unstripped "@       0" is not the @N
+    # shape the reuse lookup and its assertions match, so this only fails off GNU coreutils.
+    printf '%s\\t@%s\\t%s\\n' "$sess" "$(( $(wc -l < "$wins") ))" "$3" >> "$wins"
     # Execute the command string through sh to test quoting post-reparse
     if [ -n "\${4:-}" ]; then
       sh -c "$4" 2>/dev/null
