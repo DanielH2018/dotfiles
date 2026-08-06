@@ -64,7 +64,7 @@ done
 ref=$(artifact_upstream_ref) || exit 0
 pending="$ARTIFACT_STATE_DIR/$wt.pending"
 
-mine=$(git log --format=%s "$ref..HEAD" 2>/dev/null | head -20)
+mine=$(git log --format=%s "$ref..HEAD" 2>/dev/null)
 if [[ -n "$mine" ]]; then
   mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null
   printf '%s\n' "$mine" > "$pending" 2>/dev/null
@@ -81,6 +81,12 @@ landed=$(git log --format='%h %s' -n 200 "$ref" 2>/dev/null |
        (s in want) && !seen[s]++ { print }' "$pending" -)
 [[ -n "$landed" ]] || exit 0
 count=$(printf '%s\n' "$landed" | wc -l | tr -d ' ')
+
+# A long branch is listed in full up to a point and then counted, rather than quietly
+# truncated — a cut-off list reads as the whole slice.
+if [[ "$count" -gt 20 ]]; then
+  landed=$(printf '%s\n' "$landed" | head -20)$'\n'"... and $((count - 20)) more"
+fi
 
 jq -n --arg a "$artifact" --arg r "${ref#refs/remotes/}" --arg n "$count" --arg l "$landed" '{
   decision: "block",

@@ -78,8 +78,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
-      "hash": "25fb8218cc8180f12f8d1df593eca34923457b713dac42a8803926ff942ac462",
-      "landed": "2026-08-06T18:34:26.742Z"
+      "hash": "b72d62dbcad486e9bc60c0c8ffcfea5835ec1084f4def22bb5289a2c186a098b",
+      "landed": "2026-08-06T18:37:01.322Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",

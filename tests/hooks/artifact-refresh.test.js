@@ -192,6 +192,56 @@ test('the reported SHA is the post-rebase one, not the pre-land one', () => {
   assert.doesNotMatch(out.reason, new RegExp(before), 'not the one the rebase discarded');
 });
 
+// The case the feature exists for: one doc, three slices, each landing in turn. Slice
+// two must not re-report slice one, which is already written up and already upstream.
+test('successive slices from one worktree each report only themselves', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  const artDir = path.join(root, 'home', '.claude', 'artifacts');
+  fs.mkdirSync(artDir, { recursive: true });
+  const art = path.join(artDir, 'plan.html');
+  fs.writeFileSync(art, '<html>');
+  const a = worktree(work, root, 'wt-a', 'slices');
+
+  const writeUp = () => {
+    const r = spawnSync('bash', [LINK], {
+      input: JSON.stringify({ tool_input: { file_path: art } }),
+      cwd: a, encoding: 'utf8',
+      env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: st, CLAUDE_STATE_HOST_DIR: '' },
+    });
+    assert.strictEqual(r.status, 0, `link hook exits 0 (stderr: ${r.stderr})`);
+  };
+  writeUp();
+
+  for (const [n, name] of [['one', 'slice-one'], ['two', 'slice-two'], ['three', 'slice-three']]) {
+    commit(a, name);
+    runRefresh(a, st);
+    sh(`git fetch -q origin && git rebase -q origin/main`, a);
+    sh(`git push -q origin slices:main && git fetch -q origin`, a);
+
+    const out = runRefresh(a, st);
+    assert.ok(out, `slice ${n} fires`);
+    assert.match(out.reason, new RegExp(name), `slice ${n} names itself`);
+    assert.match(out.reason, /^.*?REFRESH[^:]*: 1 commit/s, `slice ${n} reports one commit, not a running total`);
+    writeUp();
+    assert.strictEqual(runRefresh(a, st), null, `slice ${n} stops asking once written up`);
+  }
+});
+
+test('a branch longer than the list cap says how many it left out', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  for (let i = 1; i <= 23; i++) commit(a, `c${i}`);
+  runRefresh(a, st);
+  land(a, 'slice-one');
+
+  const out = runRefresh(a, st);
+  assert.match(out.reason, /23 commit/, 'counts every one of them');
+  assert.match(out.reason, /and 3 more/, 'and says what the list left out');
+});
+
 // `bin/try --back` returns the primary checkout to main, and an abandoned branch ends
 // the same way: pending work, nothing upstream to show for it.
 test('pending work that never landed -> silent', () => {
