@@ -95,18 +95,22 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   esac
 fi
 
-# Register the .html as this project's tracked artifact so artifact-refresh.sh can
-# offer to bring it up to date once work lands. The baseline SHA is re-seeded on every
-# write, including the rewrite that answers a refresh nudge — that is what stops the
-# nudge repeating, and what makes the next landed slice trigger a fresh one.
+# Register the .html as the tracked artifact so artifact-refresh.sh can offer to bring
+# it up to date once work lands. Under both keys: the repo entry is what lets a plan
+# written here keep being refreshed as later slices land from other worktrees, and the
+# worktree entry is what stops a session that wrote its own doc being pointed at
+# somebody else's.
+#
+# Writing the artifact also clears this worktree's pending list, since the doc now
+# reflects that work. That is what stops a refresh nudge repeating every turn, and
+# what leaves the next slice to raise a fresh one.
 if [[ "$path" == *.html ]]; then
   # shellcheck source=/dev/null
   . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
-  if slug=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
-    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$slug.current" 2>/dev/null
-    if ref=$(artifact_upstream_ref); then
-      git rev-parse "$ref" 2>/dev/null > "$ARTIFACT_STATE_DIR/$slug.sha"
-    fi
+  if wt=$(artifact_worktree_slug) && repo=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
+    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$wt.current" 2>/dev/null
+    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$repo.current" 2>/dev/null
+    rm -f "$ARTIFACT_STATE_DIR/$wt.pending" 2>/dev/null
   fi
 fi
 

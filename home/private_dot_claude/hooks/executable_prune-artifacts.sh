@@ -28,8 +28,8 @@ if [[ -d "$DIR" ]]; then
   find "$DIR" -mindepth 1 -type d -empty -delete 2>/dev/null
 fi
 
-# Registry entries for artifacts that no longer exist are dead weight, and a stale
-# baseline SHA would make the Stop hook fire against a doc that is gone.
+# Registry entries for artifacts that no longer exist are dead weight, and a worktree
+# removed after its branch landed leaves a pending list nothing will ever clear.
 if [[ -d "$STATE" ]]; then
   find "$STATE" -type f -mtime "+$DAYS" -delete 2>/dev/null
 fi
