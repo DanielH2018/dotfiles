@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# lint-bsd-portability — catch the three GNU-only shell idioms that this repo has now shipped
+# four times, each one invisible on the Linux host it was written on.
+#
+# All four were found by one audit, all four had passed every gate, and all four failed only
+# on macOS/BSD userland:
+#
+#   979b240  tests/mx-ergo-resync.test.js — bare `sed -i "script"` in a solaar stub. BSD sed
+#            reads the NEXT ARGUMENT as the backup suffix, so the script became the suffix and
+#            the filename became the script; it changed nothing and the stub then lied to the
+#            script under test, which correctly reported six unapplied settings and exited 1.
+#   25cc7e8  block-dangerous-bash.sh — `\b` in BDB_REPARSE, consumed by `[[ =~ ]]`. Darwin's
+#            libc ERE has no word boundary, so the whole interpreter-name alternation never
+#            matched: `bash -c "echo a; terraform apply"` stopped denying. A live bypass in a
+#            security control, not a cosmetic bug.
+#   6ebdaa4  claude-sandbox — `mktemp .../compact-XXXXXX.json`. BSD mktemp substitutes the X's
+#            only when they are TRAILING, so the name stayed literal: a crashed run poisons
+#            every later run and concurrent runs collide.
+#
+# A sibling of bin/lint-sh-templates rather than an extension of it, because that script does a
+# different job in a way that would put a hole in this one. It RENDERS each template through
+# chezmoi and then SKIPS the ones that render empty on this host — which is precisely the
+# WSL/Windows scripts. This check is textual, so it reads every template unrendered, needs no
+# chezmoi, and has no empty-render hole. It also has to reach .js, which lint-sh-templates
+# never will: the sed bug above lived inside a shell stub in a JS test.
+#
+# WHAT IT DELIBERATELY DOES NOT CATCH
+#
+#   * `\b` in a regex built at runtime, or handed through a chain (`FOO="$BAR"`), or assigned
+#     in one file and used in another. Pattern 2 is same-file and direct: it collects the names
+#     that appear on the right of `=~` inside `[[ ]]`, then flags a `\b` in an assignment to
+#     one of those names. That is the exact shape of 25cc7e8 and it stops there.
+#   * `\b` appearing after a `]` in the same `[[ =~ ]]` expression — the inline pattern stops
+#     at the first `]` so that `[[ $x =~ y ]] && grep '\bz'` is not a false positive.
+#   * `\b` in grep/rg/sed/awk patterns. Those are a different engine which implements it, and
+#     block-dangerous-bash.sh keeps several on purpose. Only `[[ =~ ]]` is a bug.
+#   * A sed script or an mktemp template held in a variable. Only pattern 2 got the two-phase
+#     treatment, because only pattern 2 has ever been written that way here -- patterns 1 and 3
+#     look at the command line and nothing else. `RE+='\b'` (append) is not seen either.
+#   * `sed -i''` (empty attached suffix) and `mktemp --suffix=`. Both are GNU-only in their own
+#     way; neither has ever appeared here, and guessing at them costs false positives.
+#   * Python. Nothing under .py in this repo carries an mktemp template or shells out to sed
+#     in place -- checked -- and the tempfile module has none of these problems.
+#   * Comment-only lines, in any of the scanned languages. Prose about these bugs is all over
+#     the repo — including in this file — and none of it runs.
+#
+# Kept bash-3.2 clean (macOS default bash) and POSIX-awk clean, matching the rest of bin/. A
+# portability linter that needs gawk would be the joke writing itself; 2547123 landed only
+# because gawk was NOT a given here.
+
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+
+# The only suppression mechanism, deliberately — a single path list with a reason per entry,
+# the same shape as RUFF_BACKLOG in tests/lint-gate-coverage.test.js. An inline marker was
+# considered and dropped: nothing in the tree can use one anyway, since the WSL hits sit on a
+# line ending in `\`.
+#
+# Applied to arguments as well as to the derived list. prek passes explicit filenames, so an
+# exclusion that only ran on the no-argument path would leave the commit hook flagging files
+# that a manual run calls clean.
+excluded() {
+  case "${1#"$ROOT"/}" in
+    # chezmoi's own layout declares the target OS, so these can never meet a BSD sed. os-unix/
+    # -- the tree that DOES run on macOS -- stays in scope.
+    home/.chezmoiscripts/os-linux/* | home/.chezmoiscripts/os-windows/*) return 0 ;;
+    home/.chezmoitemplates/linux-install.sh) return 0 ;;
+
+    # A quoted string that is DATA ABOUT a command ('hl sed -i s/a/b/ f' as a permission-rule
+    # fixture), not shell that runs. Excluding the file also blinds this check to a future real
+    # shell stub in it; that is the cost of not being able to annotate the line.
+    tests/hooks/allow-readonly-remote.test.js) return 0 ;;
+
+    # These two hold the known-bad patterns literally, by construction.
+    bin/lint-bsd-portability | tests/lint-bsd-portability.test.js) return 0 ;;
+  esac
+  return 1
+}
+
+# Shell-ish plus JavaScript. .md.tmpl and friends are out on purpose: LINUX-SETUP.md.tmpl
+# carries `D=~/.var/app/...`, which is a free false positive for anything looking at `=~`.
+scannable() {
+  for f in $(git ls-files); do
+    case "$f" in
+      *.sh | *.bash | *.zsh | *.sh.tmpl | *.bash.tmpl | *.js | *.mjs | *.cjs)
+        printf '%s\n' "$f"
+        continue
+        ;;
+    esac
+    case "${f##*/}" in
+      # No shebang and no extension: rc files are sourced, and the .chezmoitemplates fragments
+      # are spliced into the scripts that include them.
+      dot_bashrc | dot_zshenv | is-wsl | is-desktop-linux | require-sudo)
+        printf '%s\n' "$f"
+        continue
+        ;;
+      *.*) continue ;;
+    esac
+    [ -f "$f" ] || continue
+    case "$(head -1 "$f")" in
+      '#!'*sh* | '#!'*node*) printf '%s\n' "$f" ;;
+    esac
+  done
+}
+
+# The hook in .pre-commit-config.yaml has to name this same set by hand, since `files:` and
+# `types:` are ANDed and a .sh.tmpl types as text, not shell. --list is what
+# tests/lint-bsd-portability.test.js compares the hook's pattern against, so the two cannot
+# drift apart unnoticed.
+if [ "${1:-}" = "--list" ]; then
+  scannable | while read -r f; do
+    excluded "$f" || printf '%s\n' "$f"
+  done
+  exit 0
+fi
+
+if [ "$#" -gt 0 ]; then
+  set -- "$@"
+else
+  # shellcheck disable=SC2046  # word-split intended; no path in this repo has spaces
+  set -- $(scannable)
+fi
+
+files=""
+for f in "$@"; do
+  excluded "$f" && continue
+  [ -f "$f" ] || continue
+  files="$files $f"
+done
+[ -n "$files" ] || exit 0
+
+PROG=$(
+  cat <<'AWK'
+function report(n, msg) { printf "%s:%d: %s\n", fname, n, msg; hits++ }
+
+function iscomment(s) {
+  sub(/^[[:blank:]]*/, "", s)
+  return (s ~ /^#/ || s ~ /^\/\//)
+}
+
+function check(   i, s, rest, tok, name) {
+  if (fname == "") return
+
+  # Pass A: which variables end up on the right of `=~` inside a [[ ]] test. Without this the
+  # check misses 25cc7e8 entirely -- that regex was assigned on line 127 and consumed on 139.
+  for (i = 1; i <= nlines; i++) {
+    s = line[i]
+    if (iscomment(s) || s !~ /\[\[/) continue
+    rest = s
+    while (match(rest, /=~[[:blank:]]*"?\$\{?[A-Za-z_][A-Za-z0-9_]*/)) {
+      tok = substr(rest, RSTART, RLENGTH)
+      rest = substr(rest, RSTART + RLENGTH)
+      sub(/^=~[[:blank:]]*"?\$\{?/, "", tok)
+      regexvar[tok] = 1
+    }
+  }
+
+  for (i = 1; i <= nlines; i++) {
+    s = line[i]
+    if (iscomment(s)) continue
+
+    # `/` is deliberately NOT in the leading class: /usr/bin/sed and "$BINDIR/sed" have to
+    # fire, and the trailing ["']? is what lets the quoted form of the latter through. `.` and
+    # `-` ARE in it, so that `parsed -i` and `--parsed -i` do not.
+    if (s ~ /(^|[^[:alnum:]_.-])sed["']?[[:blank:]]+(-[^[:blank:]]+[[:blank:]]+)*(-[A-Za-z]*i([[:blank:]]|$)|--in-place)/)
+      report(i, "bare `sed -i`: BSD sed takes the NEXT argument as the backup suffix, so this errors and changes nothing. Use `sed -i.bak` and delete the backup.")
+
+    if (s ~ /mktemp[^;&|]*XXXX*[^X'"`)[:space:]]/)
+      report(i, "mktemp template with characters after the X's: BSD mktemp only substitutes TRAILING X's, so the name stays literal and collides. Move the suffix off the template.")
+
+    if (s ~ /\[\[[^]]*=~[^]]*\\b/)
+      report(i, "`\\b` in a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so this silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).")
+
+    if (match(s, /^[[:blank:]]*(local|declare|export|readonly|typeset)?[[:blank:]]*[A-Za-z_][A-Za-z0-9_]*=/)) {
+      name = substr(s, RSTART, RLENGTH)
+      sub(/=$/, "", name)
+      sub(/^[[:blank:]]*/, "", name)
+      sub(/^(local|declare|export|readonly|typeset)[[:blank:]]+/, "", name)
+      if ((name in regexvar) && s ~ /\\b/)
+        report(i, "`\\b` in " name ", which is used as a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so that test silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).")
+    }
+  }
+
+  delete line
+  delete regexvar
+  nlines = 0
+}
+
+FNR == 1 { check(); fname = FILENAME }
+{ line[FNR] = $0; nlines = FNR }
+END { check(); exit (hits > 0) }
+AWK
+)
+
+# shellcheck disable=SC2086  # word-split intended
+awk "$PROG" $files

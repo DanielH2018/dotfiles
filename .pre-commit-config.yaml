@@ -104,3 +104,26 @@ repos:
         language: system
         types_or: [javascript]
         files: (\.(js|mjs)$|^(bin/config-soak|home/dot_local/bin/executable_(claude-settings-merge|dotsync|terminal-cheatsheet|tools-inventory))$)
+
+      # One audit found four GNU-only shell idioms in a single session -- bare `sed -i`, `\b`
+      # inside a bash [[ =~ ]] regex, and an mktemp template with a suffix after the X's. All
+      # four passed every gate here, because all four are correct on the Linux hosts they were
+      # written on and only misbehave on BSD/macOS userland. One was a live bypass in
+      # block-dangerous-bash.sh. bin/lint-bsd-portability is the cheap textual check; its
+      # header carries the three commits and what it deliberately does not catch.
+      #
+      # `files:` with no `types:`, following shellcheck-rc above. The set spans shell, .sh.tmpl
+      # and .js, and `files` is ANDed with `types` -- a .sh.tmpl types as text, not shell, so
+      # naming `types: [shell]` here would drop every template. The alternation therefore has
+      # to name the extensionless script directories itself; `[^/.]+$` keeps that to files with
+      # no extension, since anything with one is already covered by the first branch.
+      # tests/lint-bsd-portability.test.js asserts this pattern still admits every file
+      # `bin/lint-bsd-portability --list` derives, so the two cannot drift apart silently.
+      #
+      # Suppressions live in the script, not in an `exclude:` here, so that a manual run and a
+      # commit-time run agree on what is checked.
+      - id: bsd-portability
+        name: BSD/macOS shell portability
+        entry: bin/lint-bsd-portability
+        language: system
+        files: (\.(sh|bash|zsh|js|mjs|cjs)$|\.sh\.tmpl$|^(\.githooks|bin|home/dot_local/bin|home/private_dot_claude/sandbox|home/private_dot_claude/vault-tooling/githooks)/[^/.]+$|^home/\.chezmoitemplates/(is-[a-z-]+|require-[a-z-]+)$|^home/(dot_bashrc|dot_zshenv)$)
