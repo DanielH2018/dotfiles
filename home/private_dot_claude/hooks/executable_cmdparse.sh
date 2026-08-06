@@ -25,8 +25,22 @@
 # protect-secrets.sh were both written after a verified silent-off). Bash is the one
 # dependency a hook cannot lose.
 #
+# The scan itself is one awk pass, not a bash character loop: `${s:i:1}` costs O(i) per call,
+# so a bash loop over a command is quadratic. Measured on an 11.8KB heredoc — the shape `gh pr
+# create --body-file - <<EOF` produces routinely — a bash version of this scan cost ~2.8s per
+# call; the same input through awk costs single-digit milliseconds. block-dangerous-bash.sh
+# hit the identical bug and fixed it the same way, so this adds no new interpreter dependency
+# to the hot path — awk is already there. "A missing interpreter is a new fail-open surface"
+# does not apply here the way it might look: cmdparse's contract makes any failure a refusal
+# (CP_STATUS=unreadable:no-awk), never a skip, so an awk that cannot run degrades in the safe
+# direction, same as a missing jq degrading to "ask" rather than "allow". awk hands the
+# decomposition back through stdout as \x1f/\x1e-delimited records; bash reads them into the
+# CP_* arrays below and owns the trailing-empty-segment collapse, which stays small enough not
+# to be worth moving.
+#
 # Bash 3.2 clean (macOS default bash): no mapfile, no associative arrays, no `${arr[@]}` on a
-# possibly-empty array under `set -u` — counters are tracked explicitly instead.
+# possibly-empty array under `set -u` — counters are tracked explicitly instead. The awk is
+# POSIX — no gensub, no `\<`/`\>`, no multi-char RS — since macOS ships BSD awk, not gawk.
 #
 # CONTRACT, and the whole reason this is safe to adopt one call site at a time:
 #   cmd_parse "$COMMAND"  -> 0 and CP_STATUS=ok
@@ -35,7 +49,8 @@
 #   or ask (PreToolUse). It must never be read as "nothing to worry about here".
 #
 # Populated on success:
-#   CP_STATUS        ok | unreadable:unbalanced-quote | unreadable:substitution
+#   CP_STATUS        ok | unreadable:unbalanced-quote | unreadable:substitution |
+#                    unreadable:no-awk (awk is unavailable; refuse, do not skip)
 #   CP_NSEG          number of top-level segments
 #   CP_SEG[i]        raw segment text, quotes intact, as the shell would see it — a
 #                    substitution's delimiters and content stay in the segment that contains
@@ -64,6 +79,21 @@
 # trailing newline is ordinary in a multi-line prompt. CP_SUBSEG does not collapse a trailing
 # empty entry; consumers already skip empty segments regardless.
 #
+# Heredoc lifting and substitution scanning share the same pass and the same quote/frame
+# state, not two passes with two different ideas of "inside a quote". That is load-bearing,
+# not tidiness: a heredoc textually inside a double-quoted substitution — the
+# `git commit -am "$(cat <<'EOF' … EOF)"` shape a PR/commit body produces routinely — needs
+# the scan to know it is back at a command position once it crosses into the `$( )`, so the
+# heredoc body still gets lifted out rather than read as shell syntax. A two-pass version of
+# this parser shipped that bug: heredoc lifting alone did not know substitutions reopen a
+# command position inside a quote, so the body's own prose sailed through unlifted and the
+# scan going stricter about quotes inside substitutions turned prose into false unbalanced-quote
+# refusals. Fixed by merging the passes rather than teaching the old lift pass more state.
+#
+# No cap on substitution nesting depth: the scan does not recurse — a closing frame is a
+# substr() off its own recorded start offset, not a re-scan of its content — so nothing here
+# grows with nesting depth the way a recursive implementation's cost would.
+#
 # This slice deliberately stops at segmentation. Wrapper stripping, argv, canonical flags and
 # write-target intent are later slices of the same module, and each one changes what the
 # guards decide — segmentation alone does not.
@@ -80,375 +110,298 @@ CP_HEREDOC=()
 CP_NSUBSEG=0
 CP_SUBSEG=()
 
-# --- heredoc lift -----------------------------------------------------------------------
+# --- decomposition (heredoc lift + substitution-aware segmentation, one awk pass) --------
 #
-# Bodies are removed BEFORE segmentation, so their newlines are never separators and their
-# contents are never commands. This cuts both ways and both directions matter: a body line
-# reading `rm -rf /` must not be judged as a command, and a body must not be able to hide a
-# real command from a rule either — which is why the operator itself stays in the segment
-# text and the body is recorded against the segment that owns it.
-_cp_lift() {
-  local s="$1"
-  local n=${#s}   # separate `local`: ${#s} would read the *outer* s in a combined one
-  local i=0 q='' c
-  local pend_n=0 pend_delim='' pend_strip='' k
-  local line ldelim body off
+# One pass, one stack, because a two-pass version of this shipped a real bug: heredoc lifting
+# and segmentation each had their own idea of "inside a quote", and the compound case —
+# `git commit -am "$(cat <<'EOF' … EOF)"`, which a PR/commit body produces routinely — needs
+# BOTH to agree that crossing into the `$( )` reopens a command position, or the heredoc body
+# never gets lifted and its own prose gets read as shell syntax. See CONTRACT above.
+#
+# A frame stack (squote, dquote, backtick, paren, dparen, brace, procsub) tracks nesting the
+# same way `echo "$(echo "inner")"` needs it tracked: a substitution starts a fresh quoting
+# context, so the inner double quotes must not read as closing the outer pair. `;`/`&&`/`|`/
+# newline separate, and `<<` opens a heredoc, only at a genuine command position — stack empty
+# (true top level) or the innermost open frame is executing (paren/procsub/backtick). $(( ))
+# and ${ } are read out to their own boundary the same depth-tracked way but are not
+# themselves executing, so `<<`/`>>` inside $(( )) are shift operators, not heredoc redirects,
+# and closing either does not itself add a CP_SUBSEG entry — a real substitution nested inside
+# either ($((n=$(id))), ${x:-$(id)}) is still found because scanning continues through it.
+#
+# No recursion: each frame keeps its own running start offset (segStart[depth]), so its
+# content is one substr() away when it closes, not a re-scan. That is what makes "no depth
+# cap" safe and what makes nested substitutions come out exactly once each rather than needing
+# the ancestor-deferral bookkeeping a recursive version would.
+#
+# Output is \x1f/\x1e-delimited records on stdout (see the protocol comment on _CP_AWK) that
+# `cmd_parse` reads back into the CP_* arrays below. \002 is a private framing byte between
+# bash and this awk call only — appended by cmd_parse and stripped inside awk — so a trailing
+# newline in COMMAND round-trips through awk's line-based input instead of being silently
+# eaten by it.
+_CP_AWK='
+{ lines[NR] = $0 }
+END {
+  s = ""
+  for (j = 1; j <= NR; j++) s = s (j > 1 ? "\n" : "") lines[j]
+  sub(/\002$/, "", s)
+  n = length(s)
 
-  _cp_stripped=''
-  _cp_hd_n=0
-  _cp_hd_off=()
-  _cp_hd_body=()
+  depth = 0
+  segStart[0] = 1
+  pendN = 0
+  hdCount = 0
+  nseg = 0
+  nsub = 0
+  fatal = 0
 
-  while [ "$i" -lt "$n" ]; do
-    c=${s:i:1}
-    if [ -n "$q" ]; then
-      if [ "$q" = '"' ] && [ "$c" = $'\\' ]; then
-        _cp_stripped="$_cp_stripped$c${s:i+1:1}"; i=$((i + 2)); continue
-      fi
-      [ "$c" = "$q" ] && q=''
-      _cp_stripped="$_cp_stripped$c"; i=$((i + 1)); continue
-    fi
-    case $c in
-      \'|\") q=$c; _cp_stripped="$_cp_stripped$c"; i=$((i + 1)); continue ;;
-      \\)    _cp_stripped="$_cp_stripped$c${s:i+1:1}"; i=$((i + 2)); continue ;;
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    top = (depth > 0) ? kind[depth] : ""
+
+    if (top == "squote") {
+      if (c == "\047") depth--
+      continue
+    }
+
+    if (c == "\\") { i++; continue }
+
+    if (c == "\047") {
+      if (top == "dquote") continue
+      depth++; kind[depth] = "squote"; segStart[depth] = i + 1
+      continue
+    }
+
+    if (c == "\"") {
+      if (top == "dquote") { depth--; continue }
+      depth++; kind[depth] = "dquote"; segStart[depth] = i + 1
+      continue
+    }
+
+    if (c == "`") {
+      if (top == "backtick") {
+        nsub++; subText[nsub] = substr(s, segStart[depth], i - segStart[depth])
+        depth--
+        continue
+      }
+      depth++; kind[depth] = "backtick"; segStart[depth] = i + 1
+      continue
+    }
+
+    next1 = (i < n) ? substr(s, i + 1, 1) : ""
+
+    if (c == "$" && next1 == "(") {
+      next2 = (i + 2 <= n) ? substr(s, i + 2, 1) : ""
+      depth++
+      kind[depth] = (next2 == "(") ? "dparen" : "paren"
+      cnt[depth] = 0
+      segStart[depth] = i + 2
+      i++
+      continue
+    }
+
+    if (c == "$" && next1 == "{") {
+      depth++; kind[depth] = "brace"; cnt[depth] = 0; segStart[depth] = i + 2
+      i++
+      continue
+    }
+
+    if ((c == "<" || c == ">") && next1 == "(" && top != "dquote") {
+      depth++; kind[depth] = "procsub"; cnt[depth] = 0; segStart[depth] = i + 2
+      i++
+      continue
+    }
+
+    if (top == "paren" || top == "dparen" || top == "procsub") {
+      if (c == "(") { cnt[depth]++; continue }
+      if (c == ")") {
+        if (cnt[depth] > 0) { cnt[depth]--; continue }
+        if (top != "dparen") {
+          nsub++; subText[nsub] = substr(s, segStart[depth], i - segStart[depth])
+        }
+        depth--
+        continue
+      }
+    }
+
+    if (top == "brace") {
+      if (c == "{") { cnt[depth]++; continue }
+      if (c == "}") {
+        if (cnt[depth] > 0) { cnt[depth]--; continue }
+        depth--
+        continue
+      }
+    }
+
+    atCmdPos = (depth == 0 || top == "paren" || top == "procsub" || top == "backtick")
+
+    if (atCmdPos && c == "<" && next1 == "<") {
+      next2 = (i + 2 <= n) ? substr(s, i + 2, 1) : ""
+      if (next2 != "<") {
+        hoff = i
+        j = i + 2
+        strip = 0
+        if (substr(s, j, 1) == "-") { strip = 1; j++ }
+        while (substr(s, j, 1) == " " || substr(s, j, 1) == "\t") j++
+        dq = ""; delim = ""
+        dc = substr(s, j, 1)
+        if (dc == "\047" || dc == "\"") {
+          dq = dc; j++
+          while (j <= n && substr(s, j, 1) != dq) { delim = delim substr(s, j, 1); j++ }
+          if (j > n) { fatal = 1; reason = "unbalanced-quote"; break }
+          j++
+        } else {
+          while (j <= n) {
+            dc = substr(s, j, 1)
+            if (dc == " " || dc == "\t" || dc == "\n" || dc == ";" || dc == "&" || dc == "|" || dc == ">" || dc == "<" || dc == "(") break
+            delim = delim dc; j++
+          }
+        }
+        pendN++
+        pendDelim[pendN] = delim
+        pendStrip[pendN] = strip
+        pendOff[pendN] = hoff
+        i = j - 1
+        continue
+      }
+    }
+
+    if (atCmdPos) {
+      if ((c == "&" && next1 == "&") || (c == "|" && next1 == "|")) {
+        piece = substr(s, segStart[depth], i - segStart[depth])
+        sepv = c next1
+        if (depth == 0) { nseg++; segText[nseg] = piece; segSep[nseg] = sepv; segOff0[nseg] = segStart[0]; segOff1[nseg] = i }
+        else { nsub++; subText[nsub] = piece }
+        segStart[depth] = i + 2
+        i++
+        continue
+      }
+      if (c == "&") {
+        prevc = (i > segStart[depth]) ? substr(s, i - 1, 1) : ""
+        if (prevc != ">" && prevc != "<") {
+          piece = substr(s, segStart[depth], i - segStart[depth])
+          if (depth == 0) { nseg++; segText[nseg] = piece; segSep[nseg] = "&"; segOff0[nseg] = segStart[0]; segOff1[nseg] = i }
+          else { nsub++; subText[nsub] = piece }
+          segStart[depth] = i + 1
+          continue
+        }
+      }
+      if (c == ";" || c == "|") {
+        piece = substr(s, segStart[depth], i - segStart[depth])
+        if (depth == 0) { nseg++; segText[nseg] = piece; segSep[nseg] = c; segOff0[nseg] = segStart[0]; segOff1[nseg] = i }
+        else { nsub++; subText[nsub] = piece }
+        segStart[depth] = i + 1
+        continue
+      }
+      if (c == "\n") {
+        piece = substr(s, segStart[depth], i - segStart[depth])
+        if (depth == 0) { nseg++; segText[nseg] = piece; segSep[nseg] = "newline"; segOff0[nseg] = segStart[0]; segOff1[nseg] = i }
+        else { nsub++; subText[nsub] = piece }
+        segStart[depth] = i + 1
+
+        if (pendN > 0) {
+          bodyStart = i + 1
+          for (p = 1; p <= pendN; p++) {
+            body = ""
+            while (1) {
+              rest = substr(s, bodyStart)
+              lineEnd = index(rest, "\n")
+              if (lineEnd == 0) { line = rest; lineHasNL = 0 } else { line = substr(rest, 1, lineEnd - 1); lineHasNL = 1 }
+              cmp = line
+              if (pendStrip[p] == 1) sub(/^\t+/, "", cmp)
+              if (cmp == pendDelim[p]) {
+                bodyStart = lineHasNL ? bodyStart + lineEnd : n + 1
+                break
+              }
+              body = body line "\n"
+              if (!lineHasNL) { bodyStart = n + 1; break }
+              bodyStart = bodyStart + lineEnd
+            }
+            hdCount++
+            hdOff[hdCount] = pendOff[p]
+            hdBody[hdCount] = body
+          }
+          i = bodyStart - 1
+          segStart[depth] = bodyStart
+          pendN = 0
+        }
+        continue
+      }
+    }
+  }
+
+  if (fatal) {
+    printf "STATUS\037ERR\037%s\036", reason
+    exit 0
+  }
+
+  if (depth > 0) {
+    reason = "substitution"
+    for (d = 1; d <= depth; d++) {
+      if (kind[d] == "squote" || kind[d] == "dquote") reason = "unbalanced-quote"
+    }
+    printf "STATUS\037ERR\037%s\036", reason
+    exit 0
+  }
+
+  nseg++
+  segText[nseg] = substr(s, segStart[0], n - segStart[0] + 1)
+  segSep[nseg] = "eof"
+  segOff0[nseg] = segStart[0]
+  segOff1[nseg] = n + 1
+
+  printf "STATUS\037OK\036"
+  for (x = 1; x <= nseg; x++) {
+    hd = ""
+    for (h = 1; h <= hdCount; h++) {
+      if (hdOff[h] >= segOff0[x] && hdOff[h] < segOff1[x]) {
+        hd = (hd == "") ? hdBody[h] : hd "\037" hdBody[h]
+      }
+    }
+    printf "SEG\037%s\037%s\037%s\036", segText[x], segSep[x], hd
+  }
+  for (x = 1; x <= nsub; x++) {
+    printf "SUB\037%s\036", subText[x]
+  }
+}
+'
+
+cmd_parse() {
+  CP_STATUS=''
+  CP_NSEG=0
+  CP_SEG=()
+  CP_SEP=()
+  CP_HEREDOC=()
+  CP_NSUBSEG=0
+  CP_SUBSEG=()
+
+  local rtype rf1 rf2 rf3 ok=0
+  # The last named var absorbs everything past the 3rd \x1f verbatim, un-split — load-bearing
+  # for the heredoc field, which is itself \x1f-joined when a segment carries more than one
+  # body. `read -a` would split those apart into indistinguishable extra elements; this does not.
+  while IFS=$'\037' read -r -d $'\036' rtype rf1 rf2 rf3; do
+    case $rtype in
+      STATUS)
+        if [ "$rf1" = OK ]; then ok=1; else CP_STATUS="unreadable:$rf2"; fi
+        ;;
+      SEG)
+        CP_SEG[CP_NSEG]=$rf1
+        CP_SEP[CP_NSEG]=$rf2
+        CP_HEREDOC[CP_NSEG]=$rf3
+        CP_NSEG=$((CP_NSEG + 1))
+        ;;
+      SUB)
+        CP_SUBSEG[CP_NSUBSEG]=$rf1
+        CP_NSUBSEG=$((CP_NSUBSEG + 1))
+        ;;
     esac
+  done < <(printf '%s\002' "$1" | awk -- "$_CP_AWK")
 
-    # `$((` opens arithmetic, where `<<`/`>>` are shift operators, not heredoc redirects.
-    # Reading one as a heredoc start is a real bug, already present and unguarded for bare
-    # `((1<<2))` today — verified against this file before this fix existed. `$((1<<2))` would
-    # exhibit the same failure the moment segmentation stops refusing on `$(`, so it closes
-    # here. A heredoc body never legitimately appears inside arithmetic, so the whole span is
-    # skipped opaque rather than heredoc-scanned; bare `((...))` (no `$`) is a separate,
-    # pre-existing gap this change does not touch.
-    if [ "$c" = '$' ] && [ "${s:i+1:1}" = '(' ] && [ "${s:i+2:1}" = '(' ]; then
-      _cp_stripped="$_cp_stripped\$(("; i=$((i + 3))
-      local adepth=1 aq='' ac
-      while [ "$i" -lt "$n" ] && [ "$adepth" -gt 0 ]; do
-        ac=${s:i:1}
-        if [ -n "$aq" ]; then
-          if [ "$aq" = '"' ] && [ "$ac" = $'\\' ]; then
-            _cp_stripped="$_cp_stripped$ac${s:i+1:1}"; i=$((i + 2)); continue
-          fi
-          [ "$ac" = "$aq" ] && aq=''
-          _cp_stripped="$_cp_stripped$ac"; i=$((i + 1)); continue
-        fi
-        case $ac in
-          \'|\") aq=$ac; _cp_stripped="$_cp_stripped$ac"; i=$((i + 1)); continue ;;
-          \\)    _cp_stripped="$_cp_stripped$ac${s:i+1:1}"; i=$((i + 2)); continue ;;
-          '(')   adepth=$((adepth + 1)) ;;
-          ')')   adepth=$((adepth - 1)) ;;
-        esac
-        _cp_stripped="$_cp_stripped$ac"; i=$((i + 1))
-      done
-      [ -n "$aq" ] && { _cp_reason=unbalanced-quote; return 1; }
-      continue
-    fi
-
-    # `<<<` is a herestring — one word, no body, not a heredoc.
-    if [ "$c" = '<' ] && [ "${s:i+1:1}" = '<' ] && [ "${s:i+2:1}" != '<' ]; then
-      off=${#_cp_stripped}
-      _cp_stripped="$_cp_stripped<<"; i=$((i + 2))
-      # `<<-` strips leading TABS (not spaces) from body lines and from the terminator.
-      local strip=0
-      if [ "${s:i:1}" = '-' ]; then strip=1; _cp_stripped="$_cp_stripped-"; i=$((i + 1)); fi
-      while [ "${s:i:1}" = ' ' ] || [ "${s:i:1}" = $'\t' ]; do
-        _cp_stripped="$_cp_stripped${s:i:1}"; i=$((i + 1))
-      done
-      # Delimiter word: 'EOF', "EOF" or bare EOF. Quoting only affects expansion inside the
-      # body, which this parser never performs, so all three are read the same way.
-      local dq='' delim=''
-      c=${s:i:1}
-      if [ "$c" = "'" ] || [ "$c" = '"' ]; then
-        dq=$c; _cp_stripped="$_cp_stripped$c"; i=$((i + 1))
-        while [ "$i" -lt "$n" ] && [ "${s:i:1}" != "$dq" ]; do
-          delim="$delim${s:i:1}"; _cp_stripped="$_cp_stripped${s:i:1}"; i=$((i + 1))
-        done
-        if [ "$i" -ge "$n" ]; then _cp_reason=unbalanced-quote; return 1; fi
-        _cp_stripped="$_cp_stripped$dq"; i=$((i + 1))
-      else
-        while [ "$i" -lt "$n" ]; do
-          c=${s:i:1}
-          case $c in
-            ' '|$'\t'|$'\n'|';'|'&'|'|'|'>'|'<'|'(' ) break ;;
-          esac
-          delim="$delim$c"; _cp_stripped="$_cp_stripped$c"; i=$((i + 1))
-        done
-      fi
-      pend_delim="$pend_delim$CP_US$delim"
-      pend_strip="$pend_strip$CP_US$strip"
-      # The offset recorded is the operator's, so the body lands on the segment that
-      # actually redirects it rather than on whatever the newline split off.
-      _cp_hd_off[_cp_hd_n]=$off
-      _cp_hd_body[_cp_hd_n]=''
-      _cp_hd_n=$((_cp_hd_n + 1))
-      pend_n=$((pend_n + 1))
-      continue
-    fi
-
-    if [ "$c" = $'\n' ] && [ "$pend_n" -gt 0 ]; then
-      # The newline still terminates the command line; only the bodies after it are lifted.
-      _cp_stripped="$_cp_stripped$c"; i=$((i + 1))
-      k=$((_cp_hd_n - pend_n))
-      while [ "$pend_n" -gt 0 ]; do
-        ldelim=${pend_delim#"$CP_US"}; ldelim=${ldelim%%"$CP_US"*}
-        pend_delim=${pend_delim#"$CP_US"}; pend_delim=${pend_delim#"$ldelim"}
-        local st=${pend_strip#"$CP_US"}; st=${st%%"$CP_US"*}
-        pend_strip=${pend_strip#"$CP_US"}; pend_strip=${pend_strip#"$st"}
-        body=''
-        while [ "$i" -le "$n" ]; do
-          line=''
-          while [ "$i" -lt "$n" ] && [ "${s:i:1}" != $'\n' ]; do
-            line="$line${s:i:1}"; i=$((i + 1))
-          done
-          [ "$i" -lt "$n" ] && i=$((i + 1))   # step over the newline
-          local cmp=$line
-          [ "$st" = 1 ] && while [ "${cmp#	}" != "$cmp" ]; do cmp=${cmp#	}; done
-          [ "$cmp" = "$ldelim" ] && break
-          body="$body$line"$'\n'
-          # An unterminated heredoc runs to end of input; the body is what there is.
-          [ "$i" -ge "$n" ] && break
-        done
-        _cp_hd_body[k]=$body
-        k=$((k + 1))
-        pend_n=$((pend_n - 1))
-      done
-      continue
-    fi
-
-    _cp_stripped="$_cp_stripped$c"; i=$((i + 1))
-  done
-
-  [ -n "$q" ] && { _cp_reason=unbalanced-quote; return 1; }
-  return 0
-}
-
-# --- segmentation -----------------------------------------------------------------------
-_cp_emit() {
-  # $1 text, $2 separator, $3 start offset, $4 end offset
-  local j=$CP_NSEG hd='' k
-  CP_SEG[j]=$1
-  CP_SEP[j]=$2
-  k=0
-  while [ "$k" -lt "$_cp_hd_n" ]; do
-    if [ "${_cp_hd_off[k]}" -ge "$3" ] && [ "${_cp_hd_off[k]}" -lt "$4" ]; then
-      if [ -n "$hd" ]; then hd="$hd$CP_US${_cp_hd_body[k]}"; else hd=${_cp_hd_body[k]}; fi
-    fi
-    k=$((k + 1))
-  done
-  CP_HEREDOC[j]=$hd
-  CP_NSEG=$((j + 1))
-}
-
-# A substitution's content is exposed flattened, not nested: every $( ), backtick, and
-# <( )/>( ) found at any depth gets its own entry here, in the order its closing delimiter is
-# reached. A consumer that only pattern-matches command names (the shadow census does) does
-# not need the tree shape back, only that nothing which actually runs stays invisible to it.
-_cp_emit_sub() {
-  CP_SUBSEG[CP_NSUBSEG]=$1
-  CP_NSUBSEG=$((CP_NSUBSEG + 1))
-}
-
-# Recursion guard against adversarial nesting (`$($($($(...))))`): each level re-scans its own
-# content from scratch (see _cp_scan), so total work is O(depth * len) — bounded by refusing
-# past this depth, not by capping input size.
-CP_MAX_SUBST_DEPTH=15
-
-# _cp_scan segments s[start:end) as one command list: either the top-level command
-# (IS_TOP=1, emitting into CP_SEG/CP_SEP/CP_HEREDOC via _cp_emit) or one substitution's
-# content (IS_TOP=0, emitting flattened into CP_SUBSEG via _cp_emit_sub). A stack of open
-# frames tracks nesting — quote and squote/dquote/paren/brace kinds — because bash starts a
-# genuinely fresh quoting context inside a substitution: `echo "$(echo "inner")"` is valid,
-# and the inner double quotes must not be read as closing the outer pair. `;`/`&&`/`|`/newline
-# only separate at THIS call's own stack depth 0 — one inside an open quote or substitution,
-# at any depth, is data, not a boundary.
-#
-# Closing an executing frame (backtick, $( ), <( )/>( )) recurses into this same function over
-# its own content with IS_TOP=0, which is what exposes what actually runs. $(( )) and ${ } are
-# read out to their own boundary the same depth-tracked, quote-aware way, but are not
-# themselves executing constructs, so closing one does not emit a CP_SUBSEG entry for its own
-# content — scanning still continues through it, so a real substitution nested inside either
-# ($((n=$(id))), ${x:-$(id)}) is still found and still recorded.
-_cp_scan() {
-  local s="$1" start_="$2" end_="$3" is_top="$4" sdepth="$5"
-  local i=$start_ n=$end_
-  local cur='' seg_start=$start_ c next prev top
-  local stk_kind stk_cnt stk_start stk_n=0 _cp_anc _cp_ak
-  stk_kind=(); stk_cnt=(); stk_start=()
-
-  if [ "$sdepth" -gt "$CP_MAX_SUBST_DEPTH" ]; then _cp_reason=substitution; return 1; fi
-
-  while [ "$i" -lt "$n" ]; do
-    c=${s:i:1}
-    next=${s:i+1:1}
-    top=''
-    [ "$stk_n" -gt 0 ] && top=${stk_kind[stk_n - 1]}
-
-    # Inside '...', nothing is special but the closing quote — not even a backslash.
-    if [ "$top" = squote ]; then
-      cur="$cur$c"; i=$((i + 1))
-      [ "$c" = "'" ] && stk_n=$((stk_n - 1))
-      continue
-    fi
-
-    if [ "$c" = $'\\' ]; then
-      cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue
-    fi
-
-    if [ "$c" = "'" ]; then
-      # A literal apostrophe inside "...", not a quote — single quotes don't nest-quote there.
-      if [ "$top" = dquote ]; then
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-      stk_kind[stk_n]=squote; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
-      cur="$cur$c"; i=$((i + 1)); continue
-    fi
-
-    if [ "$c" = '"' ]; then
-      if [ "$top" = dquote ]; then
-        stk_n=$((stk_n - 1))
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-      stk_kind[stk_n]=dquote; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
-      cur="$cur$c"; i=$((i + 1)); continue
-    fi
-
-    if [ "$c" = '`' ]; then
-      if [ "$top" = backtick ]; then
-        stk_n=$((stk_n - 1))
-        # Only recurse if no still-open ancestor is itself executing ($( ), <( )/>( ), `...`).
-        # An executing ancestor will re-scan this exact range as part of its OWN content when
-        # it closes, so recursing here too would double the work and duplicate the entry.
-        # $(( ) and ${ } never re-scan (they are not executing), so nesting inside either
-        # does not defer.
-        _cp_anc=0; _cp_ak=0
-        while [ "$_cp_ak" -lt "$stk_n" ]; do
-          case ${stk_kind[_cp_ak]} in paren|procsub|backtick) _cp_anc=1 ;; esac
-          _cp_ak=$((_cp_ak + 1))
-        done
-        if [ "$_cp_anc" -eq 0 ]; then
-          if ! _cp_scan "$s" "${stk_start[stk_n]}" "$i" 0 "$((sdepth + 1))"; then return 1; fi
-        fi
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-      stk_kind[stk_n]=backtick; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
-      cur="$cur$c"; i=$((i + 1)); continue
-    fi
-
-    # $( ) is command substitution (executing); $(( is arithmetic — `<<`/`>>` inside it are
-    # shift operators, never heredoc redirects, which is what _cp_lift's own $(( skip exists
-    # to keep straight before this ever sees it. Both close on the same paren-depth-zero `)`;
-    # only the executing flag differs, decided once here at push and read back at pop.
-    if [ "$c" = '$' ] && [ "$next" = '(' ]; then
-      if [ "${s:i+2:1}" = '(' ]; then stk_kind[stk_n]=dparen; else stk_kind[stk_n]=paren; fi
-      stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
-      cur="$cur$c$next"; i=$((i + 2)); continue
-    fi
-
-    # ${ } is parameter expansion, not execution — never refused, never a CP_SUBSEG entry of
-    # its own — but scanned the same way so a substitution nested inside it is still found.
-    if [ "$c" = '$' ] && [ "$next" = '{' ]; then
-      stk_kind[stk_n]=brace; stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
-      cur="$cur$c$next"; i=$((i + 2)); continue
-    fi
-
-    # <( )/>( ) are only live at a command position, never inside "..." — real bash reads a
-    # quoted "<(...)" as literal text, not process substitution.
-    if { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ "$next" = '(' ] && [ "$top" != dquote ]; then
-      stk_kind[stk_n]=procsub; stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
-      cur="$cur$c$next"; i=$((i + 2)); continue
-    fi
-
-    if [ "$top" = paren ] || [ "$top" = dparen ] || [ "$top" = procsub ]; then
-      if [ "$c" = '(' ]; then
-        stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} + 1))
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-      if [ "$c" = ')' ]; then
-        if [ "${stk_cnt[stk_n - 1]}" -gt 0 ]; then
-          stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} - 1))
-          cur="$cur$c"; i=$((i + 1)); continue
-        fi
-        stk_n=$((stk_n - 1))
-        if [ "$top" != dparen ]; then
-          # Same deferral as the backtick case above: skip if an executing ancestor remains.
-          _cp_anc=0; _cp_ak=0
-          while [ "$_cp_ak" -lt "$stk_n" ]; do
-            case ${stk_kind[_cp_ak]} in paren|procsub|backtick) _cp_anc=1 ;; esac
-            _cp_ak=$((_cp_ak + 1))
-          done
-          if [ "$_cp_anc" -eq 0 ]; then
-            if ! _cp_scan "$s" "${stk_start[stk_n]}" "$i" 0 "$((sdepth + 1))"; then return 1; fi
-          fi
-        fi
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-    fi
-
-    if [ "$top" = brace ]; then
-      if [ "$c" = '{' ]; then
-        stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} + 1))
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-      if [ "$c" = '}' ]; then
-        if [ "${stk_cnt[stk_n - 1]}" -gt 0 ]; then
-          stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} - 1))
-          cur="$cur$c"; i=$((i + 1)); continue
-        fi
-        stk_n=$((stk_n - 1))
-        cur="$cur$c"; i=$((i + 1)); continue
-      fi
-    fi
-
-    if [ "$stk_n" -eq 0 ]; then
-      if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
-        if [ "$is_top" = 1 ]; then _cp_emit "$cur" "$c$next" "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
-        cur=''; i=$((i + 2)); seg_start=$i; continue
-      fi
-      # A lone `&` backgrounds what is to its left and starts a new command, so it separates.
-      # `>&N` / `<&N` are fd dups and must not.
-      if [ "$c" = '&' ]; then
-        prev=''
-        [ -n "$cur" ] && prev=${cur:$((${#cur} - 1)):1}
-        if [ "$prev" != '>' ] && [ "$prev" != '<' ]; then
-          if [ "$is_top" = 1 ]; then _cp_emit "$cur" '&' "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
-          cur=''; i=$((i + 1)); seg_start=$i; continue
-        fi
-      fi
-      if [ "$c" = ';' ] || [ "$c" = '|' ]; then
-        if [ "$is_top" = 1 ]; then _cp_emit "$cur" "$c" "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
-        cur=''; i=$((i + 1)); seg_start=$i; continue
-      fi
-      # The fix this module exists for. Heredoc bodies are already gone, so every newline left
-      # here separates two real commands.
-      if [ "$c" = $'\n' ]; then
-        if [ "$is_top" = 1 ]; then _cp_emit "$cur" 'newline' "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
-        cur=''; i=$((i + 1)); seg_start=$i; continue
-      fi
-    fi
-
-    cur="$cur$c"; i=$((i + 1))
-  done
-
-  if [ "$stk_n" -gt 0 ]; then
-    # Prefer the quote reading when both are open: it is the proximate, fixable cause — an
-    # unclosed $( ) alongside an unclosed " is usually the quote swallowing the rest.
-    local k=0 reason=substitution
-    while [ "$k" -lt "$stk_n" ]; do
-      { [ "${stk_kind[k]}" = squote ] || [ "${stk_kind[k]}" = dquote ]; } && reason=unbalanced-quote
-      k=$((k + 1))
-    done
-    _cp_reason=$reason
+  if [ "$ok" -ne 1 ]; then
+    CP_NSEG=0; CP_SEG=(); CP_SEP=(); CP_HEREDOC=()
+    CP_NSUBSEG=0; CP_SUBSEG=()
+    [ -z "$CP_STATUS" ] && CP_STATUS='unreadable:no-awk'
     return 1
   fi
-
-  if [ "$is_top" = 1 ]; then _cp_emit "$cur" 'eof' "$seg_start" "$n"; else _cp_emit_sub "$cur"; fi
-  return 0
-}
-
-_cp_segment() {
-  local s="$1"
-  local n=${#s}   # separate `local`: see _cp_lift
-  if ! _cp_scan "$s" 0 "$n" 1 0; then return 1; fi
 
   # A trailing separator terminates the last command; it does not start an empty new one.
   # This matters beyond tidiness. `ls\n` and `ls;` are single commands, and a trailing
@@ -470,28 +423,7 @@ _cp_segment() {
     CP_NSEG=$last
     CP_SEP[CP_NSEG - 1]='eof'
   done
-  return 0
-}
 
-cmd_parse() {
-  CP_STATUS=''
-  CP_NSEG=0
-  CP_SEG=()
-  CP_SEP=()
-  CP_HEREDOC=()
-  CP_NSUBSEG=0
-  CP_SUBSEG=()
-  _cp_reason=''
-  if ! _cp_lift "$1"; then
-    CP_STATUS="unreadable:$_cp_reason"
-    return 1
-  fi
-  if ! _cp_segment "$_cp_stripped"; then
-    CP_STATUS="unreadable:$_cp_reason"
-    CP_NSEG=0
-    CP_NSUBSEG=0
-    return 1
-  fi
   CP_STATUS=ok
   return 0
 }

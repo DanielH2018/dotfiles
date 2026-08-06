@@ -1,6 +1,8 @@
 const { test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 // cmdparse.sh is sourced by the guards on the hot path; `--json` is the test/linter entry
@@ -138,6 +140,26 @@ test('a substitution inside double quotes is not a blind spot', () => {
   assert.deepStrictEqual(subsegs('echo "$(ls; terraform apply)"'), ['ls', 'terraform apply']);
 });
 
+// A regression the shadow census caught directly: `git commit -am "$(cat <<'EOF' … EOF)"` is
+// the shape a PR/commit body produces routinely. Heredoc lifting and substitution scanning
+// have to agree that crossing into the `$( )` reopens a command position, or the heredoc body
+// never gets lifted and its own prose — which is full of unpaired apostrophes and quotes —
+// gets read as shell syntax and refused as unbalanced. A two-pass version of this parser
+// shipped exactly that bug; this is the case that caught it.
+test('a heredoc inside a double-quoted substitution is lifted, not misread as syntax', () => {
+  const cmd = [
+    'git commit -am "$(cat <<\'EOF\'',
+    "It's a fix, not a feature. Don't read the apostrophes as quotes.",
+    'EOF',
+    ')" 2>&1',
+  ].join('\n');
+  const r = parse(cmd);
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.nseg, 1);
+  assert.match(r.heredoc[0], /apostrophes as quotes/, 'the body is lifted onto the segment');
+  assert.deepStrictEqual(subsegs(cmd), ["cat <<'EOF'"]);
+});
+
 // Nesting: each level gets its own CP_SUBSEG entry, exactly once — not zero (lost inside a
 // non-executing wrapper) and not duplicated (found again by an executing ancestor's re-scan).
 test('nested substitutions are each recorded exactly once', () => {
@@ -174,6 +196,25 @@ test('an unbalanced substitution is still refused', () => {
   assert.strictEqual(parse('echo $(echo "unterminated').status, 'unreadable:unbalanced-quote');
   assert.strictEqual(parse('echo $(ls').status, 'unreadable:substitution');
   assert.strictEqual(parse('echo `id').status, 'unreadable:substitution');
+});
+
+// The decomposition is one awk pass (see the file header for why). A missing awk must refuse,
+// never silently skip — same direction as block-dangerous-bash.sh losing jq or awk.
+test('refuses rather than failing open when awk is unavailable', () => {
+  const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmdparse-noawk-'));
+  try {
+    const shim = path.join(shimDir, 'awk');
+    fs.writeFileSync(shim, '#!/bin/sh\nexit 127\n');
+    fs.chmodSync(shim, 0o755);
+    const env = { ...process.env, PATH: `${shimDir}:${process.env.PATH}` };
+    const r = JSON.parse(execFileSync('bash', [LIB, '--json'], {
+      input: 'ls -la', encoding: 'utf8', env,
+    }));
+    assert.strictEqual(r.status, 'unreadable:no-awk');
+    assert.strictEqual(r.nseg, 0, 'a refusal yields no segments to reason about');
+  } finally {
+    fs.rmSync(shimDir, { recursive: true, force: true });
+  }
 });
 
 // --- F7: redirect vs fd-dup ---------------------------------------------------------------
