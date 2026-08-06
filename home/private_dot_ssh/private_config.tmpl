@@ -15,6 +15,37 @@ Host daniel-server homelab
     # lists local artifacts and 404s every remote one. daniel-server sets a matching
     # CLAUDE_ARTIFACTS_PORT=8182 in settings.base.json so the links it emits agree.
     LocalForward 127.0.0.1:8182 127.0.0.1:8182
+{{- if ne .chezmoi.os "windows" }}
+    # Multiplex, so the forward above is established exactly once. Without this every
+    # additional session re-binds the same loopback port and fails —
+    #   bind [127.0.0.1]:8182: Address already in use
+    #   channel_setup_fwd_listener_tcpip: cannot listen to port: 8182
+    #   Could not request local forwarding.
+    # — which is noise (ExitOnForwardFailure defaults to no, so the session continues on
+    # the first session's tunnel), but the tunnel then belongs to whichever session opened
+    # first: close that one and artifact links in every survivor die with no error.
+    #
+    # %C, not %r@%h:%p — unix socket paths cap at ~104 bytes and the literal form overflows
+    # it on long hostnames, at which point ssh silently declines to multiplex
+    # (agentview/common.sh:86 hit exactly this). ~/.ssh already exists at mode 0700, so the
+    # flat name needs no mkdir, matching otel-sweep's `~/.ssh/otel-sweep-%C`.
+    #
+    # ServerAlive* is not redundant with ControlPersist: it detects a master whose peer went
+    # away, so a suspended box leaves a socket that fails rather than one that hangs the next
+    # session. 60/10 are daniel-pi's interactive values below — deliberately NOT agentview's
+    # 5/2, which are tuned to fail a background picker fast and would drop a live shell on a
+    # brief blip.
+    #
+    # Agent View and otel-sweep pass their own -o Control* with private sockets, by design
+    # (docs/specs/2026-08-05-agentview-remote-freshness-design.md §3.1) — behaviour travels
+    # with the tool. These lines are for interactive sessions only and do not reach them.
+    # Gated off Windows: Win32-OpenSSH does not support control-socket multiplexing.
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
+{{- end }}
 
 Host daniel-pi
     HostName 10.0.0.139
@@ -48,3 +79,12 @@ Host daniel-box
     # quietly renders the OTHER host's artifacts. settings.base.json sets a matching
     # CLAUDE_ARTIFACTS_PORT=8183 on daniel-box so the links it emits agree.
     LocalForward 127.0.0.1:8183 127.0.0.1:8183
+{{- if ne .chezmoi.os "windows" }}
+    # Multiplex so the forward is established once, same arrangement as daniel-server above
+    # — see the rationale there for %C, the ServerAlive* values, and the Windows gate.
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
+{{- end }}
