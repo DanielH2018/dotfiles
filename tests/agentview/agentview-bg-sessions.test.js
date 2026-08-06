@@ -707,7 +707,9 @@ test('ctrl-n and ctrl-x hand off via $AV_EXEC, which only goes silent under tmux
   // pty (the tmux popup) — execute-silent hands the child /dev/null and an inline fzf hangs.
   assert.match(src, /if \[ -n "\$\{TMUX:-\}" \]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi/,
     'the bind action resolves once, from $TMUX');
-  assert.match(src, /ctrl-x:'"\$AV_EXEC"'\([^)]*--remove \{1\}\)\+reload/, 'ctrl-x still reloads after removing');
+  // The repaint is a transform rather than a bare reload: --repaint decides between
+  // repainting and restarting, so a schema change deployed under the picker cannot skew it.
+  assert.match(src, /ctrl-x:'"\$AV_EXEC"'\([^)]*--remove \{1\}\)\+transform\([^)]*--repaint/, 'ctrl-x still repaints after removing');
   assert.match(src, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n still runs --spawn');
 });
 

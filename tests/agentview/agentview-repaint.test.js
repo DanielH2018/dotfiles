@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const LIB = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview');
@@ -27,12 +28,16 @@ function copyTree() {
   const self = path.join(bin, 'agentview');
   fs.copyFileSync(SRC, self);
   fs.chmodSync(self, 0o755);
-  return { self, lib };
+  // None of the modes under test enumerate sessions, but the seams are pinned anyway: the
+  // suite is one added test away from rendering rows, and an unpinned one would then mix
+  // the operator's real Windows sessions into the fixtures. See tests/lib/agentview-env.js.
+  const seams = agentviewWinSeams({ bin, scratch });
+  return { self, lib, seams };
 }
 
 const run = (t, args, env = {}) => execFileSync('bash', [t.self, ...args], {
   encoding: 'utf8',
-  env: { ...process.env, AGENTVIEW_SELF: t.self, AGENTVIEW_LIB: t.lib, ...env },
+  env: { ...process.env, AGENTVIEW_SELF: t.self, AGENTVIEW_LIB: t.lib, ...t.seams.env, ...env },
 }).trim();
 
 test('--fingerprint is stable across calls when nothing changed', () => {
@@ -100,6 +105,42 @@ test('--repaint with no exported fingerprint does not restart in a loop', () => 
   const t = copyTree();
   const out = run(t, ['--repaint', '']);
   assert.match(out, /^reload\(/, `expected reload when no baseline was exported, got: ${out}`);
+});
+
+test('no repaint bind reloads unconditionally', () => {
+  // One missed bind is a picker that still renders skewed columns, and only on the key
+  // nobody thought to press. Read the binds rather than trusting the edit.
+  const src = fs.readFileSync(SRC, 'utf8');
+  const binds = src.split('\n').filter((l) => /^\s*--bind='/.test(l) && l.includes('--body'));
+  const unconditional = binds.filter((l) => !l.includes('--repaint'));
+  assert.deepStrictEqual(unconditional, [], 'every bind that repaints must go through --repaint');
+});
+
+test('every repaint bind is still present', () => {
+  const src = fs.readFileSync(SRC, 'utf8');
+  for (const key of ['ctrl-t', 'ctrl-v', 'ctrl-g', 'ctrl-r', 'ctrl-p', 'ctrl-f', 'ctrl-n', 'ctrl-x']) {
+    assert.ok(
+      new RegExp(`--bind='${key}:[^\\n]*--repaint`).test(src),
+      `${key} must repaint through --repaint`,
+    );
+  }
+});
+
+test('the fold toggle repaints conditionally too', () => {
+  // --enter is the one repaint that is neither a key bind nor the poster.
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  fs.appendFileSync(path.join(t.lib, 'render.sh'), '\n# nudge\n');
+  const out = run(t, ['--enter', 'fold:completed'], { AV_SCRIPT_FP: fp, HOME: scratch('av-fold-home-') });
+  assert.match(out, /become\(/, `a fold toggle on a changed script must restart, got: ${out}`);
+});
+
+test('the fold toggle still folds when nothing changed', () => {
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  const out = run(t, ['--enter', 'fold:completed'], { AV_SCRIPT_FP: fp, HOME: scratch('av-fold-home-') });
+  assert.match(out, /--fold fold:completed/, `expected the fold action, got: ${out}`);
+  assert.match(out, /reload\(/);
 });
 
 test('--fingerprint is unchanged when a module is rewritten with identical bytes', () => {

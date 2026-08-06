@@ -102,16 +102,11 @@ fi
 # instead. A fold header's key has no session behind it — accepting it (fzf's default for
 # both enter and a double-click) would just exit the picker on a dead key, so both must
 # toggle + repaint it instead.
-if [ "$mode" = "--enter" ]; then
-  case "${2:-}" in
-    fold:*) printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
-              "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$2" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" ;;
-    '')     ;;   # keyless row (header/spacer/status line) -- no-op, not accept: accepting an
-                 # empty KEY exits the picker on a dead click, same bug a fold: key exists to avoid.
-    *)      printf accept ;;
-  esac
-  exit 0
-fi
+#
+# Unlike --skip above, this one is handled AFTER the module loader below, not here: its
+# fold branch needs av_script_fingerprint (common.sh) to decide between repainting and
+# restarting. Everything it does is still a single flat call from the --bind's point of
+# view; only the dispatch point moved.
 
 statedir="$HOME/.claude/agent-view"
 # Claude's own per-process registry (see the load_session_map block below for what the render
@@ -291,7 +286,7 @@ _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_S
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
   --card|--keys|--groupby)           _avmods="" ;;
-  --fingerprint|--repaint)           _avmods="common" ;;
+  --fingerprint|--repaint|--enter)   _avmods="common" ;;
   --spawn)                           _avmods="spawn" ;;
   --resolve)                         _avmods="common focus" ;;
   # jump_or_report (focus.sh) has a defensive fold: guard before do_jump — reachable via a
@@ -315,6 +310,31 @@ for _m in $_avmods; do
 done
 
 if [ "$mode" = "--fingerprint" ]; then av_script_fingerprint; printf '%s\n' "$_av_sfp"; exit 0; fi
+
+# --enter KEY: see the note above the --skip block for why enter and double-click both
+# route through a dispatch instead of an inlined conditional. A fold header's key has no
+# session behind it — accepting it (fzf's default for both) would exit the picker on a
+# dead key, so both must toggle + repaint it instead.
+if [ "$mode" = "--enter" ]; then
+  case "${2:-}" in
+    fold:*) av_script_fingerprint
+            if [ -n "${AV_SCRIPT_FP:-}" ] && [ "$_av_sfp" != "$AV_SCRIPT_FP" ]; then
+              # Fold first, then restart: the keypress still has to do what it says, and a
+              # become discards whatever action would have followed it.
+              # No {q}: --enter's argument positions are shared with --skip, and enter is
+              # not a filtering key.
+              "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" --fold "$2" >/dev/null 2>&1
+              printf "become('%s')" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+            else
+              printf "execute-silent('%s' --fold %s)+reload('%s' --body)" \
+                "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}" "$2" "${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+            fi ;;
+    '')     ;;   # keyless row (header/spacer/status line) -- no-op, not accept: accepting an
+                 # empty KEY exits the picker on a dead click, same bug a fold: key exists to avoid.
+    *)      printf accept ;;
+  esac
+  exit 0
+fi
 
 # --repaint QUERY: what every repaint bind now calls. It prints ONE fzf action -- a reload
 # when this fzf's argv still matches the script on disk, and a become when it does not, so
@@ -685,14 +705,14 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='page-up:page-up+transform('"'$SELF'"' --skip up {1})' \
   --bind='page-down:page-down+transform('"'$SELF'"' --skip down {1})' \
   --bind='load:transform('"'$SELF'"' --skip down {1})' \
-  --bind='ctrl-t:execute('"'$SELF'"' --send {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-v:execute('"'$SELF'"' --resume {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-g:execute-silent('"'$SELF'"' --groupby)+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-t:execute('"'$SELF'"' --send {1})+transform('"'$SELF'"' --repaint {q})' \
+  --bind='ctrl-v:execute('"'$SELF'"' --resume {1})+transform('"'$SELF'"' --repaint {q})' \
+  --bind='ctrl-g:execute-silent('"'$SELF'"' --groupby)+transform('"'$SELF'"' --repaint {q})' \
+  --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+transform('"'$SELF'"' --repaint {q})' \
+  --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+transform('"'$SELF'"' --repaint {q})' \
   --bind='ctrl-f:transform('"'$SELF'"' --repaint {q})+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
-  --bind='ctrl-n:'"$AV_EXEC"'('"'$SELF'"' --spawn '"$portfile"')+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-x:'"$AV_EXEC"'('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
+  --bind='ctrl-n:'"$AV_EXEC"'('"'$SELF'"' --spawn '"$portfile"')+transform('"'$SELF'"' --repaint {q})' \
+  --bind='ctrl-x:'"$AV_EXEC"'('"'$SELF'"' --remove {1})+transform('"'$SELF'"' --repaint {q})' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
   --bind='alt-2:become('"'$SELF'"' --jump-nth 2)' \
   --bind='alt-3:become('"'$SELF'"' --jump-nth 3)' \

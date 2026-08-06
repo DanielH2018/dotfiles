@@ -576,7 +576,9 @@ test('picker binds the new hotkeys and hints them in the footer', () => {
   const src = fs.readFileSync(VIEW, 'utf8');
   assert.match(src, /ctrl-r:execute\([^)]*--rename {1}/, 'ctrl-r renames the selected row');
   assert.match(src, /ctrl-p:execute-silent\([^)]*--pin {1}/, 'ctrl-p pins the selected row');
-  assert.match(src, /ctrl-f:reload\(/, 'ctrl-f is the manual refresh (moved off ctrl-r)');
+  // A transform, not a bare reload: --repaint decides between repainting and restarting the
+  // picker, so that a schema change deployed under it cannot skew the columns.
+  assert.match(src, /ctrl-f:transform\([^)]*--repaint \{q\}\)/, 'ctrl-f is the manual refresh (moved off ctrl-r)');
   assert.match(src, /alt-1:become\([^)]*--jump-nth 1\)/, 'alt-1 jumps to session #1');
   assert.match(src, /alt-9:become\([^)]*--jump-nth 9\)/, 'alt-9 jumps to session #9');
   assert.match(src, /'\?:show-preview\+preview\([^)]*--keys\)'/, '? shows the shortcut cheatsheet');
