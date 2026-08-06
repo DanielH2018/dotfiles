@@ -143,6 +143,51 @@ test('the fold toggle still folds when nothing changed', () => {
   assert.match(out, /reload\(/);
 });
 
+// post_reload is a shell function, so it is exercised by sourcing rows.sh with a stub curl
+// on PATH and reading back what it would have POSTed.
+function postedAction(t, { changed }) {
+  const bin = scratch('av-post-');
+  const log = path.join(bin, 'curl.log');
+  fs.writeFileSync(
+    path.join(bin, 'curl'),
+    `#!/usr/bin/env bash\nfor a in "$@"; do printf '%s\\n' "$a"; done >> ${log}\n`,
+    { mode: 0o755 },
+  );
+  const portfile = path.join(bin, 'port');
+  fs.writeFileSync(portfile, '8099\n');
+
+  const fp = run(t, ['--fingerprint']);
+  if (changed) fs.appendFileSync(path.join(t.lib, 'render.sh'), '\n# nudge\n');
+
+  execFileSync('bash', ['-c', 'AV_LIB="$1"; source "$1/common.sh"; source "$1/rows.sh"; post_reload "$2"', 'bash', t.lib, portfile], {
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      AGENTVIEW_SELF: t.self,
+      AGENTVIEW_LIB: t.lib,
+      ...t.seams.env,
+      AV_SCRIPT_FP: fp,
+      HOME: scratch('av-post-home-'),
+    },
+  });
+  return fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
+}
+
+test('the background poster reloads while the script is unchanged', () => {
+  const t = copyTree();
+  const posted = postedAction(t, { changed: false });
+  assert.match(posted, /reload\(/, `expected a reload POST, got: ${posted}`);
+  assert.doesNotMatch(posted, /become\(/);
+});
+
+test('the background poster restarts the picker when the script changed', () => {
+  // The inotify-driven repaint is the one that fires without anybody pressing a key, so
+  // leaving it unconditional means the skew can appear while the picker sits untouched.
+  const t = copyTree();
+  const posted = postedAction(t, { changed: true });
+  assert.match(posted, /become\(/, `expected a become POST, got: ${posted}`);
+});
+
 test('--fingerprint is unchanged when a module is rewritten with identical bytes', () => {
   // chezmoi apply rewrites files whether or not their content moved; a stat-based
   // fingerprint would restart the picker on every apply, including no-op ones.

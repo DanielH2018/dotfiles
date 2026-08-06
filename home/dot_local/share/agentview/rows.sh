@@ -625,14 +625,26 @@ post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into
   # Shared by --refresh-remote (startup + CTRL+F) and the watch loop below, so there is one
   # curl call to keep working instead of two copies drifting apart. Missing curl or an empty
   # port degrades quietly -- the picker just keeps showing what it already has.
-  local pf="$1" p self
+  local pf="$1" p self action
   command -v curl >/dev/null 2>&1 || return 0
   [ -n "$pf" ] || return 0
   for _ in $(seq 1 40); do [ -s "$pf" ] && break; sleep 0.05; done   # await fzf's port (start-bind)
   p=$(cat "$pf" 2>/dev/null)
   self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
-  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" \
-      --data "reload('$self' --body)+refresh-preview" >/dev/null 2>&1
+  # This is the repaint nobody triggers -- it arrives from inotify while the picker sits
+  # untouched -- so it needs the same check the key binds get, or an upgrade can skew the
+  # columns of a picker that was never touched. The decision happens HERE rather than in a
+  # POSTed transform: measured against fzf 0.74.2, a transform(...) POSTed to --listen does
+  # not take effect, and this process is already reading the same files with the picker's
+  # baseline inherited through the environment.
+  action="reload('$self' --body)+refresh-preview"
+  av_script_fingerprint
+  if [ -n "${AV_SCRIPT_FP:-}" ] && [ "$_av_sfp" != "$AV_SCRIPT_FP" ]; then
+    # No query: the poster does not know what is typed, and --listen resolves no placeholder
+    # for it. Losing the filter on a background restart beats rendering wrong columns.
+    action="become('$self')"
+  fi
+  [ -n "$p" ] && curl -s -XPOST "127.0.0.1:$p" --data "$action" >/dev/null 2>&1
   return 0
 }
 
