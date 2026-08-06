@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily check that Claude Code telemetry is still reaching a backend
+
+[Timer]
+# 08:12, off the hour and clear of claude-changelog-watch at 07:37 — two model-adjacent jobs
+# waking the machine together buys nothing, and the sweep wants the other one's ssh finished.
+OnCalendar=*-*-* 08:12:00
+# The failure this detects persists until someone restarts the session, so a run missed to a
+# powered-down morning still finds it the next boot. Nothing here is time-sensitive enough to
+# want the run skipped instead.
+Persistent=true
+# No deadline, so let systemd batch it rather than wake the machine. The randomisation also
+# keeps a catch-up run off the exact moment of boot, when the network may not be up.
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

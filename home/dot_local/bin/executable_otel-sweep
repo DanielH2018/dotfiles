@@ -50,6 +50,11 @@ SSH_OPTS = [
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=5",
     "-o", "StrictHostKeyChecking=accept-new",
+    # ~/.ssh/config forwards ports to these hosts, and a second connection cannot
+    # bind them again — three lines of "Address already in use" on every probe.
+    # Harmless, but it turns a daily timer's journal into noise, and this tool
+    # needs no forwarding of its own.
+    "-o", "ClearAllForwardings=yes",
 ]
 
 DEFAULT_TIMEOUT = 120

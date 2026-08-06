@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# otel-sweep-watch — daily check that every machine is actually exporting telemetry.
+#
+# The failure this exists for is silent by construction: a session started before its
+# collector was up exports nothing for its entire life, while pods stay green and the
+# counters keep climbing. Two of them went unnoticed for three days each. A journal line
+# nobody reads would be exactly as invisible, so findings raise a desktop notification —
+# the one place this deviates from the other health timers here.
+#
+# What counts as a finding is deliberately narrow, because a check that cries wolf daily
+# gets muted and then detects nothing:
+#   - a machine that cannot be reached at all
+#   - Loki unreachable on a machine that answered (nothing is recorded without it)
+#   - a session whose transcript is growing while Loki holds none of its events
+# Prometheus or Tempo being unreachable is NOT a finding: daniel-server legitimately runs
+# no Tempo, so flagging it would fire every single day forever.
+#
+# Exits non-zero on findings so `systemctl --user --failed` is a second, passive signal.
+set -uo pipefail
+
+SWEEP=${OTEL_SWEEP:-otel-sweep}
+
+if ! command -v "$SWEEP" >/dev/null 2>&1; then
+  printf 'otel-sweep-watch: %s not on PATH\n' "$SWEEP" >&2
+  exit 2
+fi
+
+# --deep is the point: silent-session detection is the only check here that the fast pass
+# cannot make. It costs a per-session Loki query on each machine, affordable once a day.
+raw=$("$SWEEP" --deep 2>/dev/null)
+if [ -z "$raw" ]; then
+  printf 'otel-sweep-watch: sweep produced no output\n' >&2
+  exit 2
+fi
+
+# Quoted heredoc so bash expands nothing and the program can use either quote style —
+# escaped quotes inside f-string expressions only parse on Python 3.12+.
+read -r -d '' SUMMARISE <<'PY'
+import json, sys
+
+data = json.load(sys.stdin)
+findings, lines = [], []
+
+for host in sorted(data):
+    d = data[host]
+    if "error" in d:
+        findings.append("%s: unreachable (%s)" % (host, d["error"][:80]))
+        lines.append("%s: UNREACHABLE" % host)
+        continue
+    if d.get("backends", {}).get("loki") != "ready":
+        findings.append("%s: Loki unreachable - nothing is being recorded" % host)
+    silent = d.get("silent_sessions", [])
+    for s in silent:
+        findings.append("%s: session %s exporting nowhere (%sMB)"
+                        % (host, s["session"][:8], s["mb"]))
+    lines.append("%s: events=%d sessions=%d silent=%d"
+                 % (host, sum(d.get("events_24h", {}).values()),
+                    d.get("sessions_24h", 0), len(silent)))
+
+print("\n".join(lines))
+if findings:
+    print("FINDINGS:")
+    for f in findings:
+        print("  " + f)
+PY
+
+report=$(printf '%s' "$raw" | python3 -c "$SUMMARISE")
+status=$?
+
+printf '%s\n' "$report"
+if [ "$status" -ne 0 ]; then
+  printf 'otel-sweep-watch: could not parse sweep output\n' >&2
+  exit 2
+fi
+
+case $report in
+  *FINDINGS:*) ;;
+  *) exit 0 ;;
+esac
+
+# Best effort: a headless box has no bus, and the journal line above is still the record.
+if command -v notify-send >/dev/null 2>&1; then
+  detail=$(printf '%s' "$report" | sed -n '/FINDINGS:/,$p' | tail -n +2 | head -5)
+  notify-send --urgency=normal --icon=dialog-warning \
+    "Claude telemetry" "$detail" 2>/dev/null || true
+fi
+
+exit 1
