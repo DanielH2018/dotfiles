@@ -59,6 +59,49 @@ test('--fingerprint changes when the launcher itself changes', () => {
   assert.notStrictEqual(run(t, ['--fingerprint']), before);
 });
 
+test('--repaint asks for a reload when the fingerprint matches', () => {
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  const out = run(t, ['--repaint', ''], { AV_SCRIPT_FP: fp });
+  assert.match(out, /^reload\(/, `expected a reload action, got: ${out}`);
+  assert.doesNotMatch(out, /become/);
+});
+
+test('--repaint asks fzf to replace itself when a module changed underneath it', () => {
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  fs.appendFileSync(path.join(t.lib, 'render.sh'), '\n# nudge\n');
+  const out = run(t, ['--repaint', ''], { AV_SCRIPT_FP: fp });
+  assert.match(out, /^become\(/, `expected a become action, got: ${out}`);
+});
+
+test('--repaint carries the typed query into the restart', () => {
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  fs.appendFileSync(path.join(t.lib, 'render.sh'), '\n# nudge\n');
+  const out = run(t, ['--repaint', 'chez'], { AV_SCRIPT_FP: fp });
+  assert.match(out, /--query 'chez'/, `query must survive the restart, got: ${out}`);
+});
+
+test('--repaint quotes a query that would otherwise break out of the become string', () => {
+  // become() hands its argument to a shell, so an apostrophe in the filter is a
+  // quoting hole, not a cosmetic issue.
+  const t = copyTree();
+  const fp = run(t, ['--fingerprint']);
+  fs.appendFileSync(path.join(t.lib, 'render.sh'), '\n# nudge\n');
+  const out = run(t, ['--repaint', "it's"], { AV_SCRIPT_FP: fp });
+  assert.match(out, /--query 'it'\\''s'/, `expected a shell-safe query, got: ${out}`);
+});
+
+test('--repaint with no exported fingerprint does not restart in a loop', () => {
+  // A missing AV_SCRIPT_FP means "launched by something that never set it" -- an old
+  // picker, or a direct call. Restarting on that would replace the picker on every
+  // keypress forever, which is worse than the skew being fixed.
+  const t = copyTree();
+  const out = run(t, ['--repaint', '']);
+  assert.match(out, /^reload\(/, `expected reload when no baseline was exported, got: ${out}`);
+});
+
 test('--fingerprint is unchanged when a module is rewritten with identical bytes', () => {
   // chezmoi apply rewrites files whether or not their content moved; a stat-based
   // fingerprint would restart the picker on every apply, including no-op ones.

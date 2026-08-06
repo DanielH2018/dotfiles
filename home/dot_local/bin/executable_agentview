@@ -291,7 +291,7 @@ _av_self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || _av_self="${BASH_S
 AV_LIB="${AGENTVIEW_LIB:-${_av_self%/*}/../share/agentview}"
 case "$mode" in
   --card|--keys|--groupby)           _avmods="" ;;
-  --fingerprint)                     _avmods="common" ;;
+  --fingerprint|--repaint)           _avmods="common" ;;
   --spawn)                           _avmods="spawn" ;;
   --resolve)                         _avmods="common focus" ;;
   # jump_or_report (focus.sh) has a defensive fold: guard before do_jump — reachable via a
@@ -315,6 +315,25 @@ for _m in $_avmods; do
 done
 
 if [ "$mode" = "--fingerprint" ]; then av_script_fingerprint; printf '%s\n' "$_av_sfp"; exit 0; fi
+
+# --repaint QUERY: what every repaint bind now calls. It prints ONE fzf action -- a reload
+# when this fzf's argv still matches the script on disk, and a become when it does not, so
+# the replacement process parses its own --with-nth instead of inheriting a stale one.
+# An unset AV_SCRIPT_FP means nobody exported a baseline (a direct call, or a picker from
+# before this existed): reload, because restarting against no baseline never converges.
+if [ "$mode" = "--repaint" ]; then
+  av_script_fingerprint
+  _av_rp_self="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+  if [ -z "${AV_SCRIPT_FP:-}" ] || [ "$_av_sfp" = "$AV_SCRIPT_FP" ]; then
+    printf "reload('%s' --body)+refresh-preview" "$_av_rp_self"
+  else
+    # become() runs this through a shell, so the query is single-quoted with the
+    # embedded-quote escape rather than interpolated raw.
+    _av_rp_q=$(printf '%s' "${2:-}" | sed "s/'/'\\\\''/g")
+    printf "become('%s' --query '%s')" "$_av_rp_self" "$_av_rp_q"
+  fi
+  exit 0
+fi
 if [ "$mode" = "--resolve" ]; then resolve_key "${2:-}"; exit 0; fi
 if [ "$mode" = "--jump" ]; then jump_or_report "${2:-}"; exit $?; fi
 if [ "$mode" = "--remove" ]; then do_remove "${2:-}"; exit 0; fi
@@ -589,6 +608,14 @@ body=$(build_pretty); prof build_pretty
 # deployed path; AGENTVIEW_SELF overrides it so an un-deployed copy (e.g. a worktree under
 # review) can drive its own picker end-to-end without clobbering the installed binary.
 SELF="${AGENTVIEW_SELF:-$HOME/.local/bin/agentview}"
+# --query STR: seeds fzf's filter. Exists so --repaint's become can hand the typed query to
+# the picker that replaces it; harmless to pass by hand.
+AV_QUERY=''
+[ "$mode" = "--query" ] && AV_QUERY="${2:-}"
+# The baseline every --repaint compares against. Exported rather than passed as an argument,
+# because fzf's transform children inherit this process's environment.
+av_script_fingerprint
+export AV_SCRIPT_FP="$_av_sfp"
 # Live reload: open instantly on the cached snapshot above, then in the BACKGROUND
 # refresh the homelab cache over ssh and POST a `reload` into this fzf via its
 # --listen server, so fresh remote rows swap in without ever blocking the open. The
@@ -640,7 +667,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --track --id-nth=2 \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
-  --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' \
+  --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' --query="$AV_QUERY" \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
   --footer='  ↵ switch/fold · alt-# jump · ⌃t send · ⌃v resume · ⌃r rename · ⌃p pin · ⌃g group · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
@@ -663,7 +690,7 @@ sel=$(printf '%s\n' "$body" | fzf \
   --bind='ctrl-g:execute-silent('"'$SELF'"' --groupby)+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-r:execute('"'$SELF'"' --rename {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-p:execute-silent('"'$SELF'"' --pin {1})+reload('"'$SELF'"' --body)+refresh-preview' \
-  --bind='ctrl-f:reload('"'$SELF'"' --body)+refresh-preview+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
+  --bind='ctrl-f:transform('"'$SELF'"' --repaint {q})+execute-silent(nohup '"'$SELF'"' --refresh-remote '"$portfile"' >/dev/null 2>&1 &)' \
   --bind='ctrl-n:'"$AV_EXEC"'('"'$SELF'"' --spawn '"$portfile"')+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='ctrl-x:'"$AV_EXEC"'('"'$SELF'"' --remove {1})+reload('"'$SELF'"' --body)+refresh-preview' \
   --bind='alt-1:become('"'$SELF'"' --jump-nth 1)' \
