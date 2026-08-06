@@ -34,6 +34,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 
 PROG = "otel-sweep"
 
@@ -70,6 +71,11 @@ SSH_OPTS = [
 ]
 
 DEFAULT_TIMEOUT = 120
+
+# Long enough to outlast the transients that actually occur here — a WireGuard
+# rekey, a firewall rate limiter's window — and short enough that a machine that
+# is genuinely down still costs one extra connect timeout, not a stalled timer.
+RETRY_PAUSE = 3
 
 # The whole remote side, as a constant. Nothing is substituted into it; the mode
 # arrives as argv so this string stays fixed at every call site.
@@ -208,27 +214,35 @@ if MODE == "deep":
 
     # A session whose transcript is being written while Loki has none of its
     # events is exporting nowhere. That is the failure this tool exists for.
+    #
+    # Loki is also the only evidence that any session exported at all, so when it
+    # is unreachable the query returns nothing and EVERY recently-written
+    # transcript looks silent. The unreachable backend is already a finding on its
+    # own; letting it manufacture a second finding per transcript is how one
+    # outage becomes a wall of alarms about sessions that are exporting fine.
+    # Skip the check instead of reporting all of it.
     seen = set()
-    for r in loki("sum by (session_id) (count_over_time(" + CC + " [720h]))"):
-        sid = r.get("metric", {}).get("session_id")
-        if sid:
-            seen.add(sid)
     silent = []
-    cutoff = time.time() - 48 * 3600
-    for path in (pathlib.Path.home() / ".claude" / "projects").glob("*/*.jsonl"):
-        try:
-            st = path.stat()
-        except OSError:
-            continue
-        if st.st_mtime < cutoff or path.stem in seen:
-            continue
-        silent.append({
-            "session": path.stem,
-            "mb": round(st.st_size / 1048576, 1),
-            "modified": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
-            ),
-        })
+    if BASE["loki"]:
+        for r in loki("sum by (session_id) (count_over_time(" + CC + " [720h]))"):
+            sid = r.get("metric", {}).get("session_id")
+            if sid:
+                seen.add(sid)
+        cutoff = time.time() - 48 * 3600
+        for path in (pathlib.Path.home() / ".claude" / "projects").glob("*/*.jsonl"):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if st.st_mtime < cutoff or path.stem in seen:
+                continue
+            silent.append({
+                "session": path.stem,
+                "mb": round(st.st_size / 1048576, 1),
+                "modified": time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
+                ),
+            })
     out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)[:10]
     out["known_sessions"] = len(seen)
 
@@ -237,6 +251,23 @@ print(json.dumps(out))
 
 
 def probe(dest, mode, timeout):
+    """Reach one machine, tolerating a single transient.
+
+    A refused or unrouteable connection is not evidence a machine is down: the
+    ssh path here crosses a WireGuard tunnel that rekeys and a UFW rate limiter
+    that rejects bursts, and both recover within seconds. Reporting the first
+    failure as "unreachable" is what turns those into a desktop notification
+    about a machine that is fine. Only the ssh path can fail this way, so the
+    local probe is not retried.
+    """
+    result = probe_once(dest, mode, timeout)
+    if dest is None or "error" not in result:
+        return result
+    time.sleep(RETRY_PAUSE)
+    return probe_once(dest, mode, timeout)
+
+
+def probe_once(dest, mode, timeout):
     """Run PROBE on one machine. argv is constants; there is no shell."""
     if dest is None:
         argv = ["python3", "-", mode]

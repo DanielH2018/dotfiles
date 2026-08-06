@@ -78,11 +78,36 @@ case $report in
   *) exit 0 ;;
 esac
 
-# Best effort: a headless box has no bus, and the journal line above is still the record.
-if command -v notify-send >/dev/null 2>&1; then
-  detail=$(printf '%s' "$report" | sed -n '/FINDINGS:/,$p' | tail -n +2 | head -5)
-  notify-send --urgency=normal --icon=dialog-warning \
-    "Claude telemetry" "$detail" 2>/dev/null || true
+findings=$(printf '%s' "$report" | sed -n '/FINDINGS:/,$p' | tail -n +2)
+
+# An unchanged finding set tells you nothing the last banner already did, and this
+# script kept no memory, so anything that persisted raised a fresh notification on
+# every single run. Re-notify when the findings change, or when the window lapses
+# — a problem that is still there should resurface rather than go quiet for good.
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/otel-sweep-watch
+repeat_after=${OTEL_SWEEP_WATCH_REPEAT_AFTER:-21600}
+fingerprint=$(printf '%s' "$findings" | cksum | cut -d' ' -f1)
+now=$(date +%s)
+notify=yes
+if [ -r "$state_dir/last-notified" ]; then
+  previous=$(cut -d' ' -f1 "$state_dir/last-notified")
+  since=$(cut -d' ' -f2 "$state_dir/last-notified")
+  case $since in
+    '' | *[!0-9]*) since=0 ;;
+  esac
+  if [ "$previous" = "$fingerprint" ] && [ "$((now - since))" -lt "$repeat_after" ]; then
+    notify=no
+  fi
+fi
+
+if [ "$notify" = yes ]; then
+  # Best effort: a headless box has no bus, and the journal line above is still the record.
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send --urgency=normal --icon=dialog-warning \
+      "Claude telemetry" "$(printf '%s' "$findings" | head -5)" 2>/dev/null || true
+  fi
+  mkdir -p "$state_dir" 2>/dev/null || true
+  printf '%s %s\n' "$fingerprint" "$now" >"$state_dir/last-notified" 2>/dev/null || true
 fi
 
 exit 1

@@ -93,6 +93,29 @@ test('a burst of sweeps reuses one connection per machine', () => {
   assert.match(SRC, /"ControlPersist=\d+"/, 'the master must outlive a single run to help across runs');
 });
 
+test('a single transient is retried before a machine is called unreachable', () => {
+  // The ssh path crosses a WireGuard tunnel that rekeys and a UFW rate limiter
+  // that rejects bursts; both recover in seconds. Treating the first refusal as
+  // an outage is what raises a desktop notification about a healthy machine.
+  assert.match(SRC, /def probe_once\(dest, mode, timeout\)/);
+  assert.match(SRC, /time\.sleep\(RETRY_PAUSE\)/);
+  assert.match(SRC, /return probe_once\(dest, mode, timeout\)/);
+  // A local probe cannot fail this way, so it must not pay for the retry.
+  assert.match(SRC, /if dest is None or "error" not in result/);
+});
+
+test('silent-session detection is skipped when Loki is unreachable', () => {
+  // The set of known sessions comes from Loki, so an unreachable Loki returns
+  // nothing and every recently-written transcript reads as exporting nowhere —
+  // one outage manufacturing a finding per session on top of its own.
+  const deep = SRC.slice(SRC.indexOf('if MODE == "deep":'), SRC.indexOf('print(json.dumps(out))'));
+  assert.match(deep, /if BASE\["loki"\]:/, 'the scan must be gated on Loki being reachable');
+  assert.ok(
+    deep.indexOf('if BASE["loki"]:') < deep.indexOf('silent.append'),
+    'the guard must wrap the scan rather than follow it',
+  );
+});
+
 test('the remote probe only ever reaches a private address', () => {
   // Loki is unpublished on daniel-server, so the probe resolves a container IP.
   // That discovered value is the one place remote data selects a network target.

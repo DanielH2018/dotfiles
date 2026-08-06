@@ -36,11 +36,32 @@ function hash(s) {
   return h;
 }
 
-function run(payload) {
+// A notify-send that records instead of drawing, so the tests can assert on what
+// the operator would actually have seen.
+function notifySpy() {
+  const bin = fs.mkdtempSync(path.join(DIR, 'bin-'));
+  const log = path.join(bin, 'calls');
+  fs.writeFileSync(path.join(bin, 'notify-send'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
+  fs.chmodSync(path.join(bin, 'notify-send'), 0o755);
+  return {
+    bin,
+    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []),
+  };
+}
+
+function run(payload, extra = {}) {
   try {
     const stdout = execFileSync('bash', [WATCH], {
       encoding: 'utf8',
-      env: { ...process.env, OTEL_SWEEP: stub(payload), PATH: process.env.PATH },
+      env: {
+        ...process.env,
+        OTEL_SWEEP: stub(payload),
+        PATH: process.env.PATH,
+        // Each run gets its own state dir by default, so the dedup memory neither
+        // reaches the real ~/.local/state nor leaks between tests.
+        XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'state-')),
+        ...extra,
+      },
     });
     return { code: 0, stdout };
   } catch (err) {
@@ -103,4 +124,39 @@ test('an unreachable machine is a finding, not a crash', { skip }, () => {
 test('unparseable sweep output exits 2, distinct from a finding', { skip }, () => {
   const { code } = run('not json at all');
   assert.strictEqual(code, 2, 'a broken sweep must not look like a clean run');
+});
+
+const LOKI_DOWN = JSON.stringify({
+  box: { backends: { loki: 'unreachable', prometheus: 'ready', tempo: 'ready' }, events_24h: {}, sessions_24h: 0, silent_sessions: [] },
+});
+
+test('an unchanged finding set notifies once, not on every run', { skip }, () => {
+  const spy = notifySpy();
+  const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'dedup-')), PATH: `${spy.bin}:${process.env.PATH}` };
+
+  assert.strictEqual(run(LOKI_DOWN, env).code, 1);
+  assert.strictEqual(spy.calls().length, 1, 'the first finding must reach the desktop');
+
+  assert.strictEqual(run(LOKI_DOWN, env).code, 1, 'still a finding, so still exit 1');
+  assert.strictEqual(spy.calls().length, 1, 'repeating the same findings must not raise a second banner');
+});
+
+test('something still broken resurfaces once the window lapses', { skip }, () => {
+  const spy = notifySpy();
+  const env = {
+    XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'window-')),
+    PATH: `${spy.bin}:${process.env.PATH}`,
+    OTEL_SWEEP_WATCH_REPEAT_AFTER: '0',
+  };
+  run(LOKI_DOWN, env);
+  run(LOKI_DOWN, env);
+  assert.strictEqual(spy.calls().length, 2, 'dedup must not silence a persisting problem for good');
+});
+
+test('a different finding still notifies inside the window', { skip }, () => {
+  const spy = notifySpy();
+  const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'changed-')), PATH: `${spy.bin}:${process.env.PATH}` };
+  run(LOKI_DOWN, env);
+  run(JSON.stringify({ server: { error: 'ssh: connect to host daniel-server port 22: No route to host' } }), env);
+  assert.strictEqual(spy.calls().length, 2, 'a new problem must not be masked by an unrelated older one');
 });
