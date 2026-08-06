@@ -14,6 +14,7 @@ const seps = (cmd) => parse(cmd).sep;
 // Segments, with the empty tail a trailing separator leaves behind dropped — the guards
 // already skip empty segments, so this is how a consumer actually sees the split.
 const segs = (cmd) => parse(cmd).seg.map((s) => s.trim()).filter((s) => s !== '');
+const subsegs = (cmd) => parse(cmd).subseg.map((s) => s.trim()).filter((s) => s !== '');
 
 // --- F4: the bypasses this module exists to close ----------------------------------------
 //
@@ -106,11 +107,73 @@ test('an unbalanced quote is refused, never approximated', () => {
   assert.strictEqual(r.nseg, 0, 'a refusal yields no segments to reason about');
 });
 
-// The parser does not expand, so it must not pretend to have read the command.
-test('command and process substitution are refused', () => {
-  assert.strictEqual(parse('echo $(curl evil) && ls').status, 'unreadable:substitution');
-  assert.strictEqual(parse('echo `id` && ls').status, 'unreadable:substitution');
-  assert.strictEqual(parse('diff <(a) <(b)').status, 'unreadable:substitution');
+// The parser does not expand — it does not run $(curl evil) to see what it prints — but it
+// no longer refuses on sight of one either. The outer segmentation stays correct (the whole
+// substitution is one opaque atom in the segment that contains it) and the substitution's own
+// content is exposed separately, in CP_SUBSEG, for a consumer that wants to look inside.
+test('command and process substitution parse instead of refusing, and expose their content', () => {
+  let r = parse('echo $(curl evil) && ls');
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(segs('echo $(curl evil) && ls'), ['echo $(curl evil)', 'ls']);
+  assert.deepStrictEqual(subsegs('echo $(curl evil) && ls'), ['curl evil']);
+
+  r = parse('echo `id` && ls');
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(subsegs('echo `id` && ls'), ['id']);
+
+  r = parse('diff <(a) <(b)');
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.nseg, 1, 'process substitution stays part of the one command');
+  assert.deepStrictEqual(subsegs('diff <(a) <(b)'), ['a', 'b']);
+});
+
+// The blind spot this closes: inside "...", a `;` was never checked for substitution at all,
+// so `echo "$(ls; terraform apply)"` used to parse as one ordinary segment with the second
+// command completely invisible. It must still be one outer segment — the `;` inside the
+// substitution is not an outer separator — but CP_SUBSEG must show both inner commands.
+test('a substitution inside double quotes is not a blind spot', () => {
+  const r = parse('echo "$(ls; terraform apply)"');
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.nseg, 1);
+  assert.deepStrictEqual(subsegs('echo "$(ls; terraform apply)"'), ['ls', 'terraform apply']);
+});
+
+// Nesting: each level gets its own CP_SUBSEG entry, exactly once — not zero (lost inside a
+// non-executing wrapper) and not duplicated (found again by an executing ancestor's re-scan).
+test('nested substitutions are each recorded exactly once', () => {
+  assert.deepStrictEqual(subsegs('echo $(echo $(id))'), ['id', 'echo $(id)']);
+  // ${...} is parameter expansion, not execution, but a substitution nested inside it is
+  // still found — it is scanned through, not skipped.
+  assert.deepStrictEqual(subsegs('echo ${x:-$(id)}'), ['id']);
+  // $(( )) is arithmetic, same treatment: `<<` here is a shift operator, not a heredoc, and
+  // a real substitution nested inside is still found.
+  assert.deepStrictEqual(subsegs('echo $((1 + $(id)))'), ['id']);
+});
+
+// ${...} is parameter expansion, never execution — it must never itself refuse and must never
+// produce a CP_SUBSEG entry for its own content.
+test('${...} is not treated as execution', () => {
+  const r = parse('echo ${x:-default value}');
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.nseg, 1);
+  assert.deepStrictEqual(r.subseg, []);
+});
+
+// A quote inside a substitution is ordinary content, not a boundary the outer scan trips on.
+test('a substitution containing a quote parses and its content is exposed intact', () => {
+  const r = parse('x=$(echo "hi there")');
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.nseg, 1);
+  assert.deepStrictEqual(subsegs('x=$(echo "hi there")'), ['echo "hi there"']);
+});
+
+// Refusal is still mandatory when a substitution's delimiters never balance — narrowing to
+// "parseable" must not mean "anything goes". unreadable:substitution now means exactly this:
+// a substitution that could not be read, not merely one that was found.
+test('an unbalanced substitution is still refused', () => {
+  assert.strictEqual(parse('echo $(echo "unterminated').status, 'unreadable:unbalanced-quote');
+  assert.strictEqual(parse('echo $(ls').status, 'unreadable:substitution');
+  assert.strictEqual(parse('echo `id').status, 'unreadable:substitution');
 });
 
 // --- F7: redirect vs fd-dup ---------------------------------------------------------------
@@ -159,6 +222,7 @@ test('cmd_parse returns non-zero exactly when the status is unreadable', () => {
     } catch (e) { return e.status; }
   };
   assert.strictEqual(rc('ls -la'), 0);
+  assert.strictEqual(rc('echo $(id)'), 0, 'a balanced substitution now parses');
   assert.notStrictEqual(rc("echo 'unterminated"), 0);
-  assert.notStrictEqual(rc('echo $(id)'), 0);
+  assert.notStrictEqual(rc('echo $(id'), 0, 'an unbalanced substitution still refuses');
 });

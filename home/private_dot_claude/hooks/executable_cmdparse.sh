@@ -36,13 +36,33 @@
 #
 # Populated on success:
 #   CP_STATUS        ok | unreadable:unbalanced-quote | unreadable:substitution
-#   CP_NSEG          number of segments
-#   CP_SEG[i]        raw segment text, quotes intact, as the shell would see it
+#   CP_NSEG          number of top-level segments
+#   CP_SEG[i]        raw segment text, quotes intact, as the shell would see it — a
+#                    substitution's delimiters and content stay in the segment that contains
+#                    it; this parser does not strip or evaluate them
 #   CP_SEP[i]        separator that TERMINATED segment i: && || ; | & newline eof
 #   CP_HEREDOC[i]    heredoc bodies attached to segment i, \x1f-joined ('' if none)
+#   CP_NSUBSEG       number of substitution segments (0 if the command has none)
+#   CP_SUBSEG[i]     content of one $( ), `...`, or <( )/>( ), segmented the same way as
+#                    CP_SEG and flattened across nesting depth — a substitution inside a
+#                    substitution gets its own entry alongside its parent's. This is what
+#                    actually runs: `echo "$(ls; terraform apply)"` is CP_NSEG=1 (the `;`
+#                    inside the substitution is not an outer separator) and
+#                    CP_SUBSEG=("ls" "terraform apply"). No separator or heredoc is recorded
+#                    per sub-segment.
 #
-# A trailing separator leaves a final empty segment (`ls;` -> 2 segments). That is honest
-# rather than tidy; consumers already skip empty segments.
+# $(( )) and ${ } are read out to their own boundary — depth-tracked and quote-aware, same as
+# a substitution — but are not themselves executing constructs, so closing one does not add a
+# CP_SUBSEG entry for its own content. Scanning still continues through it, so a real
+# substitution nested inside either ($((n=$(id))), ${x:-$(id)}) is still found and recorded.
+# unreadable:substitution now means "a substitution's delimiters never balanced", not "a
+# substitution was found" — CP_STATUS=ok is compatible with a command that contains one, and
+# CP_SUBSEG is how a consumer sees inside it.
+#
+# A trailing separator terminates the last CP_SEG rather than starting an empty one
+# (`ls;` -> 1 segment, not 2) — allow-compound-bash.sh's compound gate keys on CP_NSEG, and a
+# trailing newline is ordinary in a multi-line prompt. CP_SUBSEG does not collapse a trailing
+# empty entry; consumers already skip empty segments regardless.
 #
 # This slice deliberately stops at segmentation. Wrapper stripping, argv, canonical flags and
 # write-target intent are later slices of the same module, and each one changes what the
@@ -57,6 +77,8 @@ CP_NSEG=0
 CP_SEG=()
 CP_SEP=()
 CP_HEREDOC=()
+CP_NSUBSEG=0
+CP_SUBSEG=()
 
 # --- heredoc lift -----------------------------------------------------------------------
 #
@@ -90,6 +112,37 @@ _cp_lift() {
       \'|\") q=$c; _cp_stripped="$_cp_stripped$c"; i=$((i + 1)); continue ;;
       \\)    _cp_stripped="$_cp_stripped$c${s:i+1:1}"; i=$((i + 2)); continue ;;
     esac
+
+    # `$((` opens arithmetic, where `<<`/`>>` are shift operators, not heredoc redirects.
+    # Reading one as a heredoc start is a real bug, already present and unguarded for bare
+    # `((1<<2))` today — verified against this file before this fix existed. `$((1<<2))` would
+    # exhibit the same failure the moment segmentation stops refusing on `$(`, so it closes
+    # here. A heredoc body never legitimately appears inside arithmetic, so the whole span is
+    # skipped opaque rather than heredoc-scanned; bare `((...))` (no `$`) is a separate,
+    # pre-existing gap this change does not touch.
+    if [ "$c" = '$' ] && [ "${s:i+1:1}" = '(' ] && [ "${s:i+2:1}" = '(' ]; then
+      _cp_stripped="$_cp_stripped\$(("; i=$((i + 3))
+      local adepth=1 aq='' ac
+      while [ "$i" -lt "$n" ] && [ "$adepth" -gt 0 ]; do
+        ac=${s:i:1}
+        if [ -n "$aq" ]; then
+          if [ "$aq" = '"' ] && [ "$ac" = $'\\' ]; then
+            _cp_stripped="$_cp_stripped$ac${s:i+1:1}"; i=$((i + 2)); continue
+          fi
+          [ "$ac" = "$aq" ] && aq=''
+          _cp_stripped="$_cp_stripped$ac"; i=$((i + 1)); continue
+        fi
+        case $ac in
+          \'|\") aq=$ac; _cp_stripped="$_cp_stripped$ac"; i=$((i + 1)); continue ;;
+          \\)    _cp_stripped="$_cp_stripped$ac${s:i+1:1}"; i=$((i + 2)); continue ;;
+          '(')   adepth=$((adepth + 1)) ;;
+          ')')   adepth=$((adepth - 1)) ;;
+        esac
+        _cp_stripped="$_cp_stripped$ac"; i=$((i + 1))
+      done
+      [ -n "$aq" ] && { _cp_reason=unbalanced-quote; return 1; }
+      continue
+    fi
 
     # `<<<` is a herestring — one word, no body, not a heredoc.
     if [ "$c" = '<' ] && [ "${s:i+1:1}" = '<' ] && [ "${s:i+2:1}" != '<' ]; then
@@ -186,65 +239,216 @@ _cp_emit() {
   CP_NSEG=$((j + 1))
 }
 
-_cp_segment() {
-  local s="$1"
-  local n=${#s}   # separate `local`: see _cp_lift
-  local i=0 q='' cur='' c next prev start=0
+# A substitution's content is exposed flattened, not nested: every $( ), backtick, and
+# <( )/>( ) found at any depth gets its own entry here, in the order its closing delimiter is
+# reached. A consumer that only pattern-matches command names (the shadow census does) does
+# not need the tree shape back, only that nothing which actually runs stays invisible to it.
+_cp_emit_sub() {
+  CP_SUBSEG[CP_NSUBSEG]=$1
+  CP_NSUBSEG=$((CP_NSUBSEG + 1))
+}
+
+# Recursion guard against adversarial nesting (`$($($($(...))))`): each level re-scans its own
+# content from scratch (see _cp_scan), so total work is O(depth * len) — bounded by refusing
+# past this depth, not by capping input size.
+CP_MAX_SUBST_DEPTH=15
+
+# _cp_scan segments s[start:end) as one command list: either the top-level command
+# (IS_TOP=1, emitting into CP_SEG/CP_SEP/CP_HEREDOC via _cp_emit) or one substitution's
+# content (IS_TOP=0, emitting flattened into CP_SUBSEG via _cp_emit_sub). A stack of open
+# frames tracks nesting — quote and squote/dquote/paren/brace kinds — because bash starts a
+# genuinely fresh quoting context inside a substitution: `echo "$(echo "inner")"` is valid,
+# and the inner double quotes must not be read as closing the outer pair. `;`/`&&`/`|`/newline
+# only separate at THIS call's own stack depth 0 — one inside an open quote or substitution,
+# at any depth, is data, not a boundary.
+#
+# Closing an executing frame (backtick, $( ), <( )/>( )) recurses into this same function over
+# its own content with IS_TOP=0, which is what exposes what actually runs. $(( )) and ${ } are
+# read out to their own boundary the same depth-tracked, quote-aware way, but are not
+# themselves executing constructs, so closing one does not emit a CP_SUBSEG entry for its own
+# content — scanning still continues through it, so a real substitution nested inside either
+# ($((n=$(id))), ${x:-$(id)}) is still found and still recorded.
+_cp_scan() {
+  local s="$1" start_="$2" end_="$3" is_top="$4" sdepth="$5"
+  local i=$start_ n=$end_
+  local cur='' seg_start=$start_ c next prev top
+  local stk_kind stk_cnt stk_start stk_n=0 _cp_anc _cp_ak
+  stk_kind=(); stk_cnt=(); stk_start=()
+
+  if [ "$sdepth" -gt "$CP_MAX_SUBST_DEPTH" ]; then _cp_reason=substitution; return 1; fi
 
   while [ "$i" -lt "$n" ]; do
     c=${s:i:1}
-    if [ -n "$q" ]; then
-      if [ "$q" = '"' ] && [ "$c" = $'\\' ]; then
-        cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue
+    next=${s:i+1:1}
+    top=''
+    [ "$stk_n" -gt 0 ] && top=${stk_kind[stk_n - 1]}
+
+    # Inside '...', nothing is special but the closing quote — not even a backslash.
+    if [ "$top" = squote ]; then
+      cur="$cur$c"; i=$((i + 1))
+      [ "$c" = "'" ] && stk_n=$((stk_n - 1))
+      continue
+    fi
+
+    if [ "$c" = $'\\' ]; then
+      cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue
+    fi
+
+    if [ "$c" = "'" ]; then
+      # A literal apostrophe inside "...", not a quote — single quotes don't nest-quote there.
+      if [ "$top" = dquote ]; then
+        cur="$cur$c"; i=$((i + 1)); continue
       fi
-      [ "$c" = "$q" ] && q=''
+      stk_kind[stk_n]=squote; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
       cur="$cur$c"; i=$((i + 1)); continue
     fi
-    case $c in
-      \'|\") q=$c; cur="$cur$c"; i=$((i + 1)); continue ;;
-      \\)    cur="$cur$c${s:i+1:1}"; i=$((i + 2)); continue ;;
-    esac
 
-    next=${s:i+1:1}
-    # Command and process substitution can smuggle an unlisted command inside an otherwise
-    # allowed segment. This parser does not expand, so it must not pretend to have read the
-    # command: refuse, and let the caller defer.
-    if [ "$c" = '`' ] \
-      || { [ "$c" = '$' ] && [ "$next" = '(' ]; } \
-      || { { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ "$next" = '(' ]; }; then
-      _cp_reason=substitution; return 1
+    if [ "$c" = '"' ]; then
+      if [ "$top" = dquote ]; then
+        stk_n=$((stk_n - 1))
+        cur="$cur$c"; i=$((i + 1)); continue
+      fi
+      stk_kind[stk_n]=dquote; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
+      cur="$cur$c"; i=$((i + 1)); continue
     fi
 
-    if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
-      _cp_emit "$cur" "$c$next" "$start" "$i"
-      cur=''; i=$((i + 2)); start=$i; continue
+    if [ "$c" = '`' ]; then
+      if [ "$top" = backtick ]; then
+        stk_n=$((stk_n - 1))
+        # Only recurse if no still-open ancestor is itself executing ($( ), <( )/>( ), `...`).
+        # An executing ancestor will re-scan this exact range as part of its OWN content when
+        # it closes, so recursing here too would double the work and duplicate the entry.
+        # $(( ) and ${ } never re-scan (they are not executing), so nesting inside either
+        # does not defer.
+        _cp_anc=0; _cp_ak=0
+        while [ "$_cp_ak" -lt "$stk_n" ]; do
+          case ${stk_kind[_cp_ak]} in paren|procsub|backtick) _cp_anc=1 ;; esac
+          _cp_ak=$((_cp_ak + 1))
+        done
+        if [ "$_cp_anc" -eq 0 ]; then
+          if ! _cp_scan "$s" "${stk_start[stk_n]}" "$i" 0 "$((sdepth + 1))"; then return 1; fi
+        fi
+        cur="$cur$c"; i=$((i + 1)); continue
+      fi
+      stk_kind[stk_n]=backtick; stk_start[stk_n]=$((i + 1)); stk_n=$((stk_n + 1))
+      cur="$cur$c"; i=$((i + 1)); continue
     fi
-    # A lone `&` backgrounds what is to its left and starts a new command, so it separates.
-    # `>&N` / `<&N` are fd dups and must not. The old splitter refused the whole command on
-    # a lone `&`, which was safe but coarse; treating it as a separator is strictly narrower.
-    if [ "$c" = '&' ]; then
-      prev=''
-      [ -n "$cur" ] && prev=${cur:$((${#cur} - 1)):1}
-      if [ "$prev" != '>' ] && [ "$prev" != '<' ]; then
-        _cp_emit "$cur" '&' "$start" "$i"
-        cur=''; i=$((i + 1)); start=$i; continue
+
+    # $( ) is command substitution (executing); $(( is arithmetic — `<<`/`>>` inside it are
+    # shift operators, never heredoc redirects, which is what _cp_lift's own $(( skip exists
+    # to keep straight before this ever sees it. Both close on the same paren-depth-zero `)`;
+    # only the executing flag differs, decided once here at push and read back at pop.
+    if [ "$c" = '$' ] && [ "$next" = '(' ]; then
+      if [ "${s:i+2:1}" = '(' ]; then stk_kind[stk_n]=dparen; else stk_kind[stk_n]=paren; fi
+      stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
+      cur="$cur$c$next"; i=$((i + 2)); continue
+    fi
+
+    # ${ } is parameter expansion, not execution — never refused, never a CP_SUBSEG entry of
+    # its own — but scanned the same way so a substitution nested inside it is still found.
+    if [ "$c" = '$' ] && [ "$next" = '{' ]; then
+      stk_kind[stk_n]=brace; stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
+      cur="$cur$c$next"; i=$((i + 2)); continue
+    fi
+
+    # <( )/>( ) are only live at a command position, never inside "..." — real bash reads a
+    # quoted "<(...)" as literal text, not process substitution.
+    if { [ "$c" = '<' ] || [ "$c" = '>' ]; } && [ "$next" = '(' ] && [ "$top" != dquote ]; then
+      stk_kind[stk_n]=procsub; stk_cnt[stk_n]=0; stk_start[stk_n]=$((i + 2)); stk_n=$((stk_n + 1))
+      cur="$cur$c$next"; i=$((i + 2)); continue
+    fi
+
+    if [ "$top" = paren ] || [ "$top" = dparen ] || [ "$top" = procsub ]; then
+      if [ "$c" = '(' ]; then
+        stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} + 1))
+        cur="$cur$c"; i=$((i + 1)); continue
+      fi
+      if [ "$c" = ')' ]; then
+        if [ "${stk_cnt[stk_n - 1]}" -gt 0 ]; then
+          stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} - 1))
+          cur="$cur$c"; i=$((i + 1)); continue
+        fi
+        stk_n=$((stk_n - 1))
+        if [ "$top" != dparen ]; then
+          # Same deferral as the backtick case above: skip if an executing ancestor remains.
+          _cp_anc=0; _cp_ak=0
+          while [ "$_cp_ak" -lt "$stk_n" ]; do
+            case ${stk_kind[_cp_ak]} in paren|procsub|backtick) _cp_anc=1 ;; esac
+            _cp_ak=$((_cp_ak + 1))
+          done
+          if [ "$_cp_anc" -eq 0 ]; then
+            if ! _cp_scan "$s" "${stk_start[stk_n]}" "$i" 0 "$((sdepth + 1))"; then return 1; fi
+          fi
+        fi
+        cur="$cur$c"; i=$((i + 1)); continue
       fi
     fi
-    if [ "$c" = ';' ] || [ "$c" = '|' ]; then
-      _cp_emit "$cur" "$c" "$start" "$i"
-      cur=''; i=$((i + 1)); start=$i; continue
+
+    if [ "$top" = brace ]; then
+      if [ "$c" = '{' ]; then
+        stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} + 1))
+        cur="$cur$c"; i=$((i + 1)); continue
+      fi
+      if [ "$c" = '}' ]; then
+        if [ "${stk_cnt[stk_n - 1]}" -gt 0 ]; then
+          stk_cnt[stk_n - 1]=$((${stk_cnt[stk_n - 1]} - 1))
+          cur="$cur$c"; i=$((i + 1)); continue
+        fi
+        stk_n=$((stk_n - 1))
+        cur="$cur$c"; i=$((i + 1)); continue
+      fi
     fi
-    # The fix this module exists for. Heredoc bodies are already gone, so every newline left
-    # here separates two real commands.
-    if [ "$c" = $'\n' ]; then
-      _cp_emit "$cur" 'newline' "$start" "$i"
-      cur=''; i=$((i + 1)); start=$i; continue
+
+    if [ "$stk_n" -eq 0 ]; then
+      if { [ "$c" = '&' ] && [ "$next" = '&' ]; } || { [ "$c" = '|' ] && [ "$next" = '|' ]; }; then
+        if [ "$is_top" = 1 ]; then _cp_emit "$cur" "$c$next" "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
+        cur=''; i=$((i + 2)); seg_start=$i; continue
+      fi
+      # A lone `&` backgrounds what is to its left and starts a new command, so it separates.
+      # `>&N` / `<&N` are fd dups and must not.
+      if [ "$c" = '&' ]; then
+        prev=''
+        [ -n "$cur" ] && prev=${cur:$((${#cur} - 1)):1}
+        if [ "$prev" != '>' ] && [ "$prev" != '<' ]; then
+          if [ "$is_top" = 1 ]; then _cp_emit "$cur" '&' "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
+          cur=''; i=$((i + 1)); seg_start=$i; continue
+        fi
+      fi
+      if [ "$c" = ';' ] || [ "$c" = '|' ]; then
+        if [ "$is_top" = 1 ]; then _cp_emit "$cur" "$c" "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
+        cur=''; i=$((i + 1)); seg_start=$i; continue
+      fi
+      # The fix this module exists for. Heredoc bodies are already gone, so every newline left
+      # here separates two real commands.
+      if [ "$c" = $'\n' ]; then
+        if [ "$is_top" = 1 ]; then _cp_emit "$cur" 'newline' "$seg_start" "$i"; else _cp_emit_sub "$cur"; fi
+        cur=''; i=$((i + 1)); seg_start=$i; continue
+      fi
     fi
+
     cur="$cur$c"; i=$((i + 1))
   done
 
-  [ -n "$q" ] && { _cp_reason=unbalanced-quote; return 1; }
-  _cp_emit "$cur" 'eof' "$start" "$n"
+  if [ "$stk_n" -gt 0 ]; then
+    # Prefer the quote reading when both are open: it is the proximate, fixable cause — an
+    # unclosed $( ) alongside an unclosed " is usually the quote swallowing the rest.
+    local k=0 reason=substitution
+    while [ "$k" -lt "$stk_n" ]; do
+      { [ "${stk_kind[k]}" = squote ] || [ "${stk_kind[k]}" = dquote ]; } && reason=unbalanced-quote
+      k=$((k + 1))
+    done
+    _cp_reason=$reason
+    return 1
+  fi
+
+  if [ "$is_top" = 1 ]; then _cp_emit "$cur" 'eof' "$seg_start" "$n"; else _cp_emit_sub "$cur"; fi
+  return 0
+}
+
+_cp_segment() {
+  local s="$1"
+  local n=${#s}   # separate `local`: see _cp_lift
+  if ! _cp_scan "$s" 0 "$n" 1 0; then return 1; fi
 
   # A trailing separator terminates the last command; it does not start an empty new one.
   # This matters beyond tidiness. `ls\n` and `ls;` are single commands, and a trailing
@@ -275,6 +479,8 @@ cmd_parse() {
   CP_SEG=()
   CP_SEP=()
   CP_HEREDOC=()
+  CP_NSUBSEG=0
+  CP_SUBSEG=()
   _cp_reason=''
   if ! _cp_lift "$1"; then
     CP_STATUS="unreadable:$_cp_reason"
@@ -283,6 +489,7 @@ cmd_parse() {
   if ! _cp_segment "$_cp_stripped"; then
     CP_STATUS="unreadable:$_cp_reason"
     CP_NSEG=0
+    CP_NSUBSEG=0
     return 1
   fi
   CP_STATUS=ok
@@ -340,6 +547,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   while [ "$_cp_i" -lt "$CP_NSEG" ]; do
     [ "$_cp_i" -gt 0 ] && printf ','
     _cp_json_str "${CP_HEREDOC[_cp_i]}"
+    _cp_i=$((_cp_i + 1))
+  done
+  printf '],"subseg":['
+  _cp_i=0
+  while [ "$_cp_i" -lt "$CP_NSUBSEG" ]; do
+    [ "$_cp_i" -gt 0 ] && printf ','
+    _cp_json_str "${CP_SUBSEG[_cp_i]}"
     _cp_i=$((_cp_i + 1))
   done
   printf ']}\n'
