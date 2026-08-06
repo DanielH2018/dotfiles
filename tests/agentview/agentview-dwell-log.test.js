@@ -70,6 +70,24 @@ test('a rewritten remote cache logs a change', () => {
   assert.strictEqual(row[2], 'yes');
 });
 
+test('a cache rewritten with identical content is not a change', () => {
+  // The bug this exists to prevent, found by running the real picker: refresh_one_remote
+  // replaces the cache with `mv -f` on EVERY successful fetch, changed or not, and the picker
+  // fires a refresh at startup. A stat-based fingerprint therefore reported "yes" for
+  // essentially every picker -- inventing the exact answer the measurement is meant to decide.
+  const row = drive({ alpha: 'a\n', beta: 'b\n' }, (home) => {
+    const p = path.join(home, '.agentview-remote-cache.alpha');
+    fs.rmSync(p);
+    fs.writeFileSync(p, 'a\n');   // same bytes, fresh inode -- what mv -f leaves behind
+    // Move the mtime explicitly. Rewriting inside the same wall-clock second leaves stat's
+    // second-resolution %Y untouched, which would let a stat-based fingerprint pass this test
+    // for the wrong reason -- the first version of it did exactly that.
+    const future = new Date(Date.now() + 60_000);
+    fs.utimesSync(p, future, future);
+  });
+  assert.strictEqual(row[2], 'no', 'identical content through a fresh inode is not a row change');
+});
+
 test('the open duration is recorded', () => {
   const row = drive({ alpha: 'a\n', beta: 'b\n' });
   assert.strictEqual(row[1], '42', 'seconds-open must come from the captured open timestamp');

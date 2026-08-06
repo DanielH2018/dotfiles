@@ -127,15 +127,19 @@ remote_status_for() { printf '%s/.agentview-remote-status.%s' "$HOME" "$1"; }
 remote_hosts() { printf '%s\n' "${!HOST_SSH[@]}"; }
 
 # --- slice 1b instrumentation. TEMPORARY: remove with the push-vs-poll decision. ---
-# One question only: does a remote row ever change while a picker is open? refresh_one_remote
-# rewrites a host's cache only when its content changed, so a moved fingerprint is a moved row --
-# no parsing, no diffing, two stats and a comparison.
+# One question only: does a remote row ever change while a picker is open?
 av_remote_fingerprint() {  # -> _av_fp
-  local host
+  local host c h
   _av_fp=""
   while IFS= read -r host; do
     [ -n "$host" ] || continue
-    _av_fp="$_av_fp$(stat -c '%s:%Y' "$(remote_cache_for "$host")" 2>/dev/null || printf 'NA')|"
+    c="$(remote_cache_for "$host")"
+    # CONTENT, not stat. refresh_one_remote replaces the cache with `mv -f` on every successful
+    # fetch whether or not anything in it changed, so size+mtime move once per refresh -- and the
+    # picker fires a refresh at startup. Keying on stat reported "a remote row changed" for
+    # essentially every picker, which is the one answer this measurement must not invent.
+    h=$(cksum < "$c" 2>/dev/null) || h=NA
+    _av_fp="$_av_fp$h|"
   done < <(remote_hosts)
 }
 
