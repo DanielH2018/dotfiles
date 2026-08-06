@@ -190,6 +190,17 @@ const DENY = [
   'gh api repos/o/r/issues -f title=x',
   'gh api --input=body.json repos/o/r/issues',
   'gh api --hostname github.com graphql',
+  // Killing by name/cmdline match: the caller's own argv carries `claude` and its
+  // worktree path, so each of these can include the agent session in its kill list.
+  'pkill -f streamcontroller',
+  'pkill node',
+  'killall claude',
+  'sudo pkill -9 -f dev-server',
+  'cd /tmp && pkill -f vite',
+  'pgrep -f "http.server 8181" | xargs kill',
+  'pgrep -f vite | kill',
+  'kill $(pgrep -f dev-server)',
+  'kill -9 $(ps aux | grep vite | awk \'{print $2}\')',
 ];
 
 const ALLOW = [
@@ -274,6 +285,24 @@ const ALLOW = [
   'git log --oneline > /tmp/log.txt',
   'make build > build.log 2>&1',
   'echo done >> CHANGELOG.md',
+  // Detection is not the hazard, and serve-artifacts.sh ships this exact line — denying
+  // it would break a hook in this repo.
+  'pgrep -f "http.server 8181"',
+  'ps aux | grep vite',
+  // A PID that was captured or confirmed, not pattern-matched, is the sanctioned form.
+  'kill 12345',
+  'kill -9 12345',
+  'flatpak kill com.core447.StreamController',
+  // The kill rules anchor on command position; the terraform rule broke once by matching
+  // its binary anywhere, so pin that these read as prose, not as invocations.
+  "git commit -m 'add pkill guard'",
+  'echo "use killall as a last resort" >> notes.md',
+  // A backslash-escaped pipe is regex alternation, not a command separator. SCAN used to
+  // collapse the backslash and read these as piping into an interpreter.
+  "ls -1 tests | grep -i 'danger\\|bash'",
+  "grep -n 'interpreter\\|/bin/sh\\|xargs' hook.sh",
+  // Escaped separators other than `|` still flow through the same normalization.
+  "find . -name '*.tmp' -exec rm {} \\;",
 ];
 
 test('dangerous commands are denied', { skip }, async () => {

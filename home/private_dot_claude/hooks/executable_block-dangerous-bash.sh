@@ -27,7 +27,15 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 # target) and drop quote characters, which are grouping rather than content —
 # without this, `rm -rf "$HOME"` reads as `rm -rf "$HOME"` and slips past the
 # `\s\$HOME` anchor that catches the unquoted form.
-SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ' | tr -d "\"'")
+#
+# A backslash-escaped pipe is dropped BEFORE that collapse. `\|` is never a command
+# separator in any quoting context — it is regex alternation or a literal — but the
+# collapse turned it into a real one, so `ls | grep -i 'danger\|bash'` normalized to
+# `... |bash` and the pipe-to-shell rule denied it (verified: the same command with
+# `bash` removed from the pattern is allowed). Deleting the two characters rather than
+# substituting a space keeps the surrounding tokens joined, so no rule below sees a new
+# word boundary either.
+SCAN=$(printf '%s' "${COMMAND//\\|/}" | tr '\n\t\\' '   ' | tr -d "\"'")
 
 # --- M02 shadow census ----------------------------------------------------------------------
 #
@@ -280,6 +288,30 @@ fi
 # Fork bomb
 if echo "$COMMAND" | grep -qE ':\(\)\{.*\};:'; then
   deny "Blocked: fork bomb detected."
+fi
+
+# Killing a process selected by matching its name or command line. This box runs several
+# background agent jobs at once, and an agent's own argv carries both the `claude` binary
+# and its worktree path — so `pkill -f <worktree>` or `kill $(pgrep -f node)` puts the
+# caller in its own kill list, and the session dies mid-command with no error to read.
+# `pgrep`/`ps` on their own stay allowed: detection is not the hazard, and
+# serve-artifacts.sh depends on `pgrep -f` to decide whether to start its server.
+KILL_HINT="Kill a PID you captured at spawn, or resolve one and confirm it first (ss -H -ltnp for a port owner, then check /proc/<pid>/cwd)."
+# Same command-position anchor as SSH_AT_RE/GH_API_AT: leading env assignments and wrapper
+# words allowed, but the binary must start a command. Matching anywhere would deny
+# `git commit -m 'add pkill guard'`, which is how the terraform rule broke once already.
+KILL_AT='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?'
+if echo "$SCAN" | grep -qE "$KILL_AT(pkill|killall)([[:space:]]|$)"; then
+  deny "Blocked: pkill/killall selects processes by name or command line, which can include this agent session. $KILL_HINT"
+fi
+if echo "$SCAN" | grep -qE '\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?kill([[:space:]]|$)'; then
+  deny "Blocked: piping matched PIDs into kill. $KILL_HINT"
+fi
+# Command substitution instead of a pipe — `kill $(pgrep -f x)`, `kill \`ps ... \``.
+# Matched on COMMAND: SCAN keeps `$(` but the raw string is what the other substitution
+# rule reads, and there is no quoting trick here for SCAN to undo.
+if echo "$COMMAND" | grep -qE '\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b'; then
+  deny "Blocked: kill of a PID found by pattern matching (pgrep/ps). $KILL_HINT"
 fi
 
 # Generic pipe-to-shell (belt-and-suspenders with permissions.deny)
