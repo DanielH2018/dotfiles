@@ -526,6 +526,24 @@ AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
 case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
 [ "$AV_WATCH_INTERVAL" -ge 1 ] || AV_WATCH_INTERVAL=1
 
+# Seconds since the LEAST recently fetched host, read from the status sidecars
+# refresh_one_remote already writes ("<outcome>\t<epoch>"). Reusing them keeps the cadence honest
+# without introducing new state to keep in sync, and a host with no sidecar reads as epoch 0 --
+# infinitely stale -- so the first iteration fetches instead of waiting to discover the hosts.
+av_remote_age() {  # -> _av_remote_age (integer seconds)
+  local host sf ts oldest now
+  now=$(date +%s)
+  oldest=""
+  while IFS= read -r host; do
+    [ -n "$host" ] || continue
+    sf="$(remote_status_for "$host")"
+    ts=$(cut -f2 "$sf" 2>/dev/null)
+    case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+    if [ -z "$oldest" ] || [ "$ts" -lt "$oldest" ]; then oldest="$ts"; fi
+  done < <(remote_hosts)
+  _av_remote_age=$(( now - ${oldest:-0} ))
+}
+
 av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
   # The blocking wait runs BACKGROUNDED + `wait`ed on, not as a plain foreground command: bash
   # forwards a signal to a shell blocked in `wait` immediately, but does NOT forward one to a
@@ -570,7 +588,14 @@ av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or ti
     0|2) : ;;
     *) sleep "$AV_WATCH_INTERVAL" & _av_watch_child=$!; wait "$_av_watch_child"; rc=2 ;;
   esac
-  [ "$rc" -eq 2 ] && refresh_remote
+  # A timeout still fetches -- nothing local moved, so the remotes are the only thing that can
+  # have. But elapsed time fetches too: without it, refresh_remote runs only after an interval of
+  # local QUIET, and a steady trickle of local events postpones it indefinitely. That was latent
+  # while $statedir alone was nearly silent; watching $sessionsdir makes it reachable.
+  av_remote_age
+  if [ "$rc" -eq 2 ] || [ "$_av_remote_age" -ge "$AV_WATCH_INTERVAL" ]; then
+    refresh_remote
+  fi
   post_reload "$1"
   return 0
 }
