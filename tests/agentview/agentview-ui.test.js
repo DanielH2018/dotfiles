@@ -16,7 +16,7 @@ const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 // The script sources its modules from ../share/agentview relative to its own path;
-// the copy under test lives in a scratch bin/, so point it back at the source tree.
+// the copy under test lives in a scratch bin/, so AGENTVIEW_LIB has to point elsewhere.
 const LIB = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview');
 const HOST = 'testbox';
 
@@ -43,6 +43,15 @@ function makeEnv() {
   fs.copyFileSync(SRC, self);
   fs.chmodSync(self, 0o755);
 
+  // Snapshot the modules alongside the launcher instead of pointing at the live source.
+  // The launcher is copied once here, but AGENTVIEW_LIB is re-read by every `--body`
+  // subprocess the picker spawns, so a checkout that moves mid-run -- `bin/try` switching
+  // the primary checkout's branch is the way that happens -- hands one run two vintages of
+  // the row format. That mismatch is exactly the tab-column skew these tests exist to
+  // catch, and it would arrive as unexplained flake rather than a failure pointing at it.
+  const lib = path.join(bin, 'share', 'agentview');
+  fs.cpSync(LIB, lib, { recursive: true });
+
   const tmuxLog = path.join(bin, 'tmux.log');
   fs.writeFileSync(tmuxLog, '');
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash\necho ${HOST}\n`, { mode: 0o755 });
@@ -63,7 +72,7 @@ function makeEnv() {
     PATH: `${bin}:${process.env.PATH}`,
     TMUX_LOG: tmuxLog,
     AGENTVIEW_SELF: self,
-    AGENTVIEW_LIB: LIB,
+    AGENTVIEW_LIB: lib,
     ...seams.env,
     AV_KILLCMD: 'true',   // the seam do_remove kills through; nothing real to signal here
   };

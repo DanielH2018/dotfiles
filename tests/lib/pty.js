@@ -58,6 +58,18 @@ function encode(key) {
 
 const shellQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
+// stop() below covers the normal path, but it runs from a t.after hook -- so a node that
+// dies by SIGKILL (a worktree torn down mid-run, the test runner reaped by its harness)
+// never reaches it, and `detached` puts script outside node's process group where a
+// kill of that group can't sweep it either. That combination left a full picker -- script,
+// three bashes, an fzf and a respawning inotifywait -- polling for an hour after its test
+// run was gone. So the pty side watches back: script(1) setsid's, making the shell that
+// runs this the leader of the inner session, so `-$$` from the backgrounded block is that
+// whole session. Output goes to /dev/null because anything it printed would land in the
+// pty stream and corrupt the parsed screen.
+const watchdog = () =>
+  `{ while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done; kill -KILL -- -$$; } >/dev/null 2>&1 &`;
+
 class Term {
   constructor(argv, { cols = 100, rows = 30, env = process.env, cwd } = {}) {
     this.screen = new Screen(cols, rows);
@@ -65,7 +77,7 @@ class Term {
     this.raw = '';
 
     const cmd = argv.map(shellQuote).join(' ');
-    const inner = `stty rows ${rows} cols ${cols} 2>/dev/null; exec ${cmd}`;
+    const inner = `stty rows ${rows} cols ${cols} 2>/dev/null; ${watchdog()} exec ${cmd}`;
     this.child = spawn('script', ['-qfc', inner, '/dev/null'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
