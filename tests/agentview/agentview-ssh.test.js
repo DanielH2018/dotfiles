@@ -266,8 +266,14 @@ test('a local file event repaints without touching the network', () => {
   const e = env();
   const log = writeInotifyStub(e, 0);
   for (const host of ['daniel-server', 'daniel-box']) {
+    // Stamped ahead, not at "now": av_watch_once fetches once the snapshot's age reaches
+    // AV_WATCH_INTERVAL, which is 1s here, so a stamp of exactly now leaves no headroom --
+    // any scheduling delay above a second between this write and the shell reading it makes
+    // a deliberately-fresh fixture read as stale and fetch. That is invisible when the file
+    // runs alone and reliable under the full suite's load, which is how it reached main
+    // green. The staleness test below expresses its intent the same way, with -600.
     fs.writeFileSync(path.join(e.home, `.agentview-remote-status.${host}`),
-      `ok\t${Math.floor(Date.now() / 1000)}\n`);
+      `ok\t${Math.floor(Date.now() / 1000) + 600}\n`);   // fetched "just now", with headroom
   }
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.strictEqual(e.sshCalls().length, 0,
