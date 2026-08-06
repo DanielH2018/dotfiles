@@ -79,6 +79,20 @@ test('ssh argv is assembled from constants and cannot hang on a prompt', () => {
   assert.ok(SRC.includes('"ConnectTimeout=5"'), 'a connect timeout is required');
 });
 
+test('a burst of sweeps reuses one connection per machine', () => {
+  // daniel-box and daniel-server both run UFW's `limit ssh`: the 6th connection
+  // from one source inside 30s is rejected, and probe() renders that rejection as
+  // an unreachable machine. Multiplexing is the only thing keeping a burst of
+  // sweeps under that budget, so assert it the way the confinement checks work —
+  // on the option list, not on a live connection.
+  assert.ok(SRC.includes('"ControlMaster=auto"'), 'connection reuse must be enabled');
+  assert.ok(
+    SRC.includes('"ControlPath=~/.ssh/otel-sweep-%C"'),
+    "the control socket must be otel-sweep's own, so a probe cannot adopt an interactive session's forwardings",
+  );
+  assert.match(SRC, /"ControlPersist=\d+"/, 'the master must outlive a single run to help across runs');
+});
+
 test('the remote probe only ever reaches a private address', () => {
   // Loki is unpublished on daniel-server, so the probe resolves a container IP.
   // That discovered value is the one place remote data selects a network target.

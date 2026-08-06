@@ -55,6 +55,18 @@ SSH_OPTS = [
     # Harmless, but it turns a daily timer's journal into noise, and this tool
     # needs no forwarding of its own.
     "-o", "ClearAllForwardings=yes",
+    # Both machines run UFW's `limit ssh`, so the 6th connection from one source
+    # inside 30s is rejected — and probe() reports a rejected connection as the
+    # machine being unreachable, which is this tool alarming about a firewall it
+    # tripped itself. A blanket allow rule makes otel-sweep cheap to invoke, so
+    # six runs in half a minute is an ordinary afternoon rather than an edge case.
+    # Reusing one connection per host caps a burst at a single TCP connection,
+    # twelve times under the budget instead of one run over it. The socket gets
+    # its own name so a probe never adopts an interactive session's forwardings,
+    # and %C hashes the destination to keep the path inside the AF_UNIX limit.
+    "-o", "ControlMaster=auto",
+    "-o", "ControlPath=~/.ssh/otel-sweep-%C",
+    "-o", "ControlPersist=60",
 ]
 
 DEFAULT_TIMEOUT = 120
