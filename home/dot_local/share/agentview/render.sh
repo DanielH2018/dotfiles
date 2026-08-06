@@ -12,7 +12,8 @@ E=$'\033'; Z="$E[0m"
 C_NEED="$E[38;2;249;226;175m"          # yellow  — needs input
 C_WORK="$E[38;2;166;227;161m"          # green   — working
 C_REVIEW="$E[38;2;250;179;135m"        # peach   — review (stopped, but dirty/unpushed)
-C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle
+C_UNSEEN="$E[38;2;148;226;213m"        # teal    — DONE: finished while you weren't looking
+C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle (i.e. seen)
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
@@ -29,7 +30,7 @@ PILL_L=$''; PILL_R=$''     # powerline half-circles — round the source b
 # (render_body + interactive picker) can't drift — they had: one used an extra leading
 # tab, mis-offsetting the "no sessions" row against fzf's --with-nth=2.. delimiter.
 state_color() {  # set $_scol to a state group's accent (a function call, no per-row fork)
-  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; *) _scol="$C_DONE";; esac
+  case "$1" in needs-input) _scol="$C_NEED";; working) _scol="$C_WORK";; review) _scol="$C_REVIEW";; unseen) _scol="$C_UNSEEN";; *) _scol="$C_DONE";; esac
 }
 row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads PINNED_SET
   # via dynamic scope from build_pretty). No fork — runs per row on the render path.
@@ -40,7 +41,7 @@ row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads
 NO_SESSIONS_ROW=$'\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
 LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
-declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [completed]="COMPLETED" [idle]="IDLE" )
+declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [unseen]="DONE" [completed]="COMPLETED" [idle]="IDLE" )
 
 group_expanded() {  # $1 = group name -> true (0) if its rows should render in full.
   # completed/idle are the only foldable groups: the rest are what the picker exists to show.
@@ -170,6 +171,51 @@ fold_title_states() {  # upgrade `rows` from the mux pane title's state glyph. R
   done <<< "$rows"
   rows="$out"
 }
+fold_seen_states() {  # completed -> unseen, when the work landed while you were looking away.
+  # herdr splits one underlying state in two: idle is ready AND you have seen it; done is the
+  # same state where the work finished unwatched. Across a dozen rows that is the difference
+  # between a list you scan and a list you act on.
+  #
+  # The marker stores the row's ts as of the last focus, NOT a boolean. A boolean would latch on
+  # first focus and the row could never be DONE again, which makes the feature work exactly once
+  # per session.
+  #
+  # Keyed on host+cwd+kind rather than compute_pin_id, which prefers the locator. A pin names a
+  # PANE; a pane dying is precisely when a daemon-hosted job finishes, so a pane-keyed marker
+  # would evaporate at the one moment this exists for.
+  #
+  # Refines "completed" only. A review row (stopped with a dirty tree) keeps REVIEW: it is the
+  # more actionable label and already has its own group.
+  # An ABSENT sidecar means dormant, not "nothing seen". Treating it as nothing-seen would put
+  # every completed row in DONE on a fresh setup, so the group would be the whole list at exactly
+  # the moment you are deciding whether it is useful. The file appears the first time you focus
+  # anything, which arms the feature; from then on an unfocused completed row is DONE, which is
+  # the case this exists for. Deleting the sidecar disarms it again.
+  [ -r "$seenfile" ] || return 0
+  local -A SEEN=()
+  local _k _v
+  while IFS=$'\t' read -r _k _v; do
+    [ -n "$_k" ] && SEEN["$_k"]="$_v"
+  done < "$seenfile"
+  local out="" L st host cwd rest kind ts mark
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    st="${L%%$'\t'*}"; rest="${L#*$'\t'}"
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
+    ts="${rest#*$'\t'}"; ts="${ts%%$'\t'*}"
+    kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
+    if [ "$st" = completed ]; then
+      compute_seen_id "$host" "$cwd" "$kind"
+      mark="${SEEN[$_sid]:-}"
+      # Compared as strings, not numbers: any ts the marker did not capture means the session
+      # has moved since you looked, and a ts format change can never turn into a silent -gt.
+      [ "$ts" != "$mark" ] && st=unseen
+    fi
+    out+="$st"$'\t'"$host"$'\t'"$cwd"$'\t'"$rest"$'\n'
+  done <<< "$rows"
+  rows="$out"
+}
 collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into one row.
   # Backgrounding a session spawns a bg job that inherits the task title but gets a fresh
   # session id with NO lineage link (session files carry no parent field), so the origin and
@@ -263,7 +309,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     row_pinned "$host" "$cwd" "$kind" "$locator"
     if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); else GCNT[$st]=$(( ${GCNT[$st]:-0} + 1 )); fi
   done
-  for grp in pinned needs-input working review completed idle; do
+  for grp in pinned needs-input working review unseen completed idle; do
     if [ "$grp" = pinned ]; then cnt=$PINCNT; else cnt=${GCNT[$grp]:-0}; fi
     [ "$cnt" -eq 0 ] && continue
     [ "$first" -eq 0 ] && printf '\t\n'   # blank spacer between groups (empty KEY = no-op on select)

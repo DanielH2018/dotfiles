@@ -390,6 +390,30 @@ do_jump() {  # $1 = KEY -> focus the session. Remote rows attach in a fresh loca
   return 0
 }
 
+mark_seen() {  # $1 = KEY -> record this row's ts as the last time you actually LOOKED at it.
+  # Called only from jump_or_report, so only a real focus counts. `--resolve` prints a pane id
+  # without coming through here, and that is deliberate rather than incidental: reading a
+  # session is not seeing it, and keeping the two apart is what makes the DONE group mean
+  # "finished while you were away" instead of "untouched by any tool".
+  # KEY is host US cwd US state US ts US title US pane US kind US locator (render.sh).
+  local key="$1" host cwd kind ts tmp="$seenfile.tmp.$$"
+  host=$(printf '%s' "$key" | cut -d"$US" -f1)
+  cwd=$(printf '%s' "$key" | cut -d"$US" -f2)
+  ts=$(printf '%s' "$key" | cut -d"$US" -f4)
+  kind=$(printf '%s' "$key" | cut -d"$US" -f7)
+  [ -n "$cwd" ] || return 0                 # header/spacer row: no session behind it
+  compute_seen_id "$host" "$cwd" "$kind"
+  if [ -f "$seenfile" ]; then
+    # Drop any previous stamp for this identity. awk on an exact field-1 match rather than a
+    # grep pattern: the id embeds a cwd, and a path is full of regex metacharacters.
+    if awk -F'\t' -v id="$_sid" '$1 != id' "$seenfile" > "$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$seenfile" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    else rm -f "$tmp" 2>/dev/null; fi
+  fi
+  printf '%s\t%s\n' "$_sid" "$ts" >> "$seenfile" 2>/dev/null
+  return 0
+}
+
 jump_or_report() {  # $1 = KEY -> jump, or say why not. Every entry point that focuses a session
   # goes through here: a jump that fails silently is indistinguishable from a dead keybinding,
   # so the failure must reach the terminal AND the exit status.
@@ -398,7 +422,9 @@ jump_or_report() {  # $1 = KEY -> jump, or say why not. Every entry point that f
   # awk (executable_agentview) already excludes fold: rows from its count, so this guard is
   # a safety net for a direct `agentview --jump fold:<group>`, not the normal path there.
   case "$1" in fold:*) do_fold "$1"; return 0 ;; esac
-  do_jump "$1" && return 0
+  # Stamp only on a jump that actually landed: a failed focus never showed you anything, so
+  # clearing DONE there would hide the row you were trying to reach.
+  do_jump "$1" && { mark_seen "$1"; return 0; }
   printf 'agentview: no pane found for that session\n' >&2
   return 1
 }

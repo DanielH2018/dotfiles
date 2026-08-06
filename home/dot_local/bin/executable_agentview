@@ -121,6 +121,12 @@ pinfile="$HOME/.claude/agent-view-pins"
 # collapsed is the default, so an empty/missing file means everything folds. do_fold
 # (actions.sh) toggles a line; group_expanded (render.sh) reads it.
 foldfile="$HOME/.claude/agent-view-folds"
+# Seen sidecar: "<host US cwd US kind>\t<ts>" per line — the row ts as of the last time you
+# FOCUSED that session. fold_seen_states (render.sh) promotes a completed row whose ts has
+# moved past its marker into the DONE group; jump_or_report (focus.sh) restamps it, which is
+# the way back out. A ts rather than a flag, so the row can go DONE again the next time work
+# lands unwatched. Deliberately not written by `--resolve`: reading a session is not seeing it.
+seenfile="$HOME/.claude/agent-view-seen"
 # The CTRL+N / CTRL+X choosers. Inside tmux each one runs in its own display-popup so it
 # FLOATS over the session list: those binds use execute-silent, so fzf never repaints and the
 # list stays painted underneath. The picker is ITSELF a display-popup (see .tmux.conf) and
@@ -241,6 +247,8 @@ compute_pin_id() {  # sets _pid = stable pin identity for $1=host $2=cwd $3=kind
   if [ -n "$4" ] && [ "${4%%:*}" != "none" ]; then _pid="$4"
   else _pid="$1$US$2$US$3"; fi
 }
+# compute_seen_id is the sibling of the above and lives in common.sh instead, so the fold that
+# uses it can be exercised by sourcing the libs alone — see agentview-seen-state.test.js.
 
 # Shared jq fragments (were copy-pasted three times). `norm` makes Windows and Unix
 # cwds comparable; JQ_NONSHELL keeps only panes whose title isn't a bare shell/mux
@@ -431,6 +439,10 @@ if [ "$HAVE_WEZTERM" = 1 ]; then
   load_titles;      prof load_titles
   fold_title_states;  prof fold_title_states  # spinner in the pane title un-sticks a stale row
 fi
+# Runs for every row, not just local ones: the seen sidecar is keyed by host, so a remote
+# session that finished unwatched reaches the DONE group too. After the title fold, so a row
+# the spinner just moved back to "working" is not also called finished.
+fold_seen_states;     prof fold_seen_states
 
 # header line (right-aligned totals). Counted in pure bash — the old grep|awk|sort|grep
 # chain was 4 process spawns, and spawns dominate render time on Windows.

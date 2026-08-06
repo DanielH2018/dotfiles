@@ -125,3 +125,11 @@ remote_cache_for()  { printf '%s/.agentview-remote-cache.%s' "$HOME" "$1"; }
 remote_status_for() { printf '%s/.agentview-remote-status.%s' "$HOME" "$1"; }
 
 remote_hosts() { printf '%s\n' "${!HOST_SSH[@]}"; }
+
+# Seen identity for the DONE group: $1=host $2=cwd $3=kind -> _sid.
+# Deliberately NOT compute_pin_id (executable_agentview), which prefers the locator. A pin
+# names a PANE, and a pane dying is exactly when a daemon-hosted job finishes — a pane-keyed
+# marker would evaporate at the one moment this exists for. host+cwd+kind survives that, and
+# matches how the rest of agentview keys a session. Lives here rather than beside
+# compute_pin_id so fold_seen_states can be exercised by sourcing the libs alone.
+compute_seen_id() { _sid="$1$US$2$US$3"; }
