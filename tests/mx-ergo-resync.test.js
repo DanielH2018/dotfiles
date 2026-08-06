@@ -78,6 +78,14 @@ function run({ state = HEALTHY, reachable = true, refuse = '' } = {}) {
 
   if (reachable) fs.writeFileSync(statePath, `${state}\n`);
 
+  // `sed -i.bak`, with the suffix attached, is the one in-place form both seds accept. Bare
+  // `-i "script"` is GNU-only: BSD sed reads the next argument as the backup suffix, so the
+  // script becomes the suffix and the filename becomes the script, and it exits complaining
+  // about an "unescaped newline inside substitute pattern" having changed nothing. The stub
+  // sends its own stderr to /dev/null through solaar_q, so on macOS that surfaced only as
+  // every write appearing not to take — the script then correctly reported six unapplied
+  // settings and exited 1. Verified against /usr/bin/sed: bare -i leaves the file untouched,
+  // -i.bak rewrites it. The .bak files land in a mktemp dir that is removed with the rest.
   fs.writeFileSync(path.join(bin, 'solaar'), `#!/bin/bash
 printf 'solaar %s\\n' "$*" >> "${log}"
 [ -f "${statePath}" ] || exit 0
@@ -87,12 +95,12 @@ if [ $# -eq 3 ]; then grep "^\${setting} = " "${statePath}"; exit 0; fi
 if [ $# -eq 4 ]; then
     val=$4
     case "\$val" in false) val=False ;; true) val=True ;; esac
-    sed -i "s/^\${setting} = .*/\${setting} = \${val}/" "${statePath}"
+    sed -i.bak "s/^\${setting} = .*/\${setting} = \${val}/" "${statePath}"
 else
     # Map setting: rewrite just this key's value, on this setting's line only. The address is
     # load-bearing -- "Middle Button:" appears on both the divert-keys and reprogrammable-keys
     # lines, and an unanchored sed would clobber the other one.
-    sed -i "/^\${setting} = /s/\$4:[^,}]*/\$4:\$5/" "${statePath}"
+    sed -i.bak "/^\${setting} = /s/\$4:[^,}]*/\$4:\$5/" "${statePath}"
 fi
 `, { mode: 0o755 });
 
