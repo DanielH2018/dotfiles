@@ -261,11 +261,17 @@ test('a watch timeout also refreshes the remote hosts', () => {
 });
 
 test('a local file event repaints without touching the network', () => {
-  // The whole point of watching: a local state change must not cost an ssh round-trip.
+  // The whole point of watching: a local state change must not cost an ssh round-trip -- as long
+  // as the remote snapshot is still inside its interval. Staleness is the next test's job.
   const e = env();
   const log = writeInotifyStub(e, 0);
+  for (const host of ['daniel-server', 'daniel-box']) {
+    fs.writeFileSync(path.join(e.home, `.agentview-remote-status.${host}`),
+      `ok\t${Math.floor(Date.now() / 1000)}\n`);
+  }
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
-  assert.strictEqual(e.sshCalls().length, 0, 'a local event must not trigger an ssh fetch');
+  assert.strictEqual(e.sshCalls().length, 0,
+    'a local event with a fresh remote snapshot must not trigger an ssh fetch');
   // Proves this is "an event fired on the right watch", not "inotifywait was never invoked" --
   // a stub-not-found path would also produce zero ssh calls (it falls to the sleep fallback)
   // and pass the assertion above for the wrong reason.
@@ -273,6 +279,57 @@ test('a local file event repaints without touching the network', () => {
   assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
   assert.ok(argv.includes(path.join(e.home, '.claude', 'agent-view')),
     `expected the statedir as the watch target in: ${argv}`);
+});
+
+test('a stream of local events cannot starve the remote refresh', () => {
+  // refresh_remote used to run only on the inotify TIMEOUT branch, so remotes refreshed after an
+  // interval of local QUIET rather than every interval. Watching the session registry adds local
+  // events on purpose, which would have made remote rows staler as local ones got fresher.
+  const e = env();
+  writeInotifyStub(e, 0);   // rc 0 = a local event fired, never a timeout
+  for (const host of ['daniel-server', 'daniel-box']) {
+    fs.writeFileSync(path.join(e.home, `.agentview-remote-status.${host}`),
+      `ok\t${Math.floor(Date.now() / 1000) - 600}\n`);   // fetched 10 minutes ago
+  }
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0,
+    'a local event must still fetch the remotes once the interval has elapsed since the last fetch');
+});
+
+test('a host that has never been fetched counts as infinitely stale', () => {
+  // No status sidecar at all is the first-run case. Reading a missing epoch as 0 makes the very
+  // first iteration fetch, rather than waiting for a quiet interval to discover the hosts exist.
+  const e = env();
+  writeInotifyStub(e, 0);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0,
+    'a host with no recorded fetch must be treated as stale, not as fresh');
+});
+
+test('the watcher watches the live session registry, not just the hook sidecars', () => {
+  // Daemon-hosted bg jobs never fire UserPromptSubmit, so their hook rows go stale or never
+  // exist (rows.sh:39-45). They are recovered from ~/.claude/sessions, which nothing watched --
+  // so a local bg job finishing took up to a full interval to reach the picker.
+  const e = env();
+  const log = writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'sessions')),
+    `expected the sessions registry as a watch target in: ${argv}`);
+  assert.ok(argv.includes(path.join(e.home, '.claude', 'agent-view')),
+    `the statedir must still be watched too, not replaced, in: ${argv}`);
+});
+
+test('a missing sessions registry is created before the watch, not watched blindly', () => {
+  // inotifywait against a path that does not exist returns rc 1, not rc 2. rc 1 lands in the
+  // floor-sleep branch, which silently degrades the whole loop to a plain timer with no error
+  // surfaced -- local event-driven updates would just stop on a freshly provisioned box.
+  const e = env();
+  fs.rmSync(path.join(e.home, '.claude', 'sessions'), { recursive: true, force: true });
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(fs.existsSync(path.join(e.home, '.claude', 'sessions')),
+    'the watcher must mkdir -p the sessions registry the same way it does the statedir');
 });
 
 test('the watcher falls back to a timer when inotifywait is absent', () => {

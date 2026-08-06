@@ -82,7 +82,9 @@ case "$1" in
       =*) awk -F'\\t' -v n="\${3#=}" -v s="$sess" '$3==n && $1==s{f=1} END{exit !f}' "$wins" && exit 0; exit 1 ;;
       *)  cut -f2 "$wins" | grep -qxF "$3" && exit 0; exit 1 ;;
     esac ;;
-  new-window)    printf '%s\\t@%s\\t%s\\n' "$sess" "$(wc -l < "$wins")" "$3" >> "$wins"; exit 0 ;;
+  # $(( )) strips the leading pad BSD wc -l writes. An unstripped "@       0" is not the @N
+  # shape the reuse lookup and its assertions match, so this only fails off GNU coreutils.
+  new-window)    printf '%s\\t@%s\\t%s\\n' "$sess" "$(( $(wc -l < "$wins") ))" "$3" >> "$wins"; exit 0 ;;
   kill-window)   awk -F'\\t' -v n="\${3#=}" '$3!=n' "$wins" > "$wins.t" 2>/dev/null; mv "$wins.t" "$wins"; exit 0 ;;
   show-options)  awk -F'\\t' -v w="$5" '$1==w{print $2}' "$opts"; exit 0 ;;
   set-option)    awk -F'\\t' -v w="$4" '$1!=w' "$opts" > "$opts.t"; mv "$opts.t" "$opts"

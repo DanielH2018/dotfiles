@@ -38,7 +38,14 @@ function hash(s) {
 
 // A notify-send that records instead of drawing, so the tests can assert on what
 // the operator would actually have seen.
-function notifySpy() {
+//
+// Every test here drives the real script, and the real script calls the real
+// notify-send — so any fixture carrying a finding drew an actual desktop banner.
+// Three of them, on every suite run, which the pre-push gate makes every `git push`:
+// the "alerts" that prompted this were the test fixtures all along, landing on the
+// desktop as if a machine were down. The stub therefore shadows notify-send for
+// EVERY run, not only the tests that assert on notifications.
+function notifyStub() {
   const bin = fs.mkdtempSync(path.join(DIR, 'bin-'));
   const log = path.join(bin, 'calls');
   fs.writeFileSync(path.join(bin, 'notify-send'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
@@ -49,6 +56,9 @@ function notifySpy() {
   };
 }
 
+// Shadows notify-send for every run that does not bring its own stub.
+const SILENT = notifyStub();
+
 function run(payload, extra = {}) {
   try {
     const stdout = execFileSync('bash', [WATCH], {
@@ -56,7 +66,7 @@ function run(payload, extra = {}) {
       env: {
         ...process.env,
         OTEL_SWEEP: stub(payload),
-        PATH: process.env.PATH,
+        PATH: `${SILENT.bin}:${process.env.PATH}`,
         // Each run gets its own state dir by default, so the dedup memory neither
         // reaches the real ~/.local/state nor leaks between tests.
         XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'state-')),
@@ -131,7 +141,7 @@ const LOKI_DOWN = JSON.stringify({
 });
 
 test('an unchanged finding set notifies once, not on every run', { skip }, () => {
-  const spy = notifySpy();
+  const spy = notifyStub();
   const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'dedup-')), PATH: `${spy.bin}:${process.env.PATH}` };
 
   assert.strictEqual(run(LOKI_DOWN, env).code, 1);
@@ -142,7 +152,7 @@ test('an unchanged finding set notifies once, not on every run', { skip }, () =>
 });
 
 test('something still broken resurfaces once the window lapses', { skip }, () => {
-  const spy = notifySpy();
+  const spy = notifyStub();
   const env = {
     XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'window-')),
     PATH: `${spy.bin}:${process.env.PATH}`,
@@ -154,9 +164,19 @@ test('something still broken resurfaces once the window lapses', { skip }, () =>
 });
 
 test('a different finding still notifies inside the window', { skip }, () => {
-  const spy = notifySpy();
+  const spy = notifyStub();
   const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'changed-')), PATH: `${spy.bin}:${process.env.PATH}` };
   run(LOKI_DOWN, env);
   run(JSON.stringify({ server: { error: 'ssh: connect to host daniel-server port 22: No route to host' } }), env);
   assert.strictEqual(spy.calls().length, 2, 'a new problem must not be masked by an unrelated older one');
+});
+
+test('a finding raised by any test is intercepted, never drawn', { skip }, () => {
+  // The guard for the bug this file itself caused. Several fixtures above carry
+  // findings, and until the stub shadowed notify-send on every run they drew real
+  // banners — on every `git push`, since the pre-push gate runs the suite. They were
+  // indistinguishable from a machine actually being down, and were chased as such.
+  const before = SILENT.calls().length;
+  assert.strictEqual(run(LOKI_DOWN).code, 1);
+  assert.strictEqual(SILENT.calls().length, before + 1, 'the banner must land in the stub, not on the desktop');
 });
