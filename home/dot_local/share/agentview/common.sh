@@ -143,21 +143,49 @@ av_remote_fingerprint() {  # -> _av_fp
   done < <(remote_hosts)
 }
 
+# The baseline the EXIT trap compares against, written by the startup --refresh-remote pass
+# rather than at picker open. executable_agentview launches that pass DETACHED, so a
+# fingerprint taken at open is taken while the ssh fetch is still in flight: whatever the fetch
+# then wrote landed mid-picker and was logged as "a row changed while you watched", when all it
+# meant was "the remote had moved since you last looked". Only the first reading justifies
+# pushing events. Five of the first eighteen samples were `yes` on pickers of 2-5s, which no
+# 30s poll can produce -- that is the artifact, not a remote that changes every two seconds.
+#
+# First writer wins: CTRL+F runs the same mode again, and resetting the baseline there would
+# hide precisely the staleness that a manual refresh is evidence of.
+av_write_dwell_baseline() {  # $1 = portfile
+  local fp="${1:-}.fp"
+  [ -n "${1:-}" ] || return 0
+  [ -e "$fp" ] && return 0
+  av_remote_fingerprint 2>/dev/null || return 0
+  printf '%s' "$_av_fp" > "$fp" 2>/dev/null || true
+}
+
 # Never fails the picker: this runs from the EXIT trap, so every step degrades to a recorded
 # "unknown" rather than to a non-zero exit on the way out.
-av_log_dwell() {
-  local now changed
+av_log_dwell() {  # $1 = portfile
+  local now changed base origin
   now=$(date +%s)
+  # Column 4 records WHICH baseline was used, so a sample taken before the snapshot settled is
+  # visible as such instead of being averaged in with the ones that mean something.
+  base=''
+  origin=open
+  if [ -n "${1:-}" ] && [ -s "${1}.fp" ]; then
+    base=$(cat "${1}.fp" 2>/dev/null) || base=''
+    [ -n "$base" ] && origin=settled
+    rm -f "${1}.fp" 2>/dev/null
+  fi
+  [ -n "$base" ] || base=${_av_fp_open:-unknown}
   av_remote_fingerprint 2>/dev/null || _av_fp='unknown'
-  if [ "${_av_fp:-unknown}" = unknown ] || [ "${_av_fp_open:-unknown}" = unknown ]; then
+  if [ "${_av_fp:-unknown}" = unknown ] || [ "$base" = unknown ]; then
     changed=unknown
-  elif [ "$_av_fp" = "$_av_fp_open" ]; then
+  elif [ "$_av_fp" = "$base" ]; then
     changed=no
   else
     changed=yes
   fi
   mkdir -p "$HOME/.claude" 2>/dev/null
-  printf '%s\t%s\t%s\n' "$now" "$(( now - ${_av_open_ts:-$now} ))" "$changed" \
+  printf '%s\t%s\t%s\t%s\n' "$now" "$(( now - ${_av_open_ts:-$now} ))" "$changed" "$origin" \
     >> "$HOME/.claude/agent-view-dwell.log" 2>/dev/null || true
 }
 

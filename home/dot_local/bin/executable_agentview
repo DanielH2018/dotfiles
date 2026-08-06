@@ -495,6 +495,9 @@ if [ "$mode" = "--refresh-remote" ]; then
   reap_windows_rows   # drop Windows rows the daemon no longer runs, then add the live sessions
   sync_windows_rows   # no hook ever registered, so the POST below reloads a list that is both
   refresh_remote      # free of phantoms and complete (see reap_windows_rows for why it is here)
+  # Slice 1b: the snapshot has just settled, so this is the only honest baseline for "did a
+  # row change while the picker was open" — see av_write_dwell_baseline.
+  av_write_dwell_baseline "${2:-}"
   sample_usage        # per-session cpu/ram for the card, sampled here for the same reason
   # Deliberately HERE and not inside refresh_remote: the watch loop calls that function on
   # every timer tick, which would spawn a find pair per interval for as long as a picker is
@@ -605,7 +608,7 @@ poster_pid=$!
 watch_pid=$!
 # av_log_dwell goes LAST: the kills and the portfile removal are what matter for correctness,
 # and the slice 1b instrumentation must never delay or displace them.
-trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null; av_log_dwell' EXIT
+trap 'kill "$poster_pid" "$watch_pid" 2>/dev/null; rm -f "$portfile" 2>/dev/null; av_log_dwell "$portfile"' EXIT
 
 # How CTRL+N / CTRL+X hand off to their chooser. execute() ALWAYS clears fzf's window first
 # — even `execute(echo hi)` wipes the list — so under it the chooser can only ever replace
