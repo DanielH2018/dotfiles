@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "1237cb845ef9108bf7d88aacdfcb0890a55a882cf1144394162118fc6c77b3f3",
-      "landed": "2026-08-06T01:10:45.965Z"
+      "hash": "81ea2b7c1980d8e870f3b0e60570936eba98b998a2dcab53c4fdb1219e4e0787",
+      "landed": "2026-08-06T12:49:42.138Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -78,8 +78,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "d877a3cab89a27283ae1fcc99117643f65a9bc187e8ac836b1c790ea43f395cd",
-      "landed": "2026-08-01T21:22:13.349Z"
+      "hash": "bd928de210042e26d590c95655b7c6f5860db5e78a54fe2e7c5223b6704bdcfb",
+      "landed": "2026-08-06T12:49:42.138Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
