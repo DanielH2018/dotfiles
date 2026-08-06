@@ -13,9 +13,27 @@ otel-sweep --deep --rows   # adds sessions that are exporting nowhere
 otel-sweep --deep          # same, as JSON, when you need a field the table drops
 ```
 
-One command reaches all three machines and needs no prompt. Reach for `otelq` only for
-a follow-up query on **this** PC; there is no unprompted ad-hoc query path to the others,
-and that is deliberate — see the grant comment in `settings.permissions.json`.
+One command reaches all three machines and needs no prompt.
+
+For a follow-up query on **this** PC, `otelq` is the way in. It is allowlisted, so none of
+these prompt:
+
+```bash
+otelq ready                                            # readiness of both backends
+otelq logs '<LogQL>' --rows                            # instant query against Loki
+otelq logs '<LogQL>' --stream --since 24h --limit 5    # range query; also --direction
+otelq metric '<PromQL>' --stream --since 30m --step 60 # PromQL against Prometheus
+otelq labels                                           # label names, or values for one
+```
+
+Never `curl` the Loki or Prometheus HTTP API. `otelq` covers every query shape those
+endpoints take, and `curl` stays ask-listed on purpose — a prefix rule cannot constrain what
+follows a URL, so each call costs a prompt. A real run of this skill spent six prompts, all
+of them curl, every one expressible as `otelq`. Summarize sweep JSON with `jq`, which is also
+allowlisted; a `python3 -` heredoc is not, and the secrets hook blocks it outright.
+
+There is no unprompted ad-hoc query path to the other two machines, and that is deliberate —
+see the grant comment in `settings.permissions.json`.
 
 Start with `--rows`. Escalate to `--deep` when the fast pass shows a machine with events
 but you are asked whether anything is missing — silent sessions are invisible to the fast
