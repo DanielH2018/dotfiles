@@ -81,17 +81,27 @@ unset _vault
 # we skip there), bind one to a fixed socket so every new shell and WezTerm pane reuses the same
 # unlocked keys — unlock a key once, not once per pane. Keys aren't auto-added; the first
 # ssh/git that needs one loads it on demand.
-if command -v ssh-agent >/dev/null 2>&1 && [ -z "${SSH_AUTH_SOCK:-}" ]; then
-  _ssh_sock="${XDG_RUNTIME_DIR:-$HOME}/.ssh-agent.sock"
-  export SSH_AUTH_SOCK="$_ssh_sock"
-  # ssh-add -l exit codes: 0=agent has keys, 1=agent up but empty, 2=can't reach agent.
-  ssh-add -l >/dev/null 2>&1
-  if [ "$?" -eq 2 ]; then
-    rm -f "$_ssh_sock"
-    (umask 077; ssh-agent -a "$_ssh_sock" >/dev/null 2>&1)
-  fi
-  unset _ssh_sock
-fi
+#
+# Interactive shells only. The agent is spawned detached, so it outlives the shell that
+# sourced this file, and a non-interactive caller with its own HOME gets a socket path nobody
+# will ever reuse — the test suite sources common.sh under a fresh mkdtemp HOME per case and
+# accumulated 1,033 unreachable agents (983 MB) in one morning. Nothing is lost by skipping:
+# keys are never added here, so an agent a script spawns is empty and authenticates nothing.
+case $- in
+  *i*)
+    if command -v ssh-agent >/dev/null 2>&1 && [ -z "${SSH_AUTH_SOCK:-}" ]; then
+      _ssh_sock="${XDG_RUNTIME_DIR:-$HOME}/.ssh-agent.sock"
+      export SSH_AUTH_SOCK="$_ssh_sock"
+      # ssh-add -l exit codes: 0=agent has keys, 1=agent up but empty, 2=can't reach agent.
+      ssh-add -l >/dev/null 2>&1
+      if [ "$?" -eq 2 ]; then
+        rm -f "$_ssh_sock"
+        (umask 077; ssh-agent -a "$_ssh_sock" >/dev/null 2>&1)
+      fi
+      unset _ssh_sock
+    fi
+    ;;
+esac
 
 # --- PATH (idempotent prepends; brew/python/coreutils paths are macOS-only, set in .zshrc) ---
 for _d in "$HOME/.local/bin" "$HOME/go/bin"; do
