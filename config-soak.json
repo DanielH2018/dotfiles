@@ -158,8 +158,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-artifacts.sh",
-      "hash": "1c7182508b1efbec11b3b6be3581851a0ff94d6f943663cc9923cc8f2ee2ab02",
-      "landed": "2026-08-06T14:23:58.984Z"
+      "hash": "58969f10252b9d00599b170869652ca350b5231b57e02450612332e4b502eec1",
+      "landed": "2026-08-06T14:28:50.242Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
@@ -293,8 +293,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "f7368c17ebe18a3e27c8402d04fc4c687ba1ba3905965567e81c81219787be4d",
-      "landed": "2026-08-06T14:23:58.984Z"
+      "hash": "e0ec1660cd4a8fcce9aaa56de5496167789ef011ef700bb9c721823be46f26d1",
+      "landed": "2026-08-06T14:28:50.242Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
