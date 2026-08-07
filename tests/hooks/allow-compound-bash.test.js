@@ -94,6 +94,12 @@ test('defers when any part is denied, ask-listed, or unlisted', { skip }, () => 
 test('allows git merge --ff-only past its ask rule, with one ref and no options', { skip }, () => {
   assert.strictEqual(allowed('git merge --ff-only origin/main && git log --oneline -3'), 'allow');
   assert.strictEqual(allowed('git merge --ff-only origin/main | tail -3'), 'allow');
+  // `2>&1` is on nearly every real invocation. The ref is read off the redirect-stripped
+  // form for exactly this reason — reading the raw segment sees two words and refuses.
+  assert.strictEqual(allowed('git merge --ff-only origin/main 2>&1 | tail -3'), 'allow');
+  assert.strictEqual(
+    allowed('git merge --ff-only origin/main 2>&1 | tail -2; git log --oneline -1'), 'allow');
+  assert.strictEqual(allowed('git merge --ff-only origin/main 2>/dev/null && git log'), 'allow');
 });
 
 test('the git merge exception does not widen to any other merge form', { skip }, () => {

@@ -244,7 +244,7 @@ fi
 # as. Reads JSEG/JSEG_N, populated below from cmd_parse's CP_SEG. Returns 0 to allow, 1 to
 # defer.
 judge() {
-  local idx=0 part redir teed teecmd target
+  local idx=0 part redir teed teecmd target ffref
   while [ "$idx" -lt "$JSEG_N" ]; do
     part=$(trim "${JSEG[idx]}")
     idx=$((idx + 1))
@@ -289,9 +289,12 @@ judge() {
   # ref may follow, and it may not look like an option — otherwise `git merge --ff-only
   # --no-ff x` would ride in on the prefix. Bare `git merge`, `--no-ff`, `--squash`,
   # `--strategy` and `-X` all miss this and stay gated by the ask rule below.
+  # The ref is read off $redir, not $part: nearly every real call carries `2>&1`, and
+  # judging the raw segment would see two words and refuse the whole exception.
   case $part in
     'git merge --ff-only '*)
-      case ${part#git merge --ff-only } in
+      ffref=$(trim "${redir#git merge --ff-only }")
+      case $ffref in
         ''|-*|*[[:space:]]*) ;;
         *) continue ;;
       esac ;;
