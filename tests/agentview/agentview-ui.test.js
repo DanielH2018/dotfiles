@@ -126,8 +126,9 @@ function open(env) {
   return new Term(['bash', env.AGENTVIEW_SELF], { cols: 110, rows: 30, env });
 }
 
-// agentview's --pointer is the same glyph fzf gutters every other row with, so
-// the selected row is identified by --highlight-line's background instead.
+// The selected row is identified by --highlight-line's background rather than by the
+// pointer glyph: fzf paints its own ▌ down the gutter of every non-current row, so a
+// pointer-glyph search would match all of them, whatever --pointer is set to.
 function selectedLine(screen) {
   const rows = screen.highlightedRows();
   return rows.length ? screen.line(rows[0]).trim() : '';
@@ -267,7 +268,7 @@ test('a mouse click selects the row that was clicked', { skip }, async (t) => {
 
   // fzf enables SGR mouse reporting (?1000h/?1002h/?1006h) on startup, so this
   // is the same byte sequence a terminal sends when the user clicks the cell.
-  const target = lineIndex(term, 'claude · beta');
+  const target = lineIndex(term, 'beta');
   assert.ok(target > 0, `beta row not on screen:\n${term.text()}`);
   term.click(target + 1, 30);
 

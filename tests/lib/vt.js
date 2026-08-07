@@ -1,10 +1,9 @@
 // Minimal VT100/xterm screen model: feed it the bytes a TUI writes to its pty
 // and read back what a human would see. Covers the subset fzf/agentview emit
 // (cursor moves, erases, alt-screen, scroll region) plus background colour,
-// which is the only way to tell which row fzf has selected: agentview sets
-// --pointer='▌', the same glyph fzf already draws in the gutter of every other
-// row, so the selected row is distinguishable only by --highlight-line's
-// background.
+// which is how we tell which row fzf has selected: fzf draws its own ▌ in the
+// gutter of every non-current row, so scanning for a bar glyph finds all of
+// them and --highlight-line's background is what actually singles one out.
 //
 // Hand-rolled because this repo carries no npm/pip dependencies -- see the note
 // in tests/python-suites.test.js about pytest being unavailable on this machine.

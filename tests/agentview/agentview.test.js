@@ -16,6 +16,9 @@ const path = require('node:path');
 const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
+// The footer is built at startup from render.sh's AV_HINTS (width-aware), so the hint
+// strings live there rather than in the picker's flags.
+const RENDER = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview', 'render.sh');
 const US = '\x1f';
 
 let toolsOk = true;
@@ -786,7 +789,7 @@ test('picker binds ctrl-x to --remove and hints it in the footer', () => {
   // float over the list, plain execute otherwise. See av_pick in the script.
   assert.match(src, /ctrl-x:'"\$AV_EXEC"'\([^)]*--remove {1}/, 'ctrl-x runs agentview --remove on the selected KEY');
   assert.match(src, /reload\(/, 'removal reloads the body so the row disappears');
-  assert.match(src, /⌃x remove/, 'footer advertises the remove action');
+  assert.match(fs.readFileSync(RENDER, 'utf8'), /⌃x remove/, 'footer advertises the remove action');
 });
 
 // ---- state coloring (yellow=needs-input, green=working, grey=completed) --
@@ -971,7 +974,7 @@ test('picker slims margins and trims the footer to fit narrow windows', () => {
   const src = fs.readFileSync(VIEW, 'utf8');
   assert.match(src, /--margin=1,2%/, 'side margins are slimmed to reclaim width');
   assert.doesNotMatch(src, /state from Claude Code hooks/, 'the long footer tagline is dropped');
-  assert.match(src, /⌃x remove/, 'the key hints stay in the trimmed footer');
+  assert.match(fs.readFileSync(RENDER, 'utf8'), /⌃x remove/, 'the key hints stay in the trimmed footer');
 });
 
 // ---- right column: task title, else age (never the redundant state word) --
@@ -1122,6 +1125,151 @@ test('--card labels a review session with the peach state', { skip }, () => {
   const blob = cardKey([HOST, 'C:\\a\\rproj', 'review', '0', 'fixing things', '1', 'host', 'none:']);
   const txt = stripAnsi(run(env, ['--card', blob]).out);
   assert.match(txt, /State\s+review/);
+});
+
+// ---- row geometry: name block · title · shared status column ----------------
+// The row used to right-align "title + marker" as one blob, so every title began at a
+// different column and there was no edge to run the eye down. It also computed its width
+// from a formula that disagreed with fzf's actual list width, so fzf silently ellipsised
+// the last 1-2 cells of every row that reached the edge. These pin both.
+
+const LCOLS = 110;
+// What row_width must compute at startup: fzf's list geometry for --margin=1,2% --padding=1
+// --border=rounded, less its 2-column gutter. Verified against fzf 0.74's own $FZF_COLUMNS.
+const rowWidth = (c) => c - 2 * Math.floor((c * 2) / 100) - 8;
+
+// Display cells, mirroring av_dwidth: East Asian Wide and emoji take two, everything else one.
+const dwidth = (s) => [...s].reduce((n, ch) => {
+  const cp = ch.codePointAt(0);
+  const wide = (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0x303e)
+    || (cp >= 0x3041 && cp <= 0x33ff) || (cp >= 0x3400 && cp <= 0x4dbf)
+    || (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0xa000 && cp <= 0xa4cf)
+    || (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff)
+    || (cp >= 0xfe30 && cp <= 0xfe6f) || (cp >= 0xff00 && cp <= 0xff60)
+    || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x1f300 && cp <= 0x1faff);
+  return n + (wide ? 2 : 1);
+}, 0);
+
+// The DISPLAY field of each SESSION row (KEY \t TRACKID \t DISPLAY). Group headers, spacers
+// and host-status rows carry no machine pill, which is what separates them here.
+const sessionRows = (capture) => fs.readFileSync(capture, 'utf8').split('\n')
+  .filter((l) => l.includes(''))
+  .map((l) => stripAnsi(l.split('\t').slice(2).join('\t')));
+
+test('no rendered row overruns the width fzf gives the list', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  // Long titles so every row reaches the right edge, and one carrying a wide glyph: `${#s}`
+  // counts runes, so an emoji title measured a cell short per glyph and overran.
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: now - 5, title: 'w'.repeat(200) });
+  stateFile(home, 'e', { pane: '2', state: 'working', cwd: '/r/emoji', host: HOST, ts: now - 6, title: '🚀'.repeat(80) });
+  stateFile(home, 'c', { pane: '3', state: 'completed', cwd: '/r/beta', host: HOST, ts: now - 4000, title: 'c'.repeat(200) });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  run(env, [], { COLUMNS: String(LCOLS) });
+  const rows = sessionRows(capture);
+  assert.strictEqual(rows.length, 3, `expected three session rows, got:\n${rows.join('\n')}`);
+  for (const d of rows) {
+    assert.strictEqual(dwidth(d), rowWidth(LCOLS),
+      `row is ${dwidth(d)} cells, the list is ${rowWidth(LCOLS)}:\n${d}`);
+  }
+});
+
+test('titles end on one column whatever their row state, with the marker in its own', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  // `<` marks each title's last cell: if the titles share a right edge it lands on one column.
+  stateFile(home, 'w', { pane: '1', state: 'working',   cwd: '/r/alpha', host: HOST, ts: now - 5, title: 'AA<' });
+  stateFile(home, 'c', { pane: '2', state: 'completed', cwd: '/r/beta',  host: HOST, ts: now - 4000, title: 'BBBBBB<' });
+  stateFile(home, 'i', { pane: '3', state: 'idle',      cwd: '/r/gamma', host: HOST, ts: now - 9000, title: 'CCCCCCCCCC<' });
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\nidle\n');
+  run(env, [], { COLUMNS: String(LCOLS) });
+  const ends = sessionRows(capture).map((d) => d.indexOf('<'));
+  assert.strictEqual(ends.length, 3, 'three rows rendered');
+  assert.ok(ends.every((e) => e > 0), `every row kept its title:\n${sessionRows(capture).join('\n')}`);
+  assert.strictEqual(new Set(ends).size, 1, `titles must share a right edge, got columns ${ends}`);
+  // …and the markers are right-aligned in the column past it, so they share an edge too.
+  const marked = sessionRows(capture).filter((d) => /idle/.test(d));
+  assert.strictEqual(marked.length, 2, 'the two finished rows carry an idle marker');
+  for (const d of marked) assert.match(d, /idle \d+[smhd]$/, `marker sits flush right:\n${d}`);
+});
+
+test('the kind column appears only when a sandbox row needs it', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'a', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: now - 5, title: 'one' });
+  run(env, [], { COLUMNS: String(LCOLS) });
+  assert.doesNotMatch(stripAnsi(fs.readFileSync(capture, 'utf8')), /claude ·/,
+    '"claude ·" on every row distinguishes nothing — it is only ever claude or sandbox');
+
+  const two = makeEnv();
+  stateFile(two.home, 'a', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: now - 5, title: 'one' });
+  stateFile(two.home, 's', { pane: '2', state: 'working', cwd: '/r/box', host: HOST, ts: now - 6, kind: 'sandbox', title: 'two' });
+  run(two.env, [], { COLUMNS: String(LCOLS) });
+  const body = stripAnsi(fs.readFileSync(two.capture, 'utf8'));
+  assert.match(body, /sandbox ·/, 'a sandbox row still says so');
+  assert.match(body, /claude ·/, 'and its neighbour keeps the column so the two line up');
+});
+
+test('each machine badge gets its own colour', { skip }, () => {
+  // Only PC and Homelab were ever listed, so this box and the Box rendered in the same
+  // default text colour and the pill carried no information.
+  const now = nowSec();
+  const remote = JSON.stringify({ pane: '1', state: 'working', cwd: '/home/ubuntu/srv',
+    session: 'r', host: 'daniel-server', ts: now - 5 });
+  const { env, home, bin, capture } = makeEnv({ remote });
+  localHost(bin, 'fedora');   // else selfhost IS winhost and the local badge reads "PC"
+  stateFile(home, 'a', { pane: '1', state: 'working', cwd: '/r/alpha', host: 'fedora', ts: now - 5, title: 'local' });
+  run(env, [], { COLUMNS: String(LCOLS) });
+  const raw = fs.readFileSync(capture, 'utf8');
+  const pills = [...raw.matchAll(/\x1b\[38;2;([\d;]+)m(PC|Box|Linux|WSL|Homelab)\x1b\[0m/g)];
+  const labels = new Set(pills.map((m) => m[2]));
+  const hues = new Set(pills.map((m) => m[1]));
+  assert.ok(labels.has('Linux') && labels.has('Homelab'), `expected both machines, got ${[...labels]}`);
+  assert.strictEqual(hues.size, labels.size, `each machine needs its own hue, got ${[...hues]} for ${[...labels]}`);
+});
+
+test('the footer drops whole hints to fit rather than being cut off mid-word', { skip }, () => {
+  const { env, home, fzfArgs } = makeEnv();
+  stateFile(home, 'a', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: nowSec() - 5, title: 'one' });
+
+  run(env, [], { COLUMNS: '80' });
+  const narrow = fs.readFileSync(fzfArgs, 'utf8');
+  const line = /--footer=(.*?)(?: --|\n)/s.exec(narrow);
+  assert.ok(line, `no --footer in argv:\n${narrow}`);
+  assert.ok(dwidth(line[1]) <= rowWidth(80), `footer is ${dwidth(line[1])} cells, list is ${rowWidth(80)}`);
+  assert.match(narrow, /\? keys/, 'the hint that reveals the dropped ones is the last to go');
+  assert.match(narrow, /↵ switch\/fold/, 'and so is the one that says what enter does');
+  assert.doesNotMatch(narrow, /⌃x remove/, 'the lowest-priority hint goes first');
+
+  run(env, [], { COLUMNS: '220' });
+  const wide = fs.readFileSync(fzfArgs, 'utf8');
+  for (const hint of ['↵ switch/fold', 'alt-# jump', '⌃t send', '⌃v resume', '⌃r rename',
+    '⌃p pin', '⌃g group', '⌃n new', '⌃x remove', '⌃f refresh', '? keys', 'esc']) {
+    assert.ok(wide.includes(hint), `a wide pane shows every hint; missing "${hint}"`);
+  }
+});
+
+test('the header states the grouping on the left and the totals on the right', { skip }, () => {
+  const { env, home, fzfArgs } = makeEnv();
+  stateFile(home, 'a', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: nowSec() - 5, title: 'one' });
+  run(env, [], { COLUMNS: String(LCOLS) });
+  // Appending "· by repo" only in repo mode meant the default never said what it grouped by,
+  // nor that ⌃g could change it.
+  assert.match(fs.readFileSync(fzfArgs, 'utf8'), /--header=\s+by state\s+1 session · 1 machine/,
+    'state mode names itself, with the totals right-aligned away from it');
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-groupby'), 'repo\n');
+  run(env, [], { COLUMNS: String(LCOLS) });
+  assert.match(fs.readFileSync(fzfArgs, 'utf8'), /--header=\s+by repo\s/);
+});
+
+test('the pointer is not the glyph fzf already paints down the gutter', { skip }, () => {
+  // fzf 0.74 draws ▌ in the gutter of every NON-current row on its own (independent of
+  // --pointer/--marker/--scrollbar), so a ▌ pointer marked the current row with the same
+  // glyph as every other one and only --highlight-line's background told them apart.
+  const src = fs.readFileSync(VIEW, 'utf8');
+  const ptr = /--pointer='(.+?)'/.exec(src);
+  assert.ok(ptr, 'the picker sets a pointer');
+  assert.notStrictEqual(ptr[1], '▌', 'the pointer must differ from fzf’s own gutter bar');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

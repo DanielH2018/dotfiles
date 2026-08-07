@@ -12,6 +12,8 @@ const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
 const SRC = fs.readFileSync(VIEW, 'utf8');
+// The footer is assembled from render.sh's AV_HINTS now, not spelled out in the picker flags.
+const HINTS = fs.readFileSync(path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview', 'render.sh'), 'utf8');
 const HOST_ROW = '[no repo · plain claude]';   // first repo-pick row -> plain host session
 
 let toolsOk = true;
@@ -154,7 +156,7 @@ test('interactive picker binds ctrl-n to --spawn and hints it in the footer', ()
   // The literal action is $AV_EXEC now — execute-silent under tmux (so the spawn pickers can
   // float as a popup over the list), plain execute otherwise. See av_pick in the script.
   assert.match(SRC, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n runs agentview --spawn');
-  assert.match(SRC, /⌃n new/, 'footer advertises the new-session action');
+  assert.match(HINTS, /⌃n new/, 'footer advertises the new-session action');
 });
 
 // ---- theming: every box the spawn flow opens is Catppuccin Mocha, like the terminal ----

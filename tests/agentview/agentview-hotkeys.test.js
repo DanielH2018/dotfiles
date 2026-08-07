@@ -13,6 +13,9 @@ const path = require('node:path');
 const { agentviewWinSeams } = require('../lib/agentview-env');
 
 const VIEW = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_agentview');
+// Footer hints moved into render.sh's AV_HINTS when the footer became width-aware: the
+// picker now builds the line at startup instead of carrying it as a literal flag.
+const RENDER = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview', 'render.sh');
 const US = '\x1f';
 const HOST = 'av-host'; // what the `hostname` stub reports (selfhost)
 
@@ -586,11 +589,12 @@ test('picker binds the new hotkeys and hints them in the footer', () => {
   assert.match(src, /up:up\+transform\([^)]*--skip up \{1\}\)/, 'up steps over a group header');
   assert.match(src, /down:down\+transform\([^)]*--skip down \{1\}\)/, 'down steps over a group header');
   assert.match(src, /load:transform\([^)]*--skip down \{1\}\)/, 'the picker never opens on a header row');
-  assert.match(src, /⌃r rename/, 'footer advertises rename');
-  assert.match(src, /⌃p pin/, 'footer advertises pin');
-  assert.match(src, /alt-# jump/, 'footer advertises the alt jump');
-  assert.match(src, /⌃f refresh/, 'footer advertises the moved refresh');
-  assert.match(src, /\? keys/, 'footer advertises the shortcut help');
+  const hints = fs.readFileSync(RENDER, 'utf8');
+  assert.match(hints, /⌃r rename/, 'footer advertises rename');
+  assert.match(hints, /⌃p pin/, 'footer advertises pin');
+  assert.match(hints, /alt-# jump/, 'footer advertises the alt jump');
+  assert.match(hints, /⌃f refresh/, 'footer advertises the moved refresh');
+  assert.match(hints, /\? keys/, 'footer advertises the shortcut help');
 });
 
 // ---- render width + twin-name disambiguation ----------------------------

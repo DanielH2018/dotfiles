@@ -606,7 +606,10 @@ machines=${#_mh[@]}
 htext="${total} session${ts_s} · ${machines} machine${ms_s}"
 av_groupby
 # shellcheck disable=SC2154  # _gb is set by av_groupby (render module)
-[ "$_gb" = repo ] && htext="$htext · by repo"
+# The grouping mode moves to the LEFT of the header, where it balances the right-aligned
+# totals and is stated in both modes — appending "· by repo" only in repo mode meant the
+# default never said what it was grouped by, or that ⌃g could change it.
+[ "$_gb" = repo ] && hmode="by repo" || hmode="by state"
 # Fleet total from the same cache the cards read: what every local agent is costing this
 # machine, together. Pure bash over a handful of lines — no fork on the render path.
 if [ -s "$usage_cache" ]; then
@@ -619,7 +622,9 @@ if [ -s "$usage_cache" ]; then
   [ "$_tc" -gt 0 ] || [ "$_tm" -gt 0 ] && htext="$htext · ${_tc}% cpu · $(( _tm / 1024 )).$(( (_tm % 1024) * 10 / 1024 )) GB"
 fi
 row_width
-printf -v hdrline '%*s' "$_rw" "$htext"
+hpad=$(( _rw - 2 - ${#hmode} - ${#htext} )); [ "$hpad" -lt 1 ] && hpad=1
+printf -v hdrline '  %s%*s%s' "$hmode" "$hpad" '' "$htext"
+av_footer "$_rw"
 
 body=$(build_pretty); prof build_pretty
 [ -z "$body" ] && body="$NO_SESSIONS_ROW"
@@ -675,6 +680,11 @@ if [ -n "${TMUX:-}" ]; then AV_EXEC='execute-silent'; else AV_EXEC='execute'; fi
 # enter/double-click binds: both dispatch to the --enter mode above, which decides accept
 # vs. fold-toggle — see that block for why the decision can't be inlined here. A plain
 # accept lands the row's KEY on fzf's stdout, read as $sel below.
+#
+# --pointer is ❯ rather than ▌: fzf paints ▌ down the gutter of every NON-current row on its
+# own (0.74; independent of --pointer, --marker, --scrollbar and --no-multi — measured), so a
+# ▌ pointer was the same glyph as the column it was supposed to stand out from, and the
+# current row was distinguishable only by --highlight-line's background.
 # Slice 1b: the remote snapshot's shape at open, compared again in the EXIT trap. Temporary --
 # it exists to decide whether streaming remote changes is worth building, and comes out with
 # that decision.
@@ -687,10 +697,10 @@ sel=$(printf '%s\n' "$body" | fzf \
   --track --id-nth=2 \
   --height='90%' --min-height=12 --margin=1,2% --padding=1 \
   --border=rounded --border-label="$LABEL" --border-label-pos=3 \
-  --prompt="$PROMPT" --ghost='filter sessions…' --pointer='▌' --query="$AV_QUERY" \
+  --prompt="$PROMPT" --ghost='filter sessions…' --pointer='❯' --query="$AV_QUERY" \
   --info=hidden --no-scrollbar --highlight-line \
   --header="$hdrline" --header-first \
-  --footer='  ↵ switch/fold · alt-# jump · ⌃t send · ⌃v resume · ⌃r rename · ⌃p pin · ⌃g group · ⌃n new · ⌃x remove · ⌃f refresh · ? keys · esc' \
+  --footer="$_footer" \
   --preview="'$SELF' --card {1}" \
   --preview-window='right,46%,border-left,hidden,wrap' \
   --preview-label=' session ' \

@@ -15,6 +15,7 @@ C_REVIEW="$E[38;2;250;179;135m"        # peach   — review (stopped, but dirty/
 C_UNSEEN="$E[38;2;148;226;213m"        # teal    — DONE: finished while you weren't looking
 C_DONE="$E[38;2;108;112;134m"          # overlay0 — completed / idle (i.e. seen)
 C_DIM="$E[38;2;127;132;156m"           # overlay1 — "claude ·"
+C_FAINT="$E[38;2;88;91;112m"           # surface2 — the status column, a step under its title
 C_BOLD="$E[1m"                         # bold prefix — group headers + names render bold+state
 C_PIN="$E[38;2;203;166;247m"           # mauve — PINNED group accent (★)
 C_ERR="$E[38;2;243;139;168m"           # red — host unreachable / fetch failed
@@ -39,9 +40,47 @@ row_pinned() {  # sets $_pinned=1/0 for $1=host $2=cwd $3=kind $4=locator (reads
   [ -n "${PINNED_SET[$_pid]:-}" ] && _pinned=1 || _pinned=0
 }
 NO_SESSIONS_ROW=$'\t\t   '"${C_DONE}   no active Claude sessions — nothing running${Z}"
-LABEL=$' ✳ claude sessions '      # ✳ Claude mark in the border title
+# ✳ Claude mark in the border title. Two spaces after it, not one: IosevkaTerm NFM draws ✳
+# about two cells wide while the terminal allocates it one (it is East Asian Ambiguous), so a
+# single space was swallowed and the mark sat flush against the word. Tuned to that font.
+LABEL=$' ✳  claude sessions '
 PROMPT=$'  '                     # Nerd Font magnifier + gap (IosevkaTerm NFM)
 declare -A GN=( [pinned]="PINNED" [needs-input]="NEEDS INPUT" [working]="WORKING" [review]="REVIEW" [unseen]="DONE" [completed]="COMPLETED" [idle]="IDLE" )
+
+# Footer hints in display order, each "<rank>|<text>". fzf never re-wraps --footer, so the
+# fixed string this used to be was simply cut off at the pane's right edge — on a 100-column
+# pane that silently ate `⌃f refresh · ? keys · esc`, including the one hint that can reveal
+# the others. Rank is drop order, highest dropped first, so ↵ / ? / esc survive longest.
+AV_HINTS=(
+  '1|↵ switch/fold'
+  '4|alt-# jump'
+  '6|⌃t send'
+  '7|⌃v resume'
+  '9|⌃r rename'
+  '10|⌃p pin'
+  '11|⌃g group'
+  '5|⌃n new'
+  '12|⌃x remove'
+  '8|⌃f refresh'
+  '2|? keys'
+  '3|esc'
+)
+av_footer() {  # $1 = usable columns -> _footer: the most hints that fit, in display order
+  local w="${1:-80}" keep=12 out h rank text
+  while [ "$keep" -ge 1 ]; do
+    out=""
+    for h in "${AV_HINTS[@]}"; do
+      rank="${h%%|*}"; text="${h#*|}"
+      [ "$rank" -gt "$keep" ] && continue
+      [ -n "$out" ] && out+=" · "
+      out+="$text"
+    done
+    av_dwidth "$out"
+    [ "$_dw" -le "$(( w - 2 ))" ] && break   # -2 for the indent _footer carries below
+    keep=$(( keep - 1 ))
+  done
+  _footer="  $out"
+}
 
 group_expanded() {  # $1 = group name -> true (0) if its rows should render in full.
   # completed/idle are the only foldable groups: the rest are what the picker exists to show.
@@ -78,10 +117,17 @@ row_width() {  # sets _rw: usable row columns for the render + header alignment.
   # start from the terminal and discount fzf's chrome (2×2% margin + padding + border).
   # Floor of 40 keeps the pad/truncate math sane on tiny panes. Was a hardcoded 72, which
   # overran narrow panes (clipped names) and wasted wide ones.
+  # The startup branch must land on the SAME number the reload branch reads out of fzf, or the
+  # first render is wider than the list and fzf eats the tail of every full row (it showed as a
+  # `··` ellipsis on the right edge of the header and every row that reached it). fzf lays out
+  # `--margin=1,2% --padding=1 --border=rounded` as COLUMNS - 2*(⌊COLUMNS*2/100⌋+1) - 4, so the
+  # item text is that minus the 2-column gutter. `_rw*4/100` is NOT the same as doubling the
+  # 2% margin: it rounds once instead of twice, which is where 1 of the 2 columns went.
+  # Checked against fzf 0.74's own $FZF_COLUMNS at 40/55/72/80/99/100/110/120/149/160/200/240.
   if [ -n "${FZF_COLUMNS:-}" ]; then _rw=$(( FZF_COLUMNS - 2 ))
   else
     _rw="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
-    _rw=$(( _rw - _rw * 4 / 100 - 6 ))
+    _rw=$(( _rw - 2 * (_rw * 2 / 100) - 8 ))
   fi
   [ "$_rw" -lt 40 ] && _rw=40
 }
@@ -95,6 +141,67 @@ fmt_age() {  # $1 = epoch -> sets _age: compact "12m"/"3h"/"2d"; empty for unkno
   elif [ "$d" -lt 3600 ];  then _age="$((d/60))m"
   elif [ "$d" -lt 86400 ]; then _age="$((d/3600))h"
   else _age="$((d/86400))d"; fi
+}
+
+av_wide() {  # $1 = codepoint -> true (0) when the glyph occupies two terminal cells.
+  # East Asian Wide/Fullwidth plus emoji. Ambiguous-width glyphs (⚠ ● ★ ✳) are NOT here:
+  # a terminal decides those itself and both Ghostty and wcwidth call them one cell, so
+  # claiming two would open a gap rather than close one.
+  local c="$1"
+  (( c >= 0x1100 && c <= 0x115F )) ||
+  (( c >= 0x2E80 && c <= 0x303E )) ||
+  (( c >= 0x3041 && c <= 0x33FF )) ||
+  (( c >= 0x3400 && c <= 0x4DBF )) ||
+  (( c >= 0x4E00 && c <= 0x9FFF )) ||
+  (( c >= 0xA000 && c <= 0xA4CF )) ||
+  (( c >= 0xAC00 && c <= 0xD7A3 )) ||
+  (( c >= 0xF900 && c <= 0xFAFF )) ||
+  (( c >= 0xFE30 && c <= 0xFE6F )) ||
+  (( c >= 0xFF00 && c <= 0xFF60 )) ||
+  (( c >= 0xFFE0 && c <= 0xFFE6 )) ||
+  (( c >= 0x1F300 && c <= 0x1FAFF )) ||
+  (( c >= 0x20000 && c <= 0x3FFFD ))
+}
+
+av_dwidth() {  # $1 -> _dw: how many cells $1 occupies. `${#s}` counts RUNES, so a session
+  # title carrying an emoji or CJK was measured short and its row overran the right edge by
+  # a cell per glyph. The ASCII test is a byte-range match rather than [:ascii:], which is
+  # locale-dependent; nearly every row takes that fast path and never enters the loop.
+  local s="$1" i n c cp
+  if [[ "$s" != *[$'\x80'-$'\xff']* ]]; then _dw=${#s}; return; fi
+  n=${#s}; _dw=0
+  for (( i = 0; i < n; i++ )); do
+    c="${s:i:1}"; printf -v cp '%d' "'$c"
+    if [ "$cp" -ge 128 ] && av_wide "$cp"; then _dw=$(( _dw + 2 )); else _dw=$(( _dw + 1 )); fi
+  done
+}
+
+av_trunc() {  # $1 = text, $2 = max cells -> _tr: $1 fitted to $2, ellipsized when it was cut.
+  # Counts cells like av_dwidth, so a wide glyph can't smuggle an extra column past the limit.
+  local s="$1" max="$2" i n c cp w=0
+  av_dwidth "$s"
+  if [ "$_dw" -le "$max" ]; then _tr="$s"; return; fi
+  if [ "$max" -le 1 ]; then _tr="…"; return; fi
+  n=${#s}; _tr=""
+  for (( i = 0; i < n; i++ )); do
+    c="${s:i:1}"; printf -v cp '%d' "'$c"
+    if [ "$cp" -ge 128 ] && av_wide "$cp"; then w=$(( w + 2 )); else w=$(( w + 1 )); fi
+    [ "$w" -gt $(( max - 1 )) ] && break
+    _tr+="$c"
+  done
+  _tr+="…"
+}
+
+row_mark() {  # $1=state $2=ts $3=git marker $4=title -> _mark: the row's right-hand status
+  # column. Split out of the row render so build_pretty can measure every row's marker in its
+  # counting pass and reserve one shared column for them — two call sites, one case statement,
+  # because a second copy is how the two would drift.
+  case "$1" in
+    needs-input|working) _mark=""; [ -n "$4" ] || { fmt_age "$2"; _mark="$_age"; } ;;
+    review)    fmt_age "$2"; _mark="${3:-⚠ review}"; [ -n "$_age" ] && _mark="$_mark $_age" ;;
+    completed) fmt_age "$2"; [ -n "$_age" ] && _mark="✓ idle $_age" || _mark="✓ completed" ;;
+    *)         fmt_age "$2"; [ -n "$_age" ] && _mark="· idle $_age" || _mark="· idle" ;;
+  esac
 }
 
 badge_name() {  # $1 = host -> sets _bn: friendly machine tag (from HOST_LABEL)
@@ -301,9 +408,16 @@ collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into 
 }
 
 build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carries the card fields
-  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol stext cnt key glyph L _rest
-  local bcell left_p left_c pad sp maxs bpad bfg first=1 fwd clabel
+  local W BADGEW=7 grp st host cwd pane ts kind locator title_reg gitmark name title bn scol cnt key glyph L _rest
+  local bcell left_p left_c pad sp maxt bpad bfg first=1 fwd clabel
   local PINCNT=0 idx=0 g1 gutc _pinned _hp _leaf _par
+  # Three columns, not two: the name block, then the title, then a shared right-hand status
+  # column. Right-aligning title+marker as one blob left every title starting somewhere
+  # different, so the eye had no edge to run down. MARKW is the widest marker in THIS render
+  # (0 when nothing has one, which puts titles back on the right edge), capped so one
+  # pathological marker cannot eat the title column.
+  local HAS_SANDBOX=0 KINDW=0 MARKW=0 MARKCAP=14 mark markc mpad kpad kplain kcell_c ttext left_w gap
+  local _mark _dw _tr
   row_width; W=$_rw
   # Pinned rows collect into a PINNED group at the very top. Load the sidecar once into a
   # set, then in the tally below count pinned rows separately so a state group's header
@@ -351,14 +465,28 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
   done
   # Pass 2 — per-group counts, and (repo mode) the most urgent state in each group, which is
   # what colors its header: a collapsed-looking project still says whether anything needs you.
+  # It also sizes the two shared columns the render loop pads into. Both are measured over
+  # EVERY row including pinned ones, above the `continue` below: a pinned sandbox row still
+  # renders, and missing it would leave its prefix hanging 10 columns off everything else.
   for L in "${sorted[@]}"; do
     st="${L%%$'\t'*}"; [ -z "$st" ] && continue
     _rest="${L#*$'\t'}"; host="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
     cwd="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
     _rest="${_rest#*$'\t'}"                       # skip pane
-    _rest="${_rest#*$'\t'}"                       # skip ts
+    ts="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
     kind="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
-    locator="${_rest%%$'\t'*}"
+    locator="${_rest%%$'\t'*}"; _rest="${_rest#*$'\t'}"
+    title_reg="${_rest%%$'\t'*}"
+    if [ "$_rest" = "$title_reg" ]; then gitmark=""; else gitmark="${_rest#*$'\t'}"; fi
+    [ "$kind" = sandbox ] && HAS_SANDBOX=1
+    # Measured from the registry title alone. The render loop may still fall back to a mux
+    # pane title for a working row, which only ever shrinks that row's marker — so this is an
+    # upper bound on the column, never an under-reservation that would clip one.
+    row_mark "$st" "$ts" "$gitmark" "$title_reg"
+    if [ -n "$_mark" ]; then
+      av_dwidth "$_mark"
+      [ "$_dw" -gt "$MARKW" ] && MARKW="$_dw"
+    fi
     row_pinned "$host" "$cwd" "$kind" "$locator"
     if [ "$_pinned" = 1 ]; then PINCNT=$(( PINCNT + 1 )); continue; fi
     if [ "$GB" = repo ]; then row_group_name "$cwd"; _gk="$_gname"; else _gk="$st"; fi
@@ -366,6 +494,11 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
     state_rank "$st"
     [ "$_sr" -lt "${GURG[$_gk]:-9}" ] && GURG[$_gk]="$_sr"
   done
+  [ "$MARKW" -gt "$MARKCAP" ] && MARKW="$MARKCAP"
+  # "claude · " on every row distinguished nothing — it is only ever `claude` or `sandbox`.
+  # Reserve the column when a sandbox row is actually present (so both kinds still line up),
+  # and give its width back to the titles when none is.
+  [ "$HAS_SANDBOX" = 1 ] && KINDW=10
   if [ "$GB" = repo ]; then
     GORDER=(pinned)
     if [ "${#GCNT[@]}" -gt 0 ]; then
@@ -452,46 +585,60 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       title="${title//$'\t'/ }"
       [ "$kind" = "sandbox" ] && clabel="sandbox" || clabel="claude"
       badge_name "$host"; bn="$_bn"
+      # One hue per machine, from a cool family the warm state colors don't use — the pill
+      # says WHERE, the name says WHAT, and they must not be read as the same axis. Only PC
+      # and Homelab were ever listed, so every other machine (this box, a WSL side, the Box)
+      # fell through to plain text and two different hosts rendered identically.
       case "$bn" in
-        PC)      bfg="$E[38;2;137;180;250m";;   # blue  — desktop
-        Homelab) bfg="$E[38;2;203;166;247m";;   # mauve — server
-        *)       bfg="$E[38;2;205;214;244m";;   # text  — cloud
+        PC)      bfg="$E[38;2;137;180;250m";;   # blue     — desktop
+        Homelab) bfg="$E[38;2;203;166;247m";;   # mauve    — server
+        Box)     bfg="$E[38;2;137;220;235m";;   # sky      — daniel-box
+        Linux)   bfg="$E[38;2;180;190;254m";;   # lavender — this machine, natively
+        WSL)     bfg="$E[38;2;116;199;236m";;   # sapphire — this machine, under Windows
+        *)       bfg="$E[38;2;205;214;244m";;   # text     — anything unregistered
       esac
       # badge cell = the rounded pill (caps hugging <name>, no inner padding) + trailing pad,
-      # so the "claude ·" column lines up whatever the machine name's length.
+      # so the name column lines up whatever the machine name's length.
       bpad=$(( BADGEW - ${#bn} )); [ "$bpad" -lt 0 ] && bpad=0
       printf -v bcell '%*s' "$((BADGEW + 2))" ''
+      # Padded by hand, not with `%-*s`: bash's printf counts a field width in BYTES, and the
+      # `·` here is two of them, so the format string silently emitted no padding at all and
+      # the sandbox/claude column never lined up.
+      if [ "$KINDW" -gt 0 ]; then
+        kplain="$clabel ·"; av_dwidth "$kplain"; kpad=$(( KINDW - _dw )); [ "$kpad" -lt 0 ] && kpad=0
+        printf -v kplain '%s%*s' "$kplain" "$kpad" ''
+        kcell_c="${C_DIM}${kplain}${Z}"
+      else kplain=""; kcell_c=""; fi
       state_color "$st"; scol="$_scol"     # colour the bar/name by the row's real state, even under PINNED
       # Number gutter sits just after the accent bar — where the header's ● bullet is — so
       # the ▎ rule stays column-aligned down the group while ALT+1..9 jumps to the Nth row.
       # --jump-nth counts the same non-empty-KEY rows in this order.
       idx=$(( idx + 1 ))
       if [ "$idx" -le 9 ]; then g1="$idx"; gutc="${C_DIM}${idx}${Z}"; else g1=" "; gutc=" "; fi
-      left_p="  ${g1} ${bcell}  ${clabel} · ${name}"
+      left_p="  ${g1} ${bcell}  ${kplain}${name}"
       # Machine source as a rounded pill: fill-colored caps hug the machine-colored name with
       # no inner padding (tight); trailing bpad right-pads to the shared column.
-      printf -v left_c '%s%s%s %s %s%s%s%s%s%s%s%s%s%*s  %s%s · %s%s%s%s%s' \
+      printf -v left_c '%s%s%s %s %s%s%s%s%s%s%s%s%s%*s  %s%s%s%s%s' \
         "$scol" "$GBAR" "$Z" "$gutc" "$BADGEFG" "$PILL_L" "$BADGEBG" "$bfg" "$bn" "$Z" "$BADGEFG" "$PILL_R" "$Z" "$bpad" '' \
-        "$C_DIM" "$clabel" "$Z" "$C_BOLD" "$scol" "$name" "$Z"
-      case "$st" in
-        # Right column = the session's task title (its "name"). When none was captured, fall
-        # back to the age — never the state word, which just echoes the group header.
-        needs-input|working) if [ -n "$title" ]; then stext="$title"; else fmt_age "$ts"; stext="$_age"; fi;;
-        review)      fmt_age "$ts"; stext="${gitmark:-⚠ review}"; [ -n "$_age" ] && stext="$stext $_age";;
-        completed)   fmt_age "$ts"; [ -n "$_age" ] && stext="✓ idle $_age" || stext="✓ completed";;
-        *)           fmt_age "$ts"; [ -n "$_age" ] && stext="· idle $_age" || stext="· idle";;
-      esac
-      maxs=$(( W - ${#left_p} - 2 )); [ "$maxs" -lt 8 ] && maxs=8
-      # Idle/completed rows keep their title too: the idle marker appends only while
-      # both fit — when width runs out the name wins and the marker drops.
-      case "$st" in needs-input|working) ;; *)
-        if [ -n "$title" ]; then
-          [ $(( ${#title} + 2 + ${#stext} )) -le "$maxs" ] && stext="$title  $stext" || stext="$title"
-        fi;;
-      esac
-      [ "${#stext}" -gt "$maxs" ] && stext="${stext:0:maxs-1}…"
-      pad=$(( W - ${#left_p} - ${#stext} )); [ "$pad" -lt 1 ] && pad=1
+        "$kcell_c" "$C_BOLD" "$scol" "$name" "$Z"
+      row_mark "$st" "$ts" "$gitmark" "$title"
+      mark="$_mark"
+      # The marker sits a step fainter than the title it trails, so the eye lands on the task
+      # name first. REVIEW is the exception: there the marker (⚠ dirty / ↑N) IS the message.
+      [ "$st" = review ] && markc="$scol" || markc="$C_FAINT"
+      av_dwidth "$left_p"; left_w="$_dw"
+      gap=0; [ "$MARKW" -gt 0 ] && gap=2
+      # -1 for the minimum one-space separator the pad below is floored to: without it a
+      # title fitted to the full remainder pushed the row one cell wider than the list.
+      maxt=$(( W - left_w - MARKW - gap - 1 )); [ "$maxt" -lt 8 ] && maxt=8
+      # Fit a COPY: $title itself goes on into KEY, which the preview card reads for its Task
+      # field, and a card quoting the row's ellipsis back at you is not a shorter title.
+      av_trunc "$title" "$maxt"; ttext="$_tr"
+      av_dwidth "$ttext"
+      pad=$(( W - left_w - _dw - MARKW - gap )); [ "$pad" -lt 1 ] && pad=1
       printf -v sp '%*s' "$pad" ''
+      av_dwidth "$mark"; mpad=$(( MARKW - _dw )); [ "$mpad" -lt 0 ] && mpad=0
+      printf -v mark '%*s%*s%s' "$gap" '' "$mpad" '' "$mark"
       # KEY *is* the card blob (host|cwd|state|ts|title|pane|kind|locator, US-delimited):
       # the jump path reads field 2 (cwd, legacy) + field 8 (locator, direct) and the
       # preview reads the whole thing via {1} — so no per-row fork is needed.
@@ -503,7 +650,7 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
       # for the same reason — deliberately not the pane/locator, since a pane dying is
       # exactly when a daemon-hosted job finishes.
       compute_seen_id "$host" "$cwd" "$kind"
-      printf '%s\t%s\t%s%s%s%s%s\n' "$key" "$_sid" "$left_c" "$sp" "$scol" "$stext" "$Z"
+      printf '%s\t%s\t%s%s%s%s%s%s%s%s\n' "$key" "$_sid" "$left_c" "$sp" "$scol" "$ttext" "$Z" "$markc" "$mark" "$Z"
     done
   done
   host_status_rows                            # unreachable/failed/stale hosts, appended last
