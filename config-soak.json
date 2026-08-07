@@ -248,8 +248,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
-      "hash": "cc1587bbb7824c575f2fe0480ff97d922d8685c83aadd5c55d320e54edbb95fb",
-      "landed": "2026-07-30T14:54:44.657Z"
+      "hash": "f5b0ee36145a3e21b99ee6955331799447fc13a3f180e13843d3744220cad4a9",
+      "landed": "2026-08-07T14:00:13.094Z"
     },
     {
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
