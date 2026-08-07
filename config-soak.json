@@ -68,8 +68,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "4641bcda0897a66307404ad59324e97a3814eb9d74f50ca299997a7ebd14a293",
-      "landed": "2026-08-07T13:15:56.285Z"
+      "hash": "625cdde8eff2f55a6235c1459623f17968b0ececbeffa9f7f8dbdb5c9d44184a",
+      "landed": "2026-08-07T13:20:58.300Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
