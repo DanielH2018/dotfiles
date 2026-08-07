@@ -347,6 +347,36 @@ fold_seen_states() {  # completed -> unseen, when the work landed while you were
   done <<< "$rows"
   rows="$out"
 }
+fold_live_completed_to_idle() {  # completed -> idle, for a session that is merely between turns.
+  # "Completed" reads as finished, and for a live session it is wrong: the turn ended, the
+  # process is still there, and the next prompt continues it. The marker column already said
+  # "idle 9s" while the group above it said COMPLETED — this makes the group agree.
+  #
+  # Runs AFTER fold_seen_states on purpose. That step promotes an unwatched finish to DONE, and
+  # it keys on "completed"; reclassifying first would empty DONE out entirely. Anything still
+  # completed by the time we get here is a row you have already seen.
+  #
+  # Local host rows only, because those are the ones whose liveness we can know: gather_local_rows
+  # prunes every local row carrying a dead pid, so a survivor that had one is running. Remote and
+  # Windows rows are not pid-checked (their pids aren't ours to signal), so a completed row there
+  # may genuinely be over and keeps COMPLETED.
+  # Not airtight: a local row with NO pid skips that check, and this still calls it idle. The row
+  # format carries no pid to re-test here, and the state hook stamps one on every real session, so
+  # the gap is a mislabelled group on a row that shouldn't exist rather than anything load-bearing.
+  # review is untouched, as in fold_seen_states: a dirty tree is the more actionable label.
+  local out="" L st host cwd rest kind
+  while IFS= read -r L; do
+    [ -z "$L" ] && continue
+    st="${L%%$'\t'*}"; rest="${L#*$'\t'}"
+    host="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+    cwd="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"        # rest = pane ts kind locator title git
+    kind="${rest#*$'\t'}"; kind="${kind#*$'\t'}"; kind="${kind%%$'\t'*}"
+    [ "$st" = completed ] && [ "$kind" = host ] && [ "$host" = "$selfhost" ] && st=idle
+    out+="$st"$'\t'"$host"$'\t'"$cwd"$'\t'"$rest"$'\n'
+  done <<< "$rows"
+  rows="$out"
+}
+
 collapse_bg_forks() {  # merge a bg daemon row with its interactive origin into one row.
   # Backgrounding a session spawns a bg job that inherits the task title but gets a fresh
   # session id with NO lineage link (session files carry no parent field), so the origin and
@@ -675,6 +705,7 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
     fold_title_states
   fi
   fold_seen_states
+  fold_live_completed_to_idle
   body=$(build_pretty)
   [ -z "$body" ] && body="$NO_SESSIONS_ROW"
 }

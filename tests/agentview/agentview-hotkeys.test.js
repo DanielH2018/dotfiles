@@ -169,11 +169,14 @@ test('--fold with an empty group is a no-op', { skip }, () => {
 // checking the KEY itself catches that regression.
 test('a collapsed group carries a landable fold: sentinel, not an empty key', { skip }, () => {
   const { env, home } = makeEnv();
+  // A live local session: fold_live_completed_to_idle re-groups it under IDLE, which is
+  // foldable exactly like COMPLETED — the sentinel mechanism under test is generic to any
+  // foldable group.
   stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
   const body = run(env, ['--body']).out;
-  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
-  assert.ok(line, `expected a collapsed COMPLETED line, got:\n${body}`);
-  assert.strictEqual(line.split('\t')[0], 'fold:completed', 'the fold row carries the sentinel key, not an empty one');
+  const line = body.split('\n').find((l) => l.includes('IDLE'));
+  assert.ok(line, `expected a collapsed IDLE line, got:\n${body}`);
+  assert.strictEqual(line.split('\t')[0], 'fold:idle', 'the fold row carries the sentinel key, not an empty one');
 });
 
 // ---- fold round trip: an EXPANDED foldable header must stay landable ----
@@ -186,13 +189,16 @@ test('a collapsed group carries a landable fold: sentinel, not an empty key', { 
 // here instead of passing two separately-mocked tests the way this branch's own gap did.
 test('an expanded foldable group header carries a landable fold: key end to end', { skip }, () => {
   const { env, home } = makeEnv();
+  // A live local session: fold_live_completed_to_idle re-groups it under IDLE, which is
+  // foldable exactly like COMPLETED — the round trip under test is generic to any
+  // foldable group.
   stateFile(home, 'done', { host: HOST, cwd: '/r/done', state: 'completed', ts: nowSec() - 10, kind: 'host', locator: 'tmux:/s:sd:%1', pane: '%1', title: 'done' });
-  fs.writeFileSync(foldFile(home), 'completed\n');   // expand it -- collapsed is the default
+  fs.writeFileSync(foldFile(home), 'idle\n');   // expand it -- collapsed is the default
   const body = run(env, ['--body']).out;
-  const line = body.split('\n').find((l) => l.includes('COMPLETED'));
-  assert.ok(line, `expected an expanded COMPLETED line, got:\n${body}`);
+  const line = body.split('\n').find((l) => l.includes('IDLE'));
+  assert.ok(line, `expected an expanded IDLE line, got:\n${body}`);
   const key = line.split('\t')[0];
-  assert.strictEqual(key, 'fold:completed', 'the EXPANDED header still carries the fold sentinel, not an empty key');
+  assert.strictEqual(key, 'fold:idle', 'the EXPANDED header still carries the fold sentinel, not an empty key');
 
   // Feed that real KEY through --skip: a landable row must not deflect the cursor.
   assert.strictEqual(run(env, ['--skip', 'down', key, '4']).out.trim(), '',
@@ -200,7 +206,7 @@ test('an expanded foldable group header carries a landable fold: key end to end'
 
   // Feed it through --enter: it must toggle the fold, not fall through to accept.
   const action = run(env, ['--enter', key]).out;
-  assert.match(action, /--fold fold:completed/, 'enter on the expanded header toggles the fold, not accept');
+  assert.match(action, /--fold fold:idle/, 'enter on the expanded header toggles the fold, not accept');
   run(env, ['--fold', key]);   // perform the toggle --enter's transform would have triggered
   assert.strictEqual(fs.readFileSync(foldFile(home), 'utf8').trim(), '', 'the round trip re-collapses the group');
 });
@@ -507,7 +513,10 @@ test('--jump-nth skips a collapsed fold row instead of mis-numbering past it', {
   const { env, home, tmuxLog } = makeEnv();
   const now = nowSec();
   stateFile(home, 'a', { host: HOST, cwd: '/r/alpha', state: 'working', ts: now - 5, kind: 'host', locator: 'tmux:/s:sa:%1', pane: '%1', title: 'alpha' });
-  stateFile(home, 'c', { host: HOST, cwd: '/r/charlie', state: 'completed', ts: now - 10, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'charlie' });
+  // charlie is on a non-self host: fold_live_completed_to_idle only re-groups a LOCAL
+  // host row, so a self-host fixture here would fold into the same IDLE group as delta
+  // instead of staying a separate collapsed COMPLETED group.
+  stateFile(home, 'c', { host: 'otherbox', cwd: '/r/charlie', state: 'completed', ts: now - 10, kind: 'host', locator: 'tmux:/s:sc:%3', pane: '%3', title: 'charlie' });
   stateFile(home, 'd', { host: HOST, cwd: '/r/delta', state: 'idle', ts: now - 20, kind: 'host', locator: 'tmux:/s:sd:%4', pane: '%4', title: 'delta' });
   // completed stays collapsed (default); idle is explicitly expanded. Render order is fixed
   // by group (working, then completed, then idle), so this is: alpha (gutter 1), fold:completed

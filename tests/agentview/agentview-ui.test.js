@@ -90,11 +90,15 @@ function session(home, sid, obj) {
 // distinctive. ts stays within the last day: gather_local_rows (rows.sh) HIDES a row
 // aged 1-7 days and PRUNES it past 7, so anything older would silently vanish from
 // both the collapsed count and the expanded rows.
+// The completed sessions carry a non-self host: fold_live_completed_to_idle only
+// re-groups a LOCAL host row from COMPLETED to IDLE, so a self-host fixture here would
+// land in the same IDLE group as the idle sessions below instead of the two distinct
+// foldable groups these tests need.
 function seedFinished(home, { completed = 0, idle = 0 } = {}) {
   const ts = nowSec();
   for (let i = 1; i <= completed; i++) {
     session(home, `completed-session-${i}`, {
-      pane: `%c${i}`, state: 'completed', cwd: `/home/daniel/dev/completed-session-${i}`, host: HOST,
+      pane: `%c${i}`, state: 'completed', cwd: `/home/daniel/dev/completed-session-${i}`, host: 'otherbox',
       ts: ts - 100 - i, kind: 'host', title: '', locator: `tmux:/tmp/s.sock:main:%c${i}`,
     });
   }

@@ -208,10 +208,9 @@ test('--fingerprint is unchanged when a module is rewritten with identical bytes
 // gone by the very next reload.
 const US = '\x1f';
 
-function seenStateHome(t, { markAge } = {}) {
+function seenStateHome(t, { markAge, host = os.hostname() } = {}) {
   const home = scratch('av-seenbody-home-');
   fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
-  const host = os.hostname();
   const cwd = '/home/daniel/dev/proj';
   const ts = Math.floor(Date.now() / 1000) - 100;
   fs.writeFileSync(path.join(home, '.claude', 'agent-view', 'x.json'), JSON.stringify({
@@ -235,10 +234,28 @@ test('--body classifies a completed row the seen sidecar marks stale as DONE, no
 
 test('--body leaves an already-seen completed row under COMPLETED', () => {
   const t = copyTree();
-  const home = seenStateHome(t, { markAge: 0 });     // marker matches ts: already seen
+  // A non-self host: fold_live_completed_to_idle only re-groups a LOCAL host row from
+  // COMPLETED to IDLE, and this test is specifically about a completed row staying in
+  // COMPLETED once the seen sidecar's marker matches (as opposed to falling to DONE).
+  const home = seenStateHome(t, { markAge: 0, host: 'daniel-server' });     // marker matches ts: already seen
   const out = run(t, ['--body'], { HOME: home });
   assert.match(out, /COMPLETED/, `expected the COMPLETED group, got:\n${out}`);
   assert.doesNotMatch(out, /DONE/, `row must not render under DONE, got:\n${out}`);
+});
+
+test('a live local session that finished unwatched still reaches DONE, not IDLE', () => {
+  // fold_live_completed_to_idle must run AFTER fold_seen_states (render.sh, render_body()):
+  // reversing the two would let this row's local/live status turn it IDLE before the
+  // seen-sidecar promotion ever runs, and fold_seen_states — keyed on the literal state
+  // "completed" — would then find nothing left to promote. DONE, the group the picker
+  // most needs you to see, would silently lose every row that also happens to be a live
+  // local session, which is most of them.
+  const t = copyTree();
+  const home = seenStateHome(t, { markAge: 500 });   // sidecar armed, marker predates ts (self host, kind=host)
+  const out = run(t, ['--body'], { HOME: home });
+  assert.match(out, /DONE/, `expected the DONE group, got:\n${out}`);
+  assert.doesNotMatch(out, /IDLE/, `row must not fall to IDLE, got:\n${out}`);
+  assert.doesNotMatch(out, /COMPLETED/, `row must not render under COMPLETED, got:\n${out}`);
 });
 
 test("render_body() applies the same fold steps as the picker's own first render", () => {
@@ -257,7 +274,7 @@ test("render_body() applies the same fold steps as the picker's own first render
   assert.ok(bodyStart >= 0 && bodyEnd > bodyStart, 'could not locate render_body()');
   const renderBody = renderSrc.slice(bodyStart, bodyEnd);
 
-  for (const fn of ['fold_title_states', 'fold_seen_states']) {
+  for (const fn of ['fold_title_states', 'fold_seen_states', 'fold_live_completed_to_idle']) {
     assert.ok(inline.includes(fn), `expected the inline picker render to call ${fn}`);
     assert.ok(renderBody.includes(fn),
       `render_body() must call ${fn} too, or every reload (every key bind plus the ` +

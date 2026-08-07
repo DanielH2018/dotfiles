@@ -277,14 +277,15 @@ test('body groups sessions by state and hides sessions older than a day', { skip
   stateFile(home, 'b', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\bravo',  session: 'b', host: HOST, ts: now - 20 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\charlie',session: 'c', host: HOST, ts: now - 30 });
   stateFile(home, 'old', { pane: '4', state: 'working',   cwd: 'C:\\d\\staleone', session: 'old', host: HOST, ts: now - 200000 });
-  // completed collapses behind a fold line by default (task 6); expand it so charlie's
-  // row still renders for the assertion below.
-  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  // charlie is a live local session, so fold_live_completed_to_idle re-groups it under
+  // IDLE, not COMPLETED (task 6 for the fold, this change for the regroup); expand it so
+  // charlie's row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
   run(env, []); // fzf stub exits 0 with no pick -> agentview exits after capture
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /WORKING/);
   assert.match(body, /NEEDS INPUT/);
-  assert.match(body, /COMPLETED/);
+  assert.match(body, /IDLE/);
   assert.match(body, /alpha/); assert.match(body, /bravo/); assert.match(body, /charlie/);
   assert.doesNotMatch(body, /staleone/, 'session older than a day must be hidden');
 });
@@ -803,16 +804,18 @@ test('group-header labels are tinted by their state color (bold)', { skip }, () 
   const now = nowSec();
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\nproj', host: HOST, ts: now - 6 });
+  // 'c' is a live local session, so fold_live_completed_to_idle re-groups it under IDLE,
+  // not COMPLETED — idle shares COMPLETED's grey (C_DONE), so it still proves the same
+  // color mapping. IDLE collapses behind a fold line by default (task 6); expand it so
+  // this asserts the expanded header. The collapsed one is state-colored too, so color
+  // alone no longer tells the two apart — the fold-glyph test below is what discriminates.
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
-  // completed collapses behind a fold line by default (task 6); expand it so this asserts
-  // the expanded header. The collapsed one is state-colored too, so color alone no longer
-  // tells the two apart — the fold-glyph test below is what discriminates.
-  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.work}mWORKING`), 'WORKING header is bold green');
   assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.need}mNEEDS INPUT`), 'NEEDS INPUT header is bold yellow');
-  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.done}mCOMPLETED`), 'COMPLETED header is bold grey');
+  assert.match(raw, new RegExp(`\\x1b\\[1m\\x1b\\[${SC.done}mIDLE`), 'IDLE header is bold grey');
   assert.doesNotMatch(raw, /38;2;180;190;254/, 'header no longer uses the old lavender');
 });
 
@@ -830,18 +833,20 @@ test('a foldable header shows ▸ collapsed and ▾ expanded; other headers keep
   const { env, home } = makeEnv();
   const now = nowSec();
   stateFile(home, 'w', { pane: '1', state: 'working',   cwd: 'C:\\a\\wproj', host: HOST, ts: now - 5 });
+  // 'c' is a live local session, so fold_live_completed_to_idle re-groups it under IDLE —
+  // idle is foldable exactly like completed, so it still exercises the same fold affordance.
   stateFile(home, 'c', { pane: '3', state: 'completed', cwd: 'C:\\c\\cproj', host: HOST, ts: now - 7 });
 
   // Collapsed is the default — no foldfile.
-  const shut = lineOf(run(env, ['--body']).out, 'COMPLETED');
-  assert.match(shut, /▸/, 'a collapsed COMPLETED header carries the collapsed glyph');
+  const shut = lineOf(run(env, ['--body']).out, 'IDLE');
+  assert.match(shut, /▸/, 'a collapsed IDLE header carries the collapsed glyph');
   assert.doesNotMatch(shut, /▾/, 'and never the expanded one');
   assert.match(shut, new RegExp(`\\x1b\\[${SC.done}m▸`), 'the glyph is tinted by the group state');
 
-  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
   const open = run(env, ['--body']).out;
-  const shown = lineOf(open, 'COMPLETED');
-  assert.match(shown, /▾/, 'an expanded COMPLETED header carries the expanded glyph');
+  const shown = lineOf(open, 'IDLE');
+  assert.match(shown, /▾/, 'an expanded IDLE header carries the expanded glyph');
   assert.doesNotMatch(shown, /▸/, 'and never the collapsed one');
 
   // WORKING cannot be folded, so the affordance would be a lie there.
@@ -881,14 +886,15 @@ test('session names are tinted by their state color', { skip }, () => {
   stateFile(home, 'w', { pane: '1', state: 'working',     cwd: 'C:\\a\\greenname',  host: HOST, ts: now - 5 });
   stateFile(home, 'n', { pane: '2', state: 'needs-input', cwd: 'C:\\b\\yellowname', host: HOST, ts: now - 6 });
   stateFile(home, 'c', { pane: '3', state: 'completed',   cwd: 'C:\\c\\greyname',   host: HOST, ts: now - 7 });
-  // completed collapses behind a fold line by default (task 6); expand it so greyname's
-  // row still renders for the assertion below.
-  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  // 'c' is a live local session, so fold_live_completed_to_idle re-groups it under IDLE,
+  // which is grey too (both share C_DONE). IDLE collapses behind a fold line by default
+  // (task 6); expand it so greyname's row still renders for the assertion below.
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
   run(env, []);
   const raw = fs.readFileSync(capture, 'utf8');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.work}mgreenname`), 'working session name is green');
   assert.match(raw, new RegExp(`\\x1b\\[${SC.need}myellowname`), 'needs-input session name is yellow');
-  assert.match(raw, new RegExp(`\\x1b\\[${SC.done}mgreyname`), 'completed session name is grey');
+  assert.match(raw, new RegExp(`\\x1b\\[${SC.done}mgreyname`), 'idle session name is grey');
 });
 
 test('picker highlights the whole current line so the state color reads on hover', () => {
@@ -1106,7 +1112,10 @@ test('REVIEW sorts between WORKING and COMPLETED', { skip }, () => {
   const now = nowSec();
   stateFile(home, 'w', { state: 'working',   cwd: 'C:\\a\\wproj', session: 'w', host: HOST, ts: now - 5 });
   stateFile(home, 'r', { state: 'review',    cwd: 'C:\\a\\rproj', session: 'r', host: HOST, ts: now - 6, git: '↑2' });
-  stateFile(home, 'c', { state: 'completed', cwd: 'C:\\a\\cproj', session: 'c', host: HOST, ts: now - 7 });
+  // A non-self host: a local host row would be re-grouped under IDLE by
+  // fold_live_completed_to_idle, and this test is specifically about the COMPLETED
+  // group's position in the sort order.
+  stateFile(home, 'c', { state: 'completed', cwd: '/home/ubuntu/cproj', session: 'c', host: 'daniel-server', ts: now - 7 });
   run(env, []);
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   const iW = body.indexOf('WORKING'), iR = body.indexOf('REVIEW'), iC = body.indexOf('COMPLETED');
@@ -1116,11 +1125,36 @@ test('REVIEW sorts between WORKING and COMPLETED', { skip }, () => {
 
 test('a clean completed row (no marker) stays in COMPLETED', { skip }, () => {
   const { env, home, capture } = makeEnv();
-  stateFile(home, 'c', { state: 'completed', cwd: 'C:\\a\\cleanproj', session: 'c', host: HOST, ts: nowSec() - 30, git: '' });
+  // A non-self host: a local host row would be re-grouped under IDLE by
+  // fold_live_completed_to_idle, and this test is specifically about a completed row
+  // staying in COMPLETED (as opposed to REVIEW) when its git marker is clean.
+  stateFile(home, 'c', { state: 'completed', cwd: '/home/ubuntu/cleanproj', session: 'c', host: 'daniel-server', ts: nowSec() - 30, git: '' });
   run(env, []);
   const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
   assert.match(body, /COMPLETED/);
   assert.doesNotMatch(body, /REVIEW/, 'a clean stop is not reviewed');
+});
+
+// ---- fold_live_completed_to_idle: COMPLETED -> IDLE for a live local session -----------
+test('a live local host session in state completed renders under IDLE, not COMPLETED', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'c', { state: 'completed', cwd: 'C:\\a\\liveproj', session: 'c', host: HOST, ts: nowSec() - 30 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /IDLE/, 'a live local session merely between turns is IDLE');
+  assert.doesNotMatch(body, /COMPLETED/, 'not COMPLETED — the process is still there');
+});
+
+test('a completed row on a non-self host stays COMPLETED, not IDLE', { skip }, () => {
+  // fold_live_completed_to_idle only trusts liveness for a row it can verify: a non-self
+  // host is not locally pid-checkable, so it stays COMPLETED rather than assume the
+  // session is still running.
+  const { env, home, capture } = makeEnv();
+  stateFile(home, 'c', { state: 'completed', cwd: '/home/ubuntu/cproj', session: 'c', host: 'daniel-server', ts: nowSec() - 30 });
+  run(env, []);
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.match(body, /COMPLETED/);
+  assert.doesNotMatch(body, /IDLE/, 'a remote row is not locally verifiable as live');
 });
 
 test('the live registry fold re-derives review from the git marker (idle -> completed -> review)', { skip }, () => {
@@ -1182,8 +1216,9 @@ test('no rendered row overruns the width fzf gives the list', { skip }, () => {
   // counts runes, so an emoji title measured a cell short per glyph and overran.
   stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/r/alpha', host: HOST, ts: now - 5, title: 'w'.repeat(200) });
   stateFile(home, 'e', { pane: '2', state: 'working', cwd: '/r/emoji', host: HOST, ts: now - 6, title: '🚀'.repeat(80) });
+  // 'c' is a live local session, so fold_live_completed_to_idle re-groups it under IDLE.
   stateFile(home, 'c', { pane: '3', state: 'completed', cwd: '/r/beta', host: HOST, ts: now - 4000, title: 'c'.repeat(200) });
-  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'completed\n');
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-folds'), 'idle\n');
   run(env, [], { COLUMNS: String(LCOLS) });
   const rows = sessionRows(capture);
   assert.strictEqual(rows.length, 3, `expected three session rows, got:\n${rows.join('\n')}`);

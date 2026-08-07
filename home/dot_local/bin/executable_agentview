@@ -592,6 +592,10 @@ fi
 # session that finished unwatched reaches the DONE group too. After the title fold, so a row
 # the spinner just moved back to "working" is not also called finished.
 fold_seen_states;     prof fold_seen_states
+# ...and only then is what remains "completed" a live session merely between turns, which the
+# IDLE group describes and COMPLETED does not. Strictly after the DONE promotion above, which
+# keys on completed and would find nothing left if this ran first.
+fold_live_completed_to_idle; prof fold_live_completed_to_idle
 
 # header line (right-aligned totals). Counted in pure bash — the old grep|awk|sort|grep
 # chain was 4 process spawns, and spawns dominate render time on Windows.
