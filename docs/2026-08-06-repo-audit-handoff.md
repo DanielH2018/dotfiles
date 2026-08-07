@@ -52,6 +52,20 @@ The numbers below are **macOS** numbers. On Linux the same tree gives 1887/1918 
 not 127 — the difference is the Windows/WSL/darwin-only sets, not anything installable. After
 #282: 1902/1933, 31 skipped, and 1912/1933 with 21 skipped under `UI_TIER_B=1`.
 
+## Status — updated 2026-08-07, from macOS
+
+**#282 verified green on macOS: 2022 tests, 1887 pass, 0 fail, 135 skipped.** Worth stating
+explicitly because #282 was authored on Linux and its whole subject is code that passes on Linux
+and fails here — the failure mode it fixes is the one it could most easily have reintroduced. It
+did not. `tests/lint-bsd-portability.test.js` passes on the platform whose behaviour it encodes.
+
+Note the case totals differ by platform, not just the skip counts: 2022 here against 1933 on
+Linux. Some suites generate cases from what they find on the host, so the denominator moves too
+and only the failure count compares cleanly across the two.
+
+This machine was 55 commits behind when it picked the doc back up; fast-forwarded and applied
+(11 files), so it is current and `chezmoi status --exclude=scripts` is empty.
+
 ## The one finding worth carrying forward
 
 **Four separate bugs this session came from assuming GNU behaviour on a BSD userland.** All four
@@ -163,10 +177,12 @@ word-split, so `node --test $TEST_FILES` passes all 158 paths as one argument; u
     coordination, or the CI item above, not the lock.
 10. **Correct the `CLAUDE.local.md` PATH claim** — see the GNU-on-BSD section above. It is the
     reason these forms keep being written.
-11. **This doc is the durable record.** The audit's working artifacts are in
-    `~/.claude/artifacts/` (`repo-test-audit-2026-08-06.md` and `.html`), which is **not**
-    chezmoi-managed and is pruned after 7 days without an update. Anything there worth keeping
-    should move here.
+11. ~~**This doc is the durable record.**~~ **Closed 2026-08-07 from the Mac** — the machine the
+    artifacts actually live on. `~/.claude/artifacts/repo-test-audit-2026-08-06.md` and `.html`
+    were reviewed section by section against this doc. Everything durable was already here or in
+    the PR descriptions: the per-item work records are in git history, and the skip tally is
+    superseded twice over (the numbers moved, and they were macOS-only). The one genuinely
+    reusable thing missing was the gate's shape, now folded in below. The artifacts can prune.
 
 ## Re-establishing state
 
@@ -187,6 +203,25 @@ cd ~/.local/share/chezmoi && .githooks/pre-push </dev/null
 cd ~/work-laptop-config && ./test-install.sh && ./test-snowflake-auth.sh
 ```
 
-Baseline at the end of this session: **1917 tests, 0 failing.** Skips are 127 with `gawk` and
-`flock` on PATH (a fresh interactive shell), or ~144 without — the difference is the flock-gated
-set, and it is the reason the number moves between runs.
+Baseline on macOS as of 2026-08-07, after #282: **2022 tests, 1887 pass, 0 failing, 135 skipped.**
+Skip counts move with what is on PATH — `flock` and `gawk` account for ~24 of them — so compare
+the *failure* count across runs, not the skips.
+
+### The gate, step by step
+
+Folded over from the audit's working notes (item 11) because it is the one piece of them worth
+keeping: `.githooks/pre-push` is the whole suite, and knowing its shape means you can run the one
+step you care about instead of the 100-second lot.
+
+| Step | Command | Notes |
+|---|---|---|
+| 1 | `bin/check-push-signatures` | Reads git's pre-push protocol on **stdin**, so only a real push exercises it. Must come first — anything else consuming stdin breaks it. |
+| 2 | `node bin/config-soak status` | Deterministic review ledger. Fails until a behaviour-affecting config change is `config-soak land`ed. |
+| 3 | `python3 quality/instruction_quality.py verify $QFILES --min-score 52` | Security dimension is a hard gate at 70; the composite floor is a ratchet. **This is where the empty-glob hole was** — see the status block. |
+| 3b | `prek run --all-files` | ruff + shellcheck ×3 + oxlint. Scope comes from `.pre-commit-config.yaml`. |
+| 4 | `tq_node injection tests/hooks/screen-injection.test.js` | Red-team guard, named separately so a regression is attributed rather than buried in the total. |
+| 5 | `node --test $(git ls-files '*.test.js' '*.test.mjs')` | The file list comes from **git**, not node's discovery, which skips dot-directories at any depth. |
+
+Steps 3b and the `tq` wrapper degrade to a skip when their tool is absent rather than failing.
+Since #282 the final verdict line says so — `pre-push checks passed, N steps skipped (…)` — which
+is what makes a partially-checked green distinguishable from a fully-checked one.
