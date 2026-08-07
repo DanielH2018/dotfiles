@@ -236,3 +236,20 @@ test('a command with no substitution reports nsubseg 0 and leaves the newline ce
   assert.strictEqual(row.newly_anchored_sub, null);
   assert.strictEqual(row.sub_anchored, null);
 });
+
+// The census reads CP_STATUS and the normalized members from the decision path's parse
+// instead of parsing again. A command cmd_parse REFUSES is the case that used to take an
+// explicit `else` branch in the census, so it is the one most likely to regress into
+// logging a bare default: it must still carry the real refusal reason, and the counts it
+// could not compute must be zero rather than stale.
+test('a command cmd_parse refuses is censused with its refusal status, not a default', () => {
+  const d = logDir('refused');
+  run(BDB, 'terraform destroy "unclosed', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
+  const [row] = readLog(d);
+  assert.ok(row, 'a refusal must still produce a census row');
+  assert.match(row.status, /^unreadable:/, 'the reason, not a bare "unreadable"');
+  assert.strictEqual(row.nseg, 0);
+  assert.strictEqual(row.nsubseg, 0);
+  assert.strictEqual(row.newly_anchored, null, 'nothing was segmented, so nothing is newly anchored');
+  assert.strictEqual(row.old, 'deny', 'and the whole-string rules still judged it');
+});

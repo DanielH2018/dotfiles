@@ -178,24 +178,43 @@ SCAN=$_BDB_NORM
 # is never a skip" contract violation it resembles: the other arm of the union is the
 # pre-existing whole-string check, so a refusal degrades to the current security posture,
 # never to nothing. That is only true while both arms are present.
+# The normalized members are kept in arrays as well as joined into BDB_SCANSET. The shadow
+# census below needs exactly these strings, and it used to derive them itself — a second
+# cmd_parse of the same command plus a second _bdb_normalize per segment and per substitution
+# body, all recomputing what this loop already produced. Measured with CMDPARSE_SHADOW=1 (its
+# deployed setting) that duplicate cost a 20-segment command ~172ms.
 BDB_SCANSET=$SCAN
+BDB_LIB=0     # cmdparse.sh sourced
+BDB_PARSED=0  # ...and cmd_parse accepted the command, so the arrays below are populated
+BDB_NSEG=0
+BDB_NSUB=0
+BDB_NORMSEG=()
+BDB_NORMSUB=()
 if [ "${CMDPARSE:-on}" != off ]; then
   # shellcheck source=/dev/null
-  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null && cmd_parse "$COMMAND"; then
-    bdb_i=0
-    while [ "$bdb_i" -lt "$CP_NSEG" ]; do
-      _bdb_normalize "${CP_SEG[bdb_i]}"
-      BDB_SCANSET="$BDB_SCANSET
+  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null; then
+    BDB_LIB=1
+    if cmd_parse "$COMMAND"; then
+      BDB_PARSED=1
+      BDB_NSEG=$CP_NSEG
+      BDB_NSUB=$CP_NSUBSEG
+      bdb_i=0
+      while [ "$bdb_i" -lt "$CP_NSEG" ]; do
+        _bdb_normalize "${CP_SEG[bdb_i]}"
+        BDB_NORMSEG[bdb_i]=$_BDB_NORM
+        BDB_SCANSET="$BDB_SCANSET
 $_BDB_NORM"
-      bdb_i=$((bdb_i + 1))
-    done
-    bdb_i=0
-    while [ "$bdb_i" -lt "$CP_NSUBSEG" ]; do
-      _bdb_normalize "${CP_SUBSEG[bdb_i]}"
-      BDB_SCANSET="$BDB_SCANSET
+        bdb_i=$((bdb_i + 1))
+      done
+      bdb_i=0
+      while [ "$bdb_i" -lt "$CP_NSUBSEG" ]; do
+        _bdb_normalize "${CP_SUBSEG[bdb_i]}"
+        BDB_NORMSUB[bdb_i]=$_BDB_NORM
+        BDB_SCANSET="$BDB_SCANSET
 $_BDB_NORM"
-      bdb_i=$((bdb_i + 1))
-    done
+        bdb_i=$((bdb_i + 1))
+      done
+    fi
   fi
 fi
 
@@ -279,26 +298,25 @@ TF_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)
 # substitution gap (looking inside an opaque atom) call for different fixes, and
 # collapsing them would erase which one a given row is evidence of.
 BDB_OLD=none
+# The decision path above already sourced cmdparse.sh; this only decides whether to LOG.
+# It still gates on the library having loaded, so a census row means the same thing it
+# always did — no row at all when there was nothing to parse with, rather than a row
+# claiming `unreadable`. CMDPARSE=off leaves BDB_LIB at 0, which covers the kill switch.
 BDB_SHADOW=0
-if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "${CMDPARSE:-on}" != off ]; then
-  # shellcheck source=/dev/null
-  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null; then BDB_SHADOW=1; fi
-fi
+if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "$BDB_LIB" = 1 ]; then BDB_SHADOW=1; fi
 
 # shellcheck disable=SC2329  # invoked indirectly, from the EXIT trap installed below
 _bdb_shadow_log() {
   [ "$BDB_SHADOW" = 1 ] || return 0
-  local newly='' newly_sub='' found_sub='' seg segscan i=0
-  local status=unreadable nseg=0 nsubseg=0
-  if cmd_parse "$COMMAND"; then
-    status=$CP_STATUS
-    nseg=$CP_NSEG
-    nsubseg=$CP_NSUBSEG
-    while [ "$i" -lt "$CP_NSEG" ]; do
-      # Same normalization this hook applies to the whole command, applied per segment —
-      # via the same function, so the two sides of the `match && ! match` below cannot drift.
-      _bdb_normalize "${CP_SEG[i]}"
-      segscan=$_BDB_NORM
+  local newly='' newly_sub='' found_sub='' segscan i=0
+  # Reused from the decision path, not recomputed. This used to run its own cmd_parse and
+  # its own _bdb_normalize per member — the same work, on the same command, with the same
+  # library, producing the same strings. CP_STATUS survives from that parse because
+  # cmd_parse is the only thing that writes it and nothing calls it in between.
+  local status=${CP_STATUS:-unreadable} nseg=$BDB_NSEG nsubseg=$BDB_NSUB
+  if [ "$BDB_PARSED" = 1 ]; then
+    while [ "$i" -lt "$nseg" ]; do
+      segscan=${BDB_NORMSEG[i]}
       i=$((i + 1))
       # Only count a family as NEWLY visible if the whole-string form did not already
       # catch it — the census is of the gap, not of every match.
@@ -341,9 +359,8 @@ _bdb_shadow_log() {
     # case above. Expect its corpus count to be at or near zero; sub_anchored stays
     # informative regardless.
     i=0
-    while [ "$i" -lt "$CP_NSUBSEG" ]; do
-      _bdb_normalize "${CP_SUBSEG[i]}"
-      segscan=$_BDB_NORM
+    while [ "$i" -lt "$nsubseg" ]; do
+      segscan=${BDB_NORMSUB[i]}
       i=$((i + 1))
       if echo "$segscan" | grep -qiE "$SSH_AT_RE"; then
         case $found_sub in *ssh*) ;; *) found_sub="$found_sub ssh" ;; esac
@@ -355,8 +372,6 @@ _bdb_shadow_log() {
           || case $newly_sub in *terraform*) ;; *) newly_sub="$newly_sub terraform" ;; esac
       fi
     done
-  else
-    status=$CP_STATUS
   fi
   local logdir="${CLAUDE_SHADOW_LOG_DIR:-$HOME/.claude/logs}"
   mkdir -p "$logdir" 2>/dev/null && jq -cn \
