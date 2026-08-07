@@ -30,6 +30,15 @@ function env({ sshBody = 'exit 0', watchInterval = '1' } = {}) {
   fs.writeFileSync(path.join(bin, 'ssh'),
     `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(argvLog)}\n${sshBody}\n`,
     { mode: 0o755 });
+  // post_reload polls the portfile for up to 2s waiting on fzf's start-bind to write the
+  // port. No test here runs fzf, so every run used to pay that 2s in full -- 2.18s per
+  // invocation against 0.14s with the file already there, and this file makes 16 of them.
+  // Three tests below already pre-wrote it to keep the poll from masking an elapsed-time
+  // assertion; doing it here extends that to every test instead of the ones that noticed.
+  fs.writeFileSync(path.join(home, 'portfile'), '1\n');
+  // With a port to read, post_reload goes on to POST. Stub curl so it stays off the loopback
+  // interface rather than relying on port 1 refusing the connection.
+  fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   const seams = agentviewWinSeams({ bin, scratch });
   return {
     home, bin, argvLog,
@@ -341,11 +350,9 @@ test('a missing sessions registry is created before the watch, not watched blind
 test('the watcher falls back to a timer when inotifywait is absent', () => {
   // chezmoi deploys these dotfiles to WSL and both servers; inotify-tools is not everywhere.
   // Without a fallback the picker would silently stop repainting on those machines.
+  // env() pre-writes the portfile, so post_reload's poll returns on its first check and the
+  // elapsed time below measures only the fallback sleep.
   const e = env();
-  // post_reload polls this file for up to 2s waiting for fzf's port; writing it up front lets
-  // that poll return on its first check, so the elapsed time below measures only the fallback
-  // sleep, not the poll.
-  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
   fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
   const started = Date.now();
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
@@ -360,10 +367,8 @@ test('an inotifywait error does not busy-spin -- the loop still waits a full int
   // post_reload's curl + refresh_remote's ssh as fast as the CPU allows.
   const e = env();
   const log = writeInotifyStub(e, 1);
-  // Same confound as the fallback test above: post_reload polls this file for up to 2s, which
-  // would mask a missing floor-wait behind its own delay. Pre-writing it makes that poll return
-  // immediately, so the elapsed time below measures only the floor sleep (or its absence).
-  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
+  // As above: env()'s pre-written portfile keeps post_reload's poll from masking a missing
+  // floor-wait behind its own delay, so the elapsed time is the floor sleep or its absence.
   const started = Date.now();
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.ok(Date.now() - started >= 900,
@@ -381,7 +386,6 @@ test('AGENT_VIEW_WATCH_INTERVAL=0 does not defeat the floor sleep', () => {
   // same value that broke the first path also disarms the thing meant to catch it.
   const e = env({ watchInterval: '0' });
   fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
-  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
   const started = Date.now();
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.ok(Date.now() - started >= 900,

@@ -49,6 +49,11 @@ function env(rhome) {
   fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
   fs.writeFileSync(path.join(bin, 'ssh'),
     `#!/bin/bash\nHOME=${JSON.stringify(rhome)} exec bash -s\n`, { mode: 0o755 });
+  // post_reload polls the portfile for up to 2s waiting on fzf's start-bind. Nothing here runs
+  // fzf, so both --refresh-remote tests below paid that in full; pre-writing it costs nothing
+  // and keeps the poll out of the measurement. curl is stubbed for the POST that then happens.
+  fs.writeFileSync(path.join(home, 'portfile'), '1\n');
+  fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   const seams = agentviewWinSeams({ bin, scratch });
   return {
     home,
