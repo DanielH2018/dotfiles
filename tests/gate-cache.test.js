@@ -145,6 +145,46 @@ test('a corrupt record misses rather than throwing', { skip }, () => {
   }
 });
 
+// The record's fields changed meaning when the toolchain digest went in. A v1 record has the
+// sha where v2 has the version, so without the version check its sha would land in `ver`, its
+// timestamp in `sha`, and the comparisons would go on to read fields that were never written.
+test('a record from the previous format misses', { skip }, () => {
+  const root = repo();
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root }).toString().trim();
+  fs.writeFileSync(path.join(root, '.git', 'gate-cache'),
+    `${head} ${Math.floor(Date.now() / 1000)}\n`);
+  assert.notStrictEqual(gate(root, 'check').status, 0, 'a v1 record must not be read as a v2 hit');
+});
+
+// Without this the digest could be computed and never compared, and nothing else here would
+// notice: every other test holds the toolchain still, so a hit proves only that the sha matched.
+test('a changed toolchain misses at the same HEAD and clean tree', { skip }, () => {
+  const root = repo();
+  assert.strictEqual(gate(root, 'save').status, 0);
+  assert.strictEqual(gate(root, 'check').status, 0, 'sanity: a hit before the toolchain moves');
+
+  // A stub node earlier on PATH than the real one: same HEAD, same clean tree, different
+  // version text. Prepended rather than replacing PATH, so git and bash still resolve.
+  const stubDir = scratch();
+  fs.writeFileSync(path.join(stubDir, 'node'), '#!/bin/bash\necho v0.0.0-stub\n', { mode: 0o755 });
+  const r = gate(root, 'check', { PATH: `${stubDir}:${process.env.PATH}` });
+  assert.notStrictEqual(r.status, 0, 'a different node must invalidate the record');
+
+  // ...and the original toolchain still hits, so the miss above was the digest and not some
+  // side effect of passing PATH at all.
+  assert.strictEqual(gate(root, 'check').status, 0, 'the untouched toolchain must still hit');
+});
+
+test('a record saved under one toolchain is not revived by restoring it', { skip }, () => {
+  const root = repo();
+  const stubDir = scratch();
+  fs.writeFileSync(path.join(stubDir, 'node'), '#!/bin/bash\necho v0.0.0-stub\n', { mode: 0o755 });
+  const stubPath = { PATH: `${stubDir}:${process.env.PATH}` };
+  gate(root, 'save', stubPath);
+  assert.strictEqual(gate(root, 'check', stubPath).status, 0, 'sanity: hits under the toolchain that saved it');
+  assert.notStrictEqual(gate(root, 'check').status, 0, 'must miss under a different toolchain');
+});
+
 test('the record lives under the git dir, so worktrees do not share one', { skip }, () => {
   const root = repo();
   gate(root, 'save');

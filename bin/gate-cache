@@ -26,17 +26,47 @@
 # push is blocked, and a wrong hit is invisible — the suite does not run and the push still
 # reports green, which looks exactly like having run it.
 #
-# GATE_CACHE_OFF=1 forces a miss. GATE_CACHE_TTL bounds a record's age (default 300s):
-# the key covers tracked content, not the node/ruff/shellcheck versions that ran against
-# it, so a record is deliberately short-lived. A landing takes about a minute.
+# The toolchain is part of the key too — every tool the gate shells out to, by resolved path
+# and full --version output. That used to be what the TTL stood in for, and standing in for it
+# was expensive: at 300s almost every landing missed and paid the suite again, because a PR is
+# rarely landed within five minutes of being opened. Keying the tools directly costs 0.07s per
+# check and converts most of those misses into hits.
+#
+# GATE_CACHE_OFF=1 forces a miss. GATE_CACHE_TTL still bounds a record's age (default 3600s),
+# but it now bounds the ENVIRONMENT the key does not reach — gitignored files, the ~/.claude
+# config some suites read, ambient variables, OS libraries — rather than tool versions. That
+# category is open-ended, which is why the bound stays rather than going away.
 #
 # Kept bash-3.2 clean, like the gate that calls it.
 set -u
 
 RECORD_NAME=gate-cache
-TTL="${GATE_CACHE_TTL:-300}"
+TTL="${GATE_CACHE_TTL:-3600}"
+
+# Bumped whenever the record's shape or the meaning of its fields changes. A record written by
+# an older gate-cache reads as a miss instead of being misparsed into a hit.
+RECORD_VERSION=v2
 
 usage() { printf 'usage: gate-cache check|save\n' >&2; exit 2; }
+
+# Every tool the gate runs, in a fixed order. Resolved path AND version text: an upgrade that
+# keeps the path, and a PATH change that keeps the version, are both real changes to what the
+# gate would do. --version output is captured with stderr folded in, because not every tool
+# writes it to stdout, and collapsed onto one line so the digest is a single field.
+#
+# An absent tool gets an explicit marker rather than an empty string. The gate's degrade paths
+# branch on tool PRESENCE -- prek missing turns lint into a note_skip -- so a record earned
+# without prek must not vouch for a run that has it.
+toolchain_digest() {
+  for _t in bash chezmoi git node oxlint prek python3 ruff shellcheck; do
+    _p=$(command -v "$_t" 2>/dev/null) || _p=''
+    if [ -n "$_p" ]; then
+      printf '%s\t%s\t%s\n' "$_t" "$_p" "$("$_t" --version 2>&1 | tr '\n' ' ')"
+    else
+      printf '%s\t<absent>\n' "$_t"
+    fi
+  done | git hash-object --stdin 2>/dev/null
+}
 
 # The git dir, not the worktree root: worktrees get their own, which is what we want —
 # a sibling worktree sharing this repo has a different tree and has proved nothing about
@@ -67,10 +97,17 @@ cmd_check() {
 
   head_sha=$(git rev-parse HEAD 2>/dev/null) || return 1
 
-  # A truncated or hand-edited record reads as a miss, not an error.
-  read -r sha stamp _rest < "$record" || return 1
+  # A truncated, hand-edited, or older-format record reads as a miss, not an error.
+  read -r ver sha tools stamp _rest < "$record" || return 1
+  [ "${ver:-}" = "$RECORD_VERSION" ] || return 1
   [ "${sha:-}" = "$head_sha" ] || return 1
   is_number "${stamp:-}" || return 1
+
+  # After the cheap comparisons: this one spawns nine processes, and there is no point
+  # paying for it to reject a record the sha already ruled out.
+  now_tools=$(toolchain_digest) || return 1
+  [ -n "$now_tools" ] || return 1
+  [ "${tools:-}" = "$now_tools" ] || return 1
 
   now=$(date +%s) || return 1
   age=$((now - stamp))
@@ -92,9 +129,14 @@ cmd_save() {
   head_sha=$(git rev-parse HEAD 2>/dev/null) || return 0
   now=$(date +%s) || return 0
 
+  # No digest, no record. Vouching for a tree without recording what tested it would leave a
+  # record that can only be compared against an empty string, i.e. one that never matches.
+  tools=$(toolchain_digest) || return 0
+  [ -n "$tools" ] || return 0
+
   # Write-then-rename, so a reader never sees a half-written record.
   tmp="$record.$$"
-  printf '%s %s\n' "$head_sha" "$now" > "$tmp" 2>/dev/null || return 0
+  printf '%s %s %s %s\n' "$RECORD_VERSION" "$head_sha" "$tools" "$now" > "$tmp" 2>/dev/null || return 0
   mv -f "$tmp" "$record" 2>/dev/null || { rm -f "$tmp"; return 0; }
 }
 
