@@ -1,6 +1,6 @@
 ---
 name: chezmoi-repo-ops
-description: Use in the chezmoi dotfiles repo after bin/land, bin/try, or chezmoi apply, and whenever the pre-push gate fails — landing is not deploying, and every hop has a way to silently no-op. Covers the post-land sync, gate triage (missing node, config-soak, shellcheck coverage), and proving a change actually reached $HOME.
+description: Use in the chezmoi dotfiles repo when a change won't stick — something merged but never showed up, a fix that worked came back, `chezmoi diff` is clean while the deployed file is wrong, `node` dies with exit 127 or FileNotFoundError, a shellcheck finding count looks off, or the pre-push gate rejects. Also after any `bin/land`, before the next `chezmoi apply`: landing is not deploying, and every hop can silently no-op.
 ---
 
 # chezmoi-repo-ops
