@@ -232,6 +232,46 @@ test('only completed is downgraded — a working turn in a dirty repo stays work
   assert.strictEqual(s.git, '', 'no marker stamped outside a completed stop');
 });
 
+// ---- staleness guard on the completed/review write. `ts` is captured before
+// git_review_marker (status + rev-list), so it is event time, not write time: a slow git
+// call can delay the write but never makes the stop look newer than it was. The guard
+// compares STRICTLY — a same-second row must still be overwritten, because Stop routinely
+// lands in the same second as the UserPromptSubmit that opened the turn, and skipping
+// there would strand the row on "working" with no later writer to correct it.
+function seedRow(home, sid, state, ts) {
+  execFileSync('bash', ['-c',
+    `source "${HELPER}"; av_write_full "${sid}" "${state}" "/tmp" "h" ${ts} "host" "t" "wezterm:1" "1" ""`],
+    { env: { ...process.env, HOME: home } });
+}
+
+test('a completed write does not clobber a row with a strictly newer ts', { skip }, () => {
+  const home = freshHome();
+  const future = Math.floor(Date.now() / 1000) + 100000;
+  seedRow(home, 'race1', 'working', future);
+  run('completed', { session_id: 'race1', cwd: '/tmp' }, { pane: '1', home });
+  const s = readState(home, 'race1');
+  assert.strictEqual(s.state, 'working', 'a stale completed write must not clobber a newer working row');
+  assert.strictEqual(s.ts, future, 'the newer row is left untouched, not just its state field');
+});
+
+test('a completed write still lands over an older row (guard does not block legitimate stops)', { skip }, () => {
+  const home = freshHome();
+  seedRow(home, 'race2', 'working', 1);
+  run('completed', { session_id: 'race2', cwd: '/tmp' }, { pane: '1', home });
+  const s = readState(home, 'race2').state;
+  assert.strictEqual(s, 'completed', 'a stop after real work is not blocked by a stale row on disk');
+});
+
+// A sub-second turn: UserPromptSubmit writes `working` and Stop writes `completed` in the
+// same wall-clock second. Treating equal timestamps as stale strands the row on "working".
+test('a completed write lands over a same-second working row', { skip }, () => {
+  const home = freshHome();
+  seedRow(home, 'race3', 'working', Math.floor(Date.now() / 1000));
+  run('completed', { session_id: 'race3', cwd: '/tmp' }, { pane: '1', home });
+  const s = readState(home, 'race3').state;
+  assert.strictEqual(s, 'completed', 'a same-second stop must not be skipped as stale');
+});
+
 // ---- the `start` state (SessionStart) ------------------------------------
 // Every other event fires only after the user does something, so a session started or resumed
 // and then left idle never wrote a row and was invisible to the picker. `start` closes that,

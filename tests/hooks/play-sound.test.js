@@ -26,7 +26,7 @@ const skipWsl = skip || (fs.existsSync(WIN_WAV) ? false : 'no /mnt/c/Windows/Med
 
 const dirs = [];
 
-function sandbox({ paplay = true, aplay = true } = {}) {
+function sandbox({ paplay = true, aplay = true, pwPlay = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'playsound-'));
   dirs.push(dir);
   const bin = path.join(dir, 'bin');
@@ -37,11 +37,17 @@ function sandbox({ paplay = true, aplay = true } = {}) {
   );
   if (paplay) stub('paplay');
   if (aplay) stub('aplay');
+  if (pwPlay) stub('pw-play');
   // Bare-name powershell.exe would only ever be reachable through PATH; the absolute-path
   // form is caught by the source check below instead.
   stub('powershell.exe');
   return { bin, log };
 }
+
+// The desktop-Linux branches (paplay/pw-play against the freedesktop theme file) read a real
+// file off the filesystem rather than a stub, so they only run where that theme is installed.
+const THEME_SOUND = '/usr/share/sounds/freedesktop/stereo/message.oga';
+const skipTheme = skip || (fs.existsSync(THEME_SOUND) ? false : 'no freedesktop sound theme installed');
 
 // Playback is backgrounded and the hook exits immediately, so the stub may not have written
 // yet when the script returns. Poll briefly rather than sleeping a fixed amount.
@@ -99,6 +105,33 @@ test('with no player at all it still exits 0', { skip }, () => {
   assert.strictEqual(log.trim(), '', 'nothing was launched');
   // execFileSync would have thrown on a non-zero exit; a hook that fails is noise in the
   // transcript on every prompt.
+});
+
+test('the cue plays at a reduced default volume, not full', { skip: skipTheme }, () => {
+  const sb = sandbox({ paplay: true, aplay: false });
+  const log = run(sb, 'input');
+  // 35% of paplay's 0-65536 linear scale.
+  assert.match(log, /^paplay .*--volume=22937\b/m, 'paplay gets a 35% default volume');
+});
+
+test('CLAUDE_SOUND_VOLUME overrides the default volume', { skip: skipTheme }, () => {
+  const sb = sandbox({ paplay: true, aplay: false });
+  const log = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '50' });
+  assert.match(log, /^paplay .*--volume=32768\b/m, 'paplay gets the overridden 50% volume');
+});
+
+test('an invalid CLAUDE_SOUND_VOLUME falls back to the default', { skip: skipTheme }, () => {
+  const sb = sandbox({ paplay: true, aplay: false });
+  const bogus = run(sb, 'input', { CLAUDE_SOUND_VOLUME: 'loud' });
+  assert.match(bogus, /^paplay .*--volume=22937\b/m, 'non-numeric input falls back to 35%');
+  const oor = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '250' });
+  assert.match(oor, /^paplay .*--volume=22937\b/m, 'out-of-range input falls back to 35%');
+});
+
+test('pw-play gets a 0.0-1.0 float volume when paplay is absent', { skip: skipTheme }, () => {
+  const sb = sandbox({ paplay: false, aplay: false, pwPlay: true });
+  const log = run(sb, 'input');
+  assert.match(log, /^pw-play .*--volume=0\.350\b/m, 'pw-play gets a 35% default volume as a float');
 });
 
 test('no executable line launches a Windows binary', { skip }, () => {

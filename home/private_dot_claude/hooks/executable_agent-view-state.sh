@@ -31,7 +31,11 @@ sid=$(hook_field '.session_id // empty')
 file="$dir/$sid.json"
 
 # Host rows key on the stable session id (no RUN_ID), so the delete is unconditional.
-if [ "$state" = "end" ]; then av_guarded_remove "$sid"; exit 0; fi
+if [ "$state" = "end" ]; then
+  av_guarded_remove "$sid"
+  rm -f "$dir-subagents/$sid" 2>/dev/null   # the row is gone; its outstanding set can't outlive it
+  exit 0
+fi
 
 # Headless sdk invocations (`claude -p` — e.g. the remember plugin's haiku
 # summarizers) fire the same hooks as real sessions but have no pane or prompt to
@@ -102,8 +106,33 @@ host=$(hostname 2>/dev/null)
 # completed), where the picker re-derives review from this field.
 gitmark=""
 if [ "$state" = "completed" ]; then
-  gitmark=$(git_review_marker "$cwd")
-  [ -n "$gitmark" ] && state="review"
+  # An async subagent outlives the turn that launched it, so Stop fires while the session is
+  # still waiting on one and the row would read "completed" mid-work. agent-view-subagents.sh
+  # tracks the outstanding set (keyed by this same session id) and stamps the row completed
+  # once the last one lands. Absent file -> no subagents tracked -> behave exactly as before.
+  subfile="$dir-subagents/$sid"
+  if [ -s "$subfile" ]; then
+    state="working"
+  else
+    gitmark=$(git_review_marker "$cwd")
+    [ -n "$gitmark" ] && state="review"
+  fi
 fi
+
+# Staleness guard: drop a completed/review write that a newer row has already overtaken.
+# `ts` is captured before git_review_marker above, so it is event time rather than write
+# time, and a slow status+rev-list cannot make a stop look newer than it was. Compares
+# strictly: a same-second row is NOT stale, because Stop routinely lands in the same
+# second as the UserPromptSubmit that opened the turn, and skipping there would strand
+# the row on "working" with no later writer to correct it. Only completed/review is
+# guarded — working/needs-input always precedes its own turn's Stop.
+if [ "$state" = "completed" ] || [ "$state" = "review" ]; then
+  if [ -f "$file" ]; then
+    disk_ts=$(jq -r '.ts // 0' < "$file" 2>/dev/null)
+    case "$disk_ts" in ''|*[!0-9]*) disk_ts=0;; esac
+    [ "$disk_ts" -gt "$ts" ] 2>/dev/null && exit 0
+  fi
+fi
+
 av_write_full "$sid" "$state" "$cwd" "$host" "$ts" "host" "$title" "$locator" "$pane" "" "$pid" "$gitmark"
 exit 0

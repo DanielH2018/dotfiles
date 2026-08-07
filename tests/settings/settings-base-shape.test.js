@@ -242,3 +242,30 @@ test('the audible cue does not fire on the idle reminder', { skip }, () => {
       'a genuine permission prompt must still make a sound');
   }
 });
+
+// A Notification matcher is compared against the payload's notification_type. A matcher that
+// names no real type is not a narrow filter, it is a hook that never runs — and it reads in
+// review exactly like a working one. We shipped "task_complete" for months believing it wrote
+// the agentview completed state; it never fired once, and the two tests above passed the whole
+// time because they only ever asserted on the matcher STRING.
+//
+// The list is the set of notification_type literals present in the Claude Code 2.1.224 binary,
+// which is the authority here — the published docs table has been incomplete before. Re-derive
+// it after a Claude Code upgrade with:
+//   strings -n 8 ~/.local/share/claude/versions/<v> | grep -oE '"(permission_prompt|...)"'
+const NOTIFICATION_TYPES = [
+  'permission_prompt', 'idle_prompt', 'auth_success', 'agent_needs_input', 'agent_completed',
+  'elicitation_active', 'elicitation_complete', 'elicitation_dialog', 'elicitation_response',
+  'elicitation_url_dialog',
+];
+
+test('every Notification matcher names a real notification type', { skip }, () => {
+  const cfg = JSON.parse(render());
+  for (const e of (cfg.hooks || {}).Notification || []) {
+    if (!e.matcher) continue;   // matcher-less is legitimate: it means "every type"
+    for (const token of e.matcher.split('|').map((t) => t.trim()).filter(Boolean)) {
+      assert.ok(NOTIFICATION_TYPES.includes(token),
+        `"${token}" is not a notification_type, so this hook never fires: ${e.matcher}`);
+    }
+  }
+});

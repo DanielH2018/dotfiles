@@ -27,6 +27,18 @@ esac
 WIN_MEDIA="/mnt/c/Windows/Media/$WAV"
 THEME_SOUND="/usr/share/sounds/freedesktop/stereo/$THEME.oga"
 
+# Full volume was the complaint that started this file's volume support: 35% is audible over
+# normal desktop noise without a startle. CLAUDE_SOUND_VOLUME (0-100) overrides it; anything
+# that isn't a plain integer in range falls back to the default rather than passing garbage to
+# the player. canberra-gtk-play and aplay have no volume flag, so they stay at their native
+# level regardless of this setting.
+PCT="${CLAUDE_SOUND_VOLUME:-35}"
+if ! [[ "$PCT" =~ ^[0-9]+$ ]] || [[ "$PCT" -gt 100 ]]; then
+  PCT=35
+fi
+PAPLAY_VOLUME=$(( PCT * 65536 / 100 ))          # paplay: linear 0-65536
+printf -v PW_VOLUME '%d.%02d0' $(( PCT / 100 )) $(( PCT % 100 ))  # pw-play: float 0.0-1.0
+
 # WSLg publishes its PulseAudio socket at a fixed path. A session the reaper has
 # orphaned may never have inherited PULSE_SERVER, so set it explicitly rather than
 # trusting the login environment.
@@ -41,11 +53,11 @@ fi
 
 if command -v paplay >/dev/null 2>&1 && [ -n "${PULSE_SERVER:-}" ] && [ -r "$WIN_MEDIA" ]; then
   # The Windows .wav played natively: identical sound, no interop.
-  paplay "$WIN_MEDIA" >/dev/null 2>&1 &
+  paplay --volume="$PAPLAY_VOLUME" "$WIN_MEDIA" >/dev/null 2>&1 &
 elif command -v paplay >/dev/null 2>&1 && [ -r "$THEME_SOUND" ]; then
-  paplay "$THEME_SOUND" >/dev/null 2>&1 &
+  paplay --volume="$PAPLAY_VOLUME" "$THEME_SOUND" >/dev/null 2>&1 &
 elif command -v pw-play >/dev/null 2>&1 && [ -r "$THEME_SOUND" ]; then
-  pw-play "$THEME_SOUND" >/dev/null 2>&1 &
+  pw-play --volume="$PW_VOLUME" "$THEME_SOUND" >/dev/null 2>&1 &
 elif command -v canberra-gtk-play >/dev/null 2>&1; then
   canberra-gtk-play -i "$THEME" >/dev/null 2>&1 &
 elif command -v aplay >/dev/null 2>&1; then

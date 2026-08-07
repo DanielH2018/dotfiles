@@ -492,12 +492,16 @@
       }
     ],
     "Notification": [
-      {{/* audible cue only when a session genuinely needs you. task_complete (fires on every
-           turn end, incl. unfocused background sessions) is intentionally excluded so working
-           sessions stay silent, and idle_prompt is excluded for the same reason: a session that
-           merely went idle is not asking for anything, and a cue 60s after every finished turn
-           trains you to ignore the cue that matters. A permission prompt is the one event where
-           a session is genuinely blocked on you. */}}
+      {{/* audible cue only when a session genuinely needs you. idle_prompt is excluded: a
+           session that merely went idle is not asking for anything, and a cue 60s after every
+           finished turn trains you to ignore the cue that matters. A permission prompt is the
+           one event where a session is genuinely blocked on you.
+           The matcher is the payload's notification_type. The real values (confirmed against
+           the 2.1.224 binary, not the docs) are permission_prompt, idle_prompt, auth_success,
+           agent_needs_input, agent_completed and the elicitation_* set. "task_complete" is NOT
+           one of them — an entry matching it never fires at all, which is what the agentview
+           "completed" entry below used to do. settings-base-shape.test.js now rejects any
+           matcher outside that set so a dead one cannot land green again. */}}
       {
         "matcher": "permission_prompt",
         "hooks": [
@@ -523,14 +527,17 @@
           }
         ]
       },
-      {{/* agentview: completed on task-complete notification */}}
+      {{/* DIAGNOSTIC, remove once it has caught a spurious cue: log every notification with
+           its type, to find out what is firing the audible cue when nothing is blocked. The
+           cue above is gated on permission_prompt and that gate is real, so the sound has a
+           source we have not identified. Matcher-less, so it sees every type. */}}
       {
-        "matcher": "task_complete",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh completed",
-            "timeout": 5
+            "command": "~/.claude/hooks/notify-log.sh",
+            "timeout": 5,
+            "async": true
           }
         ]
       }{{ end }}
@@ -635,6 +642,22 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {{/* agentview: an async subagent outlives the turn that launched it, so Stop fires and
+           the row reads "completed" while the session is in fact still waiting on it. Track
+           the outstanding set here; agent-view-state.sh consults it before writing completed.
+           Both events carry the PARENT session_id (verified in logs/sessions.log), which is
+           what makes the set keyable by row. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent-view-subagents.sh start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [
@@ -643,6 +666,18 @@
             "command": "~/.claude/hooks/subagent-stop.sh",
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {{/* Not async, unlike the logger above: this decrements the outstanding set and then
+           re-stamps the row when the last subagent lands. An async decrement has no ordering
+           guarantee against Stop, and a lost one strands the row on "working" for good. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/agent-view-subagents.sh stop",
+            "timeout": 10
           }
         ]
       }
