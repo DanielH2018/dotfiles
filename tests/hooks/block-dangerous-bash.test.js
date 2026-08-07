@@ -803,3 +803,49 @@ test('the scan set does not invent a command position', { skip }, async () => {
   cmds.forEach((cmd, i) =>
     assert.notStrictEqual(got[i], 'deny', `false positive from the scan set: ${cmd}`));
 });
+
+// ---- bdb_re / bdb_rei: the fork-free matchers ----------------------------------------
+//
+// These replaced ~25 `echo "$X" | grep -qE` pipelines (54ms -> 24ms per invocation, on the
+// critical path of every Bash tool call). Two properties of grep had to survive the swap,
+// and neither is obvious from reading [[ =~ ]]:
+//
+//   line orientation — grep tests each line, so `^` anchors at the start of EVERY line. A
+//   bare [[ $subject =~ $re ]] sees one string and anchors only at offset 0, which let
+//   `echo a\nterraform destroy` through. That is what these first cases pin.
+//
+//   case folding — the `grep -qiE` sites became bdb_rei, which toggles nocasematch. If that
+//   toggle regresses, the uppercase forms below stop denying.
+test('anchored rules still fire on any line, not just the first', { skip }, async () => {
+  const cmds = [
+    'echo a\nterraform destroy',
+    'echo a\nterraform apply',
+    'echo a\nterraform state rm aws_instance.x',
+    'ls -la\npkill -9 node',
+    'echo one\necho two\ngh api -X POST /repos/o/r',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `newline hid an anchored rule: ${JSON.stringify(cmd)}`));
+});
+
+test('the case-insensitive rules stay case-insensitive', { skip }, async () => {
+  const cmds = [
+    'SSH host "sudo apt update"',
+    'Terraform Apply',
+    'TERRAFORM DESTROY',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `case folding regressed: ${cmd}`));
+});
+
+// A quoted regex inside [[ ]] is matched as a literal string, which would turn every rule in
+// the hook into a silent no-op while the suite above still passed on the few literal-ish
+// patterns. Assert the matchers are actually invoked with the regex unquoted.
+test('the matchers pass their regex unquoted', { skip }, () => {
+  const src = fs.readFileSync(HOOK, 'utf8');
+  assert.match(src, /\[\[ \$line =~ \$re \]\]/, 'bdb_re must match with an unquoted regex');
+  assert.doesNotMatch(src, /=~ "\$re"/, 'a quoted regex matches literally, disabling the rule');
+  assert.doesNotMatch(src, /\|\s*grep -q/, 'a grep pipeline came back into the hot path');
+});

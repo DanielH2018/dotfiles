@@ -22,6 +22,52 @@ hook_require_jq ask "block-dangerous-bash: jq is unavailable, so the dangerous-c
 COMMAND=$(hook_field '.tool_input.command // empty')
 [ -z "$COMMAND" ] && exit 0
 
+# Match with bash's own regex engine instead of forking grep. Every rule below used to be
+# a pipe into `grep -qE`, and there are ~25 of them on the path of *every* Bash tool
+# call: measured 54ms per invocation, of which ~50ms was fork+exec of grep, against a 2ms
+# floor. This is the hottest hook in the setup (3042 calls/day), so the forks cost ~164s/day
+# and sat in front of every command the agent ran.
+#
+# Safe because [[ =~ ]] on glibc is the same ERE dialect grep -E uses, including the GNU
+# extensions these patterns depend on (\b, \s, \s+). That is not obvious and not portable
+# trivia — it was verified differentially, both per-pattern and end-to-end over a corpus of
+# ~90 commands covering every rule, before this replaced anything.
+#
+# The regex MUST stay unquoted inside [[ ]]: quoting it makes bash match it as a literal
+# string, which would silently turn every rule here into a no-op.
+#
+# The loop is the whole reason this is not a one-liner. grep is LINE-oriented: it tests each
+# line separately, so `^` anchors at the start of every line and a rule written
+# `(^|[;&|(`])\s*terraform` fires on the second line of `echo a\nterraform destroy`. A bare
+# [[ $subject =~ $re ]] sees one string, `^` only matches offset 0, and that command silently
+# became allowed — caught by "a newline is a real separator to every anchored family", not by
+# the corpus. Splitting on newlines here restores grep's semantics exactly.
+#
+# Split with parameter expansion rather than a herestring: `<<<` materializes a temp file per
+# call, and this runs ~46 times per hook invocation.
+bdb_re() {
+  local subject="$1" re="$2" rest="$1" line
+  while [ -n "$rest" ]; do
+    line=${rest%%$'\n'*}
+    [[ $line =~ $re ]] && return 0
+    [ "$line" = "$rest" ] && break
+    rest=${rest#*$'\n'}
+  done
+  return 1
+}
+
+# Case-insensitive arm, standing in for `grep -qiE`. nocasematch is restored rather than
+# unconditionally unset so this cannot leak a shell option back to the caller.
+bdb_rei() {
+  local subject="$1" re="$2" restore rc
+  restore=$(shopt -p nocasematch)
+  shopt -s nocasematch
+  bdb_re "$subject" "$re"
+  rc=$?
+  eval "$restore"
+  return "$rc"
+}
+
 # Normalized copy for the whole-string checks below: collapse newline/tab/backslash
 # (so a `\`-continuation can't split a binary from its verb, or a flag from its
 # target) and drop quote characters, which are grouping rather than content —
@@ -337,11 +383,11 @@ _bdb_shadow_log() {
       i=$((i + 1))
       # Only count a family as NEWLY visible if the whole-string form did not already
       # catch it — the census is of the gap, not of every match.
-      if echo "$segscan" | grep -qiE "$SSH_AT_RE" && ! echo "$SCAN" | grep -qiE "$SSH_AT_RE"; then
+      if bdb_rei "$segscan" "$SSH_AT_RE" && ! bdb_rei "$SCAN" "$SSH_AT_RE"; then
         case $newly in *ssh*) ;; *) newly="$newly ssh" ;; esac
       fi
-      if echo "$segscan" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
-        && ! echo "$SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+      if bdb_rei "$segscan" "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
+        && ! bdb_rei "$SCAN" "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
         case $newly in *terraform*) ;; *) newly="$newly terraform" ;; esac
       fi
     done
@@ -379,13 +425,13 @@ _bdb_shadow_log() {
     while [ "$i" -lt "$nsubseg" ]; do
       segscan=${BDB_NORMSUB[i]}
       i=$((i + 1))
-      if echo "$segscan" | grep -qiE "$SSH_AT_RE"; then
+      if bdb_rei "$segscan" "$SSH_AT_RE"; then
         case $found_sub in *ssh*) ;; *) found_sub="$found_sub ssh" ;; esac
-        echo "$SCAN" | grep -qiE "$SSH_AT_RE" || case $newly_sub in *ssh*) ;; *) newly_sub="$newly_sub ssh" ;; esac
+        bdb_rei "$SCAN" "$SSH_AT_RE" || case $newly_sub in *ssh*) ;; *) newly_sub="$newly_sub ssh" ;; esac
       fi
-      if echo "$segscan" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+      if bdb_rei "$segscan" "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
         case $found_sub in *terraform*) ;; *) found_sub="$found_sub terraform" ;; esac
-        echo "$SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
+        bdb_rei "$SCAN" "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b" \
           || case $newly_sub in *terraform*) ;; *) newly_sub="$newly_sub terraform" ;; esac
       fi
     done
@@ -464,7 +510,7 @@ deny() {
 # leans on this block as its deny backstop, but the backstop only ever matched `ssh`,
 # so a destructive `hl` payload degraded from denied to merely prompted.
 # The anchor itself, and why it is anchored, are defined near the top of the file.
-if echo "$BDB_SCANSET" | grep -qiE "$SSH_AT_RE"; then
+if bdb_rei "$BDB_SCANSET" "$SSH_AT_RE"; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
   #
@@ -484,7 +530,7 @@ if echo "$BDB_SCANSET" | grep -qiE "$SSH_AT_RE"; then
   # change against no observed benefit — leave it whole-string.
   REMOTE="$SCAN"
   ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not from an agent session."
-  echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside a remote (ssh/hl) command. $ssh_hint"
+  bdb_rei "$REMOTE" '\bsudo\b' && deny "Blocked: sudo inside a remote (ssh/hl) command. $ssh_hint"
   # BUG, found and fixed in this change: the leading anchor was `(^|[[:space:]])`, so `su`
   # immediately after a separator with no space (`true;su -`) or a substitution delimiter
   # (`` `su - root` ``) was missed. Verified: `ssh h true;su - root -c reboot` reached this
@@ -493,18 +539,18 @@ if echo "$BDB_SCANSET" | grep -qiE "$SSH_AT_RE"; then
   # KILL_AT, this check is not itself a command-position anchor — `su` here is one word
   # among an ssh command's arguments (`ssh homelab su - root`), so any preceding whitespace
   # must keep matching on its own, not only whitespace that follows a separator/paren/backtick.
-  echo "$REMOTE" | grep -qiE '(^|[;&|(`]|[[:space:]])[[:space:]]*su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside a remote (ssh/hl) command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET" && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\bchown\b' && deny "Blocked: chown inside a remote (ssh/hl) command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside a remote (ssh/hl) command. $ssh_hint"
-  echo "$REMOTE" | grep -qiE '\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b' && deny "Blocked: power-state change (reboot/shutdown/halt) on the remote host. $ssh_hint"
+  bdb_rei "$REMOTE" '(^|[;&|(`]|[[:space:]])[[:space:]]*su[[:space:]]+(-|root|[a-z_])' && deny "Blocked: su inside a remote (ssh/hl) command. $ssh_hint"
+  bdb_rei "$REMOTE" "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET" && deny "Blocked: rm -rf of home/root on the remote host. $ssh_hint"
+  bdb_rei "$REMOTE" '\bchown\b' && deny "Blocked: chown inside a remote (ssh/hl) command. $ssh_hint"
+  bdb_rei "$REMOTE" '\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b' && deny "Blocked: chmod 777 inside a remote (ssh/hl) command. $ssh_hint"
+  bdb_rei "$REMOTE" '\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b' && deny "Blocked: power-state change (reboot/shutdown/halt) on the remote host. $ssh_hint"
 fi
 
 # rm -rf targeting home or root (handles separated flags: rm -r -f /, rm --recursive --force /)
-if echo "$SCAN" | grep -qiE "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET"; then
+if bdb_rei "$SCAN" "\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*$RM_TARGET"; then
   deny "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
 fi
-if echo "$SCAN" | grep -qiE '\brm\s' && echo "$SCAN" | grep -qiE '(\s-[a-zA-Z]*r|\s--recursive)' && echo "$SCAN" | grep -qiE '(\s-[a-zA-Z]*f|\s--force)' && echo "$SCAN" | grep -qE "$RM_TARGET"; then
+if bdb_rei "$SCAN" '\brm\s' && bdb_rei "$SCAN" '(\s-[a-zA-Z]*r|\s--recursive)' && bdb_rei "$SCAN" '(\s-[a-zA-Z]*f|\s--force)' && bdb_re "$SCAN" "$RM_TARGET"; then
   deny "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
 fi
 
@@ -521,12 +567,12 @@ fi
 # `$(git push --force)` with no destination) undisturbed: this hook already documents
 # that it cannot know the current branch, so a destination-less push is out of scope
 # here regardless, not something this fix changes.
-if echo "$SCAN" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$SCAN" | grep -q '\-\-force-with-lease'; then
-  if echo "$SCAN" | grep -qE '(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)'; then
+if bdb_re "$SCAN" 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! bdb_re "$SCAN" '\-\-force-with-lease'; then
+  if bdb_re "$SCAN" '(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)'; then
     deny "Blocked: force-push to main/master. Use a feature branch."
   fi
 fi
-if echo "$SCAN" | grep -qE 'git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b'; then
+if bdb_re "$SCAN" 'git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b'; then
   deny "Blocked: force-push via +refspec to main/master. Use a feature branch."
 fi
 
@@ -555,8 +601,8 @@ fi
 # that rule's terminator: this one's whole purpose is telling `main:feature` (destination
 # is feature) apart from `feature:main` (destination is main), and accepting `:` here
 # would blur that back together.
-if echo "$SCAN" | grep -qE 'git[[:space:]]+push\b' \
-  && echo "$SCAN" | grep -qE '([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)'; then
+if bdb_re "$SCAN" 'git[[:space:]]+push\b' \
+  && bdb_re "$SCAN" '([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)'; then
   deny "Blocked: push targeting main/master. Push a feature branch and open a PR."
 fi
 
@@ -576,24 +622,24 @@ fi
 # (see the SSH_AT_RE comment above for the full defect). `` echo "`gh api -XPOST
 # repos/o/r/issues`" `` got NO DECISION on the deployed hook.
 GH_API_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b'
-if echo "$BDB_SCANSET" | grep -qE "$GH_API_AT"; then
+if bdb_re "$BDB_SCANSET" "$GH_API_AT"; then
   gh_hint="Read-only gh api is fine; a human runs the mutation."
-  if echo "$SCAN" | grep -qiE '(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b'; then
+  if bdb_rei "$SCAN" '(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b'; then
     deny "Blocked: mutating gh api request (POST/PUT/PATCH/DELETE). $gh_hint"
   fi
   # -f/-F is the only short flag gh api spells with an f, so a cluster containing
   # one is unambiguous; --field/--raw-field are checked separately because the
   # leading `--` stops the short-flag pattern from reaching them.
-  if echo "$SCAN" | grep -qE '(^|[[:space:]])(--field|--raw-field)([[:space:]]|=)'; then
+  if bdb_re "$SCAN" '(^|[[:space:]])(--field|--raw-field)([[:space:]]|=)'; then
     deny "Blocked: gh api field parameter, which makes the request a POST. $gh_hint"
   fi
-  if echo "$SCAN" | grep -qE '(^|[[:space:]])-[a-zA-Z]*[fF]'; then
+  if bdb_re "$SCAN" '(^|[[:space:]])-[a-zA-Z]*[fF]'; then
     deny "Blocked: gh api field parameter (-f/-F), which makes the request a POST. $gh_hint"
   fi
-  if echo "$SCAN" | grep -qE '(^|[[:space:]])--input([[:space:]]|=)'; then
+  if bdb_re "$SCAN" '(^|[[:space:]])--input([[:space:]]|=)'; then
     deny "Blocked: gh api reading a request body from a file. $gh_hint"
   fi
-  if echo "$SCAN" | grep -qE '(^|[[:space:]]|/)graphql\b'; then
+  if bdb_re "$SCAN" '(^|[[:space:]]|/)graphql\b'; then
     deny "Blocked: gh api graphql, which can mutate. $gh_hint"
   fi
 fi
@@ -614,7 +660,7 @@ PIPE_TO_SHELL="\|[[:space:]]*$PIPE_WRAPPERS([^[:space:]|;&]*/)?(sh|bash|zsh|dash
 PIPE_TO_INTERPRETER="\|[[:space:]]*$PIPE_WRAPPERS([^[:space:]|;&]*/)?(python[0-9.]*|node|deno|bun|perl|ruby|php)([[:space:]]+(-|/dev/stdin))?[[:space:]]*([;&|)]|\$)"
 
 # Curl-pipe-to-shell
-if echo "$SCAN" | grep -qE "(curl|wget)[^|]*($PIPE_TO_SHELL|$PIPE_TO_INTERPRETER)"; then
+if bdb_re "$SCAN" "(curl|wget)[^|]*($PIPE_TO_SHELL|$PIPE_TO_INTERPRETER)"; then
   deny "Blocked: piping remote content to an interpreter. Download, inspect, then run."
 fi
 
@@ -634,17 +680,17 @@ fi
 # http://evil.example)` `` got NO DECISION — the interpreter-word branch uses `\b`
 # (backtick-safe already), but `.` needs its own anchor since a bare dot has no word
 # boundary, and that anchor was still `(^|[;&|(])`.
-if echo "$COMMAND" | grep -qE '(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|(^|[;&|(`])[[:space:]]*\.[[:space:]])[^;&]*([<$]\(|`)[[:space:]]*([^[:space:]]*/)?(curl|wget)\b'; then
+if bdb_re "$COMMAND" '(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|(^|[;&|(`])[[:space:]]*\.[[:space:]])[^;&]*([<$]\(|`)[[:space:]]*([^[:space:]]*/)?(curl|wget)\b'; then
   deny "Blocked: executing downloaded content via process/command substitution. Download, inspect, then run."
 fi
 
 # Writing to protected files
-if echo "$COMMAND" | grep -qE '>\s*(\.env|~?/\.ssh/|~?/\.aws/credentials)'; then
+if bdb_re "$COMMAND" '>\s*(\.env|~?/\.ssh/|~?/\.aws/credentials)'; then
   deny "Blocked: writing to a secrets file. Ask the user to do this manually."
 fi
 
 # Fork bomb
-if echo "$COMMAND" | grep -qE ':\(\)\{.*\};:'; then
+if bdb_re "$COMMAND" ':\(\)\{.*\};:'; then
   deny "Blocked: fork bomb detected."
 fi
 
@@ -666,26 +712,26 @@ KILL_HINT="Kill a PID you captured at spawn, or resolve one and confirm it first
 # deployed hook.
 KILL_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?'
 KILL_TAIL='([[:space:]]|\)|`|$)'
-if echo "$BDB_SCANSET" | grep -qE "$KILL_AT(pkill|killall)$KILL_TAIL"; then
+if bdb_re "$BDB_SCANSET" "$KILL_AT(pkill|killall)$KILL_TAIL"; then
   deny "Blocked: pkill/killall selects processes by name or command line, which can include this agent session. $KILL_HINT"
 fi
-if echo "$SCAN" | grep -qE '\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?kill'"$KILL_TAIL"; then
+if bdb_re "$SCAN" '\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?kill'"$KILL_TAIL"; then
   deny "Blocked: piping matched PIDs into kill. $KILL_HINT"
 fi
 # Command substitution instead of a pipe — `kill $(pgrep -f x)`, `kill \`ps ... \``.
 # Matched on COMMAND: SCAN keeps `$(` but the raw string is what the other substitution
 # rule reads, and there is no quoting trick here for SCAN to undo.
-if echo "$COMMAND" | grep -qE '\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b'; then
+if bdb_re "$COMMAND" '\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b'; then
   deny "Blocked: kill of a PID found by pattern matching (pgrep/ps). $KILL_HINT"
 fi
 
 # Generic pipe-to-shell (belt-and-suspenders with permissions.deny)
-if echo "$SCAN" | grep -qE "$PIPE_TO_SHELL"; then
+if bdb_re "$SCAN" "$PIPE_TO_SHELL"; then
   deny "Blocked: piping output to a shell interpreter. Download, inspect, then run."
 fi
 
 # Disk-wipe commands
-if echo "$COMMAND" | grep -qE '\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b'; then
+if bdb_re "$COMMAND" '\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b'; then
   deny "Blocked: low-level disk operation."
 fi
 
@@ -722,14 +768,14 @@ while IFS= read -r seg; do
       seg="$head $*"
       ;;
   esac
-  if printf '%s' "$seg" | grep -qE "\b$READERS\b.*$SECRET_PATHS"; then
+  if bdb_re "$seg" "\b$READERS\b.*$SECRET_PATHS"; then
     deny "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to share the specific value needed."
   fi
 done <<< "$(printf '%s' "$SCAN" | tr ';&|' '\n')"
 set +f
 # Interpreters that can slurp a file (python -c 'open(".env")', node -e, perl, ...).
 # Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
-if echo "$SCAN" | grep -qE "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
+if bdb_re "$SCAN" "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
   deny "Blocked: reading a secrets file via an interpreter. Ask the user to share the specific value needed."
 fi
 
@@ -744,7 +790,7 @@ fi
 # an attacker key to authorized_keys or a line to .zshrc is the persistence move that
 # outlives the session, and none of these were on the write side.
 WRITE_TARGETS="($SECRET_PATHS|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
-if echo "$SCAN" | grep -qE "(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*$WRITE_TARGETS"; then
+if bdb_re "$SCAN" "(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*$WRITE_TARGETS"; then
   deny "Blocked: writing to a secrets or shell-startup file. Ask the user to do this manually."
 fi
 
@@ -762,23 +808,23 @@ TF_SCAN="$BDB_SCANSET"
 # Destructive verb as the first token after the binary (optional global flags
 # like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
 # since the verb still appears as a whole word.
-if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
+if bdb_rei "$TF_SCAN" "$TF_AT$TF_BIN\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy|import|taint|untaint|force-unlock)\b"; then
   deny "Blocked: state-mutating/destructive terraform command (apply/destroy/import/taint/force-unlock). Use plan to preview; a human applies infra changes."
 fi
 # Terragrunt run-all / run [--all] <verb> (verb sits after run-all/run + flags)
-if echo "$TF_SCAN" | grep -qiE "$TF_AT""terragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b"; then
+if bdb_rei "$TF_SCAN" "$TF_AT""terragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b"; then
   deny "Blocked: destructive terragrunt run-all/run command. Use plan to preview; a human applies infra changes."
 fi
 # state subcommands that rewrite or drop state (state list/show stay allowed)
-if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"; then
+if bdb_rei "$TF_SCAN" "$TF_AT$TF_BIN\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"; then
   deny "Blocked: terraform state mutation (state rm/mv/push/replace-provider). state list/show are fine; mutations must be done by a human."
 fi
 # workspace deletion drops that workspace's state
-if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*\bworkspace[[:space:]]+delete\b"; then
+if bdb_rei "$TF_SCAN" "$TF_AT$TF_BIN\b.*\bworkspace[[:space:]]+delete\b"; then
   deny "Blocked: terraform/tofu workspace delete drops its state."
 fi
 # any -auto-approve — never allow non-interactive apply/destroy
-if echo "$TF_SCAN" | grep -qiE "$TF_AT$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
+if bdb_rei "$TF_SCAN" "$TF_AT$TF_BIN\b.*[[:space:]]--?auto-approve\b"; then
   deny "Blocked: terraform -auto-approve. Non-interactive apply/destroy is not permitted."
 fi
 
@@ -792,7 +838,7 @@ fi
 # upgraded and allowed without the pipe-to-shell, secret-read or terraform rules ever
 # running. Every deny now gets its say first; only a command that survives all of them
 # reaches the upgrade.
-if echo "$COMMAND" | grep -qE 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! echo "$COMMAND" | grep -q '\-\-force-with-lease'; then
+if bdb_re "$COMMAND" 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! bdb_re "$COMMAND" '\-\-force-with-lease'; then
   BDB_OLD=allow
   UPGRADED=$(echo "$COMMAND" | sed -E 's/--force([ ]|$)/--force-with-lease\1/g; s/([ ])-f([ ]|$)/\1--force-with-lease\2/g')
   jq -n --arg cmd "$UPGRADED" '{
