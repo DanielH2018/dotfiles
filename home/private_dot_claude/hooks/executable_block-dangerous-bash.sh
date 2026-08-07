@@ -473,6 +473,15 @@ if echo "$BDB_SCANSET" | grep -qiE "$SSH_AT_RE"; then
   # change — `ssh h uptime; sudo apt update` denies today as "sudo inside a remote
   # command" and would stop — so it belongs in its own change with its own corpus diff,
   # not smuggled into one whose safety argument is that it only ever adds denies.
+  #
+  # That diff has since been run, and the answer is DON'T: across all 11,483 distinct
+  # commands in the shadow census, the number whose ssh-block deny has its payload in a
+  # segment containing no ssh/hl is ZERO. The false positive is real in principle and has
+  # never once happened here. The detector was checked against synthetic cases first, so
+  # the zero is a measurement and not a broken script: it flags both `ssh h uptime; sudo
+  # apt update` and `hl uptime && sudo systemctl restart nginx`, and correctly leaves a
+  # genuine `ssh homelab sudo reboot` alone. Narrowing REMOTE would trade a deny-removing
+  # change against no observed benefit — leave it whole-string.
   REMOTE="$SCAN"
   ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not from an agent session."
   echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside a remote (ssh/hl) command. $ssh_hint"

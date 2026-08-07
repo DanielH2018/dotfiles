@@ -14,24 +14,27 @@
          which ~/.zshenv prefers when there is a graphical session to draw on. */}}
     "SUDO_ASKPASS": "{{ .chezmoi.homeDir }}/.local/bin/tmux-askpass",
 {{ end }}
-    {{/* M02 shadow census. The three Bash guards each carry their own idea of where one
-         command ends and the next begins, and cmdparse.sh is the one segmentation meant to
-         replace all three. This flag makes them compute what that shared segmentation WOULD
-         decide, append one JSONL line per call to ~/.claude/logs/cmdparse-shadow.jsonl, and
-         then return the OLD decision unchanged — a test asserts decision-identity with the
-         flag on vs off, so turning this on cannot change what is approved or denied.
+    {{/* M02 shadow census: RETIRED, key deleted, machinery kept.
 
-         It is on to collect the evidence the cutover needs: the guards run on every Bash
-         call, so the log is a census of live traffic rather than a synthetic sample. The
-         ship gate for slice 2 is zero `old != allow -> new == allow` rows among those with
-         shadow_only == 0. Rows with shadow_only == 1 are the newline-only compounds, which
-         stay deferred by decision (spec §8a) rather than by accident.
+         It existed to measure what cmdparse.sh's shared segmentation WOULD decide, so the
+         three Bash guards could adopt it on evidence rather than on faith. All three have
+         now adopted it — allow-compound-bash and allow-readonly-remote in #285,
+         block-dangerous-bash in #288 — so the gap it was measuring is closed, and the
+         behaviour it detected is pinned directly by tests instead.
 
-         Turn OFF by deleting this key. CMDPARSE=off is the harder kill switch: it disables
-         the shared parser everywhere, not just the census. Read the log before removing
-         either — an empty log means the flag never reached the hooks, not that the parse
-         agrees. */}}
-    "CMDPARSE_SHADOW": "1",
+         It was not free. Measured on the deployed hook, interleaved on/off, median of 21:
+         +8.2ms on a short command, +24.0ms with substitutions, +65.2ms on a 20-segment
+         compound, +68.9ms when those segments are quoted — on EVERY Bash call, to write
+         ~3,600 rows a day nobody was reading.
+
+         Re-enable by restoring "CMDPARSE_SHADOW": "1" here. Nothing else was removed: the
+         hooks still carry _bdb_shadow_log and the CP_SUBSEG walk, and their tests still
+         run against the flag set, so this is one key away whenever these guards are touched
+         again. That is deliberate — the census is what found the command-substitution
+         bypass (#286), and the next unknown gap will want the same instrument.
+
+         CMDPARSE=off remains the harder kill switch: it disables the shared parser
+         everywhere, not just the census. */}}
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
          window unconditionally, and long sessions were compacting 3-6 times each —
          every compaction also truncates history before the remember pipeline can
