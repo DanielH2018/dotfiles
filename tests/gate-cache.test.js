@@ -59,8 +59,15 @@ function commit(root, text) {
 }
 
 function gate(root, arg, env = {}) {
+  // Drop any ambient GATE_CACHE_* before layering the case's own on top. The gate that runs
+  // this suite is itself a consumer of these variables -- `GATE_CACHE_OFF=1 git push` sets one
+  // for the whole run -- so inheriting them turns every hit-expecting test below red for a
+  // reason that has nothing to do with the cache. Found exactly that way.
+  const base = { ...process.env };
+  delete base.GATE_CACHE_OFF;
+  delete base.GATE_CACHE_TTL;
   return spawnSync('bash', [GATE, arg], {
-    cwd: root, encoding: 'utf8', env: { ...process.env, ...env },
+    cwd: root, encoding: 'utf8', env: { ...base, ...env },
   });
 }
 
