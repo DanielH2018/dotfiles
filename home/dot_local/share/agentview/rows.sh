@@ -172,6 +172,33 @@ synth_session_rows() {  # rows for live busy/waiting sessions the hook registry 
   done                                               # bg session shows once it works/waits
 }
 
+# _apply_local_line TAGGED_LINE FILE — act on one classified state file: prune it, or render
+# its row. Shared by the one-jq fast path and the per-file fallback so both decide identically.
+_apply_local_line() {
+  local _l="$1" _f="$2" _lr _lpid _lsid
+  case "$_l" in
+    P)  rm -f "$_f" 2>/dev/null ;;
+    L*) _lr="${_l#L$'\t'}"; _lpid="${_lr%%$'\t'*}"                   # L<TAB>pid<TAB>sid<TAB>row
+        _lr="${_lr#*$'\t'}"; _lsid="${_lr%%$'\t'*}"
+        if ! kill -0 "$_lpid" 2>/dev/null; then
+          rm -f "$_f" 2>/dev/null                                    # process gone -> leaked, prune
+        elif [ -n "${SMAP[$_lsid]:-}" ]; then
+          merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n'   # live session: fold + render
+        else
+          # kill -0 is NOT pid-reuse-safe: a dead session whose pid the OS recycled to a live
+          # process still passes it, yet the stale row's recorded pane id may since have been
+          # reassigned by the mux to a DIFFERENT session — trusting it misroutes <enter> (the
+          # Clipboard->memory bug). SMAP (load_session_map: keyed by sessionId, dead-pid-filtered)
+          # is authoritative for liveness; when it can't confirm this sid, keep rendering the row
+          # (a live session momentarily missing from the registry must not vanish) but scrub the
+          # unverified locator so the jump can't land on a stranger's pane.
+          av_neutralize_locator "${_lr#*$'\t'}"; rows+="$_mrow"$'\n'
+        fi ;;
+    R*) _lr="${_l#R$'\t'}"; _lsid="${_lr%%$'\t'*}"                   # R<TAB>sid<TAB>row
+        merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n' ;;
+  esac
+}
+
 gather_local_rows() {  # append local session rows to global `rows`, prune >7d + dead-pid leaks
   local local_files jqout jqlines i l _lr _lpid _lsid _mrow
   # ONE jq over the whole state dir (process spawns dominate on Windows at ~55ms each,
@@ -186,45 +213,32 @@ gather_local_rows() {  # append local session rows to global `rows`, prune >7d +
   load_session_map
   shopt -s nullglob; local_files=( "$statedir"/*.json ); shopt -u nullglob
   if [ "${#local_files[@]}" -gt 0 ]; then
-  jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" --arg self "$selfhost" "
-      $JQ_TS | (.pid // \"\" | tostring) as \$pid | (.session // .key // \"\" | tostring) as \$sid |
+  local _ljq
+  _ljq="$JQ_TS | (.pid // \"\" | tostring) as \$pid | (.session // .key // \"\" | tostring) as \$sid |
       if   \$ts > 0 and \$age > \$prune then \"P\"
       elif \$ts > 0 and \$age > 86400  then \"H\"
       elif (.kind // \"host\") == \"host\" and (.host // \"\") == \$self and \$pid != \"\"
            then \"L\t\" + \$pid + \"\t\" + \$sid + \"\t\" + ($JQ_ROW)
-      else \"R\t\" + \$sid + \"\t\" + ($JQ_ROW) end" "${local_files[@]}" 2>/dev/null)
+      else \"R\t\" + \$sid + \"\t\" + ($JQ_ROW) end"
+  jqout=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" --arg self "$selfhost" \
+      "$_ljq" "${local_files[@]}" 2>/dev/null)
   jqlines=(); [ -n "$jqout" ] && mapfile -t jqlines <<< "$jqout"
   if [ "${#jqlines[@]}" -eq "${#local_files[@]}" ]; then
     for i in "${!local_files[@]}"; do
-      case "${jqlines[$i]}" in
-        P)  rm -f "${local_files[$i]}" 2>/dev/null ;;
-        L*) _lr="${jqlines[$i]#L$'\t'}"; _lpid="${_lr%%$'\t'*}"       # L<TAB>pid<TAB>sid<TAB>row
-            _lr="${_lr#*$'\t'}"; _lsid="${_lr%%$'\t'*}"
-            if ! kill -0 "$_lpid" 2>/dev/null; then
-              rm -f "${local_files[$i]}" 2>/dev/null                  # process gone -> leaked, prune
-            elif [ -n "${SMAP[$_lsid]:-}" ]; then
-              merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n'   # live session: fold + render
-            else
-              # kill -0 is NOT pid-reuse-safe: a dead session whose pid the OS recycled to a live
-              # process still passes it, yet the stale row's recorded pane id may since have been
-              # reassigned by the mux to a DIFFERENT session — trusting it misroutes <enter> (the
-              # Clipboard->memory bug). SMAP (load_session_map: keyed by sessionId, dead-pid-filtered)
-              # is authoritative for liveness; when it can't confirm this sid, keep rendering the row
-              # (a live session momentarily missing from the registry must not vanish) but scrub the
-              # unverified locator so the jump can't land on a stranger's pane.
-              av_neutralize_locator "${_lr#*$'\t'}"; rows+="$_mrow"$'\n'
-            fi ;;
-        R*) _lr="${jqlines[$i]#R$'\t'}"; _lsid="${_lr%%$'\t'*}"       # R<TAB>sid<TAB>row
-            merge_session_row "${_lr#*$'\t'}" "$_lsid"; rows+="$_mrow"$'\n' ;;
-      esac
+      _apply_local_line "${jqlines[$i]}" "${local_files[$i]}"
     done
   else
-    for l in "${jqlines[@]}"; do
-      case "$l" in
-        L*) _lr="${l#L$'\t'}"; _lr="${_lr#*$'\t'}"                    # count mismatch: render, never rm
-            rows+="${_lr#*$'\t'}"$'\n' ;;
-        R*) _lr="${l#R$'\t'}"; rows+="${_lr#*$'\t'}"$'\n' ;;
-      esac
+    # A file jq could not parse (an interrupted write leaves a truncated .json) emits no line,
+    # which desyncs the index pairing. Re-running one file at a time costs a process per row,
+    # but only on the rare malformed-file run — and it keeps the corruption local to its own
+    # file. Skipping the whole prune instead, as this used to, meant one truncated file stopped
+    # every dead row on the machine from ever being cleaned up: found live with five leaked rows
+    # still listed, processes long gone.
+    for i in "${!local_files[@]}"; do
+      l=$(jq -r --argjson now "$now" --argjson prune "$PRUNE" --arg self "$selfhost" \
+            "$_ljq" "${local_files[$i]}" 2>/dev/null)
+      [ -n "$l" ] || continue                                        # unparseable: leave it alone
+      _apply_local_line "$l" "${local_files[$i]}"
     done
   fi
   fi

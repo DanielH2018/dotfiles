@@ -1005,6 +1005,25 @@ test('prunes a local host row whose recorded pid is dead (leaked session)', { sk
   assert.match(body, /liveproj/, 'a live session still renders');
 });
 
+// gather_local_rows emits one tagged jq line per file and pairs them with the glob BY INDEX,
+// so a file jq cannot parse desyncs the pairing and the whole run falls to the no-prune
+// fallback. One unreadable file therefore stops EVERY dead row on the machine from being
+// pruned — they keep rendering indefinitely, which is what was seen live: five rows whose
+// processes were long gone, all still listed.
+test('one unparseable state file does not disable pruning for every other row', { skip }, () => {
+  const { env, home, capture } = makeEnv();
+  const now = nowSec();
+  stateFile(home, 'dead', { state: 'working', cwd: 'C:\\a\\deadproj', host: HOST, kind: 'host', ts: now - 60, pid: '2147483647', locator: 'none:' });
+  stateFile(home, 'live', { state: 'working', cwd: 'C:\\a\\liveproj', host: HOST, kind: 'host', ts: now - 60, pid: String(process.pid), locator: 'none:' });
+  fs.writeFileSync(avFile(home, 'truncated'), '{"key":"truncated","state":"wor');   // interrupted write
+  run(env, []);
+  assert.ok(!fs.existsSync(avFile(home, 'dead')), 'a dead row is still pruned despite a corrupt sibling');
+  assert.ok(fs.existsSync(avFile(home, 'live')), 'the live row is untouched');
+  const body = stripAnsi(fs.readFileSync(capture, 'utf8'));
+  assert.doesNotMatch(body, /deadproj/, 'the dead session is not rendered');
+  assert.match(body, /liveproj/, 'the live session still renders');
+});
+
 test('keeps a local row with no recorded pid (legacy entry — no liveness signal)', { skip }, () => {
   const { env, home } = makeEnv();
   stateFile(home, 'legacy', { state: 'working', cwd: 'C:\\a\\legacyproj', host: HOST, kind: 'host', ts: nowSec() - 60, locator: 'none:' }); // no pid
