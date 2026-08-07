@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "16a209e97328503b0b0beb6f7c45a846580e0b9071c4b7ac240240369105c81e",
-      "landed": "2026-08-07T03:09:49.098Z"
+      "hash": "cb0c51094c0aec0e6ba8c29f9a9751dc66b6cbc8738253d211de8908af774b28",
+      "landed": "2026-08-07T13:21:56.755Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -58,8 +58,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_agent-view-state.sh",
-      "hash": "50f30060a7a2a6aa4e96d92142709bef81f8adf4e165ff19ca33e117ebdabf98",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "28073c607a5479d7775444c785b7cffb07fb1ff8f8bc61bd84afe3ce78965f11",
+      "landed": "2026-08-07T13:21:56.755Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
+      "hash": "bcb64f740e04b9c2b7bcf8850b04a3f661beea7889441e1ea001bb281fea0e6d",
+      "landed": "2026-08-07T13:21:56.755Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
@@ -132,14 +137,19 @@
       "landed": "2026-08-01T12:04:20.075Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_notify-log.sh",
+      "hash": "9c25d2b0d6cc5ff8d59802b92aa76936fa5a0141379b8d8a54c4f80458c16b8e",
+      "landed": "2026-08-07T13:21:56.755Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
       "hash": "dba5bc07f27b727069b6b64b4a6202d733457d7d521cbdfb2ec5d55fb528c036",
       "landed": "2026-08-01T12:04:20.075Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
-      "hash": "fa0a23a2766f5ebaff252669011df615fc17033f4e6709864eef59dadb04410a",
-      "landed": "2026-07-31T22:02:49.005Z"
+      "hash": "6cf35ec5f22ea1d8e1f7057e9cd0e1847b1e47139e4125118f15353137b43ea5",
+      "landed": "2026-08-07T13:21:56.755Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
