@@ -486,11 +486,13 @@ refresh_one_remote() {  # $1 = host. Pull its state, fold its live registry in, 
   out=$(ssh "${AV_SSH_OPTS[@]}" -o BatchMode=yes "${HOST_SSH[$host]}" bash -s <<'REMOTE_FOLD' 2>/dev/null
 set -u; shopt -s nullglob
 declare -A M UPD
-# sid -> "state<TAB>ts<TAB>kind<TAB>jobId" from live, non-sdk, alive-pid sessions (newest
-# updatedAt wins). kind/jobId carry the daemon identity the hook row cannot know — see the
-# bg rewrite below. jobId is emitted LAST because it is the only field that can be empty and
-# tab is IFS whitespace: a middle empty would collapse and shift every later column.
+# sid -> "state<TAB>ts<TAB>kind<TAB>jobId<TAB>name" from live, non-sdk, alive-pid sessions
+# (newest updatedAt wins). kind/jobId carry the daemon identity the hook row cannot know — see
+# the bg rewrite below; name fills an empty hook title — see the title fill below.
 for sf in "$HOME/.claude/sessions"/*.json; do
+  # US-joined, NOT @tsv: jobId and name can BOTH be empty, and tab is IFS whitespace -- `read`
+  # collapses a middle empty field and shifts every later column. Same fix load_session_map
+  # already carries for the local side of this exact fold.
   line=$(jq -r '
     select(((.status // "") != "") and ((.sessionId // "") != "") and (((.entrypoint // "") | startswith("sdk")) | not)) |
     [ (.pid // 0 | tostring), .sessionId,
@@ -498,13 +500,13 @@ for sf in "$HOME/.claude/sessions"/*.json; do
       (((.statusUpdatedAt // .updatedAt // .startedAt // 0) / 1000) | floor | tostring),
       ((.updatedAt // .startedAt // 0) | tostring),
       (if (.kind // "") == "bg" then "bg" else "host" end),
-      (.jobId // "") ] | @tsv' "$sf" 2>/dev/null)
+      (.jobId // ""), (.name // "") ] | join("")' "$sf" 2>/dev/null)
   [ -n "$line" ] || continue
-  IFS=$'\t' read -r pid sid st ts upd lkind ljob <<< "$line"
+  IFS=$'\x1f' read -r pid sid st ts upd lkind ljob name <<< "$line"
   [ -n "$pid" ] && [ -n "$sid" ] || continue
   kill -0 "$pid" 2>/dev/null || continue
   if [ -n "${UPD[$sid]:-}" ] && [ "${UPD[$sid]}" -ge "$upd" ] 2>/dev/null; then continue; fi
-  UPD[$sid]="$upd"; M[$sid]="$st"$'\t'"$ts"$'\t'"$lkind"$'\t'"${ljob:-}"
+  UPD[$sid]="$upd"; M[$sid]="$st"$'\t'"$ts"$'\t'"$lkind"$'\t'"${ljob:-}"$'\t'"${name:-}"
 done
 # Emit each hook row, its HOST state/ts overridden by the live registry when present.
 for af in "$HOME/.claude/agent-view"/*.json; do
@@ -514,15 +516,20 @@ for af in "$HOME/.claude/agent-view"/*.json; do
   if [ -n "$ov" ] && [ "$kind" = "host" ]; then
     st="${ov%%$'\t'*}"; ov="${ov#*$'\t'}"
     ts="${ov%%$'\t'*}"; ov="${ov#*$'\t'}"
-    lkind="${ov%%$'\t'*}"; ljob="${ov#*$'\t'}"
+    lkind="${ov%%$'\t'*}"; ov="${ov#*$'\t'}"
+    ljob="${ov%%$'\t'*}"; name="${ov#*$'\t'}"
     # Idle folds to "completed"; a dirty/unpushed tree (a stamped .git marker) is REVIEW —
     # keep .git and re-derive, mirroring the local merge_session_row upgrade.
     # A daemon bg job has no pane on either side, so its hook row carries a none: locator the
     # jump path can only reject. Flip kind to bg and carry the JOB id as the focus target
     # (attach matches jobId, NOT the session uuid) — the same swap merge_session_row makes
     # locally, so <enter> reaches `claude attach` over ssh instead of reporting "no pane".
-    jq -c --arg s "$st" --argjson t "${ts:-0}" --arg k "$lkind" --arg j "$ljob" \
+    # A fresh session's hook title lags the transcript (no ai-title generated yet), while
+    # Claude's own registry already has one -- same gap merge_session_row fills locally with
+    # the registry name. Only fills an EMPTY title: a /rename or a landed ai-title always wins.
+    jq -c --arg s "$st" --argjson t "${ts:-0}" --arg k "$lkind" --arg j "$ljob" --arg n "$name" \
       '.state=(if $s=="completed" and ((.git // "")!="") then "review" else $s end) | .ts=$t
+       | .title=(if (.title // "") == "" then $n else .title end)
        | if $k == "bg" then .kind="bg" | .locator="bg:"+$j | .backend="bg" else . end' "$af" 2>/dev/null
   else
     jq -c '.' "$af" 2>/dev/null

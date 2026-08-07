@@ -657,6 +657,13 @@ build_pretty() {  # prints "KEY<TAB>COLORED-DISPLAY" per row, grouped; KEY carri
 }
 
 render_body() {  # sets global `body` from local + cached-remote rows (the fzf list)
+  # Mirror the picker's own inline first render (executable_agentview, around the
+  # gather_local_rows call): every bind and the background remote refresh reach the list
+  # ONLY through here (`$SELF --body`), so a fold missing from this function is a fold
+  # that renders once, on the very first frame, and never again. fold_title_states un-sticks
+  # a stale hook row from a live pane title's spinner; fold_seen_states is what turns a
+  # completed row into DONE when the work landed while you were looking away. Both must run
+  # AFTER load_titles/collapse_bg_forks and in this order, same as the inline block.
   rows=""
   gather_local_rows
   gather_windows_rows                        # same-machine Windows sessions, via /mnt/c
@@ -665,7 +672,9 @@ render_body() {  # sets global `body` from local + cached-remote rows (the fzf l
   if [ "$HAVE_WEZTERM" = 1 ]; then
     PANELIST=$(wezterm cli --no-auto-start --prefer-mux list --format json 2>/dev/null)
     load_titles
+    fold_title_states
   fi
+  fold_seen_states
   body=$(build_pretty)
   [ -z "$body" ] && body="$NO_SESSIONS_ROW"
 }

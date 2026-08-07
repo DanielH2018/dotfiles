@@ -198,3 +198,70 @@ test('--fingerprint is unchanged when a module is rewritten with identical bytes
   fs.writeFileSync(p, body);
   assert.strictEqual(run(t, ['--fingerprint']), before);
 });
+
+// --body (render_body, render.sh) is what EVERY reload after the picker's first frame runs:
+// every key bind goes through --repaint, which becomes reload('$SELF --body') when nothing
+// changed (see the tests above), and so does the background remote-refresh poster. The
+// picker's own inline startup block runs the same gather/build steps but additionally calls
+// fold_title_states and fold_seen_states before build_pretty (executable_agentview, just
+// above the "header line" comment) -- so a fold present only there renders on frame 1 and is
+// gone by the very next reload.
+const US = '\x1f';
+
+function seenStateHome(t, { markAge } = {}) {
+  const home = scratch('av-seenbody-home-');
+  fs.mkdirSync(path.join(home, '.claude', 'agent-view'), { recursive: true });
+  const host = os.hostname();
+  const cwd = '/home/daniel/dev/proj';
+  const ts = Math.floor(Date.now() / 1000) - 100;
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view', 'x.json'), JSON.stringify({
+    pane: '%1', state: 'completed', cwd, host, ts, kind: 'host', title: '',
+    locator: 'tmux:/tmp/s.sock:main:%1',
+  }));
+  if (markAge !== undefined) {
+    fs.writeFileSync(path.join(home, '.claude', 'agent-view-seen'),
+      [host, cwd, 'host'].join(US) + `\t${ts - markAge}\n`);
+  }
+  return home;
+}
+
+test('--body classifies a completed row the seen sidecar marks stale as DONE, not COMPLETED', () => {
+  const t = copyTree();
+  const home = seenStateHome(t, { markAge: 500 });   // sidecar armed, marker predates ts
+  const out = run(t, ['--body'], { HOME: home });
+  assert.match(out, /DONE/, `expected the DONE group, got:\n${out}`);
+  assert.doesNotMatch(out, /COMPLETED/, `row must not render under COMPLETED, got:\n${out}`);
+});
+
+test('--body leaves an already-seen completed row under COMPLETED', () => {
+  const t = copyTree();
+  const home = seenStateHome(t, { markAge: 0 });     // marker matches ts: already seen
+  const out = run(t, ['--body'], { HOME: home });
+  assert.match(out, /COMPLETED/, `expected the COMPLETED group, got:\n${out}`);
+  assert.doesNotMatch(out, /DONE/, `row must not render under DONE, got:\n${out}`);
+});
+
+test("render_body() applies the same fold steps as the picker's own first render", () => {
+  // A meta test, same idea as "no repaint bind reloads unconditionally" above: read the
+  // source rather than trust the edit, so the two paths can't silently re-diverge.
+  const launcherSrc = fs.readFileSync(SRC, 'utf8');
+  const renderSrc = fs.readFileSync(path.join(LIB, 'render.sh'), 'utf8');
+
+  const inlineStart = launcherSrc.indexOf('rows=""\ngather_local_rows');
+  const inlineEnd = launcherSrc.indexOf('body=$(build_pretty)', inlineStart);
+  assert.ok(inlineStart >= 0 && inlineEnd > inlineStart, 'could not locate the inline render block');
+  const inline = launcherSrc.slice(inlineStart, inlineEnd);
+
+  const bodyStart = renderSrc.indexOf('render_body() {');
+  const bodyEnd = renderSrc.indexOf('\n}', bodyStart);
+  assert.ok(bodyStart >= 0 && bodyEnd > bodyStart, 'could not locate render_body()');
+  const renderBody = renderSrc.slice(bodyStart, bodyEnd);
+
+  for (const fn of ['fold_title_states', 'fold_seen_states']) {
+    assert.ok(inline.includes(fn), `expected the inline picker render to call ${fn}`);
+    assert.ok(renderBody.includes(fn),
+      `render_body() must call ${fn} too, or every reload (every key bind plus the ` +
+      'background remote refresh, all of which call "$SELF --body") renders a different ' +
+      'classification than the first frame');
+  }
+});

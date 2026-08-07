@@ -328,6 +328,44 @@ test('ctrl-p pins the row into the PINNED group', { skip }, async (t) => {
   assert.match(fs.readFileSync(pinfile(home), 'utf8'), /\S/);
 });
 
+// The picker's own inline startup block (executable_agentview) calls fold_seen_states before
+// its first fzf frame, but every reload after that -- every key bind via --repaint, and the
+// background remote-refresh poster that fires ~1s after open -- goes through render_body()
+// (render.sh), a separate function. When the two fell out of sync a completed row the seen
+// sidecar marks unwatched rendered DONE on frame 1 and reverted to plain COMPLETED the moment
+// anything reloaded the list -- which happens automatically, unprompted, every time.
+test('a DONE row stays DONE once the background refresh reloads the list', { skip }, async (t) => {
+  const { home, env } = makeEnv();
+  const ts = nowSec() - 100;
+  session(home, 'unwatched', {
+    pane: '%9', state: 'completed', cwd: '/home/daniel/dev/unwatched', host: HOST,
+    ts, kind: 'host', title: '', locator: 'tmux:/tmp/s.sock:main:%9',
+  });
+  const US = '\x1f';
+  fs.writeFileSync(path.join(home, '.claude', 'agent-view-seen'),
+    [HOST, '/home/daniel/dev/unwatched', 'host'].join(US) + `\t${ts - 500}\n`);
+
+  const term = open(env);
+  t.after(() => term.stop());
+
+  await term.waitFor('DONE');
+  assert.ok(!term.screen.contains('COMPLETED'),
+    `first frame should classify the row as DONE, got:\n${term.text()}`);
+
+  // Prove a reload actually lands, without touching the row under test: a second, unrelated
+  // session written just before ctrl-f can only appear once render_body() re-gathers rows.
+  session(home, 'proof', {
+    pane: '%8', state: 'working', cwd: '/home/daniel/dev/proof', host: HOST,
+    ts: nowSec(), kind: 'host', title: 'proof task', locator: 'tmux:/tmp/s.sock:main:%8',
+  });
+  term.send('ctrl-f');   // fires reload('...' --body), the same action the background poster sends
+  await term.waitFor('proof task');
+
+  assert.ok(term.screen.contains('DONE'), `row should still be DONE after the reload, got:\n${term.text()}`);
+  assert.ok(!term.screen.contains('COMPLETED'),
+    `row must not revert to COMPLETED after the reload, got:\n${term.text()}`);
+});
+
 test('completed and idle collapse to one line each by default', { skip }, async (t) => {
   const { home, env } = makeEnv();
   seedFinished(home, { completed: 3, idle: 2 });
