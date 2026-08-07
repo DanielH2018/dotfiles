@@ -24,6 +24,15 @@
 # Everything here converges on one instance. Stacked instances are the documented way
 # this gets permanently stuck: the one holding the handle is the broken one, and each
 # relaunch adds another that cannot grab it.
+#
+# A third thing this script owns: case 1's SIGABRT leaves an ABRT report behind, and
+# `abrt-applet` re-notifies about every *unresolved* report at the start of every
+# session (`man abrt-applet`: "at start-up ... checks for new problems which occurred
+# while the tool was not running"). Left alone, an abort from three logins ago is a
+# fresh popup at today's login even though nothing new happened -- the crash itself
+# already self-recovers via Restart=on-failure. So this also purges ABRT reports that
+# match that exact, already-diagnosed signature. Anything else is left for daniel to
+# actually look at.
 
 set -uo pipefail
 
@@ -32,6 +41,12 @@ APP_ID="com.core447.StreamController"
 COMM="StreamControlle" # /proc comm is truncated to 15 chars; this is the whole name
 VENDOR="0fd9"
 PRODUCT="006d"
+
+# The known-crash signature (see streamcontroller-libdbus-watch-abort): the flatpak's
+# python3.13 process, launched as "StreamController". Only reports matching both get
+# purged -- an unrelated python3.13 crash elsewhere must not be silently deleted.
+ABRT_EXECUTABLE="/usr/bin/python3.13"
+ABRT_CMDLINE="StreamController"
 
 # Two strikes before acting. The timer runs every 2 minutes and a healthy start takes
 # ~6s to write its key images, so a single strike can land inside a legitimate startup;
@@ -95,6 +110,28 @@ deck_held_by_app() {
 read_strikes() { [[ -r $STRIKE_FILE ]] && cat "$STRIKE_FILE" 2>/dev/null || printf '0'; }
 clear_strikes() { rm -f "$STRIKE_FILE"; }
 
+# Purge ABRT reports matching the known StreamController crash signature, so they
+# cannot accumulate into a login notification for a crash that already recovered on
+# its own. No graphical session or deck check needed -- abrt-cli works before login.
+cleanup_known_abrt_reports() {
+	command -v abrt-cli >/dev/null 2>&1 || return 0
+
+	local id info exec_re cmdline_re
+	# Escape regex metachars in the executable path (the dots in "python3.13" would
+	# otherwise match any char) and anchor each value on whitespace or line end, so
+	# e.g. "StreamControllerFoo" cannot pass as a match.
+	exec_re="^Executable[[:space:]]+${ABRT_EXECUTABLE//./\\.}([[:space:]]|\$)"
+	cmdline_re="^Command line[[:space:]]+${ABRT_CMDLINE}([[:space:]]|\$)"
+
+	while IFS= read -r id; do
+		[[ -n $id ]] || continue
+		info=$(abrt-cli info "$id" 2>/dev/null) || continue
+		grep -qE "$exec_re" <<<"$info" || continue
+		grep -qE "$cmdline_re" <<<"$info" || continue
+		abrt-cli remove -f "$id" >/dev/null 2>&1
+	done < <(abrt-cli list 2>/dev/null | awk '/^Id/ {print $2}')
+}
+
 # Restarts inside the last hour, one epoch timestamp per line.
 recent_restarts() {
 	local cutoff now
@@ -157,6 +194,11 @@ recover() {
 }
 
 main() {
+	# Unconditional and independent of everything below: abrt-cli works before login,
+	# and the deck-recovery logic below returns early in several cases (no session, no
+	# deck, deliberate quit) that must not also skip this.
+	cleanup_known_abrt_reports
+
 	# Everything this recovers is PartOf=graphical-session.target. With lingering enabled
 	# the user manager -- and so this timer -- starts at boot, hours before anyone logs
 	# in, and `systemctl start` on the app then launches GTK against no display: it

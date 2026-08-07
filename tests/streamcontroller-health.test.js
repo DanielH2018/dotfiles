@@ -98,10 +98,54 @@ done
 exit 0
 `, { mode: 0o755 });
 
+  // Problems live at $STUB_ABRT_DIR/<id>/{executable,cmdline}. `list` enumerates ids,
+  // `info` prints them in real abrt-cli's column-aligned format, `remove -f <id>`
+  // records what was purged instead of touching anything real.
+  fs.writeFileSync(path.join(bin, 'abrt-cli'), `#!/bin/bash
+data="\${STUB_ABRT_DIR:-}"
+case "$1" in
+  list)
+    [ -d "$data" ] || exit 0
+    for d in "$data"/*/; do
+      [ -d "$d" ] || continue
+      id="\${d%/}"; id="\${id##*/}"
+      printf 'Id            %s  \\n' "$id"
+    done
+    exit 0
+    ;;
+  info)
+    id="$2"
+    printf 'Id            %s  \\n' "$id"
+    printf 'Executable    %s  \\n' "$(cat "$data/$id/executable" 2>/dev/null)"
+    printf 'Command line  %s  \\n' "$(cat "$data/$id/cmdline" 2>/dev/null)"
+    exit 0
+    ;;
+  remove)
+    id="\${@: -1}"
+    echo "$id" >> "${marks}/abrt-removed"
+    exit 0
+    ;;
+esac
+exit 0
+`, { mode: 0o755 });
+
   return { bin, marks };
 }
 
-function run({ attached = true, pids = [], holders = [], unitFailed = false, noSession = false, state, home }) {
+// Writes $STUB_ABRT_DIR/<id>/{executable,cmdline} fixtures for the abrt-cli stub above.
+function makeAbrtProblems(problems) {
+  if (!problems || !problems.length) return undefined;
+  const root = mkdtemp('sch-abrt-');
+  for (const p of problems) {
+    const dir = path.join(root, p.id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'executable'), p.executable);
+    fs.writeFileSync(path.join(dir, 'cmdline'), p.cmdline);
+  }
+  return root;
+}
+
+function run({ attached = true, pids = [], holders = [], unitFailed = false, noSession = false, state, home, abrtProblems }) {
   const { bin, marks } = makeStubs();
   const fakeHome = home || mkdtemp('sch-home-');
   const resetBin = path.join(fakeHome, '.local', 'bin');
@@ -109,6 +153,8 @@ function run({ attached = true, pids = [], holders = [], unitFailed = false, noS
   fs.writeFileSync(path.join(resetBin, 'streamdeck-usb-reset'), `#!/bin/bash
 echo reset >> "${marks}/reset"
 `, { mode: 0o755 });
+
+  const abrtDir = makeAbrtProblems(abrtProblems);
 
   const out = execFileSync('bash', [SCRIPT], {
     encoding: 'utf8',
@@ -122,13 +168,18 @@ echo reset >> "${marks}/reset"
       STUB_PIDS: pids.join(' '),
       ...(unitFailed ? { STUB_UNIT_FAILED: '1' } : {}),
       ...(noSession ? { STUB_NO_SESSION: '1' } : {}),
+      ...(abrtDir ? { STUB_ABRT_DIR: abrtDir } : {}),
     },
   });
 
+  const removedFile = path.join(marks, 'abrt-removed');
   return {
     out,
     restarted: fs.existsSync(path.join(marks, 'systemctl')),
     didReset: fs.existsSync(path.join(marks, 'reset')),
+    abrtRemoved: fs.existsSync(removedFile)
+      ? fs.readFileSync(removedFile, 'utf8').trim().split('\n').filter(Boolean)
+      : [],
   };
 }
 
@@ -213,6 +264,29 @@ test('restarts are capped within the hour', { skip }, () => {
   const r = run({ pids: [111], holders: [], state });
   assert.match(r.out, /not retrying/);
   assert.equal(r.restarted, false);
+});
+
+test('purges an ABRT report matching the known StreamController crash signature', { skip }, () => {
+  const r = run({
+    pids: [111], holders: [111], state: mkdtemp('sch-state-'),
+    abrtProblems: [{ id: 'aaa1', executable: '/usr/bin/python3.13', cmdline: 'StreamController' }],
+  });
+  assert.deepEqual(r.abrtRemoved, ['aaa1']);
+});
+
+test('leaves ABRT reports that do not match the signature alone', { skip }, () => {
+  const r = run({
+    pids: [111], holders: [111], state: mkdtemp('sch-state-'),
+    abrtProblems: [
+      // Wrong executable -- some other python3.13 script, not the flatpak.
+      { id: 'bbb2', executable: '/usr/bin/python3.13', cmdline: 'some-other-script' },
+      // Right executable, but cmdline is only a prefix match -- must not pass.
+      { id: 'ccc3', executable: '/usr/bin/python3.13', cmdline: 'StreamControllerFoo' },
+      // Unrelated component entirely.
+      { id: 'ddd4', executable: '/usr/bin/dolphin', cmdline: 'dolphin' },
+    ],
+  });
+  assert.deepEqual(r.abrtRemoved, []);
 });
 
 process.on('exit', () => {
