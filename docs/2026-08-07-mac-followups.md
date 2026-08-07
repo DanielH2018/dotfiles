@@ -7,6 +7,12 @@ what happened; this one is a checklist for a different machine.
 
 Written from the Fedora box. The session that wrote it could not run a single item here.
 
+**This file is not on `main`.** It lives on the branch `docs/2026-08-07-mac-followups`:
+
+```sh
+cd ~/.local/share/chezmoi && git fetch origin && git checkout docs/2026-08-07-mac-followups
+```
+
 ## How to read the stamps
 
 | Stamp | Means |
@@ -79,7 +85,22 @@ node --test tests/lint-bsd-portability.test.js
 15 tests. All 15 pass on Linux. **If any fail on macOS, the linter is the bug** — fix the awk,
 not the fixtures. The fixtures are historical fact.
 
-## 3. Delete four unmanaged orphans — MAC-ONLY
+## 3. Confirm the darwin block actually fires — MAC-ONLY
+
+Do this **before** item 4. A non-empty result here means the ignore is not working, and hand-
+deleting the files would just have the next `chezmoi apply` put them back.
+
+```sh
+chezmoi managed | grep -E 'agentview|agent-view-state\.sh|/av$'
+```
+
+On the Mac this should print **nothing**. On Linux that exact command prints **10** paths
+(measured 2026-08-07, not derived) — the contrast is the test.
+
+The pattern is deliberately narrower than it looks: it matches `.local/bin/av` but *not*
+`.claude/sandbox/agent-view-state-hook.sh`, which must survive on macOS. See item 4.
+
+## 4. Delete four unmanaged orphans — MAC-ONLY
 
 `#282` added a `darwin` block to `home/.chezmoiignore`. Ignoring stops *future* applies; it does
 not remove what is already deployed, and this repo has no `.chezmoiremove` (deliberately — an
@@ -90,19 +111,10 @@ that nothing will ever clean up.
 truth** — read it there rather than from a copy that can drift. All four were confirmed
 `chezmoi managed` on Linux on 2026-08-07, so all four are real files on the Mac, not phantoms.
 
-Note `.claude/hooks/agent-view-register.sh` is deliberately *not* ignored and must survive:
-`claude-sandbox` sources it and mounts it into the container, and `.claude/sandbox` does deploy
-on macOS. Delete only what the comment lists.
-
-## 4. Confirm the darwin block actually fires — MAC-ONLY
-
-```sh
-chezmoi managed | grep -E 'agentview|agent-view-state\.sh|/av$'
-```
-
-On the Mac this should print **nothing**. On Linux the same command prints ten paths — that
-contrast is the test. Run it *before* item 3, because a non-empty result there means the ignore
-is not working and deleting the files by hand would just have them redeployed.
+Two neighbours are deliberately *not* ignored and must survive:
+`.claude/hooks/agent-view-register.sh` and `.claude/sandbox/agent-view-state-hook.sh` —
+`claude-sandbox` sources the register hook and mounts it into the container, and
+`.claude/sandbox` does deploy on macOS. Delete only what the comment lists.
 
 ## 5. Prune the audit artifacts — MAC-ONLY
 
