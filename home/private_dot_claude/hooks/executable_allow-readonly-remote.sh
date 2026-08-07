@@ -70,16 +70,38 @@ STRIPPED=${STRIPPED//\'/}
 read -ra TOK <<<"$STRIPPED"
 [ "${#TOK[@]}" -eq 0 ] && exit 0
 
+allow() {
+  printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
+  exit 0
+}
+
 # Identify the wrapper and where the remote command begins.
 bin=${TOK[0]##*/}   # basename, so an absolute path to hl/ssh still matches
 case $bin in
   hl) start=1 ;;
   ssh)
-    # Only the canonical `ssh [user@]host CMD...` form. Bail on any option
-    # (-i/-p/-o/...) so an option value is never mistaken for the remote verb.
-    [ "${#TOK[@]}" -lt 3 ] && exit 0
-    [[ ${TOK[1]} == -* ]] && exit 0
-    start=2 ;;
+    # `-O check` asks the local multiplexer whether a master connection is alive. It runs
+    # nothing on the remote and changes nothing, so it stands on its own. `-O exit` keeps
+    # prompting on purpose: it tears the master down, and once it is gone the following
+    # commands each open their own connection, which is what trips the hosts' ssh rate limit.
+    if [[ ${TOK[1]:-} == -O ]]; then
+      [[ ${TOK[2]:-} == check && ${#TOK[@]} -eq 4 && ${TOK[3]} != -* ]] && allow
+      exit 0
+    fi
+    # BatchMode=yes only stops ssh asking for a password; it cannot change what the remote
+    # command does, so consuming it still leaves the verb to the allowlist below. Every
+    # other option bails, so an option value is never mistaken for the remote verb.
+    start=1
+    while [[ ${TOK[$start]:-} == -* ]]; do
+      case ${TOK[$start]} in
+        -oBatchMode=yes) start=$((start + 1)) ;;
+        -o) [[ ${TOK[$((start + 1))]:-} == BatchMode=yes ]] || exit 0
+            start=$((start + 2)) ;;
+        *) exit 0 ;;
+      esac
+    done
+    [ "${#TOK[@]}" -lt $((start + 2)) ] && exit 0
+    start=$((start + 1)) ;;
   *) exit 0 ;;
 esac
 
@@ -100,11 +122,6 @@ case $rest in
   *';'* | *'&'* | *'|'* | *'`'* | *'$'* | *'('* | *')'* )
     exit 0 ;;
 esac
-
-allow() {
-  printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
-  exit 0
-}
 
 # Reading a secret path (even with `cat`) exfiltrates it into the transcript.
 # /proc/<pid>/environ dumps the process environment — every exported token — and is
@@ -137,7 +154,7 @@ third=${REMOTE[2]:-}
 # args, or writing fstab) mutates, and `sort -o`/`uniq [IN OUT]`/`xxd -r [IN
 # OUT]` all take an output file, so none of the three belong on a read-only list.
 case $verb in
-  uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|which|type|\
+  true|uptime|uptimed|whoami|hostname|id|date|uname|arch|pwd|which|type|\
   df|free|du|ps|top|htop|vmstat|iostat|w|who|last|lscpu|lsblk|lsof|lsmod|dmesg|\
   sensors|nvidia-smi|getent|\
   ls|cat|head|tail|wc|stat|file|tree|readlink|realpath|basename|dirname|\

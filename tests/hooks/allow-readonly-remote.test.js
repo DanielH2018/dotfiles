@@ -56,6 +56,10 @@ const ALLOW = [
   'ssh ubuntu@10.0.0.161 uptime',
   'ssh 10.0.0.161 docker ps',
   '/home/daniel/.local/bin/hl uptime',       // absolute path to wrapper
+  'ssh -O check daniel-box',                 // asks the local mux if a master is alive
+  'ssh -o BatchMode=yes daniel-box true',    // reachability probe
+  'ssh -oBatchMode=yes daniel-box uptime',   // concatenated option form
+  'ssh daniel-server true',
 ];
 
 const DEFER = [
@@ -160,6 +164,23 @@ const DEFER = [
   // an unbalanced quote: the old strip-and-split had no balance check at all and would
   // have silently mis-tokenized this; cmd_parse's refusal must reach here as a defer.
   'hl echo "unterminated',
+  // `-O exit` tears the master connection down, unlike the read-only `-O check`.
+  'ssh -O exit daniel-box',
+  'ssh -O forward daniel-box',
+  // `-O check` is allowed only as the bare 4-token form; a trailing remote command is a
+  // different call and must not ride in on it.
+  'ssh -O check daniel-box uptime',
+  'ssh -O check',
+  // only BatchMode=yes is consumed; every other option still bails, so an option value is
+  // never mistaken for the remote verb.
+  'ssh -o StrictHostKeyChecking=no daniel-box uptime',
+  'ssh -i /home/daniel/.ssh/id_ed25519 daniel-box uptime',
+  'ssh -o BatchMode=no daniel-box uptime',
+  // consuming the option must not weaken the verb allowlist behind it.
+  'ssh -o BatchMode=yes daniel-box rm -rf /tmp/x',
+  'ssh -o BatchMode=yes daniel-box cat /home/daniel/.ssh/id_ed25519',
+  // no remote command after the host is an interactive shell, not a probe.
+  'ssh -o BatchMode=yes daniel-box',
 ];
 
 // A literal newline embedded in a quoted argument is the same remote-reparsing hazard as
