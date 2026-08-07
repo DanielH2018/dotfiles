@@ -681,6 +681,13 @@ AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
 case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
 [ "$AV_WATCH_INTERVAL" -ge 1 ] || AV_WATCH_INTERVAL=1
 
+# A name, not a path, so PATH still decides which one runs. It is a seam only because the
+# ABSENT case is otherwise untestable: a test can delete its own stub, but /usr/bin/inotifywait
+# sits behind it on PATH and gets picked up instead. The timer fallback below therefore went
+# unexercised on every machine that has inotify-tools -- including the one this is developed
+# on, and the exact opposite of the WSL/server boxes the fallback exists for.
+AV_INOTIFYWAIT="${AGENT_VIEW_INOTIFYWAIT:-inotifywait}"
+
 # Seconds since the LEAST recently fetched host, read from the status sidecars
 # refresh_one_remote already writes ("<outcome>\t<epoch>"). Reusing them keeps the cadence honest
 # without introducing new state to keep in sync, and a host with no sidecar reads as epoch 0 --
@@ -713,14 +720,14 @@ av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or ti
   # (a timeout), and rc 1 falls into the floor-sleep branch below -- which would quietly turn
   # the whole loop into a plain timer on a box that has not written either directory yet.
   mkdir -p "$statedir" "$sessionsdir" 2>/dev/null
-  if command -v inotifywait >/dev/null 2>&1; then
+  if command -v "$AV_INOTIFYWAIT" >/dev/null 2>&1; then
     # -qq stays silent. 2 means "timed out with no event", which is the cue to look at the
     # remote hosts; 0 means a real event fired.
     # $sessionsdir is Claude's own live registry. Daemon-hosted bg jobs never fire the hook that
     # writes $statedir, so without this a local bg job changing state waited for the remote
     # timer. Measured 2026-08-06: 0.74 events/min across the whole registry, against the two
     # repaints a minute the interval already causes -- no debounce needed.
-    inotifywait -qq -t "$AV_WATCH_INTERVAL" \
+    "$AV_INOTIFYWAIT" -qq -t "$AV_WATCH_INTERVAL" \
       -e close_write -e create -e delete -e moved_to "$statedir" "$sessionsdir" >/dev/null 2>&1 &
     _av_watch_child=$!
     wait "$_av_watch_child"

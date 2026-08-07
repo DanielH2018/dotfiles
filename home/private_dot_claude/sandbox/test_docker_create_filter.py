@@ -99,15 +99,28 @@ class StubHandler(socketserver.BaseRequestHandler):
             )
 
 
+# shutdown() cannot return until serve_forever's next poll, and that defaults to 0.5s.
+# Two servers per harness across five harnesses made it ~4s of this file's 4.1s.
+POLL_INTERVAL = 0.01
+
+
 class Harness:
     def __init__(self):
         self.upstream = StubUpstream(("127.0.0.1", 0), StubHandler)
         self.upstream.seen = []
-        threading.Thread(target=self.upstream.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=self.upstream.serve_forever,
+            args=(POLL_INTERVAL,),
+            daemon=True,
+        ).start()
         flt.UPSTREAM = f"127.0.0.1:{self.upstream.server_address[1]}"
         flt.policy.WORKSPACE = WS
         self.proxy = flt.Server(("127.0.0.1", 0), flt.Handler)
-        threading.Thread(target=self.proxy.serve_forever, daemon=True).start()
+        threading.Thread(
+            target=self.proxy.serve_forever,
+            args=(POLL_INTERVAL,),
+            daemon=True,
+        ).start()
         self.port = self.proxy.server_address[1]
 
     def close(self):

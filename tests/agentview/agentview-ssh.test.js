@@ -21,7 +21,11 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 
 // Builds a HOME, a PATH dir, and an ssh stub that appends its argv to argvLog, one call per
 // line. `body` is the stub's exit behaviour: default succeeds and prints nothing.
-function env({ sshBody = 'exit 0', watchInterval = '1' } = {}) {
+// noInotify drives the timer fallback. Deleting the stub from `bin` does NOT do that: PATH is
+// the fixture dir followed by the real one, so /usr/bin/inotifywait answers instead and the
+// watcher takes its normal path. Three tests below did exactly that and passed anyway, because
+// `inotifywait -t 1` blocks for the same second the fallback's `sleep 1` would have.
+function env({ sshBody = 'exit 0', watchInterval = '1', noInotify = false } = {}) {
   const home = scratch('av-home-');
   const bin = scratch('av-bin-');
   const argvLog = path.join(home, 'ssh-argv.log');
@@ -39,6 +43,15 @@ function env({ sshBody = 'exit 0', watchInterval = '1' } = {}) {
   // With a port to read, post_reload goes on to POST. Stub curl so it stays off the loopback
   // interface rather than relying on port 1 refusing the connection.
   fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  // rows.sh reaches sleep by bare name, so this shadows it the way the stubs above do. It
+  // records the argument rather than swallowing it, because that argument IS what the
+  // watch-floor tests below are about: the floor exists so a requested interval of 0 cannot
+  // become `sleep 0`, and asserting which interval was requested pins that exactly, where
+  // timing the process only infers it -- at a real second per test to prove one integer.
+  const sleepLog = path.join(home, 'sleep-args.log');
+  fs.writeFileSync(path.join(bin, 'sleep'),
+    `#!/bin/bash\nprintf '%s\\n' "$1" >> ${JSON.stringify(sleepLog)}\nexit 0\n`,
+    { mode: 0o755 });
   const seams = agentviewWinSeams({ bin, scratch });
   return {
     home, bin, argvLog,
@@ -50,12 +63,17 @@ function env({ sshBody = 'exit 0', watchInterval = '1' } = {}) {
           HOME: home, AV_LIB: LIB,
           PATH: `${bin}:${process.env.PATH}`,
           AGENT_VIEW_WATCH_INTERVAL: watchInterval,
+          ...(noInotify ? { AGENT_VIEW_INOTIFYWAIT: 'agentview-absent-inotifywait' } : {}),
         },
       });
     },
     sshCalls() {
       if (!fs.existsSync(argvLog)) return [];
       return fs.readFileSync(argvLog, 'utf8').split('\n').filter(Boolean);
+    },
+    sleeps() {
+      if (!fs.existsSync(sleepLog)) return [];
+      return fs.readFileSync(sleepLog, 'utf8').split('\n').filter(Boolean);
     },
   };
 }
@@ -350,13 +368,10 @@ test('a missing sessions registry is created before the watch, not watched blind
 test('the watcher falls back to a timer when inotifywait is absent', () => {
   // chezmoi deploys these dotfiles to WSL and both servers; inotify-tools is not everywhere.
   // Without a fallback the picker would silently stop repainting on those machines.
-  // env() pre-writes the portfile, so post_reload's poll returns on its first check and the
-  // elapsed time below measures only the fallback sleep.
-  const e = env();
-  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
-  const started = Date.now();
+  const e = env({ noInotify: true });
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
-  assert.ok(Date.now() - started >= 900, 'the fallback must actually wait, not spin');
+  assert.ok(e.sleeps().includes('1'),
+    `the fallback must wait a full interval, not spin; slept: ${JSON.stringify(e.sleeps())}`);
   assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
 });
 
@@ -367,12 +382,9 @@ test('an inotifywait error does not busy-spin -- the loop still waits a full int
   // post_reload's curl + refresh_remote's ssh as fast as the CPU allows.
   const e = env();
   const log = writeInotifyStub(e, 1);
-  // As above: env()'s pre-written portfile keeps post_reload's poll from masking a missing
-  // floor-wait behind its own delay, so the elapsed time is the floor sleep or its absence.
-  const started = Date.now();
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
-  assert.ok(Date.now() - started >= 900,
-    'an inotifywait error must still wait a full interval before returning, not spin');
+  assert.ok(e.sleeps().includes('1'),
+    `an error iteration must still wait a full interval, not spin; slept: ${JSON.stringify(e.sleeps())}`);
   assert.ok(e.sshCalls().length > 0, 'an error iteration is treated as a timeout and refreshes');
   const argv = fs.readFileSync(log, 'utf8');
   assert.match(argv, /-t 1\b/, `expected -t 1 (AGENT_VIEW_WATCH_INTERVAL) in: ${argv}`);
@@ -384,12 +396,13 @@ test('AGENT_VIEW_WATCH_INTERVAL=0 does not defeat the floor sleep', () => {
   // fallback's own `sleep "$AV_WATCH_INTERVAL"` timeout returns instantly (busy-spin), and the
   // floor-sleep backstop for a bad inotifywait exit is `sleep "$AV_WATCH_INTERVAL"` too, so the
   // same value that broke the first path also disarms the thing meant to catch it.
-  const e = env({ watchInterval: '0' });
-  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });
-  const started = Date.now();
+  const e = env({ watchInterval: '0', noInotify: true });
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
-  assert.ok(Date.now() - started >= 900,
-    'a requested interval of 0 must still be raised to the 1s floor, not spin');
+  // Asserting the argument, not the elapsed time: `sleep 0` is exactly the failure this floor
+  // exists to prevent, and it is invisible to a clock that only asks whether a second passed.
+  assert.ok(e.sleeps().includes('1'),
+    `a requested interval of 0 must be raised to the 1s floor; slept: ${JSON.stringify(e.sleeps())}`);
+  assert.ok(!e.sleeps().includes('0'), 'sleep 0 returns instantly and turns the loop into a spin');
   assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
 });
 
@@ -471,11 +484,9 @@ test('a watch tick refreshes without sweeping', () => {
   // inside that function would spawn a find pair per interval for as long as a picker is open
   // -- the cost this was moved off the render path to avoid. It belongs to the
   // --refresh-remote dispatch, which runs at startup and on CTRL+F.
-  const e = env();
+  const e = env({ noInotify: true });   // force the timer path
   const legacy = path.join(e.home, '.agentview-remote-cache');
   fs.writeFileSync(legacy, '');
-  fs.rmSync(path.join(e.bin, 'inotifywait'), { force: true });   // force the timer path
-  fs.writeFileSync(path.join(e.home, 'portfile'), '1\n');
   e.run(['--watch-once', path.join(e.home, 'portfile')]);
   assert.ok(e.sshCalls().length > 0, 'the tick should still refresh the hosts');
   assert.ok(fs.existsSync(legacy), 'a watch tick must not run the sweep');
