@@ -20,9 +20,25 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 // end to end. The hook is a pure stdin->stdout decision with no shared state, so the only
 // thing serial execution bought was ~10s of process-startup wait (this was the whole suite's
 // slowest file). Failures still surface in list order — see `decide` below.
-function runHook(command) {
+// In the source tree the library is `executable_cmdparse.sh`; chezmoi drops the prefix on
+// apply, so the hook's default sibling path (`cmdparse.sh`) resolves only once deployed.
+// Without this seam every case in this file ran with the source lookup FAILING, which
+// collapses the hook's scan set to the whole-string SCAN alone — a configuration that never
+// ships. The suite passed 145 cases against it and reported nothing, including the pinned
+// newline test below, which kept asserting a gap that the deployed hook no longer has.
+// CMDPARSE and CMDPARSE_SHADOW are stripped rather than left unset for the reason spelled
+// out in cmdparse-shadow.test.js: an inherited ambient value makes an off-by-default case
+// pass for the wrong reason.
+const HOOK_ENV = (() => {
+  const e = { ...process.env, CMDPARSE_LIB: path.join(path.dirname(HOOK), 'executable_cmdparse.sh') };
+  delete e.CMDPARSE_SHADOW;
+  delete e.CMDPARSE;
+  return e;
+})();
+
+function runHook(command, env = {}) {
   return new Promise((resolve) => {
-    const p = spawn('bash', [HOOK], { stdio: ['pipe', 'pipe', 'ignore'] });
+    const p = spawn('bash', [HOOK], { stdio: ['pipe', 'pipe', 'ignore'], env: { ...HOOK_ENV, ...env } });
     let out = '';
     p.stdout.setEncoding('utf8');
     p.stdout.on('data', (d) => { out += d; });
@@ -38,13 +54,13 @@ function decision(stdout) {
 }
 const LANES = Math.min(8, os.availableParallelism());
 // Decisions for `commands`, indexed to match, so callers assert in list order.
-async function decide(commands) {
+async function decide(commands, env = {}) {
   const out = Array.from({ length: commands.length });
   let next = 0;
   await Promise.all(Array.from({ length: LANES }, async () => {
     while (next < commands.length) {
       const i = next++;
-      out[i] = decision(await runHook(commands[i]));
+      out[i] = decision(await runHook(commands[i], env));
     }
   }));
   return out;
@@ -696,12 +712,94 @@ test('text describing a dangerous command is not the command', { skip }, async (
     assert.notStrictEqual(got[i], 'deny', `false positive on quoted text: ${cmd}`));
 });
 
-test('a newline is the one real separator normalization drops', { skip }, async () => {
-  // Not a lapse — SCAN collapses a newline to a space, which is what blinds the anchored rules
-  // to it, and the M02 shadow census exists to measure exactly this gap. Pinned so that the day
-  // it is closed, this test says so rather than passing quietly.
-  const cmds = TAILS.map((t) => `echo a\n${t}`);
+// The predecessor of this test asserted the OPPOSITE and was pinned so that the day the gap
+// closed it would say so rather than pass quietly. That day is this change: the anchored rules
+// now match against a scan set — SCAN, then one line per cmd_parse segment and substitution
+// body — so a command after a newline is in command position for the first time.
+//
+// All four anchored families, not just the two the shadow census covered: GH_API_AT and
+// KILL_AT were never censused, so their behaviour here was genuinely unmeasured beforehand.
+test('a newline is a real separator to every anchored family', { skip }, async () => {
+  const cmds = [
+    'echo a\nterraform destroy',
+    'echo a\nssh homelab sudo reboot',
+    'echo a\npkill -9 node',
+    'echo a\ngh api -XPOST /repos/o/r/issues',
+  ];
   const got = await decide(cmds);
   cmds.forEach((cmd, i) =>
-    assert.notStrictEqual(got[i], 'deny', `newline gap closed — update the census notes: ${cmd}`));
+    assert.strictEqual(got[i], 'deny', `newline still hides this family: ${cmd}`));
+});
+
+// The load-bearing half of the union, and the reason this change adds a scan set rather than
+// replacing SCAN with segments. _bdb_normalize applies the BDB_REPARSE veto to whatever string
+// it is handed, so on a segment the veto is scoped to that segment: here the whole command
+// names an interpreter (`bash`), which vetoes the quoted-separator dropper and leaves the `;`
+// in place, so terraform is in command position and this denies. Segment 2 on its own names no
+// interpreter, so the dropper RUNS there and terraform stops being in command position.
+// Segment normalization is strictly weaker for this shape. Delete the SCAN arm and this fails.
+//
+// Every case here uses a family that is NOT itself in the BDB_REPARSE name list. An `ssh`
+// payload cannot demonstrate this: `ssh` is on that list, so the veto fires on the segment
+// too, the separator survives either way, and the case denies with the SCAN arm deleted —
+// passing for a reason that has nothing to do with what it claims to test. Mutation-checked,
+// which is how that vacuous case was caught here rather than shipped.
+test('the whole-string arm still catches what per-segment normalization would lose', { skip }, async () => {
+  const cmds = [
+    'bash -c "foo" ; echo "a; terraform apply"',
+    'sh -c "x" && echo "b; pkill -9 nginx"',
+    'python3 -c "x" ; echo "c; gh api -XPOST /repos/o/r/issues"',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.strictEqual(got[i], 'deny', `SCAN arm dropped — bypass: ${cmd}`));
+});
+
+// Three ways the segment arm can go away: the kill switch, a command cmd_parse refuses, and a
+// missing library. All three must degrade to the whole-string behaviour that shipped before
+// this change — never to nothing. That is why a parse refusal needs no `ask` fallback here:
+// the union's other arm is the pre-existing check, so a refusal lands on the current security
+// posture. Each case pairs a whole-string form (must still deny) with the newline form (may
+// go back to being missed) so a degradation that silently disabled BOTH arms would fail.
+test('losing the segment arm degrades to the whole-string rules, not to nothing', { skip }, async () => {
+  const stillDenied = 'echo a; terraform destroy';
+  const needsSegments = 'echo a\nterraform destroy';
+
+  const [offDeny, offGap] = await decide([stillDenied, needsSegments], { CMDPARSE: 'off' });
+  assert.strictEqual(offDeny, 'deny', 'CMDPARSE=off must not disable the whole-string rules');
+  assert.notStrictEqual(offGap, 'deny', 'with the kill switch on, the newline gap is back');
+
+  const [noLibDeny, noLibGap] = await decide([stillDenied, needsSegments], {
+    CMDPARSE_LIB: path.join(os.tmpdir(), 'cmdparse-does-not-exist.sh'),
+  });
+  assert.strictEqual(noLibDeny, 'deny', 'a missing library must not disable the rules');
+  assert.notStrictEqual(noLibGap, 'deny', 'without the library there are no segments');
+});
+
+// A command cmd_parse cannot read (6 of 11,483 in the corpus, all unbalanced quotes) takes the
+// same path: no segments, whole-string rules intact. Asserted separately from the two above
+// because it is the case the "a refusal is never a skip" contract is about.
+test('a command cmd_parse refuses still gets the whole-string rules', { skip }, async () => {
+  const cmds = ['terraform destroy "unclosed', 'echo "unclosed ; ls'];
+  const got = await decide(cmds);
+  assert.strictEqual(got[0], 'deny', 'an unparseable command is not an unjudged one');
+  assert.notStrictEqual(got[1], 'deny', 'and it is not blanket-denied either');
+});
+
+// The scan set adds lines to what the anchored rules see, so it can only ever add denies —
+// but only if each added line is genuinely a command. These are the shapes where a segment
+// boundary could put an ordinary word in command position by mistake.
+test('the scan set does not invent a command position', { skip }, async () => {
+  const cmds = [
+    'echo "a\nterraform apply"',
+    "echo 'a\nterraform apply'",
+    'git commit -m "line one\nline two: terraform apply"',
+    'grep -c pattern file.txt',
+    'wc -c file.txt',
+    'terraform plan',
+    'echo done\nls -la',
+  ];
+  const got = await decide(cmds);
+  cmds.forEach((cmd, i) =>
+    assert.notStrictEqual(got[i], 'deny', `false positive from the scan set: ${cmd}`));
 });

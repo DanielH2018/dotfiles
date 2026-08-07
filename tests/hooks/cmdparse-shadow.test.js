@@ -110,16 +110,25 @@ test('CMDPARSE=off disables the shadow even with CMDPARSE_SHADOW=1', () => {
   assert.deepStrictEqual(readLog(d), []);
 });
 
-// The census of the two verified bypasses: the anchored rules cannot see past a newline
-// today, and per-segment evaluation of the SAME regexes shows which families they miss.
-test('the PreToolUse guard records the families a newline hides from it', () => {
+// The census of the two verified bypasses: the anchored rules could not see past a newline,
+// and per-segment evaluation of the SAME regexes shows which families they missed.
+//
+// `old` was 'none' when this census was written — that WAS the bypass. It is 'deny' now that
+// the anchored rules match against the scan set (SCAN plus one line per segment), so this
+// case is no longer a gap in the decision path. The census keeps measuring, and the pairing
+// is what makes it worth keeping: newly_anchored is gated on SCAN ALONE, so a row that is
+// both `old: deny` and `newly_anchored: [family]` says the segment arm of the union is what
+// produced the deny and the whole-string arm would still have missed it. That is the
+// adoption working, asserted rather than assumed.
+test('the PreToolUse guard denies the families a newline used to hide from it', () => {
   const d = logDir('bdb');
   run(BDB, 'echo x\nterraform destroy', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
   run(BDB, 'echo x\nssh homelab reboot', { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d });
   const rows = readLog(d);
   assert.strictEqual(rows.length, 2);
-  assert.strictEqual(rows[0].old, 'none', 'today this command gets no decision at all');
-  assert.deepStrictEqual(rows[0].newly_anchored, ['terraform']);
+  assert.strictEqual(rows[0].old, 'deny', 'the newline form is denied now, not missed');
+  assert.strictEqual(rows[1].old, 'deny');
+  assert.deepStrictEqual(rows[0].newly_anchored, ['terraform'], 'SCAN alone still misses it');
   assert.deepStrictEqual(rows[1].newly_anchored, ['ssh']);
 });
 

@@ -139,11 +139,65 @@ _bdb_normalize() {  # -> _BDB_NORM
   if [[ $s == *[\"\']* ]] && [[ ! $s =~ $BDB_REPARSE ]]; then
     if _bdb_drop_quoted_separators "$s"; then s=$_BDB_UNQ; fi
   fi
-  _BDB_NORM=$(printf '%s' "$s" | tr '\n\t\\' '   ' | tr -d "\"'")
+  # Parameter expansion rather than `$(printf | tr | tr)`. Identical output — verified over
+  # all 11,483 distinct commands in the shadow census, 0 mismatches — but no fork. This used
+  # to run once per hook invocation, where three processes did not matter; it now runs once
+  # per segment and per substitution body, where they do: a 20-segment command paid ~100ms in
+  # process startup alone, on the PreToolUse path of every Bash call.
+  s=${s//$'\n'/ }
+  s=${s//$'\t'/ }
+  s=${s//\\/ }
+  s=${s//\"/}
+  s=${s//\'/}
+  _BDB_NORM=$s
 }
 
 _bdb_normalize "$COMMAND"
 SCAN=$_BDB_NORM
+
+# The command-position-anchored rules below match against a SET of strings rather than
+# against SCAN alone: line 1 is SCAN itself — byte for byte what those rules used to scan —
+# followed by one line per cmd_parse segment and one per substitution body. `grep -E`
+# anchors `^`/`$` per line and _bdb_normalize collapses newlines inside a member, so each
+# segment's own start is a command position. That is the whole point: SCAN flattens a
+# newline to a space, so `printf 'echo x\nterraform destroy'` never put terraform in
+# command position and never denied. The anchors are reused unchanged — they already carry
+# `^` as an alternative, and a second `^`-only copy per family would be the exact drift
+# this library exists to end.
+#
+# UNION, not replacement, and the SCAN arm is load-bearing rather than legacy. _bdb_normalize
+# evaluates BDB_REPARSE against whatever string it is handed, so on a segment that veto is
+# scoped to the segment: `bash -c "foo" ; echo "a; terraform apply"` vetoes whole-string (the
+# command names an interpreter), keeps its quoted `;`, and denies — but segment 2 alone names
+# no interpreter, so the quoted-separator dropper runs there and terraform leaves command
+# position. Segment normalization is strictly WEAKER in that case. Dropping the SCAN arm to
+# "simplify" this reintroduces a bypass.
+#
+# All three degradation paths — cmd_parse refusal, CMDPARSE=off, cmdparse.sh unreadable —
+# collapse the set to SCAN alone, i.e. exactly today's behavior. This is not the "a refusal
+# is never a skip" contract violation it resembles: the other arm of the union is the
+# pre-existing whole-string check, so a refusal degrades to the current security posture,
+# never to nothing. That is only true while both arms are present.
+BDB_SCANSET=$SCAN
+if [ "${CMDPARSE:-on}" != off ]; then
+  # shellcheck source=/dev/null
+  if . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null && cmd_parse "$COMMAND"; then
+    bdb_i=0
+    while [ "$bdb_i" -lt "$CP_NSEG" ]; do
+      _bdb_normalize "${CP_SEG[bdb_i]}"
+      BDB_SCANSET="$BDB_SCANSET
+$_BDB_NORM"
+      bdb_i=$((bdb_i + 1))
+    done
+    bdb_i=0
+    while [ "$bdb_i" -lt "$CP_NSUBSEG" ]; do
+      _bdb_normalize "${CP_SUBSEG[bdb_i]}"
+      BDB_SCANSET="$BDB_SCANSET
+$_BDB_NORM"
+      bdb_i=$((bdb_i + 1))
+    done
+  fi
+fi
 
 # Command-position anchors, shared by the rules further down and by the shadow census.
 #
@@ -378,9 +432,15 @@ deny() {
 # leans on this block as its deny backstop, but the backstop only ever matched `ssh`,
 # so a destructive `hl` payload degraded from denied to merely prompted.
 # The anchor itself, and why it is anchored, are defined near the top of the file.
-if echo "$SCAN" | grep -qiE "$SSH_AT_RE"; then
+if echo "$BDB_SCANSET" | grep -qiE "$SSH_AT_RE"; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload
   # words have clean boundaries: `ssh h 'sudo rm -rf /'` -> `ssh h sudo rm -rf /`.
+  #
+  # The gate above widened to the scan set, but the payload scan stays whole-string.
+  # Narrowing REMOTE to the matching segment would read better and is a deny-REMOVING
+  # change — `ssh h uptime; sudo apt update` denies today as "sudo inside a remote
+  # command" and would stop — so it belongs in its own change with its own corpus diff,
+  # not smuggled into one whose safety argument is that it only ever adds denies.
   REMOTE="$SCAN"
   ssh_hint="Run privileged or destructive remote commands in a direct session on the server, not from an agent session."
   echo "$REMOTE" | grep -qiE '\bsudo\b' && deny "Blocked: sudo inside a remote (ssh/hl) command. $ssh_hint"
@@ -475,7 +535,7 @@ fi
 # (see the SSH_AT_RE comment above for the full defect). `` echo "`gh api -XPOST
 # repos/o/r/issues`" `` got NO DECISION on the deployed hook.
 GH_API_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b'
-if echo "$SCAN" | grep -qE "$GH_API_AT"; then
+if echo "$BDB_SCANSET" | grep -qE "$GH_API_AT"; then
   gh_hint="Read-only gh api is fine; a human runs the mutation."
   if echo "$SCAN" | grep -qiE '(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b'; then
     deny "Blocked: mutating gh api request (POST/PUT/PATCH/DELETE). $gh_hint"
@@ -565,7 +625,7 @@ KILL_HINT="Kill a PID you captured at spawn, or resolve one and confirm it first
 # deployed hook.
 KILL_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?'
 KILL_TAIL='([[:space:]]|\)|`|$)'
-if echo "$SCAN" | grep -qE "$KILL_AT(pkill|killall)$KILL_TAIL"; then
+if echo "$BDB_SCANSET" | grep -qE "$KILL_AT(pkill|killall)$KILL_TAIL"; then
   deny "Blocked: pkill/killall selects processes by name or command line, which can include this agent session. $KILL_HINT"
 fi
 if echo "$SCAN" | grep -qE '\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?kill'"$KILL_TAIL"; then
@@ -656,7 +716,7 @@ fi
 # indirection (xargs/eval/$VAR) or write-a-script-then-run — see review notes.
 # Read-only ops stay allowed: plan, validate, fmt, show, output, providers,
 # graph, init, get, state list/show, workspace list/select.
-TF_SCAN="$SCAN"
+TF_SCAN="$BDB_SCANSET"
 # TF_BIN and the TF_AT command-position anchor are defined near the top of the file.
 # Destructive verb as the first token after the binary (optional global flags
 # like -chdir=… in between). Also catches terragrunt apply-all/destroy-all,
