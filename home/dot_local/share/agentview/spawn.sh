@@ -38,10 +38,13 @@ spawn_pick_host() {  # echo self | pc | remote:<alias> (empty = cancel). Reachab
   for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
   # Size the box to the list rather than to the terminal. This one is short and fully known
   # before it opens, so a percentage can only be wrong: 30% of a modest window left the third
-  # host below the fold, scrolling a three-item list. The chrome around the rows is exactly
-  # four lines — the two border lines, the prompt and the header (--info=hidden costs none).
+  # host below the fold, scrolling a three-item list. The chrome around the rows is FIVE lines,
+  # counted off a rendered box rather than reasoned about — the two borders, the prompt, the
+  # header, and the rule fzf draws under the prompt, which --info=hidden does not remove (it
+  # hides the counter, not the separator; --no-separator is a different flag). Guessing four
+  # here shipped a box one row short, which looks exactly like the bug it was meant to fix.
   n=$(printf '%s\n' "$rows" | wc -l)
-  sel=$(printf '%s\n' "$rows" | av_pick 46% "$((n + 4))" --prompt 'host> ' --layout=reverse \
+  sel=$(printf '%s\n' "$rows" | av_pick 46% "$((n + 5))" --prompt 'host> ' --layout=reverse \
     --border=rounded --info=hidden --pointer='▌' --highlight-line \
     --header 'new session · pick a host · esc cancels')
   [ -n "$sel" ] || return 0

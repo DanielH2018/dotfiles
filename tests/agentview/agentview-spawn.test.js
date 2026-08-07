@@ -15,6 +15,11 @@ const SRC = fs.readFileSync(VIEW, 'utf8');
 // The footer is assembled from render.sh's AV_HINTS now, not spelled out in the picker flags.
 const HINTS = fs.readFileSync(path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'agentview', 'render.sh'), 'utf8');
 const HOST_ROW = '[no repo · plain claude]';   // first repo-pick row -> plain host session
+// Lines fzf spends on chrome around the host list: two borders, the prompt, the header, and
+// the rule under the prompt that --info=hidden does NOT remove. Asserted against a rendered
+// box by the test at the bottom of this file, because getting it wrong by one is invisible
+// here and looks like the scrolling bug in the terminal.
+const CHROME_LINES = 5;
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -199,7 +204,7 @@ test('the host box is sized to its rows, not to a slice of the terminal', { skip
   const hostArgs = fs.readFileSync(fzfArgsLog, 'utf8').split('\n')
     .filter((l) => l.startsWith('host'))[0];
   assert.ok(hostArgs, 'the host chooser ran');
-  assert.match(hostArgs, new RegExp(`--height=~${rows.length + 4}(\\s|$)`),
+  assert.match(hostArgs, new RegExp(`--height=~${rows.length + CHROME_LINES}(\\s|$)`),
     `box fits ${rows.length} rows; got ${hostArgs}`);
 });
 
@@ -213,7 +218,7 @@ test('the tmux popup for the host pick gets the same fitted height', { skip }, (
     .filter((l) => l.startsWith('display-popup') && l.includes('--prompt host'))[0];
   assert.ok(popup, `a popup opened for the host pick; got ${fs.readFileSync(tmuxLog, 'utf8')}`);
   // -B means tmux draws no border of its own, so the popup height IS the fzf box height.
-  assert.match(popup, new RegExp(`-h ${rows.length + 4}(\\s|$)`), `popup fits the rows; got ${popup}`);
+  assert.match(popup, new RegExp(`-h ${rows.length + CHROME_LINES}(\\s|$)`), `popup fits the rows; got ${popup}`);
 });
 
 // ---- theming: every box the spawn flow opens is Catppuccin Mocha, like the terminal ----
@@ -451,6 +456,42 @@ test('homelab spawn in a bare shell execs cts --ssh=<alias> <repo>', { skip }, (
   const { env, ctsLog } = makeEnv();
   run(env, { FZF_HOST: 'Homelab', FZF_REPO: 'infra', FZF_BRANCH: '' });   // no mux
   assert.match(fs.readFileSync(ctsLog, 'utf8'), /--ssh=daniel-server infra/, 'remote launcher exec\'d in place');
+});
+
+// ---- the one claim the stubs cannot check: does a box of that height actually fit the rows? ----
+// Every assertion above compares a number against CHROME_LINES, so all of them agree with each
+// other whether or not that constant is right — and it was wrong by one when first shipped, which
+// in the terminal is indistinguishable from no fix at all. This renders a real fzf at the real
+// size in a real tmux pane and counts the rows it draws. Needs tmux + fzf; skipped without them.
+let renderOk = true;
+try { execFileSync('bash', ['-c', 'command -v tmux && command -v fzf'], { stdio: 'ignore' }); }
+catch { renderOk = false; }
+
+test('a box sized rows+CHROME_LINES really shows every row', { skip: renderOk ? false : 'tmux/fzf unavailable' }, () => {
+  const items = ['Linux', 'Box', 'Homelab'];
+  const sock = `av-render-${process.pid}`;
+  const tm = (...a) => execFileSync('tmux', ['-L', sock, ...a], { encoding: 'utf8' });
+  try {
+    tm('new-session', '-d', '-s', 'r', '-x', '100', '-y', '30');
+    // The same flags spawn_pick_host passes, at the height it computes for this list.
+    tm('send-keys', '-t', 'r', `printf '${items.join('\\n')}\\n' | fzf --height=${items.length + CHROME_LINES}`
+      + " --layout=reverse --border=rounded --info=hidden --pointer='|' --highlight-line"
+      + " --prompt 'host> ' --header 'new session · pick a host · esc cancels'", 'Enter');
+    let pane = '';
+    const end = Date.now() + 5000;
+    while (Date.now() < end) {
+      pane = tm('capture-pane', '-p', '-t', 'r');
+      if (pane.includes('╰')) break;                    // the box finished drawing
+      execFileSync('sleep', ['0.1']);
+    }
+    const box = pane.slice(pane.lastIndexOf('╭'));
+    for (const item of items) {
+      assert.ok(new RegExp(`^│.*\\b${item}\\b`, 'm').test(box),
+        `${item} is inside the box, not below the fold:\n${box}`);
+    }
+  } finally {
+    try { tm('kill-server'); } catch { /* already gone */ }
+  }
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
