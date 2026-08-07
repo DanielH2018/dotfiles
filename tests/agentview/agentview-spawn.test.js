@@ -37,14 +37,17 @@ function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [], winWezterm = f
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const spawnLog = path.join(bin, 'spawn.log'); fs.writeFileSync(spawnLog, '');
   const repoListFile = path.join(bin, 'repo-list.txt'); fs.writeFileSync(repoListFile, '');
+  const hostListFile = path.join(bin, 'host-list.txt'); fs.writeFileSync(hostListFile, '');
   const sandboxLog = path.join(bin, 'sandbox.log'); fs.writeFileSync(sandboxLog, '');
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
 
-  // fzf answers by prompt: repo> -> $FZF_REPO, branch> -> $FZF_BRANCH. The repo> list is
-  // captured to $REPO_CAPTURE so a test can assert exactly which repos were offered.
+  // fzf answers by prompt: repo> -> $FZF_REPO, branch> -> $FZF_BRANCH. The repo> and host>
+  // lists are captured to $REPO_CAPTURE / $HOST_CAPTURE so a test can assert exactly what
+  // each box offered.
   fs.writeFileSync(path.join(bin, 'fzf'), `#!/bin/bash
 prompt=""; prev=""
 for a in "$@"; do [ "$prev" = "--prompt" ] && prompt="$a"; prev="$a"; done
+rows_tmp=\$(mktemp); trap 'rm -f "\$rows_tmp"' EXIT
 # One line per chooser: "<prompt>\\t<argv>", so a test can assert how each box was styled.
 [ -n "\${FZF_ARGS_LOG:-}" ] && printf '%s\\t%s\\n' "\$prompt" "\$*" >> "\$FZF_ARGS_LOG"
 case "$prompt" in
@@ -52,7 +55,13 @@ case "$prompt" in
     if [ -n "\${REPO_CAPTURE:-}" ]; then cat > "\$REPO_CAPTURE"; else cat >/dev/null; fi
     printf '%s\\n' "\${FZF_REPO:-}" ;;
   branch*) cat >/dev/null; printf '%s\\n' "\${FZF_BRANCH:-}" ;;
-  host*) cat >/dev/null; printf '%s\\n' "\${FZF_HOST-WSL}" ;;
+  host*)
+    if [ -n "\${HOST_CAPTURE:-}" ]; then cat > "\$HOST_CAPTURE"; else cat > "\$rows_tmp"; fi
+    # Unset FZF_HOST = take the FIRST row, the way an untouched fzf would. That row is this
+    # machine, and its label tracks WSL_DISTRO_NAME, so the default follows the host instead
+    # of naming one — pinning it to "WSL" made every local-spawn test pass only under WSL.
+    if [ -n "\${FZF_HOST+x}" ]; then printf '%s\\n' "\$FZF_HOST"
+    else head -1 "\${HOST_CAPTURE:-\$rows_tmp}"; fi ;;
   mode*) cat >/dev/null; printf '%s\\n' "\${FZF_MODE-sandbox}" ;;
   *)       cat >/dev/null ;;
 esac
@@ -128,11 +137,12 @@ exit 0
     CLAUDE_SANDBOX_BIN: path.join(bin, 'claude-sandbox'),
     ...seams.env,
     TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, REPO_CAPTURE: repoListFile,
+    HOST_CAPTURE: hostListFile,
     SANDBOX_LOG: sandboxLog, CLAUDE_LOG: claudeLog, CURL_LOG: curlLog,
     CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog, WIN_WEZ_LOG: winWezLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
-  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, sandboxLog, claudeLog, curlLog,
+  return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, hostListFile, sandboxLog, claudeLog, curlLog,
     ctLog, ctsLog, fzfArgsLog, winWezLog, winWezBin: seams.wezterm,
     sandboxBin: path.join(bin, 'claude-sandbox') };
 }
@@ -157,6 +167,27 @@ test('interactive picker binds ctrl-n to --spawn and hints it in the footer', ()
   // float as a popup over the list), plain execute otherwise. See av_pick in the script.
   assert.match(SRC, /ctrl-n:'"\$AV_EXEC"'\([^)]*--spawn/, 'ctrl-n runs agentview --spawn');
   assert.match(HINTS, /⌃n new/, 'footer advertises the new-session action');
+});
+
+// ---- host pick: the first row names THIS machine, the ssh hosts always follow ----
+test('host chooser offers Linux + the ssh hosts on a native box', { skip }, () => {
+  const { env, hostListFile } = makeEnv();          // no WSL_DISTRO_NAME, no wezterm.exe
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  const rows = fs.readFileSync(hostListFile, 'utf8').split('\n').filter(Boolean);
+  assert.strictEqual(rows[0], 'Linux', `this machine leads the list; got ${JSON.stringify(rows)}`);
+  // HOST_SSH is an associative array, so Box/Homelab come back in an unspecified order.
+  assert.ok(rows.includes('Box') && rows.includes('Homelab'), `ssh hosts offered; got ${rows}`);
+  assert.ok(!rows.includes('PC (Windows)'), `no Windows side off WSL; got ${rows}`);
+});
+
+test('host chooser offers WSL + PC under WSL', { skip }, () => {
+  const { env, hostListFile } = makeEnv({ winWezterm: true });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', WSL_DISTRO_NAME: 'Ubuntu',
+    FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  const rows = fs.readFileSync(hostListFile, 'utf8').split('\n').filter(Boolean);
+  assert.strictEqual(rows[0], 'WSL', `this machine leads the list; got ${JSON.stringify(rows)}`);
+  assert.ok(rows.includes('PC (Windows)'), `the Windows side is a target too; got ${rows}`);
+  assert.ok(rows.includes('Box') && rows.includes('Homelab'), `ssh hosts offered; got ${rows}`);
 });
 
 // ---- theming: every box the spawn flow opens is Catppuccin Mocha, like the terminal ----
@@ -335,10 +366,10 @@ test('an empty portfile is a silent no-op (standalone --spawn unaffected)', { sk
 });
 
 // ---- host pick (step 0) ----
-test('the host pick offers WSL + homelab, and routes WSL to the repo pick', { skip }, () => {
+test('the host pick routes this machine to the repo pick', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
-  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_BRANCH: '' });
-  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n airflow/, 'WSL path still spawns the repo');
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'Linux', FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  assert.match(fs.readFileSync(tmuxLog, 'utf8'), /new-window -n airflow/, 'the local path still spawns the repo');
 });
 
 test('cancelling the host pick is a clean no-op', { skip }, () => {
@@ -348,10 +379,10 @@ test('cancelling the host pick is a clean no-op', { skip }, () => {
   assert.strictEqual(fs.readFileSync(spawnLog, 'utf8'), '', 'no wezterm spawn either');
 });
 
-// ---- WSL native mode (ct) ----
-test('WSL native mode spawns plain claude in a tmux window, no sandbox, no branch', { skip }, () => {
+// ---- local native mode (ct) ----
+test('native mode spawns plain claude in a tmux window, no sandbox, no branch', { skip }, () => {
   const { env, tmuxLog, sandboxBin, reposRoot } = makeEnv();
-  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: 'native' });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'Linux', FZF_REPO: 'airflow', FZF_MODE: 'native' });
   const log = fs.readFileSync(tmuxLog, 'utf8');
   assert.match(log, /new-window -n airflow/, 'opens a titled window');
   assert.ok(log.includes(`cd ${path.join(reposRoot, 'airflow')} 2>/dev/null || cd; claude`),
@@ -359,16 +390,16 @@ test('WSL native mode spawns plain claude in a tmux window, no sandbox, no branc
   assert.ok(!log.includes(sandboxBin) && !log.includes(' -b '), 'no sandbox, no -b');
 });
 
-test('WSL native mode in a bare shell execs ct <repo>', { skip }, () => {
+test('native mode in a bare shell execs ct <repo>', { skip }, () => {
   const { env, ctLog, reposRoot } = makeEnv();
-  run(env, { FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: 'native' });   // no mux
+  run(env, { FZF_HOST: 'Linux', FZF_REPO: 'airflow', FZF_MODE: 'native' });   // no mux
   assert.ok(fs.readFileSync(ctLog, 'utf8').includes(path.join(reposRoot, 'airflow')),
     'ct ran on the repo dir');
 });
 
 test('cancelling the mode pick is a clean no-op', { skip }, () => {
   const { env, tmuxLog } = makeEnv();
-  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'WSL', FZF_REPO: 'airflow', FZF_MODE: '' });
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_HOST: 'Linux', FZF_REPO: 'airflow', FZF_MODE: '' });
   assert.ok(!fs.readFileSync(tmuxLog, 'utf8').includes('new-window'), 'nothing spawned when the mode pick is empty');
 });
 

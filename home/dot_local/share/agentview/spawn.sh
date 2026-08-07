@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2154  # winhost/win_spawn_dir/_wezbin are the parent script's globals
+# shellcheck disable=SC2154  # winhost/win_spawn_dir/selflabel/_wezbin are the parent script's globals
 # agentview · spawn — interactive new-session flow (CTRL+N) and its backend launchers.
 # Sourced by ~/.local/bin/agentview for --spawn only; relies on the config globals,
 # av_pick and av_wezterm that the main script defines before loading this.
@@ -27,16 +27,20 @@ fi
 # First row of the repo pick: no repo at all -> a plain HOST claude session (no sandbox).
 host_row='[no repo · plain claude]'
 
-spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachable hosts only.
+spawn_pick_host() {  # echo self | pc | remote:<alias> (empty = cancel). Reachable hosts only.
+  # The first row is THIS machine, labelled by $selflabel — "WSL" under Windows, "Linux" on a
+  # native box. It was hardcoded "WSL", which named nothing on a Linux host and read as a
+  # target that wasn't there. "PC (Windows)" is the separate Windows side, so both rows show
+  # under WSL and only the one shows elsewhere; the ssh hosts follow on every machine.
   local rows sel h
-  rows="WSL"
+  rows="$selflabel"
   is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && rows="$rows"$'\n'"PC (Windows)"
   for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
   sel=$(printf '%s\n' "$rows" | av_pick 46% 30% --prompt 'host> ' --layout=reverse \
     --border=rounded --info=hidden --pointer='▌' --highlight-line \
     --header 'new session · pick a host · esc cancels')
   [ -n "$sel" ] || return 0
-  [ "$sel" = "WSL" ] && { printf 'wsl'; return 0; }
+  [ "$sel" = "$selflabel" ] && { printf 'self'; return 0; }
   [ "$sel" = "PC (Windows)" ] && { printf 'pc'; return 0; }
   for h in "${!HOST_SSH[@]}"; do
     if [ "$sel" = "${HOST_LABEL[$h]:-$h}" ]; then printf 'remote:%s' "${HOST_SSH[$h]}"; return 0; fi
@@ -44,7 +48,7 @@ spawn_pick_host() {  # echo wsl | pc | remote:<alias> (empty = cancel). Reachabl
   return 0
 }
 
-spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
+spawn_pick_mode() {  # echo sandbox | native (empty = cancel). Local repo only.
   local sel
   sel=$(printf 'sandbox\nnative\n' | av_pick 62% 26% --prompt 'mode> ' --layout=reverse \
     --border=rounded --info=hidden --pointer='▌' --highlight-line \
@@ -56,9 +60,9 @@ spawn_pick_mode() {  # echo sandbox | native (empty = cancel). WSL repo only.
   esac
 }
 
-spawn_pick_repo() {  # $1 = host (wsl | remote:<alias>) -> repo path/NAME, @host, or empty
+spawn_pick_repo() {  # $1 = host (self | remote:<alias>) -> repo path/NAME, @host, or empty
   local host="$1" names sel d
-  if [ "$host" = "wsl" ]; then
+  if [ "$host" = "self" ]; then
     names=$(for d in "$repos_root"/*/; do
       [ -d "$d/.git" ] || continue                  # real checkout; a .git FILE = linked worktree
       printf '%s\n' "$(basename "${d%/}")"
@@ -72,13 +76,13 @@ spawn_pick_repo() {  # $1 = host (wsl | remote:<alias>) -> repo path/NAME, @host
       --header 'new session · no repo = plain claude · esc cancels')
   [ -n "$sel" ] || return 0
   if   [ "$sel" = "$host_row" ]; then printf '@host'
-  elif [ "$host" = "wsl" ];      then printf '%s' "$repos_root/$sel"
+  elif [ "$host" = "self" ];      then printf '%s' "$repos_root/$sel"
   else printf '%s' "$sel"; fi                        # remote: pass the NAME (ctw resolves it)
 }
 
 spawn_pick_branch() {  # $1=host $2=repo -> branch (empty = main repo, no worktree)
   local host="$1" repo="$2" out src
-  if [ "$host" = "wsl" ]; then
+  if [ "$host" = "self" ]; then
     src=$("$sandbox_bin" "$repo" --complete-branches 2>/dev/null)
   else
     src=$("$cts_bin" --complete-branches "${host#remote:}" "$repo" 2>/dev/null)
