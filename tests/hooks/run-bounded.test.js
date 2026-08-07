@@ -47,18 +47,23 @@ test('a real non-zero exit inside the bound is status ok, not could-not-evaluate
 
 test('timeout, child honors TERM: killed at the wall-clock ceiling', { skip }, () => {
   const start = Date.now();
-  const { rb: out } = rb(`run_bounded 1 4096 -- sleep 999`);
+  // Fractional: the timeout is handed straight to `timeout`, which takes it. A whole second
+  // here bought nothing -- the assertion is that TERM lands first, not that it lands at 1s.
+  const { rb: out } = rb(`run_bounded 0.2 4096 -- sleep 999`);
   const elapsed = Date.now() - start;
   assert.strictEqual(out.STATUS, 'timeout');
-  assert.ok(elapsed < 3000, `should die on TERM well before the 2s kill-after grace, took ${elapsed}ms`);
+  assert.ok(elapsed < 1500, `should die on TERM well before the 2s kill-after grace, took ${elapsed}ms`);
 });
 
 test('timeout, child ignores TERM: escalates to SIGKILL after kill-after', { skip }, () => {
   const start = Date.now();
-  const { rb: out } = rb(`run_bounded 1 4096 -- bash -c 'trap "" TERM; sleep 999'`, { extra: '' });
+  const { rb: out } = rb(`run_bounded 0.2 4096 -- bash -c 'trap "" TERM; sleep 999'`, { extra: '' });
   const elapsed = Date.now() - start;
   assert.strictEqual(out.STATUS, 'timeout', 'kill-after must still resolve this to timeout, not hang forever');
-  assert.ok(elapsed >= 1000 && elapsed < 6000, `expected ~1-3s (1s TERM + up to 2s kill-after), took ${elapsed}ms`);
+  // The 2s grace dominates and is not a parameter, so this is the floor for the escalation
+  // path. Staying past 1s is what proves TERM was ignored and SIGKILL did the work: a child
+  // that honoured TERM would have been gone at 0.2s.
+  assert.ok(elapsed >= 1000 && elapsed < 6000, `expected ~2.2s (0.2s TERM + up to 2s kill-after), took ${elapsed}ms`);
 });
 
 test('flooded stdout is truncated at the byte cap, not buffered whole first', { skip }, () => {

@@ -314,7 +314,10 @@ test('waits for a bench another worktree is holding', { skip: skip || (flockOk ?
   const marker = path.join(dir, '.git', 'held');
   // The holder announces itself once it actually owns the lock, so the run below
   // is guaranteed to contend rather than racing it for first grab.
-  const holder = spawn('flock', [lock, '-c', `touch ${marker}; sleep 2`], { stdio: 'ignore' });
+  // 0.6s, not 2s: the assertions are that `try` reports contention and still lands, not that
+  // it waited any particular length. The marker loop below already guarantees the holder owns
+  // the lock first, so this only has to outlast `try`'s startup, which is under 100ms.
+  const holder = spawn('flock', [lock, '-c', `touch ${marker}; sleep 0.6`], { stdio: 'ignore' });
   try {
     for (let i = 0; i < 60 && !fs.existsSync(marker); i += 1) {
       execFileSync('sleep', ['0.05']);

@@ -137,7 +137,8 @@ test('tops up only what is missing', { skip }, () => {
 // Obsidian and Spotify share a position on the bottom monitor, so whichever maps last is the
 // one on top. Ordering is the whole reason the delay exists.
 test('starts Obsidian after Spotify', { skip }, () => {
-  const { launched } = run({ delay: 1, expect: 5 });
+  // Any positive delay puts Obsidian last; this test asserts the order, not the length.
+  const { launched } = run({ delay: 0.1, expect: 5 });
   const spotify = launched.findIndex((l) => l.includes('com.spotify.Client'));
   const obsidian = launched.findIndex((l) => l.includes('md.obsidian.Obsidian'));
   assert.ok(spotify >= 0 && obsidian >= 0, 'both must start');
@@ -146,8 +147,11 @@ test('starts Obsidian after Spotify', { skip }, () => {
 
 test('OBSIDIAN_DELAY controls the wait before Obsidian', { skip }, () => {
   const started = Date.now();
-  run({ delay: 2, expect: 5 });
-  assert.ok(Date.now() - started >= 1800, 'the configured delay must actually be waited out');
+  // 0.8s, and no lower: the five stub launches cost a couple of hundred ms by themselves, so
+  // a threshold much under that would be satisfied even with the delay ignored outright, and
+  // the test would stop discriminating rather than merely running faster.
+  run({ delay: 0.8, expect: 5 });
+  assert.ok(Date.now() - started >= 700, 'the configured delay must actually be waited out');
 });
 
 test.after(() => {

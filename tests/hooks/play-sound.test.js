@@ -65,7 +65,7 @@ function readLogSettled(log) {
   return fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : '';
 }
 
-function run(sb, arg = 'done', extraEnv = {}) {
+function launch(sb, arg = 'done', extraEnv = {}) {
   execFileSync(BASH, [HOOK, arg], {
     encoding: 'utf8',
     // The stub dir is the ENTIRE PATH: the hook resolves its players with `command -v` and
@@ -74,7 +74,35 @@ function run(sb, arg = 'done', extraEnv = {}) {
     env: { PATH: sb.bin, STUB_LOG: sb.log, HOME: os.tmpdir(), ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
+
+function run(sb, arg = 'done', extraEnv = {}) {
+  launch(sb, arg, extraEnv);
   return readLogSettled(sb.log);
+}
+
+// Asserting that nothing was launched cannot go through readLogSettled. That loop exits
+// early only when the log gains content, so a case expecting an empty log never breaks out
+// and pays the whole ceiling on every green run -- 10s, which was 6% of the entire suite.
+//
+// Dropping to a shorter fixed wait would only move the problem: too short stops being a
+// slow pass and starts being a silent false one, and the ceiling is 10s precisely because
+// a fixed 0.5s proved unreliable under full-suite load.
+//
+// So wait on evidence instead of on the clock. A control sandbox that DOES launch is run
+// immediately after, and its stub is the same thing -- an orphaned /bin/sh appending one
+// line. Once the control has written, any spawn from the earlier run has had at least as
+// long to show up, so an empty log means absence rather than impatience. On an idle box
+// this returns in milliseconds, and it stretches itself under load rather than going red.
+function runExpectingSilence(sb, arg = 'done', extraEnv = {}) {
+  launch(sb, arg, extraEnv);
+  // aplay is the one branch with no filesystem dependency -- it needs the binary on PATH
+  // and nothing else -- so the control fires on any box, theme sounds installed or not.
+  const control = sandbox({ paplay: false, aplay: true });
+  launch(control, arg, extraEnv);
+  assert.ok(readLogSettled(control.log).trim(),
+    'the control never launched either, so this run proves nothing about silence');
+  return fs.existsSync(sb.log) ? fs.readFileSync(sb.log, 'utf8') : '';
 }
 
 test('plays the Windows .wav natively through paplay', { skip: skipWsl }, () => {
@@ -101,7 +129,7 @@ test('without paplay it falls to aplay, never to powershell', { skip }, () => {
 
 test('with no player at all it still exits 0', { skip }, () => {
   const sb = sandbox({ paplay: false, aplay: false });
-  const log = run(sb);
+  const log = runExpectingSilence(sb);
   assert.strictEqual(log.trim(), '', 'nothing was launched');
   // execFileSync would have thrown on a non-zero exit; a hook that fails is noise in the
   // transcript on every prompt.
