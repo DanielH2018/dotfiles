@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "202bfdb8994dde5810861290264c3d7d4ec7e54f024a9b9a5a65d00881c81fa4",
-      "landed": "2026-08-07T20:07:23.191Z"
+      "hash": "48aa7cf0dbb7a90ca112984cda99b4261ca0292834f5a8eb9a51d07fa264f34d",
+      "landed": "2026-08-07T20:41:35.832Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -113,8 +113,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "3f7570176de52c6a18bb58bd91eb0abd87f09d161a335a71eabcaa663ae31def",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "0cb3ae968db2475c831ae2d5e18bf4ee1b40e8708a9aef564546b951bf2cadf2",
+      "landed": "2026-08-07T20:41:35.832Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_cmdparse.sh",
@@ -220,6 +220,11 @@
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
       "hash": "9d9c448e5b97ad3c13c5456b72b6d8143bd20fae913144470799f9a74ff33460",
       "landed": "2026-07-30T00:10:39.037Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.sh",
+      "hash": "1ea209776594f6533a26a931db59c448c76ce2857f2cfc0c6d0425b886e11210",
+      "landed": "2026-08-07T20:41:35.832Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
