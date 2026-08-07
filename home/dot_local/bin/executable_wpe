@@ -28,6 +28,7 @@ WALLPAPERS="$DATA/wallpapers"
 CONFIG_DIR="$HOME/.config/wallpaperengine"
 CONFIG="$CONFIG_DIR/config"
 UNIT="wallpaperengine.service"
+PICKER="$HOME/.local/bin/wpe-pick"
 
 # Steam's copy, used only by `wpe sync`.
 STEAM_WE="/mnt/games/SteamLibrary/steamapps/common/wallpaper_engine"
@@ -112,9 +113,11 @@ outputs_raw() {
 }
 
 cmd_outputs() {
+  local active
+  active="$(resolve_outputs | tr '\n' ' ')"
   outputs_raw | while read -r name geom res state; do
     marker="  "
-    [ "$name" = "$OUTPUT" ] && marker="* "
+    case " $active " in *" $name "*) marker="* " ;; esac
     printf '%s%-10s %-10s %-10s %s\n' "$marker" "$name" "$res" "$geom" "$state"
   done
 }
@@ -128,10 +131,26 @@ cmd_set() {
   reload_if_running
 }
 
+# Resolve the configured OUTPUT into the actual display names to draw on. `all` is resolved at
+# run time rather than frozen into the config, so plugging a monitor in or flipping the KVM
+# changes what it covers without rewriting anything.
+resolve_outputs() {
+  if [ "$OUTPUT" = all ]; then
+    outputs_raw | awk '$4 == "enabled" { print $1 }'
+  else
+    printf '%s\n' "$OUTPUT" | tr ',' '\n' | sed '/^$/d'
+  fi
+}
+
 cmd_screen() {
-  [ $# -eq 1 ] || die "usage: wpe screen <output>   (see: wpe outputs)"
-  outputs_raw | awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' \
-    || die "no output named $1 — try: wpe outputs"
+  [ $# -eq 1 ] || die "usage: wpe screen <output|out1,out2|all>   (see: wpe outputs)"
+  if [ "$1" != all ]; then
+    local name
+    for name in $(printf '%s' "$1" | tr ',' ' '); do
+      outputs_raw | awk -v n="$name" '$1 == n { found = 1 } END { exit !found }' \
+        || die "no output named $name — try: wpe outputs"
+    done
+  fi
   OUTPUT="$1"
   write_config
   echo "output: $OUTPUT"
@@ -180,14 +199,30 @@ cmd_run() {
   # deliberately beats leaving "$EXTRA" unquoted and silencing the warning.
   local extra_args
   read -ra extra_args <<< "$EXTRA"
+
+  # One --screen-root/--scaling/--bg triple per display. Repeating the same --bg draws the same
+  # wallpaper independently on each one, which is what "the same wallpaper everywhere" means —
+  # --screen-span would instead stretch a single copy across the whole desktop rectangle.
+  local out screen_args=()
+  while IFS= read -r out; do
+    [ -n "$out" ] || continue
+    screen_args+=(--screen-root "$out" --scaling "$SCALING" --bg "$WALLPAPERS/$WALLPAPER")
+  done < <(resolve_outputs)
+  [ ${#screen_args[@]} -gt 0 ] || die "no displays resolved from OUTPUT='$OUTPUT'"
+
   exec "$BIN" \
     --assets-dir "$ASSETS" \
     --fps "$FPS" \
     --layer "$LAYER" \
     "${extra_args[@]}" \
-    --screen-root "$OUTPUT" \
-    --scaling "$SCALING" \
-    --bg "$WALLPAPERS/$WALLPAPER"
+    "${screen_args[@]}"
+}
+
+# GTK4 thumbnail grid. It shells back out to this script for every change, so picking from the
+# window and picking from the shell go through the same validation and restart path.
+cmd_pick() {
+  [ -x "$PICKER" ] || die "picker not installed at $PICKER"
+  exec "$PICKER"
 }
 
 # Windowed, for checking whether a wallpaper renders at all without disturbing the desktop.
@@ -208,7 +243,9 @@ clear_failure() { systemctl --user reset-failed "$UNIT" 2>/dev/null || true; }
 
 cmd_status() {
   printf 'wallpaper : %s  %s\n' "${WALLPAPER:-<unset>}" "$([ -n "$WALLPAPER" ] && title_of "$WALLPAPER")"
-  printf 'output    : %s\n' "${OUTPUT:-<unset>}"
+  printf 'output    : %s\n' "${OUTPUT:-<unset>}$(
+    [ "$OUTPUT" = all ] && printf '  (%s)' "$(resolve_outputs | tr '\n' ' ' | sed 's/ $//')"
+  )"
   printf 'fps       : %s\n' "$FPS"
   printf 'scaling   : %s\n' "$SCALING"
   printf 'layer     : %s\n' "$LAYER"
@@ -242,6 +279,7 @@ case "${1:-status}" in
   layer)    shift; cmd_layer "$@" ;;
   scaling)  shift; cmd_scaling "$@" ;;
   run)      cmd_run ;;
+  pick)     cmd_pick ;;
   preview)  shift; cmd_preview "$@" ;;
   sync)     cmd_sync ;;
   status)   cmd_status ;;
@@ -252,18 +290,22 @@ case "${1:-status}" in
   disable)  systemctl --user disable --now "$UNIT" && echo "disabled" ;;
   log)      journalctl --user -u "$UNIT" -n "${2:-50}" --no-pager ;;
   *)
-    cat <<EOF
+    # Quoted delimiter: this is literal help text, and an unquoted heredoc would run anything
+    # in backticks and expand any $name that turns up in a future line.
+    cat <<'EOF'
 usage: wpe <command>
 
   status              current wallpaper, output, service state (default)
   list                subscribed wallpapers; * marks the current one
   outputs             connected displays; * marks the current one
   set <id>            choose a wallpaper
-  screen <output>     choose which display it runs on
+  screen <spec>       which displays: one name, a comma-separated list, or
+                      "all" (resolved live, so it follows a KVM flip)
   fps <n>             frame cap (default 30; 4 displays already pin the GPU clock)
   scaling <mode>      stretch | fit | fill | default
   layer <name>        background | bottom | top | overlay — use background if it
                       ever covers desktop icons or widgets
+  pick                GTK4 thumbnail grid; click a tile to apply it
   preview [id]        render in a 1280x720 window, leaving the desktop alone
   start | stop | restart
   enable | disable    run at login, or stop doing so

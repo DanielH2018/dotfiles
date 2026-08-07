@@ -3,10 +3,13 @@
 # it in place. Managing it normally would mean every `chezmoi apply` reverted the chosen wallpaper.
 #
 # WALLPAPER is a workshop id under ~/.local/share/wallpaperengine/wallpapers — run `wpe list`.
-# OUTPUT is a Wayland output name — run `wpe outputs`. DP-1 is the primary on this desktop; on any
-# other machine set it before `wpe enable`, since a missing output makes the unit exit 1.
+#
+# OUTPUT is `all`, a single Wayland output name, or a comma-separated list — run `wpe outputs`.
+# `all` is the default because it is resolved at run time, not frozen here: it draws the same
+# wallpaper on every connected display and simply covers fewer of them after a KVM flip. A pinned
+# name would instead make the unit exit 1 the moment that display is absent.
 WALLPAPER=1569613506
-OUTPUT=DP-1
+OUTPUT=all
 FPS=30
 SCALING=fill
 LAYER=bottom

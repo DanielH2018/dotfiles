@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Thumbnail picker for linux-wallpaperengine, launched by `wpe pick`.
+
+Every mutation goes back through the `wpe` script rather than writing the
+config directly. That keeps one source of truth for validation, the systemd
+restart and the reset-failed handling — the picker is a view over `wpe`, not
+a second owner of the same state. Owning that state independently is exactly
+what makes the third-party GUIs fight the service.
+
+GTK4 via PyGObject because both were already installed; nothing here needs a
+new package.
+"""
+
+import json
+import subprocess
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("GdkPixbuf", "2.0")
+
+from gi.repository import (  # noqa: E402  (needs require_version first)
+    Gdk,
+    GdkPixbuf,
+    GLib,
+    Gtk,
+)
+
+DATA = Path.home() / ".local/share/wallpaperengine"
+WALLPAPERS = DATA / "wallpapers"
+CONFIG = Path.home() / ".config/wallpaperengine/config"
+WPE = str(Path.home() / ".local/bin/wpe")
+UNIT = "wallpaperengine.service"
+
+THUMB_W, THUMB_H = 260, 146
+
+
+def read_config():
+    """Parse the KEY=value config `wpe` writes. A missing file is not an error."""
+    cfg = {}
+    if not CONFIG.exists():
+        return cfg
+    for line in CONFIG.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        cfg[key.strip()] = value.strip().strip('"')
+    return cfg
+
+
+def wpe(*args):
+    """Run a wpe subcommand, returning (ok, output) so failures reach the UI."""
+    try:
+        proc = subprocess.run(
+            [WPE, *args], capture_output=True, text=True, timeout=30, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+
+def unit_is_active():
+    proc = subprocess.run(
+        ["systemctl", "--user", "is-active", UNIT],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout.strip() == "active"
+
+
+def load_wallpapers():
+    """Read every wallpaper dir. project.json names its own preview file — 6 of
+    these ship an animated preview.gif rather than preview.jpg, so don't assume
+    the extension. GIFs load as their first frame, which is fine for picking."""
+    items = []
+    if not WALLPAPERS.is_dir():
+        return items
+    for d in sorted(WALLPAPERS.iterdir()):
+        meta = d / "project.json"
+        if not d.is_dir() or not meta.exists():
+            continue
+        try:
+            data = json.loads(meta.read_text(errors="replace"))
+        except (OSError, ValueError):
+            data = {}
+        named = data.get("preview")
+        path = d / named if named else None
+        if path is None or not path.exists():
+            path = next(iter(sorted(d.glob("preview.*"))), None)
+        items.append(
+            {
+                "id": d.name,
+                "title": data.get("title") or d.name,
+                "type": (data.get("type") or "?").lower(),
+                "preview": path,
+            }
+        )
+    return items
+
+
+def texture_from(pixbuf):
+    """Wrap a pixbuf as a texture without Gdk.Texture.new_for_pixbuf, which is
+    deprecated and prints a warning to stderr on every launch."""
+    fmt = (
+        Gdk.MemoryFormat.R8G8B8A8
+        if pixbuf.get_has_alpha()
+        else Gdk.MemoryFormat.R8G8B8
+    )
+    return Gdk.MemoryTexture.new(
+        pixbuf.get_width(),
+        pixbuf.get_height(),
+        fmt,
+        GLib.Bytes.new(pixbuf.get_pixels()),
+        pixbuf.get_rowstride(),
+    )
+
+
+def output_names():
+    """Display names via `wpe outputs`, which already strips the colour codes.
+    `all` leads the list because it is the common choice — the same wallpaper on
+    every monitor — and `wpe screen` resolves it live."""
+    ok, out = wpe("outputs")
+    names = ["all"]
+    if not ok:
+        return names
+    for line in out.splitlines():
+        parts = line.replace("*", " ").split()
+        if parts:
+            names.append(parts[0])
+    return names
+
+
+class Picker(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="dev.local.wpe-pick")
+        self.cfg = read_config()
+        self.items = load_wallpapers()
+        self.tiles = {}
+
+    def do_activate(self):
+        win = Gtk.ApplicationWindow(application=self, title="Wallpaper Engine")
+        win.set_default_size(1120, 720)
+
+        header = Gtk.HeaderBar()
+        win.set_titlebar(header)
+
+        self.output_drop = Gtk.DropDown.new_from_strings(output_names())
+        current = self.cfg.get("OUTPUT", "")
+        for i, row in enumerate(self.output_drop.get_model()):
+            if row.get_string() == current:
+                self.output_drop.set_selected(i)
+                break
+        self.output_drop.connect("notify::selected", self.on_output_changed)
+        header.pack_start(self.output_drop)
+
+        # A picker that can only turn the wallpaper on is a one-way door.
+        self.power = Gtk.Button()
+        self.power.connect("clicked", self.on_power)
+        header.pack_end(self.power)
+
+        self.status = Gtk.Label(xalign=0)
+        self.status.add_css_class("dim-label")
+        header.set_title_widget(self.status)
+
+        scroller = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+        # A flow grid reflows to the width it is given, so a horizontal
+        # scrollbar is never the right answer — and asking for one is what
+        # makes GTK complain about slider sizing.
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.flow = Gtk.FlowBox(
+            valign=Gtk.Align.START,
+            max_children_per_line=6,
+            min_children_per_line=2,
+            selection_mode=Gtk.SelectionMode.NONE,
+            row_spacing=12,
+            column_spacing=12,
+        )
+        for edge in ("top", "bottom", "start", "end"):
+            getattr(self.flow, f"set_margin_{edge}")(12)
+        scroller.set_child(self.flow)
+        win.set_child(scroller)
+
+        if self.items:
+            for item in self.items:
+                self.flow.append(self.make_tile(item))
+        else:
+            self.flow.append(
+                Gtk.Label(label=f"No wallpapers under {WALLPAPERS}.\nRun: wpe sync")
+            )
+
+        self.refresh_marks()
+        win.present()
+
+    def make_tile(self, item):
+        # A FlowBox hands spare width to its children, which stretches a 260px
+        # tile to fill half the window and drops the grid to two columns.
+        # Centring pins each tile to its natural width so the column count
+        # follows the window instead.
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_size_request(THUMB_W, -1)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_hexpand(False)
+
+        frame = Gtk.Frame()
+        frame.set_size_request(THUMB_W, THUMB_H)
+        frame.set_halign(Gtk.Align.CENTER)
+        child = None
+        if item["preview"]:
+            try:
+                # Scale at load rather than letting Gtk.Picture hold the full-size
+                # texture: a Picture reports the texture's own size as its natural
+                # width, so a 1920px preview makes the FlowBox allocate 1920px-wide
+                # cells and collapse the grid to two columns. Also keeps 16 previews
+                # from sitting in memory at full resolution.
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(item["preview"]), THUMB_W, THUMB_H, True
+                )
+                child = Gtk.Picture.new_for_paintable(texture_from(pixbuf))
+                child.set_content_fit(Gtk.ContentFit.COVER)
+            except GLib.Error:
+                child = None
+        if child is None:
+            child = Gtk.Label(label="(no preview)")
+        child.set_size_request(THUMB_W, THUMB_H)
+        frame.set_child(child)
+
+        button = Gtk.Button()
+        button.set_child(frame)
+        button.set_has_frame(False)
+        button.connect("clicked", self.on_pick, item)
+
+        title = Gtk.Label(
+            label=item["title"], xalign=0, ellipsize=3, max_width_chars=26
+        )
+        title.set_tooltip_text(f"{item['title']}  ({item['id']})")
+        subtitle = Gtk.Label(label=item["type"], xalign=0)
+        subtitle.add_css_class("dim-label")
+
+        box.append(button)
+        box.append(title)
+        box.append(subtitle)
+        self.tiles[item["id"]] = (box, title, item)
+        return box
+
+    def refresh_marks(self):
+        """Re-read config so the tick follows shell-side changes too, and resync
+        the button with the unit's real state rather than what we last asked."""
+        self.cfg = read_config()
+        current = self.cfg.get("WALLPAPER", "")
+        for wid, (box, title, item) in self.tiles.items():
+            if wid == current:
+                escaped = GLib.markup_escape_text(item["title"])
+                title.set_markup(f"<b>✓ {escaped}</b>")
+                box.add_css_class("view")
+            else:
+                title.set_text(item["title"])
+                box.remove_css_class("view")
+
+        active = unit_is_active()
+        self.power.set_label("Stop" if active else "Start")
+        name = next(
+            (i["title"] for i in self.items if i["id"] == current),
+            current or "nothing",
+        )
+        state = "running" if active else "stopped"
+        self.status.set_text(f"{name} on {self.cfg.get('OUTPUT', '?')} · {state}")
+
+    def fail(self, out):
+        self.status.set_text(out.splitlines()[0] if out else "failed")
+
+    def on_pick(self, _button, item):
+        ok, out = wpe("set", item["id"])
+        if ok:
+            self.refresh_marks()
+        else:
+            self.fail(out)
+
+    def on_output_changed(self, drop, _param):
+        selected = drop.get_selected_item()
+        if selected is None:
+            return
+        name = selected.get_string()
+        if name == self.cfg.get("OUTPUT", ""):
+            return
+        ok, out = wpe("screen", name)
+        if ok:
+            self.refresh_marks()
+        else:
+            self.fail(out)
+
+    def on_power(self, _button):
+        wpe("stop" if self.power.get_label() == "Stop" else "start")
+        self.refresh_marks()
+
+
+if __name__ == "__main__":
+    Picker().run(None)
