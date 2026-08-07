@@ -26,11 +26,11 @@ fs.writeFileSync(path.join(HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
     allow: ['Bash(git status:*)', 'Bash(ls:*)', 'Bash(echo:*)', 'Bash(cat:*)',
       'Bash(jq:*)', 'Bash(jsonq:*)', 'Bash(git commit:*)', 'Bash(gh api:*)',
-      'Bash(sh:*)',
+      'Bash(sh:*)', 'Bash(tail:*)', 'Bash(git log:*)',
       // An allow rule with an interior wildcard, to pin that those stay literal.
       'Bash(frob * --safe)'],
     deny: ['Bash(rm:*)', 'Bash(git commit *--no-verify)', 'Bash(* | sh)'],
-    ask: ['Bash(git push:*)', 'Bash(gh api *-X DELETE)'],
+    ask: ['Bash(git push:*)', 'Bash(gh api *-X DELETE)', 'Bash(git merge:*)'],
   },
 }));
 
@@ -86,6 +86,28 @@ test('defers when any part is denied, ask-listed, or unlisted', { skip }, () => 
   assert.strictEqual(allowed('ls && rm -rf build'), null);          // deny
   assert.strictEqual(allowed('git status && git push origin main'), null); // ask
   assert.strictEqual(allowed('git status && frobnicate'), null);    // unlisted
+});
+
+// `git merge --ff-only <ref>` is the single named exception to the ask list: no permission
+// rule can free it (ask is evaluated before allow, and specificity does not break the tie)
+// and every real invocation is a compound, so this hook is the only place it can be said.
+test('allows git merge --ff-only past its ask rule, with one ref and no options', { skip }, () => {
+  assert.strictEqual(allowed('git merge --ff-only origin/main && git log --oneline -3'), 'allow');
+  assert.strictEqual(allowed('git merge --ff-only origin/main | tail -3'), 'allow');
+});
+
+test('the git merge exception does not widen to any other merge form', { skip }, () => {
+  // bare merge, and the flags that can create a commit or rewrite the tree
+  assert.strictEqual(allowed('git merge origin/main && git log'), null);
+  assert.strictEqual(allowed('git merge --no-ff origin/main && git log'), null);
+  assert.strictEqual(allowed('git merge --squash origin/main && git log'), null);
+  // an option smuggled after --ff-only must not ride in on the prefix
+  assert.strictEqual(allowed('git merge --ff-only --no-ff x && git log'), null);
+  // more than one ref, or none at all
+  assert.strictEqual(allowed('git merge --ff-only a b && git log'), null);
+  assert.strictEqual(allowed('git merge --ff-only && git log'), null);
+  // the exception sits behind the redirection guard, so it cannot become a writer
+  assert.strictEqual(allowed('git merge --ff-only origin/main > out.txt && git log'), null);
 });
 
 test('defers when a command substitution could smuggle a segment', { skip }, () => {

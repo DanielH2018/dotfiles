@@ -272,9 +272,33 @@ judge() {
     tee) [ "$teed" != "$teecmd" ] && return 1 ;;
   esac
 
-  # Deny or ask list → defer to normal permission handling
-  if matches_any "$part" ${DENY[@]+"${DENY[@]}"} || matches_any "$part" ${ASK[@]+"${ASK[@]}"} \
-    || matches_glob "$part" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"} \
+  # Deny list → defer. No exception below reaches past this.
+  if matches_any "$part" ${DENY[@]+"${DENY[@]}"} \
+    || matches_glob "$part" ${DENY_GLOB[@]+"${DENY_GLOB[@]}"}; then
+    return 1
+  fi
+
+  # The one ask-listed segment named as safe here, and the only place it can be named:
+  # `Bash(git merge:*)` is ask-listed, ask is evaluated before allow, and specificity does
+  # not break the tie, so no permission rule can free `--ff-only` on its own. Every real
+  # invocation is a compound (`git merge --ff-only origin/main 2>&1 | tail -3`), which is
+  # why it lands here rather than in a rule at all.
+  #
+  # `--ff-only` refuses anything that is not a fast-forward: it cannot create a merge
+  # commit, cannot leave a conflicted index, and fails with a message instead. Exactly one
+  # ref may follow, and it may not look like an option — otherwise `git merge --ff-only
+  # --no-ff x` would ride in on the prefix. Bare `git merge`, `--no-ff`, `--squash`,
+  # `--strategy` and `-X` all miss this and stay gated by the ask rule below.
+  case $part in
+    'git merge --ff-only '*)
+      case ${part#git merge --ff-only } in
+        ''|-*|*[[:space:]]*) ;;
+        *) continue ;;
+      esac ;;
+  esac
+
+  # Ask list → defer to normal permission handling
+  if matches_any "$part" ${ASK[@]+"${ASK[@]}"} \
     || matches_glob "$part" ${ASK_GLOB[@]+"${ASK_GLOB[@]}"}; then
     return 1
   fi
