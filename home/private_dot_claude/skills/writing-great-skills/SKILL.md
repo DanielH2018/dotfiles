@@ -31,6 +31,20 @@ Pick model-invocation only when the agent (or another skill) must reach it on it
 When user-invoked skills pile past what you can hold in your head, the cure is a **router**
 (`/skill-router`) — one skill that names the others and when to reach for each.
 
+## Model-invoked descriptions fire on symptoms
+
+Where a user-invoked description is a summary, a model-invoked one is the **entire invocation
+mechanism** — so it has to match how the problem *presents*, not the deliberate action someone
+would take if they already knew the skill existed. Anyone who can think "I'm about to land, load
+the land skill" did not need the skill. The real moment is a bare error string, or a fix that
+silently came back.
+
+Before shipping one, list the two or three incidents that motivated it and write down how each
+*first appeared* — the operator's actual words, the literal error text — then check the
+description against those phrasings. Prospective triggers ("after X", "when Y fails") can stay,
+but after the symptoms, not instead of them. The tell that you got this wrong is a skill whose
+own author hits its exact failure and doesn't get it loaded.
+
 ## The other levers
 
 - **Leading words** — a compact concept already in the model's pretraining (*tight*,
@@ -49,7 +63,9 @@ When user-invoked skills pile past what you can hold in your head, the cure is a
 
 **Premature completion** (vague criterion lets the agent stop early) · **duplication**
 (one branch written twice) · **sediment** (stale instructions never removed) · **sprawl**
-(too many near-duplicate skills) · **no-op** (a sentence that changes nothing if deleted).
+(too many near-duplicate skills) · **no-op** (a sentence that changes nothing if deleted) ·
+**dead trigger** (a model-invoked description keyed on an action only someone who already
+knows the skill would take).
 
 ## Where it fits
 
