@@ -338,7 +338,14 @@ test('statistics is imported per call, not on every invocation', { skip }, () =>
     python, ['-X', 'importtime', JSONQ, expr, T], { encoding: 'utf8' },
   ).stderr;
 
-  assert.doesNotMatch(importsOf('d["a"]'), /\| statistics$/m,
+  // The canary runs first on purpose. `doesNotMatch` against -X importtime passes
+  // vacuously if that output ever stops looking like `us | cumulative | name`, which
+  // would leave the guard green while guarding nothing. json is imported on every run,
+  // so failing to find it means the format moved, not that the deferral works.
+  const plain = importsOf('d["a"]');
+  assert.match(plain, /\| json$/m, '-X importtime output shape changed; the check below is inert');
+
+  assert.doesNotMatch(plain, /\| statistics$/m,
     'a query that never calls mean/median must not pay for statistics');
   assert.match(importsOf('mean(d["b"])'), /\| statistics$/m,
     'mean must still reach the real statistics module');
