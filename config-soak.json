@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "e2d6203bede2f4e4f2e67a0c670179fba5167a8b36ae082a66bacd083fc836a9",
-      "landed": "2026-08-06T20:48:51.350Z"
+      "hash": "16a209e97328503b0b0beb6f7c45a846580e0b9071c4b7ac240240369105c81e",
+      "landed": "2026-08-07T03:09:49.098Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -88,8 +88,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "86b74464555e094523a46db976f09eca3c16943516f71cf1e1c34477ebf0cabf",
-      "landed": "2026-08-07T02:04:46.647Z"
+      "hash": "3f56351c9899b050e0f2eee085ae1f2fe5220bc1ce51953589c1d843c11d46a4",
+      "landed": "2026-08-07T03:09:49.098Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
