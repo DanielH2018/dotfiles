@@ -175,6 +175,24 @@ test('reaps the origin of a spare-dispatched backgrounding (roster path)', { ski
   assert.match(fs.readFileSync(env.log, 'utf8'), /ORIGIN.*222/);
 });
 
+// Backgrounding WITH a prompt puts the prompt text in seed.intent, not the literal
+// "(backgrounded)" a no-prompt backgrounding carries. Requiring that exact string excluded
+// the commonest case: found live with the origin still running 1h53m after the fork, holding
+// its memory and a second Agentview row.
+test('reaps the origin when the backgrounding carried a prompt', { skip }, () => {
+  const promptWorker = bgWorker('ORIGIN', 'FORK');
+  promptWorker.dispatch.seed.intent = "I've got some fixes for Claude and Agentview.\n\n- Fix the thing";
+  const env = fakeEnv({
+    procs: { '111': '/x/claude bg-spare --bg-spare /tmp/x/abc.claim.sock', '222': '/x/claude' },
+    sessions: { '111': 'FORK', '222': 'ORIGIN' },
+    rows: ['ORIGIN'],
+    roster: { FORK: promptWorker },
+  });
+  runSweep(env);
+  assert.deepStrictEqual(killed(env), ['222'], 'a prompt in seed.intent is still a backgrounding');
+  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN.json')), 'row removed');
+});
+
 test('plain spare agent in roster -> nothing killed', { skip }, () => {
   const env = fakeEnv({
     procs: { '111': '/x/claude bg-spare --bg-spare /tmp/x/abc.claim.sock', '222': '/x/claude' },

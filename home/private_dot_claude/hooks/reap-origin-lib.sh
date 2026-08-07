@@ -16,8 +16,17 @@
 #   worker argv is only `claude bg-spare --bg-spare <claim.sock>` — the --resume link to
 #   the origin is gone from the cmdline and survives solely in the daemon roster. Same
 #   three-marker rigor, read from dispatch instead: launch.mode=resume + launch.fork=true
-#   + seed.intent="(backgrounded)", where launch.sessionId is the origin transcript path.
+#   + a non-empty seed.intent, where launch.sessionId is the origin transcript path.
 #   A plain spare-spawned agent (source=spare, mode=prompt, intent="") never matches.
+#
+#   intent was originally required to equal the literal "(backgrounded)". That is what a
+#   session backgrounded with no prompt carries — but backgrounding WITH a prompt puts the
+#   prompt text there instead, so the gate silently excluded the commonest case and left the
+#   origin alive holding ~430MB and a second Agentview row. Found live: a roster entry with
+#   mode=resume, fork=true and the user's prompt as intent, whose origin was still running
+#   1h53m later. The discrimination never rested on this marker anyway — mode=prompt and
+#   fork=false already reject a plain spare — so it is now "some intent" rather than one
+#   exact string.
 #
 # Test seams (defaults are the real thing): CLAUDE_SESSIONS_DIR, AGENT_VIEW_DIR,
 # REAP_KILLCMD, REAP_LOG, REAP_ROSTER, IDENTITY_LIB.
@@ -146,7 +155,7 @@ $(jq -r '
   (.workers // {}) | to_entries[] | .value as $w | ($w.dispatch // {}) as $d |
   select(($d.launch.mode // "")  == "resume")         |
   select(($d.launch.fork // false) == true)           |
-  select(($d.seed.intent // "") == "(backgrounded)")  |
+  select((($d.seed.intent // "") | length) > 0)       |
   ($d.launch.sessionId // "") as $p                   |
   select($p | endswith(".jsonl"))                     |
   (($p | split("/") | last | sub("\\.jsonl$"; "")) + "\t" + ($w.sessionId // ""))
