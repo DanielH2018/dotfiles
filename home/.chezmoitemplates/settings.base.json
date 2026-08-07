@@ -877,7 +877,19 @@
   }{{ else }}{ "enabled": false }{{ end }},
   "alwaysThinkingEnabled": true,
 {{- if eq .chezmoi.os "linux" }}
-  "preferredNotifChannel": "terminal_bell",
+  {{/* Claude Code's OWN notification channel, and it is NOT filtered by the Notification
+       hook's matcher — it fires on every notification_type there is. terminal_bell here is
+       what made sessions chime with nothing blocked, and it hid behind the hook layer for
+       long enough that four agents searched settings drift, every plugin's hooks.json and
+       every caller of play-sound.sh without finding it: the hook gate was correct the whole
+       time, the bell simply ran beside it. Measured over 30 minutes with the notify-log
+       diagnostic: 19 notifications, of which only 2 were permission_prompt — the other 17
+       (10 agent_completed, 4 idle_prompt, 3 agent_needs_input) rang the bell while the hook
+       stayed correctly silent.
+       Disabled rather than switched to "ghostty": the audible cue we DO want is already
+       covered by notify.sh on permission_prompt, so a second channel can only re-add the
+       noise this removes. */}}
+  "preferredNotifChannel": "notifications_disabled",
 {{- end }}
   "advisorModel": "opus",
   {{/* Off on measured cost, not on principle. Over 16h of OTEL telemetry
