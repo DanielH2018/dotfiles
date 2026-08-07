@@ -88,8 +88,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "0642122b219896022a8de23ccc689592a687d80ab5444a6c2a5f642153dfc5de",
-      "landed": "2026-08-07T00:58:23.298Z"
+      "hash": "f1f30c7b524b6fa1cdfc30255614853196b2dbfbc94604e64ef5e9d0a4393d7a",
+      "landed": "2026-08-07T01:38:08.490Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
