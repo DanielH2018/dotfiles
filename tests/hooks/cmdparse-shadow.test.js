@@ -253,3 +253,44 @@ test('a command cmd_parse refuses is censused with its refusal status, not a def
   assert.strictEqual(row.newly_anchored, null, 'nothing was segmented, so nothing is newly anchored');
   assert.strictEqual(row.old, 'deny', 'and the whole-string rules still judged it');
 });
+
+// The census reads CP_STATUS from the decision path's parse, which is only sound while
+// cmd_parse stays its sole writer and nothing calls it in between. That invariant cannot
+// break loudly on its own -- a stray cmd_parse leaves every other assertion in this file
+// green and just changes what the status column means. So the break is staged here:
+// a copy of the hook with a second cmd_parse injected after the scan set is built, fed a
+// command the real parse REFUSES. Without the guard the row would claim `ok`, inheriting
+// the injected call's success and reporting a clean parse for a command that had none.
+test('a stray cmd_parse between the parse and the trap is reported, not inherited', () => {
+  const stage = fs.mkdtempSync(path.join(tmp, 'desync-'));
+  for (const f of fs.readdirSync(HOOKS)) {
+    const src = path.join(HOOKS, f);
+    if (fs.statSync(src).isFile()) fs.copyFileSync(src, path.join(stage, f));
+  }
+  const hook = path.join(stage, 'executable_block-dangerous-bash.sh');
+  const text = fs.readFileSync(hook, 'utf8');
+  assert.strictEqual(
+    text.split('\nBDB_OLD=none\n').length, 2,
+    'injection anchor must be unique, or this test is staging something else',
+  );
+  fs.writeFileSync(
+    hook,
+    text.replace('\nBDB_OLD=none\n', '\ncmd_parse "x;y" >/dev/null 2>&1 || true\nBDB_OLD=none\n'),
+  );
+
+  const d = logDir('desync');
+  const env = { CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d, CMDPARSE_LIB: LIB };
+  run(hook, 'terraform destroy "unclosed', env);
+  const [row] = readLog(d);
+  assert.ok(row, 'the row must still be written — the census stays a census');
+  assert.match(row.status, /^desync:/, `guard did not fire, status was ${row.status}`);
+
+  // ...and the unstaged hook does not cry wolf on the same command.
+  const clean = logDir('desync-control');
+  run(BDB, 'terraform destroy "unclosed', {
+    CMDPARSE_SHADOW: '1',
+    CLAUDE_SHADOW_LOG_DIR: clean,
+  });
+  const [ctrl] = readLog(clean);
+  assert.match(ctrl.status, /^unreadable:/, 'a real refusal is not a desync');
+});

@@ -314,6 +314,23 @@ _bdb_shadow_log() {
   # library, producing the same strings. CP_STATUS survives from that parse because
   # cmd_parse is the only thing that writes it and nothing calls it in between.
   local status=${CP_STATUS:-unreadable} nseg=$BDB_NSEG nsubseg=$BDB_NSUB
+  # That reuse holds only while cmd_parse stays the sole writer of CP_STATUS AND nothing
+  # calls it between the scan-set build and this trap. No test can see that invariant
+  # break: a stray cmd_parse leaves every assertion in the suite green and silently
+  # changes what this column means, which is the failure mode worth guarding because it
+  # is the one that looks like success. Check the pairing instead of the value —
+  # cmd_parse's contract is 0 with CP_STATUS=ok, non-zero with CP_STATUS=unreadable:<why>
+  # — so any other combination means something overwrote it. Record the desync rather
+  # than the stale value; a census that quietly reports the wrong status is worse than
+  # one that reports it cannot tell.
+  case "$BDB_PARSED:$status" in
+    1:ok | 0:unreadable:*) ;;
+    *)
+      printf 'block-dangerous-bash: census CP_STATUS desync (parsed=%s status=%s)\n' \
+        "$BDB_PARSED" "$status" >&2
+      status="desync:$status"
+      ;;
+  esac
   if [ "$BDB_PARSED" = 1 ]; then
     while [ "$i" -lt "$nseg" ]; do
       segscan=${BDB_NORMSEG[i]}
