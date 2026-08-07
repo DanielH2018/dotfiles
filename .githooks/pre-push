@@ -131,7 +131,7 @@ fi
 #    demand a good signature outright.
 run "commit signatures" bin/check-push-signatures
 
-# Steps 2-6 read the WORKING TREE, not the refs being pushed, so their answer cannot change
+# Steps 2-5 read the WORKING TREE, not the refs being pushed, so their answer cannot change
 # between two pushes of the same clean tree — and bin/land makes three such pushes per
 # landing (the branch, then <branch>:main, then the branch deletion). Measured 2026-08-07:
 # 3 × 58s of gate inside a 183s landing, two thirds of it re-answering an answered question.
