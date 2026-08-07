@@ -64,6 +64,12 @@ exit 0
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\necho "$*" >> "$SSH_LOG"\nexit 0\n`, { mode: 0o755 });
   // Injection seam for the guarded kill — logs the pid instead of signalling anything.
   const killStub = path.join(bin, 'killstub'); fs.writeFileSync(killStub, `#!/bin/bash\necho "$1" >> "$KILL_LOG"\nexit 0\n`, { mode: 0o755 });
+  // Every refusal path in actions.sh dwells 1.5s so the message can be read before fzf
+  // repaints over it. Nothing here runs fzf and nothing asserts the dwell, so that was 1.52s
+  // of dead wait on each of the ~10 refusal tests — the file's whole 15.4s. actions.sh calls
+  // sleep by bare name, so this shadows it the same way the ssh and claude stubs above do,
+  // and the dwell stays exactly as it is in production.
+  fs.writeFileSync(path.join(bin, 'sleep'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   // Real Windows sessions would render alongside the fixtures and shift the row numbering
   // the pin/jump assertions depend on. See tests/lib/agentview-env.js.
   const seams = agentviewWinSeams({ bin, scratch });
