@@ -82,24 +82,43 @@ def _function_table():
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog=PROG,
+        add_help=False,
         description="Query JSON with a closed subset of Python syntax.",
         epilog="Bound names: d (first document), d1..dN (per input), ds (all). "
                "There is no attribute access — see --functions for what is callable.",
     )
-    parser.add_argument("-r", "--raw", action="store_true",
-                        help="print string results unquoted, one per line for a list")
-    parser.add_argument("--indent", type=int, default=None,
-                        help="pretty-print with N spaces (default: compact)")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help=f"wall-clock cap in seconds (default: {DEFAULT_TIMEOUT})")
-    parser.add_argument("-s", "--script", metavar="SRC",
-                        help="multi-statement mode; assign the result to `out`")
-    parser.add_argument("--jsonl", action="store_true",
-                        help="parse each input as JSON Lines; `d` is the record list")
-    parser.add_argument("--functions", action="store_true",
-                        help="print every callable name and exit")
-    parser.add_argument("args", nargs="*", metavar="EXPR [FILE...]",
-                        help="expression, then input files (stdin if none)")
+    # Arguments go on groups, and -h is added by hand rather than by add_help,
+    # because `_ActionsContainer.add_argument` guards its metavar validation with
+    # `hasattr(self, "_get_validation_formatter")` — a method ArgumentParser has
+    # and a group does not. Registering on the parser therefore builds a
+    # HelpFormatter here, which imports shutil and _colorize and, behind them,
+    # dataclasses and inspect: 16ms of a 37ms parse, to lay out help that is
+    # almost never printed. A group skips it and parses identically.
+    #
+    # The two groups are named for argparse's own defaults and created in its own
+    # order, so --help renders byte-for-byte what add_help=True produced.
+    #
+    # Not a bug waiting on upstream. CPython gh-142267 cured the *repeated* build
+    # by caching the formatter (that cache is already here) but left the first one
+    # eager, having weighed and rejected a lazy _set_color as unbackportable.
+    positionals = parser.add_argument_group("positional arguments")
+    opts = parser.add_argument_group("options")
+    opts.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS,
+                      help="show this help message and exit")
+    opts.add_argument("-r", "--raw", action="store_true",
+                      help="print string results unquoted, one per line for a list")
+    opts.add_argument("--indent", type=int, default=None,
+                      help="pretty-print with N spaces (default: compact)")
+    opts.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                      help=f"wall-clock cap in seconds (default: {DEFAULT_TIMEOUT})")
+    opts.add_argument("-s", "--script", metavar="SRC",
+                      help="multi-statement mode; assign the result to `out`")
+    opts.add_argument("--jsonl", action="store_true",
+                      help="parse each input as JSON Lines; `d` is the record list")
+    opts.add_argument("--functions", action="store_true",
+                      help="print every callable name and exit")
+    positionals.add_argument("args", nargs="*", metavar="EXPR [FILE...]",
+                             help="expression, then input files (stdin if none)")
     ns = parser.parse_args(argv)
 
     if ns.functions:

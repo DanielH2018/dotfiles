@@ -352,6 +352,32 @@ test('statistics is imported per call, not on every invocation', { skip }, () =>
   assert.strictEqual(ok(['median(d["b"])', T]), '2', 'median works through the wrapper');
 });
 
+// Registering arguments on a group instead of the parser is what keeps argparse from
+// building a HelpFormatter — and so from importing shutil and _colorize — on every run.
+// It reads like a stylistic choice, so it is exactly the kind of thing a later cleanup
+// folds back into parser.add_argument(). Nothing about behaviour changes when that
+// happens, only the cost, so assert the imports and pin the help layout that proves the
+// groups are still named and ordered to match argparse's own defaults.
+test('argparse builds no help formatter unless help is actually asked for', { skip }, () => {
+  const importsOf = (...args) => spawnSync(
+    python, ['-X', 'importtime', JSONQ, ...args], { encoding: 'utf8' },
+  ).stderr;
+
+  const plain = importsOf('d["a"]', T);
+  assert.match(plain, /\| json$/m, '-X importtime output shape changed; checks below are inert');
+  assert.doesNotMatch(plain, /\| shutil$/m, 'a query must not build a help formatter');
+  assert.doesNotMatch(plain, /\| _colorize$/m, 'a query must not pull the colour machinery');
+
+  assert.match(importsOf('--help'), /\| _colorize$/m,
+    '--help must still format normally; the cost is deferred, not removed');
+
+  const help = ok(['--help']).replace(/\[[0-9;]*m/g, '');
+  assert.match(help, /^positional arguments:$/m, 'positional group heading preserved');
+  assert.match(help, /^options:$/m, 'options group heading preserved');
+  assert.ok(help.indexOf('positional arguments:') < help.indexOf('options:'),
+    'group order must match what add_help=True produced');
+});
+
 test('--script runs statements and returns `out`', { skip }, () => {
   assert.strictEqual(ok(['--script', 'out = sum(d["b"])', T]), '6');
   assert.strictEqual(
