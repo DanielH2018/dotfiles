@@ -267,10 +267,27 @@ test("a chezmoi query still answers while another process holds the state lock",
     return;
   }
 
-  const holder = cp.spawn("flock", ["-x", state, "-c", "sleep 30"], { stdio: "ignore" });
+  // The holder announces itself once it actually owns the lock. Waiting for that beats
+  // guessing an interval: 0.5s was both slower than it needed to be on an idle box and, on a
+  // loaded one, short enough to let the assertions below race a lock nobody holds yet --
+  // which fails the test for a reason that has nothing to do with the code under test.
+  //
+  // detached, so flock leads its own process group and the cleanup below can take the whole
+  // group down. `holder.kill()` alone reaches flock but NOT the shell it spawned, and that
+  // shell keeps the lock fd open for the rest of its 30s -- leaving a real lock on the real
+  // chezmoi state file after every run. That was enough to fail a concurrent `chezmoi apply`,
+  // and it is why this test only passed the first time: the next run's flock waited on the
+  // previous run's leak. The old fixed 0.5s sleep hid it, because a lock held by anything --
+  // including the leak -- satisfies the "a plain query must fail" assertion below.
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ti-lock-")), "held");
+  const holder = cp.spawn("flock", ["-x", state, "-c", `touch ${marker}; sleep 30`],
+    { stdio: "ignore", detached: true });
   const scratch = path.join(os.tmpdir(), "tools-inventory-test-state.boltdb");
   try {
-    cp.spawnSync("sh", ["-c", "sleep 0.5"]); // let flock actually take the lock
+    for (let i = 0; i < 300 && !fs.existsSync(marker); i += 1) {
+      cp.spawnSync("sh", ["-c", "sleep 0.01"]);
+    }
+    assert.ok(fs.existsSync(marker), "holder never took the lock");
     const plain = cp.spawnSync(bin, ["ignored"], { encoding: "utf8", timeout: 40000 });
     const scratched = cp.spawnSync(bin, ["--persistent-state", scratch, "ignored"],
       { encoding: "utf8", timeout: 40000 });
@@ -280,8 +297,10 @@ test("a chezmoi query still answers while another process holds the state lock",
     assert.strictEqual(scratched.status, 0, "--persistent-state must succeed anyway");
     assert.ok(scratched.stdout.split("\n").filter(Boolean).length > 0, "with a real list");
   } finally {
-    holder.kill();
+    // Negative pid: the whole group, so the shell holding the lock fd goes with flock.
+    try { process.kill(-holder.pid, "SIGKILL"); } catch { /* already gone */ }
     try { fs.rmSync(scratch, { force: true }); } catch { /* nothing to clean up */ }
+    try { fs.rmSync(path.dirname(marker), { recursive: true, force: true }); } catch { /* gone */ }
   }
 });
 
