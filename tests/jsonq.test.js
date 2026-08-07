@@ -18,7 +18,7 @@
 // Hermetic: fixtures live in a temp dir. Skips cleanly without python3.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -327,6 +327,22 @@ test('regex, numeric and collection helpers behave', { skip }, () => {
     'true');
   assert.strictEqual(ok(['kind(d)', T]), '"dict"');
   assert.strictEqual(ok(['kind(None)', T]), '"null"');
+});
+
+// `statistics` drags in decimal, fractions, random and bisect, and only mean() and
+// median() need it. Binding them as `statistics.mean` in the table would import it on
+// every invocation, so they go through wrappers that import inside the call. Nothing
+// about the output changes when that regresses — only the cost — so assert the import.
+test('statistics is imported per call, not on every invocation', { skip }, () => {
+  const importsOf = (expr) => spawnSync(
+    python, ['-X', 'importtime', JSONQ, expr, T], { encoding: 'utf8' },
+  ).stderr;
+
+  assert.doesNotMatch(importsOf('d["a"]'), /\| statistics$/m,
+    'a query that never calls mean/median must not pay for statistics');
+  assert.match(importsOf('mean(d["b"])'), /\| statistics$/m,
+    'mean must still reach the real statistics module');
+  assert.strictEqual(ok(['median(d["b"])', T]), '2', 'median works through the wrapper');
 });
 
 test('--script runs statements and returns `out`', { skip }, () => {

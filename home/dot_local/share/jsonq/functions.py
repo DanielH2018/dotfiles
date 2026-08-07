@@ -7,7 +7,6 @@ reference to every entry for the life of the process."""
 import json
 import math
 import re
-import statistics
 
 from _jsonq.errors import JsonqError
 from _jsonq.guards import _int, _pow, _range
@@ -175,6 +174,19 @@ def _re_sub(pattern, repl, text, count=0):
     return re.sub(pattern, repl, text, count=count)
 
 
+# `statistics` is the most expensive import in the tool — ~10ms of a 46ms run, and it
+# drags in decimal, fractions, random and bisect behind it. It backs two functions most
+# queries never call, so it is imported per call rather than per process.
+def _mean(values):
+    import statistics
+    return statistics.mean(values)
+
+
+def _median(values):
+    import statistics
+    return statistics.median(values)
+
+
 _SECTIONS = (
     ("core", {
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
@@ -208,7 +220,7 @@ _SECTIONS = (
     ("numbers", {
         "floor": math.floor, "ceil": math.ceil, "sqrt": math.sqrt,
         "log": math.log, "log10": math.log10, "exp": math.exp,
-        "mean": statistics.mean, "median": statistics.median,
+        "mean": _mean, "median": _median,
     }),
     ("collections", {
         "unique": _unique, "flatten": _flatten, "counter": _counter,
