@@ -1,0 +1,275 @@
+#!/bin/bash
+# Control linux-wallpaperengine: pick a wallpaper, pick a screen, start/stop the background.
+#
+# Wallpaper Engine itself is Windows-only and does not work under Proton — it needs to hook the
+# desktop shell, and there is no Windows desktop to hook. This drives Almamu/linux-wallpaperengine,
+# a native reimplementation of the renderer that reads the Steam-installed content directly.
+#
+# Two things about this box shape the design:
+#
+#   1. Steam keeps Wallpaper Engine on /mnt/games (NTFS), which goes dirty and silently unmounts
+#      after a hard freeze — see the ntfs-games-drive-dirty-after-freeze note. Depending on that
+#      mount for a login-time service means the wallpaper dies whenever the drive does, so the
+#      assets and the subscribed wallpapers are *copied* under ~/.local/share/wallpaperengine
+#      (~260 MB). `wpe sync` refreshes that copy after subscribing to something new. Nothing at
+#      runtime touches /mnt/games.
+#   2. Four displays already pin the GPU memory clock (multi-head-pins-gpu-memory-clock), so an
+#      animated wallpaper defaults to one output at 30 fps rather than all four uncapped.
+#
+# The wallpaper id and output live in ~/.config/wallpaperengine/config, not in the unit file, so
+# switching wallpapers does not mean editing systemd.
+set -euo pipefail
+
+PREFIX="$HOME/.local/lib/linux-wallpaperengine"
+BIN="$PREFIX/linux-wallpaperengine"
+DATA="$HOME/.local/share/wallpaperengine"
+ASSETS="$DATA/assets"
+WALLPAPERS="$DATA/wallpapers"
+CONFIG_DIR="$HOME/.config/wallpaperengine"
+CONFIG="$CONFIG_DIR/config"
+UNIT="wallpaperengine.service"
+
+# Steam's copy, used only by `wpe sync`.
+STEAM_WE="/mnt/games/SteamLibrary/steamapps/common/wallpaper_engine"
+STEAM_WORKSHOP="/mnt/games/SteamLibrary/steamapps/workshop/content/431960"
+
+# Defaults, overridden by the config file.
+WALLPAPER=""
+OUTPUT=""
+FPS=30
+SCALING=fill
+# wlr-layer-shell layer. `bottom` sits above Plasma's desktop and below normal windows, which is
+# upstream's default and what makes the wallpaper visible at all — plasmashell draws its own opaque
+# wallpaper on the `background` layer, so anchoring there can leave this one hidden behind it. The
+# cost of `bottom` is that it covers Plasma's desktop icons and widgets; on this machine all four
+# desktop containments have zero widgets and ~/Desktop is empty, so there is nothing to cover.
+# Switch with `wpe layer background` if that ever stops being true.
+LAYER=bottom
+# --silent because several of these wallpapers ship an audio track and would otherwise play over
+# whatever is already making noise. Drop it from EXTRA in the config file to get wallpaper audio.
+EXTRA="--disable-mouse --disable-parallax --silent"
+
+# shellcheck source=/dev/null  # written at runtime by write_config, nothing to follow at lint time
+[ -f "$CONFIG" ] && . "$CONFIG"
+
+die() { printf 'wpe: %s\n' "$1" >&2; exit 1; }
+
+count_wallpapers() { find "$WALLPAPERS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; }
+
+title_of() {
+  python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1]))["title"])
+except Exception: print("?")' "$WALLPAPERS/$1/project.json" 2>/dev/null || echo '?'
+}
+
+type_of() {
+  python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1]))["type"].lower())
+except Exception: print("?")' "$WALLPAPERS/$1/project.json" 2>/dev/null || echo '?'
+}
+
+write_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG" <<EOF
+# Written by \`wpe\`. WALLPAPER is a workshop id under $WALLPAPERS.
+WALLPAPER=$WALLPAPER
+OUTPUT=$OUTPUT
+FPS=$FPS
+SCALING=$SCALING
+LAYER=$LAYER
+EXTRA="$EXTRA"
+EOF
+}
+
+# Restart only if it is already running, so \`set\` and \`screen\` take effect immediately when the
+# wallpaper is up and stay quiet when it is not.
+reload_if_running() {
+  if systemctl --user is-active --quiet "$UNIT"; then
+    clear_failure
+    systemctl --user restart "$UNIT"
+    echo "restarted"
+  fi
+}
+
+cmd_list() {
+  [ -d "$WALLPAPERS" ] || die "no wallpapers at $WALLPAPERS — run: wpe sync"
+  for d in "$WALLPAPERS"/*/; do
+    id="$(basename "$d")"
+    marker="  "
+    [ "$id" = "$WALLPAPER" ] && marker="* "
+    printf '%s%-12s %-6s %s\n' "$marker" "$id" "$(type_of "$id")" "$(title_of "$id")"
+  done
+}
+
+# kscreen-doctor colours its output even when piped, so strip the escape sequences before parsing
+# — otherwise the field the display name lands in carries a colour code and never matches.
+outputs_raw() {
+  kscreen-doctor -o | sed 's/\x1b\[[0-9;]*m//g' | awk '
+    /^Output:/  { name = $3; enabled = "disabled" }
+    /^\tenabled/ { enabled = "enabled" }
+    /Geometry:/ { print name, $2, $3, enabled }
+  '
+}
+
+cmd_outputs() {
+  outputs_raw | while read -r name geom res state; do
+    marker="  "
+    [ "$name" = "$OUTPUT" ] && marker="* "
+    printf '%s%-10s %-10s %-10s %s\n' "$marker" "$name" "$res" "$geom" "$state"
+  done
+}
+
+cmd_set() {
+  [ $# -eq 1 ] || die "usage: wpe set <id>"
+  [ -d "$WALLPAPERS/$1" ] || die "no wallpaper $1 — try: wpe list"
+  WALLPAPER="$1"
+  write_config
+  echo "wallpaper: $WALLPAPER  $(title_of "$WALLPAPER") ($(type_of "$WALLPAPER"))"
+  reload_if_running
+}
+
+cmd_screen() {
+  [ $# -eq 1 ] || die "usage: wpe screen <output>   (see: wpe outputs)"
+  outputs_raw | awk -v n="$1" '$1 == n { found = 1 } END { exit !found }' \
+    || die "no output named $1 — try: wpe outputs"
+  OUTPUT="$1"
+  write_config
+  echo "output: $OUTPUT"
+  reload_if_running
+}
+
+cmd_fps() {
+  [ $# -eq 1 ] || die "usage: wpe fps <n>"
+  FPS="$1"
+  write_config
+  echo "fps: $FPS"
+  reload_if_running
+}
+
+cmd_layer() {
+  [ $# -eq 1 ] || die "usage: wpe layer <background|bottom|top|overlay>"
+  case "$1" in
+    background|bottom|top|overlay) ;;
+    *) die "layer must be one of: background, bottom, top, overlay" ;;
+  esac
+  LAYER="$1"
+  write_config
+  echo "layer: $LAYER"
+  reload_if_running
+}
+
+cmd_scaling() {
+  [ $# -eq 1 ] || die "usage: wpe scaling <stretch|fit|fill|default>"
+  case "$1" in
+    stretch|fit|fill|default) ;;
+    *) die "scaling must be one of: stretch, fit, fill, default" ;;
+  esac
+  SCALING="$1"
+  write_config
+  echo "scaling: $SCALING"
+  reload_if_running
+}
+
+# The actual invocation. Run by the systemd unit, and directly by `wpe run` for debugging.
+cmd_run() {
+  [ -x "$BIN" ] || die "not built — see $HOME/src/linux-wallpaperengine"
+  [ -n "$WALLPAPER" ] || die "no wallpaper set — try: wpe list, then wpe set <id>"
+  [ -n "$OUTPUT" ] || die "no output set — try: wpe outputs, then wpe screen <name>"
+  [ -d "$WALLPAPERS/$WALLPAPER" ] || die "wallpaper $WALLPAPER is gone — run: wpe sync"
+  # EXTRA is a flag list in a config file, so it has to word-split. Splitting it into an array
+  # deliberately beats leaving "$EXTRA" unquoted and silencing the warning.
+  local extra_args
+  read -ra extra_args <<< "$EXTRA"
+  exec "$BIN" \
+    --assets-dir "$ASSETS" \
+    --fps "$FPS" \
+    --layer "$LAYER" \
+    "${extra_args[@]}" \
+    --screen-root "$OUTPUT" \
+    --scaling "$SCALING" \
+    --bg "$WALLPAPERS/$WALLPAPER"
+}
+
+# Windowed, for checking whether a wallpaper renders at all without disturbing the desktop.
+cmd_preview() {
+  local id="${1:-$WALLPAPER}"
+  [ -x "$BIN" ] || die "not built — see $HOME/src/linux-wallpaperengine"
+  [ -d "$WALLPAPERS/$id" ] || die "no wallpaper $id — try: wpe list"
+  echo "preview: $id  $(title_of "$id")  (close the window to exit)"
+  "$BIN" --assets-dir "$ASSETS" --fps "$FPS" --window 0x0x1280x720 "$WALLPAPERS/$id"
+}
+
+# If the configured output is absent — which is exactly what a KVM flip down to one display does —
+# the binary exits 1, Restart=on-failure burns through StartLimitBurst in 90s and systemd parks the
+# unit in failed state. From there `systemctl start` answers "start request repeated too quickly"
+# and the wallpaper never returns on its own, even once the display is back. Clearing the failure
+# counter first makes start/restart mean what they say.
+clear_failure() { systemctl --user reset-failed "$UNIT" 2>/dev/null || true; }
+
+cmd_status() {
+  printf 'wallpaper : %s  %s\n' "${WALLPAPER:-<unset>}" "$([ -n "$WALLPAPER" ] && title_of "$WALLPAPER")"
+  printf 'output    : %s\n' "${OUTPUT:-<unset>}"
+  printf 'fps       : %s\n' "$FPS"
+  printf 'scaling   : %s\n' "$SCALING"
+  printf 'layer     : %s\n' "$LAYER"
+  printf 'binary    : %s\n' "$([ -x "$BIN" ] && echo "$BIN" || echo '<not built>')"
+  # Both queries exit non-zero for the perfectly normal inactive/disabled cases, so take the word
+  # they print and only fall back when they print nothing at all.
+  local active enabled
+  active="$(systemctl --user is-active "$UNIT" 2>/dev/null)" || true
+  enabled="$(systemctl --user is-enabled "$UNIT" 2>/dev/null)" || true
+  printf 'service   : %s, %s at login\n' "${active:-unknown}" "${enabled:-not enabled}"
+}
+
+# Re-copy from Steam. Needed after subscribing to new wallpapers in the Windows app, and after a
+# Wallpaper Engine update changes the shared assets.
+cmd_sync() {
+  mountpoint -q /mnt/games || die "/mnt/games is not mounted — Steam's copy is unreachable"
+  [ -d "$STEAM_WE/assets" ] || die "no assets at $STEAM_WE/assets"
+  mkdir -p "$DATA"
+  rsync -a --delete "$STEAM_WE/assets/" "$ASSETS/"
+  rsync -a --delete "$STEAM_WORKSHOP/" "$WALLPAPERS/"
+  echo "synced: $(count_wallpapers) wallpapers, $(du -sh "$DATA" | cut -f1) total"
+  reload_if_running
+}
+
+case "${1:-status}" in
+  list)     cmd_list ;;
+  outputs)  cmd_outputs ;;
+  set)      shift; cmd_set "$@" ;;
+  screen)   shift; cmd_screen "$@" ;;
+  fps)      shift; cmd_fps "$@" ;;
+  layer)    shift; cmd_layer "$@" ;;
+  scaling)  shift; cmd_scaling "$@" ;;
+  run)      cmd_run ;;
+  preview)  shift; cmd_preview "$@" ;;
+  sync)     cmd_sync ;;
+  status)   cmd_status ;;
+  start)    clear_failure; systemctl --user start "$UNIT" && cmd_status ;;
+  stop)     systemctl --user stop "$UNIT" && echo "stopped" ;;
+  restart)  clear_failure; systemctl --user restart "$UNIT" && cmd_status ;;
+  enable)   clear_failure; systemctl --user enable --now "$UNIT" && cmd_status ;;
+  disable)  systemctl --user disable --now "$UNIT" && echo "disabled" ;;
+  log)      journalctl --user -u "$UNIT" -n "${2:-50}" --no-pager ;;
+  *)
+    cat <<EOF
+usage: wpe <command>
+
+  status              current wallpaper, output, service state (default)
+  list                subscribed wallpapers; * marks the current one
+  outputs             connected displays; * marks the current one
+  set <id>            choose a wallpaper
+  screen <output>     choose which display it runs on
+  fps <n>             frame cap (default 30; 4 displays already pin the GPU clock)
+  scaling <mode>      stretch | fit | fill | default
+  layer <name>        background | bottom | top | overlay — use background if it
+                      ever covers desktop icons or widgets
+  preview [id]        render in a 1280x720 window, leaving the desktop alone
+  start | stop | restart
+  enable | disable    run at login, or stop doing so
+  log [n]             recent service output
+  sync                re-copy assets and wallpapers from Steam on /mnt/games
+  run                 foreground; what the service execs
+EOF
+    ;;
+esac

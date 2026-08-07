@@ -1,0 +1,22 @@
+[Unit]
+Description=Animated desktop wallpaper (linux-wallpaperengine)
+PartOf=graphical-session.target
+After=graphical-session.target
+# The content lives under ~/.local/share, deliberately copied off the NTFS games drive so a dirty
+# /mnt/games cannot take the wallpaper down with it. If the copy is missing the unit skips rather
+# than crash-looping; `wpe sync` puts it back.
+ConditionPathExists=%h/.local/share/wallpaperengine/wallpapers
+ConditionPathExists=%h/.local/share/wallpaperengine/assets
+# A wallpaper is not worth fighting for — give up after a few failures instead of respawning a
+# broken GL context forever. These are [Unit] keys, not [Service] ones, since systemd 229.
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/wpe run
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=graphical-session.target

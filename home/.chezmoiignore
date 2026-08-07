@@ -60,6 +60,13 @@ Scripts
 # passes the rest of the file through, so on a headless Linux host it is inert rather than
 # wrong -- which is why this is gated on the OS and not on the hostname.
 .config/powerdevilrc
+# wpe drives linux-wallpaperengine, a native reimplementation of Wallpaper Engine's renderer that
+# exists only for Linux — Wallpaper Engine itself is a Windows app and does not work under Proton.
+# The control script talks to a systemd user manager, kscreen-doctor and wlr-layer-shell, none of
+# which exist on macOS or Windows, so all three paths are dead weight there rather than degraded.
+.local/bin/wpe
+.config/systemd/user/wallpaperengine.service
+.config/wallpaperengine
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to

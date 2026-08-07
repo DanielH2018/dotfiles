@@ -1,0 +1,13 @@
+# First-run defaults for `wpe`. This is a create_ file: chezmoi writes it once on a machine that
+# doesn't have it and never touches it again, because `wpe set` / `wpe screen` / `wpe layer` rewrite
+# it in place. Managing it normally would mean every `chezmoi apply` reverted the chosen wallpaper.
+#
+# WALLPAPER is a workshop id under ~/.local/share/wallpaperengine/wallpapers — run `wpe list`.
+# OUTPUT is a Wayland output name — run `wpe outputs`. DP-1 is the primary on this desktop; on any
+# other machine set it before `wpe enable`, since a missing output makes the unit exit 1.
+WALLPAPER=1569613506
+OUTPUT=DP-1
+FPS=30
+SCALING=fill
+LAYER=bottom
+EXTRA="--disable-mouse --disable-parallax --silent"
