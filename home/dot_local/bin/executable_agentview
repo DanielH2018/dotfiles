@@ -166,6 +166,8 @@ AV_COLOR="$AV_COLOR,header:#9399b2,footer:#6c7086,info:#cba6f7,pointer:#b4befe,p
 AV_COLOR="$AV_COLOR,border:#45475a,label:#bac2de,ghost:#585b70,preview-border:#45475a,preview-label:#bac2de"
 
 av_pick() {  # $1=width $2=height, rest = fzf args; stdin = the list, stdout = the pick
+  # Both dimensions take either form tmux and fzf accept — a percentage of the terminal, or a
+  # LINE COUNT. A caller whose list is short and fully known passes lines, so the box fits it.
   local w="$1" h="$2" lst sel cmd rc
   shift 2
   set -- --color="$AV_COLOR" "$@"

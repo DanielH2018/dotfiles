@@ -32,11 +32,16 @@ spawn_pick_host() {  # echo self | pc | remote:<alias> (empty = cancel). Reachab
   # native box. It was hardcoded "WSL", which named nothing on a Linux host and read as a
   # target that wasn't there. "PC (Windows)" is the separate Windows side, so both rows show
   # under WSL and only the one shows elsewhere; the ssh hosts follow on every machine.
-  local rows sel h
+  local rows sel h n
   rows="$selflabel"
   is_windows_host "$winhost" && [ -x "$WEZTERM_WIN" ] && rows="$rows"$'\n'"PC (Windows)"
   for h in "${!HOST_SSH[@]}"; do rows="$rows"$'\n'"${HOST_LABEL[$h]:-$h}"; done
-  sel=$(printf '%s\n' "$rows" | av_pick 46% 30% --prompt 'host> ' --layout=reverse \
+  # Size the box to the list rather than to the terminal. This one is short and fully known
+  # before it opens, so a percentage can only be wrong: 30% of a modest window left the third
+  # host below the fold, scrolling a three-item list. The chrome around the rows is exactly
+  # four lines — the two border lines, the prompt and the header (--info=hidden costs none).
+  n=$(printf '%s\n' "$rows" | wc -l)
+  sel=$(printf '%s\n' "$rows" | av_pick 46% "$((n + 4))" --prompt 'host> ' --layout=reverse \
     --border=rounded --info=hidden --pointer='▌' --highlight-line \
     --header 'new session · pick a host · esc cancels')
   [ -n "$sel" ] || return 0

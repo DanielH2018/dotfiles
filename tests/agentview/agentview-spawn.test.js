@@ -190,6 +190,32 @@ test('host chooser offers WSL + PC under WSL', { skip }, () => {
   assert.ok(rows.includes('Box') && rows.includes('Homelab'), `ssh hosts offered; got ${rows}`);
 });
 
+test('the host box is sized to its rows, not to a slice of the terminal', { skip }, () => {
+  // 3 rows (Linux/Box/Homelab) + border, prompt and header = 7 lines. A percentage cannot
+  // know that: at 30% the third host sat below the fold on an ordinary window.
+  const { env, fzfArgsLog, hostListFile } = makeEnv();
+  run(env, { FZF_REPO: 'airflow', FZF_BRANCH: '' });                     // no tmux -> plain fzf
+  const rows = fs.readFileSync(hostListFile, 'utf8').split('\n').filter(Boolean);
+  const hostArgs = fs.readFileSync(fzfArgsLog, 'utf8').split('\n')
+    .filter((l) => l.startsWith('host'))[0];
+  assert.ok(hostArgs, 'the host chooser ran');
+  assert.match(hostArgs, new RegExp(`--height=~${rows.length + 4}(\\s|$)`),
+    `box fits ${rows.length} rows; got ${hostArgs}`);
+});
+
+test('the tmux popup for the host pick gets the same fitted height', { skip }, () => {
+  const { env, tmuxLog, hostListFile } = makeEnv();
+  run(env, { TMUX: '/tmp/tmux-1000/default,1,0', FZF_REPO: 'airflow', FZF_BRANCH: '' });
+  const rows = fs.readFileSync(hostListFile, 'utf8').split('\n').filter(Boolean);
+  const popup = fs.readFileSync(tmuxLog, 'utf8').split('\n')
+    // tmux re-parses the popup body, so av_pick %q-escapes every word: the prompt reads
+    // `--prompt host\>\ ` in the log, not `host> `.
+    .filter((l) => l.startsWith('display-popup') && l.includes('--prompt host'))[0];
+  assert.ok(popup, `a popup opened for the host pick; got ${fs.readFileSync(tmuxLog, 'utf8')}`);
+  // -B means tmux draws no border of its own, so the popup height IS the fzf box height.
+  assert.match(popup, new RegExp(`-h ${rows.length + 4}(\\s|$)`), `popup fits the rows; got ${popup}`);
+});
+
 // ---- theming: every box the spawn flow opens is Catppuccin Mocha, like the terminal ----
 test('every spawn chooser inherits the Mocha palette from av_pick', { skip }, () => {
   const { env, fzfArgsLog } = makeEnv();
