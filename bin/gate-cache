@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+#
+# gate-cache — remember that the pre-push gate's working-tree checks passed, so a second
+# push of the same clean tree does not re-run them.
+#
+# bin/land pushes three times per landing — the branch, then <branch>:main, then the
+# branch deletion — and git runs pre-push on every one. Only the signature check reads
+# the push range; the other ~57s (config-soak, instruction quality, lint, the injection
+# guard, the 2039-test suite) is a pure function of the working tree, and land cannot
+# change the tree between those pushes because it refuses to run on a dirty one. Measured
+# 2026-08-07: 3 × 58s of gate inside a 183s landing, two of the three re-answering a
+# question that was answered seconds earlier.
+#
+#   gate-cache check    exit 0 (and print the record's age in seconds) if the tree gate
+#                       can be skipped; non-zero, silently, for every other reason
+#   gate-cache save     record HEAD as green; a no-op on a dirty tree
+#
+# The key is HEAD's sha and nothing else, and it is only consulted when the tree is CLEAN.
+# Two clean trees at the same sha are byte-identical, so a hit is exact rather than
+# probable. The wider key that suggests itself — sha plus a digest of `git status
+# --porcelain` — is NOT exact and must not be used: porcelain lists paths and status
+# letters, never contents, so editing one file twice yields the same digest both times and
+# the second edit would inherit the first one's pass.
+#
+# Every failure path here is a miss. A cache that cannot answer must never be the reason a
+# push is blocked, and a wrong hit is invisible — the suite does not run and the push still
+# reports green, which looks exactly like having run it.
+#
+# GATE_CACHE_OFF=1 forces a miss. GATE_CACHE_TTL bounds a record's age (default 300s):
+# the key covers tracked content, not the node/ruff/shellcheck versions that ran against
+# it, so a record is deliberately short-lived. A landing takes about a minute.
+#
+# Kept bash-3.2 clean, like the gate that calls it.
+set -u
+
+RECORD_NAME=gate-cache
+TTL="${GATE_CACHE_TTL:-300}"
+
+usage() { printf 'usage: gate-cache check|save\n' >&2; exit 2; }
+
+# The git dir, not the worktree root: worktrees get their own, which is what we want —
+# a sibling worktree sharing this repo has a different tree and has proved nothing about
+# it, even when its HEAD sha matches.
+record_path() {
+  gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [ -n "$gitdir" ] || return 1
+  printf '%s/%s\n' "$gitdir" "$RECORD_NAME"
+}
+
+is_clean() {
+  status=$(git status --porcelain 2>/dev/null) || return 1
+  [ -z "$status" ]
+}
+
+is_number() { case "${1:-}" in '' | *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
+cmd_check() {
+  [ -z "${GATE_CACHE_OFF:-}" ] || return 1
+  is_number "$TTL" || return 1
+
+  record=$(record_path) || return 1
+  [ -f "$record" ] || return 1
+
+  # Clean first: on a dirty tree the sha below still matches the tree that passed, and
+  # matching it is precisely what must not be enough.
+  is_clean || return 1
+
+  head_sha=$(git rev-parse HEAD 2>/dev/null) || return 1
+
+  # A truncated or hand-edited record reads as a miss, not an error.
+  read -r sha stamp _rest < "$record" || return 1
+  [ "${sha:-}" = "$head_sha" ] || return 1
+  is_number "${stamp:-}" || return 1
+
+  now=$(date +%s) || return 1
+  age=$((now - stamp))
+  # A negative age means the clock moved backwards since the record was written; that is
+  # not a fresh record, it is an unreadable one.
+  [ "$age" -ge 0 ] || return 1
+  # Strictly less than, so GATE_CACHE_TTL=0 disables the cache outright rather than
+  # admitting the record written a moment ago.
+  [ "$age" -lt "$TTL" ] || return 1
+
+  printf '%s\n' "$age"
+}
+
+cmd_save() {
+  # Not an error: the gate still passed, there is just nothing here worth vouching for.
+  is_clean || return 0
+
+  record=$(record_path) || return 0
+  head_sha=$(git rev-parse HEAD 2>/dev/null) || return 0
+  now=$(date +%s) || return 0
+
+  # Write-then-rename, so a reader never sees a half-written record.
+  tmp="$record.$$"
+  printf '%s %s\n' "$head_sha" "$now" > "$tmp" 2>/dev/null || return 0
+  mv -f "$tmp" "$record" 2>/dev/null || { rm -f "$tmp"; return 0; }
+}
+
+[ $# -eq 1 ] || usage
+case "$1" in
+  check) cmd_check ;;
+  save) cmd_save ;;
+  *) usage ;;
+esac

@@ -26,6 +26,10 @@
 #                             settings merge, dotsync, evals lib); offline, self-skips the
 #                             chezmoi-template tests when chezmoi isn't installed.
 #
+# Checks 2-5 read the working tree, not the refs being pushed, so bin/gate-cache lets a
+# second push of the same clean tree skip them — see the guard below. Check 1 is never
+# cached. GATE_CACHE_OFF=1 git push re-runs everything.
+#
 # Both test steps print a tq digest rather than the runner's own log — see
 # tq_node below. TQ_OFF=1 git push restores the raw output.
 #
@@ -127,72 +131,88 @@ fi
 #    demand a good signature outright.
 run "commit signatures" bin/check-push-signatures
 
-# 2. Deterministic review/soak ledger — no LLM, no judgement.
-run "config-soak (review ledger)" node bin/config-soak status
-
-# 3. Instruction-file quality. Security gate (>=70) is always enforced by
-#    `verify`; the composite floor is a ratchet pinned to today's worst file, so
-#    any regression below the current baseline blocks the push. rules/python.md
-#    and rules/rust.md both score 52 and set the floor; 53 fails. Raise this as
-#    those files improve — a floor below the true minimum is slack, not a gate.
-QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-52}"
-QFILES=$(ls home/private_dot_claude/agents/*.md \
-            home/private_dot_claude/skills/*/SKILL.md \
-            home/private_dot_claude/rules/*.md \
-            home/private_dot_claude/CLAUDE.md.tmpl 2>/dev/null)
-if [ -n "$QFILES" ]; then
-  # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
-  run "instruction quality (security>=70; composite>=${QUALITY_MIN_SCORE})" \
-    python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
-else
-  # The `ls` above eats its own error, so an empty match dropped the security gate entirely
-  # and printed nothing at all — the one degrade site with no trace in the log.
-  note_skip "instruction quality" "instruction quality - no instruction files matched, skipped"
+# Steps 2-6 read the WORKING TREE, not the refs being pushed, so their answer cannot change
+# between two pushes of the same clean tree — and bin/land makes three such pushes per
+# landing (the branch, then <branch>:main, then the branch deletion). Measured 2026-08-07:
+# 3 × 58s of gate inside a 183s landing, two thirds of it re-answering an answered question.
+# bin/gate-cache keys on HEAD's sha and answers only for a clean tree; the reasoning for a
+# key that narrow is in that file. The signature check above stays outside this on purpose —
+# it is the one step that reads the push range, so its answer really does differ per push.
+GATE="$ROOT/bin/gate-cache"
+tree_cached=0
+if [ -x "$GATE" ] && cache_age=$("$GATE" check 2>/dev/null); then
+  tree_cached=1
+  note_skip "tree gate" "tree gate - this clean tree passed ${cache_age}s ago (GATE_CACHE_OFF=1 to re-run)"
 fi
 
-# 3b. Lint. Scope comes from .pre-commit-config.yaml so there is one definition of what
-#    gets linted; prek is the runner because it is what is installed here. Before this
-#    step the config had no runner attached at all — .git/hooks-safe holds only a
-#    pre-push, so nothing ever executed it, and ruff/shellcheck reached files solely via
-#    the lint-after-edit PostToolUse hook. That made coverage depend on Claude being the
-#    editor. Skips rather than fails when prek is absent, matching how tq degrades above:
-#    a missing local tool should not block a push on a machine that never installed it.
-if command -v prek >/dev/null 2>&1; then
-  run "lint (ruff + shellcheck)" prek run --all-files
-else
-  note_skip "lint" "lint (ruff + shellcheck) - prek not installed, skipped"
-fi
+if [ "$tree_cached" -eq 0 ]; then
+  # 2. Deterministic review/soak ledger — no LLM, no judgement.
+  run "config-soak (review ledger)" node bin/config-soak status
 
-# 4. Injection-hook red-team regression guard. Run through --test rather than as
-#    a bare script so the digest covers it too; the file is a node:test suite
-#    either way, and step 5's list picks it up as well — it stays a named step so
-#    a red-team regression is attributed instead of buried in the suite total.
-run "screen-injection red-team" tq_node injection tests/hooks/screen-injection.test.js
+  # 3. Instruction-file quality. Security gate (>=70) is always enforced by
+  #    `verify`; the composite floor is a ratchet pinned to today's worst file, so
+  #    any regression below the current baseline blocks the push. rules/python.md
+  #    and rules/rust.md both score 52 and set the floor; 53 fails. Raise this as
+  #    those files improve — a floor below the true minimum is slack, not a gate.
+  QUALITY_MIN_SCORE="${QUALITY_MIN_SCORE:-52}"
+  QFILES=$(ls home/private_dot_claude/agents/*.md \
+              home/private_dot_claude/skills/*/SKILL.md \
+              home/private_dot_claude/rules/*.md \
+              home/private_dot_claude/CLAUDE.md.tmpl 2>/dev/null)
+  if [ -n "$QFILES" ]; then
+    # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
+    run "instruction quality (security>=70; composite>=${QUALITY_MIN_SCORE})" \
+      python3 quality/instruction_quality.py verify $QFILES --min-score "$QUALITY_MIN_SCORE"
+  else
+    # The `ls` above eats its own error, so an empty match dropped the security gate entirely
+    # and printed nothing at all — the one degrade site with no trace in the log.
+    note_skip "instruction quality" "instruction quality - no instruction files matched, skipped"
+  fi
 
-# 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
-#    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
-#
-#    The file list comes from git, NOT from `node --test`'s own discovery. Node's default
-#    discovery skips every directory whose name starts with a dot, at any depth — verified
-#    on node 24.18.1 with a fixture: a *.test.js under sub/.hidden/deep/ is not collected.
-#    Two real suites live under vault-tooling/claude-audit-portable/pkg/.claude/ and were
-#    therefore never run by this gate, and nothing said so: the run just reported a smaller
-#    total, and a total nobody has a baseline for looks exactly like a passing one. (Both
-#    pass — this had hidden no failure, only the fact that it was hiding.)
-#
-#    Deriving the list from `git ls-files` also makes the covered set the TRACKED set, so a
-#    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,
-#    .chezmoidata/ are all invisible to node's walk — is picked up by construction rather
-#    than by remembering this constraint.
-TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs')
-if [ -z "$TEST_FILES" ]; then
-  # Bare `node --test` would silently fall back to its own discovery, i.e. the bug above.
-  printf '%s✗ unit tests: git ls-files matched no test files%s\n' "$R" "$Z" >&2
-  fail=1
-else
-  # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
-  run "unit tests (node --test)" tq_node unit $TEST_FILES
-fi
+  # 3b. Lint. Scope comes from .pre-commit-config.yaml so there is one definition of what
+  #    gets linted; prek is the runner because it is what is installed here. Before this
+  #    step the config had no runner attached at all — .git/hooks-safe holds only a
+  #    pre-push, so nothing ever executed it, and ruff/shellcheck reached files solely via
+  #    the lint-after-edit PostToolUse hook. That made coverage depend on Claude being the
+  #    editor. Skips rather than fails when prek is absent, matching how tq degrades above:
+  #    a missing local tool should not block a push on a machine that never installed it.
+  if command -v prek >/dev/null 2>&1; then
+    run "lint (ruff + shellcheck)" prek run --all-files
+  else
+    note_skip "lint" "lint (ruff + shellcheck) - prek not installed, skipped"
+  fi
+
+  # 4. Injection-hook red-team regression guard. Run through --test rather than as
+  #    a bare script so the digest covers it too; the file is a node:test suite
+  #    either way, and step 5's list picks it up as well — it stays a named step so
+  #    a red-team regression is attributed instead of buried in the suite total.
+  run "screen-injection red-team" tq_node injection tests/hooks/screen-injection.test.js
+
+  # 5. Deterministic unit suite — hooks, config-soak, settings merge, dotsync, evals lib.
+  #    Fast + offline; the chezmoi-template tests self-skip when chezmoi isn't installed.
+  #
+  #    The file list comes from git, NOT from `node --test`'s own discovery. Node's default
+  #    discovery skips every directory whose name starts with a dot, at any depth — verified
+  #    on node 24.18.1 with a fixture: a *.test.js under sub/.hidden/deep/ is not collected.
+  #    Two real suites live under vault-tooling/claude-audit-portable/pkg/.claude/ and were
+  #    therefore never run by this gate, and nothing said so: the run just reported a smaller
+  #    total, and a total nobody has a baseline for looks exactly like a passing one. (Both
+  #    pass — this had hidden no failure, only the fact that it was hiding.)
+  #
+  #    Deriving the list from `git ls-files` also makes the covered set the TRACKED set, so a
+  #    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,
+  #    .chezmoidata/ are all invisible to node's walk — is picked up by construction rather
+  #    than by remembering this constraint.
+  TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs')
+  if [ -z "$TEST_FILES" ]; then
+    # Bare `node --test` would silently fall back to its own discovery, i.e. the bug above.
+    printf '%s✗ unit tests: git ls-files matched no test files%s\n' "$R" "$Z" >&2
+    fail=1
+  else
+    # shellcheck disable=SC2086  # word-split intended; these paths have no spaces
+    run "unit tests (node --test)" tq_node unit $TEST_FILES
+  fi
+fi  # tree_cached
 
 # Reap scratch dirs from runs that were killed before their cleanup handlers could run.
 # After the suite, not before: this is the run most likely to have just made some, and a
@@ -204,6 +224,16 @@ if [ "$fail" -ne 0 ]; then
   printf '\n%spre-push blocked.%s Fix the above, or bypass once: git push --no-verify\n' "$R" "$Z" >&2
   exit 1
 fi
+
+# Green, and the tree gate actually ran — vouch for this tree so the rest of the landing's
+# pushes can skip it. After the fail check, never before: a record written by a red run is
+# the one thing that would let a broken tree onto main. Re-recording after a hit would let
+# a chain of hits slide the record's timestamp forward indefinitely, so a tree is only ever
+# vouched for by a run that tested it.
+if [ "$tree_cached" -eq 0 ] && [ -x "$GATE" ]; then
+  "$GATE" save || true
+fi
+
 if [ "$nskipped" -eq 0 ]; then
   printf '\n%spre-push checks passed.%s\n' "$G" "$Z"
 else
