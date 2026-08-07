@@ -1,0 +1,104 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Stops ABRT raising a desktop crash notification for
+# StreamController, which aborts from an upstream libdbus assertion ("watch != NULL" in
+# dbus-watch.c) several times a day and recovers itself every time via Restart=on-failure on
+# its autostart unit. The popup therefore reported a problem that had already fixed itself
+# seconds earlier.
+#
+# This suppresses the notification, not merely the package attribution. abrt-action-save-
+# package-data runs inside the post-create event (/etc/libreport/events.d/abrt_event.conf),
+# and a blacklist hit there aborts the chain before the `notify` event — which is the D-Bus
+# signal abrt-applet listens on. That file's own CAUTION comment states it: "The event
+# 'notify' might not get executed if any of the post-create events decide that the problem
+# should be ignored by ABRT (e.g. unpackaged program, unsigned package, ...)".
+#
+# Why the path is narrower than it looks: /usr/bin/python3.13 does NOT exist on this host —
+# the system python is 3.14, and rpm owns no such file. That path can only ever come from
+# inside a flatpak sandbox, so this cannot mute a host python crash. StreamController is
+# currently the only app on org.gnome.Platform/50.
+#
+# It is still a path match rather than a signature match, because ABRT has no way to filter on
+# a crash signature — BlackList takes package names and BlackListedPaths takes executable-path
+# globs, and neither can see the assertion string or the cmdline. So if Fedora ever ships a
+# host /usr/bin/python3.13, or another python3.13-runtime flatpak is installed, this silently
+# widens. That is the tradeoff, accepted deliberately.
+#
+# Evidence is unaffected either way: systemd-coredump records every abort independently of
+# ABRT (`coredumpctl list`), and the decisive assertion string goes to the journal. Both have
+# always been the real evidence path for this bug; the ABRT report never was.
+#
+# Losing the report is the point, so it is not paired with the report *cleanup* in
+# ~/.local/bin/streamcontroller-health. That cleanup stays: it clears reports predating this
+# blacklist, and reports from any crash this path does not match.
+#
+# No daemon restart: abrt-action-save-package-data is invoked as a fresh subprocess per crash
+# by the event pipeline, so it reads this file on the next abort.
+#
+# bump-to-reinstall: abrt-blacklist v1
+set -u
+TAG=abrt-blacklist
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can exercise this against a throwaway file; nothing in
+# normal operation sets it.
+: "${ABRT_CONF:=/etc/abrt/abrt-action-save-package-data.conf}"
+
+BEGIN_MARK='# >>> chezmoi abrt-blacklist >>>'
+END_MARK='# <<< chezmoi abrt-blacklist <<<'
+
+# ABRT replaces the default list wholesale when this key is set rather than extending it, so
+# its four documented defaults are repeated here. Dropping them would start reporting crashes
+# in /usr/share/doc and firefox's plugin-container, which nobody asked for.
+WANT='BlackListedPaths = /usr/share/doc/*, */example*, /usr/bin/nspluginviewer, /usr/lib*/firefox/plugin-container, /usr/bin/python3.13'
+
+[ -f "$ABRT_CONF" ] || { echo "$TAG: $ABRT_CONF does not exist; nothing to configure" >&2; exit 0; }
+
+# A block missing its closing marker would make the strip below swallow the rest of the file,
+# so refuse rather than truncate the config on the way to a one-line edit.
+if [ "$(grep -c -F -x "$BEGIN_MARK" "$ABRT_CONF")" -ne "$(grep -c -F -x "$END_MARK" "$ABRT_CONF")" ]; then
+  echo "$TAG: the managed block in $ABRT_CONF is unbalanced; repair its markers by hand" >&2
+  exit 1
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+stripped="$work/stripped"
+proposed="$work/proposed"
+
+# The file as it would be with any previous managed block removed. Everything below reasons
+# about this, so a re-run compares against the operator's own content, not against its own
+# output from last time.
+awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
+  $0 == b { skip = 1; next }
+  $0 == e { skip = 0; next }
+  !skip   { print }
+' "$ABRT_CONF" > "$stripped"
+
+# A BlackListedPaths set by hand outside the block wins or loses on load-order behaviour that
+# has not been verified here, so leave it alone rather than write a second, conflicting copy.
+# This is also what makes the script safe to run after the same line was pasted in manually.
+if grep -qE '^[[:space:]]*BlackListedPaths[[:space:]]*=' "$stripped"; then
+  echo "$TAG: BlackListedPaths is already set in $ABRT_CONF outside the managed block; leaving it alone" >&2
+  exit 0
+fi
+
+# The file is a flat list of `Option = Value` with no sections (man 5
+# abrt-action-save-package-data.conf), so appending is always the right placement — unlike an
+# ini file, there is no wrong stanza to land under.
+{
+  cat "$stripped"
+  printf '%s\n%s\n%s\n' "$BEGIN_MARK" "$WANT" "$END_MARK"
+} > "$proposed"
+
+# Convergence check before the sudo probe: a no-op apply must not prompt for a password.
+if cmp -s "$proposed" "$ABRT_CONF"; then
+  exit 0
+fi
+
+require_sudo "the ABRT crash-notification blacklist"
+
+echo "$TAG: blacklisting the StreamController crash path in $ABRT_CONF"
+sudo install -m 0644 "$proposed" "$ABRT_CONF" \
+  || { echo "$TAG: could not write $ABRT_CONF" >&2; exit 1; }
+{{ end -}}
