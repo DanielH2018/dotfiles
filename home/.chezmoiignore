@@ -63,10 +63,14 @@ Scripts
 # wpe drives linux-wallpaperengine, a native reimplementation of Wallpaper Engine's renderer that
 # exists only for Linux — Wallpaper Engine itself is a Windows app and does not work under Proton.
 # The control script talks to a systemd user manager, kscreen-doctor and wlr-layer-shell, none of
-# which exist on macOS or Windows, so all three paths are dead weight there rather than degraded.
+# which exist on macOS or Windows, so these paths are dead weight there rather than degraded.
+# The .desktop entry goes with them: XDG desktop entries are a freedesktop mechanism, and the one
+# here launches the Linux-only picker.
 .local/bin/wpe
+.local/bin/wpe-pick
 .config/systemd/user/wallpaperengine.service
 .config/wallpaperengine
+.local/share/applications/wpe-pick.desktop
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to

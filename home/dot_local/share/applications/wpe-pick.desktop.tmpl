@@ -1,0 +1,22 @@
+[Desktop Entry]
+# Launcher for the linux-wallpaperengine thumbnail picker, so it is reachable from KRunner, the
+# application menu and anything that launches apps by desktop id (a Stream Deck key, for one)
+# rather than only from a shell.
+#
+# Templated for the Exec path: a desktop entry has no field code for the home directory (%h is not
+# one — the codes are %f %F %u %U %i %c %k), and a bare `wpe pick` would depend on ~/.local/bin
+# being on the PATH of whatever the desktop environment uses to spawn applications, which is not
+# the login shell's PATH.
+Type=Application
+Name=Wallpaper Engine
+GenericName=Animated Wallpaper Picker
+Comment=Pick an animated wallpaper for the desktop
+Exec={{ .chezmoi.homeDir }}/.local/bin/wpe pick
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=wallpaper;background;animated;desktop;engine;
+# The GTK application_id, so the task manager groups the window with this entry instead of
+# showing it as an unmatched python3 process.
+StartupWMClass=dev.local.wpe-pick
+StartupNotify=true
