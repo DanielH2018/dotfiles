@@ -306,6 +306,16 @@
             "type": "command",
             "command": "~/server/.claude/hooks/auto-approve-remote-ssh.sh",
             "timeout": 10
+          },
+          {{/* Widens the two hooks above for ONE host: any `ssh daniel-server CMD`, not just a
+               read-only verb. A permission rule can't express this — `Bash(ssh:*)` is an `ask`
+               rule and ask beats allow whatever the specificity, so only a PermissionRequest
+               hook resolves it. block-dangerous-bash.sh still denies sudo/rm -rf/reboot in the
+               remote payload on PreToolUse, which runs first and is unaffected by this. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-daniel-server.sh",
+            "timeout": 10
           }
         ]
       }
