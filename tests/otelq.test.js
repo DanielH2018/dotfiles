@@ -70,15 +70,18 @@ elif verb == "all":
         "prompts": m.report_prompts(a["decisions"], "1d"),
         "bytes": m.report_bytes(a["totals"], a["big"], "1d", 20000),
         "failures": m.report_failures(a["failures"], "1d"),
+        "reduction": m.report_reduction(a["filters"], "1d"),
     }
     for name in a.get("truncated", []):
         parts[name]["truncated"] = True
     payload = m.report_all(
         1700000000, "1d", parts["prompts"], parts["bytes"], parts["failures"],
         m.report_subst({k: tuple(v) for k, v in a["subst"].items()}, "1d"),
-        m.report_reduction(a["filters"], "1d"))
+        parts["reduction"])
     # Serialized exactly as the CLI does, since the rollup matches on the text.
     print(json.dumps(payload, indent=None, ensure_ascii=False))
+elif verb == "rotated":
+    print(json.dumps(m._rotated_into_window(sys.argv[2], float(sys.argv[3]))))
 elif verb == "readrecs":
     print(json.dumps(m._read_jsonl(sys.argv[2], sys.argv[4], int(sys.argv[3]))))
 `);
@@ -457,11 +460,27 @@ test('the rollup guard accepts what savings all actually emits', { skip }, () =>
 test('savings all carries a capped fetch into the record it keeps', { skip }, () => {
   const clean = JSON.parse(drive(['all'], JSON.stringify(allInput())));
   assert.strictEqual(clean.truncated, false);
-  for (const part of ['prompts', 'bytes', 'failures']) {
+  for (const part of ['prompts', 'bytes', 'failures', 'reduction']) {
     const out = JSON.parse(drive(['all'], JSON.stringify(allInput({ truncated: [part] }))));
     assert.strictEqual(out.truncated, true,
       `a capped ${part} fetch must not be written down as a whole count`);
   }
+});
+
+test('reduction flags a rotation that took part of the window with it', { skip }, () => {
+  // jsonq keeps one generation at .1 and the reader opens only the live file,
+  // so without this the missing half reads as a whole count.
+  const live = path.join(DIR, 'filters.jsonl');
+  fs.writeFileSync(live, '');
+  assert.strictEqual(drive(['rotated', live, '1000']), 'false', 'no .1 yet');
+
+  fs.writeFileSync(live + '.1', '');
+  fs.utimesSync(live + '.1', 500, 500);
+  assert.strictEqual(drive(['rotated', live, '1000']), 'false',
+    'a rotation older than the window costs it nothing');
+
+  fs.utimesSync(live + '.1', 2000, 2000);
+  assert.strictEqual(drive(['rotated', live, '1000']), 'true');
 });
 
 test('reduction reports nulls rather than zero when there is nothing to measure', { skip }, () => {

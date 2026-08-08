@@ -445,10 +445,25 @@ def report_reduction(records, window):
     }
 
 
+def _rotated_into_window(path, cutoff):
+    """Did jsonq rotate the counter away part-way through this window?
+
+    jsonq keeps one generation at `.1` and this reads only the live file, so a
+    window spanning a rotation is missing whatever went with it. The rotation is
+    the last write `.1` ever gets, so an mtime at or after the cutoff means
+    records inside the window are in there.
+    """
+    try:
+        return os.path.getmtime(path + ".1") >= cutoff
+    except OSError:
+        return False
+
+
 def cmd_savings_reduction(ns, now):
     cutoff = now - parse_duration(ns.since)
     records = _read_jsonl(FILTER_METRICS, "t", cutoff)
     payload = report_reduction(records, ns.since)
+    payload["truncated"] = _rotated_into_window(FILTER_METRICS, cutoff)
     if not records:
         payload["note"] = (
             f"no records in {FILTER_METRICS} for this window — the counter writes "
@@ -570,7 +585,7 @@ def report_all(now, window, prompts, byte_report, failures, subst, reduction):
         # The rollup keeps this line after the events behind it are gone, so a
         # capped count recorded as whole can never be caught later.
         "truncated": any(part.get("truncated")
-                         for part in (prompts, byte_report, failures)),
+                         for part in (prompts, byte_report, failures, reduction)),
     }
 
 
