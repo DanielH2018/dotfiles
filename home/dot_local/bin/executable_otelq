@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -58,6 +59,14 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 # aggregation drops the label. Reading the lines and counting here avoids all
 # three problems and is testable without a backend.
 SAVINGS_LIMIT = 5000
+
+# Written by jsonq's own counter; pinned to that tool's path by a test, since
+# nothing else connects the two. Fixed, and no flag sets it — otelq reads one
+# known file, which is not the arbitrary-read primitive the allow rule assumes
+# it is not.
+FILTER_METRICS = os.path.join(
+    os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+    "claude-metrics", "filters.jsonl")
 
 # Tokens that never name the program that did the work. Segment-skips consume
 # the rest of the segment (`cd /some/path`); token-skips consume only
@@ -304,7 +313,79 @@ def report_prompts(events, window):
     }
 
 
+def _read_filter_records(path, cutoff):
+    """The counter file, one JSON object per line, newer than cutoff.
+
+    A partial last line is normal — the file is appended to by another process
+    while this reads it — so a line that will not parse is skipped rather than
+    treated as corruption.
+    """
+    records = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(record, dict) and (record.get("t") or 0) >= cutoff:
+                    records.append(record)
+    except OSError:
+        return []
+    return records
+
+
+def report_reduction(records, window):
+    """M6 — how much the filter tools actually removed.
+
+    A ratio, not a savings claim. It says what jsonq read and what it printed,
+    both observed. What it deliberately does not say is what the alternative
+    would have cost, because nothing observes the alternative.
+
+    Calls reading stdin are counted but not measured: the bytes are gone before
+    the size could be taken, so folding them in at zero would drag the ratio
+    toward 1 and understate every real reduction.
+    """
+    measured = [r for r in records if isinstance(r.get("in"), int)]
+    bytes_in = sum(r["in"] for r in measured)
+    bytes_out = sum(r.get("out") or 0 for r in measured)
+    ratios = sorted(r["in"] / max(r.get("out") or 0, 1) for r in measured)
+    by_tool = {}
+    for record in records:
+        _tally(by_tool, record.get("tool") or "?")
+    return {
+        "report": "reduction",
+        "measures": "bytes read vs bytes printed — a reduction ratio, not a savings claim",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "calls": len(records),
+        "calls_measured": len(measured),
+        "calls_from_stdin": len(records) - len(measured),
+        "bytes_in": bytes_in,
+        "bytes_out": bytes_out,
+        "reduction_ratio": round(bytes_in / bytes_out, 1) if bytes_out else None,
+        "median_call_ratio": round(ratios[len(ratios) // 2], 1) if ratios else None,
+        "by_tool": _ranked(by_tool, "tool"),
+    }
+
+
+def cmd_savings_reduction(ns, now):
+    cutoff = now - parse_duration(ns.since)
+    records = _read_filter_records(FILTER_METRICS, cutoff)
+    payload = report_reduction(records, ns.since)
+    if not records:
+        payload["note"] = (
+            f"no records in {FILTER_METRICS} for this window — the counter writes "
+            "on each jsonq run, and JSONQ_METRICS=0 disables it")
+    return payload
+
+
 def cmd_savings(ns, now):
+    if ns.report == "reduction":
+        return cmd_savings_reduction(ns, now)
     # Filter in the selector, not in Python. Fetching every decision and
     # discarding the auto-approved ones blows the entry limit long before the
     # window ends — 7d is ~15k decisions but only ~600 prompts — and silently
@@ -342,6 +423,19 @@ def _rows(payload):
 
 def _savings_rows(payload):
     """The digest as value<TAB>label, matching what --rows means everywhere else."""
+    if payload["report"] == "reduction":
+        lines = [
+            f"{payload['reduction_ratio']}\treduction ratio over {payload['window']} "
+            f"({payload['bytes_in']} bytes read -> {payload['bytes_out']} printed)",
+            f"{payload['median_call_ratio']}\tmedian per call",
+            f"{payload['calls_measured']}\tcalls measured",
+            f"{payload['calls_from_stdin']}\tcalls from stdin (input size unknowable)",
+        ]
+        for row in payload["by_tool"]:
+            lines.append(f"{row['count']}\t{row['tool']}")
+        if payload.get("note"):
+            lines.append(f"-\t{payload['note']}")
+        return "\n".join(lines)
     lines = [f"{payload['prompts_fired']}\tprompts fired over {payload['window']} "
              f"({payload['scope']})"]
     if payload.get("truncated"):
@@ -406,6 +500,10 @@ def main(argv=None):
     p = sub.add_parser(
         "savings", help="what the tooling rules are costing, from tool-call events",
         parents=[common])
+    p.add_argument("report", nargs="?", default="prompts",
+                   choices=("prompts", "reduction"),
+                   help="prompts: interruptions still on the table (default). "
+                        "reduction: bytes the filter tools removed")
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
     ns = parser.parse_args(argv)

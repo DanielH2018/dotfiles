@@ -45,11 +45,21 @@ fs.writeFileSync(T, JSON.stringify({
 }));
 fs.writeFileSync(U, JSON.stringify({ a: 9, z: 1 }));
 
+// Every run gets its own XDG_DATA_HOME. jsonq appends a reduction record on each
+// successful query, and the default path is the real ~/.local/share — so without
+// this the suite would file hundreds of synthetic calls into the operator's own
+// metrics and quietly skew them.
+const XDG = path.join(DIR, 'xdg');
+const METRICS = path.join(XDG, 'claude-metrics', 'filters.jsonl');
+
 // Returns {code, out, err}. Never throws, so a test can assert on failure.
-function jsonq(args, input) {
+function jsonq(args, input, env) {
   try {
     const out = execFileSync(python, [JSONQ, ...args], {
-      encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      input,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, { XDG_DATA_HOME: XDG }, env),
     });
     return { code: 0, out: out.trim(), err: '' };
   } catch (e) {
@@ -57,7 +67,11 @@ function jsonq(args, input) {
   }
 }
 
-const ok = (args, input) => jsonq(args, input).out;
+const metricLines = () => (fs.existsSync(METRICS)
+  ? fs.readFileSync(METRICS, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
+  : []);
+
+const ok = (args, input, env) => jsonq(args, input, env).out;
 const SOURCE = fs.readFileSync(JSONQ, 'utf8');
 
 // The tool is the shim plus the modules it loads, so every structural assertion
@@ -657,6 +671,73 @@ test('--jsonl does not bypass the secret-path guard', { skip }, () => {
   const r = jsonq(['--jsonl', 'len(d)', path.join(os.homedir(), '.claude.json')]);
   assert.strictEqual(r.code, 2);
   assert.match(r.err, /secret-path/);
+});
+
+// ---------------------------------------------------------------------------
+// The reduction counter. jsonq is the only place the input size is knowable —
+// telemetry records what it printed, never what it read — so this is the one
+// figure that makes "how much did the filter remove" answerable without
+// inventing a counterfactual. It is also a write, on a tool whose allow rule
+// rests on what it cannot do, so the confinement matters as much as the number.
+
+test('records bytes in and bytes out for a successful query', { skip }, () => {
+  const before = metricLines().length;
+  ok(['d["a"]', T]);
+  const added = metricLines().slice(before);
+  assert.strictEqual(added.length, 1);
+  assert.strictEqual(added[0].in, fs.statSync(T).size, 'in is the bytes actually read');
+  assert.strictEqual(added[0].out, 1, 'out is the rendered result, "1"');
+  assert.strictEqual(added[0].tool, 'jsonq');
+});
+
+test('records nothing when the query fails', { skip }, () => {
+  const before = metricLines().length;
+  assert.strictEqual(jsonq(['d["nope"]', T]).code, 1);
+  assert.strictEqual(jsonq(['1 +', T]).code, 2);
+  assert.strictEqual(metricLines().length, before,
+    'a query that produced nothing filtered nothing; counting it dilutes the ratio');
+});
+
+test('never writes the expression itself, only its length', { skip }, () => {
+  const before = metricLines().length;
+  ok(['d["users"][0]["n"]', T]);
+  const added = metricLines().slice(before);
+  assert.strictEqual(added[0].expr_len, 'd["users"][0]["n"]'.length);
+  assert.ok(!('expr' in added[0]) && !('source' in added[0]),
+    'a filter literal can carry values out of the queried data — length only');
+  assert.ok(!JSON.stringify(added[0]).includes('users'),
+    'the expression text must not reach the metrics file');
+});
+
+test('JSONQ_METRICS=0 turns the counter off', { skip }, () => {
+  const before = metricLines().length;
+  assert.strictEqual(ok(['d["a"]', T], undefined, { JSONQ_METRICS: '0' }), '1');
+  assert.strictEqual(metricLines().length, before);
+});
+
+test('records stdin calls with a null input size rather than guessing', { skip }, () => {
+  const before = metricLines().length;
+  assert.strictEqual(ok(['d["a"]'], '{"a": 1}'), '1');
+  const added = metricLines().slice(before);
+  assert.strictEqual(added.length, 1);
+  assert.strictEqual(added[0].in, null,
+    'the bytes are consumed before they can be sized; zero would understate every ratio');
+});
+
+test('an unwritable metrics path does not break the query', { skip }, () => {
+  const wedged = path.join(DIR, 'wedged');
+  fs.writeFileSync(wedged, 'not a directory');
+  const r = jsonq(['d["a"]', T], undefined, { XDG_DATA_HOME: wedged });
+  assert.strictEqual(r.code, 0, 'a counter that breaks a query is worse than no counter');
+  assert.strictEqual(r.out, '1');
+});
+
+test('no flag can redirect where the counter writes', { skip }, () => {
+  const help = jsonq(['--help']).out;
+  for (const flag of ['--metrics', '--metrics-path', '--stats-file', '--out-file']) {
+    assert.ok(!help.includes(flag),
+      `${flag} would make a blanket Bash(jsonq:*) rule a write-anywhere primitive`);
+  }
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -2,8 +2,11 @@
 
 import argparse
 import ast
+import json
+import os
 import signal
 import sys
+import time
 
 from _jsonq.documents import _install_timeout, _load, _render
 from _jsonq.errors import JsonqError, _Break, _Continue
@@ -11,6 +14,15 @@ from _jsonq.functions import _SECTIONS, FUNCTIONS
 from _jsonq.interp import _EXPR_HANDLERS, _INERT, _STMT_HANDLERS, _Interp
 from _jsonq.limits import DEFAULT_TIMEOUT, MAX_OUTPUT_BYTES, MAX_SOURCE_BYTES, PROG
 from _jsonq.validate import _bindings, _validate
+
+# Where the reduction counter appends. Fixed, and no flag sets it — the same
+# reason otelq hardcodes its hosts. A settable path would turn a tool that
+# carries a blanket allow rule into a write-anywhere primitive.
+METRICS_DIR = os.path.join(
+    os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+    "claude-metrics")
+METRICS_PATH = os.path.join(METRICS_DIR, "filters.jsonl")
+MAX_METRICS_BYTES = 5 * 1024 * 1024
 
 
 def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT,
@@ -61,6 +73,50 @@ def run(source, files, mode, raw=False, indent=None, timeout=DEFAULT_TIMEOUT,
     if len(text.encode("utf-8")) > MAX_OUTPUT_BYTES:
         raise JsonqError("output exceeds the 10 MB cap; narrow the expression")
     return text
+
+
+def _record_reduction(files, source, text):
+    """Append one line: bytes read in, bytes printed out.
+
+    This is the only honest reduction figure available anywhere. Claude Code's
+    telemetry records what jsonq *printed* but never what it *read*, so the
+    ratio cannot be reconstructed after the fact — and counting invocations
+    instead would measure how often the tool is used, not what it filtered out.
+
+    The expression is recorded only by length. A filter literal can carry values
+    lifted out of whatever is being queried, and a metrics file is a poor place
+    to learn that.
+
+    Nothing here is reachable from a query: the interpreter has no attribute
+    access and no open(), so this runs in the CLI layer or not at all. Every
+    failure is swallowed, because a counter that breaks a query is worse than no
+    counter.
+    """
+    if os.environ.get("JSONQ_METRICS") == "0":
+        return
+    try:
+        # `in` is None for stdin: the bytes are consumed before they could be
+        # sized, and recording zero would understate every ratio that follows.
+        read = (sum(os.path.getsize(os.path.expanduser(f)) for f in files)
+                if files else None)
+        record = {
+            "t": int(time.time()),
+            "tool": PROG,
+            "in": read,
+            "out": len(text.encode("utf-8")),
+            "expr_len": len(source),
+            "files": len(files),
+        }
+        os.makedirs(METRICS_DIR, exist_ok=True)
+        if (os.path.exists(METRICS_PATH)
+                and os.path.getsize(METRICS_PATH) >= MAX_METRICS_BYTES):
+            # One generation back, then start fresh. Unbounded growth on a path
+            # nothing prunes is how a counter becomes a disk problem.
+            os.replace(METRICS_PATH, METRICS_PATH + ".1")
+        with open(METRICS_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except (OSError, ValueError):
+        return
 
 
 def _function_table():
@@ -133,7 +189,11 @@ def main(argv=None):
         source, files, mode = ns.args[0], list(ns.args[1:]), "eval"
 
     try:
-        print(run(source, files, mode, ns.raw, ns.indent, ns.timeout, ns.jsonl))
+        text = run(source, files, mode, ns.raw, ns.indent, ns.timeout, ns.jsonl)
+        print(text)
+        # After the print, so a query that failed records nothing — it
+        # filtered nothing, and counting it would dilute the ratio.
+        _record_reduction(files, source, text)
     except JsonqError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2

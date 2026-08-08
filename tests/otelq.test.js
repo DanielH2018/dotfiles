@@ -52,12 +52,17 @@ elif verb == "prompts":
     print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
 elif verb == "srows":
     print(m._savings_rows(json.loads(sys.stdin.read())))
+elif verb == "reduction":
+    print(json.dumps(m.report_reduction(json.loads(sys.stdin.read()), "7d")))
+elif verb == "readrecs":
+    print(json.dumps(m._read_filter_records(sys.argv[2], int(sys.argv[3]))))
 `);
 
-function otelq(args, input) {
+function otelq(args, input, env) {
   try {
     const out = execFileSync(python, [OTELQ, ...args], {
       encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
+      env: Object.assign({}, process.env, env),
     });
     return { code: 0, out: out.trim(), err: '' };
   } catch (e) {
@@ -288,6 +293,82 @@ test('savings exposes no flag that could redirect the response', { skip }, () =>
   for (const flag of ['--host', '--url', '--base', '--output', '-o', '--insecure']) {
     assert.ok(!help.includes(flag), `${flag} must not exist — it would break the allow rule`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// savings reduction — the half that reads jsonq's counter file rather than Loki.
+
+const rec = (over) => Object.assign({ t: 2000, tool: 'jsonq', in: 1000, out: 10 }, over);
+
+test('reduction counts stdin calls but keeps them out of the ratio', { skip }, () => {
+  const out = JSON.parse(drive(['reduction'], JSON.stringify([
+    rec({ in: 1000, out: 10 }),
+    rec({ in: null }), // stdin: size unknowable
+  ])));
+  assert.strictEqual(out.calls, 2);
+  assert.strictEqual(out.calls_measured, 1);
+  assert.strictEqual(out.calls_from_stdin, 1);
+  assert.strictEqual(out.reduction_ratio, 100,
+    'folding an unmeasurable call in at zero would drag every ratio toward 1');
+});
+
+test('reduction survives a call that printed nothing', { skip }, () => {
+  const out = JSON.parse(drive(['reduction'], JSON.stringify([rec({ in: 500, out: 0 })])));
+  assert.strictEqual(out.median_call_ratio, 500, 'no division by zero');
+});
+
+test('reduction reports nulls rather than zero when there is nothing to measure', { skip }, () => {
+  const out = JSON.parse(drive(['reduction'], JSON.stringify([])));
+  assert.strictEqual(out.reduction_ratio, null);
+  assert.strictEqual(out.median_call_ratio, null);
+  assert.strictEqual(out.calls, 0);
+});
+
+test('reduction labels itself a ratio, not a savings claim', { skip }, () => {
+  const out = JSON.parse(drive(['reduction'], JSON.stringify([rec({})])));
+  assert.match(out.measures, /not a savings claim/,
+    'the counterfactual is unobservable — the wording is the guard against implying it');
+});
+
+test('the counter file reader skips junk lines and honours the cutoff', { skip }, () => {
+  const f = path.join(DIR, 'filters.jsonl');
+  fs.writeFileSync(f, [
+    JSON.stringify(rec({ t: 100 })),      // too old
+    JSON.stringify(rec({ t: 3000 })),
+    '{"partial": ',                        // a half-written append
+    '',
+    '"not an object"',
+    JSON.stringify(rec({ t: 4000 })),
+  ].join('\n'));
+  const got = JSON.parse(drive(['readrecs', f, '1000']));
+  assert.deepStrictEqual(got.map((r) => r.t), [3000, 4000]);
+});
+
+test('a missing counter file reads as empty, not as an error', { skip }, () => {
+  assert.deepStrictEqual(JSON.parse(drive(['readrecs', path.join(DIR, 'nope'), '0'])), []);
+});
+
+// jsonq writes this file and otelq reads it, with no shared constant between
+// them. Drifting the two paths apart yields a reduction report that is
+// permanently empty while each side looks correct on its own, so the only
+// assertion worth making runs both tools against one XDG_DATA_HOME.
+test('otelq reads the counter file jsonq actually writes', { skip }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'otelq-xdg-'));
+  dirs.push(home);
+  const doc = path.join(home, 'doc.json');
+  fs.writeFileSync(doc, JSON.stringify({ a: [1, 2, 3] }));
+  const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
+
+  execFileSync(python, [JSONQ, 'len(d["a"])', doc], {
+    encoding: 'utf8', env: Object.assign({}, process.env, { XDG_DATA_HOME: home }),
+  });
+
+  const out = JSON.parse(otelq(['savings', 'reduction'], undefined,
+    { XDG_DATA_HOME: home }).out);
+  assert.strictEqual(out.calls, 1, 'otelq must find the record jsonq just wrote');
+  assert.strictEqual(out.calls_measured, 1);
+  assert.strictEqual(out.bytes_in, fs.statSync(doc).size);
+  assert.ok(out.reduction_ratio > 1, 'a filtered query reads more than it prints');
 });
 
 // otelq hardcodes its backend ports and claude-otel/docker-compose.yml publishes them, with
