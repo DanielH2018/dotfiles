@@ -152,6 +152,22 @@ Scripts
 .ssh/config
 {{ end }}
 
+# kwinrulesrc is KWin's window-rule store, and every rule in it is a `position` naming an
+# absolute coordinate inside one of this box's four outputs (see the login-window-layout
+# launcher, which relies on it). Those coordinates are meaningless anywhere else: a host with a
+# different display arrangement would place windows off-screen, and one without Plasma has
+# nothing to read the file at all. So this is gated on the hostname rather than on the OS —
+# unlike powerdevilrc, which is inert rather than wrong on a headless Linux host.
+#
+# Managed as a plain file, not a modify_ script. PowerDevil owns powerdevilrc and writes
+# unrelated state into it, so a plain file there would fight KDE forever; kwinrulesrc is
+# nothing but window rules, so asserting the whole file is asserting exactly what we mean.
+# The cost is that a rule added through System Settings shows up as drift — re-add it with
+# `chezmoi add ~/.config/kwinrulesrc` to keep it.
+{{ if ne .chezmoi.hostname "fedora" }}
+.config/kwinrulesrc
+{{ end }}
+
 # The sudo shim (see the script for why it exists) belongs wherever SUDO_ASKPASS is configured
 # and sudo refuses to use it without -A. That was the headless hosts, and it now includes this
 # work laptop: measured 2026-08-04 (sudo 1.9.17p2) the same way daniel-box was, plain sudo

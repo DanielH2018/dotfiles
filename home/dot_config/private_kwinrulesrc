@@ -1,0 +1,73 @@
+[059b0a94-4048-412e-ad38-26e45d40d728]
+Description=Bitwarden - Stream Deck placement
+position=1536,0
+positionrule=3
+size=1200,720
+sizerule=3
+wmclass=com.bitwarden.desktop
+wmclasscomplete=false
+wmclassmatch=1
+
+[2e9c7a55-8d13-4f26-b0c4-5a7e91d2f308]
+Description=Spotify - login placement (bottom)
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+position=3283,904
+positionrule=3
+wmclass=spotify
+wmclasscomplete=false
+wmclassmatch=1
+
+[7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47]
+Description=Firefox - login placement (main)
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+position=1576,40
+positionrule=3
+wmclass=org.mozilla.firefox
+wmclasscomplete=false
+wmclassmatch=1
+
+[923685de-9867-49f5-bed2-8a1da53e8b52]
+Description=Obsidian - login placement (bottom)
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+position=3283,904
+positionrule=3
+wmclass=md.Obsidian
+wmclasscomplete=false
+wmclassmatch=1
+
+[General]
+count=6
+rules=d31e37ca-991b-4265-b5a5-770bbdb42c82,059b0a94-4048-412e-ad38-26e45d40d728,923685de-9867-49f5-bed2-8a1da53e8b52,d68fa888-6425-4f4c-bd4a-a106d577356a,7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47,2e9c7a55-8d13-4f26-b0c4-5a7e91d2f308
+
+[d31e37ca-991b-4265-b5a5-770bbdb42c82]
+Description=Ghostty - login placement (right)
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+position=3283,40
+positionrule=3
+wmclass=com.mitchellh.ghostty
+wmclasscomplete=false
+wmclassmatch=1
+
+[d68fa888-6425-4f4c-bd4a-a106d577356a]
+Description=Discord - login placement (left)
+maximizehoriz=true
+maximizehorizrule=3
+maximizevert=true
+maximizevertrule=3
+position=40,40
+positionrule=3
+wmclass=discord
+wmclasscomplete=false
+wmclassmatch=1
