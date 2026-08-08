@@ -82,6 +82,13 @@ FILTER_METRICS = os.path.join(
     os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
     "claude-metrics", "filters.jsonl")
 
+# One `savings all` line per day, appended by otel-savings-rollup. Loki keeps
+# 31 days and a stack rebuild has already cost every day older than a week once,
+# so a trend that has to survive either lives here rather than in Loki.
+DAILY_METRICS = os.path.join(
+    os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+    "claude-metrics", "daily.jsonl")
+
 # Tokens that never name the program that did the work. Segment-skips consume
 # the rest of the segment (`cd /some/path`); token-skips consume only
 # themselves, so `sudo dnf` still reports `dnf`.
@@ -376,12 +383,15 @@ def report_bytes(totals, big_events, window, threshold):
     }
 
 
-def _read_filter_records(path, cutoff):
-    """The counter file, one JSON object per line, newer than cutoff.
+def _read_jsonl(path, stamp, cutoff):
+    """One JSON object per line, keeping those stamped at or after cutoff.
 
-    A partial last line is normal — the file is appended to by another process
-    while this reads it — so a line that will not parse is skipped rather than
-    treated as corruption.
+    The timestamp field is named rather than assumed: the counter file stamps
+    `t` and the daily rollup stamps `generated_at`, and a reader that guessed
+    would silently return everything for one of them.
+
+    A partial last line is normal — another process appends while this reads —
+    so a line that will not parse is skipped rather than treated as corruption.
     """
     records = []
     try:
@@ -394,7 +404,7 @@ def _read_filter_records(path, cutoff):
                     record = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(record, dict) and (record.get("t") or 0) >= cutoff:
+                if isinstance(record, dict) and (record.get(stamp) or 0) >= cutoff:
                     records.append(record)
     except OSError:
         return []
@@ -437,7 +447,7 @@ def report_reduction(records, window):
 
 def cmd_savings_reduction(ns, now):
     cutoff = now - parse_duration(ns.since)
-    records = _read_filter_records(FILTER_METRICS, cutoff)
+    records = _read_jsonl(FILTER_METRICS, "t", cutoff)
     payload = report_reduction(records, ns.since)
     if not records:
         payload["note"] = (
@@ -529,9 +539,74 @@ def report_subst(counts, window):
     }
 
 
+def report_all(now, window, prompts, byte_report, failures, subst, reduction):
+    """Every headline figure on one line, for the daily rollup to append.
+
+    Rankings are deliberately dropped. This shape is written once a day forever,
+    so it carries the numbers a trend needs and not the per-command detail that
+    is better re-queried against Loki while the window still holds it.
+    """
+    return {
+        "report": "all",
+        "generated_at": int(now),
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "prompts_fired": prompts["prompts_fired"],
+        "hook_decisions": {r["decision"]: r["count"]
+                           for r in prompts["hook_decisions"]},
+        "failures": failures["failures"],
+        "bytes_total": byte_report["bytes_total"],
+        "bytes_by_tool": {r["tool"]: r["bytes"] for r in byte_report["bytes_by_tool"]},
+        "big_calls": byte_report["big_calls"],
+        "adoption": {r["preferred"]: r["adoption"] for r in subst["pairs"]},
+        "reduction_ratio": reduction["reduction_ratio"],
+        "reduction_calls": reduction["calls"],
+    }
+
+
+def report_trend(records, window):
+    """The daily lines as a series, oldest first.
+
+    Reports how many days it actually found rather than assuming the rollup ran:
+    a gap in this file is the difference between "the number improved" and "the
+    timer stopped", and those look identical once plotted.
+    """
+    days = sorted(records, key=lambda r: r.get("generated_at") or 0)
+    return {
+        "report": "trend",
+        "measures": "the daily rollup as a series — the only view that survives "
+                    "Loki's retention",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "days_found": len(days),
+        "series": [{
+            "generated_at": d.get("generated_at"),
+            "prompts_fired": d.get("prompts_fired"),
+            "failures": d.get("failures"),
+            "bytes_total": d.get("bytes_total"),
+            "reduction_ratio": d.get("reduction_ratio"),
+            "adoption": d.get("adoption") or {},
+        } for d in days],
+    }
+
+
 def cmd_savings(ns, now):
     if ns.report == "reduction":
         return cmd_savings_reduction(ns, now)
+
+    if ns.report == "trend":
+        cutoff = now - parse_duration(ns.since)
+        return report_trend(
+            _read_jsonl(DAILY_METRICS, "generated_at", cutoff), ns.since)
+
+    if ns.report == "all":
+        return report_all(
+            now, ns.since,
+            cmd_savings(argparse.Namespace(**{**vars(ns), "report": "prompts"}), now),
+            cmd_savings(argparse.Namespace(**{**vars(ns), "report": "bytes"}), now),
+            cmd_savings(argparse.Namespace(**{**vars(ns), "report": "failures"}), now),
+            cmd_savings(argparse.Namespace(**{**vars(ns), "report": "subst"}), now),
+            cmd_savings(argparse.Namespace(**{**vars(ns), "report": "reduction"}), now))
 
     if ns.report == "subst":
         counts = {name: (_count_matching(preferred, ns.since, now, ns.timeout),
@@ -611,6 +686,22 @@ def _savings_rows(payload):
         if payload.get("note"):
             lines.append(f"-\t{payload['note']}")
         return "\n".join(lines)
+    if payload["report"] == "trend":
+        lines = [f"{payload['days_found']}\tdays in the rollup"
+                 f" over {payload['window']}"]
+        for day in payload["series"]:
+            lines.append(f"{day['prompts_fired']}\tprompts\t"
+                         f"{day['failures']} failed\t{day['bytes_total']} bytes\t"
+                         f"ratio {day['reduction_ratio']}\t@{day['generated_at']}")
+        if not payload["series"]:
+            lines.append(f"-\tnothing in {DAILY_METRICS} — is "
+                         "otel-savings-rollup.timer enabled?")
+        return "\n".join(lines)
+
+    if payload["report"] == "all":
+        return "\n".join(f"{v}\t{k}" for k, v in payload.items()
+                         if isinstance(v, (int, float)))
+
     if payload["report"] == "subst":
         lines = [f"-\tadoption over {payload['window']} ({payload['scope']})"]
         for row in payload["pairs"]:
@@ -701,11 +792,14 @@ def main(argv=None):
         "savings", help="what the tooling rules are costing, from tool-call events",
         parents=[common])
     p.add_argument("report", nargs="?", default="prompts",
-                   choices=("prompts", "bytes", "failures", "subst", "reduction"),
+                   choices=("prompts", "bytes", "failures", "subst", "reduction",
+                            "all", "trend"),
                    help="prompts: interruptions still on the table (default). "
                         "bytes: where context goes. failures: the retry tax. "
                         "subst: is the rule holding. "
-                        "reduction: bytes the filter tools removed")
+                        "reduction: bytes the filter tools removed. "
+                        "all: every headline on one line, for the rollup. "
+                        "trend: the rollup as a series")
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
     ns = parser.parse_args(argv)

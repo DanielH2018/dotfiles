@@ -52,6 +52,8 @@ elif verb == "prompts":
     print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
 elif verb == "srows":
     print(m._savings_rows(json.loads(sys.stdin.read())))
+elif verb == "trend":
+    print(json.dumps(m.report_trend(json.loads(sys.stdin.read()), "7d")))
 elif verb == "subst":
     raw = json.loads(sys.stdin.read())
     print(json.dumps(m.report_subst({k: tuple(v) for k, v in raw.items()}, "7d")))
@@ -63,7 +65,7 @@ elif verb == "bytesrep":
 elif verb == "reduction":
     print(json.dumps(m.report_reduction(json.loads(sys.stdin.read()), "7d")))
 elif verb == "readrecs":
-    print(json.dumps(m._read_filter_records(sys.argv[2], int(sys.argv[3]))))
+    print(json.dumps(m._read_jsonl(sys.argv[2], sys.argv[4], int(sys.argv[3]))))
 `);
 
 function otelq(args, input, env) {
@@ -303,6 +305,31 @@ test('savings exposes no flag that could redirect the response', { skip }, () =>
   }
 });
 
+test('trend orders the rollup oldest first', { skip }, () => {
+  const out = JSON.parse(drive(['trend'], JSON.stringify([
+    { generated_at: 300, prompts_fired: 3 },
+    { generated_at: 100, prompts_fired: 1 },
+    { generated_at: 200, prompts_fired: 2 },
+  ])));
+  assert.deepStrictEqual(out.series.map((d) => d.prompts_fired), [1, 2, 3]);
+});
+
+// A missing day and an improved number look identical on a chart. days_found is
+// what tells them apart, so it counts records rather than assuming the timer ran.
+test('trend counts the days it actually found', { skip }, () => {
+  const out = JSON.parse(drive(['trend'], JSON.stringify([
+    { generated_at: 100 }, { generated_at: 200 },
+  ])));
+  assert.strictEqual(out.days_found, 2);
+  assert.strictEqual(JSON.parse(drive(['trend'], '[]')).days_found, 0);
+});
+
+test('trend --rows says where to look when the rollup never ran', { skip }, () => {
+  const empty = JSON.parse(drive(['trend'], '[]'));
+  assert.match(drive(['srows'], JSON.stringify(empty)), /otel-savings-rollup\.timer/,
+    'an empty series is far more often a stopped timer than a quiet week');
+});
+
 test('subst reports adoption and names the tool being replaced', { skip }, () => {
   const out = JSON.parse(drive(['subst'], JSON.stringify({
     jsonq: [30, 10], rg: [1, 99], gron: [0, 0],
@@ -408,12 +435,12 @@ test('the counter file reader skips junk lines and honours the cutoff', { skip }
     '"not an object"',
     JSON.stringify(rec({ t: 4000 })),
   ].join('\n'));
-  const got = JSON.parse(drive(['readrecs', f, '1000']));
+  const got = JSON.parse(drive(['readrecs', f, '1000', 't']));
   assert.deepStrictEqual(got.map((r) => r.t), [3000, 4000]);
 });
 
 test('a missing counter file reads as empty, not as an error', { skip }, () => {
-  assert.deepStrictEqual(JSON.parse(drive(['readrecs', path.join(DIR, 'nope'), '0'])), []);
+  assert.deepStrictEqual(JSON.parse(drive(['readrecs', path.join(DIR, 'nope'), '0', 't'])), []);
 });
 
 // jsonq writes this file and otelq reads it, with no shared constant between

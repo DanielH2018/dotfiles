@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily rollup of Claude Code tooling-cost figures
+
+[Timer]
+# 23:50 — the window this records is `--since 1d`, so it wants to run at the end
+# of the day it is measuring rather than the start of the next one. Clear of
+# otel-sweep-watch at 08:12 and claude-changelog-watch at 07:37.
+OnCalendar=*-*-* 23:50:00
+# A missed day is a permanent hole in the series: Loki's own retention will have
+# rolled past that window long before anyone notices. Catch up on next boot.
+Persistent=true
+# Nothing here is time-sensitive to the minute, so let systemd batch the wakeup.
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

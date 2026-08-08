@@ -1,0 +1,19 @@
+[Unit]
+Description=Append one day of Claude Code tooling-cost figures to a durable file
+Documentation=file:%h/.local/bin/otel-savings-rollup
+# Loki only. No ssh, no desktop — nothing here needs a graphical session, and
+# requiring one would skip the run on a headless boot.
+
+[Service]
+Type=oneshot
+# systemd's user manager does not source a login shell, so ~/.local/bin — where
+# otelq and this runner live — is absent from the default PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/otel-savings-rollup
+# ~10 Loki queries against a loopback backend. The cap exists so a wedged
+# request cannot leave the unit running until tomorrow's trigger.
+TimeoutStartSec=5min
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal

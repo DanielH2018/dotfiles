@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# otel-savings-rollup — append one day of tooling-cost figures to a durable file.
+#
+# Loki is configured for 31 days, and a stack rebuild has already cost every day
+# older than a week once. Anything that wants to compare a number against the
+# same number a quarter ago has to keep its own copy, and this is it: one
+# `otelq savings all` line per day, appended, never rewritten.
+#
+# Deliberately not a Prometheus recording rule. The figures come from LogQL over
+# event lines, not from a scraped series, so there is nothing for Prometheus to
+# record — and a rollup that outlives the stack it queries cannot live inside it.
+set -uo pipefail
+
+OTELQ=${OTELQ:-otelq}
+OUT="${XDG_DATA_HOME:-$HOME/.local/share}/claude-metrics/daily.jsonl"
+# A catch-up run can land hours after the scheduled one (Persistent=true), and
+# two records for one day plot as a real change rather than as a repeat.
+MIN_GAP_SECONDS=43200
+
+if ! command -v "$OTELQ" >/dev/null 2>&1; then
+  printf 'otel-savings-rollup: %s not on PATH\n' "$OTELQ" >&2
+  exit 2
+fi
+
+if ! record=$("$OTELQ" savings all --since 1d 2>&1); then
+  printf 'otel-savings-rollup: query failed: %s\n' "$record" >&2
+  exit 1
+fi
+
+# A truncated or error-shaped record is worse than a missing day: the gap is
+# visible in the trend and the half-record is not.
+case $record in
+  '{"report": "all"'*) ;;
+  *)
+    printf 'otel-savings-rollup: unexpected output: %.120s\n' "$record" >&2
+    exit 1
+    ;;
+esac
+
+if ! mkdir -p "$(dirname "$OUT")"; then
+  printf 'otel-savings-rollup: cannot create %s\n' "$(dirname "$OUT")" >&2
+  exit 1
+fi
+
+if [ -f "$OUT" ]; then
+  last=$(tail -1 "$OUT" | sed -n 's/.*"generated_at": \([0-9]*\).*/\1/p')
+  now=$(date +%s)
+  if [ -n "$last" ] && [ "$((now - last))" -lt "$MIN_GAP_SECONDS" ]; then
+    printf 'otel-savings-rollup: last record is %ss old, skipping\n' "$((now - last))"
+    exit 0
+  fi
+fi
+
+printf '%s\n' "$record" >>"$OUT"
+printf 'otel-savings-rollup: appended one record to %s\n' "$OUT"
