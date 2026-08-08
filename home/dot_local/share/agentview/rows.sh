@@ -676,10 +676,38 @@ post_reload() {  # $1 = portfile written by fzf's start bind. POST a reload into
 # of 0: "0" is all-digits and would otherwise sail through as a valid interval, and `sleep 0`
 # returns in about 1ms -- which also defeats the floor-sleep backstop below, since that backstop
 # IS a `sleep "$AV_WATCH_INTERVAL"`. Raising instead of rejecting also reads "as responsive as
-# possible" the way someone setting 0 probably meant it, rather than silently landing on 30.
-AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-30}"
-case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=30 ;; esac
+# possible" the way someone setting 0 probably meant it, rather than silently landing on 5.
+#
+# 5, not the 30 this shipped with: 30 was a guess, and it was the whole of the reported lag --
+# a remote row only moves on a tick, so a remote session changing state trailed by up to 30s
+# (mean 15s) while a local one repainted the moment inotify fired. Measured 2026-08-08 from
+# this machine, warm through the ControlPersist master: one ssh round-trip 10ms, and a full
+# refresh_one_remote fold 45ms against the busier of the two hosts as it stood -- 2 hook rows,
+# 5 registry entries. The fold spawns a jq per file, so it scales with the session count --
+# a synthetic 40-session home measured 425ms, or ~8% of a 5s tick -- and both hosts run
+# concurrently, so the tick costs the slowest host, not their sum. Raise the interval if a
+# host ever carries enough sessions for that to matter.
+# What 30 was really buying was repaint frequency, not fetch cost, and that is now paid for
+# separately by AV_REPAINT_INTERVAL below.
+AV_WATCH_INTERVAL="${AGENT_VIEW_WATCH_INTERVAL:-5}"
+case "$AV_WATCH_INTERVAL" in ''|*[!0-9]*) AV_WATCH_INTERVAL=5 ;; esac
 [ "$AV_WATCH_INTERVAL" -ge 1 ] || AV_WATCH_INTERVAL=1
+
+# How long a picker with NO news may go without a repaint. Polling fast and repainting fast
+# are separate wants: a fetch is cheap and invisible, but every repaint is a `reload()` POSTed
+# into a live fzf, which re-runs `--body`, re-fires the `load:` bind and resets an open
+# preview's scroll. Doing that every 5s to show an unchanged list is what makes a fast tick
+# user-hostile, so a tick only repaints when something actually moved -- with this as the
+# backstop, because some of what a row shows is relative ("✓ idle 3m", fmt_age in render.sh)
+# and would otherwise freeze on a quiet picker. 0 is a legitimate value here (repaint every
+# tick, the pre-5s behaviour) and needs no floor: the tick itself is what bounds the rate.
+AV_REPAINT_INTERVAL="${AGENT_VIEW_REPAINT_INTERVAL:-30}"
+case "$AV_REPAINT_INTERVAL" in ''|*[!0-9]*) AV_REPAINT_INTERVAL=30 ;; esac
+
+# Seeded at process start, not 0: --refresh-remote has just painted the picker by the time
+# --watch is spawned, so the first tick owes nothing. (It is also what makes the gate
+# observable from a single --watch-once, which is the only seam the tests have.)
+_av_last_repaint=$(date +%s)
 
 # A name, not a path, so PATH still decides which one runs. It is a seam only because the
 # ABSENT case is otherwise untestable: a test can delete its own stub, but /usr/bin/inotifywait
@@ -704,6 +732,45 @@ av_remote_age() {  # -> _av_remote_age (integer seconds)
     if [ -z "$oldest" ] || [ "$ts" -lt "$oldest" ]; then oldest="$ts"; fi
   done < <(remote_hosts)
   _av_remote_age=$(( now - ${oldest:-0} ))
+}
+
+# The one signal that beats the tick. Neither homelab host has paplay/pw-play/aplay or the
+# freedesktop sound theme, so a remote session's Notification hook falls all the way through
+# play-sound.sh to `printf '\a' > /dev/tty` -- and that byte rides the attach ssh straight into
+# the local tmux pane, where it rings Ghostty and flags the window (the tab going yellow is
+# window-status-activity-style on a bell, monitor-bell being on by default). So the desktop
+# already knows a remote session moved, at t=0, through a channel agentview was not reading.
+# ~/.tmux.conf's alert-bell hook truncates this marker; $statedir is what the watcher already
+# inotifies, and a dotfile with no .json suffix is invisible to every `"$statedir"/*.json` glob.
+AV_KICK_FILE="$statedir/.remote-kick"
+
+# Whole seconds, not nanoseconds, and that IS the rate limit: a bell storm (a stray cat of a
+# binary over the attach, not anything Claude does) collapses to at most one forced fetch per
+# second, because every bell inside the same second reads back the same key. Seeded at module
+# load so a marker left by an earlier picker cannot force a redundant fetch on the first tick.
+_av_kick_seen=$(stat -c %Y "$AV_KICK_FILE" 2>/dev/null)
+av_kick_pending() {  # 0 when a bell has arrived since the last forced fetch
+  local m
+  m=$(stat -c %Y "$AV_KICK_FILE" 2>/dev/null) || return 1
+  [ -n "$m" ] || return 1
+  [ "$m" != "$_av_kick_seen" ] || return 1
+  _av_kick_seen="$m"
+  return 0
+}
+
+# Content fingerprint of everything a remote fetch can change, so a tick can tell "I fetched"
+# from "something moved". Contents, not mtimes: refresh_one_remote's mv rewrites the cache on
+# every successful fetch whether or not a byte differs. The status sidecar contributes only its
+# OUTCOME field (cut -f1) and not its epoch, for the same reason -- the epoch is rewritten every
+# time -- while the outcome still matters, because ok -> unreachable changes what render.sh
+# draws (the "· 4m old" stale line) with no change to the cache at all.
+av_remote_digest() {  # -> _av_remote_digest
+  local host
+  _av_remote_digest=$( while IFS= read -r host; do
+      [ -n "$host" ] || continue
+      cat "$(remote_cache_for "$host")" 2>/dev/null
+      cut -f1 "$(remote_status_for "$host")" 2>/dev/null
+    done < <(remote_hosts) | cksum )
 }
 
 av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or time out.
@@ -755,10 +822,27 @@ av_watch_once() {  # $1 = portfile. One iteration: wait for a local change or ti
   # local QUIET, and a steady trickle of local events postpones it indefinitely. That was latent
   # while $statedir alone was nearly silent; watching $sessionsdir makes it reachable.
   av_remote_age
-  if [ "$rc" -eq 2 ] || [ "$_av_remote_age" -ge "$AV_WATCH_INTERVAL" ]; then
+  # Checked BEFORE the age gate, and consumed either way: a bell means a remote session just
+  # changed state, which is exactly the case the interval is too slow for. Without this the
+  # marker's own close_write would wake the loop as an ordinary local event (rc 0), find the
+  # snapshot still inside its interval, and repaint the stale cache -- the push firing and
+  # nothing moving.
+  local kick=0; av_kick_pending && kick=1
+  av_remote_digest; local before="$_av_remote_digest" now
+  if [ "$kick" -eq 1 ] || [ "$rc" -eq 2 ] || [ "$_av_remote_age" -ge "$AV_WATCH_INTERVAL" ]; then
     refresh_remote
   fi
-  post_reload "$1"
+  av_remote_digest
+  # Repaint on news, not on the clock. rc 0 IS news -- a local file event, already filtered by
+  # inotifywait's -e list -- and the local rows are read fresh by `--body` either way, so it does
+  # not go through the digest. The floor covers the rest: relative ages keep ticking, and a
+  # script upgrade still reaches post_reload's become() within AV_REPAINT_INTERVAL.
+  now=$(date +%s)
+  if [ "$rc" -eq 0 ] || [ "$before" != "$_av_remote_digest" ] \
+     || [ $(( now - _av_last_repaint )) -ge "$AV_REPAINT_INTERVAL" ]; then
+    _av_last_repaint="$now"
+    post_reload "$1"
+  fi
   return 0
 }
 

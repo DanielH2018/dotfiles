@@ -25,7 +25,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 // the fixture dir followed by the real one, so /usr/bin/inotifywait answers instead and the
 // watcher takes its normal path. Three tests below did exactly that and passed anyway, because
 // `inotifywait -t 1` blocks for the same second the fallback's `sleep 1` would have.
-function env({ sshBody = 'exit 0', watchInterval = '1', noInotify = false } = {}) {
+function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInotify = false } = {}) {
   const home = scratch('av-home-');
   const bin = scratch('av-bin-');
   const argvLog = path.join(home, 'ssh-argv.log');
@@ -41,8 +41,12 @@ function env({ sshBody = 'exit 0', watchInterval = '1', noInotify = false } = {}
   // assertion; doing it here extends that to every test instead of the ones that noticed.
   fs.writeFileSync(path.join(home, 'portfile'), '1\n');
   // With a port to read, post_reload goes on to POST. Stub curl so it stays off the loopback
-  // interface rather than relying on port 1 refusing the connection.
-  fs.writeFileSync(path.join(bin, 'curl'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  // interface rather than relying on port 1 refusing the connection. It logs its argv, because
+  // the POST is now conditional: av_watch_once skips the repaint on a tick that found no news,
+  // and this call is the only externally visible difference between the two.
+  const curlLog = path.join(home, 'curl-argv.log');
+  fs.writeFileSync(path.join(bin, 'curl'),
+    `#!/bin/bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(curlLog)}\nexit 0\n`, { mode: 0o755 });
   // rows.sh reaches sleep by bare name, so this shadows it the way the stubs above do. It
   // records the argument rather than swallowing it, because that argument IS what the
   // watch-floor tests below are about: the floor exists so a requested interval of 0 cannot
@@ -63,6 +67,7 @@ function env({ sshBody = 'exit 0', watchInterval = '1', noInotify = false } = {}
           HOME: home, AV_LIB: LIB,
           PATH: `${bin}:${process.env.PATH}`,
           AGENT_VIEW_WATCH_INTERVAL: watchInterval,
+          ...(repaintInterval === undefined ? {} : { AGENT_VIEW_REPAINT_INTERVAL: repaintInterval }),
           ...(noInotify ? { AGENT_VIEW_INOTIFYWAIT: 'agentview-absent-inotifywait' } : {}),
         },
       });
@@ -70,6 +75,10 @@ function env({ sshBody = 'exit 0', watchInterval = '1', noInotify = false } = {}
     sshCalls() {
       if (!fs.existsSync(argvLog)) return [];
       return fs.readFileSync(argvLog, 'utf8').split('\n').filter(Boolean);
+    },
+    curlCalls() {
+      if (!fs.existsSync(curlLog)) return [];
+      return fs.readFileSync(curlLog, 'utf8').split('\n').filter(Boolean);
     },
     sleeps() {
       if (!fs.existsSync(sleepLog)) return [];
@@ -404,6 +413,132 @@ test('AGENT_VIEW_WATCH_INTERVAL=0 does not defeat the floor sleep', () => {
     `a requested interval of 0 must be raised to the 1s floor; slept: ${JSON.stringify(e.sleeps())}`);
   assert.ok(!e.sleeps().includes('0'), 'sleep 0 returns instantly and turns the loop into a spin');
   assert.ok(e.sshCalls().length > 0, 'the timer path refreshes the remote hosts');
+});
+
+// ---- tick cadence and the repaint gate ----
+// A local session repaints the moment inotify fires; a remote one only moves on a tick, so it
+// trailed by up to a full interval. The tick is now 5s rather than 30s, which is only
+// affordable because a tick that finds nothing new no longer repaints -- see
+// AV_REPAINT_INTERVAL in rows.sh.
+
+const SETTLED_ROW = '{"session":"s","state":"working","ts":1,"kind":"host"}';
+
+// Seeds both hosts so that a fetch returning `row` changes nothing: av_remote_digest reads
+// exactly these files, the cache in full and the status's outcome field only. The cache is
+// written WITHOUT a trailing newline on purpose -- refresh_one_remote's `printf '%s' "$out"`
+// drops the one command substitution already ate, so a seed carrying one is not the settled
+// state the fetch produces and every tick would read as news. The status file does end in a
+// newline, because av_write_status writes one.
+function seedSettled(e, row, stampOffset = 0) {
+  for (const host of ['daniel-server', 'daniel-box']) {
+    fs.writeFileSync(path.join(e.home, `.agentview-remote-cache.${host}`), row);
+    fs.writeFileSync(path.join(e.home, `.agentview-remote-status.${host}`),
+      `ok\t${Math.floor(Date.now() / 1000) + stampOffset}\n`);
+  }
+}
+
+test('the default tick is 5s, not the 30 that put the picker behind the sound', () => {
+  // An empty override falls through the same validation an unset one does, which is the only
+  // way to observe the default from a harness that always exports the variable.
+  const e = env({ watchInterval: '' });
+  const log = writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  const argv = fs.readFileSync(log, 'utf8');
+  assert.match(argv, /-t 5\b/, `expected the 5s default tick in: ${argv}`);
+});
+
+test('a tick that finds nothing new fetches but does not repaint', () => {
+  // The whole reason a 5s tick is affordable. Every repaint is a reload() POSTed into a live
+  // fzf: it re-runs --body, re-fires the load: bind and resets an open preview's scroll, so
+  // doing it every 5s to redraw an identical list is worse than the lag it was meant to fix.
+  const e = env({ sshBody: `printf '%s\\n' '${SETTLED_ROW}'` });
+  seedSettled(e, SETTLED_ROW);
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0, 'a quiet tick must still fetch -- it is the only thing that can move');
+  assert.deepStrictEqual(e.curlCalls(), [],
+    'a fetch that changed no byte must not POST a reload');
+});
+
+test('a remote row that changed state repaints immediately', () => {
+  // The reported symptom, from the picker's side: needs-input appears on a remote host and the
+  // row has to follow within a tick.
+  const e = env({ sshBody: `printf '%s\\n' '{"session":"s","state":"needs-input","ts":9,"kind":"host"}'` });
+  seedSettled(e, SETTLED_ROW);
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.curlCalls().length > 0,
+    'a remote host switching to needs-input must reach the open picker');
+});
+
+test('a host going unreachable repaints even though its cache is untouched', () => {
+  // rc 255 leaves the previous snapshot in place deliberately, so the cache alone cannot see
+  // this. render.sh still draws differently (the "· 4m old" stale line), which is why the
+  // digest carries the status sidecar's outcome field.
+  const e = env({ sshBody: 'exit 255' });
+  seedSettled(e, SETTLED_ROW);
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.curlCalls().length > 0,
+    'ok -> unreachable changes what the picker draws and must repaint');
+});
+
+test('a local file event repaints even when no remote row moved', () => {
+  // rc 0 is already a filtered local change (inotifywait -e), and --body reads the local rows
+  // fresh, so it bypasses the digest rather than being compared against it.
+  const e = env();
+  writeInotifyStub(e, 0);
+  seedSettled(e, SETTLED_ROW, 600);   // stamped ahead: nothing to fetch, so nothing can differ
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.strictEqual(e.sshCalls().length, 0, 'a fresh snapshot must not be re-fetched');
+  assert.ok(e.curlCalls().length > 0, 'a local event is news on its own');
+});
+
+// ---- the bell kick ----
+// A remote session's Notification hook has no sound player on either homelab host, so it ends
+// at `printf '\a'`, which rides the attach ssh into the local tmux pane. tmux's alert-bell hook
+// truncates $statedir/.remote-kick; that is the earliest this machine can know a remote row
+// moved, and it has to outrank the interval rather than read as an ordinary local event.
+
+const KICK = ['.claude', 'agent-view', '.remote-kick'];
+
+// The marker has to move AFTER rows.sh is sourced -- the module seeds itself from whatever is
+// already on disk -- so the inotifywait stub writes it, which is also what really happens: the
+// truncate is the close_write that wakes the watcher.
+function writeKickingInotifyStub(e) {
+  fs.writeFileSync(path.join(e.bin, 'inotifywait'),
+    `#!/bin/bash\n: > ${JSON.stringify(path.join(e.home, ...KICK))}\nexit 0\n`, { mode: 0o755 });
+}
+
+test('a bell fetches the remotes immediately, without waiting out the interval', () => {
+  const e = env();
+  writeKickingInotifyStub(e);
+  seedSettled(e, SETTLED_ROW, 600);   // stamped ahead: the age gate alone would not fetch
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.sshCalls().length > 0,
+    'a bell means a remote session just changed state -- the fetch cannot wait for the next tick');
+});
+
+test('a marker that has not moved since the last fetch is not a bell', () => {
+  // Otherwise every iteration would re-read the same marker as fresh news and fetch forever.
+  const e = env();
+  fs.writeFileSync(path.join(e.home, ...KICK), '');
+  writeInotifyStub(e, 0);
+  seedSettled(e, SETTLED_ROW, 600);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.strictEqual(e.sshCalls().length, 0,
+    'a stale marker must not force a fetch on every local event');
+});
+
+test('the repaint floor still fires on a picker with no news at all', () => {
+  // Some of what a row shows is relative -- "✓ idle 3m" -- so a gate with no floor would freeze
+  // those labels on a quiet picker. 0 means "every tick", which is the pre-gate behaviour.
+  const e = env({ sshBody: `printf '%s\\n' '${SETTLED_ROW}'`, repaintInterval: '0' });
+  seedSettled(e, SETTLED_ROW);
+  writeInotifyStub(e, 2);
+  e.run(['--watch-once', path.join(e.home, 'portfile')]);
+  assert.ok(e.curlCalls().length > 0,
+    'the floor must repaint an unchanged picker so relative ages keep moving');
 });
 
 // ---- orphan collection ----
