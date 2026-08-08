@@ -52,6 +52,11 @@ elif verb == "prompts":
     print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
 elif verb == "srows":
     print(m._savings_rows(json.loads(sys.stdin.read())))
+elif verb == "failures":
+    print(json.dumps(m.report_failures(json.loads(sys.stdin.read()), "7d")))
+elif verb == "bytesrep":
+    payload = json.loads(sys.stdin.read())
+    print(json.dumps(m.report_bytes(payload["totals"], payload["big"], "7d", 20000)))
 elif verb == "reduction":
     print(json.dumps(m.report_reduction(json.loads(sys.stdin.read()), "7d")))
 elif verb == "readrecs":
@@ -292,6 +297,44 @@ test('savings exposes no flag that could redirect the response', { skip }, () =>
   const help = otelq(['savings', '--help']).out;
   for (const flag of ['--host', '--url', '--base', '--output', '-o', '--insecure']) {
     assert.ok(!help.includes(flag), `${flag} must not exist — it would break the allow rule`);
+  }
+});
+
+test('failures ranks the programs that keep costing a turn', { skip }, () => {
+  const out = JSON.parse(drive(['failures'], JSON.stringify([
+    bash('git push'), bash('git status'), bash('ls /nope'),
+  ])));
+  assert.strictEqual(out.failures, 3);
+  assert.deepStrictEqual(out.by_program.map((r) => [r.program, r.count]),
+    [['git', 2], ['ls', 1]]);
+  assert.ok(out.by_program[0].example.startsWith('git '));
+});
+
+test('bytes totals every tool and orders by volume', { skip }, () => {
+  const out = JSON.parse(drive(['bytesrep'], JSON.stringify({
+    totals: { Bash: 100, Read: 900, Edit: 5 }, big: [bash('cat huge.log')],
+  })));
+  assert.strictEqual(out.bytes_total, 1005);
+  assert.deepStrictEqual(out.bytes_by_tool.map((r) => r.tool), ['Read', 'Bash', 'Edit']);
+  assert.strictEqual(out.big_calls, 1);
+  assert.strictEqual(out.big_calls_by_program[0].program, 'cat');
+});
+
+test('bytes reports an empty stack as zero rather than crashing', { skip }, () => {
+  const out = JSON.parse(drive(['bytesrep'], JSON.stringify({ totals: {}, big: [] })));
+  assert.strictEqual(out.bytes_total, 0);
+  assert.deepStrictEqual(out.bytes_by_tool, []);
+});
+
+// --since reaches LogQL as a range literal rather than a urlencoded parameter —
+// the one place in this tool where caller text lands inside a query. It is
+// validated before interpolation, and this is what proves the validation runs.
+test('a window that is not a duration never reaches the query', { skip }, () => {
+  for (const bad of ['7d] | drop __error__ [1h', '1h;ls', '../etc', '5', 'd']) {
+    const r = otelq(['savings', 'bytes', '--since', bad]);
+    assert.strictEqual(r.code, 2, `--since ${bad} must be refused`);
+    assert.match(r.err, /bad duration/);
+    assert.ok(!r.err.includes('Traceback'), 'a refusal, not a crash');
   }
 });
 

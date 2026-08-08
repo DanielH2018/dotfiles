@@ -60,6 +60,11 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 # three problems and is testable without a backend.
 SAVINGS_LIMIT = 5000
 
+# What counts as a call worth naming in the bytes report. Below this the volume
+# is real but no single call is the problem, and listing them all would be the
+# same unbounded dump the report exists to find.
+BIG_RESULT_BYTES = 20000
+
 # Written by jsonq's own counter; pinned to that tool's path by a test, since
 # nothing else connects the two. Fixed, and no flag sets it — otelq reads one
 # known file, which is not the arbitrary-read primitive the allow rule assumes
@@ -274,42 +279,91 @@ def _label_of(event):
     return program_of(_command_of(event))
 
 
-def report_prompts(events, window):
-    """M1 — the interruption ledger.
+def _rank_by_program(events):
+    """Rank events by the program behind them, keeping one example of each.
 
-    Every row is a permission prompt that actually fired and stopped the human.
-    Ranking by program is what turns it into an allowlist rule; the example is
-    there so the rule can be written without going back to the transcript.
+    The example is what makes a row actionable — an allowlist rule or a fix can
+    be written from it without going back to the transcript.
     """
-    by_program, by_tool, hooks = {}, {}, {}
-    examples = {}
-    prompts = 0
+    by_program, by_tool, examples = {}, {}, {}
     for event in events:
-        source = event.get("source") or ""
-        if source == "hook":
-            _tally(hooks, event.get("decision") or "?")
-            continue
-        if not source.startswith("user_"):
-            continue
-        prompts += 1
         label = _label_of(event)
         _tally(by_program, label)
         _tally(by_tool, event.get("tool_name") or "?")
         if label not in examples:
-            command = _command_of(event) or event.get("tool_name") or ""
-            examples[label] = command[:120]
+            examples[label] = (_command_of(event) or event.get("tool_name") or "")[:120]
     ranked = _ranked(by_program, "program")
     for row in ranked:
         row["example"] = examples.get(row["program"], "")
+    return ranked, _ranked(by_tool, "tool")
+
+
+def report_prompts(events, window):
+    """M1 — the interruption ledger.
+
+    Every row is a permission prompt that actually fired and stopped the human.
+    Hook decisions are kept separate: no human was interrupted by those, so
+    folding them in would overstate the cost.
+    """
+    hooks, prompts = {}, []
+    for event in events:
+        source = event.get("source") or ""
+        if source == "hook":
+            _tally(hooks, event.get("decision") or "?")
+        elif source.startswith("user_"):
+            prompts.append(event)
+    by_program, by_tool = _rank_by_program(prompts)
     return {
         "report": "prompts",
         "measures": "prompts that fired — savings still on the table",
         "window": window,
         "scope": "127.0.0.1 (this machine only)",
-        "prompts_fired": prompts,
-        "by_program": ranked,
-        "by_tool": _ranked(by_tool, "tool"),
+        "prompts_fired": len(prompts),
+        "by_program": by_program,
+        "by_tool": by_tool,
         "hook_decisions": _ranked(hooks, "decision"),
+    }
+
+
+def report_failures(events, window):
+    """M5 — the failure tax.
+
+    A failed tool call costs a turn and the context of its own error output,
+    then usually a retry. Ranked by program, because the fix is nearly always a
+    changed command pattern rather than a one-off.
+    """
+    by_program, by_tool = _rank_by_program(events)
+    return {
+        "report": "failures",
+        "measures": "tool calls that failed — a wasted turn plus its output, each",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "failures": len(events),
+        "by_program": by_program,
+        "by_tool": by_tool,
+    }
+
+
+def report_bytes(totals, big_events, window, threshold):
+    """M2 — where context actually goes.
+
+    Totals come from a Loki aggregation rather than a fetch: `tool_name` is a
+    real top-level field, so this one grouping is both sound and cheap at any
+    window. The per-call list is a bounded fetch of the individual results over
+    the threshold, which is what names the commands worth bounding.
+    """
+    by_program, _ = _rank_by_program(big_events)
+    return {
+        "report": "bytes",
+        "measures": "context returned by tool calls — where output is not bounded",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "bytes_total": sum(totals.values()),
+        "bytes_by_tool": [{"tool": k, "bytes": v}
+                          for k, v in sorted(totals.items(), key=lambda kv: -kv[1])],
+        "big_call_threshold": threshold,
+        "big_calls": len(big_events),
+        "big_calls_by_program": by_program,
     }
 
 
@@ -358,7 +412,7 @@ def report_reduction(records, window):
         _tally(by_tool, record.get("tool") or "?")
     return {
         "report": "reduction",
-        "measures": "bytes read vs bytes printed — a reduction ratio, not a savings claim",
+        "measures": "bytes read vs bytes printed — a ratio, not a savings claim",
         "window": window,
         "scope": "127.0.0.1 (this machine only)",
         "calls": len(records),
@@ -383,19 +437,60 @@ def cmd_savings_reduction(ns, now):
     return payload
 
 
+def _bytes_by_tool(since, now, timeout):
+    """Total result bytes per tool, aggregated by Loki rather than fetched.
+
+    `since` reaches LogQL as a range literal, so it is validated first — that is
+    the only place in this tool where caller text lands inside a query rather
+    than in a urlencoded parameter.
+    """
+    parse_duration(since)
+    query = (
+        'sum by (tool_name) (sum_over_time({service_name="claude-code"} | json '
+        '| event_name="tool_result" '
+        '| line_format "{{.tool_name}}#{{.tool_result_size_bytes}}" '
+        '| regexp "#(?P<sz>[0-9]+)$" | unwrap sz | __error__!="" [' + since + ']))'
+    )
+    payload = _get(LOKI, "/loki/api/v1/query",
+                   {"query": query, "time": str(int(now))}, timeout)
+    totals = {}
+    for series in (payload.get("data") or {}).get("result") or []:
+        tool = (series.get("metric") or {}).get("tool_name") or "?"
+        try:
+            totals[tool] = totals.get(tool, 0) + int(float((series.get("value"))[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return totals
+
+
 def cmd_savings(ns, now):
     if ns.report == "reduction":
         return cmd_savings_reduction(ns, now)
-    # Filter in the selector, not in Python. Fetching every decision and
-    # discarding the auto-approved ones blows the entry limit long before the
-    # window ends — 7d is ~15k decisions but only ~600 prompts — and silently
-    # reports a fraction of the real count as if it were the whole.
-    events = _savings_fetch(
-        '{service_name="claude-code"} | json | event_name="tool_decision" '
-        '| source=~"user_.*|hook"',
-        ns.since, now, ns.timeout)
-    payload = report_prompts(events, ns.since)
-    payload["truncated"] = len(events) >= SAVINGS_LIMIT
+
+    if ns.report == "bytes":
+        fetched = _savings_fetch(
+            '{service_name="claude-code"} | json | event_name="tool_result" '
+            f'| tool_result_size_bytes > {BIG_RESULT_BYTES}',
+            ns.since, now, ns.timeout)
+        payload = report_bytes(_bytes_by_tool(ns.since, now, ns.timeout),
+                               fetched, ns.since, BIG_RESULT_BYTES)
+    elif ns.report == "failures":
+        fetched = _savings_fetch(
+            '{service_name="claude-code"} | json | event_name="tool_result" '
+            '| success="false"',
+            ns.since, now, ns.timeout)
+        payload = report_failures(fetched, ns.since)
+    else:
+        # Filter in the selector, not in Python. Fetching every decision and
+        # discarding the auto-approved ones blows the entry limit long before
+        # the window ends — 7d is ~15k decisions but only ~600 prompts — and
+        # silently reports a fraction of the real count as if it were the whole.
+        fetched = _savings_fetch(
+            '{service_name="claude-code"} | json | event_name="tool_decision" '
+            '| source=~"user_.*|hook"',
+            ns.since, now, ns.timeout)
+        payload = report_prompts(fetched, ns.since)
+    payload["truncated"] = len(fetched) >= SAVINGS_LIMIT
     return payload
 
 
@@ -421,6 +516,14 @@ def _rows(payload):
     return "\n".join(f"{v}\t{lab}" for v, lab in lines)
 
 
+def _truncation_note(payload):
+    """First line, not last. A partial count reads exactly like a whole one, so
+    the warning has to arrive before the numbers do."""
+    if not payload.get("truncated"):
+        return []
+    return [f"!\ttruncated at {SAVINGS_LIMIT} events — narrow --since"]
+
+
 def _savings_rows(payload):
     """The digest as value<TAB>label, matching what --rows means everywhere else."""
     if payload["report"] == "reduction":
@@ -436,15 +539,31 @@ def _savings_rows(payload):
         if payload.get("note"):
             lines.append(f"-\t{payload['note']}")
         return "\n".join(lines)
+    if payload["report"] == "bytes":
+        lines = [f"{payload['bytes_total']}\tbytes returned over {payload['window']} "
+                 f"({payload['scope']})"]
+        for row in payload["bytes_by_tool"]:
+            lines.append(f"{row['bytes']}\t{row['tool']}")
+        lines.append(f"{payload['big_calls']}\tcalls over "
+                     f"{payload['big_call_threshold']} bytes, by program:")
+        for row in payload["big_calls_by_program"]:
+            lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+        return "\n".join(_truncation_note(payload) + lines)
+
+    if payload["report"] == "failures":
+        lines = [f"{payload['failures']}\tfailed calls over {payload['window']} "
+                 f"({payload['scope']})"]
+        for row in payload["by_program"]:
+            lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+        return "\n".join(_truncation_note(payload) + lines)
+
     lines = [f"{payload['prompts_fired']}\tprompts fired over {payload['window']} "
              f"({payload['scope']})"]
-    if payload.get("truncated"):
-        lines.append(f"!\ttruncated at {SAVINGS_LIMIT} events — narrow --since")
     for row in payload["by_program"]:
         lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
     for row in payload["hook_decisions"]:
         lines.append(f"{row['count']}\thook:{row['decision']}\t(no human involved)")
-    return "\n".join(lines)
+    return "\n".join(_truncation_note(payload) + lines)
 
 
 def main(argv=None):
@@ -501,8 +620,9 @@ def main(argv=None):
         "savings", help="what the tooling rules are costing, from tool-call events",
         parents=[common])
     p.add_argument("report", nargs="?", default="prompts",
-                   choices=("prompts", "reduction"),
+                   choices=("prompts", "bytes", "failures", "reduction"),
                    help="prompts: interruptions still on the table (default). "
+                        "bytes: where context goes. failures: the retry tax. "
                         "reduction: bytes the filter tools removed")
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
