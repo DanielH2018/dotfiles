@@ -490,12 +490,18 @@ def _count_matching(pattern, since, now, timeout):
     rewritten from `tool_parameters` first: the event body is only the event
     name, so a line filter against the raw line matches nothing — silently, and
     a zero here reads exactly like real disuse.
+
+    That rewrite is parsed a second time so the pattern sees only
+    `full_command`. Matching the whole `tool_parameters` blob counts the tool's
+    name in the `description` field as a use of it, and leaves the command JSON
+    escaped, where a `\\n` glues the next word to an `n` and defeats `\\b`.
     """
     parse_duration(since)
     query = (
         'sum by (tool_name) (count_over_time({service_name="claude-code"} | json '
         '| event_name="tool_result" | tool_name="Bash" '
-        '| line_format "{{.tool_parameters}}" '
+        '| line_format "{{.tool_parameters}}" | json '
+        '| line_format "{{.full_command}}" '
         "|~ `" + pattern + "` | __error__!=\"\" [" + since + "]))"
     )
     payload = _get(LOKI, "/loki/api/v1/query",
@@ -561,6 +567,10 @@ def report_all(now, window, prompts, byte_report, failures, subst, reduction):
         "adoption": {r["preferred"]: r["adoption"] for r in subst["pairs"]},
         "reduction_ratio": reduction["reduction_ratio"],
         "reduction_calls": reduction["calls"],
+        # The rollup keeps this line after the events behind it are gone, so a
+        # capped count recorded as whole can never be caught later.
+        "truncated": any(part.get("truncated")
+                         for part in (prompts, byte_report, failures)),
     }
 
 

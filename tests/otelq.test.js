@@ -64,6 +64,21 @@ elif verb == "bytesrep":
     print(json.dumps(m.report_bytes(payload["totals"], payload["big"], "7d", 20000)))
 elif verb == "reduction":
     print(json.dumps(m.report_reduction(json.loads(sys.stdin.read()), "7d")))
+elif verb == "all":
+    a = json.loads(sys.stdin.read())
+    parts = {
+        "prompts": m.report_prompts(a["decisions"], "1d"),
+        "bytes": m.report_bytes(a["totals"], a["big"], "1d", 20000),
+        "failures": m.report_failures(a["failures"], "1d"),
+    }
+    for name in a.get("truncated", []):
+        parts[name]["truncated"] = True
+    payload = m.report_all(
+        1700000000, "1d", parts["prompts"], parts["bytes"], parts["failures"],
+        m.report_subst({k: tuple(v) for k, v in a["subst"].items()}, "1d"),
+        m.report_reduction(a["filters"], "1d"))
+    # Serialized exactly as the CLI does, since the rollup matches on the text.
+    print(json.dumps(payload, indent=None, ensure_ascii=False))
 elif verb == "readrecs":
     print(json.dumps(m._read_jsonl(sys.argv[2], sys.argv[4], int(sys.argv[3]))))
 `);
@@ -410,6 +425,43 @@ test('reduction counts stdin calls but keeps them out of the ratio', { skip }, (
 test('reduction survives a call that printed nothing', { skip }, () => {
   const out = JSON.parse(drive(['reduction'], JSON.stringify([rec({ in: 500, out: 0 })])));
   assert.strictEqual(out.median_call_ratio, 500, 'no division by zero');
+});
+
+// ---------------------------------------------------------------------------
+// savings all — the one shape the rollup writes down and keeps.
+
+const ROLLUP = path.join(__dirname, '..', 'home', 'dot_local', 'bin',
+  'executable_otel-savings-rollup');
+
+const allInput = (over) => Object.assign({
+  decisions: [bash('git push')],
+  totals: { Bash: 100 },
+  big: [],
+  failures: [bash('ls /nope')],
+  subst: { jsonq: [1, 1] },
+  filters: [{ t: 2000, tool: 'jsonq', in: 1000, out: 10 }],
+}, over);
+
+test('the rollup guard accepts what savings all actually emits', { skip }, () => {
+  // The guard is a literal prefix match, so it depends on `report` being the
+  // first key and on json.dumps' default separators. Nothing else connects the
+  // two files: reorder the dict and the rollup rejects every day in silence,
+  // which then reads as a disabled timer.
+  const line = drive(['all'], JSON.stringify(allInput()));
+  const guard = fs.readFileSync(ROLLUP, 'utf8').match(/^\s*'(\{"report".*?)'\*\)/m);
+  assert.ok(guard, 'the rollup must still gate on a literal prefix');
+  assert.ok(line.startsWith(guard[1]),
+    `guard ${JSON.stringify(guard[1])} rejects ${JSON.stringify(line.slice(0, 40))}`);
+});
+
+test('savings all carries a capped fetch into the record it keeps', { skip }, () => {
+  const clean = JSON.parse(drive(['all'], JSON.stringify(allInput())));
+  assert.strictEqual(clean.truncated, false);
+  for (const part of ['prompts', 'bytes', 'failures']) {
+    const out = JSON.parse(drive(['all'], JSON.stringify(allInput({ truncated: [part] }))));
+    assert.strictEqual(out.truncated, true,
+      `a capped ${part} fetch must not be written down as a whole count`);
+  }
 });
 
 test('reduction reports nulls rather than zero when there is nothing to measure', { skip }, () => {
