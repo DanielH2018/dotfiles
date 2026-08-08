@@ -52,6 +52,9 @@ elif verb == "prompts":
     print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
 elif verb == "srows":
     print(m._savings_rows(json.loads(sys.stdin.read())))
+elif verb == "subst":
+    raw = json.loads(sys.stdin.read())
+    print(json.dumps(m.report_subst({k: tuple(v) for k, v in raw.items()}, "7d")))
 elif verb == "failures":
     print(json.dumps(m.report_failures(json.loads(sys.stdin.read()), "7d")))
 elif verb == "bytesrep":
@@ -298,6 +301,28 @@ test('savings exposes no flag that could redirect the response', { skip }, () =>
   for (const flag of ['--host', '--url', '--base', '--output', '-o', '--insecure']) {
     assert.ok(!help.includes(flag), `${flag} must not exist — it would break the allow rule`);
   }
+});
+
+test('subst reports adoption and names the tool being replaced', { skip }, () => {
+  const out = JSON.parse(drive(['subst'], JSON.stringify({
+    jsonq: [30, 10], rg: [1, 99], gron: [0, 0],
+  })));
+  const byName = Object.fromEntries(out.pairs.map((p) => [p.preferred, p]));
+  assert.strictEqual(byName.jsonq.adoption, 0.75);
+  assert.strictEqual(byName.rg.adoption, 0.01);
+  assert.strictEqual(byName.gron.adoption, null, 'no calls either way is unknown, not 0%');
+  assert.strictEqual(byName.rg.replaces, 'grep',
+    'the report must name the tool, not the regex that finds it');
+  for (const p of out.pairs) {
+    assert.ok(!/\\b/.test(p.replaces), 'a raw RE2 pattern must not reach the output');
+  }
+});
+
+test('subst calls itself adoption and warns that the pairs overlap', { skip }, () => {
+  const out = JSON.parse(drive(['subst'], JSON.stringify({ jsonq: [1, 1] })));
+  assert.match(out.measures, /not a savings claim/);
+  assert.match(out.note, /counts for both/,
+    'a command running both tools is counted twice — read as a partition it misleads');
 });
 
 test('failures ranks the programs that keep costing a turn', { skip }, () => {

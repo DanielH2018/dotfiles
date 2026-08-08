@@ -65,6 +65,15 @@ SAVINGS_LIMIT = 5000
 # same unbounded dump the report exists to find.
 BIG_RESULT_BYTES = 20000
 
+# Pairs the tooling rules ask to be substituted, as (preferred, replaced).
+# Patterns are RE2 and matched against the command text, so a command using both
+# sides counts for both — this is an adoption ratio, not a partition.
+SUBSTITUTIONS = (
+    ("jsonq", r"\bjsonq\b", "python3 -c", "python3 -c"),
+    ("rg", r"\brg\b", "grep", r"\bgrep\b"),
+    ("gron", r"\bgron\b", "jq", r"\bjq\b"),
+)
+
 # Written by jsonq's own counter; pinned to that tool's path by a test, since
 # nothing else connects the two. Fixed, and no flag sets it — otelq reads one
 # known file, which is not the arbitrary-read primitive the allow rule assumes
@@ -463,9 +472,72 @@ def _bytes_by_tool(since, now, timeout):
     return totals
 
 
+def _count_matching(pattern, since, now, timeout):
+    """How many Bash calls in the window ran a command matching `pattern`.
+
+    Counted by Loki rather than fetched, because the population is every Bash
+    call and that is far past what one fetch may return. The line has to be
+    rewritten from `tool_parameters` first: the event body is only the event
+    name, so a line filter against the raw line matches nothing — silently, and
+    a zero here reads exactly like real disuse.
+    """
+    parse_duration(since)
+    query = (
+        'sum by (tool_name) (count_over_time({service_name="claude-code"} | json '
+        '| event_name="tool_result" | tool_name="Bash" '
+        '| line_format "{{.tool_parameters}}" '
+        "|~ `" + pattern + "` | __error__!=\"\" [" + since + "]))"
+    )
+    payload = _get(LOKI, "/loki/api/v1/query",
+                   {"query": query, "time": str(int(now))}, timeout)
+    total = 0
+    for series in (payload.get("data") or {}).get("result") or []:
+        try:
+            total += int(float((series.get("value"))[1]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return total
+
+
+def report_subst(counts, window):
+    """M4 — is the rule holding?
+
+    Adoption, not savings. It says how often the preferred tool was reached for
+    against the one a rule asks it to replace; it says nothing about what the
+    other choice would have cost, because nothing observes that.
+    """
+    pairs = []
+    for name, _preferred, replaced_label, _replaced in SUBSTITUTIONS:
+        used, instead = counts.get(name, (0, 0))
+        total = used + instead
+        pairs.append({
+            "preferred": name,
+            "replaces": replaced_label,
+            "preferred_calls": used,
+            "replaced_calls": instead,
+            "adoption": round(used / total, 2) if total else None,
+        })
+    return {
+        "report": "subst",
+        "measures": "how often the preferred tool was used — an adoption ratio, "
+                    "not a savings claim",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "note": "a command using both tools counts for both; these are not shares "
+                "of a partition",
+        "pairs": pairs,
+    }
+
+
 def cmd_savings(ns, now):
     if ns.report == "reduction":
         return cmd_savings_reduction(ns, now)
+
+    if ns.report == "subst":
+        counts = {name: (_count_matching(preferred, ns.since, now, ns.timeout),
+                         _count_matching(replaced, ns.since, now, ns.timeout))
+                  for name, preferred, _label, replaced in SUBSTITUTIONS}
+        return report_subst(counts, ns.since)
 
     if ns.report == "bytes":
         fetched = _savings_fetch(
@@ -539,6 +611,15 @@ def _savings_rows(payload):
         if payload.get("note"):
             lines.append(f"-\t{payload['note']}")
         return "\n".join(lines)
+    if payload["report"] == "subst":
+        lines = [f"-\tadoption over {payload['window']} ({payload['scope']})"]
+        for row in payload["pairs"]:
+            lines.append(f"{row['adoption']}\t{row['preferred']}\t"
+                         f"{row['preferred_calls']} vs {row['replaced_calls']} "
+                         f"{row['replaces']}")
+        lines.append(f"-\t{payload['note']}")
+        return "\n".join(lines)
+
     if payload["report"] == "bytes":
         lines = [f"{payload['bytes_total']}\tbytes returned over {payload['window']} "
                  f"({payload['scope']})"]
@@ -620,9 +701,10 @@ def main(argv=None):
         "savings", help="what the tooling rules are costing, from tool-call events",
         parents=[common])
     p.add_argument("report", nargs="?", default="prompts",
-                   choices=("prompts", "bytes", "failures", "reduction"),
+                   choices=("prompts", "bytes", "failures", "subst", "reduction"),
                    help="prompts: interruptions still on the table (default). "
                         "bytes: where context goes. failures: the retry tax. "
+                        "subst: is the rule holding. "
                         "reduction: bytes the filter tools removed")
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
