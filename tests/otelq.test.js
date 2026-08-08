@@ -46,6 +46,12 @@ elif verb == "rows":
     print(m._rows(json.loads(sys.stdin.read())))
 elif verb == "bases":
     print(json.dumps([m.LOKI, m.PROM, m.TEMPO]))
+elif verb == "prog":
+    print(m.program_of(sys.argv[2]))
+elif verb == "prompts":
+    print(json.dumps(m.report_prompts(json.loads(sys.stdin.read()), "7d")))
+elif verb == "srows":
+    print(m._savings_rows(json.loads(sys.stdin.read())))
 `);
 
 function otelq(args, input) {
@@ -177,6 +183,111 @@ test('reports an unreachable backend as a refusal, not a crash', { skip }, () =>
   // Ports are fixed, so this asserts the error path's shape via the message the
   // URLError branch produces; a live stack makes it a no-op.
   assert.match(SRC, /unreachable.*docker ps/, 'unreachable path should hint at the stack');
+});
+
+// ---------------------------------------------------------------------------
+// savings — the digest built from tool-call events.
+//
+// The aggregation runs in Python rather than LogQL precisely so it can be tested
+// without a backend, so these drive the pure functions over synthetic events.
+// `program_of` carries most of the risk: rank by the wrong token and the ledger
+// blames a directory change for work it did not do.
+
+const decision = (over) => Object.assign({
+  tool_name: 'Bash', source: 'user_temporary', decision: 'accept',
+  tool_parameters: JSON.stringify({ bash_command: 'x', full_command: 'x' }),
+}, over);
+
+const bash = (cmd, over) => decision(Object.assign({
+  tool_parameters: JSON.stringify({ bash_command: cmd.split(' ')[0], full_command: cmd }),
+}, over));
+
+test('program_of names the program that runs, not the first token', { skip }, () => {
+  const cases = [
+    ['grep -n foo bar.txt', 'grep'],
+    ['cd /tmp && grep x y', 'grep'],
+    ['cd /tmp; ls -la', 'ls'],
+    ['PATH=/x:$PATH node t.js', 'node'],
+    ['sudo dnf install x', 'dnf'],
+    ['command -v magick', 'magick'],
+    ['/home/daniel/.local/bin/otelq ready', 'otelq'],
+    ['echo hi | grep h', 'echo'],
+    ['timeout 30 ssh host uptime', 'timeout'],
+  ];
+  for (const [cmd, want] of cases) {
+    assert.strictEqual(drive(['prog', cmd]), want, `program_of(${cmd})`);
+  }
+});
+
+test('program_of yields "?" when nothing names a program', { skip }, () => {
+  for (const cmd of ['', 'cd /tmp', 'export A=1', '   ']) {
+    assert.strictEqual(drive(['prog', cmd]), '?', `program_of(${JSON.stringify(cmd)})`);
+  }
+});
+
+test('prompts counts only decisions a human answered', { skip }, () => {
+  const events = [
+    bash('git push'),
+    bash('git push'),
+    bash('rsync -a src dst', { source: 'user_permanent' }),
+    bash('ls', { source: 'config' }), // auto-approved: not a prompt
+    bash('curl evil', { source: 'hook', decision: 'reject' }),
+  ];
+  const out = JSON.parse(drive(['prompts'], JSON.stringify(events)));
+  assert.strictEqual(out.prompts_fired, 3, 'config-approved calls are not interruptions');
+  assert.deepStrictEqual(out.by_program.map((r) => [r.program, r.count]),
+    [['git', 2], ['rsync', 1]], 'ranked by count, descending');
+  assert.deepStrictEqual(out.hook_decisions, [{ decision: 'reject', count: 1 }]);
+});
+
+test('prompts ranks non-Bash tools under their tool name', { skip }, () => {
+  const events = [
+    decision({ tool_name: 'AskUserQuestion', tool_parameters: '' }),
+    decision({ tool_name: 'AskUserQuestion', tool_parameters: '' }),
+    bash('git push'),
+  ];
+  const out = JSON.parse(drive(['prompts'], JSON.stringify(events)));
+  assert.deepStrictEqual(out.by_program.map((r) => r.program), ['AskUserQuestion', 'git']);
+  assert.deepStrictEqual(out.by_tool.map((r) => [r.tool, r.count]),
+    [['AskUserQuestion', 2], ['Bash', 1]]);
+});
+
+test('prompts survives tool_parameters that is absent or not JSON', { skip }, () => {
+  const events = [
+    decision({ tool_parameters: '{not json' }),
+    decision({ tool_parameters: '' }),
+    decision({ tool_parameters: '["a list, not an object"]' }),
+  ];
+  const out = JSON.parse(drive(['prompts'], JSON.stringify(events)));
+  assert.strictEqual(out.prompts_fired, 3, 'a malformed payload must not drop the event');
+  assert.deepStrictEqual(out.by_program.map((r) => r.program), ['?']);
+});
+
+test('prompts caps the example so one long command cannot flood the digest', { skip }, () => {
+  const out = JSON.parse(drive(['prompts'], JSON.stringify([bash(`git ${'x'.repeat(400)}`)])));
+  assert.strictEqual(out.by_program[0].example.length, 120);
+});
+
+test('savings --rows flags a truncated fetch instead of under-reporting', { skip }, () => {
+  const base = JSON.parse(drive(['prompts'], JSON.stringify([bash('git push')])));
+  assert.ok(!drive(['srows'], JSON.stringify(base)).includes('truncated'));
+  const rendered = drive(['srows'], JSON.stringify(Object.assign({}, base, { truncated: true })));
+  assert.match(rendered, /truncated at \d+ events/,
+    'a silently partial count reads as a real one — it has to say so');
+});
+
+test('savings states the window and that it covers one machine only', { skip }, () => {
+  const out = JSON.parse(drive(['prompts'], JSON.stringify([bash('git push')])));
+  assert.strictEqual(out.window, '7d');
+  assert.match(out.scope, /127\.0\.0\.1/,
+    'the stack is loopback-only, so the digest must not read as cross-machine');
+});
+
+test('savings exposes no flag that could redirect the response', { skip }, () => {
+  const help = otelq(['savings', '--help']).out;
+  for (const flag of ['--host', '--url', '--base', '--output', '-o', '--insecure']) {
+    assert.ok(!help.includes(flag), `${flag} must not exist — it would break the allow rule`);
+  }
 });
 
 // otelq hardcodes its backend ports and claude-otel/docker-compose.yml publishes them, with

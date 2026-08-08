@@ -47,6 +47,61 @@ MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _DURATION = re.compile(r"^(\d+)([smhdw])$")
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
+# `savings` fetches raw event lines and aggregates in Python rather than in
+# LogQL. That is not a style preference. Grouping in LogQL forces `bash_command`
+# as the key, which holds only the first token of the command — `cd` alone
+# accounts for ~40% of Bash calls, so a per-command ranking built on it
+# attributes work to a directory change instead of to whatever did the work.
+# The full text is in `tool_parameters`, a JSON string *inside* the line, and
+# extracting it there needs a double parse whose every line then carries
+# `__error__="JSONParserErr"` — which Loki refuses to aggregate over unless the
+# aggregation drops the label. Reading the lines and counting here avoids all
+# three problems and is testable without a backend.
+SAVINGS_LIMIT = 5000
+
+# Tokens that never name the program that did the work. Segment-skips consume
+# the rest of the segment (`cd /some/path`); token-skips consume only
+# themselves, so `sudo dnf` still reports `dnf`.
+_SEGMENT_SKIP = frozenset({
+    "cd", "export", "set", "unset", "local", "readonly", "shift", "return",
+    "source", ".", "eval", ":",
+})
+_TOKEN_SKIP = frozenset({
+    "sudo", "command", "env", "time", "exec", "nohup", "builtin", "then",
+    "do", "else", "elif", "fi", "done", "if", "while", "for", "until", "!",
+    "{", "}", "(", ")",
+})
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SPLIT_SEGMENTS = re.compile(r"\|\||&&|[;|\n&]")
+
+
+def program_of(command):
+    """Name the program a shell command actually runs.
+
+    The first token is usually not it: `cd x && grep y` is a grep, and
+    `PATH=... node t.js` is a node. Walks segments left to right, skipping
+    directory changes, variable assignments and shell keywords, and returns the
+    first real program by basename so `/home/x/.local/bin/otelq` and `otelq`
+    are one entry rather than two.
+    """
+    if not command:
+        return "?"
+    for segment in _SPLIT_SEGMENTS.split(command):
+        for token in segment.split():
+            if _ASSIGNMENT.match(token):
+                continue
+            bare = token.strip("\"'`(){}")
+            if not bare or bare.startswith("-"):
+                # A flag belongs to a token we already skipped — `command -v x`
+                # is an x, not a `-v`.
+                continue
+            if bare in _SEGMENT_SKIP:
+                break
+            if bare in _TOKEN_SKIP:
+                continue
+            return bare.rsplit("/", 1)[-1]
+    return "?"
+
 
 class OtelqError(Exception):
     """A refusal we raise ourselves — reported without a traceback."""
@@ -156,6 +211,113 @@ def cmd_ready(ns, now):
     return out
 
 
+def _savings_fetch(selector, since, now, timeout, limit=SAVINGS_LIMIT):
+    """Raw event lines over a window, as the label maps Loki returns.
+
+    `| json` lifts every event field into the stream labels, so one event is one
+    stream and the caller gets a dict per event without parsing the body again.
+    """
+    start, end = _window(since, now)
+    payload = _get(LOKI, "/loki/api/v1/query_range", {
+        "query": selector,
+        "start": str(int(start)),
+        "end": str(int(end)),
+        "limit": str(limit),
+        "direction": "backward",
+    }, timeout)
+    events = []
+    for series in (payload.get("data") or {}).get("result") or []:
+        labels = series.get("stream") or {}
+        events.extend(labels for _ in series.get("values") or [])
+    return events
+
+
+def _command_of(event):
+    """The full shell command behind a Bash event, or '' for other tools.
+
+    `tool_parameters` is a JSON *string* inside the line, which is why nothing
+    upstream can group on its contents.
+    """
+    raw = event.get("tool_parameters")
+    if not raw:
+        return ""
+    try:
+        params = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    return params.get("full_command") or "" if isinstance(params, dict) else ""
+
+
+def _tally(counter, key):
+    counter[key] = counter.get(key, 0) + 1
+
+
+def _ranked(counter, key_name):
+    return [{key_name: k, "count": n}
+            for k, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def _label_of(event):
+    """What to rank an event under: the program for Bash, else the tool name."""
+    tool = event.get("tool_name") or "?"
+    if tool != "Bash":
+        return tool
+    return program_of(_command_of(event))
+
+
+def report_prompts(events, window):
+    """M1 — the interruption ledger.
+
+    Every row is a permission prompt that actually fired and stopped the human.
+    Ranking by program is what turns it into an allowlist rule; the example is
+    there so the rule can be written without going back to the transcript.
+    """
+    by_program, by_tool, hooks = {}, {}, {}
+    examples = {}
+    prompts = 0
+    for event in events:
+        source = event.get("source") or ""
+        if source == "hook":
+            _tally(hooks, event.get("decision") or "?")
+            continue
+        if not source.startswith("user_"):
+            continue
+        prompts += 1
+        label = _label_of(event)
+        _tally(by_program, label)
+        _tally(by_tool, event.get("tool_name") or "?")
+        if label not in examples:
+            command = _command_of(event) or event.get("tool_name") or ""
+            examples[label] = command[:120]
+    ranked = _ranked(by_program, "program")
+    for row in ranked:
+        row["example"] = examples.get(row["program"], "")
+    return {
+        "report": "prompts",
+        "measures": "prompts that fired — savings still on the table",
+        "window": window,
+        "scope": "127.0.0.1 (this machine only)",
+        "prompts_fired": prompts,
+        "by_program": ranked,
+        "by_tool": _ranked(by_tool, "tool"),
+        "hook_decisions": _ranked(hooks, "decision"),
+    }
+
+
+def cmd_savings(ns, now):
+    # Filter in the selector, not in Python. Fetching every decision and
+    # discarding the auto-approved ones blows the entry limit long before the
+    # window ends — 7d is ~15k decisions but only ~600 prompts — and silently
+    # reports a fraction of the real count as if it were the whole.
+    events = _savings_fetch(
+        '{service_name="claude-code"} | json | event_name="tool_decision" '
+        '| source=~"user_.*|hook"',
+        ns.since, now, ns.timeout)
+    payload = report_prompts(events, ns.since)
+    payload["truncated"] = len(events) >= SAVINGS_LIMIT
+    return payload
+
+
 def _rows(payload):
     """Render the vector/matrix shape every ad-hoc query ended up reformatting by
     hand: value, then the label set, one series per line, biggest first."""
@@ -176,6 +338,19 @@ def _rows(payload):
             return (1, 0.0)
     lines.sort(key=sort_key)
     return "\n".join(f"{v}\t{lab}" for v, lab in lines)
+
+
+def _savings_rows(payload):
+    """The digest as value<TAB>label, matching what --rows means everywhere else."""
+    lines = [f"{payload['prompts_fired']}\tprompts fired over {payload['window']} "
+             f"({payload['scope']})"]
+    if payload.get("truncated"):
+        lines.append(f"!\ttruncated at {SAVINGS_LIMIT} events — narrow --since")
+    for row in payload["by_program"]:
+        lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
+    for row in payload["hook_decisions"]:
+        lines.append(f"{row['count']}\thook:{row['decision']}\t(no human involved)")
+    return "\n".join(lines)
 
 
 def main(argv=None):
@@ -228,14 +403,20 @@ def main(argv=None):
 
     sub.add_parser("ready", help="readiness of both backends", parents=[common])
 
+    p = sub.add_parser(
+        "savings", help="what the tooling rules are costing, from tool-call events",
+        parents=[common])
+    p.add_argument("--since", default="7d", help="window (default: 7d)")
+
     ns = parser.parse_args(argv)
-    handlers = {"logs": cmd_logs, "metric": cmd_metric,
-                "labels": cmd_labels, "ready": cmd_ready}
+    handlers = {"logs": cmd_logs, "metric": cmd_metric, "labels": cmd_labels,
+                "ready": cmd_ready, "savings": cmd_savings}
 
     try:
         payload = handlers[ns.cmd](ns, time.time())
-        print(_rows(payload) if ns.rows else json.dumps(payload, indent=ns.indent,
-                                                        ensure_ascii=False))
+        render = _savings_rows if ns.cmd == "savings" else _rows
+        print(render(payload) if ns.rows else json.dumps(payload, indent=ns.indent,
+                                                         ensure_ascii=False))
     except OtelqError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 2
