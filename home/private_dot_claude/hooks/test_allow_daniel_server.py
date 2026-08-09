@@ -5,9 +5,9 @@ Run: python3 test_allow_daniel_server.py
 
 Feeds the hook a PermissionRequest Bash payload on stdin and asserts allow
 (structured decision) vs prompt (no output). The hook exists to widen
-allow-readonly-remote.sh for a single host, so the cases that matter are:
-non-read-only commands on daniel-server ARE approved, and every way of reaching
-some OTHER host is not.
+allow-readonly-remote.sh for the two homelab hosts, so the cases that matter are:
+non-read-only commands on daniel-server/daniel-pi ARE approved, and every way of
+reaching some OTHER host is not.
 """
 
 import json
@@ -52,8 +52,12 @@ CASES = [
     # Host matching must be exact — substring matches would widen to other machines.
     ("ssh daniel-server-backup uptime", False, "suffix is a different host"),
     ("ssh notdaniel-server uptime", False, "prefix is a different host"),
-    ("ssh daniel-pi uptime", False, "other homelab host keeps the ask prompt"),
-    # Shapes that could reach somewhere other than daniel-server.
+    ("ssh daniel-pi uptime", True, "second homelab host, read-only"),
+    ("ssh daniel-pi docker restart zigbee2mqtt", True, "second homelab host, write"),
+    ("ssh ubuntu@daniel-pi whoami", True, "user@ prefix stripped on the Pi too"),
+    ("ssh daniel-pi-backup uptime", False, "suffix is a different host"),
+    ("ssh notdaniel-pi uptime", False, "prefix is a different host"),
+    # Shapes that could reach somewhere other than the two homelab hosts.
     ("ssh daniel-server", False, "interactive shell, no remote command"),
     ("ssh daniel-server ssh daniel-pi uptime", False, "second hop"),
     (

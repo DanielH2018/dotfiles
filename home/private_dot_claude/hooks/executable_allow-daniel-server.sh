@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # allow-daniel-server.sh
 #
-# PermissionRequest hook for Bash. Auto-approves ANY command run on daniel-server
-# via `ssh daniel-server CMD` — read-only or not. This is a deliberate widening of
+# PermissionRequest hook for Bash. Auto-approves ANY command run on a homelab host
+# via `ssh <host> CMD` — read-only or not. This is a deliberate widening of
 # allow-readonly-remote.sh, which only ever approves a provably read-only verb.
 #
 # Why a hook and not a permission rule: `Bash(ssh:*)` sits in the `ask` list, and
@@ -10,7 +10,8 @@
 # `allow` entry like `Bash(ssh daniel-server:*)` would never be reached. Only a
 # PermissionRequest hook resolves an ask rule.
 #
-# Scope is deliberately one host. Every other ssh target keeps the ask prompt.
+# Scope is deliberately the two homelab hosts below. Every other ssh target keeps
+# the ask prompt.
 #
 # NOT a full bypass: block-dangerous-bash.sh is a PreToolUse hook that re-scans the
 # remote payload and exits 2 on sudo/rm -rf/reboot/..., and a blocking hook runs
@@ -51,9 +52,12 @@ read -ra TOK <<<"$STRIPPED"
 # Exact host match only. Substring matching would let `daniel-server-backup` or
 # `notdaniel-server` through; strip an optional `user@` first.
 host=${TOK[1]#*@}
-[ "$host" = daniel-server ] || exit 0
+case $host in
+  daniel-server|daniel-pi) ;;
+  *) exit 0 ;;
+esac
 
-# Refuse a second hop — daniel-server is the only host this file speaks for, and
+# Refuse a second hop — these two hosts are all this file speaks for, and
 # `ssh daniel-server ssh other-host ...` lands somewhere else entirely.
 case ${TOK[2]##*/} in
   ssh|hl|scp|sftp|rsync) exit 0 ;;
