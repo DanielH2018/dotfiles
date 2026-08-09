@@ -42,6 +42,24 @@ artifact_worktree_slug() {
   artifact_hash_dir "$dir"
 }
 
+# Several sessions commonly share one worktree too -- most agents here work directly
+# in the primary checkout (EnterWorktree is opt-in), so artifact_worktree_slug alone
+# is not enough: two unrelated sessions in the same checkout hash to the same key and
+# read/write the same pending file, so one session's landed commits get reported to
+# the other as if they were its own. Folding session_id into the key gives each
+# session its own pending/baseline files even when the worktree slug is identical.
+# Falls back to the bare worktree slug when no session_id is available (older hook
+# payloads), which reproduces the pre-fix behavior rather than going silent.
+artifact_session_key() {
+  local wt="$1" sess="${2:-}"
+  [[ -n "$wt" ]] || return 1
+  if [[ -z "$sess" ]]; then
+    printf '%s' "$wt"
+    return 0
+  fi
+  printf '%s:%s' "$wt" "$sess" | sha1sum | cut -c1-16
+}
+
 # Not every repo here is `main` — the homelab server's default branch is master — so
 # ask the remote what its HEAD is before falling back to guessing.
 artifact_upstream_ref() {

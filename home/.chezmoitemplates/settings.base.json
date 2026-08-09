@@ -342,6 +342,21 @@
           }
         ]
       },
+      {{/* baseline for artifact-refresh.sh's Stop hook: what was already unlanded before
+           this session's own first commit, so a sibling session's still-unlanded work in
+           the same checkout is never misattributed to this one. "startup" only, not
+           "compact" -- session_id survives compaction and reseeding there would discard
+           what this session had already accumulated. */}}
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact-session-seed.sh",
+            "timeout": 10
+          }
+        ]
+      },
       {{/* reap the redundant interactive origin left running when a session is backgrounded; /proc-based, so non-Windows only. No-ops unless the daemon's ancestor cmdline carries the fork signature */}}{{ if ne .chezmoi.os "windows" }}{
         "matcher": "startup",
         "hooks": [

@@ -8,6 +8,7 @@ const os = require('node:os');
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const REFRESH = path.join(HOOKS, 'executable_artifact-refresh.sh');
 const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
+const SEED = path.join(HOOKS, 'executable_artifact-session-seed.sh');
 
 const dirs = [];
 
@@ -81,8 +82,8 @@ function artifactFile(root, name = 'plan.html') {
 }
 
 // Runs the Stop hook. `stopActive` mirrors the harness re-invoking it after it blocked.
-function runRefresh(cwd, stateDir, { stopActive = false } = {}) {
-  const input = JSON.stringify({ stop_hook_active: stopActive });
+function runRefresh(cwd, stateDir, { stopActive = false, sessionId } = {}) {
+  const input = JSON.stringify({ stop_hook_active: stopActive, session_id: sessionId });
   const r = spawnSync('bash', [REFRESH], {
     input, cwd, encoding: 'utf8',
     env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir },
@@ -90,6 +91,17 @@ function runRefresh(cwd, stateDir, { stopActive = false } = {}) {
   assert.strictEqual(r.status, 0, `hook exits 0 (stderr: ${r.stderr})`);
   const out = (r.stdout || '').trim();
   return out ? JSON.parse(out) : null;
+}
+
+// Runs the SessionStart seed hook that records, per (worktree, session_id), which
+// commits were already unlanded before this session's own first commit.
+function runSeed(cwd, stateDir, sessionId) {
+  const r = spawnSync('bash', [SEED], {
+    input: JSON.stringify({ session_id: sessionId }),
+    cwd, encoding: 'utf8',
+    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir },
+  });
+  assert.strictEqual(r.status, 0, `seed hook exits 0 (stderr: ${r.stderr})`);
 }
 
 function pendingOf(stateDir, dir) {
@@ -328,6 +340,38 @@ test('link-artifact registers the .html under both keys and clears pending', () 
   }
   assert.deepStrictEqual(pendingOf(st, a), [], 'the landed slice is now written up');
   assert.strictEqual(runRefresh(a, st), null, 'so a freshly written artifact owes no refresh');
+});
+
+// The reported bug: two sessions sharing ONE worktree (no `git worktree add` between
+// them -- most sessions here work directly in the primary checkout), so the bare
+// worktree slug alone cannot tell them apart. Session B never touched the artifact
+// or the commit that landed; it should stay silent about it.
+test('another session in the SAME worktree landing -> silent, not misattributed', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+
+  // Session B starts first (in the shared checkout) and records its baseline before
+  // session A does anything.
+  runSeed(work, st, 'session-b');
+  runRefresh(work, st, { sessionId: 'session-b' });
+
+  // Session A starts, commits, and lands its own work -- still in the same worktree.
+  runSeed(work, st, 'session-a');
+  sh('git checkout -qb slice-one', work);
+  commit(work, 'ours-only');
+  runRefresh(work, st, { sessionId: 'session-a' });
+  land(work, 'slice-one');
+
+  // Session A's own Stop correctly reports its own landing.
+  const outA = runRefresh(work, st, { sessionId: 'session-a' });
+  assert.ok(outA, 'session A landed its own commit');
+  assert.match(outA.reason, /ours-only/);
+
+  // Session B, unrelated, never committed anything -- it must not be nudged about A's
+  // landing just because they share a worktree slug.
+  const outB = runRefresh(work, st, { sessionId: 'session-b' });
+  assert.strictEqual(outB, null, "another session's landing in the same worktree owes us no refresh");
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -101,16 +101,20 @@ fi
 # worktree entry is what stops a session that wrote its own doc being pointed at
 # somebody else's.
 #
-# Writing the artifact also clears this worktree's pending list, since the doc now
+# Writing the artifact also clears this session's pending list, since the doc now
 # reflects that work. That is what stops a refresh nudge repeating every turn, and
-# what leaves the next slice to raise a fresh one.
+# what leaves the next slice to raise a fresh one. Pending is keyed by session, not
+# just worktree — see artifact-refresh.sh — so this clears the session-scoped file;
+# the bare worktree-slug file from before that fix is also removed as leftover cleanup.
 if [[ "$path" == *.html ]]; then
   # shellcheck source=/dev/null
   . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
+  session=$(hook_field '.session_id // empty')
   if wt=$(artifact_worktree_slug) && repo=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
+    sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"
     printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$wt.current" 2>/dev/null
     printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$repo.current" 2>/dev/null
-    rm -f "$ARTIFACT_STATE_DIR/$wt.pending" 2>/dev/null
+    rm -f "$ARTIFACT_STATE_DIR/$sesskey.pending" "$ARTIFACT_STATE_DIR/$wt.pending" 2>/dev/null
   fi
 fi
 

@@ -17,6 +17,16 @@
 # branch is), and the nudge fires when that set goes empty because it reached
 # upstream. Another worktree landing cannot move it: their commits were never in it.
 #
+# The worktree alone is not a fine enough key: most sessions here work directly in
+# the primary checkout (EnterWorktree is opt-in), so two unrelated sessions can hash
+# to the same worktree slug and would otherwise share one pending file — one
+# session's landed commits reported to the other as its own. artifact_session_key
+# folds session_id in on top of the worktree slug, and artifact-session-seed.sh (a
+# SessionStart hook) records what was already unlanded before this session's first
+# commit, so `mine` below can subtract that baseline and keep only what is new since
+# this session started — a sibling session's still-unlanded work never gets counted
+# as this session's, even though `ref..HEAD` itself is shared, unscoped branch state.
+#
 # Subjects, not SHAs, because bin/land rebases before it fast-forwards main, so every
 # SHA recorded pre-land is dead by the time the nudge fires. Resolving the subjects
 # against upstream at nudge time both recovers the real post-rebase SHA and doubles
@@ -47,6 +57,8 @@ hook_read_input
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 wt=$(artifact_worktree_slug) || exit 0
 repo=$(artifact_repo_slug) || exit 0
+session=$(hook_field '.session_id // empty')
+sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"
 
 # A worktree that wrote its own artifact tracks that one; otherwise it inherits the
 # project's, which is how a plan written in one worktree keeps being updated as later
@@ -62,9 +74,21 @@ done
 [[ -n "$artifact" && -f "$artifact" ]] || exit 0
 
 ref=$(artifact_upstream_ref) || exit 0
-pending="$ARTIFACT_STATE_DIR/$wt.pending"
+pending="$ARTIFACT_STATE_DIR/$sesskey.pending"
+baseline="$ARTIFACT_STATE_DIR/$sesskey.baseline"
 
-mine=$(git log --format=%s "$ref..HEAD" 2>/dev/null)
+# `ref..HEAD` is shared branch state, not per-session — a sibling session's still-
+# unlanded commits show up here exactly like this session's own. Subtracting the
+# baseline (what was already unlanded before THIS session's first commit, recorded by
+# artifact-session-seed.sh at startup) leaves only what appeared since. No baseline
+# file (older payload with no session_id, or the seed hook never ran) falls back to
+# the unscoped set rather than going silent.
+mine_now=$(git log --format=%s "$ref..HEAD" 2>/dev/null)
+if [[ -n "$mine_now" && -f "$baseline" ]]; then
+  mine=$(comm -23 <(printf '%s\n' "$mine_now" | sort) <(sort "$baseline"))
+else
+  mine="$mine_now"
+fi
 if [[ -n "$mine" ]]; then
   mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null
   printf '%s\n' "$mine" > "$pending" 2>/dev/null
@@ -90,6 +114,6 @@ fi
 
 jq -n --arg a "$artifact" --arg r "${ref#refs/remotes/}" --arg n "$count" --arg l "$landed" '{
   decision: "block",
-  reason: ("AUTO-ARTIFACT REFRESH (standing preference): \($n) commit(s) from this worktree have landed on \($r) since the tracked artifact was last written:\n\n\($l)\n\nBring \($a) up to date before you stop: set each slice'"'"'s data-status to what is actually true now, give every newly-done slice its PR number and short SHA, refresh the summary line and the data-updated stamp, and leave slices that have not shipped alone. Then re-emit the artifact link as the LAST line of your reply, with nothing after it.\n\nThose commits are this worktree'"'"'s own work, not the repo'"'"'s. If they are still unrelated to what this artifact describes, do not invent status — say so in one line and stop.")
+  reason: ("AUTO-ARTIFACT REFRESH (standing preference): \($n) commit(s) from this session have landed on \($r) since the tracked artifact was last written:\n\n\($l)\n\nBring \($a) up to date before you stop: set each slice'"'"'s data-status to what is actually true now, give every newly-done slice its PR number and short SHA, refresh the summary line and the data-updated stamp, and leave slices that have not shipped alone. Then re-emit the artifact link as the LAST line of your reply, with nothing after it.\n\nThose commits are this session'"'"'s own work, not another session'"'"'s. If they are still unrelated to what this artifact describes, do not invent status — say so in one line and stop.")
 }'
 exit 0
