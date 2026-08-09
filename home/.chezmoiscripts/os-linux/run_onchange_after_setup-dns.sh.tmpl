@@ -1,0 +1,89 @@
+{{ if includeTemplate "is-desktop-linux" . -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Points this machine's DNS at the LAN Pi-hole instead of
+# the resolvers the ISP hands out over DHCP.
+#
+# Two halves, and the second one is what actually makes it work. Setting ipv4.dns on the
+# NetworkManager profiles is not enough while Mullvad is connected: the tunnel publishes the
+# wildcard routing domain `~.` with Default Route yes, which tells systemd-resolved to send
+# every query to Mullvad's own resolver (10.64.0.1) ahead of any LAN link. Measured 2026-08-09
+# with the profiles already pointed at the Pi-hole, `resolvectl query` still answered
+# pagead2.googlesyndication.com as 142.250.217.98 via link wg0-mullvad, while the Pi-hole
+# returned 0.0.0.0 for that same name. Giving Mullvad a custom DNS drops the `~.` domain from
+# the tunnel and the LAN links take over.
+#
+# The IPv6 half of ignore-auto-dns matters as much as the IPv4 half. DHCP here also hands out
+# 2001:558:feed::1 and ::2; leave those in place and the box keeps two working upstream
+# resolvers, so queries quietly bypass the Pi-hole and it reads as broken filtering rather
+# than as no filtering at all.
+#
+# The cost, stated plainly: DNS now leaves the tunnel in cleartext to the LAN rather than
+# riding it to Mullvad. That is inherent to using a LAN resolver behind a VPN, and it is the
+# trade a Pi-hole exists to make. To undo it: `mullvad dns set default`, and clear ipv4.dns
+# plus both ignore-auto-dns flags on the connections listed below.
+#
+# Known limitation: run_onchange keys on the rendered text, so this repairs nothing that drifts
+# underneath it. Change PIHOLE_DNS and it re-fires, but a hand-run `mullvad dns set default` or
+# an nmcli edit leaves the box off-policy until something here changes — bump the version below
+# to force a re-apply.
+#
+# bump-to-reinstall: dns v1
+set -u
+TAG=setup-dns
+{{ includeTemplate "require-sudo" . }}
+
+PIHOLE_DNS=10.0.0.243
+
+# Named rather than discovered by connection type. A type sweep would also capture a phone
+# tether or a guest-network profile, and forcing a LAN-only resolver onto one of those leaves
+# that connection with no working resolver at all.
+LAN_CONNECTIONS='Wired connection 1
+HUNTER-5G'
+
+# Mullvad first. Until its `~.` domain is gone it outranks the LAN links, so doing this half
+# first means every intermediate state still resolves.
+if command -v mullvad >/dev/null 2>&1; then
+  # A custom DNS on a LAN address is inert unless the tunnel's firewall permits local traffic:
+  # the queries are dropped and the box is left with no resolver. Defer rather than widen the
+  # VPN firewall from here — that is a security setting, and not this script's to change.
+  if ! mullvad lan get 2>/dev/null | grep -q allow; then
+    echo "$TAG: Mullvad local network sharing is off, so $PIHOLE_DNS is unreachable from inside the tunnel; run 'mullvad lan set allow' if that is what you want, then re-apply" >&2
+    exit 1
+  fi
+  echo "$TAG: pointing Mullvad at $PIHOLE_DNS"
+  if ! mullvad dns set custom "$PIHOLE_DNS"; then
+    echo "$TAG: could not set Mullvad's custom DNS (is the daemon running?)" >&2
+    exit 1
+  fi
+fi
+
+require_sudo "the Pi-hole DNS settings"
+
+# Fed by heredoc rather than a pipe so the loop runs in this shell and $failed survives it.
+failed=0
+while IFS= read -r conn; do
+  [ -n "$conn" ] || continue
+  if ! nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$conn"; then
+    echo "$TAG: no connection named '$conn' on this machine; skipping"
+    continue
+  fi
+  echo "$TAG: $conn -> $PIHOLE_DNS"
+  if ! sudo nmcli connection modify "$conn" ipv4.dns "$PIHOLE_DNS" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes; then
+    echo "$TAG: failed to modify '$conn'" >&2
+    failed=1
+    continue
+  fi
+  # Re-activating is what pushes the change down to systemd-resolved. A modify on its own
+  # leaves the live link on the DHCP resolvers until something else reconnects it.
+  if ! sudo nmcli connection up "$conn" >/dev/null; then
+    echo "$TAG: failed to re-activate '$conn'" >&2
+    failed=1
+  fi
+done <<EOF
+$LAN_CONNECTIONS
+EOF
+
+[ "$failed" -eq 0 ] || exit 1
+
+echo "$TAG: done — DNS resolves through $PIHOLE_DNS, VPN up or down"
+{{ end -}}
