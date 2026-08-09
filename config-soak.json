@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "48aa7cf0dbb7a90ca112984cda99b4261ca0292834f5a8eb9a51d07fa264f34d",
-      "landed": "2026-08-07T20:41:35.832Z"
+      "hash": "c5e5819b201e70ef3dcbac6990186f9bc8648076b00d2b8106ed9ea562cb47fe",
+      "landed": "2026-08-09T19:04:35.602Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -48,8 +48,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
-      "hash": "d6a1e8f4aa4b2e433b5db5a89ec14e04bdaaae2c103758188769d48e3e2a1b5a",
-      "landed": "2026-08-06T18:34:26.742Z"
+      "hash": "e5c3c3230654a6d4262acd99f5f906c3450dc1d2ebde3adf2cd79799166885c1",
+      "landed": "2026-08-09T19:04:35.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
@@ -72,6 +72,11 @@
       "landed": "2026-08-07T13:20:58.300Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_allow-daniel-server.sh",
+      "hash": "29741f5c82479e79814eedc5e0ec4222624146c562b0c5bc7fc20831459c2dd7",
+      "landed": "2026-08-09T19:04:35.602Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
       "hash": "b697577abfeb32b8a9bb2ad56b407a5e987a9066d9d8bb760d32706aea6a6061",
       "landed": "2026-08-07T13:10:46.389Z"
@@ -83,8 +88,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
-      "hash": "b72d62dbcad486e9bc60c0c8ffcfea5835ec1084f4def22bb5289a2c186a098b",
-      "landed": "2026-08-06T18:37:01.322Z"
+      "hash": "e26b162f7710e94af1a36ac71607b84491d32094a2ef1604114c2363fb58d377",
+      "landed": "2026-08-09T19:04:35.602Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_artifact-session-seed.sh",
+      "hash": "3dcdfe024afad4b0535afbff50048b626d538e8e06d637c4a8dd04dd9b89b95f",
+      "landed": "2026-08-09T19:04:35.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
@@ -128,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "6031174a88fdabc5ef1ecfc5c9867b424bf1f7a45370c5ca123f78f1de2983b8",
-      "landed": "2026-08-06T18:34:26.742Z"
+      "hash": "3cb998a6dc6bcce1420f9de24f108d4131bfa26dd227286789daa5717fd3cf7b",
+      "landed": "2026-08-09T19:04:35.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -260,6 +270,11 @@
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
       "hash": "1e2474af4ef736d0cae2aec305937b33b7301d633894a8348628f196b46d4e88",
       "landed": "2026-07-30T16:17:07.035Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_allow_daniel_server.py",
+      "hash": "60b76b3b993100caa407aee961fa264effd6b4602ba687609d678ececf9b73fc",
+      "landed": "2026-08-09T19:04:35.602Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
