@@ -101,6 +101,29 @@ esac
   return { dir, bin, restarted: () => fs.readFileSync(restarts, 'utf8').trim().length > 0 };
 }
 
+// A `wpe` that does not know the `resolved` subcommand: it falls through to its usage text and
+// exits 0, exactly like the version that predates it.
+function sandboxWithOldWpe(drawing) {
+  const sb = sandbox({ resolved: [['unused']], drawing, state: 'active' });
+  write(
+    path.join(sb.bin, 'wpe'),
+    `#!/usr/bin/env bash
+case "$1" in
+  restart) echo restart >> ${JSON.stringify(path.join(sb.dir, 'restarts'))} ;;
+  *) cat <<'EOF'
+usage: wpe <command>
+
+  outputs             connected displays; * marks the current one
+  screen <spec>       one name, a comma-separated list, or "all"
+  start | stop | restart
+EOF
+    ;;
+esac
+`,
+  );
+  return sb;
+}
+
 function run(sb) {
   return execFileSync(BASH, [path.join(sb.bin, 'wpe-watch'), 'once'], {
     encoding: 'utf8',
@@ -163,6 +186,18 @@ test('does nothing when no display is enabled', { skip }, () => {
 // Named for what it actually pins: the two-read comparison, not the delay between them. The
 // tests set WPE_WATCH_STABLE=0, so the settle *timing* has no coverage here -- only the rule that
 // two disagreeing reads mean "do nothing".
+// Regression: this happened for real. A plain `chezmoi apply` from a checkout predating the
+// `resolved` subcommand replaced ~/.local/bin/wpe, `wpe resolved` printed its usage text and
+// exited 0, and the watcher read that as a list of display names -- which can never match what
+// the renderer is drawing, so it restarted the wallpaper on every 15s tick. Three restarts
+// landed before it was stopped. An exit-code check alone would not have caught it.
+test('ignores a wpe that answers `resolved` with usage text', { skip }, () => {
+  const sb = sandboxWithOldWpe(['DP-1', 'DP-2', 'DP-3', 'HDMI-A-1']);
+  const out = run(sb);
+  assert.ok(!sb.restarted(), 'usage text must never be read as a display list');
+  assert.match(out, /no usable output list/);
+});
+
 test('does not act when two consecutive reads disagree', { skip }, () => {
   const sb = sandbox({
     // Mid-flip: the second display appears between the two reads.

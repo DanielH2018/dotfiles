@@ -53,7 +53,19 @@ drawing() {
 
 # Displays it should be drawing on. `wpe resolved` is the single source of truth -- reparsing
 # kscreen-doctor here would duplicate its ANSI-stripping quirk and let the two drift.
-wanted() { "$WPE" resolved 2>/dev/null | sort -u; }
+#
+# Non-zero means "no usable answer, do nothing", which is not the same as "no displays". The case
+# that forces the distinction is real and was hit in testing: a `chezmoi apply` from a checkout
+# predating the `resolved` subcommand replaces ~/.local/bin/wpe with a version that falls through
+# to its usage text and exits 0. Taking that at face value gives a long list of "display names"
+# that can never match anything, and the watcher restarts the wallpaper every tick forever. So the
+# shape is checked, not just the exit code: bare output names only, one per line.
+wanted() {
+  local out
+  out="$("$WPE" resolved 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | grep -qvE '^[A-Za-z0-9_-]*$' && return 1
+  printf '%s\n' "$out" | sed '/^$/d' | sort -u
+}
 
 # Only "active" and "failed" are ours to act on. An inactive unit means the wallpaper was
 # deliberately stopped (`wpe stop` before a game, per the fullscreen-detection gap), and reviving
@@ -69,7 +81,14 @@ check() {
   actionable || return 0
 
   local want
-  want="$(wanted)"
+  # Logged once rather than every tick: an unusable `wpe` stays unusable until someone fixes it,
+  # and 15s of journal noise a minute would bury the line that says why.
+  if ! want="$(wanted)"; then
+    [ -n "${warned:-}" ] || log "$WPE gave no usable output list -- standing down until it does"
+    warned=1
+    return 0
+  fi
+  warned=
   # No displays at all -- every output is switched away. Restarting now would exec the renderer
   # with no --screen-root, which dies, and repeating that is how the unit reaches failed state in
   # the first place. Wait for a display to come back; the tick will find it.
