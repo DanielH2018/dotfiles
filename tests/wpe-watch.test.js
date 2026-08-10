@@ -160,7 +160,10 @@ test('does nothing when no display is enabled', { skip }, () => {
   assert.ok(!sb.restarted(), 'restarting with no --screen-root would just fail again');
 });
 
-test('waits for the topology to settle before acting', { skip }, () => {
+// Named for what it actually pins: the two-read comparison, not the delay between them. The
+// tests set WPE_WATCH_STABLE=0, so the settle *timing* has no coverage here -- only the rule that
+// two disagreeing reads mean "do nothing".
+test('does not act when two consecutive reads disagree', { skip }, () => {
   const sb = sandbox({
     // Mid-flip: the second display appears between the two reads.
     resolved: [['DP-1'], ['DP-1', 'DP-2']],
