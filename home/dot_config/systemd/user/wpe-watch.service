@@ -1,0 +1,28 @@
+[Unit]
+Description=Re-bind the animated wallpaper when displays come and go
+Documentation=file:%h/.local/bin/wpe-watch
+# Ordering, not a requirement: this watches for displays rather than needing one, and if the
+# wallpaper service is not running it stays quiet. `PartOf` so it goes away with the session
+# instead of outliving it as an orphan reading a dead compositor.
+PartOf=graphical-session.target
+After=graphical-session.target wallpaperengine.service
+# The whole job is calling `wpe`; without it there is nothing to watch.
+ConditionFileIsExecutable=%h/.local/bin/wpe
+
+[Service]
+Type=simple
+# systemd's user manager does not source a login shell, so ~/.local/bin -- holding wpe and this
+# script -- is absent from the default PATH. kscreen-doctor, udevadm, pgrep and systemctl all
+# come from /usr/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/wpe-watch run
+# Long-lived by design; it exits non-zero only when `udevadm monitor` ends under it, and then the
+# right answer is to come back rather than leave the wallpaper unwatched.
+Restart=on-failure
+RestartSec=10
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

@@ -28,6 +28,9 @@ WALLPAPERS="$DATA/wallpapers"
 CONFIG_DIR="$HOME/.config/wallpaperengine"
 CONFIG="$CONFIG_DIR/config"
 UNIT="wallpaperengine.service"
+# The renderer freezes its display list at exec time, so a KVM flip leaves the wallpaper missing
+# on whatever came back. This unit watches for that and restarts the one above.
+WATCH_UNIT="wpe-watch.service"
 PICKER="$HOME/.local/bin/wpe-pick"
 
 # Steam's copy, used only by `wpe sync`.
@@ -142,6 +145,10 @@ resolve_outputs() {
   fi
 }
 
+# The resolved display names, one per line. Exists so `wpe-watch` can ask what this script would
+# draw on without reimplementing the kscreen-doctor parse and its colour-stripping quirk.
+cmd_resolved() { resolve_outputs; }
+
 cmd_screen() {
   [ $# -eq 1 ] || die "usage: wpe screen <output|out1,out2|all>   (see: wpe outputs)"
   if [ "$1" != all ]; then
@@ -241,6 +248,33 @@ cmd_preview() {
 # counter first makes start/restart mean what they say.
 clear_failure() { systemctl --user reset-failed "$UNIT" 2>/dev/null || true; }
 
+# Control surface for the display watcher. It is a background service that restarts this one, so
+# it needs to be visible and switchable off from the same place everything else is -- `wpe status`
+# reports it, and `wpe watch disable` is the way out.
+cmd_watch() {
+  case "${1:-status}" in
+    start)   systemctl --user reset-failed "$WATCH_UNIT" 2>/dev/null || true
+             systemctl --user start "$WATCH_UNIT" && echo "watch: started" ;;
+    stop)    systemctl --user stop "$WATCH_UNIT" && echo "watch: stopped" ;;
+    enable)  systemctl --user reset-failed "$WATCH_UNIT" 2>/dev/null || true
+             systemctl --user enable --now "$WATCH_UNIT" && echo "watch: enabled" ;;
+    disable) systemctl --user disable --now "$WATCH_UNIT" && echo "watch: disabled" ;;
+    once)    "$HOME/.local/bin/wpe-watch" once ;;
+    log)     journalctl --user -u "$WATCH_UNIT" -n "${2:-50}" --no-pager ;;
+    status)  printf 'watch     : %s\n' "$(watch_state)" ;;
+    *)       die "usage: wpe watch <start|stop|enable|disable|once|log|status>" ;;
+  esac
+}
+
+# Both queries exit non-zero for the ordinary inactive/disabled cases, so take the word they print
+# and only fall back when they print nothing at all.
+watch_state() {
+  local active enabled
+  active="$(systemctl --user is-active "$WATCH_UNIT" 2>/dev/null)" || true
+  enabled="$(systemctl --user is-enabled "$WATCH_UNIT" 2>/dev/null)" || true
+  printf '%s, %s at login' "${active:-unknown}" "${enabled:-not enabled}"
+}
+
 cmd_status() {
   printf 'wallpaper : %s  %s\n' "${WALLPAPER:-<unset>}" "$([ -n "$WALLPAPER" ] && title_of "$WALLPAPER")"
   printf 'output    : %s\n' "${OUTPUT:-<unset>}$(
@@ -256,6 +290,7 @@ cmd_status() {
   active="$(systemctl --user is-active "$UNIT" 2>/dev/null)" || true
   enabled="$(systemctl --user is-enabled "$UNIT" 2>/dev/null)" || true
   printf 'service   : %s, %s at login\n' "${active:-unknown}" "${enabled:-not enabled}"
+  printf 'watch     : %s\n' "$(watch_state)"
 }
 
 # Re-copy from Steam. Needed after subscribing to new wallpapers in the Windows app, and after a
@@ -273,6 +308,8 @@ cmd_sync() {
 case "${1:-status}" in
   list)     cmd_list ;;
   outputs)  cmd_outputs ;;
+  resolved) cmd_resolved ;;
+  watch)    shift; cmd_watch "$@" ;;
   set)      shift; cmd_set "$@" ;;
   screen)   shift; cmd_screen "$@" ;;
   fps)      shift; cmd_fps "$@" ;;
@@ -298,6 +335,7 @@ usage: wpe <command>
   status              current wallpaper, output, service state (default)
   list                subscribed wallpapers; * marks the current one
   outputs             connected displays; * marks the current one
+  resolved            just the display names OUTPUT resolves to right now
   set <id>            choose a wallpaper
   screen <spec>       which displays: one name, a comma-separated list, or
                       "all" (resolved live, so it follows a KVM flip)
@@ -309,6 +347,8 @@ usage: wpe <command>
   preview [id]        render in a 1280x720 window, leaving the desktop alone
   start | stop | restart
   enable | disable    run at login, or stop doing so
+  watch <cmd>         the display watcher that re-binds the wallpaper after a KVM
+                      flip: start | stop | enable | disable | once | log | status
   log [n]             recent service output
   sync                re-copy assets and wallpapers from Steam on /mnt/games
   run                 foreground; what the service execs

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Re-bind the wallpaper to the displays that are actually there.
+#
+# linux-wallpaperengine takes its displays as `--screen-root` arguments at exec time and never
+# looks again. `wpe`'s OUTPUT=all resolves live, but only once per process, so the set is frozen
+# the moment the service starts. Flip the KVM away and back and the wallpaper is missing on every
+# display that was gone at start time -- the renderer is still running, just not on them. There is
+# no way to tell the running process about a new output; the only lever is a restart.
+#
+# Two failure shapes, one fix:
+#
+#   - displays return  -> the running process draws on a subset; restart to pick them up
+#   - displays vanish  -> the process exits 1, `Restart=on-failure` burns StartLimitBurst in ~90s
+#                         and systemd parks the unit failed, where plain `start` refuses. `wpe
+#                         restart` runs `reset-failed` first, which is what revives it.
+#
+# The trigger is a state diff, not an event identity. KDE emits no D-Bus signal for an output
+# change (verified: nothing on org.kde.KScreen, org.kde.KWin or org.kde.kded6 across a
+# disable/enable cycle) and `kscreen-doctor` has no watch mode, so the event source here is the
+# DRM uevent -- which a KVM flip does raise and a software `kscreen-doctor disable` does not.
+# Comparing state rather than trusting the event means the poll tick alone is enough to recover
+# even if the uevent never arrives.
+set -uo pipefail
+
+BIN=$(dirname "$(readlink -f "$0")")
+WPE="$BIN/wpe"
+UNIT=wallpaperengine.service
+RENDERER="$HOME/.local/lib/linux-wallpaperengine/linux-wallpaperengine"
+
+# Seconds to let a flip finish before looking. A KVM switching several displays raises a burst of
+# uevents and KWin re-adds the outputs one at a time; restarting mid-burst re-binds to a partial
+# set, which is the original bug wearing a different hat.
+SETTLE=${WPE_WATCH_SETTLE:-4}
+# Fallback poll. Covers any output change that raises no uevent we see, and is the sole recovery
+# path if `udevadm monitor` is unavailable.
+TICK=${WPE_WATCH_TICK:-15}
+# Gap between the two reads that have to agree before anything is restarted.
+STABLE=${WPE_WATCH_STABLE:-2}
+
+log() { printf 'wpe-watch: %s\n' "$1"; }
+
+# Displays the running renderer is actually drawing on, one per line, sorted.
+#
+# Read from the live process rather than a state file: a manual `wpe restart`, a crash, or a
+# hand-run `wpe run` all change what is on screen without telling us, and a cached answer would
+# make the watcher confidently wrong. `pgrep -f` matches the full path, so it cannot collide with
+# this script or with `wpe` itself.
+drawing() {
+  pgrep -af "$RENDERER" 2>/dev/null \
+    | grep -oE -- '--screen-root [A-Za-z0-9_-]+' \
+    | awk '{ print $2 }' | sort -u
+}
+
+# Displays it should be drawing on. `wpe resolved` is the single source of truth -- reparsing
+# kscreen-doctor here would duplicate its ANSI-stripping quirk and let the two drift.
+wanted() { "$WPE" resolved 2>/dev/null | sort -u; }
+
+# Only "active" and "failed" are ours to act on. An inactive unit means the wallpaper was
+# deliberately stopped (`wpe stop` before a game, per the fullscreen-detection gap), and reviving
+# it on the next KVM flip would make stop meaningless. "activating"/"deactivating" is a restart
+# already in flight; leave it alone rather than stacking another on top.
+actionable() {
+  local state
+  state="$(systemctl --user is-active "$UNIT" 2>/dev/null)"
+  [ "$state" = active ] || [ "$state" = failed ]
+}
+
+check() {
+  actionable || return 0
+
+  local want
+  want="$(wanted)"
+  # No displays at all -- every output is switched away. Restarting now would exec the renderer
+  # with no --screen-root, which dies, and repeating that is how the unit reaches failed state in
+  # the first place. Wait for a display to come back; the tick will find it.
+  [ -n "$want" ] || return 0
+
+  # Require the topology to hold still before acting, so a slow multi-display flip cannot be
+  # caught halfway through.
+  sleep "$STABLE"
+  [ "$(wanted)" = "$want" ] || return 0
+
+  local have
+  have="$(drawing)"
+  [ "$have" = "$want" ] && return 0
+
+  log "outputs changed: drawing on [$(echo "$have" | tr '\n' ' ')], want [$(echo "$want" | tr '\n' ' ')] -- restarting"
+  # `wpe restart` and not `systemctl restart`: it calls `reset-failed` first, which is the only
+  # thing that gets the unit out of the parked state a flip-away leaves behind.
+  "$WPE" restart >/dev/null || log "restart failed"
+}
+
+case "${1:-run}" in
+  once) check; exit 0 ;;
+  run) ;;
+  *) printf 'usage: wpe-watch [run|once]\n' >&2; exit 2 ;;
+esac
+
+log "watching for display changes (settle ${SETTLE}s, tick ${TICK}s)"
+# Catch the case where displays changed while this was not running -- notably at login, when the
+# watcher and the wallpaper service start together.
+check
+
+udevadm monitor --udev --subsystem-match=drm 2>/dev/null | while true; do
+  IFS= read -r -t "$TICK" _
+  rc=$?
+  # bash distinguishes the two ways `read` fails: >128 is the timeout, anything else non-zero is
+  # end of input. Treating EOF as a tick would spin the loop at full speed forever.
+  if [ "$rc" -ne 0 ] && [ "$rc" -le 128 ]; then
+    log "udev monitor ended; exiting for systemd to restart"
+    exit 1
+  fi
+  # Drain the rest of the burst: keep reading until the events stop for SETTLE seconds, then look
+  # once at the settled state.
+  if [ "$rc" -eq 0 ]; then
+    while IFS= read -r -t "$SETTLE" _; do :; done
+  fi
+  check
+done
