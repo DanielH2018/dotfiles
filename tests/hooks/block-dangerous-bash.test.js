@@ -847,5 +847,10 @@ test('the matchers pass their regex unquoted', { skip }, () => {
   const src = fs.readFileSync(HOOK, 'utf8');
   assert.match(src, /\[\[ \$line =~ \$re \]\]/, 'bdb_re must match with an unquoted regex');
   assert.doesNotMatch(src, /=~ "\$re"/, 'a quoted regex matches literally, disabling the rule');
-  assert.doesNotMatch(src, /\|\s*grep -q/, 'a grep pipeline came back into the hot path');
+  // Scoped to the native matcher rather than the whole file. grep is legitimate in the
+  // BDB_ENGINE fallback ahead of the loop, which runs only where libc's regcomp rejects the
+  // \b and \s these rules are written in (BSD/macOS) and the alternative is evaluating no
+  // rules at all. The property worth guarding is that the fast path forks nothing per call.
+  const native = src.slice(src.indexOf('while [ -n "$rest" ]'));
+  assert.doesNotMatch(native, /\|\s*grep -q/, 'a grep pipeline came back into the hot path');
 });

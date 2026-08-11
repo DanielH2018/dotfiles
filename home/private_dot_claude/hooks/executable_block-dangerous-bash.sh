@@ -45,8 +45,40 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 #
 # Split with parameter expansion rather than a herestring: `<<<` materializes a temp file per
 # call, and this runs ~46 times per hook invocation.
+# ...on glibc. bash delegates [[ =~ ]] to the libc regcomp it was built against, and \b/\s
+# are GNU extensions: BSD libc (macOS) rejects them, so every rule that uses one silently
+# never matched and the hook exited 0 with no decision — the entire blocklist off on the
+# machine, with nothing in the UI saying so. Probe the dialect once rather than per call.
+# grep is the fallback because it is the engine these patterns were written against before
+# the optimisation above, so it restores their exact prior semantics rather than a
+# re-derivation of them. Neither available means the rules cannot be evaluated at all, which
+# is the same situation as a missing jq and takes the same answer: ask, don't fail open.
+BDB_PROBE_S='a\s+b'
+BDB_PROBE_B='ab\b'
+BDB_ENGINE=native
+if ! { [[ 'a b' =~ $BDB_PROBE_S ]] && [[ ab =~ $BDB_PROBE_B ]]; }; then
+  if printf 'a b\n' | grep -qE "$BDB_PROBE_S" 2>/dev/null \
+    && printf 'ab\n' | grep -qE "$BDB_PROBE_B" 2>/dev/null; then
+    BDB_ENGINE='grep'
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"block-dangerous-bash: neither this shell nor grep supports the regex dialect the dangerous-command rules are written in, so they could not be evaluated. Review this command yourself."}}\n'
+    exit 0
+  fi
+fi
+
 bdb_re() {
   local subject="$1" re="$2" rest="$1" line
+  if [ "$BDB_ENGINE" = grep ]; then
+    # grep is line-oriented, which is precisely the semantics the loop below reproduces,
+    # so the whole subject goes in at once. -i via the caller's BDB_ICASE, since grep
+    # cannot see nocasematch.
+    if [ "${BDB_ICASE:-0}" = 1 ]; then
+      printf '%s\n' "$subject" | grep -qiE "$re"
+    else
+      printf '%s\n' "$subject" | grep -qE "$re"
+    fi
+    return $?
+  fi
   while [ -n "$rest" ]; do
     line=${rest%%$'\n'*}
     [[ $line =~ $re ]] && return 0
@@ -59,7 +91,7 @@ bdb_re() {
 # Case-insensitive arm, standing in for `grep -qiE`. nocasematch is restored rather than
 # unconditionally unset so this cannot leak a shell option back to the caller.
 bdb_rei() {
-  local subject="$1" re="$2" restore rc
+  local subject="$1" re="$2" restore rc BDB_ICASE=1
   restore=$(shopt -p nocasematch)
   shopt -s nocasematch
   bdb_re "$subject" "$re"
