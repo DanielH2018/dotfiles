@@ -60,10 +60,19 @@ function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInoti
   return {
     home, bin, argvLog,
     run(args) {
+      // focus.sh picks the attach path on $TMUX, and the jump assertions below are about the
+      // no-tmux one — the branch that execs ssh directly. Inheriting the runner's TMUX sent
+      // them through av_open_in_host_window instead, where no ssh runs and the stub records
+      // nothing, so both failed for anyone running the suite from inside tmux (on macOS that
+      // is every Ghostty surface) while passing on a bare CI runner. A test that wants the
+      // tmux branch sets TMUX itself.
+      const base = { ...process.env };
+      delete base.TMUX;
+      delete base.TMUX_PANE;
       return execFileSync('bash', [SCRIPT, ...args], {
         encoding: 'utf8',
         env: {
-          ...process.env, ...seams.env,
+          ...base, ...seams.env,
           HOME: home, AV_LIB: LIB,
           PATH: `${bin}:${process.env.PATH}`,
           AGENT_VIEW_WATCH_INTERVAL: watchInterval,
