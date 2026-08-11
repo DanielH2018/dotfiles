@@ -53,12 +53,17 @@ COMMAND=$(hook_field '.tool_input.command // empty')
 # the optimisation above, so it restores their exact prior semantics rather than a
 # re-derivation of them. Neither available means the rules cannot be evaluated at all, which
 # is the same situation as a missing jq and takes the same answer: ask, don't fail open.
+# The bash probe tests \s only, though the rules lean on \b just as hard. Both are GNU
+# regcomp extensions and no libc ships one without the other — glibc has both, BSD and musl
+# have neither — so \s answers the question for both. Probing \b here would also mean writing
+# the one construct bin/lint-bsd-portability exists to forbid, and earning an exemption for it
+# would blunt a linter that already caught this hook once (25cc7e8). grep is probed on both,
+# since there the boundary is a real feature rather than a bug.
 BDB_PROBE_S='a\s+b'
-BDB_PROBE_B='ab\b'
 BDB_ENGINE=native
-if ! { [[ 'a b' =~ $BDB_PROBE_S ]] && [[ ab =~ $BDB_PROBE_B ]]; }; then
+if ! [[ 'a b' =~ $BDB_PROBE_S ]]; then
   if printf 'a b\n' | grep -qE "$BDB_PROBE_S" 2>/dev/null \
-    && printf 'ab\n' | grep -qE "$BDB_PROBE_B" 2>/dev/null; then
+    && printf 'ab\n' | grep -qE 'ab\b' 2>/dev/null; then
     BDB_ENGINE='grep'
   else
     printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"block-dangerous-bash: neither this shell nor grep supports the regex dialect the dangerous-command rules are written in, so they could not be evaluated. Review this command yourself."}}\n'
