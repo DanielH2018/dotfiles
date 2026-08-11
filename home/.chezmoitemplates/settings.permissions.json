@@ -334,7 +334,13 @@
       "Bash(/bin/bash ~/.claude/hooks/allow-compound-bash.sh)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
       "Bash(~/.claude/hooks/block-dangerous-bash.sh)",
-      "Skill(keybindings-help)"
+      "Skill(keybindings-help)",
+      {{/* Dependabot PR triage. The agent pushes branches, opens combined PRs and closes the
+           superseded originals, so this is not a read-only grant — it is allowed because the
+           work is repetitive and the agent's own brief carries the guardrails (draft PRs,
+           never force-push a dependabot branch, merge nothing). Named specifically rather
+           than a bare Agent rule, which would auto-approve every subagent type. */}}
+      "Agent(lpt-dependabot-reviewer:dependabot-reviewer)"
     ],
     "deny": [
       "WebFetch(domain:github.com)",
