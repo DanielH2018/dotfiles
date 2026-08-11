@@ -121,4 +121,9 @@ cleanup() {
   if [[ "${AV_REGISTERED:-false}" == true ]] && declare -f av_guarded_remove >/dev/null 2>&1; then
     av_guarded_remove "$INSTANCE_ID" "$RUN_ID" || true
   fi
+  # Leave the pane back to word-left; a pane that outlives the container would otherwise
+  # keep routing C-Left to Agent View.
+  if [[ "${AV_PANE_MARKED:-false}" == true && -n "${TMUX_PANE:-}" ]]; then
+    tmux set-option -p -t "$TMUX_PANE" -u @av_agent 2>/dev/null || true
+  fi
 }

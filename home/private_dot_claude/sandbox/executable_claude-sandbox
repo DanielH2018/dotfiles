@@ -965,5 +965,15 @@ if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/a
   fi
 fi
 
+# Mark the pane so dot_tmux.conf's C-Left bind can tell a sandbox from a shell. It can't
+# read that from the process: `docker run` below is a child in this script's process group,
+# so tmux reports the pane's command as `bash`. cleanup() unsets it.
+if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] \
+  && command -v tmux >/dev/null 2>&1; then
+  if tmux set-option -p -t "$TMUX_PANE" @av_agent 1 2>/dev/null; then
+    AV_PANE_MARKED=true
+  fi
+fi
+
 relabel_docker_args
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"
