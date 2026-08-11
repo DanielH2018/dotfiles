@@ -67,3 +67,21 @@ test('rejects an empty profile value', { skip }, () => {
   assert.notStrictEqual(result.status, 0);
   assert.match(result.stderr.toString(), /invalid profile ""/);
 });
+
+// Without an explicit [interpreters.ps1], chezmoi runs os-windows .chezmoiscripts as
+// `powershell -NoLogo <script>`, which Windows' default Restricted execution policy
+// refuses ("running scripts is disabled on this system") - so every Windows bootstrap
+// fails at install-cli-tools. The interpreter block is OS-independent template text, so
+// asserting it on any host is a real check.
+test('renders a ps1 interpreter that bypasses the execution policy', { skip }, () => {
+  const out = render('workstation');
+  assert.match(out, /^\[interpreters\.ps1\]$/m);
+  // `powershell`, not `pwsh`: pwsh is installed *by* these scripts, so it cannot be the
+  // interpreter that runs them on a fresh box.
+  assert.match(out, /^\s*command = "powershell"$/m);
+  const args = out.match(/^\s*args = \[(.*)\]$/m);
+  assert.ok(args, 'ps1 interpreter must pass explicit args');
+  // -File must be last: chezmoi appends the script path, and without -File powershell
+  // treats it as a command to interpret, which the execution policy blocks all the same.
+  assert.match(args[1], /"-ExecutionPolicy", "Bypass", "-File"$/);
+});

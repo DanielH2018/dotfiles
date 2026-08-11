@@ -18,3 +18,12 @@ umask = 0o022
 # support; on macOS/Linux bash runs the /bin/sh script identically.
 [interpreters.sh]
     command = "bash"
+# Windows defaults to the Restricted execution policy, so chezmoi's default
+# invocation (`powershell -NoLogo <script>`) fails the os-windows .chezmoiscripts
+# with "running scripts is disabled on this system". Bypass it per-process rather
+# than loosening the machine policy — same flags the repo's own .ps1 launchers use
+# (run_onchange_install-nerd-font, the WSL interop-reaper installer). `powershell`,
+# not `pwsh`: on a fresh box pwsh isn't installed until these scripts run.
+[interpreters.ps1]
+    command = "powershell"
+    args = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
