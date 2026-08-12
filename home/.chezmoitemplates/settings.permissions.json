@@ -566,6 +566,5 @@
       "Edit(~/.claude/settings.json)",
       "Edit(~/.claude/settings.local.json)"
     ],
-    "defaultMode": "auto",
-    "disableBypassPermissionsMode": "disable"
+    "defaultMode": "auto"
   }
