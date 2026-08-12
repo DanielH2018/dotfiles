@@ -145,7 +145,7 @@
          small closed set, unlike session_id. The sibling OTEL_METRICS_INCLUDE_VERSION is
          deliberately left off: the collector's resource_to_telemetry_conversion already
          puts service_version on every series, so it would only duplicate a label. */}}
-    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true",
+    "OTEL_METRICS_INCLUDE_ENTRYPOINT": "true"{{ if ne .chezmoi.os "darwin" }},
     {{/* Content logging, on deliberately. Default-off redacts prompts and responses to
          "<REDACTED>" and drops tool arguments and output, which leaves the logs able to
          say a turn was expensive but never what it was doing. Safe here and only here:
@@ -155,11 +155,25 @@
          Loki's max_structured_metadata_size is raised to match — see loki-config.yaml.
          OTEL_LOG_RAW_API_BODIES stays off: it stores the entire request JSON on every
          call, which re-serialises the full system prompt and conversation history each
-         turn, for content already captured by the four vars below. */}}
+         turn, for content already captured by the four vars below.
+
+         Off on darwin — that is the work laptop, and it is the one host where the
+         "reports to nobody" premise above is false. ~/.claude/remote-settings.json is
+         pushed by the org and overrides OTEL_EXPORTER_OTLP_ENDPOINT to Lithic's shared
+         collector (otel-collector-public…pwpinfra.com:4318). The env is a merge, not a
+         replacement: keys the org does not define still come from this file, which is
+         why session_id reached their Prometheus while their own metrics lacked it
+         (SRE-4745). These four would reach it the same way. The announcement of that
+         collector states plainly that prompts, code content, and tool inputs/outputs
+         are never exported — so leaving them on ships exactly the payload the whole
+         company was told is not collected, into a Loki that has nowhere to put it (no
+         claude-code streams exist in any Lithic Loki datasource; the pipeline is
+         metrics-only). Verified 2026-08-12. If the Mac ever gets its own collector back
+         and the org override is gone, this gate is the thing to revisit. */}}
     "OTEL_LOG_USER_PROMPTS": "1",
     "OTEL_LOG_ASSISTANT_RESPONSES": "1",
     "OTEL_LOG_TOOL_DETAILS": "1",
-    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}{{ if eq .chezmoi.hostname "daniel-server" }},
+    "OTEL_LOG_TOOL_CONTENT": "1"{{ end }}{{ end }}{{ if eq .chezmoi.hostname "daniel-server" }},
     {{/* serve-artifacts.sh binds this port and link-artifact.sh writes it into the
          emitted URL, so both ends move together. It has to differ from the 8181
          default because daniel-server is reached over plain ssh from a workstation
