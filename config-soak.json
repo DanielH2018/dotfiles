@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "c5e5819b201e70ef3dcbac6990186f9bc8648076b00d2b8106ed9ea562cb47fe",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "f3e6a60a3762a0b52f8baf296605a2ddd7e0230ee3c876ee0329843376a2540f",
+      "landed": "2026-08-12T20:34:51.361Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
