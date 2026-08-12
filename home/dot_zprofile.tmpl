@@ -2,4 +2,9 @@
 # Homebrew — must run in login shells before .zshrc so HOMEBREW_PREFIX is set
 # and /opt/homebrew/bin precedes /usr/bin in PATH.
 eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# agentview: no standing reason for this laptop to ssh into the homelab (daniel-server,
+# daniel-box) on every picker launch. Empty, not unset, so executable_agentview's
+# `${AGENT_VIEW_REMOTE_HOSTS-...}` default doesn't kick back in.
+export AGENT_VIEW_REMOTE_HOSTS=""
 {{- end -}}

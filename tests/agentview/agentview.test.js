@@ -958,6 +958,16 @@ test('the same box badges WSL when it really is WSL', { skip }, () => {
   assert.doesNotMatch(body, /Linux/, 'the badge is one or the other, never both');
 });
 
+test('a Mac badges its own sessions macOS', { skip }, () => {
+  const { env, home, bin } = makeEnv();
+  localHost(bin, 'MacBook-Pro-2');
+  fs.writeFileSync(path.join(bin, 'uname'), '#!/bin/bash\necho Darwin\n', { mode: 0o755 });
+  stateFile(home, 'w', { pane: '1', state: 'working', cwd: '/Users/d/wproj', host: 'MacBook-Pro-2', ts: nowSec() - 5 });
+  const body = stripAnsi(run(env, ['--body']).out);
+  assert.match(body, /macOS/, `expected a macOS badge, got:\n${body}`);
+  assert.doesNotMatch(body, /Linux|WSL/, 'the badge names the actual OS, not the Linux/WSL fallback');
+});
+
 // ---- per-group left accent rule (\u258e, state-colored) ----------------------
 test('each group carries a state-colored left accent rule', { skip }, () => {
   const { env, home, capture } = makeEnv();

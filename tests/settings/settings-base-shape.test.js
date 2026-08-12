@@ -202,14 +202,9 @@ test('every fallbackModel entry is one of availableModels', { skip }, () => {
 //
 // The audible cue on the SAME event is left alone deliberately: whether a 60-second nudge is
 // worth a sound is a separate question from what state the picker records.
-test('the agentview needs-input hook does not fire on the idle reminder', { skip }, (t) => {
-  // All five agent-view-state entries are gated to linux/windows in the base template, because
-  // agentview has no macOS path anywhere — executable_agentview says a Darwin branch there would
-  // be dead code rather than caution. So off those platforms there is no entry to assert a
-  // matcher on, and asserting one anyway fails on every macOS run without a regression behind it.
-  if (process.platform !== 'linux' && process.platform !== 'win32') {
-    return t.skip('agentview hooks render empty off Linux/Windows');
-  }
+test('the agentview needs-input hook does not fire on the idle reminder', { skip }, () => {
+  // All five agent-view-state entries are gated to linux/windows/darwin in the base template —
+  // agentview now runs everywhere (it needs bash 4+, which it checks for itself at startup).
   const cfg = JSON.parse(render());
   const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
     (e.hooks || []).some((h) => (h.command || '').includes('agent-view-state.sh needs-input')));

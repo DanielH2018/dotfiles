@@ -748,10 +748,13 @@ AV_KICK_FILE="$statedir/.remote-kick"
 # binary over the attach, not anything Claude does) collapses to at most one forced fetch per
 # second, because every bell inside the same second reads back the same key. Seeded at module
 # load so a marker left by an earlier picker cannot force a redundant fetch on the first tick.
-_av_kick_seen=$(stat -c %Y "$AV_KICK_FILE" 2>/dev/null)
+# stat -c is GNU; BSD/macOS stat wants -f %m instead.
+_av_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
+
+_av_kick_seen=$(_av_mtime "$AV_KICK_FILE")
 av_kick_pending() {  # 0 when a bell has arrived since the last forced fetch
   local m
-  m=$(stat -c %Y "$AV_KICK_FILE" 2>/dev/null) || return 1
+  m=$(_av_mtime "$AV_KICK_FILE") || return 1
   [ -n "$m" ] || return 1
   [ "$m" != "$_av_kick_seen" ] || return 1
   _av_kick_seen="$m"

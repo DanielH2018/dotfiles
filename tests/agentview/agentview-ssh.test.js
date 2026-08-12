@@ -25,7 +25,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 // the fixture dir followed by the real one, so /usr/bin/inotifywait answers instead and the
 // watcher takes its normal path. Three tests below did exactly that and passed anyway, because
 // `inotifywait -t 1` blocks for the same second the fallback's `sleep 1` would have.
-function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInotify = false } = {}) {
+function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInotify = false, remoteHosts } = {}) {
   const home = scratch('av-home-');
   const bin = scratch('av-bin-');
   const argvLog = path.join(home, 'ssh-argv.log');
@@ -78,6 +78,7 @@ function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInoti
           AGENT_VIEW_WATCH_INTERVAL: watchInterval,
           ...(repaintInterval === undefined ? {} : { AGENT_VIEW_REPAINT_INTERVAL: repaintInterval }),
           ...(noInotify ? { AGENT_VIEW_INOTIFYWAIT: 'agentview-absent-inotifywait' } : {}),
+          ...(remoteHosts === undefined ? {} : { AGENT_VIEW_REMOTE_HOSTS: remoteHosts }),
         },
       });
     },
@@ -173,10 +174,48 @@ test('the attach does not inherit BatchMode', () => {
 
 test('daniel-box is registered with the display label Box', () => {
   // host_label() falls back to ${1#daniel-}, which would render a lowercase "box" without an
-  // explicit entry. The label is the visible half of this task.
+  // explicit entry. The label is the visible half of this task. HOST_SSH is built at runtime
+  // from $AGENT_VIEW_REMOTE_HOSTS (a per-machine override — see agentview-remote-hosts.test.js
+  // for its behavior), so daniel-box's presence is checked against that default, not a literal
+  // HOST_SSH=(...) initializer.
   const src = fs.readFileSync(SCRIPT, 'utf8');
-  assert.match(src, /HOST_SSH=\([^)]*\[daniel-box\]/, 'daniel-box missing from HOST_SSH');
+  assert.match(
+    src,
+    /AGENT_VIEW_REMOTE_HOSTS-[^}]*\bdaniel-box\b/,
+    'daniel-box missing from the default AGENT_VIEW_REMOTE_HOSTS roster'
+  );
   assert.match(src, /HOST_LABEL=\([^)]*\[daniel-box\]="Box"/, 'daniel-box must be labelled Box');
+});
+
+test('daniel-box is reachable with no override (default roster unchanged)', () => {
+  const e = env({ sshBody: `printf '%s\\n' '{"session":"s1","state":"working","ts":1,"kind":"host"}'` });
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(
+    fs.existsSync(path.join(e.home, '.agentview-remote-cache.daniel-box')),
+    'daniel-box should still be polled when AGENT_VIEW_REMOTE_HOSTS is unset'
+  );
+});
+
+test('AGENT_VIEW_REMOTE_HOSTS="" polls nothing (a machine with no allotted remotes)', () => {
+  const e = env({ remoteHosts: '' });
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.deepStrictEqual(e.sshCalls(), [], 'no host should be allotted, so no ssh call should fire');
+});
+
+test('AGENT_VIEW_REMOTE_HOSTS narrows the roster to the named host only', () => {
+  const e = env({
+    sshBody: `printf '%s\\n' '{"session":"s1","state":"working","ts":1,"kind":"host"}'`,
+    remoteHosts: 'daniel-server',
+  });
+  e.run(['--refresh-remote', path.join(e.home, 'portfile')]);
+  assert.ok(
+    fs.existsSync(path.join(e.home, '.agentview-remote-cache.daniel-server')),
+    'daniel-server was named, so it should be polled'
+  );
+  assert.ok(
+    !fs.existsSync(path.join(e.home, '.agentview-remote-cache.daniel-box')),
+    'daniel-box was not named, so it should not be polled'
+  );
 });
 
 test('each host gets its own cache file', () => {

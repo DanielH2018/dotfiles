@@ -396,7 +396,7 @@
             "timeout": 5
           }
         ]
-      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: register the row at session start. Every other agent-view-state event fires only after activity, so a session started or resumed and then left idle had no row at all and the picker could not see it. "resume" matters most: that is the path that was silently invisible. */}}
       {
         "matcher": "startup|resume|clear",
@@ -429,7 +429,7 @@
             "timeout": 5
           }
         ]
-      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: mark this session "working" when a prompt is submitted */}}
       {
         "hooks": [
@@ -558,7 +558,7 @@
             "timeout": 5
           }
         ]
-      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: needs-input on a permission prompt ONLY. idle_prompt is the 60-second
            "waiting for your input" nudge, which fires long after a session has finished —
            and agent-view-state.sh writes unconditionally, so it overwrote a completed/review
@@ -631,7 +631,7 @@
             "timeout": 10
           }
         ]
-      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: mark completed when the turn stops */}}
       {
         "hooks": [
@@ -665,7 +665,7 @@
             "async": true
           }
         ]
-      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") }},
+      }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: remove this session's state file on end */}}
       {
         "hooks": [

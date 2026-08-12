@@ -71,6 +71,14 @@
 # background jobs get kind=bg with locator bg:<jobId> — no pane exists, so <enter>
 # runs `claude attach <jobId>` in a new backend pane (roster fallback without one).
 set -u
+# The session model below is `declare -A` throughout (HOST_LABEL, SMAP, GN, ...) - a bash 4
+# feature. macOS ships bash 3.2 at /bin/bash for licensing reasons and never updates it, so
+# this fails immediately and clearly rather than partway through, on whichever `declare -A`
+# happens to run first, with a message that doesn't say why.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  printf 'agentview: needs bash 4+ (found %s). On macOS: brew install bash, and make sure it comes before /bin/bash on PATH.\n' "${BASH_VERSION:-unknown}" >&2
+  exit 1
+fi
 mode="${1:-fzf}"
 
 # --skip DIR KEY [HOPS]: the picker's up/down keys arm this as an fzf `transform`. Group
@@ -201,12 +209,18 @@ winhost="daniel-desktop"
 # nothing: it named whatever host agentview ran on, so every session on a native Linux box
 # rendered as WSL. WSL_DISTRO_NAME is the signal the spawn paths already branch on (the
 # wezterm routing below, spawn.sh's --domain-name), so the badge now agrees with them.
-# Two-way on purpose: agentview has no macOS path anywhere, so a Darwin branch would be
-# dead code rather than caution.
 selflabel="Linux"; [ -n "${WSL_DISTRO_NAME:-}" ] && selflabel="WSL"
+[ "$(uname -s 2>/dev/null)" = "Darwin" ] && selflabel="macOS"
 declare -A HOST_LABEL=( ["$selfhost"]="$selflabel" ["$winhost"]="PC" [daniel-server]="Homelab" [daniel-box]="Box" )
 declare -A HOST_LOCAL=( ["$selfhost"]=1 ["$winhost"]=1 )
-declare -A HOST_SSH=( [daniel-server]="daniel-server" [daniel-box]="daniel-box" )
+# Remote hosts THIS machine polls over ssh on every launch. Every machine used to poll the
+# same fixed pair regardless of where it ran. $AGENT_VIEW_REMOTE_HOSTS (space-separated,
+# from the machine's shell profile) lets a machine narrow that; unset keeps the old
+# default, set-but-empty means "poll nothing remote" (a laptop with no standing reason to
+# ssh into the homelab on every picker launch).
+declare -A HOST_SSH=()
+for _rh in ${AGENT_VIEW_REMOTE_HOSTS-daniel-server daniel-box}; do HOST_SSH["$_rh"]="$_rh"; done
+unset _rh
 windir="${AGENT_VIEW_WINDIR:-/mnt/c/Users/${USER}/.claude/agent-view}"
 WEZTERM_WIN="${AGENT_VIEW_WEZTERM_WIN:-/mnt/c/Program Files/WezTerm/wezterm.exe}"
 # The wezterm domain a WSL-side tab must be pinned to (config.wsl_domains in wezterm.lua).
