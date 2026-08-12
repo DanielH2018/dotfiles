@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+# fix-games-mount — repair an NTFS volume left dirty by a hard reset, and
+# bring its systemd mount (plus any dependent bind mount) back up.
+#
+# Built for /mnt/games (Steam library, /dev/sda2, NTFS) on Fedora, where a GPU
+# fault hard-resets the box while the volume is mounted rw. The ntfs3 driver
+# then refuses it: `volume is dirty and "force" flag is not set!`
+#
+#   fix-games-mount          # check only, writes nothing
+#   fix-games-mount --fix    # repair, remount, verify
+#
+# Needs root and re-execs itself under sudo, so it is invoked by bare name
+# rather than as `sudo fix-games-mount`: sudo's secure_path does not include
+# ~/.local/bin, so the sudo-first form cannot find it.
+#
+# Exit codes: 0 ok/repaired, 1 needs --fix, 2 refused (SMART or unknown cause),
+#             3 repair or verification failed.
+
+set -uo pipefail
+
+# Kept for the sudo re-exec below — the parse loop shifts "$@" away.
+ARGV=("$@")
+
+MOUNTPOINT=${MOUNTPOINT:-/mnt/games}
+DO_FIX=0
+SKIP_SMART=0
+
+# SMART raw values that must all be zero before we write to the volume.
+SMART_GATE=(
+    Reallocated_Sector_Ct
+    Used_Rsvd_Blk_Cnt_Tot
+    Runtime_Bad_Block
+    Program_Fail_Cnt_Total
+    Erase_Fail_Count_Total
+    Uncorrectable_Error_Cnt
+    CRC_Error_Count
+)
+
+if [[ -t 1 ]]; then
+    R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'
+else
+    R=""; G=""; Y=""; B=""; N=""
+fi
+ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+bad()  { printf '  %s✗%s %s\n' "$R" "$N" "$*"; }
+section() { printf '\n%s== %s ==%s\n' "$B" "$*" "$N"; }
+
+usage() {
+    cat <<EOF
+Usage: fix-games-mount [--fix] [--skip-smart] [--mountpoint PATH]
+
+  (no flags)      Diagnose only. Writes nothing to the disk.
+  --fix           Run ntfsfix -d, reset the failed unit, mount -a, verify.
+  --skip-smart    Proceed even if the SMART gate fails. Dangerous: the gate is
+                  what stops you writing to a disk that is physically failing.
+  --mountpoint    Default: $MOUNTPOINT
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --fix)         DO_FIX=1 ;;
+        --skip-smart)  SKIP_SMART=1 ;;
+        --mountpoint)  MOUNTPOINT=${2:?--mountpoint needs a path}; shift ;;
+        -h|--help)     usage; exit 0 ;;
+        *)             printf 'Unknown argument: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+# ntfsfix, smartctl and mount all need root. Re-exec under sudo rather than
+# telling the caller to retry that way: this script lives in ~/.local/bin, which
+# sudo's secure_path excludes, so `sudo fix-games-mount` is "command not found".
+# Placed after the parse loop so --help and argument errors work unprivileged.
+if [[ $EUID -ne 0 ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        bad "Must run as root (ntfsfix, smartctl and mount all need it); sudo is not installed."
+        exit 2
+    fi
+    SELF=$(readlink -f "$0" 2>/dev/null)
+    [[ -n $SELF ]] || SELF=$0
+    warn "Not root — re-running under sudo."
+    exec sudo -- "$SELF" ${ARGV[@]+"${ARGV[@]}"}
+fi
+
+# --- resolve the device behind the mountpoint --------------------------------
+
+section "Target"
+
+# systemd names the unit after the path: /mnt/games -> mnt-games.mount
+UNIT=$(systemd-escape --path --suffix=mount "$MOUNTPOINT") || exit 3
+
+FSTAB_SPEC=$(awk -v mp="$MOUNTPOINT" '!/^[[:space:]]*#/ && $2 == mp {print $1; exit}' /etc/fstab)
+if [[ -z "$FSTAB_SPEC" ]]; then
+    bad "No /etc/fstab entry for $MOUNTPOINT — nothing to repair."
+    exit 2
+fi
+
+if [[ "$FSTAB_SPEC" == UUID=* || "$FSTAB_SPEC" == LABEL=* ]]; then
+    DEV=$(findfs "$FSTAB_SPEC" 2>/dev/null)
+else
+    DEV="$FSTAB_SPEC"
+fi
+if [[ -z "${DEV:-}" || ! -b "$DEV" ]]; then
+    bad "Could not resolve $FSTAB_SPEC to a block device. Is the disk attached?"
+    exit 2
+fi
+
+PARENT=$(lsblk -no pkname "$DEV" 2>/dev/null | head -1)
+DISK="/dev/${PARENT:-$(basename "$DEV")}"
+DEVNAME=$(basename "$DEV")
+
+printf '  mountpoint  %s\n' "$MOUNTPOINT"
+printf '  device      %s  (disk %s)\n' "$DEV" "$DISK"
+printf '  unit        %s\n' "$UNIT"
+
+# Bind mounts that depend on this one, so we verify N lines and not 1.
+mapfile -t BINDS < <(awk -v mp="$MOUNTPOINT" \
+    '!/^[[:space:]]*#/ && $2 ~ "^" mp "/" {print $2}' /etc/fstab)
+if [[ ${#BINDS[@]} -gt 0 ]]; then
+    printf '  dependent   %s\n' "${BINDS[*]}"
+fi
+
+# --- already healthy? --------------------------------------------------------
+
+section "Current state"
+
+if mountpoint -q "$MOUNTPOINT"; then
+    ok "$MOUNTPOINT is already mounted."
+    ALL_UP=1
+    for b in "${BINDS[@]}"; do
+        if mountpoint -q "$b"; then ok "bind mounted: $b"
+        else bad "bind NOT mounted: $b"; ALL_UP=0; fi
+    done
+    if [[ $ALL_UP -eq 1 ]]; then
+        printf '\n%sNothing to do.%s\n' "$G" "$N"
+        exit 0
+    fi
+    warn "Main mount is up but a dependent bind is missing."
+    if [[ $DO_FIX -eq 0 ]]; then
+        printf '\nRe-run with --fix to run: systemctl reset-failed && mount -a\n'
+        exit 1
+    fi
+    ntfsfix_needed=0
+else
+    bad "$MOUNTPOINT is not mounted."
+    ntfsfix_needed=1
+fi
+
+if systemctl is-active --quiet "$UNIT"; then
+    ok "unit $UNIT is active"
+else
+    state=$(systemctl is-active "$UNIT" 2>/dev/null)
+    bad "unit $UNIT is ${state:-unknown}"
+fi
+
+# --- confirm the cause is the dirty flag, not something else -----------------
+
+if [[ $ntfsfix_needed -eq 1 ]]; then
+    section "Cause"
+
+    DIRTY=$(journalctl -b -k --no-pager 2>/dev/null \
+            | grep -F "ntfs3($DEVNAME)" | grep -c 'volume is dirty')
+    HIBER=$(journalctl -b -k --no-pager 2>/dev/null \
+            | grep -F "ntfs3($DEVNAME)" | grep -ci 'hibernat')
+
+    if [[ $HIBER -gt 0 ]]; then
+        bad "Volume is HIBERNATED, not merely dirty (Windows Fast Startup / hiberfil)."
+        printf '     ntfsfix will not help. Boot Windows and shut down fully, or\n'
+        printf '     disable Fast Startup. Refusing to touch the disk.\n'
+        exit 2
+    fi
+
+    if [[ $DIRTY -eq 0 ]]; then
+        bad "No 'volume is dirty' message from ntfs3($DEVNAME) this boot."
+        printf '     The mount is failing for some other reason. Refusing to run\n'
+        printf '     ntfsfix blind. Look at:\n'
+        printf '       systemctl status %s\n' "$UNIT"
+        printf '       journalctl -b -k | grep ntfs3\n'
+        exit 2
+    fi
+
+    ok "Confirmed: ntfs3 refused the volume as dirty ($DIRTY message(s) this boot)."
+    journalctl -b -k --no-pager 2>/dev/null | grep -F "ntfs3($DEVNAME)" \
+        | tail -3 | sed 's/^/      /'
+
+    # --- SMART gate: never write to a disk that is physically failing --------
+
+    section "SMART gate"
+
+    if ! command -v smartctl >/dev/null 2>&1; then
+        warn "smartctl not installed (dnf install smartmontools) — gate skipped."
+        SMART_FAIL=0
+    else
+        SMART_OUT=$(smartctl -A "$DISK" 2>/dev/null)
+        SMART_FAIL=0
+        if [[ -z "$SMART_OUT" ]]; then
+            warn "Could not read SMART attributes from $DISK — gate skipped."
+        else
+            for attr in "${SMART_GATE[@]}"; do
+                raw=$(awk -v n="$attr" '$2 == n {print $10; exit}' <<<"$SMART_OUT")
+                if [[ -z "$raw" ]]; then
+                    warn "$attr: not reported by this drive"
+                elif [[ "$raw" =~ ^0+$ ]]; then
+                    ok "$attr: $raw"
+                else
+                    bad "$attr: $raw  (expected 0)"
+                    SMART_FAIL=1
+                fi
+            done
+            hs=$(smartctl -H "$DISK" 2>/dev/null | grep -i 'overall-health' | sed 's/.*: //')
+            [[ -n "$hs" ]] && printf '  overall-health: %s\n' "$hs"
+        fi
+    fi
+
+    if [[ $SMART_FAIL -eq 1 ]]; then
+        if [[ $SKIP_SMART -eq 1 ]]; then
+            warn "SMART gate FAILED but --skip-smart was given. Proceeding anyway."
+            warn "If this disk is dying, writing to it can make recovery harder."
+        else
+            bad "SMART gate FAILED — refusing to write to $DISK."
+            printf '     Image the disk before repairing it. Override with --skip-smart\n'
+            printf '     only if you accept the risk.\n'
+            exit 2
+        fi
+    fi
+fi
+
+# --- check mode stops here ---------------------------------------------------
+
+if [[ $DO_FIX -eq 0 ]]; then
+    section "Diagnosis"
+    printf '  Repairable. Re-run with --fix to apply:\n\n'
+    [[ $ntfsfix_needed -eq 1 ]] && printf '    ntfsfix -d %s\n' "$DEV"
+    printf '    systemctl reset-failed %s\n' "$UNIT"
+    printf '    mount -a\n\n'
+    printf '  ntfsfix -d clears the dirty flag %sonly if%s the volume can be fixed and\n' "$B" "$N"
+    printf '  mounted; otherwise it re-sets the flag to request a check. Conditional,\n'
+    printf '  with a safe fallback.\n'
+    exit 1
+fi
+
+# --- repair ------------------------------------------------------------------
+
+section "Repair"
+
+# Timestamp to diff kernel messages against, so we can tell new ntfs3 errors
+# from the ones that were already there before we touched anything.
+SINCE=$(date '+%Y-%m-%d %H:%M:%S')
+
+if [[ $ntfsfix_needed -eq 1 ]]; then
+    printf '  $ ntfsfix -d %s\n' "$DEV"
+    if ! ntfsfix -d "$DEV" 2>&1 | sed 's/^/      /'; then
+        bad "ntfsfix failed. Not attempting to mount."
+        exit 3
+    fi
+    # ntfsfix exits 0 even on some failures; check for the success sentence.
+    :
+fi
+
+printf '  $ systemctl reset-failed %s\n' "$UNIT"
+systemctl reset-failed "$UNIT" 2>/dev/null
+for b in "${BINDS[@]}"; do
+    systemctl reset-failed "$(systemd-escape --path --suffix=mount "$b")" 2>/dev/null
+done
+
+printf '  $ mount -a\n'
+if ! mount -a 2>&1 | sed 's/^/      /'; then
+    bad "mount -a reported an error."
+fi
+
+# --- verify ------------------------------------------------------------------
+
+section "Verification"
+
+FAIL=0
+
+if mountpoint -q "$MOUNTPOINT"; then
+    ok "$MOUNTPOINT mounted: $(findmnt -no SOURCE,FSTYPE,OPTIONS "$MOUNTPOINT" | cut -c1-90)"
+else
+    bad "$MOUNTPOINT still not mounted."; FAIL=1
+fi
+
+for b in "${BINDS[@]}"; do
+    if mountpoint -q "$b"; then ok "bind mounted: $b"
+    else bad "bind NOT mounted: $b"; FAIL=1; fi
+done
+
+for u in "$UNIT" $(for b in "${BINDS[@]}"; do systemd-escape --path --suffix=mount "$b"; done); do
+    if systemctl is-active --quiet "$u"; then ok "unit active: $u"
+    else bad "unit $(systemctl is-active "$u" 2>/dev/null): $u"; FAIL=1; fi
+done
+
+# The abort condition: fresh ntfs3 complaints after we mounted.
+NEW=$(journalctl -k --no-pager --since "$SINCE" 2>/dev/null \
+      | grep -F "ntfs3($DEVNAME)" | grep -viE 'enabled|included|version')
+if [[ -n "$NEW" ]]; then
+    bad "NEW ntfs3 kernel messages since the repair began:"
+    while IFS= read -r line; do printf '      %s\n' "$line"; done <<<"$NEW"
+    printf '     This is the abort condition. Unmount and run chkdsk /f from Windows\n'
+    printf '     before writing anything else to the volume.\n'
+    FAIL=1
+else
+    ok "No new ntfs3 kernel messages since the repair began."
+fi
+
+if mountpoint -q "$MOUNTPOINT"; then
+    OWNER=$(stat -c '%u' "$MOUNTPOINT" 2>/dev/null)
+    OWNER=${OWNER:-1000}
+    # runuser -u takes a NAME, not a #uid — resolve it, and treat "could not run
+    # the test" as a warning rather than a failure. Conflating the two reports a
+    # healthy volume as read-only.
+    OWNER_NAME=$(id -nu "$OWNER" 2>/dev/null)
+    PROBE="$MOUNTPOINT/.fix-games-mount-write-test"
+    if [[ -z "$OWNER_NAME" ]]; then
+        warn "Write test skipped: uid $OWNER maps to no user account."
+    else
+        err=$(runuser -u "$OWNER_NAME" -- touch "$PROBE" 2>&1)
+        if [[ -e "$PROBE" ]]; then
+            ok "Write test as $OWNER_NAME (uid $OWNER): passed"
+            rm -f "$PROBE"
+        else
+            bad "Write test as $OWNER_NAME (uid $OWNER): FAILED — ${err:-no error reported}"
+            bad "The volume may be mounted read-only. Check: findmnt $MOUNTPOINT"
+            FAIL=1
+        fi
+    fi
+    printf '  capacity: %s\n' "$(df -h "$MOUNTPOINT" | awk 'NR==2 {print $3" used of "$2" ("$5")"}')"
+fi
+
+# --- why it happened ---------------------------------------------------------
+
+section "Why it went dirty"
+
+# Find the most recent boot that ended WITHOUT a clean shutdown. Do not key this
+# off "Mounted <unit>" log lines: a repair done by this script uses `mount -a`,
+# which systemd does not log that way, so the boot we just fixed looks unmounted
+# and the real culprit gets missed. Clean-shutdown evidence is the reliable signal.
+FOUND=0
+for b in -1 -2 -3 -4 -5 -6; do
+    journalctl -b $b --no-pager >/dev/null 2>&1 || continue
+
+    # Match systemd-shutdown[1] specifically. A bare "Reached target shutdown.target"
+    # is emitted by *user* managers (the greeter's systemd[1870]) during an ordinary
+    # session logout and is NOT a system shutdown — matching it marks crashed boots
+    # as clean.
+    clean=$(journalctl -b $b --no-pager 2>/dev/null | grep -cE "systemd-shutdown\[1\]:")
+    [[ $clean -gt 0 ]] && continue   # ended cleanly; not the culprit
+
+    end=$(journalctl -b $b --no-pager -n 1 2>/dev/null | awk '{print $1,$2,$3}')
+    bad "boot $b ended UNCLEANLY at $end — no shutdown sequence in its journal."
+
+    nv=$(journalctl -b $b -k --no-pager 2>/dev/null \
+         | grep -cE 'NVRM:.*(critical error|HealthCheck|rpcRecvPoll)')
+    if [[ $nv -gt 0 ]]; then
+        printf '      GPU fault: %s NVRM crash lines (kgspHealthCheck / critical error 120).\n' "$nv"
+        printf '      This is the known trigger on this machine.\n'
+    else
+        printf '      No NVRM crash lines — the hang came from something else. Worth\n'
+        printf '      checking: journalctl -b %s -k | tail -50\n' "$b"
+    fi
+    FOUND=1
+    break
+done
+
+if [[ $FOUND -eq 0 ]]; then
+    ok "No unclean boot found in the last 6 — the flag may predate them."
+fi
+
+printf '\n  The dirty flag is set by the driver on mount and cleared on clean unmount.\n'
+printf '  A hard reset with the volume mounted rw leaves it set. Fixing the crash\n'
+printf '  is the only thing that stops this recurring; this script only repairs it.\n'
+
+section "Result"
+if [[ $FAIL -eq 0 ]]; then
+    printf '%s  Repaired and verified. Launch Steam to confirm it lists the library.%s\n\n' "$G" "$N"
+    exit 0
+else
+    printf '%s  Repair incomplete — see the failed checks above.%s\n\n' "$R" "$N"
+    exit 3
+fi

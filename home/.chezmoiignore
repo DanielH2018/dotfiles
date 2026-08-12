@@ -165,6 +165,17 @@ Scripts
 .config/kwinrulesrc
 {{ end }}
 
+# fix-games-mount repairs one specific volume on one specific machine: /mnt/games on this
+# box's /dev/sda2, a Samsung 860 EVO whose SMART attribute names it gates on by hand, dirtied
+# by a TU102 GPU fault it names as "the known trigger on this machine". None of that is a
+# parameter — it is the script. Elsewhere it would either find no fstab entry and exit, or
+# (worse, on another Linux host with a /mnt/games) reach for ntfsfix against a disk whose
+# health it cannot actually judge. Same reasoning as kwinrulesrc above: meaningless off this
+# host, so gated on the hostname rather than on the OS.
+{{ if ne .chezmoi.hostname "fedora" }}
+.local/bin/fix-games-mount
+{{ end }}
+
 # The sudo shim (see the script for why it exists) belongs wherever SUDO_ASKPASS is configured
 # and sudo refuses to use it without -A. That was the headless hosts, and it now includes this
 # work laptop: measured 2026-08-04 (sudo 1.9.17p2) the same way daniel-box was, plain sudo
