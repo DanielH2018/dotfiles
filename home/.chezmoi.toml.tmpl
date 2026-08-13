@@ -17,7 +17,29 @@ umask = 0o022
 # stays settings.json) and runs it via this interpreter. Windows has no shebang
 # support; on macOS/Linux bash runs the /bin/sh script identically.
 [interpreters.sh]
+{{- if eq .chezmoi.os "windows" }}
+    # NEVER a bare "bash": on Windows that is a PATH search, and
+    # %LOCALAPPDATA%\Microsoft\WindowsApps\bash.exe -- the WSL launcher stub -- can win that
+    # search ahead of Git's real bash.exe depending on the invoking process's PATH order,
+    # which was observed to vary between otherwise-identical `chezmoi apply` runs on the same
+    # machine. Running a modify_ script under the WSL stub instead of Git Bash points every
+    # $HOME/AppData/... path this repo's scripts use at an entirely different filesystem, so
+    # it looks exactly like the files being intermittently missing -- which is what actually
+    # produced the node-detection flakiness modify_settings.json.sh.tmpl works around; that
+    # was a symptom of this, not a separate bug. Absolute path only, same candidate list (and
+    # same final fallback) as wezterm.lua.tmpl's git_bash lookup, so the two stay consistent.
+    {{- if stat "C:/Program Files/Git/bin/bash.exe" }}
+    command = 'C:\Program Files\Git\bin\bash.exe'
+    {{- else if stat "C:/Program Files (x86)/Git/bin/bash.exe" }}
+    command = 'C:\Program Files (x86)\Git\bin\bash.exe'
+    {{- else if stat (printf "%s/Programs/Git/bin/bash.exe" (env "LOCALAPPDATA")) }}
+    command = {{ printf "%s\\Programs\\Git\\bin\\bash.exe" (env "LOCALAPPDATA") | quote }}
+    {{- else }}
+    command = 'C:\Program Files\Git\bin\bash.exe'
+    {{- end }}
+{{- else }}
     command = "bash"
+{{- end }}
 # Windows defaults to the Restricted execution policy, so chezmoi's default
 # invocation (`powershell -NoLogo <script>`) fails the os-windows .chezmoiscripts
 # with "running scripts is disabled on this system". Bypass it per-process rather
