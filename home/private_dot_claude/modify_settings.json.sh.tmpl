@@ -74,13 +74,19 @@ if [ -z "$NODE" ]; then
   # during a headless `chezmoi apply`. fnm_multishells/* only exists inside an
   # fnm-activated shell and is kept as a last-resort fallback. fnm's Windows layout puts
   # node.exe directly under aliases/default/ (no bin/ subdir, .exe suffix) instead of the
-  # Unix aliases/default/bin/node, so both shapes are checked.
+  # Unix aliases/default/bin/node, so both shapes are checked. The aliases/default entry
+  # is itself a junction fnm creates, and on at least one machine that junction came out
+  # unreadable (dir/Get-Content both fail on it even though the target is fine and other,
+  # unrelated junctions on the same box work) -- cause unconfirmed, but the node-versions/*
+  # glob below reaches the same install by walking past the alias entirely, so a broken
+  # junction there doesn't strand this script.
   for c in \
     "${FNM_DIR:-$HOME/.local/share/fnm}/aliases/default/bin/node" \
     "$HOME/.fnm/aliases/default/bin/node" \
     "${FNM_DIR:-$HOME/AppData/Roaming/fnm}/aliases/default/node.exe" \
     /opt/homebrew/bin/node /usr/local/bin/node \
-    "$HOME"/.local/state/fnm_multishells/*/bin/node; do
+    "$HOME"/.local/state/fnm_multishells/*/bin/node \
+    "${FNM_DIR:-$HOME/AppData/Roaming/fnm}"/node-versions/*/installation/node.exe; do
     [ -x "$c" ] && NODE="$c" && break
   done
 fi
