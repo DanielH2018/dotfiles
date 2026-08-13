@@ -36,10 +36,27 @@ const SCRIPT = path.join(__dirname, '..', 'home', 'dot_config', 'modify_private_
 
 const GHOSTTY = 'd31e37ca-991b-4265-b5a5-770bbdb42c82';
 const DISCORD = 'd68fa888-6425-4f4c-bd4a-a106d577356a';
-const FIREFOX = '7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47';
 const SPOTIFY = '2e9c7a55-8d13-4f26-b0c4-5a7e91d2f308';
 const OBSIDIAN = '923685de-9867-49f5-bed2-8a1da53e8b52';
-const OWNED = [SPOTIFY, FIREFOX, OBSIDIAN, GHOSTTY, DISCORD];
+const OWNED = [SPOTIFY, OBSIDIAN, GHOSTTY, DISCORD];
+
+// Retired: this rule maximized every Firefox toplevel, extension popup windows included,
+// and Firefox answered with a 95x123 sliver. Placement moved to login-window-layout. The
+// UUID stays here because the script must actively delete it, not merely stop writing it.
+const FIREFOX = '7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47';
+const FIREFOX_SECTION = [
+  `[${FIREFOX}]`,
+  'Description=Firefox - login placement (main)',
+  'maximizehoriz=true',
+  'maximizehorizrule=3',
+  'maximizevert=true',
+  'maximizevertrule=3',
+  'position=1576,40',
+  'positionrule=3',
+  'wmclass=org.mozilla.firefox',
+  'wmclasscomplete=false',
+  'wmclassmatch=1',
+];
 
 // A rule this script does not own, and must never touch. This is the shape of the real
 // Bitwarden entry, down to the size keys the owned rules deliberately no longer carry.
@@ -57,8 +74,10 @@ const BITWARDEN_SECTION = [
 ];
 
 // The rule order as actually deployed -- deliberately not sorted, and not the order the
-// sections appear in. Preserving it is the point.
+// sections appear in. Preserving it is the point. Still carries the retired Firefox UUID,
+// because that is what an existing deployed file looks like on the way into this script.
 const LIVE_RULES = [GHOSTTY, BITWARDEN, OBSIDIAN, DISCORD, FIREFOX, SPOTIFY];
+const LIVE_RULES_AFTER = LIVE_RULES.filter((u) => u !== FIREFOX);
 
 let bashOk = true;
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
@@ -105,9 +124,22 @@ test('keeps rules it does not own -- the Bitwarden entry must survive intact', {
 
 test('an unowned rule keeps its place in the index, and is never de-listed', { skip }, () => {
   const out = run(ini(BITWARDEN_SECTION, [''], general(LIVE_RULES)));
-  assert.deepStrictEqual(rulesOf(out), LIVE_RULES,
+  assert.deepStrictEqual(rulesOf(out), LIVE_RULES_AFTER,
     'rules= order changed; order is rule precedence, so this silently re-ranks the rules');
-  assert.strictEqual(countOf(out), LIVE_RULES.length);
+  assert.strictEqual(countOf(out), LIVE_RULES_AFTER.length);
+});
+
+test('deletes the retired Firefox rule, section and index entry alike', { skip }, () => {
+  const out = run(ini(BITWARDEN_SECTION, [''], FIREFOX_SECTION, [''], general(LIVE_RULES)));
+  assert.ok(!out.includes(`[${FIREFOX}]`),
+    'the retired section survived; a passed-through rule keeps maximizing extension popups');
+  assert.ok(!out.includes('org.mozilla.firefox'),
+    'a Firefox wmclass is still matched somewhere in the file');
+  assert.ok(!rulesOf(out).includes(FIREFOX),
+    'the retired UUID is still indexed in rules=, so KWin would still load it');
+  assert.strictEqual(countOf(out), rulesOf(out).length);
+  assert.deepStrictEqual(section(out, BITWARDEN), BITWARDEN_SECTION.slice(1),
+    'removing the retired rule disturbed an unowned neighbour');
 });
 
 test('asserts an owned section whole -- a key KDE added to it is removed', { skip }, () => {
@@ -133,7 +165,7 @@ test('adds a missing owned rule to both the section list and the index', { skip 
   }
   assert.deepStrictEqual(rulesOf(out), [BITWARDEN, ...OWNED],
     'a pre-existing entry must keep its position and new ones append after it');
-  assert.strictEqual(countOf(out), 6);
+  assert.strictEqual(countOf(out), 5);
 });
 
 test('count always matches the length of rules=', { skip }, () => {

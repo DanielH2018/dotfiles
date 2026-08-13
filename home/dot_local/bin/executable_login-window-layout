@@ -104,3 +104,7 @@ fi
 
 sleep "$OBSIDIAN_DELAY"
 start Obsidian '/app/obsidian' flatpak run md.obsidian.Obsidian
+
+# start returns non-zero for an app that was already running, and a top-up run where
+# everything is up would otherwise leave that as the script's own exit status.
+exit 0

@@ -63,7 +63,32 @@ printf '%s %s\\n' "${cmd}" "$*" >> "${marks}/launched"
 `, { mode: 0o755 });
   }
 
+  // Firefox placement talks to KWin over gdbus. Stub it, or a test run would load a script
+  // into the live compositor and move the developer's own browser window.
+  fs.writeFileSync(path.join(bin, 'gdbus'), `#!/bin/bash
+printf '%s\\n' "$*" >> "${marks}/gdbus"
+for a in "$@"; do
+  case "$a" in
+    */login-window-layout-firefox.*) cp "$a" "${marks}/kwinscript" 2>/dev/null ;;
+  esac
+done
+`, { mode: 0o755 });
+
   return { bin, marks };
+}
+
+function readMark(marks, name) {
+  const p = path.join(marks, name);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+}
+
+// Placement runs in a background subshell that outlives the script, so poll rather than sample.
+function waitForMark(marks, name, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (!fs.existsSync(path.join(marks, name)) && Date.now() < deadline) {
+    execFileSync('sleep', ['0.05']);
+  }
+  return readMark(marks, name);
 }
 
 function readLaunched(marks) {
@@ -74,12 +99,16 @@ function readLaunched(marks) {
 // The script backgrounds every launch, so it exits before the stubs have written their marks.
 // Wait for the expected count rather than sampling once; `expect: 0` still has to wait, or the
 // test would pass simply by reading too early.
-function run({ running = [], delay = 0, expect = 0 } = {}) {
+function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position } = {}) {
   const { bin, marks } = makeStubs(running);
-  const stdout = execFileSync('bash', [SCRIPT], {
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OBSIDIAN_DELAY: String(delay) },
-    encoding: 'utf8',
-  });
+  const env = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    OBSIDIAN_DELAY: String(delay),
+    FIREFOX_PLACE_DELAY: String(placeDelay),
+  };
+  if (position) { env.FIREFOX_POSITION = position; }
+  const stdout = execFileSync('bash', [SCRIPT], { env, encoding: 'utf8' });
   const deadline = Date.now() + 3000;
   let launched = readLaunched(marks);
   while (launched.length < expect && Date.now() < deadline) {
@@ -90,7 +119,7 @@ function run({ running = [], delay = 0, expect = 0 } = {}) {
     execFileSync('sleep', ['0.3']);
     launched = readLaunched(marks);
   }
-  return { stdout, launched };
+  return { stdout, launched, marks };
 }
 
 test('starts all five when nothing is running', { skip }, () => {
@@ -152,6 +181,45 @@ test('OBSIDIAN_DELAY controls the wait before Obsidian', { skip }, () => {
   // the test would stop discriminating rather than merely running faster.
   run({ delay: 0.8, expect: 5 });
   assert.ok(Date.now() - started >= 700, 'the configured delay must actually be waited out');
+});
+
+// Firefox placement moved here out of kwinrulesrc, because a wmclass rule also caught the
+// popup windows extensions open and shrank them to a sliver in the corner. These tests pin
+// the two properties that made moving it worthwhile: it runs once, and only for a launch.
+test('places Firefox after starting it', { skip }, () => {
+  const { marks } = run({ expect: 5 });
+  const calls = waitForMark(marks, 'gdbus');
+  assert.match(calls, /Scripting\.loadScript/, 'no KWin script was loaded, so nothing was placed');
+  assert.match(calls, /Scripting\.start/, 'the script was loaded but never run');
+  assert.match(calls, /Scripting\.unloadScript/,
+    'the script was left loaded; KWin would collect a dead entry per login');
+});
+
+test('does not place Firefox when it was already running', { skip }, () => {
+  const { stdout, marks } = run({ running: Object.values(RUNNING) });
+  execFileSync('sleep', ['0.5']);
+  assert.strictEqual(readMark(marks, 'gdbus'), '',
+    'a top-up run moved a window the user had already arranged');
+  assert.doesNotMatch(stdout, /placed Firefox/);
+});
+
+test('unmaximizes before moving, or the window hangs off the output', { skip }, () => {
+  const { marks } = run({ expect: 5 });
+  waitForMark(marks, 'kwinscript');
+  const js = readMark(marks, 'kwinscript');
+  const unmax = js.indexOf('setMaximize(false, false)');
+  const move = js.indexOf('w.frameGeometry =');
+  const max = js.indexOf('setMaximize(true, true)');
+  assert.ok(unmax >= 0 && move >= 0 && max >= 0, 'placement script lost one of its three steps');
+  assert.ok(unmax < move && move < max,
+    'writing frameGeometry to a maximized window moves the frame without resizing it');
+});
+
+test('FIREFOX_POSITION picks the corner to maximize from', { skip }, () => {
+  const { marks } = run({ expect: 5, position: '40,80' });
+  waitForMark(marks, 'kwinscript');
+  assert.match(readMark(marks, 'kwinscript'), /x: 40, y: 80/,
+    'the configured position did not reach the KWin script');
 });
 
 test.after(() => {
