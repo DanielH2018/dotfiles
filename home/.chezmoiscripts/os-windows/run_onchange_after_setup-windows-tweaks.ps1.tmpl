@@ -38,16 +38,27 @@ Write-Host "         select $dir\winaero-tweaker.ini"
 # because the WezTerm CTRL+SHIFT+S keybind launches `bash --noprofile --norc -c agentview`
 # (no profile, for speed): it only finds `agentview` + the `jq` LF-shim (both in
 # ~/.local/bin) and TaskbarAutoHideFix.exe (~/bin) if these dirs are on the Windows PATH.
-# Idempotent (append-if-missing); User scope = no elevation.
+#
+# Prepended, not appended: Windows auto-adds %LOCALAPPDATA%\Microsoft\WindowsApps to the
+# User PATH ahead of anything this script appends, and that directory ships fake
+# "App Execution Alias" python.exe/python3.exe stubs that just open the Microsoft Store.
+# `uv python install --default` puts real shims in ~/.local/bin (see
+# install-cli-tools.ps1), so those only win the name-resolution race if ~/.local/bin comes
+# first. Idempotent either way (remove-then-prepend, so re-running converges on the same
+# order instead of drifting); User scope = no elevation.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-foreach ($sub in '.local\bin', 'bin') {
+# Reverse order: each iteration prepends, so processing 'bin' first and '.local\bin'
+# last leaves '.local\bin' frontmost -- same relative order the previous append-only
+# version produced (.local\bin, then bin, then everything else).
+foreach ($sub in 'bin', '.local\bin') {
     $d = Join-Path $env:USERPROFILE $sub
-    if (($userPath -split ';') -notcontains $d) {
-        $userPath = $userPath.TrimEnd(';') + ';' + $d
-        [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
-        Write-Host "[apply] added $d to the User PATH (open a new shell to pick it up)"
+    $entries = $userPath -split ';' | Where-Object { $_ -and $_ -ne $d }
+    if (($userPath -split ';') -contains $d) {
+        Write-Host "[apply] moved $d to the front of the User PATH (open a new shell to pick it up)"
     } else {
-        Write-Host "[skip] $d already on the User PATH"
+        Write-Host "[apply] added $d to the front of the User PATH (open a new shell to pick it up)"
     }
+    $userPath = (@($d) + $entries) -join ';'
+    [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
 }
 {{- end -}}

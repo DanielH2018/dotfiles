@@ -58,10 +58,14 @@ if ($fnm) {
 # vault-index's fastembed/duckdb deps (the system 'python' may be newer). Idempotent:
 # uv skips an already-installed version. The "minor version link" warning on Windows
 # without Developer Mode is benign - `uv run --python 3.12` still resolves the interpreter.
+# --default additionally puts unversioned python.exe/python3.exe shims in ~/.local/bin
+# (uv python dir --bin), so plain `python`/`python3` resolve outside a uv-managed project
+# too -- setup-windows-tweaks.ps1 puts that directory ahead of the WindowsApps App
+# Execution Alias stubs on PATH so these shims win instead of the Store-install nag.
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if ($uv) {
     Write-Host "[install] managed CPython 3.12 via uv ..."
-    & $uv.Source python install 3.12
+    & $uv.Source python install 3.12 --default
 
     # The two Python CLIs that are machine-global rather than per-project - the Windows half
     # of os-unix/run_once_after_install-python-tools.sh.tmpl (see its header for the full
