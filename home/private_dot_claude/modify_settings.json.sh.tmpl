@@ -90,6 +90,19 @@ if [ -z "$NODE" ]; then
     [ -x "$c" ] && NODE="$c" && break
   done
 fi
+if [ -z "$NODE" ] && command -v fnm >/dev/null 2>&1; then
+  # Every guess above assumes the alias junction or version directory is visible from this
+  # shell; on at least one Windows machine that visibility was inconsistent from one
+  # invocation to the next (dir, Get-Content, and even this script's own -x tests
+  # disagreed), while `fnm` itself -- which resolves the install through its own internal
+  # bookkeeping rather than a filesystem link -- stayed reliable throughout. Ask it
+  # directly as a last resort: find the version fnm reports as default, then have fnm
+  # exec node in place just long enough to report its own real path.
+  FNM_DEFAULT_VERSION="$(fnm list 2>/dev/null | awk '/default/{print $2; exit}')"
+  if [ -n "$FNM_DEFAULT_VERSION" ]; then
+    NODE="$(fnm exec --using="$FNM_DEFAULT_VERSION" -- node -e 'process.stdout.write(process.execPath)' 2>/dev/null || true)"
+  fi
+fi
 [ -n "$NODE" ] || { echo "modify_settings: node not found on PATH or common locations; cannot generate ~/.claude/settings.json" >&2; exit 1; }
 MERGE="{{ .chezmoi.sourceDir }}/dot_local/bin/executable_claude-settings-merge"
 # By environment, never as an argument: an older copy of the merge script ignores an unknown
