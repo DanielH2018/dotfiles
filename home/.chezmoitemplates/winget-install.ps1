@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Warning "winget not found — install 'App Installer' from the Microsoft Store, then re-run 'chezmoi apply'."
+    Write-Warning "winget not found - install 'App Installer' from the Microsoft Store, then re-run 'chezmoi apply'."
     return
 }
 

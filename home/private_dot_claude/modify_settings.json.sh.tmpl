@@ -72,10 +72,13 @@ NODE="$(command -v node 2>/dev/null || true)"
 if [ -z "$NODE" ]; then
   # fnm's default alias resolves a node without an interactive `fnm env`, so this works
   # during a headless `chezmoi apply`. fnm_multishells/* only exists inside an
-  # fnm-activated shell and is kept as a last-resort fallback.
+  # fnm-activated shell and is kept as a last-resort fallback. fnm's Windows layout puts
+  # node.exe directly under aliases/default/ (no bin/ subdir, .exe suffix) instead of the
+  # Unix aliases/default/bin/node, so both shapes are checked.
   for c in \
     "${FNM_DIR:-$HOME/.local/share/fnm}/aliases/default/bin/node" \
     "$HOME/.fnm/aliases/default/bin/node" \
+    "${FNM_DIR:-$HOME/AppData/Roaming/fnm}/aliases/default/node.exe" \
     /opt/homebrew/bin/node /usr/local/bin/node \
     "$HOME"/.local/state/fnm_multishells/*/bin/node; do
     [ -x "$c" ] && NODE="$c" && break

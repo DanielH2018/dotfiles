@@ -16,7 +16,14 @@ $ep  = Join-Path $dir 'explorerpatcher.reg'
 if (Get-Command reg.exe -ErrorAction SilentlyContinue) {
     if ((Test-Path $ep) -and (Test-Path 'HKCU:\Software\ExplorerPatcher')) {
         Write-Host "[apply] ExplorerPatcher settings <- explorerpatcher.reg"
+        # reg.exe writes its "completed successfully" status to stderr. Under
+        # $ErrorActionPreference = 'Stop', merging that into the pipeline (2>&1) turns
+        # a benign line into a terminating NativeCommandError even though reg.exe exits
+        # 0 -- so this scopes ErrorActionPreference down to Continue for just this call.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         reg.exe import $ep 2>&1 | Out-Null
+        $ErrorActionPreference = $prevEAP
         Write-Host "        (restart File Explorer for changes to take full effect)"
     } elseif (Test-Path $ep) {
         Write-Host "[skip] ExplorerPatcher not installed yet; re-run 'chezmoi apply' after it installs."

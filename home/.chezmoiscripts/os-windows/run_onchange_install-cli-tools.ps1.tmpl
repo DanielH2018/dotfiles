@@ -1,7 +1,7 @@
 {{- if eq .chezmoi.os "windows" -}}
 # Managed by chezmoi (run_onchange). Installs the modern CLI toolchain via winget so
 # Git Bash gets the same experience as the macOS/Linux zsh setup (see dot_bashrc):
-# starship prompt, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, uv. Also installs fnm —
+# starship prompt, zoxide, fzf, eza, fd, ripgrep, bat, fastfetch, uv. Also installs fnm -
 # the Windows counterpart to run_once_before_install-fnm.sh.tmpl, which skips Windows.
 # Idempotent: skips anything already on PATH or already reported installed by winget.
 # Re-runs only when this file changes.
@@ -10,7 +10,7 @@
 {{ includeTemplate "winget-install.ps1" . }}
 # id = exact winget package id; cmd = the binary it puts on PATH (used to skip).
 $packages = @(
-    # Core CLI toolchain — generated from .chezmoidata/tools.toml (the shared source of
+    # Core CLI toolchain - generated from .chezmoidata/tools.toml (the shared source of
     # truth with the Brewfile + Linux installer). Only tools with a winget id appear here.
 {{- range .tools }}{{ if .winget }}
     @{ id = '{{ .winget }}'; cmd = '{{ .cmd }}' },
@@ -26,7 +26,7 @@ $packages = @(
     # Lua parser used only by tests/terminal/wezterm-config.test.js to syntax-check the rendered
     # WezTerm config (luac -p). DEVCOM.Lua drops luac.exe under
     # %LOCALAPPDATA%\Programs\Lua\bin and does NOT add it to PATH, so Get-Command below
-    # won't find it — the winget-list check handles the skip, and the test locates luac
+    # won't find it - the winget-list check handles the skip, and the test locates luac
     # by that path.
     @{ id = 'DEVCOM.Lua';    cmd = 'luac'    }
 )
@@ -49,7 +49,7 @@ if ($fnm) {
     & $fnm.Source install --lts
     & $fnm.Source default lts-latest
 } else {
-    Write-Warning "fnm not on PATH yet — open a new shell and re-run 'chezmoi apply' to install a default Node."
+    Write-Warning "fnm not on PATH yet - open a new shell and re-run 'chezmoi apply' to install a default Node."
 }
 
 # uv manages its own CPython, so provision a default interpreter here (mirrors the fnm
@@ -57,13 +57,13 @@ if ($fnm) {
 # vault-index) targets Python >=3.11; 3.12 has the widest wheel coverage for
 # vault-index's fastembed/duckdb deps (the system 'python' may be newer). Idempotent:
 # uv skips an already-installed version. The "minor version link" warning on Windows
-# without Developer Mode is benign — `uv run --python 3.12` still resolves the interpreter.
+# without Developer Mode is benign - `uv run --python 3.12` still resolves the interpreter.
 $uv = Get-Command uv -ErrorAction SilentlyContinue
 if ($uv) {
     Write-Host "[install] managed CPython 3.12 via uv ..."
     & $uv.Source python install 3.12
 
-    # The two Python CLIs that are machine-global rather than per-project — the Windows half
+    # The two Python CLIs that are machine-global rather than per-project - the Windows half
     # of os-unix/run_once_after_install-python-tools.sh.tmpl (see its header for the full
     # rationale, including why pytest is deliberately NOT installed globally). ruff backs the
     # ~/.claude auto-format + lint-after-edit hooks, which call a bare `ruff`; prek is the
@@ -74,7 +74,7 @@ if ($uv) {
         & $uv.Source tool install $t
     }
 } else {
-    Write-Warning "uv not on PATH yet — open a new shell and re-run 'chezmoi apply' to provision a managed Python and install ruff/prek."
+    Write-Warning "uv not on PATH yet - open a new shell and re-run 'chezmoi apply' to provision a managed Python and install ruff/prek."
 }
 
 Write-Host "CLI tools done. Open a new Git Bash shell so the updated PATH and ~/.bashrc take effect."
