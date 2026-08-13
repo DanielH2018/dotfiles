@@ -7,6 +7,14 @@
 # Wayland here: it matches the window and then never moves it. This script only
 # decides *what* starts and in *what order*.
 #
+# Firefox is the exception, and is placed from here instead. A kwinrulesrc rule
+# matches on wmclass, and every Firefox toplevel shares org.mozilla.firefox --
+# including the popup windows extensions open through browser.windows.create.
+# A rule cannot tell those apart from the browser window, so it maximized every
+# popup at map time and Firefox answered with a 95x123 sliver in the corner. The
+# rule is gone; place_firefox below does the same job once, after the window has
+# finished sizing itself, and leaves later popups alone.
+#
 # Order matters for the bottom monitor: Spotify and Obsidian are placed on top of
 # each other there, so Obsidian starts last to end up as the visible one.
 #
@@ -19,27 +27,80 @@ set -uo pipefail
 # leaves Spotify on top.
 OBSIDIAN_DELAY="${OBSIDIAN_DELAY:-8}"
 
+# Seconds to wait after starting Firefox before moving its window. Placing it at
+# map time is what the old rule did, and Firefox overrides geometry it did not
+# ask for; by the time this elapses it has settled and the move sticks.
+FIREFOX_PLACE_DELAY="${FIREFOX_PLACE_DELAY:-12}"
+
+# Top-left corner Firefox is maximized from, inside its assigned output. Same
+# coordinate the retired kwinrulesrc rule used.
+FIREFOX_POSITION="${FIREFOX_POSITION:-1576,40}"
+
 log() { printf '%s login-window-layout: %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 # start <name> <pgrep-pattern> <command...>
+# Returns non-zero when the app was already running, so callers can tell an
+# actual launch from a top-up and skip any follow-up placement.
 start() {
   local name="$1" pattern="$2"
   shift 2
   if pgrep -f "$pattern" >/dev/null 2>&1; then
     log "$name already running, skipping"
-    return 0
+    return 1
   fi
   log "starting $name"
   "$@" >/dev/null 2>&1 &
+}
+
+# Move the browser window to its output and maximize it there. Runs as a KWin
+# script because a Wayland client cannot position itself, which is the whole
+# reason the placement lives in the compositor at all.
+place_firefox() {
+  local x="${FIREFOX_POSITION%,*}" y="${FIREFOX_POSITION#*,}"
+  local script name
+  script="$(mktemp -t login-window-layout-firefox.XXXXXX)" || return 1
+  name="login-window-layout-firefox-$$"
+
+  # Unmaximize before moving: Firefox restores its own maximized state from
+  # xulstore, and writing frameGeometry to a window that is already maximized
+  # moves the frame without resizing it, leaving it hanging off the output by
+  # exactly the offset below. Drop the state, move, then maximize onto whichever
+  # output now contains the window.
+  cat >"$script" <<EOF
+for (const w of workspace.windowList()) {
+  if (String(w.resourceClass) !== "org.mozilla.firefox") { continue; }
+  w.setMaximize(false, false);
+  const g = w.frameGeometry;
+  w.frameGeometry = { x: $x, y: $y, width: g.width, height: g.height };
+  w.setMaximize(true, true);
+  break;
+}
+EOF
+
+  local scripting=(--session --dest org.kde.KWin --object-path /Scripting)
+  if gdbus call "${scripting[@]}" --method org.kde.kwin.Scripting.loadScript "$script" "$name" >/dev/null 2>&1; then
+    gdbus call "${scripting[@]}" --method org.kde.kwin.Scripting.start >/dev/null 2>&1
+    # Unload so the list does not grow a dead entry per login.
+    gdbus call "${scripting[@]}" --method org.kde.kwin.Scripting.unloadScript "$name" >/dev/null 2>&1
+    log "placed Firefox at $FIREFOX_POSITION"
+  else
+    log "could not load KWin placement script, leaving Firefox where it opened"
+  fi
+  rm -f "$script"
 }
 
 # Discord self-updates into ~/.config/discord/app-<version>/, so match on that
 # path shape rather than the /usr/bin launcher, which only execs into it and so
 # never appears in the process table itself.
 start Discord '/discord/app-[^/]*/Discord' discord
-start Firefox '^/usr/lib64/firefox/firefox' firefox
+firefox_started=false
+start Firefox '^/usr/lib64/firefox/firefox' firefox && firefox_started=true
 start Ghostty '^/usr/bin/ghostty' ghostty --gtk-single-instance=true
 start Spotify 'share/spotify/spotify' flatpak run com.spotify.Client
+
+if [[ "$firefox_started" == true ]]; then
+  ( sleep "$FIREFOX_PLACE_DELAY"; place_firefox ) &
+fi
 
 sleep "$OBSIDIAN_DELAY"
 start Obsidian '/app/obsidian' flatpak run md.obsidian.Obsidian

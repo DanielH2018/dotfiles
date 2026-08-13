@@ -9,13 +9,26 @@
 # plain managed file would delete all of it on every apply and KDE would write it back, so the
 # two would fight forever with `chezmoi status` permanently dirty.
 #
-# WHAT IS OWNED: the five UUID-keyed sections below and nothing else. They pin Discord,
-# Firefox, Ghostty, Spotify and Obsidian to a coordinate inside their assigned monitor, and
-# maximize them there, at login. ~/.local/bin/login-window-layout starts those five apps and
-# relies on these rules for placement -- it deliberately decides only *what* runs, never
-# where, because KWin's own screen=N rule is inert on Wayland here (it matches the window and
-# then never moves it). Losing these rules does not break the launcher loudly; it just opens
-# five windows into default placement.
+# WHAT IS OWNED: the four UUID-keyed sections below, plus the one UUID in DISOWNED, and
+# nothing else. They pin Discord, Ghostty, Spotify and Obsidian to a coordinate inside their
+# assigned monitor, and maximize them there, at login. ~/.local/bin/login-window-layout starts
+# those apps and relies on these rules for placement -- for them it decides only *what* runs,
+# never where, because KWin's own screen=N rule is inert on Wayland here (it matches the window
+# and then never moves it). Losing these rules does not break the launcher loudly; it just
+# opens the windows into default placement.
+#
+# FIREFOX IS DELIBERATELY NOT HERE, and its old UUID is in DISOWNED so an existing deployed
+# copy is removed rather than passed through. A window rule matches on wmclass, and every
+# Firefox toplevel shares wmclass org.mozilla.firefox -- including the popup windows
+# extensions open through browser.windows.create (Bitwarden's auth prompt, Kagi Summarize).
+# KWin cannot tell those from the main browser window: on Wayland both are plain xdg_toplevels
+# reporting normalWindow=true, and at map time both are captioned "Mozilla Firefox", so no
+# narrowing of the rule is possible. Measured on this box, the rule maximized each popup at
+# map time and Firefox then committed a degenerate size -- 95x123 logical, below its own
+# declared 150x150 minimum -- leaving a sliver pinned at the target monitor's top-left. With
+# the rule gone the same popup opens 600x528, placed over its parent. Firefox's login
+# placement moved into login-window-layout, which applies it once to the first window rather
+# than forever to every one.
 #
 # Each owned section is asserted WHOLE, not key-by-key. We mean "this rule is exactly this",
 # so a key KDE adds to one of these five is removed on the next apply. Sections we do not own
@@ -64,17 +77,6 @@ positionrule=3
 wmclass=spotify
 wmclasscomplete=false
 wmclassmatch=1
-[7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47]
-Description=Firefox - login placement (main)
-maximizehoriz=true
-maximizehorizrule=3
-maximizevert=true
-maximizevertrule=3
-position=1576,40
-positionrule=3
-wmclass=org.mozilla.firefox
-wmclasscomplete=false
-wmclassmatch=1
 [923685de-9867-49f5-bed2-8a1da53e8b52]
 Description=Obsidian - login placement (bottom)
 maximizehoriz=true
@@ -111,6 +113,13 @@ wmclassmatch=1
 EOF
 
 awk '
+	# Rules we used to own and now actively remove. Dropping a section from the canon above
+	# is not enough on its own: sections we do not own pass through untouched, so a retired
+	# rule would sit in the deployed file forever, still indexed in [General].
+	BEGIN {
+		disowned["[7f3a1c20-4b5e-4d61-9a02-1c8e6f0b3d47]"] = 1
+	}
+
 	# First file: the owned sections. Section headers are matched as whole lines rather
 	# than parsed, so a UUID is never split on its own hyphens.
 	NR == FNR {
@@ -144,7 +153,7 @@ awk '
 		if (!(gen in seen)) { seen[gen] = 1; order[++n_sec] = gen }
 
 		# Rebuild the rule index. Entries already present keep their position; only
-		# UUIDs absent from the list are appended.
+		# UUIDs absent from the list are appended, and disowned ones are dropped.
 		n_rules = 0
 		if (gen in body) {
 			n = split(body[gen], gl, "\n")
@@ -153,6 +162,7 @@ awk '
 				m = split(substr(gl[i], length("rules=") + 1), part, ",")
 				for (j = 1; j <= m; j++) {
 					if (part[j] == "" || (part[j] in listed)) { continue }
+					if (("[" part[j] "]") in disowned) { continue }
 					listed[part[j]] = 1
 					rules[++n_rules] = part[j]
 				}
@@ -172,6 +182,7 @@ awk '
 		if (preamble != "") { printf "%s", preamble; started = 1 }
 		for (i = 1; i <= n_sec; i++) {
 			s = order[i]
+			if (s in disowned) { continue }
 			if (started) { print "" }
 			started = 1
 			print s
