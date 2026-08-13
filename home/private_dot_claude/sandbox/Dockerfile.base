@@ -3,10 +3,21 @@ FROM debian:stable-slim
 
 # --- All system packages in a single layer ---
 # Bootstrap curl → add gh/docker repos → install everything in one pass.
-# Cache mounts speed up rebuilds by reusing downloaded .deb files.
+# Cache mounts reuse downloaded .deb files and package indexes across rebuilds,
+# but only once two defaults are undone: debian:*-slim ships
+# /etc/apt/apt.conf.d/docker-clean, whose DPkg::Post-Invoke deletes every .deb
+# right after install, and the conventional `rm -rf /var/lib/apt/lists/*` empties
+# the *cache mount* rather than the layer (a cache-mounted path never lands in
+# the layer at all, so there is nothing there to shrink). With both removed the
+# mounts hold ~200MB of debs + indexes and a rebuild of these layers is local.
+# Inherited by every per-repo image, whose apt layers mount the same caches.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' \
+       > /etc/apt/apt.conf.d/keep-cache \
+    && mkdir -p /var/cache/apt/archives/partial /var/lib/apt/lists/partial \
+    && apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && mkdir -p -m 755 /etc/apt/keyrings \
     # GitHub CLI repo
@@ -28,16 +39,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
        git jq tini openssh-client make wl-clipboard \
-       gh docker-ce-cli docker-compose-plugin \
-    && rm -rf /var/lib/apt/lists/*
+       gh docker-ce-cli docker-compose-plugin
 
 # Node.js (needed for Claude Code npm install)
 ARG NODE_VERSION=22
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends nodejs
 
 # chezmoi
 # Dotfiles manager. The vault sandbox bind-mounts the chezmoi SOURCE read-write;
@@ -59,16 +68,6 @@ RUN set -eux; \
     rm -f "${file}" "chezmoi_${CHEZMOI_VERSION}_checksums.txt" chezmoi; \
     chezmoi --version
 
-# Claude Code
-# CLAUDE_CODE_REFRESH is a cache-busting token the launcher sets to the current
-# date so a new day re-resolves @latest, without a full --no-cache rebuild.
-# It sits directly above the install so the apt/node layers stay cached.
-ARG CLAUDE_CODE_VERSION="latest"
-ARG CLAUDE_CODE_REFRESH="0"
-RUN echo "claude-code refresh token: ${CLAUDE_CODE_REFRESH}" \
-    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    && npm cache clean --force
-
 # Non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 claudebot
 USER claudebot
@@ -78,8 +77,15 @@ WORKDIR /workspace
 # .claude-defaults/ at runtime (not baked into the image) so config edits
 # don't bust the Docker layer cache. Entrypoint syncs them into the
 # persistent .claude/ volume on each launch.
+#
+# .cache must exist and belong to claudebot BEFORE the first build cache mount
+# under it: a cache mount creates any missing parent as root:root, and the
+# fastembed model download below then can't create ~/.cache/huggingface next to
+# the mounted ~/.cache/pip. Fails as a bare "Permission denied (os error 13)"
+# from deep inside huggingface_hub.
 RUN mkdir -p /home/claudebot/.claude-defaults/hooks \
-             /home/claudebot/.claude/hooks
+             /home/claudebot/.claude/hooks \
+             /home/claudebot/.cache
 
 # --- vault-index semantic search tooling (shared layer) ---
 # Used when a sandbox mounts a curated read-only vault subset: the host builds a
@@ -93,7 +99,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-venv \
-    && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /opt/vault-index && chown claudebot:claudebot /opt/vault-index
 COPY vault-search /usr/local/bin/vault-search
 RUN chmod +x /usr/local/bin/vault-search
@@ -106,8 +111,12 @@ ENV SNOWFLAKE_CLI_VENV=/opt/snowflake-cli/venv
 USER root
 RUN mkdir -p /opt/snowflake-cli && chown claudebot:claudebot /opt/snowflake-cli
 USER claudebot
-RUN python3 -m venv "$SNOWFLAKE_CLI_VENV" \
-    && "$SNOWFLAKE_CLI_VENV/bin/pip" install --no-cache-dir snowflake-cli
+# pip's download cache lives in a build cache mount, not in the layer, so
+# --no-cache-dir is unnecessary here: the wheels stay out of the image *and*
+# survive for the next rebuild. uid/gid match claudebot so pip can write it.
+RUN --mount=type=cache,target=/home/claudebot/.cache/pip,uid=1000,gid=1000,sharing=locked \
+    python3 -m venv "$SNOWFLAKE_CLI_VENV" \
+    && "$SNOWFLAKE_CLI_VENV/bin/pip" install snowflake-cli
 USER root
 RUN ln -s "$SNOWFLAKE_CLI_VENV/bin/snow" /usr/local/bin/snow
 # Pre-create with correct ownership: bind-mounting config.toml into a
@@ -118,8 +127,9 @@ USER claudebot
 ENV VAULT_INDEX_VENV=/opt/vault-index/venv
 ENV VAULT_INDEX_MODEL_CACHE=/opt/vault-index/models
 ARG VAULT_INDEX_MODEL="BAAI/bge-small-en-v1.5"
-RUN python3 -m venv "$VAULT_INDEX_VENV" \
-    && "$VAULT_INDEX_VENV/bin/pip" install --no-cache-dir fastembed duckdb \
+RUN --mount=type=cache,target=/home/claudebot/.cache/pip,uid=1000,gid=1000,sharing=locked \
+    python3 -m venv "$VAULT_INDEX_VENV" \
+    && "$VAULT_INDEX_VENV/bin/pip" install fastembed duckdb \
     && mkdir -p "$VAULT_INDEX_MODEL_CACHE" \
     && HF_HUB_OFFLINE=0 "$VAULT_INDEX_VENV/bin/python" -c "import os; from fastembed import TextEmbedding; TextEmbedding('$VAULT_INDEX_MODEL', cache_dir=os.environ['VAULT_INDEX_MODEL_CACHE'])" \
     && "$VAULT_INDEX_VENV/bin/python" -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL fts'); c.close()"
@@ -147,6 +157,28 @@ RUN mkdir -p /home/claudebot/.ssh \
 # Audit mount point (created as root before final USER switch)
 USER root
 RUN mkdir -p /audit && chown claudebot:claudebot /audit
+
+# Claude Code — deliberately the LAST expensive layer.
+# It is the only thing in this image that changes on a normal week, and every
+# layer below a changed one rebuilds: sited up by the toolchain (where it used
+# to be) a new release re-ran both pip venvs and re-downloaded the embedding
+# model. Down here a release costs one `npm install -g`.
+#
+# The launcher resolves @latest on the host and passes the concrete version, so
+# the layer's cache key IS the release: an unchanged version is a cache hit and
+# the daily check builds nothing. CLAUDE_CODE_REFRESH stays as the escape hatch
+# --rebuild-base uses to force a reinstall of this layer alone.
+#
+# Sits just above the entrypoint COPY, not at the very bottom, so editing
+# entrypoint.sh re-runs only that copy instead of reinstalling Claude Code.
+# npm's cache is a build cache mount, so it speeds up rebuilds without landing
+# in the image (which is what `npm cache clean --force` used to buy).
+ARG CLAUDE_CODE_VERSION="latest"
+ARG CLAUDE_CODE_REFRESH="0"
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    echo "claude-code refresh token: ${CLAUDE_CODE_REFRESH}" \
+    && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && claude --version
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

@@ -221,22 +221,65 @@ if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_
 fi
 
 # --- Base image build helper ---
-# Builds claudebot:base, passing a cache-bust token so the Claude Code layer
-# re-resolves @latest. "force" (explicit --rebuild-base) always busts; the
-# default is date-scoped so the daily auto-refresh is a no-op within a day.
-build_base() {
-  local refresh
-  if [[ "${1:-}" == "force" ]]; then
-    refresh="$(date -u +%Y%m%d%H%M%S)"
-  else
-    refresh="$(date -u +%Y%m%d)"
+# Resolve the current Claude Code release from the npm registry, on the HOST.
+# The version then goes into the build as a concrete arg, which makes the
+# install layer's cache key the release itself: same version, cache hit, no
+# work. Resolving inside the build instead (@latest) is invisible to the cache,
+# which is why this used to need a daily cache-busting token that rebuilt the
+# layer — and everything under it — whether or not a release had happened.
+# Memoized: one lookup per run, however many callers ask.
+CLAUDE_CODE_LATEST=""
+CLAUDE_CODE_LATEST_RESOLVED=false
+resolve_claude_code_version() {
+  if [[ "$CLAUDE_CODE_LATEST_RESOLVED" == false ]]; then
+    CLAUDE_CODE_LATEST_RESOLVED=true
+    CLAUDE_CODE_LATEST="$(curl -fsSL --max-time 10 \
+      https://registry.npmjs.org/@anthropic-ai/claude-code/latest 2>/dev/null \
+      | jq -r '.version // empty' 2>/dev/null || true)"
   fi
-  echo "Building claudebot:base..."
+  printf '%s' "$CLAUDE_CODE_LATEST"
+}
+
+# Builds claudebot:base. "force" (explicit --rebuild-base) additionally busts the
+# Claude Code layer with a timestamp token, to reinstall the same version.
+# Offline or a registry hiccup falls back to @latest inside the build — correct,
+# just uncached.
+build_base() {
+  local version version_args=() refresh_args=()
+  version="$(resolve_claude_code_version)"
+  if [[ -n "$version" ]]; then
+    version_args=(--build-arg "CLAUDE_CODE_VERSION=$version")
+  else
+    echo "Warning: could not resolve the latest claude-code version — building with @latest." >&2
+  fi
+  if [[ "${1:-}" == "force" ]]; then
+    refresh_args=(--build-arg "CLAUDE_CODE_REFRESH=$(date -u +%Y%m%d%H%M%S)")
+  fi
+  echo "Building claudebot:base${version:+ (claude-code $version)}..."
   docker build -t claudebot:base \
-    --build-arg CLAUDE_CODE_REFRESH="$refresh" \
+    ${version_args[@]+"${version_args[@]}"} \
+    ${refresh_args[@]+"${refresh_args[@]}"} \
     -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
   mkdir -p "$STATE_DIR"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/.last-claude-update"
+  [[ -n "$version" ]] && printf '%s\n' "$version" > "$STATE_DIR/.claude-code-version"
+  return 0
+}
+
+# A per-repo image runs the Claude Code baked into the base it was built on, so it
+# has to be rebuilt whenever the base moves — not only when the base moved in THIS
+# run. refresh_claude_if_stale sets REBUILD for whichever repo happens to trigger
+# the daily rebuild; every other repo launches later the same day, finds the stamp
+# already fresh, and would otherwise keep running the old release out of its own
+# cached layers indefinitely. The base id is stamped onto the per-repo image as a
+# label at build time, so this needs no side state, and an image built before the
+# label existed rebuilds once.
+built_on_stale_base() {
+  local tag="$1" current="$2" built_on
+  [[ -n "$current" ]] || return 1
+  docker image inspect "$tag" &>/dev/null || return 1
+  built_on="$(docker image inspect --format '{{index .Config.Labels "claudebot.base-id"}}' "$tag" 2>/dev/null || true)"
+  [[ "$built_on" != "$current" ]]
 }
 
 # Re-resolve @latest at most once per day when the base already exists.
@@ -247,9 +290,28 @@ refresh_claude_if_stale() {
   if [[ -f "$marker" ]] && [[ -z "$(find "$marker" -mtime +0 -print -quit 2>/dev/null)" ]]; then
     return 0
   fi
-  echo "Refreshing Claude Code (daily @latest check)..."
+  # Cheapest path: the registry says we already have the current release, so
+  # there is nothing to build. Re-arm the daily check and skip the build.
+  local latest installed
+  latest="$(resolve_claude_code_version)"
+  installed="$(cat "$STATE_DIR/.claude-code-version" 2>/dev/null || true)"
+  if [[ -n "$latest" && "$latest" == "$installed" ]]; then
+    mkdir -p "$STATE_DIR"
+    touch "$marker"
+    return 0
+  fi
+  echo "Refreshing Claude Code${latest:+ → $latest} (daily @latest check)..."
+  # Per-repo images are FROM claudebot:base, so they only need rebuilding when
+  # the base image ID actually moved. Rebuilding them after a no-op base build
+  # was the bulk of what the daily refresh cost.
+  local before after
+  before="$(docker image inspect --format '{{.Id}}' claudebot:base 2>/dev/null || true)"
   build_base
-  REBUILD=true
+  after="$(docker image inspect --format '{{.Id}}' claudebot:base 2>/dev/null || true)"
+  if [[ "$before" != "$after" ]]; then
+    REBUILD=true
+  fi
+  return 0
 }
 
 # --- Rebuild base image if requested ---
@@ -689,12 +751,19 @@ else
 fi
 
 # --- Build image (skip if already exists and no rebuild requested) ---
+BASE_IMAGE_ID="$(docker image inspect --format '{{.Id}}' claudebot:base 2>/dev/null || true)"
+if [[ "$REBUILD" != true ]] && built_on_stale_base "$IMAGE_TAG" "$BASE_IMAGE_ID"; then
+  echo ""
+  echo "Base image moved since $IMAGE_TAG was built — rebuilding it."
+  REBUILD=true
+fi
 if [[ "$REBUILD" == true ]] || ! docker image inspect "$IMAGE_TAG" &>/dev/null; then
   echo ""
   echo "Building $IMAGE_TAG..."
   docker build \
     -f "$DOCKERFILE" \
     -t "$IMAGE_TAG" \
+    --label "claudebot.base-id=$BASE_IMAGE_ID" \
     "$SANDBOX_DIR"
 else
   echo ""
