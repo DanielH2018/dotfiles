@@ -98,12 +98,21 @@ start Firefox '^/usr/lib64/firefox/firefox' firefox && firefox_started=true
 start Ghostty '^/usr/bin/ghostty' ghostty --gtk-single-instance=true
 start Spotify 'share/spotify/spotify' flatpak run com.spotify.Client
 
+place_pid=
 if [[ "$firefox_started" == true ]]; then
   ( sleep "$FIREFOX_PLACE_DELAY"; place_firefox ) &
+  place_pid=$!
 fi
 
 sleep "$OBSIDIAN_DELAY"
 start Obsidian '/app/obsidian' flatpak run md.obsidian.Obsidian
+
+# Wait out the placement rather than leaving it orphaned. Today this runs from a .desktop
+# autostart, where a backgrounded child outlives its parent -- but as a systemd user unit it
+# would not: the default KillMode tears down the cgroup when the main process exits, and the
+# placement would be killed mid-sleep with nothing logged. Waiting on that one pid, never a
+# bare wait, which would also wait on the apps themselves and never return.
+[[ -n "$place_pid" ]] && wait "$place_pid"
 
 # start returns non-zero for an app that was already running, and a top-up run where
 # everything is up would otherwise leave that as the script's own exit status.

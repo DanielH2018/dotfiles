@@ -215,6 +215,14 @@ test('unmaximizes before moving, or the window hangs off the output', { skip }, 
     'writing frameGeometry to a maximized window moves the frame without resizing it');
 });
 
+// placeDelay is 0 everywhere else, which would pass even if the placement were killed the
+// moment the script exited. This one outlives the parent's own work and still has to land.
+test('placement survives a delay longer than the rest of the script', { skip }, () => {
+  const { marks } = run({ expect: 5, delay: 0.1, placeDelay: 1 });
+  assert.match(waitForMark(marks, 'gdbus', 5000), /Scripting\.loadScript/,
+    'the placement was dropped when its parent finished first');
+});
+
 test('FIREFOX_POSITION picks the corner to maximize from', { skip }, () => {
   const { marks } = run({ expect: 5, position: '40,80' });
   waitForMark(marks, 'kwinscript');
