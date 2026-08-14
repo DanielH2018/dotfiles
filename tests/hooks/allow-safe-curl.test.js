@@ -52,9 +52,84 @@ const ALLOW = [
   'curl --url "http://10.0.0.161/x" -m 5',
   'curl "http://10.0.0.161:9090/api/v1/query?query=up&step=5m"',
   "curl 'http://10.0.0.161/a?b=1&c=2'",      // ? and & are literal inside quotes
+  // Post-k3s reachability: a workload answers at a ClusterIP, a pod IP, or an
+  // ingress hostname. None could match the exact-host list, which is why this hook
+  // approved nothing at all in the week of 2026-08-07 while 148 curls prompted.
+  'curl http://10.43.39.218:9090/api/v1/query',   // ClusterIP
+  'curl http://10.42.0.171:3000/health',          // pod IP
+  'curl https://prometheus-k8s.local.daniel-hunter.com/api/v1/query',
+  'curl -sS https://jellyfin.daniel-hunter.com/health',
+  // -G moves --data-urlencode into the query string, so this is a GET. It is the
+  // shape roles/k8s/claude-otel/CLAUDE.md prescribes for Loki and Prometheus.
+  'curl -s -G http://127.0.0.1:9090/api/v1/query --data-urlencode "query=up"',
+  'curl -sG --data-urlencode "query=up" http://10.43.39.218:9090/api/v1/query',
+  'curl -s --get --data-urlencode "query=up" http://127.0.0.1:9090/api/v1/query',
+  'curl -sS -w "%{http_code}" https://homepage.daniel-hunter.com/',
+  // The status-probe idiom: -o is admitted for /dev/null only, so the body is
+  // discarded rather than written. 97 calls in the week of 2026-08-07 looked like this.
+  'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9090/-/ready',
+  'curl -so /dev/null -w "homepage=%{http_code}" https://homepage.daniel-hunter.com/',
+  'curl --output /dev/null -w "%{http_code}" http://10.43.39.218:9090/-/ready',
+  'curl --output=/dev/null -w "%{http_code}" http://127.0.0.1:9090/-/ready',
+  // A backslash inside double quotes is only an escape before $ ` " \ or a newline;
+  // before an `n` both characters are literal. The trailing newline on a probe format
+  // is the common case, and refusing it approved the single-quoted spelling only.
+  'curl -s -o /dev/null -w "%{http_code}\\n" http://127.0.0.1:9090/-/ready',
+  'curl -so /dev/null -w "homepage=%{http_code}\\n" https://homepage.daniel-hunter.com/',
+  // An ESCAPED $ or backtick cannot expand, so it is text like any other.
+  'curl -H "X-Literal: \\$HOME" http://10.0.0.161/x',
+  'curl -w "\\`literal\\`" http://10.0.0.161/x',
 ];
 
 const DEFER = [
+  // The domain match is anchored to the END of the host. These are the shapes a
+  // naive contains-check would hand to an attacker-controlled name.
+  'curl http://daniel-hunter.com.attacker.net/x',
+  'curl http://evil-daniel-hunter.com/x',
+  'curl http://notdaniel-hunter.com/x',
+  'curl https://prometheus-k8s.local.daniel-hunter.com.evil.net/x',
+  // The CIDR arms are numeric, so a hostname that merely looks like one fails.
+  'curl http://10.43.39.218.evil.com/x',
+  'curl http://10.44.0.1/x',                 // adjacent range, not the cluster's
+  'curl http://10.43.999.1/x',               // octet out of range
+  'curl http://10.43.0/x',                   // too few octets
+  // --data-urlencode without -G is a POST body, not a GET.
+  'curl --data-urlencode "query=up" http://127.0.0.1:9090/api/v1/query',
+  'curl -X POST --data-urlencode "q=1" http://127.0.0.1:9090/x',
+  // ...and the @file form still reads a file into the request wherever it appears.
+  'curl -G --data-urlencode @/etc/passwd http://127.0.0.1:9090/x',
+  // -o is pinned to /dev/null. Every other target is still a disk write, in each
+  // spelling the parser accepts: separate word, attached to a short cluster, and both
+  // long forms. These are the cases the exception lives or dies on.
+  'curl -o /home/ubuntu/.ssh/authorized_keys https://prometheus-k8s.local.daniel-hunter.com/x',
+  'curl -o /tmp/x http://127.0.0.1:9090/metrics',
+  'curl -so/tmp/x http://127.0.0.1:9090/metrics',
+  'curl --output /tmp/x http://127.0.0.1:9090/metrics',
+  'curl --output=/tmp/x http://127.0.0.1:9090/metrics',
+  'curl -o /dev/null/../../tmp/x http://127.0.0.1:9090/metrics',
+  'curl -o "/dev/null x" http://127.0.0.1:9090/metrics',
+  // The sibling write primitives stay out of the tables altogether.
+  'curl -O http://127.0.0.1:9090/metrics',
+  'curl --output-dir /tmp -o /dev/null http://127.0.0.1:9090/metrics',
+  // An UNescaped $ or backtick inside double quotes still expands before curl runs,
+  // and still bails. Escaping is what makes the character inert, not quoting.
+  'curl -H "X-Sub: $(whoami)" http://10.0.0.161/x',
+  'curl -w "`whoami`" http://10.0.0.161/x',
+  'curl "http://10.0.0.161/$PATH"',
+  // Consuming an escaped quote must not let the closing quote go missing: this ends
+  // inside an unterminated string, which is a parse the hook must not act on.
+  'curl "http://10.0.0.161/x\\"',
+  // Same, but with the token continuing afterwards rather than ending -- the escaped
+  // quote swallows the rest of the line into the string instead of closing it.
+  'curl "http://10.0.0.161/x\\" -o /tmp/y',
+  // A doubled backslash escapes ITSELF, so the quote that follows really does close
+  // and the options after it are read normally. -o /tmp/y is then a disk write.
+  'curl "http://10.0.0.161/x\\\\" -o /tmp/y',
+  // ...and an escape cannot smuggle userinfo past the authority check either.
+  'curl "http://10.0.0.161\\@evil.com/x"',
+  // Redirects still defeat the host check, allowlisted host or not.
+  'curl -L https://prometheus-k8s.local.daniel-hunter.com/x',
+
   // host is not on the allowlist, in each way a substring check would miss
   'curl http://evil.com/x',
   'curl http://10.0.0.1610/x',               // allowlist entry is a prefix of this host
@@ -192,17 +267,27 @@ test('structure: the option table is an allowlist and stays one', { skip }, () =
   // Each of these would defeat the host check or reintroduce the disk write that
   // put curl in the ask list to begin with.
   const shorts = shortTable('BOOL_SHORT') + shortTable('VALUE_SHORT');
-  for (const c of 'LoOJdFTKbux') {
+  for (const c of 'LOJdFTKbux') {
     assert.ok(!shorts.includes(c), `-${c} must not be in a short-option table (found in "${shorts}")`);
   }
   const longs = new Set([...longTable('long_bool'), ...longTable('long_value')]);
   for (const opt of ['location', 'location-trusted', 'resolve', 'connect-to', 'proxy',
-    'preproxy', 'unix-socket', 'abstract-unix-socket', 'config', 'next', 'output',
+    'preproxy', 'unix-socket', 'abstract-unix-socket', 'config', 'next',
     'output-dir', 'remote-name', 'remote-header-name', 'create-dirs', 'dump-header',
     'trace', 'trace-ascii', 'stderr', 'upload-file', 'data', 'data-binary', 'data-raw',
     'form', 'form-string', 'cookie', 'cookie-jar', 'user', 'netrc', 'netrc-file']) {
     assert.ok(!longs.has(opt), `--${opt} must not be in a long-option table`);
   }
+
+  // -o/--output is the ONE write primitive admitted, and only for the literal
+  // /dev/null (DECIDED 2026-08-14: 67 status probes a week were refused for this
+  // option alone, and -I is not a substitute -- it still prints response headers).
+  // The invariant did not go away, it narrowed: the exception has to stay pinned to
+  // that exact value, so assert the pin rather than the option's absence.
+  assert.ok(shorts.includes('o'), '-o is admitted deliberately; see check_value');
+  assert.ok(longs.has('output'), '--output is admitted deliberately; see check_value');
+  const pin = /output \| o\)\s*\n\s*\[\[ \$value == \/dev\/null \]\] \|\| return 1/.exec(src);
+  assert.ok(pin, '-o/--output must be pinned to exactly /dev/null in check_value');
 
   // One allow() call site, and it only runs once a URL has been checked. Without
   // this guard `curl -sS` alone would auto-approve.

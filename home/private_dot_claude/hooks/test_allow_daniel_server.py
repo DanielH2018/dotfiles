@@ -71,6 +71,54 @@ CASES = [
     ("ssh daniel-server uptime > /tmp/out", False, "local redirect"),
     ("ssh daniel-server $(cat /tmp/cmd)", False, "command substitution"),
     ("scp /etc/passwd daniel-server:/tmp/", False, "not ssh"),
+    # A metacharacter INSIDE the quoted payload is a byte for sshd, not a local
+    # split. These are the shapes that used to prompt; the `cd`-prefix idiom is
+    # the one `ssh-lands-in-home-not-repo` tells us to write.
+    (
+        "ssh daniel-server 'cd /home/ubuntu/server; git status --short'",
+        True,
+        "semicolon in single quotes is payload",
+    ),
+    (
+        'ssh daniel-server "cd /home/ubuntu/server; uv run python scripts/probe.py"',
+        True,
+        "cd-prefix idiom in double quotes",
+    ),
+    ("ssh daniel-server 'docker ps | head -20'", True, "pipe in quotes is remote"),
+    ("ssh daniel-server 'cat a > /tmp/b'", True, "redirect in quotes is remote"),
+    (
+        "ssh daniel-pi 'docker logs wg-easy --since 24h 2>&1 | tail -20'",
+        True,
+        "the documented Pi log idiom",
+    ),
+    # ...but a double-quoted payload still expands LOCALLY, so $ and ` stay refused.
+    ('ssh daniel-server "echo $(whoami)"', False, "double quotes expand locally"),
+    ('ssh daniel-server "echo `whoami`"', False, "backtick expands locally"),
+    (
+        "ssh daniel-server 'echo $(whoami)'",
+        True,
+        "single quotes reach the remote shell unexpanded; remote is unrestricted",
+    ),
+    # The second hop must be refused wherever it sits in the payload, now that a
+    # `;` can put it past the first token.
+    (
+        'ssh daniel-server "cd /tmp; ssh other-host uptime"',
+        False,
+        "second hop behind a cd",
+    ),
+    (
+        'ssh daniel-server "cd /tmp; rsync -a /etc other-host:/backup"',
+        False,
+        "second hop via rsync behind a cd",
+    ),
+    # A parse we cannot trust must not produce an approval.
+    ("ssh daniel-server 'echo unterminated", False, "unterminated quote"),
+    ('ssh daniel-server "uptime" > /tmp/out', False, "redirect outside the quotes"),
+    (
+        'ssh daniel-server "uptime"; touch /tmp/local',
+        False,
+        "chaining after a quoted payload",
+    ),
 ]
 
 
