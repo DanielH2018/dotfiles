@@ -137,7 +137,33 @@ test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip 
     '\\.pfx': '/opt/app/cert.pfx',
   };
 
-  const branches = m[1].split('|');
+  // The file-extension branches are grouped as `\.(pem|key|p12|pfx)\b` rather than
+  // listed bare, because the bare form matched any substring -- `.keys()` in a
+  // python3 -c read as a private key and was denied. A naive split on `|` shreds
+  // that group into `\.(pem`, `key`, ... and matches nothing, so split at paren
+  // depth 0 and expand such a group back into one branch per extension. Each
+  // extension therefore still gets its own sample path and its own assertion.
+  const splitTopLevel = (body) => {
+    const out = [];
+    let depth = 0;
+    let cur = '';
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (c === '\\') { cur += c + (body[i + 1] ?? ''); i++; continue; }
+      if (c === '(') depth++;
+      if (c === ')') depth--;
+      if (c === '|' && depth === 0) { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+    return out;
+  };
+  const expand = (branch) => {
+    const group = /^\\\.\(([^)]+)\)\\b$/.exec(branch);
+    return group ? group[1].split('|').map((ext) => `\\.${ext}`) : [branch];
+  };
+
+  const branches = splitTopLevel(m[1]).flatMap(expand);
   const unmapped = branches.filter((b) => !(b in SAMPLE));
   assert.deepStrictEqual(unmapped, [],
     `SECRET_PATHS gained ${unmapped.join(', ')} — add a sample path here and an arm in protect-secrets.sh`);
