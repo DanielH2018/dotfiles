@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Measure how many Bash calls that interrupted you would now answer themselves.
+
+Claude Code's OTEL stream records a `tool_decision` event per tool call, naming the
+authority that decided it: a `config` rule, a `hook`, or `user` -- a prompt someone
+had to answer. This reads the `user` ones out of Loki and replays each through the
+PermissionRequest hook chain as it stands today, so "did that auto-approver change
+help?" is a command rather than an afternoon.
+
+It exists because the answer is not guessable. Fixing allow-safe-curl.sh's host list
+on 2026-08-14 looked like it should recover ~104 prompts a week; replaying the actual
+traffic recovered 1, because 118 of the 147 curl calls were pipelines the hook never
+parses. Every estimate made that day was wrong until it was replayed.
+
+    prompt-friction                       # last 7 days, summary
+    prompt-friction --since 24h
+    prompt-friction --unresolved          # what to fix next
+    prompt-friction --json                # machine-readable
+    prompt-friction --save corpus.jsonl   # freeze a corpus
+    prompt-friction --from-file corpus.jsonl   # replay it, no Loki needed
+
+The hook chain is read from settings.json rather than hardcoded, so a hook added or
+removed there shows up here without editing this file.
+
+Do NOT give this a blanket `Bash(prompt-friction:*)` allow rule the way otelq has one.
+otelq earns that by being confined -- no settable host, GET only. This is not: --save
+writes to any path it is handed and --from-file reads any path, so a blanket rule
+would be an arbitrary file-write primitive wearing a diagnostic tool's name.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import os
+import re
+import subprocess
+import sys
+
+SETTINGS = os.path.expanduser("~/.claude/settings.json")
+HOOK_LIB = os.path.expanduser("~/.claude/hooks/hook-input.sh")
+LOGQL = ('{service_name="claude-code"} | event_name="tool_decision" '
+         '| source=~"user.*" | tool_name="Bash"')
+
+
+def hook_chain():
+    """The PermissionRequest:Bash hooks, in the order Claude Code runs them.
+
+    Read from settings rather than listed here: a chain that drifts from the real
+    one produces a confidently wrong number, which is worse than no number.
+    """
+    try:
+        with open(SETTINGS, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError) as exc:
+        sys.exit(f"prompt-friction: cannot read {SETTINGS}: {exc}")
+    out = []
+    for group in cfg.get("hooks", {}).get("PermissionRequest", []):
+        if not re.search(r"\bBash\b", group.get("matcher", "") or ""):
+            continue
+        for hook in group.get("hooks", []):
+            cmd = hook.get("command", "")
+            if cmd:
+                out.append(os.path.expanduser(cmd))
+    if not out:
+        sys.exit("prompt-friction: no PermissionRequest:Bash hooks in settings.json")
+    return out
+
+
+def fetch(since, limit):
+    """Pull the commands that reached a user prompt. Needs otelq on PATH."""
+    try:
+        raw = subprocess.run(
+            ["otelq", "logs", LOGQL, "--stream", "--since", since,
+             "--limit", str(limit)],
+            capture_output=True, text=True, timeout=120, check=False).stdout
+    except FileNotFoundError:
+        sys.exit("prompt-friction: otelq not found on PATH")
+    except subprocess.TimeoutExpired:
+        sys.exit("prompt-friction: otelq timed out")
+    try:
+        streams = json.loads(raw)["data"]["result"]
+    except (ValueError, KeyError):
+        sys.exit("prompt-friction: otelq returned no usable result "
+                 "(is the observability stack up? try `otelq ready`)")
+    cmds = []
+    for stream in streams:
+        meta = stream.get("stream", {})
+        try:
+            params = json.loads(meta.get("tool_parameters", "{}"))
+        except ValueError:
+            continue
+        cmd = params.get("full_command")
+        if not cmd:
+            continue
+        # One entry per occurrence: a shape run twenty times cost twenty prompts,
+        # and weighting by frequency is the whole point of measuring.
+        for _ in stream.get("values", []):
+            cmds.append({"command": cmd, "decision": meta.get("decision", "")})
+    return cmds
+
+
+def classify(command):
+    """Coarse bucket. Deliberately three, matching where the fixes actually land."""
+    if re.match(r"\s*curl\b", command):
+        return "curl"
+    if re.match(r"\s*ssh\b", command):
+        return "ssh"
+    return "other"
+
+
+def head(command):
+    """The leading word of the first segment -- what to name a residual group by."""
+    first = re.split(r"[|;&\n]", command.strip(), maxsplit=1)[0].strip()
+    token = first.split()[0] if first.split() else "?"
+    return token.rsplit("/", 1)[-1]
+
+
+def decide(command, chain):
+    """Which hook, if any, answers this command. None means the user still would."""
+    payload = json.dumps({
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "cwd": os.getcwd(),
+        "tool_input": {"command": command},
+    })
+    env = dict(os.environ, HOOK_INPUT_LIB=HOOK_LIB)
+    for path in chain:
+        if not os.path.exists(path):
+            continue
+        try:
+            proc = subprocess.run(["bash", path], input=payload, capture_output=True,
+                                  text=True, timeout=30, env=env, check=False)
+        except subprocess.TimeoutExpired:
+            continue
+        if '"allow"' in proc.stdout:
+            return os.path.basename(path)
+    return None
+
+
+def measure(records, chain):
+    totals = collections.Counter()
+    answered = collections.Counter()
+    by_hook = collections.Counter()
+    residual = collections.Counter()
+    for rec in records:
+        cmd = rec["command"]
+        bucket = classify(cmd)
+        totals[bucket] += 1
+        hook = decide(cmd, chain)
+        if hook:
+            answered[bucket] += 1
+            by_hook[hook] += 1
+        else:
+            residual[f"{bucket}:{head(cmd)}"] += 1
+    return {
+        "prompted": dict(totals),
+        "answered": dict(answered),
+        "by_hook": dict(by_hook),
+        "residual": dict(residual),
+        "total_prompted": sum(totals.values()),
+        "total_answered": sum(answered.values()),
+    }
+
+
+def render(result, show_residual):
+    total, auto = result["total_prompted"], result["total_answered"]
+    print(f"replayed {total} Bash calls that reached a user prompt\n")
+    print(f"{'class':8} {'prompted':>9} {'now auto':>9} {'still asks':>11}")
+    for bucket in ("curl", "ssh", "other"):
+        got = result["prompted"].get(bucket, 0)
+        won = result["answered"].get(bucket, 0)
+        print(f"{bucket:8} {got:9d} {won:9d} {got - won:11d}")
+    print(f"{'TOTAL':8} {total:9d} {auto:9d} {total - auto:11d}")
+    if total:
+        print(f"\n{auto / total:.1%} of prompts would now answer themselves")
+    if result["by_hook"]:
+        print("\nwhich hook answered:")
+        for name, count in sorted(result["by_hook"].items(),
+                                  key=lambda kv: -kv[1]):
+            print(f"  {count:5d}  {name}")
+    if show_residual:
+        print("\nstill prompting, by leading command:")
+        ranked = sorted(result["residual"].items(), key=lambda kv: -kv[1])
+        for label, count in ranked[:25]:
+            print(f"  {count:5d}  {label}")
+        print("\nNote: a large group here is not automatically a gap. Deploys, "
+              "writes and\ninterpreter invocations are supposed to prompt -- read "
+              "before you allow-list.")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Replay the prompts you answered through today's hook chain.")
+    ap.add_argument("--since", default="7d", help="Loki window (default: 7d)")
+    ap.add_argument("--limit", type=int, default=5000, help="max events to pull")
+    ap.add_argument("--json", action="store_true", dest="as_json",
+                    help="emit the result as JSON")
+    ap.add_argument("--unresolved", action="store_true",
+                    help="also list what still prompts, by leading command")
+    ap.add_argument("--save", metavar="FILE",
+                    help="write the fetched corpus as JSONL and exit")
+    ap.add_argument("--from-file", metavar="FILE",
+                    help="replay a saved corpus instead of querying Loki")
+    args = ap.parse_args()
+
+    if args.from_file:
+        with open(args.from_file, encoding="utf-8") as fh:
+            records = [json.loads(line) for line in fh if line.strip()]
+    else:
+        records = fetch(args.since, args.limit)
+
+    if args.save:
+        with open(args.save, "w", encoding="utf-8") as fh:
+            for rec in records:
+                fh.write(json.dumps(rec) + "\n")
+        print(f"wrote {len(records)} records to {args.save}")
+        return
+
+    result = measure(records, hook_chain())
+    if args.as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        render(result, args.unresolved)
+
+
+if __name__ == "__main__":
+    main()
