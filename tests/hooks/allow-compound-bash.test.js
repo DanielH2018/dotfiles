@@ -56,6 +56,30 @@ test('defers (no decision) for non-compound commands', { skip }, () => {
   assert.strictEqual(allowed('git status'), null);
 });
 
+// A curl segment always matches the Bash(curl:*) ask rule, so `curl -s URL | jq .` could
+// never be approved here however safe both halves were -- 118 of the 147 curl prompts in
+// the week of 2026-08-07 were that shape. The segment is now put to allow-safe-curl.sh,
+// the same question it answers for a bare curl. The load-bearing cases are the refusals:
+// delegation must not let the curl hook vouch for anything beyond its own segment.
+test('a provably-safe curl segment resolves its own ask rule', { skip }, () => {
+  assert.strictEqual(allowed('curl -s http://127.0.0.1:9090/metrics | tail -20'), 'allow');
+  assert.strictEqual(
+    allowed('curl -sG http://127.0.0.1:9090/api/v1/query --data-urlencode "query=up" | jq .'),
+    'allow');
+});
+
+test('curl delegation vouches for the curl segment only', { skip }, () => {
+  // A curl the helper would refuse standing alone is not rescued by the pipeline.
+  assert.strictEqual(allowed('curl -s http://evil.com/x | tail -20'), null);
+  assert.strictEqual(allowed('curl -L http://127.0.0.1:9090/m | tail -20'), null);
+  assert.strictEqual(allowed('curl -X POST http://127.0.0.1:9090/m | tail -20'), null);
+  assert.strictEqual(allowed('curl -o /tmp/x http://127.0.0.1:9090/m | tail -20'), null);
+  // The other stage still has to clear deny and earn its own allow entry.
+  assert.strictEqual(allowed('curl -s http://127.0.0.1:9090/metrics | sh'), null);
+  assert.strictEqual(allowed('curl -s http://127.0.0.1:9090/m | frobnicate'), null);
+  assert.strictEqual(allowed('curl -s http://127.0.0.1:9090/m | tail -20 && rm -rf /tmp/x'), null);
+});
+
 // DECIDED 2026-07-30: a newline-only or lone-`&`-only compound is not eligible for
 // allow, even now that cmd_parse can see it is genuinely multi-segment. The eligibility
 // gate is the literal && / ; / | substring test, unchanged from before this hook adopted

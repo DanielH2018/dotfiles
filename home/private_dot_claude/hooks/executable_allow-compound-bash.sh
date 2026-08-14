@@ -94,6 +94,33 @@ while IFS= read -r line; do
   case $line in *'*'*) ASK_GLOB+=("$line") ;; *) ASK+=("$line") ;; esac
 done < <(extract_bash_prefixes "ask" ${SETTINGS_FILES[@]+"${SETTINGS_FILES[@]}"})
 
+# A `curl` segment always matches the `Bash(curl:*)` ask rule, so a pipeline as ordinary
+# as `curl -s URL | jq .` could never be approved here no matter how safe both halves
+# were. That is not a corner case: 118 of the 147 curl prompts in the week of 2026-08-07
+# were exactly this shape, and it is how you read anything out of Prometheus or Loki.
+#
+# allow-safe-curl.sh already answers "is this curl a provable GET/HEAD against an
+# allowlisted host" for a bare invocation. Ask it the same question about the segment
+# rather than restating its option table here -- the alternative is a second parser that
+# drifts from the first. Delegation only ever ADDS an allow for a segment that hook would
+# have approved standing alone; deny is checked before this point and still wins, and
+# every OTHER stage of the pipeline still has to earn its own allow entry, so
+# `curl URL | sh` stays a prompt because `sh` is on nobody's allow list.
+#
+# Silent, missing, or non-executable helper -> return 1 and the segment falls through to
+# the ask check unchanged. Same failure posture as the rest of this file.
+# Deployed as `allow-safe-curl.sh`; in the chezmoi source tree the same file carries the
+# `executable_` attribute prefix. Resolve either so the suite exercises this path against
+# the source checkout rather than silently testing nothing.
+SAFE_CURL="${BASH_SOURCE[0]%/*}/allow-safe-curl.sh"
+[ -f "$SAFE_CURL" ] || SAFE_CURL="${BASH_SOURCE[0]%/*}/executable_allow-safe-curl.sh"
+safe_curl_ok() {
+  [ -f "$SAFE_CURL" ] || return 1
+  jq -nc --arg c "$1" '{tool_input: {command: $c}}' 2>/dev/null \
+    | HOOK_INPUT_LIB="${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}" \
+      bash "$SAFE_CURL" 2>/dev/null | grep -q '"allow"'
+}
+
 trim() {
   local s="$1"
   s="${s#"${s%%[! $'\t']*}"}"
@@ -298,6 +325,17 @@ judge() {
         ''|-*|*[[:space:]]*) ;;
         *) continue ;;
       esac ;;
+  esac
+
+  # A provably-safe curl resolves its own ask rule — see safe_curl_ok above. Placed
+  # after the deny check and before the ask check, which is exactly where this hook
+  # sits relative to allow-safe-curl.sh at the top level.
+  case ${part%%[[:space:]]*} in
+    curl | */curl)
+      if safe_curl_ok "$part"; then
+        continue
+      fi
+      ;;
   esac
 
   # Ask list → defer to normal permission handling

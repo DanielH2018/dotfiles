@@ -29,14 +29,51 @@ COMMAND=$(hook_field '.tool_input.command // ""')
 # (`ssh daniel-server uptime; rm -rf ~`) or redirect output locally. The remote
 # payload is unrestricted by design, but the LOCAL command line must be exactly
 # one plain `ssh` invocation, so anything that could split it falls through to a
-# prompt. Note this is the outer string: `ssh daniel-server "rm -rf /tmp/x"` has
-# no metacharacter and is approved, which is the point.
-case $COMMAND in
-  *';'* | *'&'* | *'|'* | *'<'* | *'>'* | *'$'* | *'`'* | *'('* | *')'* | *$'\n'* )
-    exit 0 ;;
-esac
+# prompt.
+#
+# Which metacharacters matter depends on QUOTING, not on presence. A `;` inside
+# the quoted payload is one more byte handed to sshd; the same `;` outside the
+# quotes starts a local command. Scanning the raw string for either treats them
+# alike, and that is what made `ssh daniel-server "cd /repo; git status"` prompt
+# -- 67 of the 361 ssh prompts measured over the week of 2026-08-07, all of them
+# the `cd`-prefix idiom that `ssh-lands-in-home-not-repo` tells us to write.
+#
+# So walk the string tracking quote state and judge each character in context:
+#   outside quotes  -- ; & | < > ( ) $ ` newline all split or expand locally
+#   in "double"     -- $ and ` still expand LOCALLY before ssh runs; the rest are
+#                      literal bytes in the payload
+#   in 'single'     -- nothing expands; every byte is payload
+# A backslash escapes the next character everywhere but inside single quotes, so
+# consume the pair rather than letting `\"` desynchronise the quote tracking. An
+# unterminated quote means the parse is not trustworthy: fall through to a prompt.
+local_split_risk() {
+  local s=$1 i c q='' n=${#1}
+  for ((i = 0; i < n; i++)); do
+    c=${s:i:1}
+    if [ "$q" = "'" ]; then
+      [ "$c" = "'" ] && q=''
+      continue
+    fi
+    if [ "$q" = '"' ]; then
+      case $c in
+        [\\]) ((i++)) ;;
+        '"') q='' ;;
+        '$' | '`') return 0 ;;
+      esac
+      continue
+    fi
+    case $c in
+      [\\]) ((i++)) ;;
+      "'" | '"') q=$c ;;
+      ';' | '&' | '|' | '<' | '>' | '(' | ')' | '$' | '`' | $'\n') return 0 ;;
+    esac
+  done
+  [ -z "$q" ] || return 0
+  return 1
+}
+local_split_risk "$COMMAND" && exit 0
 
-# Metachars are ruled out, so quotes are pure grouping.
+# Local splitting is ruled out, so quotes are pure grouping.
 STRIPPED=${COMMAND//\"/}
 STRIPPED=${STRIPPED//\'/}
 read -ra TOK <<<"$STRIPPED"
@@ -59,9 +96,18 @@ esac
 
 # Refuse a second hop — these two hosts are all this file speaks for, and
 # `ssh daniel-server ssh other-host ...` lands somewhere else entirely.
-case ${TOK[2]##*/} in
-  ssh|hl|scp|sftp|rsync) exit 0 ;;
-esac
+#
+# Every payload token, not just the first: once a `;` inside the quotes is
+# allowed through, `ssh daniel-server "cd /tmp; ssh other-host ..."` puts the
+# hop in second position, where checking TOK[2] alone would miss it. Scanning
+# the whole payload also refuses a hop reached as an argument
+# (`docker exec c rsync ...`), which is the safe direction for a file whose
+# entire claim is "these two hosts".
+for ((t = 2; t < ${#TOK[@]}; t++)); do
+  case ${TOK[t]##*/} in
+    ssh|hl|scp|sftp|rsync) exit 0 ;;
+  esac
+done
 
 printf '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}\n'
 exit 0
