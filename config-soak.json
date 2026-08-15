@@ -8,8 +8,8 @@
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "fdfbc86f7d63aaf3996a361a09211aa1c3d54ba3a6c2275449908fce3b491d14",
-      "landed": "2026-08-11T15:56:40.586Z"
+      "hash": "5380b1244c05a1c800cdbac92d4db1a9c52b4bbabcf7c809f9044221e3f3b8f8",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -68,13 +68,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "625cdde8eff2f55a6235c1459623f17968b0ececbeffa9f7f8dbdb5c9d44184a",
-      "landed": "2026-08-07T13:20:58.300Z"
+      "hash": "57fcd11d821b5ed7fa4f775304ed4d6a83afa49eec46e10de34e1fb0f42b1dc9",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-daniel-server.sh",
-      "hash": "29741f5c82479e79814eedc5e0ec4222624146c562b0c5bc7fc20831459c2dd7",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "0cd5f81191f4eb30c690550ecbf7abc7c13c9e5126febc2c775ded11c9c33a90",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
@@ -83,8 +83,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-safe-curl.sh",
-      "hash": "188cd9ef3fd2d51673971d80723b239eb37bb5b684caec28b4479ae79eda93cc",
-      "landed": "2026-08-05T21:01:37.762Z"
+      "hash": "0c567ec1fbaa9a8acd97466e0ac6d88529d072c8e847324951f1e8497b5bcbc6",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
@@ -108,8 +108,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "248209f0a8c549cc5a422ec513e7863e6504673bde8e861ecf1f07badde856bc",
-      "landed": "2026-08-11T15:55:22.711Z"
+      "hash": "dac48e7ab951cd2abe7eff7cf866d64f482788d6b5566cce92b898d9ed9aab4b",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -278,8 +278,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_allow_daniel_server.py",
-      "hash": "60b76b3b993100caa407aee961fa264effd6b4602ba687609d678ececf9b73fc",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "8a7f20e24fef742439299fd889639639ae9268b4d621891d7b8b43515f29e28e",
+      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
