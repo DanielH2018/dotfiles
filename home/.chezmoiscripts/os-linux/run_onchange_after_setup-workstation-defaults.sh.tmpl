@@ -1,0 +1,108 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Three Fedora defaults this workstation wants different.
+# Each is a one-liner; they are together because separately they would be three near-empty
+# scripts, and apart from being small they have nothing in common — read them as a list, not as
+# a subsystem.
+#
+#   1. a static hostname       the box reports the transient "fedora" otherwise
+#   2. NetworkManager-wait-online.service   ~6 s of every boot, for nothing this box does
+#   3. /etc/sysconfig/livesys.rpmsave       debris from the install media
+#
+# ---- 1. hostname -------------------------------------------------------------------------
+# /etc/hostname is empty here, so hostnamectl falls back to the transient "fedora" that DHCP or
+# the kernel supplied. On a fleet where the other machines are daniel-box, daniel-server and
+# daniel-pi, and where ssh, mDNS and KDE Connect all address hosts by name, the unnamed one is
+# the one you cannot address.
+#
+# **This is not a cosmetic change here, and that is why the guard is what it is.** This repo
+# templates on `.chezmoi.hostname` in four places — `.chezmoiignore` decides whether
+# `~/.ssh/config` deploys at all, and settings.base.json picks CLAUDE_ARTIFACTS_PORT from it.
+# Every one of those conditionals tests membership of the list
+# (daniel-box, daniel-server, daniel-pi), so a name outside that set leaves all of them taking
+# exactly the branch they take today: ssh/config keeps deploying, and the artifacts port stays
+# 8181, "the client's own" in that file's words. Do not name this box one of those three.
+#
+# The guard is "no static hostname set" rather than a hostname match, because keying a hostname
+# change on the hostname is circular. It is also what makes this safe fleet-wide: the other
+# machines already have theirs set, so this can only ever fire on a box that has none. The
+# consequence to know about is that a brand-new machine provisioned from this repo would also
+# match and be named below — change HOSTNAME first if that is not what you want.
+#
+# ---- 2. NetworkManager-wait-online -------------------------------------------------------
+# It exists so units ordered `After=network-online.target` do not start before the network is
+# routable, and it costs 5.9 s of this box's 70 s boot to provide that guarantee. Nothing here
+# needs it: the only active consumers are dnf-makecache.timer and dnf5-automatic.timer, whose
+# services run at 06:28 rather than at boot, and rsyslog, which logs locally.
+#
+# kdump is the one worth stating explicitly, because it is `After=network-online.target` and it
+# is now load-bearing for this machine — it is what caught the NVIDIA resume panic. It is safe:
+# its `Wants=` is empty, so the ordering applies only if something else pulls the target in, and
+# /etc/kdump.conf writes to a local `path /var/crash` rather than over nfs or ssh. `After=` is
+# ordering, not a dependency.
+#
+# Disabled rather than masked, because masking would also stop anything that deliberately wants
+# it later. Note the asymmetry with the timers in setup-update-automation, which treat "disabled"
+# as theirs to re-enable: here "enabled" is what this script undoes, so re-enabling it by hand
+# lasts until the next apply. Removing this script is the durable way to keep it.
+#
+# ---- 3. livesys.rpmsave -------------------------------------------------------------------
+# Left by the live installer. Harmless, and removing it is mostly so that
+# `find /etc -name '*.rpm*'` comes back empty and stays a useful signal.
+#
+# bump-to-reinstall: workstation-defaults v1
+set -u
+TAG=workstation-defaults
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against throwaway paths; nothing in normal
+# operation sets any of them.
+: "${HOSTNAME_FILE:=/etc/hostname}"
+: "${RPMSAVE_FILE:=/etc/sysconfig/livesys.rpmsave}"
+
+# The name this box takes when it has none. Must NOT be daniel-box, daniel-server or daniel-pi —
+# see the note above.
+HOSTNAME=daniel-desktop
+WAIT_ONLINE=NetworkManager-wait-online.service
+
+# Everything below the convergence check must be decidable without root, so a no-op apply never
+# prompts for a password. All three targets are world-readable.
+need_hostname=0
+need_wait=0
+need_rpmsave=0
+
+# hostnamectl --static prints an empty line when unset, so the file is the more direct read and
+# does not depend on systemd being reachable.
+[ -s "$HOSTNAME_FILE" ] || need_hostname=1
+[ "$(systemctl is-enabled "$WAIT_ONLINE" 2>/dev/null)" = enabled ] && need_wait=1
+[ -e "$RPMSAVE_FILE" ] && need_rpmsave=1
+
+if [ "$need_hostname" -eq 0 ] && [ "$need_wait" -eq 0 ] && [ "$need_rpmsave" -eq 0 ]; then
+  exit 0
+fi
+
+require_sudo "the workstation default overrides"
+
+if [ "$need_hostname" -eq 1 ]; then
+  if sudo hostnamectl set-hostname "$HOSTNAME"; then
+    echo "$TAG: set the static hostname to $HOSTNAME"
+    # Said because the shell prompt, the mDNS name and anything already resolving this box by
+    # its old name keep the old one until they are restarted.
+    echo "$TAG: existing shells and mDNS caches keep the old name until they restart"
+  else
+    echo "$TAG: could not set the hostname" >&2
+  fi
+fi
+
+if [ "$need_wait" -eq 1 ]; then
+  sudo systemctl disable "$WAIT_ONLINE" >/dev/null 2>&1 \
+    && echo "$TAG: disabled $WAIT_ONLINE" \
+    || echo "$TAG: could not disable $WAIT_ONLINE" >&2
+fi
+
+if [ "$need_rpmsave" -eq 1 ]; then
+  sudo rm -f "$RPMSAVE_FILE" \
+    && echo "$TAG: removed $RPMSAVE_FILE" \
+    || echo "$TAG: could not remove $RPMSAVE_FILE" >&2
+fi
+{{ end -}}
