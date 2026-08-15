@@ -1,0 +1,21 @@
+[Unit]
+Description=Update user-scope Flatpak apps and runtimes
+# A run without a network fails on every remote and reports it, which is noise rather than
+# information. Persistent=true on the timer means a skipped run is picked up later anyway.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# --user is the whole point: installs in this repo are user-scope (linux-install.sh's
+# flatpak_install), so a system-scope update here would be updating something nothing manages.
+ExecStart=/usr/bin/flatpak update --user --noninteractive --assumeyes
+# Runtimes are the part that accumulates — an app moving from one runtime branch to the next
+# leaves the old one installed forever, and nothing else ever collects it. This only removes
+# refs no installed app depends on; the case that made it worth automating was an NVIDIA GL
+# extension for a driver version the host had already replaced, 895 MB of it.
+ExecStartPost=/usr/bin/flatpak uninstall --user --unused --noninteractive --assumeyes
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Enable the user-scope Flatpak update timer. Flatpaks were the one update surface here with no
+# automation at all — they moved only when someone opened Discover — so an app could sit months
+# behind while dnf stayed current. run_onchange re-runs (and reloads systemd) whenever the unit
+# files below change; their hashes are embedded so edits retrigger it.
+#
+# Turn it off with `systemctl --user mask flatpak-update.timer`; a plain `disable` is undone by
+# the next apply.
+#   service: {{ include "dot_config/systemd/user/flatpak-update.service" | sha256sum }}
+#   timer:   {{ include "dot_config/systemd/user/flatpak-update.timer" | sha256sum }}
+set -eu
+command -v flatpak >/dev/null 2>&1 || exit 0
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+  # A masked timer is the documented opt-out, so it is the one state this must not undo.
+  if [ "$(systemctl --user is-enabled flatpak-update.timer 2>/dev/null)" != masked ]; then
+    systemctl --user enable --now flatpak-update.timer || true
+  fi
+fi

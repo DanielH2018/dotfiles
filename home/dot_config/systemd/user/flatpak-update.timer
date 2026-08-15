@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily user-scope Flatpak update
+
+[Timer]
+OnCalendar=daily
+# A user timer only runs while the session is up, so without this every day the machine spends
+# logged out is an update that simply never happens.
+Persistent=true
+# dnf5-automatic.timer already fires at 06:00 with an hour of jitter. Half an hour of slack here
+# keeps the two off each other's bandwidth without pinning this to a specific minute.
+RandomizedDelaySec=30m
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
