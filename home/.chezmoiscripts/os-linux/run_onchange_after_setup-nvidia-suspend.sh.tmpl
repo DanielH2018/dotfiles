@@ -1,0 +1,115 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Fixes the kernel panic this box took on every resume from
+# suspend, by pointing the NVIDIA video-memory save file at a directory SELinux lets the sleep
+# code write.
+#
+# The bug, from eight kdump vmcores taken 2026-08-03 to 08-14 — all eight with the same assertion
+# chain, and the ones checked with the same faulting instruction across three kernel versions:
+#
+#     NVRM: GPU0 Assertion failed: (status == NV_OK) || (status == NV_ERR_GPU_IN_FULLCHIP_RESET) @ mem.c:178
+#     NVRM: GPU0 Assertion failed: pEntries != NULL @ gmmu_walk.c:842
+#     BUG: unable to handle page fault for address: 00000000000025f0
+#     Comm: systemd-sleep  RIP: nvEvoDisableVblankSemControl+0x34/0xd0 [nvidia_modeset]
+#     nvkms_resume -> nvKmsResume -> nvResumeDevEvo -> nvRevokeDevice -> FreeDeviceReference
+#
+# and from the journal, one of these on every single `PM: suspend entry`:
+#
+#     avc: denied { write open } for comm="systemd-sleep" path="/var/tmp/#1255772 (deleted)"
+#       scontext=system_u:system_r:systemd_sleep_t:s0 tcontext=system_u:object_r:tmp_t:s0
+#       tclass=file permissive=0
+#
+# Chain: a hand-written /etc/modprobe.d/nvidia-power.conf (owned by no rpm, and until now not
+# managed here either) set NVreg_TemporaryFilePath=/var/tmp. /var/tmp is labelled tmp_t, and the
+# targeted policy does not let systemd_sleep_t write tmp_t files. So the video-memory save failed
+# silently at suspend, and on resume the driver found the allocation was not NV_OK, walked into a
+# null pEntries, and panicked. Nine suspends in fourteen days, eight panics.
+#
+# Why this path and not a policy module: the compiled policy already grants exactly what is
+# needed, to a type that exists for this purpose. From policy.35, decompiled with checkpolicy:
+#
+#     allow systemd_sleep_t systemd_sleep_var_lib_t:dir  { ... write add_name remove_name search };
+#     allow systemd_sleep_t systemd_sleep_var_lib_t:file { ... read write create open unlink ... };
+#
+# and file_contexts maps `/var/lib/systemd/sleep(/.*)?` to that type, recursively — so a file the
+# driver creates in there is born with the right label and keeps it across a relabel. Writing an
+# `allow systemd_sleep_t tmp_t:file` module instead would have widened the policy for every sleep
+# operation on the system to reach a directory that is already reachable.
+#
+# It is also the right *place*: persistent storage rather than tmpfs (so this stays correct for
+# hibernate, where /run would not be), on a filesystem with room for a full vidmem image.
+#
+# No dracut regeneration. RPM Fusion ships /usr/lib/dracut/dracut.conf.d/99-nvidia-dracut.conf
+# with `omit_drivers+=" nvidia nvidia-drm nvidia-modeset nvidia-uvm "` precisely so that the
+# driver is not in the ramdisk and its options do not need one rebuilt. The module loads from the
+# real root, reads this file then, and so a plain reboot is enough.
+#
+# A reboot IS required, though: NVreg_TemporaryFilePath is read when the module loads, and the
+# module cannot be unloaded while a display server holds it. Until then the old path stays live
+# and suspend keeps panicking. `grep TemporaryFilePath /proc/driver/nvidia/params` says which one
+# is in force.
+#
+# Only TemporaryFilePath is set. PreserveVideoMemoryAllocations reads 2 at runtime, which is the
+# driver's own default rather than anything the old file chose, so pinning it here would be
+# changing behaviour this fix has no evidence about.
+#
+# The off switch, which restores the panic, so it is really an "undo the fix" switch:
+#   sudo rm /etc/modprobe.d/nvidia-power.conf   # then reboot
+#
+# bump-to-reinstall: nvidia-suspend v1
+set -u
+TAG=nvidia-suspend
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against throwaway paths; nothing in normal
+# operation sets either.
+: "${MODPROBE_CONF:=/etc/modprobe.d/nvidia-power.conf}"
+: "${SLEEP_DIR:=/var/lib/systemd/sleep}"
+
+# Nothing to configure on a box with no NVIDIA driver, which is not a misconfiguration.
+[ -d /proc/driver/nvidia ] || exit 0
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+cat > "$work/nvidia-power.conf" <<CONF
+# Managed by chezmoi. See run_onchange_after_setup-nvidia-suspend.sh.tmpl.
+# $SLEEP_DIR is labelled systemd_sleep_var_lib_t, which is the one place the targeted policy
+# lets systemd_sleep_t create and write files. Pointing this at /var/tmp (tmp_t) made every
+# resume from suspend a kernel panic.
+options nvidia NVreg_TemporaryFilePath=$SLEEP_DIR
+CONF
+
+# Decidable without root: /etc/modprobe.d is world-readable, so a converged apply never prompts
+# for a password. The directory check is part of convergence because systemd creates it lazily —
+# a box that has never slept may not have one yet, and the driver will not create it itself.
+need_conf=0
+need_dir=0
+cmp -s "$work/nvidia-power.conf" "$MODPROBE_CONF" || need_conf=1
+[ -d "$SLEEP_DIR" ] || need_dir=1
+
+[ "$need_conf" -eq 0 ] && [ "$need_dir" -eq 0 ] && exit 0
+
+require_sudo "the NVIDIA suspend temporary-file path"
+
+if [ "$need_dir" -eq 1 ]; then
+  sudo mkdir -p "$SLEEP_DIR" || { echo "$TAG: could not create $SLEEP_DIR" >&2; exit 1; }
+  # Created rather than inherited, so the label comes from file_contexts rather than from the
+  # parent. Without this a directory made by mkdir would be var_lib_t and the write would be
+  # denied exactly as it was under /var/tmp.
+  if command -v restorecon >/dev/null 2>&1; then
+    sudo restorecon -F "$SLEEP_DIR" >/dev/null 2>&1 \
+      || echo "$TAG: restorecon on $SLEEP_DIR reported a problem" >&2
+  fi
+  echo "$TAG: created $SLEEP_DIR"
+fi
+
+if [ "$need_conf" -eq 1 ]; then
+  sudo install -m 0644 "$work/nvidia-power.conf" "$MODPROBE_CONF" \
+    || { echo "$TAG: could not write $MODPROBE_CONF" >&2; exit 1; }
+  echo "$TAG: wrote $MODPROBE_CONF"
+  # Said plainly because the file being right is not the same as the fix being live, and the
+  # difference between the two is one more panic.
+  echo "$TAG: reboot to load the driver with the new path; until then suspend still panics"
+fi
+{{ end -}}
