@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# mullvad-settings-watch — daily check that the Mullvad tunnel settings that cost
+# throughput have not drifted back.
+#
+# Measured 2026-08-15 on this box, gigabit line, 8 concurrent streams:
+#
+#   DAITA on,  entry any-US       83-155 Mbps
+#   DAITA on,  entry same city       113 Mbps   (routing cannot rescue DAITA)
+#   DAITA off, entry any-US          430 Mbps   (entry relay was picked in LAX)
+#   DAITA off, entry same city       983 Mbps
+#   no tunnel                    877-999 Mbps
+#
+# So two settings were worth 6-12x, and both can come back without anyone touching
+# them deliberately: the desktop app writes the same settings.json with no "managed"
+# marker, and dnf5-automatic now upgrades mullvad-vpn unattended overnight. Neither
+# announces itself. A tunnel quietly running at a tenth of the line rate is exactly
+# the kind of thing that goes unnoticed for months, which is what this is for.
+#
+# The entry check is deliberately structural rather than "entry must be Chicago".
+# Pinning the entry couples it to the exit: move the exit to another city and a
+# hardcoded pin becomes the very cross-country detour it was added to remove, while
+# a check for the literal string keeps reporting success. What matters is that entry
+# and exit are the same city, whichever city that is.
+#
+# Reports only; it does not rewrite settings. Drift here is usually a deliberate
+# server change, and silently undoing the operator's choice is worse than saying so.
+#
+# Exits 0 clean, 1 on findings (so `systemctl --user --failed` is a second passive
+# signal), 2 when the settings cannot be read or understood — an unreadable file is
+# not the same as a healthy one and must not report clean.
+set -uo pipefail
+
+SETTINGS=${MULLVAD_SETTINGS:-/etc/mullvad-vpn/settings.json}
+
+# Expectations, overridable so this does not have to be edited to change a policy.
+expect_daita=${MULLVAD_WATCH_EXPECT_DAITA:-off}
+expect_multihop=${MULLVAD_WATCH_EXPECT_MULTIHOP:-on}
+expect_quantum=${MULLVAD_WATCH_EXPECT_QUANTUM:-on}
+require_same_city=${MULLVAD_WATCH_REQUIRE_SAME_CITY:-1}
+
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'mullvad-settings-watch: jq not on PATH\n' >&2
+  exit 2
+fi
+
+if [ ! -r "$SETTINGS" ]; then
+  # Mullvad ships settings.json world-readable (0644); root-only means either a
+  # different build or a hardened install, and either way this cannot do its job.
+  printf 'mullvad-settings-watch: cannot read %s\n' "$SETTINGS" >&2
+  exit 2
+fi
+
+q() { jq -r "$1" "$SETTINGS" 2>/dev/null; }
+
+# Not `// empty`: jq's alternative operator fires on `false` as well as null, so the
+# healthy `daita.enabled: false` would read as an absent field and send every run down
+# the "unrecognised schema" path below. Test the null explicitly instead. An absent path
+# still has to come back as "" rather than the string "null", so that a schema change
+# after an upgrade is reported as undetermined rather than as a real finding.
+scalar() { q "($1) | if . == null then empty else tostring end"; }
+daita=$(scalar '.tunnel_options.wireguard.daita.enabled')
+multihop=$(scalar '.relay_settings.normal.wireguard_constraints.use_multihop')
+quantum=$(scalar '.tunnel_options.wireguard.quantum_resistant')
+exit_city=$(q '(.relay_settings.normal.location.only.location.city // []) | join("/")')
+entry_city=$(q '(.relay_settings.normal.wireguard_constraints.entry_location.only.location.city // []) | join("/")')
+
+# The three booleans are the load-bearing ones. If any is missing the schema moved
+# under us and every comparison below would be meaningless.
+if [ -z "$daita" ] || [ -z "$multihop" ] || [ -z "$quantum" ]; then
+  printf 'mullvad-settings-watch: unrecognised settings schema in %s\n' "$SETTINGS" >&2
+  printf '  daita=%s multihop=%s quantum=%s\n' "${daita:-?}" "${multihop:-?}" "${quantum:-?}" >&2
+  exit 2
+fi
+
+onoff() { case $1 in true) echo on ;; false) echo off ;; *) echo "$1" ;; esac; }
+daita=$(onoff "$daita")
+multihop=$(onoff "$multihop")
+
+printf 'daita=%s multihop=%s quantum=%s entry=%s exit=%s\n' \
+  "$daita" "$multihop" "$quantum" "${entry_city:-any}" "${exit_city:-any}"
+
+findings=''
+add() { findings="${findings}${findings:+$'\n'}  $1"; }
+
+[ "$daita" = "$expect_daita" ] ||
+  add "DAITA is $daita, expected $expect_daita - caps the tunnel near 110-155 Mbps"
+[ "$multihop" = "$expect_multihop" ] ||
+  add "multihop is $multihop, expected $expect_multihop"
+[ "$quantum" = "$expect_quantum" ] ||
+  add "quantum resistance is $quantum, expected $expect_quantum"
+
+# Only meaningful with multihop on and an exit actually pinned to a city. An exit
+# left at country or any scope has no city for the entry to match, and demanding one
+# would fire every day for a setup that is not doing anything wrong.
+if [ "$multihop" = on ] && [ "$require_same_city" = 1 ] && [ -n "$exit_city" ]; then
+  if [ -z "$entry_city" ]; then
+    add "multihop entry is unconstrained while the exit is pinned to $exit_city - Mullvad may pick an entry anywhere in scope (this cost ~2x when it chose LAX)"
+  elif [ "$entry_city" != "$exit_city" ]; then
+    add "multihop entry $entry_city does not match exit $exit_city - every packet detours via $entry_city"
+  fi
+fi
+
+[ -n "$findings" ] || exit 0
+
+printf 'FINDINGS:\n%s\n' "$findings"
+
+# Re-notify when the finding set changes, or when the window lapses. A problem that
+# is still there should resurface rather than go quiet after one banner.
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/mullvad-settings-watch
+repeat_after=${MULLVAD_WATCH_REPEAT_AFTER:-86400}
+fingerprint=$(printf '%s' "$findings" | cksum | cut -d' ' -f1)
+now=$(date +%s)
+notify=yes
+if [ -r "$state_dir/last-notified" ]; then
+  previous=$(cut -d' ' -f1 "$state_dir/last-notified")
+  since=$(cut -d' ' -f2 "$state_dir/last-notified")
+  case $since in
+    '' | *[!0-9]*) since=0 ;;
+  esac
+  if [ "$previous" = "$fingerprint" ] && [ "$((now - since))" -lt "$repeat_after" ]; then
+    notify=no
+  fi
+fi
+
+if [ "$notify" = yes ]; then
+  # Best effort: a headless run has no bus, and the journal line above is still the record.
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send --urgency=normal --icon=dialog-warning \
+      "Mullvad settings drifted" "$(printf '%s' "$findings" | head -3)" 2>/dev/null || true
+  fi
+  mkdir -p "$state_dir" 2>/dev/null || true
+  printf '%s %s\n' "$fingerprint" "$now" >"$state_dir/last-notified" 2>/dev/null || true
+fi
+
+exit 1

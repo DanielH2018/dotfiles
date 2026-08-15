@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily check that Mullvad tunnel settings have not drifted
+
+[Timer]
+# 08:41 — after dnf5-automatic at 06:00, because an unattended mullvad-vpn upgrade
+# migrating settings is the main thing this is watching for, and clear of
+# claude-changelog-watch at 07:37 and otel-sweep-watch at 08:12.
+OnCalendar=*-*-* 08:41:00
+# Drift persists until someone changes it back, so a run missed to a powered-down
+# morning still finds it on the next boot.
+Persistent=true
+# No deadline, so let systemd batch it rather than wake the machine.
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

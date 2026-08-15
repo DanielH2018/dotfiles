@@ -1,0 +1,24 @@
+[Unit]
+Description=Check that throughput-critical Mullvad tunnel settings have not drifted
+Documentation=file:%h/.local/bin/mullvad-settings-watch
+# Ordering only. Reading settings.json needs nothing graphical, but notify-send does,
+# and a finding raised before the desktop exists would be dropped silently.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+# systemd's user manager does not source a login shell, so ~/.local/bin is absent from
+# the default PATH. jq and notify-send come from /usr/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/mullvad-settings-watch
+# Exit 1 means "settings drifted", which is the whole point of the check — surface it in
+# `systemctl --user --failed` rather than letting systemd log it as a crash. Exit 2 is a
+# genuine failure (unreadable or unrecognised settings) and is deliberately not listed.
+SuccessExitStatus=1
+# Reads one small local file. The bound exists only so nothing can hang the unit.
+TimeoutStartSec=1min
+Nice=10
+IOSchedulingClass=idle
+# stdout is the record; journald already rotates it, so the check keeps no log of its own.
+StandardOutput=journal
+StandardError=journal

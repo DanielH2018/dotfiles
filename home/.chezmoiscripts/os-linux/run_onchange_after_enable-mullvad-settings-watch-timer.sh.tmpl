@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Enable the Mullvad settings drift check. Two settings on this box are worth 6-12x of the
+# line rate, and both can be changed by things that do not announce themselves — the desktop
+# app writes settings.json directly, and dnf5-automatic upgrades mullvad-vpn overnight. A
+# tunnel running at a tenth of line rate looks exactly like a healthy one from the outside.
+# run_onchange re-runs (and reloads systemd) whenever the unit files below change; their
+# hashes are embedded so edits retrigger it.
+#
+# Turn it off with `systemctl --user mask mullvad-settings-watch.timer`; a plain `disable` is
+# undone by the next apply.
+#   service: {{ include "dot_config/systemd/user/mullvad-settings-watch.service" | sha256sum }}
+#   timer:   {{ include "dot_config/systemd/user/mullvad-settings-watch.timer" | sha256sum }}
+set -eu
+# No Mullvad, nothing to watch. The check itself would exit 2 forever on such a machine.
+[ -r /etc/mullvad-vpn/settings.json ] || exit 0
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+  # A masked timer is the documented opt-out, so it is the one state this must not undo.
+  if [ "$(systemctl --user is-enabled mullvad-settings-watch.timer 2>/dev/null)" != masked ]; then
+    systemctl --user enable --now mullvad-settings-watch.timer || true
+  fi
+fi
