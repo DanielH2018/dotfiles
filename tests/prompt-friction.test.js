@@ -20,7 +20,16 @@ const TOOL = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_
 let skip = false;
 try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { skip = 'python3 unavailable'; }
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-'));
+// Collected so the scratch goes on exit rather than being left for bin/sweep-test-tmp, which
+// only reaps what a crashed run abandoned. tests/sweep-test-tmp.test.js enforces this.
+const dirs = [];
+const scratch = (prefix) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  dirs.push(d);
+  return d;
+};
+
+const DIR = scratch('pf-');
 
 // A hook that allows only the commands whose text contains ALLOWME, so the expected
 // count is a property of the fixture rather than of any real allowlist.
@@ -37,7 +46,7 @@ const NO = path.join(DIR, 'no-hook.sh');
 fs.writeFileSync(NO, '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n');
 
 function settingsWith(hooks) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-home-'));
+  const home = scratch('pf-home-');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({
     hooks: { PermissionRequest: [{ matcher: 'Bash', hooks: hooks.map(c => ({ type: 'command', command: c })) }] },
@@ -114,8 +123,10 @@ test('--save round-trips a corpus that replays identically', { skip }, () => {
 });
 
 test('a settings file with no PermissionRequest:Bash hooks fails loudly', { skip }, () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-bare-'));
+  const home = scratch('pf-bare-');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }));
   assert.throws(() => run([], home), /no PermissionRequest:Bash hooks/);
 });
+
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
