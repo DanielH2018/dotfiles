@@ -49,7 +49,7 @@ const dirs = [];
 
 // One run of the rendered script against throwaway paths. `state` persists across runs when the
 // caller passes one back in, which is what the converged-apply test needs.
-function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd'], pm = true } = {}) {
+function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd'], pm = true, mullvad = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'update-automation-'));
   dirs.push(home);
   const binDir = path.join(home, 'stubs');
@@ -67,8 +67,12 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
   const automaticConf = path.join(etc, 'etc', 'dnf', 'automatic.conf');
   const overrideDir = path.join(etc, 'etc', 'dnf', 'repos.override.d');
   const tmpfilesDir = path.join(etc, 'etc', 'tmpfiles.d');
+  const unitDir = path.join(etc, 'etc', 'systemd', 'system');
 
   const all = { sudo: SUDO_OK, systemctl: SYSTEMCTL, 'systemd-tmpfiles': 'exit 0', ...stubs };
+  // Presence on PATH is what the script tests, so a machine without Mullvad is one where this
+  // stub is simply absent.
+  if (mullvad) all['mullvad-exclude'] = all['mullvad-exclude'] || 'exec "$@"';
   if (pm) {
     all.dnf = all.dnf || 'exit 0';
     all.rpm = all.rpm || `[ "$1" = "-q" ] && { for p in ${installed.join(' ')}; do [ "$p" = "$2" ] && exit 0; done; exit 1; }\nexit 0`;
@@ -88,6 +92,7 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
       AUTOMATIC_CONF: automaticConf,
       REPO_OVERRIDE_DIR: overrideDir,
       TMPFILES_DIR: tmpfilesDir,
+      SYSTEMD_UNIT_DIR: unitDir,
     },
   });
 
@@ -99,6 +104,7 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
     automaticConf: read(automaticConf),
     override: read(path.join(overrideDir, '20-vendor-skip-if-unavailable.repo')),
     tmpfiles: read(path.join(tmpfilesDir, 'dnf-package-cache.conf')),
+    splitTunnel: read(path.join(unitDir, 'dnf5-automatic.service.d', '10-split-tunnel.conf')),
     sudoLog: read(path.join(stateDir, 'sudo.log')) || '',
     enableLog: read(path.join(stateDir, 'enable.log')) || '',
   };
@@ -190,7 +196,31 @@ test('skips the firmware timer when fwupd is not installed', { skip }, () => {
   assert.doesNotMatch(r.sudoLog, /install -y fwupd/);
 });
 
-// 8. A Debian box (or anything without dnf) has nothing here to do and must say so by exiting
+// 8. The split-tunnel drop-in. The empty ExecStart is the part that matters: without it systemd
+//    appends rather than replaces, and a oneshot would run the upgrade twice — once through the
+//    tunnel, defeating the whole point, and once outside it.
+test('writes a split-tunnel drop-in that replaces the unit ExecStart', { skip }, () => {
+  if (!linux || renderFile(SRC).trim() === '') return;
+  const r = run();
+  assert.strictEqual(r.exitCode, 0, r.out);
+  assert.match(r.splitTunnel, /^ExecStart=$/m, 'must clear the unit ExecStart before adding one');
+  assert.match(r.splitTunnel, /mullvad-exclude \/usr\/bin\/dnf5 automatic --timer/);
+  // The fallback: whatever happens with Mullvad, an ordinary run still has to be reachable.
+  assert.match(r.splitTunnel, /exec \/usr\/bin\/dnf5 automatic --timer'$/m);
+  assert.match(r.sudoLog, /systemctl daemon-reload/, 'a drop-in systemd has not re-read is inert');
+});
+
+// 9. No Mullvad, no drop-in — writing a file about routing around a VPN that is not installed
+//    would be noise, and the unit is already correct without it.
+test('writes no split-tunnel drop-in without mullvad-exclude', { skip }, () => {
+  if (!linux || renderFile(SRC).trim() === '') return;
+  const r = run({ mullvad: false });
+  assert.strictEqual(r.exitCode, 0, r.out);
+  assert.strictEqual(r.splitTunnel, null, 'no Mullvad means no drop-in');
+  assert.match(r.automaticConf, /^apply_updates = yes$/m, 'the rest must still be applied');
+});
+
+// 10. A Debian box (or anything without dnf) has nothing here to do and must say so by exiting
 //    clean rather than writing dnf config into /etc.
 test('does nothing without dnf', { skip }, () => {
   if (!linux || renderFile(SRC).trim() === '') return;

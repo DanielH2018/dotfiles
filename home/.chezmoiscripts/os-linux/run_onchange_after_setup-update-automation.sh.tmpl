@@ -9,11 +9,13 @@
 # package fails, so one bad vendor mirror takes the other thirty with it) leaves no trace anyone
 # reads.
 #
-# Four changes, sharing one sudo probe:
+# Five changes, sharing one sudo probe:
 #   1. /etc/dnf/automatic.conf      apply the updates; report to the motd
 #   2. /etc/dnf/repos.override.d    let a flaky vendor repo be skipped rather than fail everything
 #   3. /etc/tmpfiles.d              bound the package cache that keepcache=True otherwise keeps
 #   4. fwupd-refresh.timer          check for firmware updates at all
+#   5. a dnf5-automatic drop-in     fetch outside the Mullvad tunnel, which serves the vendor
+#                                   repos two orders of magnitude slower than the open internet
 #
 # Why the kernel and the NVIDIA stack are held back from unattended application: this box builds
 # its NVIDIA module through akmod, so a kernel update and a driver update are one event, and an
@@ -50,7 +52,11 @@
 # The pre/post snapper hook from setup-btrfs-snapshots covers what this applies: dnf5-automatic
 # is a libdnf5 transaction like any other, so an unattended upgrade gets a rollback point.
 #
-# bump-to-reinstall: update-automation v1
+# Excluded traffic leaves over the real connection, so the ISP sees which packages are fetched.
+# That is the trade the split-tunnel drop-in makes, deliberately, and `sudo rm` on the drop-in
+# plus a daemon-reload undoes it until the next apply writes it back.
+#
+# bump-to-reinstall: update-automation v2
 set -u
 TAG=update-automation
 {{ includeTemplate "linux-install.sh" . }}
@@ -60,6 +66,7 @@ TAG=update-automation
 : "${AUTOMATIC_CONF:=/etc/dnf/automatic.conf}"
 : "${REPO_OVERRIDE_DIR:=/etc/dnf/repos.override.d}"
 : "${TMPFILES_DIR:=/etc/tmpfiles.d}"
+: "${SYSTEMD_UNIT_DIR:=/etc/systemd/system}"
 
 # Held back from unattended application; comma-separated, matching excludepkgs in dnf5.conf(5).
 EXCLUDE='kernel*,kmod-nvidia*,akmod-nvidia*,xorg-x11-drv-nvidia*,nvidia-*'
@@ -72,6 +79,7 @@ CACHE_AGE=30d
 
 OVERRIDE_CONF="$REPO_OVERRIDE_DIR/20-vendor-skip-if-unavailable.repo"
 TMPFILES_CONF="$TMPFILES_DIR/dnf-package-cache.conf"
+SPLIT_TUNNEL_CONF="$SYSTEMD_UNIT_DIR/dnf5-automatic.service.d/10-split-tunnel.conf"
 
 # Everything here is dnf-specific, so a Debian box is not misconfigured — it has nothing to do.
 [ "$PM" = dnf ] || exit 0
@@ -105,6 +113,24 @@ CONF
   done
 } > "$work/override.repo"
 
+# Runs the nightly update outside the Mullvad tunnel, where one is in use. Measured 2026-08-15
+# on relay us-chi-wg-308 via us-sjc-wg-002 with DAITA and multihop: the same cache-busted rpm
+# from packages.microsoft.com came down at 124 kB/s through the tunnel and 31 MB/s outside it.
+# Fedora's own mirrors are unaffected (~4 MB/s either way), so the cost lands on exactly the
+# vendor repos whose flakiness the override file above is already working around.
+#
+# The probe is `mullvad-exclude true` rather than `command -v`: the binary can be present while
+# the daemon is stopped or refuses the cgroup, and only running something through it tells them
+# apart. Either failure falls through to an ordinary run, so the worst case is a slow update
+# rather than no update. The empty ExecStart clears the unit's own; without it systemd would
+# append and a oneshot would run the upgrade twice.
+cat > "$work/split-tunnel.conf" <<'CONF'
+# Managed by chezmoi. See run_onchange_after_setup-update-automation.sh.tmpl.
+[Service]
+ExecStart=
+ExecStart=/bin/sh -c 'if command -v mullvad-exclude >/dev/null 2>&1 && mullvad-exclude true >/dev/null 2>&1; then exec mullvad-exclude /usr/bin/dnf5 automatic --timer; fi; exec /usr/bin/dnf5 automatic --timer'
+CONF
+
 cat > "$work/tmpfiles.conf" <<CONF
 # Managed by chezmoi. Bounds the rpm cache kept by keepcache=True in /etc/dnf/dnf.conf.
 # Cleaned by systemd-tmpfiles-clean.timer, which Fedora already runs daily.
@@ -117,12 +143,18 @@ need_pkg=0
 need_conf=0
 need_override=0
 need_tmpfiles=0
+need_split=0
 need_timers=''
 
 rpm -q dnf5-plugin-automatic >/dev/null 2>&1 || need_pkg=1
 cmp -s "$work/automatic.conf" "$AUTOMATIC_CONF" || need_conf=1
 cmp -s "$work/override.repo" "$OVERRIDE_CONF" || need_override=1
 cmp -s "$work/tmpfiles.conf" "$TMPFILES_CONF" || need_tmpfiles=1
+# No Mullvad means nothing to route around, so the drop-in is not written at all rather than
+# written and inert. An existing one is left alone: it falls back to a plain run on its own.
+if command -v mullvad-exclude >/dev/null 2>&1; then
+  cmp -s "$work/split-tunnel.conf" "$SPLIT_TUNNEL_CONF" || need_split=1
+fi
 
 # A masked unit is the documented way to opt out, so it is left alone; "disabled" is indis-
 # tinguishable from never-enabled and is therefore treated as ours to enable.
@@ -139,7 +171,7 @@ if rpm -q fwupd >/dev/null 2>&1; then
 fi
 
 if [ "$need_pkg" -eq 0 ] && [ "$need_conf" -eq 0 ] && [ "$need_override" -eq 0 ] \
-   && [ "$need_tmpfiles" -eq 0 ] && [ -z "$need_timers" ]; then
+   && [ "$need_tmpfiles" -eq 0 ] && [ "$need_split" -eq 0 ] && [ -z "$need_timers" ]; then
   exit 0
 fi
 
@@ -173,6 +205,12 @@ if [ "$need_tmpfiles" -eq 1 ]; then
   # timer runs. Without this the mode/ownership pass waits for a boot for no reason.
   sudo systemd-tmpfiles --create "$TMPFILES_CONF" >/dev/null 2>&1 \
     || echo "$TAG: systemd-tmpfiles --create reported a problem with $TMPFILES_CONF" >&2
+fi
+
+if [ "$need_split" -eq 1 ]; then
+  install_as_root "$work/split-tunnel.conf" "$SPLIT_TUNNEL_CONF" || exit 1
+  # A drop-in systemd has not re-read is a file, not an override.
+  sudo systemctl daemon-reload || echo "$TAG: systemctl daemon-reload failed" >&2
 fi
 
 for unit in $need_timers; do

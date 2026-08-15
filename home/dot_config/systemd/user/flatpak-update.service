@@ -7,14 +7,9 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-# --user is the whole point: installs in this repo are user-scope (linux-install.sh's
-# flatpak_install), so a system-scope update here would be updating something nothing manages.
-ExecStart=/usr/bin/flatpak update --user --noninteractive --assumeyes
-# Runtimes are the part that accumulates — an app moving from one runtime branch to the next
-# leaves the old one installed forever, and nothing else ever collects it. This only removes
-# refs no installed app depends on; the case that made it worth automating was an NVIDIA GL
-# extension for a driver version the host had already replaced, 895 MB of it.
-ExecStartPost=/usr/bin/flatpak uninstall --user --unused --noninteractive --assumeyes
+# The update, the prune, and the Mullvad detour live in the script rather than here, so that
+# running it by hand is the same operation the timer performs.
+ExecStart=%h/.local/bin/flatpak-update
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=journal

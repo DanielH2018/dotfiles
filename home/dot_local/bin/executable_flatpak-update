@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Update user-scope flatpaks, then collect the runtimes nothing references any more.
+#
+# Driven by flatpak-update.timer, but written to be run by hand too — "update my flatpaks now"
+# is the other half of having automated it, and burying that in a unit file means the manual
+# path is a different command with different flags.
+#
+# The Mullvad detour is the reason this is a script rather than two ExecStart lines. Flathub is
+# served badly over this VPN: measured 2026-08-15 on relay us-chi-wg-308 via us-sjc-wg-002 with
+# DAITA and multihop, the same cache-busted 7.6 MB object came down at 39 kB/s through the
+# tunnel and 305 kB/s outside it, and packages.microsoft.com was worse — 124 kB/s against
+# 31 MB/s. Fedora's own mirrors are unaffected (~4 MB/s either way), so this is about who peers
+# with the exit node rather than about the VPN as such.
+#
+# That is a deliberate privacy trade: excluded traffic goes out over the real connection, so the
+# ISP sees which flatpaks are being fetched. Set FLATPAK_UPDATE_NO_EXCLUDE=1 to keep everything
+# in the tunnel and accept the throughput.
+set -uo pipefail
+
+# `mullvad-exclude true` is the capability probe, not `command -v` alone: the binary can be
+# present while the daemon is stopped or refuses the cgroup, and the difference only shows up
+# when something is actually run through it. A machine with no Mullvad at all takes the same
+# path as one where the exclusion is unavailable — run the command directly and say nothing.
+run_outside_tunnel() {
+  if [[ ${FLATPAK_UPDATE_NO_EXCLUDE:-0} == 1 ]]; then
+    "$@"
+  elif command -v mullvad-exclude >/dev/null 2>&1 && mullvad-exclude true >/dev/null 2>&1; then
+    mullvad-exclude "$@"
+  else
+    "$@"
+  fi
+}
+
+status=0
+run_outside_tunnel flatpak update --user --noninteractive --assumeyes || status=$?
+
+# Runtimes are what actually accumulates: an app moving between runtime branches leaves the old
+# one installed and nothing else ever collects it. Only refs no installed app depends on go.
+# A failed update above must not stop this — the collectable set does not depend on it.
+run_outside_tunnel flatpak uninstall --user --unused --noninteractive --assumeyes || true
+
+exit "$status"
