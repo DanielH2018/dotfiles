@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_once_after_install-cli-tools.sh.tmpl');
+const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_after_install-cli-tools.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 const TOOLS = path.join(__dirname, '..', '..', 'home', '.chezmoidata', 'tools.toml');
 const tools = fs.readFileSync(TOOLS, 'utf8');
@@ -42,15 +42,20 @@ const PASSTHROUGH = ['sh', 'mkdir', 'cat', 'rm', 'ln', 'sed', 'head', 'mktemp', 
 // Drive the rendered script against a synthetic PATH: `stubs` maps command name -> shell body,
 // and every passthrough binary above is symlinked in beside them. No real package manager, sudo
 // or network is reachable. Returns the merged stdout+stderr plus the throwaway HOME.
-function runWithStubs(stubs) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-'));
-  dirs.push(home);
+// `opts.home` reuses a previous run's HOME, which is what the throttle-gate tests need — the
+// stamp the gate reads lives under it. `opts.env` adds to the child environment for the same
+// reason: CLI_TOOLS_FORCE and CLI_TOOLS_MAX_AGE_DAYS are the gate's overrides.
+function runWithStubs(stubs, opts = {}) {
+  const home = opts.home || fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-'));
+  if (!opts.home) dirs.push(home);
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
     let real;
     try { real = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim(); } catch { continue; }
-    if (real) fs.symlinkSync(real, path.join(binDir, name));
+    // A reused HOME already has these; relinking would throw EEXIST.
+    const link = path.join(binDir, name);
+    if (real && !fs.existsSync(link)) fs.symlinkSync(real, link);
   }
   for (const [name, script] of Object.entries(stubs)) {
     fs.writeFileSync(path.join(binDir, name), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
@@ -59,7 +64,7 @@ function runWithStubs(stubs) {
   fs.writeFileSync(scriptFile, render());
   const out = execFileSync(path.join(binDir, 'sh'), ['-c', `sh ${JSON.stringify(scriptFile)} 2>&1 || true`], {
     encoding: 'utf8',
-    env: { HOME: home, PATH: binDir },
+    env: { HOME: home, PATH: binDir, ...opts.env },
   });
   return { out, home };
 }
@@ -83,7 +88,7 @@ test('script is gated to Linux', { skip }, () => {
   if (process.platform !== 'linux') {
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   } else if (rendered.trim() !== '') {
-    assert.match(rendered, /tools-bump: v12/, 'Linux render carries the installer');
+    assert.match(rendered, /^TAG=install-cli-tools$/m, 'Linux render carries the installer');
   }
 });
 
@@ -309,6 +314,89 @@ test('the podman socket is left alone without a user systemd session', { skip },
   });
   assert.doesNotMatch(readLog(home, 'systemctl.log'), /enable/,
     'enabling podman.socket without a user bus only produces an error');
+});
+
+// --- The throttle gate -----------------------------------------------------------------------
+//
+// This script became run_after_ (every apply) instead of run_once_after_, which is what makes it
+// ever upgrade a release binary. The gate is what keeps that affordable, so the tests below are
+// about when it lets a run through — a gate that is too eager costs a dozen GitHub round trips
+// per apply, and one that is too reluctant is the run_once_ behaviour it replaced.
+
+// The stamp's contents are the tools.toml hash the template baked in. Read it back out of the
+// render rather than recomputing it here, so the test cannot disagree with the script about how
+// the key is derived.
+const toolsKey = () => (render().match(/^TOOLS_KEY='([0-9a-f]+)'$/m) || [])[1];
+const stampPath = (home) => path.join(home, '.local', 'bin', '.versions', '.last-check');
+
+// Section 4's arch report. It comes from the installer body rather than the shared library, so
+// it is printed if and only if the gate let the run past — which the library's own
+// no-package-manager warning, emitted above the gate, is not.
+const REACHED_END = /unknown arch .*skipping eza/;
+
+function gateStubs() {
+  return { curl: 'exit 1', uname: NO_ARCH, unzip: 'exit 0', sudo: SUDO_OK };
+}
+
+// Writes the stamp as a converged run would have left it, `ageDays` ago.
+function stamp(home, { key, ageDays = 0 }) {
+  const p = stampPath(home);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, key);
+  const when = new Date(Date.now() - ageDays * 86400 * 1000);
+  fs.utimesSync(p, when, when);
+  return p;
+}
+
+test('a fresh stamp inside the window stops the run before any work', { skip }, () => {
+  if (process.platform !== 'linux' || render().trim() === '') return;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-'));
+  dirs.push(home);
+  stamp(home, { key: toolsKey(), ageDays: 1 });
+  const { out } = runWithStubs(gateStubs(), { home });
+  assert.doesNotMatch(out, REACHED_END, 'a run inside the window must stop at the gate');
+});
+
+test('a stamp older than the window lets the run through', { skip }, () => {
+  if (process.platform !== 'linux' || render().trim() === '') return;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-old-'));
+  dirs.push(home);
+  stamp(home, { key: toolsKey(), ageDays: 30 });
+  const { out } = runWithStubs(gateStubs(), { home });
+  assert.match(out, REACHED_END, 'a stamp past the age window must not stop the run');
+});
+
+// The reason the stamp holds a hash at all: adding a tool to tools.toml has to take effect on
+// the next apply, not up to a week later.
+test('a changed tools.toml overrides a fresh stamp', { skip }, () => {
+  if (process.platform !== 'linux' || render().trim() === '') return;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-key-'));
+  dirs.push(home);
+  stamp(home, { key: 'aaaaaaaaaaaa', ageDays: 0 });
+  const { out } = runWithStubs(gateStubs(), { home });
+  assert.match(out, REACHED_END, 'a stamp written for different tools must not stop the run');
+});
+
+// The way out, and the way back in past it.
+test('the opt-out marker stops the run, and CLI_TOOLS_FORCE overrides it', { skip }, () => {
+  if (process.platform !== 'linux' || render().trim() === '') return;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-off-'));
+  dirs.push(home);
+  const verDir = path.join(home, '.local', 'bin', '.versions');
+  fs.mkdirSync(verDir, { recursive: true });
+  fs.writeFileSync(path.join(verDir, '.no-auto-update'), '');
+
+  assert.doesNotMatch(runWithStubs(gateStubs(), { home }).out, REACHED_END,
+    'the opt-out marker must stop the run');
+  assert.match(runWithStubs(gateStubs(), { home, env: { CLI_TOOLS_FORCE: '1' } }).out, REACHED_END,
+    'CLI_TOOLS_FORCE must override the opt-out marker');
+});
+
+// A machine that has never run this must not read as up to date.
+test('no stamp at all lets the run through', { skip }, () => {
+  if (process.platform !== 'linux' || render().trim() === '') return;
+  const { out } = runWithStubs(gateStubs());
+  assert.match(out, REACHED_END, 'a machine with no stamp must run');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

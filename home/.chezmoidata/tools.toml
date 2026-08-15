@@ -3,8 +3,8 @@
 # manager and ignores the rest:
 #   - winget = winget package id      -> run_onchange_install-cli-tools.ps1.tmpl  (Windows)
 #   - brew   = Homebrew formula       -> Brewfile.tmpl                             (macOS)
-#   - apt    = Debian/Ubuntu package  -> run_once_after_install-cli-tools.sh.tmpl  (Linux)
-#   - dnf    = Fedora/RHEL package    -> run_once_after_install-cli-tools.sh.tmpl  (Linux)
+#   - apt    = Debian/Ubuntu package  -> run_after_install-cli-tools.sh.tmpl  (Linux)
+#   - dnf    = Fedora/RHEL package    -> run_after_install-cli-tools.sh.tmpl  (Linux)
 #   - cmd    = binary name on PATH    -> used by the winget installer to skip-if-present
 # An empty field means that installer doesn't handle this tool (it's absent there, or
 # installed by another mechanism — e.g. eza/fastfetch come from GitHub release binaries on

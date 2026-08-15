@@ -4,10 +4,23 @@
 # Fedora, amd64 or arm64), mirroring the macOS Brewfile for Linux. The distro package manager
 # for repo packages + release binaries for the gaps. Gated to non-minimal profiles so a
 # resource-constrained host (profile=minimal, e.g. the Pi) opts out of the heavy install.
-# run_once_after_: runs AFTER file targets, so a sudo-less run that can't reach the package
-# manager fails loudly (exit 1 → chezmoi does NOT record success → retries next apply) WITHOUT
-# blocking dotfile deployment. Bump the marker to force a refresh.
-# tools-bump: v12
+# run_after_: runs on every apply, AFTER file targets, so a sudo-less run that can't reach the
+# package manager fails loudly (exit 1) WITHOUT blocking dotfile deployment.
+#
+# It used to be run_once_after_ with a hand-bumped `tools-bump` marker, which meant the release
+# binaries below — eza, fzf, zoxide, ripgrep, bat, fd, nvim, yazi, and the rest — installed once
+# and then stayed at whatever version was current that day. install_release has always been
+# version-aware (it resolves the latest tag and reinstalls when the recorded one differs), so
+# nothing was missing except a reason to run it again; bumping the marker refreshed every tool
+# at once, which is why it rarely got bumped.
+#
+# Running on every apply would mean a GitHub round trip per tool per apply, so the gate below
+# throttles the whole script to once a week — a converged apply inside that window is one stat()
+# and an exit, with no sudo probe and no network. It runs anyway, regardless of the window, when
+# tools.toml itself changes, so adding a tool still takes effect on the next apply.
+#   CLI_TOOLS_FORCE=1 chezmoi apply        check now, ignoring the window
+#   CLI_TOOLS_MAX_AGE_DAYS=1 chezmoi apply check daily instead of weekly
+#   touch ~/.local/bin/.versions/.no-auto-update   stop checking (CLI_TOOLS_FORCE still wins)
 set -u
 TAG=install-cli-tools
 
@@ -16,6 +29,27 @@ TAG=install-cli-tools
 # app installer uses, so both speak one vocabulary and a fix lands in both. Everything from here
 # on is CLI-toolchain-specific.
 {{ includeTemplate "linux-install.sh" . }}
+
+# 0. The throttle. Everything below this point costs a sudo probe and a dozen GitHub round
+#    trips, so a converged apply must not reach it. The stamp holds the tools.toml hash it was
+#    written for, which is what makes "a new tool was added" override the age window: a changed
+#    list cannot match the recorded one, so the run happens regardless of when the last one did.
+#    VER_DIR is created by linux-install.sh above, so the stamp always has somewhere to live.
+STAMP="$VER_DIR/.last-check"
+SKIP_MARK="$VER_DIR/.no-auto-update"
+TOOLS_KEY='{{ include ".chezmoidata/tools.toml" | sha256sum }}'
+: "${CLI_TOOLS_MAX_AGE_DAYS:=7}"
+: "${CLI_TOOLS_FORCE:=0}"
+
+if [ "$CLI_TOOLS_FORCE" != 1 ]; then
+  if [ -e "$SKIP_MARK" ]; then exit 0; fi
+  # -mtime on a path that does not exist prints nothing (and an error we discard), so a machine
+  # that has never run this reads as stale rather than fresh.
+  if [ "$(cat "$STAMP" 2>/dev/null)" = "$TOOLS_KEY" ] \
+     && [ -n "$(find "$STAMP" -mtime "-$CLI_TOOLS_MAX_AGE_DAYS" 2>/dev/null)" ]; then
+    exit 0
+  fi
+fi
 
 # 1. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
 #    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
@@ -229,8 +263,8 @@ if [ -n "$rust_arch" ]; then
 fi
 
 # Fail loudly (and retry next apply) if any distro package is still missing — e.g. a sudo-less
-# run. As a run_once_after_ script this does NOT block dotfile deployment. PM="" reports every
-# check satisfied, so an unsupported distro converges on the release binaries instead of
+# run. This runs after the file targets, so it does NOT block dotfile deployment. PM="" reports
+# every check satisfied, so an unsupported distro converges on the release binaries instead of
 # retrying a package install it can never perform.
 still=""
 for p in $PKGS; do
@@ -243,4 +277,9 @@ if [ -n "$still" ] || ! gh_ready || ! wez_ready; then
   echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
   exit 1
 fi
+
+# Only a fully converged run resets the age window. Stamping an incomplete one would turn "this
+# machine still needs sudo" into a week of silence, which is exactly the failure the old
+# run_once_ marker had: a script that has decided it is done when it is not.
+printf '%s' "$TOOLS_KEY" > "$STAMP"
 {{ end -}}

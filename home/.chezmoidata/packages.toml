@@ -318,7 +318,7 @@ apt = "git"
 [[apps.coding]]
 name = "GitHub CLI"
 winget = "GitHub.cli"
-manual = "Installed on Linux by os-linux/run_once_after_install-cli-tools.sh.tmpl, which also adds cli.github.com's apt repo so Ubuntu doesn't pin gh at 2.45. Deliberately not duplicated here."
+manual = "Installed on Linux by os-linux/run_after_install-cli-tools.sh.tmpl, which also adds cli.github.com's apt repo so Ubuntu doesn't pin gh at 2.45. Deliberately not duplicated here."
 
 [[apps.coding]]
 name = "Visual Studio Code"
