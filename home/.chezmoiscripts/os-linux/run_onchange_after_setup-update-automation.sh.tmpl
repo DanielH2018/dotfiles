@@ -1,0 +1,182 @@
+{{ if eq .chezmoi.os "linux" -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Makes a Fedora box actually install its updates, and makes a
+# failed attempt visible. Fedora enables dnf5-automatic.timer but ships no /etc/dnf/automatic.conf
+# — both /etc paths are %ghost in dnf5-plugin-automatic, so `rpm -V` is clean while the file is
+# absent — and the compiled defaults are download_updates=yes, apply_updates=no, emit_via=stdio.
+# The machine therefore spends the bandwidth every morning, installs none of it, and reports the
+# outcome only to the journal. A run that fails (dnf5 aborts the whole download set when one
+# package fails, so one bad vendor mirror takes the other thirty with it) leaves no trace anyone
+# reads.
+#
+# Four changes, sharing one sudo probe:
+#   1. /etc/dnf/automatic.conf      apply the updates; report to the motd
+#   2. /etc/dnf/repos.override.d    let a flaky vendor repo be skipped rather than fail everything
+#   3. /etc/tmpfiles.d              bound the package cache that keepcache=True otherwise keeps
+#   4. fwupd-refresh.timer          check for firmware updates at all
+#
+# Why the kernel and the NVIDIA stack are held back from unattended application: this box builds
+# its NVIDIA module through akmod, so a kernel update and a driver update are one event, and an
+# unlogged hard freeze here has already been correlated with a driver install. Those stay manual
+# in Discover; everything else lands overnight. Widen or narrow at EXCLUDE below — if automatic
+# runs start reporting dependency errors, `kernel*` is the entry to narrow first, since it also
+# catches kernel-headers and kernel-devel.
+#
+# Why repos.override.d rather than editing the .repo files: the Google Chrome RPM rewrites
+# /etc/yum.repos.d/google-chrome.repo from its own %post on every update, so an edit there is
+# reverted the next time Chrome updates. Overrides load after the repo files and cannot be
+# clobbered that way — dnf5.conf(5), "DROP-IN REPO DIRECTORIES", whose own example is this.
+#
+# Why tmpfiles.d rather than a `dnf clean packages` timer: systemd-tmpfiles-clean.timer already
+# runs daily and the `e` line type takes a glob and an age, so the cache gets an upper bound with
+# no new unit to enable, own, or forget.
+#
+# The off switch is `systemctl mask`, not `disable` — this script re-enables a disabled timer on
+# the next apply, and a mask is the one state it will not fight:
+#   sudo systemctl mask dnf5-automatic.timer     stop unattended updates
+#   sudo systemctl mask fwupd-refresh.timer      stop firmware metadata refresh
+#   sudo systemctl unmask <unit>                 hand it back to this script
+#
+# Deliberately NOT done here:
+#   reboot = when-needed  would reboot out from under a live session. Kernel updates are excluded
+#                         anyway, so there is nothing an unattended run could install that needs
+#                         one.
+#   emit_via = email      needs a working local MTA. The motd is read at every new shell here.
+#   skip_if_unavailable on the Fedora repos     a Fedora mirror outage should fail loudly rather
+#                         than quietly resolve a transaction against a partial view of the distro.
+#   installing fwupd      enabling a timer for a daemon that is already present is maintenance;
+#                         putting a firmware-flashing daemon on a machine that lacks one is not.
+#
+# The pre/post snapper hook from setup-btrfs-snapshots covers what this applies: dnf5-automatic
+# is a libdnf5 transaction like any other, so an unattended upgrade gets a rollback point.
+#
+# bump-to-reinstall: update-automation v1
+set -u
+TAG=update-automation
+{{ includeTemplate "linux-install.sh" . }}
+
+# All three overridable purely so the tests can drive this against throwaway paths, the same way
+# linux-install.sh exposes REPO_DIR; nothing in normal operation sets any of them.
+: "${AUTOMATIC_CONF:=/etc/dnf/automatic.conf}"
+: "${REPO_OVERRIDE_DIR:=/etc/dnf/repos.override.d}"
+: "${TMPFILES_DIR:=/etc/tmpfiles.d}"
+
+# Held back from unattended application; comma-separated, matching excludepkgs in dnf5.conf(5).
+EXCLUDE='kernel*,kmod-nvidia*,akmod-nvidia*,xorg-x11-drv-nvidia*,nvidia-*'
+# Vendor repos whose outage should not fail an unrelated transaction. Repo IDs, not file names —
+# mullvad-stable lives in mullvad.repo and code lives in vscode.repo.
+SKIPPABLE='code google-chrome warpdotdev mullvad-stable rpmfusion-nonfree-nvidia-driver'
+# How long a downloaded rpm stays cached. keepcache=True buys a free retry, reinstall or
+# downgrade; a month is longer than that is ever useful and still bounds the directory.
+CACHE_AGE=30d
+
+OVERRIDE_CONF="$REPO_OVERRIDE_DIR/20-vendor-skip-if-unavailable.repo"
+TMPFILES_CONF="$TMPFILES_DIR/dnf-package-cache.conf"
+
+# Everything here is dnf-specific, so a Debian box is not misconfigured — it has nothing to do.
+[ "$PM" = dnf ] || exit 0
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+# Only the keys that differ from /usr/share/dnf5/dnf5-plugins/automatic.conf. dnf5 layers this
+# file over that one, so a short override stays readable and picks up upstream's default changes
+# for everything it does not name.
+cat > "$work/automatic.conf" <<CONF
+# Managed by chezmoi. Overrides /usr/share/dnf5/dnf5-plugins/automatic.conf; see dnf5-automatic(8).
+[commands]
+apply_updates = yes
+upgrade_type = default
+reboot = never
+
+[emitters]
+emit_via = motd, stdio
+emit_no_updates = no
+
+[base]
+excludepkgs = $EXCLUDE
+CONF
+
+{
+  echo '# Managed by chezmoi. Repo overrides applied after /etc/yum.repos.d; see dnf5.conf(5).'
+  echo '# A vendor mirror outage skips that repo instead of failing the whole transaction.'
+  for repo in $SKIPPABLE; do
+    printf '\n[%s]\nskip_if_unavailable = true\n' "$repo"
+  done
+} > "$work/override.repo"
+
+cat > "$work/tmpfiles.conf" <<CONF
+# Managed by chezmoi. Bounds the rpm cache kept by keepcache=True in /etc/dnf/dnf.conf.
+# Cleaned by systemd-tmpfiles-clean.timer, which Fedora already runs daily.
+e /var/cache/libdnf5/*/packages - - - $CACHE_AGE
+CONF
+
+# Everything below the convergence check must be decidable without root, so a no-op apply never
+# prompts for a password. All four target files are world-readable.
+need_pkg=0
+need_conf=0
+need_override=0
+need_tmpfiles=0
+need_timers=''
+
+rpm -q dnf5-plugin-automatic >/dev/null 2>&1 || need_pkg=1
+cmp -s "$work/automatic.conf" "$AUTOMATIC_CONF" || need_conf=1
+cmp -s "$work/override.repo" "$OVERRIDE_CONF" || need_override=1
+cmp -s "$work/tmpfiles.conf" "$TMPFILES_CONF" || need_tmpfiles=1
+
+# A masked unit is the documented way to opt out, so it is left alone; "disabled" is indis-
+# tinguishable from never-enabled and is therefore treated as ours to enable.
+timer_wanted() { # $1=unit -> 0 when it should be enabled and currently is not
+  state="$(systemctl is-enabled "$1" 2>/dev/null)"
+  [ "$state" = masked ] && return 1
+  [ "$state" = enabled ] && return 1
+  return 0
+}
+timer_wanted dnf5-automatic.timer && need_timers="$need_timers dnf5-automatic.timer"
+# fwupd ships the timer, so no fwupd means no timer to enable rather than a missing one.
+if rpm -q fwupd >/dev/null 2>&1; then
+  timer_wanted fwupd-refresh.timer && need_timers="$need_timers fwupd-refresh.timer"
+fi
+
+if [ "$need_pkg" -eq 0 ] && [ "$need_conf" -eq 0 ] && [ "$need_override" -eq 0 ] \
+   && [ "$need_tmpfiles" -eq 0 ] && [ -z "$need_timers" ]; then
+  exit 0
+fi
+
+have_sudo || { echo "$TAG: needs sudo — re-run 'chezmoi apply' where sudo can prompt" >&2; exit 1; }
+
+# The plugin first: automatic.conf configures a command that would not exist without it, and the
+# package owns the timer the last step enables.
+if [ "$need_pkg" -eq 1 ]; then
+  echo "$TAG: installing dnf5-plugin-automatic"
+  pkg_install dnf5-plugin-automatic \
+    || { echo "$TAG: could not install dnf5-plugin-automatic" >&2; exit 1; }
+fi
+
+install_as_root() { # $1=staged file $2=destination
+  sudo mkdir -p "$(dirname "$2")" || { echo "$TAG: could not create $(dirname "$2")" >&2; return 1; }
+  sudo install -m 0644 "$1" "$2" || { echo "$TAG: could not write $2" >&2; return 1; }
+  echo "$TAG: wrote $2"
+}
+
+if [ "$need_conf" -eq 1 ]; then
+  install_as_root "$work/automatic.conf" "$AUTOMATIC_CONF" || exit 1
+fi
+
+if [ "$need_override" -eq 1 ]; then
+  install_as_root "$work/override.repo" "$OVERRIDE_CONF" || exit 1
+fi
+
+if [ "$need_tmpfiles" -eq 1 ]; then
+  install_as_root "$work/tmpfiles.conf" "$TMPFILES_CONF" || exit 1
+  # --create only fixes up the directories; the age-based removal is --clean, which the daily
+  # timer runs. Without this the mode/ownership pass waits for a boot for no reason.
+  sudo systemd-tmpfiles --create "$TMPFILES_CONF" >/dev/null 2>&1 \
+    || echo "$TAG: systemd-tmpfiles --create reported a problem with $TMPFILES_CONF" >&2
+fi
+
+for unit in $need_timers; do
+  echo "$TAG: enabling $unit"
+  sudo systemctl enable --now "$unit" || echo "$TAG: could not enable $unit" >&2
+done
+{{ end -}}
