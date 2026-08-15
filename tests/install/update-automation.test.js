@@ -68,6 +68,8 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
   const overrideDir = path.join(etc, 'etc', 'dnf', 'repos.override.d');
   const tmpfilesDir = path.join(etc, 'etc', 'tmpfiles.d');
   const unitDir = path.join(etc, 'etc', 'systemd', 'system');
+  const motdDir = path.join(etc, 'etc', 'motd.d');
+  const reportBin = path.join(etc, 'usr', 'local', 'bin', 'dnf-update-report');
 
   const all = { sudo: SUDO_OK, systemctl: SYSTEMCTL, 'systemd-tmpfiles': 'exit 0', ...stubs };
   // Presence on PATH is what the script tests, so a machine without Mullvad is one where this
@@ -93,6 +95,8 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
       REPO_OVERRIDE_DIR: overrideDir,
       TMPFILES_DIR: tmpfilesDir,
       SYSTEMD_UNIT_DIR: unitDir,
+      MOTD_DIR: motdDir,
+      REPORT_BIN: reportBin,
     },
   });
 
@@ -105,6 +109,9 @@ function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd']
     override: read(path.join(overrideDir, '20-vendor-skip-if-unavailable.repo')),
     tmpfiles: read(path.join(tmpfilesDir, 'dnf-package-cache.conf')),
     splitTunnel: read(path.join(unitDir, 'dnf5-automatic.service.d', '10-split-tunnel.conf')),
+    reportDropin: read(path.join(unitDir, 'dnf5-automatic.service.d', '20-report.conf')),
+    report: read(reportBin),
+    reportPath: reportBin,
     sudoLog: read(path.join(stateDir, 'sudo.log')) || '',
     enableLog: read(path.join(stateDir, 'enable.log')) || '',
   };
@@ -144,7 +151,30 @@ test('writes the vendor repo overrides and the cache age bound', { skip }, () =>
   }
   assert.strictEqual((r.override.match(/skip_if_unavailable = true/g) || []).length, 5);
   assert.doesNotMatch(r.override, /^\[fedora/m, 'a Fedora mirror outage must still fail loudly');
-  assert.match(r.tmpfiles, /^e \/var\/cache\/libdnf5\/\*\/packages - - - 30d$/m);
+  assert.match(r.tmpfiles, /^e \/var\/cache\/libdnf5\/\*\/packages - - - 14d$/m);
+});
+
+// 3b. The reboot signal. `apply_updates = yes` with `reboot = never` and no restart handling is
+//     how a box ends up patched on disk and unpatched in every running process, so the drop-in
+//     that reports it is load-bearing rather than cosmetic. Asserted on the wiring — the drop-in
+//     names the helper and the helper is executable — because the helper's own output depends on
+//     a live dnf5 that these stubs do not model.
+test('wires a post-run report onto the unattended update service', { skip }, () => {
+  if (!linux || renderFile(SRC).trim() === '') return;
+  const r = run();
+  assert.strictEqual(r.exitCode, 0, r.out);
+  assert.ok(r.reportDropin, 'the report drop-in must be written');
+  assert.match(r.reportDropin, /^ExecStartPost=.*dnf-update-report$/m);
+  assert.ok(r.report, 'the report helper must be installed');
+  assert.match(r.report, /needs-restarting -r/, 'the helper must ask dnf whether a reboot is due');
+  assert.ok((fs.statSync(r.reportPath).mode & 0o111) !== 0, 'the helper must be executable');
+  // The held-back set is invisible to the unattended run by construction, so the helper is the
+  // only thing that can surface it; keeping the two lists in step is the point of the assertion.
+  for (const held of ['kernel*', 'akmod-nvidia*']) {
+    assert.ok(r.report.includes(held), `the helper must count ${held} as held back`);
+  }
+  // ExecStartPost returning non-zero would mark a successful update run as failed.
+  assert.match(r.report, /^exit 0$/m, 'the helper must not fail the unit');
 });
 
 // 4. Both timers get enabled from a cold start.

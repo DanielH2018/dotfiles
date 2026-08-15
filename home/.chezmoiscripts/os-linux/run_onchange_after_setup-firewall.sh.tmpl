@@ -1,0 +1,139 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Closes the blanket high-port hole in Fedora's default
+# firewall zone without breaking the two things on this box that depend on it.
+#
+# The stock FedoraWorkstation zone (/usr/lib/firewalld/zones/FedoraWorkstation.xml) ends with:
+#
+#     <port protocol="udp" port="1025-65535"/>
+#     <port protocol="tcp" port="1025-65535"/>
+#
+# Its own <description> frames that as rejecting ports 1-1024, which reads as restrictive and is
+# the opposite way round: every port a desktop application is capable of binding is open, to any
+# source, on every interface in the zone. The zone was designed when "the LAN" and "behind NAT"
+# meant the same thing.
+#
+# They do not mean the same thing here. This box holds a routable IPv6 address on both eno1 and
+# wlp11s0 (a 2601:246:c301:df20::/64 delegation), and IPv6 has no NAT to hide behind — firewalld
+# is the only thing between a listening socket and the open internet. So the stock zone exposes
+# every high port to the world over v6 while appearing to only expose the LAN.
+#
+# Why the ports are scoped rather than removed: both applications that need them are undiscover-
+# able by port number.
+#   - Spotify Connect advertises over mDNS and serves on a *dynamic* high TCP port, reassigned
+#     every launch (44235 at the time of writing, 57621 for its LAN discovery socket). There is
+#     no fixed port to allow.
+#   - KDE Connect uses 1714-1764, which firewalld does ship as a service, but it is inside the
+#     range anyway and covered by the same rule.
+# Enumerating ports therefore cannot work; restricting *source* can. The rich rules below re-open
+# the identical range to the local subnet only, so both keep working exactly as before, while the
+# same packets arriving over routable IPv6 from off-link are dropped.
+#
+# Both listeners are IPv4 (`ss -tlnp` shows 0.0.0.0 for spotify, * for kdeconnectd), so the v6
+# rules cover link-local only. That is deliberate: the ISP's delegated /64 is not stable, and a
+# rule naming today's prefix would silently stop matching when it rotates. Link-local is stable,
+# is what neighbour discovery and KDE Connect's v6 path actually use, and is unroutable off-link
+# by definition.
+#
+# mdns is added as a service rather than left to the source rules because its firewalld
+# definition is destination-scoped to the multicast groups (224.0.0.251, ff02::fb), so it is
+# narrow regardless of source and keeps discovery working if the subnet below is ever wrong.
+#
+# LAN_CIDR is the one value to change if this machine moves to another subnet. Getting it wrong
+# is not a security failure, it is a Spotify-Connect-stops-working failure — the symptom is that
+# the desktop disappears from the phone's device list while playback on the desktop still works.
+#
+# The off switch is to delete the override and reload, which restores the packaged zone:
+#   sudo rm /etc/firewalld/zones/FedoraWorkstation.xml && sudo firewall-cmd --reload
+#
+# Deliberately NOT done here:
+#   changing the default zone to `public`   would move every interface at once and take ssh with
+#                         it; overriding the zone in place keeps one thing to reason about.
+#   opening the kdeconnect service zone-wide   1714-1764 is inside the range the source rules
+#                         already cover, so a zone-wide entry would only add v6 internet exposure.
+#   touching wlp11s0/eno1 zone assignment   both are on the same LAN and both want the same
+#                         policy; splitting them would be two states to keep in step for nothing.
+#
+# bump-to-reinstall: setup-firewall v1
+set -u
+TAG=setup-firewall
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against throwaway paths; nothing in normal
+# operation sets either.
+: "${FIREWALLD_ZONE_DIR:=/etc/firewalld/zones}"
+: "${STOCK_ZONE:=/usr/lib/firewalld/zones/FedoraWorkstation.xml}"
+
+# The subnet both interfaces sit on. See the note above before changing.
+LAN_CIDR='10.0.0.0/24'
+
+ZONE_CONF="$FIREWALLD_ZONE_DIR/FedoraWorkstation.xml"
+
+# No firewalld means nothing to harden rather than a broken box.
+command -v firewall-cmd >/dev/null 2>&1 || exit 0
+# A packaged zone that has gone missing is a signal that Fedora moved or renamed it; refuse
+# rather than paper an override over a zone whose defaults are no longer what this file assumes.
+[ -f "$STOCK_ZONE" ] || { echo "$TAG: $STOCK_ZONE is missing; not overriding a zone that may have been redefined" >&2; exit 0; }
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+# Written whole rather than mutated with `firewall-cmd --permanent --add/--remove`, so the
+# desired state is one readable file, convergence is one `cmp`, and a partially-applied run
+# cannot leave a zone half-way between two policies.
+cat > "$work/zone.xml" <<CONF
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Managed by chezmoi. Overrides /usr/lib/firewalld/zones/FedoraWorkstation.xml.
+     See run_onchange_after_setup-firewall.sh.tmpl for why the high ports are source-scoped. -->
+<zone>
+  <short>Fedora Workstation</short>
+  <description>Unsolicited incoming packets are rejected except for select services. Ports 1025-65535 are open to the local subnet only, so LAN peer-to-peer applications keep working while the same ports stay closed to routable IPv6.</description>
+  <service name="dhcpv6-client"/>
+  <service name="ssh"/>
+  <service name="samba-client"/>
+  <service name="mdns"/>
+  <forward/>
+  <rule family="ipv4">
+    <source address="$LAN_CIDR"/>
+    <port protocol="tcp" port="1025-65535"/>
+    <accept/>
+  </rule>
+  <rule family="ipv4">
+    <source address="$LAN_CIDR"/>
+    <port protocol="udp" port="1025-65535"/>
+    <accept/>
+  </rule>
+  <rule family="ipv6">
+    <source address="fe80::/10"/>
+    <port protocol="tcp" port="1025-65535"/>
+    <accept/>
+  </rule>
+  <rule family="ipv6">
+    <source address="fe80::/10"/>
+    <port protocol="udp" port="1025-65535"/>
+    <accept/>
+  </rule>
+</zone>
+CONF
+
+# Decidable without root: /etc/firewalld/zones is world-readable, so a converged apply never
+# prompts for a password.
+cmp -s "$work/zone.xml" "$ZONE_CONF" && exit 0
+
+require_sudo "the FedoraWorkstation firewall zone override"
+
+sudo mkdir -p "$FIREWALLD_ZONE_DIR" || { echo "$TAG: could not create $FIREWALLD_ZONE_DIR" >&2; exit 1; }
+sudo install -m 0644 "$work/zone.xml" "$ZONE_CONF" || { echo "$TAG: could not write $ZONE_CONF" >&2; exit 1; }
+echo "$TAG: wrote $ZONE_CONF"
+
+# --check-config parses every zone and reports a bad one by name. Running it before the reload
+# means a typo here is caught while the previous policy is still loaded, rather than after
+# firewalld has already dropped it and fallen back to something stricter than either.
+if ! sudo firewall-cmd --check-config >/dev/null 2>&1; then
+  echo "$TAG: firewalld rejected the new configuration; removing $ZONE_CONF and leaving the packaged zone in place" >&2
+  sudo rm -f "$ZONE_CONF"
+  exit 1
+fi
+
+sudo firewall-cmd --reload >/dev/null 2>&1 || echo "$TAG: firewall-cmd --reload failed; the override applies at the next reload or boot" >&2
+{{ end -}}

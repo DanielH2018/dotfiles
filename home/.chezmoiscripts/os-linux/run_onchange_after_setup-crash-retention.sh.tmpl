@@ -1,0 +1,81 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Bounds /var/crash, which kdump fills and nothing empties.
+#
+# kdump on this box is armed and working: crashkernel=2G-64G:256M,64G-:512M on the cmdline,
+# kdump.service enabled, and `hardlockup_panic=1` / `softlockup_panic=1` from
+# /etc/sysctl.d/99-lockup-panic.conf turning a hang into a panic that leaves a dump rather than a
+# silent freeze. That was the point of setting it up, and it worked — the resume-path NVIDIA bug
+# was diagnosed off these dumps and nothing else on the box recorded it.
+#
+# What nobody set up was the other end. Fedora ships no retention for /var/crash at all: kdump
+# writes a timestamped directory per panic and leaves it there forever. Twelve days of a
+# once-per-suspend panic produced eight dumps and 8.1 GB, the largest single vmcore being 1.7 GB.
+# On a box that panics on a schedule, an unbounded dump directory is a disk-full outage waiting
+# for a long enough bad patch.
+#
+# Why 14 days rather than a dump count: the useful question about a kernel panic is "is this
+# still happening, and is it still the same one", and both are answered by the recent dumps. A
+# count-based keep-newest-N is the shape you actually want, but tmpfiles.d has no such rule and
+# the age-based one needs no new unit, timer, or script to own — systemd-tmpfiles-clean.timer
+# already runs daily and takes a glob and an age. Fourteen days of a once-a-day panic is ~14 GB
+# worst case on a filesystem at 14% of 929 GB, and the realistic rate is far below that.
+#
+# The dmesg goes with the vmcore, which is the part worth knowing before widening or narrowing
+# this: vmcore-dmesg.txt is a couple of hundred kB and is where the panic reason lives, while the
+# vmcore beside it is the multi-GB memory image only a crash debugger reads. This rule ages out
+# both together because tmpfiles cannot select within a directory. If a dump matters, copy its
+# vmcore-dmesg.txt somewhere else before it ages out — 14 days is the window for that, not a
+# promise the evidence is kept.
+#
+# The off switch is to remove the rule; nothing re-creates the dumps it already removed:
+#   sudo rm /etc/tmpfiles.d/kdump-crash.conf
+#
+# Deliberately NOT done here:
+#   changing core_collector   `makedumpfile -l --message-level 7 -d 31` in /etc/kdump.conf is
+#                         already the aggressive setting; the dumps are large because the machine
+#                         has 31 GiB of RAM, not because the collector is lax.
+#   disabling kdump       the dumps are the only reason the NVIDIA resume bug is understood.
+#                         Bounding them is the fix; turning off the instrumentation is not.
+#
+# bump-to-reinstall: crash-retention v1
+set -u
+TAG=crash-retention
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against a throwaway path; nothing in normal
+# operation sets it.
+: "${TMPFILES_DIR:=/etc/tmpfiles.d}"
+
+# How long a crash dump is kept. See the note above before changing.
+CRASH_AGE=14d
+
+TMPFILES_CONF="$TMPFILES_DIR/kdump-crash.conf"
+
+# No kdump means no dumps to bound rather than a missing rule.
+[ -d /var/crash ] || exit 0
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+cat > "$work/tmpfiles.conf" <<CONF
+# Managed by chezmoi. Bounds the crash dumps kdump writes to /var/crash, which Fedora never
+# prunes. Cleaned by systemd-tmpfiles-clean.timer, which Fedora already runs daily.
+e /var/crash - - - $CRASH_AGE
+CONF
+
+# Decidable without root: /etc/tmpfiles.d is world-readable, so a converged apply never prompts
+# for a password.
+cmp -s "$work/tmpfiles.conf" "$TMPFILES_CONF" && exit 0
+
+require_sudo "the /var/crash retention rule"
+
+sudo mkdir -p "$TMPFILES_DIR" || { echo "$TAG: could not create $TMPFILES_DIR" >&2; exit 1; }
+sudo install -m 0644 "$work/tmpfiles.conf" "$TMPFILES_CONF" || { echo "$TAG: could not write $TMPFILES_CONF" >&2; exit 1; }
+echo "$TAG: wrote $TMPFILES_CONF"
+
+# --create only fixes up the directory itself; the age-based removal is --clean, which the daily
+# timer runs. Without this the mode/ownership pass waits for a boot for no reason.
+sudo systemd-tmpfiles --create "$TMPFILES_CONF" >/dev/null 2>&1 \
+  || echo "$TAG: systemd-tmpfiles --create reported a problem with $TMPFILES_CONF" >&2
+{{ end -}}

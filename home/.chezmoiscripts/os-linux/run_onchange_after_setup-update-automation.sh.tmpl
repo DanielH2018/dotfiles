@@ -9,13 +9,15 @@
 # package fails, so one bad vendor mirror takes the other thirty with it) leaves no trace anyone
 # reads.
 #
-# Five changes, sharing one sudo probe:
+# Six changes, sharing one sudo probe:
 #   1. /etc/dnf/automatic.conf      apply the updates; report to the motd
 #   2. /etc/dnf/repos.override.d    let a flaky vendor repo be skipped rather than fail everything
 #   3. /etc/tmpfiles.d              bound the package cache that keepcache=True otherwise keeps
 #   4. fwupd-refresh.timer          check for firmware updates at all
 #   5. a dnf5-automatic drop-in     fetch outside the Mullvad tunnel, which serves the vendor
 #                                   repos two orders of magnitude slower than the open internet
+#   6. a second drop-in + helper    say so when an unattended run leaves a reboot due, or leaves
+#                                   held-back updates that only a human will ever install
 #
 # Why the kernel and the NVIDIA stack are held back from unattended application: this box builds
 # its NVIDIA module through akmod, so a kernel update and a driver update are one event, and an
@@ -56,17 +58,19 @@
 # That is the trade the split-tunnel drop-in makes, deliberately, and `sudo rm` on the drop-in
 # plus a daemon-reload undoes it until the next apply writes it back.
 #
-# bump-to-reinstall: update-automation v2
+# bump-to-reinstall: update-automation v3
 set -u
 TAG=update-automation
 {{ includeTemplate "linux-install.sh" . }}
 
-# All three overridable purely so the tests can drive this against throwaway paths, the same way
+# All overridable purely so the tests can drive this against throwaway paths, the same way
 # linux-install.sh exposes REPO_DIR; nothing in normal operation sets any of them.
 : "${AUTOMATIC_CONF:=/etc/dnf/automatic.conf}"
 : "${REPO_OVERRIDE_DIR:=/etc/dnf/repos.override.d}"
 : "${TMPFILES_DIR:=/etc/tmpfiles.d}"
 : "${SYSTEMD_UNIT_DIR:=/etc/systemd/system}"
+: "${MOTD_DIR:=/etc/motd.d}"
+: "${REPORT_BIN:=/usr/local/bin/dnf-update-report}"
 
 # Held back from unattended application; comma-separated, matching excludepkgs in dnf5.conf(5).
 EXCLUDE='kernel*,kmod-nvidia*,akmod-nvidia*,xorg-x11-drv-nvidia*,nvidia-*'
@@ -74,12 +78,17 @@ EXCLUDE='kernel*,kmod-nvidia*,akmod-nvidia*,xorg-x11-drv-nvidia*,nvidia-*'
 # mullvad-stable lives in mullvad.repo and code lives in vscode.repo.
 SKIPPABLE='code google-chrome warpdotdev mullvad-stable rpmfusion-nonfree-nvidia-driver'
 # How long a downloaded rpm stays cached. keepcache=True buys a free retry, reinstall or
-# downgrade; a month is longer than that is ever useful and still bounds the directory.
-CACHE_AGE=30d
+# downgrade, and none of those is useful weeks later. Measured 2026-08-15 before this bound had
+# ever run: 499 rpms and 3.0 GB accumulated in ten days, all of it newer than the 30d this used
+# to be — so the old value was a ceiling the directory had not yet reached rather than one it was
+# being held at, and the steady state it implied was closer to 9 GB than 3. Two weeks still spans
+# any plausible "undo last week's update" and roughly halves that.
+CACHE_AGE=14d
 
 OVERRIDE_CONF="$REPO_OVERRIDE_DIR/20-vendor-skip-if-unavailable.repo"
 TMPFILES_CONF="$TMPFILES_DIR/dnf-package-cache.conf"
 SPLIT_TUNNEL_CONF="$SYSTEMD_UNIT_DIR/dnf5-automatic.service.d/10-split-tunnel.conf"
+REPORT_DROPIN="$SYSTEMD_UNIT_DIR/dnf5-automatic.service.d/20-report.conf"
 
 # Everything here is dnf-specific, so a Debian box is not misconfigured — it has nothing to do.
 [ "$PM" = dnf ] || exit 0
@@ -137,6 +146,87 @@ cat > "$work/tmpfiles.conf" <<CONF
 e /var/cache/libdnf5/*/packages - - - $CACHE_AGE
 CONF
 
+# Closes the loop an unattended installer leaves open. `apply_updates = yes` replaces libraries
+# on disk while every already-running process keeps the deleted copies mapped, and `reboot =
+# never` means nothing ever tells anyone. The result is a box that is patched by any audit that
+# reads rpm and unpatched in every process that matters, indefinitely.
+#
+# The emitters do not close it either. `emit_via = motd` writes /etc/motd.d, and pam_motd is
+# configured in /etc/pam.d/sshd and nowhere else on this box — so the notice is shown when you
+# ssh in and never when you sit down at it. That is the wrong way round for a desktop.
+#
+# So: motd for the ssh case, which is free and already wired, plus a desktop notification for the
+# case that actually happens here. The held-back count rides along because excluding kernel and
+# NVIDIA from unattended runs (see EXCLUDE above) silently converts them into updates nobody is
+# ever prompted about — a permanently-pending set that no longer produces a signal is the failure
+# mode this line exists to prevent.
+cat > "$work/update-report.sh" <<'CONF'
+#!/bin/sh
+# Managed by chezmoi. See run_onchange_after_setup-update-automation.sh.tmpl.
+# ExecStartPost of dnf5-automatic.service; runs as root after an unattended run.
+set -u
+# Globbing off so these reach dnf5 as patterns instead of being expanded against the working
+# directory. Keep in step with excludepkgs in /etc/dnf/automatic.conf.
+set -f
+HELD='kernel* kmod-nvidia* akmod-nvidia* xorg-x11-drv-nvidia* nvidia-*'
+MOTD_FILE=/etc/motd.d/50-updates
+
+# `needs-restarting -r` exits 0 when nothing running was replaced and 1 when a reboot is due.
+# Anything else is a broken check (no metadata, no plugin) and is reported as neither, so a
+# failure to determine the answer never turns into a standing nag.
+dnf5 needs-restarting -r >/dev/null 2>&1
+case "$?" in
+  0) reboot_due=0 ;;
+  1) reboot_due=1 ;;
+  *) reboot_due=0 ;;
+esac
+
+# check-update exits 100 when there are updates and 0 when there are none, so the status is not
+# usable as a count. Lines of exactly three fields are the "name.arch version repo" rows, which
+# skips the "Obsoleting packages" trailer and any repo-refresh chatter.
+# shellcheck disable=SC2086 # HELD is a list of patterns and must split into separate arguments;
+# `set -f` above is what makes that safe, by stopping the patterns expanding against the cwd.
+held_count=$(dnf5 -q check-update $HELD 2>/dev/null | awk 'NF==3 {n++} END {print n+0}')
+
+msg=''
+[ "$reboot_due" -eq 1 ] && msg="A reboot is due: core libraries were replaced since this boot."
+if [ "$held_count" -gt 0 ]; then
+  [ -n "$msg" ] && msg="$msg
+"
+  msg="${msg}${held_count} held-back update(s) (kernel / NVIDIA) need installing by hand."
+fi
+
+# Removed rather than left stale when there is nothing to say, so a "reboot is due" notice does
+# not survive the reboot that satisfied it.
+if [ -z "$msg" ]; then
+  rm -f "$MOTD_FILE"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$MOTD_FILE")"
+printf '%s\n' "$msg" > "$MOTD_FILE"
+
+# Best-effort by design: no graphical session at 06:42 is the normal case, and the motd above is
+# the durable record either way. Never fails the unit — ExecStartPost returning non-zero would
+# mark a successful update run as failed.
+# shellcheck disable=SC2046 # the split is the mechanism: it puts the uid in $1 and the user in
+# $2. `set -f` above keeps it a word split rather than a glob.
+set -- $(loginctl list-users --no-legend 2>/dev/null | awk 'NR==1 {print $1, $2}')
+uid="${1:-}"
+user="${2:-}"
+if [ -n "$uid" ] && [ -n "$user" ] && [ -S "/run/user/$uid/bus" ]; then
+  runuser -u "$user" -- env "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" \
+    notify-send -a "Software updates" "Software updates" "$msg" >/dev/null 2>&1
+fi
+exit 0
+CONF
+
+cat > "$work/report.conf" <<CONF
+# Managed by chezmoi. See run_onchange_after_setup-update-automation.sh.tmpl.
+[Service]
+ExecStartPost=$REPORT_BIN
+CONF
+
 # Everything below the convergence check must be decidable without root, so a no-op apply never
 # prompts for a password. All four target files are world-readable.
 need_pkg=0
@@ -144,12 +234,16 @@ need_conf=0
 need_override=0
 need_tmpfiles=0
 need_split=0
+need_report=0
+need_dropin=0
 need_timers=''
 
 rpm -q dnf5-plugin-automatic >/dev/null 2>&1 || need_pkg=1
 cmp -s "$work/automatic.conf" "$AUTOMATIC_CONF" || need_conf=1
 cmp -s "$work/override.repo" "$OVERRIDE_CONF" || need_override=1
 cmp -s "$work/tmpfiles.conf" "$TMPFILES_CONF" || need_tmpfiles=1
+cmp -s "$work/update-report.sh" "$REPORT_BIN" || need_report=1
+cmp -s "$work/report.conf" "$REPORT_DROPIN" || need_dropin=1
 # No Mullvad means nothing to route around, so the drop-in is not written at all rather than
 # written and inert. An existing one is left alone: it falls back to a plain run on its own.
 if command -v mullvad-exclude >/dev/null 2>&1; then
@@ -171,7 +265,8 @@ if rpm -q fwupd >/dev/null 2>&1; then
 fi
 
 if [ "$need_pkg" -eq 0 ] && [ "$need_conf" -eq 0 ] && [ "$need_override" -eq 0 ] \
-   && [ "$need_tmpfiles" -eq 0 ] && [ "$need_split" -eq 0 ] && [ -z "$need_timers" ]; then
+   && [ "$need_tmpfiles" -eq 0 ] && [ "$need_split" -eq 0 ] && [ "$need_report" -eq 0 ] \
+   && [ "$need_dropin" -eq 0 ] && [ -z "$need_timers" ]; then
   exit 0
 fi
 
@@ -209,6 +304,22 @@ fi
 
 if [ "$need_split" -eq 1 ]; then
   install_as_root "$work/split-tunnel.conf" "$SPLIT_TUNNEL_CONF" || exit 1
+  # A drop-in systemd has not re-read is a file, not an override.
+  sudo systemctl daemon-reload || echo "$TAG: systemctl daemon-reload failed" >&2
+fi
+
+if [ "$need_report" -eq 1 ]; then
+  # 0755 and under /usr/local/bin rather than ~/.local/bin: this runs as root from a systemd
+  # unit, and a root unit executing a script from a user-writable directory would hand every
+  # local process a way into it.
+  sudo mkdir -p "$(dirname "$REPORT_BIN")" || { echo "$TAG: could not create $(dirname "$REPORT_BIN")" >&2; exit 1; }
+  sudo install -m 0755 "$work/update-report.sh" "$REPORT_BIN" \
+    || { echo "$TAG: could not write $REPORT_BIN" >&2; exit 1; }
+  echo "$TAG: wrote $REPORT_BIN"
+fi
+
+if [ "$need_dropin" -eq 1 ]; then
+  install_as_root "$work/report.conf" "$REPORT_DROPIN" || exit 1
   # A drop-in systemd has not re-read is a file, not an override.
   sudo systemctl daemon-reload || echo "$TAG: systemctl daemon-reload failed" >&2
 fi

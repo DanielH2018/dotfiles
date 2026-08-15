@@ -1,0 +1,63 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Keeps plocate's nightly index off the NTFS games drive.
+#
+# plocate-updatedb.service takes 1m34s on this box, second only to the unattended dnf run, and
+# nearly all of it is walking /mnt/games — 685 GB of Steam library on an NTFS volume that
+# /etc/updatedb.conf prunes neither by path (PRUNEPATHS lists /tmp /media /dev /sys /proc /run
+# /var/cache /var/spool) nor by filesystem (ntfs3 is absent from PRUNEFS). Every night it indexes
+# a few hundred thousand shader-cache and asset files onto a SATA SSD.
+#
+# The tradeoff is real and worth stating: after this, `locate` no longer finds anything under
+# /mnt/games. That is the point — a Steam library is browsed through Steam, not through locate,
+# and the index is more useful without a few hundred thousand .vpk and .pak entries in it. If
+# that turns out to be wrong, the off switch is to drop /mnt/games back out of PRUNEPATHS.
+#
+# Why PRUNEPATHS rather than adding ntfs3 to PRUNEFS: PRUNEFS would also silently exclude any
+# future NTFS mount, which is a bigger claim than this change is making. Naming the one path
+# keeps the decision visible in the file.
+#
+# Why the existing value is edited rather than replaced wholesale: repeating Fedora's defaults
+# here would freeze them, and a distro that later adds a path to PRUNEPATHS would have it quietly
+# dropped on this box. Appending to whatever is present keeps their list theirs.
+#
+# The off switch, which the next apply will not undo because the convergence check is a substring
+# test on the live file:
+#   sudo sed -i 's| /mnt/games||' /etc/updatedb.conf
+#
+# bump-to-reinstall: updatedb-prune v1
+set -u
+TAG=updatedb-prune
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against a throwaway file; nothing in normal
+# operation sets either.
+: "${UPDATEDB_CONF:=/etc/updatedb.conf}"
+: "${PRUNE_PATH:=/mnt/games}"
+
+# No config means plocate is not installed the way this assumes; no mount point means there is
+# nothing expensive to skip. Neither is a misconfiguration.
+[ -f "$UPDATEDB_CONF" ] || exit 0
+[ -d "$PRUNE_PATH" ] || exit 0
+
+# Decidable without root: /etc/updatedb.conf is world-readable, so a converged apply never
+# prompts for a password. Matched with surrounding spaces or a closing quote so that a
+# hypothetical /mnt/games-backup entry does not read as a match.
+if grep -qE "^PRUNEPATHS[^\"]*\"[^\"]*(^|[[:space:]])${PRUNE_PATH}([[:space:]]|\")" "$UPDATEDB_CONF"; then
+  exit 0
+fi
+
+# A file with no PRUNEPATHS line at all is not one this edit understands; say so rather than
+# append a line whose interaction with the rest of the file is unknown.
+grep -q '^PRUNEPATHS' "$UPDATEDB_CONF" || {
+  echo "$TAG: $UPDATEDB_CONF has no PRUNEPATHS line; add $PRUNE_PATH by hand" >&2
+  exit 0
+}
+
+require_sudo "pruning $PRUNE_PATH from the plocate index"
+
+# Appends inside the existing quotes, on the PRUNEPATHS line only.
+sudo sed -i "/^PRUNEPATHS/ s|\"\$| ${PRUNE_PATH}\"|" "$UPDATEDB_CONF" \
+  || { echo "$TAG: could not edit $UPDATEDB_CONF" >&2; exit 1; }
+echo "$TAG: added $PRUNE_PATH to PRUNEPATHS in $UPDATEDB_CONF"
+{{ end -}}
