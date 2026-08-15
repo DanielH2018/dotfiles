@@ -148,12 +148,24 @@ broken_connectors() {
 	return 0
 }
 
-reprobe() { printf 'detect\n' >"$DRM_DIR/$1/status" 2>/dev/null; }
+# The write's stderr is logged rather than silenced, because "the kernel refused the write" and
+# "the driver ignored the reprobe" are different diagnoses with different next steps, and they
+# are indistinguishable from the outside once the error text is gone. `2>&1 >file` and not
+# `>file 2>&1`: redirections apply left to right, so this aims stderr at the capture first and
+# only then sends stdout to the connector -- the other order writes the error into sysfs.
+write_status() {
+	local conn=$1 value=$2 err
+	err=$(printf '%s\n' "$value" 2>&1 >"$DRM_DIR/$conn/status") && return 0
+	log "$conn: writing '$value' to status failed: ${err:-no error text}"
+	return 1
+}
+
+reprobe() { write_status "$1" detect; }
 
 unplug_replug() {
-	printf 'off\n' >"$DRM_DIR/$1/status" 2>/dev/null || return 1
+	write_status "$1" off || return 1
 	sleep 1
-	printf 'detect\n' >"$DRM_DIR/$1/status" 2>/dev/null
+	write_status "$1" detect
 }
 
 mapfile -t broken < <(broken_connectors)
@@ -225,6 +237,12 @@ TimeoutStartSec=120
 StateDirectory=display-edid-health
 ProtectHome=yes
 ProtectSystem=strict
+# The one path the sandbox must not cover: every rung of the recovery is a write to
+# /sys/class/drm/<connector>/status. ProtectSystem=strict is documented as exempting the API
+# filesystems, but naming it explicitly is a no-op if it already was writable and the fix if it
+# was not -- and the failure mode without it is silent, a unit that runs, logs, and changes
+# nothing.
+ReadWritePaths=/sys/class/drm
 PrivateTmp=yes
 NoNewPrivileges=yes
 DISPLAY_EDID_SERVICE
@@ -244,6 +262,12 @@ TimeoutStartSec=120
 StateDirectory=display-edid-health
 ProtectHome=yes
 ProtectSystem=strict
+# The one path the sandbox must not cover: every rung of the recovery is a write to
+# /sys/class/drm/<connector>/status. ProtectSystem=strict is documented as exempting the API
+# filesystems, but naming it explicitly is a no-op if it already was writable and the fix if it
+# was not -- and the failure mode without it is silent, a unit that runs, logs, and changes
+# nothing.
+ReadWritePaths=/sys/class/drm
 PrivateTmp=yes
 NoNewPrivileges=yes
 
@@ -263,6 +287,12 @@ TimeoutStartSec=60
 StateDirectory=display-edid-health
 ProtectHome=yes
 ProtectSystem=strict
+# The one path the sandbox must not cover: every rung of the recovery is a write to
+# /sys/class/drm/<connector>/status. ProtectSystem=strict is documented as exempting the API
+# filesystems, but naming it explicitly is a no-op if it already was writable and the fix if it
+# was not -- and the failure mode without it is silent, a unit that runs, logs, and changes
+# nothing.
+ReadWritePaths=/sys/class/drm
 PrivateTmp=yes
 NoNewPrivileges=yes
 DISPLAY_EDID_FORCE

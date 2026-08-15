@@ -93,7 +93,7 @@ function stubDir(root) {
 // call order in the non-forced path is: confirm delay (1), settle after re-detect (2), the 1s
 // inside the forced off/detect (3), settle after that (4). So repairAfter:2 exercises the first
 // rung succeeding and repairAfter:4 the second, while leaving it unset exercises neither working.
-function runHealth({ connectors, args = [], repairAfter, repairVendor = 'GSM', minInterval = 0, stampAgeSeconds } = {}) {
+function runHealth({ connectors, args = [], repairAfter, repairVendor = 'GSM', minInterval = 0, stampAgeSeconds, readOnlyStatus = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'display-edid-'));
   dirs.push(root);
   const drm = fakeDrm(root, connectors);
@@ -134,6 +134,10 @@ exit 0
 
   const scriptFile = path.join(root, 'display-edid-health');
   fs.writeFileSync(scriptFile, healthScript(), { mode: 0o755 });
+
+  // Stands in for a sandbox that left /sys read-only: the script's writes fail rather than being
+  // ignored, which is a different diagnosis and has to read differently in the journal.
+  if (readOnlyStatus && target) fs.chmodSync(path.join(drm, target.name, 'status'), 0o444);
 
   const env = {
     PATH: binDir,
@@ -212,6 +216,16 @@ test('says plainly when neither rung recovers, and exits non-zero', { skip }, ()
   // Both rungs were tried before giving up, rather than one failing and the other being skipped.
   assert.match(r.out, /forcing a re-detect/);
   assert.match(r.out, /forcing it off and re-detecting/);
+});
+
+test('reports the error text when the write to status is refused', { skip }, () => {
+  // The whole justification for shipping this before the fault can be reproduced is that the
+  // journal will name the failing layer. "Permission denied" and "the driver ignored it" are the
+  // two candidates and they need different fixes, so the error text cannot be swallowed.
+  const r = runHealth({ connectors: [placeholder('card1-DP-3')], readOnlyStatus: true });
+  assert.strictEqual(r.exitCode, 1);
+  assert.match(r.out, /card1-DP-3: writing 'detect' to status failed:.*[Pp]ermission denied/);
+  assert.match(r.out, /card1-DP-3: writing 'off' to status failed:/);
 });
 
 test('treats a connected connector with a zero-length EDID as broken', { skip }, () => {
@@ -332,12 +346,15 @@ test('the resume unit is ordered after the sleep targets, not just wanted by the
 });
 
 test('no unit hardens /sys out of reach of its own recovery', { skip }, () => {
-  // ProtectKernelTunables mounts /sys read-only. Every write in the ladder is to
-  // /sys/class/drm/<connector>/status and is silenced with 2>/dev/null, so with it set the units
-  // would run, log, and fix nothing.
+  // Every rung of the recovery writes to /sys/class/drm/<connector>/status, so the sandbox has to
+  // leave that path writable. ProtectKernelTunables would mount /sys read-only outright.
+  // ProtectSystem=strict is documented as exempting the API filesystems, but the failure mode if
+  // that ever changes is silent -- units that run, log, and fix nothing -- so ReadWritePaths
+  // names the path rather than relying on the exemption.
   const r = runInstaller();
   for (const n of ['display-edid-health.service', 'display-edid-health-resume.service', 'display-edid-health-force.service']) {
     assert.doesNotMatch(r.unit(n), /ProtectKernelTunables/, `${n} sets ProtectKernelTunables`);
+    assert.match(r.unit(n), /^ReadWritePaths=\/sys\/class\/drm$/m, `${n} does not keep /sys/class/drm writable`);
   }
 });
 
