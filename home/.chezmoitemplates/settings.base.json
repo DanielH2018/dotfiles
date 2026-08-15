@@ -342,13 +342,14 @@
           }
         ]
       },
-      {{/* baseline for artifact-refresh.sh's Stop hook: what was already unlanded before
-           this session's own first commit, so a sibling session's still-unlanded work in
-           the same checkout is never misattributed to this one. "startup" only, not
-           "compact" -- session_id survives compaction and reseeding there would discard
-           what this session had already accumulated. */}}
+      {{/* the floor artifact-commit-track.sh measures this session's own commits against:
+           where HEAD was when the session began. Every source, not just "startup" -- a
+           resumed or cleared session needs the floor too, and re-stamping is safe because
+           this hook writes only `.tip` and never `.mine`, so nothing already credited to
+           the session is lost. (Its predecessor recorded the subject list the Stop hook
+           read, which is why THAT one had to be startup-only.) */}}
       {
-        "matcher": "startup",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
@@ -445,6 +446,21 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {{/* `pre` half of the commit tracker: stamps where HEAD is before a
+               commit-shaped command, so the `post` half can credit THIS session with
+               exactly what that command added. Attribution has to come from a tool
+               call -- `ref..HEAD` is shared branch state and reads identically in every
+               session sharing the checkout, which is why the startup-snapshot scheme it
+               replaces reported siblings' commits as yours. Stamping only in `post`
+               would measure from this session's previous commit instead, adopting
+               anything a sibling committed in between. Exits on a string match for
+               anything not commit-shaped, prints nothing, and always exits 0, so it
+               cannot perturb the permission decision the rest of this chain makes. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact-commit-track.sh pre",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "~/.claude/hooks/block-dangerous-bash.sh",
@@ -479,6 +495,18 @@
       }
     ],
     "PostToolUse": [
+      {{/* `post` half of the commit tracker: credits this session with what the command
+           it brackets added to HEAD. See the PreToolUse entry for the pair. */}}
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/artifact-commit-track.sh post",
+            "timeout": 10
+          }
+        ]
+      },
       {
         "matcher": "Edit|Write",
         "hooks": [

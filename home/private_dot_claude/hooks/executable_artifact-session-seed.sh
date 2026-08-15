@@ -1,22 +1,25 @@
 #!/bin/bash
-# SessionStart (matcher: startup only): record which currently-unlanded commits on
-# this branch predate this session, so artifact-refresh.sh's Stop hook can tell "a
-# sibling session's still-unlanded work" apart from "this session's own work" when
-# several sessions share one checkout (the common case here -- EnterWorktree is
-# opt-in, most agents work directly in the primary checkout).
+# SessionStart: stamp where HEAD was when this session began, so
+# artifact-commit-track.sh has a floor to measure its first commit against. Everything
+# this session goes on to create is `HEAD --not <upstream> --not <tip>`; without the
+# floor that hook records nothing at all (see its header for why claiming the branch
+# instead is the bug, not the fallback).
 #
-# Without this baseline, artifact-refresh.sh has no way to attribute an unlanded
-# commit to a session: `git log ref..HEAD` is shared branch state, not per-process, so
-# every session sees the exact same list regardless of who wrote it. Recording that
-# list here, before this session's own first commit, lets the Stop hook later treat
-# only NEW entries (ones absent from this file) as "mine".
+# This used to record a SUBJECT LIST -- which commits were already unlanded at
+# startup -- for the Stop hook to subtract. That never worked in practice: sessions
+# here start on a clean master, so the list was empty (70 of 71 files, measured
+# 2026-08-15) and subtracting it changed nothing, leaving every sibling session's
+# commits attributed to every concurrent session. Attribution now comes from the
+# session's own tool calls, and all this hook owes them is the starting point.
 #
-# Runs on "startup" only, not "compact" -- session_id is stable across a compaction,
-# so reseeding there would discard whatever this session had already accumulated as
-# genuinely its own, right before the Stop hook needed to read it.
+# Runs on every source, not just "startup". A resumed or cleared session needs the
+# floor as much as a fresh one, and re-stamping is safe because this hook only ever
+# writes `.tip` -- it never touches `.mine`, so a compaction or resume keeps whatever
+# this session had already been credited with. (The old subject-list seed had to be
+# startup-only for exactly that reason: it wrote the file the Stop hook read.)
 #
-# Best-effort and silent throughout: a failure here just means artifact-refresh.sh
-# falls back to its pre-fix behavior (attribute everything unlanded), not a bad decision.
+# Best-effort and silent throughout: a failure here means commits go unattributed and
+# the artifact nudge stays quiet, not that it fires with somebody else's work in it.
 
 set -u
 
@@ -31,9 +34,9 @@ session=$(hook_field '.session_id // empty')
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 wt=$(artifact_worktree_slug) || exit 0
-ref=$(artifact_upstream_ref) || exit 0
 sesskey=$(artifact_session_key "$wt" "$session") || exit 0
+head=$(git rev-parse --verify --quiet HEAD) || exit 0
 
 mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null
-git log --format=%s "$ref..HEAD" > "$ARTIFACT_STATE_DIR/$sesskey.baseline" 2>/dev/null
+printf '%s\n' "$head" > "$ARTIFACT_STATE_DIR/$sesskey.tip" 2>/dev/null
 exit 0

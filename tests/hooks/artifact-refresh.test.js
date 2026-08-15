@@ -9,6 +9,7 @@ const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'ho
 const REFRESH = path.join(HOOKS, 'executable_artifact-refresh.sh');
 const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
 const SEED = path.join(HOOKS, 'executable_artifact-session-seed.sh');
+const TRACK = path.join(HOOKS, 'executable_artifact-commit-track.sh');
 
 const dirs = [];
 
@@ -34,7 +35,7 @@ function repoWithOrigin() {
   return { root, work };
 }
 
-// The bug this file guards is cross-worktree, so the fixture has to make real ones --
+// The first bug this file guarded was cross-worktree, so the fixture makes real ones --
 // a second clone would not share refs/remotes/origin and could not reproduce it.
 function worktree(work, root, name, branch) {
   const p = path.join(root, name);
@@ -42,7 +43,7 @@ function worktree(work, root, name, branch) {
   return p;
 }
 
-function commit(wt, msg) {
+function gitCommit(wt, msg) {
   sh(`echo x >> ${msg}.txt && git add -A && git commit -qm '${msg}'`, wt);
 }
 
@@ -68,6 +69,12 @@ function slug(dir, gitDirFlag) {
 const wtSlug = (dir) => slug(dir, '--git-dir');
 const repoSlug = (dir) => slug(dir, '--git-common-dir');
 
+// The per-session key: worktree slug folded with session_id, as artifact_session_key
+// computes it.
+function sessionSlug(dir, sessionId) {
+  return sh(`printf '%s:%s' '${wtSlug(dir)}' '${sessionId}' | sha1sum | cut -c1-16`, dir);
+}
+
 // Seeds the registry the way link-artifact.sh would: the repo entry is the one a
 // plan gets, so every worktree of the project inherits it.
 function track(dir, stateDir, artifact, key = repoSlug(dir)) {
@@ -81,8 +88,10 @@ function artifactFile(root, name = 'plan.html') {
   return p;
 }
 
+const SID = 'session-1';
+
 // Runs the Stop hook. `stopActive` mirrors the harness re-invoking it after it blocked.
-function runRefresh(cwd, stateDir, { stopActive = false, sessionId } = {}) {
+function runRefresh(cwd, stateDir, { stopActive = false, sessionId = SID } = {}) {
   const input = JSON.stringify({ stop_hook_active: stopActive, session_id: sessionId });
   const r = spawnSync('bash', [REFRESH], {
     input, cwd, encoding: 'utf8',
@@ -93,9 +102,10 @@ function runRefresh(cwd, stateDir, { stopActive = false, sessionId } = {}) {
   return out ? JSON.parse(out) : null;
 }
 
-// Runs the SessionStart seed hook that records, per (worktree, session_id), which
-// commits were already unlanded before this session's own first commit.
-function runSeed(cwd, stateDir, sessionId) {
+// Runs the SessionStart hook that stamps where HEAD was when a session began. Every
+// test starts its sessions through this, because that stamp is the floor the commit
+// tracker measures against -- an unseeded session claims nothing at all, by design.
+function runSeed(cwd, stateDir, sessionId = SID) {
   const r = spawnSync('bash', [SEED], {
     input: JSON.stringify({ session_id: sessionId }),
     cwd, encoding: 'utf8',
@@ -104,8 +114,35 @@ function runSeed(cwd, stateDir, sessionId) {
   assert.strictEqual(r.status, 0, `seed hook exits 0 (stderr: ${r.stderr})`);
 }
 
-function pendingOf(stateDir, dir) {
-  const p = path.join(stateDir, `${wtSlug(dir)}.pending`);
+// One half of the commit tracker. The pair brackets a Bash call: `pre` stamps HEAD
+// before it, `post` credits this session with what it added. This is the whole
+// attribution mechanism -- a session that never runs it records nothing.
+function runTrack(cwd, stateDir, mode, { sessionId = SID, cmd = 'git commit -qm x' } = {}) {
+  const r = spawnSync('bash', [TRACK, mode], {
+    input: JSON.stringify({ session_id: sessionId, tool_input: { command: cmd } }),
+    cwd, encoding: 'utf8',
+    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir },
+  });
+  assert.strictEqual(r.status, 0, `track hook (${mode}) exits 0 (stderr: ${r.stderr})`);
+  assert.strictEqual((r.stdout || '').trim(), '', `track hook (${mode}) says nothing`);
+}
+
+// A git-moving command run BY a session, bracketed by the hook pair the way the
+// harness brackets a real Bash call.
+function tracked(wt, stateDir, sessionId, cmd, run) {
+  runTrack(wt, stateDir, 'pre', { sessionId, cmd });
+  run();
+  runTrack(wt, stateDir, 'post', { sessionId, cmd });
+}
+
+// A commit made BY a session.
+function commit(wt, msg, stateDir, sessionId = SID) {
+  if (!stateDir) return gitCommit(wt, msg);
+  tracked(wt, stateDir, sessionId, `git commit -qm '${msg}'`, () => gitCommit(wt, msg));
+}
+
+function pendingOf(stateDir, dir, sessionId = SID) {
+  const p = path.join(stateDir, `${sessionSlug(dir, sessionId)}.pending`);
   return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim().split('\n') : [];
 }
 
@@ -118,6 +155,7 @@ test('tracked artifact but no work of our own -> silent', () => {
   const { root, work } = repoWithOrigin();
   const st = state(root);
   track(work, st, artifactFile(root));
+  runSeed(work, st);
 
   assert.strictEqual(runRefresh(work, st), null, 'nothing has landed, so nothing is owed');
   assert.deepStrictEqual(pendingOf(st, work), [], 'and there is nothing to remember');
@@ -128,10 +166,11 @@ test('our commits still unlanded -> silent, but remembered for when they land', 
   const st = state(root);
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
 
   assert.strictEqual(runRefresh(a, st), null, 'work in progress is not work that shipped');
-  assert.deepStrictEqual(pendingOf(st, a), ['first-slice'], 'recorded against this worktree');
+  assert.deepStrictEqual(pendingOf(st, a), ['first-slice'], 'recorded against this session');
 });
 
 test('our commits landed -> blocks with a refresh instruction', () => {
@@ -140,7 +179,8 @@ test('our commits landed -> blocks with a refresh instruction', () => {
   const art = artifactFile(root);
   track(work, st, art);
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -154,20 +194,22 @@ test('our commits landed -> blocks with a refresh instruction', () => {
   assert.match(out.reason, /do not invent status/i, 'gives an out when commits are unrelated');
 });
 
-// The reported bug: with the diff taken against upstream, everything another session
-// landed arrived in your nudge as if you had written it.
+// The originally reported bug: with the diff taken against upstream, everything
+// another session landed arrived in your nudge as if you had written it.
 test('another worktree landing -> silent here, and absent from our nudge', () => {
   const { root, work } = repoWithOrigin();
   const st = state(root);
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
   const b = worktree(work, root, 'wt-b', 'unrelated');
+  runSeed(a, st);
+  runSeed(b, st, 'session-b');
 
-  commit(a, 'ours-first');
-  commit(a, 'ours-second');
-  commit(b, 'theirs');
+  commit(a, 'ours-first', st);
+  commit(a, 'ours-second', st);
+  commit(b, 'theirs', st, 'session-b');
   runRefresh(a, st);
-  runRefresh(b, st);
+  runRefresh(b, st, { sessionId: 'session-b' });
 
   land(b, 'unrelated');
   assert.strictEqual(runRefresh(a, st), null,
@@ -190,12 +232,13 @@ test('the reported SHA is the post-rebase one, not the pre-land one', () => {
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
   const b = worktree(work, root, 'wt-b', 'unrelated');
+  runSeed(a, st);
 
-  commit(a, 'ours');
+  commit(a, 'ours', st);
   const before = sh('git rev-parse --short HEAD', a);
   runRefresh(a, st);
 
-  commit(b, 'theirs');
+  gitCommit(b, 'theirs');
   land(b, 'unrelated');
   land(a, 'slice-one');
   const after = sh('git rev-parse --short HEAD', a);
@@ -216,10 +259,11 @@ test('successive slices from one worktree each report only themselves', () => {
   const art = path.join(artDir, 'plan.html');
   fs.writeFileSync(art, '<html>');
   const a = worktree(work, root, 'wt-a', 'slices');
+  runSeed(a, st);
 
   const writeUp = () => {
     const r = spawnSync('bash', [LINK], {
-      input: JSON.stringify({ tool_input: { file_path: art } }),
+      input: JSON.stringify({ tool_input: { file_path: art }, session_id: SID }),
       cwd: a, encoding: 'utf8',
       env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: st, CLAUDE_STATE_HOST_DIR: '' },
     });
@@ -228,7 +272,7 @@ test('successive slices from one worktree each report only themselves', () => {
   writeUp();
 
   for (const [n, name] of [['one', 'slice-one'], ['two', 'slice-two'], ['three', 'slice-three']]) {
-    commit(a, name);
+    commit(a, name, st);
     runRefresh(a, st);
     sh(`git fetch -q origin && git rebase -q origin/main`, a);
     sh(`git push -q origin slices:main && git fetch -q origin`, a);
@@ -247,7 +291,8 @@ test('a branch longer than the list cap says how many it left out', () => {
   const st = state(root);
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  for (let i = 1; i <= 23; i++) commit(a, `c${i}`);
+  runSeed(a, st);
+  for (let i = 1; i <= 23; i++) commit(a, `c${i}`, st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -263,7 +308,8 @@ test('pending work that never landed -> silent', () => {
   const st = state(root);
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'abandoned');
+  runSeed(a, st);
+  commit(a, 'abandoned', st);
   runRefresh(a, st);
   sh('git reset -q --hard origin/main', a);
 
@@ -275,7 +321,8 @@ test('stop_hook_active -> silent, so a block cannot loop', () => {
   const st = state(root);
   track(work, st, artifactFile(root));
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -288,7 +335,8 @@ test('artifact deleted (pruned) -> silent rather than resurrecting it', () => {
   const st = state(root);
   track(work, st, path.join(root, 'gone.html'));
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -302,7 +350,8 @@ test('a worktree that wrote its own artifact tracks that one, not the project pl
   const a = worktree(work, root, 'wt-a', 'slice-one');
   const own = artifactFile(root, 'my-own.html');
   track(a, st, own, wtSlug(a));
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -318,7 +367,8 @@ test('link-artifact registers the .html under both keys and clears pending', () 
   const { root, work } = repoWithOrigin();
   const st = state(root);
   const a = worktree(work, root, 'wt-a', 'slice-one');
-  commit(a, 'first-slice');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
   runRefresh(a, st);
   land(a, 'slice-one');
 
@@ -328,7 +378,7 @@ test('link-artifact registers the .html under both keys and clears pending', () 
   fs.writeFileSync(art, '<html>');
 
   const r = spawnSync('bash', [LINK], {
-    input: JSON.stringify({ tool_input: { file_path: art } }),
+    input: JSON.stringify({ tool_input: { file_path: art }, session_id: SID }),
     cwd: a, encoding: 'utf8',
     env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: st, CLAUDE_STATE_HOST_DIR: '' },
   });
@@ -342,36 +392,152 @@ test('link-artifact registers the .html under both keys and clears pending', () 
   assert.strictEqual(runRefresh(a, st), null, 'so a freshly written artifact owes no refresh');
 });
 
-// The reported bug: two sessions sharing ONE worktree (no `git worktree add` between
-// them -- most sessions here work directly in the primary checkout), so the bare
-// worktree slug alone cannot tell them apart. Session B never touched the artifact
-// or the commit that landed; it should stay silent about it.
+// Two sessions sharing ONE worktree (no `git worktree add` between them -- most
+// sessions work directly in the primary checkout), where B does nothing at all.
 test('another session in the SAME worktree landing -> silent, not misattributed', () => {
   const { root, work } = repoWithOrigin();
   const st = state(root);
   track(work, st, artifactFile(root));
 
-  // Session B starts first (in the shared checkout) and records its baseline before
-  // session A does anything.
   runSeed(work, st, 'session-b');
   runRefresh(work, st, { sessionId: 'session-b' });
 
-  // Session A starts, commits, and lands its own work -- still in the same worktree.
   runSeed(work, st, 'session-a');
   sh('git checkout -qb slice-one', work);
-  commit(work, 'ours-only');
+  commit(work, 'ours-only', st, 'session-a');
   runRefresh(work, st, { sessionId: 'session-a' });
   land(work, 'slice-one');
 
-  // Session A's own Stop correctly reports its own landing.
   const outA = runRefresh(work, st, { sessionId: 'session-a' });
   assert.ok(outA, 'session A landed its own commit');
   assert.match(outA.reason, /ours-only/);
 
-  // Session B, unrelated, never committed anything -- it must not be nudged about A's
-  // landing just because they share a worktree slug.
   const outB = runRefresh(work, st, { sessionId: 'session-b' });
   assert.strictEqual(outB, null, "another session's landing in the same worktree owes us no refresh");
+});
+
+// The bug the tip-delta scheme exists for, and the one a startup snapshot could not
+// reach: B is not idle, it is Stopping between turns while A's work is still
+// UNLANDED. The snapshot scheme wrote A's commit into B's pending list at that Stop
+// (B started on a clean master, so its baseline was empty and subtracted nothing),
+// then nudged B about it the moment A landed. Attribution by tool call means B never
+// recorded the commit in the first place.
+test("a sibling's unlanded commit is never adopted by a session that Stops beside it", () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+
+  // Both sessions start clean, on the same branch in the same checkout.
+  runSeed(work, st, 'session-a');
+  runSeed(work, st, 'session-b');
+  sh('git checkout -qb shared', work);
+
+  // A commits. B takes a turn and Stops while that commit is still unlanded --
+  // exactly when the old scheme adopted it.
+  commit(work, 'a-only', st, 'session-a');
+  runRefresh(work, st, { sessionId: 'session-a' });
+  assert.strictEqual(runRefresh(work, st, { sessionId: 'session-b' }), null,
+    'B has committed nothing, so B has nothing pending');
+  assert.deepStrictEqual(pendingOf(st, work, 'session-b'), [],
+    "and A's in-flight commit was not written into B's pending list");
+
+  land(work, 'shared');
+
+  const outB = runRefresh(work, st, { sessionId: 'session-b' });
+  assert.strictEqual(outB, null, "A's landing is not B's to write up");
+
+  const outA = runRefresh(work, st, { sessionId: 'session-a' });
+  assert.ok(outA, 'while A, who wrote it, is still nudged');
+  assert.match(outA.reason, /a-only/);
+});
+
+// Same shape, but both sessions are committing -- each nudge must carry only its own
+// subjects, not the union of whatever the shared branch happens to hold.
+test('two committing sessions in one checkout each report only their own commits', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+
+  runSeed(work, st, 'session-a');
+  runSeed(work, st, 'session-b');
+  sh('git checkout -qb shared', work);
+
+  commit(work, 'a-first', st, 'session-a');
+  commit(work, 'b-first', st, 'session-b');
+  commit(work, 'a-second', st, 'session-a');
+  runRefresh(work, st, { sessionId: 'session-a' });
+  runRefresh(work, st, { sessionId: 'session-b' });
+  land(work, 'shared');
+
+  const outA = runRefresh(work, st, { sessionId: 'session-a' });
+  assert.match(outA.reason, /a-first/);
+  assert.match(outA.reason, /a-second/);
+  assert.doesNotMatch(outA.reason, /b-first/, "A does not claim B's commit");
+  assert.match(outA.reason, /: 2 commit/, 'and counts only its own');
+
+  const outB = runRefresh(work, st, { sessionId: 'session-b' });
+  assert.match(outB.reason, /b-first/);
+  assert.doesNotMatch(outB.reason, /a-first/, "B does not claim A's commits");
+  assert.match(outB.reason, /: 1 commit/);
+});
+
+// A pull that fast-forwards someone else's already-pushed commits into HEAD moves the
+// tip past them; `--not <upstream>` is what stops them being credited to this session
+// on the way through.
+test('pulling upstream commits credits none of them to this session', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  const b = worktree(work, root, 'wt-b', 'unrelated');
+  runSeed(a, st);
+
+  gitCommit(b, 'theirs');
+  land(b, 'unrelated');
+
+  tracked(a, st, SID, 'git pull --ff-only',
+    () => sh('git fetch -q origin && git merge -q --ff-only origin/main', a));
+
+  commit(a, 'ours', st);
+  runRefresh(a, st);
+  land(a, 'slice-one');
+
+  const out = runRefresh(a, st);
+  assert.match(out.reason, /ours/);
+  assert.doesNotMatch(out.reason, /theirs/, 'a pulled commit is not authorship');
+  assert.match(out.reason, /: 1 commit/);
+});
+
+// `post` with no `pre` and no SessionStart stamp -- the shape of hooks installed
+// midway through a session. With no floor to measure against, the branch could be
+// anyone's, so it claims nothing rather than claiming all of it.
+test('a post with no floor stays silent instead of adopting the branch', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+
+  // No runSeed, and no `pre` half.
+  gitCommit(a, 'not-ours');
+  runTrack(a, st, 'post', { sessionId: 'unseeded', cmd: "git commit -qm 'not-ours'" });
+  runRefresh(a, st, { sessionId: 'unseeded' });
+  land(a, 'slice-one');
+
+  assert.strictEqual(runRefresh(a, st, { sessionId: 'unseeded' }), null,
+    'no floor means no claim');
+});
+
+// The tracker exits on a string match, so the overwhelmingly common Bash call costs
+// no git process -- and claims nothing either.
+test('a non-commit-shaped command records nothing', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  runSeed(a, st);
+  tracked(a, st, SID, 'ls -la', () => gitCommit(a, 'sneaky'));
+
+  const mine = path.join(st, `${sessionSlug(a, SID)}.mine`);
+  assert.strictEqual(fs.existsSync(mine), false, 'nothing claimed off an unrelated command');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

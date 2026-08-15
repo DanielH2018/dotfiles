@@ -21,11 +21,24 @@
 # the primary checkout (EnterWorktree is opt-in), so two unrelated sessions can hash
 # to the same worktree slug and would otherwise share one pending file — one
 # session's landed commits reported to the other as its own. artifact_session_key
-# folds session_id in on top of the worktree slug, and artifact-session-seed.sh (a
-# SessionStart hook) records what was already unlanded before this session's first
-# commit, so `mine` below can subtract that baseline and keep only what is new since
-# this session started — a sibling session's still-unlanded work never gets counted
-# as this session's, even though `ref..HEAD` itself is shared, unscoped branch state.
+# folds session_id in on top of the worktree slug so each session gets its own files.
+#
+# But a per-session FILE still needs a per-session ANSWER to put in it, and
+# `ref..HEAD` cannot supply one: it is shared branch state, identical in every session
+# looking at that checkout. The first attempt subtracted a startup snapshot of it
+# (artifact-session-seed.sh) and called the remainder mine. That is only correct while
+# no sibling commits after your startup — and here sessions start on a clean master,
+# so the snapshot was empty in 70 of 71 recorded cases (measured 2026-08-15) and the
+# subtraction was a no-op. Every commit any session landed during yours came back as
+# yours, which is the bug this file kept being blamed for.
+#
+# So attribution no longer comes from a diff at all. artifact-commit-track.sh, a
+# PostToolUse hook, records each commit at the moment this session's own Bash call
+# creates it, into `<sesskey>.mine`. This hook intersects that list with what is still
+# unlanded: the `.mine` entries are the claim, `ref..HEAD` only decides which of them
+# have not shipped yet. A sibling's commit is in `ref..HEAD` and never in `.mine`, so
+# it cannot be reported here however the branch moves. A session that commits nothing
+# has no `.mine` at all and is silent by construction, rather than inheriting a branch.
 #
 # Subjects, not SHAs, because bin/land rebases before it fast-forwards main, so every
 # SHA recorded pre-land is dead by the time the nudge fires. Resolving the subjects
@@ -63,6 +76,18 @@ sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"
 # A worktree that wrote its own artifact tracks that one; otherwise it inherits the
 # project's, which is how a plan written in one worktree keeps being updated as later
 # slices land from others.
+ref=$(artifact_upstream_ref) || exit 0
+
+# Re-stamp this session's tip before anything else can exit early. Between turns is
+# exactly when a sibling session's commits arrive, and absorbing them into the tip
+# here is what keeps artifact-commit-track.sh's attribution window one command wide
+# instead of one turn wide. Doing it before the artifact lookup matters: a project
+# that starts tracking an artifact mid-session must not inherit a tip left stale from
+# before it was tracked.
+if head=$(git rev-parse --verify --quiet HEAD) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
+  printf '%s\n' "$head" > "$ARTIFACT_STATE_DIR/$sesskey.tip" 2>/dev/null
+fi
+
 artifact=""
 for key in "$wt" "$repo"; do
   [[ -f "$ARTIFACT_STATE_DIR/$key.current" ]] || continue
@@ -73,21 +98,18 @@ done
 # longer tracking one. Staying silent is right; re-creating it would not be.
 [[ -n "$artifact" && -f "$artifact" ]] || exit 0
 
-ref=$(artifact_upstream_ref) || exit 0
 pending="$ARTIFACT_STATE_DIR/$sesskey.pending"
-baseline="$ARTIFACT_STATE_DIR/$sesskey.baseline"
+minefile="$ARTIFACT_STATE_DIR/$sesskey.mine"
 
-# `ref..HEAD` is shared branch state, not per-session — a sibling session's still-
-# unlanded commits show up here exactly like this session's own. Subtracting the
-# baseline (what was already unlanded before THIS session's first commit, recorded by
-# artifact-session-seed.sh at startup) leaves only what appeared since. No baseline
-# file (older payload with no session_id, or the seed hook never ran) falls back to
-# the unscoped set rather than going silent.
-mine_now=$(git log --format=%s "$ref..HEAD" 2>/dev/null)
-if [[ -n "$mine_now" && -f "$baseline" ]]; then
-  mine=$(comm -23 <(printf '%s\n' "$mine_now" | sort) <(sort "$baseline"))
-else
-  mine="$mine_now"
+# What this session created (`.mine`, written per commit by artifact-commit-track.sh)
+# ∩ what is still unlanded (`ref..HEAD`). Ordering follows git log, newest first, so
+# the nudge reads the way the branch does. Nothing recorded means nothing claimed —
+# silence, not the whole branch.
+unlanded=$(git log --format=%s "$ref..HEAD" 2>/dev/null)
+mine=""
+if [[ -n "$unlanded" && -s "$minefile" ]]; then
+  mine=$(printf '%s\n' "$unlanded" |
+    awk 'NR==FNR { mine[$0]=1; next } ($0 in mine) && !seen[$0]++' "$minefile" -)
 fi
 if [[ -n "$mine" ]]; then
   mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null
