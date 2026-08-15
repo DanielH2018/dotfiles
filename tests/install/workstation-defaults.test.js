@@ -22,7 +22,11 @@ const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linu
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
-const PASSTHROUGH = ['sh', 'rm', 'echo', 'printf', 'cat'];
+// PATH is replaced wholesale by the stub dir, so anything the script shells out to and is not
+// listed here simply does not exist. `tr` is load-bearing: the hostname guard strips whitespace
+// through it, and without it the substitution yields empty and every run looks unset — which is
+// how the first version of this file passed its regression test for the wrong reason.
+const PASSTHROUGH = ['sh', 'rm', 'echo', 'printf', 'cat', 'tr'];
 
 const SUDO_OK = 'echo "$@" >> "$STATE_DIR/sudo.log"; [ "$1" = "-v" ] && exit 0; exec "$@"';
 
@@ -39,7 +43,9 @@ const HOSTNAMECTL = 'echo "$@" >> "$STATE_DIR/hostnamectl.log"; exit 0';
 
 const dirs = [];
 
-function run({ state, hostnameSet = false, waitEnabled = true, rpmsave = true } = {}) {
+// hostnameContent is the file's literal bytes, or null for no file at all — a boolean would not
+// be able to express the case that actually shipped on this box, a file holding one newline.
+function run({ state, hostnameContent = null, waitEnabled = true, rpmsave = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'workstation-defaults-'));
   dirs.push(home);
   const binDir = path.join(home, 'stubs');
@@ -58,7 +64,7 @@ function run({ state, hostnameSet = false, waitEnabled = true, rpmsave = true } 
   const hostnameFile = path.join(root, 'etc', 'hostname');
   const rpmsaveFile = path.join(root, 'etc', 'sysconfig', 'livesys.rpmsave');
   fs.mkdirSync(path.dirname(rpmsaveFile), { recursive: true });
-  if (hostnameSet) fs.writeFileSync(hostnameFile, 'already-named\n');
+  if (hostnameContent !== null) fs.writeFileSync(hostnameFile, hostnameContent);
   if (rpmsave) fs.writeFileSync(rpmsaveFile, 'debris\n');
 
   for (const [name, script] of Object.entries({ sudo: SUDO_OK, systemctl: SYSTEMCTL, hostnamectl: HOSTNAMECTL })) {
@@ -114,14 +120,28 @@ test('never takes a name the repo templates branch on', { skip }, () => {
 // is also what keeps this from renaming the rest of the fleet.
 test('leaves an existing static hostname alone', { skip }, () => {
   if (!linux || renderFile(SRC).trim() === '') return;
-  const r = run({ hostnameSet: true });
+  const r = run({ hostnameContent: 'already-named\n' });
   assert.strictEqual(r.exitCode, 0, r.out);
   assert.strictEqual(r.hostnamectlLog, '', 'a machine that already has a name must keep it');
 });
 
+// Regression. Fedora ships /etc/hostname holding a bare newline, which is one byte — so a
+// `[ -s ]` guard calls it non-empty, the script reports nothing to do, and the box keeps
+// answering to the transient DHCP name forever. This shipped that way and did nothing on the
+// machine it was written for.
+test('treats a whitespace-only /etc/hostname as unset', { skip }, () => {
+  if (!linux || renderFile(SRC).trim() === '') return;
+  for (const content of ['\n', '  \n', '']) {
+    const r = run({ hostnameContent: content });
+    assert.strictEqual(r.exitCode, 0, r.out);
+    assert.match(r.hostnamectlLog, /set-hostname daniel-desktop/,
+      `a hostname file containing ${JSON.stringify(content)} means unset`);
+  }
+});
+
 test('does not re-disable an already-disabled unit', { skip }, () => {
   if (!linux || renderFile(SRC).trim() === '') return;
-  const r = run({ waitEnabled: false, hostnameSet: true, rpmsave: false });
+  const r = run({ waitEnabled: false, hostnameContent: 'already-named\n', rpmsave: false });
   assert.strictEqual(r.exitCode, 0, r.out);
   assert.strictEqual(r.disableLog, '');
   assert.strictEqual(r.sudoLog, '', 'nothing to do means no sudo at all');
@@ -133,7 +153,7 @@ test('a converged apply changes nothing and never probes sudo', { skip }, () => 
   assert.strictEqual(first.exitCode, 0, first.out);
   // The hostname file is not written by the stub, so the second run is told it is set — which is
   // what the real hostnamectl would have done.
-  const second = run({ state: first.stateDir, hostnameSet: true, waitEnabled: false, rpmsave: false });
+  const second = run({ state: first.stateDir, hostnameContent: 'already-named\n', waitEnabled: false, rpmsave: false });
   assert.strictEqual(second.exitCode, 0, second.out);
   assert.strictEqual(second.sudoLog, first.sudoLog, 'a converged apply must not touch sudo');
 });

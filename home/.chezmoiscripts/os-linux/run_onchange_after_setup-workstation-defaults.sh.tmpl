@@ -50,7 +50,7 @@
 # Left by the live installer. Harmless, and removing it is mostly so that
 # `find /etc -name '*.rpm*'` comes back empty and stays a useful signal.
 #
-# bump-to-reinstall: workstation-defaults v1
+# bump-to-reinstall: workstation-defaults v2
 set -u
 TAG=workstation-defaults
 {{ includeTemplate "require-sudo" . }}
@@ -71,9 +71,11 @@ need_hostname=0
 need_wait=0
 need_rpmsave=0
 
-# hostnamectl --static prints an empty line when unset, so the file is the more direct read and
-# does not depend on systemd being reachable.
-[ -s "$HOSTNAME_FILE" ] || need_hostname=1
+# Whitespace-stripped rather than `[ -s ]`, because Fedora ships /etc/hostname containing a bare
+# newline: one byte, so `-s` calls it non-empty and the box keeps reporting the transient name
+# forever while this script reports nothing to do. Reading the file rather than asking
+# hostnamectl keeps this working when systemd is not reachable, but it has to read it properly.
+[ -n "$(tr -d '[:space:]' < "$HOSTNAME_FILE" 2>/dev/null)" ] || need_hostname=1
 [ "$(systemctl is-enabled "$WAIT_ONLINE" 2>/dev/null)" = enabled ] && need_wait=1
 [ -e "$RPMSAVE_FILE" ] && need_rpmsave=1
 
