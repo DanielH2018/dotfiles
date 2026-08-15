@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "f3e6a60a3762a0b52f8baf296605a2ddd7e0230ee3c876ee0329843376a2540f",
-      "landed": "2026-08-12T20:34:51.361Z"
+      "hash": "75f53c8dacb224528a89913cb5b544af9c85703badb3e11421a7f33fba8da40a",
+      "landed": "2026-08-15T12:36:51.590Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -87,14 +87,19 @@
       "landed": "2026-08-05T21:01:37.762Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
+      "hash": "92f25b82544fe8b60dfd934d106989c000db9f981d04ffee8daa751681a89018",
+      "landed": "2026-08-15T12:36:51.590Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
-      "hash": "e26b162f7710e94af1a36ac71607b84491d32094a2ef1604114c2363fb58d377",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "dbaf991a4b3abf106e300c0e15d3c08cd91d88473c9b7861b13bc76593f28358",
+      "landed": "2026-08-15T12:36:51.590Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-session-seed.sh",
-      "hash": "3dcdfe024afad4b0535afbff50048b626d538e8e06d637c4a8dd04dd9b89b95f",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "8e029c46a964af4810ca4b8d21031ee4c2224946ffd48320c89d604ea52bb7cb",
+      "landed": "2026-08-15T12:36:51.590Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
