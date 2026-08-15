@@ -1,0 +1,21 @@
+[Desktop Entry]
+# Shadows /usr/share/applications/discord.desktop so the application menu, KRunner, a Stream Deck
+# key and the discord:// scheme handler all launch through ~/.local/bin/discord, which runs
+# Discord outside the Mullvad tunnel. Without this entry only shell launches would be excluded,
+# and the menu — the way Discord is actually started — would still hit the blocked exit.
+#
+# Templated for the Exec path: a desktop entry has no field code for the home directory (%h is not
+# one), and a bare `discord` would depend on ~/.local/bin being on the PATH of whatever the
+# desktop environment uses to spawn applications, which is not the login shell's PATH.
+#
+# Kept in step with the upstream entry by hand. If Discord's packaging grows new fields, diff
+# against /usr/share/applications/discord.desktop rather than assuming this is still complete.
+Name=Discord
+StartupWMClass=discord
+Comment=All-in-one voice and text chat for gamers that's free, secure, and works on both your desktop and phone.
+GenericName=Internet Messenger
+Exec={{ .chezmoi.homeDir }}/.local/bin/discord --url -- %u
+Icon=discord
+Type=Application
+Categories=Network;InstantMessaging;
+MimeType=x-scheme-handler/discord;

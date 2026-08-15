@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Launch Discord outside the Mullvad tunnel.
+#
+# Cloudflare intermittently serves Discord's "Temporary Network Error" page to requests coming
+# from shared Mullvad exit addresses whose reputation has drifted. It is a flat 403 on the app
+# shell — no cf-mitigated header, no challenge cookie, nothing solvable client side — and it is
+# not a Discord outage, so the only local lever is which address the request leaves from.
+# Confirmed 2026-08-15: exit 87.249.134.18 (us-chi-wg-202) returned 403 on every app-shell load
+# while a Seattle exit was clean, same machine and same build.
+#
+# The trade is deliberate and is the whole point of the file: Discord sees the home address
+# instead of the exit's. Set DISCORD_NO_EXCLUDE=1 to put a launch back inside the tunnel.
+#
+# Named `discord` so it shadows /usr/bin/discord on PATH and covers shell launches as well as the
+# desktop entry, which calls this file by absolute path because a desktop entry does not inherit
+# the login shell's PATH.
+set -uo pipefail
+
+# The RPM path, overridable for a tarball or Flatpak install (and for the tests, which cannot
+# stub an absolute path).
+REAL=${DISCORD_BIN:-/usr/bin/discord}
+
+if [[ ! -x $REAL ]]; then
+  echo "discord: $REAL is not executable — is Discord installed?" >&2
+  exit 127
+fi
+
+# `mullvad-exclude true` is the capability probe, not `command -v` alone: the binary can be
+# present while the daemon is stopped or refuses the cgroup, and the difference only shows up
+# when something is actually run through it. A machine with no Mullvad at all takes the same path
+# as one where the exclusion is unavailable — launch directly and say nothing, because failing to
+# start Discord is strictly worse than starting it inside the tunnel.
+if [[ ${DISCORD_NO_EXCLUDE:-0} != 1 ]] \
+  && command -v mullvad-exclude >/dev/null 2>&1 \
+  && mullvad-exclude true >/dev/null 2>&1; then
+  exec mullvad-exclude "$REAL" "$@"
+fi
+
+exec "$REAL" "$@"
