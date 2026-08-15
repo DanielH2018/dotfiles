@@ -12,11 +12,14 @@
 # commits attributed to every concurrent session. Attribution now comes from the
 # session's own tool calls, and all this hook owes them is the starting point.
 #
-# Runs on every source, not just "startup". A resumed or cleared session needs the
-# floor as much as a fresh one, and re-stamping is safe because this hook only ever
-# writes `.tip` -- it never touches `.mine`, so a compaction or resume keeps whatever
-# this session had already been credited with. (The old subject-list seed had to be
-# startup-only for exactly that reason: it wrote the file the Stop hook read.)
+# Runs on "startup|resume|clear" -- a resumed or cleared session needs the floor as
+# much as a fresh one, and re-stamping is safe there because this hook only ever
+# writes `.tip` and never touches `.mine`, so nothing already credited to the session
+# is lost. NOT "compact": a compaction fires mid-session, and re-flooring to whatever
+# HEAD holds then would move the floor past a sibling's commits. The commit-shaped
+# path overwrites the tip in `pre` anyway, but artifact-commit-track.sh's
+# post-without-pre fallback reads this stamp, and that fallback must never be handed a
+# floor this session did not reach itself.
 #
 # Best-effort and silent throughout: a failure here means commits go unattributed and
 # the artifact nudge stays quiet, not that it fires with somebody else's work in it.

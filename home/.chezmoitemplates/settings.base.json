@@ -346,10 +346,10 @@
            where HEAD was when the session began. Every source, not just "startup" -- a
            resumed or cleared session needs the floor too, and re-stamping is safe because
            this hook writes only `.tip` and never `.mine`, so nothing already credited to
-           the session is lost. (Its predecessor recorded the subject list the Stop hook
-           read, which is why THAT one had to be startup-only.) */}}
+           the session is lost. Not "compact": that fires mid-session, and re-flooring to
+           whatever HEAD holds by then would move the floor past a sibling's commits. */}}
       {
-        "matcher": "startup|resume|clear|compact",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",

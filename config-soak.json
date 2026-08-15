@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "75f53c8dacb224528a89913cb5b544af9c85703badb3e11421a7f33fba8da40a",
-      "landed": "2026-08-15T12:36:51.590Z"
+      "hash": "cc77f4e41d84a0627feca47734ee697df8b62df955c54c959d85e526da1ae900",
+      "landed": "2026-08-15T12:38:28.491Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -98,8 +98,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-session-seed.sh",
-      "hash": "8e029c46a964af4810ca4b8d21031ee4c2224946ffd48320c89d604ea52bb7cb",
-      "landed": "2026-08-15T12:36:51.590Z"
+      "hash": "65d889cec2265eca3abdf356f72f17ce886174829049b4093eb9272801ed2f3a",
+      "landed": "2026-08-15T12:38:28.491Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_auto-format.sh",
