@@ -1,0 +1,317 @@
+{{ if includeTemplate "is-desktop-linux" . -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Recovers a monitor that comes back from suspend lit up but
+# not properly enumerated -- right picture, wrong resolution, wrong place in the layout -- which
+# on this box has so far only been fixable by switching the monitor off and on again.
+#
+# What is actually wrong, from ~/.config/kwinoutputconfig.json:
+#
+#     data[3] connectorName "DP-3"  edidIdentifier "GSM 30796 142 11 2025 0"  2560x1440@299993
+#     data[4] connectorName "DP-3"  edidIdentifier "NVD 0 0 0 0 0"            640x480@59940
+#
+# Two saved configurations for one connector. The first is the LG ULTRAGEAR as it reads when the
+# EDID is intact. The second is what the driver reports when it could not read the EDID at all:
+# NVIDIA substitutes a placeholder whose PNP manufacturer id is "NVD" and whose product, serial,
+# week and year are all zero. KWin identifies an output by hashing its EDID, so the placeholder
+# is a *different output* as far as KWin is concerned -- it cannot match the saved 2560x1440
+# layout to it, so it stores and applies a fresh default instead. That default is the wrong
+# resolution and the wrong position, which is exactly the symptom. (A third stale entry,
+# "Unknown-1" at 1024x768, is the same failure with no placeholder EDID at all.)
+#
+# Turning the monitor off and on works because that drops hotplug detect, and the re-plug makes
+# the driver read the EDID again. Once the real EDID is back, KWin re-matches data[3] and the
+# layout returns on its own. So the recovery does not have to touch KWin: it only has to make
+# the kernel re-read the EDID.
+#
+# What this installs is that re-read, on a trigger. `status` under a DRM connector is the DRM
+# core's forced-reprobe interface -- writing `detect` clears any force and re-runs the driver's
+# detect callback, `off` then `detect` is the software equivalent of unplugging the cable -- and
+# either write raises a hotplug event, which is the thing KWin listens for.
+#
+# Honest about what is verified and what is not:
+#
+#   - The cause is read off a persisted artefact, not off a logged instance. There is no journal
+#     record of the failure: the only suspend in any retained boot is boot -4, and it ends at the
+#     resume panic that setup-nvidia-suspend addresses, so no successful resume was ever logged.
+#     The placeholder entry is therefore undated, and a KVM display flip or a cold boot with the
+#     monitor powered off would leave the same artefact. The timer below exists for that reason
+#     -- it catches the failure whatever triggered it, and the journal tag then says which.
+#   - Whether nvidia-drm honours a forced reprobe was not tested. It should: nv_drm uses the
+#     drm_helper_probe_single_connector_modes() path, which calls the driver's detect callback
+#     with force set. It is a ladder rather than a single write for exactly that reason, and the
+#     last rung logs and gives up rather than pretending.
+#
+#     To settle it by hand, next time the monitor comes back wrong:
+#         sudo systemctl start display-edid-health-force.service
+#         journalctl -t display-edid-health -n 20
+#
+# Deliberately not doing a DDC/CI power cycle as a further rung. It would be the closest thing to
+# the manual fix, and D6 is writable on this monitor -- but nvidia-drm exposes no `ddc` symlink
+# under the connector, so the I2C bus can only be found by matching the EDID, which is the one
+# thing that is broken when this fires. It would be dead code on this box.
+#
+# Not keyed on "DP-3". The connector names have rotated between sessions here -- the memory note
+# for the login window layout records DP-3 as the far-left 1080p panel, while the live session
+# has DP-3 as the centre ULTRAGEAR -- so every check below iterates connectors and decides from
+# the EDID.
+#
+# The off switch:
+#   sudo systemctl disable --now display-edid-health.timer display-edid-health-resume.service
+#
+# bump-to-reinstall: display-edid-recovery v1
+set -u
+TAG=setup-display-edid-recovery
+{{ includeTemplate "linux-install.sh" . }}
+
+# Overridable purely so the tests can install into a throwaway root; both are empty or the real
+# path in normal operation. One prefix rather than a variable per destination, and deliberately
+# not named BIN_DIR: linux-install.sh above already owns that name and points it at
+# ~/.local/bin, so a `: "${BIN_DIR:=...}"` here would never take effect and this would install
+# the health script somewhere the units do not look.
+: "${INSTALL_ROOT:=}"
+: "${DRM_GLOB:=/sys/class/drm/card*-*}"
+
+HEALTH_BIN="$INSTALL_ROOT/usr/local/bin/display-edid-health"
+UNIT_DIR="$INSTALL_ROOT/etc/systemd/system"
+POLKIT_DIR="$INSTALL_ROOT/etc/polkit-1/rules.d"
+
+# No DRM connectors means nothing to watch -- a headless or virtualised box, not a misconfigured
+# one.
+# shellcheck disable=SC2086  # DRM_GLOB is a glob; quoting it is what would break the check.
+ls $DRM_GLOB >/dev/null 2>&1 || exit 0
+
+have_sudo || { echo "$TAG: needs sudo to install system units — re-run 'chezmoi apply' where sudo can prompt" >&2; exit 1; }
+
+echo "$TAG: installing display-edid-health recovery"
+
+sudo tee "$HEALTH_BIN" >/dev/null <<'DISPLAY_EDID_HEALTH'
+#!/bin/bash
+# Managed by chezmoi (setup-display-edid-recovery). Forces the kernel to re-read the EDID of any
+# connector that is connected but has no usable one.
+set -uo pipefail
+
+# Overridable purely so the tests can drive this against a fake sysfs tree; nothing in normal
+# operation sets any of them.
+: "${DRM_DIR:=/sys/class/drm}"
+: "${STATE_DIR:=/var/lib/display-edid-health}"
+: "${CONFIRM_DELAY:=8}"  # seconds a bad EDID must persist before it counts as broken
+: "${SETTLE:=4}"         # seconds to let a reprobe land before re-reading
+: "${MIN_INTERVAL:=300}" # seconds between recoveries, guards against a reprobe loop
+
+FORCE=0
+[[ ${1:-} == --force ]] && FORCE=1
+
+log() {
+	logger -t display-edid-health -- "$*" 2>/dev/null
+	printf 'display-edid-health: %s\n' "$*" >&2
+}
+
+# EDID bytes 8-9 are the PNP manufacturer id: three 5-bit letters, A=1, big-endian, top bit
+# reserved. Anything that does not decode to three letters is not an EDID we can trust.
+edid_vendor() {
+	local hi lo word out n
+	local letters=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+	read -r hi lo < <(od -An -tu1 -j8 -N2 -- "$1" 2>/dev/null)
+	[[ ${hi:-} =~ ^[0-9]+$ && ${lo:-} =~ ^[0-9]+$ ]] || return 1
+	word=$(((hi << 8) | lo))
+	out=
+	for n in $(((word >> 10) & 0x1f)) $(((word >> 5) & 0x1f)) $((word & 0x1f)); do
+		((n >= 1 && n <= 26)) || return 1
+		out+=${letters:n-1:1}
+	done
+	printf '%s\n' "$out"
+}
+
+# NVIDIA hands out a placeholder EDID -- manufacturer "NVD", every other field zero -- when it
+# cannot read the real one. No monitor ships that id, so seeing it is unambiguous.
+PLACEHOLDER_VENDOR=NVD
+
+broken_connectors() {
+	local c name status size vendor
+	for c in "$DRM_DIR"/card*-*; do
+		[ -d "$c" ] || continue
+		name=${c##*/}
+		status=$(cat "$c/status" 2>/dev/null) || continue
+		[ "$status" = connected ] || continue
+		size=$(wc -c <"$c/edid" 2>/dev/null) || size=0
+		# Under 128 bytes is not a truncated EDID, it is no EDID: one block is the minimum.
+		if ((size < 128)); then
+			printf '%s\n' "$name"
+			continue
+		fi
+		vendor=$(edid_vendor "$c/edid") || {
+			printf '%s\n' "$name"
+			continue
+		}
+		[ "$vendor" = "$PLACEHOLDER_VENDOR" ] && printf '%s\n' "$name"
+	done
+	return 0
+}
+
+reprobe() { printf 'detect\n' >"$DRM_DIR/$1/status" 2>/dev/null; }
+
+unplug_replug() {
+	printf 'off\n' >"$DRM_DIR/$1/status" 2>/dev/null || return 1
+	sleep 1
+	printf 'detect\n' >"$DRM_DIR/$1/status" 2>/dev/null
+}
+
+mapfile -t broken < <(broken_connectors)
+
+if ((FORCE == 0)); then
+	((${#broken[@]})) || exit 0
+	# A monitor part-way through waking up is indistinguishable from a broken one, so nothing
+	# acts until the state has survived CONFIRM_DELAY. This is why the unit is not ordered
+	# tightly against the resume path -- it is allowed to take its time.
+	sleep "$CONFIRM_DELAY"
+	mapfile -t broken < <(broken_connectors)
+	((${#broken[@]})) || exit 0
+fi
+
+if ((${#broken[@]} == 0)); then
+	log "every connected output has a real EDID; nothing to recover"
+	exit 0
+fi
+
+now=$(date +%s)
+stamp="$STATE_DIR/last-recovery"
+if ((FORCE == 0)) && [ -r "$stamp" ]; then
+	last=$(cat "$stamp" 2>/dev/null || echo 0)
+	[[ $last =~ ^[0-9]+$ ]] || last=0
+	if ((now - last < MIN_INTERVAL)); then
+		log "still broken (${broken[*]}) but last recovery was $((now - last))s ago; skipping"
+		exit 0
+	fi
+fi
+install -d -m 0755 "$STATE_DIR" 2>/dev/null
+printf '%s\n' "$now" >"$stamp" 2>/dev/null
+
+rc=0
+for name in "${broken[@]}"; do
+	log "$name is connected with no usable EDID; forcing a re-detect"
+	reprobe "$name"
+	sleep "$SETTLE"
+	if ! broken_connectors | grep -qx -- "$name"; then
+		log "$name recovered after re-detect"
+		continue
+	fi
+	log "$name still has no usable EDID; forcing it off and re-detecting"
+	unplug_replug "$name"
+	sleep "$SETTLE"
+	if ! broken_connectors | grep -qx -- "$name"; then
+		log "$name recovered after a forced off/detect"
+		continue
+	fi
+	# Said plainly rather than swallowed: if this line is in the journal, the kernel-level
+	# reprobe does not work on this driver and the monitor still needs its power button.
+	log "$name did not recover from either reprobe; power-cycle the monitor by hand"
+	rc=1
+done
+exit "$rc"
+DISPLAY_EDID_HEALTH
+sudo chmod 0755 "$HEALTH_BIN"
+
+# ProtectKernelTunables is deliberately absent from all three units: it would remount /sys
+# read-only and the forced reprobe is a write to /sys/class/drm/<connector>/status.
+sudo tee "$UNIT_DIR/display-edid-health.service" >/dev/null <<'DISPLAY_EDID_SERVICE'
+[Unit]
+Description=Re-read the EDID of any display that is connected but not properly enumerated
+ConditionPathExists=/usr/local/bin/display-edid-health
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/display-edid-health
+TimeoutStartSec=120
+StateDirectory=display-edid-health
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+DISPLAY_EDID_SERVICE
+
+# After= plus WantedBy= on the sleep targets is the documented way to run on the way back out of
+# suspend rather than on the way in (systemd.special(7), suspend.target).
+sudo tee "$UNIT_DIR/display-edid-health-resume.service" >/dev/null <<'DISPLAY_EDID_RESUME'
+[Unit]
+Description=Re-read display EDIDs after resume, in case one came back unenumerated
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target nvidia-resume.service
+ConditionPathExists=/usr/local/bin/display-edid-health
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/display-edid-health
+TimeoutStartSec=120
+StateDirectory=display-edid-health
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+DISPLAY_EDID_RESUME
+
+sudo tee "$UNIT_DIR/display-edid-health-force.service" >/dev/null <<'DISPLAY_EDID_FORCE'
+[Unit]
+Description=Re-read display EDIDs now, skipping the confirm delay and the rate limit (manual trigger)
+ConditionPathExists=/usr/local/bin/display-edid-health
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/display-edid-health --force
+TimeoutStartSec=60
+StateDirectory=display-edid-health
+ProtectHome=yes
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+DISPLAY_EDID_FORCE
+
+# Resume is the suspected trigger but not a proven one -- a KVM display flip or a cold boot with
+# the monitor off leaves the same placeholder EDID -- so the timer covers the cases the resume
+# unit cannot see. It is cheap: a stat and a 2-byte read per connector, and it exits without
+# acting unless a connected output has no real EDID.
+sudo tee "$UNIT_DIR/display-edid-health.timer" >/dev/null <<'DISPLAY_EDID_TIMER'
+[Unit]
+Description=Periodically check for a display that is connected but not properly enumerated
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=display-edid-health.service
+
+[Install]
+WantedBy=timers.target
+DISPLAY_EDID_TIMER
+
+sudo tee "$POLKIT_DIR/49-display-edid-health-force.rules" >/dev/null <<'DISPLAY_EDID_POLKIT'
+// Managed by chezmoi (setup-display-edid-recovery). Lets the desktop user trigger the manual
+// recovery without a password prompt -- the monitor being in the wrong resolution and the wrong
+// place is a poor situation in which to go hunting for a password dialogue.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "display-edid-health-force.service" &&
+        action.lookup("verb") == "start" &&
+        subject.user == "{{ .chezmoi.username }}") {
+        return polkit.Result.YES;
+    }
+});
+DISPLAY_EDID_POLKIT
+
+command -v restorecon >/dev/null 2>&1 && sudo restorecon -F \
+	"$HEALTH_BIN" \
+	"$UNIT_DIR/display-edid-health.service" \
+	"$UNIT_DIR/display-edid-health-resume.service" \
+	"$UNIT_DIR/display-edid-health-force.service" \
+	"$UNIT_DIR/display-edid-health.timer" \
+	"$POLKIT_DIR/49-display-edid-health-force.rules" 2>/dev/null
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now display-edid-health.timer >/dev/null 2>&1 \
+	|| echo "$TAG: could not enable display-edid-health.timer" >&2
+sudo systemctl enable display-edid-health-resume.service >/dev/null 2>&1 \
+	|| echo "$TAG: could not enable display-edid-health-resume.service" >&2
+
+echo "$TAG: display-edid-health armed on resume and on a 2min timer; journal tag 'display-edid-health' records any recovery"
+{{ end -}}
