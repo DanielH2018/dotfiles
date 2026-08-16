@@ -58,15 +58,44 @@ function makeStub(dir, name, body) {
   return p;
 }
 
+// The shims gate themselves to WSL and hand off to the real xclip/xsel anywhere else,
+// so every test claims to be WSL. Without that the whole file fails off WSL, testing
+// the guard instead of the behaviour it guards. `wsl: false` opts back out, for the
+// one test that is about the guard.
 function run(script, args, opts = {}) {
+  const { wsl = true, ...rest } = opts;
+  const env = { ...(rest.env || process.env) };
+  if (wsl) env.WSL_DISTRO_NAME = 'test';
+  else delete env.WSL_DISTRO_NAME;
   try {
     const out = execFileSync(BASH, [script, ...args], {
-      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...opts,
+      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...rest, env,
     });
     return { code: 0, stdout: out, stderr: '' };
   } catch (e) {
     return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
   }
+}
+
+// --- the WSL guard itself ---
+// Untested until now, which is how it came to break this file: the shims grew the
+// guard and every test here kept asserting the behaviour behind it. Asserted as
+// "never reaches wl-copy" rather than a specific exit code, because the shim execs a
+// real xclip/xsel where one exists and only fails with 127 where one doesn't.
+// Unreachable on WSL, where /proc/version satisfies the guard no matter the env.
+const onWsl = /microsoft/i.test(
+  fs.existsSync('/proc/version') ? fs.readFileSync('/proc/version', 'utf8') : '',
+);
+const skipGuard = skip || (onWsl ? 'the guard cannot be exercised on WSL' : false);
+
+for (const [label, script] of [['xclip', XCLIP], ['xsel', XSEL]]) {
+  test(`${label} refuses to reach wl-copy off WSL`, { skip: skipGuard }, () => {
+    const dir = scratch();
+    const argvFile = path.join(dir, 'argv.txt');
+    makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
+    run(script, [], { env: { ...process.env, PATH: dir }, wsl: false, input: 'x' });
+    assert.ok(!fs.existsSync(argvFile), `${label} must not forward to wl-copy off WSL`);
+  });
 }
 
 // --- xclip: copy path ---
