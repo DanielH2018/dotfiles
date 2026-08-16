@@ -69,5 +69,23 @@ name="clip-$(date +%Y%m%d-%H%M%S).${ext}"
     "mkdir -p '$DIR'; find '$DIR' -name 'clip-*' -mtime +$KEEP_DAYS -delete; cat > '$DIR/$name'" ||
   fail "Transfer to $HOST failed"
 
-wl-copy "$DIR/$name"
+# Handing off to a transient unit rather than calling wl-copy directly, because a Wayland
+# selection is served by a live process rather than stored anywhere. Launched from the keyboard
+# shortcut this script *is* a systemd unit (app-clip2server@….service), and systemd kills whatever
+# is left in the unit's cgroup once the main process exits — so wl-copy's forked daemon dies with
+# it, ownership reverts to the previous owner, and the paste silently yields whatever was on the
+# clipboard before. setsid does not help: the kill is by cgroup, not by session.
+#
+# --foreground keeps the copy the unit's main process, so systemd doesn't reap it as a leftover;
+# wl-copy then exits on its own when the next client takes the selection, and --collect reaps the
+# unit. Falls back to a plain wl-copy where systemd-run isn't available, which is correct for the
+# terminal case — nothing is tearing a cgroup down there.
+if command -v systemd-run >/dev/null 2>&1; then
+  systemd-run --user --quiet --collect \
+    --setenv=WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    wl-copy --foreground "$DIR/$name"
+else
+  wl-copy "$DIR/$name"
+fi
+
 notify-send "clip2server" "$DIR/$name — path copied"
