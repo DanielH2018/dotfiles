@@ -349,6 +349,24 @@
            TRUSTED domain, so a DELETE against its API is not otherwise caught. */}}
       "Deleting or lifecycle-expiring objects in the Backblaze B2 or Cloudflare R2 Longhorn backup buckets, deleting Longhorn volumes, snapshots or backups through the Longhorn UI or API, or `helm uninstall` of longhorn — each destroys the same backup chain `kubectl delete` would, by a route no command pattern catches. Clears only when the user names the specific volume or backup and the operation",
       "Running `scripts/deploy.sh` or `uv run ansible-playbook` WITHOUT `--check` against this inventory reconfigures live homelab infrastructure — Traefik, Authelia, Pi-hole DNS, WireGuard. Clears when the user asked to deploy, naming the service or the playbook"
+    ],
+
+    {{/* hard_deny, not soft_deny, and the reason is a precedence fact `claude auto-mode critique`
+         surfaced: the built-in Git Push Destination ALLOW exception is MANDATORY and explicitly
+         blesses a push to the session repo's default branch "whatever its name", carving out
+         only branches NAMED production/release/deploy/gh-pages. `master` is not such a name.
+         Inside the classifier, allow overrides soft_deny and user intent clears the remainder —
+         so stating this in environment or soft_deny reads as protection while doing nothing.
+         hard_deny is the only tier the built-in exception cannot override.
+
+         Scoped to a DIRECT push. `gh pr merge` is not a push and stays reachable; it is
+         ask-listed as the intended human checkpoint. The real enforcement is server-side
+         anyway — the `master CI gate` ruleset on GitHub requires a green
+         `prek (lint + validate + tests + secrets)` and has no bypass actors — so this is
+         defence in depth, and the place the agent is told why. */}}
+    "hard_deny": [
+      "$defaults",
+      "Never `git push` directly to `master` on DanielH2018/server. That branch is a production deploy trigger: a 30-minute systemd timer pulls origin/master and applies it to the live homelab with Ansible, so a direct push ships to running infrastructure without review. Changes reach master through a pull request whose CI has passed. Pushing to any other branch, and opening or merging a PR, are unaffected"
     ]
   },
   "hooks": {{/* Git Bash runs these on Windows too; notify.sh just no-ops there */}}{
