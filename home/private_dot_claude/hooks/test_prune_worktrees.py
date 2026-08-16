@@ -20,6 +20,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Importing the hook below would otherwise write a __pycache__ into the chezmoi source
+# tree, which config-soak walks by filesystem and would then track as config.
+sys.dont_write_bytecode = True
+
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "executable_prune-worktrees.py"
 if not SCRIPT.exists():  # deployed copy drops chezmoi's mode prefix
@@ -110,6 +114,12 @@ check(
     mod.classify(wt(branch=None), merged=True, dirty=False, is_current=False)[0]
     == mod.KEEP,
 )
+
+# ── is_dirty ──────────────────────────────────────────────────────────────────
+
+# A path git cannot read status for stands in for the shared-index failure: the answer
+# has to be "dirty", because reading a failure as clean is what would delete live work.
+check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-xyz"))
 
 # ── parse_worktree_list ───────────────────────────────────────────────────────
 

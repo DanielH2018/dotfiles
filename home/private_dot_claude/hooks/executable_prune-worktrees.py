@@ -176,7 +176,24 @@ def is_merged(repo: str, head: str, target: str) -> bool:
 
 
 def is_dirty(path: str) -> bool:
-    return bool(_git(["status", "--porcelain"], cwd=path))
+    """Does this tree hold uncommitted work? Anything short of a clean answer says yes.
+
+    The index is shared across a repo's worktrees, so a `git status` that fails here is
+    usually another session mid-write rather than a broken tree. Reading that as "clean"
+    would be the one wrong answer that costs work, so anything short of a clean exit —
+    including a directory that has vanished from under us — counts as dirty.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return True
+    return result.returncode != 0 or bool(result.stdout.strip())
 
 
 def log(message: str) -> None:
