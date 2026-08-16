@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "02e4bee9e65c2ff16e5fcab906049a7924ae77dede706cea24a61721a93dfe7a",
-      "landed": "2026-08-16T17:50:13.784Z"
+      "hash": "7d835a8297ac88440cefeda01445ca71d200033449560b3d142ba9230044e525",
+      "landed": "2026-08-16T17:54:20.899Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -187,6 +187,11 @@
       "landed": "2026-08-06T18:34:26.742Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_prune-worktrees.py",
+      "hash": "7b9cb613b2e51e1f23a86e8b551141ee93bb830b904b092f6317c677f56bc4fc",
+      "landed": "2026-08-16T17:54:20.899Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
       "hash": "aa8d6c1ed4c661d06769fb076093526b71d91c06c57c9059d8c02ae645286a9e",
       "landed": "2026-08-01T12:04:20.075Z"
@@ -252,6 +257,11 @@
       "landed": "2026-07-08T20:17:05.073Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
+      "hash": "586d88e29cd93b9f53c16b86d1e1778b2d458cce3d215b7a50e20c980c99389a",
+      "landed": "2026-08-16T17:54:20.899Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
       "hash": "b98ab57e627ca64c75faccb7851e23b775ac234db7f2709635c875ee6148feef",
       "landed": "2026-08-01T12:04:20.075Z"
@@ -280,6 +290,16 @@
       "path": "home/private_dot_claude/hooks/test_allow_daniel_server.py",
       "hash": "8a7f20e24fef742439299fd889639639ae9268b4d621891d7b8b43515f29e28e",
       "landed": "2026-08-15T14:30:21.828Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
+      "hash": "3f471b3e3f91d6dcbc4202184ff1f16d9ae9feb1a382eaf0847dff9dedfca276",
+      "landed": "2026-08-16T17:54:20.899Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
+      "hash": "d665da261bf2095482a6c198888354acbc49c73f48de2964ba1f2cc05c69c5c2",
+      "landed": "2026-08-16T17:54:20.899Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
