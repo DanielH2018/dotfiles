@@ -23,6 +23,13 @@
       "Read(**)",
       "Glob",
       "Grep",
+      {{/* Sessions manage their own worktrees end to end — create, enter, clean up — so none of
+           that should ever stop for a prompt. This is a tool rule, not a Bash one, so unlike
+           every Bash entry below it survives autoMode.classifyAllShell, which suspends the Bash
+           allow list while auto mode is active. The Bash half of the same workflow
+           (`git worktree add/remove`, `git branch -D`) is handled by NOT ask-listing it. */}}
+      "EnterWorktree",
+      "ExitWorktree",
       "Bash(ls:*)",
       "Bash(pwd)",
       "Bash(cd:*)",
@@ -361,6 +368,16 @@
       "Read(~/.pypirc)",
       "Read(~/.npmrc)",
       "Read(**/secrets/**)",
+      {{/* The SOPS age private keys. The `*.key` deny above does NOT reach them — the file is
+           literally named keys.txt — and nothing else in this list covers .agekey. Losing or
+           leaking these is the one failure with no recovery path: they decrypt every secret in
+           a PUBLIC repo, and .gitignore blocking the commit does not stop a read that pastes
+           one into a transcript. Denied outright rather than ask-listed, because an ask is a
+           prompt and prompts here get approved 99.6% of the time. */}}
+      "Read(~/.config/sops/age/**)",
+      "Read(**/*.agekey)",
+      "Edit(~/.config/sops/age/**)",
+      "Edit(**/*.agekey)",
       "Edit(**/.env)",
       "Edit(**/.env.*)",
       "Edit(**/*.pem)",
@@ -378,6 +395,18 @@
       "Edit(~/.pypirc)",
       "Edit(~/.npmrc)",
       "Edit(**/secrets/**)",
+      {{/* Costs nothing today and closes the door tomorrow. Plain `kubectl` authenticates as
+           system:serviceaccount:kube-system:homelab-readonly, which holds get/list/watch — so
+           `kubectl auth can-i delete pods` already answers "no", as does delete pvc and
+           pods/exec. With `sudo` denied just below, Ansible is the ONLY write path to this
+           cluster. This entry means a future credential widening cannot silently hand back
+           `delete` against Longhorn PVCs and their B2 backup chain. Deny rather than
+           autoMode.soft_deny: a soft block clears on explicit user intent, and "delete that
+           pod" is exactly the phrasing that would clear it.
+
+           Per-verb matching means this cannot carve out the routine `delete pod` (the
+           Deployment recreates it) — accepted, because RBAC refuses that too today. */}}
+      "Bash(kubectl delete:*)",
       "Bash(sudo:*)",
       "Bash(su:*)",
       "Bash(chown:*)",
@@ -480,7 +509,6 @@
       {{/* -t is the short form of --show-token; either one prints the GitHub token into the transcript */}}
       "Bash(gh auth status *--show-token*)",
       "Bash(gh auth status *-t*)",
-      "Bash(docker build:*)",
       "Bash(node -e:*)",
       "Bash(python3 -c:*)",
       "Bash(python -c:*)",
@@ -497,31 +525,34 @@
            covered, which is a limit of prefix matching rather than of this entry. */}}
       "Bash(npx -p:*)",
       "Bash(npx -p=*)",
+      {{/* The destructive four. These silently destroy work that is NOT in git — uncommitted
+           edits, untracked files — which no reflog, no checkpoint and no classifier can bring
+           back, so they stay the one Bash tier worth stopping on. Note the cover is PARTIAL:
+           a compound like `rm -rf /tmp/x; (...)` was observed running unprompted while a bare
+           `rm` prompted, so treat these as a speed bump, not a guarantee. Anything that must
+           NEVER run belongs in deny, which is evaluated before both the ask tier and the
+           classifier. */}}
       "Bash(rm:*)",
       "Bash(rmdir:*)",
       "Bash(git reset --hard:*)",
       "Bash(git clean:*)",
-      "Bash(git rebase:*)",
-      "Bash(git merge:*)",
-      "Bash(git cherry-pick:*)",
-      "Bash(git switch:*)",
-      "Bash(git checkout:*)",
-      "Bash(git stash push:*)",
+      "Bash(git restore:*)",
+      {{/* Branch-level git is deliberately NOT here any more: checkout/switch/rebase/merge/
+           cherry-pick/branch -D/worktree remove are all reflog-recoverable, they were ~27
+           prompts a week, and every one of them was approved. Worktree lifecycle in particular
+           has to be prompt-free — sessions create, enter and clean up their own worktrees, so a
+           prompt there stalls an unattended run for no decision anyone was going to make. */}}
+      {{/* stash pop/drop/clear survive the cull for a reason the classifier cannot know: the
+           stash stack is SHARED across every worktree and parallel session on this machine, so
+           a pop or drop can silently take another session's entry. `push` and `apply` are not
+           destructive and are gone. */}}
       "Bash(git stash pop:*)",
-      "Bash(git stash apply:*)",
       "Bash(git stash drop:*)",
       "Bash(git stash clear)",
-      "Bash(git stash save:*)",
-      "Bash(git restore:*)",
-      "Bash(git branch -d:*)",
-      "Bash(git branch -D:*)",
-      "Bash(git branch -m:*)",
-      "Bash(git branch -M:*)",
-      "Bash(git branch --delete:*)",
-      "Bash(git branch -c:*)",
-      "Bash(git worktree remove:*)",
+      {{/* Merging is what triggers the deploy: the gitops timer pulls origin/master every 30
+           min and applies it with Ansible. Kept as the one intentional human checkpoint, now
+           that the `master CI gate` ruleset enforces the correctness half. */}}
       "Bash(gh pr merge:*)",
-      "Bash(gh issue create:*)",
       "Bash(gh api *-X POST*)",
       "Bash(gh api *-X PUT*)",
       "Bash(gh api *-X PATCH*)",
@@ -535,32 +566,22 @@
       "Bash(gh api *--input *)",
       "Bash(gh api graphql*)",
       "Bash(gh api */graphql*)",
-      "Bash(npm install:*)",
-      "Bash(npm uninstall:*)",
-      "Bash(npm publish:*)",
-      "Bash(pnpm install:*)",
-      "Bash(pnpm add:*)",
-      "Bash(yarn add:*)",
-      "Bash(pip install:*)",
-      "Bash(uv add:*)",
-      "Bash(poetry add:*)",
-      "Bash(cargo install:*)",
-      "Bash(cargo publish:*)",
-      "Bash(docker run:*)",
-      "Bash(docker rm:*)",
-      "Bash(docker rmi:*)",
-      "Bash(docker compose up:*)",
-      "Bash(docker compose down:*)",
-      "Bash(docker compose build:*)",
-      "Bash(docker compose restart:*)",
-      "Bash(docker compose exec:*)",
-      {{/* curl stays ask-listed, and a prefix rule could not narrow it: `Bash(curl http://10.0.0.161/:*)` constrains nothing after the URL, so `curl http://10.0.0.161/x -o ~/.ssh/authorized_keys` would match it. The narrowing lives in allow-safe-curl.sh instead, which parses the whole line and auto-approves only a plain GET/HEAD against loopback or one of the three LAN hosts. wget has no such hook — it writes to disk by default, so the read-only shape curl has (stdout unless told otherwise) isn't there to check for. */}}
-      "Bash(curl:*)",
-      "Bash(wget:*)",
-      "Bash(ssh:*)",
-      "Bash(scp:*)",
-      "Bash(sftp:*)",
-      "Bash(rsync:*)",
+      {{/* The package-manager and docker install/run rules are gone: they fired ZERO times in a
+           measured week. This is an Ansible/kubectl/git homelab, neither cluster node has had
+           Docker since 2026-08-14, and dependency installs go through uv/prek. They cost nothing
+           to keep, but a rule that never fires still reads as coverage that isn't there. */}}
+      {{/* curl/ssh/scp/sftp/rsync/wget were the single biggest source of prompts (~80 a week,
+           all approved) and they are gone from this tier on purpose. A prefix rule could never
+           narrow them — `Bash(curl http://10.0.0.161/:*)` constrains nothing after the URL, so
+           `curl http://10.0.0.161/x -o ~/.ssh/authorized_keys` would have matched it — which is
+           exactly the discrimination the auto-mode classifier CAN make, reading the whole line
+           against the trusted hosts and domains named in autoMode.environment.
+
+           Consequence worth knowing: an ask rule is what routes a call through the
+           PermissionRequest hooks, so allow-safe-curl.sh / allow-readonly-remote.sh /
+           auto-approve-remote-ssh.sh no longer fast-path these in auto mode — the classifier
+           does. The hooks are retained because they still carry Manual mode, where no
+           classifier runs. */}}
       {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
       "Edit(~/.claude/hooks/**)",
       "Edit(~/.claude/settings.json)",
