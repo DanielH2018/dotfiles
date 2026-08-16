@@ -442,12 +442,13 @@
            .claude/worktrees/ whose branch is already an ancestor of origin/HEAD, are clean,
            and hold no live session's lock. Claude Code's exit prompt only reaches a session
            still attached when it ends, so a backgrounded or killed one leaves its tree
-           behind forever. "startup" only -- a resumed session's own tree is one of the
-           candidates, and while `is_current` protects it, running this at every source
-           would be repeated work for no gain. CLAUDE_WORKTREE_AUTOPRUNE=0 opts out; every
-           removal is logged to ~/.claude/logs/sessions.log. */}}
+           behind forever. Every source that opens a working session, not just "startup":
+           a resumed session is the long-lived case where merged siblings pile up, and its
+           own tree is protected by the is_current check either way. Not "compact", which
+           fires mid-turn and would sweep for nothing. CLAUDE_WORKTREE_AUTOPRUNE=0 opts
+           out; every removal is logged to ~/.claude/logs/sessions.log. */}}
       {
-        "matcher": "startup",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -760,6 +761,21 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/check-before-stop.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {{/* the session's own worktree is the one prune-worktrees.py can never reap: while
+           the session lives it holds the lock and stands in the directory, so the sweeper
+           is always a session late for it. This asks for the cleanup in-session instead,
+           once the branch is an ancestor of origin/HEAD and the tree is clean. Local refs
+           only -- the merge that makes that true runs in this same session and updates
+           them, so no fetch is needed and a stale ref just falls through to the sweeper. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/worktree-landed.sh",
             "timeout": 10
           }
         ]
