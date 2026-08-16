@@ -52,7 +52,7 @@ def git(args, cwd):
 
 
 def build(root):
-    """An origin, a clone, and the four worktree states the hook has to tell apart."""
+    """An origin, a clone, and the worktree states the hook has to tell apart."""
     origin = root / "origin"
     origin.mkdir()
     git(["init", "-q", "-b", "main", "--bare", "."], origin)
@@ -88,6 +88,9 @@ def build(root):
     return {
         "repo": repo,
         "landed": worktree("landed", commit=True, push=True, land=True),
+        # A second landed tree, so a check that consumes the one-ask stamp on one of
+        # them cannot make a later check pass for the wrong reason.
+        "landed2": worktree("landed2", commit=True, push=True, land=True),
         "unmerged": worktree("unmerged", commit=True, push=True, land=False),
         "dirty": worktree("dirty", commit=True, push=True, land=True),
         "fresh": worktree("fresh", commit=False, push=False, land=False),
@@ -116,6 +119,10 @@ with tempfile.TemporaryDirectory() as tmp:
         bool(landed) and "prune-worktrees.py" in landed.get("reason", ""),
     )
 
+    # Asked once, never again for this tree: merging is often not the end of the work
+    # (merge, deploy, verify), and a hook that re-blocks every turn would nag a session
+    # that has good reason to stay put.
+    check("a later turn on the same worktree is silent", run(t["landed"]) is None)
     check("a second pass in the same cascade is silent", run(t["landed"], True) is None)
     check("uncommitted work is silent", run(t["dirty"]) is None)
     check("an unmerged branch is silent", run(t["unmerged"]) is None)
@@ -129,9 +136,10 @@ with tempfile.TemporaryDirectory() as tmp:
     git(["push", "-q", "-u", "origin", "wt-byhand"], outside)
     check("a worktree outside .claude/worktrees is silent", run(outside) is None)
 
-    # Detached HEAD has no branch to have landed.
-    git(["checkout", "-q", "--detach"], t["landed"])
-    check("detached HEAD is silent", run(t["landed"]) is None)
+    # Detached HEAD has no branch to have landed. Run it on the untouched landed tree,
+    # which would otherwise block — so silence here is the detach, not the stamp.
+    git(["checkout", "-q", "--detach"], t["landed2"])
+    check("detached HEAD is silent", run(t["landed2"]) is None)
 
 print()
 if failures:

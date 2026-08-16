@@ -38,6 +38,14 @@ GIT_DIR_ABS=$(cd "$GIT_DIR_RAW" 2>/dev/null && pwd -P) || exit 0
 COMMON_ABS=$(cd "$COMMON_RAW" 2>/dev/null && pwd -P) || exit 0
 [ "$GIT_DIR_ABS" != "$COMMON_ABS" ] || exit 0
 
+# Ask once per worktree, ever. stop_hook_active only suppresses a re-fire inside a single
+# stop cascade, so without this the same landed-and-clean state re-blocks at the end of
+# every later turn — and merging is often not the end of the work here (merge, deploy,
+# verify), which would evict a session from its worktree mid-task and then nag about it.
+# The stamp lives in the per-worktree git dir, so it dies with the tree it refers to.
+STAMP="$GIT_DIR_ABS/claude-landed-nudged"
+[ -f "$STAMP" ] && exit 0
+
 # Only session worktrees are ours to comment on. One the operator made by hand elsewhere
 # is not, however landed it looks.
 TOPLEVEL=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
@@ -76,6 +84,8 @@ fi
 # only from this directory.
 git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null || exit 0
 
+: >"$STAMP" 2>/dev/null
+
 jq -n --arg branch "$BRANCH" --arg default "$DEFAULT" --arg path "$TOPLEVEL" '{
   decision: "block",
   reason: (
@@ -90,6 +100,8 @@ jq -n --arg branch "$BRANCH" --arg default "$DEFAULT" --arg path "$TOPLEVEL" '{
     "- If ExitWorktree reports no active worktree session, it cannot act here. Say so " +
     "in one line and stop: prune-worktrees.py removes \($path) at the next session " +
     "start, once this session'"'"'s lock owner is gone.\n\n" +
-    "Then finish your reply. Do not start new work."
+    "Then finish your reply. Do not start new work. If there is still work to do here " +
+    "(a deploy to run, a verification to make), say so and keep the worktree — this " +
+    "fires once per worktree and will not ask again."
   )
 }'
