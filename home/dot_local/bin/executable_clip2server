@@ -58,17 +58,50 @@ fi
 
 name="clip-$(date +%Y%m%d-%H%M%S).${ext}"
 
-# `;` and not `&&` between the retention sweep and the write: find exits non-zero over a single
-# unreadable entry, and chaining would then drop the image this run is sending.
+# The whole remote side is one ssh command — upload, retention sweep, and the hand-off into the
+# Claude prompt. Splitting it would double the connections per press, and the server runs
+# `ufw limit ssh`, which REJECTs the sixth in 30s; a burst of pastes is exactly the case that
+# limit punishes.
 #
-# SC2029: the client-side expansion is the point — $DIR, $KEEP_DAYS and $name are decided here and
-# the remote shell only ever sees their values.
-# shellcheck disable=SC2029
-{ if [ -n "$src_file" ]; then cat -- "$src_file"; else wl-paste --type image/png; fi; } |
-  ssh "$HOST" \
-    "mkdir -p '$DIR'; find '$DIR' -name 'clip-*' -mtime +$KEEP_DAYS -delete; cat > '$DIR/$name'" ||
-  fail "Transfer to $HOST failed"
+# The image has to become a *file* on the far side no matter what. A terminal cannot carry image
+# bytes (OSC 52 is base64 text, and the wrong direction anyway) and the server is headless, so
+# there is no clipboard over there for Claude to read from. What the hand-off buys is that the
+# path never passes through the operator's hands: send-keys types it into the prompt, and Claude
+# resolves it into a real image attachment.
+#
+# Built with semicolons rather than newlines so `printf %q` emits a plain single-quoted string
+# rather than bash's $'…' form, which the remote login shell is not guaranteed to parse.
+# `;` and not `&&` between the sweep and the write: find exits non-zero over a single unreadable
+# entry, and chaining would then drop the image this run is sending.
+remote='mkdir -p "$D"; find "$D" -name "clip-*" -mtime +"$K" -delete; cat > "$T"; '
+# tmux does the filtering with -f, which keeps awk (and its quoting) out of a nested shell string.
+# Sorted by window_activity (an epoch) so the most recently used Claude pane wins. Not
+# pane_activity, which reads empty on tmux 3.7b and would leave the ordering arbitrary — the bug
+# only shows up once there are two Claude sessions, which is exactly when it matters.
+remote+='pane=$(tmux list-panes -a -f "#{==:#{pane_current_command},claude}" '
+remote+='-F "#{window_activity} #{session_name}:#{window_index}.#{pane_index}" 2>/dev/null '
+remote+='| sort -rn | head -1 | cut -d" " -f2); '
+# Trailing space so the next thing typed doesn't run into the path. No Enter — the turn is the
+# operator's to send, and this way several images can be queued into one prompt.
+remote+='[ -n "$pane" ] || exit 0; tmux send-keys -t "$pane" -l "$T "; printf %s "$pane"'
 
+# SC2029: the client-side expansion is the point — $DIR, $KEEP_DAYS and $name are decided here and
+# the remote shell only ever sees their values, quoted by printf %q.
+# shellcheck disable=SC2029
+pane=$(
+  { if [ -n "$src_file" ]; then cat -- "$src_file"; else wl-paste --type image/png; fi; } |
+    ssh "$HOST" "D=$(printf '%q' "$DIR") T=$(printf '%q' "$DIR/$name") K=$KEEP_DAYS \
+      sh -c $(printf '%q' "$remote")"
+) || fail "Transfer to $HOST failed"
+
+if [ -n "$pane" ]; then
+  notify-send "clip2server" "Image sent to $pane"
+  exit 0
+fi
+
+# No Claude pane over there, so fall back to the two-step flow: leave the remote path on the local
+# clipboard for the operator to paste by hand.
+#
 # Handing off to a transient unit rather than calling wl-copy directly, because a Wayland
 # selection is served by a live process rather than stored anywhere. Launched from the keyboard
 # shortcut this script *is* a systemd unit (app-clip2server@….service), and systemd kills whatever
@@ -88,4 +121,4 @@ else
   wl-copy "$DIR/$name"
 fi
 
-notify-send "clip2server" "$DIR/$name — path copied"
+notify-send "clip2server" "$DIR/$name — path copied (no Claude pane found)"
