@@ -3,19 +3,25 @@
 # a desktop entry plus a [services][<id>.desktop] group in kglobalshortcutsrc keyed `_launch` —
 # there is no config surface that takes a bare command line.
 #
-# The config write is the whole job here, and unlike run_onchange_kde-free-ghostty-chords.sh
-# there is no live-registration half to pair with it. That script rebinds chords on components
-# that already exist (kwin, plasmashell), which setForeignShortcut can reach. A launcher shortcut
+# A [services] entry takes the chord *bare*, and that is the whole trap here. The sibling script
+# run_onchange_kde-free-ghostty-chords.sh writes the three-field `chord,default,display` form,
+# because that is what a component shortcut (kwin, plasmashell) takes — write that form under
+# [services] and KDE parses the three comma-separated tokens as a three-key sequence. The chord
+# still displays correctly in System Settings and `shortcutKeys` still reports it, so it looks
+# bound; but the stored sequence is [chord, Key_unknown, Key_unknown, 0], KWin won't install a
+# malformed sequence in its key map, and the physical keypress does nothing. A clean binding reads
+# [chord, 0, 0, 0]. `getGlobalShortcutsByKey <qt keycode>` is the probe that tells them apart —
+# it returns the action for a live binding and nothing for a malformed one.
+#
+# There is also no live-registration half to pair with the write, unlike that sibling script. It
+# rebinds chords on components that already exist, which setForeignShortcut can reach; a launcher
 # introduces a *new* component, and measured on Plasma 6.5 / Fedora 44:
 #   - setForeignShortcut against an unregistered component returns success and does nothing —
 #     the component never appears in allComponents.
 #   - doRegister, the obvious way to create it first, crashes kwin_wayland (which is where
 #     Plasma 6 hosts kglobalaccel), taking the session's window layout with it. Don't.
 # kglobalaccel registers [services] groups when it starts, so the chord goes live at the next
-# login. Verified after a kwin restart: the component appears as /component/clip2server_desktop
-# with _launch bound to 0x12000056, and the session's rewrite of kglobalshortcutsrc on exit
-# preserves the chord (it blanks the default/display fields, which is cosmetic — the display name
-# comes from the desktop entry's Name).
+# login. The display name comes from the desktop entry's Name, not from this file.
 #
 # Idempotent, and a no-op wherever KDE isn't the desktop.
 #   clip2server: {{ include "dot_local/bin/executable_clip2server" | sha256sum }}
@@ -26,7 +32,6 @@ command -v kwriteconfig6 >/dev/null 2>&1 || exit 0
 case "${XDG_CURRENT_DESKTOP:-}" in *KDE*) ;; *) exit 0 ;; esac
 
 CHORD='Meta+Shift+V'
-DISPLAY_NAME='Send Clipboard Image to daniel-box'
 
 # Only write when the chord isn't already the active binding, so a re-run doesn't clobber a
 # rebind made through System Settings — and so the field-blanking the session does on exit
@@ -39,7 +44,7 @@ case "${current%%,*}" in
   *)
     kwriteconfig6 --file kglobalshortcutsrc \
       --group services --group clip2server.desktop \
-      --key _launch "${CHORD},none,${DISPLAY_NAME}"
+      --key _launch "$CHORD"
     echo "kde-clip2server-shortcut: ${CHORD} bound; live at next login" >&2
     ;;
 esac
