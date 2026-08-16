@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Bind Meta+Shift+V to clip2server. Plasma 6 removed khotkeys, so a "custom command shortcut" is
+# a desktop entry plus a [services][<id>.desktop] group in kglobalshortcutsrc keyed `_launch` —
+# there is no config surface that takes a bare command line.
+#
+# The config write is the whole job here, and unlike run_onchange_kde-free-ghostty-chords.sh
+# there is no live-registration half to pair with it. That script rebinds chords on components
+# that already exist (kwin, plasmashell), which setForeignShortcut can reach. A launcher shortcut
+# introduces a *new* component, and measured on Plasma 6.5 / Fedora 44:
+#   - setForeignShortcut against an unregistered component returns success and does nothing —
+#     the component never appears in allComponents.
+#   - doRegister, the obvious way to create it first, crashes kwin_wayland (which is where
+#     Plasma 6 hosts kglobalaccel), taking the session's window layout with it. Don't.
+# kglobalaccel registers [services] groups when it starts, so the chord goes live at the next
+# login. Verified after a kwin restart: the component appears as /component/clip2server_desktop
+# with _launch bound to 0x12000056, and the session's rewrite of kglobalshortcutsrc on exit
+# preserves the chord (it blanks the default/display fields, which is cosmetic — the display name
+# comes from the desktop entry's Name).
+#
+# Idempotent, and a no-op wherever KDE isn't the desktop.
+#   clip2server: {{ include "dot_local/bin/executable_clip2server" | sha256sum }}
+#   launcher:    {{ include "dot_local/share/applications/clip2server.desktop.tmpl" | sha256sum }}
+set -eu
+
+command -v kwriteconfig6 >/dev/null 2>&1 || exit 0
+case "${XDG_CURRENT_DESKTOP:-}" in *KDE*) ;; *) exit 0 ;; esac
+
+CHORD='Meta+Shift+V'
+DISPLAY_NAME='Send Clipboard Image to daniel-box'
+
+# Only write when the chord isn't already the active binding, so a re-run doesn't clobber a
+# rebind made through System Settings — and so the field-blanking the session does on exit
+# isn't treated as drift worth undoing.
+current=$(kreadconfig6 --file kglobalshortcutsrc \
+  --group services --group clip2server.desktop --key _launch 2>/dev/null || true)
+
+case "${current%%,*}" in
+  "$CHORD") ;;
+  *)
+    kwriteconfig6 --file kglobalshortcutsrc \
+      --group services --group clip2server.desktop \
+      --key _launch "${CHORD},none,${DISPLAY_NAME}"
+    echo "kde-clip2server-shortcut: ${CHORD} bound; live at next login" >&2
+    ;;
+esac

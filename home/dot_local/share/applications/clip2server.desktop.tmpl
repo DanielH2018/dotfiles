@@ -1,0 +1,19 @@
+[Desktop Entry]
+# Launcher for clip2server, which exists for one reason: a KDE global shortcut binds to a desktop
+# id, not to a command. Plasma 6 dropped khotkeys, so the "custom command shortcut" of the GNOME
+# world is spelled here plus a [services][clip2server.desktop] entry in kglobalshortcutsrc —
+# written by run_onchange_kde-clip2server-shortcut.sh.
+#
+# Templated for the Exec path for the same reason as wpe-pick.desktop: a desktop entry has no
+# field code for the home directory, and a bare `clip2server` would depend on ~/.local/bin being
+# on the PATH of whatever the desktop environment spawns applications from, which is not the
+# login shell's PATH.
+Type=Application
+Name=Send Clipboard Image to daniel-box
+GenericName=Clipboard Image Uploader
+Comment=Copy the clipboard screenshot to daniel-box and put its remote path on the clipboard
+Exec={{ .chezmoi.homeDir }}/.local/bin/clip2server
+Icon=edit-copy
+Terminal=false
+Categories=Utility;
+Keywords=clipboard;screenshot;paste;claude;ssh;

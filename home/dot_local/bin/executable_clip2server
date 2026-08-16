@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Put the Wayland clipboard's image onto daniel-box and leave its *remote* path on the local
+# clipboard. Claude Code resolves an image path typed into its prompt, so pasting that path into
+# a session running on daniel-box over ssh attaches the screenshot as a real image — which a
+# terminal paste of the image bytes cannot do.
+#
+# The ssh config's ControlMaster/ControlPersist for this host is load-bearing, not cosmetic: the
+# server runs `ufw limit ssh`, which REJECTs the 6th connection in 30s, so without connection
+# reuse a burst of pastes starts failing silently partway through.
+set -euo pipefail
+
+HOST=daniel-box
+DIR=/home/ubuntu/clip
+KEEP_DAYS=7
+
+fail() {
+  notify-send --urgency=critical "clip2server" "$1"
+  exit 1
+}
+
+# Captured before matching rather than piped straight into `grep -q`: grep exits at its first
+# match, wl-paste takes the SIGPIPE, and under `pipefail` the pipeline reports 141 — so the
+# "nothing to send" branch would fire intermittently with an image sitting on the clipboard.
+types=$(wl-paste --list-types 2>/dev/null || true)
+grep -qx 'image/png' <<<"$types" || fail "No PNG on the clipboard"
+
+name="clip-$(date +%Y%m%d-%H%M%S).png"
+
+# `;` and not `&&` between the retention sweep and the write: find exits non-zero over a single
+# unreadable entry, and chaining would then drop the image this run is sending.
+#
+# SC2029: the client-side expansion is the point — $DIR, $KEEP_DAYS and $name are decided here and
+# the remote shell only ever sees their values.
+# shellcheck disable=SC2029
+wl-paste --type image/png | ssh "$HOST" \
+  "mkdir -p '$DIR'; find '$DIR' -name 'clip-*.png' -mtime +$KEEP_DAYS -delete; cat > '$DIR/$name'" ||
+  fail "Transfer to $HOST failed"
+
+wl-copy "$DIR/$name"
+notify-send "clip2server" "$DIR/$name — path copied"
