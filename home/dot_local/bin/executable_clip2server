@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Put the Wayland clipboard's image onto daniel-box and leave its *remote* path on the local
-# clipboard. Claude Code resolves an image path typed into its prompt, so pasting that path into
-# a session running on daniel-box over ssh attaches the screenshot as a real image — which a
-# terminal paste of the image bytes cannot do.
-#
-# The ssh config's ControlMaster/ControlPersist for this host is load-bearing, not cosmetic: the
-# server runs `ufw limit ssh`, which REJECTs the 6th connection in 30s, so without connection
-# reuse a burst of pastes starts failing silently partway through.
+# Put the Wayland clipboard's image onto daniel-box and hand its *remote* path to the Claude
+# session running there. Claude Code resolves an image path typed into its prompt, so the path
+# becomes a real image attachment — which a terminal paste of the image bytes cannot do, the
+# server being headless and a terminal carrying no image types.
 set -euo pipefail
 
 HOST=daniel-box
 DIR=/home/ubuntu/clip
 KEEP_DAYS=7
+
+# Its own control socket, not the one ~/.ssh/config sets up for interactive use. The server caps
+# concurrent sessions per connection at 2 (measured: sessions 1-2 open, 3+ get "Session open
+# refused by peer"), and two interactive shells already sit at that cap — so sharing their master
+# means every run is refused the mux and dials a fresh TCP connection instead. That walks straight
+# into `ufw limit ssh`, which REJECTs the sixth in 30s: a burst of pastes starts failing silently,
+# which is the exact failure the shared master was supposed to prevent.
+#
+# On a socket of its own the baseline is zero sessions and a run needs one, so every paste after
+# the first rides a connection that already exists. ClearAllForwardings drops the config's
+# LocalForward 8183, which a second connection cannot bind anyway.
+SSH_OPTS=(
+  -o ControlPath="$HOME/.ssh/cm-clip2server"
+  -o ControlMaster=auto
+  -o ControlPersist=10m
+  -o ClearAllForwardings=yes
+)
 
 fail() {
   notify-send --urgency=critical "clip2server" "$1"
@@ -90,7 +103,7 @@ remote+='[ -n "$pane" ] || exit 0; tmux send-keys -t "$pane" -l "$T "; printf %s
 # shellcheck disable=SC2029
 pane=$(
   { if [ -n "$src_file" ]; then cat -- "$src_file"; else wl-paste --type image/png; fi; } |
-    ssh "$HOST" "D=$(printf '%q' "$DIR") T=$(printf '%q' "$DIR/$name") K=$KEEP_DAYS \
+    ssh "${SSH_OPTS[@]}" "$HOST" "D=$(printf '%q' "$DIR") T=$(printf '%q' "$DIR/$name") K=$KEEP_DAYS \
       sh -c $(printf '%q' "$remote")"
 ) || fail "Transfer to $HOST failed"
 
