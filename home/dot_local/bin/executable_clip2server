@@ -18,13 +18,45 @@ fail() {
   exit 1
 }
 
+# Two different things reach the clipboard from a screenshot and only one of them is image bytes.
+# Spectacle's default post-capture action saves the file and copies its *location*, so what lands
+# is a text/uri-list; copying out of an image editor lands image/png. Handle both — rejecting the
+# uri-list is rejecting the exact flow this script exists for.
+#
 # Captured before matching rather than piped straight into `grep -q`: grep exits at its first
 # match, wl-paste takes the SIGPIPE, and under `pipefail` the pipeline reports 141 — so the
 # "nothing to send" branch would fire intermittently with an image sitting on the clipboard.
 types=$(wl-paste --list-types 2>/dev/null || true)
-grep -qx 'image/png' <<<"$types" || fail "No PNG on the clipboard"
+ext=png
+src_file=
 
-name="clip-$(date +%Y%m%d-%H%M%S).png"
+if grep -qx 'image/png' <<<"$types"; then
+  :
+elif grep -qx 'text/uri-list' <<<"$types"; then
+  # Trimmed with parameter expansion rather than `| head -1`, for the SIGPIPE reason above: head
+  # closes the pipe after the first line and wl-paste dies on 141, which `pipefail` then makes
+  # fatal. A uri-list is CRLF-delimited and may carry several entries; take the first.
+  uri=$(wl-paste --type text/uri-list 2>/dev/null || true)
+  uri=${uri%%$'\n'*}
+  uri=${uri%$'\r'}
+  [ "${uri#file://}" != "$uri" ] || fail "Clipboard URI is not a local file"
+  # Percent-decoding, which a screenshot path needs the moment a folder has a space in it. Every
+  # `%` in a well-formed file URI introduces two hex digits, so rewriting it as `\x` hands printf
+  # an escape it already knows — including a literal percent, which arrives as %25 and decodes
+  # back to itself.
+  src_file=${uri#file://}
+  printf -v src_file '%b' "${src_file//%/\\x}"
+  [ -r "$src_file" ] || fail "Not readable: $src_file"
+  mime=$(file --brief --mime-type "$src_file")
+  case "$mime" in
+    image/*) ext=${mime#image/} ;;
+    *) fail "Clipboard file is not an image ($mime)" ;;
+  esac
+else
+  fail "No image on the clipboard"
+fi
+
+name="clip-$(date +%Y%m%d-%H%M%S).${ext}"
 
 # `;` and not `&&` between the retention sweep and the write: find exits non-zero over a single
 # unreadable entry, and chaining would then drop the image this run is sending.
@@ -32,8 +64,9 @@ name="clip-$(date +%Y%m%d-%H%M%S).png"
 # SC2029: the client-side expansion is the point — $DIR, $KEEP_DAYS and $name are decided here and
 # the remote shell only ever sees their values.
 # shellcheck disable=SC2029
-wl-paste --type image/png | ssh "$HOST" \
-  "mkdir -p '$DIR'; find '$DIR' -name 'clip-*.png' -mtime +$KEEP_DAYS -delete; cat > '$DIR/$name'" ||
+{ if [ -n "$src_file" ]; then cat -- "$src_file"; else wl-paste --type image/png; fi; } |
+  ssh "$HOST" \
+    "mkdir -p '$DIR'; find '$DIR' -name 'clip-*' -mtime +$KEEP_DAYS -delete; cat > '$DIR/$name'" ||
   fail "Transfer to $HOST failed"
 
 wl-copy "$DIR/$name"
