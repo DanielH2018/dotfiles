@@ -4,6 +4,16 @@
 # Writes are requested via -i/--input or -a/--append; xsel allows these as
 # combined short-flag clusters (e.g. -ib = input + clipboard), so match the
 # letter anywhere in a single-dash cluster. Default (no write flag) is read.
+#
+# WSL-ONLY — see the xclip shim for why the gate is here rather than in chezmoi.
+if ! grep -qi microsoft /proc/version 2>/dev/null && [ -z "$WSL_DISTRO_NAME" ]; then
+  for real in /usr/bin/xsel /bin/xsel; do
+    [ -x "$real" ] && exec "$real" "$@"
+  done
+  echo "xsel: not installed (this shim is WSL-only)" >&2
+  exit 127
+fi
+
 write=0
 for arg in "$@"; do
   case "$arg" in

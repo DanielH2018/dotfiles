@@ -3,6 +3,18 @@
 # Windows clipboard. Installed because /etc/wsl.conf sets appendWindowsPath=false
 # (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
 #
+# WSL-ONLY. chezmoi deploys this to every machine, and ~/.local/bin precedes
+# /usr/bin on PATH, so off WSL the shim would shadow a real xclip and forward to
+# a wl-paste that isn't there — every read failing with an empty result rather
+# than an error. Gate first, hand off to the real binary otherwise.
+if ! grep -qi microsoft /proc/version 2>/dev/null && [ -z "$WSL_DISTRO_NAME" ]; then
+  for real in /usr/bin/xclip /bin/xclip; do
+    [ -x "$real" ] && exec "$real" "$@"
+  done
+  echo "xclip: not installed (this shim is WSL-only)" >&2
+  exit 127
+fi
+#
 # Two things beyond a plain forward, both for Claude Code's image paste:
 #   - The TARGETS probe is answered with `wl-paste -l` (the type list). The old
 #     shim ignored -t and dumped raw bytes, so Claude's `... | grep image/*`
