@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/005-no-noun-stacks",
+  "rules": "sentence-clarity",
+  "description": "A domain whose nouns invite stacking; compound modifiers the reply builds must stay at three words or fewer.",
+  "input": "Write two or three sentences for our monitoring doc describing the following. There is a script that reads whether the Longhorn backup target is currently armed. A Kuma monitor reports the result of that script. The monitor turns red whenever the target is disarmed.",
+  "assert": {
+    "must_match": ["\\."]
+  },
+  "rubric": "PASS only if the reply constructs no noun pile-up of four or more nouns or adjectives stacked as a single compound modifier. 'the script that reads whether the backup target is armed' passes; 'the Longhorn backup target arm state check' does not. Two things must NOT be counted as violations: a product or entity name carried over verbatim from the input, however many words it contains, since the reply did not construct it; and a possessive or prepositional phrase such as 'the result of that script' or \"that script's result\", which is not a stack. FAIL only if you can quote a specific four-or-more-unit compound modifier that the reply itself built; if none can be quoted, the reply passes.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

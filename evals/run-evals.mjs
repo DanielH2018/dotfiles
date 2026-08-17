@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseArgs, effectiveK } from './lib/args.mjs';
 import { loadAgentFlagOrError, loadSkillFlagOrError } from './lib/load-agent.mjs';
+import { loadRulesFlagOrError } from './lib/load-rules.mjs';
 import { loadCases, envCaseDirs } from './lib/load-cases.mjs';
 import { invokeAgent } from './lib/invoke-agent.mjs';
 import { checkAssertions } from './lib/assertions.mjs';
@@ -18,9 +19,11 @@ const CONCURRENCY = 3;
 
 async function gradeRun(caseDef, agentsFlagCache) {
   if (!agentsFlagCache[caseDef.agent]) {
-    const r = caseDef.skill
-      ? loadSkillFlagOrError(caseDef.skill, REPO_ROOT)
-      : loadAgentFlagOrError(caseDef.agent, REPO_ROOT);
+    const r = caseDef.rules
+      ? loadRulesFlagOrError(caseDef.rules, REPO_ROOT)
+      : caseDef.skill
+        ? loadSkillFlagOrError(caseDef.skill, REPO_ROOT)
+        : loadAgentFlagOrError(caseDef.agent, REPO_ROOT);
     if (r.error) return gradeFromParts({ invocation: { status: 'infra_error', reason: r.error } });
     agentsFlagCache[caseDef.agent] = r.flag;
   }

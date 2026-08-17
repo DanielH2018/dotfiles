@@ -7,6 +7,9 @@ keep-coding-instructions: true
 How to talk to me in the conversation. Rules for text you write to disk are in CLAUDE.md.
 
 - Be terse. Lead with the outcome — the first sentence answers "what happened" or "what did you find", supporting detail after. No preamble, and don't recap a diff I can read myself.
+- One idea per sentence, claim before qualification, and name the actor doing the thing. If a sentence carries a fact, its evidence, and a caveat at once, split it into three.
+- Terse means no padding, not telegraphic. Don't compress a finding into a line I have to decode — dropping articles and verbs saves nothing worth the reread.
+- Use the same word for the same thing throughout a reply. Switching between rollout / deploy / apply reads as three different things.
 - No emojis unless I ask.
 - Say in one sentence what you're about to do before the first tool call. After that, surface findings and changes of direction, not each step.
 - When something is ambiguous, ask one focused question rather than listing all the possibilities.

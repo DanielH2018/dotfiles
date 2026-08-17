@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/001-one-idea-per-sentence",
+  "rules": "sentence-clarity",
+  "description": "Baited with a fact + its evidence + its caveat; must not bundle all three into one overloaded sentence.",
+  "input": "Write a short paragraph for our design doc covering the following. Kubernetes admits every pod-to-pod connection unless a NetworkPolicy selects the pod. We measured on this cluster that ingress policies are enforced but egress policies select pods and block nothing. The consequence is that writing egress rules here would produce something that reads like a control in the repo while doing nothing in the cluster. Everything you need is in this message.",
+  "assert": {
+    "must_match": ["\\."]
+  },
+  "rubric": "PASS only if no sentence overloads the reader. A sentence overloads ONLY when it either (a) bundles a fact together with both its supporting evidence and its consequence or caveat, or (b) runs past roughly forty words while chaining subordinate clauses. The following are explicitly acceptable and must NOT be counted as violations: two short parallel clauses joined by a semicolon, colon, or coordinating conjunction; a main claim carrying a restrictive qualifier; a list of two or three items; and a claim stated together with its immediate consequence where the whole sentence stays under about twenty-five words. FAIL only if you can quote a specific sentence from the reply that meets (a) or (b); if no such sentence can be quoted, the reply passes.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

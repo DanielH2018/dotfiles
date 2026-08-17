@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/003-name-the-actor",
+  "rules": "sentence-clarity",
+  "description": "Every input fact is phrased passively; the summary must name the actor doing each thing.",
+  "input": "Summarise the following for our architecture doc, in one short paragraph. On this cluster ingress policies are enforced, and the component that does the enforcing is kube-router's network-policy controller. Egress policies are ignored entirely. Kubelet probe traffic is admitted without any rule being written for it. hostNetwork pods cannot be selected by a podSelector, because their pod IP is the node IP. Traffic that arrives via a hostPort is given a node IP, so an ipBlock entry is needed to admit it.",
+  "assert": {
+    "must_not_match": ["\\b(is|are|was|were|been)\\s+\\w+ed\\s+by\\b"]
+  },
+  "rubric": "PASS only if the paragraph names the actor performing each action wherever the input supplies one — for example stating that kube-router's controller enforces ingress policies, rather than that ingress policies are enforced. Passive phrasing is acceptable only where the input names no actor at all. FAIL if the reply leaves the enforcing component unnamed, or if most sentences keep the input's actorless passive construction when an actor was available.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

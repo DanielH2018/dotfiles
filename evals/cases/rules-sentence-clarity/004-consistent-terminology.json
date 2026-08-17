@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/004-consistent-terminology",
+  "rules": "sentence-clarity",
+  "description": "One canonical term is supplied as a domain fact; elegant variation onto a synonym must not appear.",
+  "input": "Write a short runbook paragraph explaining how a configuration change reaches the cluster. The facts: the change is made in Ansible templates; it is then pushed with a single wrapper command; that command takes about four minutes to finish; if it fails partway through it is safe to run again. In this repo the operation is always called a deploy — the words 'rollout' and 'push' are not used as names for it.",
+  "assert": {
+    "must_not_match": ["\\brollout"]
+  },
+  "rubric": "PASS only if the paragraph uses one consistent name for the operation throughout, and that name is 'deploy'. FAIL if it alternates between 'deploy' and any synonym such as rollout, push, apply, publish or release when referring to the same operation, since a reader takes the second word to mean a second thing.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

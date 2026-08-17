@@ -14,6 +14,27 @@ style never does: everything below governs text written to disk, not just my rep
 - Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links — `[label](file:///abs/path)`, never raw. Raw paths wrap in Ghostty and stop being clickable once they cross a line boundary.
 - Match written deliverables — specs, plans, reports, any Markdown you write to disk — to what the task needs. Cover the substance without padding it out.
 
+### Sentence-level clarity
+
+Adapted from the writing rules of ASD-STE100, the controlled-English standard used for
+aerospace maintenance documentation. Its *rules* transfer to prose; its **approved-word
+dictionary does not** — nothing here can enforce a vocabulary allowlist, and its
+procedure-specific rules (the ban on `-ing` forms, the procedural/descriptive split) are
+written for assembly steps and make ordinary prose stilted. The six below are the part that
+carries over, and each is checkable by rereading what you wrote:
+
+- **One idea per sentence.** Two independent claims means two sentences. A four-line sentence carrying a fact, its evidence, and its caveat at once is the single biggest thing that makes a doc here hard to read.
+- **Claim first, qualification second.** Lead with what is true, then bound it. Don't make me hold three subordinate clauses before reaching the verb.
+- **Name the actor.** "kube-router enforces ingress policies", not "ingress policies are enforced". Passive voice hides who does the thing, which is usually the fact an operator needs.
+- **Same name for the same thing, every time.** Pick one of rollout / deploy / apply and keep it for the whole document. Elegant variation reads as three different concepts.
+- **No noun stacks past three words.** "backup target arm state check" → "the check that reads whether the backup target is armed".
+- **At most one em-dash aside per paragraph.** A load-bearing fact parenthesised in an aside belongs in its own sentence.
+
+**Compression is not clarity.** Terse means no padding, not telegraphic. Dropping the
+articles and verbs out of a finding — "B2 disarmed pending cap-raise/spend-reduction
+decision" — saves a few words and costs a reread; that trade is never worth it. This applies
+to memory files and status lines as much as to docs.
+
 ## Config & dotfiles management (chezmoi)
 
 My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. A hand-edit to a deployed file is reverted on the next `chezmoi apply` (templated sources) or silently drifts. Run `chezmoi source-path <file>` before editing any config under `~`; a `.tmpl` source means the deployed file is generated and hand-edits there are pointless.

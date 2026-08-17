@@ -17,6 +17,7 @@ node evals/run-evals.mjs --agent implementer   # only one agent's cases
 node evals/run-evals.mjs --case migration-reviewer/001-drop-column-still-read
 node evals/run-evals.mjs --k 3                 # override k for every case
 node evals/run-evals.mjs --json report.json    # also write a machine-readable report
+node evals/run-evals.mjs --agent rules-sentence-clarity --control   # the no-rules arm (see Rules cases)
 ```
 
 **`k` precedence:** `--smoke` (forces k=1) > `--k <n>` > the case's own `k` field.
@@ -177,3 +178,95 @@ original pass sat untriaged for a week, which reads the same as "deliberately sk
 | `domain-modeling` | skip — provenance behavior needs the vault to source against |
 | `reprime` | skip — its core act is re-reading external rule files |
 | `writing-great-skills` | skip — open-ended authoring judgment, low regression value |
+
+## Rules cases
+
+A case can grade a **section of the user-level `CLAUDE.md`** instead of an agent or a skill:
+set `"rules": "<slug>"` in the case JSON and put it under `evals/cases/rules-<slug>/`. The
+runner renders `home/private_dot_claude/CLAUDE.md.tmpl` with `chezmoi execute-template`,
+slices out the heading named in `RULES_SECTIONS` (`evals/lib/load-rules.mjs`), and runs that
+block as the system prompt of a synthetic agent `rules-<slug>`. Model pinned to **opus**, same
+reasoning as skill cases.
+
+**The section is sliced from the real file at eval time, never copied.** A pasted duplicate
+beside the cases keeps passing after the source is edited, so it would grade text the model is
+never actually given — the failure mode `skill-router` hit for eight days.
+
+### The A/B, and the precondition that makes it valid
+
+A pass rate with no baseline answers nothing, so `--control` re-runs the same cases against an
+arm that gets the identical task framing and **no rules block**:
+
+```bash
+node evals/run-evals.mjs --agent rules-sentence-clarity            # treatment
+node evals/run-evals.mjs --agent rules-sentence-clarity --control  # control
+```
+
+`--control` is applied after the filters, so `--agent rules-sentence-clarity` names the
+treatment arm in both directions; the control arm reports as `rules-control`.
+
+**Run the A/B only on the `--bare` + `ANTHROPIC_API_KEY` path.** Per *Isolation & auth* above,
+without an API key the runner omits `--bare` and ambient global-`CLAUDE.md` context is
+minimized but not eliminated. These rules *live* in that ambient file, so on the non-bare path
+the control arm can receive the very rules it is supposed to lack, and the comparison measures
+nothing. The treatment arm is unaffected — it is handed the rules deliberately.
+
+### Scope: what these cases do and do not cover
+
+The rules ship in two places. Only one is gradable here.
+
+| Home | Governs | Covered? |
+|---|---|---|
+| `CLAUDE.md` → `### Sentence-level clarity` | text written to disk; reaches subagents | **yes** — the seven cases below |
+| `output-styles/daniel-voice.md` | conversational replies in the main session | **no** |
+
+The output style is not testable by this harness: it governs the interactive main loop, where
+it is re-asserted per turn, and `claude -p --agent` is a different, single-turn code path. Its
+three clarity bullets restate the same rules as the CLAUDE.md section, so a treatment win here
+is evidence the **wording** works — it is not evidence about conversational adherence.
+
+### Coverage
+
+Seven cases, one per rule, each input baited to induce that rule's failure and worded so it
+never hints at the rule itself (a hint would lift the control arm and flatten the A/B).
+
+| Case | Rule | Gate |
+|---|---|---|
+| `001-one-idea-per-sentence` | one idea per sentence | judge only |
+| `002-claim-before-qualification` | claim first, qualification second | judge only |
+| `003-name-the-actor` | name the actor | regex: agentive passive |
+| `004-consistent-terminology` | same name for the same thing | regex: `\brollout` |
+| `005-no-noun-stacks` | no noun stacks past three words | judge only |
+| `006-one-em-dash-aside` | one em-dash aside per paragraph | regex: two dashes on a line |
+| `007-terse-not-telegraphic` | compression is not clarity | regex: articles present |
+
+The em-dash gate assumes `claude -p` emits one line per paragraph; it can under-catch a
+wrapped paragraph, and is unlikely — though not guaranteed — to false-fail: a sentence pairing
+a dash-bounded aside with a second unrelated dash on the same line would trip it. The rubric
+backs the gate in both directions. Four rules are judge-only
+because no regex distinguishes them without false-failing honest prose.
+
+Each regex gate has a falsifiability test in `tests/evals/evals-load-rules.test.mjs`: it reads
+the real case file and asserts the gate both rejects the failure it targets and admits the
+honest form. A case that cannot fail measures nothing, and a rubric loosened to stop
+false-failing can drift into always-passing without anyone noticing. Those tests cost no API
+calls, so they run with the rest of the unit suite.
+
+**Rubric strictness is the recurring defect here.** Cases 001 and 006 both shipped with rubrics
+that overreached the rule they grade — 001 demanded that *every* sentence carry a single claim,
+failing ordinary semicolons; 006 demanded that every load-bearing fact get its own sentence,
+which let the judge count semicolons as asides. Both were recut to fail only a **quotable**
+sentence meeting a **named, closed** condition. When adding a rules case, state what does *not*
+count as a violation, and require the judge to quote the offending text.
+
+Case 005 failed 3/5 for a different reason worth its own note: **the input itself contained the
+violation.** It named "the Longhorn Backblaze B2 backup target", a four-unit noun stack, so the
+reply was penalised for faithfully reusing a term the prompt supplied. The rule governs stacks
+the reply *constructs*. Check that a case's own input does not contain the failure it grades,
+and exempt names carried over verbatim.
+
+Measured at k=5 on the treatment arm (2026-08-17), after those three recuts: 001 4/5, 002 5/5,
+003 5/5, 004 5/5, 005 5/5, 006 5/5, 007 5/5. Every case clears its `rate>=4/5` bar.
+
+**Not covered:** whether the rules help in a real multi-turn session; whether they hold when
+competing with a long task context; and the output style, per the scope table above.

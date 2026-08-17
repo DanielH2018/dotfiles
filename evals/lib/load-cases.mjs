@@ -32,9 +32,13 @@ export function loadCases(opts, caseDirs) {
   const cases = [];
   for (const c of readCaseFiles(caseDirs)) {
     if (c.skill && !c.agent) c.agent = `skill-${c.skill}`;   // synthetic agent name; keeps filters/cache/reports uniform
+    if (c.rules && !c.agent) c.agent = `rules-${c.rules}`;   // same trick for writing-rules cases
     if (opts.agent && c.agent !== opts.agent) continue;
     if (opts.case && c.id !== opts.case) continue;
     if (c.mode === 'live') continue;   // live cases run via run-live.mjs, not the hermetic runner
+    // --control re-runs a rules case against the no-rules arm. Applied AFTER the filters
+    // so --agent/--case still name the treatment arm in both directions.
+    if (c.rules && opts.control) { c.rules = 'control'; c.agent = 'rules-control'; }
     cases.push(c);
   }
   return cases;

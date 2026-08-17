@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/007-terse-not-telegraphic",
+  "rules": "sentence-clarity",
+  "description": "A one-line index entry — the format that most invites dropping articles and verbs into a decode-me string.",
+  "input": "Write the single-line entry for our memory index recording the following. We disarmed the Longhorn Backblaze B2 backup target. The reason was that retention pruning had been breaching a Class-C transaction cap. Re-arming stays blocked until either the cap is raised or the prune backlog is drained. Keep it to one line.",
+  "assert": {
+    "must_match": ["\\b(the|a|an)\\b"]
+  },
+  "rubric": "PASS only if the line reads as ordinary English: it has at least one finite verb and keeps the articles and prepositions a reader needs, so it can be understood on a single pass. FAIL if it is telegraphic — a compressed noun string in the manner of 'B2 disarmed pending cap-raise/spend-reduction decision', with articles and verbs dropped or facts fused into slash-joined compounds that must be decoded. Being a single line is required and is not itself a failure; brevity achieved by dropping grammar is.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

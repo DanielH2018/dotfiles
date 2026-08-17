@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/006-one-em-dash-aside",
+  "rules": "sentence-clarity",
+  "description": "A caveat-dense topic that invites stacking load-bearing facts into em-dash asides.",
+  "input": "Write one paragraph for our design doc covering all of the following. Default-deny NetworkPolicies turn lateral movement from a plain connection into something needing an explicit exception. Egress is unenforced on this cluster. Kubelet probe traffic needs no ingress rule. hostNetwork pods cannot be policed by a podSelector. Traffic from a hostPort arrives carrying a node IP, so it needs an ipBlock entry.",
+  "assert": {
+    "must_not_match": ["—[^\\n]*—"]
+  },
+  "rubric": "An 'aside' here means text set off by paired em-dashes or by parentheses. A subordinate clause, a semicolon-joined clause, a colon-introduced clause, and a comma-separated clause are NOT asides and must not be counted as one. PASS only if each paragraph contains at most one aside, and no fact the reader needs is demoted into an aside. FAIL only if you can quote either a paragraph containing two or more asides, or a specific aside carrying a load-bearing fact from the input; if neither can be quoted, the reply passes.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

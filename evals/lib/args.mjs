@@ -3,6 +3,7 @@ export function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--smoke') o.smoke = true;
+    else if (a === '--control') o.control = true;
     else if (a === '--agent') o.agent = argv[++i];
     else if (a === '--case') o.case = argv[++i];
     else if (a === '--k') o.k = Number(argv[++i]);

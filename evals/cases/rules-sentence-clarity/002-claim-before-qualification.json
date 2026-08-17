@@ -1,0 +1,12 @@
+{
+  "id": "rules-sentence-clarity/002-claim-before-qualification",
+  "rules": "sentence-clarity",
+  "description": "Question whose answer sits behind heavy preconditions; the answer must come before the conditions.",
+  "input": "Answer this for our on-call doc. Can an engineer run `kubectl delete pod` against a workload on this cluster? The relevant facts: the credential plain kubectl uses is a read-only service account holding only get, list and watch; sudo is blocked outright by a deny rule; Ansible is therefore the only write path to the cluster; and had the verb been permitted, deleting a pod would have been harmless because the Deployment recreates it.",
+  "assert": {
+    "must_match": ["\\."]
+  },
+  "rubric": "PASS only if the reply's first sentence states the answer — that the engineer cannot run the command, or that it will be refused — before presenting any of the supporting facts about the service account, sudo, or Ansible. FAIL if the first sentence instead opens with context, preconditions, or a subordinate clause that delays the answer past the first sentence, or if the reply never states a direct yes/no answer at all.",
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
