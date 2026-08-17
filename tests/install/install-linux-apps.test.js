@@ -27,10 +27,12 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 //
 // The Windows script (rendered with its OS guard stripped) goes through the same helper: the
 // cache is keyed on the body, so it cannot be served this file's default render.
-const render = (file) => renderTemplate(file || body, { source: SOURCE });
+// Pinned to the workstation profile so the gate below is satisfied on any host; see the
+// `profile` note in tests/lib/render.js for why this beats skipping on a server-profile machine.
+const render = (file) => renderTemplate(file || body, { source: SOURCE, profile: 'workstation' });
 
-// The script is gated to a non-WSL workstation, so it renders empty on a server/minimal profile
-// or under WSL. Those hosts have nothing to assert against.
+// The script is gated to a non-WSL workstation. With the profile pinned above, only WSL and
+// non-Linux hosts still render empty, and those have nothing to assert against.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 
 // Parse the rendered APPS block back into records — this is exactly what the shell `while read`
@@ -384,7 +386,7 @@ function runModule(shell, { repoFiles = {} } = {}) {
   }
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
-  for (const name of PASSTHROUGH.concat(['grep'])) {
+  for (const name of PASSTHROUGH.concat(['grep', 'uname'])) {
     let real;
     try { real = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim(); } catch { continue; }
     if (real && !fs.existsSync(path.join(binDir, name))) fs.symlinkSync(real, path.join(binDir, name));
@@ -398,9 +400,16 @@ function runModule(shell, { repoFiles = {} } = {}) {
   fs.writeFileSync(modulePath, renderTemplate('{{ includeTemplate "linux-install.sh" . }}'));
   const runner = path.join(home, 'run.sh');
   fs.writeFileSync(runner, `. ${JSON.stringify(modulePath)}\n${shell}\n`);
+  // PATH is the stub dir ALONE. With /usr/bin:/bin appended, the host's own package manager
+  // leaked in and decided the test: PM resolves by probing apt-get first, so on a Debian or
+  // Ubuntu machine every rpm_repo_* function below took its `[ "$PM" = dnf ] || return 0` exit
+  // and did nothing, while the assertions read as a broken module. install-cli-tools.test.js
+  // already carries the mirror image of this note — there the real dnf leaked in and silently
+  // tested the dnf path instead of the unsupported-distro one. The stubs must be the only
+  // package managers on PATH, in both directions.
   const out = execFileSync(path.join(binDir, 'sh'), ['-c', `sh ${JSON.stringify(runner)} 2>&1 || true`], {
     encoding: 'utf8',
-    env: { HOME: home, PATH: `${binDir}:/usr/bin:/bin`, REPO_DIR: repoDir, TAG: 'test' },
+    env: { HOME: home, PATH: binDir, REPO_DIR: repoDir, TAG: 'test' },
   });
   return { out, repoDir };
 }

@@ -382,8 +382,18 @@ test('argparse builds no help formatter unless help is actually asked for', { sk
   assert.doesNotMatch(plain, /\| shutil$/m, 'a query must not build a help formatter');
   assert.doesNotMatch(plain, /\| _colorize$/m, 'a query must not pull the colour machinery');
 
-  assert.match(importsOf('--help'), /\| _colorize$/m,
+  // shutil, not _colorize, is what proves the formatter got built: argparse's HelpFormatter
+  // reads the terminal width through it on every version. _colorize is stdlib only from 3.13,
+  // so pinning the positive case to it failed on 3.12 — an interpreter difference reported as
+  // a jsonq regression. It still earns its place where it exists, since it is the marker that
+  // is specific to help FORMATTING rather than to shutil's other callers.
+  const helpImports = importsOf('--help');
+  assert.match(helpImports, /\| shutil$/m,
     '--help must still format normally; the cost is deferred, not removed');
+  const hasColorize = spawnSync(python, ['-c', 'import _colorize'], { encoding: 'utf8' }).status === 0;
+  if (hasColorize) {
+    assert.match(helpImports, /\| _colorize$/m, '--help must still pull the colour machinery');
+  }
 
   const help = ok(['--help']).replace(/\[[0-9;]*m/g, '');
   assert.match(help, /^positional arguments:$/m, 'positional group heading preserved');

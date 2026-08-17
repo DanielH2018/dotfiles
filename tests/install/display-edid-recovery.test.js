@@ -37,7 +37,10 @@ const PASSTHROUGH = ['sh', 'bash', 'cat', 'cp', 'wc', 'od', 'grep', 'install', '
 
 const dirs = [];
 let renderedCache;
-const rendered = () => (renderedCache ??= renderFile(SRC));
+// Pinned to the workstation profile: this script is gated behind is-desktop-linux, so it renders
+// to zero bytes on a server-profile host and every assertion below fails there for no reason.
+// See the `profile` note in tests/lib/render.js.
+const rendered = () => (renderedCache ??= renderFile(SRC, { profile: 'workstation' }));
 
 // The health script is embedded in the installer as a quoted heredoc, so it is extracted rather
 // than duplicated here -- a copy in the test would keep passing after the real one drifted.

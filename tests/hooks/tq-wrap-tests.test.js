@@ -29,6 +29,32 @@ if (python3Ok) {
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
 }
 
+// load_detect() in the hook refuses a TQ_LIB that is writable by group or other — a real
+// hardening check, covered below by 'a world-writable TQ_HOME is refused'. Left to derive
+// TQ_LIB from TQ_SOURCE's own checkout tree, that check is at the mercy of whatever umask
+// this machine's git checkout happened to land with: a permissive umask (e.g. 007, this
+// host's default) leaves the checked-out tq lib group-writable, the hook raises inside its
+// own blind except, and every rewrite assertion below sees null instead of a verdict — not
+// a bug in the hook or in what it protects, just this suite depending on ambient state it
+// never set. `chezmoi apply` does not reproduce this either; deployed files land 644/755
+// regardless of the source checkout's bits. So copy the lib into a temp dir once, harden
+// its permissions explicitly, and point TQ_HOME at that — the same fix in kind as the
+// TQ_OFF scrub above, for the same reason: this hook must be exercised on its own terms,
+// not on whatever the environment happened to leave lying around.
+const TQ_LIB_SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'tq');
+let hardenedLib = '';
+if (python3Ok) {
+  hardenedLib = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hook-lib-'));
+  dirs.push(hardenedLib);
+  fs.cpSync(TQ_LIB_SRC, hardenedLib, { recursive: true, filter: (src) => !src.includes('__pycache__') });
+  const harden = (p) => {
+    const st = fs.statSync(p);
+    fs.chmodSync(p, st.isDirectory() ? 0o755 : 0o644);
+    if (st.isDirectory()) for (const e of fs.readdirSync(p)) harden(path.join(p, e));
+  };
+  harden(hardenedLib);
+}
+
 function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
   const input = raw !== null ? raw : JSON.stringify({ tool_name: tool, tool_input: { command } });
   // TQ_OFF must not reach the hook from the ambient environment. `.githooks/pre-push`
@@ -37,7 +63,7 @@ function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
   // red on exactly the runs that used that escape hatch — a red gate caused by the bypass
   // rather than by anything under test. Cases that mean to exercise the off switch pass it
   // through `env`, which is spread last and still wins.
-  const base = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ };
+  const base = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ, TQ_HOME: hardenedLib };
   delete base.TQ_OFF;
   const r = spawnSync('python3', [HOOK], {
     input,

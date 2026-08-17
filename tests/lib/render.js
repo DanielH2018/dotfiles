@@ -24,6 +24,7 @@
 // one will do is just slower. Expect it to prevent nothing.
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const REPO = path.join(__dirname, '..', '..');
@@ -51,10 +52,39 @@ const cache = new Map();
 // several fake HOMEs. Both it and `cwd` are part of the cache key, so renders that differ only in
 // environment cannot be served each other's result; a memo that got that wrong would be worse
 // than no memo at all.
-function renderTemplate(body, { source = SOURCE, cwd, env } = {}) {
-  const key = [source || '', cwd || '', env ? JSON.stringify(env) : '', body].join(' ');
+// `profile` overrides .profile for this render. Desktop-only templates open with
+// `{{ if includeTemplate "is-desktop-linux" . }}`, which is false unless .profile is
+// "workstation" -- so on a server-profile machine (daniel-box sets profile = "server") those
+// templates render to zero bytes, and every assertion about their contents fails on a host where
+// nothing is actually wrong. Skipping there would be worse than fixing it: this repo already
+// treats a silently skipped suite as indistinguishable from a passing one, which is why the
+// pre-push file list comes from git rather than from node's discovery. The logic in these
+// scripts -- which EDID counts as broken, whether the podman shim is installed -- does not
+// depend on the profile; only the decision to deploy them does. Pinning the profile the
+// template expects makes that coverage travel to any machine.
+//
+// A config file rather than an env var because chezmoi reads .data only from its config.
+// --config replaces that file wholesale, so the other keys the real one carries (umask,
+// interpreters) are deliberately absent: execute-template applies nothing and reads none of them.
+const profileConfigs = new Map();
+function profileConfig(profile) {
+  if (!profileConfigs.has(profile)) {
+    const base = JSON.parse(execFileSync('chezmoi', ['dump-config', '--format=json'], { encoding: 'utf8' }));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-profile-'));
+    const file = path.join(dir, 'chezmoi.json');
+    fs.writeFileSync(file, JSON.stringify({ data: { ...base.data, profile } }));
+    profileConfigs.set(profile, file);
+  }
+  return profileConfigs.get(profile);
+}
+
+function renderTemplate(body, { source = SOURCE, cwd, env, profile } = {}) {
+  const key = [source || '', cwd || '', env ? JSON.stringify(env) : '', profile || '', body].join(' ');
   if (!cache.has(key)) {
-    const args = source ? ['--source', source, 'execute-template'] : ['execute-template'];
+    const config = profile ? ['--config', profileConfig(profile)] : [];
+    const args = source
+      ? [...config, '--source', source, 'execute-template']
+      : [...config, 'execute-template'];
     const opts = { input: body, encoding: 'utf8' };
     if (cwd) opts.cwd = cwd;
     if (env) opts.env = env;

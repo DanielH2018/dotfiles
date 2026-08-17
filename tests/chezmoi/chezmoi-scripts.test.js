@@ -914,7 +914,9 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
       fs.symlinkSync(realBin(bin), path.join(dir, bin));
     }
     const scriptFile = path.join(dir, 'rendered.sh');
-    fs.writeFileSync(scriptFile, renderFile(BT_SRC));
+    // Workstation profile: this script is gated behind is-desktop-linux and renders to zero bytes
+    // on a server-profile host. See the `profile` note in tests/lib/render.js.
+    fs.writeFileSync(scriptFile, renderFile(BT_SRC, { profile: 'workstation' }));
     const env = { PATH: dir, HOME: dir, STUB_LOG: logFile, FAKE_ROOT: fakeRoot };
     return { scriptFile, env, logFile, fakeRoot };
   }

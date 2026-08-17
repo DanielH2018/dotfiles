@@ -29,7 +29,11 @@ const dirs = [];
 // against main's data — and the shared linux-install.sh this script now includes would resolve to
 // whatever main happens to carry, or not at all.
 const SOURCE = path.join(__dirname, '..', '..', 'home');
-const render = () => renderTemplate(body, { source: SOURCE });
+// Pinned to the workstation profile. The template itself renders on a server profile, but the
+// podman-docker shim inside it sits behind is-desktop-linux (asserted by 'the podman-docker shim
+// is gated away from WSL' below), so on a server host that block vanishes and the shim cases fail
+// while rendersHere() still reports true. See the `profile` note in tests/lib/render.js.
+const render = () => renderTemplate(body, { source: SOURCE, profile: 'workstation' });
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 
