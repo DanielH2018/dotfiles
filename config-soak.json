@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "d83fdb044328a36f69b5627beda5903157a3a9720640f8670d7bea2f3077d290",
-      "landed": "2026-08-14T20:23:06.154Z"
+      "hash": "6e821ab2358e03b11bab6d1328418b62d33c4b357988fd2cecfb15ae9366be92",
+      "landed": "2026-08-17T14:27:25.160Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -303,8 +303,8 @@
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
-      "hash": "85915fdd1fb34ea7a939bc7fcf4423af3d0e43b46c42e1826751c1131b6ba437",
-      "landed": "2026-08-05T19:22:53.299Z"
+      "hash": "9eb3fee08e3cbd092517bda9646e654ce8e821bc18e0f4ce46bf6d22fafc592c",
+      "landed": "2026-08-17T14:27:25.160Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
