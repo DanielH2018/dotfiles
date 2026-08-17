@@ -3,14 +3,24 @@ description: "Iterative PR review and fix loop. Usage: /review-loop [max-iterati
 disable-model-invocation: true
 ---
 
-Parse `$ARGUMENTS`: the first bare number is max iterations (default `5`), and `--auto`/`--confirm` set the autonomy mode (default `default`); then delete `.claude/review-loop-triage.local.md` if it exists so each `/review-loop` invocation starts with a clean triage slate.
+# Iterative PR review and fix loop
 
-Construct the Ralph Loop prompt. The prompt must pass the autonomy mode to `/review-and-fix` so each iteration knows how to behave:
+## When to use
 
-```
-"/review-and-fix [MODE]" --max-iterations [N] --completion-promise "NO FIXES NEEDED"
-```
+Use when a branch needs more than one review-fix pass — a large diff, or one where earlier
+fixes are likely to surface new findings. For a single pass, run `/review-and-fix` directly
+and skip the loop.
 
-Where `[MODE]` is the autonomy mode (`auto`, `confirm`, or `default`) and `[N]` is the max iterations.
+## Parameters
 
-Invoke the `ralph-loop:ralph-loop` skill with the constructed arguments.
+| Parameter | Value |
+|---|---|
+| `ITERATION_COMMAND` | `/review-and-fix` |
+| `DEFAULT_MAX` | `5` |
+| `TRIAGE_FILE` | `.claude/review-loop-triage.local.md` |
+
+## Steps
+
+Follow `references/loop-driver.md` with the parameters above. It holds the argument parsing,
+the triage-ledger reset, and the Ralph Loop prompt shape — never restate those steps here,
+so the two loop commands cannot drift apart.

@@ -3,14 +3,24 @@ description: "Iterative Claude Code setup review and fix loop. Usage: /review-se
 disable-model-invocation: true
 ---
 
-Parse `$ARGUMENTS`: the first bare number is max iterations (default `3`), and `--auto`/`--confirm` set the autonomy mode (default `default`); then delete `.claude/review-setup-triage.local.md` if it exists so each `/review-setup-loop` invocation starts with a clean triage slate.
+# Iterative Claude Code setup review and fix loop
 
-Construct the Ralph Loop prompt:
+## When to use
 
-```
-"/review-setup [MODE]" --max-iterations [N] --completion-promise "NO FIXES NEEDED"
-```
+Use when auditing the Claude Code config — hooks, settings, CLAUDE.md, commands — and one
+pass is not enough, because fixing one hook often reveals the next. For a single pass, run
+`/review-setup` directly and skip the loop.
 
-Where `[MODE]` is the autonomy mode and `[N]` is the max iterations.
+## Parameters
 
-Invoke the `ralph-loop:ralph-loop` skill with the constructed arguments.
+| Parameter | Value |
+|---|---|
+| `ITERATION_COMMAND` | `/review-setup` |
+| `DEFAULT_MAX` | `3` |
+| `TRIAGE_FILE` | `.claude/review-setup-triage.local.md` |
+
+## Steps
+
+Follow `references/loop-driver.md` with the parameters above. It holds the argument parsing,
+the triage-ledger reset, and the Ralph Loop prompt shape — never restate those steps here,
+so the two loop commands cannot drift apart.
