@@ -101,7 +101,9 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 
-# shellcheck disable=SC2329  # run by with_repo_lock, which invokes it via "$@"
+# No call site is visible here — with_repo_lock invokes it via "$@" — so SC2329 fires for the
+# function and SC2317 for every command in its body.
+# shellcheck disable=SC2329,SC2317
 land() {
   printf 'landing %s (PR #%s)\n' "$BRANCH" "$PR"
 

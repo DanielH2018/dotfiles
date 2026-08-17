@@ -83,9 +83,9 @@ ENV PATH=\"\$JAVA_HOME/bin:\$PATH\"
   # Node via fnm
   local node_version=""
   if [[ -f "$REPO_PATH/.nvmrc" ]]; then
-    node_version=$(cat "$REPO_PATH/.nvmrc" | tr -d '[:space:]' | sed 's/^v//')
+    node_version=$(tr -d '[:space:]' < "$REPO_PATH/.nvmrc" | sed 's/^v//')
   elif [[ -f "$REPO_PATH/.node-version" ]]; then
-    node_version=$(cat "$REPO_PATH/.node-version" | tr -d '[:space:]' | sed 's/^v//')
+    node_version=$(tr -d '[:space:]' < "$REPO_PATH/.node-version" | sed 's/^v//')
   elif [[ -f "$REPO_PATH/package.json" ]]; then
     # No version file — base image already has Node 22 (current LTS).
     # Skip fnm to avoid a ~200MB duplicate install. If the repo needs

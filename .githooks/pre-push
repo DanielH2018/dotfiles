@@ -108,13 +108,17 @@ if [ -z "${TQ_OFF:-}" ] && [ -f "$TQ" ] && command -v python3 >/dev/null 2>&1; t
   # never-read record on every green push.
   TQ_JSON_DIR="$(git rev-parse --absolute-git-dir)/tq"
   mkdir -p "$TQ_JSON_DIR" || TQ_JSON_DIR=""
-  # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
+  # Invoked indirectly, as `run <label> tq_node ...`, so no call site is visible here: SC2329
+  # fires for the function and SC2317 for every command in its body.
+  # shellcheck disable=SC2329,SC2317
   tq_node() { # tq_node <json-name> [node --test args...]
     name="$1"; shift
     TQ_JSON="${TQ_JSON_DIR:+$TQ_JSON_DIR/$name.json}" python3 "$TQ" node --test "$@"
   }
 else
-  # shellcheck disable=SC2329  # invoked indirectly, as `run <label> tq_node ...`
+  # Invoked indirectly, as `run <label> tq_node ...`, so no call site is visible here: SC2329
+  # fires for the function and SC2317 for every command in its body.
+  # shellcheck disable=SC2329,SC2317
   tq_node() { shift; node --test "$@"; }
   # NOT a skipped step, so it stays out of note_skip: the raw runner executes the same tests
   # and `run` still branches on node's own exit code, so coverage is identical — only the

@@ -388,7 +388,9 @@ BDB_OLD=none
 BDB_SHADOW=0
 if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "$BDB_LIB" = 1 ]; then BDB_SHADOW=1; fi
 
-# shellcheck disable=SC2329  # invoked indirectly, from the EXIT trap installed below
+# Invoked indirectly, from the EXIT trap installed below, so no call site is visible here:
+# SC2329 fires for the function and SC2317 for every command in its body.
+# shellcheck disable=SC2329,SC2317
 _bdb_shadow_log() {
   [ "$BDB_SHADOW" = 1 ] || return 0
   local newly='' newly_sub='' found_sub='' segscan i=0
