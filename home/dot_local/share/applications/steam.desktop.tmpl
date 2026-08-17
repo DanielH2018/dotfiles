@@ -1,0 +1,66 @@
+[Desktop Entry]
+# Shadows /usr/share/applications/steam.desktop so the application menu, KRunner and the
+# steam:// scheme handler all launch through ~/.local/bin/steam, which runs Steam outside the
+# Mullvad tunnel. Without this entry only shell launches would be excluded, and the menu — the
+# way Steam is actually started — would still put the client on an exit whose NAT drops the
+# hole-punch probes Steam's peer connections need.
+#
+# Templated for the Exec path: a desktop entry has no field code for the home directory (%h is
+# not one), and a bare `steam` would depend on ~/.local/bin being on the PATH of whatever the
+# desktop environment uses to spawn applications, which is not the login shell's PATH.
+#
+# Every Desktop Action carries its own Exec and none of them inherit the one above, so each has
+# to be redirected too — a missed action is a menu item that quietly starts Steam inside the
+# tunnel. The upstream entry's Comment translations are dropped rather than copied; they are the
+# only fields here that would need re-syncing on every Steam release and none of them affect
+# launching.
+#
+# Kept in step with the upstream entry by hand. If Steam's packaging grows new fields or actions,
+# diff against /usr/share/applications/steam.desktop rather than assuming this is still complete.
+Name=Steam
+Comment=Application for managing and playing games on Steam
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam %U
+Icon=steam
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;Game;
+MimeType=x-scheme-handler/steam;x-scheme-handler/steamlink;
+Actions=Store;Community;Library;Servers;Screenshots;News;Settings;BigPicture;Friends;
+PrefersNonDefaultGPU=true
+X-KDE-RunOnDiscreteGpu=true
+
+[Desktop Action Store]
+Name=Store
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://store
+
+[Desktop Action Community]
+Name=Community
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://url/CommunityHome/
+
+[Desktop Action Library]
+Name=Library
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/games
+
+[Desktop Action Servers]
+Name=Servers
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/servers
+
+[Desktop Action Screenshots]
+Name=Screenshots
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/screenshots
+
+[Desktop Action News]
+Name=News
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://openurl/https://store.steampowered.com/news
+
+[Desktop Action Settings]
+Name=Settings
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/settings
+
+[Desktop Action BigPicture]
+Name=Big Picture
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/bigpicture
+
+[Desktop Action Friends]
+Name=Friends
+Exec={{ .chezmoi.homeDir }}/.local/bin/steam steam://open/friends

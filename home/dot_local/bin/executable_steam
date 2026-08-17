@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Launch Steam outside the Mullvad tunnel.
+#
+# Slay the Spire 2 — and anything else built on ISteamNetworkingSockets — sets up peer
+# connections with ICE-style NAT traversal, which needs hole-punch probes (unsolicited inbound
+# UDP) to reach the client. Mullvad's exit drops them: measured 2026-08-17 by firing a packet at
+# our own exit mapping (68.235.46.46) from the home address, which never arrived — with the
+# firewall hardened *and* with 1025-65535/udp opened at runtime, so the drop is upstream of this
+# machine and no local rule can undo it. The game reports it as
+# `5008, Timed out attempting to negotiate rendezvous` and joining a lobby fails.
+#
+# The trade is deliberate and is the whole point of the file: Steam and its peers see the home
+# address instead of an exit's. Set STEAM_NO_EXCLUDE=1 to put a launch back inside the tunnel.
+#
+# Games inherit the exclusion from the client that launches them, so covering Steam covers the
+# games. To confirm a running session is actually excluded rather than assume it:
+#   grep -c . /sys/fs/cgroup/net_cls/mullvad-exclusions/cgroup.procs
+# and check the count moves when Steam starts. A client that was already running stays wherever
+# it was — this wrapper cannot move a live process, and Steam forwards a steam:// URL to the
+# existing instance rather than starting a new one, so a launch made while Steam is up does
+# nothing. Quit Steam first if it came up inside the tunnel.
+#
+# Named `steam` so it shadows /usr/bin/steam on PATH and covers shell launches as well as the
+# desktop entry, which calls this file by absolute path because a desktop entry does not inherit
+# the login shell's PATH.
+set -uo pipefail
+
+# The RPM path — itself a symlink to /usr/lib/steam/bin_steam.sh. Overridable for a tarball or
+# Flatpak install (and for the tests, which cannot stub an absolute path).
+REAL=${STEAM_BIN:-/usr/bin/steam}
+
+if [[ ! -x $REAL ]]; then
+  echo "steam: $REAL is not executable — is Steam installed?" >&2
+  exit 127
+fi
+
+# `mullvad-exclude true` is the capability probe, not `command -v` alone: the binary can be
+# present while the daemon is stopped or refuses the cgroup, and the difference only shows up
+# when something is actually run through it. A machine with no Mullvad at all takes the same path
+# as one where the exclusion is unavailable — launch directly and say nothing, because failing to
+# start Steam is strictly worse than starting it inside the tunnel, where everything except peer
+# connections works normally.
+if [[ ${STEAM_NO_EXCLUDE:-0} != 1 ]] \
+  && command -v mullvad-exclude >/dev/null 2>&1 \
+  && mullvad-exclude true >/dev/null 2>&1; then
+  exec mullvad-exclude "$REAL" "$@"
+fi
+
+exec "$REAL" "$@"
