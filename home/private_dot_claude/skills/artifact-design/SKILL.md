@@ -40,6 +40,11 @@ When refreshing: change only the slices whose state actually changed, plus the s
 line and `data-updated`. Leave everything else byte-identical. If the landed commits
 have nothing to do with the artifact, say so and change nothing — never invent status.
 
+This is the general rule for any edit to an already-published artifact, not just slice
+refreshes: touch only what the request or the new status requires and leave the rest of
+the file byte-identical. A small requested change (a number, a line, one section) isn't
+license to also rewrite phrasing, resize headers, or "improve" parts nobody asked about.
+
 Artifacts are pruned after 7 days without an update, so a doc that keeps getting
 refreshed as work lands stays put and an abandoned one clears itself out. Executable
 files in the artifacts directory are never pruned — a generated script is a tool, not
@@ -97,7 +102,8 @@ green `#40a02b`, yellow `#df8e1d`, red `#d20f39`, mauve `#8839ef`) rather than i
 - Keep it skimmable: headers, tables, and severity/priority cues where relevant.
 - Avoid emojis unless Daniel asks for them.
 - Set an intentional type scale — deliberate sizes and weights for headers vs. body vs. captions — even within the system font stack. The font is fixed; the hierarchy still has to be designed.
-- Let structure encode information, not decorate it. Don't add `01 / 02 / 03` numbering or step markers unless the content is genuinely a sequence where order carries meaning.
+- Let structure encode information, not decorate it. Don't add `01 / 02 / 03` numbering or step markers unless the content is genuinely a sequence where order carries meaning. Every element earns its place — don't pad with filler sections or restate the summary as a sidebar just to fill space.
+- Avoid AI-slop tropes: no gradient backgrounds, no rounded-corner cards with a left-border accent stripe (the single most recognizable LLM-report tic), no decorative icon-in-a-circle bullets.
 
 ## CSS gotcha
 
