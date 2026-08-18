@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "6e821ab2358e03b11bab6d1328418b62d33c4b357988fd2cecfb15ae9366be92",
-      "landed": "2026-08-17T14:27:25.160Z"
+      "hash": "0086f67fcba9dcb8cd229657338ce83b19aedd68bb0f796f727ccc7eb04435f1",
+      "landed": "2026-08-18T13:15:12.551Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -303,8 +303,8 @@
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
-      "hash": "9eb3fee08e3cbd092517bda9646e654ce8e821bc18e0f4ce46bf6d22fafc592c",
-      "landed": "2026-08-17T14:27:25.160Z"
+      "hash": "b03d19510eed62457193d143130df633341abb4fa8ef9398a0a773893009ce58",
+      "landed": "2026-08-18T13:15:12.551Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
@@ -348,8 +348,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "e0ec1660cd4a8fcce9aaa56de5496167789ef011ef700bb9c721823be46f26d1",
-      "landed": "2026-08-06T14:28:50.242Z"
+      "hash": "b682310c08ecb188b8792479c52adf32c6e1a89692da8dfa37f1527fc1d6de6b",
+      "landed": "2026-08-18T13:15:12.551Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
