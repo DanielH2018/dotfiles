@@ -52,8 +52,10 @@
 # stop there anyway: a session opens the PR and stops, and landing is a separate ask.
 #
 # Pairs with link-artifact.sh, which registers the artifact and clears the pending
-# list. That clear is what makes this fire once per landed slice rather than every
-# turn: the rewrite that answers the nudge is what satisfies it.
+# list when the rewrite lands. This hook also retires a set the moment it reports it,
+# so the nudge is raised once per landed slice whether or not the rewrite happens —
+# relying on the rewrite alone left it firing every turn when a session answered the
+# reason text's own "say so in one line and stop" instead.
 
 set -u
 
@@ -88,8 +90,14 @@ if head=$(git rev-parse --verify --quiet HEAD) && mkdir -p "$ARTIFACT_STATE_DIR"
   printf '%s\n' "$head" > "$ARTIFACT_STATE_DIR/$sesskey.tip" 2>/dev/null
 fi
 
+# Session first, then worktree, then repo. The repo entry is what lets a plan written
+# in one session keep being refreshed as later slices land from others, and it stays.
+# But it also aimed every session in the checkout at whichever doc was registered last,
+# so a session that wrote its own artifact was told to update somebody else's — the two
+# keys below it are the same string in a primary checkout, where `git rev-parse
+# --git-dir` and `--git-common-dir` both answer `.git`, so neither could break the tie.
 artifact=""
-for key in "$wt" "$repo"; do
+for key in "$sesskey" "$wt" "$repo"; do
   [[ -f "$ARTIFACT_STATE_DIR/$key.current" ]] || continue
   artifact=$(cat "$ARTIFACT_STATE_DIR/$key.current")
   break
@@ -127,6 +135,23 @@ landed=$(git log --format='%h %s' -n 200 "$ref" 2>/dev/null |
        (s in want) && !seen[s]++ { print }' "$pending" -)
 [[ -n "$landed" ]] || exit 0
 count=$(printf '%s\n' "$landed" | wc -l | tr -d ' ')
+
+# Retire what is about to be reported. Rewriting the artifact clears pending through
+# link-artifact.sh, but the reason below also offers a legitimate way to answer without
+# writing anything -- "if they are still unrelated ... say so in one line and stop" --
+# and taking it left pending intact, so the identical block fired on every following
+# Stop until the file aged out at 7 days. Measured 2026-08-18: one session took it three
+# times. `stop_hook_active` does not cover this; it suppresses re-entry inside one stop
+# cascade, and each of those blocks was a fresh turn. Retiring here raises every landed
+# set exactly once, however it is answered, and leaves a later slice free to raise its
+# own.
+remaining=$(awk 'NR==FNR { done[substr($0, index($0, " ") + 1)] = 1; next }
+                 !($0 in done)' <(printf '%s\n' "$landed") "$pending")
+if [[ -n "$remaining" ]]; then
+  printf '%s\n' "$remaining" > "$pending" 2>/dev/null
+else
+  rm -f "$pending" 2>/dev/null
+fi
 
 # A long branch is listed in full up to a point and then counted, rather than quietly
 # truncated — a cut-off list reads as the whole slice.

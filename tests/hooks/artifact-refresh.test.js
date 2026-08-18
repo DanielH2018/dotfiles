@@ -540,4 +540,66 @@ test('a non-commit-shaped command records nothing', () => {
   assert.strictEqual(fs.existsSync(mine), false, 'nothing claimed off an unrelated command');
 });
 
+
+// The nudge has to be answerable. Rewriting the artifact clears pending through
+// link-artifact.sh, but the reason text also invites a session to answer in one line and
+// stop when the commits are unrelated, and that path writes no .html. Leaving pending
+// intact then fired the identical block on every following Stop until the state file
+// aged out at 7 days -- one session took it three times on 2026-08-18.
+test('a landed set is nudged once, not on every following Stop', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  runSeed(a, st);
+  commit(a, 'first-slice', st);
+  runRefresh(a, st);
+  land(a, 'slice-one');
+
+  assert.ok(runRefresh(a, st), 'the landing raises the nudge');
+  assert.strictEqual(runRefresh(a, st), null, 'the next Stop is silent');
+  assert.deepStrictEqual(pendingOf(st, a), [], 'the reported set is retired');
+});
+
+// How a sibling's commit was adopted: B ran something read-only that merely mentioned a
+// commit -- `head -20 bin/land`, `git show <sha>` -- which matched the old word list and
+// opened a `post` window. A committed into the shared checkout inside it, and B's `post`
+// read A's HEAD movement as its own work.
+test('a read-only command that names a commit opens no window', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const B = 'session-b';
+  runSeed(work, st, SID);
+  runSeed(work, st, B);
+  tracked(work, st, B, 'head -20 bin/land 2>/dev/null | cut -c1-150',
+    () => commit(work, 'a-slice', st, SID));
+
+  const mineB = path.join(st, `${sessionSlug(work, B)}.mine`);
+  assert.strictEqual(fs.existsSync(mineB), false, 'the reader claims none of the committer work');
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(work, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['a-slice'], 'and the committer still claims its own');
+});
+
+// Most sessions here work directly in the primary checkout, where `git rev-parse
+// --git-dir` and `--git-common-dir` both answer `.git`. The worktree and repo slugs are
+// then the same string, so the worktree entry could not stop a session being aimed at
+// whichever doc another session registered last. The session entry can.
+test('a session that wrote its own artifact is not aimed at another session doc', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root, 'their-plan.html'));
+  const own = artifactFile(root, 'my-plan.html');
+  track(work, st, own, sessionSlug(work, SID));
+  runSeed(work, st);
+  commit(work, 'first-slice', st);
+  runRefresh(work, st);
+  land(work, 'HEAD');
+
+  const out = runRefresh(work, st);
+  assert.ok(out, 'the landing still raises a nudge');
+  assert.ok(out.reason.includes(own), 'the session entry wins');
+  assert.ok(!out.reason.includes('their-plan.html'), 'the repo entry stays the fallback');
+});
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

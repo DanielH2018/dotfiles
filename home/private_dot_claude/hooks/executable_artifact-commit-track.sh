@@ -47,10 +47,22 @@ hook_read_input
 cmd=$(hook_field '.tool_input.command // empty')
 [[ -n "$cmd" ]] || exit 0
 
-# Cheap pre-filter. Deliberately loose -- a false positive costs one `git log` in a
-# hook that already exits 0 on anything uninteresting, a false negative costs a
-# silently unattributed commit.
-[[ "$cmd" =~ (commit|merge|rebase|cherry-pick|revert|land|git\ am|git\ pull|git\ fetch) ]] || exit 0
+# Match commands that can create a commit here, not commands that mention one. The
+# previous filter tested the whole string against a bare word list, so `git show <sha>`,
+# `head -20 bin/land` and `grep -rn commit hooks/` all passed it, and each one opened a
+# `post` window measured from a HEAD that may be several commands old. That window is
+# where a sibling session's commit gets adopted: it moves the shared checkout's HEAD
+# while we run something read-only, and the next `post` reads the movement as ours.
+# Measured 2026-08-18: one commit landed in two sessions' `.mine` this way.
+#
+# So the verb has to follow `git` in the same command segment, and `bin/land` has to be
+# invoked rather than merely named. `fetch` is gone from the list because it cannot move
+# HEAD, and bare `land` with it -- that word was matching every path under
+# /tmp/chezmoi-land-*. Still loose inside a segment: `git log --grep commit` matches, and
+# costs one `git log` against a tip that is fresh anyway.
+gitverb='(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?(commit|merge|rebase|cherry-pick|revert|am|pull)([[:space:]]|$)'
+landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(\./)?bin/land([[:space:]]|$)'
+[[ "$cmd" =~ $gitverb || "$cmd" =~ $landcmd ]] || exit 0
 
 session=$(hook_field '.session_id // empty')
 

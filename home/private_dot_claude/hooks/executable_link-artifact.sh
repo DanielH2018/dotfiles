@@ -96,10 +96,12 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
 fi
 
 # Register the .html as the tracked artifact so artifact-refresh.sh can offer to bring
-# it up to date once work lands. Under both keys: the repo entry is what lets a plan
-# written here keep being refreshed as later slices land from other worktrees, and the
-# worktree entry is what stops a session that wrote its own doc being pointed at
-# somebody else's.
+# it up to date once work lands. Under three keys, which that hook reads most specific
+# first: the repo entry is what lets a plan written here keep being refreshed as later
+# slices land from other worktrees, and the session entry is what stops a session that
+# wrote its own doc being pointed at somebody else's. The worktree entry sits between
+# them, and on its own it could not do that job — in a primary checkout, where most
+# sessions here work, the worktree and repo slugs are the same string.
 #
 # Writing the artifact also clears this session's pending list, since the doc now
 # reflects that work. That is what stops a refresh nudge repeating every turn, and
@@ -112,6 +114,7 @@ if [[ "$path" == *.html ]]; then
   session=$(hook_field '.session_id // empty')
   if wt=$(artifact_worktree_slug) && repo=$(artifact_repo_slug) && mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null; then
     sesskey=$(artifact_session_key "$wt" "$session") || sesskey="$wt"
+    printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$sesskey.current" 2>/dev/null
     printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$wt.current" 2>/dev/null
     printf '%s\n' "$path" > "$ARTIFACT_STATE_DIR/$repo.current" 2>/dev/null
     rm -f "$ARTIFACT_STATE_DIR/$sesskey.pending" "$ARTIFACT_STATE_DIR/$wt.pending" 2>/dev/null

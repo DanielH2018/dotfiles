@@ -88,13 +88,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
-      "hash": "92f25b82544fe8b60dfd934d106989c000db9f981d04ffee8daa751681a89018",
-      "landed": "2026-08-15T12:36:51.590Z"
+      "hash": "d6895f20f92d232b06f2aeed37a9d31650684b7da95d5ea40bb738076268bd4a",
+      "landed": "2026-08-18T13:44:02.032Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
-      "hash": "dbaf991a4b3abf106e300c0e15d3c08cd91d88473c9b7861b13bc76593f28358",
-      "landed": "2026-08-15T12:36:51.590Z"
+      "hash": "1f565dabd2b485564189b664d113bdebfe6870db673b06e56689fbbe1d1d9c6b",
+      "landed": "2026-08-18T13:44:02.032Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-session-seed.sh",
@@ -143,8 +143,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "3cb998a6dc6bcce1420f9de24f108d4131bfa26dd227286789daa5717fd3cf7b",
-      "landed": "2026-08-09T19:04:35.602Z"
+      "hash": "e4e8445bc2f17ab3fd87df7f62b91136b3e8572a759664359316385c1e02d2f8",
+      "landed": "2026-08-18T13:44:02.032Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
