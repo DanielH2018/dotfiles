@@ -88,8 +88,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
-      "hash": "d6895f20f92d232b06f2aeed37a9d31650684b7da95d5ea40bb738076268bd4a",
-      "landed": "2026-08-18T13:44:02.032Z"
+      "hash": "2818281ec1fc5ab3062ed26aa30de4aeb22ca5329627ebc0e63a8a6c87d7567a",
+      "landed": "2026-08-18T13:48:56.002Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",

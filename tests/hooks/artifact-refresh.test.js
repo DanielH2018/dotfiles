@@ -602,4 +602,25 @@ test('a session that wrote its own artifact is not aimed at another session doc'
   assert.ok(out.reason.includes(own), 'the session entry wins');
   assert.ok(!out.reason.includes('their-plan.html'), 'the repo entry stays the fallback');
 });
+
+// The command that actually held the window open on 2026-08-18: a session syncing its
+// checkout after a sibling landed. It moves HEAD without authoring anything, so it
+// advances the floor and claims nothing that arrives while it runs.
+test('a sync command adopts nothing a sibling commits inside it', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const B = 'session-b';
+  runSeed(work, st, SID);
+  runSeed(work, st, B);
+  tracked(work, st, B,
+    'git checkout main -q && git fetch origin main -q && git merge --ff-only origin/main -q',
+    () => commit(work, 'a-slice', st, SID));
+
+  const mineB = path.join(st, `${sessionSlug(work, B)}.mine`);
+  assert.strictEqual(fs.existsSync(mineB), false, 'the syncing session claims nothing');
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(work, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['a-slice'], 'and the committer still claims its own');
+});
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

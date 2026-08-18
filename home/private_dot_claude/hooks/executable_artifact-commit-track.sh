@@ -26,12 +26,17 @@
 # A(commit), where A claimed B's subject. Bounded by the command itself, only a
 # sibling committing DURING your `git commit` can collide.
 #
-# Both halves are gated on the same string match, so a Bash call that is not
-# commit-shaped costs one regex and starts no git process -- and the two halves cannot
-# disagree about whether to run, since they test the same command. A commit made by a
-# command that does not look commit-shaped (a wrapper script, say) is never recorded
-# and never nudged about. That is the safe direction: a missed nudge costs a stale
-# artifact, a wrong one asserts another session's work as yours in a document.
+# Both halves are gated on the same string match, so a Bash call that cannot commit
+# costs one regex and starts no git process -- and the two halves cannot disagree about
+# whether to run, since they test the same command. A commit made by a command that does
+# not look like one (a wrapper script, say) is never recorded and never nudged about.
+# That is the safe direction: a missed nudge costs a stale artifact, a wrong one asserts
+# another session's work as yours in a document.
+#
+# That gate used to be a bare word list tested against the whole command, which put
+# `git show <sha>` and `head -20 bin/land` inside it, and every one of those matches
+# opened a window a sibling's commit could fall into. What matters is not that the words
+# appear but that the command can author a commit here -- see the filter itself.
 #
 # `pre` must stay silent whatever happens -- it prints nothing and always exits 0, so
 # it cannot perturb the permission decision it shares PreToolUse(Bash) with.
@@ -60,9 +65,20 @@ cmd=$(hook_field '.tool_input.command // empty')
 # HEAD, and bare `land` with it -- that word was matching every path under
 # /tmp/chezmoi-land-*. Still loose inside a segment: `git log --grep commit` matches, and
 # costs one `git log` against a tip that is fresh anyway.
-gitverb='(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?(commit|merge|rebase|cherry-pick|revert|am|pull)([[:space:]]|$)'
-landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(\./)?bin/land([[:space:]]|$)'
-[[ "$cmd" =~ $gitverb || "$cmd" =~ $landcmd ]] || exit 0
+#
+# `merge` and `pull` are split off into their own list. They move HEAD without this
+# session authoring anything -- `git checkout main && git fetch && git merge --ff-only
+# origin/main` is how a session syncs after a sibling lands, and it was the command
+# holding the window open in the 2026-08-18 incident. They advance the floor and record
+# nothing, so a sibling committing while one runs cannot be adopted. A true merge commit
+# is lost with them, which is the safe direction: it is a sync, not a slice of work.
+authorverb='(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?(commit|rebase|cherry-pick|revert|am)([[:space:]]|$)'
+importverb='(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?(merge|pull)([[:space:]]|$)'
+# bin/land invoked at the start of a segment, by any path -- ./bin/land, bin/land, or
+# ~/.local/share/chezmoi/bin/land -- optionally behind environment assignments, which is
+# how it is run when node has to be put on PATH first.
+landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[^[:space:];&|(]*bin/land([[:space:]]|$)'
+[[ "$cmd" =~ $authorverb || "$cmd" =~ $importverb || "$cmd" =~ $landcmd ]] || exit 0
 
 session=$(hook_field '.session_id // empty')
 
@@ -86,6 +102,13 @@ mkdir -p "$ARTIFACT_STATE_DIR" 2>/dev/null
 # the whole point of this half -- it is what bounds the delta to this one command
 # instead of to everything since this session last committed.
 if [[ "$mode" == "pre" ]]; then
+  printf '%s\n' "$head" > "$tipfile" 2>/dev/null
+  exit 0
+fi
+
+# An import-only command moves the floor and claims nothing -- see the filter above for
+# why `git merge` and `git pull` are held apart from the verbs that author work.
+if ! [[ "$cmd" =~ $authorverb || "$cmd" =~ $landcmd ]]; then
   printf '%s\n' "$head" > "$tipfile" 2>/dev/null
   exit 0
 fi
