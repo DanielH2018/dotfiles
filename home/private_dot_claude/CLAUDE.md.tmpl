@@ -30,6 +30,14 @@ carries over, and each is checkable by rereading what you wrote:
 - **No noun stacks past three words.** "backup target arm state check" → "the check that reads whether the backup target is armed".
 - **At most one em-dash aside per paragraph.** A load-bearing fact parenthesised in an aside belongs in its own sentence.
 
+Four more, from the Google developer documentation style guide. They catch failures the six
+above do not, and each is likewise checkable by rereading:
+
+- **Conditions and purpose before the instruction.** "To deploy the change, run `chezmoi apply ~/.claude/CLAUDE.md`", not "Run `chezmoi apply ~/.claude/CLAUDE.md` to deploy the change". Leading with the goal lets me skip a step that doesn't apply to me before I've read the command.
+- **Nothing dates the prose.** Cut *currently*, *now*, *new*, *soon*, *latest*, *existing*, *as of this writing*. "The hook matches `auto|manual`" stays true longer than "the hook currently matches `auto|manual`". Memory files and skill docs get read months later. Use an absolute date when the timing is itself the fact.
+- **Software does not perceive or want.** "The linter reports an unused import", not "the linter sees one"; "the API requires a token", not "the API wants a token". Naming the actor invites a human verb — name it and keep the verb literal.
+- **Present tense, not `will`.** "The script writes the manifest, then reloads the unit." Reserve `will` for something genuinely deferred: "the file is archived the next time the backup runs."
+
 **Compression is not clarity.** Terse means no padding, not telegraphic. Dropping the
 articles and verbs out of a finding — "B2 disarmed pending cap-raise/spend-reduction
 decision" — saves a few words and costs a reread; that trade is never worth it. This applies
