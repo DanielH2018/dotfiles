@@ -1,0 +1,19 @@
+name = "local · shell"
+title = "local-shell"
+color = "blue"
+
+# A plain local shell, no command. This exists because `default_session_mode = "tab_config"`
+# routes every new tab through a tab config, so without a row that runs nothing there is no
+# way to open an ordinary local terminal.
+#
+# It is also the local answer to `ssh-other.toml`: that config cannot open a local session,
+# because Warp decides a pane is an interactive SSH by matching the command against `^ssh\s+`
+# and a `{{host}}` of `local` would just be a failing `ssh local`. Wrapping the choice in a
+# script does not help either — the wrapper name would not match that regex, which costs the
+# remote bootstrap that daniel-box.toml documents.
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~"
+is_focused = true
+commands = []
