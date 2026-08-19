@@ -2,12 +2,23 @@ name = "Claude · daniel-box"
 title = "claude-box"
 color = "yellow"
 
-# Hybrid model: Warp owns the pane, tmux holds the PTY on the far side of ssh.
-# `tmux new -A -s claude claude` creates the session running Claude the first time
-# and plain-attaches on every reconnect, so a dropped link never kills an in-flight turn.
+# No tmux on the far side. Warp identifies a CLI agent by the command running in the pane, so
+# wrapping Claude in `tmux new -A` left Warp seeing only `ssh` — no agent toolbar, no branch,
+# no agent icon on the sidebar row. Running Claude as the pane's own remote command restores
+# all three, and lets Warp warpify the ssh subshell.
+#
+# The cost is that nothing holds the remote PTY: a dropped link kills the in-flight turn.
+# `claude --resume` recovers the conversation, so what is lost is the turn, not the session.
+#
+# The remote command is single-quoted so the LOCAL shell leaves it alone — Warp runs
+# `commands` through the local shell first, and an unquoted $SHELL would expand to this
+# machine's zsh path rather than daniel-box's.
+#
+# `claude; exec zsh -l` rather than `exec claude`: quitting Claude drops to a remote shell
+# instead of closing the pane, matching how the local configs behave.
 [[panes]]
 id = "main"
 type = "terminal"
 directory = "~"
 is_focused = true
-commands = ['ssh -t daniel-box "cd ~/server && exec ~/.local/bin/tmux new -A -s claude claude"']
+commands = ["ssh -t daniel-box 'cd ~/server && claude; exec zsh -l'"]
