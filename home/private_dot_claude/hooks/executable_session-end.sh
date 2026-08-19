@@ -56,4 +56,61 @@ if [ -f "$TODAY_FILE" ]; then
   fi
 fi
 
+# ── Learning loop: enqueue this session for an async debrief ────────────────
+# Mechanism A of ~/.claude/specs/learning-loop_2026-08-19.md. SessionEnd output
+# is informational and never reaches Claude (see the header above), so the
+# debrief cannot ask the live model anything. This hook only enqueues the
+# transcript and kicks the digest off detached; the writing happens in a
+# headless run of the learning-digest skill.
+#
+# Tuning: CLAUDE_LEARN_DEBRIEF=0 turns it off. CLAUDE_LEARN_MIN_TOOLS sets the
+# tool-call floor below which a session is too trivial to debrief (default 25).
+#
+# The floor reads reprime-nudge.sh's per-session counter, where the byte count
+# of the .count file IS the tool-call count. That file only exists when the
+# reprime nudge is armed; with CLAUDE_REPRIME_EVERY=0 the count is absent, which
+# reads as 0 tool calls and no session ever debriefs.
+learning_enqueue() {
+  [ "${CLAUDE_LEARN_DEBRIEF:-1}" = "0" ] && return 0
+
+  TRANSCRIPT=$(hook_field '.transcript_path // empty')
+  [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] || return 0
+
+  MIN="${CLAUDE_LEARN_MIN_TOOLS:-25}"
+  case "$MIN" in '' | *[!0-9]*) MIN=25 ;; esac
+
+  COUNTF="$HOME/.claude/logs/reprime-state/$SESSION_ID.count"
+  TOOLS=0
+  [ -f "$COUNTF" ] && TOOLS=$(wc -c < "$COUNTF" 2>/dev/null | tr -d ' ')
+  case "$TOOLS" in '' | *[!0-9]*) TOOLS=0 ;; esac
+
+  if [ "$TOOLS" -lt "$MIN" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID event=learn_skip tools=$TOOLS floor=$MIN" >> "$LOG_DIR/sessions.log"
+    return 0
+  fi
+
+  QUEUE_DIR="$HOME/.claude/logs/learning-queue"
+  mkdir -p "$QUEUE_DIR" 2>/dev/null || return 0
+  # One atomic append per session. The digest claims the whole file by renaming
+  # it, so a session that ends mid-drain lands in the next drain rather than
+  # being lost.
+  printf '%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SESSION_ID" "${PROJECT_DIR:-unknown}" "$TRANSCRIPT" \
+    >> "$QUEUE_DIR/pending.tsv" || return 0
+
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID event=learn_queued tools=$TOOLS" >> "$LOG_DIR/sessions.log"
+
+  # Fire the digest detached. run-skill.sh is idempotent per calendar day, so a
+  # second session today no-ops here and its queue entry waits for the next
+  # drain. Detached because this hook runs under a 5s timeout.
+  RUNNER="$HOME/.claude/scheduled/run-skill.sh"
+  [ -x "$RUNNER" ] || return 0
+  # $0-passing rather than interpolation: /bin/bash here is 3.2, which has no
+  # ${var@Q}, and $HOME may contain a space.
+  nohup /bin/zsh -lc 'exec "$0" learning-digest headless' "$RUNNER" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+learning_enqueue
+
 exit 0
