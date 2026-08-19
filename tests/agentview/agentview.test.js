@@ -127,6 +127,13 @@ exit \${FZF_RC:-0}
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo "${HOST}"
 `, { mode: 0o755 });
+  // The self-label branch reads `uname -s` (executable_agentview:213), so a Darwin box labels
+  // itself macOS and every Linux/WSL badge assertion fails there and nowhere else. Stub uname
+  // alongside hostname: the platform becomes an input the test states, not one it inherits.
+  fs.writeFileSync(path.join(bin, 'uname'), `#!/bin/bash
+[ "\${1:-}" = "-s" ] && { echo Linux; exit 0; }
+exec /usr/bin/uname "$@"
+`, { mode: 0o755 });
   // no-op curl: the background live-reload poster fires one; keep it off the network.
   fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash
 exit 0
@@ -136,6 +143,10 @@ exit 0
   const seams = agentviewWinSeams({ bin, scratch });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    // Pin the ssh roster: a machine that exports AGENT_VIEW_REMOTE_HOSTS="" from its login
+    // profile empties HOST_SSH through the spread above, so every remote assertion failed
+    // there and passed everywhere else -- the same shape as the TMUX leak.
+    AGENT_VIEW_REMOTE_HOSTS: 'daniel-server daniel-box',
     ...seams.env,
     WEZ_LIST_FILE: listFile, SSH_REMOTE_FILE: remoteFile, SSH_LOG: sshLog,
     WEZ_ACTIVATE_LOG: activateLog, TMUX_LOG: tmuxLog, WEZ_SPAWN_LOG: spawnLog, FZF_CAPTURE: capture,

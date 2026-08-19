@@ -30,7 +30,7 @@ function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefi
 
 // A stub-bin dir (fzf/tmux/wezterm/claude-sandbox/hostname) + a repos root with fake git
 // repos. The fzf stub picks by prompt; tmux/wezterm log their spawn command.
-function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [], winWezterm = false } = {}) {
+function makeEnv({ repos = ['airflow', 'webapp'], worktrees = [], winWezterm = false, uname = 'Linux' } = {}) {
   const bin = scratch('avs-bin-');
   const reposRoot = scratch('avs-repos-');
   for (const r of repos) fs.mkdirSync(path.join(reposRoot, r, '.git'), { recursive: true });
@@ -126,6 +126,15 @@ exit 0
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo host
 `, { mode: 0o755 });
+  // The self-label branch reads `uname -s` (executable_agentview:213) and labels a Darwin box
+  // macOS, so on a Mac this machine's row reads "macOS" and every assertion below spelling it
+  // "Linux" fails -- on that machine only, which is how it went unnoticed for five days. Stub
+  // uname the way fzf/tmux/hostname already are: the platform becomes an input the test states
+  // rather than one it inherits, so Linux and WSL stay assertable on any host.
+  fs.writeFileSync(path.join(bin, 'uname'), `#!/bin/bash
+[ "\${1:-}" = "-s" ] && { echo ${uname}; exit 0; }
+exec /usr/bin/uname "$@"
+`, { mode: 0o755 });
   // curl stub: log the POST body so a test can assert the picker is told to `abort` after a
   // real spawn (the ctrl-n dismiss). The real close POST is detached (nohup+sleep), so tests
   // poll CURL_LOG rather than read it once.
@@ -147,6 +156,12 @@ exit 0
     CT_LOG: ctLog, CTS_LOG: ctsLog, FZF_ARGS_LOG: fzfArgsLog, WIN_WEZ_LOG: winWezLog,
   };
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME;
+  // Pin the ssh roster rather than inherit it. A machine with no standing reason to poll the
+  // homelab exports AGENT_VIEW_REMOTE_HOSTS="" from its login profile; that reaches here
+  // through the `...process.env` above and empties HOST_SSH, so every Homelab assertion failed
+  // there and passed everywhere else. Pinning beats deleting -- the roster these tests assert
+  // against is stated here instead of inherited from the script's default.
+  env.AGENT_VIEW_REMOTE_HOSTS = 'daniel-server daniel-box';
   return { bin, reposRoot, env, tmuxLog, spawnLog, repoListFile, hostListFile, sandboxLog, claudeLog, curlLog,
     ctLog, ctsLog, fzfArgsLog, winWezLog, winWezBin: seams.wezterm,
     sandboxBin: path.join(bin, 'claude-sandbox') };

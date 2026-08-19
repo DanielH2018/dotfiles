@@ -75,6 +75,10 @@ exit 0
   const seams = agentviewWinSeams({ bin, scratch });
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    // Pin the ssh roster: a machine that exports AGENT_VIEW_REMOTE_HOSTS="" from its login
+    // profile empties HOST_SSH through the spread above, so every remote assertion failed
+    // there and passed everywhere else -- the same shape as the TMUX leak.
+    AGENT_VIEW_REMOTE_HOSTS: 'daniel-server daniel-box',
     TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog, SSH_LOG: sshLog, KILL_LOG: killLog, AV_KILLCMD: killStub,
     TMUX_BUF_LOG: tmuxBufLog,
     ...seams.env,

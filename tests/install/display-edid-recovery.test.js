@@ -29,7 +29,15 @@ const { renderFile, chezmoiAvailable } = require('../lib/render');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-display-edid-recovery.sh.tmpl');
 
-const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
+// The template opens with `{{ if includeTemplate "is-desktop-linux" . }}`, and that gate reads
+// `eq .chezmoi.os "linux"`. `.chezmoi.os` is a chezmoi built-in derived from the real host, so
+// unlike `.profile` below it cannot be pinned from a config file -- off Linux the whole file
+// renders to zero bytes and all 15 assertions fail on a host the script never targets. Skip
+// there rather than assert against an empty string.
+const onLinux = process.platform === 'linux';
+const skip = !chezmoiAvailable ? 'chezmoi not on PATH'
+  : !onLinux ? `is-desktop-linux gates this template off ${process.platform}`
+  : false;
 
 // Real binaries the health script needs; PATH is replaced wholesale by the stub dir, so anything
 // not listed here and not stubbed simply won't exist.

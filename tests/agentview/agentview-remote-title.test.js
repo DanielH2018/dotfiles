@@ -62,6 +62,7 @@ function env(rhome) {
         encoding: 'utf8',
         env: {
           ...process.env, ...seams.env,
+          AGENT_VIEW_REMOTE_HOSTS: 'daniel-server daniel-box',
           HOME: home, AV_LIB: path.join(ROOT, 'home', 'dot_local', 'share', 'agentview'),
           PATH: `${bin}:${process.env.PATH}`,
         },

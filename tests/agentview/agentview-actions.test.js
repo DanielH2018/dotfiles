@@ -128,6 +128,13 @@ exit 0
   fs.writeFileSync(path.join(bin, 'hostname'), `#!/bin/bash
 echo "${SELF}"
 `, { mode: 0o755 });
+  // The self-label branch reads `uname -s` (executable_agentview:213), so a Darwin box labels
+  // itself macOS and every Linux/WSL badge assertion fails there and nowhere else. Stub uname
+  // alongside hostname: the platform becomes an input the test states, not one it inherits.
+  fs.writeFileSync(path.join(bin, 'uname'), `#!/bin/bash
+[ "\${1:-}" = "-s" ] && { echo Linux; exit 0; }
+exec /usr/bin/uname "$@"
+`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'curl'), `#!/bin/bash
 exit 0
 `, { mode: 0o755 });
@@ -160,6 +167,10 @@ exit 0
 
   const env = {
     ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    // Pin the ssh roster: a machine that exports AGENT_VIEW_REMOTE_HOSTS="" from its login
+    // profile empties HOST_SSH through the spread above, so every remote assertion failed
+    // there and passed everywhere else -- the same shape as the TMUX leak.
+    AGENT_VIEW_REMOTE_HOSTS: 'daniel-server daniel-box',
     ...seams.env,
     AV_WINKILL: path.join(bin, 'taskkill.exe'),
     AV_KILLCMD: killStub,

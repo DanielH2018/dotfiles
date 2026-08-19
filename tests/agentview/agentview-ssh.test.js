@@ -69,6 +69,10 @@ function env({ sshBody = 'exit 0', watchInterval = '1', repaintInterval, noInoti
       const base = { ...process.env };
       delete base.TMUX;
       delete base.TMUX_PANE;
+      // Same leak, different variable: an inherited AGENT_VIEW_REMOTE_HOSTS="" makes
+      // `remoteHosts === undefined` mean "poll nothing" instead of "the script's default",
+      // which is exactly what the roster tests below assert against.
+      delete base.AGENT_VIEW_REMOTE_HOSTS;
       return execFileSync('bash', [SCRIPT, ...args], {
         encoding: 'utf8',
         env: {
