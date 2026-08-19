@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "c22c3c38486bacc3c695c24b154da4bd1803ac903a6cc8ddcd6a386b1a7ac719",
-      "landed": "2026-08-19T18:18:52.894Z"
+      "hash": "e07bb13d27246b65640be4a8d8da409355f0232477e8b00837713e5ac132c7de",
+      "landed": "2026-08-19T18:24:31.120Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -140,6 +140,11 @@
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
       "hash": "ff4f4e4976f0c527edf915b698f1db2a0ac83d70ac1d86aded0ac25cc4ff4dab",
       "landed": "2026-08-01T12:04:20.075Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
+      "hash": "df5169d84af2b58ad0acf9b15703737c64d354fd54419c096727ed187c66de19",
+      "landed": "2026-08-19T18:24:31.120Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
@@ -440,6 +445,26 @@
       "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",
       "hash": "f544ab0e3286282338dea2d72d729aa09f51a958af8900d74a376719c731e782",
       "landed": "2026-08-19T18:18:52.894Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/learning-quiz/SKILL.md",
+      "hash": "f36540445bd0caa2d254bc33640ae074fc58f8936c39b40dbf04bd1efa63183c",
+      "landed": "2026-08-19T18:24:31.120Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh",
+      "hash": "063fa569dddf0f9a280adb34602f11d3cb281006094cb0d48ea89ab9208463a1",
+      "landed": "2026-08-19T18:24:31.120Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_render-sheet.sh",
+      "hash": "772ec2491244a0f01e44075f70db0377a53fd28630527cb50ae83414e75a5776",
+      "landed": "2026-08-19T18:24:31.120Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/learning-quiz/scripts/executable_test_cards.sh",
+      "hash": "18c9f7e43b4aed49c9d1f337e5bd42c0585443e7f7ca3125fb7c552ac56b6d11",
+      "landed": "2026-08-19T18:24:31.120Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
