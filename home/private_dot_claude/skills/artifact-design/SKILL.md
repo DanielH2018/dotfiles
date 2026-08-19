@@ -63,8 +63,40 @@ a report. If you write one there, `chmod +x` it or it will age out with the docs
   <body><!-- content --></body></html>
   ```
 - **Give every artifact a `<title>`.** It is the name the artifacts browser lists and searches on, and the only field it cannot derive from anything else — without one the entry degrades to a slug of the filename. Write the same words as the `<h1>`.
+- **Declare the metadata block.** Four `<meta>` tags in the `<head>`, described under *Searchable metadata* below.
 - **Filename**: `<slug>_<YYYY-MM-DD>.html`.
 - Always still deliver the written plan/spec in the chat. The artifact is a readability aid, never a replacement — if you only render the HTML and skip the chat version, you've failed the task.
+
+## Searchable metadata
+
+The browser filters and searches on four fields. Declare them in the `<head>`:
+
+```html
+<meta name="artifact:category" content="backup">
+<meta name="artifact:status"   content="active">
+<meta name="artifact:services" content="longhorn, traefik">
+<meta name="artifact:tags"     content="b2, retention, cost-cap">
+```
+
+A Markdown artifact declares the same four as YAML frontmatter (`category: backup`) at the
+top of the file.
+
+| field | values | notes |
+|---|---|---|
+| `category` | `infra` `security` `backup` `network` `monitoring` `cost` `home-automation` `tooling` `ci` | one only; pick the subject, not the surface it touches |
+| `status` | `planned` `active` `done` | the same three tokens the slice chips use — deliberately not a second vocabulary |
+| `services` | the names this repo uses — `longhorn`, `sonarr`, `wg-easy` | what the document is *about*, not every service it mentions in passing |
+| `tags` | free-form | the only field with no derivation, so it is the one that carries what nothing else can — an incident, a PR, a decision |
+
+**Why declare what the indexer can guess.** It guesses so the several dozen artifacts written
+before this existed are still findable, and derived values are marked as derived in the UI. A
+guess is not as good as a statement: it reads the words you happened to use, so a document
+that mentions Longhorn while being about B2 spend lands under `backup` rather than `cost`.
+Declaring costs four lines and ends the ambiguity.
+
+**Don't tag every service you name.** A review touching a dozen services is *about* two or
+three. The indexer caps derived services at five, most-mentioned first; a declared list is
+taken as written, so keep it to the subject.
 
 ## Where the link points
 
