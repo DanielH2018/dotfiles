@@ -33,3 +33,19 @@ workspace:toggle_vertical_tabs_panel: cmd-g
 workspace:toggle_tab_configs_menu: cmd-shift-g
 
 workspace:toggle_command_palette: ctrl-shift-p
+
+# Tab groups. Warp groups OPEN tabs in the sidebar; a tab config cannot declare a group,
+# so the group is built here and persists in the workspace DB (`tab_groups`, keyed by
+# window_id, storing name, color, collapsed and pinned). That makes these the sidebar half
+# of the host grouping — the `+` menu half is the filename/`name` prefix on each config.
+#
+# Action names come from Warp's own action table inside the binary, not from the keysets
+# repo: `FORMAT.md` there is stale enough to omit `workspace:toggle_tab_configs_menu`,
+# which parses fine above. All four are `workspace:`.
+#
+# alt-cmd-* because every two-modifier `alt-cmd-<key>` appears in Warp's own defaults, so
+# the ordering is known to parse; cmd-g and cmd-shift-g are already the panel and the menu.
+workspace:new_tab_group_from_active_or_selected_tabs: alt-cmd-g
+workspace:remove_active_or_selected_tabs_from_group: alt-cmd-u
+workspace:pin_active_tab_group: alt-cmd-p
+workspace:unpin_active_tab_group: alt-shift-cmd-p
