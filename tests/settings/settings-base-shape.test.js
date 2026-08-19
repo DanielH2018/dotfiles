@@ -132,12 +132,14 @@ test('outputStyle names a style file that exists and keeps the coding instructio
     + `without it this style drops Claude Code's built-in software-engineering instructions.`);
 });
 
-// The artifact-link chain is three files agreeing on one number per host: the box serves
-// ~/.claude/artifacts on CLAUDE_ARTIFACTS_PORT, link-artifact.sh writes that port into the
-// http:// link, and ~/.ssh/config forwards it so the link resolves on the workstation.
-// Every failure mode here is silent rather than loud — a duplicate port means the second
-// `ssh -L` cannot bind and the browser renders the FIRST host's artifacts, and 8181 is the
-// workstation's own server, so it 404s every remote file while still returning a page.
+// The artifact-link chain: the box serves ~/.claude/artifacts on CLAUDE_ARTIFACTS_PORT, and
+// link-artifact.sh turns that into a link the workstation can open — by the cluster URL where
+// CLAUDE_ARTIFACTS_BASE_URL is set, and by the loopback port everywhere else, which then needs
+// an ssh forward to resolve. Every failure mode here is silent rather than loud — a duplicate
+// port means the second `ssh -L` cannot bind and the browser renders the FIRST host's
+// artifacts, and 8181 is the workstation's own server, so it 404s every remote file while
+// still returning a page. The ports must stay distinct even unforwarded, because a manual
+// `ssh -L` for two hosts on one port fails the same way.
 // Read from the template source, not a render: the gates are per-hostname and the test only
 // ever runs on one machine.
 // Anchored on `eq`, which is what the artifact gates are — an if/else-if chain of
@@ -163,7 +165,16 @@ test('each host that serves artifacts gets its own port, never the workstation 8
     'a remote host claims 8181, which is the local default the workstation already serves');
 });
 
-test('every artifact port is forwarded by that host\'s ssh stanza', () => {
+// Hosts whose links carry a real hostname instead of the loopback port. link-artifact.sh:112
+// takes the CLAUDE_ARTIFACTS_BASE_URL branch whenever that var is set, so for these hosts the
+// port is only what serve-artifacts.sh binds locally — no emitted link points at it.
+const BASE_URL_HOSTS = (() => {
+  const src = fs.readFileSync(TMPL, 'utf8');
+  const m = src.match(/has\s+\.chezmoi\.hostname\s+\(list([^)]*)\)[\s\S]*?"CLAUDE_ARTIFACTS_BASE_URL"/);
+  return m ? [...m[1].matchAll(/"([^"]+)"/g)].map(([, h]) => h) : [];
+})();
+
+test('every artifact port is reachable, by cluster URL or by an ssh forward', () => {
   const ssh = fs.readFileSync(
     path.join(REPO, 'home', 'private_dot_ssh', 'private_config.tmpl'), 'utf8');
   const stanzas = new Map();
@@ -173,11 +184,16 @@ test('every artifact port is forwarded by that host\'s ssh stanza', () => {
     if (m) { current = m[1].trim().split(/\s+/); current.forEach((h) => stanzas.set(h, [])); }
     else if (current) current.forEach((h) => stanzas.get(h).push(line));
   }
+  assert.ok(BASE_URL_HOSTS.length > 0,
+    'no CLAUDE_ARTIFACTS_BASE_URL gate found — either it was removed or the pattern drifted, '
+    + 'and without it this test would accept a host whose links reach nothing');
   for (const { host, port } of HOST_PORTS) {
+    if (BASE_URL_HOSTS.includes(host)) continue;
     const body = (stanzas.get(host) || []).join('\n');
     assert.match(body, new RegExp(`LocalForward\\s+127\\.0\\.0\\.1:${port}\\s+127\\.0\\.0\\.1:${port}`),
-      `${host} serves artifacts on ${port} but its ssh stanza does not forward it, so every `
-      + `artifact link it emits is dead from the workstation`);
+      `${host} serves artifacts on ${port}, is not in the CLAUDE_ARTIFACTS_BASE_URL list, and its `
+      + `ssh stanza does not forward the port — so every artifact link it emits is dead from the `
+      + `workstation. Give it the cluster URL or forward the port.`);
   }
 });
 
