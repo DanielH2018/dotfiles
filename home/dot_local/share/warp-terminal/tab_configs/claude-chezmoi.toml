@@ -1,0 +1,10 @@
+name = "Claude · chezmoi"
+title = "claude-chezmoi"
+color = "blue"
+
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~/.local/share/chezmoi"
+is_focused = true
+commands = ["claude"]

@@ -1,0 +1,13 @@
+name = "Claude · daniel-box"
+title = "claude-box"
+color = "yellow"
+
+# Hybrid model: Warp owns the pane, tmux holds the PTY on the far side of ssh.
+# `tmux new -A -s claude claude` creates the session running Claude the first time
+# and plain-attaches on every reconnect, so a dropped link never kills an in-flight turn.
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~"
+is_focused = true
+commands = ['ssh -t daniel-box "cd ~/server && exec ~/.local/bin/tmux new -A -s claude claude"']

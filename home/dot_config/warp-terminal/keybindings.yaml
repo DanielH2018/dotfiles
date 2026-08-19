@@ -1,0 +1,35 @@
+# Ported from Ghostty (home/dot_config/ghostty/config.tmpl).
+# The Ghostty config uses super where macOS uses cmd, for the reason spelled out there:
+# ctrl belongs to the shell (SIGINT, EOF, kill-word, fzf) and a terminal must not claim it.
+# Warp spells that same physical key `cmd` on every platform, so these read as cmd-*
+# and land on Meta here.
+#
+# KWin takes Meta+T / Meta+W / Meta+D before Warp ever sees them; the same chezmoi script
+# that frees them for Ghostty (run_onchange_kde-free-ghostty-chords.sh.tmpl) covers Warp.
+
+# Tabs and windows
+workspace:new_terminal_tab: cmd-t
+workspace:new_window: cmd-shift-t
+root_view:close_window: cmd-shift-w
+
+# Splits — Ghostty's super+d / super+shift+d
+pane_group:add_right: cmd-d
+pane_group:add_down: cmd-shift-d
+
+# Split navigation — Ghostty's super+[ / super+]
+pane_group:navigate_prev: cmd-[
+pane_group:navigate_next: cmd-]
+
+# Split resize — Ghostty's super+shift+[ / super+shift+]
+pane_group:resize_left: cmd-shift-[
+pane_group:resize_right: cmd-shift-]
+
+workspace:toggle_maximize_pane: cmd-enter
+
+# Session management — replaces the two tmux bindings that retire with agentview.
+# prefix+g (open the picker) becomes the vertical tabs panel.
+# prefix+G (agentview --spawn) becomes the tab configs menu.
+workspace:toggle_vertical_tabs_panel: cmd-g
+workspace:toggle_tab_configs_menu: cmd-shift-g
+
+workspace:toggle_command_palette: ctrl-shift-p

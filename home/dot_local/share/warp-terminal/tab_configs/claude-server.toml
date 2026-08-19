@@ -1,0 +1,10 @@
+name = "Claude · server"
+title = "claude-server"
+color = "green"
+
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~/server"
+is_focused = true
+commands = ["claude"]
