@@ -14,6 +14,21 @@
          which ~/.zshenv prefers when there is a graphical session to draw on. */}}
     "SUDO_ASKPASS": "{{ .chezmoi.homeDir }}/.local/bin/tmux-askpass",
 {{ end }}
+{{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
+    {{/* The cluster serves every host's ~/.claude/artifacts behind Authelia (server repo,
+         ansible/roles/k8s/artifacts), so link-artifact.sh emits a real hostname here rather
+         than the 127.0.0.1:8181 loopback link, which only that host's own terminal can open.
+
+         Set ONLY on the two k3s nodes: every other machine keeps the loopback and file://
+         branches unchanged, and serve-artifacts.sh stays installed everywhere as the fallback
+         for when the route or the pod is down.
+
+         CLAUDE_ARTIFACTS_HOST is the /a/<host>/ path segment. It must match the directory the
+         server mounts that host's tree under — daniel-box's own hostPath and daniel-server's
+         rsync destination are both named for the host. */}}
+    "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.local.daniel-hunter.com",
+    "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}",
+{{ end }}
     {{/* M02 shadow census: RETIRED, key deleted, machinery kept.
 
          It existed to measure what cmdparse.sh's shared segmentation WOULD decide, so the

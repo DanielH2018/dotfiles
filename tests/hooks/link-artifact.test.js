@@ -30,9 +30,14 @@ dirs.push(STATE_DIR);
 function run(filePath, env = {}) {
   const input = JSON.stringify({ tool_input: { file_path: filePath } });
   const e = { ...process.env };
-  // Start from a clean slate for the two vars the hook keys off of.
+  // Start from a clean slate for every var the hook keys off of. CLAUDE_ARTIFACTS_BASE_URL
+  // matters most: it is SET in the environment on daniel-box and daniel-server, so leaving it
+  // through would make the loopback and file:// cases below assert against the cluster URL on
+  // exactly the machines this suite usually runs on.
   delete e.CLAUDE_ARTIFACTS_HOST_DIR;
   delete e.CLAUDE_STATE_HOST_DIR;
+  delete e.CLAUDE_ARTIFACTS_BASE_URL;
+  delete e.CLAUDE_ARTIFACTS_HOST;
   e.CLAUDE_ARTIFACT_STATE_DIR = STATE_DIR;
   Object.assign(e, env);
   const r = spawnSync('bash', [HOOK], { input, env: e, encoding: 'utf8' });
@@ -66,6 +71,54 @@ test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link
     assert.match(ctx, /Shift\+Ctrl\+click/,
       `linux message names the full Shift+Ctrl+click gesture; got: ${ctx}`);
   }
+});
+
+// ── the homelab cluster URL (CLAUDE_ARTIFACTS_BASE_URL) ────────────────────────────────
+// On daniel-box / daniel-server the artifacts trees are also served in-cluster behind
+// Authelia (server repo, roles/k8s/artifacts), so the link is a real hostname instead of a
+// loopback port only that host's own terminal can reach. Every machine WITHOUT the var must
+// keep the file:// and 127.0.0.1 behaviour the tests above pin.
+const BASE = 'https://artifacts.local.example.com';
+
+test('base URL set -> host-scoped cluster link', () => {
+  const ctx = run('/home/ubuntu/.claude/artifacts/plan.html',
+    { CLAUDE_ARTIFACTS_BASE_URL: BASE, CLAUDE_ARTIFACTS_HOST: 'daniel-box' });
+  assert.ok(ctx.includes(`${BASE}/a/daniel-box/plan.html`),
+    `emits the cluster URL under the writing host; got: ${ctx}`);
+  assert.ok(!ctx.includes('127.0.0.1'), 'the loopback link is replaced, not appended');
+});
+
+test('base URL host segment defaults to the short hostname', () => {
+  const expected = require('node:os').hostname().split('.')[0];
+  const ctx = run('/home/ubuntu/.claude/artifacts/plan.html', { CLAUDE_ARTIFACTS_BASE_URL: BASE });
+  assert.ok(ctx.includes(`${BASE}/a/${expected}/plan.html`),
+    `falls back to hostname -s, which is the name the peer-sync directory uses; got: ${ctx}`);
+});
+
+test('base URL with a trailing slash does not double it', () => {
+  const ctx = run('/home/ubuntu/.claude/artifacts/plan.html',
+    { CLAUDE_ARTIFACTS_BASE_URL: `${BASE}/`, CLAUDE_ARTIFACTS_HOST: 'daniel-box' });
+  assert.ok(ctx.includes(`${BASE}/a/daniel-box/plan.html`), `strips the trailing slash; got: ${ctx}`);
+});
+
+test('base URL preserves a nested relative path', () => {
+  const ctx = run('/home/ubuntu/.claude/artifacts/2026/plan.html',
+    { CLAUDE_ARTIFACTS_BASE_URL: BASE, CLAUDE_ARTIFACTS_HOST: 'daniel-box' });
+  assert.ok(ctx.includes(`${BASE}/a/daniel-box/2026/plan.html`),
+    `keeps the path below the artifacts root; got: ${ctx}`);
+});
+
+test('base URL is ignored in the sandbox, which has no route to the cluster', () => {
+  const ctx = run('/home/claudebot/.claude/artifacts/plan.html',
+    { CLAUDE_ARTIFACTS_BASE_URL: BASE, CLAUDE_STATE_HOST_DIR: '/Users/d/.claude/sandbox/state' });
+  assert.ok(!ctx.includes(BASE), `container mode keeps its host translation; got: ${ctx}`);
+  assert.ok(ctx.includes('file:///Users/d/.claude/sandbox/state/artifacts/plan.html'), ctx);
+});
+
+test('base URL does not suppress the missing-HTML-companion nudge', () => {
+  const dir = artifactsDir(['findings.md']);
+  const ctx = run(path.join(dir, 'findings.md'), { CLAUDE_ARTIFACTS_BASE_URL: BASE });
+  assert.match(ctx, /AUTO-ARTIFACT/, `still nudges for the HTML companion; got: ${ctx}`);
 });
 
 test('non-openable extension -> no-op', () => {

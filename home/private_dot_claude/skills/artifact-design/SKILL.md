@@ -55,14 +55,40 @@ a report. If you write one there, `chmod +x` it or it will age out with the docs
 - **Local by default.** Write one self-contained `.html` file to `~/.claude/artifacts/` and tell Daniel the path.
   - If that directory doesn't exist yet, create it first — don't skip the artifact because the directory is missing.
 - **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file.
-- **Never publish to claude.ai** or call the Artifact tool unless Daniel explicitly asks for it.
+- **Never publish to claude.ai** or call the Artifact tool unless Daniel explicitly asks for it. Serving an artifact inside the homelab is not publishing — see *Where the link points* below; the rule is about claude.ai, not about the LAN.
 - **Self-contained.** Inline all CSS; no external fonts, scripts, or network assets — it must render offline from `file://`. A minimal skeleton:
   ```html
-  <!doctype html><html><head><meta charset="utf-8"><style>/* all CSS inline here */</style></head>
+  <!doctype html><html><head><meta charset="utf-8"><title>Short Descriptive Title</title>
+  <style>/* all CSS inline here */</style></head>
   <body><!-- content --></body></html>
   ```
+- **Give every artifact a `<title>`.** It is the name the artifacts browser lists and searches on, and the only field it cannot derive from anything else — without one the entry degrades to a slug of the filename. Write the same words as the `<h1>`.
 - **Filename**: `<slug>_<YYYY-MM-DD>.html`.
 - Always still deliver the written plan/spec in the chat. The artifact is a readability aid, never a replacement — if you only render the HTML and skip the chat version, you've failed the task.
+
+## Where the link points
+
+Writing the file is the same everywhere; only the closing link differs, and `link-artifact.sh`
+picks it — you never construct the URL yourself. Take the link that hook hands you.
+
+| Where the session runs | The link | Served by |
+|---|---|---|
+| daniel-box / daniel-server | `https://artifacts.local.daniel-hunter.com/a/<host>/<file>` | the cluster, behind Authelia |
+| Any other Linux host | `http://127.0.0.1:8181/<file>` | `serve-artifacts.sh`, a loopback server |
+| macOS | `file://<abs path>` | the filesystem |
+
+The cluster route is an addition, not a replacement. The loopback server stays installed on
+every Linux host and is the fallback whenever the cluster route or its pod is down — so
+nothing about a local, non-server session changes.
+
+Two things worth knowing when you serve one:
+
+- **Search reads the metadata this skill already requires.** `<title>`, `data-updated` and the
+  `data-status` chips are indexed and are what the browser filters on, so the slice markers
+  above earn their keep twice.
+- **A daniel-server artifact takes up to 5 minutes to appear.** Only daniel-box mounts its own
+  tree directly; daniel-server's copy is rsynced across by a cron there. The file is written
+  and the local link works immediately either way.
 
 ## Palette
 

@@ -95,6 +95,31 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
   esac
 fi
 
+# Homelab hosts (daniel-box / daniel-server): the artifacts trees are also served in-cluster
+# at one Authelia-gated URL by roles/k8s/artifacts, so the link can be a real hostname rather
+# than a loopback port only that host's own terminal can reach. Opt-in by env var
+# (CLAUDE_ARTIFACTS_BASE_URL, set per host in chezmoi's settings.base.json), so every machine
+# without it keeps the file:// and 127.0.0.1 branches above untouched.
+#
+# The path carries the writing host — /a/<host>/<file> — because the server mounts one tree
+# per host under that segment. CLAUDE_ARTIFACTS_HOST names it; `hostname -s` is the fallback,
+# which is the same name the Ansible peer-sync directory uses.
+#
+# NOTE the freshness gap on a non-primary host: daniel-box mounts its own tree directly, so a
+# link there resolves immediately, but daniel-server's artifacts arrive by an rsync cron on
+# daniel-box (every 5 min). The loopback server stays installed as the fallback for that
+# window and for whenever the cluster route is down.
+if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ -n "${CLAUDE_ARTIFACTS_BASE_URL:-}" ]; then
+  case "$path" in
+    */.claude/artifacts/*)
+      rel="${path#*/.claude/artifacts/}"
+      arthost="${CLAUDE_ARTIFACTS_HOST:-$(hostname -s)}"
+      url="${CLAUDE_ARTIFACTS_BASE_URL%/}/a/${arthost}/${rel}"
+      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user it opens rendered in the browser (Shift+Ctrl+click, or plain Ctrl+click in a VS Code terminal), behind the usual SSO login. Link: "
+      ;;
+  esac
+fi
+
 # Register the .html as the tracked artifact so artifact-refresh.sh can offer to bring
 # it up to date once work lands. Under three keys, which that hook reads most specific
 # first: the repo entry is what lets a plan written here keep being refreshed as later
