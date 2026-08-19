@@ -559,6 +559,20 @@
             "timeout": 5
           }
         ]
+      },
+      {{/* learning loop, mechanism B: the pre-delegation explain gate. Inert
+           unless CLAUDE_LEARN_GATE=1 -- the hook exits 0 with no output on an
+           unset var, so wiring it here costs nothing until Daniel arms it.
+           Defers to /prep and to prep's own `go` / `just do it` / `no intake`
+           bypasses, and fires at most once per session. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/learning-gate.sh",
+            "timeout": 5
+          }
+        ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* agentview: mark this session "working" when a prompt is submitted */}}
       {
