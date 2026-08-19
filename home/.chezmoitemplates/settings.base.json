@@ -552,6 +552,18 @@
             "timeout": 5
           }
         ]
+      },
+      {{/* warp: seed the row at session start, so a session opened and left alone is still
+           labelled rather than showing the bare command Warp defaults to. */}}
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warp-session-title.sh start",
+            "timeout": 5
+          }
+        ]
       }{{ end }}{{ if eq .chezmoi.os "linux" }},
       {{/* Linux only: serve ~/.claude/artifacts on localhost:8181 so artifact links are click-to-render from a VS Code Remote-SSH TUI (file:// can't cross the remote boundary) */}}
       {
@@ -595,6 +607,17 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/agent-view-state.sh working",
+            "timeout": 5
+          }
+        ]
+      },
+      {{/* warp: label this session's sidebar row. Kept as its own block rather than a second
+           entry in agentview's, so retiring agentview does not silently take this with it. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warp-session-title.sh working",
             "timeout": 5
           }
         ]
@@ -760,6 +783,17 @@
           }
         ]
       },
+      {{/* warp: something is blocked on Daniel — relabel the row "input" */}}
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warp-session-title.sh needs-input",
+            "timeout": 5
+          }
+        ]
+      },
       {{/* DIAGNOSTIC, remove once it has caught a spurious cue: log every notification with
            its type, to find out what is firing the audible cue when nothing is blocked. The
            cue above is gated on permission_prompt and that gate is real, so the sound has a
@@ -845,6 +879,16 @@
             "timeout": 5
           }
         ]
+      },
+      {{/* warp: the turn is over — relabel the row "done" */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warp-session-title.sh completed",
+            "timeout": 5
+          }
+        ]
       }{{ end }}
     ],
     "StopFailure": [
@@ -876,6 +920,16 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/agent-view-state.sh end",
+            "timeout": 5
+          }
+        ]
+      },
+      {{/* warp: the session is gone — reset the row to Warp's own auto-title */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/warp-session-title.sh end",
             "timeout": 5
           }
         ]
