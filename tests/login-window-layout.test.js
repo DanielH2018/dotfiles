@@ -166,12 +166,20 @@ test('tops up only what is missing', { skip }, () => {
 // Obsidian and Spotify share a position on the bottom monitor, so whichever maps last is the
 // one on top. Ordering is the whole reason the delay exists.
 test('starts Obsidian after Spotify', { skip }, () => {
-  // Any positive delay puts Obsidian last; this test asserts the order, not the length.
-  const { launched } = run({ delay: 0.1, expect: 5 });
-  const spotify = launched.findIndex((l) => l.includes('com.spotify.Client'));
-  const obsidian = launched.findIndex((l) => l.includes('md.obsidian.Obsidian'));
+  // Assert on the script's own log, not on the order the stub launchers finished writing
+  // their marks. Every launch is backgrounded, so mark order reflects fork scheduling and
+  // no delay makes it sound -- only more probable. Under the full suite even 0.8s lost the
+  // race, with the marks arriving discord, firefox, ghostty, obsidian, spotify. log() runs
+  // in the script's main process, in sequence, which is the thing actually under test:
+  // this script decides what starts and in what order.
+  const { stdout, launched } = run({ delay: 0.1, expect: 5 });
+  const spotify = stdout.indexOf('starting Spotify');
+  const obsidian = stdout.indexOf('starting Obsidian');
   assert.ok(spotify >= 0 && obsidian >= 0, 'both must start');
   assert.ok(obsidian > spotify, 'Obsidian must start after Spotify to end up on top');
+  // Both still have to reach a launcher; membership only, never order.
+  assert.ok(launched.some((l) => l.includes('com.spotify.Client')), 'Spotify must launch');
+  assert.ok(launched.some((l) => l.includes('md.obsidian.Obsidian')), 'Obsidian must launch');
 });
 
 test('OBSIDIAN_DELAY controls the wait before Obsidian', { skip }, () => {
