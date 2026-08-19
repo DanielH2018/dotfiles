@@ -14,6 +14,7 @@
 .claude/sandbox/test_gen_vault_index.py
 .claude/sandbox/test_gh_pr_guard.py
 .claude/skills/config-lint/scripts/config-lint.test.js
+.claude/skills/learning-quiz/scripts/test_cards.sh
 .claude/skills/pr-feedback/scripts/fixtures
 .claude/skills/pr-feedback/scripts/fixtures/comment_only.json
 .claude/skills/pr-feedback/scripts/fixtures/empty.json
