@@ -1,10 +1,10 @@
-name = "Claude · chezmoi"
-title = "claude-chezmoi"
+name = "local · vault"
+title = "local-vault"
 color = "blue"
 
 [[panes]]
 id = "main"
 type = "terminal"
-directory = "~/.local/share/chezmoi"
+directory = "~/My_Vault"
 is_focused = true
 commands = ["claude"]

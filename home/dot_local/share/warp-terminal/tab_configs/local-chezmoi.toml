@@ -1,0 +1,14 @@
+# Grouping: Warp has no folders or sections for tab configs, so the group is carried by a
+# prefix on both the filename and `name` — whichever of the two the `+` menu sorts by, the
+# rows stay contiguous. `color` reinforces it: local is blue, daniel-box yellow,
+# daniel-server green.
+name = "local · chezmoi"
+title = "local-chezmoi"
+color = "blue"
+
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~/.local/share/chezmoi"
+is_focused = true
+commands = ["claude"]

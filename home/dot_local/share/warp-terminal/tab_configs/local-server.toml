@@ -1,6 +1,6 @@
-name = "Claude · server"
-title = "claude-server"
-color = "green"
+name = "local · server"
+title = "local-server"
+color = "blue"
 
 [[panes]]
 id = "main"

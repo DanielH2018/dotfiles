@@ -1,5 +1,5 @@
-name = "Claude · daniel-box"
-title = "claude-box"
+name = "daniel-box · shell"
+title = "daniel-box"
 color = "yellow"
 
 # Bare `ssh`, no remote command — this reproduces the path that demonstrably gets Warp's
@@ -26,7 +26,7 @@ color = "yellow"
 # cwd chips, and the sidebar row reads `daniel-box:~` rather than a bare `daniel-box`.
 #
 # So Claude is not started here. Run it yourself once the session is up, which is the same
-# keystroke sequence that already works.
+# keystroke sequence that already works. The same applies to every other remote config.
 [[panes]]
 id = "main"
 type = "terminal"

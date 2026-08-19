@@ -1,0 +1,21 @@
+name = "ssh · other host"
+title = "ssh-{{host}}"
+color = "cyan"
+
+# The escape hatch for a host with no dedicated config above. Warp's parameter types are
+# `text`, `branch` and `repo` only — there is no enum — so this is a free-text box seeded
+# with a default rather than a menu. The dedicated per-host configs are the menu.
+#
+# Still a bare `ssh` after substitution, which is what keeps the agent toolbar; see
+# daniel-box.toml.
+[params.host]
+type = "text"
+description = "Host (an ssh_config alias)"
+default = "daniel-box"
+
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~"
+is_focused = true
+commands = ["ssh {{host}}"]

@@ -1,0 +1,12 @@
+name = "daniel-server · shell"
+title = "daniel-server"
+color = "green"
+
+# Bare `ssh` and nothing else — see daniel-box.toml for why a remote command costs the
+# agent toolbar. Type `cd <dir> && claude` yourself once the session is up.
+[[panes]]
+id = "main"
+type = "terminal"
+directory = "~"
+is_focused = true
+commands = ["ssh daniel-server"]
