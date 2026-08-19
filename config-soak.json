@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "7d835a8297ac88440cefeda01445ca71d200033449560b3d142ba9230044e525",
-      "landed": "2026-08-16T17:54:20.899Z"
+      "hash": "c22c3c38486bacc3c695c24b154da4bd1803ac903a6cc8ddcd6a386b1a7ac719",
+      "landed": "2026-08-19T18:18:52.894Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -218,8 +218,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "48a60cfbecf43101101a88af0ee798b3472f509092599d76da4fffa5e87bceaf",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "463f6516b71375f40894af9be3d25983f9160a35aa5f065edd469752d5217fac",
+      "landed": "2026-08-19T18:18:52.894Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -303,8 +303,8 @@
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
-      "hash": "b03d19510eed62457193d143130df633341abb4fa8ef9398a0a773893009ce58",
-      "landed": "2026-08-18T13:15:12.551Z"
+      "hash": "482c3b0e16908c60ae58a6cbb07fa29906e6b1d0153d9e126cd3239e2e035d80",
+      "landed": "2026-08-19T18:18:52.894Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",
@@ -435,6 +435,11 @@
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
       "hash": "85b9645719b35766771c9a925a41c386abe687ab4373556d41e1881eb76bb229",
       "landed": "2026-08-02T21:17:22.436Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",
+      "hash": "f544ab0e3286282338dea2d72d729aa09f51a958af8900d74a376719c731e782",
+      "landed": "2026-08-19T18:18:52.894Z"
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
