@@ -1150,5 +1150,9 @@
   "autoInstallIdeExtension": true,
   "agentPushNotifEnabled": true,
   "inputNeededNotifEnabled": true,
-  "remoteControlAtStartup": true
+  "remoteControlAtStartup": true,
+  "spellcheck": {
+    "enabled": true,
+    "language": "en_US"
+  }
 }
