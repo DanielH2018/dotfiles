@@ -26,7 +26,12 @@
          CLAUDE_ARTIFACTS_HOST is the /a/<host>/ path segment. It must match the directory the
          server mounts that host's tree under — daniel-box's own hostPath and daniel-server's
          rsync destination are both named for the host. */}}
-    "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.local.daniel-hunter.com",
+    {{/* The PUBLIC name, not artifacts.local.<domain>. A link is the only way anyone reaches
+         an artifact, so it has to work from wherever the reader is, not only on the LAN.
+         Authelia gates both names; the public one additionally sends the login through the
+         public portal (auth.<domain>) rather than auth.local.<domain>, which is what a
+         client with no route to the LAN portal needs. */}}
+    "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.daniel-hunter.com",
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}",
 {{ end }}
     {{/* M02 shadow census: RETIRED, key deleted, machinery kept.
