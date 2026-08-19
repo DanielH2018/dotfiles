@@ -34,6 +34,7 @@ function makeEnv() {
   fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog };
   delete env.TMUX; delete env.WEZTERM_PANE; delete env.CLAUDE_WRAP_TTY; delete env.WSL_DISTRO_NAME;
+  delete env.TERM_PROGRAM;
   return { bin, env, tmuxLog, claudeLog };
 }
 const read = (p) => fs.readFileSync(p, 'utf8');
@@ -80,6 +81,15 @@ test('a native wezterm pane passes through (the wezterm keybind owns C-Left)', (
 // foreground process through wsl.exe, so it forwards the key and lets tmux decide. That
 // makes tmux mandatory there. WEZTERM_PANE now crosses into WSL (it is in WSLENV), so it
 // no longer means "an outer layer owns the key"; only a non-WSL wezterm pane does.
+// Warp is the base terminal, not a host for tmux: its sidebar replaces Agent View, and a
+// wrapped session's OSC 0 title dies at the tmux layer, so the row never shows session state.
+test('a Warp pane passes through (the sidebar replaces Agent View, and tmux eats the title)', () => {
+  const { env, tmuxLog, claudeLog } = makeEnv();
+  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', TERM_PROGRAM: 'WarpTerminal' });
+  assert.strictEqual(read(tmuxLog), '', 'TERM_PROGRAM=WarpTerminal suppresses the wrap');
+  assert.match(read(claudeLog), /^\s*$/m, 'the real binary runs instead');
+});
+
 test('a wezterm WSL pane still wraps (wezterm forwards C-Left to tmux there)', () => {
   const { env, tmuxLog, claudeLog } = makeEnv();
   run('bash', env, [], { CLAUDE_WRAP_TTY: '1', WEZTERM_PANE: '7', WSL_DISTRO_NAME: 'Ubuntu' });

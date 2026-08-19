@@ -42,13 +42,21 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 # non-WSL WezTerm pane, so those pass through. A WezTerm WSL pane does NOT: wezterm.lua
 # can't read a WSL pane's foreground process, so it forwards C-Left and lets tmux decide
 # — the wrap is what tmux there is. Detaching (C-b d) keeps the session alive in agentview.
+#
+# Warp passes through as well, on `TERM_PROGRAM=WarpTerminal`. Warp replaces what the wrap
+# buys: its sidebar is the picker, so there is no Agent View to bind C-Left back to. The wrap
+# also actively breaks Warp — a session's OSC 0 title (warp-session-title.sh) sets tmux's
+# pane_title and stops there unless the tmux server has `set-titles on`, so a wrapped session
+# shows Warp's own label and never its state. Verified 2026-08-19: writing the OSC inside the
+# wrap changed nothing; writing it to the Warp pty renamed the sidebar row immediately.
 # CLAUDE_WRAP_TTY=1 is a test seam that stands in for the TTY check.
 claude() {
   case "${1:-}" in
     ''|-c|--continue|-r|--resume|attach|agents) ;;
     *) command claude "$@"; return $? ;;
   esac
-  if [ -n "${TMUX:-}" ] || { [ -n "${WEZTERM_PANE:-}" ] && [ -z "${WSL_DISTRO_NAME:-}" ]; } \
+  if [ -n "${TMUX:-}" ] || [ "${TERM_PROGRAM:-}" = WarpTerminal ] \
+    || { [ -n "${WEZTERM_PANE:-}" ] && [ -z "${WSL_DISTRO_NAME:-}" ]; } \
     || ! command -v tmux >/dev/null 2>&1 \
     || { [ -z "${CLAUDE_WRAP_TTY:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; }; then
     command claude "$@"; return $?
