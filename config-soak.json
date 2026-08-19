@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "f4aea58aeec3328fbc8214de5697efb93954e2f18de3862af5e1b8061da5a675",
-      "landed": "2026-08-19T20:45:27.203Z"
+      "hash": "80a020f4598bb2f50ab9b974a11271ae06ea1d4303b1f9cd2c3c7ec65ffd96cc",
+      "landed": "2026-08-19T21:43:33.401Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -250,6 +250,11 @@
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.sh",
       "hash": "1ea209776594f6533a26a931db59c448c76ce2857f2cfc0c6d0425b886e11210",
       "landed": "2026-08-07T20:41:35.832Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
+      "hash": "eff793cdb9f36576694a8b0827795884c47df007da99c4c7855c097cd19f9801",
+      "landed": "2026-08-19T21:43:33.401Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",
