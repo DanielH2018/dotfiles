@@ -93,10 +93,13 @@ test('SessionEnd resets the row instead of leaving a stale label', { skip }, () 
 test('no writable terminal is a silent no-op, not a failure', { skip }, () => {
   // Headless `claude -p` has no controlling terminal. A non-zero exit here would surface
   // as a hook failure on every turn of every headless run.
+  //
+  // stdin is 'ignore', not a pipe: the hook bails at the tty check BEFORE it reads stdin,
+  // so piping input races the exit and intermittently throws EPIPE instead of asserting
+  // anything. That early bail is the behaviour under test, so the race is the test's bug.
   const r = execFileSync('bash', [HOOK, 'working'], {
-    input: JSON.stringify({ cwd: '/home/daniel' }),
     encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, WARP_TITLE_TTY: '/nonexistent/dir/tty', HOOK_INPUT_LIB: LIB },
   });
   assert.strictEqual(r, '');
