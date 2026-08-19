@@ -201,16 +201,20 @@
          linux, and WSL is linux). With both on 8181 the client-side `ssh -L` can't
          bind, fails with "Address already in use", and the browser silently reaches
          the local server instead — a directory listing that renders but 404s every
-         file written here. ~/.ssh/config forwards 8182 to match.
+         file written here.
+
+         ~/.ssh/config no longer forwards it. CLAUDE_ARTIFACTS_BASE_URL above wins in
+         link-artifact.sh, so nothing emits a loopback link for this host; the port is what
+         serve-artifacts.sh binds locally, and reaching it from a workstation is now an
+         explicit `ssh -L 8182:127.0.0.1:8182 daniel-server`.
 
          The invariant this creates: EVERY ssh-reached host gets its own port, and none
          of them may be 8181, the client's own. Next free one goes to the next host —
          daniel-pi has no server today, so 8184 when it needs one. */}}
     "CLAUDE_ARTIFACTS_PORT": "8182"{{ else if eq .chezmoi.hostname "daniel-box" }},
-    {{/* Same arrangement as daniel-server, one port over: ~/.ssh/config forwards 8183
-         to match, and 8182 is already the daniel-server forward — two hosts on one port
-         means whichever session connects second silently reads the first one's
-         artifacts. */}}
+    {{/* Same arrangement as daniel-server, one port over. Not forwarded either; the ports
+         still have to differ per host, because a manual `ssh -L` for two hosts on one port
+         means whichever tunnel comes up second silently reads the first one's artifacts. */}}
     "CLAUDE_ARTIFACTS_PORT": "8183"{{ end }}
   },
   "attribution": {

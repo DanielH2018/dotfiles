@@ -4,26 +4,32 @@ Host daniel-server homelab
     HostName 10.0.0.161
     User ubuntu
     IdentityFile ~/.ssh/daniel-server
-    # Renders Claude Code's artifact links. The server serves ~/.claude/artifacts on
-    # loopback, which VS Code Remote-SSH forwarded automatically and a plain ssh
-    # session does not, so http://127.0.0.1:8182/... only resolves with this in place.
-    # sshd allows it via `Match User ubuntu -> AllowTcpForwarding local`; -R stays off.
+    # No LocalForward. This block used to forward 8182 so the loopback artifact server was
+    # reachable from here, because link-artifact.sh emitted http://127.0.0.1:8182/... The
+    # cluster now serves both hosts' trees at https://artifacts.daniel-hunter.com/a/<host>/,
+    # and link-artifact.sh:112 takes that branch whenever CLAUDE_ARTIFACTS_BASE_URL is set —
+    # which settings.base.json sets on daniel-server and daniel-box. So no emitted link points
+    # at the loopback port any more, and forwarding it bought nothing but errors.
     #
-    # 8182, not the 8181 default, because this machine runs its own artifact server on
-    # 8181 (the SessionStart hook is gated on linux, and WSL is linux). Sharing the port
-    # means this forward can't bind and the browser quietly hits the local server, which
-    # lists local artifacts and 404s every remote one. daniel-server sets a matching
-    # CLAUDE_ARTIFACTS_PORT=8182 in settings.base.json so the links it emits agree.
-    LocalForward 127.0.0.1:8182 127.0.0.1:8182
-{{- if ne .chezmoi.os "windows" }}
-    # Multiplex, so the forward above is established exactly once. Without this every
-    # additional session re-binds the same loopback port and fails —
+    # Warp is what made those errors unavoidable. It re-invokes ssh with its OWN
+    # `-o ControlMaster=yes -o ControlPath=~/.ssh/<random>`, and a command-line -o beats this
+    # file, so a Warp pane never joins the master below. Every pane after the first therefore
+    # re-bound the same loopback port and failed:
     #   bind [127.0.0.1]:8182: Address already in use
     #   channel_setup_fwd_listener_tcpip: cannot listen to port: 8182
     #   Could not request local forwarding.
-    # — which is noise (ExitOnForwardFailure defaults to no, so the session continues on
-    # the first session's tunnel), but the tunnel then belongs to whichever session opened
-    # first: close that one and artifact links in every survivor die with no error.
+    # Worse than noise: the tunnel belonged to whichever pane opened first, so closing that one
+    # killed artifact links in every survivor with no error at all.
+    #
+    # serve-artifacts.sh still binds the port ON each host, so the loopback route survives as a
+    # manual fallback for when the cluster is down: `ssh -L 8182:127.0.0.1:8182 daniel-server`.
+{{- if ne .chezmoi.os "windows" }}
+    # Multiplexing stays. It no longer exists to establish a forward once — it is here so
+    # repeat sessions skip the handshake, and so a burst of them does not trip UFW's ssh rate
+    # limit (six connections in 30s to either host gets REJECTed, which reads as the host being
+    # down). Note sshd's MaxSessions caps channels PER CONNECTION, so multiplexing trades a
+    # connection limit for a channel limit; the hardening role sets it to 10 (server repo,
+    # roles/setup/initial_setup) and at the old value of 2 the third pane could not open.
     #
     # %C, not %r@%h:%p — unix socket paths cap at ~104 bytes and the literal form overflows
     # it on long hostnames, at which point ssh silently declines to multiplex
@@ -70,18 +76,12 @@ Host daniel-box
     IdentityFile ~/.ssh/daniel-box
 {{- end }}
     IdentityFile ~/.ssh/id_ed25519
-    # Renders Claude Code's artifact links, same arrangement as daniel-server above:
-    # the box serves ~/.claude/artifacts on loopback and a plain ssh session forwards
-    # nothing on its own, so http://127.0.0.1:8183/... only resolves with this in place.
-    #
-    # 8183 because 8181 is this workstation's own artifact server and 8182 is the
-    # daniel-server forward; a shared port can't bind twice, and the browser then
-    # quietly renders the OTHER host's artifacts. settings.base.json sets a matching
-    # CLAUDE_ARTIFACTS_PORT=8183 on daniel-box so the links it emits agree.
-    LocalForward 127.0.0.1:8183 127.0.0.1:8183
+    # No LocalForward, same reasoning as daniel-server above — the cluster serves this host's
+    # artifacts at a real URL, so nothing emits a 127.0.0.1:8183 link any more. The manual
+    # fallback is `ssh -L 8183:127.0.0.1:8183 daniel-box`.
 {{- if ne .chezmoi.os "windows" }}
-    # Multiplex so the forward is established once, same arrangement as daniel-server above
-    # — see the rationale there for %C, the ServerAlive* values, and the Windows gate.
+    # Multiplex, same arrangement as daniel-server above — see the rationale there for what
+    # multiplexing is still for, %C, the ServerAlive* values, and the Windows gate.
     ControlMaster auto
     ControlPath ~/.ssh/cm-%C
     ControlPersist 10m
