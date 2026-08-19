@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "ce5f40596d5118a80aa66caa4c58946533cc2fe53352072343373285a81923ba",
-      "landed": "2026-08-19T20:10:51.239Z"
+      "hash": "f4aea58aeec3328fbc8214de5697efb93954e2f18de3862af5e1b8061da5a675",
+      "landed": "2026-08-19T20:45:27.203Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -148,8 +148,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "e4e8445bc2f17ab3fd87df7f62b91136b3e8572a759664359316385c1e02d2f8",
-      "landed": "2026-08-18T13:44:02.032Z"
+      "hash": "ffc9d9eb5489327e753faf8acbd4e06302fd7879c28428bba3839882c3926db3",
+      "landed": "2026-08-19T20:45:27.203Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -353,8 +353,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "b682310c08ecb188b8792479c52adf32c6e1a89692da8dfa37f1527fc1d6de6b",
-      "landed": "2026-08-18T13:15:12.551Z"
+      "hash": "59fad48fe304f16742c1b5ceda4833be138c93ced2bba01c828a3b466932d6a5",
+      "landed": "2026-08-19T20:45:27.203Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
