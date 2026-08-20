@@ -9,7 +9,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { shConstInt } = require('../lib/sh-const');
+
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_lint-after-edit.sh');
+
+// The hook's truncation cap, read from the hook. The noisy-linter case below has to produce
+// more output than this to reach the truncation branch at all, so a restated 40 here would
+// stop testing truncation the moment the cap were raised — silently, still green.
+const MAX_LINES = shConstInt(HOOK, 'MAX_LINES');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -76,7 +83,8 @@ test('shell script with a lint violation: block decision surfaces the output', {
 test('a very noisy linter run is truncated with a notice, not pasted whole', { skip: skipLintCase }, () => {
   const dir = scratch();
   const f = path.join(dir, 'noisy.sh');
-  const violations = Array.from({ length: 40 }, (_, i) => `v${i}=$1\necho $v${i}\n`).join('');
+  // One SC2086 finding per violation, so overshooting the cap guarantees the truncation branch.
+  const violations = Array.from({ length: MAX_LINES * 2 }, (_, i) => `v${i}=$1\necho $v${i}\n`).join('');
   fs.writeFileSync(f, `#!/bin/bash\n${violations}`);
   const out = runHook(JSON.stringify({ tool_input: { file_path: f } }));
   assert.strictEqual(decision(out), 'block');
@@ -84,7 +92,9 @@ test('a very noisy linter run is truncated with a notice, not pasted whole', { s
   assert.match(reason, /more line\(s\) truncated/);
   // Head retained, so the first real finding still reaches the model.
   assert.match(reason, /SC2086/);
-  assert.ok(reason.split('\n').length < 60, `reason should be bounded, got ${reason.split('\n').length} lines`);
+  // The bound is the cap plus the hook's own framing lines, not a second magic number.
+  const lines = reason.split('\n').length;
+  assert.ok(lines < MAX_LINES + 20, `reason should be bounded near MAX_LINES=${MAX_LINES}, got ${lines} lines`);
 });
 
 test('unsupported file type is a no-op', { skip }, () => {

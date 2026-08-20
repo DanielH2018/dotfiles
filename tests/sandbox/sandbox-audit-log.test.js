@@ -18,9 +18,20 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 const dirs = [];
 function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-audit-')); dirs.push(d); return d; }
 
-function runHook(logDir, input) {
+// Rotation thresholds for this test's own runs. The hook ships 5000/3000; driving them down
+// here is what lets the rotation case seed a handful of lines instead of 5001, and keeps the
+// expected counts small enough to read rather than arithmetic to take on trust.
+const MAX_LINES = 10;
+const KEEP_LINES = 6;
+// Passed only by the rotation case — the append cases must see the shipped defaults.
+const rotationEnv = { AUDIT_MAX_LINES: String(MAX_LINES), AUDIT_KEEP_LINES: String(KEEP_LINES) };
+
+function runHook(logDir, input, extraEnv = {}) {
   return execFileSync('bash', [HOOK], {
-    input, encoding: 'utf8', env: { ...process.env, LOG_DIR: logDir }, stdio: ['pipe', 'pipe', 'pipe'],
+    input,
+    encoding: 'utf8',
+    env: { ...process.env, LOG_DIR: logDir, ...extraEnv },
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
 // LOG_FILE is $LOG_DIR/<UTC date>.jsonl. Discover the name the hook actually used
@@ -60,18 +71,19 @@ test('two calls append two lines', { skip }, () => {
 });
 
 test('exceeding MAX_LINES rotates the log down to KEEP_LINES, keeping the newest entries', { skip }, () => {
-  // MAX_LINES=5000/KEEP_LINES=3000 are hardcoded in the script, not env-overridable —
-  // pre-seed past the threshold rather than shrinking the knobs.
   const dir = scratch();
   // One throwaway call so the hook names the log file; then seed that exact file,
   // so the seed and the append below can't land on two different dates.
-  runHook(dir, JSON.stringify({ session_id: 's0', tool_name: 'Bash', tool_input: { command: 'discard' } }));
-  const seed = Array.from({ length: 5001 }, (_, i) => `seed-${i}`).join('\n') + '\n';
+  runHook(dir, JSON.stringify({ session_id: 's0', tool_name: 'Bash', tool_input: { command: 'discard' } }), rotationEnv);
+  const seed = Array.from({ length: MAX_LINES + 1 }, (_, i) => `seed-${i}`).join('\n') + '\n';
   fs.writeFileSync(logPath(dir), seed);
-  runHook(dir, JSON.stringify({ session_id: 'sN', tool_name: 'Bash', tool_input: { command: 'newest' } }));
+  runHook(dir, JSON.stringify({ session_id: 'sN', tool_name: 'Bash', tool_input: { command: 'newest' } }), rotationEnv);
   const lines = readLines(dir);
-  assert.strictEqual(lines.length, 3000);
-  assert.strictEqual(lines[0], 'seed-2002', 'oldest retained entry after trim');
+  assert.strictEqual(lines.length, KEEP_LINES);
+  // 11 seeded plus 1 appended, trimmed to the last 6: seed-6 is the oldest survivor. Written
+  // out rather than computed from MAX_LINES/KEEP_LINES — an off-by-one in the script's own
+  // trim is exactly what this catches, and a shared formula would drift right along with it.
+  assert.strictEqual(lines[0], 'seed-6', 'oldest retained entry after trim');
   assert.strictEqual(JSON.parse(lines[lines.length - 1]).cmd, 'newest', 'newest entry survives rotation');
 });
 

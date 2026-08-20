@@ -11,7 +11,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { shConstInt } = require('../lib/sh-const');
+
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-end.sh');
+
+// A buffer size that has to exceed the hook's roll budget, sized from the budget rather than
+// written out beside it. Raise REMEMBER_TODAY_MAX_BYTES past a hardcoded 20000 and every
+// "rolls the buffer" test below would go on passing while testing the under-budget path.
+const OVER_BUDGET = shConstInt(HOOK, 'REMEMBER_BUDGET') * 3;
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -65,28 +72,30 @@ test('leaves the buffer alone when it is under budget', { skip }, () => {
 
 test('rolls the buffer once it passes budget, freeing the injected name', { skip }, () => {
   const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(20000));
+  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
   run(env);
   // The plugin's SessionStart hook cats the exact today-<DATE>.md and nothing else,
   // so freeing that name is what actually drops the bytes out of the next session.
   assert.ok(!fs.existsSync(buffer(env.proj)), 'buffer must be renamed out of the injected path');
-  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(20000));
-  assert.match(log(env.home), /event=remember_roll bytes=20000 budget=8192 part=1/);
+  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(OVER_BUDGET));
+  // 8192 stays written out: it is the value the hook must REPORT, which is what this
+  // assertion exists to catch. Only the input that has to exceed it is derived.
+  assert.match(log(env.home), new RegExp(`event=remember_roll bytes=${OVER_BUDGET} budget=8192 part=1`));
 });
 
 test('rolls to the next free part without clobbering an earlier one', { skip }, () => {
   const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(20000));
+  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
   run(env);
-  fs.writeFileSync(buffer(env.proj), 'c'.repeat(20000));
+  fs.writeFileSync(buffer(env.proj), 'c'.repeat(OVER_BUDGET));
   run(env);
-  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(20000), 'part 1 must survive');
-  assert.equal(fs.readFileSync(buffer(env.proj, '-2'), 'utf8'), 'c'.repeat(20000));
+  assert.equal(fs.readFileSync(buffer(env.proj, '-1'), 'utf8'), 'b'.repeat(OVER_BUDGET), 'part 1 must survive');
+  assert.equal(fs.readFileSync(buffer(env.proj, '-2'), 'utf8'), 'c'.repeat(OVER_BUDGET));
 });
 
 test('rolled parts keep the today-*.md shape consolidation globs for', { skip }, () => {
   const env = fakeEnv();
-  fs.writeFileSync(buffer(env.proj), 'b'.repeat(20000));
+  fs.writeFileSync(buffer(env.proj), 'b'.repeat(OVER_BUDGET));
   run(env);
   const [rolled] = fs.readdirSync(path.join(env.proj, '.remember'));
   // pipeline/shell.py globs today-*.md, skips names containing the current date and

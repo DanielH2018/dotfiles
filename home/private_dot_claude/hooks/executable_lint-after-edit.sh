@@ -13,6 +13,11 @@
 
 set -u
 
+# How much of a failing linter's output reaches the block reason -- i.e. the model's
+# context -- for a single edit. Declared here rather than inside the failure branch so the
+# test can read it and size its own input from it, instead of restating 40 alongside it.
+MAX_LINES=40
+
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
 # SWALLOW: a hook must run without its libs rather than fail closed on the whole
 # edit. The fallback stubs below (guarded on `command -v`) keep every check
@@ -178,7 +183,6 @@ if [ "$FAILED" -eq 1 ]; then
   # pasted into the block reason — i.e. straight into the model's context — for a single
   # edit. Keep the head, where the first real error is, and say what was dropped rather
   # than truncating silently.
-  MAX_LINES=40
   TOTAL=$(printf '%s\n' "$OUTPUT" | wc -l | tr -d '[:space:]')
   if [ "$TOTAL" -gt "$MAX_LINES" ]; then
     OUTPUT="$(printf '%s\n' "$OUTPUT" | head -n "$MAX_LINES")

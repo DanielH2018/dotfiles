@@ -7,8 +7,10 @@ set -u
 LOG_DIR="${LOG_DIR:-/audit}"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/$(date -u +%Y-%m-%d).jsonl"
-MAX_LINES=5000
-KEEP_LINES=3000
+# Overridable so the test can drive rotation with a handful of lines rather than seeding
+# past a 5000-line threshold and restating the trim arithmetic in its expectations.
+MAX_LINES="${AUDIT_MAX_LINES:-5000}"
+KEEP_LINES="${AUDIT_KEEP_LINES:-3000}"
 
 INPUT=$(cat)
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

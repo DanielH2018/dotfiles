@@ -15,8 +15,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { shConstInt } = require('../lib/sh-const');
+
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_play-sound.sh');
-const BASH = ['/usr/bin/bash', '/bin/bash'].find((p) => fs.existsSync(p));
+const BASH =['/usr/bin/bash', '/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';
 
 // The paplay branch needs the Windows media file the hook hardcodes, so that case only runs
@@ -133,6 +135,22 @@ test('with no player at all it still exits 0', { skip }, () => {
   assert.strictEqual(log.trim(), '', 'nothing was launched');
   // execFileSync would have thrown on a non-zero exit; a hook that fails is noise in the
   // transcript on every prompt.
+});
+
+// The volume cases below assert the ENCODED values — 32768 on paplay's 0-65536 linear scale,
+// 0.500 as pw-play's float — and those stay written out. Computing them from the percentage
+// here would just re-run the hook's own arithmetic, so the expectation would drift along with
+// a broken conversion instead of catching it.
+//
+// What is worth pinning separately is the percentage they encode, and that it has exactly one
+// home. It had two — `${CLAUDE_SOUND_VOLUME:-50}` and the validation fallback — where editing
+// one would have made invalid input play at a different volume from the default, with nothing
+// red. shConst throws on a second assignment, so this catches that shape coming back as well
+// as a bare change of value, and it names which end drifted where a failed `--volume=32768`
+// match does not.
+test('the default volume has one home in the hook, and it is what the cases below encode', { skip }, () => {
+  assert.strictEqual(shConstInt(HOOK, 'DEFAULT_VOLUME_PCT'), 50,
+    'default volume changed: update the encoded 32768 / 13107 / 0.500 expectations below with it');
 });
 
 test('the cue plays at a reduced default volume, not full', { skip: skipTheme }, () => {

@@ -33,9 +33,14 @@ THEME_SOUND="/usr/share/sounds/freedesktop/stereo/$THEME.oga"
 # CLAUDE_SOUND_VOLUME (0-100) overrides it; anything that isn't a plain integer in range falls
 # back to the default rather than passing garbage to the player. canberra-gtk-play and aplay
 # have no volume flag, so they stay at their native level regardless of this setting.
-PCT="${CLAUDE_SOUND_VOLUME:-50}"
+#
+# The default is named once. It was written twice -- as the :- fallback and again in the
+# validation branch -- and editing one of the two would have made invalid input play at a
+# different volume from the default, silently.
+DEFAULT_VOLUME_PCT=50
+PCT="${CLAUDE_SOUND_VOLUME:-$DEFAULT_VOLUME_PCT}"
 if ! [[ "$PCT" =~ ^[0-9]+$ ]] || [[ "$PCT" -gt 100 ]]; then
-  PCT=50
+  PCT="$DEFAULT_VOLUME_PCT"
 fi
 PAPLAY_VOLUME=$(( PCT * 65536 / 100 ))          # paplay: linear 0-65536
 printf -v PW_VOLUME '%d.%02d0' $(( PCT / 100 )) $(( PCT % 100 ))  # pw-play: float 0.0-1.0

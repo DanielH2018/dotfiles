@@ -6,8 +6,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 
+const { shConst } = require('../lib/sh-const');
+
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
+
+// The pinned version, read from the script rather than restated. The idempotence test below
+// stubs a local tmux AT this version to make the script take its already-current branch, so a
+// stale copy here would not go red -- it would silently exercise the upgrade path instead.
+const TMUX_VERSION = shConst(SRC, 'TMUX_VERSION');
 
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
 // (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
@@ -23,7 +30,7 @@ test('script is gated to Linux', { skip }, () => {
   if (process.platform !== 'linux') {
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   } else if (rendered.trim() !== '') {
-    assert.match(rendered, /TMUX_VERSION=3\.7b/, 'Linux render carries the builder');
+    assert.ok(rendered.includes(`TMUX_VERSION=${TMUX_VERSION}`), 'Linux render carries the builder');
   }
 });
 
@@ -31,6 +38,11 @@ test('script is gated to Linux', { skip }, () => {
 //    didn't swallow them).
 test('Linux branch carries the gate, source-build, and sudo-less defer', { skip }, () => {
   assert.match(body, /if and \(eq \.chezmoi\.os "linux"\) \(ne \.profile "minimal"\)/);
+  // The version stays written out HERE, deliberately, and in exactly one place. Bumping the
+  // pin is a config decision, so it should turn one test red and get looked at -- the same
+  // reason dns.test.js writes out 10.0.0.243. What must not be restated is the STUB the
+  // idempotence case builds from it, which is where a stale copy went green testing the
+  // wrong branch; that one derives.
   assert.match(body, /TMUX_VERSION=3\.7b/);
   assert.match(body, /libevent-dev/);
   assert.match(body, /bison/);
@@ -49,7 +61,7 @@ test('idempotence: current local tmux skips the rebuild', { skip }, () => {
     dirs.push(home);
     const bin = path.join(home, '.local', 'bin');
     fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/sh\necho "tmux 3.7b"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/sh\necho "tmux ${TMUX_VERSION}"\n`, { mode: 0o755 });
     const scriptFile = path.join(home, 'render.sh');
     fs.writeFileSync(scriptFile, rendered);
     // Merge stderr (where the script logs) into stdout so the skip message is captured.

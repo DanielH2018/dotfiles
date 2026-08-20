@@ -7,6 +7,8 @@ const os = require('node:os');
 
 const dirs = [];
 
+const { shConst } = require('../lib/sh-const');
+
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
 // A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
@@ -14,7 +16,7 @@ const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hoo
 // serve-artifacts.sh; macOS gets file://<abs>. Mirror the hook's `uname` split.
 // The literal 127.0.0.1 is load-bearing — see the hook for why `localhost` hangs on
 // the Windows side of WSL.
-const PORT = process.env.CLAUDE_ARTIFACTS_PORT || '8181';
+const PORT = process.env.CLAUDE_ARTIFACTS_PORT || shConst(HOOK, 'PORT');
 const hostLink = (absPath, rel) =>
   process.platform === 'linux' ? `http://127.0.0.1:${PORT}/${rel}` : `file://${absPath}`;
 
