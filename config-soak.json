@@ -52,21 +52,6 @@
       "landed": "2026-08-09T19:04:35.602Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
-      "hash": "491bec5c4a906482d5454f7eccd43912a4fa12c4fdeb79985291a3f0412aa071",
-      "landed": "2026-07-25T01:23:11.477Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-state.sh",
-      "hash": "28073c607a5479d7775444c785b7cffb07fb1ff8f8bc61bd84afe3ce78965f11",
-      "landed": "2026-08-07T13:21:56.755Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
-      "hash": "bcb64f740e04b9c2b7bcf8850b04a3f661beea7889441e1ea001bb281fea0e6d",
-      "landed": "2026-08-07T13:21:56.755Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
       "hash": "57fcd11d821b5ed7fa4f775304ed4d6a83afa49eec46e10de34e1fb0f42b1dc9",
       "landed": "2026-08-15T14:30:21.828Z"
@@ -288,8 +273,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/reap-origin-lib.sh",
-      "hash": "f5b0ee36145a3e21b99ee6955331799447fc13a3f180e13843d3744220cad4a9",
-      "landed": "2026-08-07T14:00:13.094Z"
+      "hash": "11642574de31d4d07848fa200d3c5e741961dc9963e0025f6c2b69b496ce7439",
+      "landed": "2026-08-20T01:17:35.175Z"
     },
     {
       "path": "home/private_dot_claude/hooks/run-bounded.sh",

@@ -182,7 +182,7 @@ test('settings.json is mounted read-only at its live path, not copied into the w
 
 test('every hook is mounted read-only at its live ~/.claude/hooks path', () => {
   const hooks = MOUNTS.filter(([t]) => t.startsWith('/home/claudebot/.claude/hooks/'));
-  assert.ok(hooks.length >= 8, `expected the full hook set mounted live, found ${hooks.length}`);
+  assert.ok(hooks.length >= 7, `expected the full hook set mounted live, found ${hooks.length}`);
   for (const [target, mode] of hooks) {
     assert.strictEqual(mode, 'ro', `${target} must be mounted :ro — a writable guard hook is no guard`);
   }

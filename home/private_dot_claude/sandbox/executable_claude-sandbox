@@ -837,12 +837,6 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude/hooks/screen-injection.sh:ro"
   -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude/hooks/block-dangerous-bash.sh:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
-  # Agent View Phase 2: the in-container state hook + the shared register library it
-  # sources. Present in every container (settings.base.json wires the hook for all), but
-  # they no-op unless AGENT_VIEW_KEY + the registry RW mount are set — added interactive-
-  # only below, so exec/shell containers can't touch the registry.
-  -v "$HOME/.claude/hooks/agent-view-register.sh:/home/claudebot/.claude/hooks/agent-view-register.sh:ro"
-  -v "$SANDBOX_DIR/agent-view-state-hook.sh:/home/claudebot/.claude/hooks/agent-view-state-hook.sh:ro"
   # CLAUDE.md is the one managed file that stays staged-and-copied: entrypoint.sh
   # appends the dynamic environment context to it, so it has to be writable.
   # It is instructions, not policy or executable code.
@@ -1002,47 +996,7 @@ else
   [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
 fi
 
-# --- Agent View registration (interactive Claude sessions only) ---
-# Surface this sandbox session in the agentview picker so it can be seen/attached
-# alongside host sessions. The launcher runs in the user's pane, so it captures that
-# pane's backend/locator directly — no later cwd-correlation needed. Headless (--exec)
-# has no pane and already exited above; the standalone shell (--shell) isn't a Claude
-# session, so neither registers. cleanup() removes the row on exit (RUN_ID-guarded).
-# Every step is guarded so a registry hiccup can never abort the launch (set -e).
-if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -f "$HOME/.claude/hooks/agent-view-register.sh" ]]; then
-  # shellcheck disable=SC1091  # hook lives outside this tree; existence is checked above
-  source "$HOME/.claude/hooks/agent-view-register.sh"
-  if declare -f av_write_full >/dev/null 2>&1; then
-    av_title="$REPO_NAME"
-    if [[ -n "$WT_BRANCH" ]]; then av_title="$REPO_NAME · $WT_BRANCH"; fi
-    av_title="$av_title (sandbox)"
-    av_locator="$(av_capture_locator || true)"
-    av_write_full "$INSTANCE_ID" "working" "$WORK_PATH" "$(hostname 2>/dev/null || echo '?')" \
-      "$(date +%s 2>/dev/null || echo 0)" "sandbox" "$av_title" "$av_locator" "" "$RUN_ID" || true
-    AV_REGISTERED=true
-    # (the agent-view mount added below is picked up by relabel_docker_args, which
-    # runs after this block — the transform is idempotent, so ordering is free)
-    # Phase 2: bind the registry dir RW so the in-container UserPromptSubmit/Notification/
-    # Stop hooks can flip THIS row's state (joined by AGENT_VIEW_KEY=INSTANCE_ID). Only
-    # session-state JSON crosses the mount — no secrets. av_write_full just created the
-    # dir. Interactive-only: exec already exited and shell is gated out above, so their
-    # containers get neither the mount nor the key and the hook no-ops there.
-    DOCKER_ARGS+=(
-      -v "$HOME/.claude/agent-view:/home/claudebot/.claude/agent-view"
-      -e "AGENT_VIEW_KEY=$INSTANCE_ID"
-    )
-  fi
-fi
 
-# Mark the pane so dot_tmux.conf's C-Left bind can tell a sandbox from a shell. It can't
-# read that from the process: `docker run` below is a child in this script's process group,
-# so tmux reports the pane's command as `bash`. cleanup() unsets it.
-if [[ "$EXEC_MODE" != true && "$SHELL_MODE" != true && -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] \
-  && command -v tmux >/dev/null 2>&1; then
-  if tmux set-option -p -t "$TMUX_PANE" @av_agent 1 2>/dev/null; then
-    AV_PANE_MARKED=true
-  fi
-fi
 
 relabel_docker_args
 docker run "${DOCKER_ARGS[@]}" "$IMAGE_TAG" "${CLAUDE_ARGS[@]}"

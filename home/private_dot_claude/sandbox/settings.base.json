@@ -236,40 +236,6 @@
           }
         ]
       }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/claudebot/.claude/hooks/agent-view-state-hook.sh working",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/claudebot/.claude/hooks/agent-view-state-hook.sh needs-input",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/claudebot/.claude/hooks/agent-view-state-hook.sh completed",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   },
   "cleanupPeriodDays": 7,

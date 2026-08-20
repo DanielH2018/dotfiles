@@ -78,7 +78,6 @@ _reap_session_index() {
 #   Returns 0 if it reaped, 1 otherwise.
 _reap_origin_sid() {
   local origin_sid="$1" fork_sid="$2"
-  local av_dir="${AGENT_VIEW_DIR:-$HOME/.claude/agent-view}"
   local killcmd="${REAP_KILLCMD:-kill}"
   local logfile="${REAP_LOG:-$HOME/.local/state/reap-origin.log}"
 
@@ -107,9 +106,6 @@ _reap_origin_sid() {
 
   # SIGTERM (graceful): transcript stays on disk, resumable
   "$killcmd" "$origin_pid" 2>/dev/null
-
-  # drop the Agentview row so it vanishes now instead of on the next dead-pid prune
-  rm -f "$av_dir/$origin_sid.json" 2>/dev/null
 
   # audit
   mkdir -p "$(dirname "$logfile")" 2>/dev/null

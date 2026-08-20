@@ -101,7 +101,6 @@ test('reaps the origin of a backgrounded fork found in the scan', { skip }, () =
   });
   runSweep(env);
   assert.deepStrictEqual(killed(env), ['222'], 'origin pid reaped');
-  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN.json')), 'row removed');
   assert.match(fs.readFileSync(env.log, 'utf8'), /ORIGIN.*222/);
 });
 
@@ -171,7 +170,6 @@ test('reaps the origin of a spare-dispatched backgrounding (roster path)', { ski
   });
   runSweep(env);
   assert.deepStrictEqual(killed(env), ['222'], 'origin pid reaped via roster');
-  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN.json')), 'row removed');
   assert.match(fs.readFileSync(env.log, 'utf8'), /ORIGIN.*222/);
 });
 
@@ -190,7 +188,6 @@ test('reaps the origin when the backgrounding carried a prompt', { skip }, () =>
   });
   runSweep(env);
   assert.deepStrictEqual(killed(env), ['222'], 'a prompt in seed.intent is still a backgrounding');
-  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN.json')), 'row removed');
 });
 
 test('plain spare agent in roster -> nothing killed', { skip }, () => {

@@ -87,7 +87,6 @@ test('backgrounded signature + live origin -> SIGTERM origin once, remove row, l
   const env = fakeEnv({ '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
   run(env, BG('ORIGIN-SID'));
   assert.deepStrictEqual(killedPids(env), ['203774'], 'origin pid SIGTERM\'d exactly once');
-  assert.ok(!fs.existsSync(path.join(env.avdir, 'ORIGIN-SID.json')), 'Agentview row removed');
   assert.match(fs.readFileSync(env.log, 'utf8'), /ORIGIN-SID.*203774/, 'audit line written');
 });
 
@@ -96,7 +95,6 @@ test('plain --resume (no --fork-session) -> no-op', { skip }, () => {
   const env = fakeEnv({ '203774': 'ORIGIN-SID' }, ['ORIGIN-SID']);
   run(env, `/x/claude --session-id S --resume /p/ORIGIN-SID.jsonl --model Fable`);
   assert.deepStrictEqual(killedPids(env), [], 'nothing killed');
-  assert.ok(fs.existsSync(path.join(env.avdir, 'ORIGIN-SID.json')), 'row untouched');
 });
 
 test('interactive fork (no --reply-on-resume) -> no-op', { skip }, () => {
@@ -134,7 +132,6 @@ test('recorded procStart does not match the running process -> no-op', { skip },
   const env = fakeEnv({ '203774': ['ORIGIN-SID', '1375'] }, ['ORIGIN-SID']);
   run(env, BG('ORIGIN-SID'));
   assert.deepStrictEqual(killedPids(env), [], 'recycled pid must never be signalled');
-  assert.ok(fs.existsSync(path.join(env.avdir, 'ORIGIN-SID.json')), 'row left alone too');
 });
 
 test('process is gone entirely -> no-op', { skip }, () => {
