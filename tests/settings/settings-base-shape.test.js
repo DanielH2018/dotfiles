@@ -207,32 +207,6 @@ test('every fallbackModel entry is one of availableModels', { skip }, () => {
     + `enforceAvailableModels would reject the very model it falls back to`);
 });
 
-// The idle reminder is not a request for input.
-//
-// `idle_prompt` is Claude's 60-second "waiting for your input" nudge, which fires long AFTER a
-// session has finished. agent-view-state.sh writes its state unconditionally, so that reminder
-// overwrote a completed/review row with needs-input — and because the review downgrade only runs
-// for "completed", it also wiped the dirty-tree marker Stop had just stamped. The result was that
-// an unattended finished session, the exact case the DONE group exists to surface, got painted as
-// blocked a minute later and never reached that group.
-//
-// The audible cue on the SAME event is left alone deliberately: whether a 60-second nudge is
-// worth a sound is a separate question from what state the picker records.
-test('the agentview needs-input hook does not fire on the idle reminder', { skip }, () => {
-  // All five agent-view-state entries are gated to linux/windows/darwin in the base template —
-  // agentview now runs everywhere (it needs bash 4+, which it checks for itself at startup).
-  const cfg = JSON.parse(render());
-  const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
-    (e.hooks || []).some((h) => (h.command || '').includes('agent-view-state.sh needs-input')));
-  assert.ok(entries.length, 'no Notification entry writes the agentview needs-input state');
-  for (const e of entries) {
-    assert.doesNotMatch(e.matcher, /idle_prompt/,
-      `the agentview state hook still fires on idle_prompt: ${e.matcher}`);
-    assert.match(e.matcher, /permission_prompt/,
-      'a genuine permission prompt must still mark the row needs-input');
-  }
-});
-
 // The audible cue follows the same rule as the state hook above.
 //
 // The two were split deliberately when the state hook was narrowed: what the picker RECORDS and

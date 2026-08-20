@@ -669,44 +669,10 @@ test('ctrl-f also kicks a background remote refresh', () => {
 });
 
 // ---- C-Left: back to Agent View from inside any non-shell pane ----------
-const TMUXCONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
+// The tmux half of this is gone: dot_tmux.conf no longer binds C-Left, prefix+g or prefix+G,
+// because Warp's sidebar replaced the picker those reached. WezTerm still binds it, so the
+// guard below stays.
 const WEZTERM = path.join(__dirname, '..', '..', 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
-let tmuxOk = true;
-try { execFileSync('bash', ['-c', 'command -v tmux'], { stdio: 'ignore' }); } catch { tmuxOk = false; }
-const tmuxSkip = tmuxOk ? false : 'tmux unavailable';
-
-test('tmux binds prefix-less C-Left: shells pass through, other panes get the picker', () => {
-  const conf = fs.readFileSync(TMUXCONF, 'utf8');
-  const bind = conf.split('\n').find((l) => l.startsWith('bind -n C-Left'));
-  assert.ok(bind, 'a root-table (no prefix) C-Left bind exists');
-  assert.match(bind, /if -F/, 'the bind branches on the pane command');
-  assert.match(bind, /send-keys C-Left/, 'a shell keeps word-left — the key passes through');
-  // A window, not a display-popup: tmux allows one popup per client, and a picker that was
-  // itself a popup could never float its CTRL+X / CTRL+N choosers (tmux drops the nested
-  // request silently). -S reuses the window instead of stacking a new one per press.
-  assert.match(bind, /new-window -S -n agentview agentview/, 'a non-shell pane opens the picker window');
-});
-
-test('the C-Left condition passes shells and catches claude panes (real tmux)', { skip: tmuxSkip }, () => {
-  // Evaluate the ACTUAL regex from the conf through real tmux format matching, so a
-  // typo'd pattern can't ship: the picker would silently stop opening from claude panes.
-  const conf = fs.readFileSync(TMUXCONF, 'utf8');
-  const m = conf.match(/#\{m\/r:([^,]+),#\{pane_current_command\}\}/);
-  assert.ok(m, 'the bind embeds an m/r regex on pane_current_command');
-  const sock = path.join(scratch('avh-tmux-'), 'sock');
-  const T = (...a) => execFileSync('tmux', ['-S', sock, ...a], { encoding: 'utf8' });
-  try {
-    T('new-session', '-d', '-s', 'probe');
-    const evalRe = (cand) => T('display', '-p', `#{m/r:${m[1]},${cand}}`).trim();
-    assert.strictEqual(evalRe('zsh'), '1', 'zsh passes through');
-    assert.strictEqual(evalRe('bash'), '1', 'bash passes through');
-    assert.strictEqual(evalRe('claude'), '0', 'a claude pane summons the picker');
-    assert.strictEqual(evalRe('docker'), '0', 'a sandbox (docker) pane summons the picker');
-    assert.strictEqual(evalRe('ssh'), '0', 'a remote-attach (ssh) pane summons the picker');
-  } finally {
-    try { T('kill-server'); } catch { /* server already gone */ }
-  }
-});
 
 test('wezterm binds CTRL+Left with the same shell pass-through', () => {
   const src = fs.readFileSync(WEZTERM, 'utf8');
