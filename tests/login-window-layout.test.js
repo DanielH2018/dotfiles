@@ -1,7 +1,8 @@
 // Regression guard for executable_login-window-layout.
 //
-// Drives the ACTUAL script with stub launchers and a stub pgrep on PATH, so it never starts
-// a real Discord or Spotify.
+// Drives the ACTUAL script with stub launchers and a stub pgrep as its ENTIRE PATH, so it can
+// never start a real Discord or Spotify. The stub dir replaces PATH rather than sitting in
+// front of it, so a command with no stub fails to resolve instead of reaching the real binary.
 //
 // The stub pgrep is not a canned yes/no -- it runs the script's own pattern against a fake
 // process table with grep -E, the same way the real pgrep -f would. That makes the patterns
@@ -13,7 +14,7 @@
 // Skips without bash.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -34,11 +35,39 @@ const RUNNING = {
   obsidian: '/app/obsidian --ozone-platform-hint=auto',
 };
 
-// Every launcher the script can invoke needs a stub here. run() prepends the stub dir to the
-// real PATH rather than replacing it, so a launcher with no stub resolves to the real binary
-// and the suite opens real windows -- which is what a missing warp-terminal stub did once.
-// The last test in this file fails when the script gains a launcher that is not listed.
+// Every launcher the script can invoke needs a stub here. A missing one used to reach the real
+// binary, and swapping ghostty for warp-terminal without updating this list opened ten Warp
+// windows on the developer's desktop. The replaced PATH below is what stops that now; this list
+// is still what makes the launch observable, and the last test in this file fails when the
+// script gains a launcher that is not named here.
 const LAUNCHER_STUBS = ['discord', 'firefox', 'warp-terminal', 'flatpak'];
+
+// Real utilities the script and the stubs need, since run() replaces PATH with the stub dir
+// rather than prepending to it. Enumerated by observation, not from memory: run the script
+// with an empty PATH, read the `command not found` lines off stderr, link what it names, and
+// repeat until stderr is clean. date/mktemp/sleep surface on the first pass; cat and rm hide
+// behind them, because place_firefox returns early when mktemp fails. grep belongs to the
+// pgrep stub and cp to the gdbus stub.
+//
+// Widening this list is how the isolation gets lost, so treat a new entry as a question about
+// the script rather than a fix for a red test.
+const REAL_UTILS = ['bash', 'cat', 'cp', 'date', 'grep', 'mktemp', 'rm', 'sleep'];
+
+// Resolve a utility against the developer's own PATH. The stub dir gets a symlink per name,
+// which is what makes a replaced PATH survivable.
+function realPath(cmd) {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) { continue; }
+    const p = path.join(dir, cmd);
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch { /* not here, keep looking */ }
+  }
+  return null;
+}
+
+const BASH = realPath('bash');
 
 const dirs = [];
 
@@ -80,6 +109,14 @@ for a in "$@"; do
 done
 `, { mode: 0o755 });
 
+  // Link the real utilities in by name. Without this the replaced PATH would break the script
+  // itself, not just the launchers it must not run.
+  for (const util of REAL_UTILS) {
+    const target = realPath(util);
+    assert.ok(target, `${util} is not on PATH, so the stub dir cannot provide it`);
+    fs.symlinkSync(target, path.join(bin, util));
+  }
+
   return { bin, marks };
 }
 
@@ -109,12 +146,23 @@ function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position } =
   const { bin, marks } = makeStubs(running);
   const env = {
     ...process.env,
-    PATH: `${bin}:${process.env.PATH}`,
+    // The stub dir IS the PATH, not the front of it: an unstubbed command must fail to resolve
+    // rather than reach the real one. REAL_UTILS covers what the script legitimately needs.
+    PATH: bin,
     OBSIDIAN_DELAY: String(delay),
     FIREFOX_PLACE_DELAY: String(placeDelay),
   };
   if (position) { env.FIREFOX_POSITION = position; }
-  const stdout = execFileSync('bash', [SCRIPT], { env, encoding: 'utf8' });
+  // Spawn bash by absolute path -- with PATH replaced, resolving the interpreter through it
+  // would be one more thing to keep in REAL_UTILS for no benefit.
+  const res = spawnSync(BASH, [SCRIPT], { env, encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, `the script exited ${res.status}: ${res.stderr}`);
+  // An incomplete REAL_UTILS is otherwise silent. start() sends every launch to /dev/null,
+  // place_firefox runs in a background subshell, and log()'s timestamp comes from date, which
+  // no assertion reads -- so a missing binary leaves all 13 tests green.
+  assert.doesNotMatch(res.stderr, /command not found/,
+    `a command the script needs is missing from REAL_UTILS: ${res.stderr}`);
+  const stdout = res.stdout;
   const deadline = Date.now() + 3000;
   let launched = readLaunched(marks);
   while (launched.length < expect && Date.now() < deadline) {
@@ -244,16 +292,17 @@ test('FIREFOX_POSITION picks the corner to maximize from', { skip }, () => {
     'the configured position did not reach the KWin script');
 });
 
-// A launcher with no stub in LAUNCHER_STUBS runs for real under the test suite, because run()
-// keeps the real PATH behind the stub dir. Read the launchers back out of the script itself
-// rather than trusting the list to be maintained by hand.
+// With PATH replaced, an unstubbed launcher no longer reaches the real application -- it fails
+// to resolve, and the test that wanted it reports a missing mark and a timeout. This names the
+// cause instead, by reading the launchers back out of the script rather than trusting the list
+// above to be maintained by hand.
 test('every launcher the script starts has a stub', { skip }, () => {
   const src = fs.readFileSync(SCRIPT, 'utf8');
   const launchers = [...src.matchAll(/^start\s+\S+\s+'[^']*'\s+(\S+)/gm)].map((m) => m[1]);
   assert.ok(launchers.length > 0, 'no start lines found -- the pattern stopped matching');
   for (const cmd of launchers) {
     assert.ok(LAUNCHER_STUBS.includes(cmd),
-      `${cmd} has no stub, so the suite would launch the real application`);
+      `${cmd} has no stub, so nothing records that the script tried to start it`);
   }
 });
 
