@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
-      "hash": "a100665c576b9ec78f6e6f1976e34fc2053cd6851a6e8b03fde17186f3c20bcf",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "9eb317b28fe806f2c02cbfc79914c4a4b4f5db93d5b7b8734d7d7f9c358d3384",
+      "landed": "2026-08-20T14:50:58.324Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify-log.sh",
@@ -153,8 +153,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
-      "hash": "de9a50c8790e37ea4c3ccd04961e2f71aeeaeaf1ddd4b7447876209393ff1004",
-      "landed": "2026-08-20T13:41:52.632Z"
+      "hash": "3d455d24d0ce34acd857045a8b36090090682e6c834b092e31ba803459c0411c",
+      "landed": "2026-08-20T14:50:58.324Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
