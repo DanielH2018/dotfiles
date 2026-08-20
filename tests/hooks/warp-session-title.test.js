@@ -11,7 +11,7 @@
 // sequence early and leave the rest of the string as literal text on the row.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -121,6 +121,27 @@ test('structure: the sequence goes to the terminal, never stdout', { skip }, () 
   const prints = src.match(/^\s*printf .*\\033\]0;.*$/gm) || [];
   assert.ok(prints.length > 0, 'no OSC 0 printf found — did the hook stop emitting?');
   for (const line of prints) {
-    assert.match(line, /> "\$tty_out"/, `OSC printf not redirected to the terminal: ${line.trim()}`);
+    assert.match(line, />&3/, `OSC printf not redirected to the terminal: ${line.trim()}`);
   }
+  assert.match(src, /exec 3>"\$tty_out"/, 'fd 3 must be opened from the resolved pane tty');
+});
+
+// Claude Code runs hooks with no controlling terminal, so /dev/tty raises ENXIO there. The
+// pane has to come from CLAUDE_PID, whose process owns it. A `[[ -w /dev/tty ]]` guard does
+// not catch the case: the device node is world writable, so the test passes and only the
+// open fails — which is exactly how this failed silently for a whole Warp session.
+test('the pane tty is resolved from CLAUDE_PID, not /dev/tty', { skip }, () => {
+  const src = fs.readFileSync(HOOK, 'utf8');
+  assert.match(src, /ps -o tty= -p "\$\{CLAUDE_PID:-0\}"/, 'must ask CLAUDE_PID for the pane tty');
+  assert.doesNotMatch(src, /\[\[ -w "\$tty_out" \]\]/, 'a -w test passes on a tty that cannot be opened');
+});
+
+test('a run with no controlling terminal and no CLAUDE_PID exits quietly', { skip }, () => {
+  const e = { ...process.env };
+  delete e.CLAUDE_PID; delete e.WARP_TITLE_TTY;
+  const r = spawnSync('setsid', ['bash', HOOK, 'working'], {
+    env: e, stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000,
+  });
+  assert.strictEqual(r.status, 0, 'must exit 0 rather than error into Claude Code');
+  assert.strictEqual(String(r.stdout), '', 'nothing may reach stdout');
 });

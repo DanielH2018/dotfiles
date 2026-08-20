@@ -15,10 +15,28 @@
 set -u
 state="${1:-idle}"
 
-# Everything below writes to the terminal, so a session with no controlling terminal has
-# nothing to label. Bail before doing any work rather than after.
-tty_out="${WARP_TITLE_TTY:-/dev/tty}"   # overridable so the test suite can capture the sequence
-[[ -w "$tty_out" ]] 2>/dev/null || exit 0
+# Everything below writes to the terminal, so a run with no reachable pane has nothing to
+# label. Resolve the pane and bail before doing any work rather than after.
+#
+# `/dev/tty` is NOT that pane. Claude Code runs hooks with no controlling terminal — verified
+# 2026-08-19, `ps -o tty=` on a live hook prints `?` — so opening /dev/tty raises ENXIO. The
+# old guard did not catch it: `[[ -w /dev/tty ]]` stats the device node, which is world
+# writable, so the test PASSES and the write then fails into the `2>/dev/null`. The row kept
+# whatever title Claude Code set for itself and nothing anywhere said why.
+#
+# CLAUDE_PID is the session's own process and its tty IS the pane, so ask for that first.
+tty_out="${WARP_TITLE_TTY:-}"           # overridable so the test suite can capture the sequence
+if [[ -z "$tty_out" ]]; then
+  pane_tty=$(ps -o tty= -p "${CLAUDE_PID:-0}" 2>/dev/null | tr -d '[:space:]')
+  if [[ -n "$pane_tty" && "$pane_tty" != "?" ]]; then
+    tty_out="/dev/$pane_tty"
+  else
+    tty_out="/dev/tty"                  # older claude with no CLAUDE_PID; may still work
+  fi
+fi
+# Open it rather than test it: only an open distinguishes a writable node from a reachable
+# terminal. fd 3 stays open for the writes below, so there is exactly one open per run.
+exec 3>"$tty_out" 2>/dev/null || exit 0
 
 # shellcheck source=/dev/null
 source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
@@ -37,7 +55,7 @@ fi
 # SessionEnd: hand the row back to Warp's own auto-title rather than leaving a stale
 # "working" label on a pane whose session is gone. An empty OSC 0 string is the reset.
 if [[ "$state" == "end" ]]; then
-  printf '\033]0;\007' > "$tty_out" 2>/dev/null
+  printf '\033]0;\007' >&3
   exit 0
 fi
 
@@ -78,5 +96,5 @@ esac
 # carrying a stray BEL or ESC comes straight from the transcript, so it is not hypothetical.
 clean=$(printf '%s · %s' "$label" "$title" | tr -d '\000-\037')
 
-printf '\033]0;%s\007' "$clean" > "$tty_out" 2>/dev/null
+printf '\033]0;%s\007' "$clean" >&3
 exit 0
