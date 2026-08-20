@@ -34,7 +34,20 @@ const dirs = [];
 // Which tools get stubbed is per-platform on purpose. The hook picks its branch with
 // `command -v osascript`, so an osascript stub on Linux would send it down the macOS path and
 // this suite would stop exercising the branch that actually runs here.
-const STUBS = process.platform === 'darwin' ? ['osascript', 'afplay'] : ['notify-send'];
+//
+// Each stub writes to the log for the half of the cue it IS, which is not the same split as
+// sound-vs-banner-tool. On macOS the hook never calls play-sound.sh: `afplay` is the sound,
+// called directly so the audible cue does not depend on Notification Center delivery. Sending
+// it to the banner log would leave the played log empty on a Mac, and every sound assertion
+// below would fail there for a reason that is not a regression.
+const STUBS = process.platform === 'darwin'
+  ? { osascript: 'banners', afplay: 'played' }
+  : { 'notify-send': 'banners' };
+
+// Sleep without a timer, so `run` stays synchronous like the tests that call it.
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 function run({ type, sid, job }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'notify-'));
@@ -47,9 +60,13 @@ function run({ type, sid, job }) {
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
   const banners = path.join(home, 'banners.log');
-  for (const tool of STUBS) {
+  const logs = { played, banners };
+  for (const [tool, log] of Object.entries(STUBS)) {
+    // A stub on the played log has to match what the sound assertions look for, which is the
+    // `play ` prefix play-sound.sh itself writes -- not the tool's own name.
+    const line = log === 'played' ? `play ${tool} $*` : `${tool} $*`;
     fs.writeFileSync(path.join(bin, tool),
-      `#!/bin/sh\necho "${tool} $*" >> "${banners}"\n`, { mode: 0o755 });
+      `#!/bin/sh\necho "${line}" >> "${logs[log]}"\n`, { mode: 0o755 });
   }
   if (job) fs.mkdirSync(path.join(home, '.claude', 'jobs', sid.split('-')[0]), { recursive: true });
   try {
@@ -67,6 +84,11 @@ function run({ type, sid, job }) {
       },
     });
   } catch { /* a non-zero exit is itself a failure the assertions below will show */ }
+  // macOS backgrounds the sound (`afplay ... &`), so its write can land after bash returns.
+  // Only an absent log needs waiting on; one that already exists is the answer.
+  if (process.platform === 'darwin') {
+    for (let i = 0; i < 50 && !fs.existsSync(played); i += 1) sleep(20);
+  }
   const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
   return { played: read(played), banners: read(banners) };
 }
