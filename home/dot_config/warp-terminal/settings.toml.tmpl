@@ -1,0 +1,178 @@
+# Managed by chezmoi — edit home/dot_config/warp-terminal/settings.toml.tmpl, not ~/.config.
+#
+# WARP WRITES THIS FILE ITSELF. Every change made in Settings > ... lands here, and Warp
+# records the result as `SettingsFileLastSyncedHash` in `user_preferences.json`. So this is
+# not a write-once config: a UI change that is not copied back into this source is reverted
+# by the next `chezmoi apply`, silently and with a clean `chezmoi diff` beforehand.
+#
+# The recapture step, after changing anything in Warp's settings UI:
+#   cp ~/.config/warp-terminal/settings.toml <source>/home/dot_config/warp-terminal/settings.toml.tmpl
+# then restore the two template lines below (this header and default_tab_config_path).
+#
+# Templated because `default_tab_config_path` is absolute. Warp resolves nothing relative
+# there, so an absolute literal would deploy wrong under any other user or OS.
+
+[terminal]
+copy_on_select = true
+use_audible_bell = false
+osc52_clipboard_access = "write_only"
+
+[terminal.input]
+input_box_type_setting = "classic"
+honor_ps1 = true
+
+[agents]
+cloud_conversation_storage_enabled = true
+
+[agents.warp_agent]
+is_any_ai_enabled = true
+
+[agents.warp_agent.input]
+nld_in_terminal_enabled = false
+
+[agents.warp_agent.other]
+show_agent_notifications = true
+show_conversation_history = true
+should_render_use_agent_toolbar_for_user_commands = false
+
+[agents.execution_profiles]
+
+[agents.execution_profiles.default]
+apply_code_diffs = "always_ask"
+ask_user_question = "always_ask"
+autosync_plans_to_warp_drive = true
+base_model = "auto-genius"
+command_allowlist = []
+command_denylist = [
+  'bash(\s.*)?',
+  'fish(\s.*)?',
+  'pwsh(\s.*)?',
+  'sh(\s.*)?',
+  'zsh(\s.*)?',
+  'curl(\s.*)?',
+  'eval(\s.*)?',
+  'exec(\s.*)?',
+  'source(\s.*)?',
+  'wget(\s.*)?',
+  'dig(\s.*)?',
+  'nslookup(\s.*)?',
+  'host(\s.*)?',
+  'ssh(\s.*)?',
+  'scp(\s.*)?',
+  'rsync(\s.*)?',
+  'telnet(\s.*)?',
+  'rm(\s.*)?',
+]
+computer_use = "never"
+directory_allowlist = []
+execute_commands = "agent_decides"
+mcp_allowlist = []
+mcp_denylist = []
+mcp_permissions = "agent_decides"
+name = "Default"
+read_files = "always_allow"
+run_agents = "always_ask"
+web_search_enabled = true
+write_to_pty = "always_ask"
+
+[agents.third_party]
+should_render_cli_agent_toolbar = true
+
+[account]
+is_settings_sync_enabled = false
+
+[privacy]
+telemetry_enabled = true
+crash_reporting_enabled = true
+
+[general]
+default_session_mode = "tab_config"
+show_warning_before_quitting = false
+default_tab_config_path = "{{ .chezmoi.homeDir }}/.local/share/warp-terminal/tab_configs/local-shell.toml"
+new_tab_placement = "after_all_tabs"
+
+[appearance]
+
+[appearance.vertical_tabs]
+enabled = true
+display_granularity = "panes"
+view_mode = "expanded"
+
+[appearance.text]
+notebook_font_size = 14.0
+font_name = "IosevkaTerm Nerd Font Mono"
+font_size = 16.0
+font_weight = "bold"
+ligature_rendering_enabled = true
+
+[appearance.cursor]
+cursor_display_type = "block"
+cursor_blink = "enabled"
+
+[appearance.panes]
+should_dim_inactive_panes = true
+
+[appearance.window]
+open_windows_at_custom_size = true
+new_windows_num_columns = 120
+new_windows_num_rows = 24
+
+[appearance.themes]
+theme = { custom = { name = "Catppuccin Mocha", path = "catppuccin_mocha.yaml" } }
+
+[code]
+
+[code.editor]
+show_code_review_button = true
+show_project_explorer = true
+show_global_search = true
+
+[warp_drive]
+enabled = true
+
+[notifications]
+toast_duration_secs = 8
+
+[terminal.input.extra_meta_keys]
+left_alt = true
+right_alt = false
+
+[terminal.smart_select]
+word_char_allowlist = "-.~/:"
+
+[keys]
+ctrl_tab_behavior_setting = "cycle_most_recent_session"
+
+[notifications.preferences]
+mode = "enabled"
+is_long_running_enabled = true
+long_running_threshold = 30
+is_agent_task_completed_enabled = true
+is_needs_attention_enabled = true
+is_password_prompt_enabled = true
+play_notification_sound = true
+
+[privacy.secret_redaction]
+enabled = true
+hide_secrets_in_block_list = true
+secret_display_mode_setting = "asterisks"
+
+[warpify.ssh]
+ssh_extension_install_mode = "always_install"
+reuse_existing_control_master = true
+
+[warpify.subshells]
+added_subshell_commands = ["claude-sandbox", "toolbox enter", "podman exec"]
+
+[global_hotkey.dedicated_window]
+enabled = true
+
+[global_hotkey.dedicated_window.settings]
+active_pin_position = "top"
+hide_window_when_unfocused = false
+keybinding = "ctrl-`"
+pin_screen = "primary"
+
+[global_hotkey.dedicated_window.settings.pin_position_to_size_percentages.top]
+width = 100
+height = 45
