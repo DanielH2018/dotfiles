@@ -28,7 +28,6 @@ const skip = bashOk ? false : 'bash unavailable';
 const DECK = { dir: '1-1.4.4', product: '006d', busnum: 1, devnum: 21, node: '/dev/bus/usb/001/021' };
 const PEDAL = { dir: '3-2', product: '0086', busnum: 3, devnum: 4, node: '/dev/bus/usb/003/004' };
 
-const NODE = DECK.node;
 const dirs = [];
 
 function mkdtemp(prefix) {
