@@ -557,17 +557,6 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
-      {{/* agentview: register the row at session start. Every other agent-view-state event fires only after activity, so a session started or resumed and then left idle had no row at all and the picker could not see it. "resume" matters most: that is the path that was silently invisible. */}}
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh start",
-            "timeout": 5
-          }
-        ]
-      },
       {{/* warp: seed the row at session start, so a session opened and left alone is still
            labelled rather than showing the bare command Warp defaults to. */}}
       {
@@ -616,18 +605,8 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
-      {{/* agentview: mark this session "working" when a prompt is submitted */}}
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh working",
-            "timeout": 5
-          }
-        ]
-      },
-      {{/* warp: label this session's sidebar row. Kept as its own block rather than a second
-           entry in agentview's, so retiring agentview does not silently take this with it. */}}
+      {{/* warp: label this session's sidebar row. Kept as its own block rather than folded
+           into agentview's, which is why retiring agentview left this one standing. */}}
       {
         "hooks": [
           {
@@ -770,8 +749,8 @@
            The matcher is the payload's notification_type. The real values (confirmed against
            the 2.1.224 binary, not the docs) are permission_prompt, idle_prompt, auth_success,
            agent_needs_input, agent_completed and the elicitation_* set. "task_complete" is NOT
-           one of them — an entry matching it never fires at all, which is what the agentview
-           "completed" entry below used to do. settings-base-shape.test.js now rejects any
+           one of them — an entry matching it never fires at all, which is what an agentview
+           "completed" entry once did. settings-base-shape.test.js now rejects any
            matcher outside that set so a dead one cannot land green again. */}}
       {
         "matcher": "permission_prompt",
@@ -783,21 +762,6 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
-      {{/* agentview: needs-input on a permission prompt ONLY. idle_prompt is the 60-second
-           "waiting for your input" nudge, which fires long after a session has finished —
-           and agent-view-state.sh writes unconditionally, so it overwrote a completed/review
-           row with needs-input and wiped the dirty-tree marker Stop had just stamped. The
-           audible cue above still takes both; what the picker records is a separate call. */}}
-      {
-        "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh needs-input",
-            "timeout": 5
-          }
-        ]
-      },
       {{/* warp: something is blocked on Daniel — relabel the row "input" */}}
       {
         "matcher": "permission_prompt",
@@ -885,16 +849,6 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
-      {{/* agentview: mark completed when the turn stops */}}
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh completed",
-            "timeout": 5
-          }
-        ]
-      },
       {{/* warp: the turn is over — relabel the row "done" */}}
       {
         "hooks": [
@@ -929,16 +883,6 @@
           }
         ]
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
-      {{/* agentview: remove this session's state file on end */}}
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-state.sh end",
-            "timeout": 5
-          }
-        ]
-      },
       {{/* warp: the session is gone — reset the row to Warp's own auto-title */}}
       {
         "hooks": [
@@ -962,22 +906,6 @@
         ]
       }
     ],
-    "SubagentStart": [
-      {{/* agentview: an async subagent outlives the turn that launched it, so Stop fires and
-           the row reads "completed" while the session is in fact still waiting on it. Track
-           the outstanding set here; agent-view-state.sh consults it before writing completed.
-           Both events carry the PARENT session_id (verified in logs/sessions.log), which is
-           what makes the set keyable by row. */}}
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-subagents.sh start",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "SubagentStop": [
       {
         "hooks": [
@@ -986,18 +914,6 @@
             "command": "~/.claude/hooks/subagent-stop.sh",
             "timeout": 5,
             "async": true
-          }
-        ]
-      },
-      {{/* Not async, unlike the logger above: this decrements the outstanding set and then
-           re-stamps the row when the last subagent lands. An async decrement has no ordering
-           guarantee against Stop, and a lost one strands the row on "working" for good. */}}
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/agent-view-subagents.sh stop",
-            "timeout": 10
           }
         ]
       }

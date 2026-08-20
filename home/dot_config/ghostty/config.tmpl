@@ -142,18 +142,13 @@ copy-on-select = clipboard
 shell-integration = zsh
 #shell-integration-features = true
 
-# Start every Ghostty surface in its own fresh tmux session, so every window lands in
-# tmux. Falls back to a plain login shell when tmux isn't installed. (Ported from
-# hendrikmi/dotfiles. Ghostty is macOS/Linux-only, so this never runs on the
-# Windows/WezTerm box. Remove this line to open bare shells.)
+# No `command =` line: a Ghostty surface opens a plain login shell.
 #
-# new-session, not the "tmux attach || tmux" this started as. Ghostty runs this command
-# for every surface, not just the first, so attach-if-possible made a split (super+d) a
-# second client on the session the parent surface was already showing — tmux mirrors the
-# view between clients and shrinks both to the smaller one, so the new pane came up as a
-# duplicate of the old. Attaching also picks whatever session happens to exist, which on
-# this box means a Ghostty window can hijack a detached `claude-*` job session.
-command = zsh --login -c "if command -v tmux >/dev/null 2>&1; then exec tmux new-session; else exec zsh; fi"
+# Every surface used to start its own tmux session, because agentview's picker was a tmux
+# window and the C-Left bind that reached it needed a tmux layer in every pane. Both are
+# retired, so the layer had nothing left to carry. Sessions that want tmux still get it —
+# the `claude()` function in dot_config/shell/common.sh wraps a bare `claude` outside Warp,
+# which is what makes a session survive a closed window.
 
 # Set TERM for better Vim compatibility
 term = xterm-ghostty
