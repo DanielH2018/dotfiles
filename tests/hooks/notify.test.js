@@ -27,6 +27,15 @@ const dirs = [];
 
 // A fake $HOME with a stubbed play-sound.sh. `job` creates the jobs directory that marks the
 // notifying session as a background job, which is exactly what the gate looks for.
+//
+// The banner tools are stubbed too, on PATH. play-sound.sh resolves through $HOME, so the fake
+// home alone accounts for it, but notify-send and osascript resolve through PATH: unstubbed,
+// every run of this suite drew a real desktop notification titled "t" at whoever ran the tests.
+// Which tools get stubbed is per-platform on purpose. The hook picks its branch with
+// `command -v osascript`, so an osascript stub on Linux would send it down the macOS path and
+// this suite would stop exercising the branch that actually runs here.
+const STUBS = process.platform === 'darwin' ? ['osascript', 'afplay'] : ['notify-send'];
+
 function run({ type, sid, job }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'notify-'));
   dirs.push(home);
@@ -35,35 +44,57 @@ function run({ type, sid, job }) {
   const played = path.join(home, 'played.log');
   fs.writeFileSync(path.join(hooks, 'play-sound.sh'),
     `#!/bin/sh\necho "play $*" >> "${played}"\n`, { mode: 0o755 });
+  const bin = path.join(home, 'bin');
+  fs.mkdirSync(bin);
+  const banners = path.join(home, 'banners.log');
+  for (const tool of STUBS) {
+    fs.writeFileSync(path.join(bin, tool),
+      `#!/bin/sh\necho "${tool} $*" >> "${banners}"\n`, { mode: 0o755 });
+  }
   if (job) fs.mkdirSync(path.join(home, '.claude', 'jobs', sid.split('-')[0]), { recursive: true });
   try {
     execFileSync('bash', [HOOK], {
       input: JSON.stringify({ notification_type: type, session_id: sid, message: 'm', title: 't' }),
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      // PATH keeps jq reachable but the hook resolves play-sound.sh through $HOME, so the
-      // stub above is the one it runs.
-      env: { ...process.env, HOME: home, HOOK_INPUT_LIB: LIB },
+      // The stub bin is PREPENDED, never substituted: the hook reads its input through jq from
+      // the real PATH, and the skip guard above is what decides what a missing jq means.
+      env: {
+        ...process.env,
+        HOME: home,
+        HOOK_INPUT_LIB: LIB,
+        PATH: `${bin}:${process.env.PATH}`,
+      },
     });
   } catch { /* a non-zero exit is itself a failure the assertions below will show */ }
-  return fs.existsSync(played) ? fs.readFileSync(played, 'utf8') : '';
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+  return { played: read(played), banners: read(banners) };
 }
 
 test('a background job going idle makes a sound', { skip }, () => {
-  const played = run({ type: 'idle_prompt', sid: '664f7ae8-1fde-4339-b7d3-4441f18687a1', job: true });
+  const { played } = run({ type: 'idle_prompt', sid: '664f7ae8-1fde-4339-b7d3-4441f18687a1', job: true });
   assert.match(played, /^play /m, 'the job asking for input is the case the cue exists for');
 });
 
+// The banner is the other half of the cue. Asserting on it is also what keeps the stubs above
+// load-bearing: a stub nothing reads gets deleted as scaffolding a release later, and the
+// suite goes back to notifying the desktop.
+test('the banner carries the title and message the hook was given', { skip }, () => {
+  const { banners } = run({ type: 'permission_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
+  assert.match(banners, /\bt m\b/, 'the notification tool is called with the payload title and message');
+});
+
 test('a foreground session going idle stays silent', { skip }, () => {
-  const played = run({ type: 'idle_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
+  const { played, banners } = run({ type: 'idle_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
   assert.strictEqual(played, '', 'a cue 60s after every finished turn is the noise, not the signal');
+  assert.strictEqual(banners, '', 'the gate exits before the banner too, not just before the sound');
 });
 
 // The gate is scoped to idle_prompt alone: the other two types mean "blocked on you" whoever
 // raised them, so a missing jobs directory must not silence them.
 test('permission_prompt and agent_needs_input are not gated on the jobs directory', { skip }, () => {
   for (const type of ['permission_prompt', 'agent_needs_input']) {
-    const played = run({ type, sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
+    const { played } = run({ type, sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
     assert.match(played, /^play /m, `${type} must sound from a session that is not a job`);
   }
 });
