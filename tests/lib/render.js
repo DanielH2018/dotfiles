@@ -85,7 +85,8 @@ function dataConfig(overrides) {
 }
 
 function renderTemplate(body, { source = SOURCE, cwd, env, profile, data } = {}) {
-  const overrides = { ...(profile ? { profile } : {}), ...(data || {}) };
+  const overrides = { ...data };
+  if (profile) overrides.profile = profile;
   const hasOverrides = Object.keys(overrides).length > 0;
   const key = [source || '', cwd || '', env ? JSON.stringify(env) : '', JSON.stringify(overrides), body].join(' ');
   if (!cache.has(key)) {
