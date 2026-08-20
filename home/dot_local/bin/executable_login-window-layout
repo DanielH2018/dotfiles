@@ -95,7 +95,7 @@ EOF
 start Discord '/discord/app-[^/]*/Discord' discord
 firefox_started=false
 start Firefox '^/usr/lib64/firefox/firefox' firefox && firefox_started=true
-start Ghostty '^/usr/bin/ghostty' ghostty --gtk-single-instance=true
+start Warp '^(/usr/bin/warp-terminal|/opt/warpdotdev/warp-terminal/warp)' warp-terminal
 start Spotify 'share/spotify/spotify' flatpak run com.spotify.Client
 
 place_pid=
