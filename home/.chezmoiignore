@@ -190,3 +190,23 @@ Scripts
 {{ if has .chezmoi.hostname (list "daniel-server" "daniel-box" "daniel-desktop" "daniel-pi") }}
 claude-otel
 {{ end }}
+
+# Warp tab configs split into two kinds, and only one kind is personal. The general machinery
+# — settings.toml, keybindings.yaml, the Catppuccin theme, `local · shell` (which is also
+# `default_tab_config_path`, so it has to exist everywhere), `local · chezmoi`, `local · vault`,
+# and the free-text `ssh · other host` escape hatch — describes how Warp behaves and deploys
+# to every machine.
+#
+# These three name personal infrastructure by hostname or by repo, and a work machine can
+# reach none of them: `daniel-box` and `daniel-server` are ssh aliases for the homelab, and
+# `~/server` is DanielH2018/server, the ansible repo that provisions it. Left ungated they are
+# not merely dead entries — they put personal hostnames in the `+` menu of a work terminal.
+#
+# Gated on .work rather than on the hostname, unlike kwinrulesrc and fix-games-mount above:
+# those are wrong on one specific machine's absence of hardware, this is wrong on a class of
+# machine. A second personal box should get these without being added to a list.
+{{ if .work }}
+.local/share/warp-terminal/tab_configs/daniel-box.toml
+.local/share/warp-terminal/tab_configs/daniel-server.toml
+.local/share/warp-terminal/tab_configs/local-server.toml
+{{ end }}

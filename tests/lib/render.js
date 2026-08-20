@@ -52,6 +52,11 @@ const cache = new Map();
 // several fake HOMEs. Both it and `cwd` are part of the cache key, so renders that differ only in
 // environment cannot be served each other's result; a memo that got that wrong would be worse
 // than no memo at all.
+// `data` overrides arbitrary .chezmoi data keys for this render -- `{ work: true }` renders
+// .chezmoiignore as a work machine sees it, which is the only way to check a gate's polarity
+// without editing the template. `profile` is the same mechanism with one key named, kept as its
+// own option because most callers want exactly that.
+//
 // `profile` overrides .profile for this render. Desktop-only templates open with
 // `{{ if includeTemplate "is-desktop-linux" . }}`, which is false unless .profile is
 // "workstation" -- so on a server-profile machine (daniel-box sets profile = "server") those
@@ -66,22 +71,25 @@ const cache = new Map();
 // A config file rather than an env var because chezmoi reads .data only from its config.
 // --config replaces that file wholesale, so the other keys the real one carries (umask,
 // interpreters) are deliberately absent: execute-template applies nothing and reads none of them.
-const profileConfigs = new Map();
-function profileConfig(profile) {
-  if (!profileConfigs.has(profile)) {
+const dataConfigs = new Map();
+function dataConfig(overrides) {
+  const key = JSON.stringify(overrides);
+  if (!dataConfigs.has(key)) {
     const base = JSON.parse(execFileSync('chezmoi', ['dump-config', '--format=json'], { encoding: 'utf8' }));
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-profile-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-data-'));
     const file = path.join(dir, 'chezmoi.json');
-    fs.writeFileSync(file, JSON.stringify({ data: { ...base.data, profile } }));
-    profileConfigs.set(profile, file);
+    fs.writeFileSync(file, JSON.stringify({ data: { ...base.data, ...overrides } }));
+    dataConfigs.set(key, file);
   }
-  return profileConfigs.get(profile);
+  return dataConfigs.get(key);
 }
 
-function renderTemplate(body, { source = SOURCE, cwd, env, profile } = {}) {
-  const key = [source || '', cwd || '', env ? JSON.stringify(env) : '', profile || '', body].join(' ');
+function renderTemplate(body, { source = SOURCE, cwd, env, profile, data } = {}) {
+  const overrides = { ...(profile ? { profile } : {}), ...(data || {}) };
+  const hasOverrides = Object.keys(overrides).length > 0;
+  const key = [source || '', cwd || '', env ? JSON.stringify(env) : '', JSON.stringify(overrides), body].join(' ');
   if (!cache.has(key)) {
-    const config = profile ? ['--config', profileConfig(profile)] : [];
+    const config = hasOverrides ? ['--config', dataConfig(overrides)] : [];
     const args = source
       ? [...config, '--source', source, 'execute-template']
       : [...config, 'execute-template'];
