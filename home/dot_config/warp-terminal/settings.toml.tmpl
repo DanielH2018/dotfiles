@@ -97,6 +97,7 @@ new_tab_placement = "after_all_tabs"
 enabled = true
 display_granularity = "panes"
 view_mode = "expanded"
+primary_info = "command"
 
 [appearance.text]
 notebook_font_size = 14.0
@@ -116,9 +117,18 @@ should_dim_inactive_panes = true
 open_windows_at_custom_size = true
 new_windows_num_columns = 120
 new_windows_num_rows = 24
+zoom_level = 100
 
 [appearance.themes]
 theme = { custom = { name = "Catppuccin Mocha", path = "catppuccin_mocha.yaml" } }
+
+[appearance.tabs]
+
+[appearance.tabs.header_toolbar_chip_selection]
+
+[appearance.tabs.header_toolbar_chip_selection.custom]
+left = ["tabs_panel", "tools_panel"]
+right = ["code_review", "notifications_mailbox"]
 
 [code]
 
