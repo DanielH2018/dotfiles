@@ -1,9 +1,15 @@
-// Regression guard for the bare-terminal claude() wrapper in shell/common.sh: an
-// interactive TUI start with no mux underneath wraps in a status-less tmux session
-// (so the C-Left back-to-Agent-View bind exists there), and EVERY other invocation —
-// inside tmux/wezterm, non-TUI subcommands, pipes — reaches the real binary untouched.
-// Extracts the ACTUAL function from the source and drives it with stub tmux/claude on
-// PATH, in bash and (when present) zsh — the two shells that source common.sh.
+// Regression guard for the claude() function in home/dot_config/shell/common.sh.
+//
+// The function used to start every interactive session inside a status-less tmux session, so
+// the C-Left back-to-Agent-View bind had a layer to catch the key. agentview is retired and
+// that bind is gone, so the wrap went with it — and the wrap was never free: a session labels
+// its own terminal row by writing OSC 0, and inside tmux that sets tmux's pane_title and stops
+// there under Warp's TERM=xterm-256color, which carries no tsl/fsl for tmux to set an outer
+// title with.
+//
+// So the property under test inverted. It used to be "an interactive start wraps"; it is now
+// "nothing ever invokes tmux". The $HOME redirect is the one behaviour that survived, because
+// it fixes a Claude Code trust prompt rather than anything to do with tmux.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
@@ -11,197 +17,115 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
+const SRC = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
+const FN = fs.readFileSync(SRC, 'utf8').match(/^claude\(\) \{[\s\S]*?^\}$/m)[0];
 
-function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
-const zshSkip = have('zsh') ? false : 'zsh unavailable';
-const tmuxSkip = have('tmux') ? false : 'tmux unavailable';
-
-// The function under test, lifted verbatim from common.sh (first ^claude() { .. ^}).
-const fnMatch = fs.readFileSync(COMMON, 'utf8').match(/^claude\(\) \{\n[\s\S]*?\n\}/m);
-assert.ok(fnMatch, 'claude() exists in common.sh');
-const FN = fnMatch[0];
+let zshOk = true;
+try { execFileSync('zsh', ['-c', 'true'], { stdio: 'ignore' }); } catch { zshOk = false; }
+const zshSkip = zshOk ? false : 'zsh unavailable';
 
 const dirs = [];
 function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
 
-// Stub bin: tmux + claude log their argv; the wrap path must never run the real ones.
+// Stub bin: tmux and claude both log. tmux logging ANYTHING is a failure now — that is the
+// whole point of the file — and claude logs its argv and cwd so the redirect is checkable.
 function makeEnv() {
   const bin = scratch('cwrap-bin-');
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\necho "cwd=$PWD argv=$*" >> "$CLAUDE_LOG"\nexit 0\n', { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, TMUX_LOG: tmuxLog, CLAUDE_LOG: claudeLog };
-  delete env.TMUX; delete env.WEZTERM_PANE; delete env.CLAUDE_WRAP_TTY; delete env.WSL_DISTRO_NAME;
-  delete env.TERM_PROGRAM;
+  delete env.TMUX; delete env.WEZTERM_PANE; delete env.WSL_DISTRO_NAME; delete env.TERM_PROGRAM;
   return { bin, env, tmuxLog, claudeLog };
 }
 const read = (p) => fs.readFileSync(p, 'utf8');
 
-function run(shell, env, args, extraEnv = {}) {
+function run(shell, env, { args = [], cwd, home } = {}) {
   const argv = args.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
-  execFileSync(shell, ['-c', `${FN}\nclaude ${argv}`], { env: { ...env, ...extraEnv }, stdio: 'ignore', timeout: 10000 });
-}
-
-// Like run(), but pins the shell's cwd and $HOME so the wrapper's "$HOME -> ~/dev"
-// redirect (Claude Code's trust prompt never persists for a $HOME workspace) is testable.
-function runIn(shell, env, { args = [], extraEnv = {}, cwd, home }) {
-  const argv = args.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
-  const e = { ...env, ...extraEnv };
+  const e = { ...env };
   if (home) e.HOME = home;
   if (cwd) e.PWD = cwd;
   execFileSync(shell, ['-c', `${FN}\nclaude ${argv}`], { env: e, cwd, stdio: 'ignore', timeout: 10000 });
 }
 
-test('a bare interactive start wraps: detached create, status off, then attach', () => {
+test('an interactive start runs claude directly — tmux is never invoked', () => {
   const { env, tmuxLog, claudeLog } = makeEnv();
-  run('bash', env, [], { CLAUDE_WRAP_TTY: '1' });
-  const log = read(tmuxLog);
-  assert.match(log, /new-session -d -s claude-\d+ -c \S+ claude/, 'creates a detached session running claude in a cwd');
-  assert.match(log, /set-option -t claude-\d+ status off/, 'hides the status line before the attach');
-  assert.match(log, /attach-session -t claude-\d+/, 'then attaches this terminal');
-  assert.strictEqual(read(claudeLog), '', 'claude runs inside tmux, never directly');
+  run('bash', env);
+  assert.strictEqual(read(tmuxLog), '', 'the wrap is gone; nothing may shell out to tmux');
+  assert.match(read(claudeLog), /argv=/, 'the real binary ran');
 });
 
-test('inside tmux the wrapper passes through (the C-Left bind already exists)', () => {
-  const { env, tmuxLog, claudeLog } = makeEnv();
-  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', TMUX: '/tmp/sock,1,0' });
-  assert.strictEqual(read(tmuxLog), '', 'no nested tmux session');
-  assert.match(read(claudeLog), /^$|^\n$/, 'the real claude runs with its own (empty) args');
-});
-
-test('a native wezterm pane passes through (the wezterm keybind owns C-Left)', () => {
-  const { env, tmuxLog } = makeEnv();
-  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', WEZTERM_PANE: '7' });
-  assert.strictEqual(read(tmuxLog), '', 'WEZTERM_PANE suppresses the wrap');
-});
-
-// wezterm.lua.tmpl does NOT handle C-Left itself in a WSL pane — it can't see the pane's
-// foreground process through wsl.exe, so it forwards the key and lets tmux decide. That
-// makes tmux mandatory there. WEZTERM_PANE now crosses into WSL (it is in WSLENV), so it
-// no longer means "an outer layer owns the key"; only a non-WSL wezterm pane does.
-// Warp is the base terminal, not a host for tmux: its sidebar replaces Agent View, and a
-// wrapped session's OSC 0 title dies at the tmux layer, so the row never shows session state.
-test('a Warp pane passes through (the sidebar replaces Agent View, and tmux eats the title)', () => {
-  const { env, tmuxLog, claudeLog } = makeEnv();
-  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', TERM_PROGRAM: 'WarpTerminal' });
-  assert.strictEqual(read(tmuxLog), '', 'TERM_PROGRAM=WarpTerminal suppresses the wrap');
-  assert.match(read(claudeLog), /^\s*$/m, 'the real binary runs instead');
-});
-
-test('a wezterm WSL pane still wraps (wezterm forwards C-Left to tmux there)', () => {
-  const { env, tmuxLog, claudeLog } = makeEnv();
-  run('bash', env, [], { CLAUDE_WRAP_TTY: '1', WEZTERM_PANE: '7', WSL_DISTRO_NAME: 'Ubuntu' });
-  assert.match(read(tmuxLog), /new-session -d -s claude-\d+/, 'a WSL pane needs the tmux layer to catch C-Left');
-  assert.strictEqual(read(claudeLog), '', 'claude runs inside tmux, never directly');
-});
-
-test('non-TUI invocations pass through even on a TTY', () => {
-  for (const args of [['--version'], ['-p', 'list files'], ['mcp', 'list'], ['rm', 'sid']]) {
-    const { env, tmuxLog, claudeLog } = makeEnv();
-    run('bash', env, args, { CLAUDE_WRAP_TTY: '1' });
-    assert.strictEqual(read(tmuxLog), '', `claude ${args[0]} never wraps`);
-    assert.strictEqual(read(claudeLog).trim(), args.join(' '), `claude ${args[0]} reaches the real binary intact`);
-  }
-});
-
-test('TUI flags (-c/-r/--resume/attach/agents) do wrap', () => {
-  for (const args of [['-c'], ['--resume'], ['attach', 'job1'], ['agents']]) {
+// Every value that used to steer the wrap is now inert. Left as a set rather than one case so
+// a reintroduced branch on any of them fails here rather than in a terminal months later.
+for (const [name, extra] of [
+  ['inside tmux', { TMUX: '/tmp/tmux-1000/default,1,0' }],
+  ['a wezterm pane', { WEZTERM_PANE: '7' }],
+  ['a wezterm WSL pane', { WEZTERM_PANE: '7', WSL_DISTRO_NAME: 'Ubuntu' }],
+  ['a Warp pane', { TERM_PROGRAM: 'WarpTerminal' }],
+]) {
+  test(`${name} is indistinguishable — still no tmux`, () => {
     const { env, tmuxLog } = makeEnv();
-    run('bash', env, args, { CLAUDE_WRAP_TTY: '1' });
-    assert.match(read(tmuxLog), /new-session/, `claude ${args.join(' ')} wraps in tmux`);
+    run('bash', { ...env, ...extra });
+    assert.strictEqual(read(tmuxLog), '', `${name} changed the behaviour; the wrap is meant to be unconditional-off`);
+  });
+}
+
+test('TUI flags (-c/-r/--resume/attach/agents) reach the binary with their args intact', () => {
+  const { env, claudeLog } = makeEnv();
+  for (const f of ['-c', '--continue', '-r', '--resume', 'attach', 'agents']) run('bash', env, { args: [f] });
+  const log = read(claudeLog);
+  for (const f of ['-c', '--continue', '-r', '--resume', 'attach', 'agents']) {
+    assert.match(log, new RegExp(`argv=${f.replace(/-/g, '\\-')}$`, 'm'), `${f} did not reach the binary`);
   }
 });
 
-test('without a TTY (pipes, scripts) nothing wraps', () => {
-  // The test harness itself has no TTY on stdio, so leaving the seam unset IS the case.
-  const { env, tmuxLog, claudeLog } = makeEnv();
-  run('bash', env, []);
-  assert.strictEqual(read(tmuxLog), '', 'no TTY -> no wrap');
-  assert.ok(read(claudeLog) !== undefined && read(tmuxLog) === '', 'falls through to the real claude');
+test('non-TUI invocations pass through untouched', () => {
+  const { env, claudeLog, tmuxLog } = makeEnv();
+  run('bash', env, { args: ['-p', 'hello'] });
+  run('bash', env, { args: ['--version'] });
+  assert.strictEqual(read(tmuxLog), '');
+  assert.match(read(claudeLog), /argv=-p hello/);
+  assert.match(read(claudeLog), /argv=--version/);
 });
 
-test('args with spaces survive the tmux command quoting', () => {
-  const { env, tmuxLog } = makeEnv();
-  run('bash', env, ['-r', 'id with spaces'], { CLAUDE_WRAP_TTY: '1' });
-  assert.match(read(tmuxLog), /claude -r id\\ with\\ spaces/, 'the resumed id stays one word');
+test('args with spaces survive', () => {
+  const { env, claudeLog } = makeEnv();
+  run('bash', env, { args: ['-p', 'two words'] });
+  assert.match(read(claudeLog), /argv=-p two words/);
 });
 
-test('the wrap behaves identically under zsh', { skip: zshSkip }, () => {
-  const { env, tmuxLog, claudeLog } = makeEnv();
-  run('zsh', env, [], { CLAUDE_WRAP_TTY: '1' });
-  const log = read(tmuxLog);
-  assert.match(log, /new-session -d -s claude-\d+ -c \S+ claude/, 'zsh creates the detached session');
-  assert.match(log, /attach-session/, 'zsh attaches');
-  assert.strictEqual(read(claudeLog), '', 'zsh never runs claude directly');
-});
-
-test('against real tmux: the session exists, runs claude, and hides its status', { skip: tmuxSkip }, () => {
-  const { bin, env } = makeEnv();
-  // A long-running stub keeps the session alive for inspection; TMUX_TMPDIR isolates
-  // the server from the user's real one. The attach fails (no TTY) — expected.
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/bash\nsleep 30\n', { mode: 0o755 });
-  const tmuxTmp = scratch('cwrap-srv-');
-  const realTmux = { ...env, PATH: `${bin}:/usr/bin:/bin:/usr/local/bin`, TMUX_TMPDIR: tmuxTmp, CLAUDE_WRAP_TTY: '1' };
-  // Strip the stub tmux from PATH: keep stub claude by copying it to a claude-only dir.
-  const claudeOnly = scratch('cwrap-claude-');
-  fs.copyFileSync(path.join(bin, 'claude'), path.join(claudeOnly, 'claude'));
-  fs.chmodSync(path.join(claudeOnly, 'claude'), 0o755);
-  // The real tmux's own directory, resolved rather than assumed: Homebrew puts it in
-  // /opt/homebrew/bin, which none of the hardcoded entries below cover. Without it the wrap's
-  // `command -v tmux` guard failed, so the function fell through to the real claude and this
-  // test asserted against a server that was never asked to exist -- and then died on ENOENT
-  // spawning tmux itself. The stub tmux stays off PATH, which is the point of claudeOnly.
-  const tmuxDir = path.dirname(execFileSync('bash', ['-c', 'command -v tmux'], { encoding: 'utf8' }).trim());
-  realTmux.PATH = `${claudeOnly}:${tmuxDir}:/usr/bin:/bin:/usr/local/bin:${path.dirname(process.execPath)}`;
-  try {
-    try {
-      execFileSync('bash', ['-c', `${FN}\nclaude || true`], {
-        env: realTmux, stdio: 'ignore', timeout: 5000, killSignal: 'SIGKILL',
-      });
-    } catch {
-      // The wrap ends in `tmux attach-session`, and there is no TTY to attach to. Linux tmux
-      // gives up ("open terminal failed") and the shell exits, which is what this used to
-      // rely on; macOS tmux blocks instead, so the call sat there until execFileSync's own
-      // timeout fired and the test failed with ETIMEDOUT before asserting anything. Killing
-      // the attach at the timeout is fine either way: the detached session and its status
-      // option are both set before it, and they are what the assertions below read.
-    }
-    const T = (...a) => execFileSync('tmux', a, { env: realTmux, encoding: 'utf8' });
-    const ls = T('ls');
-    assert.match(ls, /^claude-\d+:/, 'the wrapped session exists on the isolated server');
-    const name = ls.match(/^(claude-\d+):/)[1];
-    assert.match(T('show-options', '-t', name, 'status'), /status off/, 'its status line is hidden');
-  } finally {
-    try { execFileSync('tmux', ['kill-server'], { env: realTmux, stdio: 'ignore' }); } catch { /* server already gone */ }
-  }
-});
-
-test('a real project cwd becomes the session -c dir', () => {
-  const { env, tmuxLog } = makeEnv();
-  const proj = scratch('cwrap-proj-');
-  const home = scratch('cwrap-home-');            // cwd != $HOME -> no redirect
-  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: proj, home });
-  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${proj} claude`),
-    'the tmux session opens in the current project dir');
-});
-
-test('a $HOME cwd is redirected to ~/dev so Claude Code trust persists', () => {
-  const { env, tmuxLog } = makeEnv();
+// Claude Code never persists trust for a $HOME workspace (claude-code#43958), so it re-asks on
+// every launch. Running from ~/dev trusts once and sticks.
+test('a $HOME cwd runs claude from ~/dev', () => {
+  const { env, claudeLog } = makeEnv();
   const home = scratch('cwrap-home-');
   fs.mkdirSync(path.join(home, 'dev'));
-  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: home, home });
-  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${home}/dev claude`),
-    'launching from $HOME lands the session in ~/dev, never $HOME (claude-code#43958)');
+  run('bash', env, { cwd: home, home });
+  assert.match(read(claudeLog), new RegExp(`cwd=${path.join(home, 'dev')} `), 'a $HOME session must run from ~/dev');
 });
 
-test('a $HOME cwd with no ~/dev falls back to $HOME rather than failing to launch', () => {
-  const { env, tmuxLog } = makeEnv();
-  const home = scratch('cwrap-home-');            // no dev/ subdir
-  runIn('bash', env, { extraEnv: { CLAUDE_WRAP_TTY: '1' }, cwd: home, home });
-  assert.match(read(tmuxLog), new RegExp(`new-session -d -s claude-\\d+ -c ${home} claude`),
-    'without ~/dev the session stays in $HOME so the launch still works');
+test('a $HOME cwd with no ~/dev stays in $HOME rather than failing to launch', () => {
+  const { env, claudeLog } = makeEnv();
+  const home = scratch('cwrap-home-');
+  run('bash', env, { cwd: home, home });
+  assert.match(read(claudeLog), new RegExp(`cwd=${home} `), 'no ~/dev means run where you are');
+});
+
+test('a real project cwd is left alone', () => {
+  const { env, claudeLog } = makeEnv();
+  const home = scratch('cwrap-home-');
+  fs.mkdirSync(path.join(home, 'dev'));
+  const proj = scratch('cwrap-proj-');
+  run('bash', env, { cwd: proj, home });
+  assert.match(read(claudeLog), new RegExp(`cwd=${proj} `), 'a project cwd must not be redirected');
+});
+
+test('behaves identically under zsh', { skip: zshSkip }, () => {
+  const { env, tmuxLog, claudeLog } = makeEnv();
+  run('zsh', env);
+  assert.strictEqual(read(tmuxLog), '');
+  assert.match(read(claudeLog), /argv=/);
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

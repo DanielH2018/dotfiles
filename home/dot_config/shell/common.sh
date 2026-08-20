@@ -33,46 +33,33 @@ command -v nvim >/dev/null 2>&1 && export MANPAGER='nvim +Man!'
 # --- Claude Code ---
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 
-# Bare-terminal claude runs inside a status-less tmux session so the C-Left
-# back-to-Agent-View bind (dot_tmux.conf) works there too — a bare PTY has no layer to
-# catch the key, and Claude Code's own keybindings can't run external commands. Only
-# interactive TUI starts wrap (no args / continue / resume / attach / agents, on a real
-# TTY); everything else — scripts, -p pipes, --version, the daemon — hits the real
-# binary untouched. Inside tmux the outer layer already owns the key, and so does a
-# non-WSL WezTerm pane, so those pass through. A WezTerm WSL pane does NOT: wezterm.lua
-# can't read a WSL pane's foreground process, so it forwards C-Left and lets tmux decide
-# — the wrap is what tmux there is. Detaching (C-b d) keeps the session alive in agentview.
+# Claude Code runs directly — no tmux wrap. The wrap existed so the C-Left
+# back-to-Agent-View bind had a layer to catch the key, and agentview is retired, so the
+# layer has nothing left to carry.
 #
-# Warp passes through as well, on `TERM_PROGRAM=WarpTerminal`. Warp replaces what the wrap
-# buys: its sidebar is the picker, so there is no Agent View to bind C-Left back to. The wrap
-# also actively breaks Warp — a session's OSC 0 title (warp-session-title.sh) sets tmux's
-# pane_title and stops there unless the tmux server has `set-titles on`, so a wrapped session
-# shows Warp's own label and never its state. Verified 2026-08-19: writing the OSC inside the
-# wrap changed nothing; writing it to the Warp pty renamed the sidebar row immediately.
-# CLAUDE_WRAP_TTY=1 is a test seam that stands in for the TTY check.
+# It also cost more than it bought. A session names its own row by writing an OSC 0 title
+# (warp-session-title.sh); inside tmux that sets tmux's pane_title and stops there, because
+# Warp sets TERM=xterm-256color, which carries no tsl/fsl capability for tmux to set an outer
+# title with. A wrapped session could therefore never label itself. Verified 2026-08-19 both
+# ways: the escape written inside the wrap changed nothing, and the same escape written to the
+# pane's own pty renamed the row immediately.
+#
+# What this gives up is reattaching after a dropped ssh connection or a closed window. `ct`
+# (dot_local/bin/executable_ct) is the deliberate opt-in: it runs claude under a named
+# `tmux new-session -A`, so a session worth protecting is one command away.
 claude() {
   case "${1:-}" in
     ''|-c|--continue|-r|--resume|attach|agents) ;;
     *) command claude "$@"; return $? ;;
   esac
-  if [ -n "${TMUX:-}" ] || [ "${TERM_PROGRAM:-}" = WarpTerminal ] \
-    || { [ -n "${WEZTERM_PANE:-}" ] && [ -z "${WSL_DISTRO_NAME:-}" ]; } \
-    || ! command -v tmux >/dev/null 2>&1 \
-    || { [ -z "${CLAUDE_WRAP_TTY:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; }; then
-    command claude "$@"; return $?
-  fi
-  local _n="claude-$$" _cmd="claude" _a _dir="$PWD"
   # A $HOME workspace makes Claude Code re-ask its trust prompt on every launch — it never
-  # persists there (claude-code#43958). Redirect a home-dir session to ~/dev, which trusts
-  # once and sticks; a real project cwd is left alone. Skip if ~/dev doesn't exist yet.
-  [ "$_dir" = "$HOME" ] && [ -d "$HOME/dev" ] && _dir="$HOME/dev"
-  for _a in "$@"; do _cmd="$_cmd $(printf '%q' "$_a")"; done
-  # Create detached so `status off` lands before the attach draws anything. If the name
-  # already exists (a prior detach from this same shell), the failed create is silent
-  # and the attach reconnects to it — the -A semantics, split so the set can run between.
-  tmux new-session -d -s "$_n" -c "$_dir" "$_cmd" 2>/dev/null
-  tmux set-option -t "$_n" status off 2>/dev/null
-  tmux attach-session -t "$_n"
+  # persists there (claude-code#43958). Run a home-dir session from ~/dev, which trusts once
+  # and sticks; a real project cwd is left alone. Skip if ~/dev doesn't exist yet.
+  if [ "$PWD" = "$HOME" ] && [ -d "$HOME/dev" ]; then
+    ( cd "$HOME/dev" && command claude "$@" )
+    return $?
+  fi
+  command claude "$@"
 }
 
 # --- Vault (LLM Wiki) location for /lint, /healthcheck, /rebuild ---
