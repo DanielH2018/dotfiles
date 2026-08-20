@@ -4,6 +4,12 @@
   "env": {
     "EDITOR": "vim",
     "PAGER": "less -R",
+    {{/* warp-session-title.sh owns the terminal title: it labels the row with the session
+         state (idle / working / input / done) that Claude Code's own title never carries.
+         Both write OSC 0 to the same pane, and Claude Code writes last — a hook fires on
+         SessionStart, then the UI paints `* Claude Code` over it, so the state never showed
+         (observed in Warp's sidebar 2026-08-19). This yields the title to the hook. */}}
+    "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi") }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
