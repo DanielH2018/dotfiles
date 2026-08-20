@@ -27,14 +27,15 @@ esac
 WIN_MEDIA="/mnt/c/Windows/Media/$WAV"
 THEME_SOUND="/usr/share/sounds/freedesktop/stereo/$THEME.oga"
 
-# Full volume was the complaint that started this file's volume support: 35% is audible over
-# normal desktop noise without a startle. CLAUDE_SOUND_VOLUME (0-100) overrides it; anything
-# that isn't a plain integer in range falls back to the default rather than passing garbage to
-# the player. canberra-gtk-play and aplay have no volume flag, so they stay at their native
-# level regardless of this setting.
-PCT="${CLAUDE_SOUND_VOLUME:-35}"
+# Full volume was the complaint that started this file's volume support, so the cue is played
+# below it: loud enough to carry over normal desktop noise, quiet enough not to startle. The
+# default was 35% and is 50% -- 35% was missed from a neighbouring Warp tab.
+# CLAUDE_SOUND_VOLUME (0-100) overrides it; anything that isn't a plain integer in range falls
+# back to the default rather than passing garbage to the player. canberra-gtk-play and aplay
+# have no volume flag, so they stay at their native level regardless of this setting.
+PCT="${CLAUDE_SOUND_VOLUME:-50}"
 if ! [[ "$PCT" =~ ^[0-9]+$ ]] || [[ "$PCT" -gt 100 ]]; then
-  PCT=35
+  PCT=50
 fi
 PAPLAY_VOLUME=$(( PCT * 65536 / 100 ))          # paplay: linear 0-65536
 printf -v PW_VOLUME '%d.%02d0' $(( PCT / 100 )) $(( PCT % 100 ))  # pw-play: float 0.0-1.0
@@ -63,6 +64,21 @@ elif command -v canberra-gtk-play >/dev/null 2>&1; then
 elif command -v aplay >/dev/null 2>&1; then
   aplay -q /usr/share/sounds/alsa/Front_Center.wav >/dev/null 2>&1 &
 else
-  printf '\a' > /dev/tty 2>/dev/null || true
+  # No audio player at all: a headless box reached over ssh, which is the daniel-box case.
+  # The terminal bell is the only cue left, and Warp rings it for the pane that receives it.
+  #
+  # /dev/tty does NOT reach that pane. Claude Code runs hooks with no controlling terminal,
+  # so opening /dev/tty raises ENXIO and the write vanished into the redirect — the box was
+  # silent and nothing said why. CLAUDE_PID is the session's own process and its tty IS the
+  # pane, so resolve that first and fall back to /dev/tty only for an older claude that sets
+  # no CLAUDE_PID. Same resolution warp-session-title.sh uses, for the same reason.
+  bell_tty=""
+  pane_tty=$(ps -o tty= -p "${CLAUDE_PID:-0}" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$pane_tty" ] && [ "$pane_tty" != "?" ]; then
+    bell_tty="/dev/$pane_tty"
+  else
+    bell_tty="/dev/tty"
+  fi
+  printf '\a' > "$bell_tty" 2>/dev/null || true
 fi
 exit 0

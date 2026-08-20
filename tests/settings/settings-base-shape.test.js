@@ -207,24 +207,42 @@ test('every fallbackModel entry is one of availableModels', { skip }, () => {
     + `enforceAvailableModels would reject the very model it falls back to`);
 });
 
-// The audible cue follows the same rule as the state hook above.
+// The audible cue's idle_prompt rule lives in notify.sh, not in the matcher.
 //
-// The two were split deliberately when the state hook was narrowed: what the picker RECORDS and
-// what makes a noise are different questions, so the sound was left on idle_prompt pending a
-// call. The call came back "noise" — a session that merely went idle is not asking for anything,
-// and a cue that fires 60s after every finished turn trains you to ignore the cue that matters.
-// Now both fire only on a genuine permission prompt, which is the one event where a session is
-// actually blocked on you.
-test('the audible cue does not fire on the idle reminder', { skip }, () => {
+// It was in the matcher, as a flat exclusion: a session that merely went idle is not asking for
+// anything, and a cue 60s after every finished turn trains you to ignore the cue that matters.
+// That silenced background jobs too, which is the opposite case — a job raising idle_prompt IS
+// asking you a question and owns no pane to show it in. notify.sh now tells the two apart by the
+// jobs directory, so the matcher may name idle_prompt as long as the script still gates it.
+// Asserting on the matcher alone would pass a build where that gate had been deleted.
+test('the audible cue gates the idle reminder on the session being a background job', { skip }, () => {
   const cfg = JSON.parse(render());
   const entries = ((cfg.hooks || {}).Notification || []).filter((e) =>
     (e.hooks || []).some((h) => /notify\.sh/.test(h.command || '')));
   assert.ok(entries.length, 'no Notification entry runs the audible cue');
+  const script = fs.readFileSync(
+    path.join(REPO, 'home', 'private_dot_claude', 'hooks', 'executable_notify.sh'), 'utf8');
   for (const e of entries) {
-    assert.doesNotMatch(e.matcher, /idle_prompt/,
-      `the audible cue still fires on idle_prompt: ${e.matcher}`);
     assert.match(e.matcher, /permission_prompt/,
       'a genuine permission prompt must still make a sound');
+    if (/idle_prompt/.test(e.matcher)) {
+      assert.match(script, /idle_prompt/,
+        'the matcher admits idle_prompt but notify.sh never mentions it');
+      assert.match(script, /\.claude\/jobs\//,
+        'notify.sh admits idle_prompt without gating it on the jobs directory');
+    }
+  }
+});
+
+// The Warp row label is a different question from the sound. A foreground session idling for 60s
+// has not been blocked on anything, so relabelling its row "needs-input" would be wrong even
+// though the same event legitimately makes a sound for a background job.
+test('the Warp needs-input label does not fire on the idle reminder', { skip }, () => {
+  const cfg = JSON.parse(render());
+  for (const e of (cfg.hooks || {}).Notification || []) {
+    if (!(e.hooks || []).some((h) => /warp-session-title\.sh needs-input/.test(h.command || ''))) continue;
+    assert.doesNotMatch(e.matcher, /idle_prompt/,
+      `the row label still fires on idle_prompt: ${e.matcher}`);
   }
 });
 

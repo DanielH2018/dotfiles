@@ -758,10 +758,19 @@
       }
     ],
     "Notification": [
-      {{/* audible cue only when a session genuinely needs you. idle_prompt is excluded: a
-           session that merely went idle is not asking for anything, and a cue 60s after every
-           finished turn trains you to ignore the cue that matters. A permission prompt is the
-           one event where a session is genuinely blocked on you.
+      {{/* audible cue only when a session genuinely needs you. Two types qualify:
+           permission_prompt (a foreground session is blocked on an approval) and
+           agent_needs_input (a background job or agentview session is asking a question).
+           Gating on permission_prompt alone left every background session silent, which is
+           how a daniel-box session sat waiting with no cue at all.
+           idle_prompt is admitted here but gated inside notify.sh, which sounds it only when the
+           notifying session is a background job. The type means opposite things depending on who
+           raised it: a job saying "waiting for your input" is asking you a question and owns no
+           pane to show it in, while a foreground session raises it 60s after every finished turn.
+           Excluding it outright silenced the job case -- session 664f7ae8 raised idle_prompt at
+           13:32:42 on 2026-08-20 with no agent_needs_input anywhere near it.
+           agent_completed stays excluded outright: a finished session is not asking for anything.
+           Over the 30-minute diagnostic below it was 10 of 19 notifications.
            The matcher is the payload's notification_type. The real values (confirmed against
            the 2.1.224 binary, not the docs) are permission_prompt, idle_prompt, auth_success,
            agent_needs_input, agent_completed and the elicitation_* set. "task_complete" is NOT
@@ -769,7 +778,7 @@
            "completed" entry once did. settings-base-shape.test.js now rejects any
            matcher outside that set so a dead one cannot land green again. */}}
       {
-        "matcher": "permission_prompt",
+        "matcher": "permission_prompt|agent_needs_input|idle_prompt",
         "hooks": [
           {
             "type": "command",
@@ -780,7 +789,7 @@
       }{{ if or (eq .chezmoi.os "windows") (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
       {{/* warp: something is blocked on Daniel — relabel the row "input" */}}
       {
-        "matcher": "permission_prompt",
+        "matcher": "permission_prompt|agent_needs_input",
         "hooks": [
           {
             "type": "command",

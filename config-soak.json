@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "82085cb16c49488d37c4ea70b86bdb9f622b2c9a67eff4240e8ec5d4ac69df44",
-      "landed": "2026-08-20T12:10:04.087Z"
+      "hash": "f267c8716a88edeae966e5e80137b4fecb50fdc08b378fe83a68556db5fcd949",
+      "landed": "2026-08-20T13:41:52.632Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -148,13 +148,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
-      "hash": "dba5bc07f27b727069b6b64b4a6202d733457d7d521cbdfb2ec5d55fb528c036",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "554d3f3c0132feb60299fbe4f3d78ebc7bf0ad3dba20c8e40e7ed53a77cc47f6",
+      "landed": "2026-08-20T13:41:52.632Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
-      "hash": "6cf35ec5f22ea1d8e1f7057e9cd0e1847b1e47139e4125118f15353137b43ea5",
-      "landed": "2026-08-07T13:21:56.755Z"
+      "hash": "de9a50c8790e37ea4c3ccd04961e2f71aeeaeaf1ddd4b7447876209393ff1004",
+      "landed": "2026-08-20T13:41:52.632Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",

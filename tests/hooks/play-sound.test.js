@@ -138,28 +138,30 @@ test('with no player at all it still exits 0', { skip }, () => {
 test('the cue plays at a reduced default volume, not full', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
   const log = run(sb, 'input');
-  // 35% of paplay's 0-65536 linear scale.
-  assert.match(log, /^paplay .*--volume=22937\b/m, 'paplay gets a 35% default volume');
+  // 50% of paplay's 0-65536 linear scale.
+  assert.match(log, /^paplay .*--volume=32768\b/m, 'paplay gets a 50% default volume');
 });
 
+// The override value is deliberately not 50: it now equals the default, so a broken override
+// would still produce 32768 and the test would pass while asserting nothing.
 test('CLAUDE_SOUND_VOLUME overrides the default volume', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
-  const log = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '50' });
-  assert.match(log, /^paplay .*--volume=32768\b/m, 'paplay gets the overridden 50% volume');
+  const log = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '20' });
+  assert.match(log, /^paplay .*--volume=13107\b/m, 'paplay gets the overridden 20% volume');
 });
 
 test('an invalid CLAUDE_SOUND_VOLUME falls back to the default', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
   const bogus = run(sb, 'input', { CLAUDE_SOUND_VOLUME: 'loud' });
-  assert.match(bogus, /^paplay .*--volume=22937\b/m, 'non-numeric input falls back to 35%');
+  assert.match(bogus, /^paplay .*--volume=32768\b/m, 'non-numeric input falls back to 50%');
   const oor = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '250' });
-  assert.match(oor, /^paplay .*--volume=22937\b/m, 'out-of-range input falls back to 35%');
+  assert.match(oor, /^paplay .*--volume=32768\b/m, 'out-of-range input falls back to 50%');
 });
 
 test('pw-play gets a 0.0-1.0 float volume when paplay is absent', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: false, aplay: false, pwPlay: true });
   const log = run(sb, 'input');
-  assert.match(log, /^pw-play .*--volume=0\.350\b/m, 'pw-play gets a 35% default volume as a float');
+  assert.match(log, /^pw-play .*--volume=0\.500\b/m, 'pw-play gets a 50% default volume as a float');
 });
 
 test('no executable line launches a Windows binary', { skip }, () => {
@@ -172,4 +174,29 @@ test('no executable line launches a Windows binary', { skip }, () => {
   assert.deepStrictEqual(offenders, [], 'play-sound.sh names no .exe outside comments');
 });
 
+
+// The no-player fallback is the only cue a headless box reached over ssh (daniel-box) can
+// give, and it used to write to /dev/tty -- which a hook does not have. Claude Code runs
+// hooks with no controlling terminal, so that open raised ENXIO and the bell vanished into
+// the redirect. The fallback now resolves the pane from CLAUDE_PID the way
+// warp-session-title.sh does, and this asserts the bell reaches that resolved target.
+//
+// The stub `ps` prints a traversal path rather than a tty name, so the hook's hardcoded
+// "/dev/$pane_tty" lands on a writable temp file. A real `ps -o tty=` never prints this --
+// it is the only way to observe the write without adding a test-only knob to the hook, and
+// /dev/stdout cannot stand in because node's stdout is a socketpair, which reopens ENXIO.
+test('with no player the bell goes to the pane resolved from CLAUDE_PID', { skip }, () => {
+  const sb = sandbox({ paplay: false, aplay: false });
+  const pane = path.join(path.dirname(sb.bin), 'pane');
+  fs.writeFileSync(path.join(sb.bin, 'ps'), `#!/bin/sh\necho "../..${pane}"\n`, { mode: 0o755 });
+  // Builtins only: the stub dir is the entire PATH, so a stub calling `cat` finds nothing.
+  fs.writeFileSync(path.join(sb.bin, 'tr'), '#!/bin/sh\nwhile read -r l; do echo "$l"; done\n', { mode: 0o755 });
+  execFileSync(BASH, [HOOK, 'input'], {
+    encoding: 'utf8',
+    env: { PATH: sb.bin, STUB_LOG: sb.log, HOME: os.tmpdir(), CLAUDE_PID: '4242' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.strictEqual(fs.readFileSync(pane, 'utf8'), '\x07',
+    'the bell reached the pane resolved from CLAUDE_PID, not /dev/tty');
+});
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
