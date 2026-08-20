@@ -29,10 +29,16 @@ const skip = bashOk ? false : 'bash unavailable';
 const RUNNING = {
   discord: '/home/daniel/.config/discord/app-1.0.152/Discord --url --',
   firefox: '/usr/lib64/firefox/firefox --sm-client-id 10d8c6646f000178610709800000036370005',
-  ghostty: '/usr/bin/ghostty --gtk-single-instance=true',
+  warp: '/usr/bin/warp-terminal',
   spotify: '/app/extra/share/spotify/spotify',
   obsidian: '/app/obsidian --ozone-platform-hint=auto',
 };
+
+// Every launcher the script can invoke needs a stub here. run() prepends the stub dir to the
+// real PATH rather than replacing it, so a launcher with no stub resolves to the real binary
+// and the suite opens real windows -- which is what a missing warp-terminal stub did once.
+// The last test in this file fails when the script gains a launcher that is not listed.
+const LAUNCHER_STUBS = ['discord', 'firefox', 'warp-terminal', 'flatpak'];
 
 const dirs = [];
 
@@ -57,7 +63,7 @@ function makeStubs(running) {
 grep -Eq -- "$2" "${table}"
 `, { mode: 0o755 });
 
-  for (const cmd of ['discord', 'firefox', 'ghostty', 'flatpak']) {
+  for (const cmd of LAUNCHER_STUBS) {
     fs.writeFileSync(path.join(bin, cmd), `#!/bin/bash
 printf '%s %s\\n' "${cmd}" "$*" >> "${marks}/launched"
 `, { mode: 0o755 });
@@ -129,14 +135,14 @@ test('starts all five when nothing is running', { skip }, () => {
     'firefox ',
     'flatpak run com.spotify.Client',
     'flatpak run md.obsidian.Obsidian',
-    'ghostty --gtk-single-instance=true',
+    'warp-terminal ',
   ].sort());
 });
 
 test('starts nothing when all five are already running', { skip }, () => {
   const { stdout, launched } = run({ running: Object.values(RUNNING) });
   assert.deepStrictEqual(launched, [], 'a running app must not be started a second time');
-  for (const name of ['Discord', 'Firefox', 'Ghostty', 'Spotify', 'Obsidian']) {
+  for (const name of ['Discord', 'Firefox', 'Warp', 'Spotify', 'Obsidian']) {
     assert.match(stdout, new RegExp(`${name} already running, skipping`));
   }
 });
@@ -159,7 +165,7 @@ test('tops up only what is missing', { skip }, () => {
   assert.deepStrictEqual(launched.sort(), [
     'discord ',
     'flatpak run md.obsidian.Obsidian',
-    'ghostty --gtk-single-instance=true',
+    'warp-terminal ',
   ].sort());
 });
 
@@ -169,7 +175,7 @@ test('starts Obsidian after Spotify', { skip }, () => {
   // Assert on the script's own log, not on the order the stub launchers finished writing
   // their marks. Every launch is backgrounded, so mark order reflects fork scheduling and
   // no delay makes it sound -- only more probable. Under the full suite even 0.8s lost the
-  // race, with the marks arriving discord, firefox, ghostty, obsidian, spotify. log() runs
+  // race, with the marks arriving discord, firefox, warp-terminal, obsidian, spotify. log() runs
   // in the script's main process, in sequence, which is the thing actually under test:
   // this script decides what starts and in what order.
   const { stdout, launched } = run({ delay: 0.1, expect: 5 });
@@ -236,6 +242,19 @@ test('FIREFOX_POSITION picks the corner to maximize from', { skip }, () => {
   waitForMark(marks, 'kwinscript');
   assert.match(readMark(marks, 'kwinscript'), /x: 40, y: 80/,
     'the configured position did not reach the KWin script');
+});
+
+// A launcher with no stub in LAUNCHER_STUBS runs for real under the test suite, because run()
+// keeps the real PATH behind the stub dir. Read the launchers back out of the script itself
+// rather than trusting the list to be maintained by hand.
+test('every launcher the script starts has a stub', { skip }, () => {
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  const launchers = [...src.matchAll(/^start\s+\S+\s+'[^']*'\s+(\S+)/gm)].map((m) => m[1]);
+  assert.ok(launchers.length > 0, 'no start lines found -- the pattern stopped matching');
+  for (const cmd of launchers) {
+    assert.ok(LAUNCHER_STUBS.includes(cmd),
+      `${cmd} has no stub, so the suite would launch the real application`);
+  }
 });
 
 test.after(() => {
