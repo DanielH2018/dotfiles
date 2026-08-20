@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# streamcontroller-health: restart StreamController when it is alive but has lost the deck.
+# streamcontroller-health: restart StreamController when it is alive but has lost a device.
+#
+# "Device" here means any Elgato input this machine drives through StreamController --
+# the Stream Deck original V2 and the Stream Deck Pedal. They fail and recover as a
+# unit, because recovery restarts the app rather than re-grabbing one handle, so this
+# script treats "any attached device is unheld" as the single fault condition.
 #
 # StreamController fails in two shapes, and systemd only sees one of them:
 #
@@ -7,18 +12,18 @@
 #      process exits, so Restart=on-failure in the unit's drop-in handles it. Nothing
 #      here is involved.
 #
-#   2. It fails to grab the deck (TransportError writing a feature report) and then
+#   2. It fails to grab a device (TransportError writing a feature report) and then
 #      *keeps running* with no page loaded. Upstream logs "Reached end of main.py"
 #      and leaves the process up. To systemd that is a perfectly healthy service; to
 #      the user it is a dark Stream Deck. Only case 2 needs this script.
 #
 # So the health signal deliberately is not "is the process alive" -- that is exactly
-# the state being detected. It is "does *StreamController* hold the deck's USB node".
+# the state being detected. It is "does *StreamController* hold each device's USB node".
 #
 # The emphasis is load-bearing and was found the hard way: `fuser` on the node reports
 # it busy whenever a Wine prefix is running, because winedevice.exe opens every USB
 # device it can see. Asking "is anything holding it" would therefore report a healthy
-# deck for as long as a game was open -- precisely when nobody is looking at the log
+# device for as long as a game was open -- precisely when nobody is looking at the log
 # to notice otherwise.
 #
 # Everything here converges on one instance. Stacked instances are the documented way
@@ -40,7 +45,9 @@ UNIT="app-com.core447.StreamController@autostart.service"
 APP_ID="com.core447.StreamController"
 COMM="StreamControlle" # /proc comm is truncated to 15 chars; this is the whole name
 VENDOR="0fd9"
-PRODUCT="006d"
+# Every product id StreamController drives here. Order is irrelevant -- the fault
+# condition is "any one of these is attached and unheld", not a per-device state.
+PRODUCTS=("006d" "0086") # Stream Deck original V2, Stream Deck Pedal
 
 # The known-crash signature (see streamcontroller-libdbus-watch-abort): the flatpak's
 # python3.13 process, launched as "StreamController". Only reports matching both get
@@ -53,7 +60,7 @@ ABRT_CMDLINE="StreamController"
 # two consecutive ones, four minutes apart, cannot.
 STRIKES_BEFORE_ACTING=2
 
-# A deck that is broken in some way this script cannot fix must not get restarted
+# A device that is broken in some way this script cannot fix must not get restarted
 # forever. After this many restarts in an hour it gives up and says so.
 MAX_RESTARTS_PER_HOUR=3
 
@@ -68,20 +75,25 @@ RESTART_FILE="$STATE_DIR/streamcontroller-health.restarts"
 
 log() { printf '%s\n' "$*"; }
 
-find_deck() {
-	local id_product base
+# Prints one sysfs path per attached device, zero or more lines. Unlike the single-device
+# form it replaces, absence is an empty result rather than a non-zero exit -- callers
+# distinguish "none attached" by line count, so a missing device is never an error here.
+find_devices() {
+	local id_product base product
 	for id_product in "$SYSFS_USB"/*/idProduct; do
 		base="${id_product%/idProduct}"
 		[[ -r $id_product && -r $base/idVendor ]] || continue
-		if [[ $(<"$id_product") == "$PRODUCT" && $(<"$base/idVendor") == "$VENDOR" ]]; then
-			printf '%s\n' "$base"
-			return 0
-		fi
+		[[ $(<"$base/idVendor") == "$VENDOR" ]] || continue
+		for product in "${PRODUCTS[@]}"; do
+			if [[ $(<"$id_product") == "$product" ]]; then
+				printf '%s\n' "$base"
+				break
+			fi
+		done
 	done
-	return 1
 }
 
-deck_node() {
+device_node() {
 	# Re-derived each run: devnum changes on every re-enumeration.
 	printf '/dev/bus/usb/%03d/%03d' "$(<"$1/busnum")" "$(<"$1/devnum")"
 }
@@ -95,7 +107,7 @@ app_processes() {
 	printf '%s' "${n:-0}"
 }
 
-deck_held_by_app() {
+node_held_by_app() {
 	# Only StreamController's own file descriptors count -- see the note at the top
 	# about winedevice.exe holding the same node.
 	local node="$1" pid fd
@@ -151,19 +163,19 @@ record_restart() {
 }
 
 recover() {
-	local node="$1"
-
+	# Takes no device: recovery restarts StreamController wholesale and resets every
+	# attached device, so which one was unheld does not change what happens here.
 	local used
 	used=$(recent_restarts | wc -l)
 	if ((used >= MAX_RESTARTS_PER_HOUR)); then
 		# Exits 0 deliberately: declining to retry is this script working as designed,
 		# not a failure of it. A non-zero exit would park the oneshot in `failed` and
 		# re-fail it every two minutes, which buries the one line worth reading.
-		log "deck down but already restarted ${used}x in the last hour; not retrying (needs a look)"
+		log "device down but already restarted ${used}x in the last hour; not retrying (needs a look)"
 		return 0
 	fi
 
-	log "deck not held by any process; recovering"
+	log "device not held by any process; recovering"
 
 	# Kill first, and confirm. "Beta resume mode" means a surviving instance re-grabs
 	# the deck the moment it reconnects, so resetting while one is still alive hands
@@ -210,24 +222,31 @@ main() {
 		return 0
 	fi
 
-	local deck
-	if ! deck=$(find_deck); then
-		# Deck unplugged. Not a fault, and the strike count must not survive it --
+	local devices=()
+	mapfile -t devices < <(find_devices)
+	if ((${#devices[@]} == 0)); then
+		# Everything unplugged. Not a fault, and the strike count must not survive it --
 		# otherwise plugging back in gets one free restart it never earned.
 		clear_strikes
-		log "no Stream Deck attached"
+		log "no Stream Deck device attached"
 		return 0
 	fi
 
-	local node
-	node=$(deck_node "$deck")
+	# One unheld device is enough to fault: recovery is global, so there is nothing to
+	# gain by waiting for the rest to drop too.
+	local device unheld=0
+	for device in "${devices[@]}"; do
+		node_held_by_app "$(device_node "$device")" || unheld=1
+	done
 
-	if deck_held_by_app "$node"; then
+	if ((unheld == 0)); then
+		# Attached and all held. Same clear as the unplugged branch but a distinct
+		# state: collapsing the two loses the free-restart guard above.
 		clear_strikes
 		return 0
 	fi
 
-	# Nothing holds the deck. Whether that is a fault depends on why nothing is running.
+	# At least one device is unheld. Whether that is a fault depends on why nothing is running.
 	if (($(app_processes) == 0)); then
 		if systemctl --user is-failed --quiet "$UNIT"; then
 			log "no instance running and $UNIT is failed"
@@ -244,12 +263,12 @@ main() {
 	strikes=$(($(read_strikes) + 1))
 	if ((strikes < STRIKES_BEFORE_ACTING)); then
 		printf '%s' "$strikes" >"$STRIKE_FILE"
-		log "deck not held (strike ${strikes}/${STRIKES_BEFORE_ACTING}); waiting for confirmation"
+		log "device not held (strike ${strikes}/${STRIKES_BEFORE_ACTING}); waiting for confirmation"
 		return 0
 	fi
 
 	clear_strikes
-	recover "$node"
+	recover
 }
 
 main "$@"

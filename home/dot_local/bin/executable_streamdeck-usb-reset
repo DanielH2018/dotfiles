@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""streamdeck-usb-reset: issue a USBDEVFS_RESET to the Elgato Stream Deck.
+"""streamdeck-usb-reset: issue a USBDEVFS_RESET to every attached Elgato device.
+
+"Device" means each product id in PRODUCTS -- the Stream Deck original V2 and the
+Stream Deck Pedal. Both are reset because the caller has already killed
+StreamController, so every device it drove is mid-recovery regardless of which one
+was noticed to be unheld.
 
 Why this exists at all: when StreamController dies from the libdbus
 `dbus_watch_handle()` assertion it aborts *inside* libusb's transaction, so the
@@ -25,7 +30,7 @@ import sys
 from pathlib import Path
 
 VENDOR = "0fd9"
-PRODUCT = "006d"  # Stream Deck original V2
+PRODUCTS = ("006d", "0086")  # Stream Deck original V2, Stream Deck Pedal
 
 # /proc/<pid>/comm is truncated to 15 characters; this is the whole name.
 APP_COMM = "StreamControlle"
@@ -36,20 +41,21 @@ APP_COMM = "StreamControlle"
 USBDEVFS_RESET = 0x5514
 
 
-def find_deck() -> Path | None:
-    """Return the deck's sysfs directory, or None if it is not attached."""
+def find_devices() -> list[Path]:
+    """Return a sysfs directory per attached device; empty if none are attached."""
+    found = []
     for id_product in Path("/sys/bus/usb/devices").glob("*/idProduct"):
         base = id_product.parent
         try:
             if (
-                id_product.read_text().strip() == PRODUCT
+                id_product.read_text().strip() in PRODUCTS
                 and (base / "idVendor").read_text().strip() == VENDOR
             ):
-                return base
+                found.append(base)
         except OSError:
             # Device yanked mid-scan. Not our problem -- keep looking.
             continue
-    return None
+    return found
 
 
 def device_node(base: Path) -> str:
@@ -78,12 +84,9 @@ def holders(node: str) -> list[tuple[int, str]]:
     return found
 
 
-def main() -> int:
-    base = find_deck()
-    if base is None:
-        print("no Stream Deck attached; nothing to reset")
-        return 0
-
+def reset_one(base: Path) -> int:
+    """Reset a single device. Returns 0 when there is nothing to do or the reset
+    worked, 1 only on a genuine failure."""
     node = device_node(base)
 
     # Refuse only if StreamController itself still has the device. A reset yanks the
@@ -116,6 +119,20 @@ def main() -> int:
 
     print(f"reset {node}")
     return 0
+
+
+def main() -> int:
+    bases = find_devices()
+    if not bases:
+        print("no Stream Deck device attached; nothing to reset")
+        return 0
+
+    # Every device is attempted even if an earlier one failed: a pedal that cannot be
+    # reset must not leave the deck untouched, which is the device the user notices.
+    failed = 0
+    for base in bases:
+        failed |= reset_one(base)
+    return failed
 
 
 if __name__ == "__main__":

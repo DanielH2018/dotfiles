@@ -23,7 +23,12 @@ let bashOk = true;
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
 const skip = bashOk ? false : 'bash unavailable';
 
-const NODE = '/dev/bus/usb/001/021';
+// The two devices StreamController drives here. DECK's numbers are the ones every
+// pre-pedal test was written against, so they must not change.
+const DECK = { dir: '1-1.4.4', product: '006d', busnum: 1, devnum: 21, node: '/dev/bus/usb/001/021' };
+const PEDAL = { dir: '3-2', product: '0086', busnum: 3, devnum: 4, node: '/dev/bus/usb/003/004' };
+
+const NODE = DECK.node;
 const dirs = [];
 
 function mkdtemp(prefix) {
@@ -32,27 +37,33 @@ function mkdtemp(prefix) {
   return d;
 }
 
-// A sysfs tree containing the deck, or an empty one when attached is false.
-function makeSysfs(attached) {
+// A sysfs tree containing `devices`. `attached: false` is the empty tree; `true` is
+// the deck alone, which keeps every test written before the pedal existed honest.
+function makeSysfs(devices) {
   const root = mkdtemp('sch-sysfs-');
-  if (attached) {
-    const dev = path.join(root, '1-1.4.4');
+  for (const d of devices) {
+    const dev = path.join(root, d.dir);
     fs.mkdirSync(dev);
-    fs.writeFileSync(path.join(dev, 'idProduct'), '006d\n');
+    fs.writeFileSync(path.join(dev, 'idProduct'), `${d.product}\n`);
     fs.writeFileSync(path.join(dev, 'idVendor'), '0fd9\n');
-    fs.writeFileSync(path.join(dev, 'busnum'), '1\n');
-    fs.writeFileSync(path.join(dev, 'devnum'), '21\n');
+    fs.writeFileSync(path.join(dev, 'busnum'), `${d.busnum}\n`);
+    fs.writeFileSync(path.join(dev, 'devnum'), `${d.devnum}\n`);
   }
   return root;
 }
 
-// A /proc tree. `holders` are pids whose fd/3 points at the deck node.
-function makeProc(pids, holders) {
+// A /proc tree. A pid in `holders` gets one fd per node in `heldNodes`, so a test can
+// hold the deck while leaving the pedal unheld. Non-holders get a single /dev/null fd.
+function makeProc(pids, holders, heldNodes) {
   const root = mkdtemp('sch-proc-');
   for (const pid of pids) {
     const fd = path.join(root, String(pid), 'fd');
     fs.mkdirSync(fd, { recursive: true });
-    fs.symlinkSync(holders.includes(pid) ? NODE : '/dev/null', path.join(fd, '3'));
+    if (holders.includes(pid)) {
+      heldNodes.forEach((node, i) => fs.symlinkSync(node, path.join(fd, String(3 + i))));
+    } else {
+      fs.symlinkSync('/dev/null', path.join(fd, '3'));
+    }
   }
   return root;
 }
@@ -145,7 +156,11 @@ function makeAbrtProblems(problems) {
   return root;
 }
 
-function run({ attached = true, pids = [], holders = [], unitFailed = false, noSession = false, state, home, abrtProblems }) {
+function run({ attached = true, devices, heldNodes, pids = [], holders = [], unitFailed = false, noSession = false, state, home, abrtProblems }) {
+  // `devices` is the general form; `attached` stays as the deck-only shorthand every
+  // pre-pedal test uses. A holder holds everything attached unless told otherwise.
+  const attachedDevices = devices ?? (attached ? [DECK] : []);
+  const held = heldNodes ?? attachedDevices.map((d) => d.node);
   const { bin, marks } = makeStubs();
   const fakeHome = home || mkdtemp('sch-home-');
   const resetBin = path.join(fakeHome, '.local', 'bin');
@@ -162,8 +177,8 @@ echo reset >> "${marks}/reset"
     env: {
       PATH: `${bin}:${process.env.PATH}`,
       HOME: fakeHome,
-      SC_HEALTH_SYSFS: makeSysfs(attached),
-      SC_HEALTH_PROC: makeProc(pids, holders),
+      SC_HEALTH_SYSFS: makeSysfs(attachedDevices),
+      SC_HEALTH_PROC: makeProc(pids, holders, held),
       XDG_RUNTIME_DIR: state,
       STUB_PIDS: pids.join(' '),
       ...(unitFailed ? { STUB_UNIT_FAILED: '1' } : {}),
@@ -185,13 +200,47 @@ echo reset >> "${marks}/reset"
 
 test('no deck attached is a no-op, not a fault', { skip }, () => {
   const r = run({ attached: false, pids: [111], state: mkdtemp('sch-state-') });
-  assert.match(r.out, /no Stream Deck attached/);
+  assert.match(r.out, /no Stream Deck device attached/);
   assert.equal(r.restarted, false);
 });
 
 test('deck held by StreamController is healthy', { skip }, () => {
   const r = run({ pids: [111], holders: [111], state: mkdtemp('sch-state-') });
   assert.equal(r.out.trim(), '');
+  assert.equal(r.restarted, false);
+});
+
+// The three below cover the pedal. The first two matter most: the deck's failure mode
+// was found the hard way and the pedal's is inferred, so a false positive that
+// restarts a working deck in service of a hypothetical pedal fault is the regression
+// to fear, not a missed pedal fault.
+
+test('deck and pedal both held is healthy', { skip }, () => {
+  const r = run({ devices: [DECK, PEDAL], pids: [111], holders: [111], state: mkdtemp('sch-state-') });
+  assert.equal(r.out.trim(), '');
+  assert.equal(r.restarted, false);
+});
+
+test('deck held with no pedal attached is healthy, exactly as before', { skip }, () => {
+  // The pre-change world. Adding a second product id must not make a single-deck
+  // machine look unhealthy.
+  const r = run({ devices: [DECK], pids: [111], holders: [111], state: mkdtemp('sch-state-') });
+  assert.equal(r.out.trim(), '');
+  assert.equal(r.restarted, false);
+});
+
+test('a held deck does not excuse an unheld pedal', { skip }, () => {
+  // Both attached, StreamController holds only the deck. Before the pedal was added
+  // this shape was invisible: the script looked at the deck, found it held, and
+  // reported healthy while the pedal did nothing.
+  const r = run({
+    devices: [DECK, PEDAL],
+    heldNodes: [DECK.node],
+    pids: [111],
+    holders: [111],
+    state: mkdtemp('sch-state-'),
+  });
+  assert.match(r.out, /strike 1\/2/);
   assert.equal(r.restarted, false);
 });
 
