@@ -18,6 +18,8 @@ How to talk to me in the conversation. Rules for text you write to disk are in C
 - When something is ambiguous, ask one focused question rather than listing all the possibilities.
 - Correct an earlier statement only when the error would change my code, conclusions, or decisions — state it plainly and continue.
 - Lead with the answer or the recommendation; add a caveat only when it changes what I'd do. Skip hedging-theater and faux-balance openers.
+- When I ask for an explanation or for detail, answer it completely. Terse governs padding, never the thing I asked for — brevity is no reason to withhold.
+- Never trade correctness for brevity. Error messages, failing test output, security warnings, and confirmations for destructive actions keep their full content.
 
 ## After a non-trivial change
 

@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "3baae0ebea438bd55b1737db222ff5c00b4160e7b307b03650d2d976790dc1c4",
-      "landed": "2026-08-20T00:20:34.470Z"
+      "hash": "82085cb16c49488d37c4ea70b86bdb9f622b2c9a67eff4240e8ec5d4ac69df44",
+      "landed": "2026-08-20T12:10:04.087Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "0086f67fcba9dcb8cd229657338ce83b19aedd68bb0f796f727ccc7eb04435f1",
-      "landed": "2026-08-18T13:15:12.551Z"
+      "hash": "e5f70ed1efdfe8bd3a05277c7cd764075dadaf3445056427bdd9cd52949f36e4",
+      "landed": "2026-08-20T12:10:04.087Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -237,6 +237,11 @@
       "landed": "2026-08-07T20:41:35.832Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_voice-reminder.sh",
+      "hash": "0b9b3672035e182633fd7f4b538f8c72051e351eab1f4cf6639bf61cf4b58782",
+      "landed": "2026-08-20T12:10:04.087Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
       "hash": "76d9dfb33afb42c5f09c0459c689696e1828ac3928ee43a8dccd042f79c8a26f",
       "landed": "2026-08-20T00:08:23.592Z"
@@ -298,8 +303,8 @@
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
-      "hash": "482c3b0e16908c60ae58a6cbb07fa29906e6b1d0153d9e126cd3239e2e035d80",
-      "landed": "2026-08-19T18:18:52.894Z"
+      "hash": "e04e0227e4d7fe98e07eda43249d28011dafd1eecbda478d3355b1d3b9e7fea1",
+      "landed": "2026-08-20T12:10:04.087Z"
     },
     {
       "path": "home/private_dot_claude/rules/anti-slop.md",

@@ -5,10 +5,12 @@
 Conversational tone — terseness, outcome first, no preamble, no hedging, one focused question,
 when to correct yourself — moved to the `daniel-voice` output style
 (`private_dot_claude/output-styles/daniel-voice.md`, selected by `outputStyle` in
-`settings.base.json`). Those rules decay over a long session, and an output style is part of the
-system prompt and gets re-asserted during the conversation, where a CLAUDE.md rule is injected
-once and doesn't. What stays here is what has to reach **subagents** as well, which an output
-style never does: everything below governs text written to disk, not just my replies.
+`settings.base.json`). Those rules decay over a long session, and an output style sits late in
+the system prompt where a CLAUDE.md rule is injected once, further up. Re-assertion is a
+separate mechanism and a custom style does not get it: only built-in styles carry a
+`turnReminder`, so `voice-reminder.sh` (a `UserPromptSubmit` hook) supplies one per prompt.
+What stays here is what has to reach **subagents** as well, which an output style never does:
+everything below governs text written to disk, not just my replies.
 
 - No emojis unless I ask. Reference code as `file:line`.
 - Paths to things I'll open (specs, plans, HTML reports, sandbox artifacts) go as short clickable markdown links — `[label](file:///abs/path)`, never raw. Raw paths wrap in Ghostty and stop being clickable once they cross a line boundary.
