@@ -1,4 +1,7 @@
-// Render checks for home/dot_config/warp-terminal/settings.toml.tmpl.
+// Render checks for home/.chezmoitemplates/warp-settings.toml, the shared settings body that
+// both per-OS wrappers include (macOS reads ~/.warp, Linux reads $XDG_CONFIG_HOME/warp-terminal).
+// Asserted against the body rather than either wrapper: the wrappers are one includeTemplate
+// line each, so a check on one of them would pass while the content it names was broken.
 //
 // This file is unusual for a chezmoi source: Warp WRITES its own settings.toml whenever a
 // setting changes in its UI. So the source drifts behind the deployed copy by design, and the
@@ -17,7 +20,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { renderFile, chezmoiAvailable, SOURCE } = require('../lib/render');
 
-const TMPL = path.join(SOURCE, 'dot_config', 'warp-terminal', 'settings.toml.tmpl');
+const TMPL = path.join(SOURCE, '.chezmoitemplates', 'warp-settings.toml');
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 
 let pyOk = true;
@@ -42,7 +45,8 @@ test('the recapture keeps the header and the one template action', { skip }, () 
   // look wrong afterwards -- it stays valid TOML and deploys -- so this is the only signal.
   const raw = fs.readFileSync(TMPL, 'utf8');
   assert.match(raw, /^# Managed by chezmoi/, 'the header explaining the recapture must survive it');
-  assert.match(raw, /\{\{ \.chezmoi\.homeDir \}\}/, 'default_tab_config_path must stay templated');
+  assert.match(raw, /\{\{ includeTemplate "warp-tab-configs-dir" \. \}\}/,
+    'default_tab_config_path must stay templated; the dir it names differs per OS');
 });
 
 test('the source names no machine-absolute home path', { skip: false }, () => {

@@ -210,3 +210,25 @@ claude-otel
 .local/share/warp-terminal/tab_configs/daniel-server.toml
 .local/share/warp-terminal/tab_configs/local-server.toml
 {{ end }}
+
+# Warp reads one settings.toml and one keybindings.yaml, at a path that differs by OS
+# (docs.warp.dev/terminal/settings/file-locations). macOS reads ~/.warp; Linux reads
+# $XDG_CONFIG_HOME/warp-terminal. Both are tracked, both include the same shared body from
+# .chezmoitemplates, and each machine deploys only the pair its Warp actually opens — a copy
+# at the other path is not harmless, it is a second file that looks authoritative and that a
+# recapture can be pasted into with no effect.
+#
+# Themes and tab configs stay at the XDG data path on every OS, and macOS reaches them through
+# two symlinks under ~/.warp. Warp only reads those two directories, so a symlink is safe there
+# — unlike the pair above, which Warp rewrites. It also keeps the .work gate above as the single
+# copy of the personal-host list: a parallel file tree under ~/.warp would need that gate
+# duplicated, and warp-tab-config-gate.test.js matches the XDG spelling only, so the duplicate
+# would stay green while daniel-box.toml deployed to a work laptop.
+#
+# Every path in this file is read as an entry, comments included, so no comment here may spell
+# a real target path. That is what warp-tab-config-gate.test.js caught on the first draft.
+{{ if eq .chezmoi.os "darwin" }}
+.config/warp-terminal
+{{ else }}
+.warp
+{{ end }}
