@@ -506,6 +506,16 @@
             "type": "command",
             "command": "~/.claude/hooks/memory-stale-paths.py",
             "timeout": 10
+          },
+          {{/* Same slot, the other half of memory upkeep: MEMORY.md is injected
+               verbatim into every session and grows by appending, so this warns once
+               the index passes 50 pointer lines. Silent under the cap, and it reports
+               rather than edits — which entry to promote into a rule and which to
+               archive is a judgment call with session context behind it. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/memory-index-size.py",
+            "timeout": 10
           }
         ]
       },
