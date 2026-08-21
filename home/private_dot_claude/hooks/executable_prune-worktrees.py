@@ -43,6 +43,13 @@ equivalence is not provenance — a revert of a revert, a cherry-picked hotfix, 
 whitespace change someone else also made all read as landed — and reaping on it would
 invert this script's design, which fails toward keeping the tree. The operator decides.
 
+The same caution runs the other way, and it is easier to miss. A `+` line does not prove
+work is unlanded — it only means no commit on the default branch carries that patch-id,
+which a reword or a later improvement is enough to cause. Measured 2026-08-21 on
+worktree-longhorn-b2-weekly-rearm: `git cherry` reported 16 `+` lines while five of its
+eight files were byte-identical to master and the other three were older than master's.
+Neither mark is provenance, which is why the report names the command that settles it.
+
 Removing a worktree leaves its branch behind. Nothing else deletes it, so every session
 that isolates its work used to leave a permanent ref. A successful removal is now
 followed by `git branch -d`, and a second sweep covers session branches that have no
@@ -176,7 +183,10 @@ def classify(
             return REVIEW, (
                 f"{tree.branch} is not an ancestor of the default branch, but every "
                 "commit on it already has an equivalent there — landed by a squash or "
-                "rebase merge. Remove it by hand once you have confirmed that."
+                "rebase merge, OR simply older than what is on the default branch. "
+                "Before removing, establish which: `gh pr list --state merged --head "
+                f"{tree.branch}` names the merge, and `git diff --stat <default> "
+                f"{tree.branch}` shows whether the branch is behind rather than landed."
             )
         return KEEP, f"{tree.branch} not merged"
     return REMOVABLE, f"{tree.branch} merged, clean, unlocked"
@@ -413,8 +423,10 @@ def main() -> int:
         for branch in orphan_review:
             print(
                 f"[{REVIEW:9}] branch {branch}\n"
-                "            landed by a squash or rebase merge, no worktree — "
-                "delete by hand once confirmed"
+                "            no worktree, and every commit has an equivalent on the "
+                "default branch — landed by a squash or rebase merge, or just older "
+                "than it. Check `gh pr list --state merged --head <branch>` before "
+                "deleting."
             )
         total = len(removable) + len(orphan_merged)
         if total:
@@ -455,8 +467,10 @@ def main() -> int:
         print(f"Kept {tree.path}: {reason}")
     for branch in orphan_review:
         print(
-            f"Branch {branch} has no worktree and landed by a squash or rebase merge; "
-            "delete it by hand once you have confirmed that."
+            f"Branch {branch} has no worktree and every commit on it has an "
+            "equivalent on the default branch — landed by a squash or rebase merge, or "
+            "merely older than it. Establish which before deleting: `gh pr list "
+            f"--state merged --head {branch}`."
         )
     for tree, error in failed:
         print(f"Could not remove {tree.path}: {error}")
