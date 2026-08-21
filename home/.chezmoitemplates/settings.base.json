@@ -437,6 +437,18 @@
             "command": "~/.claude/hooks/allow-safe-curl.sh",
             "timeout": 10
           },
+          {{/* Same shape again, for the third ask-listed command that takes an arbitrary
+               target: auto-approves a delete whose every operand is provably below a
+               scratch root (/tmp, /var/tmp, ~/.claude/jobs, ~/.cache/claude), the root
+               itself excluded. Earned on volume — 51 of the 611 prompts on daniel-box in
+               the week to 2026-08-21. The option table is an allowlist and any `..`,
+               glob, substitution or relative path is a refusal, so the Bash(rm:*) ask
+               rule stands for everything this cannot prove. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-safe-rm.sh",
+            "timeout": 10
+          },
           {{/* Picks up where allow-readonly-remote.sh stops: the homelab calls are wrapped in
                a local filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook
                refuses any metacharacter or option. Defers to the server repo's tested pipeline

@@ -80,6 +80,46 @@ test('curl delegation vouches for the curl segment only', { skip }, () => {
   assert.strictEqual(allowed('curl -s http://127.0.0.1:9090/m | tail -20 && rm -rf /tmp/x'), null);
 });
 
+// The same delegation for the other ask-listed command that takes an arbitrary target.
+// The fixture above puts rm in DENY, which is checked first and never reaches the
+// delegation -- that is the assertion on the last line of the block above. The real
+// settings ask-list it, so these cases build their own HOME to exercise the path that
+// actually runs in production.
+const RM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-rm-'));
+fs.mkdirSync(path.join(RM_HOME, '.claude'), { recursive: true });
+fs.writeFileSync(path.join(RM_HOME, '.claude', 'settings.json'), JSON.stringify({
+  permissions: {
+    allow: ['Bash(cd:*)', 'Bash(echo:*)', 'Bash(ls:*)', 'Bash(mkdir:*)'],
+    deny: [],
+    ask: ['Bash(rm:*)'],
+  },
+}));
+const rmAllowed = (command) => allowed(command, RM_HOME);
+
+test('a provably-confined rm segment resolves its own ask rule', { skip }, () => {
+  assert.strictEqual(rmAllowed('cd /tmp && rm -rf /tmp/scratch'), 'allow');
+  assert.strictEqual(rmAllowed('rm -rf /tmp/a && mkdir -p /tmp/a'), 'allow');
+  assert.strictEqual(rmAllowed('echo cleaning && rm -f /tmp/build/out.txt'), 'allow');
+});
+
+test('rm delegation vouches for the rm segment only', { skip }, () => {
+  // An rm the helper would refuse standing alone is not rescued by the chain.
+  assert.strictEqual(rmAllowed('cd /tmp && rm -rf /etc/passwd'), null);
+  assert.strictEqual(rmAllowed('cd /tmp && rm -rf /tmp/../etc'), null);
+  assert.strictEqual(rmAllowed('cd /tmp && rm -rf /tmp'), null);
+  assert.strictEqual(rmAllowed('cd /tmp && rm -rf /tmp/*'), null);
+  assert.strictEqual(rmAllowed('cd /tmp && rm --no-preserve-root -rf /tmp/a'), null);
+  // One confined rm does not vouch for a second unconfined one.
+  assert.strictEqual(rmAllowed('rm -rf /tmp/a && rm -rf /etc/x'), null);
+  // The other stage still has to earn its own allow entry.
+  assert.strictEqual(rmAllowed('rm -rf /tmp/a && frobnicate'), null);
+});
+
+test('deny still outranks the rm delegation', { skip }, () => {
+  // The module fixture denies Bash(rm:*), and deny is checked before delegation.
+  assert.strictEqual(allowed('cd /tmp && rm -rf /tmp/scratch'), null);
+});
+
 // DECIDED 2026-07-30: a newline-only or lone-`&`-only compound is not eligible for
 // allow, even now that cmd_parse can see it is genuinely multi-segment. The eligibility
 // gate is the literal && / ; / | substring test, unchanged from before this hook adopted

@@ -121,6 +121,19 @@ safe_curl_ok() {
       bash "$SAFE_CURL" 2>/dev/null | grep -q '"allow"'
 }
 
+# Same delegation, same reasoning, for the other ask-listed command that takes an
+# arbitrary target. A scratch cleanup is the commonest ask-listed segment in a chain:
+# 51 of the 611 prompts on daniel-box in the week to 2026-08-21, and each one prompted
+# for the whole chain because that segment could never clear the ask list on its own.
+SAFE_RM="${BASH_SOURCE[0]%/*}/allow-safe-rm.sh"
+[ -f "$SAFE_RM" ] || SAFE_RM="${BASH_SOURCE[0]%/*}/executable_allow-safe-rm.sh"
+safe_rm_ok() {
+  [ -f "$SAFE_RM" ] || return 1
+  jq -nc --arg c "$1" '{tool_input: {command: $c}}' 2>/dev/null \
+    | HOOK_INPUT_LIB="${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}" \
+      bash "$SAFE_RM" 2>/dev/null | grep -q '"allow"'
+}
+
 trim() {
   local s="$1"
   s="${s#"${s%%[! $'\t']*}"}"
@@ -333,6 +346,11 @@ judge() {
   case ${part%%[[:space:]]*} in
     curl | */curl)
       if safe_curl_ok "$part"; then
+        continue
+      fi
+      ;;
+    rm | */rm)
+      if safe_rm_ok "$part"; then
         continue
       fi
       ;;

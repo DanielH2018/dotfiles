@@ -158,6 +158,15 @@
       "Bash(git reflog:*)",
       "Bash(git cat-file:*)",
       "Bash(git name-rev:*)",
+      {{/* Branch-level git the reflog recovers. autoMode.allow already calls this routine
+           in prose, which the classifier honours — but allow-compound-bash.sh reads Bash()
+           prefixes, not prose, so every `cd X && git switch Y` chain prompted anyway (56 of
+           the 611 prompts on daniel-box in the week to 2026-08-21). `git checkout` as a bare
+           prefix is deliberately absent: `git checkout -- <path>` discards working-tree
+           changes and no reflog entry brings them back. Branch creation and switching carry
+           no such loss. */}}
+      "Bash(git switch:*)",
+      "Bash(git checkout -b:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr list:*)",
       "Bash(gh pr diff:*)",
@@ -175,6 +184,24 @@
       "Bash(gh release list:*)",
       "Bash(gh release view:*)",
       "Bash(gh api:*)",
+      {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
+           verbs are routine because the default credential is a read-only ServiceAccount —
+           the same reasoning, restated as prefixes so allow-compound-bash.sh can act on it.
+           Authority is unchanged: RBAC refuses anything these verbs could reach that the
+           prose did not already bless, and `kubectl delete` stays in the deny list below.
+           Mutating verbs (apply, patch, edit, scale, drain, taint, exec, cp, port-forward)
+           are absent by intent, not omission. */}}
+      "Bash(kubectl get:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl top:*)",
+      "Bash(kubectl events:*)",
+      "Bash(kubectl explain:*)",
+      "Bash(kubectl api-resources:*)",
+      "Bash(kubectl diff:*)",
+      "Bash(kubectl version:*)",
+      "Bash(kubectl config view:*)",
+      "Bash(kubectl config current-context)",
       "Bash(npm run:*)",
       "Bash(npm test:*)",
       "Bash(npm list:*)",
