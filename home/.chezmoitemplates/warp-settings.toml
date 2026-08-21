@@ -22,8 +22,8 @@
 
 [terminal]
 copy_on_select = true
-use_audible_bell = false
-osc52_clipboard_access = "write_only"
+use_audible_bell = true
+osc52_clipboard_access = "read_write"
 
 [terminal.input]
 input_box_type_setting = "classic"
@@ -94,7 +94,7 @@ telemetry_enabled = true
 crash_reporting_enabled = true
 
 [general]
-default_session_mode = "tab_config"
+default_session_mode = "terminal"
 show_warning_before_quitting = false
 default_tab_config_path = "{{ includeTemplate "warp-tab-configs-dir" . }}/local-shell.toml"
 new_tab_placement = "after_all_tabs"
@@ -106,13 +106,17 @@ enabled = true
 display_granularity = "panes"
 view_mode = "expanded"
 primary_info = "command"
+show_panel_in_restored_windows = true
 
 [appearance.text]
 notebook_font_size = 14.0
 font_name = "IosevkaTerm Nerd Font Mono"
-font_size = 16.0
+font_size = 18.0
 font_weight = "bold"
 ligature_rendering_enabled = true
+match_ai_font = true
+ai_font_name = "IosevkaTerm Nerd Font Mono"
+line_height_ratio = 1.2000000476837158
 
 [appearance.cursor]
 cursor_display_type = "block"
@@ -125,7 +129,7 @@ should_dim_inactive_panes = true
 open_windows_at_custom_size = true
 new_windows_num_columns = 120
 new_windows_num_rows = 24
-zoom_level = 100
+zoom_level = 90
 
 [appearance.themes]
 theme = { custom = { name = "Catppuccin Mocha", path = "catppuccin_mocha.yaml" } }
@@ -144,6 +148,9 @@ right = ["code_review", "notifications_mailbox"]
 show_code_review_button = true
 show_project_explorer = true
 show_global_search = true
+
+[code.indexing]
+agent_mode_codebase_context_auto_indexing = true
 
 [warp_drive]
 enabled = true
