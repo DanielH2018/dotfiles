@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "2d42ee43c1259e7af0c0080fbee064e347392f06cecf7d47100b5c26e4d58ad2",
-      "landed": "2026-08-21T15:25:57.903Z"
+      "hash": "a74e9ae49b6e6b8ca424a5d874da39ea8ffc426271906f5017f499cc57ce5ea8",
+      "landed": "2026-08-21T19:42:17.579Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -150,6 +150,11 @@
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
       "hash": "9eb317b28fe806f2c02cbfc79914c4a4b4f5db93d5b7b8734d7d7f9c358d3384",
       "landed": "2026-08-20T14:50:58.324Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_memory-index-size.py",
+      "hash": "395fc1d86e1d7c84bd6a952171dd04757f97bd4c883cb5b7fee95825042b5f48",
+      "landed": "2026-08-21T19:42:17.579Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
@@ -305,6 +310,11 @@
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
       "hash": "8388da2ed10136725fe99bc0a497c2cb4fe4a663fba08ee44c17fc47f2e2d0ef",
       "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_memory_index_size.py",
+      "hash": "8b8f67e6fc79ff54600d251f5c5b9d29aece5778bb9836a965c34ba7023538b4",
+      "landed": "2026-08-21T19:42:17.579Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
