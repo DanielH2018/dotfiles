@@ -3,6 +3,8 @@
 # A path appearing here means: this test file is MEANT to deploy into ~/.claude.
 # See tests/chezmoi/managed-test-drift.test.js for why this exists.
 .claude/hooks/test_allow_daniel_server.py
+.claude/hooks/test_bash_write_fanout.py
+.claude/hooks/test_memory_stale_paths.py
 .claude/hooks/test_prune_worktrees.py
 .claude/hooks/test_worktree_landed.py
 .claude/hooks/tq-wrap-tests.py

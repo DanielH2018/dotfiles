@@ -143,8 +143,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "ffc9d9eb5489327e753faf8acbd4e06302fd7879c28428bba3839882c3926db3",
-      "landed": "2026-08-19T20:45:27.203Z"
+      "hash": "adbea9d0e8e557699ea43492247aeedd12a740b367775bbe21aa504e382204ec",
+      "landed": "2026-08-21T15:33:33.868Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",

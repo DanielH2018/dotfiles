@@ -159,8 +159,8 @@ test('symlink resolution gated to in-container', () => {
 });
 
 // A Markdown artifact with no HTML companion gets an extra nudge appended after the
-// link. suggest-artifact.sh was meant to cover this but is gated on ExitPlanMode, which
-// is never called here, so this hook is the only trigger that actually fires.
+// link. suggest-artifact.sh was meant to cover it from ExitPlanMode, which is never
+// called here, so it never fired and was removed 2026-08-21; this hook is the trigger.
 // Builds a real ~/.claude/artifacts dir because the hook stats the companion on disk.
 function artifactsDir(files) {
   const fs = require('node:fs');

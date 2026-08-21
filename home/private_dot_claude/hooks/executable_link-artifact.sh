@@ -147,9 +147,9 @@ if [[ "$path" == *.html ]]; then
 fi
 
 # A Markdown artifact with no HTML companion is the standing preference going unmet.
-# suggest-artifact.sh was supposed to catch this, but it is gated on ExitPlanMode and
-# plan mode is never used here — measured 2026-08-06: zero ExitPlanMode calls across
-# 653 transcripts, so that hook has never once fired. This is the trigger that does.
+# suggest-artifact.sh was supposed to catch it, from ExitPlanMode — where plan mode is
+# never used here: measured 2026-08-06, zero ExitPlanMode calls across 653 transcripts,
+# so it never fired once and was removed 2026-08-21. This is the trigger that does.
 # Only nudge when the companion is genuinely absent, so a doc that already has one,
 # or an .md written after its .html, stays quiet.
 nudge=""

@@ -105,7 +105,7 @@ dotfiles repo, Lithic-domain agents/skills/commands from `work-laptop-config`, a
 repo's own `.claude/` project commands.
 
 The sandbox intentionally ships a **slimmed** config relative to the host: only 3 hooks run
-here (audit, suggest-artifact, link-artifact). `rules/`, `workflows/`, keybindings, and the
+here (audit, gh-pr-guard, link-artifact). `rules/`, `workflows/`, keybindings, and the
 ~18 host hooks do NOT run in-container. Enforcement of those omitted safety hooks is instead
 via the settings deny-list plus container isolation (`--cap-drop all`, `--security-opt
 no-new-privileges`), not via the hooks themselves.
