@@ -21,6 +21,14 @@ HOOK = HERE / "executable_worktree-landed.sh"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
     HOOK = HERE / "worktree-landed.sh"
 
+# Scrub git's own environment before anything runs. These tests build real repositories
+# in a temp dir and drive them with `cwd=`, but GIT_DIR and GIT_WORK_TREE outrank cwd —
+# and git exports both to every hook it runs. Under a pre-commit or pre-push hook an
+# unscrubbed run therefore aims each `git init` and `git commit` at the REAL repository
+# the hook fired in.
+for _var in [k for k in os.environ if k.startswith("GIT_")]:
+    del os.environ[_var]
+
 failures = []
 
 

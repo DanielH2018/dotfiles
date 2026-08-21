@@ -35,6 +35,15 @@ mod = importlib.util.module_from_spec(spec)
 sys.modules["prune_worktrees"] = mod
 spec.loader.exec_module(mod)
 
+# Scrub git's own environment before anything runs. These tests build real repositories
+# in a temp dir and drive them with `cwd=`, but GIT_DIR and GIT_WORK_TREE outrank cwd —
+# and git exports both to every hook it runs. Under a pre-commit or pre-push hook an
+# unscrubbed run therefore aims each `git init`, `git commit` and `git worktree remove`
+# at the REAL repository the hook fired in. Scrubbing here covers the `git()` helper and
+# every env dict built from os.environ below.
+for _var in [k for k in os.environ if k.startswith("GIT_")]:
+    del os.environ[_var]
+
 failures = []
 
 
@@ -271,6 +280,148 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "outside a repo it is a silent no-op",
         outside.returncode == 0 and outside.stdout == "",
+    )
+
+# ── branch cleanup and the squash/rebase case ─────────────────────────────────────────
+#
+# Two failure modes, one fixture. Removing a worktree used to leave its branch behind
+# forever, and the ancestor test used to call a squash-merged branch "not merged" and
+# say nothing. The second is the one with teeth: the obvious fix — reap on `git cherry`
+# equivalence — would delete a branch whose work merely resembles what is on master, so
+# the equivalence case must report and never act.
+
+
+def build_branch_repo(root):
+    """An origin plus a clone holding: a merged tree, a squash-merged tree, and three
+    branches with no worktree — merged, squash-merged, and genuinely unlanded."""
+    origin = root / "origin"
+    origin.mkdir()
+    git(["init", "-q", "-b", "main", "--bare", "."], origin)
+
+    repo = root / "repo"
+    git(["clone", "-q", str(origin), str(repo)], root)
+    git(["config", "user.email", "t@t"], repo)
+    git(["config", "user.name", "t"], repo)
+    (repo / "a").write_text("a\n")
+    git(["add", "a"], repo)
+    git(["commit", "-qm", "init"], repo)
+    git(["push", "-q", "origin", "main"], repo)
+
+    trees = repo / ".claude" / "worktrees"
+    trees.mkdir(parents=True)
+
+    # Merged the ordinary way: its worktree AND its branch should both go.
+    git(["worktree", "add", "-q", "-b", "worktree-merged", str(trees / "merged")], repo)
+
+    # Squash-merged: a commit of its own, whose patch is then replayed onto main under a
+    # different sha. Not an ancestor, but every commit has an equivalent on main.
+    git(
+        ["worktree", "add", "-q", "-b", "worktree-squashed", str(trees / "squashed")],
+        repo,
+    )
+    (trees / "squashed" / "sq").write_text("sq\n")
+    git(["add", "sq"], trees / "squashed")
+    git(["commit", "-qm", "squashed work"], trees / "squashed")
+    sha = git(["rev-parse", "HEAD"], trees / "squashed").stdout.strip()
+    git(["cherry-pick", sha], repo)
+    # Reword it. Without this the replay lands on the same parent with the same tree,
+    # author, message and second — so git produces the identical sha and the branch is
+    # an ancestor after all, which is not the shape being tested. A real squash merge
+    # always rewords (GitHub appends the PR number).
+    git(["commit", "-q", "--amend", "-m", "squashed work (#1)"], repo)
+    git(["push", "-q", "origin", "main"], repo)
+
+    # Three branches with no worktree at all.
+    git(["branch", "worktree-orphan-merged", "main"], repo)
+    git(["branch", "worktree-orphan-squashed", f"{sha}"], repo)
+    git(["branch", "worktree-orphan-live", "main"], repo)
+    git(["worktree", "add", "-q", "--detach", str(root / "scratch")], repo)
+    (root / "scratch" / "live").write_text("live\n")
+    git(["add", "live"], root / "scratch")
+    git(["commit", "-qm", "unlanded"], root / "scratch")
+    live_sha = git(["rev-parse", "HEAD"], root / "scratch").stdout.strip()
+    git(["branch", "-f", "worktree-orphan-live", live_sha], repo)
+    git(["worktree", "remove", "--force", str(root / "scratch")], repo)
+
+    # A merged branch that is NOT a session branch: the sweep must not touch it.
+    git(["branch", "my-own-branch", "main"], repo)
+    return repo, trees
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    repo, trees = build_branch_repo(root)
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
+
+    check(
+        "is_equivalent sees a squash-merged branch",
+        mod.is_equivalent(str(repo), "worktree-squashed", "origin/main"),
+    )
+    check(
+        "is_equivalent rejects a branch with unlanded work",
+        not mod.is_equivalent(str(repo), "worktree-orphan-live", "origin/main"),
+    )
+    check(
+        "is_equivalent rejects a branch with no commits of its own",
+        not mod.is_equivalent(str(repo), "worktree-orphan-merged", "origin/main"),
+    )
+
+    report = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+    check(
+        "report names the squash-merged tree for review",
+        "worktree-squashed" in report.stdout and "review" in report.stdout,
+    )
+    check(
+        "report names the orphan merged branch",
+        "worktree-orphan-merged" in report.stdout,
+    )
+
+    pruned = subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    branches = git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], repo
+    ).stdout.split()
+
+    check("the merged worktree is gone", not (trees / "merged").exists())
+    check("its branch is deleted too", "worktree-merged" not in branches)
+    check(
+        "the orphan merged branch is deleted", "worktree-orphan-merged" not in branches
+    )
+    check(
+        "the branch that is not a session branch survives", "my-own-branch" in branches
+    )
+    check(
+        "the orphan branch with unlanded work survives",
+        "worktree-orphan-live" in branches,
+    )
+
+    # The whole point of the cherry test: it reports, it does not reap. Patch-id
+    # equality is not provenance, so acting on it deletes work that only looks landed.
+    check("the squash-merged worktree survives", (trees / "squashed").exists())
+    check("the squash-merged branch survives", "worktree-squashed" in branches)
+    check(
+        "the orphan squash-merged branch survives",
+        "worktree-orphan-squashed" in branches,
+    )
+    check(
+        "prune says why it kept the squash-merged tree",
+        "squash" in pruned.stdout and "worktree-squashed" in pruned.stdout,
+    )
+    check(
+        "prune reports the deleted branches",
+        "worktree-merged" in pruned.stdout,
+    )
+    log = (root / "cfg" / "logs" / "sessions.log").read_text()
+    check(
+        "logs both branch deletions",
+        "event=branch_deleted" in log and "event=orphan_branch_deleted" in log,
     )
 
 print()

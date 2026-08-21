@@ -207,16 +207,6 @@
         ]
       },
       {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/claudebot/.claude/hooks/suggest-artifact.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {

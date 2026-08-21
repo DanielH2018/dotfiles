@@ -227,11 +227,6 @@
       "landed": "2026-08-01T12:04:20.075Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_suggest-artifact.sh",
-      "hash": "a37c06c74a081a0c289ee6ae52b0559af9f34d56a48faf70acc010e126a1d284",
-      "landed": "2026-07-26T13:17:32.064Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
       "hash": "9d9c448e5b97ad3c13c5456b72b6d8143bd20fae913144470799f9a74ff33460",
       "landed": "2026-07-30T00:10:39.037Z"

@@ -28,10 +28,17 @@ fi
 
 # Skip worktrees of repos that commit directly to main by convention
 # (remote URL match — covers worktrees at arbitrary paths).
+#
+# DanielH2018/server used to be exempted here too, on the grounds that its commits go
+# straight to master. They do not: settings.json's autoMode hard_deny calls master a
+# production deploy trigger reachable only through a PR, and that repo's CLAUDE.md
+# specifies one worktree and one PR per session. The exemption therefore switched the
+# guard off in the one repo whose default branch deploys to live infrastructure — and it
+# sat above the rebase and merge-conflict blocks below, which apply on every branch, so a
+# session there could also walk away mid-rebase with nothing said. Removed 2026-08-21.
 REMOTE_URL=$(git remote get-url origin 2>/dev/null)
 case "$REMOTE_URL" in
   *dotfiles*) exit 0 ;;
-  *DanielH2018/server.git|*DanielH2018/server) exit 0 ;;  # homelab: commits go straight to master
 esac
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)

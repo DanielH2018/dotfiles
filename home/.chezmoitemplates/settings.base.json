@@ -494,6 +494,21 @@
           }
         ]
       },
+      {{/* the same janitorial slot for memories. Nothing re-checks a memory when the code
+           it describes changes, so drift runs one way — memories are added readily and
+           revised only when someone happens to notice. A path a memory names either
+           exists or it does not, which needs no session context; this reports and never
+           edits, because a memory can be right about a file that was removed on purpose. */}}
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/memory-stale-paths.py",
+            "timeout": 10
+          }
+        ]
+      },
       {{/* same janitorial slot for session worktrees: remove the ones under
            .claude/worktrees/ whose branch is already an ancestor of origin/HEAD, are clean,
            and hold no live session's lock. Claude Code's exit prompt only reaches a session
@@ -707,6 +722,18 @@
             "type": "command",
             "command": "~/.claude/hooks/artifact-commit-track.sh post",
             "timeout": 10
+          },
+          {{/* Every hook on `Edit|Write` below reads `.tool_input.file_path`, which a Bash
+               write does not carry — so a heredoc, a `sed -i` or a `tee` runs none of
+               them. chezmoi-guard is the one that costs work: without it the source never
+               tracks the edit and the next `chezmoi apply` silently reverts it. This
+               extracts the written paths from the command text and re-drives all four.
+               Timeout matches lint-after-edit.sh, the slowest thing it can call. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/bash-write-fanout.sh",
+            "timeout": 300,
+            "statusMessage": "Checking files written by Bash..."
           }
         ]
       },
@@ -748,16 +775,10 @@
           }
         ]
       },
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/suggest-artifact.sh",
-            "timeout": 10
-          }
-        ]
-      },
+      {{/* No ExitPlanMode entry. suggest-artifact.sh hung here and never fired once: a
+           2026-08-06 count found zero ExitPlanMode calls across 653 transcripts, and
+           link-artifact.sh absorbed the job it was written for — nudging when a Markdown
+           artifact has no HTML companion. Removed 2026-08-21. */}}
       {
         "matcher": "*",
         "hooks": [

@@ -15,9 +15,19 @@
 # this hook stay quiet and leaves the tree to the sweeper — the same fail-quiet direction
 # prune-worktrees.py takes, and worth more than a per-turn network call.
 #
-# Known gap: a squash merge rewrites the commits, so the branch tip is not an ancestor of
-# the default branch and neither this hook nor the sweeper will fire. Both repos this runs
-# in merge with merge commits or a fast-forward push.
+# Known gap: a squash or rebase merge rewrites the commits, so the branch tip is not an
+# ancestor of the default branch and this hook stays quiet. That used to be excused here
+# on the grounds that both repos merge with merge commits or a fast-forward push, which is
+# false for DanielH2018/server — `gh repo view` reports both squashMergeAllowed and
+# rebaseMergeAllowed, and worktree-renovate-k8s-autodeploy (PR #158, merged) still fails
+# the ancestor test.
+#
+# The gap is covered, but by the sweeper rather than here. prune-worktrees.py falls back
+# to `git cherry` and REPORTS a branch whose every commit already has a patch-equivalent
+# on the default branch. It reports rather than reaps because patch-id equality is not
+# provenance, and that is also why the fallback does not belong in this hook: a Stop hook
+# can only block, and blocking a session to hand it something a person has to adjudicate
+# is worse than letting the next session start with the same fact on screen.
 
 set -u
 
