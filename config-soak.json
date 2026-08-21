@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "f267c8716a88edeae966e5e80137b4fecb50fdc08b378fe83a68556db5fcd949",
-      "landed": "2026-08-20T13:41:52.632Z"
+      "hash": "cce6405373478804536eedcd95dcfa7d02dcbc2af4df3b762f0a48b2158fbf01",
+      "landed": "2026-08-21T13:36:17.160Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "ab2ccdd3b774fe7d844484bf427e81c5b1ef68da2aa00759c163c4d235be071f",
-      "landed": "2026-08-16T17:50:13.784Z"
+      "hash": "ba63ba6407cb09a20e15a5abb7eb40b974822b478637e8deb557bb10e7588fea",
+      "landed": "2026-08-21T13:36:17.160Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -53,8 +53,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "57fcd11d821b5ed7fa4f775304ed4d6a83afa49eec46e10de34e1fb0f42b1dc9",
-      "landed": "2026-08-15T14:30:21.828Z"
+      "hash": "a5d1a40148a7fcc38715b999666e302cb9f0c093fa1fce28d4d1e7cdb21d620e",
+      "landed": "2026-08-21T13:36:17.160Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-daniel-server.sh",
@@ -70,6 +70,11 @@
       "path": "home/private_dot_claude/hooks/executable_allow-safe-curl.sh",
       "hash": "0c567ec1fbaa9a8acd97466e0ac6d88529d072c8e847324951f1e8497b5bcbc6",
       "landed": "2026-08-15T14:30:21.828Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_allow-safe-rm.sh",
+      "hash": "6dc362093667acdc1f9f53397a9a93e6fad66a18aa012fd61645092a8ceca54f",
+      "landed": "2026-08-21T13:36:17.160Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
