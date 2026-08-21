@@ -74,6 +74,17 @@ fi
 UNSTAGED=$(git diff --name-only 2>/dev/null | head -5)
 STAGED=$(git diff --cached --name-only 2>/dev/null | head -5)
 
+# And for a file that was never added at all. `git diff` and `git diff --cached` are both
+# blind to one, so a new file a session wrote and forgot is the one kind of lost work this
+# hook could not see — the kind with no history to recover it from.
+#
+# It is also, measurably, the common case rather than an edge one. Of 54 dirty_exit events
+# logged to sessions.log, 52 were on master, and 12 of those in a single afternoon were one
+# untracked file: a finished 248-line evaluation that a session wrote, never committed, and
+# left for every later session to trip over. `--exclude-standard` means .gitignore already
+# answers for build output and scratch, so what reaches here is a file nobody has classified.
+UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null | head -5)
+
 case "$BRANCH" in
   main|master|production|release)
     if [ -n "$STAGED" ]; then
@@ -87,6 +98,17 @@ case "$BRANCH" in
       jq -n --arg branch "$BRANCH" --arg files "$UNSTAGED" '{
         decision: "block",
         reason: ("There are unstaged modifications on protected branch \($branch):\n\($files)\n\nPlease either stage and commit these on a feature branch, or confirm with the user that discarding them is intentional.")
+      }'
+      exit 0
+    fi
+    # Last, because it is the least likely of the three to be work in progress and the
+    # most likely to be deliberate. Naming the three exits matters more here than in the
+    # blocks above: an untracked file has no history, so "leave it" is a real answer and
+    # the session needs to be able to give it rather than guess at committing it.
+    if [ -n "$UNTRACKED" ]; then
+      jq -n --arg branch "$BRANCH" --arg files "$UNTRACKED" '{
+        decision: "block",
+        reason: ("There are untracked files on protected branch \($branch):\n\($files)\n\nAn untracked file exists nowhere but this disk. Decide which it is: commit it on a feature branch, add it to .gitignore if it is build output or scratch, delete it, or tell the user it is deliberate and leave it. Do not guess — say which you chose and why.")
       }'
       exit 0
     fi

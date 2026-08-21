@@ -108,8 +108,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
-      "hash": "83415157a30ffaab1ea8072884174d7f27cafbc93f5ebe7c4779b420d6497eda",
-      "landed": "2026-08-21T15:25:57.903Z"
+      "hash": "5e94f7125cc5766f8cfb15cdeb8ea6cb6269627ceb9da83cb529a75fae23db40",
+      "landed": "2026-08-21T16:14:16.780Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
