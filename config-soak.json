@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "cce6405373478804536eedcd95dcfa7d02dcbc2af4df3b762f0a48b2158fbf01",
-      "landed": "2026-08-21T13:36:17.160Z"
+      "hash": "2d42ee43c1259e7af0c0080fbee064e347392f06cecf7d47100b5c26e4d58ad2",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -97,14 +97,19 @@
       "landed": "2026-08-01T22:15:14.883Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
+      "hash": "dbf77dec2b4d594c631de6b6f69fe636b7554ae972945375e6fe2ef35d9fc623",
+      "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
       "hash": "72eb858983e946f0ea5ad654ef37236bc25b18ed0bdddc1609a5793cd5083620",
       "landed": "2026-08-17T14:16:28.477Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
-      "hash": "39ad3a8c2b53cd83e96752dd805be0fd241796c7c66102ccec699dcd67e35aca",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "83415157a30ffaab1ea8072884174d7f27cafbc93f5ebe7c4779b420d6497eda",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
@@ -147,6 +152,11 @@
       "landed": "2026-08-20T14:50:58.324Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
+      "hash": "f7c15f5cace4a66ee24b41a744c875c7e3824bf3404e2e985cd811ad0abe709e",
+      "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_notify-log.sh",
       "hash": "9c25d2b0d6cc5ff8d59802b92aa76936fa5a0141379b8d8a54c4f80458c16b8e",
       "landed": "2026-08-07T13:21:56.755Z"
@@ -183,8 +193,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-worktrees.py",
-      "hash": "7b9cb613b2e51e1f23a86e8b551141ee93bb830b904b092f6317c677f56bc4fc",
-      "landed": "2026-08-16T17:54:20.899Z"
+      "hash": "da20932291edbf6697b68e151cfb020b300b73ff516802f8f350cfba2b9551f4",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
@@ -258,8 +268,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "586d88e29cd93b9f53c16b86d1e1778b2d458cce3d215b7a50e20c980c99389a",
-      "landed": "2026-08-16T17:54:20.899Z"
+      "hash": "feb1aacf77dc99a5572a2d8d531d73e93344c68d4421ede78c041ea4b1746ac6",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -292,14 +302,24 @@
       "landed": "2026-08-15T14:30:21.828Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
+      "hash": "8388da2ed10136725fe99bc0a497c2cb4fe4a663fba08ee44c17fc47f2e2d0ef",
+      "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
+      "hash": "98201585c62ee09adc1f02621363ed2310aca8f26f233a81531d013c75ac9fd5",
+      "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
-      "hash": "3f471b3e3f91d6dcbc4202184ff1f16d9ae9feb1a382eaf0847dff9dedfca276",
-      "landed": "2026-08-16T17:54:20.899Z"
+      "hash": "0d84ef257e13f5366a911b6472d9e5a22503a0764dd9215da084d457fa62af42",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "d665da261bf2095482a6c198888354acbc49c73f48de2964ba1f2cc05c69c5c2",
-      "landed": "2026-08-16T17:54:20.899Z"
+      "hash": "37109bdbd18c8821b3f600b13e14cdb62a77bff205b5d65043c39f38b7b3d266",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
@@ -348,8 +368,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
-      "hash": "a2d76d4a3ed8b7ca377f1ab6447f67ccf295d3ae0d4981dd476c2ffdc58cd337",
-      "landed": "2026-08-19T21:54:16.045Z"
+      "hash": "d2f86145ee386b88281f02c6a57251cdbede4e0ee400c8b8eab8e4f61688d69a",
+      "landed": "2026-08-21T15:25:57.903Z"
     },
     {
       "path": "home/private_dot_claude/skills/building-evals/SKILL.md",
