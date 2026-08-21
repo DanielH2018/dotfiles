@@ -13,7 +13,12 @@
 #   - Loki unreachable on a machine that answered (nothing is recorded without it)
 #   - a session whose transcript is growing while Loki holds none of its events
 # Prometheus or Tempo being unreachable is NOT a finding: daniel-server legitimately runs
-# no Tempo, so flagging it would fire every single day forever.
+# no Tempo, so flagging it would fire every single day forever. Loki gets the same
+# treatment on a machine otel-sweep marks `queryable: false` — daniel-server has been a
+# collector-only k3s worker since 2026-08-13, holding the otel-collector DaemonSet and no
+# query backend at all, so "Loki unreachable" there is the expected answer and its zeros
+# mean "not queryable from here", never "nothing is being recorded". Its events are in
+# box's totals.
 #
 # Exits non-zero on findings so `systemctl --user --failed` is a second, passive signal.
 set -uo pipefail
@@ -47,8 +52,13 @@ for host in sorted(data):
         findings.append("%s: unreachable (%s)" % (host, d["error"][:80]))
         lines.append("%s: UNREACHABLE" % host)
         continue
+    if d.get("queryable") is False:
+        lines.append("%s: collector-only - counts live in box" % host)
+        continue
     if d.get("backends", {}).get("loki") != "ready":
         findings.append("%s: Loki unreachable - nothing is being recorded" % host)
+    if d.get("silent_checked") is False:
+        findings.append("%s: silent-session check did not run - Loki query failed" % host)
     silent = d.get("silent_sessions", [])
     for s in silent:
         findings.append("%s: session %s exporting nowhere (%sMB)"
