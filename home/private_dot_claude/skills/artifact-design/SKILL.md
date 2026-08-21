@@ -54,6 +54,19 @@ a report. If you write one there, `chmod +x` it or it will age out with the docs
 
 - **Local by default.** Write one self-contained `.html` file to `~/.claude/artifacts/` and tell Daniel the path.
   - If that directory doesn't exist yet, create it first — don't skip the artifact because the directory is missing.
+- **Write the file with the Write tool, never a Bash heredoc.** `link-artifact.sh` is a
+  `PostToolUse` hook on matcher `Edit|Write`, and it reads the path from
+  `.tool_input.file_path`. A `cat > file <<'EOF'` carries no `file_path` and does not match
+  the matcher, so the hook never runs, no link is emitted, and the closing line degrades to a
+  hand-built `file://` path — the one thing *Where the link points* says never to do. Auto
+  mode's standing "prefer Bash for file changes" instruction points the other way; this is the
+  exception to it. Three other hooks share that matcher and are skipped the same way
+  (`auto-format.sh`, `lint-after-edit.sh`, `chezmoi-guard.sh`), so a Bash-written file bypasses
+  formatting and lint too.
+  - `bash-write-fanout.sh` narrows this; it does not close it. That hook reads the written
+    paths out of the Bash command and re-drives all four, but a write inside `python3 -c` or
+    a called script is invisible in the command text, and only a path that exists as a regular
+    file afterwards is handed on. Use the Write tool and the question does not arise.
 - **The link goes last.** Write the plan out in the chat first, then write the HTML file, then close the reply with the path — a bare link line, nothing after it. If the link lands above the written plan, Daniel has to scroll back up through the plan to open the file.
 - **Never publish to claude.ai** or call the Artifact tool unless Daniel explicitly asks for it. Serving an artifact inside the homelab is not publishing — see *Where the link points* below; the rule is about claude.ai, not about the LAN.
 - **Self-contained.** Inline all CSS; no external fonts, scripts, or network assets — it must render offline from `file://`. A minimal skeleton:
@@ -105,9 +118,14 @@ picks it — you never construct the URL yourself. Take the link that hook hands
 
 | Where the session runs | The link | Served by |
 |---|---|---|
-| daniel-box / daniel-server | `https://artifacts.local.daniel-hunter.com/a/<host>/<file>` | the cluster, behind Authelia |
+| daniel-box / daniel-server | `https://artifacts.daniel-hunter.com/a/<host>/<file>` | the cluster, behind Authelia |
 | Any other Linux host | `http://127.0.0.1:8181/<file>` | `serve-artifacts.sh`, a loopback server |
 | macOS | `file://<abs path>` | the filesystem |
+
+That hostname is the **public** name, not `artifacts.local.daniel-hunter.com`. A link is the
+only way anyone reaches an artifact, so it has to work from wherever the reader is, not only
+on the LAN. `CLAUDE_ARTIFACTS_BASE_URL` in chezmoi's `settings.base.json` is the source of
+truth and the table follows it — don't "correct" either one back to the `.local` name.
 
 The cluster route is an addition, not a replacement. The loopback server stays installed on
 every Linux host and is the fallback whenever the cluster route or its pod is down — so
