@@ -193,8 +193,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-worktrees.py",
-      "hash": "70ab17152f9b862f792f6121d608f8887a2596eb5ffc5ec375aa2a53bc924427",
-      "landed": "2026-08-21T15:40:02.717Z"
+      "hash": "02d1d9f9958fe9cd8b360f4697387ebc147a87e5c405fa5c43f86187e6de8503",
+      "landed": "2026-08-21T16:56:00.806Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",

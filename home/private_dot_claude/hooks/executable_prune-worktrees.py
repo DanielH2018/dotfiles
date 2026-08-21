@@ -53,9 +53,11 @@ Neither mark is provenance, which is why the report names the command that settl
 Removing a worktree leaves its branch behind. Nothing else deletes it, so every session
 that isolates its work used to leave a permanent ref. A successful removal is now
 followed by `git branch -d`, and a second sweep covers session branches that have no
-worktree at all. Always `-d`, never `-D`: git's own refusal on an unmerged branch is the
-same backstop this script already relies on for `worktree remove`. That is also why the
-cherry case is report-only in both sweeps — `-d` would refuse it anyway.
+worktree at all. Always `-d`, never `-D`: git's own refusal is the same backstop this
+script already relies on for `worktree remove`. That is also why the cherry case is
+report-only in both sweeps — `-d` would refuse it anyway. What `-d` accepts is narrower
+than "merged" and depends on when you ask; `delete_branch` has the mechanism and why a
+refusal does not prove the branch still holds work.
 
 Usage:
     prune-worktrees.py            # report only
@@ -308,10 +310,25 @@ def remove(repo: str, tree: Worktree) -> tuple[bool, str]:
 def delete_branch(repo: str, branch: str) -> bool:
     """Delete a branch with `-d`. Never `-D`.
 
-    `-d` refuses a branch that is not merged into its upstream or into HEAD, which makes
+    `-d` refuses a branch that is not merged into HEAD **or its upstream**, which makes
     git the arbiter rather than this script — the same division of labour `worktree
-    remove` gets. A refusal is not an error worth reporting: it means the branch still
-    holds work, which is exactly the case where keeping it is correct.
+    remove` gets.
+
+    The upstream half is why a squash-merged branch sometimes deletes cleanly here and
+    sometimes does not, which otherwise reads as this script being flaky. `-d` consults
+    the local `refs/remotes/origin/<branch>`, and that ref outlives the remote branch: a
+    repo with deleteBranchOnMerge has no remote branch from the moment the PR merges,
+    but the stale tracking ref still points at the tip until something prunes it. The
+    window in which a session branch deletes cleanly therefore closes at the next `git
+    fetch --prune`, not at the merge. Measured 2026-08-21: a branch squash-merged
+    minutes earlier was accepted, while four older squash-merged ones were refused.
+
+    So a refusal is not proof the branch still holds work. It means git could not
+    establish that the work landed, and from here that is indistinguishable from a
+    branch where it genuinely has not — keeping it is right in both cases, and neither
+    is an error worth reporting. What a refusal does cost is a person: `-D` is then the
+    only thing that deletes the branch, and this script will not reach for it. The
+    REVIEW verdict exists to put that branch in front of someone.
     """
     result = subprocess.run(
         ["git", "branch", "-d", branch],
