@@ -181,6 +181,65 @@ with tempfile.TemporaryDirectory() as tmp:
     check("skips the index", "MEMORY.md" not in loud.stdout)
     check("exits 0 when it reports", loud.returncode == 0)
 
+    # ── the worktree case ────────────────────────────────────────────────────────────
+    # Memory is keyed to the main checkout, so a session in .claude/worktrees/<name>
+    # has to resolve back to it or this hook is silent in most of the repo's sessions.
+    # But only the SLUG resolves back: path existence stays against the worktree, or a
+    # file added on a branch reads as stale.
+    git = [
+        "git",
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@e",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "docs" / "kept.md").write_text("x\n")
+    subprocess.run(
+        [*git, "add", "-A"], cwd=repo, check=True, capture_output=True, text=True
+    )
+    subprocess.run(
+        [*git, "commit", "-q", "-m", "seed"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wt = repo / ".claude" / "worktrees" / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "wt", str(wt)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (wt / "docs" / "branch-only.md").write_text("x\n")
+    (memories / "branchy.md").write_text("It lives at `docs/branch-only.md`.\n")
+
+    from_wt = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=wt, capture_output=True, text=True, env=env
+    )
+    check(
+        "a worktree resolves to the main checkout's memories",
+        "drifted.md" in from_wt.stdout,
+    )
+    check("the worktree run exits 0", from_wt.returncode == 0)
+    check(
+        "a path that exists only in the worktree is not called stale",
+        "branch-only.md" not in from_wt.stdout,
+    )
+
+    from_main = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+    check(
+        "the same path is stale from the main checkout, where it does not exist",
+        "branch-only.md" in from_main.stdout,
+    )
+    (memories / "branchy.md").unlink()
+
     off = subprocess.run(
         [sys.executable, str(SCRIPT)],
         cwd=repo,

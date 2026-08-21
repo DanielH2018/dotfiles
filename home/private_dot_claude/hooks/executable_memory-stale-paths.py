@@ -62,6 +62,47 @@ def repo_root(start: Path) -> Path | None:
     return Path(top) if result.returncode == 0 and top else None
 
 
+def main_checkout(repo: Path) -> Path:
+    """The main checkout behind `repo`, which may be a linked worktree.
+
+    Memory is keyed to the main checkout's path, so a session running in
+    .claude/worktrees/<name> derives a slug no memory directory answers to and this hook
+    goes silent — in exactly the parallel worktree sessions where most work happens.
+
+    `git rev-parse --git-common-dir` names the shared .git that every worktree of a repo
+    points at; its parent is the main checkout. In the main checkout itself the answer
+    is already that repo, so this costs one git call and changes nothing.
+
+    Use it for the memory slug ONLY. Path existence must stay against the caller's own
+    worktree: a file added on a branch does not exist in the main checkout, and checking
+    there would report a live path as stale.
+
+    Falls back to `repo` whenever the answer is unusable — git failing, an empty answer,
+    a bare repo whose .git parent is not a checkout. A wrong slug is silence, which is
+    the same failure as not looking at all, and never an error at session start.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    common = result.stdout.strip()
+    if result.returncode != 0 or not common:
+        return repo
+    git_dir = Path(common)
+    if not git_dir.is_absolute():
+        # Git answers ".git" in the main checkout and may answer relatively elsewhere;
+        # both are relative to the directory the command ran in.
+        git_dir = repo / git_dir
+    try:
+        parent = git_dir.resolve().parent
+    except OSError:
+        return repo
+    return parent if parent.is_dir() else repo
+
+
 def memory_dir(config_dir: Path, repo: Path) -> Path | None:
     """Claude Code's per-project memory directory, named after the project path.
 
@@ -185,7 +226,9 @@ def main() -> int:
         return 0
 
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    memories = memory_dir(config_dir, repo)
+    # Slug from the main checkout so a worktree session finds the memories; `repo`
+    # itself stays the yardstick for path existence below.
+    memories = memory_dir(config_dir, main_checkout(repo))
     if memories is None:
         return 0
 
