@@ -7,13 +7,11 @@ when to correct yourself — moved to the `daniel-voice` output style
 (`private_dot_claude/output-styles/daniel-voice.md`, selected by `outputStyle` in
 `settings.base.json`). Those rules decay over a long session, and an output style sits late in
 the system prompt where a CLAUDE.md rule is injected once, further up. Re-assertion is a
-separate mechanism, and the built-in one carries no content for a custom style. Claude Code
-2.1.238 emits `<name> output style is active. Remember to follow the specific guidelines for
-this style.` every turn, for custom, project, and plugin styles alike. That sentence is a
-fallback: the style loader never populates a `turnReminder` field for a style read off disk,
-and no frontmatter key supplies one, so only the built-in styles carry real reminder text.
-`voice-reminder.sh` (a `UserPromptSubmit` hook) therefore supplies the per-prompt reminder that
-names the actual rules.
+separate mechanism, and for a custom style it carries no content. Since 2.1.238 the harness
+does emit a per-turn line for custom, project, and plugin styles. Its text is the generic
+fallback, because the style loader rebuilds a style read off disk without a `turnReminder`
+field — only the built-ins carry reminder text. So `voice-reminder.sh` (a `UserPromptSubmit`
+hook) supplies the per-prompt reminder that names the actual rules.
 What stays here is what has to reach **subagents** as well, which an output style never does:
 everything below governs text written to disk, not just my replies.
 
