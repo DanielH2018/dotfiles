@@ -47,6 +47,15 @@ HOSTS = {
     "server": "daniel-server",
 }
 
+# Machines that run a collector but no query backend. daniel-server joined
+# daniel-box's k3s cluster as a worker on 2026-08-13: it holds the
+# otel-collector DaemonSet pod (hostPort 4317) while Loki, Prometheus and Tempo
+# are Deployments pinned to daniel-box. So "unreachable" there is the expected
+# answer and events=0 means "not queryable from here", never "not exporting".
+# Its events land in box's Loki; split them by os_version, since nothing in the
+# pipeline records a hostname.
+COLLECTOR_ONLY = {"server"}
+
 SSH_OPTS = [
     "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=5",
@@ -139,7 +148,14 @@ for name, port, ready in BACKENDS:
     out["backends"][name] = "ready" if BASE[name] else "unreachable"
 
 
-def loki(query, path="/loki/api/v1/query", **extra):
+def loki(query, path="/loki/api/v1/query", strict=False, **extra):
+    """Query Loki. `strict` re-raises instead of returning [].
+
+    Every caller but one treats an empty result as "nothing happened", which is
+    the right reading for a tally. It is the wrong reading for the silent-session
+    scan, where empty means "no session ever exported" and would condemn every
+    transcript on the disk. That caller passes strict=True.
+    """
     if not BASE["loki"]:
         return []
     params = {"query": query}
@@ -148,6 +164,8 @@ def loki(query, path="/loki/api/v1/query", **extra):
     try:
         return json.loads(get(url)).get("data", {}).get("result", [])
     except (urllib.error.URLError, OSError, ValueError):
+        if strict:
+            raise
         return []
 
 
@@ -221,30 +239,61 @@ if MODE == "deep":
     # own; letting it manufacture a second finding per transcript is how one
     # outage becomes a wall of alarms about sessions that are exporting fine.
     # Skip the check instead of reporting all of it.
-    seen = set()
     silent = []
+    candidates = []
+    checked = False
     if BASE["loki"]:
-        for r in loki("sum by (session_id) (count_over_time(" + CC + " [720h]))"):
-            sid = r.get("metric", {}).get("session_id")
-            if sid:
-                seen.add(sid)
         cutoff = time.time() - 48 * 3600
         for path in (pathlib.Path.home() / ".claude" / "projects").glob("*/*.jsonl"):
             try:
                 st = path.stat()
             except OSError:
                 continue
-            if st.st_mtime < cutoff or path.stem in seen:
-                continue
-            silent.append({
-                "session": path.stem,
-                "mb": round(st.st_size / 1048576, 1),
-                "modified": time.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
-                ),
-            })
+            if st.st_mtime >= cutoff:
+                candidates.append((path.stem, st))
+
+        # Ask only about the sessions in hand. `sum by (session_id)` over every
+        # session in 720h trips Loki's 500-series ceiling once the history is a
+        # few weeks deep, and the HTTP 400 that comes back is indistinguishable
+        # from an empty result — which marked every recent transcript silent,
+        # live and exporting ones included (measured 2026-08-21). Filtering to
+        # the candidate ids bounds the series count by the number of transcripts.
+        # In batches: the ids ride in a URL query string, and a long enough one
+        # is rejected by the same HTTP 400 this rewrite exists to avoid. 50 ids
+        # is ~1.9kB of URL, comfortably inside any limit, and batching drops no
+        # session the way a cap would.
+        exported = set()
+        checked = True
+        for i in range(0, len(candidates), 50):
+            ids = "|".join(sid for sid, _ in candidates[i:i + 50])
+            try:
+                rows = loki(
+                    "sum by (session_id) (count_over_time("
+                    + CC + " | session_id=~`" + ids + "` [720h]))",
+                    strict=True,
+                )
+            except Exception:
+                checked = False
+                break
+            for r in rows:
+                sid = r.get("metric", {}).get("session_id")
+                if sid:
+                    exported.add(sid)
+
+        if checked:
+            for sid, st in candidates:
+                if sid in exported:
+                    continue
+                silent.append({
+                    "session": sid,
+                    "mb": round(st.st_size / 1048576, 1),
+                    "modified": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
+                    ),
+                })
     out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)[:10]
-    out["known_sessions"] = len(seen)
+    out["silent_checked"] = checked
+    out["sessions_on_disk_48h"] = len(candidates)
 
 print(json.dumps(out))
 '''
@@ -297,12 +346,20 @@ def render_rows(results):
             continue
         ready = [k for k, v in data.get("backends", {}).items() if v == "ready"]
         events = sum(data.get("events_24h", {}).values())
+        if name in COLLECTOR_ONLY and not ready:
+            print(
+                f"{name:<8} collector-only — no query backend; "
+                "counts live in box (split by os_version)"
+            )
+            continue
         print(
             f"{name:<8} ready={','.join(ready) or 'none':<26} "
             f"events={events:<6} sessions={data.get('sessions_24h', 0)}"
         )
         for bad, n in sorted(data.get("errors_24h", {}).items()):
             print(f"         {bad}={n}")
+        if data.get("silent_checked") is False:
+            print("         silent-session check did not run (Loki query failed)")
         for entry in data.get("silent_sessions", []):
             print(
                 f"         SILENT {entry['session'][:8]} "
@@ -333,6 +390,15 @@ def main():
     mode = "deep" if ns.deep else "fast"
     targets = [ns.only] if ns.only else sorted(HOSTS)
     results = {name: probe(HOSTS[name], mode, ns.timeout) for name in targets}
+
+    # A collector-only machine answers no query, so its zeros are absence of
+    # evidence. Say so in the JSON too, or a reader takes silent_sessions: []
+    # for "clean" when it means "never looked".
+    for name in targets:
+        data = results[name]
+        ready = [k for k, v in data.get("backends", {}).items() if v == "ready"]
+        if name in COLLECTOR_ONLY and "error" not in data and not ready:
+            data["queryable"] = False
 
     if ns.rows:
         render_rows(results)
