@@ -1,0 +1,28 @@
+[Unit]
+Description=Render the day's due learning cards as an HTML quiz sheet (mechanism C, scheduled half)
+Documentation=file:%h/.claude/skills/learning-quiz/SKILL.md
+# Ordering only, not a gate — same reasoning as claude-changelog-watch. Nothing here needs the
+# graphical session; this just avoids racing session startup when both come up together.
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+# This calls render-sheet.sh directly rather than going through scheduled/run-skill.sh, which is
+# how the macOS plist reaches it. The runner exists to give a job a log, a timeout and a per-day
+# idempotency marker; systemd supplies all three natively (journald, TimeoutStartSec, and a daily
+# timer that cannot fire twice in a day). Routing through it here would add a dependency and buy
+# nothing — and, more to the point, run-skill.sh's other path starts a model session with
+# --dangerously-skip-permissions. The sheet is pure formatting with no model in it, so it has no
+# business inheriting that. Keeping this call direct confines that flag to the digest alone.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.claude/skills/learning-quiz/scripts/render-sheet.sh
+# The sheet is a list of due cards; nothing about it is urgent enough to make the box feel slow.
+Nice=10
+IOSchedulingClass=idle
+# Deterministic shell over a directory of small files. A minute is already generous; anything
+# past it means something is wrong, and a wedged run must not hold the timer's slot all day.
+TimeoutStartSec=2min
+# stdout is the record. render-sheet.sh prints one line ("learning-quiz: N due, sheet at ...")
+# and journald rotates it, so the script keeps no log file of its own.
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,20 @@
+[Unit]
+Description=Daily learning-card quiz sheet
+
+[Timer]
+# 07:15, ahead of claude-changelog-watch at 07:37 — the sheet is the thing to read with coffee,
+# and the two jobs are better off not starting together. Off the hour and off the half-hour on
+# purpose, same as its sibling: nothing here needs a round number.
+OnCalendar=*-*-* 07:15:00
+# A server is usually up at 07:15, but a reboot window that swallows the run would otherwise mean
+# a morning with no sheet at all. Safe to catch up: render-sheet.sh reads whatever is due at the
+# moment it runs and overwrites the day's file, so a late run produces the correct sheet rather
+# than a stale one. Cards do not advance here — only /quiz moves an interval — so a catch-up run
+# cannot double-count anything.
+Persistent=true
+# No deadline, so let systemd batch it rather than wake the machine for it.
+AccuracySec=5min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
