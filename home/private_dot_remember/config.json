@@ -1,0 +1,6 @@
+{
+  "_comment": "memory_inject_max_bytes caps what the remember plugin's SessionStart hook cat's into every session; a file over the cap is NAMED rather than injected, and stays greppable on disk. The rule this cap encodes: only the live buffer is injected, and all history is named and fetched on demand -- which is what the SessionStart banner already tells the reader to do with the rotated archives. Measured against /home/ubuntu/server/.remember on 2026-08-21, 1400 bytes injects now.md (913 bytes) and names today-2026-08-21.md (5342), archive.md (2262) and recent.md (1375). That is about 9 KB off the ~10.4 KB the store injected before this. The ordering cannot be expressed as a byte cap the other way round -- keeping the daily file while dropping the historical ones is impossible, because every daily file is larger than recent.md -- so the live buffer is the boundary instead. Top-level _-prefixed keys are stripped at merge time by lib-memory-dir.sh, so this comment never reaches config().",
+  "thresholds": {
+    "memory_inject_max_bytes": 1400
+  }
+}
