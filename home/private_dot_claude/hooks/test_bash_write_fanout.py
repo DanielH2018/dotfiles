@@ -124,6 +124,39 @@ with tempfile.TemporaryDirectory() as tmp:
         extracted("make 2>&1 | grep -c error", root) == [],
     )
 
+    # ── heredoc bodies are content, not shell ────────────────────────────────────────
+    #
+    # The payload carries the whole file for a heredoc write, and file content is full
+    # of characters that mean something to a shell parser. A Markdown blockquote is a
+    # bare `>`, so without stripping the body first the hook reads a redirect out of the
+    # prose and hands an untouched file to auto-format and chezmoi-guard — a silent
+    # wrong write, which is the failure the whole hook exists to prevent.
+
+    check(
+        "a blockquote in the body is not a redirect",
+        extracted("cat > a.txt <<'EOF'\n> b.txt is the index\nEOF", root) == ["a.txt"],
+    )
+    check(
+        "a shell command quoted in the body is not run",
+        extracted(
+            "cat > a.txt <<'EOF'\nRun `sed -i s/x/y/ b.txt` to fix it.\nEOF", root
+        )
+        == ["a.txt"],
+    )
+    check(
+        "an unquoted delimiter is handled",
+        extracted("cat > a.txt <<EOF\n> b.txt\nEOF", root) == ["a.txt"],
+    )
+    check(
+        "a tab-indented terminator is handled",
+        extracted("cat > a.txt <<-EOF\n> b.txt\n\tEOF\necho done", root) == ["a.txt"],
+    )
+    check(
+        "a write after the heredoc is still found",
+        extracted("cat > a.txt <<'EOF'\n> nope\nEOF\necho x > b.txt", root)
+        == ["a.txt", "b.txt"],
+    )
+
     # ── the escape hatch ─────────────────────────────────────────────────────────────
 
     check(

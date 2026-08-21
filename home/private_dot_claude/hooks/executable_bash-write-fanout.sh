@@ -65,6 +65,40 @@ declare -a TOKENS=()
 # pattern it reads as an attempt to escape the surrounding quote and shellcheck says so.
 BACKSLASH=$'\x5c'
 
+strip_heredocs() {
+  # Drop every heredoc BODY, keeping the line that opens it.
+  #
+  # This has to happen before tokenizing, and it is the difference between a useful hook
+  # and a destructive one. The payload's command string contains the whole file for a
+  # `cat > doc.md <<'EOF'` write, and file content is not shell: a Markdown blockquote
+  # line is a bare `>`, so the tokenizer would read `> README.md` out of the prose and
+  # hand an untouched file to auto-format and chezmoi-guard. Rewriting a file the command
+  # never wrote is precisely the failure this hook exists to prevent.
+  #
+  # It also bounds the cost. The tokenizer walks one character at a time, which is fine
+  # for a command line and quadratic on the tens of kilobytes a heredoc body can carry.
+  #
+  # The opening line survives, so the `> file` that names the real target is still seen.
+  local input=$1 out='' line delim='' dash=0 trimmed
+  while IFS= read -r line; do
+    if [ -n "$delim" ]; then
+      trimmed=$line
+      # `<<-` lets the terminator be indented with tabs.
+      [ "$dash" = 1 ] && trimmed=${line#"${line%%[![:space:]]*}"}
+      [ "$trimmed" = "$delim" ] && delim=''
+      continue
+    fi
+    out+=$line$'\n'
+    # `<<EOF`, `<<'EOF'`, `<<"EOF"`, `<<-EOF`, with or without a space after the operator.
+    if [[ $line =~ \<\<(-?)[[:space:]]*[\'\"]?([A-Za-z_][A-Za-z0-9_-]*) ]]; then
+      dash=0
+      [ "${BASH_REMATCH[1]}" = "-" ] && dash=1
+      delim=${BASH_REMATCH[2]}
+    fi
+  done <<<"$input"
+  printf '%s' "$out"
+}
+
 tokenize() {
   local s=$1
   local n=${#s}
@@ -113,7 +147,7 @@ tokenize() {
 declare -a CANDIDATES=()
 
 extract_paths() {
-  tokenize "$1"
+  tokenize "$(strip_heredocs "$1")"
   local i=0 n=${#TOKENS[@]} t tgt cmdword='' inplace=0
   while [ "$i" -lt "$n" ]; do
     t=${TOKENS[i]}
