@@ -57,6 +57,20 @@ My dotfiles and Claude config are managed across **two repos** — edit the *sou
 
 Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-laptop-config` respectively.
 
+## Working in isolation
+
+Isolate before editing, and treat a failure to isolate as a stop rather than a fallback.
+
+The background-job harness says "if EnterWorktree fails, continue in place." Do not: in
+place is the shared checkout, so a session whose isolation fails degrades to the *least*
+safe mode and says nothing about it. **Retry `EnterWorktree` once. If it fails again,
+make no edits — report the failure and stop.** A scratch dir is not the fallback either;
+`$CLAUDE_JOB_DIR/tmp` holds working files, never repo edits.
+
+This binds only where isolation was called for in the first place. Reading, searching and
+answering questions happen in place as usual, and a session already inside
+`.claude/worktrees/` is already isolated.
+
 ## Git conventions
 
 - Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `--no-verify`, `--no-gpg-sign`, and anything else that bypasses signing are off the table.
