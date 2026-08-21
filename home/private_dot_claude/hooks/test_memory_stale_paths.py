@@ -98,6 +98,60 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check("prose with a slash is ignored", stale("either `and/or` works") == [])
 
+    # ── a memory that names a path BECAUSE it is gone ────────────────────────────────
+    #
+    # The dominant false positive on the first real run: three of the four memories
+    # reported were describing an absence, not asserting a presence, and each was
+    # correct as written. Re-reporting those is how a session-start line trains its
+    # reader to skip it. The marker has to be found in prose that wraps mid-sentence, so
+    # the check reads a character window rather than a line.
+
+    check(
+        "a path the memory says no longer exists",
+        stale("guarded by `ansible/roles/gone.yml`, which no longer exists") == [],
+    )
+    check(
+        "a path the memory says was deleted",
+        stale("`ansible/roles/gone.yml` was deleted in commit abc1234") == [],
+    )
+    check(
+        "the marker may follow the path across a line break",
+        stale(
+            "`AUTOMATIONS_YAML` still pointed at\n`ansible/roles/gone.yml`. That\n"
+            "directory has no `files/` and no archive copy, so it raised."
+        )
+        == [],
+    )
+    check(
+        "a live claim is still reported when the marker is far away",
+        stale(
+            "The gate is `ansible/roles/gone.yml`.\n\n"
+            + ("filler. " * 40)
+            + "\nSomething unrelated was removed last week."
+        )
+        == ["ansible/roles/gone.yml"],
+    )
+    check(
+        "one live mention outweighs another that is marked gone",
+        stale(
+            "`ansible/roles/gone.yml` no longer exists.\n\n"
+            + ("filler. " * 40)
+            + "\nRun the check in `ansible/roles/gone.yml` before deploying."
+        )
+        == ["ansible/roles/gone.yml"],
+    )
+
+    # A path whose own filename contains a marker word must not suppress itself. This is
+    # the failure mode with teeth: it silences exactly the files most likely to have
+    # been deleted, and it does so silently. `ansible/roles/gone.yml` above is the same
+    # guard from the other direction — it is reported only because the needle is cut out
+    # of its own window.
+    check(
+        "a filename containing a marker word does not silence itself",
+        stale("The list is in `docs/retired-hosts.md`, read it first.")
+        == ["docs/retired-hosts.md"],
+    )
+
     # ── end to end ───────────────────────────────────────────────────────────────────
 
     subprocess.run(

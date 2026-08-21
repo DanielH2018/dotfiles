@@ -83,6 +83,74 @@ def candidate_paths(text: str) -> set[str]:
     return found
 
 
+def already_says_it_is_gone(text: str, token: str) -> bool:
+    """Does the memory name this path *because* it no longer exists?
+
+    The dominant false positive, and it dominates hard: on the first real run, three of
+    the four memories reported were describing an absence rather than asserting a
+    presence — "still pointed at `<path>`. That directory has no `files/`", "guarded by
+    `<path>`, which no longer exists", "`<path>` … the 11 Error Backup CRs no longer
+    exist". Each was correct as written, and re-reporting a memory that already records
+    the deletion is how a session-start line teaches its reader to skip it.
+
+    So: look at the prose around the mention for an absence marker. A window rather than
+    a sentence, because these files wrap mid-sentence and a line-based read misses the
+    half that carries the marker.
+
+    The path is cut out of its own window first, and that is not a detail. A file named
+    `remove_stale_backups.py` or `docs/retired-hosts.md` otherwise matches the marker
+    list with its own name and suppresses itself forever — the one failure this check
+    must not have, since it silences exactly the paths most likely to have been deleted.
+
+    The failure direction is otherwise deliberate. A genuinely stale path in a memory
+    that happens to say "removed" nearby goes unreported — a miss, and a miss costs
+    nothing here, where a false alarm costs the whole report's credibility.
+    """
+    markers = (
+        "no longer",
+        "no such",
+        "does not exist",
+        "doesn't exist",
+        "has no",
+        "was deleted",
+        "is deleted",
+        "was removed",
+        "were removed",
+        "is gone",
+        "are gone",
+        "retired",
+        "dangling",
+        "never existed",
+        "never created",
+        "declined",
+        "not adopted",
+        "used to",
+        "moved to",
+        "replaced by",
+        "superseded",
+        "which no longer",
+    )
+    needle = f"`{token}`"
+    seen = False
+    start = 0
+    while True:
+        i = text.find(needle, start)
+        if i < 0:
+            # Every mention carried a marker — or there were none to check, in which
+            # case the path got here unquoted and this test has nothing to say about it.
+            return seen
+        seen = True
+        end = i + len(needle)
+        # The surrounding prose only. Including the needle lets a path match the marker
+        # list with its own filename — see the docstring; that bug silences the very
+        # paths most likely to be stale.
+        window = (text[max(0, i - 200) : i] + " " + text[end : end + 200]).lower()
+        if not any(m in window for m in markers):
+            # One mention that reads as a live claim is enough to report the path.
+            return False
+        start = i + len(needle)
+
+
 def stale_paths(text: str, repo: Path) -> list[str]:
     """Paths this memory names that are gone, given their top directory still exists."""
     gone = []
@@ -94,8 +162,11 @@ def stale_paths(text: str, repo: Path) -> list[str]:
             continue
         if not (repo / head).is_dir():
             continue  # not a path into this repo, or its whole directory is gone
-        if not (repo / token).exists():
-            gone.append(token)
+        if (repo / token).exists():
+            continue
+        if already_says_it_is_gone(text, token):
+            continue
+        gone.append(token)
     return sorted(gone)
 
 

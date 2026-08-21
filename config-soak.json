@@ -153,8 +153,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
-      "hash": "f7c15f5cace4a66ee24b41a744c875c7e3824bf3404e2e985cd811ad0abe709e",
-      "landed": "2026-08-21T15:25:57.903Z"
+      "hash": "e937d1cb5df7f958a36fa40588bb7f0712a1ef900426b9fe4816fd4a6a50a4ae",
+      "landed": "2026-08-21T16:08:17.080Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify-log.sh",
@@ -308,8 +308,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "98201585c62ee09adc1f02621363ed2310aca8f26f233a81531d013c75ac9fd5",
-      "landed": "2026-08-21T15:25:57.903Z"
+      "hash": "141a372dae2ebd040ccf0c4153bca7c9e3c463a5eb2a5d81d0aa06a1e0eb7035",
+      "landed": "2026-08-21T16:08:17.080Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
