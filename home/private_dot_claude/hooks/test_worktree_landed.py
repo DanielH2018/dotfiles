@@ -185,14 +185,19 @@ with tempfile.TemporaryDirectory() as tmp:
         and "branch -d wt-landed" in landed.get("reason", "")
         and "Never -D" in landed.get("reason", ""),
     )
-    # Order is load-bearing: fetch.prune is on, so pulling first prunes the tracking ref
-    # that -d relies on to see a squash-merged branch as landed.
+    # Both orders are needed, one per merge shape: the pull prunes the tracking ref a
+    # squash-merged branch needs, and is the only thing that brings a ff land's
+    # tip into the primary's HEAD.
     reason = landed.get("reason", "") if landed else ""
     check(
         "the branch deletion is ordered before the pull",
         "branch -d" in reason
         and "pull --ff-only" in reason
         and reason.index("branch -d") < reason.index("pull --ff-only"),
+    )
+    check(
+        "the block asks for a second -d attempt after the pull",
+        "BEFORE the pull" in reason and "AFTER the pull" in reason,
     )
 
     # Asked once, never again for this tree: merging is often not the end of the work
