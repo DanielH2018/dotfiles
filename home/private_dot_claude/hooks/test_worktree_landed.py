@@ -178,6 +178,22 @@ with tempfile.TemporaryDirectory() as tmp:
         and "pull --ff-only" in landed.get("reason", "")
         and str(t["repo"]) in landed.get("reason", ""),
     )
+    # Removing a worktree leaves its branch behind; nothing else deletes it in-session.
+    check(
+        "the block tells the session to delete the branch with -d, never -D",
+        bool(landed)
+        and "branch -d wt-landed" in landed.get("reason", "")
+        and "Never -D" in landed.get("reason", ""),
+    )
+    # Order is load-bearing: fetch.prune is on, so pulling first prunes the tracking ref
+    # that -d relies on to see a squash-merged branch as landed.
+    reason = landed.get("reason", "") if landed else ""
+    check(
+        "the branch deletion is ordered before the pull",
+        "branch -d" in reason
+        and "pull --ff-only" in reason
+        and reason.index("branch -d") < reason.index("pull --ff-only"),
+    )
 
     # Asked once, never again for this tree: merging is often not the end of the work
     # (merge, deploy, verify), and a hook that re-blocks every turn would nag a session

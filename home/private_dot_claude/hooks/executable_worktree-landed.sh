@@ -27,6 +27,14 @@
 # staying quiet. The gh call is the one network call in this file. It is reached only when
 # the free local test has already failed, it is timeout-bounded, and every failure — no gh,
 # no auth, no GitHub remote, an API error — falls through to silence.
+#
+# Cleanup is three things, not one: leave the worktree, delete the branch it left behind,
+# fast-forward the primary checkout. The order in the block text is load-bearing. `git
+# branch -d` accepts a squash-merged branch only while the stale refs/remotes/origin ref
+# still carries its tip (see delete_branch in prune-worktrees.py), and fetch.prune is on
+# here — so pulling first prunes that ref and turns the deletion into a refusal only `-D`
+# can clear. prune-worktrees.py sweeps orphaned branches too, but it runs at the next
+# session start, by which time the window has usually closed; in-session is inside it.
 
 set -u
 
@@ -126,7 +134,14 @@ jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" 
     "- If ExitWorktree reports no active worktree session, it cannot act here. Say so " +
     "in one line and stop: prune-worktrees.py removes \($path) at the next session " +
     "start, once this session'"'"'s lock owner is gone.\n" +
-    "- Then, and only after leaving the worktree, bring the primary checkout up to " +
+    "- Then delete the branch, which removing the worktree leaves behind: " +
+    "git -C \($primary) branch -d \($branch). Do this BEFORE the pull below: -d " +
+    "accepts a squash-merged branch only while its stale refs/remotes/origin ref " +
+    "still points at the tip, and fetch.prune is on, so the pull is what closes that " +
+    "window. Never -D. If -d refuses, leave the branch and say so in one line — the " +
+    "refusal means git could not establish that the work landed, and prune-worktrees.py " +
+    "reports the branch for a person to settle.\n" +
+    "- Last, bring the primary checkout up to " +
     "date so the next session and any deploy read the merged tree: " +
     "git -C \($primary) pull --ff-only. Where the repo has a deploy lock, take it " +
     "first (in DanielH2018/server: flock /var/lock/server-git-tree.lock). If the " +
