@@ -10,6 +10,15 @@
          SessionStart, then the UI paints `* Claude Code` over it, so the state never showed
          (observed in Warp's sidebar 2026-08-19). This yields the title to the hook. */}}
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
+    {{/* prune-artifacts.sh sweeps ~/.claude/artifacts on SessionStart; this is its window.
+         The hook's own default is 7 days, which is right for a scratch page but too short
+         for a findings write-up or an audit that gets cited weeks after the work landed.
+         30 keeps a month of reports reachable from a link that was pasted into a PR.
+
+         The clock runs from last modification, so an artifact that keeps being republished
+         never expires. `find -mtime +30` truncates the day count, so a file is deleted once
+         it is 31 full days old. Set to 0 to disable the sweep entirely. */}}
+    "CLAUDE_ARTIFACT_RETENTION_DAYS": "30",
 {{ if has .chezmoi.hostname (list "daniel-box" "daniel-server" "daniel-pi") }}
     {{/* sudo run from a `!` command has no terminal to prompt on, so without an askpass
          helper it just refuses. ~/.zshenv sets this too, but that only reaches shells that
