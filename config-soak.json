@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "7a667cd5d5c2dfa2fedc1b0b0133adab476cbabeebe9f915bd2a440e23e93529",
-      "landed": "2026-08-21T15:37:20.954Z"
+      "hash": "9df8bfb61b93c2c21020e0f63354f9ad083e7b4c9ce05de09f1a84675ddc9e0a",
+      "landed": "2026-08-22T15:39:11.809Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -45,6 +45,11 @@
       "path": "home/private_dot_claude/agents/root-cause.md",
       "hash": "2772f8c4ca7e26250a76c223022e3c3bc54c4ce57150200a37269e62eef80ac3",
       "landed": "2026-07-29T21:20:52.171Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/__pycache__/test_worktree_landed.cpython-314-pytest-9.1.1.pyc",
+      "hash": "64206e3a0a6aa5bac70e34826318c3d02db4a465dbca1bf96922695ccd03c373",
+      "landed": "2026-08-22T15:39:11.809Z"
     },
     {
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
@@ -273,8 +278,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "722584e1062f36ea1bf50be79fca314f98a10c9ad376c54dfb28b7aff148d1a6",
-      "landed": "2026-08-22T13:31:22.635Z"
+      "hash": "64485df213dde163c71f0c1a079215799e191f4378e4552724a77cc85dff99e1",
+      "landed": "2026-08-22T15:39:11.809Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -328,8 +333,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "3845eab3900e5d0125b112ca051c388d609f6f8b3d9a424f70b28cfc788ef970",
-      "landed": "2026-08-22T13:31:22.635Z"
+      "hash": "7bfef4a797d1b2f1539f2fd54fb052cb6befa7e0902723ad6533e7d0639e065f",
+      "landed": "2026-08-22T15:39:11.809Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",

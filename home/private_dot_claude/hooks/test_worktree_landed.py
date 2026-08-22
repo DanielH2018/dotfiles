@@ -238,6 +238,54 @@ with tempfile.TemporaryDirectory() as tmp:
         "the squash block says the pull request landed, not that the commits did",
         bool(squashed) and "pull request is merged" in squashed.get("reason", ""),
     )
+    # The squash case gets a DIFFERENT cleanup. ExitWorktree tests reachability, so it
+    # refuses every rewritten branch. Until 2026-08-22 the block told the session to
+    # accept that refusal and stop, stranding the tree the hook had just proven landed.
+    squash_reason = squashed.get("reason", "") if squashed else ""
+    check(
+        "the squash block warns that ExitWorktree will refuse",
+        "WILL refuse" in squash_reason,
+    )
+    check(
+        "the squash block still warns off discard_changes",
+        "discard_changes" in squash_reason,
+    )
+    # Order is load-bearing: "keep" releases the lock and lifts the isolation guard,
+    # and git holds the branch until the worktree is gone.
+    check(
+        "the squash block asks for ExitWorktree keep before the git steps",
+        'action "keep"' in squash_reason
+        and "worktree remove" in squash_reason
+        and squash_reason.index('action "keep"')
+        < squash_reason.index("worktree remove"),
+    )
+    check(
+        "the squash block removes the worktree before deleting the branch",
+        "worktree remove" in squash_reason
+        and "branch -d" in squash_reason
+        and squash_reason.index("worktree remove") < squash_reason.index("branch -d"),
+    )
+    # -D is the point of this path. It supplies the fact -d cannot reach once the
+    # tracking ref is pruned — but only after -d has been tried, and only here.
+    check(
+        "the squash block offers -D only as a fallback to -d",
+        "branch -d" in squash_reason and "capital-D" in squash_reason,
+    )
+    check(
+        "the squash block never forces the worktree removal",
+        "Never --force" in squash_reason,
+    )
+    # A four-step sequence that half-fails must not leave the session improvising.
+    check(
+        "the squash block says to stop at the first failing step",
+        "Stop at the first step that fails" in squash_reason,
+    )
+    # The ancestry path must not learn -D from its neighbour: a refusal there is a
+    # signal, not an obstacle.
+    check(
+        "the ancestry block still forbids -D",
+        "Never -D on this path" in reason and "capital-D" not in reason,
+    )
     check(
         "no gh on PATH is silent",
         run(t["squashed_then_edited"], GH_BIN=str(STUB_DIR / "no-such-gh")) is None,

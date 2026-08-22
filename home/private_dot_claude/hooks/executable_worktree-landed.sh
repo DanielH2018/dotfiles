@@ -155,9 +155,13 @@ refusal here means real work this hook could not see — report it and stop.
 - If ExitWorktree reports no active worktree session, it cannot act here. Say so in one line \
 and stop: prune-worktrees.py removes $TOPLEVEL at the next session start, once this session's \
 lock owner is gone.
-- Then check whether the branch survived the removal, and if it did: \
-git -C $PRIMARY branch -d $BRANCH. The tip is an ancestor, so -d has everything it needs. If \
-it still refuses, leave the branch and say so in one line."
+- Then delete the branch, which removing the worktree leaves behind: \
+git -C $PRIMARY branch -d $BRANCH. Try it BEFORE the pull below AND, if it refuses, once more \
+AFTER the pull — -d accepts a branch merged into HEAD or into its upstream, and a \
+fast-forward or merge-commit land does not put the tip in the primary's own HEAD until that \
+pull brings it down. Never -D on this path: with the tip an ancestor, -d has every fact it \
+needs, so a refusal here is telling you something. If -d refuses both times, leave the branch \
+and say so in one line — prune-worktrees.py reports it for a person to settle."
 else
   REMOVAL="- ExitWorktree with action \"remove\" WILL refuse here, reporting \"N commits on \
 $BRANCH\". That is not a finding: the merge rewrote the commits, so the tool's reachability \

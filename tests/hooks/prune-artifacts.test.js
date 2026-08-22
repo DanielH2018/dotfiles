@@ -31,9 +31,17 @@ function write(file, daysOld) {
 }
 
 function run({ art, state }, env = {}) {
+  // The hook's OWN default retention is what most of these tests assert, so the ambient
+  // value must not reach it. settings.json exports CLAUDE_ARTIFACT_RETENTION_DAYS=30 into
+  // every Claude session, which inherited straight through here: five tests failed under
+  // `git push`'s gate while passing in CI, where the variable is unset. Dropping it from
+  // the inherited copy leaves an explicit `env` override still winning, which is what the
+  // window tests below rely on.
+  const inherited = { ...process.env };
+  delete inherited.CLAUDE_ARTIFACT_RETENTION_DAYS;
   const r = spawnSync('bash', [HOOK], {
     input: '{}', encoding: 'utf8',
-    env: { ...process.env, CLAUDE_ARTIFACTS_DIR: art, CLAUDE_ARTIFACT_STATE_DIR: state, ...env },
+    env: { ...inherited, CLAUDE_ARTIFACTS_DIR: art, CLAUDE_ARTIFACT_STATE_DIR: state, ...env },
   });
   assert.strictEqual(r.status, 0, `hook exits 0 (stderr: ${r.stderr})`);
   return r;
