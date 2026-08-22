@@ -55,8 +55,6 @@ My dotfiles and Claude config are managed across **two repos** — edit the *sou
 - **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/hooks/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
 
-Committing in each repo stays manual: `~/.local/share/chezmoi` and `~/work-laptop-config` respectively.
-
 ## Working in isolation
 
 Isolate before editing, and treat a failure to isolate as a stop rather than a fallback.
