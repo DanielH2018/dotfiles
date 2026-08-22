@@ -11,6 +11,7 @@ it to delete its workspace. The quiet cases outnumber the one that must not be q
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,23 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
 
 failures = []
 
+# A stand-in for `gh pr list --head <branch> --state merged --json number --jq length`:
+# it prints 1 when the branch is listed in $STUB_MERGED, 0 otherwise. Provenance is the
+# whole point of that call, so the tests have to be able to state both answers.
+STUB_DIR = Path(tempfile.mkdtemp(prefix="worktree-landed-stub-"))
+GH_STUB = STUB_DIR / "gh"
+MERGED_LIST = STUB_DIR / "merged"
+MERGED_LIST.write_text("")
+GH_STUB.write_text(
+    "#!/bin/bash\n"
+    "branch=\n"
+    "while [ $# -gt 0 ]; do\n"
+    '  case "$1" in --head) branch="$2"; shift 2 ;; *) shift ;; esac\n'
+    "done\n"
+    'if grep -qxF "$branch" "$STUB_MERGED" 2>/dev/null; then echo 1; else echo 0; fi\n'
+)
+GH_STUB.chmod(0o755)
+
 
 def check(name, condition):
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
@@ -38,15 +56,26 @@ def check(name, condition):
         failures.append(name)
 
 
-def run(cwd, stop_hook_active=False):
-    """Run the hook in cwd; return its decision, or None when it stayed silent."""
+def run(cwd, stop_hook_active=False, **env):
+    """Run the hook in cwd; return its decision, or None when it stayed silent.
+
+    GH_BIN points at the stub below by default, so no test reaches the network. The
+    squash fallback shells out to `gh` whenever the local ancestor test fails, which
+    covers several of the silent cases too, not just the squash ones.
+    """
     result = subprocess.run(
         ["bash", str(HOOK)],
         cwd=cwd,
         input=json.dumps({"session_id": "test", "stop_hook_active": stop_hook_active}),
         capture_output=True,
         text=True,
-        env={**os.environ, "HOOK_INPUT_LIB": str(HERE / "hook-input.sh")},
+        env={
+            **os.environ,
+            "HOOK_INPUT_LIB": str(HERE / "hook-input.sh"),
+            "GH_BIN": str(GH_STUB),
+            "STUB_MERGED": str(MERGED_LIST),
+            **env,
+        },
     )
     if result.returncode != 0:
         return {"error": result.stderr.strip() or f"exit {result.returncode}"}
@@ -77,7 +106,7 @@ def build(root):
     trees = repo / ".claude" / "worktrees"
     trees.mkdir(parents=True)
 
-    def worktree(name, *, commit, push, land):
+    def worktree(name, *, commit, push, land, squash=False):
         path = trees / name
         git(["worktree", "add", "-q", "-b", f"wt-{name}", str(path)], repo)
         if commit:
@@ -86,6 +115,13 @@ def build(root):
             git(["commit", "-qm", name], path)
         if push:
             git(["push", "-q", "-u", "origin", f"wt-{name}"], path)
+        if squash:
+            # A squash merge: the branch tip is never an ancestor of the default branch,
+            # so only the PR record says this landed.
+            git(["merge", "-q", "--squash", f"wt-{name}"], repo)
+            git(["commit", "-qm", f"squash {name}"], repo)
+            git(["push", "-q", "origin", "main"], repo)
+            git(["fetch", "-q", "origin"], repo)
         if land:
             # A merge commit on the default branch — how both real repos land work.
             git(["merge", "-q", "--no-ff", "-m", f"merge {name}", f"wt-{name}"], repo)
@@ -102,6 +138,14 @@ def build(root):
         "unmerged": worktree("unmerged", commit=True, push=True, land=False),
         "dirty": worktree("dirty", commit=True, push=True, land=True),
         "fresh": worktree("fresh", commit=False, push=False, land=False),
+        "squashed": worktree(
+            "squashed", commit=True, push=True, land=False, squash=True
+        ),
+        # Squash-merged, then worked in again: the tip is no longer the commit the PR
+        # record refers to, so the merged PR proves nothing about what is on disk.
+        "squashed_then_edited": worktree(
+            "squashed-then-edited", commit=True, push=True, land=False, squash=True
+        ),
     }
 
 
@@ -126,6 +170,14 @@ with tempfile.TemporaryDirectory() as tmp:
         "the block covers the case where ExitWorktree cannot act",
         bool(landed) and "prune-worktrees.py" in landed.get("reason", ""),
     )
+    # Leaving the tree is half the job: the primary checkout still holds the pre-merge
+    # commit, and every later session and deploy reads its templates from there.
+    check(
+        "the block tells the session to fast-forward the primary checkout",
+        bool(landed)
+        and "pull --ff-only" in landed.get("reason", "")
+        and str(t["repo"]) in landed.get("reason", ""),
+    )
 
     # Asked once, never again for this tree: merging is often not the end of the work
     # (merge, deploy, verify), and a hook that re-blocks every turn would nag a session
@@ -148,6 +200,41 @@ with tempfile.TemporaryDirectory() as tmp:
     # which would otherwise block — so silence here is the detach, not the stamp.
     git(["checkout", "-q", "--detach"], t["landed2"])
     check("detached HEAD is silent", run(t["landed2"]) is None)
+
+    # The squash fallback. Until GitHub says the PR merged, a rewritten tip is
+    # indistinguishable from work in progress.
+    check(
+        "a squash-merged branch is silent while gh reports no merged PR",
+        run(t["squashed"]) is None,
+    )
+    MERGED_LIST.write_text("wt-squashed\nwt-squashed-then-edited\n")
+    squashed = run(t["squashed"])
+    check(
+        "a squash-merged branch blocks once gh reports the PR merged",
+        bool(squashed) and squashed.get("decision") == "block",
+    )
+    check(
+        "the squash block says the pull request landed, not that the commits did",
+        bool(squashed) and "pull request is merged" in squashed.get("reason", ""),
+    )
+    check(
+        "no gh on PATH is silent",
+        run(t["squashed_then_edited"], GH_BIN=str(STUB_DIR / "no-such-gh")) is None,
+    )
+    check(
+        "a gh that fails is silent",
+        run(t["squashed_then_edited"], GH_BIN="false") is None,
+    )
+    # A commit made after the PR merged exists only here, whatever the PR record says.
+    (t["squashed_then_edited"] / "later").write_text("later\n")
+    git(["add", "."], t["squashed_then_edited"])
+    git(["commit", "-qm", "after the merge"], t["squashed_then_edited"])
+    check(
+        "a commit made after the merge is silent",
+        run(t["squashed_then_edited"]) is None,
+    )
+
+shutil.rmtree(STUB_DIR, ignore_errors=True)
 
 print()
 if failures:

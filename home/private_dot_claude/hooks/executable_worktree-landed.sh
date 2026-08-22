@@ -15,19 +15,18 @@
 # this hook stay quiet and leaves the tree to the sweeper — the same fail-quiet direction
 # prune-worktrees.py takes, and worth more than a per-turn network call.
 #
-# Known gap: a squash or rebase merge rewrites the commits, so the branch tip is not an
-# ancestor of the default branch and this hook stays quiet. That used to be excused here
-# on the grounds that both repos merge with merge commits or a fast-forward push, which is
-# false for DanielH2018/server — `gh repo view` reports both squashMergeAllowed and
-# rebaseMergeAllowed, and worktree-renovate-k8s-autodeploy (PR #158, merged) still fails
-# the ancestor test.
+# A squash or rebase merge rewrites the commits, so the branch tip is not an ancestor of
+# the default branch and the test above says nothing. That is not rare here: DanielH2018/
+# server allows both (`gh repo view` reports squashMergeAllowed and rebaseMergeAllowed),
+# and PR #317 — squash-merged as 78358ddb — is why this fallback exists.
 #
-# The gap is covered, but by the sweeper rather than here. prune-worktrees.py falls back
-# to `git cherry` and REPORTS a branch whose every commit already has a patch-equivalent
-# on the default branch. It reports rather than reaps because patch-id equality is not
-# provenance, and that is also why the fallback does not belong in this hook: a Stop hook
-# can only block, and blocking a session to hand it something a person has to adjudicate
-# is worse than letting the next session start with the same fact on screen.
+# The fallback asks GitHub whether a PR with this branch as its head is merged, which is
+# provenance rather than a guess. `git cherry`, which prune-worktrees.py falls back to, is
+# not: patch-id equality is why that sweeper REPORTS instead of reaping, and a Stop hook
+# can only block, so handing a session something a person has to adjudicate is worse than
+# staying quiet. The gh call is the one network call in this file. It is reached only when
+# the free local test has already failed, it is timeout-bounded, and every failure — no gh,
+# no auth, no GitHub remote, an API error — falls through to silence.
 
 set -u
 
@@ -92,15 +91,32 @@ fi
 
 # Landed: every commit here is already in the default branch, so nothing is recoverable
 # only from this directory.
-git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null || exit 0
+LANDED_AS="every commit is already in $DEFAULT"
+if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
+  # The tip may have been rewritten by a squash or rebase merge. Before trusting GitHub's
+  # answer, require that the tip is the commit that was pushed: a merged PR says nothing
+  # about a commit made in this worktree afterwards. A deleted upstream ref — the usual
+  # state after a merge with branch deletion — leaves nothing to disagree with.
+  UPSTREAM=$(git rev-parse --verify --quiet '@{upstream}' 2>/dev/null)
+  if [ -n "$UPSTREAM" ] && [ "$UPSTREAM" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    exit 0
+  fi
+
+  GH="${GH_BIN:-gh}"
+  command -v "$GH" >/dev/null 2>&1 || exit 0
+  MERGED=$(timeout 5 "$GH" pr list --head "$BRANCH" --state merged --limit 1 \
+    --json number --jq 'length' 2>/dev/null) || exit 0
+  [ "$MERGED" = "1" ] || exit 0
+  LANDED_AS="its pull request is merged into $DEFAULT"
+fi
 
 : >"$STAMP" 2>/dev/null
 
-jq -n --arg branch "$BRANCH" --arg default "$DEFAULT" --arg path "$TOPLEVEL" '{
+jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" --arg path "$TOPLEVEL" '{
   decision: "block",
   reason: (
-    "This session'"'"'s worktree is finished with: \($branch) is clean and every commit " +
-    "is already in \($default), so nothing here exists only on disk.\n\n" +
+    "This session'"'"'s worktree is finished with: \($branch) is clean and \($landed), " +
+    "so nothing here exists only on disk.\n\n" +
     "Clean it up now — this is a standing instruction from the user'"'"'s config, not " +
     "something to ask about:\n" +
     "- If this session created the worktree with EnterWorktree, call " +
@@ -109,7 +125,13 @@ jq -n --arg branch "$BRANCH" --arg default "$DEFAULT" --arg path "$TOPLEVEL" '{
     "correct outcome — report it and stop.\n" +
     "- If ExitWorktree reports no active worktree session, it cannot act here. Say so " +
     "in one line and stop: prune-worktrees.py removes \($path) at the next session " +
-    "start, once this session'"'"'s lock owner is gone.\n\n" +
+    "start, once this session'"'"'s lock owner is gone.\n" +
+    "- Then, and only after leaving the worktree, bring the primary checkout up to " +
+    "date so the next session and any deploy read the merged tree: " +
+    "git -C \($primary) pull --ff-only. Where the repo has a deploy lock, take it " +
+    "first (in DanielH2018/server: flock /var/lock/server-git-tree.lock). If the " +
+    "primary is on another branch, is dirty, or the fast-forward refuses, leave it " +
+    "alone and say so in one line — never merge, reset or stash it.\n\n" +
     "Then finish your reply. Do not start new work. If there is still work to do here " +
     "(a deploy to run, a verification to make), say so and keep the worktree — this " +
     "fires once per worktree and will not ask again."
