@@ -401,7 +401,7 @@
            shell commands a deny rule could match. longhorn-k8s.local.daniel-hunter.com is a
            TRUSTED domain, so a DELETE against its API is not otherwise caught. */}}
       "Deleting or lifecycle-expiring objects in the Backblaze B2 or Cloudflare R2 Longhorn backup buckets, deleting Longhorn volumes, snapshots or backups through the Longhorn UI or API, or `helm uninstall` of longhorn — each destroys the same backup chain `kubectl delete` would, by a route no command pattern catches. Clears only when the user names the specific volume or backup and the operation",
-      "Running `scripts/deploy.sh` or `uv run ansible-playbook` WITHOUT `--check` against this inventory reconfigures live homelab infrastructure — Traefik, Authelia, Pi-hole DNS, WireGuard. Clears when the user asked to deploy, naming the service or the playbook"
+      "Running `scripts/deploy.sh` or `uv run ansible-playbook` WITHOUT `--check` against this inventory reconfigures live homelab infrastructure — Traefik, Authelia, Pi-hole DNS, WireGuard. Clears when the user asked to deploy, naming the service or the playbook. It also clears for the standing post-merge procedure in the server repo's CLAUDE.md ('After a PR Merges — Pull, Deploy, Verify'): once a PR this session authored has merged and master CI is green on the merge commit, deploying the services that PR changed completes the request the user already made — it is not a fresh ask, and the session should not stop for confirmation between merge, pull, deploy and verify. That standing clearance covers only the services in the merged diff; a wider deploy still needs the user to name it"
     ],
 
     {{/* hard_deny, not soft_deny, and the reason is a precedence fact `claude auto-mode critique`
