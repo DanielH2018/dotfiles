@@ -1,19 +1,59 @@
 #!/usr/bin/env bash
-# Shim: forward xclip calls to WSLg's wl-copy/wl-paste, which bridge to the
-# Windows clipboard. Installed because /etc/wsl.conf sets appendWindowsPath=false
-# (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
+# Shim standing in for xclip on hosts that have no real one. It serves two callers
+# that both reach for xclip to read the clipboard, Claude Code above all:
 #
-# WSL-ONLY. chezmoi deploys this to every machine, and ~/.local/bin precedes
-# /usr/bin on PATH, so off WSL the shim would shadow a real xclip and forward to
-# a wl-paste that isn't there — every read failing with an empty result rather
-# than an error. Gate first, hand off to the real binary otherwise.
+#   WSL       — forward to WSLg's wl-copy/wl-paste, which bridge to the Windows
+#               clipboard. Needed because /etc/wsl.conf sets appendWindowsPath=false
+#               (so clip.exe isn't on PATH) and real xclip/xsel aren't installed.
+#   SSH       — forward to the clipboard bridge on the workstation at the far end of
+#               the connection, over a socket ssh reverse-forwards onto this host.
+#               Needed because Claude Code reads the clipboard by shelling out on the
+#               machine the CLI runs on, which over SSH is a server with no clipboard
+#               at all — so an image paste silently does nothing.
+#
+# Neither may shadow a real xclip. chezmoi deploys this to every machine and
+# ~/.local/bin precedes /usr/bin on PATH, so on a host that has the real binary this
+# would otherwise forward to a wl-paste that isn't there — every read failing with an
+# empty result rather than an error. Pick the backend first, real binary winning.
+backend=wsl
 if ! grep -qi microsoft /proc/version 2>/dev/null && [ -z "$WSL_DISTRO_NAME" ]; then
   for real in /usr/bin/xclip /bin/xclip; do
     [ -x "$real" ] && exec "$real" "$@"
   done
-  echo "xclip: not installed (this shim is WSL-only)" >&2
-  exit 127
+
+  # The bridge socket is created by ssh's RemoteForward and lives only while that
+  # connection does, so its presence is the whole test for "a clipboard is reachable".
+  # Requiring SSH_CONNECTION too keeps a stale socket from a killed session out of the
+  # picture on a local login.
+  CLIP_BRIDGE_SOCK="${CLIP_BRIDGE_SOCK:-/run/user/$(id -u)/clip-bridge.sock}"
+  if [ -n "${SSH_CONNECTION:-}" ] && [ -S "$CLIP_BRIDGE_SOCK" ]; then
+    # socat is the cleaner client but is not installed by default anywhere here;
+    # openbsd-netcat is, and its -U speaks unix sockets. Check for the flag rather
+    # than for the name — netcat-traditional answers to `nc` and cannot do this.
+    if command -v socat >/dev/null 2>&1; then
+      bridge_client=socat
+    elif command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q '\-U'; then
+      bridge_client=nc
+    else
+      echo "xclip: clipboard bridge is up but neither socat nor a -U-capable nc is installed" >&2
+      exit 127
+    fi
+    backend=bridge
+  else
+    echo "xclip: not installed (this shim serves WSL and bridged SSH sessions only)" >&2
+    exit 127
+  fi
 fi
+
+# One request per connection: send the line, read the reply, done. The desktop end
+# (clip-bridge) decides what it is willing to serve and answers nothing otherwise, so
+# this side does no filtering of its own -- it would only drift from that allowlist.
+bridge_req() {
+  case "$bridge_client" in
+    socat) printf '%s\n' "$1" | socat -t 10 - "UNIX-CONNECT:$CLIP_BRIDGE_SOCK" ;;
+    nc)    printf '%s\n' "$1" | nc -N -U "$CLIP_BRIDGE_SOCK" ;;
+  esac
+}
 #
 # Two things beyond a plain forward, both for Claude Code's image paste:
 #   - The TARGETS probe is answered with `wl-paste -l` (the type list). The old
@@ -39,6 +79,29 @@ for arg in "$@"; do
   esac
   prev="$arg"
 done
+
+if [ "$backend" = bridge ]; then
+  # Read only. A write would mean letting a remote host set this workstation's
+  # clipboard, which is a different feature with a different risk (swapping out a
+  # command you were about to paste), so it is refused rather than half-supported.
+  [ "$out" -eq 1 ] || { echo "xclip: the clipboard bridge is read-only" >&2; exit 127; }
+
+  case "$target" in
+    TARGETS|"") req=targets ;;
+    *)          req="$target" ;;
+  esac
+
+  # Via a file, not command substitution: the reply is image bytes, and $(...) both
+  # eats NUL and strips trailing newlines. The size check is also how an empty reply
+  # -- no image on the clipboard, or a type the bridge declines -- becomes a non-zero
+  # exit, which is what the caller's `xclip ... || wl-paste ...` chain expects.
+  tmp=$(mktemp) || exit 1
+  trap 'rm -f "$tmp"' EXIT
+  bridge_req "$req" > "$tmp" 2>/dev/null
+  [ -s "$tmp" ] || exit 1
+  cat "$tmp"
+  exit 0
+fi
 
 if [ "$out" -eq 1 ]; then
   case "$target" in

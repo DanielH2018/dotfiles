@@ -1,0 +1,9 @@
+[Unit]
+Description=Clipboard bridge connection %i
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clip-bridge
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal

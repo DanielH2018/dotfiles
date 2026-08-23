@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Clipboard bridge: serves this desktop's clipboard IMAGES to an SSH session on
+# another host, so Claude Code running there can answer Ctrl+V.
+#
+# Claude Code reads the clipboard by shelling out on the machine the CLI process
+# runs on. Over SSH that is the remote, which has no clipboard at all — so the
+# paste silently does nothing. The remote's `xclip` (the shim next to this file)
+# proxies the two reads Claude makes back here over an ssh RemoteForward.
+#
+# Wire protocol, one request per connection: read one line, write the reply, exit.
+#   targets           -> the image types on the clipboard, one per line
+#   image/<subtype>   -> the raw bytes of that representation
+#   anything else     -> nothing, exit non-zero
+#
+# IMAGES ONLY, and that is the security boundary, not an omission. While an ssh
+# session is up, any process on the remote host running as that user can talk to
+# the forwarded socket. A bridge that also served text/* would hand them whatever
+# was last copied out of Bitwarden. The allowlist below is deny-by-default for
+# exactly that reason — widen it only after thinking about who is on the far end.
+#
+# Runs from clip-bridge@.service, socket-activated by clip-bridge.socket, one
+# process per connection. stdin and stdout are the socket.
+set -uo pipefail
+
+# The types Claude Code probes for, and no others. Its grep is
+# image/(png|jpeg|jpg|gif|webp|bmp); image/jpg is not a real MIME type and no
+# compositor offers it, so it is absent here on purpose.
+readonly ALLOWED='^image/(png|jpeg|gif|webp|bmp)$'
+
+# A hung reader would pin a process per connection, so bound the read. The client
+# writes its request immediately after connecting.
+IFS= read -r -t 5 req || exit 1
+req=${req%$'\r'}
+
+case "$req" in
+  targets)
+    # Filtered rather than passed through: the reply names what this bridge is
+    # willing to serve, so a caller never asks for a type the read below refuses.
+    wl-paste --list-types 2>/dev/null | grep -E "$ALLOWED" || exit 1
+    ;;
+  *)
+    [[ $req =~ $ALLOWED ]] || exit 1
+    wl-paste --no-newline --type "$req" 2>/dev/null || exit 1
+    ;;
+esac

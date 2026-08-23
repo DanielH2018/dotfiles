@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Enable the clipboard-bridge socket, which serves this desktop's clipboard images to
+# Claude Code running over SSH on daniel-box / daniel-server. run_onchange re-runs (and
+# reloads systemd) whenever the units or the handler change — their hashes are embedded
+# below so edits retrigger it. Idempotent.
+#   socket:  {{ include "dot_config/systemd/user/clip-bridge.socket" | sha256sum }}
+#   service: {{ include "dot_config/systemd/user/clip-bridge@.service" | sha256sum }}
+#   tunnel:  {{ include "dot_config/systemd/user/clip-bridge-tunnel@.service" | sha256sum }}
+#   handler: {{ include "dot_local/bin/executable_clip-bridge" | sha256sum }}
+set -eu
+{{ if eq .chezmoi.hostname "daniel-desktop" -}}
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+  systemctl --user enable --now clip-bridge.socket || true
+  # One tunnel per remote that runs Claude Code. daniel-pi is absent on purpose: no claude
+  # there, so a tunnel would hold a connection open to serve nothing.
+  for host in daniel-box daniel-server; do
+    systemctl --user enable --now "clip-bridge-tunnel@${host}.service" || true
+  done
+fi
+{{- else -}}
+: # units are not deployed off daniel-desktop (see .chezmoiignore)
+{{- end }}

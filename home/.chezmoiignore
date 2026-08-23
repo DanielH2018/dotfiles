@@ -154,6 +154,19 @@ Scripts
 .local/bin/fix-games-mount
 {{ end }}
 
+# The clipboard bridge serves THIS desktop's Wayland clipboard to Claude Code running over
+# SSH elsewhere (see .local/bin/clip-bridge). It is the desktop half of a pair: the remote
+# half is the xclip shim, which deploys everywhere and stays inert without a bridge socket.
+# Gated on the hostname rather than on the OS because the listener needs a live compositor
+# to read from — on daniel-box or daniel-server there is no clipboard to serve, so the units
+# would start, bind a port, and answer every request with nothing.
+{{ if ne .chezmoi.hostname "daniel-desktop" }}
+.local/bin/clip-bridge
+.config/systemd/user/clip-bridge.socket
+.config/systemd/user/clip-bridge@.service
+.config/systemd/user/clip-bridge-tunnel@.service
+{{ end }}
+
 # The sudo shim (see the script for why it exists) belongs wherever SUDO_ASKPASS is configured
 # and sudo refuses to use it without -A. That was the headless hosts, and it now includes this
 # work laptop: measured 2026-08-04 (sudo 1.9.17p2) the same way daniel-box was, plain sudo

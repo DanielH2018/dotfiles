@@ -1,0 +1,16 @@
+[Unit]
+Description=Clipboard bridge listener for SSH sessions
+Documentation=file:%h/.local/bin/clip-bridge
+
+[Socket]
+# Loopback only. The remote never reaches this port directly — ssh RemoteForward
+# connects to it from the local ssh client, so binding any wider would expose the
+# desktop clipboard to the LAN for no gain.
+ListenStream=127.0.0.1:17321
+# One handler process per connection, with the socket as its stdio. The handler
+# serves a single request and exits, so there is no long-lived daemon holding the
+# clipboard open.
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

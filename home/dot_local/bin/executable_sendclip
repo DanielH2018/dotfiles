@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Send the clipboard image to a remote host and print the path it landed on, so it can be
+# pasted into a Claude Code session running there.
+#
+# The fallback for when the clipboard bridge is not available (see clip-bridge next to this
+# file). The bridge makes Ctrl+V work natively but needs the remote sshd to permit a
+# reverse forward; this needs nothing but an ssh connection, because it pushes rather than
+# letting the far end pull.
+#
+# usage: sendclip [host]        # host defaults to daniel-box
+set -euo pipefail
+
+host=${1:-daniel-box}
+
+# Ask before transferring rather than after: wl-paste writes nothing and exits non-zero for
+# a type it does not have, which would otherwise create an empty file on the remote and
+# look like a successful send.
+types=$(wl-paste --list-types 2>/dev/null || true)
+mime=
+for candidate in image/png image/jpeg image/webp image/gif; do
+  case $'\n'"$types"$'\n' in
+    *$'\n'"$candidate"$'\n'*) mime=$candidate; break ;;
+  esac
+done
+
+if [ -z "$mime" ]; then
+  echo "sendclip: no image on the clipboard (types: ${types//$'\n'/, })" >&2
+  exit 1
+fi
+
+# Timestamped so a second send does not overwrite an image the session is still using, and
+# under the user's own runtime dir (0700) rather than a shared /tmp.
+remote="/run/user/\$(id -u)/clip-$(date +%Y%m%d-%H%M%S).${mime#image/}"
+
+# One connection, not two: the remote both writes the file and echoes back the path it
+# expanded, so a send costs a single ssh against UFW's six-in-30s rate limit. $remote is
+# deliberately expanded on the client for the timestamp and on the remote for $(id -u),
+# which is why it is single-quoted into the command rather than escaped wholesale.
+wl-paste --no-newline --type "$mime" | ssh "$host" "cat > $remote && printf '%s\\n' $remote"

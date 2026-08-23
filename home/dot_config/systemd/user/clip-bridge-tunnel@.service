@@ -1,0 +1,43 @@
+[Unit]
+Description=Clipboard bridge reverse tunnel to %i
+Documentation=file:%h/.local/bin/clip-bridge
+Requires=clip-bridge.socket
+After=clip-bridge.socket network-online.target
+Wants=network-online.target
+# Retry forever instead of giving up after a burst -- the desktop can be up long before
+# the server is. Lives in [Unit], not [Service], despite pairing with Restart= below.
+StartLimitIntervalSec=0
+
+[Service]
+# One long-lived ssh whose only job is to carry the reverse forward, rather than a
+# RemoteForward line in the chezmoi-managed ssh client config. Warp re-invokes ssh with
+# its OWN ControlMaster and a random ControlPath, and a command-line -o beats the config
+# file, so every Warp pane is its own master and would re-bind the same socket -- the
+# identical trap that got LocalForward removed from that config, documented at length
+# there. Tying the forward to this unit instead means the socket's lifetime is the
+# bridge's, not some terminal pane's, and panes come and go freely.
+#
+# ControlMaster=no / ControlPath=none for the same reason in reverse: this connection
+# must not join or become a shared master, or closing a pane could take it down.
+#
+# The remote path is literal because RemoteForward cannot expand a variable and its
+# %-tokens do not cover the remote uid. Both hosts run the sys user at uid 1000
+# (verified); a host where that differs needs its own unit, not a template change.
+ExecStart=/usr/bin/ssh -N -T \
+    -o BatchMode=yes \
+    -o ControlMaster=no \
+    -o ControlPath=none \
+    -o ExitOnForwardFailure=yes \
+    -o StreamLocalBindUnlink=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -R /run/user/1000/clip-bridge.sock:127.0.0.1:17321 \
+    %i
+Restart=always
+# 30s, not the usual 5. UFW on these hosts REJECTs six ssh connections in 30s and that
+# reads as the host being down, so a tunnel retrying against an unreachable box must not
+# spend that budget. See StartLimitIntervalSec in [Unit] for the give-up behaviour.
+RestartSec=30
+
+[Install]
+WantedBy=default.target
