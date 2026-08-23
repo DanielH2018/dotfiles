@@ -36,4 +36,5 @@ remote="/run/user/\$(id -u)/clip-$(date +%Y%m%d-%H%M%S).${mime#image/}"
 # expanded, so a send costs a single ssh against UFW's six-in-30s rate limit. $remote is
 # deliberately expanded on the client for the timestamp and on the remote for $(id -u),
 # which is why it is single-quoted into the command rather than escaped wholesale.
+# shellcheck disable=SC2029  # the client-side expansion of $remote is the point, see above
 wl-paste --no-newline --type "$mime" | ssh "$host" "cat > $remote && printf '%s\\n' $remote"
