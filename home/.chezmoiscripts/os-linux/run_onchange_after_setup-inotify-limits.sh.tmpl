@@ -10,9 +10,11 @@
 #   code[872304]: [File Watcher (node.js)] Failed to watch /home/daniel/.config/Code/User
 #                 for changes using fs.watch() (Error: EMFILE: too many open files)
 #
-# Errno 24 is EMFILE, and that is the whole diagnosis: inotify_init() returns EMFILE for the
-# per-user instance cap specifically, and ENFILE for the system-wide one. A process fd limit is
-# a third thing and is not it — nofile here is 1048576.
+# Errno 24 is EMFILE. inotify_init() documents that for the per-user instance cap, against
+# ENFILE for the system-wide one, so the errno alone rules out the system-wide reading. It does
+# NOT by itself rule out per-process fd exhaustion, which surfaces the same errno when the fd
+# allocation fails — that one is excluded separately, by nofile being 1048576 here. The errno and
+# that measurement are the diagnosis together; neither settles it alone.
 #
 # **The knob is max_user_instances, NOT max_user_watches.** This is worth stating because every
 # guide to this symptom raises max_user_watches, and measured on this box (2026-08-23) that
