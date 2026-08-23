@@ -1,0 +1,103 @@
+{{ if and (eq .chezmoi.os "linux") (eq .profile "workstation") -}}
+#!/bin/sh
+# Managed by chezmoi (run_onchange). Raises the per-user inotify INSTANCE limit, which this
+# desktop exhausts at idle.
+#
+# The symptom was VS Code losing every file watcher on launch, once per launch:
+#
+#   code[872304]: [...file_path_watcher_inotify.cc:338]
+#                 inotify_init() failed: Too many open files (24)
+#   code[872304]: [File Watcher (node.js)] Failed to watch /home/daniel/.config/Code/User
+#                 for changes using fs.watch() (Error: EMFILE: too many open files)
+#
+# Errno 24 is EMFILE, and that is the whole diagnosis: inotify_init() returns EMFILE for the
+# per-user instance cap specifically, and ENFILE for the system-wide one. A process fd limit is
+# a third thing and is not it — nofile here is 1048576.
+#
+# **The knob is max_user_instances, NOT max_user_watches.** This is worth stating because every
+# guide to this symptom raises max_user_watches, and measured on this box (2026-08-23) that
+# value sits at 2392 of 272131 — 0.9% of its cap. Raising it would have changed nothing. The
+# instance count was 119 of a default 128, i.e. nine spare, against a VS Code launch that wants
+# several at once.
+#
+# It is demand, not a leak. Two counts four minutes apart both read exactly 119, and the
+# consumers are ordinary long-lived GUI processes: plasmashell 24, spotify 11, warp-terminal 6,
+# obsidian 6, then xdg-desktop-portal / steamwebhelper / mullvad-gui / jellyfin / Discord at 5
+# each and a tail of ~15 smaller ones. Nothing here is misbehaving; there are simply about
+# twenty always-on applications on a limit set for far fewer.
+#
+# Why 1024, and why the headroom is close to free: inotify's memory cost is in WATCHES, at
+# roughly a kB each, not in instances. With watches at 0.9% of their cap there is no pressure on
+# the resource that actually costs anything, so the generous value is the cheap one. 1024 is
+# 8.6x current use, which is what takes this off the list of things to revisit the next time an
+# Electron app is installed.
+#
+# To see current usage — this is the count the numbers above came from, and the one to re-run
+# before changing the value:
+#
+#   cd /proc; t=0
+#   for p in [0-9]*; do
+#     [ "$(stat -c %u /proc/$p 2>/dev/null)" = "$(id -u)" ] || continue
+#     n=$(ls -l /proc/$p/fd 2>/dev/null | grep -c 'anon_inode:inotify')
+#     t=$((t+n))
+#   done; echo "instances: $t"
+#
+# The off switch, which needs the reload because removing the file does not lower a running
+# value:
+#
+#   sudo rm /etc/sysctl.d/99-inotify.conf && sudo sysctl --system
+#
+# Deliberately NOT done here:
+#   raising max_user_watches   not the constraint; see above. Raising it would look like a fix
+#                              and fix nothing, which is worse than leaving it alone.
+#   chasing plasmashell's 24   normal for KDE 6 with applets, and measured stable across
+#                              snapshots. A leak would show growth; this does not.
+#   a per-application cap      inotify has no such thing. The limit is per-user, so the only
+#                              lever is the one set here.
+#
+# bump-to-reinstall: inotify-limits v1
+set -u
+TAG=inotify-limits
+{{ includeTemplate "require-sudo" . }}
+
+# Overridable purely so the tests can drive this against a throwaway path; nothing in normal
+# operation sets it.
+: "${SYSCTL_DIR:=/etc/sysctl.d}"
+
+# The instance ceiling. See the note above before changing.
+INSTANCES=1024
+
+SYSCTL_CONF="$SYSCTL_DIR/99-inotify.conf"
+
+work="$(mktemp -d)" || { echo "$TAG: could not create a work directory" >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+cat > "$work/inotify.conf" <<CONF
+# Managed by chezmoi. Fedora's default max_user_instances is 128; the ~20 always-on GUI
+# applications on this desktop hold 119 of it at idle, and VS Code fails inotify_init() with
+# EMFILE on every launch. NOT max_user_watches — that sits at 2392 of 272131 and is not the
+# constraint here.
+fs.inotify.max_user_instances = $INSTANCES
+CONF
+
+# Decidable without root: /etc/sysctl.d is world-readable, so a converged apply never prompts
+# for a password.
+cmp -s "$work/inotify.conf" "$SYSCTL_CONF" && exit 0
+
+require_sudo "the inotify instance limit"
+
+sudo mkdir -p "$SYSCTL_DIR" || { echo "$TAG: could not create $SYSCTL_DIR" >&2; exit 1; }
+sudo install -m 0644 "$work/inotify.conf" "$SYSCTL_CONF" || { echo "$TAG: could not write $SYSCTL_CONF" >&2; exit 1; }
+echo "$TAG: wrote $SYSCTL_CONF"
+
+# Without this the new ceiling waits for a reboot, and the failing application keeps failing in
+# the meantime for no reason. -p applies this one file rather than re-running every drop-in.
+sudo sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 \
+  && echo "$TAG: raised fs.inotify.max_user_instances to $INSTANCES" \
+  || echo "$TAG: sysctl -p reported a problem with $SYSCTL_CONF" >&2
+
+# Said because a process that already failed inotify_init() does not retry: the new ceiling
+# applies to instances created from now on, so the application that surfaced this needs a
+# restart before it sees any benefit.
+echo "$TAG: applications that already failed to watch files need restarting"
+{{ end -}}
