@@ -15,8 +15,10 @@
 # Files absent from this dir still resolve out of /usr/share/sounds/ocean, which is why only
 # bell.oga is shipped.
 #
-# Regenerate the sample with:
-#   ffmpeg -i /usr/share/sounds/ocean/stereo/bell.oga -af 'volume=0.50' -c:a libvorbis -q:a 5 bell.oga
+# Regenerate the sample with (0.10 = -20 dB; the desktop-login/logout files in this theme sit at -12 dB.
+# Tuned by ear over ssh against `printf '\a'`: 0.50 too loud, 0.25 and 0.20 close, 0.15 still
+# above where 0.10 landed. Quieter than the sibling files on purpose -- the bell fires often):
+#   ffmpeg -i /usr/share/sounds/ocean/stereo/bell.oga -af 'volume=0.10' -c:a libvorbis -q:a 5 bell.oga
 # The system file is a symlink to bell-window-system.oga; this override is a real file.
 [Sound Theme]
 Name=Ocean
