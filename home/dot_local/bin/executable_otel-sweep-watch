@@ -87,8 +87,12 @@ case $report in
   *FINDINGS:*) ;;
   *)
     # A clean run says so, so that "no line today" reads as "the check did not run"
-    # rather than "the check was happy". Same up/down shape as the other host health
-    # checks, which is what lets a monitor treat a missing beat as a fault.
+    # rather than "the check was happy" — but only to someone reading back. Nothing
+    # watches for the absence of an up beat: `probe.py alerts` reads status=down
+    # lines, and no Kuma push monitor exists for this check. The up line is a
+    # durable record for a post-hoc grep, not an alert. It uses the same shape as
+    # the other host health checks so that adding such a monitor later needs no
+    # change here.
     if command -v logger >/dev/null 2>&1; then
       logger -t otel-sweep-watch \
         "status=up $(printf '%s' "$report" | tr '\n' ';' | cut -c1-300)"

@@ -57,9 +57,13 @@ HOSTS = {
 # land on whichever node the scheduler picks. Nothing pins them — on 2026-08-23 a
 # reboot moved all three from daniel-box to daniel-server.
 #
-# This only suppresses when a machine has NO backend ready, and PROBE now falls
-# back to the ClusterIP, so a node without the pods still reports them ready.
-# Reaching this state means no backend answered from that node at all.
+# This only suppresses when a machine has NO backend ready. That was the normal
+# case for a node holding no pods; since PROBE falls back to the ClusterIP it is
+# not, because a node without the pods now reports them ready anyway. So the
+# suppression is close to dead code, and the honest end state is probably to drop
+# it and let a no-backends row speak for itself. Left in place for now because
+# removing it changes what the daily watcher reports, which deserves its own
+# change rather than riding along with this one.
 #
 # Events from either node land in the same Loki; split them by os_version, since
 # nothing in the pipeline records a hostname. Read the live kernels from
