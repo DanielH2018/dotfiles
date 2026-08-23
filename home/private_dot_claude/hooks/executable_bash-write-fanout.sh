@@ -237,7 +237,13 @@ fi
 DOWNSTREAM=(auto-format.sh lint-after-edit.sh chezmoi-guard.sh link-artifact.sh)
 
 OUTPUTS=$(mktemp) || exit 0
-# shellcheck disable=SC2317  # invoked by the EXIT trap below, not called directly
+# Two codes, because 0.11.0 split the old SC2317 in two: unreachable code kept that code,
+# while a function nothing calls directly became SC2329. The single suppression stopped
+# covering this line and the pre-push lint went red on a file nobody had touched.
+#
+# Keep prose OFF the directive line's own form: any comment whose first word is `shellcheck`
+# is parsed as a directive, so a continuation line starting that way is a parse error (SC1073).
+# shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap below, not called directly
 cleanup() { [ -n "${OUTPUTS:-}" ] && command rm -f -- "$OUTPUTS"; }
 trap cleanup EXIT
 
