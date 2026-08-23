@@ -47,11 +47,6 @@
       "landed": "2026-07-29T21:20:52.171Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/__pycache__/test_worktree_landed.cpython-314-pytest-9.1.1.pyc",
-      "hash": "64206e3a0a6aa5bac70e34826318c3d02db4a465dbca1bf96922695ccd03c373",
-      "landed": "2026-08-22T15:39:11.809Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
       "hash": "e5c3c3230654a6d4262acd99f5f906c3450dc1d2ebde3adf2cd79799166885c1",
       "landed": "2026-08-09T19:04:35.602Z"
