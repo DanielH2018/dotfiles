@@ -19,7 +19,7 @@ set -u
 
 case "${1:-done}" in
   # WAV is the WSL cue off /mnt/c; THEME is the freedesktop equivalent elsewhere.
-  input) WAV='Windows Notify System Generic.wav'; THEME='message' ;;   # attention: needs input
+  input) WAV='chimes.wav';                        THEME='complete' ;;  # needs input; softer sample, see volume note
   done)  WAV='chimes.wav';                        THEME='complete' ;;  # softer: turn complete
   *)     WAV='chimes.wav';                        THEME='complete' ;;
 esac
@@ -28,8 +28,13 @@ WIN_MEDIA="/mnt/c/Windows/Media/$WAV"
 THEME_SOUND="/usr/share/sounds/freedesktop/stereo/$THEME.oga"
 
 # Full volume was the complaint that started this file's volume support, so the cue is played
-# below it: loud enough to carry over normal desktop noise, quiet enough not to startle. The
-# default was 35% and is 50% -- 35% was missed from a neighbouring Warp tab.
+# below it: loud enough to carry over normal desktop noise, quiet enough not to startle.
+#
+# Volume history: 35%, then 50% because 35% was missed from a neighbouring Warp tab, and now
+# 35% again -- because gain was never the whole story. The `input` cue used to be the bright
+# `message` blip, and a bright blip at low gain goes from loud to inaudible without passing
+# through gentle, which is what made 35% unusable the first time. `input` now plays the same
+# softer `complete` sample as `done`, so the low gain carries where it previously did not.
 # CLAUDE_SOUND_VOLUME (0-100) overrides it; anything that isn't a plain integer in range falls
 # back to the default rather than passing garbage to the player. canberra-gtk-play and aplay
 # have no volume flag, so they stay at their native level regardless of this setting.
@@ -37,7 +42,7 @@ THEME_SOUND="/usr/share/sounds/freedesktop/stereo/$THEME.oga"
 # The default is named once. It was written twice -- as the :- fallback and again in the
 # validation branch -- and editing one of the two would have made invalid input play at a
 # different volume from the default, silently.
-DEFAULT_VOLUME_PCT=50
+DEFAULT_VOLUME_PCT=35
 PCT="${CLAUDE_SOUND_VOLUME:-$DEFAULT_VOLUME_PCT}"
 if ! [[ "$PCT" =~ ^[0-9]+$ ]] || [[ "$PCT" -gt 100 ]]; then
   PCT="$DEFAULT_VOLUME_PCT"
