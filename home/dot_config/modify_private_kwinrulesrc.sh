@@ -85,7 +85,7 @@ maximizevert=true
 maximizevertrule=3
 position=3283,904
 positionrule=3
-wmclass=md.Obsidian
+wmclass=md.obsidian.Obsidian
 wmclasscomplete=false
 wmclassmatch=1
 [d31e37ca-991b-4265-b5a5-770bbdb42c82]

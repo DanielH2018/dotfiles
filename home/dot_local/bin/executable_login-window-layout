@@ -15,8 +15,10 @@
 # rule is gone; place_firefox below does the same job once, after the window has
 # finished sizing itself, and leaves later popups alone.
 #
-# Order matters for the bottom monitor: Spotify and Obsidian are placed on top of
-# each other there, so Obsidian starts last to end up as the visible one.
+# Order matters on two monitors. Spotify and Obsidian are placed on top of each
+# other on the bottom one, so Obsidian starts last to end up as the visible one.
+# Bitwarden opens a 1200x720 window over a maximized Discord on the left one, so
+# it starts after Discord for the same reason -- started first it is hidden.
 #
 # Every launch is guarded on whether the app is already running, so running this
 # by hand mid-session tops up what is missing instead of opening duplicates.
@@ -26,6 +28,11 @@ set -uo pipefail
 # maps its window well after the process starts; starting Obsidian too early
 # leaves Spotify on top.
 OBSIDIAN_DELAY="${OBSIDIAN_DELAY:-8}"
+
+# Seconds to wait after Discord before starting Bitwarden. Same reason as
+# OBSIDIAN_DELAY: Discord is Electron and maps its window well after the process
+# starts, and starting Bitwarden too early leaves Discord on top of it.
+BITWARDEN_DELAY="${BITWARDEN_DELAY:-8}"
 
 # Seconds to wait after starting Firefox before moving its window. Placing it at
 # map time is what the old rule did, and Firefox overrides geometry it did not
@@ -93,6 +100,29 @@ EOF
 # path shape rather than the /usr/bin launcher, which only execs into it and so
 # never appears in the process table itself.
 start Discord '/discord/app-[^/]*/Discord' discord
+
+# Bitwarden reaches a window by a different route from the rest of the set, and the
+# guarded start alone is not enough for it. Its own XDG autostart entry runs before this
+# script and passes --autostart, which leaves the app running with no window at all -- so
+# the guard below finds a process and skips, and the window never appears. That entry
+# cannot be turned off from here either: the desktop portal rewrites it from scratch every
+# time Bitwarden starts, so a Hidden=true added to it is gone by the next login.
+#
+# Invoking the app a second time is what opens the window. It is single-instance, so the
+# second invocation hands off to the process already running and adds no second one. The
+# cost is that a top-up run mid-session raises Bitwarden rather than leaving it alone,
+# which is the one place this script does not simply start what is missing.
+#
+# Backgrounded behind its delay so the rest of the set does not wait on it.
+(
+  sleep "$BITWARDEN_DELAY"
+  if ! start Bitwarden '/app/Bitwarden/bitwarden-app' flatpak run com.bitwarden.desktop; then
+    log "asking the running Bitwarden for its window"
+    flatpak run com.bitwarden.desktop >/dev/null 2>&1 &
+  fi
+) &
+bitwarden_pid=$!
+
 firefox_started=false
 start Firefox '^/usr/lib64/firefox/firefox' firefox && firefox_started=true
 start Warp '^(/usr/bin/warp-terminal|/opt/warpdotdev/warp-terminal/warp)' warp-terminal
@@ -113,6 +143,7 @@ start Obsidian '/app/obsidian' flatpak run md.obsidian.Obsidian
 # placement would be killed mid-sleep with nothing logged. Waiting on that one pid, never a
 # bare wait, which would also wait on the apps themselves and never return.
 [[ -n "$place_pid" ]] && wait "$place_pid"
+wait "$bitwarden_pid"
 
 # start returns non-zero for an app that was already running, and a top-up run where
 # everything is up would otherwise leave that as the script's own exit status.

@@ -33,6 +33,7 @@ const RUNNING = {
   warp: '/usr/bin/warp-terminal',
   spotify: '/app/extra/share/spotify/spotify',
   obsidian: '/app/obsidian --ozone-platform-hint=auto',
+  bitwarden: '/app/Bitwarden/bitwarden-app --autostart --ozone-platform=x11',
 };
 
 // Every launcher the script can invoke needs a stub here. A missing one used to reach the real
@@ -142,7 +143,7 @@ function readLaunched(marks) {
 // The script backgrounds every launch, so it exits before the stubs have written their marks.
 // Wait for the expected count rather than sampling once; `expect: 0` still has to wait, or the
 // test would pass simply by reading too early.
-function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position } = {}) {
+function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position, bwDelay = 0 } = {}) {
   const { bin, marks } = makeStubs(running);
   const env = {
     ...process.env,
@@ -150,6 +151,7 @@ function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position } =
     // rather than reach the real one. REAL_UTILS covers what the script legitimately needs.
     PATH: bin,
     OBSIDIAN_DELAY: String(delay),
+    BITWARDEN_DELAY: String(bwDelay),
     FIREFOX_PLACE_DELAY: String(placeDelay),
   };
   if (position) { env.FIREFOX_POSITION = position; }
@@ -176,23 +178,37 @@ function run({ running = [], delay = 0, expect = 0, placeDelay = 0, position } =
   return { stdout, launched, marks };
 }
 
-test('starts all five when nothing is running', { skip }, () => {
-  const { launched } = run({ expect: 5 });
+test('starts all six when nothing is running', { skip }, () => {
+  const { launched } = run({ expect: 6 });
   assert.deepStrictEqual(launched.sort(), [
     'discord ',
     'firefox ',
+    'flatpak run com.bitwarden.desktop',
     'flatpak run com.spotify.Client',
     'flatpak run md.obsidian.Obsidian',
     'warp-terminal ',
   ].sort());
 });
 
-test('starts nothing when all five are already running', { skip }, () => {
-  const { stdout, launched } = run({ running: Object.values(RUNNING) });
-  assert.deepStrictEqual(launched, [], 'a running app must not be started a second time');
-  for (const name of ['Discord', 'Firefox', 'Warp', 'Spotify', 'Obsidian']) {
+test('starts nothing new when all six are already running', { skip }, () => {
+  const { stdout, launched } = run({ running: Object.values(RUNNING), expect: 1 });
+  // Bitwarden is the one exception, and it is not a second process: the running instance may
+  // be the tray-only --autostart one, and re-invoking it is what opens its window.
+  assert.deepStrictEqual(launched, ['flatpak run com.bitwarden.desktop'],
+    'a running app must not be started a second time');
+  for (const name of ['Discord', 'Firefox', 'Warp', 'Spotify', 'Obsidian', 'Bitwarden']) {
     assert.match(stdout, new RegExp(`${name} already running, skipping`));
   }
+});
+
+// The failure this covers is silent: Bitwarden's own autostart entry starts it with
+// --autostart, the guard sees a process and skips, and the user gets no window at all.
+test('summons a window from an already-running Bitwarden', { skip }, () => {
+  const { stdout, launched } = run({ running: [RUNNING.bitwarden], expect: 6 });
+  assert.match(stdout, /Bitwarden already running, skipping/);
+  assert.match(stdout, /asking the running Bitwarden for its window/);
+  assert.strictEqual(launched.filter((l) => l === 'flatpak run com.bitwarden.desktop').length, 1,
+    'the running Bitwarden must be invoked exactly once to open its window');
 });
 
 // The bug this file exists for: Discord's launcher execs into a versioned directory, so
@@ -209,9 +225,10 @@ test('a new Discord version is still detected', { skip }, () => {
 });
 
 test('tops up only what is missing', { skip }, () => {
-  const { launched } = run({ running: [RUNNING.firefox, RUNNING.spotify], expect: 3 });
+  const { launched } = run({ running: [RUNNING.firefox, RUNNING.spotify], expect: 4 });
   assert.deepStrictEqual(launched.sort(), [
     'discord ',
+    'flatpak run com.bitwarden.desktop',
     'flatpak run md.obsidian.Obsidian',
     'warp-terminal ',
   ].sort());
@@ -226,7 +243,7 @@ test('starts Obsidian after Spotify', { skip }, () => {
   // race, with the marks arriving discord, firefox, warp-terminal, obsidian, spotify. log() runs
   // in the script's main process, in sequence, which is the thing actually under test:
   // this script decides what starts and in what order.
-  const { stdout, launched } = run({ delay: 0.1, expect: 5 });
+  const { stdout, launched } = run({ delay: 0.1, expect: 6 });
   const spotify = stdout.indexOf('starting Spotify');
   const obsidian = stdout.indexOf('starting Obsidian');
   assert.ok(spotify >= 0 && obsidian >= 0, 'both must start');
@@ -236,12 +253,29 @@ test('starts Obsidian after Spotify', { skip }, () => {
   assert.ok(launched.some((l) => l.includes('md.obsidian.Obsidian')), 'Obsidian must launch');
 });
 
+// Bitwarden opens a 1200x720 window on the left monitor, where Discord is maximized. Whichever
+// maps last is the visible one, so starting Bitwarden first hides it behind Discord outright.
+test('starts Bitwarden after Discord so it is not hidden behind it', { skip }, () => {
+  const { stdout, launched } = run({ expect: 6, bwDelay: 0.4 });
+  const discord = stdout.indexOf('starting Discord');
+  const bitwarden = stdout.indexOf('starting Bitwarden');
+  assert.ok(discord >= 0 && bitwarden >= 0, 'both must start');
+  assert.ok(bitwarden > discord, 'Bitwarden must start after Discord to end up on top');
+  assert.ok(launched.some((l) => l.includes('com.bitwarden.desktop')), 'Bitwarden must launch');
+});
+
+test('BITWARDEN_DELAY controls the wait before Bitwarden', { skip }, () => {
+  const started = Date.now();
+  run({ bwDelay: 0.8, expect: 6 });
+  assert.ok(Date.now() - started >= 700, 'the configured delay must actually be waited out');
+});
+
 test('OBSIDIAN_DELAY controls the wait before Obsidian', { skip }, () => {
   const started = Date.now();
   // 0.8s, and no lower: the five stub launches cost a couple of hundred ms by themselves, so
   // a threshold much under that would be satisfied even with the delay ignored outright, and
   // the test would stop discriminating rather than merely running faster.
-  run({ delay: 0.8, expect: 5 });
+  run({ delay: 0.8, expect: 6 });
   assert.ok(Date.now() - started >= 700, 'the configured delay must actually be waited out');
 });
 
@@ -249,7 +283,7 @@ test('OBSIDIAN_DELAY controls the wait before Obsidian', { skip }, () => {
 // popup windows extensions open and shrank them to a sliver in the corner. These tests pin
 // the two properties that made moving it worthwhile: it runs once, and only for a launch.
 test('places Firefox after starting it', { skip }, () => {
-  const { marks } = run({ expect: 5 });
+  const { marks } = run({ expect: 6 });
   const calls = waitForMark(marks, 'gdbus');
   assert.match(calls, /Scripting\.loadScript/, 'no KWin script was loaded, so nothing was placed');
   assert.match(calls, /Scripting\.start/, 'the script was loaded but never run');
@@ -258,7 +292,7 @@ test('places Firefox after starting it', { skip }, () => {
 });
 
 test('does not place Firefox when it was already running', { skip }, () => {
-  const { stdout, marks } = run({ running: Object.values(RUNNING) });
+  const { stdout, marks } = run({ running: Object.values(RUNNING), expect: 1 });
   execFileSync('sleep', ['0.5']);
   assert.strictEqual(readMark(marks, 'gdbus'), '',
     'a top-up run moved a window the user had already arranged');
@@ -266,7 +300,7 @@ test('does not place Firefox when it was already running', { skip }, () => {
 });
 
 test('unmaximizes before moving, or the window hangs off the output', { skip }, () => {
-  const { marks } = run({ expect: 5 });
+  const { marks } = run({ expect: 6 });
   waitForMark(marks, 'kwinscript');
   const js = readMark(marks, 'kwinscript');
   const unmax = js.indexOf('setMaximize(false, false)');
@@ -280,13 +314,13 @@ test('unmaximizes before moving, or the window hangs off the output', { skip }, 
 // placeDelay is 0 everywhere else, which would pass even if the placement were killed the
 // moment the script exited. This one outlives the parent's own work and still has to land.
 test('placement survives a delay longer than the rest of the script', { skip }, () => {
-  const { marks } = run({ expect: 5, delay: 0.1, placeDelay: 1 });
+  const { marks } = run({ expect: 6, delay: 0.1, placeDelay: 1 });
   assert.match(waitForMark(marks, 'gdbus', 5000), /Scripting\.loadScript/,
     'the placement was dropped when its parent finished first');
 });
 
 test('FIREFOX_POSITION picks the corner to maximize from', { skip }, () => {
-  const { marks } = run({ expect: 5, position: '40,80' });
+  const { marks } = run({ expect: 6, position: '40,80' });
   waitForMark(marks, 'kwinscript');
   assert.match(readMark(marks, 'kwinscript'), /x: 40, y: 80/,
     'the configured position did not reach the KWin script');
