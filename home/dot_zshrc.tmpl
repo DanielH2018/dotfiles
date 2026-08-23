@@ -160,6 +160,19 @@ alias configterminal="$EDITOR ~/.zshrc ~/.config/ghostty/config ~/.config/starsh
 {{- else }}
 alias configterminal="$EDITOR ~/.zshrc ~/.config/starship.toml"
 {{- end }}
+{{- if eq .chezmoi.os "linux" }}
+
+# marketplace.visualstudio.com returns 403 to some Mullvad exit IPs, so VS Code cannot
+# browse or install extensions while the tunnel is up on a blocked one. mullvad-exclude
+# puts the process tree in the split-tunnel cgroup, the same mechanism already used for
+# Discord and Steam. The GUI launcher is handled by the desktop override in
+# ~/.local/share/applications/code.desktop; this covers terminal launches.
+# Wrapping /usr/bin/code (the shell wrapper, not the binary) keeps the remote-CLI
+# behaviour it implements for VS Code's integrated terminal.
+if (( $+commands[mullvad-exclude] )) && [[ -x /usr/bin/code ]]; then
+  alias code='mullvad-exclude /usr/bin/code'
+fi
+{{- end }}
 
 # =============================================================================
 # KEYBINDINGS (history search & word nav)
