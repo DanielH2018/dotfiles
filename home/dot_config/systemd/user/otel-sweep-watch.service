@@ -13,9 +13,12 @@ Type=oneshot
 # from /usr/bin.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/otel-sweep-watch
-# Exit 1 means "findings", which is the whole point of the check — surface it in
-# `systemctl --user --failed` rather than letting systemd log it as a crash.
-SuccessExitStatus=1
+# Exit 1 means "findings", and the unit is deliberately left to fail on it so it appears in
+# `systemctl --user --failed`. There was a `SuccessExitStatus=1` here, which did the exact
+# opposite of what its own comment claimed: it told systemd exit 1 was success, so a run with
+# findings went `inactive (dead)` and showed up in no failed list. Combined with a headless
+# box, where notify-send has no bus, that made a real finding on 2026-08-23 invisible in every
+# channel at once. Do not re-add it without replacing the signal it removes.
 # Three machines, a per-session Loki query each on the deep pass. Nowhere near this in
 # practice; it exists so an unreachable host cannot leave the unit hanging until tomorrow.
 TimeoutStartSec=10min

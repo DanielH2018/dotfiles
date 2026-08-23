@@ -85,7 +85,16 @@ fi
 
 case $report in
   *FINDINGS:*) ;;
-  *) exit 0 ;;
+  *)
+    # A clean run says so, so that "no line today" reads as "the check did not run"
+    # rather than "the check was happy". Same up/down shape as the other host health
+    # checks, which is what lets a monitor treat a missing beat as a fault.
+    if command -v logger >/dev/null 2>&1; then
+      logger -t otel-sweep-watch \
+        "status=up $(printf '%s' "$report" | tr '\n' ';' | cut -c1-300)"
+    fi
+    exit 0
+    ;;
 esac
 
 findings=$(printf '%s' "$report" | sed -n '/FINDINGS:/,$p' | tail -n +2)
@@ -110,8 +119,23 @@ if [ -r "$state_dir/last-notified" ]; then
   fi
 fi
 
+# syslog first, and unconditionally — this is the only channel that works on the machine
+# where it matters most. On daniel-box there is no desktop bus for notify-send, the user
+# journal held no record of this unit at all, and `SuccessExitStatus=1` kept it out of
+# `systemctl --user --failed`. So on 2026-08-23 this check correctly found a dead query path
+# and told nobody. Syslog reaches Loki, which is where the other host health checks report
+# and where `probe.py alerts` already looks; `status=` is their convention.
+#
+# Outside the notify gate deliberately. That gate exists to stop a repeat *notification*
+# becoming noise, and a log line is not noise. A record written only on runs that happened
+# to change the fingerprint is a record with holes in it.
+if command -v logger >/dev/null 2>&1; then
+  logger -t otel-sweep-watch \
+    "status=down $(printf '%s' "$findings" | tr '\n' ';' | cut -c1-400)"
+fi
+
 if [ "$notify" = yes ]; then
-  # Best effort: a headless box has no bus, and the journal line above is still the record.
+  # Best effort: a headless box has no bus, and the syslog line above is the durable record.
   if command -v notify-send >/dev/null 2>&1; then
     notify-send --urgency=normal --icon=dialog-warning \
       "Claude telemetry" "$(printf '%s' "$findings" | head -5)" 2>/dev/null || true

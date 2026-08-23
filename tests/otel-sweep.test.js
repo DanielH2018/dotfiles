@@ -117,15 +117,20 @@ test('silent-session detection is skipped when Loki is unreachable', () => {
 });
 
 test('the remote probe only ever reaches a private address', () => {
-  // Loki is unpublished on daniel-server, so the probe resolves a container IP.
-  // That discovered value is the one place remote data selects a network target.
+  // The second candidate for each backend is the one place the probe targets
+  // something other than loopback, so it stays behind the RFC1918 guard.
   assert.match(SRC, /RFC1918 = re\.compile/);
-  assert.match(SRC, /if RFC1918\.match\(candidate\)/);
+  assert.match(SRC, /RFC1918\.match\(candidate\)/);
 });
 
 test('the probe performs no writes', () => {
-  const probe = SRC.slice(SRC.indexOf("PROBE = r'''"), SRC.indexOf("'''\n\n\ndef probe"));
-  assert.ok(!/\bopen\(/.test(probe), 'the probe must not open files for writing');
+  const probe = SRC.slice(SRC.indexOf("PROBE = r'''"), SRC.indexOf("'''\n\n\ndef is_self"));
+  // The deep scan reads transcripts, so `open` is permitted — but only for
+  // reading. Anything that could truncate or append is what this forbids, and
+  // naming the modes keeps the assertion about writes rather than about I/O.
+  for (const call of probe.match(/\bopen\([^)]*\)/g) || []) {
+    assert.match(call, /"rb?"/, `every open must name a read mode: ${call}`);
+  }
   assert.ok(!/urllib\.request\.Request\([^)]*method=/.test(probe), 'every request stays a plain GET');
   assert.ok(!/\bdata=/.test(probe), 'a request body would make it a POST');
 });
@@ -146,6 +151,80 @@ test('an unknown flag is refused rather than ignored', { skip }, () => {
     assert.match(String(err.stderr), /unrecognized arguments/);
     return true;
   });
+});
+
+// The fallback that keeps the sweep working across a reschedule. Both candidates
+// must stay literal and private, or the blanket allow rule stops being defensible.
+test('the cluster fallback is a fixed table of private literals', { skip }, () => {
+  const table = SRC.match(/CLUSTER_IP = \{([^}]*)\}/);
+  assert.ok(table, 'PROBE must carry a CLUSTER_IP table');
+  const addresses = [...table[1].matchAll(/"([\d.]+)"/g)].map((m) => m[1]);
+  assert.strictEqual(addresses.length, 3, 'one address per backend');
+  for (const address of addresses) {
+    assert.match(address, /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)[\d.]+$/,
+      'every fallback address must be RFC1918');
+  }
+});
+
+// The fallback used to be `docker inspect`, which returns nothing on a k3s node —
+// so the second candidate was dead code on both machines that needed it.
+test('the probe shells out to nothing', { skip }, () => {
+  assert.ok(!CODE.includes('"docker"'), 'no docker invocation may remain in PROBE');
+  assert.ok(!CODE.includes('container_ip'), 'the retired bridge lookup must be gone');
+});
+
+test('a machine does not ssh to itself', { skip }, () => {
+  const out = execFileSync(python, ['-c', `
+import importlib.util, socket, sys
+from importlib.machinery import SourceFileLoader
+loader = SourceFileLoader("sweep", ${JSON.stringify(SWEEP)})
+spec = importlib.util.spec_from_loader("sweep", loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+me = socket.gethostname().split(".")[0]
+print(m.is_self(me), m.is_self(me + ".local"), m.is_self("not-" + me), m.is_self(None),
+      m.dest_for("local") is None)
+`], { encoding: 'utf8' });
+  const [self, fqdn, other, none, localDest] = out.trim().split(' ');
+  assert.strictEqual(localDest, 'True', 'the local entry always runs here');
+  assert.strictEqual(self, 'True', 'the local hostname is self');
+  assert.strictEqual(fqdn, 'True', 'an FQDN for this machine is still self');
+  assert.strictEqual(other, 'False', 'a different machine is not self');
+  assert.strictEqual(none, 'False', 'the local entry has no ssh hop to skip');
+});
+
+// Session activity comes from the transcript's content, not its mtime. A
+// retention sweep re-stamped four transcripts from days earlier, and each then
+// looked like a live session exporting nothing — the exact shape of the finding
+// this tool exists to raise.
+test('transcript activity is read from content, not mtime', { skip }, () => {
+  const probe = SRC.slice(SRC.indexOf("PROBE = r'''"));
+  assert.ok(probe.includes('last_activity(path, st)'),
+    'the candidate cutoff must go through last_activity');
+  assert.ok(!/if st\.st_mtime >= cutoff/.test(probe),
+    'st_mtime must not be the activity signal');
+
+  const out = execFileSync(python, ['-c', `
+import ast, json, os, sys, tempfile, time, calendar
+src = open(${JSON.stringify(SWEEP)}).read()
+probe = src.split("PROBE = r'''")[1].split("'''")[0]
+tree = ast.parse(probe)
+wanted = [n for n in ast.walk(tree)
+          if (isinstance(n, ast.FunctionDef) and n.name == "last_activity")
+          or (isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "STAMP")]
+ns = {"re": __import__("re"), "time": time, "calendar": calendar, "open": open}
+exec(compile(ast.Module(body=wanted, type_ignores=[]), "<probe>", "exec"), ns)
+d = tempfile.mkdtemp()
+p = os.path.join(d, "s.jsonl")
+open(p, "w").write('{"timestamp":"2020-01-02T03:04:05.000Z"}\\n')
+os.utime(p, (time.time(), time.time()))   # fresh mtime, stale content
+st = os.stat(p)
+print(int(ns["last_activity"](p, st)), int(st.st_mtime))
+`], { encoding: 'utf8' });
+  const [activity, mtime] = out.trim().split(' ').map(Number);
+  assert.strictEqual(activity, Date.UTC(2020, 0, 2, 3, 4, 5) / 1000,
+    'the content timestamp wins over a fresh mtime');
+  assert.ok(mtime - activity > 86400, 'the mtime really was much newer');
 });
 
 // Live sweep. Skipped by default: it dials two other machines over ssh.

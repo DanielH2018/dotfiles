@@ -15,10 +15,12 @@ is no position where a caller-supplied string could become a command. subprocess
 is always called with an argv list and never with a shell, so there is nothing
 to escape from either. Output is JSON on stdout; nothing is written to disk.
 
-PROBE reaches only loopback. Its one exception is daniel-server, where Loki is
-not published on the host, so PROBE resolves the container's bridge address and
-refuses anything that is not RFC1918 — the discovered value can select a private
-address on that machine's own docker bridge and nothing else.
+PROBE reaches loopback first and a fixed table of cluster addresses second. That
+second candidate is what makes the sweep survive a reschedule: the backends bind
+their query ports to 127.0.0.1 on whichever node they land on, so a reboot can
+move the whole query path to the other machine. Both candidates are constants
+and both must pass an RFC1918 check, so neither position can be reached by a
+caller-supplied string.
 
   otel-sweep                 # fast sweep of all three machines
   otel-sweep --deep          # adds sessions that are exporting nowhere
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import subprocess
 import sys
 import time
@@ -47,13 +50,20 @@ HOSTS = {
     "server": "daniel-server",
 }
 
-# Machines that run a collector but no query backend. daniel-server joined
-# daniel-box's k3s cluster as a worker on 2026-08-13: it holds the
-# otel-collector DaemonSet pod (hostPort 4317) while Loki, Prometheus and Tempo
-# are Deployments pinned to daniel-box. So "unreachable" there is the expected
-# answer and events=0 means "not queryable from here", never "not exporting".
-# Its events land in box's Loki; split them by os_version, since nothing in the
-# pipeline records a hostname.
+# Machines allowed to hold a collector and no query backend, so that answering
+# with no backends is reported as expected rather than as an outage. daniel-box
+# and daniel-server are one k3s cluster: every node runs the otel-collector
+# DaemonSet, while Loki, Prometheus and Tempo are single-replica Deployments that
+# land on whichever node the scheduler picks. Nothing pins them — on 2026-08-23 a
+# reboot moved all three from daniel-box to daniel-server.
+#
+# This only suppresses when a machine has NO backend ready, and PROBE now falls
+# back to the ClusterIP, so a node without the pods still reports them ready.
+# Reaching this state means no backend answered from that node at all.
+#
+# Events from either node land in the same Loki; split them by os_version, since
+# nothing in the pipeline records a hostname. Read the live kernels from
+# `kubectl get nodes -o wide` rather than trusting a value written down here.
 COLLECTOR_ONLY = {"server"}
 
 SSH_OPTS = [
@@ -89,9 +99,9 @@ RETRY_PAUSE = 3
 # The whole remote side, as a constant. Nothing is substituted into it; the mode
 # arrives as argv so this string stays fixed at every call site.
 PROBE = r'''
+import calendar
 import json
 import re
-import subprocess
 import sys
 import time
 import urllib.error
@@ -113,24 +123,34 @@ def get(url, timeout=15):
         return r.read().decode("utf-8", "replace")
 
 
-def container_ip(name):
-    """Loki is unpublished on daniel-server; the bridge address is the way in."""
-    fmt = "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}"
-    try:
-        found = subprocess.run(
-            ["docker", "inspect", "-f", fmt, name],
-            capture_output=True, text=True, timeout=15,
-        ).stdout.split()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    for candidate in found:
-        if RFC1918.match(candidate):
-            return candidate
+# The cluster address of each backend, used when the node-local hostPort has
+# nothing behind it. These are k3s Deployments with no nodeSelector that publish
+# their query ports on a hostPort bound to 127.0.0.1, so a reboot that
+# reschedules a pod moves that port to the other node — on 2026-08-23 all three
+# landed on daniel-server and every loopback probe from daniel-box read
+# "unreachable" while the telemetry itself was healthy. A ClusterIP is routed on
+# every node, so it answers wherever the pod is.
+#
+# Fixed constants, matching otelq's own list and the pinned clusterIP in
+# ansible/roles/k8s/claude-otel/templates/. Nothing here is caller-supplied, and
+# the RFC1918 check below still refuses anything that is not a private address.
+CLUSTER_IP = {
+    "loki": "10.43.99.158",
+    "prometheus": "10.43.39.218",
+    "tempo": "10.43.4.147",
+}
+
+
+def cluster_ip(name):
+    """The in-cluster address for a backend, when it is a private one."""
+    candidate = CLUSTER_IP.get(name)
+    if candidate and RFC1918.match(candidate):
+        return candidate
     return None
 
 
 def resolve(name, port, ready):
-    for host in ("127.0.0.1", container_ip(name)):
+    for host in ("127.0.0.1", cluster_ip(name)):
         if not host:
             continue
         base = "http://" + host + ":" + str(port)
@@ -230,6 +250,40 @@ out["newest_event_ns"] = max(stamps) if stamps else None
 if MODE == "deep":
     import pathlib
 
+    STAMP = re.compile(rb'"timestamp":"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z)"')
+
+    def last_activity(path, st, tail=65536):
+        """When this session last wrote a line, from the transcript's own content.
+
+        Not st_mtime. Transcripts get re-stamped by things that are not the
+        session — a retention sweep touched four transcripts from 2026-08-18/19
+        on 2026-08-23, and mtime alone presented all four as active sessions
+        holding zero events, which is precisely the shape of the finding this
+        check exists to raise. Four false alarms in one run is how a daily check
+        gets muted.
+
+        Reads the tail rather than the file: transcripts reach hundreds of MB and
+        the last timestamp is always near the end. Falls back to st_mtime when no
+        timestamp is found, which keeps a transcript in a format this does not
+        recognise visible rather than silently dropping it from the scan.
+        """
+        try:
+            with open(path, "rb") as fh:
+                if st.st_size > tail:
+                    fh.seek(-tail, 2)
+                found = STAMP.findall(fh.read())
+        except OSError:
+            return st.st_mtime
+        if not found:
+            return st.st_mtime
+        text = found[-1].decode("ascii", "replace")
+        try:
+            parsed = time.strptime(text[:19], "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return st.st_mtime
+        # The stamps are UTC ("...Z"), so calendar.timegm, not time.mktime.
+        return calendar.timegm(parsed)
+
     # A session whose transcript is being written while Loki has none of its
     # events is exporting nowhere. That is the failure this tool exists for.
     #
@@ -249,7 +303,7 @@ if MODE == "deep":
                 st = path.stat()
             except OSError:
                 continue
-            if st.st_mtime >= cutoff:
+            if last_activity(path, st) >= cutoff:
                 candidates.append((path.stem, st))
 
         # Ask only about the sessions in hand. `sum by (session_id)` over every
@@ -297,6 +351,28 @@ if MODE == "deep":
 
 print(json.dumps(out))
 '''
+
+
+def is_self(dest):
+    """True when `dest` names the machine this is running on.
+
+    Compared on the first label only, so `daniel-box` matches whether the host
+    reports a bare name or an FQDN. `None` is the local entry and is never
+    "self" in this sense — it has no ssh hop to skip.
+    """
+    if dest is None:
+        return False
+    return dest.split(".")[0] == socket.gethostname().split(".")[0]
+
+
+def dest_for(name):
+    """The ssh destination for a machine, or None to run PROBE here.
+
+    `--only box` on daniel-box should read this machine rather than fail on a
+    self-ssh, so a named host that resolves to us degrades to the local path.
+    """
+    dest = HOSTS[name]
+    return None if is_self(dest) else dest
 
 
 def probe(dest, mode, timeout):
@@ -388,8 +464,18 @@ def main():
     ns = ap.parse_args()
 
     mode = "deep" if ns.deep else "fast"
-    targets = [ns.only] if ns.only else sorted(HOSTS)
-    results = {name: probe(HOSTS[name], mode, ns.timeout) for name in targets}
+    if ns.only:
+        targets = [ns.only]
+    else:
+        # "local" already covers whichever machine this is, so sweeping its named
+        # entry as well would ssh to ourselves and duplicate the row. Before this,
+        # running on daniel-box reported `box UNREACHABLE` every time: the shared
+        # ~/.ssh/config gives that host IdentityFiles belonging to another machine,
+        # so the self-loop fails on a key that does not exist here. A tool alarming
+        # about a machine it is running on is noise that trains the reader to skip
+        # findings.
+        targets = [name for name in sorted(HOSTS) if not is_self(HOSTS[name])]
+    results = {name: probe(dest_for(name), mode, ns.timeout) for name in targets}
 
     # A collector-only machine answers no query, so its zeros are absence of
     # evidence. Say so in the JSON too, or a reader takes silent_sessions: []

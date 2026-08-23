@@ -46,6 +46,13 @@ elif verb == "rows":
     print(m._rows(json.loads(sys.stdin.read())))
 elif verb == "bases":
     print(json.dumps([m.LOKI, m.PROM, m.TEMPO]))
+elif verb == "candidates":
+    print(json.dumps([list(m.LOKI_BASES), list(m.PROM_BASES), list(m.TEMPO_BASES)]))
+elif verb == "resolve":
+    # Which candidates "accept" is the whole input; no socket is ever opened.
+    reachable = set(json.loads(sys.argv[2]))
+    m._accepts = lambda base, timeout: base in reachable
+    print(json.dumps(m.resolve_bases()))
 elif verb == "prog":
     print(m.program_of(sys.argv[2]))
 elif verb == "prompts":
@@ -106,13 +113,53 @@ function drive(args, input) {
 
 const SRC = fs.readFileSync(OTELQ, 'utf8');
 
-test('targets only loopback, on the three telemetry ports', { skip }, () => {
+// Loopback stays the default and the first candidate tried, so an unresolved
+// import behaves exactly as it did before the fallback existed.
+test('defaults to loopback, on the three telemetry ports', { skip }, () => {
   const bases = JSON.parse(drive(['bases']));
   assert.deepStrictEqual(bases,
     ['http://127.0.0.1:3100', 'http://127.0.0.1:9090', 'http://127.0.0.1:3200']);
-  for (const b of bases) {
-    assert.match(b, /^http:\/\/127\.0\.0\.1:/, 'base must be loopback-literal, not a hostname');
+});
+
+// The grant rests on the destination set being fixed and private. Two candidates
+// per backend does not widen it; a hostname or a public address would.
+test('every candidate is a fixed private literal, never a hostname', { skip }, () => {
+  const groups = JSON.parse(drive(['candidates']));
+  assert.strictEqual(groups.length, 3);
+  for (const group of groups) {
+    assert.strictEqual(group.length, 2, 'loopback plus exactly one cluster address');
+    assert.match(group[0], /^http:\/\/127\.0\.0\.1:\d+$/, 'loopback must be tried first');
+    assert.match(group[1], /^http:\/\/(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)[\d.]+:\d+$/,
+      'the fallback must be an RFC1918 literal');
   }
+});
+
+test('prefers loopback, and falls back per backend independently', { skip }, () => {
+  const [loki, prom, tempo] = JSON.parse(drive(['candidates']));
+
+  // Everything local: nothing changes.
+  assert.deepStrictEqual(
+    JSON.parse(drive(['resolve', JSON.stringify([loki[0], prom[0], tempo[0]])])),
+    { LOKI: loki[0], PROM: prom[0], TEMPO: tempo[0] });
+
+  // Nothing local — the 2026-08-23 case, all three rescheduled to the other node.
+  assert.deepStrictEqual(
+    JSON.parse(drive(['resolve', JSON.stringify([loki[1], prom[1], tempo[1]])])),
+    { LOKI: loki[1], PROM: prom[1], TEMPO: tempo[1] });
+
+  // Split: Loki moved, Prometheus did not. These are separate Deployments and
+  // nothing schedules them together, so resolving them as a set would be wrong.
+  assert.deepStrictEqual(
+    JSON.parse(drive(['resolve', JSON.stringify([loki[1], prom[0], tempo[1]])])),
+    { LOKI: loki[1], PROM: prom[0], TEMPO: tempo[1] });
+});
+
+// A stack that is wholly down must report "unreachable" the way it always did,
+// rather than a novel error about resolution.
+test('falls back to the first candidate when nothing answers', { skip }, () => {
+  const [loki, prom, tempo] = JSON.parse(drive(['candidates']));
+  assert.deepStrictEqual(JSON.parse(drive(['resolve', '[]'])),
+    { LOKI: loki[0], PROM: prom[0], TEMPO: tempo[0] });
 });
 
 test('exposes no flag that could redirect or persist the response', { skip }, () => {
@@ -545,8 +592,11 @@ test('otelq reads the counter file jsonq actually writes', { skip }, () => {
 test('every otelq backend port is published by the compose stack', () => {
   const compose = fs.readFileSync(
     path.join(__dirname, '..', 'home', 'claude-otel', 'docker-compose.yml'), 'utf8');
+  // Read the loopback candidate of each backend. It stays first in the tuple
+  // because that is the one the PC's compose stack publishes; the second is the
+  // cluster address, which no compose file knows about.
   const consts = Object.fromEntries(
-    [...SRC.matchAll(/^(LOKI|PROM|TEMPO) = "http:\/\/127\.0\.0\.1:(\d+)"$/gm)]
+    [...SRC.matchAll(/^(LOKI|PROM|TEMPO)_BASES = \("http:\/\/127\.0\.0\.1:(\d+)"/gm)]
       .map((m) => [m[1], m[2]]));
   assert.deepStrictEqual(Object.keys(consts).sort(), ['LOKI', 'PROM', 'TEMPO'],
     'otelq should define exactly the three backend constants this test knows about');

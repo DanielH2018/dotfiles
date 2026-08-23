@@ -49,34 +49,84 @@ pass by construction.
 | | backends | reached by |
 |---|---|---|
 | this PC | docker compose | 127.0.0.1 |
-| daniel-box | k3s, `observability` ns | 127.0.0.1 via hostPort |
-| daniel-server | none — k3s worker in daniel-box's cluster | not reachable; it runs no query backend |
+| daniel-box | k3s, `observability` ns | 127.0.0.1 hostPort, else the ClusterIP |
+| daniel-server | the same cluster, same namespace | 127.0.0.1 hostPort, else the ClusterIP |
 
-`daniel-server` joined daniel-box's k3s cluster as a worker on 2026-08-13 and its docker
-stack was retired. What runs there is the `otel-collector` DaemonSet pod, binding
-`hostPort 4317` on `127.0.0.1`. Loki, Prometheus and Tempo are single-replica Deployments
-pinned to daniel-box, so daniel-server holds no query port at all. `ready=none` and
-`events=0` from the sweep are therefore the **expected** answer for that machine, not a
-finding — `otel-sweep` has no way to query it and never will.
+**Which cluster node holds the query backends is not fixed.** Loki, Prometheus and Tempo are
+single-replica Deployments with no `nodeSelector`. They publish their query ports on a
+`hostPort` bound to `127.0.0.1`, so whichever node they land on is the only node whose
+loopback answers — and a reboot moves that. On 2026-08-23 all three moved from daniel-box to
+daniel-server, and every loopback probe from daniel-box read `unreachable` while the
+telemetry itself was completely healthy. `otelq` and `otel-sweep` now fall back to the
+ClusterIP, which is routed on every node, so both work from either machine.
 
-Its telemetry is not lost: the collector forwards to daniel-box's Loki, so daniel-server's
-events sit in the box totals. Nothing in the pipeline records a hostname, so split them by
-kernel — `sum by (os_version) (count_over_time({service_name="claude-code"}[24h]))` against
-box's Loki separates `7.0.0-28-generic` (daniel-server) from `6.8.0-137-generic`
-(daniel-box). To prove daniel-server still exports, check that split is non-zero, or test
-its collector directly with `/dev/tcp/127.0.0.1/4317`.
+Do not carry a belief about where they run. Ask:
+
+```bash
+kubectl get pods -n observability -o wide
+```
+
+Both nodes run the `otel-collector` DaemonSet pod, binding `hostPort 4317` on `127.0.0.1`,
+and both forward into the same Loki — so a node's events are in the totals whether or not
+that node holds a query backend. Nothing in the pipeline records a hostname, so split them
+by kernel:
+
+```
+sum by (os_version) (count_over_time({service_name="claude-code"}[24h]))
+```
+
+Map each `os_version` to a machine with `kubectl get nodes -o wide`, which prints the live
+kernel per node. Never hardcode the kernel strings — they change at every upgrade, and a
+query pinned to an old one returns nothing, which reads as "that machine stopped exporting".
+To prove a node still exports, check its kernel's share is non-zero, or test its collector
+directly with `/dev/tcp/127.0.0.1/4317`.
+
+Running the sweep **on** one of these machines is normal: `otel-sweep` skips the ssh hop to
+itself and reports it as `local`, so there is no row for the machine you are sitting on.
 
 For anything deeper on daniel-box, the authority is
 `~/server/ansible/roles/k8s/claude-otel/CLAUDE.md` **on that host** — read it rather than
 restating it here, so the two cannot drift.
+
+## Writing the query
+
+Two shapes return a well-formed empty result rather than an error when you get them wrong,
+so they read as "nothing to report" and end the investigation. Both did exactly that on
+2026-08-23 and hid 116 real hook failures.
+
+**`event_name` and `session_id` are structured metadata, not stream labels.** They select
+nothing inside `{...}` and must be filtered after a pipe:
+
+```
+{service_name="claude-code"} | event_name="compaction"          # correct
+{service_name="claude-code", event_name="compaction"}           # matches no stream, returns []
+```
+
+The stream selector holds `service_name` and little else. When unsure which a field is, name
+it in a `sum by (...)` over the bare selector — a field that aggregates is present, whatever
+side of the pipe it belongs on.
+
+**Check an event name exists before filtering on one.** The names are not the ones you would
+guess, and a wrong one is indistinguishable from a real zero. Enumerate first:
+
+```
+sum by (event_name) (count_over_time({service_name="claude-code"}[24h]))
+```
+
+The hook completion event is `hook_execution_complete`, not `hook_execution_end`.
 
 ## Reading the result
 
 Judge each machine against what it should look like, then report only what departs.
 
 - **Zero events is not automatically a fault.** A machine with no sessions since the window
-  opened is idle, not broken. Confirm before calling it: compare against transcript mtimes
+  opened is idle, not broken. Confirm before calling it: compare against the transcripts
   under `~/.claude/projects`. `--deep` does this for you.
+- **Transcript mtime is not session activity.** Things that are not the session re-stamp
+  those files — a retention sweep touched four transcripts from 2026-08-18/19 on 2026-08-23,
+  and each then looked like a live session holding zero events, which is the exact shape of a
+  silent session. Read the last `"timestamp"` in the file's own content instead. `--deep`
+  does this now; do it by hand too if you are checking a candidate yourself.
 - **A silent session is the finding that matters.** A transcript being written while Loki
   holds none of its events means that session exports nowhere. The cause is almost always
   that it started before the telemetry config or the collector existed — the exporter binds
@@ -98,6 +148,13 @@ Judge each machine against what it should look like, then report only what depar
   `/dev/tcp/127.0.0.1/<port>`, not a listener list.
 - `otelq ready` failing on a machine does **not** mean telemetry is down. Ingest and query
   fail independently; the collector can be accepting on 4317 while every query port is shut.
+- **A pod-readiness check cannot see a broken query path.** `telemetry-health.sh` reads
+  Deployment readiness through kubectl and a ClusterIP, so it is node-agnostic by
+  construction and stayed green through the whole 2026-08-23 outage. Green there is not
+  evidence that `otelq` works; run `otelq ready` yourself.
+- **A command whose whole output is one JSON line defeats a line filter.** `probe.py targets`
+  is one such line, so `| grep -vi up` dropped the entire payload and the empty output read
+  as "every target is up" while a target was down. Filter with `jq`, not `grep`.
 - An idle `--bg` job holds no resident process. `ps` shows only `bg-spare` workers. Liveness
   lives in `~/.claude/jobs/<short>/state.json` and a live `rv/<short>.sock`.
 - A restarted session reports under a **new** `session_id`. A query pinned to the old id

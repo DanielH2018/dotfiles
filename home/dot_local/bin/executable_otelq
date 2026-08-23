@@ -5,11 +5,21 @@ Exists for the same reason as `jsonq`: the useful operation was reachable only
 through a tool that is ask-listed for good reason. `curl:*` prompts because curl
 takes an arbitrary URL and can write the response to disk — an exfiltration and
 a download primitive in one. Neither is available here. The host is not an
-argument: every request goes to 127.0.0.1 on the two ports below, the method is
-always GET, and the response only ever reaches stdout. What the caller controls
-is a LogQL/PromQL string, and neither language can execute a process, read a
-file, or reach the network. That is what makes a blanket `Bash(otelq:*)` allow
-rule defensible where `Bash(curl:*)` is not.
+argument: every request goes to one of the fixed destinations below, the method
+is always GET, and the response only ever reaches stdout. What the caller
+controls is a LogQL/PromQL string, and neither language can execute a process,
+read a file, or reach the network. That is what makes a blanket `Bash(otelq:*)`
+allow rule defensible where `Bash(curl:*)` is not.
+
+Each backend has two candidates rather than one, and that does not widen the
+grant: both are compile-time constants and both are RFC1918, so no caller-
+supplied string can reach either position. The second exists because the
+backends are k3s Deployments with no nodeSelector — they publish their query
+ports on `hostPort` bound to 127.0.0.1, so a reboot that reschedules a pod to
+the other node takes the loopback port with it and leaves this tool dialling a
+closed port. That happened on 2026-08-23 and it read as "Loki is down" from a
+machine whose telemetry was entirely healthy. The ClusterIP is routed on every
+node, so it answers wherever the pod landed.
 
   otelq logs 'sum by (event_name) (count_over_time({service_name="claude-code"}[19h]))'
   otelq logs '{service_name="claude-code"} | event_name=`api_error`' --stream --limit 5
@@ -27,6 +37,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sys
 import time
 import urllib.error
@@ -37,10 +48,28 @@ PROG = "otelq"
 
 # Not configurable, and deliberately so — see the module docstring. A --host flag
 # would turn this into the arbitrary-fetch primitive the allow rule assumes it
-# is not.
-LOKI = "http://127.0.0.1:3100"
-PROM = "http://127.0.0.1:9090"
-TEMPO = "http://127.0.0.1:3200"
+# is not. Two candidates per backend, tried in order: the node-local hostPort
+# first, then the ClusterIP, which is routed on every node and so answers
+# whichever node the pod is running on today.
+#
+# The ClusterIPs are pinned in the manifests that create these Services
+# (ansible/roles/k8s/claude-otel/templates/ in the server repo), which is what
+# lets them be constants here — a Service that is deleted and recreated would
+# otherwise draw a fresh address and strand this list.
+LOKI_BASES = ("http://127.0.0.1:3100", "http://10.43.99.158:3100")
+PROM_BASES = ("http://127.0.0.1:9090", "http://10.43.39.218:9090")
+TEMPO_BASES = ("http://127.0.0.1:3200", "http://10.43.4.147:3200")
+
+# Rebound once by resolve_bases(); the first candidate stays the default so any
+# caller that imports this module without resolving still behaves as before.
+LOKI = LOKI_BASES[0]
+PROM = PROM_BASES[0]
+TEMPO = TEMPO_BASES[0]
+
+# How long to wait for a candidate to accept a connection. Deliberately short:
+# both candidates are on-LAN or loopback, and this cost is paid on every
+# invocation, so a generous value would tax the common case to help the rare one.
+RESOLVE_TIMEOUT = 1.5
 
 DEFAULT_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -131,6 +160,46 @@ def program_of(command):
                 continue
             return bare.rsplit("/", 1)[-1]
     return "?"
+
+
+def _accepts(base, timeout):
+    """True when something is listening at `base`'s host:port.
+
+    A TCP connect rather than an HTTP GET on purpose: this only has to choose
+    between two fixed candidates, and readiness is a separate question that
+    `ready` already answers. A backend that is up but still replaying its WAL
+    should be selected here and reported as not-ready there, not skipped in
+    favour of an address with nothing behind it at all.
+    """
+    parts = urllib.parse.urlsplit(base)
+    try:
+        with socket.create_connection((parts.hostname, parts.port), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def resolve_bases(timeout=RESOLVE_TIMEOUT):
+    """Point LOKI/PROM/TEMPO at the first candidate that accepts a connection.
+
+    Each backend resolves independently. They are separate Deployments and
+    nothing schedules them together, so a reboot can leave one on this node and
+    move another — assuming they agree would break the split case in exactly the
+    way this function exists to prevent.
+
+    Falls back to the first candidate when none answers, so a stack that is
+    wholly down still produces the same "unreachable" reports as before rather
+    than a different error about resolution.
+    """
+    global LOKI, PROM, TEMPO
+    resolved = {}
+    for name, candidates in (("LOKI", LOKI_BASES),
+                             ("PROM", PROM_BASES),
+                             ("TEMPO", TEMPO_BASES)):
+        chosen = next((c for c in candidates if _accepts(c, timeout)), candidates[0])
+        resolved[name] = chosen
+    LOKI, PROM, TEMPO = resolved["LOKI"], resolved["PROM"], resolved["TEMPO"]
+    return resolved
 
 
 class OtelqError(Exception):
@@ -766,7 +835,7 @@ def _savings_rows(payload):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog=PROG,
-        description="Query the local Loki/Prometheus stack (127.0.0.1 only, GET only).",
+        description="Query the Loki/Prometheus stack (fixed private hosts, GET only).",
     )
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT,
@@ -828,6 +897,8 @@ def main(argv=None):
     p.add_argument("--since", default="7d", help="window (default: 7d)")
 
     ns = parser.parse_args(argv)
+    # Before any request, and after parsing so a usage error costs no connects.
+    resolve_bases()
     handlers = {"logs": cmd_logs, "metric": cmd_metric, "labels": cmd_labels,
                 "ready": cmd_ready, "savings": cmd_savings}
 
