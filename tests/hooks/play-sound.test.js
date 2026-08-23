@@ -48,7 +48,8 @@ function sandbox({ paplay = true, aplay = true, pwPlay = false } = {}) {
 
 // The desktop-Linux branches (paplay/pw-play against the freedesktop theme file) read a real
 // file off the filesystem rather than a stub, so they only run where that theme is installed.
-const THEME_SOUND = '/usr/share/sounds/freedesktop/stereo/message.oga';
+// This names the sample the `input` cue takes, since that is the cue the cases below play.
+const THEME_SOUND = '/usr/share/sounds/freedesktop/stereo/complete.oga';
 const skipTheme = skip || (fs.existsSync(THEME_SOUND) ? false : 'no freedesktop sound theme installed');
 
 // Playback is backgrounded and the hook exits immediately, so the stub may not have written
@@ -116,10 +117,16 @@ test('plays the Windows .wav natively through paplay', { skip: skipWsl }, () => 
   assert.doesNotMatch(log, /powershell/, 'no interop');
 });
 
-test('the input cue is a different sound from the turn-complete cue', { skip: skipWsl }, () => {
+// The input cue used to be the bright `Windows Notify System Generic` / `message` blip, and
+// this asserted it differed from the turn-complete cue. It deliberately does not any more: a
+// bright blip at a low gain goes from loud to inaudible without passing through gentle, which
+// is what made a 35% default unusable the first time it was tried. Both cues now play the
+// softer sample, so what is worth pinning is that `input` never goes back to the bright one.
+test('the input cue plays the softer sample, not the bright attention blip', { skip: skipWsl }, () => {
   const sb = sandbox();
   const log = run(sb, 'input', { PULSE_SERVER: 'unix:/nonexistent/PulseServer' });
-  assert.match(log, /Windows Notify System Generic\.wav/, 'input gets the attention chime');
+  assert.match(log, /Windows\/Media\/chimes\.wav/, 'input gets the softer chime');
+  assert.doesNotMatch(log, /Windows Notify System Generic\.wav/, 'not the bright attention blip');
 });
 
 test('without paplay it falls to aplay, never to powershell', { skip }, () => {
@@ -137,8 +144,8 @@ test('with no player at all it still exits 0', { skip }, () => {
   // transcript on every prompt.
 });
 
-// The volume cases below assert the ENCODED values — 32768 on paplay's 0-65536 linear scale,
-// 0.500 as pw-play's float — and those stay written out. Computing them from the percentage
+// The volume cases below assert the ENCODED values — 22937 on paplay's 0-65536 linear scale,
+// 0.350 as pw-play's float — and those stay written out. Computing them from the percentage
 // here would just re-run the hook's own arithmetic, so the expectation would drift along with
 // a broken conversion instead of catching it.
 //
@@ -149,18 +156,18 @@ test('with no player at all it still exits 0', { skip }, () => {
 // as a bare change of value, and it names which end drifted where a failed `--volume=32768`
 // match does not.
 test('the default volume has one home in the hook, and it is what the cases below encode', { skip }, () => {
-  assert.strictEqual(shConstInt(HOOK, 'DEFAULT_VOLUME_PCT'), 50,
-    'default volume changed: update the encoded 32768 / 13107 / 0.500 expectations below with it');
+  assert.strictEqual(shConstInt(HOOK, 'DEFAULT_VOLUME_PCT'), 35,
+    'default volume changed: update the encoded 22937 / 13107 / 0.350 expectations below with it');
 });
 
 test('the cue plays at a reduced default volume, not full', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
   const log = run(sb, 'input');
-  // 50% of paplay's 0-65536 linear scale.
-  assert.match(log, /^paplay .*--volume=32768\b/m, 'paplay gets a 50% default volume');
+  // 35% of paplay's 0-65536 linear scale.
+  assert.match(log, /^paplay .*--volume=22937\b/m, 'paplay gets a 35% default volume');
 });
 
-// The override value is deliberately not 50: it now equals the default, so a broken override
+// The override value is deliberately not 35: it would then equal the default, so a broken override
 // would still produce 32768 and the test would pass while asserting nothing.
 test('CLAUDE_SOUND_VOLUME overrides the default volume', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
@@ -171,15 +178,15 @@ test('CLAUDE_SOUND_VOLUME overrides the default volume', { skip: skipTheme }, ()
 test('an invalid CLAUDE_SOUND_VOLUME falls back to the default', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: true, aplay: false });
   const bogus = run(sb, 'input', { CLAUDE_SOUND_VOLUME: 'loud' });
-  assert.match(bogus, /^paplay .*--volume=32768\b/m, 'non-numeric input falls back to 50%');
+  assert.match(bogus, /^paplay .*--volume=22937\b/m, 'non-numeric input falls back to 35%');
   const oor = run(sb, 'input', { CLAUDE_SOUND_VOLUME: '250' });
-  assert.match(oor, /^paplay .*--volume=32768\b/m, 'out-of-range input falls back to 50%');
+  assert.match(oor, /^paplay .*--volume=22937\b/m, 'out-of-range input falls back to 35%');
 });
 
 test('pw-play gets a 0.0-1.0 float volume when paplay is absent', { skip: skipTheme }, () => {
   const sb = sandbox({ paplay: false, aplay: false, pwPlay: true });
   const log = run(sb, 'input');
-  assert.match(log, /^pw-play .*--volume=0\.500\b/m, 'pw-play gets a 50% default volume as a float');
+  assert.match(log, /^pw-play .*--volume=0\.350\b/m, 'pw-play gets a 35% default volume as a float');
 });
 
 test('no executable line launches a Windows binary', { skip }, () => {
