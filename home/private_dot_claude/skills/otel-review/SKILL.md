@@ -68,7 +68,9 @@ kubectl get pods -n observability -o wide
 
 Both nodes run the `otel-collector` DaemonSet pod, binding `hostPort 4317` on `127.0.0.1`,
 and both forward into the same Loki — so a node's events are in the totals whether or not
-that node holds a query backend. Nothing in the pipeline records a hostname, so split them
+that node holds a query backend. History survives the move too: the collectors reach Loki by
+ClusterIP rather than a host port, and the PVCs are Longhorn RWO, so a reschedule costs the
+query path and nothing else. Nothing in the pipeline records a hostname, so split them
 by kernel:
 
 ```
@@ -90,9 +92,9 @@ restating it here, so the two cannot drift.
 
 ## Writing the query
 
-Two shapes return a well-formed empty result rather than an error when you get them wrong,
-so they read as "nothing to report" and end the investigation. Both did exactly that on
-2026-08-23 and hid 116 real hook failures.
+Four shapes return a well-formed result that is wrong rather than an error, so they read as
+"nothing to report" and end the investigation. All four did exactly that on 2026-08-23; the
+first two hid 116 real hook failures, and the last two inverted a headline finding.
 
 **`event_name` and `session_id` are structured metadata, not stream labels.** They select
 nothing inside `{...}` and must be filtered after a pipe:
@@ -114,6 +116,15 @@ sum by (event_name) (count_over_time({service_name="claude-code"}[24h]))
 ```
 
 The hook completion event is `hook_execution_complete`, not `hook_execution_end`.
+
+**`savings reduction` and `savings trend` read local files**, not Loki — they parse
+`~/.local/share/claude-metrics/` on whichever machine runs them. Run over ssh against the
+node holding Loki, they report zero for the machine that did the work. Run those two on the
+machine being measured; every other `savings` subcommand goes where Loki is.
+
+**`savings prompts` truncates at 5000 events** and says so in a row that is easy to skim
+past. At `--since 7d` it reported 210 prompts against a true 487. For a count, aggregate
+`tool_decision` by `source`; keep `savings prompts` for composition, at `--since 24h`.
 
 ## Reading the result
 
