@@ -493,13 +493,13 @@
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
-      "hash": "10949e44bf6a6e80f5b05c874509a2098ca6698a2788c7a599d5befec4c022bc",
-      "landed": "2026-07-25T23:12:01.504Z"
+      "hash": "75c1df603baa2f33586634c8fc33bd050b268d9f09313eb90ac51f6baec6879f",
+      "landed": "2026-08-23T14:06:23.158Z"
     },
     {
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
-      "hash": "861f5f18acad4a268e1f8455c9e71ee4fe3d089ed62844b596fa0713d7072b81",
-      "landed": "2026-08-23T13:30:38.044Z"
+      "hash": "0f3ac615f1b286d592140a08047e3c29c6529b53e0dbcb78b3e6c56fb47f9e9f",
+      "landed": "2026-08-23T14:06:23.158Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
