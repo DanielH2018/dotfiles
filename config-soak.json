@@ -103,8 +103,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
-      "hash": "dbf77dec2b4d594c631de6b6f69fe636b7554ae972945375e6fe2ef35d9fc623",
-      "landed": "2026-08-21T15:25:57.903Z"
+      "hash": "dce4fec2d610fa49d9d42080800e9f34e6cb63db4a541a49febd2e6026bd7b35",
+      "landed": "2026-08-23T00:21:36.646Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
@@ -178,8 +178,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
-      "hash": "3d455d24d0ce34acd857045a8b36090090682e6c834b092e31ba803459c0411c",
-      "landed": "2026-08-20T14:50:58.324Z"
+      "hash": "1b3ddfe92c96c0a99fca0e5ee6b93f7c0bf1f284a257c74ff6069bc75e2fe61d",
+      "landed": "2026-08-23T00:21:36.646Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
