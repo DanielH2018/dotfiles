@@ -1,0 +1,28 @@
+# User-level override of KDE's Ocean sound theme, carrying one file: a quieter bell.
+#
+# The terminal bell is the ONLY audible cue a Claude Code session on a headless box reached
+# over ssh can give -- daniel-box has no paplay, pw-play, canberra-gtk-play or aplay, so
+# play-sound.sh falls through every player branch to `printf '\a'`. Warp forwards that BEL and
+# KWin plays it (application.id = org.kde.kwin, media.role = "event"), at full volume with no
+# knob: an event-role stream's volume is deliberately not persisted by WirePlumber, and
+# WirePlumber ships device rules only, so there is no per-application setting to turn down.
+# Overriding the sample itself is the one durable lever.
+#
+# This index.theme mirrors /usr/share/sounds/ocean/index.theme rather than adding to it.
+# libcanberra reads the FIRST index.theme it finds across the XDG data dirs, and $XDG_DATA_HOME
+# comes before /usr/share -- so this file, not the system one, defines the theme's Directories.
+# Declaring anything different here would change resolution for every other sound in the theme.
+# Files absent from this dir still resolve out of /usr/share/sounds/ocean, which is why only
+# bell.oga is shipped.
+#
+# Regenerate the sample with:
+#   ffmpeg -i /usr/share/sounds/ocean/stereo/bell.oga -af 'volume=0.50' -c:a libvorbis -q:a 5 bell.oga
+# The system file is a symlink to bell-window-system.oga; this override is a real file.
+[Sound Theme]
+Name=Ocean
+Comment=Ocean Sound Theme for KDE Plasma
+Directories=stereo
+Example=theme-demo
+
+[stereo]
+OutputProfile=stereo
