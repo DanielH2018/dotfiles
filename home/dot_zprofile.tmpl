@@ -1,5 +1,17 @@
 {{- if eq .chezmoi.os "darwin" -}}
 # Homebrew — must run in login shells before .zshrc so HOMEBREW_PREFIX is set
-# and /opt/homebrew/bin precedes /usr/bin in PATH.
-eval "$(/opt/homebrew/bin/brew shellenv)"
+# and Homebrew's bin precedes /usr/bin in PATH.
+#
+# Two candidates, in Homebrew's own order of preference: /opt/homebrew on Apple Silicon,
+# /usr/local on Intel. This file is what SETS HOMEBREW_PREFIX, so it cannot read it the way
+# .zshrc does — it has to find the binary first. Probed at runtime rather than resolved by a
+# chezmoi `stat` at apply time, because the login shell runs on the machine that has the
+# install, and an apply can be replayed from a backup or a different box.
+for _brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if [ -x "$_brew" ]; then
+    eval "$("$_brew" shellenv)"
+    break
+  fi
+done
+unset _brew
 {{- end -}}
