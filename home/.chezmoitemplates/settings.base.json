@@ -1142,9 +1142,12 @@
              plain curl to api.github.com still returns 200, which puts the fault in the Security
              framework rather than the network policy.
 
-             None of that is expressible as a filesystem rule, so gh is in sandbox
-             .excludedCommands instead and reads this file outside the sandbox. A carve-out here
-             would grant sandboxed Bash a read it no longer needs. Do not re-add it without a
+             None of that is expressible as a filesystem rule. gh is listed in
+             sandbox.excludedCommands, but that does NOT get it out of the sandbox on this host —
+             see the note there. So sandboxed gh does not work at all, and re-adding a carve-out
+             here would not change that: it fixed only the startup abort, never the
+             authentication. Read-only gh is prompt-free on the unsandboxed path instead, via the
+             allow rules in settings.permissions.json. Do not re-add this entry without a
              concrete reader that is not gh. */}}
         {{/* The second file chezmoi manages inside a denied directory, and the reason the gh
              carve-out alone did not finish the job: status/diff/apply lstat every managed entry,
@@ -1200,25 +1203,48 @@
     "excludedCommands": [
       "docker",
       "docker-compose",
-      {{/* gh cannot work inside the sandbox at all — not a filesystem problem, so no allowRead
-           entry reaches it. It is a Go binary that calls the macOS Security framework for the
-           keychain-backed token AND for TLS trust evaluation, and the sandbox blocks both:
-           "the token in keyring is invalid" from `gh auth status`, `x509: OSStatus -26276` from
-           `gh api user`. The full working-out is on the absent hosts.yml carve-out above.
+      {{/* READ THIS BEFORE TRUSTING THIS LIST. On this host the whole list is INERT — entries
+           here do not get their command out of the sandbox. Measured 2026-08-24 with `docker`,
+           which had been listed since long before the test:
 
-           Consequence worth stating, because it inverts which layer matters:
-           autoAllowBashIfSandboxed auto-allows sandboxed commands WITHOUT consulting
-           permissions.allow, so sandboxing is what kept gh prompt-free. Excluding it here ends
-           that, and the read-only gh allowlist in settings.permissions.json becomes load-bearing
-           for the first time — which is why this change ships alongside the read verbs added
-           there. An unlisted gh verb now reaches the auto-mode classifier instead.
+             $ docker context ls        # bare command; a compound one never matches, see below
+             WARNING: Error loading config file:
+               open ~/.docker/config.json: operation not permitted
 
-           Cost: an excluded command runs fully outside the sandbox, and gh is not a pure API
-           client — `gh alias set x '!cmd'` and `gh extension install` can execute arbitrary
-           code. Neither is allowlisted, so both face the classifier rather than running
-           silently, but the escape surface is real. Accepted 2026-08-24 as the better trade
-           against the alternative, which was putting the OAuth token in a sandbox-readable
-           file. */}}
+           An excluded command still hit the sandbox filesystem deny. In the 2.1.241 binary the
+           decision is:
+
+             function SJ(e){
+               if (ZM() && Tgt()) return true;                             // always sandbox
+               ...
+               if (!unsandboxedCommandsDisabled && PWv(e.command)) return false;
+               return true }
+
+           ZM() is CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, latched at startup; Tgt() is whether that
+           scrub sandbox is available. When both hold, SJ returns "sandbox" before exclusions are
+           ever consulted. The other gate, unsandboxedCommandsDisabled, is set only on the
+           http-transport host — which also disables background tasks, and those work here, so it
+           is not that one. Env scrub is the remaining explanation consistent with the docker
+           result; the flag is latched inside the Claude process and is not visible in a scrubbed
+           subprocess env, so it could not be read directly.
+
+           Also: PWv splits a compound command and tests each part, but p3f rejects any command
+           containing /[;|&`$(){}<>#\n\r]/ outright. So a compound command can never match an
+           exclusion even where exclusions do work — test with bare commands or the result means
+           nothing.
+
+           `gh` was added here on 2026-08-24 believing it would give gh the macOS Security
+           framework access it needs for its keychain token and TLS trust (`gh auth status` says
+           "the token in keyring is invalid", `gh api user` gives `x509: OSStatus -26276`). That
+           belief was inference from the docker precedent and it is wrong. The entry is kept
+           because it is harmless and becomes correct if env scrub is ever off, NOT because it
+           does anything today. Sandboxed gh does not work; read-only gh is prompt-free on the
+           unsandboxed path via the allow rules in settings.permissions.json.
+
+           Standing caveat if the list ever does take effect: an excluded command runs fully
+           outside the sandbox, and gh is not a pure API client — `gh alias set` with a
+           shell-escape body, and `gh extension install`, can execute arbitrary code. Neither is
+           allowlisted, so both face the classifier rather than running silently. */}}
       "gh"
     ]
   }{{ else }}{ "enabled": false }{{ end }},

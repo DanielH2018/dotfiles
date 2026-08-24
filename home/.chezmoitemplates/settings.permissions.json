@@ -196,11 +196,18 @@
            same POST, so no pattern separates them, and an ask rule outranks an allow — a
            read-only graphql carve-out is not expressible even in principle. */}}
       "Bash(gh api:*)",
-      {{/* Read verbs added 2026-08-24 alongside putting gh in sandbox.excludedCommands. Until
-           then sandboxing auto-allowed every gh call via autoAllowBashIfSandboxed and this list
-           was never consulted; now it is the only thing keeping read-only gh prompt-free. An
-           unlisted verb reaches the auto-mode classifier, which does refuse ordinary read-only
-           calls — three did during the session that added these.
+      {{/* Read verbs added 2026-08-24. The justification first written here was wrong and is
+           corrected: it claimed these became load-bearing because gh had moved out of the
+           sandbox via sandbox.excludedCommands. That exclusion is inert on this host (the note
+           beside it in settings.base.json has the measurement), so nothing moved.
+
+           These rules earn their place for a different, verified reason. Sandboxed gh does not
+           work at all — it cannot reach the macOS keychain or evaluate TLS trust — so every gh
+           call that does useful work runs unsandboxed, and on that path THIS list is what
+           decides whether it prompts. Confirmed the same day: `gh cache list`, one of the verbs
+           added here, ran unsandboxed with no prompt, as did gh pr view / pr create / pr comment
+           / api user. An unlisted verb instead reaches the auto-mode classifier, which does
+           refuse ordinary read-only calls — three were refused while this was worked out.
 
            `gh search` was the largest gap: searching PRs, issues and code was absent entirely.
            `gh secret list` is deliberately NOT here — it returns only metadata, but it is a
