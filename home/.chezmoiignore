@@ -60,7 +60,12 @@ Scripts
 # The launchd equivalents live outside the source tree entirely and deploy nowhere by an
 # explicit decision recorded in the repo README; reviving one of these jobs on macOS means
 # writing a plist there, not un-ignoring a unit here.
-.config/systemd/user
+#
+# The parent, not `.config/systemd/user`: chezmoi manages intermediate directories as targets
+# in their own right, so ignoring only the `user` subtree still leaves the empty `systemd`
+# directory to be created on every apply. `user` is its only child, so gating the parent
+# ignores exactly the same set of files and takes the directory with it.
+.config/systemd
 
 # Linux-desktop utilities: each needs something the OS supplies and macOS does not — PipeWire
 # (pactl), a Wayland compositor (wl-copy/wl-paste), KWin/kscreen-doctor, solaar's Logitech HID
