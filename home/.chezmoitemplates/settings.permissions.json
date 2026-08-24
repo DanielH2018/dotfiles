@@ -178,12 +178,46 @@
       "Bash(gh run view:*)",
       "Bash(gh run watch:*)",
       "Bash(gh pr status:*)",
-      "Bash(gh pr comments:*)",
+      {{/* `gh pr comments` was listed here and granted nothing — there is no such subcommand
+           (`gh pr comments --help` prints generic `gh pr` help). Reading a PR's comments is
+           `gh pr view --comments`, already covered by `Bash(gh pr view:*)` above, or the REST
+           endpoints noted below. */}}
       "Bash(gh workflow list:*)",
       "Bash(gh workflow view:*)",
       "Bash(gh release list:*)",
       "Bash(gh release view:*)",
+      {{/* `gh api:*` is the read workhorse: every GET goes through it, including the two that
+           matter most for reading review feedback —
+           `gh api repos/{owner}/{repo}/pulls/{n}/comments` (review comments) and
+           `.../issues/{n}/comments`. Both are GETs, so they land here rather than in the ask
+           list, and reading PR discussion needs no graphql.
+
+           graphql deliberately stays in the ask list. It carries reads and mutations over the
+           same POST, so no pattern separates them, and an ask rule outranks an allow — a
+           read-only graphql carve-out is not expressible even in principle. */}}
       "Bash(gh api:*)",
+      {{/* Read verbs added 2026-08-24 alongside putting gh in sandbox.excludedCommands. Until
+           then sandboxing auto-allowed every gh call via autoAllowBashIfSandboxed and this list
+           was never consulted; now it is the only thing keeping read-only gh prompt-free. An
+           unlisted verb reaches the auto-mode classifier, which does refuse ordinary read-only
+           calls — three did during the session that added these.
+
+           `gh search` was the largest gap: searching PRs, issues and code was absent entirely.
+           `gh secret list` is deliberately NOT here — it returns only metadata, but it is a
+           credential surface and belongs behind a prompt. */}}
+      "Bash(gh search:*)",
+      "Bash(gh repo list:*)",
+      "Bash(gh gist view:*)",
+      "Bash(gh gist list:*)",
+      "Bash(gh label list:*)",
+      "Bash(gh cache list:*)",
+      "Bash(gh run download:*)",
+      "Bash(gh project view:*)",
+      "Bash(gh project list:*)",
+      "Bash(gh ruleset view:*)",
+      "Bash(gh ruleset list:*)",
+      "Bash(gh variable list:*)",
+      "Bash(gh org list:*)",
       {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
            verbs are routine because the default credential is a read-only ServiceAccount —
            the same reasoning, restated as prefixes so allow-compound-bash.sh can act on it.

@@ -1131,26 +1131,21 @@
            tools still cannot read any of it. */}}
       "allowRead": [
         "~/.config/gh/config.yml",
-        {{/* Read-only `gh` needs this, and today it gets no further than reading it. With the
-             directory denied outright, gh aborts before it parses a subcommand —
-             `failed to create root command: failed to read configuration: open
-             ~/.config/gh/hosts.yml: operation not permitted` — so EVERY gh call fails in a
-             sandboxed session, and autoAllowBashIfSandboxed makes sandboxed the default path.
-             That left the whole read-only gh allowlist in settings.permissions.json as dead
-             weight: allowed by the permission layer, killed by this one.
+        {{/* No hosts.yml entry here, deliberately, and it was tried: 85b8b0e added one because a
+             sandboxed gh aborted before parsing a subcommand — `failed to create root command:
+             failed to read configuration: open ~/.config/gh/hosts.yml: operation not permitted`.
+             It fixed that abort and gh still could not authenticate. gh is a Go binary that
+             calls the macOS Security framework for BOTH the keychain-backed token and TLS trust
+             evaluation, and the sandbox blocks that: `gh auth status` returned "the token in
+             keyring is invalid" and `gh api user` returned `x509: OSStatus -26276`.
+             SSL_CERT_FILE does not help — Go on darwin calls SecTrustEvaluate regardless — while
+             plain curl to api.github.com still returns 200, which puts the fault in the Security
+             framework rather than the network policy.
 
-             Earlier revisions of the comment above justified the directory-wide deny by saying
-             the GitHub token lives in this file. It does not, and the claim is what kept the
-             gap open. `gh auth status` reports the token source as `(keyring)` — it is in the
-             macOS keychain, which a sandboxed process can still reach. Verified 2026-08-24 that
-             `grep -c oauth_token ~/.config/gh/hosts.yml` is 0 and the operator confirmed the
-             file holds only the username and git_protocol=https.
-
-             So this exposes a GitHub username to sandboxed Bash and no credential. Should the
-             token ever move back into the file — `gh auth login` without secure storage does
-             that — this carve-out starts leaking it and must come back out. Re-check with
-             `gh auth status`: it must say `(keyring)`, not a bare token line. */}}
-        "~/.config/gh/hosts.yml",
+             None of that is expressible as a filesystem rule, so gh is in sandbox
+             .excludedCommands instead and reads this file outside the sandbox. A carve-out here
+             would grant sandboxed Bash a read it no longer needs. Do not re-add it without a
+             concrete reader that is not gh. */}}
         {{/* The second file chezmoi manages inside a denied directory, and the reason the gh
              carve-out alone did not finish the job: status/diff/apply lstat every managed entry,
              so with this one unreadable chezmoi aborted here instead — one file further along,
@@ -1204,7 +1199,27 @@
     "enableWeakerNetworkIsolation": false,
     "excludedCommands": [
       "docker",
-      "docker-compose"
+      "docker-compose",
+      {{/* gh cannot work inside the sandbox at all — not a filesystem problem, so no allowRead
+           entry reaches it. It is a Go binary that calls the macOS Security framework for the
+           keychain-backed token AND for TLS trust evaluation, and the sandbox blocks both:
+           "the token in keyring is invalid" from `gh auth status`, `x509: OSStatus -26276` from
+           `gh api user`. The full working-out is on the absent hosts.yml carve-out above.
+
+           Consequence worth stating, because it inverts which layer matters:
+           autoAllowBashIfSandboxed auto-allows sandboxed commands WITHOUT consulting
+           permissions.allow, so sandboxing is what kept gh prompt-free. Excluding it here ends
+           that, and the read-only gh allowlist in settings.permissions.json becomes load-bearing
+           for the first time — which is why this change ships alongside the read verbs added
+           there. An unlisted gh verb now reaches the auto-mode classifier instead.
+
+           Cost: an excluded command runs fully outside the sandbox, and gh is not a pure API
+           client — `gh alias set x '!cmd'` and `gh extension install` can execute arbitrary
+           code. Neither is allowlisted, so both face the classifier rather than running
+           silently, but the escape surface is real. Accepted 2026-08-24 as the better trade
+           against the alternative, which was putting the OAuth token in a sandbox-readable
+           file. */}}
+      "gh"
     ]
   }{{ else }}{ "enabled": false }{{ end }},
   "alwaysThinkingEnabled": true,
