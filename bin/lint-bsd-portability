@@ -170,10 +170,14 @@ function check(   i, s, rest, tok, name, hasbsd) {
   # Pass A also answers a second, file-scoped question, for pattern 4 below: does this file
   # carry a BSD date arm anywhere? Comments do not count -- prose about this trap is all over
   # the repo, and a file that only TALKS about `date -j` has no fallback.
+  # The left boundary is the same one pattern 4 uses, and it is load-bearing in the SUPPRESSING
+  # direction, which is the dangerous one: `date -v` is a substring of `up{date -v}` and
+  # `date -j` of `vali{date -j}`, so a bare `brew update -v` anywhere in a file would set
+  # hasbsd and silence pattern 4 for that whole file.
   for (i = 1; i <= nlines; i++) {
     s = line[i]
     if (iscomment(s)) continue
-    if (s ~ /date[[:blank:]]+-[jv]/) hasbsd = 1
+    if (s ~ /(^|[^[:alnum:]_.-])date[[:blank:]]+-[jv]/) hasbsd = 1
     if (s !~ /\[\[/) continue
     rest = s
     while (match(rest, /=~[[:blank:]]*"?\$\{?[A-Za-z_][A-Za-z0-9_]*/)) {

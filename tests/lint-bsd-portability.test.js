@@ -175,6 +175,18 @@ test('a `date -j` in a COMMENT does not count as the BSD arm', () => {
   assert.match(r.stdout, /`date -d` with no BSD arm/);
 });
 
+test('a word ENDING in "date" does not count as the BSD arm', () => {
+  // The suppressing direction is the dangerous one: `date -v` is a substring of `update -v`
+  // and `date -j` of `validate -j`, so without a left boundary one unrelated command anywhere
+  // in a file silences pattern 4 for the whole file -- silently, which is the exact failure
+  // mode the rule exists to catch.
+  for (const decoy of ['brew update -v', 'validate -j 4', 'candidate -j']) {
+    const r = run([fixture('t.sh', `${decoy}\nts_epoch=$(date -d "$t" +%s)\n`)]);
+    assert.strictEqual(r.status, 1, `suppressed by decoy: ${decoy}\n${r.stdout}`);
+    assert.match(r.stdout, /`date -d` with no BSD arm/);
+  }
+});
+
 test('the CURRENT statusline and learning-quiz cards are clean: both carry a BSD date arm', () => {
   for (const p of [
     'home/private_dot_claude/executable_statusline-command.sh',
