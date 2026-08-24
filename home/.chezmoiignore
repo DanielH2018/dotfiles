@@ -46,9 +46,50 @@ Scripts
 # here launches the Linux-only picker.
 .local/bin/wpe
 .local/bin/wpe-pick
+.local/bin/wpe-watch
 .config/systemd/user/wallpaperengine.service
 .config/wallpaperengine
 .local/share/applications/wpe-pick.desktop
+
+# systemd user units, whole tree. systemd is a Linux init system and no other OS has a user
+# manager to read these, so on macOS and Windows the directory is 20-odd files that look
+# authoritative and are never loaded. Gated as a directory rather than unit by unit: a new
+# timer should not have to be remembered here to stay off the machines that cannot run it.
+# The per-unit entries gated by HOSTNAME further down are NOT redundant with this one: they
+# still have to apply among Linux hosts, where this rule does nothing.
+# The launchd equivalents live outside the source tree entirely and deploy nowhere by an
+# explicit decision recorded in the repo README; reviving one of these jobs on macOS means
+# writing a plist there, not un-ignoring a unit here.
+.config/systemd/user
+
+# Linux-desktop utilities: each needs something the OS supplies and macOS does not — PipeWire
+# (pactl), a Wayland compositor (wl-copy/wl-paste), KWin/kscreen-doctor, solaar's Logitech HID
+# stack, or a systemd timer to drive it. On a Mac they are not degraded, they are commands that
+# fail on invocation, and they overstate what the machine can do in the generated tools
+# inventory. Gated on the OS rather than the hostname because none of them is about one box's
+# hardware — a second Linux desktop should get all of them without being named.
+#
+# Three siblings that look like they belong here and do NOT:
+#   * the clipboard shims and the bmp converter one of them calls — deliberately deployed
+#     everywhere as the inert remote half of the clipboard bridge, see its own note below
+#   * the retention sweeper — its header records that its author considered the platform
+#     (GNU spellings, Linux-only timer) and left it deployed anyway, so this does not overrule
+#     that; it probes for the spelling it needs at runtime
+#   * the trackball pointer/solaar helpers' shared unit, covered by the whole-tree rule above
+.local/bin/audio-sink-toggle
+.local/bin/bt-hid-kick
+.local/bin/claude-changelog-watch
+.local/bin/clip2server
+.local/bin/desk-away
+.local/bin/login-window-layout
+.local/bin/mic-mute-toggle
+.local/bin/mullvad-settings-watch
+.local/bin/mx-ergo-pointer
+.local/bin/mx-ergo-resync
+.local/bin/mx-ergo-solaar
+.local/bin/mx-ergo-watch
+.local/bin/otel-sweep-watch
+.local/bin/streamcontroller-health
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to
