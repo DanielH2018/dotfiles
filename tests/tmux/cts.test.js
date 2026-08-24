@@ -12,7 +12,32 @@ const path = require('node:path');
 const CTS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_cts');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = have('bash') ? false : 'bash unavailable';
-const skipTmux = !have('bash') ? 'bash unavailable' : !have('tmux') ? 'tmux unavailable' : false;
+// Presence of the binary is not usability. Under a sandbox that allows only specific unix
+// sockets, tmux installs fine and then cannot create its server socket ("error creating
+// .../default (Operation not permitted)"), so a presence-only guard let the integration test
+// run and fail. Probe by actually standing a server up on a throwaway socket dir.
+//
+// The probe has to verify with list-sessions: `tmux new-session -d` exits 0 even when the
+// socket could not be created, which is also why the test below seeds its server without
+// noticing a failure.
+function tmuxUsable() {
+  if (!have('tmux')) return false;
+  let probe;
+  try {
+    probe = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-probe-'));
+    const env = { ...process.env, TMUX_TMPDIR: probe };
+    delete env.TMUX;
+    execFileSync('tmux', ['new-session', '-d', '-s', '_probe'], { env, stdio: 'ignore' });
+    execFileSync('tmux', ['list-sessions'], { env, stdio: 'ignore' });
+    try { execFileSync('tmux', ['kill-server'], { env, stdio: 'ignore' }); } catch { /* already gone */ }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (probe) try { fs.rmSync(probe, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+const skipTmux = !have('bash') ? 'bash unavailable' : !tmuxUsable() ? 'tmux cannot create a server here' : false;
 const BASH = (() => { try { return execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim(); } catch { return 'bash'; } })();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -111,6 +136,22 @@ test('cts errors when tmux is missing', { skip }, () => {
   assert.ok(err, 'exited non-zero');
   assert.strictEqual(err.status, 1);
   assert.match(String(err.stderr), /tmux not found/);
+});
+
+test('cts errors rather than naming a session with an empty hash', { skip }, () => {
+  // tmux present so the guard above it passes, but nothing else on PATH — so cksum and cut
+  // are unreachable. Before the fix this produced `-s sb-repo-` with no suffix and carried
+  // on, which is how a pre-push run failed on a missing suffix instead of a clear error.
+  const bin = scratch();
+  fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
+  const d = repo('hashless');
+  let err;
+  try {
+    execFileSync(BASH, [CTS, d], { env: { ...process.env, PATH: bin }, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) { err = e; }
+  assert.ok(err, 'exited non-zero rather than building a nameless session');
+  assert.strictEqual(err.status, 1);
+  assert.match(String(err.stderr), /cannot derive a session name/);
 });
 
 test('-h prints usage and exits 0', { skip }, () => {

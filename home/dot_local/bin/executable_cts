@@ -151,6 +151,13 @@ absdir="$(cd "$dir" 2>/dev/null && pwd)" || { printf 'cts: no such directory: %s
 base="$(basename "$absdir" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-*//;s/-*$//')"
 [ -n "$base" ] || base="repo"
 h="$(printf '%s' "$absdir" | cksum | cut -d' ' -f1)"
+# `base` above has a fallback and this did not, so an unreachable cksum or cut produced an
+# empty suffix and a malformed `sb-myrepo-` session name rather than an error — which is
+# how it surfaced: a pre-push run where the suffix was simply missing. Never silently
+# accept a nameless session; two repos would then collide on one name. A fallback hash is
+# not the answer either, since it would give the same repo a different session name
+# depending on which tools were reachable, and a stable name is the point.
+[ -n "$h" ] || { printf 'cts: cannot derive a session name (cksum/cut not on PATH)\n' >&2; exit 1; }
 name="sb-${base}-${h: -6}"
 
 # Give each worktree its own session: pull -b/-w's VALUE out of the passthrough args
