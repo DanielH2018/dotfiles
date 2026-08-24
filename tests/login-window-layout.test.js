@@ -137,7 +137,11 @@ function waitForMark(marks, name, ms = 3000) {
 
 function readLaunched(marks) {
   const p = path.join(marks, 'launched');
-  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean) : [];
+  // Split before trimming, and only ever drop empty lines: a stub invoked with no arguments
+  // writes "<cmd> " with a trailing space, and .trim() on the whole file strips that space off
+  // whichever launch landed last -- making the expected value depend on launch order rather
+  // than on what the script did.
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').split('\n').filter(Boolean) : [];
 }
 
 // The script backgrounds every launch, so it exits before the stubs have written their marks.
