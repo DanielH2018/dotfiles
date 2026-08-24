@@ -1123,15 +1123,34 @@
            so inside the sandbox the guard silently degraded to a no-op, and an empty parse of an
            aborted status is indistinguishable from "no drift".
 
-           Safe because the secret is not in this file. The GitHub token lives in
-           ~/.config/gh/hosts.yml — stated in sandbox/sandbox-CLAUDE.md and Dockerfile.base, and
-           consistent with this file's source contents (git_protocol, editor, pager, aliases,
-           colours). hosts.yml and everything else under the directory stay denied: this is an
-           exact-path carve-out, not a directory reopen. The Read()/Edit() denies on
-           ~/.config/gh/** in settings.permissions.json are a separate layer, left alone, so the
-           agent's own file tools still cannot read any of it. */}}
+           Safe because the secret is not in this file — its source contents are git_protocol,
+           editor, pager, aliases and colours. Everything else under the directory except the
+           exact paths listed below stays denied: these are exact-path carve-outs, not a
+           directory reopen. The Read()/Edit() denies on ~/.config/gh/** in
+           settings.permissions.json are a separate layer, left alone, so the agent's own file
+           tools still cannot read any of it. */}}
       "allowRead": [
         "~/.config/gh/config.yml",
+        {{/* Read-only `gh` needs this, and today it gets no further than reading it. With the
+             directory denied outright, gh aborts before it parses a subcommand —
+             `failed to create root command: failed to read configuration: open
+             ~/.config/gh/hosts.yml: operation not permitted` — so EVERY gh call fails in a
+             sandboxed session, and autoAllowBashIfSandboxed makes sandboxed the default path.
+             That left the whole read-only gh allowlist in settings.permissions.json as dead
+             weight: allowed by the permission layer, killed by this one.
+
+             Earlier revisions of the comment above justified the directory-wide deny by saying
+             the GitHub token lives in this file. It does not, and the claim is what kept the
+             gap open. `gh auth status` reports the token source as `(keyring)` — it is in the
+             macOS keychain, which a sandboxed process can still reach. Verified 2026-08-24 that
+             `grep -c oauth_token ~/.config/gh/hosts.yml` is 0 and the operator confirmed the
+             file holds only the username and git_protocol=https.
+
+             So this exposes a GitHub username to sandboxed Bash and no credential. Should the
+             token ever move back into the file — `gh auth login` without secure storage does
+             that — this carve-out starts leaking it and must come back out. Re-check with
+             `gh auth status`: it must say `(keyring)`, not a bare token line. */}}
+        "~/.config/gh/hosts.yml",
         {{/* The second file chezmoi manages inside a denied directory, and the reason the gh
              carve-out alone did not finish the job: status/diff/apply lstat every managed entry,
              so with this one unreadable chezmoi aborted here instead — one file further along,
