@@ -139,6 +139,52 @@ test('a `\\b` regex assigned to a variable never used by [[ =~ ]] is left alone'
   assert.strictEqual(r.status, 0, r.stdout);
 });
 
+test('`date -d` fires when the file carries no BSD arm', () => {
+  const cases = [
+    'ts_epoch=$(date -d "$ts" +%s 2>/dev/null)\n',
+    'd=$(date --date="yesterday" +%F)\n',
+    'date -u -d "$stamp" +%s\n',
+  ];
+  for (const body of cases) {
+    const r = run([fixture('t.sh', body)]);
+    assert.strictEqual(r.status, 1, `missed: ${body.trim()}`);
+    assert.match(r.stdout, /`date -d` with no BSD arm/);
+  }
+});
+
+test('`date -d` passes when a BSD arm is present anywhere in the file', () => {
+  const cases = [
+    // The one-liner form, and the multi-line form the statusline uses -- pattern 4 is
+    // file-scoped precisely so the second one does not have to fit on a single line.
+    'e=$(date -d "$t" +%s 2>/dev/null || date -j -f %s "$t" +%s)\n',
+    'e=$(date -d "$t" +%s 2>/dev/null)\nif [ -z "$e" ]; then\n  e=$(date -j -u -f \'%Y-%m-%dT%H:%M:%S\' "$t" +%s)\nfi\n',
+    'date -j -f %F "$base" -v+"$1"d +%F && exit 0\ndate -d "$base + $1 days" +%F\n',
+  ];
+  for (const body of cases) {
+    const r = run([fixture('t.sh', body)]);
+    assert.strictEqual(r.status, 0, `false positive for: ${body.trim()}\n${r.stdout}`);
+  }
+});
+
+test('a `date -j` in a COMMENT does not count as the BSD arm', () => {
+  // The whole reason pass A skips comments. Prose about this trap is all over the repo --
+  // including in the fix that prompted the rule -- and a file that only talks about the
+  // fallback has no fallback.
+  const r = run([fixture('t.sh', '# BSD needs date -j here\ne=$(date -d "$t" +%s)\n')]);
+  assert.strictEqual(r.status, 1, r.stdout);
+  assert.match(r.stdout, /`date -d` with no BSD arm/);
+});
+
+test('the CURRENT statusline and learning-quiz cards are clean: both carry a BSD date arm', () => {
+  for (const p of [
+    'home/private_dot_claude/executable_statusline-command.sh',
+    'home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh',
+  ]) {
+    const r = run([path.join(REPO, p)]);
+    assert.strictEqual(r.status, 0, `${p}\n${r.stdout}`);
+  }
+});
+
 test('mktemp templates pass when the X\'s are trailing', () => {
   const cases = [
     'f="$(mktemp "${TMPDIR:-/tmp}/x-XXXXXX")"\n',

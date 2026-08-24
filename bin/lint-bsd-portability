@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# lint-bsd-portability — catch the three GNU-only shell idioms that this repo has now shipped
-# four times, each one invisible on the Linux host it was written on.
+# lint-bsd-portability — catch the four GNU-only shell idioms that this repo has now shipped
+# five times, each one invisible on the Linux host it was written on.
 #
-# All four were found by one audit, all four had passed every gate, and all four failed only
-# on macOS/BSD userland:
+# The first three were found by one audit, all of them had passed every gate, and all of them
+# failed only on macOS/BSD userland:
 #
 #   979b240  tests/mx-ergo-resync.test.js — bare `sed -i "script"` in a solaar stub. BSD sed
 #            reads the NEXT ARGUMENT as the backup suffix, so the script became the suffix and
@@ -17,6 +17,15 @@
 #   6ebdaa4  claude-sandbox — `mktemp .../compact-XXXXXX.json`. BSD mktemp substitutes the X's
 #            only when they are TRAILING, so the name stayed literal: a crashed run poisons
 #            every later run and concurrent runs collide.
+#
+# The fourth came from a later macOS audit and is the quietest of the set:
+#
+#            statusline-command.sh — `date -d "$ts" +%s` feeding a `[[ -n ]]` guard. BSD date
+#            has no -d, so the substitution came back EMPTY and the guard skipped: the whole
+#            prompt-cache countdown segment silently did not render on the Mac. Nothing errored
+#            and nothing logged. The same file had the correct two-arm shape 130 lines above
+#            (`stat -f%m ... || stat -c%Y ...`), which is what makes this a lint and not a note:
+#            the author knew the pattern and the omission still shipped.
 #
 # A sibling of bin/lint-sh-templates rather than an extension of it, because that script does a
 # different job in a way that would put a hole in this one. It RENDERS each template through
@@ -44,6 +53,18 @@
 #     in place -- checked -- and the tempfile module has none of these problems.
 #   * Comment-only lines, in any of the scanned languages. Prose about these bugs is all over
 #     the repo — including in this file — and none of it runs.
+#   * `sha256sum`, `md5sum`, `nproc`, `base64 -w` and friends, which macOS also lacks. They were
+#     considered with pattern 4 and dropped for cost: allow-readonly-remote.sh and
+#     block-dangerous-bash.sh list those names as DATA inside allowlist alternations, and the
+#     sandbox Dockerfile/image scripts use them inside container builds that are Linux by
+#     construction. The exclusion list would end up longer than the rule.
+#   * `stat -c` without a fallback. Every occurrence here already pairs it with `stat -f`, so
+#     there is no evidence to write the rule against — and a rule with no true positive is a
+#     false-positive generator waiting for its first one.
+#   * A BSD date arm that lives in a DIFFERENT file from the `date -d` it guards (a wrapper
+#     function in a sourced lib, say). Pattern 4 is file-scoped, like pattern 2 is same-file:
+#     it asks only whether this file contains a non-comment `date -j`/`date -v` anywhere.
+#     Cross-file would need a call graph, and nothing here is written that way.
 #
 # Kept bash-3.2 clean (macOS default bash) and POSIX-awk clean, matching the rest of bin/. A
 # portability linter that needs gawk would be the joke writing itself; 2547123 landed only
@@ -141,14 +162,19 @@ function iscomment(s) {
   return (s ~ /^#/ || s ~ /^\/\//)
 }
 
-function check(   i, s, rest, tok, name) {
+function check(   i, s, rest, tok, name, hasbsd) {
   if (fname == "") return
 
   # Pass A: which variables end up on the right of `=~` inside a [[ ]] test. Without this the
   # check misses 25cc7e8 entirely -- that regex was assigned on line 127 and consumed on 139.
+  # Pass A also answers a second, file-scoped question, for pattern 4 below: does this file
+  # carry a BSD date arm anywhere? Comments do not count -- prose about this trap is all over
+  # the repo, and a file that only TALKS about `date -j` has no fallback.
   for (i = 1; i <= nlines; i++) {
     s = line[i]
-    if (iscomment(s) || s !~ /\[\[/) continue
+    if (iscomment(s)) continue
+    if (s ~ /date[[:blank:]]+-[jv]/) hasbsd = 1
+    if (s !~ /\[\[/) continue
     rest = s
     while (match(rest, /=~[[:blank:]]*"?\$\{?[A-Za-z_][A-Za-z0-9_]*/)) {
       tok = substr(rest, RSTART, RLENGTH)
@@ -170,6 +196,9 @@ function check(   i, s, rest, tok, name) {
 
     if (s ~ /mktemp[^;&|]*XXXX*[^X'"`)[:space:]]/)
       report(i, "mktemp template with characters after the X's: BSD mktemp only substitutes TRAILING X's, so the name stays literal and collides. Move the suffix off the template.")
+
+    if (!hasbsd && s ~ /(^|[^[:alnum:]_.-])date["']?[[:blank:]]+(-[^[:blank:]]+[[:blank:]]+)*(-d([[:blank:]]|$)|--date)/)
+      report(i, "`date -d` with no BSD arm in this file: BSD date has no -d, so this returns empty and a guard on its output skips in SILENCE rather than erroring. Add a `date -j -f <fmt>` (or -v) fallback.")
 
     if (s ~ /\[\[[^]]*=~[^]]*\\b/)
       report(i, "`\\b` in a bash [[ =~ ]] regex: Darwin's libc ERE has no word boundary, so this silently never matches. Spell it (^|[^[:alnum:]_]) ... ([^[:alnum:]_]|$).")

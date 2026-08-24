@@ -247,7 +247,16 @@ if [[ -n "$tp" && -r "$tp" ]]; then
       end' 2>/dev/null)
   if [[ -n "$cache_meta" ]]; then
     ts="${cache_meta%|*}"; ttl="${cache_meta#*|}"
+    # GNU `date -d` first, BSD `date -j -f` second — the same two-arm shape as the stat pair
+    # further up this file. Without the second arm the whole segment vanished on macOS rather
+    # than erroring: BSD date rejects -d, ts_epoch came back empty, and the guard below skipped
+    # in silence. BSD's parser also rejects fractional seconds and the trailing Z, so trim both
+    # off the transcript's ISO-8601 stamp first (it may carry either .mmmZ or a bare Z).
     ts_epoch=$(date -d "$ts" +%s 2>/dev/null)
+    if [[ -z "$ts_epoch" ]]; then
+      bsd_ts="${ts%Z}"; bsd_ts="${bsd_ts%%.*}"
+      ts_epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "$bsd_ts" +%s 2>/dev/null)
+    fi
     if [[ -n "$ts_epoch" ]]; then
       now=$(date +%s)
       remain=$(( ttl - (now - ts_epoch) ))
