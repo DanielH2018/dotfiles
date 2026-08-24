@@ -12,6 +12,19 @@ brew "gh"
 # skipped regardless.
 brew "gawk"
 brew "util-linux"
+# DECIDED: install coreutils, so macOS gets GNU spellings. The alternative was a BSD fallback
+# inside run_bounded, and this is the smaller of the two fixes the hole admits.
+# Not cosmetic: run-bounded.sh bounds every hook child on `timeout`(1), which is coreutils and
+# which a stock Mac lacks, so run_bounded emitted "timeout: command not found" and
+# lint-after-edit.sh reported THAT as the lint verdict — a PostToolUse hook blocking real edits.
+# tests/hooks/lint-after-edit.test.js:28 describes the hole and names the two ways to close it:
+# put a timeout(1) on the hook's PATH (this) or give run_bounded a fallback, which is a change
+# to the M10 bounded-execution contract and larger than the bug.
+# .zshrc already PREPENDS coreutils/libexec/gnubin where it exists — that prepend was written
+# for this formula and had been dead code, guarded on a `-d` that never matched. Installing the
+# formula is what makes it live. Scripts keep their own BSD fallbacks regardless: gnubin reaches
+# an interactive PATH, and a hook launched from elsewhere may not see it.
+brew "coreutils"
 brew "mas"
 brew "pipx"
 brew "pre-commit"

@@ -1,0 +1,71 @@
+{{ if and (eq .chezmoi.os "darwin") (ne .profile "minimal") -}}
+#!/bin/sh
+# Installs the macOS toolchain by running the Brewfile this repo already deployed.
+#
+# The macOS counterpart to os-linux/run_after_install-cli-tools.sh.tmpl and
+# os-windows/run_onchange_install-cli-tools.ps1.tmpl. Until this existed there was no
+# os-darwin/ tree at all: ~/Brewfile deployed on darwin and nothing ever consumed it, so the
+# only instruction to run it was a sentence inside another script's error message
+# (os-unix/run_once_after_install-python-tools.sh.tmpl, on the path where uv is missing). A Mac
+# that applied this repo got the aliases in dot_config/shell/common.sh, a .zshrc reaching for
+# $BREW_PREFIX/opt/util-linux/bin, and none of the tools underneath them.
+#
+# run_onchange_after_, not run_once_after_:
+#   * after  — file targets are written first, so $HOME/Brewfile exists by the time this runs.
+#              A `before` script cannot see it on a first apply.
+#   * onchange — a new formula in the Brewfile is a reason to re-run. run_once would install
+#              the toolchain as it stood on the first apply and never look again. The hash
+#              below is what chezmoi watches; it covers the template source, so an edit to
+#              either the literal rows or the tools.toml range re-triggers.
+#
+# Brewfile hash: {{ include "Brewfile.tmpl" | sha256sum }}
+#
+# Homebrew itself is NOT installed here. Its installer wants sudo and a tty, and curl|bash-ing
+# a third-party bootstrap as a side effect of deploying dotfiles is a bigger action than this
+# script is entitled to take. Missing brew therefore defers (exit 1) with the command to run,
+# the same fail-loud-and-retry contract as require-sudo and install-python-tools: chezmoi does
+# not record a failed run, so the next apply picks it up.
+# brew-bundle-bump: v1
+set -u
+
+TAG=install-brew-bundle
+BREWFILE="$HOME/Brewfile"
+
+# .zprofile puts brew on PATH for login shells, but chezmoi runs scripts non-interactively, so
+# probe the two install prefixes directly: /opt/homebrew on Apple Silicon, /usr/local on Intel.
+# Same two-candidate shape dot_zprofile.tmpl uses, and for the same reason.
+if ! command -v brew >/dev/null 2>&1; then
+  for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$candidate" ]; then
+      eval "$("$candidate" shellenv)"
+      break
+    fi
+  done
+fi
+
+if ! command -v brew >/dev/null 2>&1; then
+  echo "$TAG: Homebrew not installed — deferring (retries next apply)." >&2
+  echo "$TAG: install it from https://brew.sh, then re-run 'chezmoi apply'." >&2
+  exit 1
+fi
+
+if [ ! -f "$BREWFILE" ]; then
+  # Unreachable on an ordinary apply — Brewfile is a darwin-only file target written before
+  # this script. Reachable if someone .chezmoiignore's it, in which case there is nothing to
+  # install and nothing to retry: recording this run done is the honest outcome.
+  echo "$TAG: no $BREWFILE; nothing to install" >&2
+  exit 0
+fi
+
+# Installs what is missing and upgrades what is outdated — the same upgrade-on-apply policy as
+# the Linux installer's install_release helper and install-python-tools' `uv tool install`.
+echo "$TAG: brew bundle --file $BREWFILE ..." >&2
+if ! brew bundle --file="$BREWFILE"; then
+  # Deliberately loud rather than tolerated. The usual cause is a `mas` row failing because
+  # the App Store is signed out, which is a one-time fix and not a reason to silently leave
+  # the rest of a partially-installed toolchain unrecorded as a problem.
+  echo "$TAG: 'brew bundle' failed — deferring (retries next apply)." >&2
+  echo "$TAG: if the failure is a 'mas' row, sign in to the App Store and re-run." >&2
+  exit 1
+fi
+{{ end -}}

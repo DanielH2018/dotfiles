@@ -63,7 +63,15 @@ setopt AUTO_CD EXTENDED_GLOB NO_CASE_GLOB AUTO_MENU
 [[ ":$PATH:" != *":$BREW_PREFIX/bin:"* ]] && \
   export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
 
-export PATH="/opt/homebrew/opt/python@3.14/libexec/bin:$PATH"
+# Unversioned `python`/`pip` from the brew keg. Guarded and prefix-derived like its two
+# neighbours below — it had been neither, so an Intel Mac (prefix /usr/local) or a box on a
+# different Python minor silently prepended a directory that does not exist.
+if [[ -d "$BREW_PREFIX/opt/python@3.14/libexec/bin" ]]; then
+  export PATH="$BREW_PREFIX/opt/python@3.14/libexec/bin:$PATH"
+fi
+
+# gnubin is live only once the coreutils formula is installed — see the Brewfile's note on why
+# it is, which is that run_bounded needs timeout(1) and a stock Mac has none.
 if [[ -d "$BREW_PREFIX/opt/coreutils/libexec/gnubin" ]]; then
   export PATH="$BREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 fi
