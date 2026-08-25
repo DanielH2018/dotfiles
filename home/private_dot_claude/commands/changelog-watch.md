@@ -66,6 +66,8 @@ Prepend a dated section to the output note, directly below the `<!-- /changelog-
 ```
 ### YYYY-MM-DD — reviewed <oldest_new_version>..<newest_new_version>
 
+[Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+
 **Adopt**
 - `<version>` <feature> → <concrete config change> — <why>
 
@@ -102,6 +104,9 @@ Load the `artifact-design` skill, then write the section you just prepended as a
 HTML page to `$CLAUDE_CHANGELOG_ARTIFACT` with the Write tool. Same content, no new analysis:
 the reviewed version range, and the Adopt/Consider/Skip verdicts with their config targets and
 reasoning. Link each config target as `[label](file:///abs/path)`, and link the output note.
+Put a link to the upstream changelog at the top of the page, immediately below the lede and
+before the summary block: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md —
+that one is an `https://` link, not a `file://` one.
 
 Use the Write tool only — never the Artifact tool. This runs headless with permissions skipped,
 and publishing your own config's weak points to claude.ai is not a thing to do unattended.
