@@ -46,6 +46,27 @@ STAGE="$SUDOERS_D/.10-timestamp-global.new"
 DESIRED='Defaults timestamp_type=global
 Defaults timestamp_timeout=5'
 
+# Not every sudo has timestamp_type. Ubuntu 26.04 points /usr/bin/sudo at sudo-rs through the
+# alternatives system, and sudo-rs implements no such setting: `visudo -cf` rejects the drop-in
+# with "unknown setting: 'timestamp_type'". Measured here 2026-08-26 against both binaries the
+# box ships — sudo-rs 0.2.13 rejects the policy, classic sudo 1.9.17p2 (visudo.ws) parses it.
+#
+# Probing for support beats matching on an implementation name: it covers a sudo simply too old
+# to carry the setting, and it keeps working if sudo-rs adds it later. `-cf -` reads the policy
+# from stdin on both implementations, so the probe stages no file and needs no privileges —
+# which is why it sits before require_sudo and costs no password prompt.
+#
+# Skipping is the whole answer on sudo-rs, not a deferral to retry. Its cache is keyed on the
+# terminal and the session leader's start time with no override (sudoers-rs(5): "a separate
+# record for each terminal"), and that is the same scoping `global` exists to escape — so there
+# is no weaker version of this policy worth installing. Widening timestamp_timeout alone would
+# buy Claude's tty-less shells nothing and still widen the window, which the note above rules
+# out on purpose. Exit 0: a non-zero exit here aborts every later script in `chezmoi apply`.
+if ! printf '%s\n' "$DESIRED" | visudo -cf - >/dev/null 2>&1; then
+  echo "$TAG: this sudo rejects the policy (sudo-rs has no timestamp_type and caches per-terminal) — skipping"
+  exit 0
+fi
+
 # run_onchange already gives idempotence — chezmoi re-runs this only when the rendered text
 # changes — so there is no convergence probe here. Re-running it simply rewrites an identical
 # file. A probe would cost a sudo prompt on every apply to save nothing, because

@@ -102,7 +102,9 @@ test('writes the drop-in and leaves no staged file', { skip }, () => {
 //    pre-validation window is inert.
 test('a staged file failing visudo -cf is discarded, not installed', { skip }, () => {
   if (process.platform !== 'linux' || renderTemplate(body).trim() === '') return;
-  const r = runWithStubs({ sudo: SUDO_OK, visudo: '[ "$1" = "-cf" ] && exit 1; exit 0', chown: 'exit 0' });
+  // Fails the staged file only, never `-cf -`: that spelling is the support probe, and a stub
+  // that failed both would exercise the skip path below instead of the one this test is for.
+  const r = runWithStubs({ sudo: SUDO_OK, visudo: '[ "$1" = "-cf" ] && [ "$2" != "-" ] && exit 1; exit 0', chown: 'exit 0' });
   assert.strictEqual(r.exitCode, 1);
   assert.ok(!r.finalExists, 'must not install a file that failed validation');
   assert.ok(!r.stageExists, 'must clean up the staged file');
@@ -127,6 +129,31 @@ test('without sudo it defers and writes nothing', { skip }, () => {
   assert.strictEqual(r.exitCode, 1);
   assert.ok(!r.finalExists, 'must not install anything without sudo');
   assert.match(r.out, /sudo unavailable; deferring the sudo credential-timestamp policy/);
+});
+
+// 7. A sudo without timestamp_type — sudo-rs, which Ubuntu 26.04 selects through alternatives —
+//    must skip rather than fail. The distinction that matters is the exit code: this script is a
+//    run_onchange under `chezmoi apply`, so exiting non-zero here strands every later script,
+//    which is exactly what happened on the 26.04 box before the probe existed.
+test('a sudo that rejects timestamp_type is skipped, not failed', { skip }, () => {
+  if (process.platform !== 'linux' || renderTemplate(body).trim() === '') return;
+  // Mirrors sudo-rs: the probe on stdin is refused, everything else would have succeeded.
+  const r = runWithStubs({ sudo: SUDO_OK, visudo: '[ "$2" = "-" ] && exit 1; exit 0', chown: 'exit 0' });
+  assert.strictEqual(r.exitCode, 0, `must not abort the rest of chezmoi apply:\n${r.out}`);
+  assert.ok(!r.finalExists, 'must not install a policy this sudo cannot parse');
+  assert.ok(!r.stageExists, 'must not stage anything either — the probe runs before any write');
+  assert.match(r.out, /skipping/);
+});
+
+// 8. The probe must cost no password prompt: it runs before require_sudo, so a box with no sudo
+//    at all still reaches it. Without that ordering, a sudo-rs box would prompt for a password
+//    and only then discover it had nothing to install.
+test('the support probe runs before sudo is ever needed', { skip }, () => {
+  if (process.platform !== 'linux' || renderTemplate(body).trim() === '') return;
+  const r = runWithStubs({ sudo: SUDO_NONE, visudo: '[ "$2" = "-" ] && exit 1; exit 0', chown: 'exit 0' });
+  assert.strictEqual(r.exitCode, 0, `an unsupported policy is a skip, with or without sudo:\n${r.out}`);
+  assert.match(r.out, /skipping/);
+  assert.doesNotMatch(r.out, /deferring/, 'must report the real reason, not a sudo deferral');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
