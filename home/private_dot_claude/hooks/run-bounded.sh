@@ -32,6 +32,39 @@
 #   Caveat: a JVM largely ignores a parent-set ulimit -v (mmap-based heap) — bound
 #   JVM children via -Xmx/GRADLE_OPTS instead of mem_kb (open question in the spec).
 #
+# Which timeout(1) to drive the child with, resolved once when this file is sourced.
+#
+# `killed` is read off timeout's exit code, which GNU reports as 128+signal. uutils coreutils
+# collapses a signal-killed child to a plain 1 -- indistinguishable from a command that genuinely
+# exited 1 -- and --preserve-status does not change it (measured against uutils 0.8.0). Ubuntu
+# 25.04+ selects uutils through the alternatives system, so on a current Ubuntu box a crashing
+# hook child was reported as an ordinary failure rather than as could-not-evaluate. That is the
+# exact misread the `killed` status exists to prevent.
+#
+# The fix has to keep `exec` below. Every wrapper shape that lets a shell observe the child's
+# status instead -- waiting on it, trapping and forwarding TERM -- stops the kill-after SIGKILL
+# reaching the real command, because that signal goes to the direct child and cannot be trapped
+# or forwarded. Measured: the grandchild survived the timeout under both implementations. A
+# primitive whose whole job is bounding does not get to leak the process it was bounding, so the
+# child stays exec'd and the *binary* changes instead.
+#
+# Resolved by name through `command -v`, a builtin, so this costs no fork: ~0.3ms for the whole
+# loop, against ~116ms to probe the implementations by running them. gtimeout is the name
+# Homebrew's coreutils uses on macOS, gnutimeout the one Ubuntu's gnu-coreutils package uses;
+# both are GNU builds, and where neither exists `timeout` is GNU already (Fedora, Debian before
+# the uutils switch). RB_TIMEOUT is overridable so the tests can drive both implementations.
+#
+# Where only a non-conforming timeout exists, everything still runs and every bound still holds
+# -- `killed` is the single casualty, degrading to `ok` with the command's collapsed exit code.
+# tests/hooks/run-bounded.test.js asserts the resolved binary conforms, so that degradation
+# surfaces as a test failure rather than as a quietly wrong verdict.
+if [ -z "${RB_TIMEOUT:-}" ]; then
+  for RB_TIMEOUT in gtimeout gnutimeout timeout; do
+    command -v "$RB_TIMEOUT" >/dev/null 2>&1 && break
+  done
+  export RB_TIMEOUT
+fi
+
 # shellcheck disable=SC2034  # RB_OUT/RB_EXIT/RB_SIGNAL are the out-params callers read
 run_bounded() {
   local t="$1" cap="$2" mem=""
@@ -47,7 +80,7 @@ run_bounded() {
   # `head -c` enforces the byte cap by letting the OS pipe buffer fill, not by
   # buffering the whole output first — the cap holds even if the child never
   # stops writing.
-  timeout --signal=TERM --kill-after=2s "$t" \
+  "$RB_TIMEOUT" --signal=TERM --kill-after=2s "$t" \
     bash -c "${mem:+ulimit -v $mem; }exec \"\$@\"" _ "$@" \
     2>&1 | head -c "$cap" >"$tmp"
   local rc=${PIPESTATUS[0]}

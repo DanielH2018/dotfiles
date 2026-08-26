@@ -15,23 +15,35 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v timeout'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'coreutils timeout unavailable';
 
-// Whether the timeout(1) on PATH can express "the child died of a signal" at all.
+// The preference list run-bounded.sh resolves RB_TIMEOUT from, mirrored here so the tests can
+// answer the same question the library does.
+const TIMEOUT_NAMES = ['gtimeout', 'gnutimeout', 'timeout'];
+const firstPresent = TIMEOUT_NAMES.find(
+  (c) => spawnSync('bash', ['-c', `command -v ${c}`], { stdio: 'ignore' }).status === 0,
+);
+
+// Whether the timeout run_bounded actually drives can express "the child died of a signal".
 //
-// GNU timeout reports a signal-killed child as 128+signal. uutils coreutils collapses that to a
-// plain 1 (measured with 0.8.0; --preserve-status does not change it), and Ubuntu 25.04+ selects
-// uutils through the alternatives system, so this is the default on a current Ubuntu box rather
-// than an exotic setup. run_bounded reads exactly that exit code, so where timeout cannot express
-// the signal, RB_STATUS comes back `ok` with RB_EXIT=1 rather than `killed`.
+// GNU reports a signal-killed child as 128+signal; uutils coreutils collapses it to a plain 1,
+// and --preserve-status does not change it. run_bounded reads that code, so under uutils a
+// crashing child reads as an ordinary failure instead of `killed` — the exact misread the status
+// exists to prevent. Resolving to a GNU build is what fixes it, so the question is about the
+// resolved binary, not about whatever `timeout` happens to name.
 //
-// That is a limit of the host's timeout, not of the logic under test: the same case run under GNU
-// timeout reports 129 and the assertion holds. So the one case that turns on the distinction skips
-// where the tool cannot make it, instead of failing every run on such a host. The consequence is
-// real and worth stating plainly — on a uutils host a hook child killed by a signal is reported as
-// an ordinary failure — but it is not something this suite can assert its way out of.
-const signalStatusOk = toolsOk
-  && spawnSync('bash', ['-c', "timeout 5 bash -c 'kill -HUP $$'"], { encoding: 'utf8' }).status === 129;
+// Where no GNU timeout is installed at all there is nothing to resolve to, so the one case that
+// turns on the distinction skips — with a reason that names the fix rather than restating the
+// defect. Every other bound still holds there; `killed` is the single casualty.
+//
+// Read off stdout rather than the child's own status: when the signalled command is the last one
+// a shell runs, bash reports it by killing ITSELF with the same signal, so spawnSync comes back
+// status=null/signal=SIGHUP and the 129 never surfaces. Trailing the printf keeps the exit code a
+// number. run_bounded is unaffected — it reads ${PIPESTATUS[0]} mid-script, never as a tail call.
+const signalStatusOk = !!firstPresent
+  && spawnSync('bash', ['-c', `${firstPresent} 5 bash -c 'kill -HUP $$'; printf %s "$?"`],
+    { encoding: 'utf8' }).stdout.trim() === '129';
 const skipSignal = skip
-  || (signalStatusOk ? false : 'timeout(1) here reports signal death as exit 1, not 128+signal (uutils coreutils)');
+  || (signalStatusOk ? false
+    : 'no GNU timeout(1) on this host — install coreutils (macOS) or gnu-coreutils (Ubuntu) so signal deaths can be classified');
 
 // Run a snippet with run_bounded (and optionally outcome-lib) sourced, then print
 // the RB_* out-params as a parseable line so the test can assert on them.
@@ -49,6 +61,19 @@ function rb(cmd, { extra = '' } = {}) {
   for (const m of r.stdout.matchAll(/^(STATUS|EXIT|SIGNAL|OUT)=(.*)$/gm)) out[m[1]] = m[2];
   return { ...r, rb: out };
 }
+
+// The resolution itself, asserted independently of which binaries this host happens to carry.
+// A bare `timeout` here is what made a crashing hook child read as an ordinary failure on Ubuntu,
+// so the preference list being reordered or dropped is a regression worth catching directly
+// rather than only through the signal case below, which skips where no GNU build exists.
+test('the timeout binary is resolved by preference, and RB_TIMEOUT overrides it', { skip }, () => {
+  const sourced = (prefix) => spawnSync('bash', ['-c',
+    `${prefix}; . ${JSON.stringify(LIB)}; printf '%s' "$RB_TIMEOUT"`], { encoding: 'utf8' }).stdout;
+  assert.strictEqual(sourced('unset RB_TIMEOUT'), firstPresent,
+    'run_bounded must drive the first preferred timeout present on this host');
+  assert.strictEqual(sourced('export RB_TIMEOUT=/custom/tmo'), '/custom/tmo',
+    'an explicit RB_TIMEOUT must win, so a caller can pin either implementation');
+});
 
 test('normal completion: exit 0 inside the bound is status ok', { skip }, () => {
   const { rb: out } = rb(`run_bounded 5 4096 -- echo hello`);
