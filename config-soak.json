@@ -298,8 +298,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
-      "hash": "1e2474af4ef736d0cae2aec305937b33b7301d633894a8348628f196b46d4e88",
-      "landed": "2026-07-30T16:17:07.035Z"
+      "hash": "8a465cbf48c9bc762a55f1a82c316fd443139aaca55812feb8230ce22114216d",
+      "landed": "2026-08-26T23:52:32.913Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_allow_daniel_server.py",
