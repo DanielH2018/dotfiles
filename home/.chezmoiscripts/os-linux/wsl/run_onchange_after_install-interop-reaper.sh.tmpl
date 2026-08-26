@@ -32,6 +32,7 @@ if [ ! -x "$PS" ]; then
 fi
 
 # Resolve the Windows profile rather than assuming the Linux and Windows usernames match.
+# shellcheck disable=SC2016  # $env:USERPROFILE is PowerShell's own syntax, expanded by powershell.exe -- the single quotes are what stop the shell expanding it first, which is the point
 win_profile=$("$PS" -NoProfile -NonInteractive -Command '[Console]::Out.Write($env:USERPROFILE)' 2>/dev/null | tr -d '\r')
 if [ -z "$win_profile" ]; then
   echo "install-interop-reaper: could not resolve %USERPROFILE%; deferring (retries next apply)" >&2
