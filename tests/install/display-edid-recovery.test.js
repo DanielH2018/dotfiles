@@ -29,16 +29,6 @@ const { renderFile, chezmoiAvailable } = require('../lib/render');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-display-edid-recovery.sh.tmpl');
 
-// The template opens with `{{ if includeTemplate "is-desktop-linux" . }}`, and that gate reads
-// `eq .chezmoi.os "linux"`. `.chezmoi.os` is a chezmoi built-in derived from the real host, so
-// unlike `.profile` below it cannot be pinned from a config file -- off Linux the whole file
-// renders to zero bytes and all 15 assertions fail on a host the script never targets. Skip
-// there rather than assert against an empty string.
-const onLinux = process.platform === 'linux';
-const skip = !chezmoiAvailable ? 'chezmoi not on PATH'
-  : !onLinux ? `is-desktop-linux gates this template off ${process.platform}`
-  : false;
-
 // Real binaries the health script needs; PATH is replaced wholesale by the stub dir, so anything
 // not listed here and not stubbed simply won't exist.
 const PASSTHROUGH = ['sh', 'bash', 'cat', 'cp', 'wc', 'od', 'grep', 'install', 'date', 'tee', 'chmod', 'ls', 'mkdir', 'printf', 'echo', 'cmp', 'rm', 'dirname', 'uname', 'command'];
@@ -49,6 +39,22 @@ let renderedCache;
 // to zero bytes on a server-profile host and every assertion below fails there for no reason.
 // See the `profile` note in tests/lib/render.js.
 const rendered = () => (renderedCache ??= renderFile(SRC, { profile: 'workstation' }));
+
+// The template opens with `{{ if includeTemplate "is-desktop-linux" . }}`, and that gate reads
+// three things: `eq .chezmoi.os "linux"`, the profile, and `not (includeTemplate "is-wsl" .)`.
+// Only the profile can be pinned from a config file. The other two are derived from the real
+// host, so on a host the script never targets the whole file renders to zero bytes and all 15
+// assertions fail against an empty string.
+//
+// Rather than enumerate those hosts, ask the template: if it rendered to nothing here, there is
+// nothing to assert. That is the guard every other desktop-only suite in this repo already uses
+// (tests/install/dns.test.js, tests/install/remove-fedora-bloat.test.js), and it is what was
+// missing here -- checking only `process.platform` skipped macOS but not WSL, so 15 tests failed
+// on every WSL box even though the script correctly never deploys there.
+const skip = !chezmoiAvailable ? 'chezmoi not on PATH'
+  : process.platform !== 'linux' ? `is-desktop-linux gates this template off ${process.platform}`
+  : rendered().trim() === '' ? 'is-desktop-linux gates this template off this host (WSL, or a non-workstation profile)'
+  : false;
 
 // The health script is embedded in the installer as a quoted heredoc, so it is extracted rather
 // than duplicated here -- a copy in the test would keep passing after the real one drifted.

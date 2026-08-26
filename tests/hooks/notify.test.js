@@ -23,6 +23,19 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
+// The hook has three branches and the banner is absent from one of them on purpose: under WSL it
+// plays the Windows cue and draws no banner at all, because notify-send has no daemon there. So
+// there is no banner tool to stub and nothing to assert -- only the banner test skips, and every
+// sound assertion still runs, which is the half of the cue WSL does have.
+//
+// Reads the same file the hook branches on rather than os.release(), so a host the hook treats as
+// WSL is one this suite treats as WSL too. Getting that split wrong is what made the banner test
+// fail on every WSL box while asserting nothing about a real regression.
+const onWsl = (() => {
+  try { return /microsoft/i.test(fs.readFileSync('/proc/sys/kernel/osrelease', 'utf8')); } catch { return false; }
+})();
+const skipBanner = skip || (onWsl ? 'WSL draws no banner by design (notify-send has no daemon there)' : false);
+
 const dirs = [];
 
 // A fake $HOME with a stubbed play-sound.sh. `job` creates the jobs directory that marks the
@@ -101,7 +114,7 @@ test('a background job going idle makes a sound', { skip }, () => {
 // The banner is the other half of the cue. Asserting on it is also what keeps the stubs above
 // load-bearing: a stub nothing reads gets deleted as scaffolding a release later, and the
 // suite goes back to notifying the desktop.
-test('the banner carries the title and message the hook was given', { skip }, () => {
+test('the banner carries the title and message the hook was given', { skip: skipBanner }, () => {
   const { banners } = run({ type: 'permission_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
   assert.match(banners, /\bt m\b/, 'the notification tool is called with the payload title and message');
 });

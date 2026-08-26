@@ -42,7 +42,8 @@ const skip = toolsOk ? false : 'chezmoi/bash unavailable';
 // mount. On a WSL kernel rebuilt without "microsoft" the template renders the script but this
 // skips its tests -- the conservative direction (a skip, never a false failure), and the only
 // one available here without reaching into /proc from the test process.
-const skipWsl = skip || (/microsoft/i.test(os.release()) ? false : 'WSL-only script (renders empty off WSL)');
+const onWsl = /microsoft/i.test(os.release());
+const skipWsl = skip || (onWsl ? false : 'WSL-only script (renders empty off WSL)');
 
 // The same argument one OS up, for the os-linux/ scripts driven in parts 2f-2h. dnf-speedups and
 // setup-btrfs-snapshots open with `{{ if eq .chezmoi.os "linux" }}` and setup-bt-hid-recovery with
@@ -71,6 +72,18 @@ try {
 } catch { /* leave null; handled below */ }
 const skipWorkstation = skipLinux
   || (profile === 'workstation' ? false : `workstation-only script (profile=${profile ?? 'unreadable'})`);
+
+// One term narrower still, for the scripts gated on is-desktop-linux rather than on the profile
+// alone. That template is linux AND workstation AND *not* WSL, and skipWorkstation covers only the
+// first two: on a WSL box with profile=workstation it stays false while the template renders to
+// zero bytes, so the bt-hid group asserted against an empty string and failed on every WSL host
+// for a script that correctly never deploys there.
+//
+// Reuses the os.release() probe above rather than testing for an empty render, for the reason the
+// skipWorkstation note gives: this asks the same question the guard asks, so a guard that breaks
+// still fails its tests instead of silently skipping them.
+const skipDesktop = skipWorkstation
+  || (onWsl ? 'desktop-only script (is-desktop-linux renders empty under WSL)' : false);
 
 // The two interactive-chsh tests route the rendered script through `script(1)` to hand it a pty.
 // Debian ships that in essential util-linux; Fedora splits it into a separate util-linux-script
@@ -526,6 +539,15 @@ const SUDO_STUB = [
     fs.writeFileSync(path.join(dir, 'sudo'), APT_SUDO_STUB, { mode: 0o755 });
     if (paplayPresent) fs.writeFileSync(path.join(dir, 'paplay'), '#!/bin/sh\n', { mode: 0o755 });
     fs.symlinkSync(realBin('chmod'), path.join(dir, 'chmod')); // used by the sudo stub itself
+    // apt-get and dpkg only have to EXIST. linux-install.sh picks its package manager with
+    // `command -v apt-get && command -v dpkg`, and PATH is replaced wholesale by this dir, so
+    // without them the module finds no package manager at all: pkg_install becomes a no-op, the
+    // post-install `command -v paplay` probe fails, and the script exits 1 having logged nothing
+    // past `sudo -v`. That reads as a broken script rather than a sandbox missing two stubs.
+    // They are never executed — the sudo stub logs its argv and returns without exec'ing.
+    for (const name of ['apt-get', 'dpkg']) {
+      fs.writeFileSync(path.join(dir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    }
     const rendered = renderFile(WA_SRC);
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
@@ -940,7 +962,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 
   const btRead = (fakeRoot, key) => fs.readFileSync(path.join(fakeRoot, BT_PATHS[key]), 'utf8');
 
-  test('bt-hid-recovery.sh.tmpl: fresh box -> writes every artifact, enables the timer, reloads udev', { skip: skipLinux }, () => {
+  test('bt-hid-recovery.sh.tmpl: fresh box -> writes every artifact, enables the timer, reloads udev', { skip: skipDesktop }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox();
     const { status } = runSh(scriptFile, env);
     const log = readLog(logFile);
@@ -990,7 +1012,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.ok(log.includes('sudo udevadm control --reload'), `udev not reloaded:\n${log}`);
   });
 
-  test('bt-hid-recovery.sh.tmpl: no bluetoothctl -> exits without writing or probing sudo', { skip: skipLinux }, () => {
+  test('bt-hid-recovery.sh.tmpl: no bluetoothctl -> exits without writing or probing sudo', { skip: skipDesktop }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox({ bluetoothctl: false });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -998,7 +1020,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '', 'the gate must run before sudo is probed');
   });
 
-  test('bt-hid-recovery.sh.tmpl: systemd does not know bluetooth.service -> exits without probing sudo', { skip: skipLinux }, () => {
+  test('bt-hid-recovery.sh.tmpl: systemd does not know bluetooth.service -> exits without probing sudo', { skip: skipDesktop }, () => {
     const { scriptFile, env, logFile, fakeRoot } = btSandbox({ btUnit: false });
     const { status } = runSh(scriptFile, env);
     assert.strictEqual(status, 0);
@@ -1006,7 +1028,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
     assert.strictEqual(readLog(logFile), '');
   });
 
-  test('bt-hid-recovery.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip: skipLinux }, () => {
+  test('bt-hid-recovery.sh.tmpl: sudo unavailable -> exit 1 so the next apply retries', { skip: skipDesktop }, () => {
     const { scriptFile, env, fakeRoot } = btSandbox();
     env.SUDO_PROBE_EXIT = '1';
     const { status } = runSh(scriptFile, env);

@@ -49,9 +49,16 @@ add_host_integration_mounts() {
   # WSLg. The socket is world-accessible (0777) and the container uid matches the host (1000), so
   # no permission setup is needed. WAYLAND_DISPLAY is the absolute socket path, which avoids having
   # to set XDG_RUNTIME_DIR (that would point other tools at a root-owned mount point).
-  if [[ -S /mnt/wslg/runtime-dir/wayland-0 ]]; then
+  #
+  # Overridable purely so the tests can aim it at a path that does not exist; nothing in normal
+  # operation sets it. Every other mount here is reached through $HOME, which a test controls by
+  # construction — this one was an absolute host path, so on a WSL box it attached itself to every
+  # case and broke the three assertions that this function contributes *nothing* when the agent
+  # socket and keybindings are absent.
+  : "${WSLG_WAYLAND_SOCK:=/mnt/wslg/runtime-dir/wayland-0}"
+  if [[ -S "$WSLG_WAYLAND_SOCK" ]]; then
     DOCKER_ARGS+=(
-      -v /mnt/wslg/runtime-dir/wayland-0:/tmp/wl-clip.sock
+      -v "$WSLG_WAYLAND_SOCK:/tmp/wl-clip.sock"
       -e WAYLAND_DISPLAY=/tmp/wl-clip.sock
     )
   fi

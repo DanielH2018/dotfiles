@@ -264,19 +264,31 @@ const LIB = path.join(REPO, 'home', 'dot_local', 'share', 'terminal-cheatsheet')
 
 test('each parser module loads on its own and declines an empty config root', () => {
   const empty = tmpdir();
-  const cases = [
-    ['wezterm', 'parseWezterm'], ['ghostty', 'parseGhostty'],
-    ['nvim', 'parseNvim'], ['yazi', 'parseYazi'],
-  ];
-  for (const [file, fn] of cases) {
-    const mod = require(path.join(LIB, 'parsers', `${file}.js`));
-    assert.strictEqual(typeof mod[fn], 'function', `${file}.js must export ${fn}`);
-    assert.strictEqual(mod[fn](empty), null, `${fn} must return null for an empty root`);
+  // The same /mnt/c reach-across the subprocess runs disable with keepWsl=false, applied to the
+  // in-process seam. These require() the parsers directly, so they inherit THIS process's
+  // environment: on a WSL box weztermFile() then falls back to /mnt/c/Users/*/.config/wezterm and
+  // parseWezterm returned the host's real binds for an empty root. That is a correct answer to a
+  // different question than the one this test asks, which is whether a parser handed an empty
+  // config root declines it.
+  const wsl = process.env.WSL_DISTRO_NAME;
+  delete process.env.WSL_DISTRO_NAME;
+  try {
+    const cases = [
+      ['wezterm', 'parseWezterm'], ['ghostty', 'parseGhostty'],
+      ['nvim', 'parseNvim'], ['yazi', 'parseYazi'],
+    ];
+    for (const [file, fn] of cases) {
+      const mod = require(path.join(LIB, 'parsers', `${file}.js`));
+      assert.strictEqual(typeof mod[fn], 'function', `${file}.js must export ${fn}`);
+      assert.strictEqual(mod[fn](empty), null, `${fn} must return null for an empty root`);
+    }
+    // Claude keys off $HOME rather than a config root, and reports nothing when ~/.claude
+    // is absent — the one card that renders from built-ins alone when the dir does exist.
+    const { parseClaude } = require(path.join(LIB, 'parsers', 'claude.js'));
+    assert.strictEqual(parseClaude(empty), null);
+  } finally {
+    if (wsl !== undefined) process.env.WSL_DISTRO_NAME = wsl;
   }
-  // Claude keys off $HOME rather than a config root, and reports nothing when ~/.claude
-  // is absent — the one card that renders from built-ins alone when the dir does exist.
-  const { parseClaude } = require(path.join(LIB, 'parsers', 'claude.js'));
-  assert.strictEqual(parseClaude(empty), null);
 });
 
 test('a parser reads a fixture root passed as an argument', () => {

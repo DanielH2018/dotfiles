@@ -227,7 +227,16 @@ function hostRun({ socket = false, plainFile = false, keybindings = false } = {}
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude', 'keybindings.json'), '{}');
   }
-  return { home, sockPath, ...drive('add_host_integration_mounts', { env: { OP_SOCKET: sockPath, HOME: home } }) };
+  // Aimed at a path that does not exist, so the WSLg clipboard branch stays out of these cases.
+  // It is the one mount here not reached through $HOME, so on a WSL host it attached to every run
+  // and the three "contributes nothing" assertions below failed against a real host integration.
+  // Its own branch is covered separately, at the end of this group.
+  const noWayland = path.join(home, 'no-wayland.sock');
+  return {
+    home,
+    sockPath,
+    ...drive('add_host_integration_mounts', { env: { OP_SOCKET: sockPath, HOME: home, WSLG_WAYLAND_SOCK: noWayland } }),
+  };
 }
 
 test('the 1Password agent socket is forwarded when it exists', { skip }, () => {
@@ -256,6 +265,23 @@ test('host keybindings are mounted read-only when present', { skip }, () => {
   assert.ok(m, 'keybindings should be mounted');
   assert.strictEqual(m.mode, 'ro');
   assert.deepStrictEqual(hostRun({}).args, [], 'and nothing is mounted when absent');
+});
+
+// The branch the suppression above exists for. Worth covering rather than only silencing: it is a
+// real host integration, it had no test at all, and the way it surfaced was three unrelated
+// assertions failing on WSL — which reads as those integrations being broken, not this one being
+// untested. Driven through the override, so it runs on every host rather than only under WSLg.
+test('the WSLg Wayland clipboard socket is forwarded when it exists', { skip }, () => {
+  const home = scratch();
+  const sock = path.join(home, 'wayland-0');
+  execFileSync('python3', ['-c',
+    'import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])\n', sock]);
+  const r = drive('add_host_integration_mounts', {
+    env: { OP_SOCKET: path.join(home, 'absent.sock'), HOME: home, WSLG_WAYLAND_SOCK: sock },
+  });
+  assert.ok(mounts(r.args).some((m) => m.from === sock && m.dest === '/tmp/wl-clip.sock'),
+    'the host clipboard socket should be mounted at the path the xclip shim reads');
+  assert.ok(envOf(r.args).includes('WAYLAND_DISPLAY=/tmp/wl-clip.sock'));
 });
 
 // --- add_sibling_repo_mounts -------------------------------------------------

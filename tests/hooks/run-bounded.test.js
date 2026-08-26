@@ -15,6 +15,24 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v timeout'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'coreutils timeout unavailable';
 
+// Whether the timeout(1) on PATH can express "the child died of a signal" at all.
+//
+// GNU timeout reports a signal-killed child as 128+signal. uutils coreutils collapses that to a
+// plain 1 (measured with 0.8.0; --preserve-status does not change it), and Ubuntu 25.04+ selects
+// uutils through the alternatives system, so this is the default on a current Ubuntu box rather
+// than an exotic setup. run_bounded reads exactly that exit code, so where timeout cannot express
+// the signal, RB_STATUS comes back `ok` with RB_EXIT=1 rather than `killed`.
+//
+// That is a limit of the host's timeout, not of the logic under test: the same case run under GNU
+// timeout reports 129 and the assertion holds. So the one case that turns on the distinction skips
+// where the tool cannot make it, instead of failing every run on such a host. The consequence is
+// real and worth stating plainly — on a uutils host a hook child killed by a signal is reported as
+// an ordinary failure — but it is not something this suite can assert its way out of.
+const signalStatusOk = toolsOk
+  && spawnSync('bash', ['-c', "timeout 5 bash -c 'kill -HUP $$'"], { encoding: 'utf8' }).status === 129;
+const skipSignal = skip
+  || (signalStatusOk ? false : 'timeout(1) here reports signal death as exit 1, not 128+signal (uutils coreutils)');
+
 // Run a snippet with run_bounded (and optionally outcome-lib) sourced, then print
 // the RB_* out-params as a parseable line so the test can assert on them.
 function sh(snippet, { withOutcomeLib = false, timeoutMs = 15000 } = {}) {
@@ -78,7 +96,7 @@ test('flooded stdout is truncated at the byte cap, not buffered whole first', { 
 // the coredump handler still runs and still notifies. SIGHUP terminates without dumping,
 // is 1 on both Linux and macOS (unlike SIGUSR1, which is 10 vs 30), and stays distinct from
 // the timeout path's TERM-then-KILL, which is the whole point of this test.
-test('killed by its own signal is distinct from a timeout kill', { skip }, () => {
+test('killed by its own signal is distinct from a timeout kill', { skip: skipSignal }, () => {
   const { rb: out } = rb(`run_bounded 5 4096 -- bash -c 'kill -HUP $$'`);
   assert.strictEqual(out.STATUS, 'killed', 'a self-inflicted signal must not be misread as a timeout');
   assert.strictEqual(out.SIGNAL, '1', 'SIGHUP is signal 1');

@@ -36,6 +36,13 @@ const SOURCE = path.join(__dirname, '..', '..', 'home');
 const render = () => renderTemplate(body, { source: SOURCE, profile: 'workstation' });
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
+// One term tighter, for the podman-docker cases. The shim sits behind is-desktop-linux, which
+// excludes WSL as well — and unlike `profile` above, that term cannot be pinned from a config
+// file, because is-wsl reads the real host. So on a WSL box the surrounding script renders fine
+// and rendersHere() stays true while the shim block alone vanishes: the shim cases then ran
+// against a script that never contained the code they assert on, two failing outright and two
+// passing vacuously.
+const shimRendersHere = () => rendersHere() && render().includes('podman-docker');
 
 // Real binaries the script may reach for. Deliberately excludes dpkg/apt-get/dnf/rpm — those are
 // only ever supplied as stubs, so PATH alone decides which distro the script believes it is on.
@@ -218,7 +225,7 @@ test('the podman-docker shim is gated away from WSL', { skip }, () => {
 
 // 9. A Fedora workstation with no `docker` on PATH gets the shim.
 test('dnf host without docker installs the podman-docker shim', { skip }, () => {
-  if (!rendersHere()) return;
+  if (!shimRendersHere()) return;
   const { out, home } = runWithStubs({
     dnf: `echo "dnf $*" >> "$HOME/dnf.log"; exit 0`,
     rpm: 'exit 0',
@@ -237,7 +244,7 @@ test('dnf host without docker installs the podman-docker shim', { skip }, () => 
 // 10. …and a host that already has `docker` is left alone. Installing over a hand-installed
 //     docker-ce is the failure this guard exists for, so it must hold even on a desktop.
 test('an existing docker install is not fought over', { skip }, () => {
-  if (!rendersHere()) return;
+  if (!shimRendersHere()) return;
   const { out, home } = runWithStubs({
     dnf: `echo "dnf $*" >> "$HOME/dnf.log"; exit 0`,
     rpm: 'exit 0',
@@ -267,7 +274,7 @@ const readLog = (home, name) => {
 //     The marker and socket steps are therefore keyed on the package being installed instead.
 //     Prove it with docker already present — the install branch is skipped, the follow-up is not.
 test('the shim follow-up runs even when docker is already installed', { skip }, () => {
-  if (!rendersHere()) return;
+  if (!shimRendersHere()) return;
   const { out, home } = runWithStubs({
     dnf: 'exit 0',
     rpm: 'exit 0',                       // podman-docker reads as installed
@@ -288,7 +295,7 @@ test('the shim follow-up runs even when docker is already installed', { skip }, 
 //     the step is a no-op once the file exists, so a runtime check would start skipping on every
 //     machine that has applied this change and quietly stop guarding anything.
 test('the nodocker marker is created inside the package-keyed block', { skip }, () => {
-  if (!rendersHere()) return;
+  if (!shimRendersHere()) return;
   const rendered = render();
   const installBranch = rendered.indexOf('if ! command -v docker');
   const keyedBlock = rendered.indexOf('pkg_installed podman-docker; then');
