@@ -206,19 +206,26 @@ added_subshell_commands = ["claude-sandbox", "toolbox enter", "podman exec"]
 
 [session]
 {{- if eq .chezmoi.os "windows" }}
-# Windows only. Left unset, Warp opens the OS default shell, which is not the shell anything
-# else here is written for — every hook, script and tab config on this machine assumes bash.
+# Windows only. Left unset, Warp opens PowerShell 7, which is not the shell anything else
+# here is written for — every hook, script and tab config on this machine assumes bash.
 #
-# Warp's NewSessionShell type also has an `{ m_s_y_s2 = "..." }` variant, and Git Bash is an
-# MSYS2 environment (MSYSTEM=MINGW64), so that is the more descriptive spelling. It is not
-# used because Warp documents no accepted value for the string, and a wrong one fails the
-# same silent way a dangling default_tab_config_path does. `executable` names the binary and
-# leaves nothing to guess.
+# Both the shape and the path came from Warp itself: setting Settings > Features > Session >
+# "Startup shell for new sessions" to Git Bash and reading back what Warp wrote. That step
+# was not optional, because settings_schema.json describes this key wrongly twice over. It
+# declares the MSYS2 variant as `m_s_y_s2`, where Warp writes `msys_2`. And it offers an
+# `executable` variant that the deserializer does not accept — `{ executable = "<path>" }`
+# parses as valid TOML and is then ignored in silence, with no error and no log line, while
+# Warp goes on launching pwsh. Prefer what Warp writes over what its schema declares.
 #
-# This is bin/bash.exe, not git-bash.exe: the latter launches its own mintty window, which
-# is the one thing a terminal embedding a shell must not do.
-startup_shell_override = "C:/Program Files/Git/bin/bash.exe"
-new_session_shell_override = { executable = "C:/Program Files/Git/bin/bash.exe" }
+# The path is Git\usr\bin\bash.exe, not Git\bin\bash.exe. The latter is a 47 KB launcher
+# shim; the former is the real MSYS2 bash, and it is the one Warp chose.
+#
+# Single-quoted because a TOML literal string takes the backslashes as written. Warp emits
+# this form itself, and it survives Warp's own surgical rewrites unchanged.
+startup_shell_override = 'C:\Program Files\Git\usr\bin\bash.exe'
+
+[session.new_session_shell_override]
+msys_2 = 'C:\Program Files\Git\usr\bin\bash.exe'
 {{- end }}
 
 # Where a session starts, set per source rather than globally. `advanced_mode` is the switch
