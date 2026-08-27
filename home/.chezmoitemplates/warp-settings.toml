@@ -226,22 +226,31 @@ new_session_shell_override = { executable = "C:/Program Files/Git/bin/bash.exe" 
 #
 # A tab config's own `directory` wins over all of this, so `new_tab` only decides the cases
 # the `+` menu does not cover.
+#
+# `custom_dir` is required on every one of these tables, not just the ones using it —
+# WorkingDirectoryPerSourceConfig lists both fields in `required`. Omitting it where the mode
+# does not read it fails the whole WorkingDirectoryConfig, and Warp then falls back to its
+# default for the entire setting rather than the one table at fault.
 [session.working_directory_config]
 advanced_mode = true
 
 [session.working_directory_config.global]
 mode = "previous_dir"
+custom_dir = ""
 
 [session.working_directory_config.new_tab]
 mode = "previous_dir"
+custom_dir = ""
 
 [session.working_directory_config.new_window]
 mode = "home_dir"
+custom_dir = ""
 
 # A split is nearly always a second view onto the work already in the pane, so inheriting the
 # directory saves the `cd` that would otherwise follow every split.
 [session.working_directory_config.split_pane]
 mode = "previous_dir"
+custom_dir = ""
 
 [experimental]
 # Keeps the UI painting while a find runs over a large scrollback.
@@ -249,12 +258,20 @@ async_find_enabled = true
 {{- if eq .chezmoi.os "windows" }}
 
 [system]
-# Windows only — the backend enum is `dx12`, `vulkan`, `gl`, and this machine is a single
-# discrete RTX 3080 Ti with no integrated GPU. dx12 is the native path for that card.
+# Windows only. This machine is a single discrete RTX 3080 Ti with no integrated GPU, and
+# DirectX 12 is the native path for that card.
+#
+# The variant is PascalCase, and Warp's own settings_schema.json says otherwise: it declares
+# the consts as `empty`, `dx12`, `vulkan`, `gl`, `metal`, `browser_web_gpu`. Those are what
+# the schema generator emitted, not what the deserializer accepts — `"dx12"` is rejected at
+# load with `Failed to parse file value for setting [setting=PreferredGraphicsBackend]`, and
+# warp.exe carries the variant table as `EmptyDx12VulkanGlMetalBrowserWebGpu`. So the schema
+# is the wrong reference for this one key; the accepted spellings are Empty, Dx12, Vulkan,
+# Gl, Metal, BrowserWebGpu.
 #
 # `prefer_low_power_gpu` defaults to true, which asks for the integrated GPU. There is none
 # here, so the request is moot rather than harmful — it is set false to say so explicitly,
 # and because the same file deploys to machines where the answer would differ.
-preferred_graphics_backend = "dx12"
+preferred_graphics_backend = "Dx12"
 prefer_low_power_gpu = false
 {{- end }}
