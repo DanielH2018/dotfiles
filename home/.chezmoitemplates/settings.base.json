@@ -1303,6 +1303,31 @@
   "awaySummaryEnabled": false,
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
+  {{/* Focus view: the transcript shows only the prompt and the final response. Tool calls,
+       tool results, mid-turn narration and hook output are all hidden, and the status line
+       carries an "N messages hidden (/focus to show)" counter. It also injects a system
+       prompt telling the model the operator sees only the last message, which is what makes
+       it put the findings there instead of narrating as it goes.
+
+       It sits next to "tui" because it DEPENDS on it: without the fullscreen renderer
+       /focus refuses outright, and the fallback is CLAUDE_CODE_NO_FLICKER=1. Move or remove
+       "tui" and this key stops working.
+
+       # DECIDED: viewMode over the session toggle, accepting a lying /focus message.
+       There are two ways to default this on and they are not interchangeable.
+       /focus writes `briefTranscript` to storageV5, which persists across sessions but is
+       machine-local state — it does not reproduce on a fresh machine, which is the whole
+       point of keeping config here. viewMode does reproduce, at a cost: the renderer reads
+       `viewMode ? viewMode === "focus" : briefTranscript`, so ANY viewMode value wins over
+       the toggle. With this key set, /focus still flips briefTranscript and still prints
+       "Focus view disabled" — and the view stays focused, because viewMode decided.
+       The message is wrong, permanently. To actually turn focus view off, delete this line
+       and restart; that is what /focus itself says on the non-fullscreen path.
+       Verified against the 2.1.247 bundle: the accessor behind viewMode is the merged
+       settings-from-disk getter, and nothing writes viewMode back at runtime.
+       Schema is an enum — "default" | "verbose" | "focus" — so "default" locks focus view
+       OFF just as hard. Absent is the only value that leaves /focus honest. */}}
+  "viewMode": "focus",
   "skipWorkflowUsageWarning": true,
   "editorMode": "normal",
   "autoCompactEnabled": true,
