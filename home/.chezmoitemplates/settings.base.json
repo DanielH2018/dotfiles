@@ -331,8 +331,24 @@
        therefore contained `autoMode: {classifyAllShell}` alone. The whole tuned environment
        block was one `chezmoi apply` from being silently deleted.
 
-       After editing, verify with `claude auto-mode config` (effective rules, $defaults expanded)
-       and `claude auto-mode critique` (AI review of the custom prose). */}}
+       After editing, verify with `claude auto-mode config` — it prints the effective rules with
+       `$defaults` expanded, which is the one check that catches a dropped `$defaults` or a
+       section that silently replaced its built-in list.
+
+       `claude auto-mode critique` is the documented companion (AI review of the custom prose)
+       and it does NOT work here: it returns `No critique was generated. Please try again.` on
+       2.1.246, on the default model and on `--model claude-sonnet-5`, and it fails identically
+       against a two-rule set injected via `--settings` — so the cause is not this block's size
+       or wording. Feedback is filed. Try it again after an upgrade; don't read its failure as a
+       verdict on the rules.
+
+       2.1.246 also added `/permissions` -> Auto mode tab, which edits all four lists in-app.
+       It writes to ~/.claude/settings.json, which THIS template generates and
+       `claude-settings-merge` re-derives on every apply, carrying forward `effortLevel` alone.
+       So the tab is a drafting surface, not a home: edit there, read back exactly what it wrote
+       with `chezmoi diff ~/.claude/settings.json`, port the prose into this file, then apply.
+       Adding `autoMode` to RUNTIME_OWNED_KEYS would make the deployed copy outrank a reviewed
+       template, which is the arrangement the 2026-08-16 move above deliberately ended. */}}
   "autoMode": {
     {{/* Suspends EVERY Bash allow rule while auto mode is active, so the classifier sees every
          shell command. Deliberate, and the reason is written up in ~/server/CLAUDE.md: a
@@ -383,11 +399,20 @@
     "allow": [
       "$defaults",
       "Read-only kubectl against the homelab k3s cluster (get, logs, describe, top, events, explain, api-resources, diff) is routine and needs no confirmation — the default credential is a read-only ServiceAccount that cannot do anything else",
-      "Running the repo's own test and lint tooling is routine: `uv run pytest`, `prek run`, `ansible-lint`, and `uv run python scripts/probe.py` (read-only diagnostics)",
+      "Running the repo's own test and lint tooling is routine: `uv run pytest`, `prek run`, `ansible-lint`, and `uv run python scripts/diagnostics/probe.py` (read-only diagnostics)",
       "Editing ansible/vars/secrets.yml through `sops` is routine — it is the sanctioned way to change a secret, and the file stays encrypted at rest",
       {{/* Sessions here manage their own worktrees end to end; the permission tiers cover the
-           tool calls, this covers the shell half so the classifier doesn't hesitate on cleanup. */}}
-      "Git worktree lifecycle under .claude/worktrees/ is routine and fully reversible: creating, entering, removing a worktree, and deleting its merged branch (`git worktree add/remove`, `git branch -d/-D`, scripts/prune_worktrees.py). Several sessions work this repo in parallel and each owns its own worktree",
+           tool calls, this covers the shell half so the classifier doesn't hesitate on cleanup.
+           Naming `-D` was not enough on its own: on 2026-08-21 it was still denied, five days
+           after this entry landed (chezmoi a39fbbc), and the memory file
+           branch-d-works-until-the-tracking-ref-is-pruned.md records it. An allow entry clears a
+           soft block by supplying the fact the block is protecting against, so the recoverability
+           is now stated rather than implied. The path was also wrong — prune_worktrees.py moved
+           under scripts/dev/ — and the classifier reads this prose, so a dead path spends the
+           entry's credibility for nothing. Single observation on the denial: if `-D` is still
+           refused after this, that is the corroboration, and the answer is to leave the deletion
+           to the operator rather than to widen the rule again. */}}
+      "Git worktree lifecycle under .claude/worktrees/ is routine and fully reversible: creating, entering and removing a worktree (`git worktree add/remove`), and deleting a branch whose work is already on origin/master. `git branch -d` covers the ordinary case; `git branch -D` is needed only for a squash- or rebase-merged branch, whose content landed under a new SHA that git's own ancestor test can no longer see — the branch tip stays in the reflog and the work is already on master, so nothing is lost. `uv run python scripts/dev/prune_worktrees.py --prune` applies exactly that content check before it removes anything. Several sessions work this repo in parallel and each owns its own worktree",
       "Branch-level git that the reflog recovers — checkout, switch, rebase, merge, cherry-pick, stash push/apply — is routine local work in this repo"
     ],
 

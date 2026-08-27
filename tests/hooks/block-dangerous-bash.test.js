@@ -99,6 +99,12 @@ const DENY = [
   'node -e "require(\'fs\').readFileSync(\'.env\')"',
   'scp server:/home/u/.ssh/id_rsa .',
   'cp .env.example .env',
+  // The extension anchor narrows on what PRECEDES the dot, so a real key or cert file
+  // still denies. Untested until 2026-08-26: the four suffixes had allow-side cases only,
+  // which is how a narrowing could have dropped them without failing anything.
+  'cat certs/server.key',
+  'cat ~/tls/wildcard.pem',
+  'grep -r BEGIN /etc/ssl/private/site.pem',
   // ssh remote-exec guardrail: privileged/destructive payloads that the outer-command
   // permission match and the quote-broken local anchors would otherwise let through
   "ssh homelab 'sudo systemctl restart docker'",
@@ -240,6 +246,14 @@ const ALLOW = [
   'sed -n 1p CHANGELOG.md',
   'echo "{}" | jq ".key"',
   'cat data.json | jq ".pem"',
+  // A jq path expression is not a file extension. The segment splitter cuts on the `|`
+  // INSIDE a quoted filter, so a fragment like `"\(.key): \(.value` is scanned on its own
+  // with the leading `jq` still in the same subject — the filter-argument drop never sees
+  // it. Same class as the `.keys()` case the extension anchor fixed; measured 2026-08-26,
+  // three denials in one session on ordinary `to_entries[]` filters.
+  'jq -r \'to_entries[] | "\\(.key): \\(.value|length)"\' report.json',
+  'jq -r \'.items[] | .key\' data.json',
+  'yq -r \'.spec | .pem\' manifest.yaml',
   // an interpreter given a script or -m/-c reads stdin as DATA, so these stay allowed —
   // the reason the language interpreters are matched only on the curl/wget path
   'cat data.json | python3 -m json.tool',
