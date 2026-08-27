@@ -4,6 +4,12 @@
 //   macOS   ~/.warp/{settings.toml,keybindings.yaml,themes/,tab_configs/}
 //   Linux   $XDG_CONFIG_HOME/warp-terminal/{settings.toml,keybindings.yaml}
 //           $XDG_DATA_HOME/warp-terminal/{themes/,tab_configs/}
+//   Windows %LOCALAPPDATA%\warp\Warp\config\{settings.toml,keybindings.yaml}
+//           %APPDATA%\warp\Warp\data\{themes\,tab_configs\}
+//
+// Windows gets a real file tree rather than the symlink bridge macOS uses, because creating a
+// symlink there needs administrator privilege even with Developer Mode on. The files are
+// one-line wrappers that `include` the XDG copy unrendered, so the content has one source.
 //
 // This repo tracked only the Linux paths, so every Warp preference here -- theme, font,
 // keybindings, tab configs -- deployed to a Mac and was read by nothing. `chezmoi status` was
@@ -19,6 +25,7 @@ const { renderFile, renderTemplate, chezmoiAvailable, SOURCE } = require('../lib
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 const MAC = path.join(SOURCE, 'dot_warp');
 const XDG = path.join(SOURCE, 'dot_config', 'warp-terminal');
+const WINDOWS = path.join(SOURCE, 'AppData', 'Local', 'warp', 'Warp', 'config');
 const IGNORE = path.join(SOURCE, '.chezmoiignore');
 
 const ignored = (data) =>
@@ -27,17 +34,20 @@ const ignored = (data) =>
 // The two files Warp writes itself exist at both paths, so a recapture on either OS has
 // somewhere to land.
 for (const name of ['settings.toml', 'keybindings.yaml']) {
-  test(`${name} is tracked for both macOS and Linux`, () => {
+  test(`${name} is tracked for macOS, Linux and Windows`, () => {
     assert.ok(fs.existsSync(path.join(MAC, `${name}.tmpl`)), `~/.warp/${name} is not tracked`);
     assert.ok(fs.existsSync(path.join(XDG, `${name}.tmpl`)), `the XDG ${name} is not tracked`);
+    assert.ok(fs.existsSync(path.join(WINDOWS, `${name}.tmpl`)), `the Windows ${name} is not tracked`);
   });
 
-  test(`both ${name} wrappers render the same bytes`, { skip }, () => {
-    // Two wrappers, one body. If they ever diverge the drift is invisible -- each machine reads
-    // one of them, so a Mac and a Linux box would disagree with nobody there to compare.
+  test(`all three ${name} wrappers render the same bytes`, { skip }, () => {
+    // Three wrappers, one body. If they ever diverge the drift is invisible -- each machine
+    // reads one of them, so the boxes would disagree with nobody there to compare.
     const mac = renderFile(path.join(MAC, `${name}.tmpl`));
     const xdg = renderFile(path.join(XDG, `${name}.tmpl`));
-    assert.strictEqual(mac, xdg, `the ${name} wrappers have drifted apart`);
+    const win = renderFile(path.join(WINDOWS, `${name}.tmpl`));
+    assert.strictEqual(mac, xdg, `the macOS and XDG ${name} wrappers have drifted apart`);
+    assert.strictEqual(mac, win, `the macOS and Windows ${name} wrappers have drifted apart`);
     assert.ok(mac.length > 0, 'an empty render would satisfy equality and deploy nothing');
   });
 }
@@ -56,24 +66,41 @@ test('themes and tab_configs are symlinks into the XDG data tree', { skip }, () 
   }
 });
 
+test('the Windows data tree wraps the XDG themes and tab configs', () => {
+  // Warp reads these from %APPDATA% on Windows, which the symlink bridge above cannot reach.
+  // A wrapper that does not name its XDG source deploys an empty file, and Warp falls back to
+  // its own defaults without reporting anything.
+  const data = path.join(SOURCE, 'AppData', 'Roaming', 'warp', 'Warp', 'data');
+  for (const [dir, file] of [['themes', 'catppuccin_mocha.yaml'], ['tab_configs', 'local-shell.toml']]) {
+    const src = path.join(data, dir, `${file}.tmpl`);
+    assert.ok(fs.existsSync(src), `the Windows ${dir}/${file} wrapper is not tracked`);
+    assert.ok(fs.readFileSync(src, 'utf8').includes(`include "dot_local/share/warp-terminal/${dir}/${file}"`),
+      `the Windows ${dir}/${file} wrapper does not include its XDG source`);
+  }
+});
+
 test('the tab-config dir template agrees with the symlink it resolves through', { skip }, () => {
   // On macOS `default_tab_config_path` names ~/.warp/tab_configs, which is the symlink above.
   // Both come from this one template, so they cannot disagree -- this pins that they still do.
   const dir = renderTemplate('{{ includeTemplate "warp-tab-configs-dir" . }}').trim();
-  assert.match(dir, /\/(\.warp|\.local\/share\/warp-terminal)\/tab_configs$/,
-    `the tab config dir rendered as ${dir}, which is neither OS's path`);
+  assert.match(dir, /\/(\.warp|\.local\/share\/warp-terminal|AppData\/Roaming\/warp\/Warp\/data)\/tab_configs$/,
+    `the tab config dir rendered as ${dir}, which is no OS's path`);
   assert.doesNotMatch(dir, /\{\{|\}\}/, 'the render left a template action unexpanded');
 });
 
-test('each machine deploys exactly one of the two settings paths', { skip }, () => {
-  // Both are tracked; a machine that deployed both would have a second file that looks
+test('each machine deploys exactly one of the three settings paths', { skip }, () => {
+  // All three are tracked; a machine that deployed two would have a second file that looks
   // authoritative, and a recapture pasted into the wrong one changes nothing at all.
   const gates = ignored({});
-  const mac = gates.has('.warp');
-  const xdg = gates.has('.config/warp-terminal');
-  assert.ok(mac !== xdg, 'exactly one of .warp / .config/warp-terminal must be ignored here');
-  assert.strictEqual(xdg, process.platform === 'darwin',
-    'the XDG pair is the dead one on macOS and the live one everywhere else');
+  const live = {
+    mac: !gates.has('.warp'),
+    xdg: !gates.has('.config/warp-terminal'),
+    windows: !gates.has('AppData'),
+  };
+  assert.strictEqual(Object.values(live).filter(Boolean).length, 1,
+    `exactly one Warp config path must deploy here, got ${JSON.stringify(live)}`);
+  const expected = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : 'xdg';
+  assert.ok(live[expected], `the live path here should be the ${expected} one`);
 });
 
 test('both gate arms name a path, on any host profile', { skip }, () => {
@@ -83,11 +110,17 @@ test('both gate arms name a path, on any host profile', { skip }, () => {
   // both copies, silently.
   const raw = fs.readFileSync(IGNORE, 'utf8');
   const gate = raw.match(/\{\{ if eq \.chezmoi\.os "darwin" \}\}\n([^]*?)\{\{ end \}\}/);
-  assert.ok(gate, 'the per-OS Warp gate is gone; both copies would deploy everywhere');
+  assert.ok(gate, 'the per-OS Warp gate is gone; every copy would deploy everywhere');
+  assert.match(gate[1], /\{\{ else if eq \.chezmoi\.os "windows" \}\}/, 'the Windows arm is gone');
   assert.match(gate[1], /^\.config\/warp-terminal$/m, 'the darwin arm must ignore the XDG pair');
-  assert.match(gate[1], /^\.warp$/m, 'the non-darwin arm must ignore ~/.warp');
+  assert.match(gate[1], /^\.warp$/m, 'the non-darwin arms must ignore ~/.warp');
+  assert.match(gate[1], /^AppData$/m, 'the non-Windows arms must ignore the Windows tree');
+  assert.match(gate[1], /^\.local\/share\/warp-terminal$/m,
+    'the Windows arm must ignore the XDG data tree, which Warp does not read there');
   for (const work of [true, false]) {
-    assert.ok(ignored({ work }).has(process.platform === 'darwin' ? '.config/warp-terminal' : '.warp'),
-      `the gate stopped firing with work=${work}`);
+    const dead = process.platform === 'darwin' ? '.config/warp-terminal'
+      : process.platform === 'win32' ? '.local/share/warp-terminal'
+        : '.warp';
+    assert.ok(ignored({ work }).has(dead), `the gate stopped firing with work=${work}`);
   }
 });

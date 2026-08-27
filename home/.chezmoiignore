@@ -264,30 +264,52 @@ claude-otel
 # Gated on .work rather than on the hostname, unlike kwinrulesrc and fix-games-mount above:
 # those are wrong on one specific machine's absence of hardware, this is wrong on a class of
 # machine. A second personal box should get these without being added to a list.
+#
+# The list is spelled twice because Warp's data directory differs by OS, and only the spelling
+# this machine actually deploys gates anything. A gate written in the other spelling matches no
+# target, which chezmoi reports as no error at all — so a work laptop would get the personal
+# hosts while the gate above it still looked correct.
 {{ if .work }}
+{{- if eq .chezmoi.os "windows" }}
+AppData/Roaming/warp/Warp/data/tab_configs/daniel-box.toml
+AppData/Roaming/warp/Warp/data/tab_configs/daniel-server.toml
+AppData/Roaming/warp/Warp/data/tab_configs/local-server.toml
+{{- else }}
 .local/share/warp-terminal/tab_configs/daniel-box.toml
 .local/share/warp-terminal/tab_configs/daniel-server.toml
 .local/share/warp-terminal/tab_configs/local-server.toml
+{{- end }}
 {{ end }}
 
 # Warp reads one settings.toml and one keybindings.yaml, at a path that differs by OS
 # (docs.warp.dev/terminal/settings/file-locations). macOS reads ~/.warp; Linux reads
-# $XDG_CONFIG_HOME/warp-terminal. Both are tracked, both include the same shared body from
-# .chezmoitemplates, and each machine deploys only the pair its Warp actually opens — a copy
-# at the other path is not harmless, it is a second file that looks authoritative and that a
-# recapture can be pasted into with no effect.
+# $XDG_CONFIG_HOME/warp-terminal; Windows reads %LOCALAPPDATA%\warp\Warp\config. All three are
+# tracked, all three include the same shared body from .chezmoitemplates, and each machine
+# deploys only the pair its Warp actually opens — a copy at the other path is not harmless, it
+# is a second file that looks authoritative and that a recapture can be pasted into with no
+# effect.
 #
-# Themes and tab configs stay at the XDG data path on every OS, and macOS reaches them through
-# two symlinks under ~/.warp. Warp only reads those two directories, so a symlink is safe there
-# — unlike the pair above, which Warp rewrites. It also keeps the .work gate above as the single
-# copy of the personal-host list: a parallel file tree under ~/.warp would need that gate
-# duplicated, and warp-tab-config-gate.test.js matches the XDG spelling only, so the duplicate
-# would stay green while daniel-box.toml deployed to a work laptop.
+# Themes and tab configs stay at the XDG data path on macOS and Linux, and macOS reaches them
+# through two symlinks under ~/.warp. Warp only reads those two directories, so a symlink is
+# safe there — unlike the pair above, which Warp rewrites.
+#
+# Windows cannot use that symlink bridge: creating one needs administrator privilege even with
+# Developer Mode enabled, so it gets a real file tree under %APPDATA%\warp\Warp\data instead.
+# Those files are one-line wrappers that `include` the XDG copy, which is raw and unrendered —
+# so the content still has exactly one source and Warp's own `{{ "{{" }}host}}` placeholders
+# survive. The cost is that the .work gate above is no longer a single copy of the personal-host
+# list, which is why it is spelled twice and why the gate test resolves the spelling from the OS.
 #
 # Every path in this file is read as an entry, comments included, so no comment here may spell
 # a real target path. That is what warp-tab-config-gate.test.js caught on the first draft.
 {{ if eq .chezmoi.os "darwin" }}
 .config/warp-terminal
+AppData
+{{ else if eq .chezmoi.os "windows" }}
+.warp
+.config/warp-terminal
+.local/share/warp-terminal
 {{ else }}
 .warp
+AppData
 {{ end }}

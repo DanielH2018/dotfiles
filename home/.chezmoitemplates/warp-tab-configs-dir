@@ -1,5 +1,7 @@
 {{- if eq .chezmoi.os "darwin" -}}
 {{ .chezmoi.homeDir }}/.warp/tab_configs
+{{- else if eq .chezmoi.os "windows" -}}
+{{ .chezmoi.homeDir }}/AppData/Roaming/warp/Warp/data/tab_configs
 {{- else -}}
 {{ .chezmoi.homeDir }}/.local/share/warp-terminal/tab_configs
 {{- end -}}
