@@ -143,6 +143,9 @@ test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip 
   // that group into `\.(pem`, `key`, ... and matches nothing, so split at paren
   // depth 0 and expand such a group back into one branch per extension. Each
   // extension therefore still gets its own sample path and its own assertion.
+  // Since 2026-08-27 that branch also carries a leading `(^|[A-Za-z0-9_~/-])` anchor,
+  // which keeps a jq filter's `\(.key)` from reading as a filename; strip it here so the
+  // sample map stays keyed on the extension rather than on the anchor's spelling.
   const splitTopLevel = (body) => {
     const out = [];
     let depth = 0;
@@ -159,7 +162,7 @@ test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip 
     return out;
   };
   const expand = (branch) => {
-    const group = /^\\\.\(([^)]+)\)\\b$/.exec(branch);
+    const group = /^(?:\([^)]*\))?\\\.\(([^)]+)\)\\b$/.exec(branch);
     return group ? group[1].split('|').map((ext) => `\\.${ext}`) : [branch];
   };
 

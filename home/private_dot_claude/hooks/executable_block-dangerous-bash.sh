@@ -793,8 +793,10 @@ fi
 # session on ordinary `to_entries[]` filters, including a `grep` for the extension list in
 # this very file. Anchoring the LEADING side as well is what separates the two: a filename
 # puts a name character or a separator before the dot (`server.key`, `~/.key`), while a jq
-# or yq path expression puts an opening paren, a quote, a pipe or a space there.
-SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|[A-Za-z0-9_~/-]\.(pem|key|p12|pfx)\b)'
+# or yq path expression puts an opening paren, a quote, a pipe or a space there. Start of
+# line stays in the class: `jsonq d .key` and `cat .key` are still a secret read, and a
+# filter fragment never begins at column 1 — the splitter leaves the separator's whitespace.
+SECRET_PATHS='(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)'
 # Content dumpers, searchers (grep/awk/sed), pagers, editors, hashers, and
 # copy/exfil tools — any of these reading a secret path is a leak vector.
 READERS='(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar|jq|yq|gojq|jaq)'
