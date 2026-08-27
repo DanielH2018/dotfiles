@@ -78,13 +78,18 @@ function Resolve-SonarBase {
     return $null
 }
 
+# Returns $true if it repaired something, $false if there was nothing to do, and
+# $null if the base did not answer. The caller needs those last two kept apart: a
+# powered-off headset is a healthy no-op, whereas an unanswered base means GG has
+# restarted onto a new port and the cached address has to be thrown away.
 function Repair-Routing([string]$Base) {
-    # Streamer mode uses a different redirection model; leave it alone entirely.
     $mode = Invoke-Api "$Base/mode"
+    if (-not $mode) { return $null }
+    # Streamer mode uses a different redirection model; leave it alone entirely.
     if ($mode -ne 'classic') { return $false }
 
     $devices = Invoke-Api "$Base/audioDevices"
-    if (-not $devices) { return $false }
+    if (-not $devices) { return $null }
 
     $target = $devices | Where-Object {
         $_.dataFlow -eq 'render' -and $_.state -eq 'active' -and
@@ -96,7 +101,7 @@ function Repair-Routing([string]$Base) {
     if (-not $target) { return $false }
 
     $current = Invoke-Api "$Base/classicRedirections"
-    if (-not $current) { return $false }
+    if (-not $current) { return $null }
 
     $encodedId = [uri]::EscapeDataString($target.id)
     $changed = @()
@@ -124,11 +129,16 @@ function Repair-Routing([string]$Base) {
 function Invoke-Pass([ref]$BaseRef) {
     if (-not $BaseRef.Value) { $BaseRef.Value = Resolve-SonarBase }
     if (-not $BaseRef.Value) { return $false }
-    $ok = Repair-Routing $BaseRef.Value
-    # A dead base usually means GG restarted onto a new port; drop the cache so the
-    # next pass re-resolves it.
-    if (-not (Invoke-Api "$($BaseRef.Value)/mode")) { $BaseRef.Value = $null }
-    return $ok
+    $result = Repair-Routing $BaseRef.Value
+    if ($null -eq $result) {
+        # GG has restarted onto a new port. Drop the cache and re-resolve immediately,
+        # rather than leaving the routing unguarded until the next wake-up.
+        $BaseRef.Value = Resolve-SonarBase
+        if (-not $BaseRef.Value) { return $false }
+        $result = Repair-Routing $BaseRef.Value
+        if ($null -eq $result) { $BaseRef.Value = $null; return $false }
+    }
+    return $result
 }
 
 # A device arrival is the moment Sonar is most likely to mangle the routing, and it
