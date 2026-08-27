@@ -18,7 +18,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { renderFile, chezmoiAvailable, SOURCE } = require('../lib/render');
+const { renderFile, renderTemplate, chezmoiAvailable, SOURCE } = require('../lib/render');
 
 const TMPL = path.join(SOURCE, '.chezmoitemplates', 'warp-settings.toml');
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
@@ -40,13 +40,35 @@ test('the template renders valid TOML', { skip: tomlSkip }, () => {
   assert.ok(doc.appearance && doc.terminal, 'a parse that loses the top-level tables is not a parse');
 });
 
-test('the recapture keeps the header and the one template action', { skip }, () => {
-  // A `cp` of the deployed file over this template drops both. Nothing else in the file would
-  // look wrong afterwards -- it stays valid TOML and deploys -- so this is the only signal.
+test('the recapture keeps the header and the three template actions', { skip }, () => {
+  // A `cp` of the deployed file over this template drops all of them. Nothing else in the file
+  // would look wrong afterwards -- it stays valid TOML and deploys -- so this is the only signal.
   const raw = fs.readFileSync(TMPL, 'utf8');
   assert.match(raw, /^# Managed by chezmoi/, 'the header explaining the recapture must survive it');
   assert.match(raw, /\{\{ includeTemplate "warp-tab-configs-dir" \. \}\}/,
     'default_tab_config_path must stay templated; the dir it names differs per OS');
+
+  // The two os guards are the ones a recapture on Windows silently turns into literals: the
+  // deployed file there HAS the keys, so copying it back deploys a Windows bash.exe path and a
+  // dx12 backend to Linux and macOS, where neither exists.
+  const guards = raw.match(/\{\{- if eq \.chezmoi\.os "windows" \}\}/g) || [];
+  assert.strictEqual(guards.length, 2,
+    'the shell overrides and the graphics keys must each stay behind an os guard');
+});
+
+test('the non-Windows render is still valid TOML', { skip: tomlSkip }, () => {
+  // This machine is Windows, so the render above only ever exercises the true branch. Stripping
+  // the guarded blocks is what the false branch produces, and the failure it guards against is
+  // a `[session]` header left with no keys and no subtable under it.
+  const raw = fs.readFileSync(TMPL, 'utf8');
+  const stripped = raw.replace(/\{\{- if eq \.chezmoi\.os "windows" \}\}[\s\S]*?\{\{- end \}\}/g, '');
+  // Matched on the key names, not on "bash.exe" -- the header names that path in prose, so a
+  // looser pattern fails here while the strip is working correctly.
+  assert.doesNotMatch(stripped, /^(startup_shell_override|preferred_graphics_backend)/m,
+    'the strip must actually remove the Windows-only keys, or this test proves nothing');
+  const doc = parseToml(renderTemplate(stripped));
+  assert.ok(doc.session.working_directory_config.advanced_mode,
+    'the per-source working directory tables must survive without the Windows block');
 });
 
 test('the source names no machine-absolute home path', { skip: false }, () => {

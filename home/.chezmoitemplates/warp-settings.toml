@@ -13,12 +13,19 @@
 #
 # The recapture step, after changing anything in Warp's settings UI — the source path is the
 # one Warp writes on THIS machine, and copying the other one back captures nothing:
-#   macOS: cp ~/.warp/settings.toml                  <source>/home/.chezmoitemplates/warp-settings.toml
-#   Linux: cp ~/.config/warp-terminal/settings.toml  <source>/home/.chezmoitemplates/warp-settings.toml
-# then restore this header and the default_tab_config_path template action below.
+#   macOS:   cp ~/.warp/settings.toml                              <source>/home/.chezmoitemplates/warp-settings.toml
+#   Linux:   cp ~/.config/warp-terminal/settings.toml              <source>/home/.chezmoitemplates/warp-settings.toml
+#   Windows: cp "$LOCALAPPDATA/warp/Warp/config/settings.toml"     <source>/home/.chezmoitemplates/warp-settings.toml
+# then restore this header and the three template actions below.
 #
-# Templated because `default_tab_config_path` is absolute and OS-dependent. Warp resolves
-# nothing relative there, so a literal would deploy wrong under any other user or OS.
+# Three things are templated, because Warp resolves nothing relative and a literal would
+# deploy wrong under another user or OS:
+#   - `default_tab_config_path`, an absolute path into the tab_configs dir
+#   - `[session]`'s shell overrides, which name a Windows-only bash.exe
+#   - `[system]`'s graphics keys, whose backend enum is Windows-only
+#
+# A recapture drops all three, and the deployed file stays valid TOML afterwards — so the
+# tests in tests/terminal/warp-settings.test.js are the only thing that notices.
 
 [terminal]
 copy_on_select = true
@@ -94,10 +101,18 @@ telemetry_enabled = true
 crash_reporting_enabled = true
 
 [general]
-default_session_mode = "terminal"
+# `tab_config` is what makes `default_tab_config_path` do anything — under any other mode
+# Warp ignores that key, and local-shell.toml exists only to give this mode a row that runs
+# nothing. A recapture had already reverted this to "terminal", which disabled the whole
+# tab-config design silently: the `+` menu still worked, so nothing looked broken.
+default_session_mode = "tab_config"
 show_warning_before_quitting = false
 default_tab_config_path = "{{ includeTemplate "warp-tab-configs-dir" . }}/local-shell.toml"
 new_tab_placement = "after_all_tabs"
+# Warp's own default, pinned rather than left implicit. It is what reopens the previous
+# windows, tabs, panes and tab groups on launch, and it is a single toggle in the UI —
+# so leaving it unset means one stray click loses the layout with nothing to revert to.
+restore_session = true
 
 [appearance]
 
@@ -188,3 +203,58 @@ reuse_existing_control_master = true
 
 [warpify.subshells]
 added_subshell_commands = ["claude-sandbox", "toolbox enter", "podman exec"]
+
+[session]
+{{- if eq .chezmoi.os "windows" }}
+# Windows only. Left unset, Warp opens the OS default shell, which is not the shell anything
+# else here is written for — every hook, script and tab config on this machine assumes bash.
+#
+# Warp's NewSessionShell type also has an `{ m_s_y_s2 = "..." }` variant, and Git Bash is an
+# MSYS2 environment (MSYSTEM=MINGW64), so that is the more descriptive spelling. It is not
+# used because Warp documents no accepted value for the string, and a wrong one fails the
+# same silent way a dangling default_tab_config_path does. `executable` names the binary and
+# leaves nothing to guess.
+#
+# This is bin/bash.exe, not git-bash.exe: the latter launches its own mintty window, which
+# is the one thing a terminal embedding a shell must not do.
+startup_shell_override = "C:/Program Files/Git/bin/bash.exe"
+new_session_shell_override = { executable = "C:/Program Files/Git/bin/bash.exe" }
+{{- end }}
+
+# Where a session starts, set per source rather than globally. `advanced_mode` is the switch
+# that makes the three tables below outrank `global`; with it off they are read and ignored.
+#
+# A tab config's own `directory` wins over all of this, so `new_tab` only decides the cases
+# the `+` menu does not cover.
+[session.working_directory_config]
+advanced_mode = true
+
+[session.working_directory_config.global]
+mode = "previous_dir"
+
+[session.working_directory_config.new_tab]
+mode = "previous_dir"
+
+[session.working_directory_config.new_window]
+mode = "home_dir"
+
+# A split is nearly always a second view onto the work already in the pane, so inheriting the
+# directory saves the `cd` that would otherwise follow every split.
+[session.working_directory_config.split_pane]
+mode = "previous_dir"
+
+[experimental]
+# Keeps the UI painting while a find runs over a large scrollback.
+async_find_enabled = true
+{{- if eq .chezmoi.os "windows" }}
+
+[system]
+# Windows only — the backend enum is `dx12`, `vulkan`, `gl`, and this machine is a single
+# discrete RTX 3080 Ti with no integrated GPU. dx12 is the native path for that card.
+#
+# `prefer_low_power_gpu` defaults to true, which asks for the integrated GPU. There is none
+# here, so the request is moot rather than harmful — it is set false to say so explicitly,
+# and because the same file deploys to machines where the answer would differ.
+preferred_graphics_backend = "dx12"
+prefer_low_power_gpu = false
+{{- end }}
