@@ -258,20 +258,23 @@ async_find_enabled = true
 {{- if eq .chezmoi.os "windows" }}
 
 [system]
-# Windows only. This machine is a single discrete RTX 3080 Ti with no integrated GPU, and
-# DirectX 12 is the native path for that card.
+# Windows only. `prefer_low_power_gpu` defaults to true, which asks for the integrated GPU.
+# There is none on this machine, so the request is moot rather than harmful — it is set false
+# to say so explicitly, and because the same file deploys to machines where it would differ.
 #
-# The variant is PascalCase, and Warp's own settings_schema.json says otherwise: it declares
-# the consts as `empty`, `dx12`, `vulkan`, `gl`, `metal`, `browser_web_gpu`. Those are what
-# the schema generator emitted, not what the deserializer accepts — `"dx12"` is rejected at
-# load with `Failed to parse file value for setting [setting=PreferredGraphicsBackend]`, and
-# warp.exe carries the variant table as `EmptyDx12VulkanGlMetalBrowserWebGpu`. So the schema
-# is the wrong reference for this one key; the accepted spellings are Empty, Dx12, Vulkan,
-# Gl, Metal, BrowserWebGpu.
+# `preferred_graphics_backend` is deliberately absent. Two reasons, and the second is the one
+# that decides it:
 #
-# `prefer_low_power_gpu` defaults to true, which asks for the integrated GPU. There is none
-# here, so the request is moot rather than harmful — it is set false to say so explicitly,
-# and because the same file deploys to machines where the answer would differ.
-preferred_graphics_backend = "Dx12"
+#   - No spelling of the value is derivable from what Warp ships. Its settings_schema.json
+#     declares the consts snake_case (`dx12`, `vulkan`, `browser_web_gpu`); warp.exe carries
+#     the variant table as `EmptyDx12VulkanGlMetalBrowserWebGpu`. Both `"dx12"` and `"Dx12"`
+#     were rejected at load with `Failed to parse file value for setting
+#     [setting=PreferredGraphicsBackend]`, so the schema is not the reference for this key and
+#     the runtime spelling is unknown. Reading it back out of Warp's own settings UI is the
+#     only reliable way to learn it.
+#   - It would buy nothing here. Warp already picks the backend this setting would name:
+#     `Using Dx12 DiscreteGpu (NVIDIA GeForce RTX 3080 Ti) for rendering new window`. It gets
+#     there on its own by deprioritizing non-DX12 Nvidia adapters on drivers past version 572
+#     (this one is 610.88), because they can crash when several windows are open.
 prefer_low_power_gpu = false
 {{- end }}

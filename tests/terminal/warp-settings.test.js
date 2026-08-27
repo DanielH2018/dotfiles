@@ -62,9 +62,9 @@ test('the non-Windows render is still valid TOML', { skip: tomlSkip }, () => {
   // a `[session]` header left with no keys and no subtable under it.
   const raw = fs.readFileSync(TMPL, 'utf8');
   const stripped = raw.replace(/\{\{- if eq \.chezmoi\.os "windows" \}\}[\s\S]*?\{\{- end \}\}/g, '');
-  // Matched on the key names, not on "bash.exe" -- the header names that path in prose, so a
-  // looser pattern fails here while the strip is working correctly.
-  assert.doesNotMatch(stripped, /^(startup_shell_override|preferred_graphics_backend)/m,
+  // Matched on the key names at line start, not on "bash.exe" -- the header names that path in
+  // prose, so a looser pattern fails here while the strip is working correctly.
+  assert.doesNotMatch(stripped, /^(startup_shell_override|prefer_low_power_gpu)/m,
     'the strip must actually remove the Windows-only keys, or this test proves nothing');
   const doc = parseToml(renderTemplate(stripped));
   assert.ok(doc.session.working_directory_config.advanced_mode,
