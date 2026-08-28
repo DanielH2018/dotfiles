@@ -111,6 +111,27 @@ command -v starship >/dev/null 2>&1 && eval "$(starship init "$_CUR_SHELL")"
 # --- Zoxide (smart cd) ---
 if command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init "$_CUR_SHELL" --cmd cd)"
+  # zoxide's hook rides in PROMPT_COMMAND, which is not a safe place to leave it. WezTerm's
+  # /etc/profile.d/wezterm.sh vendors bash-preexec on every Linux host here, and its
+  # __bp_install rebuilds PROMPT_COMMAND at the first prompt from `${PROMPT_COMMAND:-}` — a
+  # scalar read, so it sees only element 0 when the variable is an array. Whether the hook
+  # survives depends on where that read lands: it does on daniel-box/daniel-server (inside
+  # element 0) and under WSL (systemd makes it an array first, hook at element 2), and it did
+  # not in the shell that reported `zoxide: detected a possible configuration issue` — there
+  # the hook was gone and zoxide had stopped recording directories. precmd_functions is the
+  # durable place: bash-preexec carries that array across its own install, and starship
+  # already registers there on these hosts. __zoxide_hook no-ops when $PWD is unchanged, so
+  # sitting in both lists costs nothing.
+  if [ -n "$BASH_VERSION" ] && [ -n "${bash_preexec_imported:-}${__bp_imported:-}" ]; then
+    # Same re-source guard as __osc7_cwd below (A14-16): don't register the hook twice.
+    case " ${precmd_functions[*]:-} " in
+      *' __zoxide_hook '*) ;;
+      *) precmd_functions+=(__zoxide_hook) ;;
+    esac
+    # zoxide's doctor reads only PROMPT_COMMAND and cannot see precmd_functions, so once a
+    # preexec framework owns the prompt its check reports a problem that isn't there.
+    _ZO_DOCTOR=0
+  fi
   alias zi='zoxide query -i'
   # Escape hatch to use the real cd when zoxide's override gets in the way.
   cdreal() { builtin cd "$@" || return; }
