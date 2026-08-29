@@ -898,6 +898,9 @@ test('the whole-string arm still catches what per-segment normalization would lo
     'bash -c "foo" ; echo "a; terraform apply"',
     'sh -c "x" && echo "b; pkill -9 nginx"',
     'python3 -c "x" ; echo "c; gh api -XPOST /repos/o/r/issues"',
+    // The push family reads BDB_SEGSET, which holds no whole-string member. Pinned here
+    // because that is the arm this test exists to protect.
+    'bash -c "foo" ; echo "d; git push origin main"',
   ];
   const got = await decide(cmds);
   cmds.forEach((cmd, i) =>
