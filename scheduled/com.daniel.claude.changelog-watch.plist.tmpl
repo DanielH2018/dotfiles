@@ -5,10 +5,20 @@
   because work-laptop-config's catch-up.sh globs that directory and would replay the
   job even while it is unloaded.
 
+  A TEMPLATE, so activation renders it rather than symlinking it. launchd expands nothing
+  in a plist — not $HOME, not ~ — and StandardOutPath in particular has to be an absolute
+  path, so the home directory was written out as /Users/daniel and the file only worked on
+  one machine under one account. That is the same defect tests/scheduled-tasks.test.js was
+  written to catch in the Windows Task Scheduler exports; it was fixed there and left here.
+
+  Rendering costs the symlink: the copy in ~/Library/LaunchAgents no longer tracks edits to
+  this file, so changing the schedule means re-running the activate block below.
+
   Activate on a machine that wants the daily /changelog-watch run:
 
-    ln -sfn ~/.local/share/chezmoi/scheduled/com.daniel.claude.changelog-watch.plist \
-            ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.daniel.claude.changelog-watch.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
     launchctl bootstrap "gui/$(id -u)" \
             ~/Library/LaunchAgents/com.daniel.claude.changelog-watch.plist
 
@@ -29,7 +39,8 @@
 
   Runner dependency: run-skill.sh is provided by the work-laptop-config repo
   (symlinked to ~/.claude/scheduled/run-skill.sh), so activation needs that repo
-  installed. It runs the skill headless with --dangerously-skip-permissions and
+  installed. It runs the skill headless with permission prompts disabled (the
+  dangerously-skip-permissions flag) and
   renders an HTML artifact in `shown` mode.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,13 +51,13 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>exec /Users/daniel/.claude/scheduled/run-skill.sh changelog-watch shown</string>
+    <string>exec {{ .chezmoi.homeDir }}/.claude/scheduled/run-skill.sh changelog-watch shown</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>37</integer></dict>
   <key>RunAtLoad</key><false/>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/Users/daniel/.claude/logs/scheduled/changelog-watch.launchd.log</string>
-  <key>StandardErrorPath</key><string>/Users/daniel/.claude/logs/scheduled/changelog-watch.launchd.log</string>
+  <key>StandardOutPath</key><string>{{ .chezmoi.homeDir }}/.claude/logs/scheduled/changelog-watch.launchd.log</string>
+  <key>StandardErrorPath</key><string>{{ .chezmoi.homeDir }}/.claude/logs/scheduled/changelog-watch.launchd.log</string>
 </dict>
 </plist>

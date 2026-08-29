@@ -4,9 +4,9 @@
   deliberately manual: this is a workaround for a fault whose trigger is not yet understood, and
   it should not appear on a machine that has never hit it.
 
-  What it does: runs `logi-dev-mgr-kick --if-idle` every 10 minutes, which restarts Logi Options+'s
-  device manager only when the Options+ window is closed and no kick has fired in the last 15
-  minutes. The script itself explains the fault it clears.
+  What it does: runs `logi-dev-mgr-kick` in its if-idle mode every 10 minutes, which restarts
+  Logi Options+'s device manager only when the Options+ window is closed and no kick has fired
+  in the last 15 minutes. The script itself explains the fault it clears.
 
   Why idleness and not a smarter trigger: when this was diagnosed on 2026-08-06 the broken daemon
   was externally indistinguishable from a healthy one — the receiver's open HID++ userclient count
@@ -15,10 +15,16 @@
   fresh daemon for the next time the app is opened. Read ~/.cache/logi-dev-mgr-kick/kicks.log
   before replacing this with anything that claims to detect the fault.
 
+  A TEMPLATE, so activation renders it rather than symlinking it — launchd expands neither
+  $HOME nor ~ anywhere in a plist, and StandardOutPath has to be absolute, so the home
+  directory used to be written out as one machine's. Rendering costs the symlink: the copy
+  in ~/Library/LaunchAgents stops tracking edits here, so a change means re-running this.
+
   Activate:
 
-    ln -sfn ~/.local/share/chezmoi/scheduled/com.daniel.logi-dev-mgr-kick.plist \
-            ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.daniel.logi-dev-mgr-kick.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
     launchctl bootstrap "gui/$(id -u)" \
             ~/Library/LaunchAgents/com.daniel.logi-dev-mgr-kick.plist
 
@@ -40,13 +46,13 @@
   <key>Label</key><string>com.daniel.logi-dev-mgr-kick</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/daniel/.local/bin/logi-dev-mgr-kick</string>
+    <string>{{ .chezmoi.homeDir }}/.local/bin/logi-dev-mgr-kick</string>
     <string>--if-idle</string>
   </array>
   <key>StartInterval</key><integer>600</integer>
   <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>/Users/daniel/.cache/logi-dev-mgr-kick/launchd.log</string>
-  <key>StandardErrorPath</key><string>/Users/daniel/.cache/logi-dev-mgr-kick/launchd.log</string>
+  <key>StandardOutPath</key><string>{{ .chezmoi.homeDir }}/.cache/logi-dev-mgr-kick/launchd.log</string>
+  <key>StandardErrorPath</key><string>{{ .chezmoi.homeDir }}/.cache/logi-dev-mgr-kick/launchd.log</string>
 </dict>
 </plist>

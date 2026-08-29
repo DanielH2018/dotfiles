@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The macOS half of the daily transcript credential sweep. Linux runs it as
+  home/dot_config/systemd/user/claude-transcript-scan.{service,timer}; this is the same job.
+
+  Why it needs to exist separately from the SessionEnd hook. The hook
+  (home/private_dot_claude/hooks/executable_session-end.sh) already scans each transcript as
+  its session ends, on every platform, and that is the normal path. The timer exists for the
+  sessions where the hook never completed — a kill -9, a crash, or a scan that outlived its
+  parent. On macOS that catch-up did not exist at all: ten systemd timers on Linux against
+  two plists here, and this was the one whose absence had teeth.
+
+  A TEMPLATE, like its two siblings: launchd expands neither $HOME nor ~ in a plist, and
+  StandardOutPath must be absolute. Rendering costs the symlink — the copy in
+  ~/Library/LaunchAgents stops tracking edits here, so a change means re-running Activate.
+
+  Definition only. Like its siblings it lives outside `home/`, so chezmoi never deploys it:
+  work-laptop-config's catch-up.sh globs ~/Library/LaunchAgents and would replay the job
+  even while it is unloaded.
+
+  Activate:
+
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.daniel.claude.transcript-scan.plist.tmpl \
+            > ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+    launchctl bootstrap "gui/$(id -u)" \
+            ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+
+  Deactivate:
+
+    launchctl bootout "gui/$(id -u)/com.daniel.claude.transcript-scan"
+    rm ~/Library/LaunchAgents/com.daniel.claude.transcript-scan.plist
+
+  The 25-hour window below matches the unit: a day's window with an hour of overlap, because
+  it has to cover more than the interval between runs, or a slow day loses transcripts.
+
+  RunAtLoad is true where the systemd timer instead sets Persistent=true. They answer the
+  same question — a machine that was asleep at the scheduled hour must still sweep — but
+  launchd has no Persistent, and its own catch-up for a missed StartCalendarInterval fires
+  only once on wake and is not something to rely on for a security control.
+
+  Exit 1 (findings) and exit 3 (could-not-evaluate) both matter here, and launchd reports
+  neither. That is why the scanner writes ~/.claude/logs/transcript-leaks-pending and
+  hooks/session-context.sh reads it into the next session: on this platform the plist's log
+  file is the only other trace, and nobody reads a log file unprompted.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.daniel.claude.transcript-scan</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{ .chezmoi.homeDir }}/.local/bin/claude-transcript-scan</string>
+    <string>--since</string>
+    <string>25</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>17</integer></dict>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>{{ .chezmoi.homeDir }}/.claude/logs/scheduled/transcript-scan.launchd.log</string>
+  <key>StandardErrorPath</key><string>{{ .chezmoi.homeDir }}/.claude/logs/scheduled/transcript-scan.launchd.log</string>
+</dict>
+</plist>
