@@ -483,16 +483,20 @@
             "command": "~/.claude/hooks/allow-safe-rm.sh",
             "timeout": 10
           },
-          {{/* Picks up where allow-readonly-remote.sh stops: the homelab calls are wrapped in
-               a local filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook
-               refuses any metacharacter or option. Defers to the server repo's tested pipeline
-               parser rather than re-deriving it in shell. Absent repo => the command fails =>
-               no output => the prompt stands, so it can only ever remove a prompt. */}}
-          {
-            "type": "command",
-            "command": "~/server/.claude/hooks/auto-approve-remote-ssh.sh",
-            "timeout": 10
-          },
+          {{/* auto-approve-remote-ssh.sh used to be registered here. It picks up where
+               allow-readonly-remote.sh stops -- the homelab calls are wrapped in a local
+               filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook refuses
+               any metacharacter or option -- by deferring to the server repo's tested
+               pipeline parser rather than re-deriving it in shell.
+
+               Its entry moved to that repo's own .claude/settings.json on 2026-08-29, because
+               the hook lives there, hardcodes /home/ubuntu/server as its working directory,
+               and runs the repo's uv environment. At user scope it was loaded in every
+               project on this machine and no-opped in all but one, and on a machine without
+               that repo it was a spawn per permission request that could never do anything.
+               A repo-specific hook belongs in the repo that owns it.
+
+               Do not re-add it here. Two registrations means it runs twice per request. */}}
           {{/* Widens the two hooks above for ONE host: any `ssh daniel-server CMD`, not just a
                read-only verb. A permission rule can't express this — `Bash(ssh:*)` is an `ask`
                rule and ask beats allow whatever the specificity, so only a PermissionRequest
