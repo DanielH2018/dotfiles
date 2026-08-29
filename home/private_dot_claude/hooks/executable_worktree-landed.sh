@@ -29,39 +29,13 @@
 # no auth, no GitHub remote, an API error — falls through to silence.
 #
 # Cleanup is three things, not one: leave the worktree, delete the branch it left behind,
-# fast-forward the primary checkout. The block text asks for the deletion twice, once on
-# each side of the pull, because the two merge shapes need opposite orders and the hook
-# cannot tell which one is coming. `git branch -d` accepts a branch merged into HEAD OR
-# its upstream. A squash merge satisfies only the upstream half, via a stale
-# refs/remotes/origin ref that the pull prunes — fetch.prune is on here. A fast-forward or
-# merge-commit land satisfies only the HEAD half, and the tip does not reach the primary's
-# HEAD until that same pull. Observed both on 2026-08-22: `bin/land` had already pruned the
-# tracking ref, so `-d` refused before the pull and succeeded after it.
-#
-# THE TWO CASES NEED DIFFERENT INSTRUCTIONS, which is why the block text below is built in
-# two halves rather than written once.
-#
-# Where the tip is an ancestor, ExitWorktree removes the tree itself and there is nothing to
-# work around. Where a squash or rebase rewrote the commits, ExitWorktree REFUSES — it tests
-# reachability, so it reports "N commits on <branch>" for a branch whose work is provably
-# landed, indistinguishably from one holding real unlanded work. Until 2026-08-22 this hook
-# told the session to accept that refusal and stop, which stranded every squash-merged tree
-# it fired on: two in one session, both still on disk after being told to clean up.
-#
-# The session can finish the job by hand, and this hook is exactly what makes that safe. It
-# has already confirmed a merged pull request whose head is this exact tip — provenance, not
-# a content guess — so `-D` here is not overriding a safety check, it is supplying the fact
-# the check could not reach. Measured, in this order, on 2026-08-22:
-#   - ExitWorktree "keep" returns the session to the primary, RELEASES the worktree lock, and
-#     lifts the isolation guard that refuses `git -C <primary>` from inside a worktree. All
-#     three matter; the git steps below fail without it.
-#   - `git worktree remove` then succeeds with no unlock needed.
-#   - The branch cannot be deleted BEFORE the worktree is removed ("used by worktree at ...").
-#   - `-d` refused once origin/<branch> was pruned, and `-D` succeeded.
-#
-# prune-worktrees.py is the backstop, not the plan: it reaps trees at the next session start
-# (its is_merged learned the squash case on 2026-08-22), but it deletes no branches — there is
-# no branch sweep in it, despite what an earlier version of this comment claimed.
+# fast-forward the primary checkout. THE TWO MERGE SHAPES NEED DIFFERENT ORDERS, which is why
+# the block text below is built in two halves rather than written once. Why each half is
+# ordered the way it is — why `-d` is tried on both sides of the pull, why `-D` is correct in
+# the squash half and nowhere else, why ExitWorktree refuses a squash-merged tree, why
+# `--force` is never the answer, and what prune-worktrees.py does and does not sweep — is in
+# worktree-landed.md beside this script. That file is the block text's own reference, so it is
+# the one place to change when any of it is re-measured; do not restate it here.
 
 set -u
 
@@ -147,65 +121,46 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
   REWRITTEN=1
 fi
 
-# The removal step, which differs by merge shape — see the two-cases note in the header.
+# Where the reasoning for every step below lives. The block text carries the commands and
+# the caveats that change what you type — nothing else. It is rendered verbatim into the
+# session log, where a paragraph of rationale is a paragraph of noise on every landed
+# worktree. Resolved next to this script so a worktree copy points at its own doc rather
+# than the deployed one.
+DOC_DIR=$(cd "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd -P) || DOC_DIR=""
+DOC="${DOC_DIR:+$DOC_DIR/}worktree-landed.md"
+
+# The removal step, which differs by merge shape — see the two-cases note in the header and
+# the "two merge shapes" section of the doc.
 if [ "$REWRITTEN" = "0" ]; then
-  REMOVAL="- If this session created the worktree with EnterWorktree, call ExitWorktree with \
-action \"remove\". Do NOT pass discard_changes: the tip is an ancestor of $DEFAULT, so a \
-refusal here means real work this hook could not see — report it and stop.
-- If ExitWorktree reports no active worktree session, it cannot act here. Say so in one line \
-and stop: prune-worktrees.py removes $TOPLEVEL at the next session start, once this session's \
-lock owner is gone.
-- Then delete the branch, which removing the worktree leaves behind: \
-git -C $PRIMARY branch -d $BRANCH. Try it BEFORE the pull below AND, if it refuses, once more \
-AFTER the pull — -d accepts a branch merged into HEAD or into its upstream, and a \
-fast-forward or merge-commit land does not put the tip in the primary's own HEAD until that \
-pull brings it down. Never -D on this path: with the tip an ancestor, -d has every fact it \
-needs, so a refusal here is telling you something. If -d refuses both times, leave the branch \
-and say so in one line — prune-worktrees.py reports it for a person to settle."
+  PULL_STEP=3
+  REMOVAL="  1. ExitWorktree with action \"remove\". Never discard_changes.
+  2. git -C $PRIMARY branch -d $BRANCH — BEFORE the pull below, and again AFTER the pull if \
+it refuses. Never -D on this path."
 else
-  REMOVAL="- ExitWorktree with action \"remove\" WILL refuse here, reporting \"N commits on \
-$BRANCH\". That is not a finding: the merge rewrote the commits, so the tool's reachability \
-test cannot see work that provably landed. Do NOT pass discard_changes to argue with it. \
-Retire the tree by hand instead, in this order:
-    1. ExitWorktree with action \"keep\" — this returns the session to $PRIMARY, releases \
-the worktree lock, and lifts the isolation guard that refuses git commands aimed at the \
-primary from inside a worktree. The steps below fail without it.
-    2. git -C $PRIMARY worktree remove $TOPLEVEL — and if it reports the tree is locked, \
-run git -C $PRIMARY worktree unlock $TOPLEVEL first. Never --force: git's own refusal on a \
-tree holding uncommitted files is the backstop that makes this safe.
-    3. git -C $PRIMARY branch -d $BRANCH, and only if that refuses, the capital-D form of the \
-same command. Capital D is correct HERE and nowhere else: this hook confirmed a merged pull \
-request whose head is this exact tip, which is the fact -d can no longer reach once the \
-tracking ref has been pruned. The branch will not go before step 2 — git holds it while a \
-worktree uses it.
-  Stop at the first step that fails and say which one. A half-retired tree is for \
-prune-worktrees.py to finish, not for you to force past.
-- If ExitWorktree reports no active worktree session, do steps 2 and 3 anyway — they do not \
-need it — then say so in one line."
+  PULL_STEP=4
+  REMOVAL="  1. ExitWorktree with action \"keep\". Action \"remove\" WILL refuse here \
+(\"N commits on $BRANCH\"). Never discard_changes.
+  2. git -C $PRIMARY worktree remove $TOPLEVEL — unlock it first if it reports the tree is \
+locked. Never --force.
+  3. git -C $PRIMARY branch -d $BRANCH, and only if that refuses, the capital-D form."
 fi
 
 : >"$STAMP" 2>/dev/null
 
 jq -n --arg branch "$BRANCH" --arg landed "$LANDED_AS" --arg primary "$PRIMARY" \
-      --arg path "$TOPLEVEL" --arg removal "$REMOVAL" '{
+      --arg removal "$REMOVAL" --arg doc "$DOC" --arg step "$PULL_STEP" '{
   decision: "block",
   reason: (
-    "This session'"'"'s worktree is finished with: \($branch) is clean and \($landed), " +
-    "so nothing here exists only on disk.\n\n" +
-    "Clean it up now — this is a standing instruction from the user'"'"'s config, not " +
-    "something to ask about:\n" +
+    "This session'"'"'s worktree is finished with: \($branch) is clean and \($landed). " +
+    "Retire it now — a standing instruction from the user'"'"'s config, not something to " +
+    "ask about. Read \($doc) before deviating: it explains every refusal below, and what " +
+    "prune-worktrees.py does if you leave the tree.\n" +
     $removal + "\n" +
-    "- Then bring the primary checkout up to date so the next session and any deploy " +
-    "read the merged tree: git -C \($primary) pull --ff-only. Where the repo has a " +
-    "deploy lock, take it first (in DanielH2018/server: flock " +
-    "/var/lock/server-git-tree.lock). If the primary is on another branch, is dirty, or " +
-    "the fast-forward refuses, leave it alone and say so in one line — never merge, " +
-    "reset or stash it. Where a pull-based deployer derives what to deploy from " +
-    "local..origin (DanielH2018/server does), fast-forwarding by hand cancels the " +
-    "deploys those commits were due — trigger a deploy tick instead, which merges and " +
-    "deploys in one step.\n\n" +
-    "Then finish your reply. Do not start new work. If there is still work to do here " +
-    "(a deploy to run, a verification to make), say so and keep the worktree — this " +
-    "fires once per worktree and will not ask again."
+    "  " + $step + ". git -C \($primary) pull --ff-only — but where a pull-based deployer " +
+    "derives its work from local..origin (DanielH2018/server does), trigger a deploy tick " +
+    "instead; pulling by hand cancels the deploys those commits were due.\n" +
+    "Stop at the first step that fails and say which one. If there is still work to do here " +
+    "— a deploy to run, a verification to make — say so and keep the worktree; this fires " +
+    "once per worktree and will not ask again."
   )
 }'

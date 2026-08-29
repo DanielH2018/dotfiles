@@ -286,6 +286,19 @@ with tempfile.TemporaryDirectory() as tmp:
         "the ancestry block still forbids -D",
         "Never -D on this path" in reason and "capital-D" not in reason,
     )
+    # The block carries commands only; the reasoning it points at has to be a file that
+    # exists next to the hook, or the pointer is a dead end in every session it fires.
+    doc = HOOK.parent / "worktree-landed.md"
+    doc_text = doc.read_text() if doc.is_file() else ""
+    check("the reasoning doc ships beside the hook", doc.is_file())
+    check(
+        "both blocks name the reasoning doc by its real path",
+        str(doc) in reason and str(doc) in squash_reason,
+    )
+    check(
+        "the reasoning doc explains the fallback the blocks do not",
+        "prune-worktrees.py" in doc_text and "Never `--force`" in doc_text,
+    )
     check(
         "no gh on PATH is silent",
         run(t["squashed_then_edited"], GH_BIN=str(STUB_DIR / "no-such-gh")) is None,
