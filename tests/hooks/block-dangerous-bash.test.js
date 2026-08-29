@@ -414,6 +414,21 @@ const ALLOW = [
   'docker inspect --format "{{.State.Health.Status}}" dozzle',
   'ssh daniel-pi docker inspect -f "{{.State.Status}}" glances',
   'docker ps -a',
+  // Text WRITING OUT one of these commands is not the command. The arms shipped unanchored
+  // on 2026-08-29 and denied the first printf below — inside a script whose whole purpose
+  // was testing this hook — and a `grep -n` whose PATTERN named docker inspect. Same class
+  // as the quoted-terraform cases further down; the anchored families avoid it by matching
+  // only at a separator, and these arms now do too.
+  'printf \'%s\\n\' "git diff ansible/vars/secrets.yml" > cases.txt',
+  'echo "sops -d ansible/vars/secrets.yml"',
+  'git commit -m "deny sops -d and git diff on a secrets file"',
+  'grep -n "systemctl cat" hook.sh',
+  'grep -rn "docker inspect" tests/',
+  // The no-content diff flags. The driver still decrypts, but nothing from the plaintext
+  // reaches stdout — and `git diff --stat` was denied within an hour of shipping.
+  'git diff --stat ansible/vars/secrets.yml',
+  'git diff --name-only ansible/vars/secrets.yml',
+  'git diff --name-status ansible/vars/secrets.yml',
 ];
 
 test('dangerous commands are denied', { skip }, async () => {

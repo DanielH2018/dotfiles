@@ -872,12 +872,23 @@ fi
 # names and dates that gets diffed routinely, and a looser `.*secret.*` pattern denies it.
 SOPS_PATHS='(^|[[:space:]])([^[:space:]]*/)?(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))\b'
 
+# Command position, for the arms below. Written unanchored on 2026-08-29 and it denied
+# `printf '%s\n' "git diff ansible/vars/secrets.yml"` — a line WRITING OUT the command, in a
+# script that was testing this very hook. That is the failure `text describing a dangerous
+# command is not the command` already guards for elsewhere, and the anchored families avoid
+# it by matching only at a separator. These arms now do the same.
+#
+# The optional prefixes are what keep the remote spelling caught: an env assignment
+# (`SOPS_AGE_KEY_FILE=x sops -d f`) and an ssh/hl host (`ssh daniel-pi systemctl cat u`)
+# both push the real binary out of column zero without making it any less the command.
+BDB_CMD_AT='(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((ssh|hl)[[:space:]]+[^[:space:]]+[[:space:]]+)*'
+
 # sops verbs that write plaintext to stdout or into a child's environment. `edit` (which is
 # also the bare `sops <file>` form), `updatekeys`, `rotate`, `set`, `unset`, `filestatus`,
 # `groups` and `encrypt` do not, and stay allowed — denying them would break /add-secret.
 # `exec-env` is the one worth naming: it decrypts the whole file into an environment, and
 # it is the spelling a `-d`-only rule misses.
-if bdb_re "$SCAN" '\bsops\b[^;&|]*((^|[[:space:]])--decrypt([[:space:]]|=|$)|(^|[[:space:]])-[A-Za-z]*d([[:space:]]|$)|(^|[[:space:]])(decrypt|exec-env|exec-file)([[:space:]]|$))'; then
+if bdb_re "$SCAN" "${BDB_CMD_AT}sops\b[^;&|]*((^|[[:space:]])--decrypt([[:space:]]|=|\$)|(^|[[:space:]])-[A-Za-z]*d([[:space:]]|\$)|(^|[[:space:]])(decrypt|exec-env|exec-file)([[:space:]]|\$))"; then
   deny "Blocked: this decrypts a SOPS file into the session. Ask the user for the one value you need, or use \`sops <file>\` to edit without printing plaintext."
 fi
 
@@ -887,18 +898,30 @@ fi
 # only. This matches an explicitly named path; a bare `git log -p` over a range that
 # happens to contain the file is not caught, because no pattern over the command text
 # can see the range's contents.
-if bdb_re "$SCAN" "\bgit\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*$SOPS_PATHS"; then
-  deny "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext credentials. For the changed KEY NAMES only, add \`| grep -oE '^[-+][a-z_]+:'\`."
+#
+# `--stat`, `--name-only` and `--name-status` are exempt because they emit no content at all
+# — the driver still decrypts, but nothing from the plaintext reaches stdout. They were not
+# exempt on 2026-08-29 and `git diff --stat ansible/vars/secrets.yml` was denied within the
+# hour, which is what sent this arm back for a second pass.
+#
+# The deny message used to suggest `| grep -oE '^[-+][a-z_]+:'`, the idiom the homelab repo's
+# CLAUDE.md documents. That advice was unusable: this arm matches the `git diff <path>` half
+# regardless of what follows the pipe, so the remedy it named was denied by the rule printing
+# it. It is also the wrong advice on its own terms — a typo in that grep prints every value,
+# which is exactly how a token leaked on 2026-08-27. Point at the flags that cannot leak.
+if bdb_re "$SCAN" "${BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*$SOPS_PATHS" &&
+   ! bdb_re "$SCAN" '(^|[[:space:]])--(stat|name-only|name-status)([[:space:]]|=|$)'; then
+  deny "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext credentials. Use \`git diff --stat\` or \`--name-only\` to see THAT it changed, and \`sops <file>\` to inspect it."
 fi
 
 # `systemctl cat` prints the unit file including its Environment= lines; `systemctl show`
 # prints the resolved environment. Narrowing with -p/--property keeps the ordinary
 # diagnostic (`systemctl show -p ActiveState <unit>`) usable, which is most of the real use.
-if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|$)'; then
+if bdb_re "$SCAN" "${BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|\$)"; then
   deny "Blocked: \`systemctl cat\` prints the unit file, Environment= lines and all. Use \`systemctl show -p <Property> <unit>\` for a specific field."
 fi
-if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|$)'; then
-  if ! bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])(-p|--property)([[:space:]]|=)'; then
+if bdb_re "$SCAN" "${BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|\$)"; then
+  if ! bdb_re "$SCAN" '(^|[[:space:]])(-p|--property)([[:space:]]|=)'; then
     deny "Blocked: an unnarrowed \`systemctl show\` prints the unit's resolved environment. Add \`-p <Property>\`."
   fi
   if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Environment'; then
@@ -912,7 +935,7 @@ fi
 # `{{.Config.Image}}` is denied along with them: distinguishing safe from unsafe fields
 # inside a Go template is not something a regex can do, and the caller can ask for
 # `.Image` on its own.
-if bdb_re "$SCAN" '\bdocker\b[^;&|]*(^|[[:space:]])inspect([[:space:]]|$)'; then
+if bdb_re "$SCAN" "${BDB_CMD_AT}docker\b[^;&|]*(^|[[:space:]])inspect([[:space:]]|\$)"; then
   if ! bdb_re "$SCAN" '(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)'; then
     deny "Blocked: an unformatted \`docker inspect\` prints Config.Env in plaintext. Add \`--format\`, e.g. \`-f '{{.NetworkSettings.IPAddress}}'\`."
   fi
