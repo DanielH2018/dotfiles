@@ -306,6 +306,21 @@ test('git really does report a signed commit as N when the setting is absent', {
     'a signed commit reads as N with the setting absent — the whole reason for the guard');
 });
 
+test('an unverifiable machine with nothing to judge is still a pass', { skip }, () => {
+  // The guard must fire on a false verdict, not on the mere possibility of one.
+  // .githooks/pre-push runs this with </dev/null — a push protocol carrying no refs — and
+  // an early exit 3 there turns the gate's own no-op into a failure on any machine without
+  // a signers file. This branch's first CI run did exactly that: `✗ commit signatures
+  // (exit 3)` inside a gate step that had no commits in front of it.
+  const r = repo();
+  r.commit('signed');
+  unsetSigners(r.root);
+  const res = spawnSync('bash', [SCRIPT], {
+    cwd: r.root, input: '', encoding: 'utf8', env: BARE_ENV,
+  });
+  assert.strictEqual(res.status, 0, 'no refs means nothing was misjudged, so nothing to refuse');
+});
+
 test('refuses to judge when allowedSignersFile is unset', { skip }, () => {
   const r = repo();
   const base = r.commit('base');
