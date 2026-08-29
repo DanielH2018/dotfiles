@@ -1,4 +1,31 @@
 repos:
+  # Secret scanning. Every other guard in this repo is PATH-shaped — .gitignore blocks
+  # **/*.local.*, .chezmoiignore keeps work content out, and .chezmoidata/secrets.toml
+  # declares which paths count as secret. All three catch a secret that arrives at a path
+  # someone predicted in advance. None catches the case that actually recurs here: a value
+  # pasted into an ordinary script, doc or test fixture, at a path nobody would list.
+  #
+  # Being a private repo is not a substitute. GitHub's push protection is a public-repo /
+  # GHAS feature, so nothing server-side is watching this one either.
+  #
+  # A remote repo hook rather than `language: system` like shellcheck and oxlint below,
+  # for the opposite reason to theirs: those two need a host binary because their upstream
+  # hooks are docker_image, which the rootless-podman shim here cannot serve. gitleaks'
+  # hook is `language: golang`, which prek builds into its own cache — no docker, no host
+  # install, nothing to add to tools.toml.
+  #
+  # That also settles a second problem. home/dot_local/bin/executable_claude-transcript-scan
+  # resolves gitleaks from $GITLEAKS_BIN, then PATH, then ~/.cache/prek/hooks/golang-*/bin/
+  # gitleaks. Until this hook existed only the third path ever hit, and the binary it found
+  # belonged to a DIFFERENT repo's hook cache — a security control whose only dependency was
+  # a cache another repo owns and prek is free to collect. This hook puts one in ours.
+  #
+  # Pinned to the rev the homelab repo runs, so the two agree on rules and version.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0
     hooks:
