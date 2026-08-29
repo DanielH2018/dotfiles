@@ -1,0 +1,111 @@
+# Runs the same gate `.githooks/pre-push` runs, on GitHub's runners instead of a laptop.
+#
+# Why this exists: every gate in this repo — signatures, config-soak, instruction quality,
+# lint, the unit suite — was a LOCAL pre-push hook and nothing else. Two holes follow from
+# that, and neither is fixable locally. A clone that never ran `bin/install-hook-shim`, or
+# whose `core.hooksPath` drifted, has no gate at all. And commits arriving from a second
+# machine are gated by whatever that machine happens to have installed — which is how 173
+# of this repo's commits ended up unsigned.
+#
+# Branch protection would be the other half of this, and is NOT available: the repo is
+# private, and protected branches need a paid plan on a private repo. So this workflow is
+# the whole server-side story. It reports; it cannot block a push on its own.
+#
+# The gate is invoked as the hook script rather than reimplemented step by step, so CI and
+# a local push cannot drift into checking different things. The one step that does not
+# survive that is the signature check, which reads git's pre-push protocol from stdin — it
+# gets its own step below with the protocol line synthesized.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The signature step walks a commit range and the gate's own steps read git
+          # history; a shallow clone makes both wrong rather than failing loudly.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - uses: astral-sh/setup-uv@v5
+
+      # The gate's `language: system` hooks need these on PATH. shellcheck is preinstalled
+      # on ubuntu-latest; oxlint and prek are not, and chezmoi is what renders the .sh.tmpl
+      # scripts for shellcheck-templates and the template tests.
+      #
+      # Installed explicitly rather than left to the hook's skip-if-absent branches, because
+      # a skipped step is exactly the failure this workflow exists to close: the gate prints
+      # "passed, 1 step skipped" and exits 0, which is a green that checked less than it
+      # looks like. The assertion at the end of the gate step enforces that.
+      - name: Install the gate's tools
+        run: |
+          set -euo pipefail
+          npm install -g oxlint@1
+          uv tool install prek
+          sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          shellcheck --version | head -2
+
+      - name: Run the pre-push gate
+        env:
+          # The cache keys on a clean tree at a known sha and would let a second run skip
+          # the suite. A runner is not the machine that recorded it, but turn it off rather
+          # than rely on that.
+          GATE_CACHE_OFF: '1'
+          # tq digests output for a human reading a terminal. CI wants the failing test's
+          # own lines, so take the raw runner output.
+          TQ_OFF: '1'
+        run: |
+          set -euo pipefail
+          # </dev/null: the hook reads the pre-push protocol on stdin for its signature
+          # step. An empty stream makes that step a no-op with nothing to check, which is
+          # correct here — the next step does it properly with a real range.
+          .githooks/pre-push </dev/null 2>&1 | tee gate.log
+
+          # A gate that skipped a step passed less than it says. Locally that is a
+          # deliberate kindness to a machine missing a tool; in CI every tool is installed
+          # above, so a skip means the install broke and the green is misleading.
+          if grep -q 'step.* skipped' gate.log; then
+            echo "::error::the gate skipped a step — a tool above failed to install"
+            exit 1
+          fi
+
+      # Signatures, with the protocol line built by hand. Every other step reads the
+      # working tree; this one reads a commit RANGE, so it needs to be told which.
+      #
+      # Without ~/.config/git/allowed_signers the runner cannot verify a signature against
+      # a key, so signed commits come back U (unverified) and only warn. That is fine and
+      # is the point: the hole being closed is UNSIGNED commits (%G? = N), which this
+      # catches with no trust material at all. Do not set SIGN_GATE_STRICT here — it would
+      # fail every commit for want of a keyring the runner has no way to have.
+      - name: Check commit signatures
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = 'pull_request' ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+            head='${{ github.event.pull_request.head.sha }}'
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+          fi
+          # `github.event.before` is all-zeroes for a branch's first push; the gate already
+          # reads that as "new branch" and falls back to --not --remotes, so pass it through.
+          printf '%s %s %s %s\n' refs/heads/main "$head" refs/heads/main "$base" \
+            | bin/check-push-signatures
