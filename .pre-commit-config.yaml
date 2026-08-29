@@ -5,8 +5,15 @@ repos:
   # someone predicted in advance. None catches the case that actually recurs here: a value
   # pasted into an ordinary script, doc or test fixture, at a path nobody would list.
   #
-  # Being a private repo is not a substitute. GitHub's push protection is a public-repo /
-  # GHAS feature, so nothing server-side is watching this one either.
+  # This is not the only secret scanner on the repo, and the difference is WHEN. GitGuardian
+  # is installed as a GitHub App and checks every commit on main and every PR — but it runs
+  # after the commit exists on GitHub, so its verdict arrives once the value is already in
+  # published history and the only remaining action is a rotation. This hook runs before the
+  # commit, which is the one moment a secret is not yet a leak. It also works offline, and it
+  # covers the direct push that never opens a PR.
+  #
+  # GitHub's own push protection would be the third layer and is NOT available: it is a
+  # public-repo / GHAS feature and this repo is private.
   #
   # A remote repo hook rather than `language: system` like shellcheck and oxlint below,
   # for the opposite reason to theirs: those two need a host binary because their upstream
