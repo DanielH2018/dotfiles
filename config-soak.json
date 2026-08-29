@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "796993742dae674c96d5a0e14bc269a6f546347473920653799072e364954b36",
-      "landed": "2026-08-27T20:14:30.136Z"
+      "hash": "16f5b33713cd0f02c064115ac6f9c73ba80681d7fbbb819935510e3c8081704f",
+      "landed": "2026-08-29T19:12:56.399Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "0f7088817e78e015cedc0bc6412b88c364862ca930d75015fbae4fe74ce6c5fe",
-      "landed": "2026-08-24T15:06:46.871Z"
+      "hash": "3a59ff67d2549610a72a1b5d63d760fe1fb297cb5994020825b734222ede8c6d",
+      "landed": "2026-08-29T19:12:56.399Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -50,6 +50,21 @@
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
       "hash": "e5c3c3230654a6d4262acd99f5f906c3450dc1d2ebde3adf2cd79799166885c1",
       "landed": "2026-08-09T19:04:35.602Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
+      "hash": "491bec5c4a906482d5454f7eccd43912a4fa12c4fdeb79985291a3f0412aa071",
+      "landed": "2026-08-29T19:12:56.399Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-state.sh",
+      "hash": "28073c607a5479d7775444c785b7cffb07fb1ff8f8bc61bd84afe3ce78965f11",
+      "landed": "2026-08-29T19:12:56.399Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
+      "hash": "bcb64f740e04b9c2b7bcf8850b04a3f661beea7889441e1ea001bb281fea0e6d",
+      "landed": "2026-08-29T19:12:56.399Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
@@ -158,13 +173,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
-      "hash": "4ce755f6df6c82885090a863485bf065891af9cd4c5e1c0f02c6ca6a590262f4",
-      "landed": "2026-08-21T19:52:57.941Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_notify-log.sh",
-      "hash": "9c25d2b0d6cc5ff8d59802b92aa76936fa5a0141379b8d8a54c4f80458c16b8e",
-      "landed": "2026-08-07T13:21:56.755Z"
+      "hash": "7dcd5bb7ff9dad43c5ddad126fac5f05f7bf3d6d9e3b0d5519368517a8deeacd",
+      "landed": "2026-08-29T19:12:56.399Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
