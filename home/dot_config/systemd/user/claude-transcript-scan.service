@@ -1,0 +1,21 @@
+[Unit]
+Description=Scan recent Claude transcripts for credentials that reached them
+
+[Service]
+Type=oneshot
+# A day's window with an hour of overlap. The SessionEnd hook already scans each transcript
+# as its session ends; this exists for the sessions where that never ran — a kill -9, a
+# crash, or a scan that outlived its parent — so the window has to cover more than the
+# interval between runs.
+ExecStart=%h/.local/bin/claude-transcript-scan --since 25
+# Findings are the point, so exit 1 is a real verdict and must show as a failed unit.
+# Exit 3 (no gitleaks, no jq) is could-not-evaluate and must also show — a detector that
+# reports clean when it did not run is worse than no detector.
+SuccessExitStatus=0
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

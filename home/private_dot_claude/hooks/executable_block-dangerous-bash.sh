@@ -813,6 +813,26 @@ while IFS= read -r seg; do
   # shellcheck disable=SC2086  # word-splitting is intended here; globbing is off
   set -- $seg
   [ "$#" -eq 0 ] && continue
+  # A bare environment dump prints every exported credential at once. Only
+  # /proc/<pid>/environ was on SECRET_PATHS, which is the same data by a longer route:
+  # `env` and `printenv` were allowed. Measured 2026-08-29 against this hook.
+  #
+  # Anchoring at END of segment rather than command position is what catches the remote
+  # spelling: `ssh daniel-pi env` puts `ssh` in $1, and the Pi's containers carry their
+  # tokens in the environment. It also keeps the legitimate forms allowed, because each
+  # of them puts something after the word — `env VAR=x cmd` and `env bash` are command
+  # PREFIXES, `printenv PATH` is a targeted lookup, and none of the three dumps anything.
+  #
+  # The leader test exists only so `man env` and `which printenv` stay allowed; those
+  # print documentation, not values.
+  case "${1##*/}" in
+    man|which|whereis|type|command|echo|printf|apropos) ;;
+    *)
+      if bdb_re "$seg" '(^|[[:space:]])(env|printenv)([[:space:]]+-[^[:space:]]+)*[[:space:]]*$'; then
+        deny "Blocked: a bare environment dump prints every exported credential. Name the variable you need, e.g. \`printenv PATH\`."
+      fi
+      ;;
+  esac
   case "${1##*/}" in
     grep|egrep|fgrep|rg|ag|ack|jq|yq|gojq|jaq)
       head=$1; shift
@@ -831,6 +851,74 @@ set +f
 # Scan the whole command; requiring an interpreter keyword keeps jq '.key' from tripping.
 if bdb_re "$SCAN" "\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*$SECRET_PATHS"; then
   deny "Blocked: reading a secrets file via an interpreter. Ask the user to share the specific value needed."
+fi
+
+# --- decrypting, rather than reading, a secret ------------------------------------
+#
+# The three rules above all ask the same question: is a READER pointed at a path on
+# SECRET_PATHS. Everything below leaks plaintext without answering yes to it. Measured
+# 2026-08-29: six commands fed to this hook, all six allowed, and one of them had already
+# leaked a live push token on 2026-08-27 that had to be rotated.
+#
+# DECIDED: these are their own arms rather than new SECRET_PATHS entries. That variable
+# feeds three rules — the READERS loop, the interpreter arm, and WRITE_TARGETS — so adding
+# a `secrets.ya?ml` pattern there would deny `sops ansible/vars/secrets.yml` (the
+# /add-secret edit path), `sops updatekeys`, and reading the ciphertext, none of which
+# expose a value. The leak is the decrypt VERB, not the file, so the verb is what is
+# matched. Full reasoning in ~/.claude/artifacts/api-key-leakage-into-sessions_2026-08-29.html.
+
+# A SOPS-managed file, by the two basename shapes that are conventionally encrypted.
+# Deliberately narrow: `secret_rotation.yml` in the homelab repo is a PLAINTEXT registry of
+# names and dates that gets diffed routinely, and a looser `.*secret.*` pattern denies it.
+SOPS_PATHS='(^|[[:space:]])([^[:space:]]*/)?(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))\b'
+
+# sops verbs that write plaintext to stdout or into a child's environment. `edit` (which is
+# also the bare `sops <file>` form), `updatekeys`, `rotate`, `set`, `unset`, `filestatus`,
+# `groups` and `encrypt` do not, and stay allowed — denying them would break /add-secret.
+# `exec-env` is the one worth naming: it decrypts the whole file into an environment, and
+# it is the spelling a `-d`-only rule misses.
+if bdb_re "$SCAN" '\bsops\b[^;&|]*((^|[[:space:]])--decrypt([[:space:]]|=|$)|(^|[[:space:]])-[A-Za-z]*d([[:space:]]|$)|(^|[[:space:]])(decrypt|exec-env|exec-file)([[:space:]]|$))'; then
+  deny "Blocked: this decrypts a SOPS file into the session. Ask the user for the one value you need, or use \`sops <file>\` to edit without printing plaintext."
+fi
+
+# git's sops diff driver. A repo can set `diff=sops` in .gitattributes, which makes git
+# DECRYPT the file before diffing it — so `git diff <secrets file>` prints credentials
+# while every layer above reads it as an ordinary diff. The safe form prints key names
+# only. This matches an explicitly named path; a bare `git log -p` over a range that
+# happens to contain the file is not caught, because no pattern over the command text
+# can see the range's contents.
+if bdb_re "$SCAN" "\bgit\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*$SOPS_PATHS"; then
+  deny "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext credentials. For the changed KEY NAMES only, add \`| grep -oE '^[-+][a-z_]+:'\`."
+fi
+
+# `systemctl cat` prints the unit file including its Environment= lines; `systemctl show`
+# prints the resolved environment. Narrowing with -p/--property keeps the ordinary
+# diagnostic (`systemctl show -p ActiveState <unit>`) usable, which is most of the real use.
+if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|$)'; then
+  deny "Blocked: \`systemctl cat\` prints the unit file, Environment= lines and all. Use \`systemctl show -p <Property> <unit>\` for a specific field."
+fi
+if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|$)'; then
+  if ! bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(^|[[:space:]])(-p|--property)([[:space:]]|=)'; then
+    deny "Blocked: an unnarrowed \`systemctl show\` prints the unit's resolved environment. Add \`-p <Property>\`."
+  fi
+  if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Environment'; then
+    deny "Blocked: the Environment property holds the unit's secrets. Ask the user for the one value you need."
+  fi
+fi
+
+# `docker inspect` without a format prints Config.Env — every variable Compose injected,
+# in plaintext. The formatted query is the common case here (resolving a container IP) and
+# stays allowed; a format that reaches .Config or serializes the whole object does not.
+# `{{.Config.Image}}` is denied along with them: distinguishing safe from unsafe fields
+# inside a Go template is not something a regex can do, and the caller can ask for
+# `.Image` on its own.
+if bdb_re "$SCAN" '\bdocker\b[^;&|]*(^|[[:space:]])inspect([[:space:]]|$)'; then
+  if ! bdb_re "$SCAN" '(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)'; then
+    deny "Blocked: an unformatted \`docker inspect\` prints Config.Env in plaintext. Add \`--format\`, e.g. \`-f '{{.NetworkSettings.IPAddress}}'\`."
+  fi
+  if bdb_re "$SCAN" '(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)[^;&|]*(\.Config|Env|json[[:space:]]+\.[[:space:]}])'; then
+    deny "Blocked: this format reaches the container's environment. Name the specific field you need."
+  fi
 fi
 
 # Writing to secret paths via pipe (tee) or redirection — check the full command.

@@ -231,6 +231,38 @@ const DENY = [
   'pgrep -f vite | kill',
   'kill $(pgrep -f dev-server)',
   'kill -9 $(ps aux | grep vite | awk \'{print $2}\')',
+  // Plaintext that never passes a READER over a SECRET_PATHS file, so none of the three
+  // rules above sees it. All six shapes were measured as ALLOWED on 2026-08-29, and the
+  // git-diff one had already leaked a live push token on 2026-08-27.
+  // sops: every verb that writes plaintext to stdout or into a child's environment
+  'sops -d ansible/vars/secrets.yml',
+  'sops --decrypt ansible/vars/secrets.yml',
+  'sops decrypt ansible/vars/secrets.yml',
+  'sops exec-env ansible/vars/secrets.yml env',
+  'sops exec-file ansible/vars/secrets.yml "cat {}"',
+  'sops --input-type yaml -d vars/secrets.yaml',
+  // git's sops diff driver decrypts before diffing
+  'git diff ansible/vars/secrets.yml',
+  'git show HEAD:ansible/vars/secrets.yml',
+  'git log -p ansible/vars/secrets.yml',
+  'git diff app.sops.yaml',
+  // environment dumps, local and over ssh
+  'env',
+  'printenv',
+  'env | grep TOKEN',
+  'ssh daniel-pi env',
+  'ssh daniel-server printenv',
+  'env -0',
+  // systemd units carry Environment= lines
+  'systemctl cat gitops-deploy.service',
+  'systemctl show gitops-deploy',
+  'systemctl show -p Environment gitops-deploy',
+  // docker inspect prints Config.Env unless the format narrows it
+  'docker inspect wg-easy',
+  'ssh daniel-pi docker inspect wg-easy',
+  'docker inspect -f "{{json .Config}}" wg-easy',
+  'docker inspect --format "{{json .}}" wg-easy',
+  'docker inspect -f "{{.Config.Env}}" wg-easy',
 ];
 
 const ALLOW = [
@@ -346,6 +378,42 @@ const ALLOW = [
   // for the same underlying reason both times: `rm {}` names no target the rm rules anchor
   // on. Pinned because it is the idiom most likely to regress if the stripping changes.
   "find . -name '*.tmp' -exec rm {} \\;",
+  // The near-miss half of the decrypt arms. Each of these is one token away from a case
+  // in DENY, and each is a workflow that has to keep working — this is where a rule that
+  // fires on everything is told apart from one that fires on the right thing.
+  //
+  // sops: the verbs that never print a value. Denying these would break /add-secret.
+  'sops ansible/vars/secrets.yml',
+  'sops updatekeys ansible/vars/secrets.yml',
+  'sops rotate -i ansible/vars/secrets.yml',
+  'sops filestatus ansible/vars/secrets.yml',
+  'sops -e plain.yaml',
+  // git on anything that is not a SOPS-managed basename. `secret_rotation.yml` is the
+  // homelab's PLAINTEXT rotation registry and is diffed routinely; a loose `.*secret.*`
+  // pattern denies it, which is why SOPS_PATHS anchors on the basename.
+  'git diff README.md',
+  'git diff ansible/secret_rotation.yml',
+  'git show HEAD:ansible/secret_rotation.yml',
+  'git log --oneline -5',
+  'git log -p ansible/roles/k8s/sonarr/tasks/main.yml',
+  // env as a command PREFIX, and a targeted lookup — neither dumps the environment
+  'env VAR=1 ./script.sh',
+  'env bash -c "echo hi"',
+  'printenv PATH',
+  'printenv HOME',
+  'man env',
+  'which printenv',
+  // systemctl narrowed to a property, and the verbs that print no environment at all
+  'systemctl show -p ActiveState gitops-deploy',
+  'systemctl show --property=SubState gitops-deploy',
+  'systemctl status gitops-deploy',
+  'systemctl list-timers',
+  'systemctl is-active gitops-deploy',
+  // docker inspect narrowed to a field that is not the environment
+  'docker inspect -f "{{.NetworkSettings.IPAddress}}" wg-easy',
+  'docker inspect --format "{{.State.Health.Status}}" dozzle',
+  'ssh daniel-pi docker inspect -f "{{.State.Status}}" glances',
+  'docker ps -a',
 ];
 
 test('dangerous commands are denied', { skip }, async () => {

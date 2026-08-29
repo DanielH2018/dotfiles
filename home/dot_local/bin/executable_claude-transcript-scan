@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# claude-transcript-scan: find credentials that have already landed in a session transcript.
+#
+# The preventive half of this problem is block-dangerous-bash.sh, which denies a command
+# before it runs. It cannot close the whole gap, and the reason is structural rather than a
+# missing rule: no hook can rewrite a tool result. Verified 2026-08-29 against Claude Code
+# 2.1.251 — the PreToolUse output fields are permissionDecision, permissionDecisionReason,
+# updatedInput, additionalContext and systemMessage, and none of them replaces output.
+# Claude Code's own redactor (sk-ant-*, Bearer, JWT, gh*_/gl*-/xox*-) is called from the
+# logger and from redactForDisplay, so it covers the journal and the terminal, not the
+# transcript the model reads back.
+#
+# So a `grep` that happens to print a line CARRYING a key is undecidable at the gate: the
+# command names no secret path and no decrypt verb. Detection is the only layer left, and it
+# is a bounded problem where prevention is an asymptotic one. This is that layer.
+#
+# What it does NOT do: un-leak anything. A secret in a transcript stays there. The output of
+# this script is a rotation trigger — the value is already spent, and the only question left
+# is how long it stays valid.
+#
+#   claude-transcript-scan                 # transcripts touched in the last 24h
+#   claude-transcript-scan --since 72      # ...or a different window, in hours
+#   claude-transcript-scan --session PATH  # one transcript (what the SessionEnd hook runs)
+#   claude-transcript-scan --all           # every transcript on the machine
+#
+# Exit 0 clean, 1 findings, 2 usage error, 3 could-not-evaluate. 3 is deliberately not 0: a
+# missing gitleaks means the question was never asked, and a detector that reports clean when
+# it did not run is worse than no detector.
+
+set -uo pipefail
+
+PROJECTS=${CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}
+LOG=${CLAUDE_TRANSCRIPT_LEAK_LOG:-$HOME/.claude/logs/transcript-leaks.jsonl}
+SINCE_H=24
+MODE=window
+ONE=
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --since) SINCE_H=${2:-}; shift 2 || true ;;
+    --session) MODE=one; ONE=${2:-}; shift 2 || true ;;
+    --all) MODE=all; shift ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+case $SINCE_H in ''|*[!0-9]*) echo "claude-transcript-scan: --since wants whole hours" >&2; exit 2 ;; esac
+
+# gitleaks is not installed system-wide here; prek fetches it into its own cache for the
+# repo hook. Take it from PATH first so a real install wins, then the cache, and refuse
+# rather than skip if neither exists.
+GITLEAKS=${GITLEAKS_BIN:-}
+[ -z "$GITLEAKS" ] && GITLEAKS=$(command -v gitleaks 2>/dev/null)
+if [ -z "$GITLEAKS" ]; then
+  for c in "$HOME"/.cache/prek/hooks/golang-*/bin/gitleaks; do
+    [ -x "$c" ] && GITLEAKS=$c && break
+  done
+fi
+if [ -z "$GITLEAKS" ] || [ ! -x "$GITLEAKS" ]; then
+  echo "claude-transcript-scan: no gitleaks binary (PATH, \$GITLEAKS_BIN, or the prek cache) — did not scan" >&2
+  exit 3
+fi
+command -v jq >/dev/null 2>&1 || { echo "claude-transcript-scan: jq unavailable — did not scan" >&2; exit 3; }
+
+case $MODE in
+  one)
+    [ -f "$ONE" ] || { echo "claude-transcript-scan: no such transcript: $ONE" >&2; exit 2; }
+    FILES=$(printf '%s\n' "$ONE") ;;
+  all)
+    FILES=$(find "$PROJECTS" -name '*.jsonl' -type f 2>/dev/null) ;;
+  *)
+    # -mmin rather than -mtime: the window is given in hours and -mtime rounds to days,
+    # which would silently widen a 1h sweep to 24.
+    FILES=$(find "$PROJECTS" -name '*.jsonl' -type f -mmin "-$((SINCE_H * 60))" 2>/dev/null) ;;
+esac
+
+[ -n "$FILES" ] || { echo "claude-transcript-scan: no transcripts in scope"; exit 0; }
+
+mkdir -p "$(dirname "$LOG")"
+FOUND=0
+SCANNED=0
+FAILED=0
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  # `[.. | strings]` takes every string leaf of every record, which is what makes this
+  # independent of the transcript schema: a value moving from .message.content to some new
+  # field stays covered without a change here.
+  #
+  # --redact keeps the finding from repeating the secret into the journal and the log file.
+  # A detector that prints what it found is a second copy of the leak.
+  report=$(jq -r '[.. | strings] | join("\n")' "$f" 2>/dev/null \
+    | "$GITLEAKS" stdin --redact --no-banner --report-format json --report-path - 2>/dev/null)
+  rc=$?
+  if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
+    echo "claude-transcript-scan: scan failed (rc=$rc): $f" >&2
+    FAILED=$((FAILED + 1))
+    continue
+  fi
+  SCANNED=$((SCANNED + 1))
+  n=$(printf '%s' "$report" | jq 'length' 2>/dev/null || echo 0)
+  [ "${n:-0}" -gt 0 ] || continue
+  FOUND=$((FOUND + n))
+  # Rule id, line and transcript only. Enough to find it and to name what to rotate;
+  # never enough to re-leak it.
+  printf '%s' "$report" | jq -c --arg f "$f" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.[] | {ts:$t, transcript:$f, rule:.RuleID, line:.StartLine, secret:"[redacted]"}' \
+    | tee -a "$LOG"
+done <<EOF
+$FILES
+EOF
+
+if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
+  echo "claude-transcript-scan: every transcript failed to scan — treat as not run" >&2
+  exit 3
+fi
+
+if [ "$FOUND" -gt 0 ]; then
+  echo "claude-transcript-scan: $FOUND finding(s) across $SCANNED transcript(s) — logged to $LOG"
+  echo "Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
+  command -v notify-send >/dev/null 2>&1 &&
+    notify-send -u critical "Credential in a Claude transcript" "$FOUND finding(s). See $LOG." 2>/dev/null
+  exit 1
+fi
+
+echo "claude-transcript-scan: clean across $SCANNED transcript(s)"
+exit 0

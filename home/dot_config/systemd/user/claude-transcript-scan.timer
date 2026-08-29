@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily sweep for credentials in Claude transcripts
+
+[Timer]
+OnCalendar=daily
+# The box is off more than it is on. Without Persistent, a day spent powered down is a
+# day of transcripts nothing ever looks at, and the window is only 25 hours wide.
+Persistent=true
+# The clock does not matter to a detector whose findings are acted on by hand; let systemd
+# batch this rather than wake the machine for it.
+RandomizedDelaySec=30min
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,126 @@
+// Regression guard for home/dot_local/bin/executable_claude-transcript-scan.
+//
+// The scanner is the detection half of the credential-leak problem: the Bash guard denies a
+// command before it runs, but a `grep` that happens to print a line CARRYING a key names no
+// secret path and no decrypt verb, and no hook can rewrite a tool result after the fact. So
+// this is the only layer that sees that class at all, and the thing it must never do is
+// report clean when it did not actually look.
+//
+// Every case below is a pair: one input that must be FLAGGED and one near-miss that must
+// stay CLEAN. A detector is only ever observed passing, so without the flagged half there is
+// no evidence it can fail — the failure mode this repo has paid for twice.
+//
+// The token in the dirty fixture is synthetic and has never been a credential. It has to be
+// high-entropy: gitleaks discards a low-entropy candidate, and a `ghp_AAAA...` fixture
+// reported clean against a working scanner during development.
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { execFileSync, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const SCANNER = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-transcript-scan');
+
+// gitleaks is not installed system-wide; prek fetches it into its own cache. Resolve it the
+// same way the scanner does, and skip rather than fail when the cache has not been populated
+// (a fresh clone that has never run `prek`).
+function findGitleaks() {
+  try { return execFileSync('bash', ['-c', 'command -v gitleaks'], { encoding: 'utf8' }).trim(); } catch { /* fall through */ }
+  const base = path.join(os.homedir(), '.cache', 'prek', 'hooks');
+  try {
+    for (const d of fs.readdirSync(base)) {
+      const c = path.join(base, d, 'bin', 'gitleaks');
+      if (fs.existsSync(c)) return c;
+    }
+  } catch { /* no cache */ }
+  return '';
+}
+const GITLEAKS = findGitleaks();
+let jqOk = true;
+try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { jqOk = false; }
+const skip = GITLEAKS && jqOk ? false : 'gitleaks/jq unavailable';
+
+const DIRTY = [
+  { type: 'user', message: { role: 'user', content: 'hello' } },
+  { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_9tQz3XbW7kR2mYvL8pJdN4sH6cF1aE0uG5iT' }] } },
+].map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+const CLEAN = [
+  { type: 'user', message: { role: 'user', content: 'hello' } },
+  { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ran the tests, all 22 pass' }] } },
+].map((o) => JSON.stringify(o)).join('\n') + '\n';
+
+function sandbox() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-scan-'));
+  const projects = path.join(dir, 'projects', '-fixture');
+  fs.mkdirSync(projects, { recursive: true });
+  fs.writeFileSync(path.join(projects, 'dirty.jsonl'), DIRTY);
+  fs.writeFileSync(path.join(projects, 'clean.jsonl'), CLEAN);
+  return { dir, projects, log: path.join(dir, 'leaks.jsonl') };
+}
+
+function run(args, sb, extraEnv = {}) {
+  return spawnSync('bash', [SCANNER, ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects'),
+      CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
+      GITLEAKS_BIN: GITLEAKS,
+      ...extraEnv,
+    },
+  });
+}
+
+test('a transcript carrying a credential is flagged', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /github-pat/, 'the finding names the rule that matched');
+});
+
+test('a transcript without one is clean', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--session', path.join(sb.projects, 'clean.jsonl')], sb);
+  assert.strictEqual(r.status, 0, `expected exit 0, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.doesNotMatch(r.stdout, /github-pat/);
+});
+
+test('the finding never carries the secret itself', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  const logged = fs.readFileSync(sb.log, 'utf8');
+  // A detector that prints what it found is a second copy of the leak, in a file that is
+  // not itself scanned. --redact is what prevents that, and this is its regression guard.
+  assert.doesNotMatch(logged, /ghp_9tQz/, 'the log must not repeat the token');
+  assert.match(logged, /"secret":"\[redacted\]"/);
+  assert.match(logged, /"rule":"github-pat"/);
+});
+
+test('the window sweep reaches both fixtures and flags only the dirty one', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--since', '1'], sb);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stdout, /2 transcript\(s\)/, 'both fixtures were scanned');
+  assert.strictEqual((r.stdout.match(/github-pat/g) || []).length, 1, 'exactly one finding');
+});
+
+test('a missing gitleaks reports could-not-evaluate, never clean', { skip: jqOk ? false : skip }, () => {
+  const sb = sandbox();
+  // The whole point of exit 3. Reporting 0 here would make an unrunnable detector
+  // indistinguishable from a clean machine, which is the failure this file exists to stop.
+  const r = spawnSync('bash', [SCANNER, '--session', path.join(sb.projects, 'dirty.jsonl')], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: '/usr/bin:/bin', GITLEAKS_BIN: '/nonexistent', HOME: sb.dir, CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects') },
+  });
+  assert.strictEqual(r.status, 3, `expected exit 3, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.doesNotMatch(r.stdout, /clean/);
+});
+
+test('a bad argument is a usage error, not a silent pass', { skip }, () => {
+  const sb = sandbox();
+  assert.strictEqual(run(['--nope'], sb).status, 2);
+  assert.strictEqual(run(['--since', 'yesterday'], sb).status, 2);
+  assert.strictEqual(run(['--session', path.join(sb.dir, 'absent.jsonl')], sb).status, 2);
+});

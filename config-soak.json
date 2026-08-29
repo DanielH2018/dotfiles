@@ -103,8 +103,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "b436e7e1cb2b773f237e2888c4333f5523122d150815a7cf7fba9e5c7f858b9e",
-      "landed": "2026-08-27T00:45:23.732Z"
+      "hash": "ff53ca5851d6f55f145fd154d7be5dad7f609e73d2c709fa9fc830a4945bc097",
+      "landed": "2026-08-29T15:48:10.456Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -228,8 +228,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "463f6516b71375f40894af9be3d25983f9160a35aa5f065edd469752d5217fac",
-      "landed": "2026-08-19T18:18:52.894Z"
+      "hash": "d883ff035cbf828245a9d463fbe7054a5758095d1bf531dba224fcc4e08cd0fc",
+      "landed": "2026-08-29T15:48:10.456Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",

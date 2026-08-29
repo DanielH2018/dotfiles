@@ -113,4 +113,25 @@ learning_enqueue() {
 
 learning_enqueue
 
+# ── Scan the finished transcript for credentials that reached it ───────────
+# The Bash guard denies a command before it runs; it cannot cover a `grep` that happens to
+# print a line CARRYING a key, because that command names no secret path and no decrypt
+# verb. Nothing can be scrubbed after the fact either — no hook rewrites a tool result — so
+# the transcript is scanned instead and the answer is a rotation, not a redaction.
+#
+# Detached, like the digest above and for the same reason: this hook runs under a 5s
+# timeout, and extracting then scanning a long transcript takes longer than that. The
+# daily timer (claude-transcript-scan.timer) covers every session this never completed
+# for — a kill -9, a crash, or a scan outliving its parent.
+leak_scan() {
+  SCANNER="$HOME/.local/bin/claude-transcript-scan"
+  [ -x "$SCANNER" ] || return 0
+  T=$(hook_field '.transcript_path // empty')
+  [ -n "$T" ] && [ -f "$T" ] || return 0
+  nohup "$SCANNER" --session "$T" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+leak_scan
+
 exit 0
