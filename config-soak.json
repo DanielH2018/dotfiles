@@ -503,8 +503,28 @@
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
-      "hash": "538e8c8b7b8ec1a829080a0fc2debd05bf1d5d60963987c95caf353f817f0839",
-      "landed": "2026-08-29T15:41:19.149Z"
+      "hash": "8cc2b23a03f38b51d936ba94b5d9fdeebf60d769cd3a02dbfaac69011587b64c",
+      "landed": "2026-08-29T16:29:26.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-authoring/evals/README.md",
+      "hash": "4694c070072ea82dd8848c79c0b8536424f517e6d1eda825488655f1e693d22c",
+      "landed": "2026-08-29T16:29:26.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-authoring/evals/cases.json",
+      "hash": "002f8f290b3fc7aa6ea5a689ecacef224765673aeaf81e24a0f53c787cae54aa",
+      "landed": "2026-08-29T16:29:26.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-authoring/evals/executable_run.sh",
+      "hash": "a1ce64dcd40bd024d9db7b8a39a67e5c34f5991cedc6eb2af7b50e0f05a3e0f2",
+      "landed": "2026-08-29T16:29:26.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-authoring/evals/results.md",
+      "hash": "57f06ead1a670f237c8b8ef25e3da96b76e40695b3e59239b845daa2b0bf94c9",
+      "landed": "2026-08-29T16:29:26.208Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
