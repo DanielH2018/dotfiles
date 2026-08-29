@@ -66,7 +66,7 @@ function sandbox() {
   fs.mkdirSync(projects, { recursive: true });
   fs.writeFileSync(path.join(projects, 'dirty.jsonl'), DIRTY);
   fs.writeFileSync(path.join(projects, 'clean.jsonl'), CLEAN);
-  return { dir, projects, log: path.join(dir, 'leaks.jsonl') };
+  return { dir, projects, log: path.join(dir, 'leaks.jsonl'), baseline: path.join(dir, 'baseline.txt') };
 }
 
 function run(args, sb, extraEnv = {}) {
@@ -76,6 +76,7 @@ function run(args, sb, extraEnv = {}) {
       ...process.env,
       CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects'),
       CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
+      CLAUDE_TRANSCRIPT_LEAK_BASELINE: sb.baseline,
       GITLEAKS_BIN: GITLEAKS,
       ...extraEnv,
     },
@@ -112,7 +113,9 @@ test('the window sweep reaches both fixtures and flags only the dirty one', { sk
   const r = run(['--since', '1'], sb);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /2 transcript\(s\)/, 'both fixtures were scanned');
-  assert.strictEqual((r.stdout.match(/github-pat/g) || []).length, 1, 'exactly one finding');
+  // Count findings, not substring hits: each emitted record names the rule twice, once in
+  // `rule` and once inside `fingerprint`.
+  assert.strictEqual((r.stdout.match(/"rule":"github-pat"/g) || []).length, 1, 'exactly one finding');
 });
 
 test('a missing gitleaks reports could-not-evaluate, never clean', { skip: jqOk ? false : skip }, () => {
@@ -125,6 +128,49 @@ test('a missing gitleaks reports could-not-evaluate, never clean', { skip: jqOk 
   });
   assert.strictEqual(r.status, 3, `expected exit 3, got ${r.status}: ${r.stdout}${r.stderr}`);
   assert.doesNotMatch(r.stdout, /clean/);
+});
+
+// The baseline exists because the first real sweep returned 52 findings across 82
+// transcripts, 45 of them gitleaks' `generic-api-key` firing on a k8s `secretKeyRef:` field
+// name. A daily unit that goes red every day on noise gets muted, and then it caps nothing.
+// The pair below is the whole contract: it must suppress what was accepted, and it must
+// still report what was not.
+test('an accepted finding stops being reported', { skip }, () => {
+  const sb = sandbox();
+  const accept = run(['--since', '1', '--accept-baseline'], sb);
+  assert.strictEqual(accept.status, 0);
+  assert.ok(fs.existsSync(sb.baseline), 'the baseline file is written');
+
+  const after = run(['--since', '1'], sb);
+  assert.strictEqual(after.status, 0, 'a fully baselined sweep is not a failure');
+  // "nothing new" must not read as "nothing found" — a baseline nobody can see is one
+  // nobody trusts, and then it suppresses something that mattered.
+  assert.match(after.stdout, /no new findings/);
+  assert.match(after.stdout, /1 baselined/);
+});
+
+test('a finding the baseline does not cover is still reported', { skip }, () => {
+  const sb = sandbox();
+  run(['--since', '1', '--accept-baseline'], sb);
+  // A second, different credential appears after the baseline was taken.
+  fs.writeFileSync(path.join(sb.projects, 'newleak.jsonl'),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
+  const r = run(['--since', '1'], sb);
+  assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /1 NEW finding/);
+});
+
+test('the fingerprint keys on content, not on line position', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  // Prepending a record renumbers every line of the extracted stream. gitleaks' own
+  // Fingerprint is `:<rule>:<line>` and would stop matching here; hashing the matched line
+  // survives it. Compaction does exactly this to a real transcript.
+  const shifted = JSON.stringify({ type: 'user', message: { role: 'user', content: 'padding' } }) + '\n' + DIRTY;
+  fs.writeFileSync(path.join(sb.projects, 'dirty.jsonl'), shifted);
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(r.status, 0, `a renumbered but unchanged finding must stay baselined: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /no new findings/);
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {
