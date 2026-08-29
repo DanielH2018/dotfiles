@@ -441,6 +441,58 @@ test('benign/safe commands are not denied', { skip }, async () => {
   ALLOW.forEach((cmd, i) => assert.notStrictEqual(got[i], 'deny', `should not deny: ${cmd}`));
 });
 
+// ---- a rule's two halves have to come from the same command -------------------------
+//
+// Both false positives below were observed against the deployed hook on 2026-08-29, and
+// both are the same defect: a pattern matched text that belonged to a different command
+// than the one the rule is about.
+//
+// env-dump: the loop that raised it splits the QUOTE-STRIPPED scan string on `;&|`, so a
+// single-quoted regex literal arrives as bare text and its alternation reads as a pipe.
+// `RX='(ya?ml|json|env|ini)'` produced a segment that was exactly `env`.
+//
+// push-to-main: `git push` and the word `main` were each matched anywhere in the command,
+// so a feature-branch push followed by `gh pr create --base main` denied. `gh pr create`
+// pushes nothing.
+const SAME_SEGMENT_ALLOW = [
+  "RX='(ya?ml|json|env|ini)'",
+  'SOPS_PATHS=\'(secrets?\\.(ya?ml|json|env|ini))\'',
+  'cd /repo && git push -q -u origin feat/x 2>&1 | tail -2; gh pr create --title t --body b --base main',
+  'git push -f origin feat/x; gh pr create --base main',
+  'git checkout main && git push origin feat/x',
+];
+
+// The same two rules, on inputs that are the real thing. Each pattern still has to fire
+// when one command carries both halves — including when quoting hides the separator.
+const SAME_SEGMENT_DENY = [
+  'env',
+  'env; ls',
+  'ls | env',
+  'ssh daniel-pi env',
+  'git push origin main',
+  'git push origin HEAD:main',
+  'bash -c "git push origin main"',
+  'git push --force origin main',
+];
+
+test('a rule fires only when one command carries both halves', { skip }, async () => {
+  const allow = await decide(SAME_SEGMENT_ALLOW);
+  SAME_SEGMENT_ALLOW.forEach((cmd, i) => assert.notStrictEqual(allow[i], 'deny', `should not deny: ${cmd}`));
+  const deny = await decide(SAME_SEGMENT_DENY);
+  SAME_SEGMENT_DENY.forEach((cmd, i) => assert.strictEqual(deny[i], 'deny', `should deny: ${cmd}`));
+});
+
+// Without cmd_parse there are no quote-aware segments, so each rule degrades to the subject
+// it scanned before segments existed — the whole command string. The push rule reads exactly
+// as it did then, false positive included; the env rule instead SKIPS its confirmation,
+// because the whole-string subject can never match a pattern anchored at end of line and
+// AND-ing against it would turn `env; ls` into an allow.
+test('losing the segments degrades to the previous behavior, not to an allow', { skip }, async () => {
+  const off = { CMDPARSE: 'off' };
+  const got = await decide(['env; ls', 'ls | env', 'git push origin main'], off);
+  got.forEach((d, i) => assert.strictEqual(d, 'deny', `should deny with CMDPARSE=off: ${i}`));
+});
+
 // ---- substitution-anchor bypass -----------------------------------------------------
 //
 // Every command-position anchor in this file (SSH_AT_RE, TF_AT, GH_API_AT, KILL_AT, the

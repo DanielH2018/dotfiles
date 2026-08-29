@@ -266,7 +266,13 @@ SCAN=$_BDB_NORM
 # cmd_parse of the same command plus a second _bdb_normalize per segment and per substitution
 # body, all recomputing what this loop already produced. Measured with CMDPARSE_SHADOW=1 (its
 # deployed setting) that duplicate cost a 20-segment command ~172ms.
+#
+# BDB_SEGSET is the same set MINUS the whole-string SCAN line. A rule built from two
+# patterns ANDed together needs it: on SCAN both halves can come from different commands
+# that merely share one Bash call, which is a false positive rather than a match. See
+# bdb_re_pair below.
 BDB_SCANSET=$SCAN
+BDB_SEGSET=
 BDB_LIB=0     # cmdparse.sh sourced
 BDB_PARSED=0  # ...and cmd_parse accepted the command, so the arrays below are populated
 BDB_NSEG=0
@@ -287,6 +293,8 @@ if [ "${CMDPARSE:-on}" != off ]; then
         BDB_NORMSEG[bdb_i]=$_BDB_NORM
         BDB_SCANSET="$BDB_SCANSET
 $_BDB_NORM"
+        BDB_SEGSET="$BDB_SEGSET$_BDB_NORM
+"
         bdb_i=$((bdb_i + 1))
       done
       bdb_i=0
@@ -295,11 +303,36 @@ $_BDB_NORM"
         BDB_NORMSUB[bdb_i]=$_BDB_NORM
         BDB_SCANSET="$BDB_SCANSET
 $_BDB_NORM"
+        BDB_SEGSET="$BDB_SEGSET$_BDB_NORM
+"
         bdb_i=$((bdb_i + 1))
       done
     fi
   fi
 fi
+# Every degradation path — cmd_parse refusal, CMDPARSE=off, cmdparse.sh unreadable — leaves
+# BDB_SEGSET empty, and a rule reading it then sees the whole-string SCAN: exactly the
+# subject its two patterns scanned before segments existed, so a pair rule degrades to its
+# previous behavior rather than to nothing.
+[ -n "$BDB_SEGSET" ] || BDB_SEGSET=$SCAN
+
+# Two patterns that must match the SAME member of BDB_SEGSET, rather than each matching
+# somewhere in the command as a whole.
+#
+# `git push -u origin feat/x; gh pr create --base main` was denied as a push to main:
+# `git push` came from segment 1 and `main` from a `gh pr create` in segment 4, which pushes
+# nothing. Requiring one segment to carry both is the narrowing — the patterns themselves
+# are unchanged, so what each accepts as a push or as a destination is untouched.
+bdb_re_pair() {
+  local rest=$1 re1=$2 re2=$3 line
+  while [ -n "$rest" ]; do
+    line=${rest%%$'\n'*}
+    if bdb_re "$line" "$re1" && bdb_re "$line" "$re2"; then return 0; fi
+    [ "$line" = "$rest" ] && break
+    rest=${rest#*$'\n'}
+  done
+  return 1
+}
 
 # Command-position anchors, shared by the rules further down and by the shadow census.
 #
@@ -606,10 +639,14 @@ fi
 # `$(git push --force)` with no destination) undisturbed: this hook already documents
 # that it cannot know the current branch, so a destination-less push is out of scope
 # here regardless, not something this fix changes.
-if bdb_re "$SCAN" 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' && ! bdb_re "$SCAN" '\-\-force-with-lease'; then
-  if bdb_re "$SCAN" '(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)'; then
-    deny "Blocked: force-push to main/master. Use a feature branch."
-  fi
+#
+# The push and its destination have to sit in the SAME segment — see bdb_re_pair. The
+# --force-with-lease exemption stays whole-string: a lease named anywhere in the command is
+# still the safer variant of the push named in it, and scoping that half per segment would
+# turn an exempted command into a denied one.
+if ! bdb_re "$SCAN" '\-\-force-with-lease' \
+  && bdb_re_pair "$BDB_SEGSET" 'git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))' '(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)'; then
+  deny "Blocked: force-push to main/master. Use a feature branch."
 fi
 if bdb_re "$SCAN" 'git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b'; then
   deny "Blocked: force-push via +refspec to main/master. Use a feature branch."
@@ -640,8 +677,13 @@ fi
 # that rule's terminator: this one's whole purpose is telling `main:feature` (destination
 # is feature) apart from `feature:main` (destination is main), and accepting `:` here
 # would blur that back together.
-if bdb_re "$SCAN" 'git[[:space:]]+push\b' \
-  && bdb_re "$SCAN" '([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)'; then
+#
+# BUG, found and fixed in this change: the two patterns matched independently anywhere in
+# the command, so `git push -u origin feat/x; gh pr create --base main` denied — the push
+# and the word `main` came from different commands. bdb_re_pair requires one segment to
+# carry both. Neither pattern changes.
+if bdb_re_pair "$BDB_SEGSET" 'git[[:space:]]+push\b' \
+  '([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)'; then
   deny "Blocked: push targeting main/master. Push a feature branch and open a PR."
 fi
 
@@ -825,10 +867,23 @@ while IFS= read -r seg; do
   #
   # The leader test exists only so `man env` and `which printenv` stay allowed; those
   # print documentation, not values.
+  #
+  # BUG, found and fixed in this change: the segments this loop scans come from splitting
+  # SCAN on `;&|`, and _bdb_normalize has already stripped the quotes off SCAN. A quoted
+  # regex literal therefore arrives as bare text and its alternation reads as a pipe, so
+  # `RX='(ya?ml|json|env|ini)'` produced a segment that was exactly `env` and denied. The
+  # quote-aware segments in BDB_SEGSET have to agree before this rule fires. They are a
+  # second opinion, not a replacement: the naive split is what catches a secret read hidden
+  # behind quoting further down this same loop, and this rule keeps it as its first test.
+  #
+  # The confirmation is skipped, rather than falling back to SCAN, when cmd_parse gave no
+  # segments. SCAN is one line and this pattern demands end-of-line after the word, so
+  # `env; ls` never matches it — AND-ing against SCAN would turn a real dump into an allow.
+  BDB_ENV_DUMP='(^|[[:space:]])(env|printenv)([[:space:]]+-[^[:space:]]+)*[[:space:]]*$'
   case "${1##*/}" in
     man|which|whereis|type|command|echo|printf|apropos) ;;
     *)
-      if bdb_re "$seg" '(^|[[:space:]])(env|printenv)([[:space:]]+-[^[:space:]]+)*[[:space:]]*$'; then
+      if bdb_re "$seg" "$BDB_ENV_DUMP" && { [ "$BDB_PARSED" = 0 ] || bdb_re "$BDB_SEGSET" "$BDB_ENV_DUMP"; }; then
         deny "Blocked: a bare environment dump prints every exported credential. Name the variable you need, e.g. \`printenv PATH\`."
       fi
       ;;
