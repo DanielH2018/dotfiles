@@ -198,4 +198,76 @@ test('does nothing when run by hand with no pre-push input', { skip }, () => {
   assert.strictEqual(code, 0, 'no stdin means no range to judge, not "everything fails"');
 });
 
+// ── --range mode ──────────────────────────────────────────────────────────────
+//
+// CI has a range to check but no push to read it from. The first version of the workflow
+// faked the protocol on stdin, which looked equivalent and was not: the stdin path appends
+// `--not --remotes` so a server-side rebase replay is not re-judged, and on a runner
+// actions/checkout has already created a remote-tracking ref for the branch under test.
+// Every commit was excluded, so the step checked ZERO while exiting 0 and printing nothing
+// -- a signature gate indistinguishable from one that had actually passed.
+
+function checkRange(root, base, head, env = {}) {
+  const r = spawnSync('bash', [SCRIPT, '--range', base, head], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, ...env },
+  });
+  return { code: r.status, out: r.stdout || '', err: r.stderr || '' };
+}
+
+test('--range reports how many commits it checked', { skip }, () => {
+  const r = repo();
+  const base = r.commit('base');
+  r.commit('one');
+  const head = r.commit('two');
+  const { code, out } = checkRange(r.root, base, head);
+  assert.strictEqual(code, 0);
+  assert.match(out, /checked 2 commit\(s\)/,
+    'the count prints on every run, so a gate that checked nothing cannot hide');
+});
+
+test('--range refuses an empty range instead of passing it', { skip }, () => {
+  const r = repo();
+  const head = r.commit('base');
+  const { code, err } = checkRange(r.root, head, head);
+  assert.strictEqual(code, 1, 'an empty range is a caller bug, not a pass');
+  assert.match(err, /checked 0 commits/);
+  assert.match(err, /refusing to report a pass/);
+});
+
+test('--range still catches an unsigned commit', { skip }, () => {
+  const r = repo();
+  const base = r.commit('base');
+  const bad = r.commit('sneaky', { signed: false });
+  const { code, err } = checkRange(r.root, base, bad);
+  assert.strictEqual(code, 1);
+  assert.match(err, /unsigned/);
+  assert.match(err, /sneaky/);
+});
+
+test('--range ignores remote-tracking refs, which is why it exists', { skip }, () => {
+  // Reproduce the runner: the branch under test already has a remote-tracking ref covering
+  // its tip. The stdin path excludes --remotes and therefore finds nothing; --range must
+  // still see every commit in the range it was handed.
+  const r = repo();
+  const base = r.commit('base');
+  const head = r.commit('later');
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: r.root });
+
+  const viaStdin = check(r.root, `refs/heads/main ${head} refs/heads/main ${base}\n`);
+  assert.strictEqual(viaStdin.code, 0, 'the stdin path excludes it and finds nothing to check');
+
+  const ranged = checkRange(r.root, base, head);
+  assert.strictEqual(ranged.code, 0);
+  assert.match(ranged.out, /checked 1 commit\(s\)/,
+    'the remote-tracking ref must not hide the commit from --range');
+});
+
+test('--range without both arguments is a usage error', { skip }, () => {
+  const r = repo();
+  r.commit('base');
+  const bare = spawnSync('bash', [SCRIPT, '--range'], { cwd: r.root, encoding: 'utf8' });
+  assert.strictEqual(bare.status, 2);
+  assert.match(bare.stderr, /needs <base> <head>/);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

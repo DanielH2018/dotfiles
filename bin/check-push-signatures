@@ -26,9 +26,33 @@ set -u
 
 STRICT="${SIGN_GATE_STRICT:-}"
 
+# --range <base> <head>: check an explicit range instead of git's pre-push protocol.
+#
+# For CI, which has a range to check but no push to read it from. Faking the protocol on
+# stdin looked equivalent and was not: the hook path appends `--not --remotes` so a rebase
+# replay on main is not re-judged, and on a runner `actions/checkout` has already created a
+# remote-tracking ref for the very branch under test -- so every commit was excluded and the
+# step checked ZERO while exiting 0 and printing nothing.
+#
+# That is the failure this repo keeps paying for, so this mode is loud by construction: it
+# uses a plain two-dot range with no --remotes exclusion, and it REFUSES an empty one. A
+# signature gate that checked nothing must never be indistinguishable from one that passed.
+RANGE_MODE=0
+RANGE_BASE=
+RANGE_HEAD=
+if [ "${1:-}" = "--range" ]; then
+  RANGE_MODE=1
+  RANGE_BASE="${2:-}"
+  RANGE_HEAD="${3:-}"
+  if [ -z "$RANGE_BASE" ] || [ -z "$RANGE_HEAD" ]; then
+    printf 'check-push-signatures: --range needs <base> <head>\n' >&2
+    exit 2
+  fi
+fi
+
 # Nothing on stdin means this was run by hand rather than by git. Checking a range we
 # were never given would either hang on the terminal or invent one, so do neither.
-if [ -t 0 ]; then
+if [ "$RANGE_MODE" -eq 0 ] && [ -t 0 ]; then
   printf 'check-push-signatures: no pre-push input on stdin (run me from the hook)\n' >&2
   exit 0
 fi
@@ -41,6 +65,14 @@ bad=0
 warned=0
 checked=0
 
+# One synthetic protocol line in range mode, so the loop below is shared rather than
+# duplicated. remote_sha carries the base; the range is rebuilt from it just below.
+if [ "$RANGE_MODE" -eq 1 ]; then
+  INPUT=$(printf 'refs/heads/range %s refs/heads/range %s\n' "$RANGE_HEAD" "$RANGE_BASE")
+else
+  INPUT=$(cat)
+fi
+
 # git's pre-push protocol supplies four fields per line, positionally; only the two sha
 # values are used here, but the refs have to be named to consume their columns.
 # shellcheck disable=SC2034
@@ -48,7 +80,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "${local_sha:-}" ] || continue
   is_zero "$local_sha" && continue                     # ref deletion
 
-  if is_zero "${remote_sha:-}"; then
+  if [ "$RANGE_MODE" -eq 1 ]; then
+    # A plain two-dot range and nothing else. No --remotes: on a CI runner the branch under
+    # test already HAS a remote-tracking ref, which would exclude every commit being checked.
+    range="$local_sha --not $remote_sha"
+  elif is_zero "${remote_sha:-}"; then
     # New branch: everything not already reachable from some other remote-tracking ref.
     # Without --not --remotes this walks back to the root commit and re-judges history
     # that was pushed long before this gate existed.
@@ -78,7 +114,22 @@ while read -r local_ref local_sha remote_ref remote_sha; do
          [ -n "$STRICT" ] && bad=$((bad + 1)) ;;
     esac
   done < <(git log --format='%G?%x09%H%x09%s' $range 2>/dev/null)
-done
+done <<EOF
+$INPUT
+EOF
+
+# Range mode says what it did, every time, and refuses to have done nothing. The hook path
+# keeps its silence on success: it runs on every push and a line there would be noise.
+if [ "$RANGE_MODE" -eq 1 ]; then
+  if [ "$checked" -eq 0 ]; then
+    printf 'check-push-signatures: checked 0 commits in %s..%s -- refusing to report a pass.\n' \
+      "$RANGE_BASE" "$RANGE_HEAD" >&2
+    printf 'An empty range means the caller computed it wrong, not that the commits are fine.\n' >&2
+    exit 1
+  fi
+  printf 'check-push-signatures: checked %d commit(s) in %s..%s\n' \
+    "$checked" "$RANGE_BASE" "$RANGE_HEAD"
+fi
 
 if [ "$bad" -ne 0 ]; then
   printf '\n%d of %d pushed commit(s) are not properly signed.\n' "$bad" "$checked" >&2

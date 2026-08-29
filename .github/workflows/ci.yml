@@ -117,14 +117,21 @@ jobs:
             exit 1
           fi
 
-      # Signatures, with the protocol line built by hand. Every other step reads the
-      # working tree; this one reads a commit RANGE, so it needs to be told which.
+      # Signatures. Every other step reads the working tree; this one reads a commit RANGE,
+      # so it has to be told which.
       #
-      # Without ~/.config/git/allowed_signers the runner cannot verify a signature against
-      # a key, so signed commits come back U (unverified) and only warn. That is fine and
-      # is the point: the hole being closed is UNSIGNED commits (%G? = N), which this
-      # catches with no trust material at all. Do not set SIGN_GATE_STRICT here — it would
-      # fail every commit for want of a keyring the runner has no way to have.
+      # `--range`, not a hand-built protocol line on stdin. The first version did the
+      # latter, and it checked ZERO commits while exiting 0 and printing nothing: the hook
+      # path appends `--not --remotes` so a server-side rebase replay is not re-judged, and
+      # actions/checkout has already created a remote-tracking ref for the branch under
+      # test, which excluded every commit. `--range` uses a plain two-dot range and refuses
+      # an empty one, so this step cannot pass by having done nothing.
+      #
+      # Without ~/.config/git/allowed_signers the runner cannot verify a signature against a
+      # key, so signed commits come back U and only warn. That is the point: the hole being
+      # closed is UNSIGNED commits (%G? = N), which needs no trust material. Do not set
+      # SIGN_GATE_STRICT here — it would fail every commit for want of a keyring the runner
+      # has no way to have.
       - name: Check commit signatures
         run: |
           set -euo pipefail
@@ -135,7 +142,11 @@ jobs:
             base='${{ github.event.before }}'
             head='${{ github.sha }}'
           fi
-          # `github.event.before` is all-zeroes for a branch's first push; the gate already
-          # reads that as "new branch" and falls back to --not --remotes, so pass it through.
-          printf '%s %s %s %s\n' refs/heads/main "$head" refs/heads/main "$base" \
-            | bin/check-push-signatures
+          # All-zeroes is a branch's first push, where there is no base to diff against.
+          # Fall back to the merge-base with the default branch rather than to the root
+          # commit, which would re-judge history from before this gate existed.
+          case "$base" in
+            *[!0]*) ;;
+            *) base=$(git merge-base origin/main "$head") ;;
+          esac
+          bin/check-push-signatures --range "$base" "$head"
