@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "e3d4a04a589f1a2b4f382662a028ddb1f3172e1acc183136cafbfccf3954ede5",
-      "landed": "2026-08-23T13:45:05.704Z"
+      "hash": "72364b00667a8e207b3db1de9af4fb886af6c52ca2aaaff26eea12fa441d5c7a",
+      "landed": "2026-08-29T15:41:19.149Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -500,6 +500,11 @@
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
       "hash": "0f3ac615f1b286d592140a08047e3c29c6529b53e0dbcb78b3e6c56fb47f9e9f",
       "landed": "2026-08-23T14:06:23.158Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
+      "hash": "538e8c8b7b8ec1a829080a0fc2debd05bf1d5d60963987c95caf353f817f0839",
+      "landed": "2026-08-29T15:41:19.149Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-feedback/SKILL.md",
