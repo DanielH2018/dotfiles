@@ -16,9 +16,29 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+
+// The one synthetic token that must NOT be allowlisted, generated per run rather than
+// written down. A committed literal PROPAGATES: any session that reads this file copies it
+// into its own transcript, and the next sweep flags it there forever. That is measured, not
+// theoretical — the two allowlisted fixtures below did exactly that on 2026-08-29, and the
+// first version of the un-allowlisted one reintroduced the same defect within an hour of the
+// commit that fixed it, in four transcripts.
+//
+// Allowlisting is not available here: this token's whole job is to prove the allowlist is
+// not so wide that it swallows every github-pat. So it is generated instead, and lives only
+// in the transcript of the run that made it, which ages out of the scan window.
+//
+// 36 characters from a 62-symbol alphabet. The entropy floor is the thing to get right —
+// gitleaks discards low-entropy candidates, which is how a `ghp_AAAA…` fixture once reported
+// clean against a working scanner — and a random draw at this length clears it with margin.
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+function syntheticPat() {
+  return 'ghp_' + Array.from(crypto.randomBytes(36), (b) => ALPHABET[b % ALPHABET.length]).join('');
+}
 
 const SCANNER = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-transcript-scan');
 
@@ -252,8 +272,9 @@ test('the shipped ruleset still catches a token that is not a fixture', { skip }
   const sb = sandbox();
   const p = path.join(sb.projects, 'real.jsonl');
   // A third synthetic token, deliberately NOT allowlisted — without this half, an allowlist
-  // that swallowed every github-pat would pass the test above just as well.
-  fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_7pW3nK9tL5xQ2vB8mR4dF6yH1jC0sZ3uE5gA' }] } }) + '\n');
+  // that swallowed every github-pat would pass the test above just as well. Generated per
+  // run so it never becomes a committed literal; see syntheticPat above for why.
+  fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `GITHUB_TOKEN=${syntheticPat()}` }] } }) + '\n');
   const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
   assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /"rule":"github-pat"/);
