@@ -70,7 +70,7 @@ Produce the approved fixes list and skipped list before proceeding.
 
 Before dispatching any fix agent, turn the approved findings into deterministic acceptance
 checks where possible and freeze them by committing to git, so fix agents never see a
-mutable grading target. Read `commands/references/check-authoring.md` for the check
+mutable grading target. Read `~/.claude/command-references/check-authoring.md` for the check
 grammar and freeze procedure — it is the single source of truth for this phase.
 
 ---

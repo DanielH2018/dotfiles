@@ -45,6 +45,11 @@ BACKTICKED = re.compile(r"`([^`\n]+)`")
 # separately.
 PATHISH = re.compile(r"^[\w.@+-]+(?:/[\w.@+-]+)+/?$")
 
+# End of a sentence: terminal punctuation followed by a space or newline, or a blank
+# line. A bare newline is NOT one — these files wrap mid-sentence. An em-dash aside is
+# not one either, so a marker inside the same sentence's aside still counts.
+SENTENCE_BREAK = re.compile(r"[.!?][ \n]|\n[ \t]*\n")
+
 # Cap the report. A run that names thirty memories is not a nudge, it is a wall, and the
 # session start banner is not the place for it.
 MAX_REPORTED = 10
@@ -117,11 +122,40 @@ def memory_dir(config_dir: Path, repo: Path) -> Path | None:
 
 def candidate_paths(text: str) -> set[str]:
     found = set()
-    for token in BACKTICKED.findall(text):
-        token = token.strip().rstrip(".,;:)")
-        if PATHISH.match(token):
-            found.add(token.rstrip("/"))
+    for span in BACKTICKED.findall(text):
+        # A span is either a bare path or a command line that names one. Splitting on
+        # whitespace covers both: a bare path is a single word and survives unchanged.
+        # Without the split, the most common way a memory names a script — inside the
+        # command that runs it — was invisible, because the span holds spaces and
+        # PATHISH rejects it whole. `uv run python scripts/prune_worktrees.py --prune`
+        # was the live example, and that script had moved to scripts/dev/.
+        for token in span.split():
+            token = token.strip().rstrip(".,;:)")
+            if PATHISH.match(token):
+                found.add(token.rstrip("/"))
     return found
+
+
+def sentence_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    """Offsets of the sentence containing text[start:end].
+
+    Scopes the absence-marker search below. A +/-200 character window was the first
+    shape and it read across sentence boundaries in both directions, which cost recall
+    where it hurts most: `worktree-remove-refuses-while-locked.md` says "a lock whose
+    process is gone is ignored" one sentence before it names a path that really had
+    moved, and `is gone` inside that window suppressed the report. Measured 2026-08-29,
+    the hook reported three memories and every one was a deliberate mention, while the
+    two genuinely stale paths on this machine were both suppressed this way.
+
+    Sentence rather than line, because these files wrap mid-sentence — a line-based read
+    misses the half carrying the marker, which is the failure the window was chosen to
+    avoid in the first place.
+    """
+    left = 0
+    for match in SENTENCE_BREAK.finditer(text, 0, start):
+        left = match.end()
+    match = SENTENCE_BREAK.search(text, end)
+    return left, match.start() if match else len(text)
 
 
 def already_says_it_is_gone(text: str, token: str) -> bool:
@@ -171,7 +205,11 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
         "superseded",
         "which no longer",
     )
-    needle = f"`{token}`"
+    # The bare token, not a backtick-wrapped one. Since candidate_paths started reading
+    # inside command spans, a path can be mentioned without backticks of its own, and a
+    # backtick-wrapped needle finds no occurrence at all — which reads as "no mention
+    # carried a marker" and reports every such path unsuppressably.
+    needle = token
     seen = False
     start = 0
     while True:
@@ -185,15 +223,30 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
         # The surrounding prose only. Including the needle lets a path match the marker
         # list with its own filename — see the docstring; that bug silences the very
         # paths most likely to be stale.
-        window = (text[max(0, i - 200) : i] + " " + text[end : end + 200]).lower()
+        left, right = sentence_bounds(text, i, end)
+        window = (text[left:i] + " " + text[end:right]).lower()
         if not any(m in window for m in markers):
             # One mention that reads as a live claim is enough to report the path.
             return False
         start = i + len(needle)
 
 
-def stale_paths(text: str, repo: Path) -> list[str]:
-    """Paths this memory names that are gone, given their top directory still exists."""
+def stale_paths(text: str, repo: Path, also: Path | None = None) -> list[str]:
+    """Paths this memory names that are gone, given their top directory still exists.
+
+    `also` is the main checkout when `repo` is a linked worktree. A path present in
+    EITHER counts as present. Existence is checked against `repo` first because that is
+    the tree the session is working in, but an untracked path — a gitignored directory,
+    a scratch file — exists only in the checkout it was created in and never in a
+    worktree, so checking the worktree alone reported it as deleted. Measured on
+    2026-08-29: two of the three memories the hook flagged named `docs/superpowers/`,
+    which is gitignored, present in the main checkout, absent from every worktree.
+
+    The cost is a miss in one direction: a branch that DELETES a tracked file still
+    finds it in the main checkout and stays quiet. That is the failure direction this
+    hook already takes everywhere else — a miss costs nothing, a false alarm costs the
+    report's credibility.
+    """
     gone = []
     for token in candidate_paths(text):
         head = token.split("/", 1)[0]
@@ -204,6 +257,8 @@ def stale_paths(text: str, repo: Path) -> list[str]:
         if not (repo / head).is_dir():
             continue  # not a path into this repo, or its whole directory is gone
         if (repo / token).exists():
+            continue
+        if also is not None and (also / token).exists():
             continue
         if already_says_it_is_gone(text, token):
             continue
@@ -228,9 +283,13 @@ def main() -> int:
     config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     # Slug from the main checkout so a worktree session finds the memories; `repo`
     # itself stays the yardstick for path existence below.
-    memories = memory_dir(config_dir, main_checkout(repo))
+    primary = main_checkout(repo)
+    memories = memory_dir(config_dir, primary)
     if memories is None:
         return 0
+    # None when already in the main checkout, so the second existence test is skipped
+    # rather than repeated against the same tree.
+    also = primary if primary != repo else None
 
     findings = []
     for path in sorted(memories.glob("*.md")):
@@ -240,7 +299,7 @@ def main() -> int:
             text = path.read_text()
         except OSError:
             continue
-        gone = stale_paths(text, repo)
+        gone = stale_paths(text, repo, also)
         if gone:
             findings.append((path.name, gone))
 
@@ -249,9 +308,10 @@ def main() -> int:
     if not findings:
         return 0
 
+    subject = "memory names" if len(findings) == 1 else "memories name"
     print(
-        f"{len(findings)} memor{'y' if len(findings) == 1 else 'ies'} name a path that "
-        "no longer exists — check whether the memory is stale or the file simply moved:"
+        f"{len(findings)} {subject} a path that no longer exists — check whether the "
+        "memory is stale or the file simply moved:"
     )
     for name, gone in findings[:MAX_REPORTED]:
         print(f"  {name}: {', '.join(gone)}")

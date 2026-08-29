@@ -21,6 +21,6 @@ and skip the loop.
 
 ## Steps
 
-Follow `references/loop-driver.md` with the parameters above. It holds the argument parsing,
+Follow `~/.claude/command-references/loop-driver.md` with the parameters above. It holds the argument parsing,
 the triage-ledger reset, and the Ralph Loop prompt shape — never restate those steps here,
 so the two loop commands cannot drift apart.

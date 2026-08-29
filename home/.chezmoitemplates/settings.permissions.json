@@ -492,6 +492,21 @@
       "Bash(git push origin master --force*)",
       "Bash(git push origin main -f*)",
       "Bash(git push origin master -f*)",
+      {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
+           pair, the three pipe-to-shell rules, the find/awk execution forms below, and the
+           `gh api -X`/`npx -p` families in the ask tier -- is enforced by
+           allow-compound-bash.sh, NOT by Claude Code's own matcher. The hook routes any
+           pattern with an interior wildcard to matches_glob and tests it against the WHOLE
+           command before splitting (allow-compound-bash.sh:78-81, :278). Proof both ways in
+           tests/hooks/allow-compound-bash.test.js: 'evaluates deny/ask rules with an interior
+           wildcard as globs' fires them, and 'deny globs leave the everyday form of each
+           spawner allowed' proves they do not over-match.
+
+           This matters because docs/claude-shell-permissions.md in the server repo measures
+           the NATIVE matcher and concludes a flag-level guard "cannot be written at all".
+           That is true of the native engine and false of what runs here, and a reviewer has
+           already read it as grounds to delete these rules as decorative. They are not.
+           Deleting them removes real coverage. */}}
       "Bash(git commit *--no-verify*)",
       "Bash(git commit -n:*)",
       "Bash(git push *--no-verify*)",
