@@ -127,14 +127,33 @@ jobs:
       # test, which excluded every commit. `--range` uses a plain two-dot range and refuses
       # an empty one, so this step cannot pass by having done nothing.
       #
-      # Without ~/.config/git/allowed_signers the runner cannot verify a signature against a
-      # key, so signed commits come back U and only warn. That is the point: the hole being
-      # closed is UNSIGNED commits (%G? = N), which needs no trust material. Do not set
-      # SIGN_GATE_STRICT here — it would fail every commit for want of a keyring the runner
-      # has no way to have.
+      # The allowed_signers line is load-bearing, not a formality. Commits here are
+      # SSH-signed, and with gpg.ssh.allowedSignersFile UNSET git will not read an SSH
+      # signature at all: it reports %G? = N — the same code a genuinely unsigned commit
+      # gets — and explains itself only on stderr. This step's first run on main therefore
+      # failed with "10 of 10 pushed commit(s) are not properly signed" against ten commits
+      # that are signed and read G locally.
+      #
+      # An EMPTY file is enough. The signature is then read but cannot be attributed to a
+      # key, so it downgrades to U (unverified) and only warns — which is the intended
+      # behaviour: the hole being closed is UNSIGNED commits, and catching those needs no
+      # trust material. Listing real public keys would be the stricter version and is not a
+      # runner's job.
+      #
+      # `gpg.format` is deliberately not set: git dispatches on the signature's own armor
+      # header, so an SSH signature verifies as one whatever the configured default is.
+      #
+      # The gate now exits 3 rather than rejecting when this is absent, so a future runner
+      # that drops these two lines fails loudly instead of blocking every push for a reason
+      # that is not true.
+      #
+      # Do not set SIGN_GATE_STRICT here: it would turn every U into a failure, for want of
+      # a keyring the runner has no way to have.
       - name: Check commit signatures
         run: |
           set -euo pipefail
+          : > "$RUNNER_TEMP/allowed_signers"
+          git config gpg.ssh.allowedSignersFile "$RUNNER_TEMP/allowed_signers"
           if [ "${{ github.event_name }}" = 'pull_request' ]; then
             base='${{ github.event.pull_request.base.sha }}'
             head='${{ github.event.pull_request.head.sha }}'

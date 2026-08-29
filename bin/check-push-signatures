@@ -57,6 +57,31 @@ if [ "$RANGE_MODE" -eq 0 ] && [ -t 0 ]; then
   exit 0
 fi
 
+# N does not always mean unsigned, and nothing in the verdict says which it is.
+#
+# With gpg.ssh.allowedSignersFile UNSET, git will not even attempt to read an SSH signature:
+# it prints "needs to be configured and exist for ssh signature verification" on stderr and
+# reports %G? = N -- the same code a genuinely unsigned commit gets. So on a machine that
+# has never configured one, every properly signed commit reads as unsigned and this gate
+# rejects the whole push for a reason that is not true. Measured on this repo's first CI
+# run: 10 of 10 signed commits reported "unsigned", against commits that read G locally.
+#
+# The trigger is the setting being ABSENT, not the file being missing. Measured on git
+# 2.51: unset -> N, but pointed at /dev/null, at an empty file, or even at a path that does
+# not exist -> U. So the check below tests only for a value; do not "improve" it into an
+# existence test, which would refuse the working configurations above.
+#
+# Refuse to render a verdict rather than render a false one. Exit 3 is could-not-evaluate,
+# the same code and the same reason as the transcript scanner's: a check that cannot ask
+# the question must not answer it.
+if [ -z "$(git config gpg.ssh.allowedSignersFile || true)" ]; then
+  printf 'check-push-signatures: gpg.ssh.allowedSignersFile is unset.\n' >&2
+  printf 'git reports EVERY ssh-signed commit as unsigned in that state, so this gate cannot\n' >&2
+  printf 'tell a signed commit from an unsigned one and will not guess. Point it at a file --\n' >&2
+  printf 'an empty one is enough to get "unverified" (a warning) instead of "unsigned".\n' >&2
+  exit 3
+fi
+
 # An all-zero sha is git's "this ref does not exist": as the local sha it means the push
 # deletes the ref (no commits to check), as the remote sha it means the branch is new.
 is_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }

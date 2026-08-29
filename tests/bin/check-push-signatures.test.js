@@ -270,4 +270,80 @@ test('--range without both arguments is a usage error', { skip }, () => {
   assert.match(bare.stderr, /needs <base> <head>/);
 });
 
+// ── N does not always mean unsigned ───────────────────────────────────────────
+//
+// For an SSH-signed commit git needs gpg.ssh.allowedSignersFile configured AND existing
+// before it will look at the signature at all. Without it, it reports %G? = N — the same
+// code a genuinely unsigned commit gets — and says why only on stderr. So on a machine
+// that has not configured a signers file, EVERY signed commit reads as unsigned and this
+// gate rejects the push for a reason that is not true. Not hypothetical: the CI step's
+// first run on main failed with "10 of 10 pushed commit(s) are not properly signed"
+// against ten commits that verify as G locally.
+
+// A fresh CI runner has the setting nowhere: not in the repo, and not in a global config
+// either. Both halves are needed to reproduce it. `repo()` writes the key at repo level, so
+// that one is unset here — and the machine running these tests has it in ~/.gitconfig, which
+// the fixture would otherwise inherit and the guard would never fire.
+//
+// GIT_CONFIG_GLOBAL/SYSTEM=/dev/null is the stronger isolation the 2026-08-06 audit
+// recommended over per-repo overrides, for exactly this reason: it cuts the fixture off from
+// the machine instead of patching one setting at a time.
+const BARE_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+
+function unsetSigners(root) {
+  execFileSync('git', ['config', '--unset', 'gpg.ssh.allowedSignersFile'], { cwd: root });
+}
+
+test('git really does report a signed commit as N when the setting is absent', { skip }, () => {
+  // The premise, pinned. Everything below is only worth doing while this holds, so if a
+  // future git separates "unsigned" from "cannot verify", this is where it surfaces.
+  const r = repo();
+  r.commit('signed');
+  unsetSigners(r.root);
+  const verdict = execFileSync('git', ['log', '--format=%G?', '-1'],
+    { cwd: r.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: BARE_ENV }).trim();
+  assert.strictEqual(verdict, 'N',
+    'a signed commit reads as N with the setting absent — the whole reason for the guard');
+});
+
+test('refuses to judge when allowedSignersFile is unset', { skip }, () => {
+  const r = repo();
+  const base = r.commit('base');
+  const head = r.commit('also signed');
+  unsetSigners(r.root);
+  const res = spawnSync('bash', [SCRIPT, '--range', base, head], { cwd: r.root, encoding: 'utf8', env: BARE_ENV });
+  assert.strictEqual(res.status, 3,
+    'could-not-evaluate, not a rejection — calling these signed commits unsigned is the bug');
+  assert.match(res.stderr, /allowedSignersFile is unset/);
+  assert.doesNotMatch(res.stderr, /not properly signed/,
+    'it must not claim the commits are unsigned when it cannot tell');
+});
+
+test('any signers path restores a real verdict, existing or not', { skip }, () => {
+  // Measured on git 2.51: unset gives N, but /dev/null, an empty file, and a path that does
+  // not exist all give U. So the guard tests for a VALUE, not for a readable file — and a
+  // nonexistent path must not be refused, or CI configurations that work would be rejected.
+  const r = repo();
+  const base = r.commit('base');
+  const head = r.commit('signed');
+  for (const signers of ['/dev/null', path.join(r.root, 'no-such-file')]) {
+    execFileSync('git', ['config', 'gpg.ssh.allowedSignersFile', signers], { cwd: r.root });
+    const res = spawnSync('bash', [SCRIPT, '--range', base, head], { cwd: r.root, encoding: 'utf8' });
+    assert.strictEqual(res.status, 0, `${signers}: a signed commit warns rather than blocks`);
+    assert.match(res.stderr, /could not be verified/, `${signers}: and says it could not attribute it`);
+  }
+});
+
+test('an unsigned commit is still caught once a signers path is set', { skip }, () => {
+  // The guard must not have bought its honesty by going blind. This is what CI relies on.
+  const r = repo();
+  const base = r.commit('base');
+  const bad = r.commit('sneaky', { signed: false });
+  execFileSync('git', ['config', 'gpg.ssh.allowedSignersFile', '/dev/null'], { cwd: r.root });
+  const res = spawnSync('bash', [SCRIPT, '--range', base, bad], { cwd: r.root, encoding: 'utf8' });
+  assert.strictEqual(res.status, 1);
+  assert.match(res.stderr, /unsigned/);
+  assert.match(res.stderr, /sneaky/);
+});
+
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
