@@ -94,6 +94,12 @@ excluded() {
     # fixture), not shell that runs. Excluding the file also blinds this check to a future real
     # shell stub in it; that is the cost of not being able to annotate the line.
     tests/hooks/allow-readonly-remote.test.js) return 0 ;;
+    # Same shape, and here the bare spelling is load-bearing rather than incidental:
+    # block-dangerous-bash.sh gained an arm that denies an in-place edit of a secrets file, and
+    # `sed -i s/a/b/ ansible/vars/secrets.yml` is the exact command that returned no decision
+    # when it was measured. Rewriting the fixture to `sed -i.bak` to satisfy this check would
+    # stop testing the spelling the guard exists for. Same cost as above.
+    tests/hooks/block-dangerous-bash.test.js) return 0 ;;
 
     # These two hold the known-bad patterns literally, by construction.
     bin/lint-bsd-portability | tests/lint-bsd-portability.test.js) return 0 ;;

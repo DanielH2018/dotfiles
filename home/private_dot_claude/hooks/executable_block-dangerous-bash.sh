@@ -925,7 +925,11 @@ fi
 # A SOPS-managed file, by the two basename shapes that are conventionally encrypted.
 # Deliberately narrow: `secret_rotation.yml` in the homelab repo is a PLAINTEXT registry of
 # names and dates that gets diffed routinely, and a looser `.*secret.*` pattern denies it.
-SOPS_PATHS='(^|[[:space:]])([^[:space:]]*/)?(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))\b'
+#
+# Split into a bare basename alternation and the anchored path form, because WRITE_TARGETS
+# supplies its own directory prefix (`[^[:space:];&|]*`) and cannot use the anchored one.
+SOPS_BASENAMES='(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))'
+SOPS_PATHS="(^|[[:space:]])([^[:space:]]*/)?$SOPS_BASENAMES"'\b'
 
 # Command position, for the arms below. Written unanchored on 2026-08-29 and it denied
 # `printf '%s\n' "git diff ansible/vars/secrets.yml"` — a line WRITING OUT the command, in a
@@ -1009,9 +1013,34 @@ fi
 # Shell startup files and the Claude hook/settings tree join the list here — appending
 # an attacker key to authorized_keys or a line to .zshrc is the persistence move that
 # outlives the session, and none of these were on the write side.
-WRITE_TARGETS="($SECRET_PATHS|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
+#
+# SOPS basenames are on the WRITE side only, and that narrows the `# DECIDED:` marker at the
+# top of this section rather than contradicting it. That marker keeps `secrets.ya?ml` out of
+# SECRET_PATHS because the variable feeds three rules, and adding it there would deny `sops
+# ansible/vars/secrets.yml`, `sops updatekeys` and reading the ciphertext — every one of which
+# is a READ. None of them is a redirect or a `tee`, so nothing the marker protects can reach
+# this arm. Measured 2026-08-29: `tee ansible/vars/secrets.yml` returned no decision, and a
+# write to that file corrupts the ciphertext.
+WRITE_TARGETS="($SECRET_PATHS|$SOPS_BASENAMES|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
 if bdb_re "$SCAN" "(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*$WRITE_TARGETS"; then
   deny "Blocked: writing to a secrets or shell-startup file. Ask the user to do this manually."
+fi
+
+# The same targets, reached by an editor that names the file as a POSITIONAL argument. The
+# redirect/tee shape above structurally cannot see these: there is no `>` in `sed -i s/a/b/
+# ansible/vars/secrets.yml`, which returned no decision when measured on 2026-08-29 and
+# corrupts the ciphertext exactly as a `tee` onto it does.
+#
+# Only editors that unambiguously rewrite the file they name. `cp` and `mv` are deliberately
+# absent: their target is positional too, but so is their SOURCE, so the same pattern would
+# deny `cp ~/.bashrc ~/backup/` — a read. Distinguishing the two argument positions is not
+# something this regex can do, and a rule that denies backups is a rule that gets switched off.
+#
+# BDB_CMD_AT anchors at a separator for the reason spelled out above it: `grep -n "sed -i
+# ansible/vars/secrets.yml" notes.md` is text describing the command, not the command.
+BDB_INPLACE='((sed|perl)\b[^;&|]*(^|[[:space:]])(-[A-Za-z]*i([[:space:]]|\.)|--in-place)|truncate\b|dd\b[^;&|]*(^|[[:space:]])of=)'
+if bdb_re "$SCAN" "${BDB_CMD_AT}${BDB_INPLACE}[^;&|]*$WRITE_TARGETS"; then
+  deny "Blocked: editing a secrets or shell-startup file in place. A SOPS file must go through \`sops <file>\`; ask the user before changing the others."
 fi
 
 # Terraform / OpenTofu / Terragrunt — deny state-mutating & destructive ops.
