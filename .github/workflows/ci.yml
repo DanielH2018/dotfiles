@@ -63,6 +63,36 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           shellcheck --version | head -2
 
+      # Pin the machine profile, or the suite renders for a machine nobody has.
+      #
+      # Found by this workflow's first run: 111 tests failed on the runner against a tree
+      # whose gate is green on both real hosts. `home/.chezmoi.toml.tmpl` asks for `profile`
+      # and `work` through promptStringOnce/promptBoolOnce, and the answers live in
+      # ~/.config/chezmoi/chezmoi.toml, which a runner does not have. Every host-conditional
+      # template then renders against absent data, and the chezmoi-script tests assert
+      # against a render their author never saw.
+      #
+      # workstation rather than server: it is the superset, so it exercises the most scripts.
+      # A runner can only ever be one profile — the other two are covered by the machines
+      # that actually are them, which is where this gate also runs.
+      #
+      # Written directly rather than through `chezmoi init`, which wants a source argument
+      # and a TTY for the prompts. `execute-template` reads [data] and nothing else here.
+      - name: Pin the chezmoi profile
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/chezmoi"
+          cat > "$HOME/.config/chezmoi/chezmoi.toml" <<'TOML'
+          umask = 0o022
+          [data]
+              work = false
+              profile = "workstation"
+          [interpreters.sh]
+              command = "bash"
+          TOML
+          chezmoi execute-template --source home '{{ .profile }} {{ .chezmoi.os }}'
+          echo
+
       - name: Run the pre-push gate
         env:
           # The cache keys on a clean tree at a known sha and would let a second run skip
