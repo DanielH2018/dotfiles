@@ -85,3 +85,12 @@ Stated plainly, because a pass rate over 8 cases is not "the skill works":
 
 `results.md` holds the last recorded run: date, model, per-case rates. Re-record it after
 any edit to the skill's `description`, which is the only field this eval measures.
+
+**That is enforced, not remembered.** `bin/check-eval-freshness` runs in the pre-push gate
+and rejects a push whose diff changes a `description:` line without touching that skill's
+`results.md`. It does not run the eval — ~24 model calls, minutes, and network have no place
+in a gate whose contract is deterministic, free and offline — it checks that the recording
+happened and names the command. `EVAL_FRESHNESS_OFF=1` bypasses it.
+
+The gate is opt-in per skill: having an `evals/cases.json` is what gates you, so a second
+skill's eval needs no edit to the gate.

@@ -153,6 +153,20 @@ if [ "$tree_cached" -eq 0 ]; then
   # 2. Deterministic review/soak ledger — no LLM, no judgement.
   run "config-soak (review ledger)" node bin/config-soak status
 
+  # 2b. Skill eval freshness. A model-invoked skill's `description` IS its invocation
+  #     mechanism, so editing it can move the trigger rate with nothing visible to a
+  #     reader: pr-authoring shipped at a 70% fire rate on its plainest trigger and only
+  #     the eval saw it. This checks that a description edit came with re-recorded
+  #     results, and deliberately does NOT run the eval — that costs ~24 model calls,
+  #     several minutes and network, none of which belongs in a gate whose contract is
+  #     deterministic, free and offline. Opt-in per skill: having evals/cases.json is
+  #     what gates you. EVAL_FRESHNESS_OFF=1 bypasses.
+  if [ -z "${EVAL_FRESHNESS_OFF:-}" ]; then
+    run "skill eval freshness" bin/check-eval-freshness
+  else
+    note_skip "skill eval freshness" "skill eval freshness - EVAL_FRESHNESS_OFF=1, skipped"
+  fi
+
   # 3. Instruction-file quality. Security gate (>=70) is always enforced by
   #    `verify`; the composite floor is a ratchet pinned to today's worst file, so
   #    any regression below the current baseline blocks the push. rules/python.md

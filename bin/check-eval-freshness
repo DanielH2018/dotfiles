@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# check-eval-freshness — reject a push that changes a skill's `description:` without
+# re-recording that skill's eval results.
+#
+# A model-invoked skill's `description` IS its invocation mechanism, and editing it can
+# silently move the trigger rate without changing anything a person would notice. The
+# pr-authoring skill shipped at a 70% fire rate on its plainest trigger and nobody could
+# have seen it by reading; only the eval found it. That measurement is worth exactly as
+# much as its currency, so a description edit that leaves results.md untouched publishes
+# a number that no longer describes the file it sits beside.
+#
+# This gate does NOT run the eval. Running it costs ~24 model calls, several minutes and
+# real money, and needs network and credentials — none of which belongs in a pre-push
+# hook whose stated contract is deterministic, free and offline. It checks that the
+# recording happened and names the command, which is the cheapest thing that keeps the
+# two files honest with each other.
+#
+# Scope is every skill that HAS an eval — `skills/*/evals/cases.json`. A skill with no
+# eval is not gated; adding one opts it in with no edit here.
+#
+# Kept bash-3.2 clean (macOS default bash): no mapfile / associative arrays.
+
+set -u
+
+SKILLS_DIR="home/private_dot_claude/skills"
+BASE="${EVAL_FRESHNESS_BASE:-origin/main}"
+
+# Run from the repo root regardless of where the hook invoked us.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  printf 'check-eval-freshness: not a git repository\n' >&2
+  exit 0
+}
+cd "$ROOT" || exit 0
+
+# No base ref means a fresh clone or a repo with no remote yet. Nothing to compare a
+# change against, so there is no verdict to give — pass rather than invent one.
+if ! git rev-parse --verify --quiet "$BASE" >/dev/null; then
+  printf 'check-eval-freshness: no %s to compare against, skipped\n' "$BASE"
+  exit 0
+fi
+
+stale=0
+checked=0
+
+for cases in "$SKILLS_DIR"/*/evals/cases.json; do
+  [ -f "$cases" ] || continue
+  evals_dir="$(dirname "$cases")"
+  skill_dir="$(dirname "$evals_dir")"
+  skill="$(basename "$skill_dir")"
+  skill_md="$skill_dir/SKILL.md"
+  results="$evals_dir/results.md"
+  [ -f "$skill_md" ] || continue
+  checked=$((checked + 1))
+
+  # Only the description line matters. The body of a skill can change freely — the eval
+  # measures invocation, and nothing below the frontmatter affects whether it fires.
+  # Match added and removed lines both, so a deletion counts as a change.
+  if ! git diff "$BASE...HEAD" -- "$skill_md" \
+    | grep -qE '^[-+]description:'; then
+    continue
+  fi
+
+  if git diff --name-only "$BASE...HEAD" -- "$results" | grep -q .; then
+    continue
+  fi
+
+  stale=$((stale + 1))
+  printf '\n  %s: description changed, %s did not.\n' "$skill" "$results"
+  printf '    Re-run the eval and record it:\n'
+  printf '      ~/.claude/skills/%s/evals/run.sh\n' "$skill"
+  printf '    A rate you have not re-measured is not evidence the trigger still fires.\n'
+done
+
+if [ "$checked" -eq 0 ]; then
+  printf 'check-eval-freshness: no skills with evals, skipped\n'
+  exit 0
+fi
+
+if [ "$stale" -gt 0 ]; then
+  printf '\n%s skill description(s) changed without re-recorded eval results.\n' "$stale" >&2
+  printf 'Set EVAL_FRESHNESS_OFF=1 to push anyway, and say why in the PR.\n' >&2
+  exit 1
+fi
+
+printf 'check-eval-freshness: %s skill(s) with evals, results current\n' "$checked"
