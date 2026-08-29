@@ -128,7 +128,14 @@ leak_scan() {
   [ -x "$SCANNER" ] || return 0
   T=$(hook_field '.transcript_path // empty')
   [ -n "$T" ] && [ -f "$T" ] || return 0
-  nohup "$SCANNER" --session "$T" >/dev/null 2>&1 &
+  # Not /dev/null. Findings themselves now survive in the scanner's pending marker, which
+  # session-context.sh reads back — but the could-not-evaluate path (exit 3: no gitleaks,
+  # no jq) announces itself only on stderr, and discarding that makes a detector that never
+  # ran indistinguishable from one that ran clean. Truncated, not appended: this is the last
+  # run's diagnosis rather than a history, and an unattended append grows without bound.
+  RUNLOG="$HOME/.claude/logs/transcript-scan-last.log"
+  mkdir -p "${RUNLOG%/*}"
+  nohup "$SCANNER" --session "$T" >"$RUNLOG" 2>&1 &
   disown 2>/dev/null || true
 }
 

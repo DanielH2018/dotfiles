@@ -93,6 +93,11 @@ function sandbox() {
     log: path.join(dir, 'leaks.jsonl'),
     baseline: path.join(dir, 'baseline.txt'),
     glConfig: path.join(dir, 'gitleaks.toml'),
+    // Load-bearing, not decoration. The scanner appends to this file on every finding, and
+    // these fixtures deliberately produce findings — left unset it defaults to the real
+    // ~/.claude/logs/transcript-leaks-pending, so a suite run would raise a credential
+    // banner in the operator's next session out of a test fixture.
+    pending: path.join(dir, 'pending.tsv'),
   };
 }
 
@@ -105,6 +110,7 @@ function run(args, sb, extraEnv = {}) {
       CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
       CLAUDE_TRANSCRIPT_LEAK_BASELINE: sb.baseline,
       CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: sb.glConfig,
+      CLAUDE_TRANSCRIPT_LEAK_PENDING: sb.pending,
       GITLEAKS_BIN: GITLEAKS,
       ...extraEnv,
     },
@@ -285,4 +291,76 @@ test('a bad argument is a usage error, not a silent pass', { skip }, () => {
   assert.strictEqual(run(['--nope'], sb).status, 2);
   assert.strictEqual(run(['--since', 'yesterday'], sb).status, 2);
   assert.strictEqual(run(['--session', path.join(sb.dir, 'absent.jsonl')], sb).status, 2);
+});
+
+// ── The pending marker ────────────────────────────────────────────────────────
+//
+// Both unattended callers used to throw the verdict away: session-end.sh backgrounds this
+// with its output discarded, and the timer's journal line reaches nobody on a headless
+// host. notify-send does not close that (it needs a daemon) and neither does osascript
+// (it needs a Mac). The marker is the platform-independent half, read back by
+// hooks/session-context.sh at the start of the next session.
+
+test('a finding leaves a durable marker, not just a log line', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(r.status, 1);
+  const rows = fs.readFileSync(sb.pending, 'utf8').trim().split('\n');
+  assert.strictEqual(rows.length, 1, 'one run reports one row');
+  const [ts, count, log] = rows[0].split('\t');
+  assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'the row is timestamped');
+  assert.strictEqual(Number(count) > 0, true, `expected a positive count, got ${count}`);
+  assert.strictEqual(log, sb.log, 'the row points at the log holding the detail');
+});
+
+test('a clean transcript writes no marker', { skip }, () => {
+  const sb = sandbox();
+  const r = run(['--session', path.join(sb.projects, 'clean.jsonl')], sb);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(fs.existsSync(sb.pending), false,
+    'a clean run must not arm the banner — a marker nobody can clear by fixing anything '
+    + 'is how the banner stops being read');
+});
+
+test('--clear-pending disarms the banner and keeps the evidence', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(fs.existsSync(sb.pending), true, 'precondition: the marker is armed');
+  const before = fs.readFileSync(sb.log, 'utf8');
+
+  const r = run(['--clear-pending'], sb);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(fs.existsSync(sb.pending), false, 'the marker is gone');
+  // The reverse operation must not also destroy the record. Rotating a credential settles
+  // a finding; it does not mean the finding never happened.
+  assert.strictEqual(fs.readFileSync(sb.log, 'utf8'), before, 'the log is untouched');
+  assert.strictEqual(fs.existsSync(sb.baseline), false, 'nothing was baselined');
+});
+
+test('--accept-baseline also disarms the banner', { skip }, () => {
+  const sb = sandbox();
+  run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(fs.existsSync(sb.pending), true, 'precondition: the marker is armed');
+  run(['--session', path.join(sb.projects, 'dirty.jsonl'), '--accept-baseline'], sb);
+  assert.strictEqual(fs.existsSync(sb.pending), false,
+    'everything outstanding is now baselined, so the banner has nothing left to report');
+});
+
+// Exit 3 is the one verdict with no other durable trace: a finding lands in the log, but a
+// scan that never ran leaves nothing at all — which is indistinguishable from a clean run.
+test('a scan that could not run records that it could not run', { skip: jqOk ? false : 'jq unavailable' }, () => {
+  const sb = sandbox();
+  // PATH stays real — emptying it means bash itself cannot be spawned, and the test fails
+  // for a reason that has nothing to do with the scanner. HOME is redirected so the prek
+  // cache glob finds nothing either; between them the scanner has no gitleaks to resolve.
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb, {
+    PATH: '/usr/bin:/bin',
+    GITLEAKS_BIN: '/nonexistent',
+    HOME: sb.dir,
+  });
+  assert.strictEqual(r.status, 3, `expected could-not-evaluate, got ${r.status}: ${r.stdout}${r.stderr}`);
+  const [ts, count, why] = fs.readFileSync(sb.pending, 'utf8').trim().split('\t');
+  assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  assert.strictEqual(count, '0', 'a could-not-evaluate row carries count 0, not a finding count');
+  assert.match(why, /gitleaks|jq/, `the row says what was missing, got: ${why}`);
 });

@@ -18,6 +18,50 @@ case "$SOURCE" in
   *) exit 0 ;;
 esac
 
+# Credentials found in a past transcript, not yet triaged.
+#
+# Deliberately ABOVE the git check below: a leaked credential is a fact about the machine,
+# not about the directory you happened to open Claude in, and gating it on a git repo would
+# hide it exactly when you are not working in one. claude-transcript-scan writes this file
+# because neither of its unattended callers keeps a verdict — session-end.sh backgrounds it
+# with output discarded, and the timer's journal line reaches nobody on a headless host.
+#
+# The banner stays until it is answered, which is the point. `--accept-baseline` clears it
+# by declaring the findings known; `--clear-pending` clears it after a rotation, without
+# baselining anything.
+PENDING=${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}
+#
+# Two record types share the file, both `ts \t count \t detail`. A positive count is a
+# finding; a zero count is a run that could not evaluate at all, which needs saying
+# separately — silence from a detector that never ran looks exactly like a clean result.
+if [ -s "$PENDING" ]; then
+  # awk rather than a read loop: bash-3.2 clean, and one process instead of one per line.
+  # Every field gets a non-empty placeholder. Tab is an IFS *whitespace* character, so the
+  # `read` below collapses consecutive tabs into one delimiter — emitting an empty field
+  # shifts every later value one position left, and the down-count lands in a variable that
+  # is then compared with -gt. That silently dropped the could-not-evaluate banner entirely.
+  awk -F'\t' '
+    BEGIN { ftime = "-"; flog = "-"; dtime = "-"; dwhy = "-" }
+    $2 + 0 > 0 { found += $2; ftime = $1; flog = $3; next }
+    { down += 1; dtime = $1; dwhy = $3 }
+    END { printf "%d\t%s\t%s\t%d\t%s\t%s\n", found, ftime, flog, down, dtime, dwhy }
+  ' "$PENDING" 2>/dev/null | {
+    IFS=$'\t' read -r found ftime flog down dtime dwhy
+    if [ "${found:-0}" -gt 0 ] 2>/dev/null; then
+      echo "SECURITY: $found untriaged credential finding(s) in Claude transcripts, last seen $ftime."
+      echo "  Details (redacted — fingerprints, not values): $flog"
+      echo "  Rotate what is named, then: claude-transcript-scan --clear-pending"
+      echo "  Or, if these are known not to be credentials: claude-transcript-scan --accept-baseline"
+      echo ""
+    fi
+    if [ "${down:-0}" -gt 0 ] 2>/dev/null; then
+      echo "SECURITY: the transcript credential scan could not run $down time(s), last at $dtime ($dwhy)."
+      echo "  Nothing was checked in those windows. Install what is missing, then: claude-transcript-scan --clear-pending"
+      echo ""
+    fi
+  }
+fi
+
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 

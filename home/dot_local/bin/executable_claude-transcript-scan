@@ -24,6 +24,7 @@
 #   claude-transcript-scan --all              # every transcript on the machine
 #   claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
 #   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
+#   claude-transcript-scan --clear-pending    # dismiss the SessionStart banner WITHOUT baselining anything
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
 # deliberately not 0: a missing gitleaks means the question was never asked, and a detector
@@ -57,11 +58,19 @@ PROJECTS=${CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}
 LOG=${CLAUDE_TRANSCRIPT_LEAK_LOG:-$HOME/.claude/logs/transcript-leaks.jsonl}
 BASELINE=${CLAUDE_TRANSCRIPT_LEAK_BASELINE:-$HOME/.claude/logs/transcript-leaks-baseline.txt}
 GL_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG:-$HOME/.config/gitleaks/transcript-scan.toml}
+# A finding outlives the process that found it, and neither unattended caller keeps the
+# verdict: session-end.sh backgrounds this with its output discarded, and the timer's
+# journal line is read by nobody. A desktop notification does not close that gap either —
+# notify-send needs a running daemon and osascript needs a Mac, and a headless host has
+# neither. So the durable alert is a FILE, which session-context.sh reads into the next
+# session's context on every platform. Cleared by --accept-baseline or --clear-pending.
+PENDING=${CLAUDE_TRANSCRIPT_LEAK_PENDING:-$HOME/.claude/logs/transcript-leaks-pending}
 SINCE_H=24
 MODE=window
 ONE=
 ACCEPT=0
 PARANOID=0
+CLEAR=0
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -70,10 +79,21 @@ while [ $# -gt 0 ]; do
     --all) MODE=all; shift ;;
     --accept-baseline) ACCEPT=1; shift ;;
     --paranoid) PARANOID=1; shift ;;
-    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --clear-pending) CLEAR=1; shift ;;
+    -h|--help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# The way out that does not also accept anything. Triaging a finding — rotating the
+# credential and confirming it — settles it without adding a fingerprint to the baseline,
+# and with no way to say so the banner would either persist forever or push you toward a
+# blanket accept, which is the one thing this whole tool warns against.
+if [ "$CLEAR" = 1 ]; then
+  rm -f "$PENDING"
+  echo "claude-transcript-scan: cleared the pending-findings marker. The log at $LOG is untouched."
+  exit 0
+fi
 case $SINCE_H in ''|*[!0-9]*) echo "claude-transcript-scan: --since wants whole hours" >&2; exit 2 ;; esac
 
 # The daily run uses a narrowed ruleset; --paranoid uses gitleaks' full default set. The
@@ -93,6 +113,15 @@ if [ "$PARANOID" = 0 ]; then
   fi
 fi
 
+# Exit 3 is could-not-evaluate, and it is the one verdict with no other durable trace: a
+# finding lands in $LOG, but a scan that never ran leaves nothing behind at all. Record it
+# in the same marker, as a zero-count row, so the SessionStart banner reports "the detector
+# could not run" rather than the silence that is indistinguishable from "clean".
+mark_unavailable() {
+  mkdir -p "$(dirname "$PENDING")" 2>/dev/null
+  printf '%s\t0\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$PENDING"
+}
+
 # gitleaks is not installed system-wide here; prek fetches it into its own cache for the
 # repo hook. Take it from PATH first so a real install wins, then the cache, and refuse
 # rather than skip if neither exists.
@@ -105,9 +134,14 @@ if [ -z "$GITLEAKS" ]; then
 fi
 if [ -z "$GITLEAKS" ] || [ ! -x "$GITLEAKS" ]; then
   echo "claude-transcript-scan: no gitleaks binary (PATH, \$GITLEAKS_BIN, or the prek cache) — did not scan" >&2
+  mark_unavailable "no gitleaks binary"
   exit 3
 fi
-command -v jq >/dev/null 2>&1 || { echo "claude-transcript-scan: jq unavailable — did not scan" >&2; exit 3; }
+command -v jq >/dev/null 2>&1 || {
+  echo "claude-transcript-scan: jq unavailable — did not scan" >&2
+  mark_unavailable "jq unavailable"
+  exit 3
+}
 
 case $MODE in
   one)
@@ -190,11 +224,14 @@ EOF
 
 if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
   echo "claude-transcript-scan: every transcript failed to scan — treat as not run" >&2
+  mark_unavailable "every transcript failed to scan"
   exit 3
 fi
 
 if [ "$ACCEPT" = 1 ]; then
   sort -u "$BASELINE.new" 2>/dev/null > "$BASELINE" && rm -f "$BASELINE.new"
+  # Everything outstanding is now baselined, so the marker has nothing left to report.
+  rm -f "$PENDING"
   echo "claude-transcript-scan: accepted $(wc -l < "$BASELINE" | tr -d ' ') finding(s) as baseline in $BASELINE"
   echo "Only findings NOT in that file are reported from now on. Triage before accepting — accepting is how a real leak gets buried."
   exit 0
@@ -203,8 +240,21 @@ fi
 if [ "$FOUND" -gt 0 ]; then
   echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED transcript(s) ($KNOWN baselined) — logged to $LOG"
   echo "Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
-  command -v notify-send >/dev/null 2>&1 &&
+
+  # The durable half. Written before either banner is attempted, so a machine with no
+  # notification path at all still records the finding rather than losing it.
+  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FOUND" "$LOG" >> "$PENDING"
+
+  # The immediate half, best-effort. Same platform order as hooks/notify.sh: osascript is
+  # the Mac's only working path, notify-send the Linux desktop's, and a headless host
+  # matches neither and is covered by the file above.
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -e 'on run argv
+      display notification (item 2 of argv) with title (item 1 of argv)
+    end run' -- "Credential in a Claude transcript" "$FOUND new finding(s). See $LOG." >/dev/null 2>&1
+  elif command -v notify-send >/dev/null 2>&1; then
     notify-send -u critical "Credential in a Claude transcript" "$FOUND new finding(s). See $LOG." 2>/dev/null
+  fi
   exit 1
 fi
 

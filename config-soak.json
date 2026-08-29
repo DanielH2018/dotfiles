@@ -223,13 +223,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
-      "hash": "7a6dd733a03c92aa37e3b145c343d0c57ffa814146ba2f2c6d939251cb75ba1c",
-      "landed": "2026-08-01T12:04:20.075Z"
+      "hash": "e307efec144d40052dafb15f65ba3a5b2769ae6e4a3ebc1cd04e2fe6f342c1cd",
+      "landed": "2026-08-29T17:11:47.144Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "d883ff035cbf828245a9d463fbe7054a5758095d1bf531dba224fcc4e08cd0fc",
-      "landed": "2026-08-29T15:48:10.456Z"
+      "hash": "cd44ce0b2ff6e9516b2765f39511a7225069455d4594724ff32e1dc1223934c4",
+      "landed": "2026-08-29T17:11:47.144Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
