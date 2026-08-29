@@ -66,7 +66,14 @@ function sandbox() {
   fs.mkdirSync(projects, { recursive: true });
   fs.writeFileSync(path.join(projects, 'dirty.jsonl'), DIRTY);
   fs.writeFileSync(path.join(projects, 'clean.jsonl'), CLEAN);
-  return { dir, projects, log: path.join(dir, 'leaks.jsonl'), baseline: path.join(dir, 'baseline.txt') };
+  // glConfig is a path, not a file: the tests that want the narrowed ruleset write it, and
+  // the fallback test deliberately leaves it absent.
+  return {
+    dir, projects,
+    log: path.join(dir, 'leaks.jsonl'),
+    baseline: path.join(dir, 'baseline.txt'),
+    glConfig: path.join(dir, 'gitleaks.toml'),
+  };
 }
 
 function run(args, sb, extraEnv = {}) {
@@ -77,6 +84,7 @@ function run(args, sb, extraEnv = {}) {
       CLAUDE_TRANSCRIPT_ROOT: path.join(sb.dir, 'projects'),
       CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
       CLAUDE_TRANSCRIPT_LEAK_BASELINE: sb.baseline,
+      CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: sb.glConfig,
       GITLEAKS_BIN: GITLEAKS,
       ...extraEnv,
     },
@@ -171,6 +179,56 @@ test('the fingerprint keys on content, not on line position', { skip }, () => {
   const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
   assert.strictEqual(r.status, 0, `a renumbered but unchanged finding must stay baselined: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /no new findings/);
+});
+
+// The narrowed ruleset is the answer to the drip: the baseline clears the backlog, but live
+// sessions keep producing fresh `generic-api-key` matches — 4 in the two minutes after the
+// first baseline was accepted — because that rule matches entropy alone. The pair below is
+// its contract: it must drop the noise and must NOT drop a real token shape. `secretKeyRef:`
+// is a real line from the 2026-08-29 sweep, not an invented one.
+const NARROW = '[extend]\nuseDefault = true\ndisabledRules = ["generic-api-key"]\n';
+const NOISE = JSON.stringify({
+  type: 'assistant',
+  message: { role: 'assistant', content: [{ type: 'text', text: '  secretKeyRef:\n    name: sonarr-exportarr\n  api_key: "a7Kq93MnZx2WvBc8LpRt5YdH4FgJ6sEu"' }] },
+}) + '\n';
+
+test('the narrowed ruleset drops entropy-only noise', { skip }, () => {
+  const sb = sandbox();
+  const p = path.join(sb.projects, 'noise.jsonl');
+  fs.writeFileSync(p, NOISE);
+  fs.writeFileSync(sb.glConfig, NARROW);
+  const r = run(['--session', p], sb);
+  assert.strictEqual(r.status, 0, `expected clean, got ${r.status}: ${r.stdout}${r.stderr}`);
+});
+
+test('--paranoid puts the entropy rule back', { skip }, () => {
+  const sb = sandbox();
+  const p = path.join(sb.projects, 'noise.jsonl');
+  fs.writeFileSync(p, NOISE);
+  fs.writeFileSync(sb.glConfig, NARROW);
+  const r = run(['--session', p, '--paranoid'], sb);
+  assert.strictEqual(r.status, 1, `expected a finding under --paranoid: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /generic-api-key/);
+});
+
+test('narrowing does not drop a real token shape', { skip }, () => {
+  const sb = sandbox();
+  fs.writeFileSync(sb.glConfig, NARROW);
+  const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
+  assert.strictEqual(r.status, 1, 'github-pat must still fire under the narrowed set');
+  assert.match(r.stdout, /"rule":"github-pat"/);
+});
+
+test('a missing ruleset falls back to the full set rather than refusing', { skip }, () => {
+  const sb = sandbox();
+  const p = path.join(sb.projects, 'noise.jsonl');
+  fs.writeFileSync(p, NOISE);
+  // sb.glConfig deliberately not written. This is the OPPOSITE direction from a missing
+  // gitleaks: no gitleaks means the question was never asked, no config means it was asked
+  // too broadly. Over-reporting is recoverable by reading; under-reporting is not.
+  const r = run(['--session', p], sb);
+  assert.strictEqual(r.status, 1, 'the full set still finds it');
+  assert.match(r.stderr, /falling back to gitleaks' full set/);
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {

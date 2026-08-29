@@ -23,6 +23,7 @@
 #   claude-transcript-scan --session PATH     # one transcript (what the SessionEnd hook runs)
 #   claude-transcript-scan --all              # every transcript on the machine
 #   claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
+#   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
 # deliberately not 0: a missing gitleaks means the question was never asked, and a detector
@@ -38,16 +39,29 @@
 # The risk runs the other way too, which is why accepting is never automatic and never part
 # of the timer: a blanket --accept-baseline over an untriaged sweep is exactly how a real
 # leak gets buried. Triage first, accept second.
+#
+# WHY A NARROWED RULESET. The baseline clears the historical backlog; it does not stop the
+# drip. Live sessions kept producing fresh `generic-api-key` matches — 4 in the two minutes
+# after the first baseline was accepted — because that rule matches on entropy alone and a
+# transcript is full of long high-entropy identifiers that are not credentials. So the daily
+# run uses ~/.config/gitleaks/transcript-scan.toml, which disables that one rule and keeps
+# every named, structured rule. The reasoning and the measurements are in that file.
+#
+# --paranoid restores the full set. The cost of narrowing is real and is named there: it is
+# the rule that flagged the Sonarr and Radarr admin passwords, so a deliberate audit should
+# use --paranoid rather than trusting the daily run to have looked everywhere.
 
 set -uo pipefail
 
 PROJECTS=${CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}
 LOG=${CLAUDE_TRANSCRIPT_LEAK_LOG:-$HOME/.claude/logs/transcript-leaks.jsonl}
 BASELINE=${CLAUDE_TRANSCRIPT_LEAK_BASELINE:-$HOME/.claude/logs/transcript-leaks-baseline.txt}
+GL_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG:-$HOME/.config/gitleaks/transcript-scan.toml}
 SINCE_H=24
 MODE=window
 ONE=
 ACCEPT=0
+PARANOID=0
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -55,11 +69,29 @@ while [ $# -gt 0 ]; do
     --session) MODE=one; ONE=${2:-}; shift 2 || true ;;
     --all) MODE=all; shift ;;
     --accept-baseline) ACCEPT=1; shift ;;
-    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --paranoid) PARANOID=1; shift ;;
+    -h|--help) sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 case $SINCE_H in ''|*[!0-9]*) echo "claude-transcript-scan: --since wants whole hours" >&2; exit 2 ;; esac
+
+# The daily run uses a narrowed ruleset; --paranoid uses gitleaks' full default set. The
+# reason is in the config file itself — `generic-api-key` matches on entropy alone, and a
+# transcript is full of long high-entropy identifiers that are not credentials.
+#
+# A MISSING config falls back to the full set rather than refusing. That direction is
+# deliberate and is the opposite of the missing-gitleaks case below: no gitleaks means the
+# question was never asked, while no config means it was asked too broadly. Over-reporting
+# is recoverable by reading the findings; under-reporting is not.
+GL_RULES=
+if [ "$PARANOID" = 0 ]; then
+  if [ -f "$GL_CONFIG" ]; then
+    GL_RULES="--config $GL_CONFIG"
+  else
+    echo "claude-transcript-scan: no ruleset at $GL_CONFIG — falling back to gitleaks' full set, expect noise" >&2
+  fi
+fi
 
 # gitleaks is not installed system-wide here; prek fetches it into its own cache for the
 # repo hook. Take it from PATH first so a real install wins, then the cache, and refuse
@@ -113,7 +145,8 @@ while IFS= read -r f; do
   jq -r '[.. | strings] | join("\n")' "$f" > "$WORK" 2>/dev/null || { FAILED=$((FAILED + 1)); continue; }
   # --redact keeps the finding from repeating the secret into the journal and the log file.
   # A detector that prints what it found is a second copy of the leak.
-  report=$("$GITLEAKS" stdin --redact --no-banner --report-format json --report-path - < "$WORK" 2>/dev/null)
+  # shellcheck disable=SC2086  # GL_RULES is a flag pair or empty; word-splitting is the point
+  report=$("$GITLEAKS" stdin --redact --no-banner $GL_RULES --report-format json --report-path - < "$WORK" 2>/dev/null)
   rc=$?
   if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
     echo "claude-transcript-scan: scan failed (rc=$rc): $f" >&2

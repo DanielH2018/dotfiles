@@ -1,0 +1,34 @@
+# gitleaks ruleset for claude-transcript-scan's DAILY run.
+#
+# The scanner exists to catch a credential that reached a session transcript. It runs
+# unattended once a day, and an unattended check is only worth having if going red means
+# something. The first real sweep, 2026-08-29, returned 52 findings across 82 transcripts;
+# 45 were `generic-api-key` and every one that was chased to ground was a false positive:
+#
+#   secretKeyRef:                          a Kubernetes field NAME
+#   authelia_secret:                       a SOPS key name, no value on the line
+#   "<39 chars>",  # setup/fake_remux cron a SOPS key name in a Python list
+#                                          (scripts/secrets_mgmt/secret_rotation.py:140)
+#   <LONG>, <LONG> = 14.8359375            a metric line
+#
+# The rule matches on entropy with no key/value structure required, and a transcript is
+# full of long high-entropy identifiers — SHAs, UUIDs, container ids, base64 blobs, and
+# the names of secrets rather than the secrets themselves. Left on, the daily unit goes red
+# every day on findings that can never be cleared, and a check nobody trusts caps nothing.
+#
+# Only `generic-api-key` is disabled, and only because there is measured evidence for it.
+# Every named, structured rule stays on — github-pat, the aws-*, slack-*, stripe-*,
+# private-key and the rest — and those are what actually found something: the 7 github-pat
+# hits on the first sweep were a real token shape, correctly matched.
+#
+# The trade is explicit. `generic-api-key` is the rule that flagged the Sonarr and Radarr
+# admin passwords in a `/api/v3/config/host` dump, so disabling it costs that class of
+# catch on the daily run. `claude-transcript-scan --paranoid` runs the full default ruleset
+# and is the way to get it back for a deliberate audit.
+#
+# Measured before shipping, on a 1,047,079-byte live transcript:
+#   default ruleset  1 finding
+#   this config      0 findings
+[extend]
+useDefault = true
+disabledRules = ["generic-api-key"]
