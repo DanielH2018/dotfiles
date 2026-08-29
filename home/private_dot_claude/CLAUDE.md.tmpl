@@ -81,6 +81,13 @@ answering questions happen in place as usual, and a session already inside
   DB read + write, allowing duplicate settlements under load.
   ```
 
+## Pull requests
+
+- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched.
+- A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
+- Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
+- The long form is the `pr-authoring` skill; `pr-review-prep` owns diff size and commit history, `gh-stack` owns splitting.
+
 ## GitHub
 
 For anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, releases — use the authenticated `gh` CLI, never WebFetch (`WebFetch(domain:github.com)` is denied in settings and will fail); `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
@@ -100,6 +107,8 @@ Scope the proof to the change while you work: the tests covering what you touche
 ## Code review
 
 Ask review agents for **everything** they find, each finding carrying a confidence or severity score. "Only report high-confidence issues", "only high-severity", or "be conservative" get followed literally and real bugs go unreported; filtering is a separate pass, by an arbiter or by me, after seeing the full list. This overrides the `confidence ≥ 80` reporting gate baked into the bundled `feature-dev:code-reviewer` agent — state the override in the dispatch prompt when you spawn it.
+
+**When a reviewer says they don't understand something, fix the code — don't explain in the thread.** Clarify the code itself, or leave a comment at the line that confused them; a reply in the review thread helps one person once, while the code helps everyone who reads it later. This is the homelab repo's `# DECIDED:` marker generalized: it applies in every repo, and to any confusion a reviewer surfaces rather than only to a settled trade-off. Adapted from <https://google.github.io/eng-practices/review/developer/handling-comments.html>.
 
 ## Scope discipline
 
@@ -122,6 +131,7 @@ Applies to every session — answers, summaries, research, and anything written 
 - Keep it **local by default**: write a self-contained HTML file to `~/.claude/artifacts/` and tell me the path. Publishing to claude.ai or calling the Artifact tool needs me to ask for it explicitly.
 - **The link is the last thing in your reply.** Written plan first, then the artifact, then the path as the closing line — otherwise I have to scroll back up past the plan to open it.
 - Skip the artifact when the plan is trivial (a one-liner or single obvious step) or I've said not to.
+- **Docs change in the same PR as the code they describe.** A README, a docstring or a role's `CLAUDE.md` updated in a follow-up is a doc that stays wrong until someone notices. Generated pages are the exception — their generator is the thing to change.
 - **Plan in vertical slices, not horizontal layers.** Sequence a non-trivial feature as thin end-to-end slices I can actually exercise (curl / browser / a real test) at each step — work middle-out: API contract + mock data → UI against the mock → wire the service layer → DB migrations → then business logic → then error handling. Stack-order planning (DB → service → API → frontend) is the model's default and it leaves nothing runnable until the end, forcing a cold review of thousands of lines. Slices let me resteer at 100-200 lines.
 
 ## Tool use & context discipline
