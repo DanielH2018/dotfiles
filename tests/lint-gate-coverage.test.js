@@ -37,6 +37,29 @@ const skip = entries ? false : 'git ls-files unavailable';
 
 const SHELL = /^#!.*\b(bash|zsh|ksh|dash|sh)\b/;
 const PYTHON = /^#!.*\bpython[0-9.]*\b/;
+// `node` is the third dialect and was missing here, which left the oxlint hook — which
+// narrows by path exactly the way ruff does — with no coverage assertion of its own. Its
+// config comment states the rule in prose ("name it here AND git update-index --chmod=+x"),
+// and prose is the thing this file exists to replace.
+const NODE = /^#!.*\bnode\b/;
+
+// The `files:` alternation belonging to one named hook.
+//
+// Selecting it by hook id rather than by "the first files: in the file". The previous
+// spelling matched the first one anywhere in .pre-commit-config.yaml and happened to be
+// right only because ruff-check was the first hook carrying one — an ordering dependency
+// that nothing declared and that reordering or prepending a hook would silently break,
+// leaving the assertion checking some other hook's pattern and still passing.
+function filesPatternFor(cfg, id) {
+  const start = cfg.indexOf(`- id: ${id}\n`);
+  assert.ok(start !== -1, `no hook with id: ${id} in .pre-commit-config.yaml`);
+  const rest = cfg.slice(start + 1);
+  const end = rest.indexOf('- id: ');
+  const block = end === -1 ? rest : rest.slice(0, end);
+  const line = block.match(/^\s*files: (\(.*\))$/m);
+  assert.ok(line, `hook ${id} has no files: pattern`);
+  return new RegExp(line[1]);
+}
 
 // Extensionless tracked files, tagged by the shebang they carry. A basename with a
 // dot is left alone: those are classified by extension and the +x bit is irrelevant.
@@ -56,6 +79,7 @@ function scripts() {
     }
     if (SHELL.test(first)) out.push({ mode, file, kind: 'shell' });
     else if (PYTHON.test(first)) out.push({ mode, file, kind: 'python' });
+    else if (NODE.test(first)) out.push({ mode, file, kind: 'node' });
   }
   return out;
 }
@@ -82,9 +106,7 @@ const RUFF_BACKLOG = [];
 test('no extensionless Python script falls outside the ruff hook unnoticed',
   { skip }, () => {
     const cfg = fs.readFileSync(path.join(ROOT, '.pre-commit-config.yaml'), 'utf8');
-    const line = cfg.match(/^\s*files: (\(.*\))$/m);
-    assert.ok(line, 'could not find the ruff hook\'s files: pattern');
-    const re = new RegExp(line[1]);
+    const re = filesPatternFor(cfg, 'ruff-check');
     const missing = scripts()
       .filter((s) => s.kind === 'python' && !re.test(s.file))
       .map((s) => s.file);
@@ -92,4 +114,28 @@ test('no extensionless Python script falls outside the ruff hook unnoticed',
       'the set of Python scripts outside the ruff hook\'s files: pattern changed. A new '
       + 'entry is never linted — add it to the alternation in .pre-commit-config.yaml. '
       + 'A cleared entry means the backlog above needs the same name removed.');
+  });
+
+// oxlint narrows by path the same way, and for the same reason: `files:` and `types_or:`
+// are ANDed, and `types_or: [javascript]` cannot type an extensionless file by extension,
+// so the shebang decides — and a shebang types a file only when it is executable. A new
+// `#!/usr/bin/env node` script therefore needs BOTH the +x bit and a name in the
+// alternation, exactly like a Python one.
+//
+// Empty, and to be kept that way for the same reason as RUFF_BACKLOG above: four of the
+// five names now in that alternation sat at 100644 until the commit that added the hook.
+const OXLINT_BACKLOG = [];
+
+test('no extensionless node script falls outside the oxlint hook unnoticed',
+  { skip }, () => {
+    const cfg = fs.readFileSync(path.join(ROOT, '.pre-commit-config.yaml'), 'utf8');
+    const re = filesPatternFor(cfg, 'oxlint');
+    const found = scripts().filter((s) => s.kind === 'node');
+    assert.ok(found.length > 0,
+      'no extensionless node scripts found — the NODE shebang tag has stopped matching, '
+      + 'which would make this assertion vacuous');
+    const missing = found.filter((s) => !re.test(s.file)).map((s) => s.file);
+    assert.deepStrictEqual(missing, OXLINT_BACKLOG,
+      'the set of node scripts outside the oxlint hook\'s files: pattern changed. A new '
+      + 'entry is never linted — add it to the alternation in .pre-commit-config.yaml.');
   });
