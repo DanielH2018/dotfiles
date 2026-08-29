@@ -187,6 +187,7 @@ test('the fingerprint keys on content, not on line position', { skip }, () => {
 // its contract: it must drop the noise and must NOT drop a real token shape. `secretKeyRef:`
 // is a real line from the 2026-08-29 sweep, not an invented one.
 const NARROW = '[extend]\nuseDefault = true\ndisabledRules = ["generic-api-key"]\n';
+const SHIPPED = path.join(__dirname, '..', 'home', 'dot_config', 'gitleaks', 'transcript-scan.toml');
 const NOISE = JSON.stringify({
   type: 'assistant',
   message: { role: 'assistant', content: [{ type: 'text', text: '  secretKeyRef:\n    name: sonarr-exportarr\n  api_key: "a7Kq93MnZx2WvBc8LpRt5YdH4FgJ6sEu"' }] },
@@ -229,6 +230,33 @@ test('a missing ruleset falls back to the full set rather than refusing', { skip
   const r = run(['--session', p], sb);
   assert.strictEqual(r.status, 1, 'the full set still finds it');
   assert.match(r.stderr, /falling back to gitleaks' full set/);
+});
+
+// The SHIPPED ruleset, not a sandbox copy. A fixture token in a committed file PROPAGATES:
+// any session that reads this very file copies the token into its own transcript, and the
+// next sweep flags it there. Measured 2026-08-29 — six github-pat findings in a different
+// session's transcript, every one of them a line of this file. So the shipped config
+// allowlists the two literals, and this pair keeps that allowlist honest: the first half
+// fails if a fixture changes without the config, the second fails if the allowlist is ever
+// widened into something that swallows real tokens too.
+test("the shipped ruleset does not flag the suite's own fixtures", { skip }, () => {
+  assert.ok(fs.existsSync(SHIPPED), 'the shipped ruleset is where the scanner expects it');
+  const sb = sandbox();
+  fs.writeFileSync(path.join(sb.projects, 'newleak.jsonl'),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
+  const r = run(['--since', '1'], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
+  assert.strictEqual(r.status, 0, `the fixtures must not read as leaks: ${r.stdout}${r.stderr}`);
+});
+
+test('the shipped ruleset still catches a token that is not a fixture', { skip }, () => {
+  const sb = sandbox();
+  const p = path.join(sb.projects, 'real.jsonl');
+  // A third synthetic token, deliberately NOT allowlisted — without this half, an allowlist
+  // that swallowed every github-pat would pass the test above just as well.
+  fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_7pW3nK9tL5xQ2vB8mR4dF6yH1jC0sZ3uE5gA' }] } }) + '\n');
+  const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
+  assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /"rule":"github-pat"/);
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {

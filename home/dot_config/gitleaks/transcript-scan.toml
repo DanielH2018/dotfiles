@@ -32,3 +32,25 @@
 [extend]
 useDefault = true
 disabledRules = ["generic-api-key"]
+
+# The suite's own fixtures. Neither string has ever been a credential — both are synthetic
+# `ghp_` shapes written to prove the scanner can go red, and they live in
+# tests/claude-transcript-scan.test.js.
+#
+# They have to be allowlisted because a fixture in a committed file PROPAGATES. Any session
+# that reads that test file copies the token into its own transcript, and the next sweep
+# flags it there — measured 2026-08-29, six github-pat findings in another session's
+# transcript, every one of them a line of this repo's own test source. Left alone, a
+# synthetic token in a fixture is a permanent, self-renewing false positive in every session
+# that ever opens the file, and it is indistinguishable from the real thing at a glance.
+#
+# Allowlisting the literals is the deterministic fix. Generating the fixture at runtime was
+# the alternative and is worse: it trades a known-fake constant for a test whose input
+# entropy varies per run, and gitleaks discards low-entropy candidates — which is exactly how
+# the first version of that fixture (`ghp_AAAA…`) reported clean against a working scanner.
+[[allowlists]]
+description = "synthetic tokens from tests/claude-transcript-scan.test.js — never real"
+regexes = [
+  "ghp_9tQz3XbW7kR2mYvL8pJdN4sH6cF1aE0uG5iT",
+  "ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG",
+]
