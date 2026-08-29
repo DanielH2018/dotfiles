@@ -246,6 +246,15 @@ const DENY = [
   'git show HEAD:ansible/vars/secrets.yml',
   'git log -p ansible/vars/secrets.yml',
   'git diff app.sops.yaml',
+  // The key-names filter must be the IMMEDIATE next stage. A stage between it and the git
+  // command sees plaintext and can persist it, so these end with the safe filter and still
+  // leak — an exemption matching the grep anywhere on the line would be a bypass.
+  "git diff ansible/vars/secrets.yml | tee /tmp/x | grep -oE '^[-+][a-z_]+:'",
+  "git diff ansible/vars/secrets.yml | cat | grep -oE '^[-+][a-z_]+:'",
+  // A different grep is not the sanctioned one and does not strip values.
+  "git diff ansible/vars/secrets.yml | grep -oE 'token'",
+  // -o is load-bearing: without it grep prints the whole matching line, key AND value.
+  "git diff ansible/vars/secrets.yml | grep -E '^[-+][a-z_]+:'",
   // environment dumps, local and over ssh
   'env',
   'printenv',
@@ -266,6 +275,13 @@ const DENY = [
 ];
 
 const ALLOW = [
+  // The escape hatch the sops-diff denial names. Until 2026-08-29 the rule scanned only up
+  // to the first pipe, so it denied the very command its own message prescribed and the
+  // remediation was unreachable. Stages AFTER the filter are fine — only key names remain.
+  "git diff ansible/vars/secrets.yml | grep -oE '^[-+][a-z_]+:'",
+  'git -C /home/ubuntu/server diff ansible/vars/secrets.yml | grep -oE \'^[-+][a-z_]+:\'',
+  "git diff ansible/vars/secrets.yml | grep -oE '^[-+][a-z_]+:' | sort -u",
+  'git diff app.sops.yaml | grep -Eo "^[-+][a-z_]+:"',
   'ls -la',
   'rm -rf ./build',
   'cat README.md',

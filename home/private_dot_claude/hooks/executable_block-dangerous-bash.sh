@@ -887,8 +887,24 @@ fi
 # only. This matches an explicitly named path; a bare `git log -p` over a range that
 # happens to contain the file is not caught, because no pattern over the command text
 # can see the range's contents.
-if bdb_re "$SCAN" "\bgit\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*$SOPS_PATHS"; then
-  deny "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext credentials. For the changed KEY NAMES only, add \`| grep -oE '^[-+][a-z_]+:'\`."
+SOPS_DIFF='\bgit\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*'"$SOPS_PATHS"
+
+# The escape hatch the message names. `[^;&|]*` stops the scan at the first pipe, so this
+# rule matched the git command and never saw the grep that makes it safe — the prescribed
+# command was itself denied and the remediation was unreachable. Found 2026-08-29 trying to
+# inspect a dirty secrets.yml in a shared checkout.
+#
+# The grep must be the IMMEDIATE next stage. `git diff secrets.yml | tee /tmp/x | grep -oE
+# '^[-+][a-z_]+:'` ends with the safe filter and still writes plaintext to a file, so an
+# exemption that looked for the grep ANYWHERE in the line would hand out a bypass. Stages
+# after the grep are fine (`| sort -u`, `| head`) — by then only key names remain.
+# No quotes in the pattern: _bdb_normalize strips every `'` and `"` from SCAN, so a filter
+# written with them can never match and the exemption stays as unreachable as the bug it
+# fixes. Costing an hour to rediscover is why it is written here.
+SOPS_KEYNAMES_ONLY='[^;&|]*\|[[:space:]]*grep[[:space:]]+(-oE|-Eo)[[:space:]]+\^\[-\+\]\[a-z_\]\+:'
+
+if bdb_re "$SCAN" "$SOPS_DIFF" && ! bdb_re "$SCAN" "$SOPS_DIFF$SOPS_KEYNAMES_ONLY"; then
+  deny "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext credentials. For the changed KEY NAMES only, pipe it straight into \`grep -oE '^[-+][a-z_]+:'\` — that exact filter, as the very next stage."
 fi
 
 # `systemctl cat` prints the unit file including its Environment= lines; `systemctl show`
