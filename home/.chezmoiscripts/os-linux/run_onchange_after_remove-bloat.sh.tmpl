@@ -151,7 +151,14 @@ if [ -n "$QUEUE" ]; then
     *" kdepim-runtime "*)
       removed_pim=1
       # Brings down the ~19 helpers and the private MySQL server before their binaries vanish.
-      command -v akonadictl >/dev/null 2>&1 && akonadictl stop >/dev/null 2>&1 || true
+      # `if` rather than `A && B || true`: shellcheck's SC2015 flags that form because the
+      # tail runs when the HEAD is false too, which is usually a bug. Here it was harmless —
+      # the tail is `true` — but the whole line went unlinted on both machines that run this
+      # repo's gate (it renders empty at profile=server) and only CI, pinned to workstation,
+      # ever saw it. Spelling the intent out costs a line and removes the question.
+      if command -v akonadictl >/dev/null 2>&1; then
+        akonadictl stop >/dev/null 2>&1 || true
+      fi
       ;;
   esac
 
