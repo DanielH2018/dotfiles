@@ -1,7 +1,13 @@
 # dotfiles (chezmoi source)
 
-Personal, work-agnostic base config, managed by **chezmoi**. Public repo — never commit
-work-specific content, secrets, or `.local` files here (guarded in `.chezmoiignore` + `.gitignore`).
+Personal, work-agnostic base config, managed by **chezmoi**. **Treat it as public** — never
+commit work-specific content, secrets, or `.local` files here (guarded in `.chezmoiignore` +
+`.gitignore`, and by the gitleaks hook in `.pre-commit-config.yaml`).
+
+The repo is in fact **private** on GitHub; this line read "Public repo" until it was checked.
+The posture stands either way, but the visibility is load-bearing for one decision: branch
+protection needs a paid plan on a private repo, so the answer to "nothing enforces the gate
+server-side" is GitHub Actions, not a protected branch.
 
 Fuller cross-layer map (base + overlay + sandbox + vault) lives in the personal knowledge
 vault, `Work/Claude_Code_Setup.md` — not in this repo.

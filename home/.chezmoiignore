@@ -165,7 +165,7 @@ Scripts
 
 # The work overlay merged into settings.json by modify_settings.json.sh.tmpl. It
 # doesn't match *.local.* above, so without this a `chezmoi add` would sweep a
-# work-machine permission set into this public repo.
+# work-machine permission set into this repo, which is treated as public.
 .config/claude/settings.work.json
 **/*.work.json
 
