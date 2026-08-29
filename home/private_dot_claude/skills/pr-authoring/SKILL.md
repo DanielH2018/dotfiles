@@ -1,6 +1,6 @@
 ---
 name: pr-authoring
-description: Use when writing the text of a pull request — the title, the description, or the summary that goes with `gh pr create`. Triggers on "open a PR", "write the PR description", "what should this PR say", "the PR body", "summarize this branch for review", a PR opened with an empty or template-only body, or a title that names the files touched instead of the outcome. Covers what the PR SAYS; `pr-review-prep` covers whether the diff is shaped to be reviewed, and `gh-stack` covers splitting it.
+description: Use when writing the text of a pull request — its title, its body, or the summary passed to `gh pr create` — however short the request. Triggers on "write the PR description", "open a PR", "what should this PR say", "the PR body", "summarize this branch for review", a PR left with an empty or template-only body, or a title that names the files touched instead of the outcome. A one-line ask still loads it: the title becomes the squash-merge commit subject, so writing one freehand is how the convention drifts. Covers what the PR SAYS. `pr-review-prep` covers whether the diff is shaped to be reviewed, `gh-stack` covers splitting it, and a commit message on its own is neither.
 ---
 
 # pr-authoring

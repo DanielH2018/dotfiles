@@ -1,0 +1,56 @@
+{
+  "skill": "pr-authoring",
+  "model": "opus",
+  "runs": 3,
+  "peers": ["pr-review-prep", "gh-stack", "receiving-code-review"],
+  "cases": [
+    {
+      "name": "write-pr-description",
+      "expect": "fires",
+      "input": "Write the PR description for this branch.",
+      "why": "The plainest phrasing of the task the skill exists for."
+    },
+    {
+      "name": "what-should-it-say",
+      "expect": "fires",
+      "input": "I'm opening a PR for the retry-lock fix. What should it say?",
+      "why": "Names no artifact and no command — fires on intent alone."
+    },
+    {
+      "name": "empty-body",
+      "expect": "fires",
+      "input": "I opened the PR but left the body empty. Can you fill it in?",
+      "why": "The symptom, not the deliberate action. Someone who knew the skill existed would not phrase it this way."
+    },
+    {
+      "name": "gh-pr-create",
+      "expect": "fires",
+      "input": "Draft the title and summary for gh pr create.",
+      "why": "The command in the description, with no other cue."
+    },
+    {
+      "name": "commit-message",
+      "expect": "silent",
+      "input": "Write a commit message for these staged changes.",
+      "why": "The discriminating case. The skill says the PR title IS the commit subject, so it has every reason to over-fire here. It should not: nothing is being opened."
+    },
+    {
+      "name": "review-diff",
+      "expect": "silent",
+      "input": "Review this diff for bugs before I push it.",
+      "why": "Reviewing, not authoring. Belongs to a review skill."
+    },
+    {
+      "name": "split-branch",
+      "expect": "silent",
+      "input": "This branch touches 40 files across three unrelated concerns. Should I split it up?",
+      "why": "Diff shape, which the skill's Precedence section hands to pr-review-prep and gh-stack."
+    },
+    {
+      "name": "rebase-howto",
+      "expect": "silent",
+      "input": "How do I rebase this branch onto main without losing my signatures?",
+      "why": "Git mechanics near a PR but not about one. Guards against firing on branch vocabulary alone."
+    }
+  ]
+}
