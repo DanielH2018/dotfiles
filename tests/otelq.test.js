@@ -444,18 +444,33 @@ test('trend --rows says where to look when the rollup never ran', { skip }, () =
 });
 
 test('subst reports adoption and names the tool being replaced', { skip }, () => {
-  const out = JSON.parse(drive(['subst'], JSON.stringify({
-    jsonq: [30, 10], rg: [1, 99], gron: [0, 0],
-  })));
+  const out = JSON.parse(drive(['subst'], JSON.stringify({ jsonq: [30, 10] })));
   const byName = Object.fromEntries(out.pairs.map((p) => [p.preferred, p]));
   assert.strictEqual(byName.jsonq.adoption, 0.75);
-  assert.strictEqual(byName.rg.adoption, 0.01);
-  assert.strictEqual(byName.gron.adoption, null, 'no calls either way is unknown, not 0%');
-  assert.strictEqual(byName.rg.replaces, 'grep',
+  assert.strictEqual(byName.jsonq.replaces, 'python3 -c',
     'the report must name the tool, not the regex that finds it');
   for (const p of out.pairs) {
     assert.ok(!/\\b/.test(p.replaces), 'a raw RE2 pattern must not reach the output');
   }
+});
+
+test('no calls either way is unknown, not 0% adoption', { skip }, () => {
+  // A pair nobody exercised has no ratio. Reporting 0.0 would read as "the rule is being
+  // ignored" when the truth is "neither tool was reached for at all".
+  const out = JSON.parse(drive(['subst'], JSON.stringify({})));
+  assert.strictEqual(out.pairs[0].adoption, null);
+});
+
+test('every substitution pair scores a rule that is actually written down', { skip }, () => {
+  // Two pairs were retired on 2026-08-31 for scoring behaviour no rule asks for: rg/grep,
+  // where no rule prefers rg at all, and gron/jq, which inverted its own rule -- CLAUDE.md
+  // prescribes gron only for JSON of unknown shape, so a low ratio was compliance being
+  // reported as failure. Both sat at ~0 permanently, which is how a rollup gets skipped.
+  // Adding one back means quoting the rule text it scores.
+  const out = JSON.parse(drive(['subst'], JSON.stringify({})));
+  const names = out.pairs.map((p) => p.preferred).sort();
+  assert.deepStrictEqual(names, ['jsonq'],
+    'a new pair needs a written rule behind it, not just a measurable ratio');
 });
 
 test('subst calls itself adoption and warns that the pairs overlap', { skip }, () => {

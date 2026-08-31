@@ -97,10 +97,21 @@ BIG_RESULT_BYTES = 20000
 # Pairs the tooling rules ask to be substituted, as (preferred, replaced).
 # Patterns are RE2 and matched against the command text, so a command using both
 # sides counts for both — this is an adoption ratio, not a partition.
+# DECIDED: only pairs a written rule actually asks for. Two entries were removed on
+# 2026-08-31 because they scored behaviour nobody had asked for, and a metric that can
+# only ever read as failure teaches the reader to skip the rollup it sits in.
+#
+#   rg/grep   — measured 0.00 (39 vs 9251). No rule prefers rg. The sole mention across
+#               ~/.claude/CLAUDE.md, the output styles and the skills is a permissions
+#               table in homelab/SKILL.md listing `grep`/`rg` as equals.
+#   gron/jq   — measured 0.01 (11 vs 1154), and it inverted the rule it cited. CLAUDE.md
+#               prescribes gron for JSON whose shape you do NOT know and jq when you
+#               already know the schema, so a low ratio is the rule being FOLLOWED.
+#
+# The bar for adding one back: quote the rule text it scores. Without that, a pair is
+# a number with no decision attached to it.
 SUBSTITUTIONS = (
     ("jsonq", r"\bjsonq\b", "python3 -c", "python3 -c"),
-    ("rg", r"\brg\b", "grep", r"\bgrep\b"),
-    ("gron", r"\bgron\b", "jq", r"\bjq\b"),
 )
 
 # Written by jsonq's own counter; pinned to that tool's path by a test, since
