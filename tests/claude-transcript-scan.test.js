@@ -146,7 +146,7 @@ test('the window sweep reaches both fixtures and flags only the dirty one', { sk
   const sb = sandbox();
   const r = run(['--since', '1'], sb);
   assert.strictEqual(r.status, 1);
-  assert.match(r.stdout, /2 transcript\(s\)/, 'both fixtures were scanned');
+  assert.match(r.stdout, /2 source\(s\)/, 'both fixtures were scanned');
   // Count findings, not substring hits: each emitted record names the rule twice, once in
   // `rule` and once inside `fingerprint`.
   assert.strictEqual((r.stdout.match(/"rule":"github-pat"/g) || []).length, 1, 'exactly one finding');
@@ -284,6 +284,116 @@ test('the shipped ruleset still catches a token that is not a fixture', { skip }
   const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
   assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /"rule":"github-pat"/);
+});
+
+// --- the Loki store ------------------------------------------------------------------
+// otelq is stubbed throughout: these tests are about what the scanner does with a slice,
+// not about Loki. The stub answers every slice with the same payload.
+function stubOtelq(sb, payload) {
+  const bin = path.join(sb.dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const stub = path.join(bin, 'otelq');
+  fs.writeFileSync(stub, `#!/bin/sh\ncat <<'JSON'\n${payload}\nJSON\n`);
+  fs.chmodSync(stub, 0o755);
+  // Load-bearing, not setup noise. With no config on disk the scanner falls back to
+  // gitleaks' FULL set for every arm, which would make "the Loki arm uses the full set"
+  // pass without the two arms differing at all. Writing NARROW is what puts the daily
+  // ruleset in play and makes that contrast real.
+  fs.writeFileSync(sb.glConfig, NARROW);
+  // --loki scans BOTH stores, and the shared sandbox ships a transcript that trips a rule
+  // on purpose. Pointing the transcript root at an empty directory is what makes these
+  // assertions about the Loki arm rather than about that fixture.
+  const empty = path.join(sb.dir, 'no-transcripts');
+  fs.mkdirSync(empty, { recursive: true });
+  return { PATH: `${bin}:${process.env.PATH}`, CLAUDE_TRANSCRIPT_ROOT: empty };
+}
+
+function lokiPayload(...streams) {
+  return JSON.stringify({
+    status: 'success',
+    data: { resultType: 'streams', result: streams.map((st) => ({ stream: st })) },
+  });
+}
+
+// An unstructured NAME=<32 hex> assignment: the shape every *arr API key takes, and the
+// only shape `generic-api-key` catches. Built here rather than written literally so the
+// suite carries no string that reads like a real credential.
+const ENTROPY_ONLY = `FIXTURE_KEY=${'0123456789abcdef'.repeat(2)}`;
+
+test('a credential in a Loki slice is flagged, keyed to the loki store', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({
+    // syntheticPat(), not a literal: gitleaks discards low-entropy candidates, so a
+    // repeated-character fixture reports clean against a working scanner.
+    tool_parameters: `{"full_command":"curl -H \\"Authorization: token ${syntheticPat()}\\""}`,
+  }));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /github-pat/, 'the finding names the rule that matched');
+  assert.match(r.stdout, /"fingerprint":"github-pat:loki:/,
+    'the fingerprint names the store, so accepting a transcript finding cannot suppress it');
+});
+
+test('a clean Loki slice raises nothing', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ prompt: 'deploy the monitor-bridge role please' }));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 0, `expected exit 0, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.doesNotMatch(r.stdout, /github-pat/);
+});
+
+test('the Loki arm runs the FULL ruleset, not the narrowed daily one', { skip }, () => {
+  // The whole reason this arm exists. `generic-api-key` is disabled for the transcript run
+  // because it produced 45 false positives there, and it is the only rule matching the
+  // shape above -- which is the shape of the real leak that went undetected for two days.
+  // Scanning Loki with $GL_RULES would find exactly the same nothing.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ tool_parameters: `{"full_command":"${ENTROPY_ONLY}"}` }));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stdout, /generic-api-key/,
+    'the entropy rule must be live here even though the daily config disables it');
+});
+
+test('the same shape in a TRANSCRIPT still goes unflagged, which is why the arm exists', { skip }, () => {
+  // The rejecting half of the pair above. If this starts failing, generic-api-key was
+  // re-enabled for the daily run, the two arms no longer differ, and the comment
+  // justifying the split has gone stale.
+  const sb = sandbox();
+  fs.writeFileSync(sb.glConfig, NARROW);
+  fs.writeFileSync(path.join(sb.projects, 'arr.jsonl'),
+    `${JSON.stringify({ type: 'user', message: { content: ENTROPY_ONLY } })}\n`);
+  const r = run(['--session', path.join(sb.projects, 'arr.jsonl')], sb);
+  assert.strictEqual(r.status, 0, `expected the narrowed ruleset to MISS it, got ${r.status}`);
+});
+
+test('a slice at the entry cap is a failure, never a clean scan', { skip }, () => {
+  // Loki refuses limit > 5000, so a slice returning exactly the cap has been truncated.
+  // Under-reporting is the one failure this tool cannot recover from, so a capped slice
+  // must not be able to produce a clean verdict.
+  const sb = sandbox();
+  const streams = Array.from({ length: 5000 }, () => ({ prompt: 'ordinary text' }));
+  const env = stubOtelq(sb, lokiPayload(...streams));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.match(r.stderr, /hit the 5000-entry cap/, 'a truncated slice must say so');
+  assert.ok(fs.existsSync(sb.pending), 'and must leave the could-not-evaluate marker');
+});
+
+test('a slice under the cap leaves no truncation marker', { skip }, () => {
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ prompt: 'ordinary text' }));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.doesNotMatch(r.stderr, /entry cap/, 'nothing was truncated, so nothing may claim it was');
+  assert.strictEqual(r.status, 0);
+});
+
+test('a missing otelq reports could-not-evaluate, never clean', { skip }, () => {
+  const sb = sandbox();
+  const bin = path.join(sb.dir, 'emptybin');
+  fs.mkdirSync(bin, { recursive: true });
+  const r = run(['--loki', '--since', '1'], sb, { PATH: `${bin}:/usr/bin:/bin` });
+  assert.strictEqual(r.status, 3, `expected exit 3, got ${r.status}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /otelq unavailable/);
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {

@@ -24,6 +24,13 @@
 #   claude-transcript-scan --all              # every transcript on the machine
 #   claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
 #   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
+#   claude-transcript-scan --loki             # ALSO scan Loki, where the same command text lands
+#
+# --loki adds a second store rather than replacing the first. Claude Code sends the full
+# command text to Loki as tool_input/tool_parameters and the prompt as `prompt`, and Loki
+# keeps them for 744h, so a credential typed inline on a command line has two lifetimes.
+# A leak present in both stores reports twice, under `loki` and under the transcript's
+# name, and each needs accepting separately -- two copies, two acknowledgements.
 #   claude-transcript-scan --clear-pending    # dismiss the SessionStart banner WITHOUT baselining anything
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
@@ -71,6 +78,7 @@ ONE=
 ACCEPT=0
 PARANOID=0
 CLEAR=0
+LOKI=0
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -79,6 +87,7 @@ while [ $# -gt 0 ]; do
     --all) MODE=all; shift ;;
     --accept-baseline) ACCEPT=1; shift ;;
     --paranoid) PARANOID=1; shift ;;
+    --loki) LOKI=1; shift ;;
     --clear-pending) CLEAR=1; shift ;;
     -h|--help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
@@ -142,6 +151,16 @@ command -v jq >/dev/null 2>&1 || {
   mark_unavailable "jq unavailable"
   exit 3
 }
+# A systemd user unit starts with a minimal PATH and otelq lives in ~/.local/bin, so this
+# is a live failure mode rather than a theoretical one. Same rule as gitleaks: refuse
+# loudly, because a missing query tool would otherwise read as a clean Loki store.
+if [ "$LOKI" = 1 ]; then
+  command -v otelq >/dev/null 2>&1 || {
+    echo "claude-transcript-scan: otelq unavailable — did not scan Loki" >&2
+    mark_unavailable "otelq unavailable"
+    exit 3
+  }
+fi
 
 case $MODE in
   one)
@@ -155,7 +174,13 @@ case $MODE in
     FILES=$(find "$PROJECTS" -name '*.jsonl' -type f -mmin "-$((SINCE_H * 60))" 2>/dev/null) ;;
 esac
 
-[ -n "$FILES" ] || { echo "claude-transcript-scan: no transcripts in scope"; exit 0; }
+# An empty transcript list is only a reason to stop when transcripts are the whole job.
+# With --loki there is a second store to scan, and exiting here would have made the Loki
+# arm silently conditional on a transcript having been written in the same window.
+if [ -z "$FILES" ] && [ "$LOKI" = 0 ]; then
+  echo "claude-transcript-scan: no transcripts in scope"
+  exit 0
+fi
 
 mkdir -p "$(dirname "$LOG")"
 FOUND=0
@@ -171,35 +196,34 @@ WORK=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan
 chmod 600 "$WORK"
 trap 'rm -f "$WORK"' EXIT INT TERM
 
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  # `[.. | strings]` takes every string leaf of every record, which is what makes this
-  # independent of the transcript schema: a value moving from .message.content to some new
-  # field stays covered without a change here.
-  jq -r '[.. | strings] | join("\n")' "$f" > "$WORK" 2>/dev/null || { FAILED=$((FAILED + 1)); continue; }
+# Both stores scan the same way once their text is in $WORK, so the gitleaks call, the
+# fingerprint and the report live here rather than being written twice. $1 is what the log
+# records as the source, $2 the token that goes in the fingerprint, $3 the ruleset flags.
+scan_work() {
+  _src=$1 _tok=$2 _rules=$3
   # --redact keeps the finding from repeating the secret into the journal and the log file.
   # A detector that prints what it found is a second copy of the leak.
-  # shellcheck disable=SC2086  # GL_RULES is a flag pair or empty; word-splitting is the point
-  report=$("$GITLEAKS" stdin --redact --no-banner $GL_RULES --report-format json --report-path - < "$WORK" 2>/dev/null)
+  # shellcheck disable=SC2086  # _rules is a flag pair or empty; word-splitting is the point
+  report=$("$GITLEAKS" stdin --redact --no-banner $_rules --report-format json --report-path - < "$WORK" 2>/dev/null)
   rc=$?
   if [ $rc -ne 0 ] && [ $rc -ne 1 ]; then
-    echo "claude-transcript-scan: scan failed (rc=$rc): $f" >&2
+    echo "claude-transcript-scan: scan failed (rc=$rc): $_src" >&2
     FAILED=$((FAILED + 1))
-    continue
+    return 1
   fi
   SCANNED=$((SCANNED + 1))
   n=$(printf '%s' "$report" | jq 'length' 2>/dev/null || echo 0)
-  [ "${n:-0}" -gt 0 ] || continue
+  [ "${n:-0}" -gt 0 ] || return 0
 
   while IFS=$'\t' read -r rule line; do
     [ -n "$rule" ] || continue
     # Fingerprint on CONTENT, not on position. gitleaks' own Fingerprint is `:<rule>:<line>`
-    # and the line is an offset into `[.. | strings] | join("\n")` — a derived projection, so
-    # compacting a transcript or changing that filter renumbers every finding and a
-    # position-keyed baseline silently stops matching. Hashing the matched line survives both.
-    # The hash never leaves this machine and cannot be reversed into the value.
+    # and the line is an offset into a derived projection of the source, so compacting a
+    # transcript or changing that projection renumbers every finding and a position-keyed
+    # baseline silently stops matching. Hashing the matched line survives both. The hash
+    # never leaves this machine and cannot be reversed into the value.
     h=$(sed -n "${line}p" "$WORK" | sha256sum | cut -c1-16)
-    fp="${rule}:$(basename "$f"):${h}"
+    fp="${rule}:${_tok}:${h}"
     if [ -f "$BASELINE" ] && grep -qxF "$fp" "$BASELINE" 2>/dev/null; then
       KNOWN=$((KNOWN + 1))
       [ "$ACCEPT" = 1 ] || continue
@@ -209,22 +233,92 @@ while IFS= read -r f; do
       continue
     fi
     FOUND=$((FOUND + 1))
-    # Rule id, line, transcript and fingerprint only. Enough to find it and to name what to
+    # Rule id, line, source and fingerprint only. Enough to find it and to name what to
     # rotate, and to accept it later; never enough to re-leak it.
-    jq -cn --arg f "$f" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    jq -cn --arg f "$_src" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg r "$rule" --argjson l "$line" --arg p "$fp" \
       '{ts:$t, transcript:$f, rule:$r, line:$l, fingerprint:$p, secret:"[redacted]"}' \
       | tee -a "$LOG"
   done <<EOF
 $(printf '%s' "$report" | jq -r '.[] | "\(.RuleID)\t\(.StartLine)"')
 EOF
+  return 0
+}
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  # `[.. | strings]` takes every string leaf of every record, which is what makes this
+  # independent of the transcript schema: a value moving from .message.content to some new
+  # field stays covered without a change here.
+  jq -r '[.. | strings] | join("\n")' "$f" > "$WORK" 2>/dev/null || { FAILED=$((FAILED + 1)); continue; }
+  [ -f "$f" ] || continue
+  scan_work "$f" "$(basename "$f")" "$GL_RULES" || true
 done <<EOF
 $FILES
 EOF
 
+# ---- the Loki store -------------------------------------------------------------------
+# Claude Code attaches the full command text to every tool_result as tool_input and
+# tool_parameters, and the prompt to every user_prompt, so a credential typed inline on a
+# command line lands in Loki as well as in the transcript. Loki keeps it for 744h. Nothing
+# scanned there before 2026-08-31.
+#
+# TWO deliberate differences from the transcript arm, and they depend on each other:
+#
+#  * The extraction is NARROW -- three named fields, not `[.. | strings]`. A Loki payload is
+#    mostly trace_id/span_id/session_id/user_id: high-entropy hex, which is exactly what
+#    generic-api-key matches on.
+#  * The ruleset is therefore the FULL default set, never $GL_RULES. generic-api-key is
+#    disabled for the daily transcript run because it produced 45 false positives there,
+#    and it is the only rule that catches an unstructured `NAME=<32 hex>` -- the shape of
+#    every *arr API key. Scanning Loki with the narrowed ruleset would find the same
+#    nothing the transcript run finds, which is the entire reason this arm exists.
+#
+# Measured 2026-08-31 on this host: the full ruleset over one hour of narrowed Loki text
+# (378KB) returned 0 findings, and over the events holding a real leaked *arr key it
+# returned 12. Narrow the extraction and the expensive rule becomes affordable.
+if [ "$LOKI" = 1 ]; then
+  # Loki refuses limit > max_entries_limit_per_query (5000) outright, so a window holding
+  # more entries than that must be walked in slices. ~620 entries/hour here, so an hourly
+  # slice sits an order of magnitude under the cap -- and a slice that DOES reach it is
+  # counted as a failure rather than silently under-scanned, because under-reporting is the
+  # one failure this tool cannot recover from.
+  LOKI_LIMIT=5000
+  h=$SINCE_H
+  while [ "$h" -gt 0 ]; do
+    until_h=$((h - 1))
+    slice=$(otelq logs \
+      '{service_name="claude-code"} | event_name=~`tool_result|user_prompt` | keep tool_input, tool_parameters, prompt' \
+      --stream --since "${h}h" --until "${until_h}h" --limit "$LOKI_LIMIT" --timeout 60 2>/dev/null)
+    if [ -z "$slice" ]; then
+      echo "claude-transcript-scan: Loki slice ${h}h..${until_h}h did not return — treat as not scanned" >&2
+      FAILED=$((FAILED + 1))
+      h=$until_h
+      continue
+    fi
+    entries=$(printf '%s' "$slice" | jq '[.data.result[]] | length' 2>/dev/null || echo 0)
+    if [ "${entries:-0}" -ge "$LOKI_LIMIT" ]; then
+      echo "claude-transcript-scan: Loki slice ${h}h..${until_h}h hit the ${LOKI_LIMIT}-entry cap — scanned PARTIALLY" >&2
+      mark_unavailable "Loki slice ${h}h..${until_h}h truncated at $LOKI_LIMIT entries"
+      FAILED=$((FAILED + 1))
+    fi
+    printf '%s' "$slice" \
+      | jq -r '[.data.result[].stream | .tool_input, .tool_parameters, .prompt]
+               | map(select(. != null)) | join("\n")' > "$WORK" 2>/dev/null || {
+      FAILED=$((FAILED + 1)); h=$until_h; continue; }
+    # The fingerprint token is a constant, never the slice bounds: a re-scan with different
+    # boundaries must produce the same fingerprint or the baseline stops matching. A leak
+    # present in both stores therefore reports twice, under `loki` and under the transcript
+    # name, and needs acknowledging twice -- which is correct, since they are two copies
+    # with two lifetimes.
+    scan_work "loki (${h}h..${until_h}h)" "loki" "" || true
+    h=$until_h
+  done
+fi
+
 if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
-  echo "claude-transcript-scan: every transcript failed to scan — treat as not run" >&2
-  mark_unavailable "every transcript failed to scan"
+  echo "claude-transcript-scan: every source failed to scan — treat as not run" >&2
+  mark_unavailable "every source failed to scan"
   exit 3
 fi
 
@@ -238,7 +332,7 @@ if [ "$ACCEPT" = 1 ]; then
 fi
 
 if [ "$FOUND" -gt 0 ]; then
-  echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED transcript(s) ($KNOWN baselined) — logged to $LOG"
+  echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED source(s) ($KNOWN baselined) — logged to $LOG"
   echo "Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
 
   # The durable half. Written before either banner is attempted, so a machine with no
@@ -262,9 +356,9 @@ fi
 # hides whether the baseline is doing any work, and a baseline nobody can see is one nobody
 # trusts — which is how it ends up suppressing something that mattered.
 if [ "$KNOWN" -gt 0 ]; then
-  echo "claude-transcript-scan: no new findings across $SCANNED transcript(s) ($KNOWN baselined)"
+  echo "claude-transcript-scan: no new findings across $SCANNED source(s) ($KNOWN baselined)"
   exit 0
 fi
 
-echo "claude-transcript-scan: clean across $SCANNED transcript(s)"
+echo "claude-transcript-scan: clean across $SCANNED source(s)"
 exit 0

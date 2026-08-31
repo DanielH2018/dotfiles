@@ -53,6 +53,9 @@ elif verb == "resolve":
     reachable = set(json.loads(sys.argv[2]))
     m._accepts = lambda base, timeout: base in reachable
     print(json.dumps(m.resolve_bases()))
+elif verb == "win":
+    until = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "-" else None
+    print(json.dumps(list(m._window(sys.argv[2], float(sys.argv[3]), until))))
 elif verb == "prog":
     print(m.program_of(sys.argv[2]))
 elif verb == "prompts":
@@ -204,6 +207,26 @@ test('--rows handles Loki streams and matrix values', { skip }, () => {
   });
   const out = drive(['rows'], payload);
   assert.strictEqual(out, '9\tlevel=err\n5\tlevel=err');
+});
+
+test('--until moves the window back without changing its width', { skip }, () => {
+  // Loki refuses limit > 5000 outright, so a window holding more entries than that has to
+  // be walked in slices -- and --since alone can only ask for a window ending now, which
+  // leaves the middle of a day unreachable.
+  const [s0, e0] = JSON.parse(drive(['win', '1h', '10000', '-']));
+  assert.deepStrictEqual([s0, e0], [10000 - 3600, 10000], 'no --until still ends at now');
+  const [s1, e1] = JSON.parse(drive(['win', '1h', '10000', '2h']));
+  assert.strictEqual(e1, 10000 - 7200, 'the end moves back by --until');
+  assert.strictEqual(e1 - s1, e0 - s0, 'and the width is still --since');
+});
+
+test('consecutive slices abut without gap or overlap', { skip }, () => {
+  // The rejecting half. A slicer that overlapped would double-report, and one that gapped
+  // would skip entries silently -- the under-reporting this whole arm exists to prevent.
+  const [, endOfOlder] = JSON.parse(drive(['win', '1h', '10000', '2h']));
+  const [startOfNewer] = JSON.parse(drive(['win', '1h', '10000', '1h']));
+  assert.strictEqual(endOfOlder, startOfNewer,
+    'slice N ends exactly where slice N-1 begins');
 });
 
 test('--rows renders the labels endpoint, whose data is a bare list', { skip }, () => {

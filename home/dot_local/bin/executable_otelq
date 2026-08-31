@@ -242,15 +242,21 @@ def _get(base, path, params, timeout):
         raise OtelqError(f"{base}{path}: response was not JSON ({exc.msg})") from None
 
 
-def _window(since, now):
-    return now - parse_duration(since), now
+def _window(since, now, until=None):
+    """The window ending `until` ago, or now. An end bound exists because Loki
+    caps a range query at 5000 entries (max_entries_limit_per_query) and refuses
+    a larger --limit outright, so any window holding more than that has to be
+    walked in slices -- and a slice needs both bounds. --since alone can only ever
+    ask for a window ending now, which makes the middle of a day unreachable."""
+    end = now if until is None else now - parse_duration(until)
+    return end - parse_duration(since), end
 
 
 def cmd_logs(ns, now):
     """Loki. Instant by default because that is what an aggregation wants;
     --stream switches to query_range, which is what returns raw log lines."""
     if ns.stream:
-        start, end = _window(ns.since, now)
+        start, end = _window(ns.since, now, ns.until)
         params = {
             "query": ns.query,
             "start": str(int(start)),
@@ -877,6 +883,14 @@ def main(argv=None):
                        help="range window, e.g. 30m/19h/7d (default: 1h)")
         p.add_argument("--limit", type=int, default=100,
                        help="max entries (logs --stream)")
+        if name == "logs":
+            # Only `logs` gets an end bound: it is the only verb that walks raw
+            # entries, so it is the only one that meets Loki's 5000-entry cap and
+            # needs slicing. Adding it to `metric` too would advertise a flag
+            # cmd_metric ignores.
+            p.add_argument("--until", default=None,
+                           help="end the window this long ago instead of now; "
+                                "with --since this selects one slice")
         p.add_argument("--direction", choices=("backward", "forward"),
                        default="backward")
         p.add_argument("--step", default="60",

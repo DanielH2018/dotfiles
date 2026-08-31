@@ -7,7 +7,11 @@ Type=oneshot
 # as its session ends; this exists for the sessions where that never ran — a kill -9, a
 # crash, or a scan that outlived its parent — so the window has to cover more than the
 # interval between runs.
-ExecStart=%h/.local/bin/claude-transcript-scan --since 25
+# --loki scans the second store the same command text reaches. It is passed HERE rather
+# than being the default, because the flag needs otelq and a reachable Loki and the bare
+# command must keep working on a machine with neither. Leaving it off the timer would have
+# made the Loki arm opt-in for a human who remembers, which is the same as nothing.
+ExecStart=%h/.local/bin/claude-transcript-scan --since 25 --loki
 # Findings are the point, so exit 1 is a real verdict and must show as a failed unit.
 # Exit 3 (no gitleaks, no jq) is could-not-evaluate and must also show — a detector that
 # reports clean when it did not run is worse than no detector.
