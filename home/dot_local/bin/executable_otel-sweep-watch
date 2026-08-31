@@ -59,6 +59,13 @@ for host in sorted(data):
         continue
     if d.get("backends", {}).get("loki") != "ready":
         findings.append("%s: Loki unreachable - nothing is being recorded" % host)
+    # One finding per event NAME with its count, never one per occurrence: 9
+    # api_errors in a bad hour is one incident, and a finding per event is how a
+    # daily check gets muted. Until 2026-08-31 this block did not exist at all,
+    # so every error the sweep counted reached --rows and nothing else -- the
+    # count was collected nightly and read by no one.
+    for name, n in sorted((d.get("errors_24h") or {}).items()):
+        findings.append("%s: %d %s events in 24h" % (host, int(n), name))
     if d.get("silent_checked") is False:
         findings.append("%s: silent-session check did not run - Loki query failed" % host)
     silent = d.get("silent_sessions", [])

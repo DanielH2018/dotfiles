@@ -738,7 +738,14 @@ def cmd_savings(ns, now):
 def _rows(payload):
     """Render the vector/matrix shape every ad-hoc query ended up reformatting by
     hand: value, then the label set, one series per line, biggest first."""
-    result = (payload.get("data") or {}).get("result") or []
+    data = payload.get("data")
+    # `labels` is the one endpoint whose `data` is a bare list -- of label names,
+    # or of one label's values -- where every other endpoint returns an object
+    # holding `result`. Duck-typing off .get() raised AttributeError and made
+    # --rows unusable for both label forms, so the shape is tested explicitly.
+    if isinstance(data, list):
+        return "\n".join(str(item) for item in data)
+    result = (data or {}).get("result") or []
     lines = []
     for series in result:
         labels = series.get("metric") or series.get("stream") or {}

@@ -206,6 +206,31 @@ test('--rows handles Loki streams and matrix values', { skip }, () => {
   assert.strictEqual(out, '9\tlevel=err\n5\tlevel=err');
 });
 
+test('--rows renders the labels endpoint, whose data is a bare list', { skip }, () => {
+  // `labels` returns data as a list of names; every other endpoint returns an
+  // object holding `result`. _rows assumed the object shape and raised
+  // AttributeError, so --rows was unusable for both label forms until 2026-08-31.
+  assert.strictEqual(
+    drive(['rows'], JSON.stringify({ status: 'success', data: ['service_name'] })),
+    'service_name',
+  );
+  // `labels --name <n>` returns one label's values through the same branch.
+  assert.strictEqual(
+    drive(['rows'], JSON.stringify({ status: 'success', data: ['claude-code', 'other'] })),
+    'claude-code\nother',
+  );
+});
+
+test('the list branch does not swallow the ordinary result shape', { skip }, () => {
+  // The rejecting half. A branch that caught every payload would "fix" the crash
+  // by rendering nothing useful anywhere else, and every test above would still
+  // pass on its own inputs -- so assert the object shape is untouched.
+  const payload = JSON.stringify({
+    data: { resultType: 'vector', result: [{ metric: { a: '1' }, value: [1, '7'] }] },
+  });
+  assert.strictEqual(drive(['rows'], payload), '7\ta=1');
+});
+
 test('--rows survives a non-numeric value without throwing', { skip }, () => {
   const payload = JSON.stringify({ data: { result: [{ metric: { a: '1' }, value: [1, 'NaN'] }] } });
   assert.match(drive(['rows'], payload), /NaN\ta=1/);

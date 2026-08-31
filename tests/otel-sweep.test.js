@@ -136,6 +136,17 @@ test('--rows names the silent count and says when it truncated', () => {
     'a truncated listing must say so');
 });
 
+test('the error count is a pattern, not a list of event names', () => {
+  // The list read `api_error|api_refusal` and missed `internal_error` outright --
+  // 7 events over 30d that reached no output at all. A hardcoded enumeration
+  // fails silently when a new name appears; a pattern over-reports instead,
+  // which a reader narrows once.
+  assert.match(SRC, /errors_24h.*event_name=~`\.\*\(error\|refusal\)\.\*`/,
+    'the error filter must match by pattern');
+  assert.ok(!/event_name=~`api_error\|api_refusal`/.test(SRC),
+    'the superseded hardcoded list must be gone');
+});
+
 test('the remote probe only ever reaches a private address', () => {
   // The second candidate for each backend is the one place the probe targets
   // something other than loopback, so it stays behind the RFC1918 guard.

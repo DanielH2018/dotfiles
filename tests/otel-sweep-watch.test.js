@@ -162,6 +162,42 @@ test('a burst under the cap gets no truncation notice', { skip }, () => {
   assert.ok(!/more sessions exporting nowhere/.test(stdout), 'nothing was hidden, so nothing may claim it was');
 });
 
+test('a counted error reaches the findings block', { skip }, () => {
+  // The sweep collected errors_24h nightly and the watch never read it, so every
+  // api_error and internal_error was visible only to someone running --rows by
+  // hand. One finding per event NAME with its count, not one per occurrence.
+  const payload = JSON.stringify({
+    box: {
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { api_request: 900 },
+      errors_24h: { api_error: 9, internal_error: 5 },
+      sessions_24h: 7,
+      silent_sessions: [],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /box: 9 api_error events in 24h/);
+  assert.match(stdout, /box: 5 internal_error events in 24h/);
+});
+
+test('no counted errors raises nothing', { skip }, () => {
+  // The rejecting half. A block that reported on an empty dict would fire every
+  // night and get the check muted, which is the failure this watch exists to avoid.
+  const payload = JSON.stringify({
+    box: {
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { api_request: 900 },
+      errors_24h: {},
+      sessions_24h: 7,
+      silent_sessions: [],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 0);
+  assert.ok(!stdout.includes('FINDINGS'), 'an empty error map is not a finding');
+});
+
 test('Loki unreachable is a finding — nothing is recorded without it', { skip }, () => {
   const payload = JSON.stringify({
     box: { backends: { loki: 'unreachable', prometheus: 'ready', tempo: 'ready' }, events_24h: {}, sessions_24h: 0, silent_sessions: [] },

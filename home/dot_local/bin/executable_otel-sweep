@@ -217,7 +217,16 @@ def count(inner, label, window="24h"):
 
 
 out["events_24h"] = count(" | event_name != ``", "event_name")
-out["errors_24h"] = count(" | event_name=~`api_error|api_refusal`", "event_name")
+# DECIDED: a pattern, not a list of names. The list read `api_error|api_refusal`
+# and missed `internal_error` entirely — 7 events over 30d that no output ever
+# showed. That is the second time an explicit enumeration here under-reported,
+# and the failure modes are not symmetric: a pattern that matches something
+# benign produces a finding a human reads once and narrows, while a list that
+# misses a name produces silence indistinguishable from health. Same reasoning
+# the transcript-scan ruleset gives for falling back to the full set when its
+# config is missing. Measured 2026-08-31: over 30d the only names matching are
+# api_error (9), internal_error (7) and api_refusal (2).
+out["errors_24h"] = count(" | event_name=~`.*(error|refusal).*`", "event_name")
 out["hook_errors_24h"] = count(
     " | event_name=`hook_execution_complete` | num_non_blocking_error != `0`",
     "hook_event",
