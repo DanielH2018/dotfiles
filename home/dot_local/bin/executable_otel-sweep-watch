@@ -43,6 +43,8 @@ fi
 read -r -d '' SUMMARISE <<'PY'
 import json, sys
 
+SILENT_FINDING_LIMIT = 5
+
 data = json.load(sys.stdin)
 findings, lines = [], []
 
@@ -60,9 +62,16 @@ for host in sorted(data):
     if d.get("silent_checked") is False:
         findings.append("%s: silent-session check did not run - Loki query failed" % host)
     silent = d.get("silent_sessions", [])
-    for s in silent:
+    # One line per session up to the cap, then a count. A fan-out of short-lived
+    # sessions that all missed the exporter is one incident, and 23 near-identical
+    # findings train the reader to skip the block. The `silent=` line below still
+    # carries the honest total, because it is a len() over the uncapped payload.
+    for s in silent[:SILENT_FINDING_LIMIT]:
         findings.append("%s: session %s exporting nowhere (%sMB)"
                         % (host, s["session"][:8], s["mb"]))
+    if len(silent) > SILENT_FINDING_LIMIT:
+        findings.append("%s: and %d more sessions exporting nowhere"
+                        % (host, len(silent) - SILENT_FINDING_LIMIT))
     lines.append("%s: events=%d sessions=%d silent=%d"
                  % (host, sum(d.get("events_24h", {}).values()),
                     d.get("sessions_24h", 0), len(silent)))

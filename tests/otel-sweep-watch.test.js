@@ -116,6 +116,52 @@ test('a silent session is a finding', { skip }, () => {
   assert.match(stdout, /dbb7b1bf exporting nowhere \(18\.1MB\)/);
 });
 
+test('the silent count is the whole truth, not the number of lines shown', { skip }, () => {
+  // The payload was sliced to ten before 2026-08-31, and this count is a len()
+  // over it — so a night with 24 silent sessions alerted as `silent=10` and read
+  // as complete. The count must survive the cap on the finding lines.
+  const sessions = Array.from({ length: 24 }, (_, i) => ({
+    session: `deadbeef-${String(i).padStart(4, '0')}-4000-8000-000000000000`,
+    mb: 24 - i,
+    modified: '2026-08-29T20:29:00Z',
+  }));
+  const payload = JSON.stringify({
+    box: {
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { hook_registered: 20 },
+      sessions_24h: 7,
+      silent_sessions: sessions,
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /box: events=20 sessions=7 silent=24/);
+  assert.match(stdout, /and 19 more sessions exporting nowhere/);
+});
+
+test('a burst under the cap gets no truncation notice', { skip }, () => {
+  // The rejecting half of the pair above. A notice that fires whether or not
+  // anything was hidden says nothing, and one that never fires hides everything;
+  // only the two together show the cap is being read.
+  const sessions = Array.from({ length: 3 }, (_, i) => ({
+    session: `deadbeef-${String(i).padStart(4, '0')}-4000-8000-000000000000`,
+    mb: 3 - i,
+    modified: '2026-08-29T20:29:00Z',
+  }));
+  const payload = JSON.stringify({
+    box: {
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { hook_registered: 20 },
+      sessions_24h: 7,
+      silent_sessions: sessions,
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /box: events=20 sessions=7 silent=3/);
+  assert.ok(!/more sessions exporting nowhere/.test(stdout), 'nothing was hidden, so nothing may claim it was');
+});
+
 test('Loki unreachable is a finding — nothing is recorded without it', { skip }, () => {
   const payload = JSON.stringify({
     box: { backends: { loki: 'unreachable', prometheus: 'ready', tempo: 'ready' }, events_24h: {}, sessions_24h: 0, silent_sessions: [] },

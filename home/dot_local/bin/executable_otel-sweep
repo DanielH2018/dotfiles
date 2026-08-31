@@ -95,6 +95,11 @@ SSH_OPTS = [
 
 DEFAULT_TIMEOUT = 120
 
+# How many SILENT lines --rows prints before summarising the rest. The compact
+# view is the only place a cap belongs: the JSON payload carries every session,
+# and the summary line carries the count, so nothing here can hide a total.
+ROW_SILENT_LIMIT = 10
+
 # Long enough to outlast the transients that actually occur here — a WireGuard
 # rekey, a firewall rate limiter's window — and short enough that a machine that
 # is genuinely down still costs one extra connect timeout, not a stalled timer.
@@ -349,7 +354,12 @@ if MODE == "deep":
                         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime)
                     ),
                 })
-    out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)[:10]
+    # Uncapped on purpose. This list was sliced to the ten largest until
+    # 2026-08-31, and otel-sweep-watch reports `silent=N` as len() of it — so a
+    # night with 24 silent sessions alerted as 10 and read as the whole truth.
+    # The renderers below may show fewer, but they say so; the payload may not
+    # lie, because it is what every count downstream is computed from.
+    out["silent_sessions"] = sorted(silent, key=lambda s: s["mb"], reverse=True)
     out["silent_checked"] = checked
     out["sessions_on_disk_48h"] = len(candidates)
 
@@ -432,18 +442,30 @@ def render_rows(results):
                 "counts live in box (split by os_version)"
             )
             continue
-        print(
+        silent = data.get("silent_sessions", [])
+        # The count goes on the summary line, not just the SILENT lines below it.
+        # Without it, a capped list of SILENT lines reads as the complete set, which
+        # is exactly how 24 silent sessions were reported as 10 and believed.
+        summary = (
             f"{name:<8} ready={','.join(ready) or 'none':<26} "
             f"events={events:<6} sessions={data.get('sessions_24h', 0)}"
         )
+        if silent:
+            summary += f" silent={len(silent)}"
+        print(summary)
         for bad, n in sorted(data.get("errors_24h", {}).items()):
             print(f"         {bad}={n}")
         if data.get("silent_checked") is False:
             print("         silent-session check did not run (Loki query failed)")
-        for entry in data.get("silent_sessions", []):
+        for entry in silent[:ROW_SILENT_LIMIT]:
             print(
                 f"         SILENT {entry['session'][:8]} "
                 f"({entry['mb']}MB, {entry['modified']})"
+            )
+        if len(silent) > ROW_SILENT_LIMIT:
+            print(
+                f"         ... and {len(silent) - ROW_SILENT_LIMIT} more "
+                "(--deep without --rows lists them all)"
             )
 
 

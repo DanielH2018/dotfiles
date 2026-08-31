@@ -116,6 +116,26 @@ test('silent-session detection is skipped when Loki is unreachable', () => {
   );
 });
 
+test('the silent-session payload is uncapped', () => {
+  // A `[:10]` slice lived here until 2026-08-31. otel-sweep-watch derives its
+  // `silent=N` alert from len() of this list, so the slice under-counted the
+  // alert as well as the listing — 24 silent sessions reported as 10, with
+  // nothing in either output saying anything had been dropped.
+  const deep = SRC.slice(SRC.indexOf('if MODE == "deep":'), SRC.indexOf('print(json.dumps(out))'));
+  assert.match(deep, /out\["silent_sessions"\] = sorted\(silent, key=lambda s: s\["mb"\], reverse=True\)\n/,
+    'the payload must carry every silent session, uncapped');
+});
+
+test('--rows names the silent count and says when it truncated', () => {
+  // The rejecting half: a cap in the compact view is fine, a cap that looks
+  // like the whole set is the defect. Both the total and the notice must exist.
+  assert.match(SRC, /ROW_SILENT_LIMIT = \d+/);
+  assert.match(SRC, /summary \+= f" silent=\{len\(silent\)\}"/,
+    'the summary line must carry the total, not just the listed lines');
+  assert.match(SRC, /if len\(silent\) > ROW_SILENT_LIMIT:/,
+    'a truncated listing must say so');
+});
+
 test('the remote probe only ever reaches a private address', () => {
   // The second candidate for each backend is the one place the probe targets
   // something other than loopback, so it stays behind the RFC1918 guard.
