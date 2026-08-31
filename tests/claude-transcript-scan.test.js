@@ -151,10 +151,11 @@ test('the window sweep reaches both fixtures and flags only the dirty one', { sk
   const sb = sandbox();
   const r = run(['--since', '1'], sb);
   assert.strictEqual(r.status, 1);
-  assert.match(r.stdout, /2 source\(s\)/, 'both fixtures were scanned');
+  assert.match(r.stdout, /2 source\(s\) scanned/, 'both fixtures were scanned');
   // Count findings, not substring hits: each emitted record names the rule twice, once in
   // `rule` and once inside `fingerprint`.
-  assert.strictEqual((r.stdout.match(/"rule":"github-pat"/g) || []).length, 1, 'exactly one finding');
+  assert.strictEqual((fs.readFileSync(sb.log, 'utf8').match(/"rule":"github-pat"/g) || []).length, 1,
+    'exactly one finding');
 });
 
 test('a missing gitleaks reports could-not-evaluate, never clean', { skip: jqOk ? false : skip }, () => {
@@ -185,7 +186,7 @@ test('an accepted finding stops being reported', { skip }, () => {
   // "nothing new" must not read as "nothing found" — a baseline nobody can see is one
   // nobody trusts, and then it suppresses something that mattered.
   assert.match(after.stdout, /no new findings/);
-  assert.match(after.stdout, /1 baselined/);
+  assert.match(after.stdout, /1 already baselined/);
 });
 
 test('a finding the baseline does not cover is still reported', { skip }, () => {
@@ -196,7 +197,7 @@ test('a finding the baseline does not cover is still reported', { skip }, () => 
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'GITHUB_TOKEN=ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG' }] } }) + '\n');
   const r = run(['--since', '1'], sb);
   assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
-  assert.match(r.stdout, /1 NEW finding/);
+  assert.match(r.stdout, /1 new finding/);
 });
 
 test('the fingerprint keys on content, not on line position', { skip }, () => {
@@ -248,7 +249,8 @@ test('narrowing does not drop a real token shape', { skip }, () => {
   fs.writeFileSync(sb.glConfig, NARROW);
   const r = run(['--session', path.join(sb.projects, 'dirty.jsonl')], sb);
   assert.strictEqual(r.status, 1, 'github-pat must still fire under the narrowed set');
-  assert.match(r.stdout, /"rule":"github-pat"/);
+  assert.match(fs.readFileSync(sb.log, "utf8"), /"rule":"github-pat"/,
+    "the machine-readable record lives in the log, not on stdout");
 });
 
 test('a missing ruleset falls back to the full set rather than refusing', { skip }, () => {
@@ -288,7 +290,8 @@ test('the shipped ruleset still catches a token that is not a fixture', { skip }
   fs.writeFileSync(p, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: `GITHUB_TOKEN=${syntheticPat()}` }] } }) + '\n');
   const r = run(['--session', p], sb, { CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: SHIPPED });
   assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
-  assert.match(r.stdout, /"rule":"github-pat"/);
+  assert.match(fs.readFileSync(sb.log, "utf8"), /"rule":"github-pat"/,
+    "the machine-readable record lives in the log, not on stdout");
 });
 
 // --- the Loki store ------------------------------------------------------------------
@@ -335,7 +338,7 @@ test('a credential in a Loki slice is flagged, keyed to the loki store', { skip 
   const r = run(['--loki', '--since', '1'], sb, env);
   assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /github-pat/, 'the finding names the rule that matched');
-  assert.match(r.stdout, /"fingerprint":"github-pat:loki:/,
+  assert.match(fs.readFileSync(sb.log, "utf8"), /"fingerprint":"github-pat:loki:/,
     'the fingerprint names the store, so accepting a transcript finding cannot suppress it');
 });
 
@@ -416,8 +419,58 @@ test('--no-loki says so in the verdict rather than looking complete', { skip }, 
   // recreates the trap it exists to make explicit.
   const sb = sandbox();
   const r = run(['--no-loki', '--session', path.join(sb.projects, 'clean.jsonl')], sb);
-  assert.match(r.stdout, /in transcripts/);
-  assert.doesNotMatch(r.stdout, /loki/, 'a skipped store must not appear as covered');
+  assert.match(r.stdout, /scanned in transcripts\./, 'the verdict covers transcripts alone');
+  // Naming the skip is the point -- "Loki skipped (--no-loki)" is the opposite of the
+  // silent partial coverage this test guards. What must never appear is loki inside the
+  // list of stores the verdict claims to have covered.
+  assert.match(r.stdout, /Loki skipped/, 'the skip is stated, not silent');
+  assert.doesNotMatch(r.stdout, /scanned in transcripts\+loki/,
+    'a skipped store must not appear as covered');
+});
+
+test('an hourly slice asks for an hourly WIDTH, not a window back to now', { skip }, () => {
+  // The bug that made this whole area wrong. --since is the window WIDTH and --until moves
+  // its END, so a slice is `--since <width> --until Nh`. It read `--since ${h}h` until
+  // 2026-08-31, making slice 30 a THIRTY-hour window ending 29h ago -- every slice
+  // re-scanned everything newer than it. Two abutting slices returned an identical 4858
+  // entries against an authoritative 4130 for the whole 30h period.
+  const src = fs.readFileSync(SCANNER, 'utf8');
+  assert.match(src, /--stream --since 70m --until "\$\{until_h\}h"/,
+    'the width must be a fixed slice width, never the distance back to now');
+  assert.ok(!/--since "\$\{h\}h" --until/.test(src),
+    'the superseded form must be gone');
+});
+
+test('a finding reached twice in one run is counted once', { skip }, () => {
+  // Slices overlap by ten minutes on purpose, because each query computes `now` when it
+  // runs and exactly-abutting windows drift apart. That hands the same finding back twice,
+  // so the run must dedupe or the overlap would inflate every count.
+  const sb = sandbox();
+  const dup = lokiPayload(
+    { tool_parameters: `{"full_command":"curl -H \\"Authorization: token ${syntheticPat()}\\""}` },
+  );
+  // The stub answers EVERY slice with the same payload, so a 3h scan sees it three times.
+  const env = stubOtelq(sb, dup);
+  const r = run(['--loki', '--since', '3'], sb, env);
+  assert.strictEqual(r.status, 1);
+  const records = fs.readFileSync(sb.log, 'utf8').trim().split('\n').filter(Boolean);
+  assert.strictEqual(records.length, 1,
+    `the same fingerprint across slices is one finding, got ${records.length}`);
+  assert.match(r.stdout, /1 new finding/);
+});
+
+test('two DIFFERENT findings in one run are both kept', { skip }, () => {
+  // The rejecting half: a dedupe keyed too broadly would collapse distinct credentials
+  // into one and hide a real leak, which is worse than the double-count it fixes.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload(
+    { tool_parameters: `{"full_command":"curl -H \\"Authorization: token ${syntheticPat()}\\""}` },
+    { prompt: `a second, different one: ${syntheticPat()}` },
+  ));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 1);
+  const records = fs.readFileSync(sb.log, 'utf8').trim().split('\n').filter(Boolean);
+  assert.strictEqual(records.length, 2, 'distinct fingerprints must survive the dedupe');
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {

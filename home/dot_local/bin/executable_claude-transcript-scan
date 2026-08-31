@@ -208,13 +208,19 @@ STORES="transcripts"
 # under a predictable-ish name, so it does not outlive the run.
 WORK=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
 chmod 600 "$WORK"
-trap 'rm -f "$WORK"' EXIT INT TERM
+SEEN=$(mktemp) || { echo "claude-transcript-scan: mktemp failed — did not scan" >&2; exit 3; }
+chmod 600 "$SEEN"
+trap 'rm -f "$WORK" "$SEEN"' EXIT INT TERM
 
 # Both stores scan the same way once their text is in $WORK, so the gitleaks call, the
 # fingerprint and the report live here rather than being written twice. $1 is what the log
 # records as the source, $2 the token that goes in the fingerprint, $3 the ruleset flags.
 scan_work() {
   _src=$1 _tok=$2 _rules=$3
+  # The human column wants something short; $_src is a full path or a slice range. Basename
+  # for a transcript, the range itself for Loki -- both already identify the finding, and
+  # the JSONL record keeps the unabridged source either way.
+  _tok_label=${_src##*/}
   # --redact keeps the finding from repeating the secret into the journal and the log file.
   # A detector that prints what it found is a second copy of the leak.
   # shellcheck disable=SC2086  # _rules is a flag pair or empty; word-splitting is the point
@@ -238,6 +244,13 @@ scan_work() {
     # never leaves this machine and cannot be reversed into the value.
     h=$(sed -n "${line}p" "$WORK" | sha256sum | cut -c1-16)
     fp="${rule}:${_tok}:${h}"
+    # Seen already in THIS run: the overlap above hands the same finding back twice, and
+    # counting it twice would make the total meaningless. Distinct from the baseline check
+    # below, which is about findings accepted in an EARLIER run.
+    if grep -qxF "$fp" "$SEEN" 2>/dev/null; then
+      continue
+    fi
+    printf '%s\n' "$fp" >> "$SEEN"
     if [ -f "$BASELINE" ] && grep -qxF "$fp" "$BASELINE" 2>/dev/null; then
       KNOWN=$((KNOWN + 1))
       [ "$ACCEPT" = 1 ] || continue
@@ -249,15 +262,33 @@ scan_work() {
     FOUND=$((FOUND + 1))
     # Rule id, line, source and fingerprint only. Enough to find it and to name what to
     # rotate, and to accept it later; never enough to re-leak it.
+    # Two audiences, two formats. The JSONL record is what --accept-baseline and any
+    # later triage read, so it keeps every field; stdout gets a line a person can scan.
+    # `tee` used to serve both, which is why a run printed raw JSON at a human.
     jq -cn --arg f "$_src" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       --arg r "$rule" --argjson l "$line" --arg p "$fp" \
       '{ts:$t, transcript:$f, rule:$r, line:$l, fingerprint:$p, secret:"[redacted]"}' \
-      | tee -a "$LOG"
+      >> "$LOG"
+    printf '  %-18s %-34s line %s\n' "$rule" "$_tok_label" "$line"
   done <<EOF
 $(printf '%s' "$report" | jq -r '.[] | "\(.RuleID)\t\(.StartLine)"')
 EOF
   return 0
 }
+
+_n_files=$(printf '%s\n' "$FILES" | grep -c . || true)
+if [ "$LOKI" = 1 ]; then
+  echo "claude-transcript-scan: scanning ${_n_files} transcript(s) and ${SINCE_H} hourly Loki slice(s)"
+else
+  echo "claude-transcript-scan: scanning ${_n_files} transcript(s); Loki skipped (--no-loki)"
+fi
+
+# Section headers print unconditionally, before their arm runs. A header with nothing under
+# it is the useful case: it says the store was searched and was clean, which an absent
+# header cannot. The whole reason this output was reshaped is that a clean verdict and a
+# skipped store looked the same.
+printf '\ntranscripts\n'
+_found_before_transcripts=$FOUND
 
 while IFS= read -r f; do
   [ -n "$f" ] || continue
@@ -291,19 +322,35 @@ EOF
 # Measured 2026-08-31 on this host: the full ruleset over one hour of narrowed Loki text
 # (378KB) returned 0 findings, and over the events holding a real leaked *arr key it
 # returned 12. Narrow the extraction and the expensive rule becomes affordable.
+FOUND_TRANSCRIPTS=$((FOUND - _found_before_transcripts))
+[ "$FOUND_TRANSCRIPTS" -gt 0 ] || echo "  none"
+
 if [ "$LOKI" = 1 ]; then
+  printf '\nloki\n'
+  _found_before_loki=$FOUND
   # Loki refuses limit > max_entries_limit_per_query (5000) outright, so a window holding
   # more entries than that must be walked in slices. ~620 entries/hour here, so an hourly
   # slice sits an order of magnitude under the cap -- and a slice that DOES reach it is
   # counted as a failure rather than silently under-scanned, because under-reporting is the
   # one failure this tool cannot recover from.
+  # --since is the window WIDTH and --until moves its END, so an hourly slice is
+  # `--since <width>`. It read `--since ${h}h` until 2026-08-31 and every slice was
+  # therefore a full h-hour window ending ${h-1}h ago -- slice 30 re-scanned the whole
+  # 30 hours after it. Two abutting slices returned an identical 4858 entries, which is
+  # what exposed it, and a 30h scan reported 30x the events Loki actually held.
+  #
+  # 70m for a 60m step, so consecutive slices OVERLAP by ten minutes. Each query computes
+  # `now` when it runs, so a sequence of them drifts forward and exactly-abutting windows
+  # leave a sliver uncovered between each pair: measured 4087 of an authoritative 4130
+  # events over 30h before the overlap. Duplicates are free here because the fingerprint
+  # is a content hash and $SEEN drops a repeat within the run; a gap is not recoverable.
   LOKI_LIMIT=5000
   h=$SINCE_H
   while [ "$h" -gt 0 ]; do
     until_h=$((h - 1))
     slice=$(otelq logs \
       '{service_name="claude-code"} | event_name=~`tool_result|user_prompt` | keep tool_input, tool_parameters, prompt' \
-      --stream --since "${h}h" --until "${until_h}h" --limit "$LOKI_LIMIT" --timeout 60 2>/dev/null)
+      --stream --since 70m --until "${until_h}h" --limit "$LOKI_LIMIT" --timeout 60 2>/dev/null)
     if [ -z "$slice" ]; then
       echo "claude-transcript-scan: Loki slice ${h}h..${until_h}h did not return — treat as not scanned" >&2
       FAILED=$((FAILED + 1))
@@ -325,10 +372,12 @@ if [ "$LOKI" = 1 ]; then
     # present in both stores therefore reports twice, under `loki` and under the transcript
     # name, and needs acknowledging twice -- which is correct, since they are two copies
     # with two lifetimes.
-    scan_work "loki (${h}h..${until_h}h)" "loki" "" || true
+    scan_work "${h}h..${until_h}h ago" "loki" "" || true
     h=$until_h
   done
   STORES="transcripts+loki"
+  FOUND_LOKI=$((FOUND - _found_before_loki))
+  [ "$FOUND_LOKI" -gt 0 ] || echo "  none"
 fi
 
 if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
@@ -347,8 +396,15 @@ if [ "$ACCEPT" = 1 ]; then
 fi
 
 if [ "$FOUND" -gt 0 ]; then
-  echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED source(s) in $STORES ($KNOWN baselined) — logged to $LOG"
-  echo "Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
+  # Per-store counts, because "18 findings" does not tell you which store to go and read,
+  # and the two have different remedies: a transcript is a local file, a Loki record is
+  # queryable by anything on the LAN for 744h.
+  _split="${FOUND_TRANSCRIPTS:-0} in transcripts"
+  [ "$LOKI" = 1 ] && _split="$_split, ${FOUND_LOKI:-0} in loki"
+  printf '\n%d new finding(s) — %s. %d baselined, %d source(s) scanned.\n' \
+    "$FOUND" "$_split" "$KNOWN" "$SCANNED"
+  echo "  Full records: $LOG"
+  echo "  Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
 
   # The durable half. Written before either banner is attempted, so a machine with no
   # notification path at all still records the finding rather than losing it.
@@ -371,9 +427,10 @@ fi
 # hides whether the baseline is doing any work, and a baseline nobody can see is one nobody
 # trusts — which is how it ends up suppressing something that mattered.
 if [ "$KNOWN" -gt 0 ]; then
-  echo "claude-transcript-scan: no new findings across $SCANNED source(s) in $STORES ($KNOWN baselined)"
+  printf '\nno new findings — %d source(s) scanned in %s, %d already baselined.\n' \
+    "$SCANNED" "$STORES" "$KNOWN"
   exit 0
 fi
 
-echo "claude-transcript-scan: clean across $SCANNED source(s) in $STORES"
+printf '\nclean — %d source(s) scanned in %s.\n' "$SCANNED" "$STORES"
 exit 0
