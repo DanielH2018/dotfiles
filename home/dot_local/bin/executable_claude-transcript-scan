@@ -24,13 +24,18 @@
 #   claude-transcript-scan --all              # every transcript on the machine
 #   claude-transcript-scan --accept-baseline  # record today's findings as known; report only new ones
 #   claude-transcript-scan --paranoid         # gitleaks' FULL ruleset, for a deliberate audit
-#   claude-transcript-scan --loki             # ALSO scan Loki, where the same command text lands
+#   claude-transcript-scan --no-loki          # transcripts only; skip the Loki store
 #
-# --loki adds a second store rather than replacing the first. Claude Code sends the full
-# command text to Loki as tool_input/tool_parameters and the prompt as `prompt`, and Loki
-# keeps them for 744h, so a credential typed inline on a command line has two lifetimes.
-# A leak present in both stores reports twice, under `loki` and under the transcript's
-# name, and each needs accepting separately -- two copies, two acknowledgements.
+# BOTH stores are scanned by default. Claude Code sends the full command text to Loki as
+# tool_input/tool_parameters and the prompt as `prompt`, and Loki keeps them for 744h, so
+# a credential typed inline on a command line has two lifetimes. Every verdict names the
+# stores it covered, because "clean across 37 source(s)" cannot be told apart from a scan
+# that skipped one. A leak present in both reports twice, under `loki` and under the
+# transcript's name, and each needs accepting separately -- two copies, two lifetimes.
+#
+# --no-loki is for a machine with no otelq or no reachable Loki. Without it a missing
+# otelq is exit 3, could-not-evaluate, the same as a missing gitleaks: skipping a store
+# silently is the failure this tool exists to prevent.
 #   claude-transcript-scan --clear-pending    # dismiss the SessionStart banner WITHOUT baselining anything
 #
 # Exit 0 clean or nothing new, 1 NEW findings, 2 usage error, 3 could-not-evaluate. 3 is
@@ -78,7 +83,12 @@ ONE=
 ACCEPT=0
 PARANOID=0
 CLEAR=0
-LOKI=0
+# Loki is scanned by DEFAULT. It was opt-in for one day and that was a mistake: --loki
+# lived only in the systemd unit, so a hand-run scan quietly covered one store of two and
+# printed a clean verdict for a store it never opened. "The obvious invocation does less
+# than the timer" is the same could-not-run-reads-as-clean failure this tool exists to
+# prevent. --no-loki is the explicit way out, for a machine with no otelq or no Loki.
+LOKI=1
 
 while [ $# -gt 0 ]; do
   case $1 in
@@ -87,7 +97,8 @@ while [ $# -gt 0 ]; do
     --all) MODE=all; shift ;;
     --accept-baseline) ACCEPT=1; shift ;;
     --paranoid) PARANOID=1; shift ;;
-    --loki) LOKI=1; shift ;;
+    --loki) LOKI=1; shift ;;          # kept: still accepted, now the default
+    --no-loki) LOKI=0; shift ;;
     --clear-pending) CLEAR=1; shift ;;
     -h|--help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "claude-transcript-scan: unknown argument: $1" >&2; exit 2 ;;
@@ -156,7 +167,7 @@ command -v jq >/dev/null 2>&1 || {
 # loudly, because a missing query tool would otherwise read as a clean Loki store.
 if [ "$LOKI" = 1 ]; then
   command -v otelq >/dev/null 2>&1 || {
-    echo "claude-transcript-scan: otelq unavailable — did not scan Loki" >&2
+    echo "claude-transcript-scan: otelq unavailable — did not scan Loki. Pass --no-loki to scan transcripts only." >&2
     mark_unavailable "otelq unavailable"
     exit 3
   }
@@ -187,6 +198,9 @@ FOUND=0
 KNOWN=0
 SCANNED=0
 FAILED=0
+# Named in every verdict. "clean across 37 source(s)" cannot be told apart from a scan
+# that skipped a whole store; "clean across 37 source(s) (transcripts)" can.
+STORES="transcripts"
 
 # The extracted text goes to a temp file rather than straight down a pipe, because the
 # fingerprint below has to read the matched line back. Mode 0600, removed on exit: it holds
@@ -314,6 +328,7 @@ if [ "$LOKI" = 1 ]; then
     scan_work "loki (${h}h..${until_h}h)" "loki" "" || true
     h=$until_h
   done
+  STORES="transcripts+loki"
 fi
 
 if [ "$FAILED" -gt 0 ] && [ "$SCANNED" -eq 0 ]; then
@@ -332,7 +347,7 @@ if [ "$ACCEPT" = 1 ]; then
 fi
 
 if [ "$FOUND" -gt 0 ]; then
-  echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED source(s) ($KNOWN baselined) — logged to $LOG"
+  echo "claude-transcript-scan: $FOUND NEW finding(s) across $SCANNED source(s) in $STORES ($KNOWN baselined) — logged to $LOG"
   echo "Rotate the named credential: uv run python scripts/secrets_mgmt/secret_rotation.py rotate <name>" >&2
 
   # The durable half. Written before either banner is attempted, so a machine with no
@@ -356,9 +371,9 @@ fi
 # hides whether the baseline is doing any work, and a baseline nobody can see is one nobody
 # trusts — which is how it ends up suppressing something that mattered.
 if [ "$KNOWN" -gt 0 ]; then
-  echo "claude-transcript-scan: no new findings across $SCANNED source(s) ($KNOWN baselined)"
+  echo "claude-transcript-scan: no new findings across $SCANNED source(s) in $STORES ($KNOWN baselined)"
   exit 0
 fi
 
-echo "claude-transcript-scan: clean across $SCANNED source(s)"
+echo "claude-transcript-scan: clean across $SCANNED source(s) in $STORES"
 exit 0

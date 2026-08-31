@@ -102,7 +102,12 @@ function sandbox() {
 }
 
 function run(args, sb, extraEnv = {}) {
-  return spawnSync('bash', [SCANNER, ...args], {
+  // Loki is scanned by default, and this file is hermetic. A transcript test that reached
+  // a real Loki -- or failed on a missing otelq -- would be testing the machine it ran on,
+  // so everything opts out unless it asked for the Loki arm by name.
+  const wantsLoki = args.some((a) => a === '--loki');
+  const argv = wantsLoki ? args : ['--no-loki', ...args];
+  return spawnSync('bash', [SCANNER, ...argv], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -394,6 +399,25 @@ test('a missing otelq reports could-not-evaluate, never clean', { skip }, () => 
   const r = run(['--loki', '--since', '1'], sb, { PATH: `${bin}:/usr/bin:/bin` });
   assert.strictEqual(r.status, 3, `expected exit 3, got ${r.status}: ${r.stdout}${r.stderr}`);
   assert.match(r.stderr, /otelq unavailable/);
+});
+
+test('every verdict names the stores it covered', { skip }, () => {
+  // "clean across 37 source(s)" cannot be told apart from a scan that skipped a whole
+  // store. For one day --loki lived only in the systemd unit, so a hand-run scan covered
+  // transcripts alone and printed exactly that -- a clean verdict for a store it never
+  // opened, which is the could-not-run-reads-as-clean failure this tool exists to prevent.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload({ prompt: 'ordinary text' }));
+  assert.match(run(['--loki', '--since', '1'], sb, env).stdout, /in transcripts\+loki/);
+});
+
+test('--no-loki says so in the verdict rather than looking complete', { skip }, () => {
+  // The rejecting half: opting out must be visible in the output, or the escape hatch
+  // recreates the trap it exists to make explicit.
+  const sb = sandbox();
+  const r = run(['--no-loki', '--session', path.join(sb.projects, 'clean.jsonl')], sb);
+  assert.match(r.stdout, /in transcripts/);
+  assert.doesNotMatch(r.stdout, /loki/, 'a skipped store must not appear as covered');
 });
 
 test('a bad argument is a usage error, not a silent pass', { skip }, () => {
