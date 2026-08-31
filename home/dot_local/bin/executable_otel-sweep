@@ -450,7 +450,11 @@ def render_rows(results):
             f"{name:<8} ready={','.join(ready) or 'none':<26} "
             f"events={events:<6} sessions={data.get('sessions_24h', 0)}"
         )
-        if silent:
+        # Conditioned on the scan having run, not on it having found something.
+        # A clean run must say silent=0, so that a missing count reads as "the
+        # scan did not run" rather than "the scan was happy" — the same reason
+        # otel-sweep-watch prints its own count unconditionally.
+        if data.get("silent_checked"):
             summary += f" silent={len(silent)}"
         print(summary)
         for bad, n in sorted(data.get("errors_24h", {}).items()):
