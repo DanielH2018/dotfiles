@@ -381,6 +381,15 @@ def _label_of(event):
     return program_of(_command_of(event))
 
 
+def _tallied(labels):
+    """A count-by-label dict, for the ranks that do not come from an event field
+    _rank_by_program already walks."""
+    counts = {}
+    for label in labels:
+        _tally(counts, label)
+    return counts
+
+
 def _rank_by_program(events):
     """Rank events by the program behind them, keeping one example of each.
 
@@ -428,19 +437,36 @@ def report_prompts(events, window):
 
 
 def report_failures(events, window):
-    """M5 — the failure tax.
+    """M5 — non-zero exits, which are an UPPER BOUND on the failure tax.
 
-    A failed tool call costs a turn and the context of its own error output,
-    then usually a retry. Ranked by program, because the fix is nearly always a
-    changed command pattern rather than a one-off.
+    This counted `success=false` and called the total a wasted turn each. For
+    Bash that flag is just a non-zero exit, and plenty of those are a command
+    working correctly: `grep` exits 1 when it matches nothing, `[` exits 1 on
+    false, a `find` with no hits exits 1. Measured over 7d on 2026-08-31, the
+    300 most common failing commands were led by grep (16), ls (15), for (13)
+    and until (8) -- shapes that exit non-zero by design or on a benign miss.
+
+    Nothing in the telemetry separates the two. The event carries no exit code
+    and no output, and `error_type` does not split them either: both
+    ShellError and TelemetrySafeError appear on ordinary accepted commands. So
+    the honest move is to stop the headline claiming more than it knows, and to
+    show the composition instead of one conflated number. Naming a figure the
+    thing it actually measures is the fix; inventing a classifier that cannot
+    be validated against this data would be a worse one.
     """
     by_program, by_tool = _rank_by_program(events)
+    errors = _tallied(e.get("error_type") or "?" for e in events)
+    by_error = _ranked(errors, "error_type")
     return {
         "report": "failures",
-        "measures": "tool calls that failed — a wasted turn plus its output, each",
+        "measures": "tool calls that exited non-zero — an UPPER BOUND on wasted "
+                    "turns, not a count of them",
         "window": window,
         "scope": "127.0.0.1 (this machine only)",
+        "note": "a non-zero exit is not always a failure: grep with no match, a "
+                "false `[`, and a find with no hits all exit 1 having worked",
         "failures": len(events),
+        "by_error_type": by_error,
         "by_program": by_program,
         "by_tool": by_tool,
     }
@@ -841,8 +867,14 @@ def _savings_rows(payload):
         return "\n".join(_truncation_note(payload) + lines)
 
     if payload["report"] == "failures":
-        lines = [f"{payload['failures']}\tfailed calls over {payload['window']} "
+        lines = [f"{payload['failures']}\tnon-zero exits over {payload['window']} "
                  f"({payload['scope']})"]
+        # The caveat rides with the number rather than sitting below the rows,
+        # because a reader who stops after the headline is the one who needs it.
+        if payload.get("note"):
+            lines.append(f"-\t{payload['note']}")
+        for row in payload.get("by_error_type", []):
+            lines.append(f"{row['count']}\terror_type={row['error_type']}")
         for row in payload["by_program"]:
             lines.append(f"{row['count']}\t{row['program']}\t{row['example']}")
         return "\n".join(_truncation_note(payload) + lines)

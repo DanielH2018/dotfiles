@@ -490,6 +490,30 @@ test('failures ranks the programs that keep costing a turn', { skip }, () => {
   assert.ok(out.by_program[0].example.startsWith('git '));
 });
 
+test('failures calls itself an upper bound, not a count of wasted turns', { skip }, () => {
+  // It counts success=false, which for Bash is a non-zero exit -- and a grep that
+  // matches nothing exits 1 having worked. Nothing in the telemetry separates the
+  // two: there is no exit code, no output, and error_type appears on ordinary
+  // accepted commands either way. So the headline must not claim more than it knows.
+  const out = JSON.parse(drive(['failures'], JSON.stringify([bash('grep nope file')])));
+  assert.match(out.measures, /UPPER BOUND/,
+    'the headline must not present non-zero exits as wasted turns');
+  assert.match(out.note, /not always a failure/);
+});
+
+test('the caveat and the error split reach --rows, not just the JSON', { skip }, () => {
+  // A reader who stops at the headline is the one who needs the caveat, so it has
+  // to sit with the number rather than only in the payload.
+  const payload = JSON.parse(drive(['failures'], JSON.stringify([
+    bash('grep nope file'), bash('ls /nope'),
+  ])));
+  const rows = drive(['srows'], JSON.stringify(payload));
+  assert.match(rows.split('\n')[0], /non-zero exits over/,
+    'the headline names the measure, not "failed calls"');
+  assert.match(rows, /not always a failure/, 'the caveat rides with the number');
+  assert.match(rows, /error_type=/, 'and the composition is visible');
+});
+
 test('bytes totals every tool and orders by volume', { skip }, () => {
   const out = JSON.parse(drive(['bytesrep'], JSON.stringify({
     totals: { Bash: 100, Read: 900, Edit: 5 }, big: [bash('cat huge.log')],
