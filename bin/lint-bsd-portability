@@ -99,7 +99,7 @@ excluded() {
     # `sed -i s/a/b/ ansible/vars/secrets.yml` is the exact command that returned no decision
     # when it was measured. Rewriting the fixture to `sed -i.bak` to satisfy this check would
     # stop testing the spelling the guard exists for. Same cost as above.
-    tests/hooks/block-dangerous-bash.test.js) return 0 ;;
+    tests/hooks/block-dangerous-bash-vectors.js) return 0 ;;
 
     # These two hold the known-bad patterns literally, by construction.
     bin/lint-bsd-portability | tests/lint-bsd-portability.test.js) return 0 ;;
