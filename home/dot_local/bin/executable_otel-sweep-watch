@@ -12,6 +12,12 @@
 #   - a machine that cannot be reached at all
 #   - Loki unreachable on a machine that answered (nothing is recorded without it)
 #   - a session whose transcript is growing while Loki holds none of its events
+#   - an error whose MESSAGE is not a known-benign one; a rate-limit rejection is
+#     what a busy day looks like, so counting it as a fault made the verdict red
+#     on ordinary use, and a check that is red every day is one nobody reads
+# Counts are attributed to the STORE that holds them rather than to the machine
+# that queried it, because nothing in the pipeline records a hostname and two
+# cluster nodes read one Loki — reporting per host turned 9 errors into 18.
 # Prometheus or Tempo being unreachable is NOT a finding: daniel-server legitimately runs
 # no Tempo, so flagging it would fire every single day forever. Loki gets the same
 # treatment on a machine otel-sweep marks `queryable: false` — daniel-server has been a
@@ -45,9 +51,39 @@ import json, sys
 
 SILENT_FINDING_LIMIT = 5
 
+# DECIDED: benign errors are named LITERALLY here, where otel-sweep's errors_24h
+# takes a broad pattern over an enumeration. Both follow the same asymmetry, and
+# it points opposite ways on the two sides. There, a pattern that misses an error
+# NAME produces silence indistinguishable from health, so breadth is the safe
+# error. Here, an entry that is too broad silences a real fault, while one that
+# is too narrow costs a finding somebody reads once and widens — so this list
+# takes the narrowest thing that works. Prefix match on a measured sentence, not
+# a `rate.?limit` regex, which would also swallow a quota exhaustion worth waking
+# for. Measured 2026-09-02: 13 api_errors, 11 this rejection and 2 a dead OAuth
+# token on a nightly timer that had been failing since 2026-08-20.
+BENIGN_ERROR_PREFIXES = (
+    "This request would exceed your account's rate limit",
+)
+
+
+def is_benign(message):
+    return message.startswith(BENIGN_ERROR_PREFIXES)
+
+
 data = json.load(sys.stdin)
 findings, lines = [], []
 
+# Every tally the sweep collects is a property of the STORE, not of the machine
+# that asked for it — nothing in the pipeline records a hostname. Two machines on
+# one Loki therefore return one set of numbers twice, and labelling each copy
+# with a host invents a second incident: on 2026-09-02 this reported "local: 9
+# api_error events" and "server: 9 api_error events" for the same 9 events.
+# Group by the store, and report each number once, against the store holding it.
+#
+# A machine whose sweep does not say which store it read groups alone, so an
+# older otel-sweep degrades to the previous per-host output and two stores can
+# never be merged by accident.
+groups = {}
 for host in sorted(data):
     d = data[host]
     if "error" in d:
@@ -59,15 +95,11 @@ for host in sorted(data):
         continue
     if d.get("backends", {}).get("loki") != "ready":
         findings.append("%s: Loki unreachable - nothing is being recorded" % host)
-    # One finding per event NAME with its count, never one per occurrence: 9
-    # api_errors in a bad hour is one incident, and a finding per event is how a
-    # daily check gets muted. Until 2026-08-31 this block did not exist at all,
-    # so every error the sweep counted reached --rows and nothing else -- the
-    # count was collected nightly and read by no one.
-    for name, n in sorted((d.get("errors_24h") or {}).items()):
-        findings.append("%s: %d %s events in 24h" % (host, int(n), name))
     if d.get("silent_checked") is False:
         findings.append("%s: silent-session check did not run - Loki query failed" % host)
+    # Host-derived, and the only findings that are: a silent session is read from
+    # THIS machine's transcripts against the store, so it stays per-host however
+    # the stores group.
     silent = d.get("silent_sessions", [])
     # One line per session up to the cap, then a count. A fan-out of short-lived
     # sessions that all missed the exporter is one incident, and 23 near-identical
@@ -79,9 +111,58 @@ for host in sorted(data):
     if len(silent) > SILENT_FINDING_LIMIT:
         findings.append("%s: and %d more sessions exporting nowhere"
                         % (host, len(silent) - SILENT_FINDING_LIMIT))
-    lines.append("%s: events=%d sessions=%d silent=%d"
-                 % (host, sum(d.get("events_24h", {}).values()),
-                    d.get("sessions_24h", 0), len(silent)))
+    groups.setdefault(d.get("store") or ("host:" + host), []).append(host)
+
+
+def merged(hosts, field):
+    """The largest count each key reached across a store's machines.
+
+    Equal by construction — they queried one store — but the queries run seconds
+    apart, so a key can land on one side of the window and not the other. Taking
+    the max means that skew can never make a group under-report.
+    """
+    out = {}
+    for h in hosts:
+        for key, n in (data[h].get(field) or {}).items():
+            out[key] = max(out.get(key, 0), int(n))
+    return out
+
+
+for store in sorted(groups):
+    hosts = groups[store]
+    events = max(sum((data[h].get("events_24h") or {}).values()) for h in hosts)
+    sessions = max(data[h].get("sessions_24h", 0) for h in hosts)
+
+    if len(hosts) == 1:
+        label = hosts[0]
+        lines.append("%s: events=%d sessions=%d silent=%d"
+                     % (label, events, sessions,
+                        len(data[hosts[0]].get("silent_sessions", []))))
+    else:
+        # The shared totals once, then the one number that really is per-machine.
+        label = "%s store (%s)" % (store, ", ".join(hosts))
+        lines.append("%s: events=%d sessions=%d" % (label, events, sessions))
+        for h in hosts:
+            lines.append("  %s: silent=%d" % (h, len(data[h].get("silent_sessions", []))))
+
+    messages = merged(hosts, "error_messages_24h")
+    if messages:
+        benign = sum(n for msg, n in messages.items() if is_benign(msg))
+        for msg, n in sorted(messages.items()):
+            if not is_benign(msg):
+                findings.append("%s: %d x %s" % (label, n, msg[:90]))
+        # Benign volume stays in the beat and out of the verdict. Dropping it from
+        # both would trade a noisy detector for a blind one — a rate-limit count
+        # that tripled is worth finding afterwards, even though it wakes nobody.
+        if benign:
+            lines.append("%s: %d rate-limited request(s) in 24h, not a fault"
+                         % (label, benign))
+    else:
+        # No message breakdown means no class judgement is possible, so every
+        # error counts. This is what the check did before the sweep reported
+        # messages, and it is the right reading of a sweep that still does not.
+        for name, n in sorted(merged(hosts, "errors_24h").items()):
+            findings.append("%s: %d %s events in 24h" % (label, n, name))
 
 print("\n".join(lines))
 if findings:

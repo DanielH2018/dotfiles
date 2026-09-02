@@ -20,6 +20,10 @@ const SRC = fs.readFileSync(SWEEP, 'utf8');
 // The module docstring argues the confinement in prose, so it names the very
 // constructs these checks forbid. Scan the code, not the argument for it.
 const CODE = SRC.slice(SRC.indexOf('from __future__'));
+// CODE with its comment lines dropped too. A rule about what the probe DOES must
+// not fire on a comment explaining what it deliberately does NOT do — two rules
+// below name the approach they reject, and naming it is the point.
+const STATEMENTS = CODE.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
 
 const python = 'python3';
 let skip = false;
@@ -262,4 +266,46 @@ print(int(ns["last_activity"](p, st)), int(st.st_mtime))
 test('live sweep returns a per-machine object', { skip: skip || 'live: needs daniel-box and daniel-server' }, () => {
   const out = JSON.parse(run(['--only', 'local']));
   assert.ok(Object.prototype.hasOwnProperty.call(out.local, 'backends'));
+});
+
+test('the store identity is reachability, not a process fingerprint', () => {
+  // Loki is a single-replica Deployment on an RWO volume, so anything derived
+  // from the process — a start time, a pid, a uptime metric — moves on every
+  // reschedule while the store stays put, and would split the group at the next
+  // pod restart. A ClusterIP is routed on cluster nodes alone, so reaching it is
+  // a fact about the machine's position that a restart does not change.
+  assert.match(SRC, /out\["store"\] = "cluster"/, 'the probe must report which store it read');
+  assert.match(SRC, /_cluster_loki = cluster_ip\("loki"\)/,
+    'the discriminator must be the fixed ClusterIP constant');
+  // Comment lines are excluded: the paragraph above deliberately NAMES the
+  // rejected approach, and a test that forbade the word would forbid the reason.
+  assert.ok(!/process_start_time|buildinfo|proc\/uptime/.test(STATEMENTS),
+    'a process-derived identity must not creep back in');
+});
+
+test('a machine that cannot reach the cluster Loki is its own store', () => {
+  // The rejecting half. A probe that reported "cluster" unconditionally would
+  // satisfy the assertions above and merge a standalone machine's store with the
+  // cluster's, hiding its errors behind the cluster's numbers.
+  assert.match(SRC, /out\["store"\] = "local"/,
+    'the negative branch must exist, or the identity says nothing');
+});
+
+test('errors are also counted by message, not only by event name', () => {
+  // api_error covers a rate-limit rejection and a dead OAuth token alike, so the
+  // name alone permits no class judgement: on 2026-09-02 it carried 11 of the
+  // first and 2 of the second and reported 13 of one thing.
+  assert.match(SRC, /out\["error_messages_24h"\] = count\(.*, "error"\)/,
+    'the breakdown must aggregate by the error message');
+  assert.match(SRC, /error_messages_24h.*event_name=~`\.\*\(error\|refusal\)\.\*`/,
+    'and must cover the same events as errors_24h, by the same pattern');
+});
+
+test('otel-sweep does not itself decide what is benign', () => {
+  // The rejecting half, and a boundary: the sweep reports, the watch judges.
+  // A benign list in both places is a list that gets updated in one.
+  // Matched on the provider's sentence, not on the words "rate limit" — the
+  // probe legitimately discusses the UFW rate limiter that throttles its own ssh.
+  assert.ok(!/would exceed your account/i.test(SRC),
+    'classification belongs to otel-sweep-watch, which is where its test lives');
 });

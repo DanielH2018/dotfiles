@@ -264,3 +264,152 @@ test('a finding raised by any test is intercepted, never drawn', { skip }, () =>
   assert.strictEqual(run(LOKI_DOWN).code, 1);
   assert.strictEqual(SILENT.calls().length, before + 1, 'the banner must land in the stub, not on the desktop');
 });
+
+// --- store grouping -------------------------------------------------------
+//
+// Every tally the sweep collects belongs to the store, not to the machine that
+// asked. Two cluster nodes read one Loki, so before this the watch reported the
+// same 9 api_errors as "local: 9" and "server: 9" and the block read as 18.
+
+const CLUSTER_PAIR = {
+  local: {
+    store: 'cluster',
+    backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+    events_24h: { api_request: 900 },
+    errors_24h: { api_error: 9 },
+    sessions_24h: 7,
+    silent_sessions: [],
+  },
+  server: {
+    store: 'cluster',
+    backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+    events_24h: { api_request: 900 },
+    errors_24h: { api_error: 9 },
+    sessions_24h: 7,
+    silent_sessions: [],
+  },
+};
+
+test('two machines on one store report its errors once, not once each', { skip }, () => {
+  const { code, stdout } = run(JSON.stringify(CLUSTER_PAIR));
+  assert.strictEqual(code, 1);
+  const hits = stdout.match(/9 api_error events in 24h/g) || [];
+  assert.strictEqual(hits.length, 1, 'one store, one count — a second copy invents an incident');
+  assert.match(stdout, /cluster store \(local, server\): 9 api_error events in 24h/);
+  assert.match(stdout, /cluster store \(local, server\): events=900 sessions=7/);
+});
+
+test('two machines on DIFFERENT stores each report their own', { skip }, () => {
+  // The rejecting half. Collapsing by position rather than by store identity
+  // would pass the test above and hide a whole machine's errors here.
+  const payload = JSON.stringify({
+    local: { ...CLUSTER_PAIR.local, store: 'local' },
+    server: { ...CLUSTER_PAIR.server, store: 'cluster' },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  const hits = stdout.match(/9 api_error events in 24h/g) || [];
+  assert.strictEqual(hits.length, 2, 'two stores are two incidents');
+});
+
+test('a sweep that names no store groups each machine alone', { skip }, () => {
+  // Backward compatibility, and the safe default: an older otel-sweep says
+  // nothing about stores, and guessing they are shared would merge two.
+  const payload = JSON.stringify({
+    local: { ...CLUSTER_PAIR.local, store: undefined },
+    server: { ...CLUSTER_PAIR.server, store: undefined },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /local: 9 api_error events in 24h/);
+  assert.match(stdout, /server: 9 api_error events in 24h/);
+});
+
+test('silent sessions stay per-machine even when the store is shared', { skip }, () => {
+  // A silent session is read from THIS machine's transcripts, so it is the one
+  // finding the grouping must not absorb.
+  const payload = JSON.stringify({
+    local: { ...CLUSTER_PAIR.local, errors_24h: {}, silent_sessions: [] },
+    server: {
+      ...CLUSTER_PAIR.server,
+      errors_24h: {},
+      silent_sessions: [{ session: 'dbb7b1bf-6de4-4e60-a04d-d9bbcf729bf3', mb: 4.2, modified: '2026-09-02T10:00:00Z' }],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /server: session dbb7b1bf exporting nowhere/);
+  assert.ok(!/local: session/.test(stdout), 'the quiet machine must not inherit its neighbour finding');
+  assert.match(stdout, /  local: silent=0/);
+  assert.match(stdout, /  server: silent=1/);
+});
+
+// --- error classification -------------------------------------------------
+//
+// api_error covers both a rate-limit rejection, which is what a busy day looks
+// like, and a dead OAuth token on a nightly timer, which is an outage nobody
+// would otherwise see. Counting them together makes the verdict red on ordinary
+// use, and a detector that is red every day is one nobody reads.
+
+const RATE_LIMIT = "This request would exceed your account's rate limit. Please try again later.";
+const DEAD_TOKEN = 'OAuth refresh token is no longer valid; run /login to re-authenticate';
+
+test('rate-limit rejections alone are not a finding', { skip }, () => {
+  const payload = JSON.stringify({
+    box: {
+      store: 'cluster',
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { api_request: 900 },
+      errors_24h: { api_error: 11 },
+      error_messages_24h: { [RATE_LIMIT]: 11 },
+      sessions_24h: 7,
+      silent_sessions: [],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 0, 'ordinary volume must not raise a daily banner');
+  assert.ok(!stdout.includes('FINDINGS'));
+  // Not a finding is not the same as not recorded: a rate-limit count that
+  // tripled is worth finding afterwards.
+  assert.match(stdout, /11 rate-limited request\(s\) in 24h, not a fault/);
+});
+
+test('an auth failure IS a finding, in the same event name', { skip }, () => {
+  // The rejecting half. A rule that muted api_error wholesale would pass the
+  // test above and hide the exact failure that prompted this — a timer that had
+  // been dying on a dead token since 2026-08-20.
+  const payload = JSON.stringify({
+    box: {
+      store: 'cluster',
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { api_request: 900 },
+      errors_24h: { api_error: 13 },
+      error_messages_24h: { [RATE_LIMIT]: 11, [DEAD_TOKEN]: 2 },
+      sessions_24h: 7,
+      silent_sessions: [],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1);
+  assert.match(stdout, /box: 2 x OAuth refresh token is no longer valid/);
+  assert.ok(!/x This request would exceed/.test(stdout), 'the benign half must stay out of the verdict');
+  assert.match(stdout, /11 rate-limited request\(s\)/, 'and stay in the beat');
+});
+
+test('without a message breakdown every error is still a finding', { skip }, () => {
+  // A sweep too old to report messages permits no class judgement, so the check
+  // must fall back to counting rather than to trusting.
+  const payload = JSON.stringify({
+    box: {
+      store: 'cluster',
+      backends: { loki: 'ready', prometheus: 'ready', tempo: 'ready' },
+      events_24h: { api_request: 900 },
+      errors_24h: { api_error: 11 },
+      sessions_24h: 7,
+      silent_sessions: [],
+    },
+  });
+  const { code, stdout } = run(payload);
+  assert.strictEqual(code, 1, 'unknown must not read as benign');
+  assert.match(stdout, /box: 11 api_error events in 24h/);
+});
