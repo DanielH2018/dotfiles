@@ -924,6 +924,23 @@
           }
         ]
       },
+      {{/* `claude agents` files a session under "Completed" when the CLI's own regex
+           chain reads a `result:` line in the last 800 characters of the turn text -- a
+           marker that short-circuits every later branch, so a session writing one while
+           a deploy is still outstanding drops off the operator's queue. This blocks that
+           turn when the same window also says the work is unfinished, and asks for the
+           `result:` + `next:` pair that reaches the working state instead. Background
+           jobs only. The hook's own docstring carries which three steps of the chain are
+           ported and why the rest are not. */}}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/premature-done.py",
+            "timeout": 10
+          }
+        ]
+      },
       {{/* the session's own worktree is the one prune-worktrees.py can never reap: while
            the session lives it holds the lock and stands in the directory, so the sweeper
            is always a session late for it. This asks for the cleanup in-session instead,
