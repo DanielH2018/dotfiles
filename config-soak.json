@@ -357,39 +357,49 @@
       "landed": "2026-07-25T23:56:39.220Z"
     },
     {
+      "path": "home/private_dot_claude/rules/comments.md",
+      "hash": "63f4fe04b5862daf4458bad2daa7412488c7e61ecbc8cb3c034eb5962981d992",
+      "landed": "2026-09-02T12:14:48.417Z"
+    },
+    {
       "path": "home/private_dot_claude/rules/go.md",
-      "hash": "bc0bd77220f8a2cc7e16bc099ac22019e3020a0666db542bd5bc0aaf47fd3be8",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "2c60d57172568c8c28d99dd7d19535ff212a489058c764a3d05d5e408b7b89dd",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/java-kotlin.md",
-      "hash": "1197b9bb6a9072aee8cc013a17972ad047b78e550c7f4d1a520f02f501e7af94",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "ba218cd6d192771a29c21c8211c4960a2299f9b251ccb8213445e4896ff7ba3e",
+      "landed": "2026-09-02T12:14:48.417Z"
+    },
+    {
+      "path": "home/private_dot_claude/rules/markdown.md",
+      "hash": "d10f6dd3955919cc716d12caaf34d62966970d1fe8fde2f24b0652dd735075d6",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/python.md",
-      "hash": "62660718f862b17e5beee514db68ab8cb6c9160f9771cd8d8166b26eaf0a0ae6",
-      "landed": "2026-07-25T23:56:39.220Z"
+      "hash": "85afe1d1bff89fa65cea5abcdf6d37c698f7347c0bd5d3f98e9c616fcd10ec6d",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/rust.md",
-      "hash": "6b3c245b8832b3a75fdc29c0d00b964a32dfbdd07322b2ad27a16ef7ad50dcbd",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "c14c5308eb9f775ca2cd0cb4164148abe75046093d92f7953bfc844b74e82f3b",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/shell.md",
-      "hash": "5d31eabc5c9433dcf56edd71e4a9b31f71586a3bfb374a490d2275ac8beba4f6",
-      "landed": "2026-07-29T21:38:43.529Z"
+      "hash": "e97c137f9c5ab2d9cab0564a15014d77850e073bd0da9a5ad964fc8fe5e0f703",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/sql.md",
-      "hash": "9c02cab1f5daba494774c6e6a040d8cfed383b313e2433b5a17978d82e5470bd",
-      "landed": "2026-07-09T20:54:31.575Z"
+      "hash": "16aad1f59de7b80b982f5fdd407815e6ac094f73618e72257a54cf16e15f21f4",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/rules/typescript.md",
-      "hash": "19e4395058b5c1927e9aa8e3464548e76019aaac28aca6174b8fc71677b7d455",
-      "landed": "2026-07-25T23:56:39.220Z"
+      "hash": "b717991e0a49b5f16e4ab2bde96ecc937b3094df500e5e20ce367c91493df625",
+      "landed": "2026-09-02T12:14:48.417Z"
     },
     {
       "path": "home/private_dot_claude/skills/artifact-design/SKILL.md",
