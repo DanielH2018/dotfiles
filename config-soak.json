@@ -338,8 +338,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",
-      "hash": "878d60d9f8a370c9f10fb6abcd1679be9b6080d3c0b37804df4190d9ed243de1",
-      "landed": "2026-09-02T15:11:08.681Z"
+      "hash": "7e71749ab0ccb90d3ab512db4cb10891866258c3b39540376a5a166b6a6f2247",
+      "landed": "2026-09-02T15:16:27.350Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",

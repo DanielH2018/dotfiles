@@ -93,6 +93,16 @@ check(
     "a result line inside a fence is not classified done",
     mod.classifies_done("Here is the shape:\n\n```\nresult: something\n```\n") is None,
 )
+# The 800-character window can cut a fenced block in half, leaving a lone closer.
+# `fence_spans` alternates, so it reads that closer as an opener and treats the rest of
+# the window as fenced - which suppresses a real `result:` line after it. Pinned here
+# because it is the safe direction (a miss, not a false block) and because the
+# alternative reading would need state the window does not carry.
+check(
+    "a result line after a cut-off fence is not classified done",
+    mod.classifies_done("  spans.append(x)\n```\n\nresult: the sweep finished.")
+    is None,
+)
 check(
     "a later result line without next outranks an earlier one with next",
     mod.classifies_done("result: first pass done.\n\nnext: keep going.\n\n" + KAGI)
