@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "03c15d21f60fa60b2efa2b7981629bd0a5f24db156cf4a4d591cf543645621fe",
-      "landed": "2026-08-29T19:28:23.893Z"
+      "hash": "dfd3684bcd3c2d2e7fea745164a95b4c5d0908774d2b6710a3058e5177fc6584",
+      "landed": "2026-09-02T15:11:08.681Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -197,6 +197,11 @@
       "landed": "2026-08-01T12:04:20.075Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_premature-done.py",
+      "hash": "2ac856db93e04de1af1d6655a8a6a620d600a3fcfc32425a1f0788b70b03972e",
+      "landed": "2026-09-02T15:11:08.681Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_protect-secrets.sh",
       "hash": "f7e3606d5af59f6ed3117b16db470a1c9ef8c17448e6fff9e96dfa5b63fd3cd4",
       "landed": "2026-08-02T19:58:03.633Z"
@@ -330,6 +335,11 @@
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
       "hash": "a74aabb50d2b7f6ee3d71728c159eb44d798a0e99f9d65ef4cc3a4b93392389b",
       "landed": "2026-08-21T19:52:57.941Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_premature_done.py",
+      "hash": "878d60d9f8a370c9f10fb6abcd1679be9b6080d3c0b37804df4190d9ed243de1",
+      "landed": "2026-09-02T15:11:08.681Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
