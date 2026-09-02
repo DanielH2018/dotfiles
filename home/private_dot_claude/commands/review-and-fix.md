@@ -12,14 +12,18 @@ Parse the autonomy mode from `$ARGUMENTS`. Default to `default` if not provided 
 
 Check if `.claude/review-loop-triage.local.md` exists. If it does, read it. This file contains triage decisions from previous iterations — findings already SKIPped or FIXed.
 
-Build an exclusion list from all entries:
+Build an exclusion list from all entries. A `DEFER` row belongs in it: the finding is already
+filed as an issue, so re-raising it inside this loop would re-file it and inflate that issue's
+re-observation count, which is the signal that a finding recurred across separate reviews.
 
 ```
 PREVIOUSLY TRIAGED — DO NOT RE-RAISE:
-- file: path/to/file.ts, desc: "description of finding", disposition: SKIP|FIXED, reason: "..."
+- file: path/to/file.ts, desc: "description of finding", disposition: SKIP|FIXED|DEFER, reason: "...", issue: #<n>
 ```
 
-This list is passed to review agents in Phase 1 and used as a safety net in Phase 2.
+This list is passed to review agents in Phase 1 and used as a safety net in Phase 2. A `DEFER`
+row carries the issue number that tracks it; the finding is filed, so it is out of this loop
+rather than dismissed.
 
 ---
 
@@ -60,9 +64,11 @@ If a finding from Phase 1 still matches a previously-triaged entry despite the e
 
 You are the arbiter. For each finding from Phase 1, first **verify** it yourself: read the actual code at the cited file:line. If the finding is stale or already fixed, classify as SKIP without further steps.
 
-For everything else, read `review-arbiter.md` (in this same commands/ directory) and apply the classification logic it defines in full — it is the single source of truth for the SKIP/HAIKU-FIX/SONNET-FIX taxonomy and for how each autonomy mode (from `$ARGUMENTS`) should be applied. Do not re-derive the taxonomy here.
+For everything else, read `review-arbiter.md` (in this same commands/ directory) and apply the classification logic it defines in full — it is the single source of truth for the SKIP/DEFER/HAIKU-FIX/SONNET-FIX taxonomy and for how each autonomy mode (from `$ARGUMENTS`) should be applied. Do not re-derive the taxonomy here.
 
-Produce the approved fixes list and skipped list before proceeding.
+File every `DEFER` finding as the arbiter describes, and keep its issue number for the ledger.
+
+Produce the approved fixes list, the deferred list with issue numbers, and the skipped list before proceeding.
 
 ---
 
@@ -177,6 +183,9 @@ Format:
 
 SKIPPED:
 - file: path/to/file.ts, desc: "description of finding", reason: "why it was skipped"
+
+DEFERRED:
+- file: path/to/file.ts, desc: "description of finding", issue: #<n>
 
 FIXED:
 - file: path/to/file.ts, desc: "description of finding", commit: <hash>

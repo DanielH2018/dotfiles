@@ -360,6 +360,18 @@
       "Bash(gh pr comment:*)",
       "Bash(gh pr edit:*)",
       "Bash(gh pr close:*)",
+      {{/* Issue plumbing runs unattended for the same reason PR plumbing does. `scripts/dev/findings.py`
+           in the server repo files, comments on, relabels and closes issues at the end of a review or a
+           session, and CLAUDE.md instructs every session to file a finding it will not fix. Each verb is
+           reversible from the GitHub UI; `gh issue delete` is deliberately absent. In auto mode the
+           classifier judges the command text and suspends these rules, so the wrapper's stable command
+           line is what keeps that judgement consistent — these entries help outside auto mode. */}}
+      "Bash(gh issue create:*)",
+      "Bash(gh issue edit:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue close:*)",
+      "Bash(gh issue reopen:*)",
+      "Bash(gh label create:*)",
       {{/* adding a worktree only creates a directory and a branch; `git worktree remove` stays in the
            ask list because it discards uncommitted work in a tree another session may be using. */}}
       "Bash(git worktree add:*)",

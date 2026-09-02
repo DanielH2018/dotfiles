@@ -9,7 +9,9 @@ disable-model-invocation: true
 
 Assign exactly one classification:
 
-**`SKIP`** — false positive, stylistic nit, unnecessary complexity, or already fixed/stale.
+**`SKIP`** — false positive, stylistic nit, unnecessary complexity, or already fixed/stale. `SKIP` feeds the do-not-re-raise list, so it means the finding must never come back.
+
+**`DEFER`** — real and in scope for the repo, but out of scope for this loop: a design change, a different service, or a fix that needs an operator decision. A deferred finding is filed, never suppressed. In the server repo, file it with `uv run python scripts/dev/findings.py open --title "<finding>" --body-file <f> --severity <high|medium|low> --kind gap --file <file:line> --source review-and-fix`, and write the issue number into the ledger row. Elsewhere, `gh issue create` directly.
 
 **`HAIKU-FIX`** — the fix is mechanical and single-line, with no behavioral ambiguity.
 
@@ -37,6 +39,7 @@ The mode is passed as an argument from `/review-loop`.
   | 1 | src/a.ts:42 | HAIKU-FIX | Missing null check |
   | 2 | src/b.ts:15 | SONNET-FIX | Race condition in refresh |
   | 3 | src/c.ts:99 | SKIP | Stylistic preference |
+  | 4 | src/d.ts:210 | DEFER | Retry policy belongs in the scheduler, not here |
   ```
 - Wait for user approval before proceeding
 - User can modify classifications or skip additional findings
