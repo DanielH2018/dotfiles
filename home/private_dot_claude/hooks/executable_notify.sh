@@ -54,10 +54,10 @@ elif [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
   # MediaPlayer is the identical sound with a gain knob in front of it. Warp still draws the
   # banner itself (is_needs_attention_enabled), so nothing here shows one.
   #
-  # 20% was chosen by ear, A/B'd against the same file at 100%. Do not raise it to the 35 or 50
-  # play-sound.sh uses: those gains are for the soft `complete` sample, and this is the short
-  # bright system beep, which carries much further at the same gain.
-  WINDOWS_CUE_VOLUME_PCT=20
+  # 25% was chosen by ear, A/B'd against the same file at 100% and then at 20%. Do not raise it
+  # to the 35 or 50 play-sound.sh uses: those gains are for the soft `complete` sample, and this
+  # is the short bright system beep, which carries much further at the same gain.
+  WINDOWS_CUE_VOLUME_PCT=25
   printf -v CUE_VOLUME '%d.%02d' \
     $(( WINDOWS_CUE_VOLUME_PCT / 100 )) $(( WINDOWS_CUE_VOLUME_PCT % 100 ))
   if command -v powershell.exe >/dev/null 2>&1; then

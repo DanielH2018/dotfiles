@@ -192,7 +192,7 @@ ctrl_tab_behavior_setting = "cycle_most_recent_session"
 #
 # play_notification_sound = false makes Warp visual-only. It does NOT silence the cue that
 # matters: notify.sh still fires on permission_prompt and agent_needs_input, and its native
-# Windows branch plays the system beep .wav itself, through MediaPlayer at 20%. So a genuine
+# Windows branch plays the system beep .wav itself, through MediaPlayer at 25%. So a genuine
 # block still chimes, on a channel gated on needing you and at a gain that is settable; only
 # the unconditional toast chime is gone.
 #

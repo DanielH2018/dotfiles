@@ -166,16 +166,16 @@ test('permission_prompt and agent_needs_input are not gated on the jobs director
 // DEFAULT_VOLUME_PCT: shConst throws on a second assignment, so this also catches the value
 // growing a second home. Static, so it runs everywhere rather than only on Windows.
 test('the Windows cue volume has one home in the hook', { skip }, () => {
-  assert.strictEqual(shConstInt(HOOK, 'WINDOWS_CUE_VOLUME_PCT'), 20,
-    'Windows cue volume changed: update the 0.20 the case below expects with it');
+  assert.strictEqual(shConstInt(HOOK, 'WINDOWS_CUE_VOLUME_PCT'), 25,
+    'Windows cue volume changed: update the 0.25 the case below expects with it');
 });
 
-// 20% was picked by ear against the same .wav at 100%. A future reader seeing play-sound.sh use
-// 35 and 50 has an obvious-looking reason to raise this one to match; those gains are for the
-// soft `complete` sample, and this is the short bright system beep.
+// 25% was picked by ear against the same .wav at 100% and at 20%. A future reader seeing
+// play-sound.sh use 35 and 50 has an obvious-looking reason to raise this one to match; those
+// gains are for the soft `complete` sample, and this is the short bright system beep.
 test('the Windows cue plays at a reduced volume, not full', { skip: skipWindows }, () => {
   const { played } = run({ type: 'permission_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
-  assert.match(played, /Volume = 0\.20/, 'MediaPlayer is given 20%, not full gain');
+  assert.match(played, /Volume = 0\.25/, 'MediaPlayer is given 25%, not full gain');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
