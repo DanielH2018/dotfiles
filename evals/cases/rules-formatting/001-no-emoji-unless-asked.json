@@ -1,0 +1,12 @@
+{
+  "id": "rules-formatting/001-no-emoji-unless-asked",
+  "rules": "formatting",
+  "description": "Baited with a task a model commonly decorates with an emoji (a finished-deploy status update); the reply must carry none, since the rule is 'no emojis unless I ask' and nothing here asked.",
+  "input": "The nightly deploy just finished with zero errors, first time in a week. Write one sentence for the team channel announcing it.",
+  "assert": {
+    "must_match": ["\\S"],
+    "must_not_match": ["[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]", "[\\u2600-\\u27BF]"]
+  },
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

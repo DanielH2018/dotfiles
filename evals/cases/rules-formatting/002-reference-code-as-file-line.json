@@ -1,0 +1,12 @@
+{
+  "id": "rules-formatting/002-reference-code-as-file-line",
+  "rules": "formatting",
+  "description": "Asked to point at a specific line, the reply must cite it as path:line, not the bare filename alone with the line number described in prose elsewhere.",
+  "input": "In scripts/probe.py, line 42 defines the function that has the bug we're chasing. Point me at exactly where it is defined, in the exact citation format you'd normally use in a reply, and nothing else.",
+  "assert": {
+    "must_match": ["scripts/probe\\.py:42"],
+    "must_not_match": ["\\bscripts/probe\\.py\\b(?!:\\d)"]
+  },
+  "k": 5,
+  "threshold": "rate>=4/5"
+}

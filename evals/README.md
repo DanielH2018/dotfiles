@@ -218,6 +218,7 @@ The rules ship in two places. Only one is gradable here.
 | Home | Governs | Covered? |
 |---|---|---|
 | `CLAUDE.md` → `### Sentence-level clarity` | text written to disk; reaches subagents | **yes** — the seven cases below |
+| `CLAUDE.md` → `#### Formatting rules for written output` | text written to disk; reaches subagents | **yes** — `rules-formatting`, see below |
 | `output-styles/daniel-voice.md` | conversational replies in the main session | **no** |
 
 The output style is not testable by this harness: it governs the interactive main loop, where
@@ -270,3 +271,46 @@ Measured at k=5 on the treatment arm (2026-08-17), after those three recuts: 001
 
 **Not covered:** whether the rules help in a real multi-turn session; whether they hold when
 competing with a long task context; and the output style, per the scope table above.
+
+### Fully regex-graded cases: `rules-formatting`
+
+Prose-rule cases are not only for rules that need a judge. `evals/cases/rules-formatting/`
+grades `#### Formatting rules for written output` — no emojis unless asked, code referenced
+as `path:line`, a local path handed over as a clickable markdown link rather than raw — and
+none of its three cases carries a `rubric`:
+
+| Case | Rule | Gate |
+|---|---|---|
+| `001-no-emoji-unless-asked` | no emojis unless asked | regex: no BMP-symbol or astral (surrogate-pair) codepoint |
+| `002-reference-code-as-file-line` | reference code as `file:line` | regex: `path:line` present, bare `path` (no trailing `:digit`) absent |
+| `003-clickable-link-not-raw-path` | paths go as clickable markdown links, never raw | regex: `[label](file://…)` present, the bare path outside a `file://` href absent |
+
+**When a rule earns a rubric-free case, and when it doesn't.** These three are fully
+mechanical: a reply either does or does not contain an emoji codepoint, a `path:line` token,
+or a markdown link wrapping the path — there is no reading in between, unlike "one idea per
+sentence" or "no noun stacks," where a human (or a judge) has to decide whether a given
+sentence actually overloads the reader. Reach for a bare `assert` (no `rubric` key) only when
+the violation is a string/codepoint fact, not a judgment call — otherwise the false-fail and
+false-pass risk that motivates the `rubric` on every rules-sentence-clarity case applies here
+too.
+
+Omitting `rubric` is load-bearing, not just tidiness: `evals/lib/grade.mjs`'s `gradeFromParts`
+takes a `needsJudge` flag, and `evals/run-evals.mjs` sets it false exactly when
+`caseDef.rubric` is absent, skipping the live judge call entirely — the case is graded on
+`checkAssertions` alone, with zero API spend past the one call that runs the thing under test.
+Every other case in this repo still carries a `rubric` and is judged as before; this is
+additive, not a change to how existing cases grade. `tests/evals/evals-grade.test.mjs` pins
+`needsJudge`'s default (`true`) so a case that forgets to add one still requires a judge
+result rather than silently passing on the assertion alone.
+
+Each gate has a red-proof pair in `tests/evals/evals-rules-formatting.test.mjs`, same
+convention as the sentence-clarity `GATES` table in `evals-load-rules.test.mjs`: one input the
+gate must reject, one it must admit, checked with `checkAssertions` directly — no API calls,
+so these run with the rest of the unit suite and catch a gate that quietly stopped firing.
+
+**Adding a fourth rules-formatting case, or a new rules-`<slug>` set:** register the section
+heading in `RULES_SECTIONS` (`evals/lib/load-rules.mjs`), write the case under
+`evals/cases/rules-<slug>/`, and only add a `rubric` if the violation genuinely needs a
+reader's judgment to spot — a case that can be graded by `checkAssertions` alone should stay
+that way, both for cost and because a regex gate is easier to prove correct (a red-proof pair)
+than a rubric is to prove non-overreaching (see the rubric-strictness note above).

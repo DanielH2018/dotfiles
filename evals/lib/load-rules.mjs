@@ -15,6 +15,7 @@ const CLAUDE_MD_TMPL = ['home', 'private_dot_claude', 'CLAUDE.md.tmpl'];
 // Slug -> the exact heading line to slice out of the rendered CLAUDE.md.
 export const RULES_SECTIONS = {
   'sentence-clarity': '### Sentence-level clarity',
+  'formatting': '#### Formatting rules for written output',
 };
 
 // Pinned so results don't drift with whatever the session default happens to be;

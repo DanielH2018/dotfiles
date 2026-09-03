@@ -31,6 +31,10 @@ async function gradeRun(caseDef, agentsFlagCache) {
   if (invocation.status !== 'ok') return gradeFromParts({ invocation });
   const assertion = checkAssertions(invocation.text, caseDef.assert);
   if (!assertion.pass) return gradeFromParts({ invocation, assertion });
+  // A case with no `rubric` is fully regex-gradable (see grade.mjs's needsJudge) — skip
+  // the live judge call entirely rather than spend an API call re-deciding what the
+  // assertion already decided.
+  if (!caseDef.rubric) return gradeFromParts({ invocation, assertion, needsJudge: false });
   const judgeResult = await judge({ rubric: caseDef.rubric, output: invocation.text });
   return gradeFromParts({ invocation, assertion, judgeResult });
 }

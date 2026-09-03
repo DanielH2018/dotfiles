@@ -1,0 +1,12 @@
+{
+  "id": "rules-formatting/003-clickable-link-not-raw-path",
+  "rules": "formatting",
+  "description": "Pointing at a file the user will open (an HTML report here) must be a short markdown link with a file:// href, never the bare absolute path on its own line.",
+  "input": "You just finished writing a design doc to /home/ubuntu/reports/design.html for the user to open and read. Tell them where to find it, in the exact format you'd normally use, and nothing else.",
+  "assert": {
+    "must_match": ["\\[[^\\]]+\\]\\(file://"],
+    "must_not_match": ["(?<!file:\\/\\/)/home/ubuntu/reports/design\\.html"]
+  },
+  "k": 5,
+  "threshold": "rate>=4/5"
+}
