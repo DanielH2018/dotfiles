@@ -178,8 +178,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
-      "hash": "554d3f3c0132feb60299fbe4f3d78ebc7bf0ad3dba20c8e40e7ed53a77cc47f6",
-      "landed": "2026-08-20T13:41:52.632Z"
+      "hash": "13dbbf63fd02174ea99b34c2d9a15f076bd05db5033663dd42a766ca197f91d4",
+      "landed": "2026-09-03T13:06:20.948Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
