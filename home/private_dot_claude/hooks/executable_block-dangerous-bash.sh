@@ -418,8 +418,23 @@ BDB_OLD=none
 # It still gates on the library having loaded, so a census row means the same thing it
 # always did — no row at all when there was nothing to parse with, rather than a row
 # claiming `unreadable`. CMDPARSE=off leaves BDB_LIB at 0, which covers the kill switch.
+#
+# Two ways to arm it, and they don't stack:
+#   CMDPARSE_SHADOW=1          every call logs (the original, deterministic switch —
+#                               cmdparse-shadow.test.js pins this path)
+#   CMDPARSE_SHADOW_SAMPLE=N   1-in-N calls log, chosen fresh each call via $RANDOM
+# CMDPARSE_SHADOW takes priority when both are set. CMDPARSE_SHADOW_ROLL overrides the
+# $RANDOM draw outright — a test seam, same shape as run-bounded.sh's RB_TIMEOUT — so a
+# test can force either branch of the sample without depending on $RANDOM's distribution.
 BDB_SHADOW=0
-if [ "${CMDPARSE_SHADOW:-0}" = 1 ] && [ "$BDB_LIB" = 1 ]; then BDB_SHADOW=1; fi
+if [ "$BDB_LIB" = 1 ]; then
+  if [ "${CMDPARSE_SHADOW:-0}" = 1 ]; then
+    BDB_SHADOW=1
+  elif [[ "${CMDPARSE_SHADOW_SAMPLE:-0}" =~ ^[1-9][0-9]*$ ]]; then
+    bdb_roll=${CMDPARSE_SHADOW_ROLL:-$((RANDOM % CMDPARSE_SHADOW_SAMPLE))}
+    [[ "$bdb_roll" =~ ^[0-9]+$ ]] && [ "$bdb_roll" -eq 0 ] && BDB_SHADOW=1
+  fi
+fi
 
 # Invoked indirectly, from the EXIT trap installed below, so no call site is visible here:
 # SC2329 fires for the function and SC2317 for every command in its body.
@@ -509,7 +524,28 @@ _bdb_shadow_log() {
     done
   fi
   local logdir="${CLAUDE_SHADOW_LOG_DIR:-$HOME/.claude/logs}"
-  mkdir -p "$logdir" 2>/dev/null && jq -cn \
+  mkdir -p "$logdir" 2>/dev/null || return 0
+
+  # The census reuses BDB_NORMSEG/BDB_NORMSUB (see the BDB_SCANSET comment above) so the
+  # only real child process left here is jq itself, run from an EXIT trap — a hung jq or a
+  # stalled logdir filesystem would otherwise hang the hook on every call it fires for.
+  # Bounded via run_bounded (M10) instead of a bare `jq >> file`; sourced lazily, here
+  # rather than at file scope, so a run where BDB_SHADOW never goes to 1 (the common case
+  # at CMDPARSE_SHADOW_SAMPLE's default) pays nothing for it. RUN_BOUNDED_LIB is a test
+  # seam, same shape as HOOK_INPUT_LIB above.
+  # shellcheck disable=SC1090,SC1091
+  . "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}" 2>/dev/null || true
+  # Fallback when run-bounded.sh didn't source: run jq unbounded rather than drop the row
+  # silently — same degrade shape as lint-after-edit.sh's stub.
+  # shellcheck disable=SC2034  # RB_SIGNAL mirrors the real lib's out-param contract
+  command -v run_bounded >/dev/null 2>&1 || run_bounded() {
+    shift 2
+    case "${1:-}" in --) shift ;; *) shift; [ "${1:-}" = -- ] && shift ;; esac
+    RB_STATUS=ok; RB_SIGNAL=""
+    RB_OUT=$("$@" 2>&1); RB_EXIT=$?
+  }
+
+  run_bounded 3 32768 -- jq -cn \
     --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg hook block-dangerous-bash \
     --arg cmd "$COMMAND" \
@@ -523,8 +559,12 @@ _bdb_shadow_log() {
     '{ts:$ts,hook:$hook,cmd:$cmd,old:$old,status:$status,nseg:$nseg,nsubseg:$nsubseg,
       newly_anchored:(if $newly=="" then null else ($newly|split(" ")) end),
       newly_anchored_sub:(if $newly_sub=="" then null else ($newly_sub|split(" ")) end),
-      sub_anchored:(if $found_sub=="" then null else ($found_sub|split(" ")) end)}' \
-    >> "$logdir/cmdparse-shadow.jsonl" 2>/dev/null
+      sub_anchored:(if $found_sub=="" then null else ($found_sub|split(" ")) end)}'
+  # timeout/truncated/killed/error are all could-not-evaluate (run-bounded.sh's contract) —
+  # drop the row rather than write a truncated or partial one.
+  if [ "$RB_STATUS" = ok ] && [ "${RB_EXIT:-1}" = 0 ]; then
+    printf '%s\n' "$RB_OUT" >> "$logdir/cmdparse-shadow.jsonl" 2>/dev/null
+  fi
   return 0
 }
 [ "$BDB_SHADOW" = 1 ] && trap _bdb_shadow_log EXIT

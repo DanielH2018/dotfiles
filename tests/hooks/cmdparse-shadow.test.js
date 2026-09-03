@@ -28,6 +28,8 @@ const run = (hook, command, env = {}) => {
   const base = { ...process.env, CMDPARSE_LIB: LIB };
   delete base.CMDPARSE_SHADOW;
   delete base.CMDPARSE;
+  delete base.CMDPARSE_SHADOW_SAMPLE;
+  delete base.CMDPARSE_SHADOW_ROLL;
   return execFileSync('bash', [hook], {
     input: JSON.stringify({ tool_input: { command } }),
     encoding: 'utf8',
@@ -108,6 +110,49 @@ test('CMDPARSE=off disables the shadow even with CMDPARSE_SHADOW=1', () => {
   const d = logDir('killswitch');
   run(ACB, 'echo hi && ls', { CMDPARSE_SHADOW: '1', CMDPARSE: 'off', CLAUDE_SHADOW_LOG_DIR: d });
   assert.deepStrictEqual(readLog(d), []);
+});
+
+// CMDPARSE_SHADOW_SAMPLE re-arms the census at 1-in-N instead of every call.
+// CMDPARSE_SHADOW_ROLL is the test seam over the $RANDOM draw (same shape as
+// run-bounded.sh's RB_TIMEOUT) — 0 forces the sampled branch to fire, anything else
+// forces it to skip, without depending on $RANDOM's distribution.
+test('CMDPARSE_SHADOW_SAMPLE logs on a 0 roll and skips on a nonzero one', () => {
+  const hit = logDir('sample-hit');
+  run(BDB, 'echo hi && ls', {
+    CMDPARSE_SHADOW_SAMPLE: '10', CMDPARSE_SHADOW_ROLL: '0', CLAUDE_SHADOW_LOG_DIR: hit,
+  });
+  assert.strictEqual(readLog(hit).length, 1);
+
+  const miss = logDir('sample-miss');
+  run(BDB, 'echo hi && ls', {
+    CMDPARSE_SHADOW_SAMPLE: '10', CMDPARSE_SHADOW_ROLL: '3', CLAUDE_SHADOW_LOG_DIR: miss,
+  });
+  assert.deepStrictEqual(readLog(miss), []);
+});
+
+// CMDPARSE_SHADOW=1 wins over CMDPARSE_SHADOW_SAMPLE when both are set, so the
+// deterministic switch this suite otherwise relies on cannot be silently diluted by an
+// ambient sample rate (settings.base.json ships one).
+test('CMDPARSE_SHADOW=1 takes priority over CMDPARSE_SHADOW_SAMPLE', () => {
+  const d = logDir('shadow-wins');
+  run(BDB, 'echo hi && ls', {
+    CMDPARSE_SHADOW: '1', CMDPARSE_SHADOW_SAMPLE: '1000', CMDPARSE_SHADOW_ROLL: '999',
+    CLAUDE_SHADOW_LOG_DIR: d,
+  });
+  assert.strictEqual(readLog(d).length, 1);
+});
+
+// A malformed CMDPARSE_SHADOW_SAMPLE (non-numeric, zero, negative) is treated as unset
+// rather than as a crash or a decision change — bad config degrades to off, same
+// posture as every other malformed-input case this hook takes.
+test('a non-numeric or non-positive CMDPARSE_SHADOW_SAMPLE is treated as off', () => {
+  for (const bad of ['0', '-5', 'abc', '3.5']) {
+    const d = logDir(`sample-bad-${bad.replace(/[^a-z0-9]/gi, '_')}`);
+    run(BDB, 'echo hi && ls', {
+      CMDPARSE_SHADOW_SAMPLE: bad, CMDPARSE_SHADOW_ROLL: '0', CLAUDE_SHADOW_LOG_DIR: d,
+    });
+    assert.deepStrictEqual(readLog(d), [], `CMDPARSE_SHADOW_SAMPLE=${bad}`);
+  }
 });
 
 // The census of the two verified bypasses: the anchored rules could not see past a newline,
@@ -293,4 +338,23 @@ test('a stray cmd_parse between the parse and the trap is reported, not inherite
   });
   const [ctrl] = readLog(clean);
   assert.match(ctrl.status, /^unreadable:/, 'a real refusal is not a desync');
+});
+
+// The jq append is bounded via run_bounded (M10): timeout/truncated/killed/error are all
+// could-not-evaluate by that contract, and the census must drop the row rather than write
+// a partial one. RUN_BOUNDED_LIB points at a stub that always reports a non-ok status, so
+// this never depends on actually racing a real timeout.
+test('a non-ok run_bounded status drops the census row instead of writing one', () => {
+  const stub = path.join(tmp, 'run-bounded-stub.sh');
+  fs.writeFileSync(stub, [
+    '# shellcheck shell=bash',
+    'run_bounded() { RB_STATUS=timeout; RB_SIGNAL=""; RB_OUT=""; RB_EXIT=""; return 0; }',
+    '',
+  ].join('\n'));
+
+  const d = logDir('run-bounded-drop');
+  run(BDB, 'echo hi && ls', {
+    CMDPARSE_SHADOW: '1', CLAUDE_SHADOW_LOG_DIR: d, RUN_BOUNDED_LIB: stub,
+  });
+  assert.deepStrictEqual(readLog(d), []);
 });

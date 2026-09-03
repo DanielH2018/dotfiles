@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+'use strict';
+// shadow-report — read the M02 shadow census log and report, per rule family, whether it
+// ever fired over the log window.
+//
+// The census (block-dangerous-bash.sh's `_bdb_shadow_log`) exists to let three Bash guards
+// adopt cmdparse.sh's segmentation on evidence rather than faith, and stays armed afterwards
+// as the same instrument for "the next unknown gap" (settings.base.json's M02 comment). That
+// only pays off if someone reads the log; this is the someone. A future delete pass can
+// retire a family the report shows never fired across a real window — but see the split
+// below before reading "never fired" as "safe to delete everywhere."
+//
+// TWO POPULATIONS, reported separately, on purpose:
+//
+//   Census-instrumented families (today: ssh, terraform) — the log's newly_anchored /
+//   newly_anchored_sub / sub_anchored fields name these directly, so fired/never-fired
+//   counts here are real data.
+//
+//   Whole-string deny() rules (~40 sites: rm -rf, force-push, secrets reads, sops, systemctl,
+//   docker inspect, fork bomb, ...) — the log's `old` field is a generic deny/allow/none
+//   verdict per Bash call, with no attribution to which rule produced it. These are listed
+//   as NOT INSTRUMENTED. Reporting them as "never fired" would be a false clear on a rule
+//   that is still live — see MEMORY.md's "An optimisation can land green and be inert" and
+//   "Kuma exports only monitors that have beaten": absence of a signal here is absence of
+//   INSTRUMENTATION, not absence of firing.
+//
+// Usage:
+//   shadow-report [--log PATH] [--hook PATH] [--json]
+//
+//   --log PATH    the JSONL log to read (default: $CLAUDE_SHADOW_LOG_DIR or
+//                 ~/.claude/logs, plus cmdparse-shadow.jsonl)
+//   --hook PATH   block-dangerous-bash.sh source to read family names from (default: this
+//                 repo's own copy under home/private_dot_claude/hooks/ — the chezmoi
+//                 SOURCE, not a deployed copy, so the report is reproducible from a clean
+//                 checkout; pass the deployed ~/.claude/hooks/block-dangerous-bash.sh to
+//                 report against what actually produced a given log if the two have drifted)
+//   --json        machine-readable output instead of the text report
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const lib = require('./shadow-report-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const DEFAULT_HOOK = path.join(
+  REPO_ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh',
+);
+
+function parseArgs(argv) {
+  const opts = { log: null, hook: DEFAULT_HOOK, json: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--log') opts.log = argv[++i];
+    else if (a === '--hook') opts.hook = argv[++i];
+    else if (a === '--json') opts.json = true;
+    else if (a === '--help' || a === '-h') opts.help = true;
+    else {
+      process.stderr.write(`shadow-report: unrecognized argument: ${a}\n`);
+      process.exit(2);
+    }
+  }
+  return opts;
+}
+
+function defaultLogPath() {
+  const dir = process.env.CLAUDE_SHADOW_LOG_DIR || path.join(os.homedir(), '.claude', 'logs');
+  return path.join(dir, 'cmdparse-shadow.jsonl');
+}
+
+function fmtCount(n) {
+  return String(n).padStart(6, ' ');
+}
+
+function renderText(summary, denyRules, meta) {
+  const lines = [];
+  lines.push(`shadow-report: ${meta.logPath}`);
+  if (!meta.logExists) {
+    lines.push('  log file does not exist yet — nothing has fired the census in this window.');
+    lines.push('  (CMDPARSE_SHADOW_SAMPLE / CMDPARSE_SHADOW must be set for the hook to write it.)');
+    return lines.join('\n') + '\n';
+  }
+  lines.push(`  ${summary.totalRows} rows${meta.parseErrors ? `, ${meta.parseErrors} unparseable line(s) skipped` : ''}`);
+  if (meta.firstTs || meta.lastTs) lines.push(`  window: ${meta.firstTs || '?'} .. ${meta.lastTs || '?'}`);
+  lines.push('');
+
+  lines.push('status (row.status):');
+  for (const [k, v] of Object.entries(summary.statusCounts).sort((a, b) => b[1] - a[1])) {
+    lines.push(`  ${fmtCount(v)}  ${k}`);
+  }
+  const desyncTotal = Object.entries(summary.statusCounts)
+    .filter(([k]) => k.startsWith('desync:'))
+    .reduce((s, [, v]) => s + v, 0);
+  if (desyncTotal > 0) {
+    lines.push(`  ! ${desyncTotal} desync row(s) — a stray cmd_parse ran between the decision path and the`);
+    lines.push('    census (see _bdb_shadow_log\'s CP_STATUS guard); their newly_anchored data is suspect.');
+  }
+  lines.push('');
+
+  lines.push('whole-string decision (row.old — deny/allow/none, never which rule):');
+  for (const [k, v] of Object.entries(summary.oldCounts).sort((a, b) => b[1] - a[1])) {
+    lines.push(`  ${fmtCount(v)}  ${k}`);
+  }
+  lines.push('');
+
+  lines.push('census-instrumented rule families (fired vs never-fired, real data):');
+  for (const f of summary.families) {
+    const mark = f.fired ? 'FIRED       ' : 'NEVER FIRED ';
+    lines.push(
+      `  ${mark} ${f.family.padEnd(12)} newly_anchored=${f.newly_anchored} `
+      + `newly_anchored_sub=${f.newly_anchored_sub} sub_anchored=${f.sub_anchored}`,
+    );
+  }
+  const neverFired = summary.families.filter((f) => !f.fired).map((f) => f.family);
+  if (neverFired.length) {
+    lines.push('');
+    lines.push(`  delete-pass candidates (never fired over this window): ${neverFired.join(', ')}`);
+  }
+  lines.push('');
+
+  lines.push(`whole-string deny() rules — NOT INSTRUMENTED (${denyRules.length} distinct messages):`);
+  lines.push('  the log cannot say whether any one of these fired; row.old only records a generic');
+  lines.push('  deny/allow/none verdict per Bash call. Absence here is absence of instrumentation,');
+  lines.push('  not evidence a rule is dead — do not retire one of these off this report alone.');
+  for (const r of denyRules) lines.push(`  - ${r}`);
+  lines.push('');
+
+  lines.push(`disagreements (segment/substitution view found what the whole-string decision missed): ${summary.disagreements.length}`);
+  for (const d of summary.disagreements.slice(0, 50)) {
+    lines.push(`  ${d.ts}  ${d.family.padEnd(10)} ${d.field.padEnd(18)} old=${d.old}  ${JSON.stringify(d.cmd)}`);
+  }
+  if (summary.disagreements.length > 50) {
+    lines.push(`  ... and ${summary.disagreements.length - 50} more (use --json for the full list)`);
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  if (opts.help) {
+    process.stdout.write(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 34)
+      .map((l) => l.replace(/^\/\/ ?/, '')).join('\n') + '\n');
+    return;
+  }
+
+  const logPath = opts.log || defaultLogPath();
+  const hookSrc = fs.readFileSync(opts.hook, 'utf8');
+  const censusFamilies = lib.censusFamiliesFromSource(hookSrc);
+  for (const known of lib.MIN_KNOWN_CENSUS_FAMILIES) {
+    if (!censusFamilies.includes(known)) {
+      process.stderr.write(
+        `shadow-report: expected census family "${known}" not found in ${opts.hook} — `
+        + 'the family-extraction regex likely drifted from the hook source. Refusing to '
+        + 'report an empty or partial family list as if it were complete.\n',
+      );
+      process.exit(2);
+    }
+  }
+  const denyRules = lib.denyRuleLabelsFromSource(hookSrc);
+
+  const logExists = fs.existsSync(logPath);
+  let rows = [];
+  let parseErrors = 0;
+  if (logExists) {
+    const parsed = lib.parseLines(fs.readFileSync(logPath, 'utf8'));
+    rows = parsed.rows;
+    parseErrors = parsed.errors.length;
+    for (const e of parsed.errors) {
+      process.stderr.write(`shadow-report: ${logPath}:${e.lineNo}: ${e.error}\n`);
+    }
+  }
+
+  const summary = lib.summarize(rows, censusFamilies);
+  const meta = {
+    logPath,
+    logExists,
+    parseErrors,
+    firstTs: rows[0]?.ts,
+    lastTs: rows[rows.length - 1]?.ts,
+  };
+
+  if (opts.json) {
+    process.stdout.write(JSON.stringify({ meta, summary, denyRules }, null, 2) + '\n');
+  } else {
+    process.stdout.write(renderText(summary, denyRules, meta));
+  }
+}
+
+main();

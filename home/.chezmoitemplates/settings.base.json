@@ -49,27 +49,43 @@
     "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.daniel-hunter.com",
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}",
 {{ end }}
-    {{/* M02 shadow census: RETIRED, key deleted, machinery kept.
+    {{/* M02 shadow census: re-armed SAMPLED after a stint fully off.
 
-         It existed to measure what cmdparse.sh's shared segmentation WOULD decide, so the
-         three Bash guards could adopt it on evidence rather than on faith. All three have
-         now adopted it — allow-compound-bash and allow-readonly-remote in #285,
-         block-dangerous-bash in #288 — so the gap it was measuring is closed, and the
-         behaviour it detected is pinned directly by tests instead.
+         It exists to measure what cmdparse.sh's shared segmentation WOULD decide, so the
+         three Bash guards could adopt it on evidence rather than on faith. All three now
+         have — allow-compound-bash and allow-readonly-remote in #285, block-dangerous-bash
+         in #288 — so the gap it was built to measure is closed, and the behaviour it found
+         is pinned directly by tests. That is why it was turned OFF, not why it stays off:
+         it is kept armed as the same instrument for the next unknown gap — it is what
+         found the command-substitution bypass (#286) — and "closed" is a property of the
+         three known families, not a guarantee about a fourth.
 
-         It was not free. Measured on the deployed hook, interleaved on/off, median of 21:
-         +8.2ms on a short command, +24.0ms with substitutions, +65.2ms on a 20-segment
-         compound, +68.9ms when those segments are quoted — on EVERY Bash call, to write
-         ~3,600 rows a day nobody was reading.
+         The reason it went to fully off was cost, not correctness. Measured on the
+         deployed hook, interleaved on/off, median of 21: +8.2ms on a short command,
+         +24.0ms with substitutions, +65.2ms on a 20-segment compound, +68.9ms when those
+         segments are quoted — on EVERY Bash call, to write ~3,600 rows a day nobody was
+         reading. That measurement predates a fix noted at block-dangerous-bash.sh's BDB_SCANSET
+         comment: _bdb_shadow_log used to run its own cmd_parse and its own per-segment
+         _bdb_normalize (measured ~172ms of duplicate work on a 20-segment command) and now
+         reuses BDB_NORMSEG/BDB_NORMSUB from the decision path instead, so today's per-call
+         cost is smaller — the regex re-checks against already-computed strings, one jq
+         fork, one file append — though it was not independently re-measured for this
+         change. The append itself is now bounded via run_bounded (M10) instead of a bare
+         `jq >> file`, so a hung jq or a stalled filesystem in the EXIT trap cannot hang the
+         hook; see _bdb_shadow_log.
 
-         Re-enable by restoring "CMDPARSE_SHADOW": "1" here. Nothing else was removed: the
-         hooks still carry _bdb_shadow_log and the CP_SUBSEG walk, and their tests still
-         run against the flag set, so this is one key away whenever these guards are touched
-         again. That is deliberate — the census is what found the command-substitution
-         bypass (#286), and the next unknown gap will want the same instrument.
+         CMDPARSE_SHADOW_SAMPLE (below) sets the sampling denominator: 1-in-N Bash calls
+         pay the cost and get a census row, via $RANDOM (CMDPARSE_SHADOW_ROLL overrides it,
+         for tests). CMDPARSE_SHADOW=1 remains the old deterministic every-call switch —
+         restore it here for a short, complete corpus rather than a sampled one; the
+         existing cmdparse-shadow.test.js suite already pins that path. `bin/shadow-report`
+         reads the accumulated ~/.claude/logs/cmdparse-shadow.jsonl and is the intended way
+         to consume either mode's output — see its header for what it can and cannot say
+         from the log's fields.
 
          CMDPARSE=off remains the harder kill switch: it disables the shared parser
          everywhere, not just the census. */}}
+    "CMDPARSE_SHADOW_SAMPLE": "10",
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
          window unconditionally, and long sessions were compacting 3-6 times each —
          every compaction also truncates history before the remember pipeline can

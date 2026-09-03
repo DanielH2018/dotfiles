@@ -199,11 +199,11 @@ test('the acting and rotating row sets are source literals covering their rules 
 
 // --- Manifest shape ----------------------------------------------------------------
 
-test('manifest has all 19 rows from the spec table with required schema fields', () => {
+test('manifest has all 20 rows (the 19-row spec table plus G18) with required schema fields', () => {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  assert.strictEqual(manifest.length, 19);
+  assert.strictEqual(manifest.length, 20);
   const ids = manifest.map((r) => r.id).sort();
-  const expected = ['N1', 'N2', ...Array.from({ length: 17 }, (_, i) => `G${i + 1}`)].sort();
+  const expected = ['N1', 'N2', ...Array.from({ length: 18 }, (_, i) => `G${i + 1}`)].sort();
   assert.deepStrictEqual(ids, expected);
   for (const row of manifest) {
     for (const field of ['path', 'kind', 'rule', 'owner', 'finding']) {
