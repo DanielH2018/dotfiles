@@ -848,6 +848,23 @@
           }
         ]
       },
+      {{/* Fire-count logging: nothing recorded which of the 23 skills / 5 agents under
+           private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-
+           delete-pass had no evidence to weigh a removal against. Both "Agent" and
+           "Task" are named in the matcher for the same reason the hook itself checks
+           both tool_name spellings -- the harness has used either name for the
+           subagent-dispatch tool across versions, and matching only one silently
+           stops logging agent dispatches the next time it changes back. */}}
+      {
+        "matcher": "Skill|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/skill-usage-log.sh",
+            "timeout": 10
+          }
+        ]
+      },
       {{/* No ExitPlanMode entry. suggest-artifact.sh hung here and never fired once: a
            2026-08-06 count found zero ExitPlanMode calls across 653 transcripts, and
            link-artifact.sh absorbed the job it was written for — nudging when a Markdown

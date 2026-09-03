@@ -218,5 +218,16 @@
     "owner": "retention-sweep (row added, not yet in ROTATE_ROWS — see retention-sweep's source-literal row sets)",
     "finding": "shadow-router (bin/shadow-report)",
     "notes": "M02 shadow census sink (block-dangerous-bash.sh's _bdb_shadow_log); re-armed sampled via CMDPARSE_SHADOW_SAMPLE after a fully-off stint. 2.7MB / 5730 lines as of 2026-08-09 under the old always-on setting; sampling should slow growth well below that, but the row is added now rather than after it grows unbounded again. Same shape as G8/G9/G13 (rotate-size/truncate-lines diagnostic logs) — a follow-up can add it to ROTATE_ROWS if unattended rotation turns out to be needed; nothing here grants that on its own, per retention-sweep's own comment on APPLY_ROWS/ROTATE_ROWS being source literals."
+  },
+  {
+    "id": "G19",
+    "path": "~/.claude/logs/skill-usage.jsonl",
+    "kind": "file",
+    "rule": "truncate-lines",
+    "cap": "keep last 5000",
+    "grace": null,
+    "owner": "retention-sweep",
+    "finding": null,
+    "notes": "one line per Skill/Agent tool call, appended by executable_skill-usage-log.sh; same shape and cap as G13 (history.jsonl). Not from an audit finding -- added with the hook itself, since an unbounded per-invocation log is the exact failure mode G13/G8 already exist to cap."
   }
 ]

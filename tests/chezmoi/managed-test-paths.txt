@@ -8,6 +8,8 @@
 .claude/hooks/test_memory_stale_paths.py
 .claude/hooks/test_premature_done.py
 .claude/hooks/test_prune_worktrees.py
+.claude/hooks/test_skill_usage_log.py
+.claude/hooks/test_skill_usage_table.py
 .claude/hooks/test_worktree_landed.py
 .claude/hooks/tq-wrap-tests.py
 .claude/hooks/tq-wrap-tests.sh

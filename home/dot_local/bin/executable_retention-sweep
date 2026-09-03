@@ -30,7 +30,7 @@
 # --apply only, so rotation stays manual until it earns its own supervised run and a
 # separate, deliberate decision to add --rotate to the timer unit.
 #
-# ROTATE_ROWS covers G8, G9, G10, G13. G11 is excluded on purpose: its glob contains the
+# ROTATE_ROWS covers G8, G9, G10, G13, G19. G11 is excluded on purpose: its glob contains the
 # literal "cwd" marker and is skipped for every rule, unconditionally, before any row set
 # is consulted (see the cwd check in the sweep loop) — it is out of scope for every
 # sweeper mode, not specifically for rotation.
@@ -63,7 +63,7 @@ APPLY_ROWS=" G1 G2 G3 G4 G5 G6 G7 G12 G14 G15 G16 G17 "
 # The rotate/truncate rows. A source literal, same reasoning as APPLY_ROWS: reading it
 # from the manifest would mean a manifest edit could grant itself a rewrite path. Acting
 # on a row here additionally requires --rotate, on top of --apply.
-ROTATE_ROWS=" G8 G9 G10 G13 "
+ROTATE_ROWS=" G8 G9 G10 G13 G19 "
 
 APPLY=0
 ROTATE=0

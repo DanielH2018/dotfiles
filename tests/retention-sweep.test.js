@@ -191,7 +191,7 @@ test('the acting and rotating row sets are source literals covering their rules 
   const mr = src.match(/^ROTATE_ROWS="([^"]*)"/m);
   assert.ok(mr, 'ROTATE_ROWS literal not found');
   const rotateRows = mr[1].trim().split(/\s+/).sort();
-  assert.deepStrictEqual(rotateRows, ['G10', 'G13', 'G8', 'G9'].sort());
+  assert.deepStrictEqual(rotateRows, ['G10', 'G13', 'G19', 'G8', 'G9'].sort());
   assert.ok(!rotateRows.includes('G11'),
     'G11 stays cwd-skipped at runtime for every rule and must not gain a rotate row');
   assert.doesNotMatch(codeOf(SWEEP), /ROTATE_ROWS=\$\(|ROTATE_ROWS=.*jq/, 'the rotate row set must not be derived from the manifest');
@@ -199,11 +199,11 @@ test('the acting and rotating row sets are source literals covering their rules 
 
 // --- Manifest shape ----------------------------------------------------------------
 
-test('manifest has all 20 rows (the 19-row spec table plus G18) with required schema fields', () => {
+test('manifest has all 21 rows (the 19-row spec table plus G18 and G19) with required schema fields', () => {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  assert.strictEqual(manifest.length, 20);
+  assert.strictEqual(manifest.length, 21);
   const ids = manifest.map((r) => r.id).sort();
-  const expected = ['N1', 'N2', ...Array.from({ length: 18 }, (_, i) => `G${i + 1}`)].sort();
+  const expected = ['N1', 'N2', ...Array.from({ length: 19 }, (_, i) => `G${i + 1}`)].sort();
   assert.deepStrictEqual(ids, expected);
   for (const row of manifest) {
     for (const field of ['path', 'kind', 'rule', 'owner', 'finding']) {

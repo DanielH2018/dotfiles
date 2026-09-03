@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "23fcc18348e907aa98cd8e63c871ff3444b747b273b35da63e38d137584de28d",
-      "landed": "2026-09-03T14:35:39.291Z"
+      "hash": "da28bc51e0116e23c700e42724a46401e4fe66bc7b994a6994a50a1b9cbe477d",
+      "landed": "2026-09-03T15:47:37.828Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -247,6 +247,11 @@
       "landed": "2026-08-29T17:11:47.144Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
+      "hash": "579c72c296414efd7627572462d35221870cf4422e2fe745d7f1fa076fe605b0",
+      "landed": "2026-09-03T12:40:40.007Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
       "hash": "81e01c248be3369c8d400931078ef79f7fb63f36d0cbe939abf8bb46185b61c8",
       "landed": "2026-08-01T12:04:20.075Z"
@@ -345,6 +350,16 @@
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
       "hash": "0d84ef257e13f5366a911b6472d9e5a22503a0764dd9215da084d457fa62af42",
       "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
+      "hash": "481c6bd8104ebef7314988d4b04bd4c01143dd823470c1a124e604e6889346c7",
+      "landed": "2026-09-03T12:40:40.007Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_skill_usage_table.py",
+      "hash": "a46d9b49d87b81d63ca5c6c88e608e5293c35b882c2588b7064da73815d97815",
+      "landed": "2026-09-03T12:40:40.007Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
