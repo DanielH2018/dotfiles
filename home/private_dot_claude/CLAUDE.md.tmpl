@@ -58,7 +58,7 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. A hand-edit to a deployed file is reverted on the next `chezmoi apply` (templated sources) or silently drifts. Run `chezmoi source-path <file>` before editing any config under `~`; a `.tmpl` source means the deployed file is generated and hand-edits there are pointless.
+My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. `chezmoi-guard.sh` (PostToolUse) flags a direct edit under `~`: it auto-resyncs the source for a plain managed file, but only warns for a `.tmpl`/`modify_`/`run_` source — that edit is not reverted, so it stays live until you next `chezmoi apply`. Run `chezmoi source-path <file>` before editing any config under `~`.
 
 - **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/hooks/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
@@ -79,7 +79,7 @@ answering questions happen in place as usual, and a session already inside
 
 ## Git conventions
 
-- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `--no-verify`, `--no-gpg-sign`, and anything else that bypasses signing are off the table.
+- Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
 - Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
 - Write commit messages that explain *why*, not just what changed:
   ```
@@ -98,7 +98,7 @@ answering questions happen in place as usual, and a session already inside
 
 ## GitHub
 
-For anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, releases — use the authenticated `gh` CLI, never WebFetch (`WebFetch(domain:github.com)` is denied in settings and will fail); `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
+Use the authenticated `gh` CLI for anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, releases. `WebFetch(domain:github.com)` is denied (settings.permissions.json); `raw.githubusercontent.com` stays fetchable for raw files `gh` doesn't cover cleanly.
 
 ## Testing
 
