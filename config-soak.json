@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "da28bc51e0116e23c700e42724a46401e4fe66bc7b994a6994a50a1b9cbe477d",
-      "landed": "2026-09-03T15:47:37.828Z"
+      "hash": "7601a3a823cd3007cc4fc092b4d39b044c1dcf407a014914eead1d4335ffb109",
+      "landed": "2026-09-03T15:49:03.004Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "e40f1c938df7853cd7203193681cfcceacf54c52c3f05d8803d14956c0c78983",
-      "landed": "2026-09-03T14:38:47.637Z"
+      "hash": "fef643f20ef4ca86450dd15afaafbfba087a06422961c6b66bcce838850fc339",
+      "landed": "2026-09-03T15:49:03.004Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -150,6 +150,11 @@
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
       "hash": "ff4f4e4976f0c527edf915b698f1db2a0ac83d70ac1d86aded0ac25cc4ff4dab",
       "landed": "2026-08-01T12:04:20.075Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_isolation-guard.sh",
+      "hash": "a6236027593cb226c49972ce2de43aab07578f50a7e059763b8ae1171557e9ea",
+      "landed": "2026-09-03T12:40:46.550Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
@@ -330,6 +335,11 @@
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
       "hash": "8388da2ed10136725fe99bc0a497c2cb4fe4a663fba08ee44c17fc47f2e2d0ef",
       "landed": "2026-08-21T15:25:57.903Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
+      "hash": "c12ef61751517151b75c500e5430b6a96c69de1f62d719543fdca761d83ed6e4",
+      "landed": "2026-09-03T12:40:46.550Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_index_size.py",
