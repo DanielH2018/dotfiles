@@ -42,6 +42,50 @@ if command -v osascript >/dev/null 2>&1; then
   osascript -e 'on run argv
     display notification (item 2 of argv) with title (item 1 of argv)
   end run' -- "$TITLE" "$MESSAGE"
+elif [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
+  # Native Windows, and deliberately not the WSL branch below: $OSTYPE is linux-gnu under WSL,
+  # so this cannot fire there. The interop leak that bans .exe launches from play-sound.sh
+  # (microsoft/WSL#41173) is a property of a bash whose owning wsl.exe has exited; a bash
+  # running directly on Windows owns no wsl.exe and takes no interop path.
+  #
+  # play-sound.sh would reach its terminal-bell fallback here, because none of paplay, pw-play
+  # or aplay exists on this bash -- and a bell has no volume. Warp rings it at whatever the
+  # system beep is set to, which is the whole complaint. Playing that same .wav through
+  # MediaPlayer is the identical sound with a gain knob in front of it. Warp still draws the
+  # banner itself (is_needs_attention_enabled), so nothing here shows one.
+  #
+  # 20% was chosen by ear, A/B'd against the same file at 100%. Do not raise it to the 35 or 50
+  # play-sound.sh uses: those gains are for the soft `complete` sample, and this is the short
+  # bright system beep, which carries much further at the same gain.
+  WINDOWS_CUE_VOLUME_PCT=20
+  printf -v CUE_VOLUME '%d.%02d' \
+    $(( WINDOWS_CUE_VOLUME_PCT / 100 )) $(( WINDOWS_CUE_VOLUME_PCT % 100 ))
+  if command -v powershell.exe >/dev/null 2>&1; then
+    # Reading the sound out of the registry rather than hardcoding it keeps the cue matching
+    # whatever the Sounds control panel is set to, and costs nothing: it happens inside the one
+    # process that was going to be spawned anyway.
+    #
+    # Open() is asynchronous, so Volume and Play() before it settles apply to nothing and the
+    # cue comes out at full gain -- hence the wait between them.
+    # shellcheck disable=SC2016  # PowerShell's own $-variables; bash must not expand them
+    powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command '
+      Add-Type -AssemblyName presentationCore
+      $key = "HKCU:\AppEvents\Schemes\Apps\.Default\.Default\.Current"
+      $wav = (Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue)."(default)"
+      if ($wav) { $wav = [Environment]::ExpandEnvironmentVariables($wav) }
+      if (-not $wav -or -not (Test-Path -LiteralPath $wav)) {
+        $wav = "$env:WINDIR\Media\Windows Background.wav"
+      }
+      $player = New-Object System.Windows.Media.MediaPlayer
+      $player.Open([uri]$wav)
+      Start-Sleep -Milliseconds 400
+      $player.Volume = '"$CUE_VOLUME"'
+      $player.Play()
+      Start-Sleep -Milliseconds 1800
+      $player.Close()' >/dev/null 2>&1 &
+  else
+    "$HOME/.claude/hooks/play-sound.sh" input
+  fi
 elif grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
   # WSL — notify-send has no daemon here, so play an audible Windows cue instead.
   "$HOME/.claude/hooks/play-sound.sh" input

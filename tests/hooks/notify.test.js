@@ -15,6 +15,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { shConstInt } = require('../lib/sh-const');
+
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_notify.sh');
 const LIB = path.join(HOOKS, 'hook-input.sh');
@@ -34,7 +36,22 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 const onWsl = (() => {
   try { return /microsoft/i.test(fs.readFileSync('/proc/sys/kernel/osrelease', 'utf8')); } catch { return false; }
 })();
-const skipBanner = skip || (onWsl ? 'WSL draws no banner by design (notify-send has no daemon there)' : false);
+
+// Same principle as onWsl: ask what the hook itself branches on, not what node thinks it is on.
+// The hook gates its native-Windows branch on $OSTYPE, which bash sets at compile time -- msys
+// on some Git Bash builds, cygwin on others, linux-gnu under WSL. Reading it back out of bash
+// keeps this suite and the hook agreeing about which platform a box is, which is the split
+// getting WSL wrong once made wrong for every WSL box.
+const onWindows = (() => {
+  try {
+    return /^(msys|cygwin)/.test(execFileSync('bash', ['-c', 'printf %s "$OSTYPE"'], { encoding: 'utf8' }));
+  } catch { return false; }
+})();
+
+const skipBanner = skip
+  || (onWsl ? 'WSL draws no banner by design (notify-send has no daemon there)' : false)
+  || (onWindows ? 'Warp draws the banner on Windows, so the hook does not' : false);
+const skipWindows = skip || (onWindows ? false : 'not native Windows');
 
 const dirs = [];
 
@@ -53,9 +70,15 @@ const dirs = [];
 // called directly so the audible cue does not depend on Notification Center delivery. Sending
 // it to the banner log would leave the played log empty on a Mac, and every sound assertion
 // below would fail there for a reason that is not a regression.
-const STUBS = process.platform === 'darwin'
-  ? { osascript: 'banners', afplay: 'played' }
-  : { 'notify-send': 'banners' };
+function platformStubs() {
+  if (process.platform === 'darwin') return { osascript: 'banners', afplay: 'played' };
+  // Native Windows never reaches play-sound.sh either, for the same reason macOS does not: the
+  // branch plays its own cue, here through powershell.exe. It draws no banner, so there is no
+  // banner tool to stub and skipBanner covers the assertion that would have needed one.
+  if (onWindows) return { 'powershell.exe': 'played' };
+  return { 'notify-send': 'banners' };
+}
+const STUBS = platformStubs();
 
 // Sleep without a timer, so `run` stays synchronous like the tests that call it.
 function sleep(ms) {
@@ -98,8 +121,9 @@ function run({ type, sid, job }) {
     });
   } catch { /* a non-zero exit is itself a failure the assertions below will show */ }
   // macOS backgrounds the sound (`afplay ... &`), so its write can land after bash returns.
+  // Windows backgrounds its powershell.exe cue for the same reason and needs the same wait.
   // Only an absent log needs waiting on; one that already exists is the answer.
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' || onWindows) {
     for (let i = 0; i < 50 && !fs.existsSync(played); i += 1) sleep(20);
   }
   const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
@@ -132,6 +156,26 @@ test('permission_prompt and agent_needs_input are not gated on the jobs director
     const { played } = run({ type, sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
     assert.match(played, /^play /m, `${type} must sound from a session that is not a job`);
   }
+});
+
+// The reason the Windows branch exists at all is the gain, so that is the part worth pinning.
+// Without a volume it would be play-sound.sh's terminal bell, which Warp rings at the system
+// beep level and offers no way to turn down.
+//
+// Parsed out of the hook rather than restated, the way play-sound.test.js reads
+// DEFAULT_VOLUME_PCT: shConst throws on a second assignment, so this also catches the value
+// growing a second home. Static, so it runs everywhere rather than only on Windows.
+test('the Windows cue volume has one home in the hook', { skip }, () => {
+  assert.strictEqual(shConstInt(HOOK, 'WINDOWS_CUE_VOLUME_PCT'), 20,
+    'Windows cue volume changed: update the 0.20 the case below expects with it');
+});
+
+// 20% was picked by ear against the same .wav at 100%. A future reader seeing play-sound.sh use
+// 35 and 50 has an obvious-looking reason to raise this one to match; those gains are for the
+// soft `complete` sample, and this is the short bright system beep.
+test('the Windows cue plays at a reduced volume, not full', { skip: skipWindows }, () => {
+  const { played } = run({ type: 'permission_prompt', sid: '7e1ec437-5939-48b5-9dcd-e97c32f9242b', job: false });
+  assert.match(played, /Volume = 0\.20/, 'MediaPlayer is given 20%, not full gain');
 });
 
 process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

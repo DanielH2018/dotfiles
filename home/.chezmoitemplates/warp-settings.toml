@@ -191,10 +191,14 @@ ctrl_tab_behavior_setting = "cycle_most_recent_session"
 # suppressed.
 #
 # play_notification_sound = false makes Warp visual-only. It does NOT silence the cue that
-# matters: notify.sh still fires on permission_prompt and agent_needs_input, and on Windows that
-# path ends at play-sound.sh's terminal-bell fallback -- the bash shipped here has no paplay,
-# pw-play or aplay -- which Warp rings because use_audible_bell is true. So a genuine block
-# still chimes, through a channel gated on needing you; only the toast chime is gone.
+# matters: notify.sh still fires on permission_prompt and agent_needs_input, and its native
+# Windows branch plays the system beep .wav itself, through MediaPlayer at 20%. So a genuine
+# block still chimes, on a channel gated on needing you and at a gain that is settable; only
+# the unconditional toast chime is gone.
+#
+# use_audible_bell above is NOT what carries that cue any more. It was, while notify.sh fell
+# through to play-sound.sh's terminal bell on Windows, and a bell is exactly the thing with no
+# volume -- which is why the branch exists. It stays true only for whatever else rings it.
 #
 # long_running_threshold 30 -> 120 rather than is_long_running_enabled = false: at 30s every
 # claude invocation qualified, which made the category meaningless. The feature is still worth

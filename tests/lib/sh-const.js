@@ -37,7 +37,12 @@ function shConst(file, name) {
   const rhs = hits[0].match(re)[1].trim();
   // Evaluate the right-hand side alone in an EMPTY environment, so `${X:-50}` yields the
   // default rather than whatever the test runner happens to have exported for X.
-  return execFileSync('/usr/bin/env', ['-i', '/bin/bash', '-c', `printf '%s' ${rhs}`], {
+  //
+  // `env` is resolved through PATH rather than named as /usr/bin/env: node on Windows is a
+  // native binary, so an absolute POSIX path is not a path it can spawn and every caller of
+  // this helper threw ENOENT there. Git Bash puts its own env.exe on PATH, and that one does
+  // resolve the /bin/bash below. On Linux and macOS this is the same binary either way.
+  return execFileSync('env', ['-i', '/bin/bash', '-c', `printf '%s' ${rhs}`], {
     encoding: 'utf8',
   });
 }
