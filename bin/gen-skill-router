@@ -1,0 +1,126 @@
+#!/usr/bin/env node
+'use strict';
+// gen-skill-router — generate the "all installed skills" block in skill-router's SKILL.md,
+// and fail if the hand-written lane prose in that same file references a skill that no
+// longer exists.
+//
+// skill-router/SKILL.md.tmpl says its own failure mode at the top: "Hand-curated. When it
+// drifts from what's installed, reconcile against `ls ~/.claude/skills` + the plugin list."
+// That's a chore someone has to remember to run; this makes the generated half of the file
+// impossible to drift (it's regenerated from the tree) and the hand-written half impossible
+// to drift silently (a reference to a renamed/removed skill fails the build instead of
+// quietly pointing nowhere).
+//
+// Reads home/private_dot_claude/skills/*/SKILL.md — the chezmoi SOURCE tree, not a deployed
+// ~/.claude/skills — so this is reproducible from a clean git checkout: same reasoning as
+// config-soak.json fingerprinting the source rather than the rendered output.
+//
+// Usage:
+//   gen-skill-router            regenerate home/private_dot_claude/skills/skill-router/SKILL.md.tmpl
+//   gen-skill-router --check    regenerate to memory, diff against the committed file, exit
+//                               non-zero on any difference (the CI gate; see
+//                               tests/gen-skill-router.test.js, which runs this in --check
+//                               mode against the real repo tree)
+
+const fs = require('node:fs');
+const path = require('node:path');
+const lib = require('./gen-skill-router-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const SKILLS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'skills');
+const AGENTS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'agents');
+const TEMPLATE_PATH = path.join(SKILLS_DIR, 'skill-router', 'SKILL.md.tmpl');
+
+function readSkillFiles(skillsDir) {
+  const out = {};
+  if (!fs.existsSync(skillsDir)) return out;
+  for (const ent of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    // SKILL.md.tmpl (skill-router's own file, chezmoi strips .tmpl on deploy) falls back
+    // to SKILL.md — this generator would otherwise never see itself in its own output.
+    // Frontmatter is plain YAML in both cases; only the body carries {{ }} actions.
+    const md = path.join(skillsDir, ent.name, 'SKILL.md');
+    const mdTmpl = path.join(skillsDir, ent.name, 'SKILL.md.tmpl');
+    const src = fs.existsSync(md) ? md : (fs.existsSync(mdTmpl) ? mdTmpl : null);
+    if (src) out[ent.name] = fs.readFileSync(src, 'utf8');
+  }
+  return out;
+}
+
+function readAgentNames(agentsDir) {
+  if (!fs.existsSync(agentsDir)) return [];
+  return fs.readdirSync(agentsDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => f.slice(0, -3));
+}
+
+function firstDiffLine(a, b) {
+  const al = a.split('\n');
+  const bl = b.split('\n');
+  const n = Math.max(al.length, bl.length);
+  for (let i = 0; i < n; i += 1) {
+    if (al[i] !== bl[i]) {
+      return { lineNo: i + 1, expected: al[i] ?? '(end of file)', got: bl[i] ?? '(end of file)' };
+    }
+  }
+  return null;
+}
+
+function main() {
+  const check = process.argv.includes('--check');
+
+  const skillFiles = readSkillFiles(SKILLS_DIR);
+  const skills = lib.collectSkills(skillFiles);
+  const skillNames = skills.map((s) => s.name);
+  const agentNames = readAgentNames(AGENTS_DIR);
+
+  if (!fs.existsSync(TEMPLATE_PATH)) {
+    process.stderr.write(`gen-skill-router: template not found at ${TEMPLATE_PATH}\n`);
+    process.exit(2);
+  }
+  const currentTemplate = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+
+  // Drift check: every bare skill/agent-shaped reference in the hand-written lane prose
+  // (work-gated content and the generated block itself stripped first — the former belongs
+  // to a different repo's skill surface, the latter is generator-authored description text
+  // that routinely carries unrelated backtick spans) must resolve to a real skill, a real
+  // agent, or the small reviewed EXTERNAL_ALLOWLIST.
+  const stripped = lib.stripWorkBlocks(lib.stripGeneratedBlock(currentTemplate));
+  const missing = lib.findMissingReferences(stripped, skillNames, agentNames);
+  if (missing.length > 0) {
+    process.stderr.write(
+      `gen-skill-router: the lane prose references ${missing.length} name(s) that are not `
+      + `an installed skill, an agent in ${path.relative(REPO_ROOT, AGENTS_DIR)}, or in `
+      + `EXTERNAL_ALLOWLIST: ${missing.join(', ')}\n`
+      + 'Either the skill/agent was renamed and the prose is stale, or this is a new '
+      + 'external reference that belongs in EXTERNAL_ALLOWLIST (bin/gen-skill-router-lib.js) '
+      + 'with a comment saying what it is.\n',
+    );
+    process.exit(1);
+  }
+
+  const regenerated = lib.injectGenerated(currentTemplate, skills);
+
+  if (check) {
+    if (regenerated === currentTemplate) {
+      process.stdout.write(`gen-skill-router --check: ${path.relative(REPO_ROOT, TEMPLATE_PATH)} is up to date (${skills.length} skills).\n`);
+      return;
+    }
+    const diff = firstDiffLine(regenerated, currentTemplate);
+    process.stderr.write(
+      `gen-skill-router --check: ${path.relative(REPO_ROOT, TEMPLATE_PATH)} is out of date. `
+      + 'Run `bin/gen-skill-router` and commit the result.\n',
+    );
+    if (diff) {
+      process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
+      process.stderr.write(`    generated: ${diff.expected}\n`);
+      process.stderr.write(`    committed: ${diff.got}\n`);
+    }
+    process.exit(1);
+  }
+
+  fs.writeFileSync(TEMPLATE_PATH, regenerated);
+  process.stdout.write(`gen-skill-router: wrote ${path.relative(REPO_ROOT, TEMPLATE_PATH)} (${skills.length} skills).\n`);
+}
+
+main();
