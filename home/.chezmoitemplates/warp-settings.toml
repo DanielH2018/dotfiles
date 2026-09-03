@@ -171,7 +171,7 @@ agent_mode_codebase_context_auto_indexing = true
 enabled = true
 
 [notifications]
-toast_duration_secs = 8
+toast_duration_secs = 4
 
 [terminal.input.extra_meta_keys]
 left_alt = true
@@ -183,14 +183,30 @@ word_char_allowlist = "-.~/:"
 [keys]
 ctrl_tab_behavior_setting = "cycle_most_recent_session"
 
+# Quieter cues in Warp. Claude Code sessions raised most of the traffic here, and the two
+# noisiest categories were the ones announcing something FINISHING rather than something waiting
+# on you. settings.base.json already excludes `agent_completed` from the Notification hook's
+# matcher for that reason ("a finished session is not asking for anything"); this is the same
+# call applied to Warp's own channel, so the two agree instead of one re-adding what the other
+# suppressed.
+#
+# play_notification_sound = false makes Warp visual-only. It does NOT silence the cue that
+# matters: notify.sh still fires on permission_prompt and agent_needs_input, and on Windows that
+# path ends at play-sound.sh's terminal-bell fallback -- the bash shipped here has no paplay,
+# pw-play or aplay -- which Warp rings because use_audible_bell is true. So a genuine block
+# still chimes, through a channel gated on needing you; only the toast chime is gone.
+#
+# long_running_threshold 30 -> 120 rather than is_long_running_enabled = false: at 30s every
+# claude invocation qualified, which made the category meaningless. The feature is still worth
+# having for a slow build, so raise the bar instead of removing it.
 [notifications.preferences]
 mode = "enabled"
 is_long_running_enabled = true
-long_running_threshold = 30
-is_agent_task_completed_enabled = true
+long_running_threshold = 120
+is_agent_task_completed_enabled = false
 is_needs_attention_enabled = true
 is_password_prompt_enabled = true
-play_notification_sound = true
+play_notification_sound = false
 
 [privacy.secret_redaction]
 enabled = true
