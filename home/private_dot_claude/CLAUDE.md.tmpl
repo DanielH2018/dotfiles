@@ -43,6 +43,12 @@ above do not, and each is likewise checkable by rereading:
 - **Software does not perceive or want.** "The linter reports an unused import", not "the linter sees one"; "the API requires a token", not "the API wants a token". Naming the actor invites a human verb — name it and keep the verb literal.
 - **Present tense, not `will`.** "The script writes the manifest, then reloads the unit." Reserve `will` for something genuinely deferred: "the file is archived the next time the backup runs."
 
+**Say what you mean, literally.** Mannered prose substitutes metaphor and flourish for direct
+statement: "a dial worth turning" for "a parameter worth varying", "this point earns its keep"
+for "this point still matters". The phrase exists to display the writer, not to convey the
+idea, and it is imprecise — a metaphor drags in connotations you did not choose. When a literal
+phrase is available, use it.
+
 **Compression is not clarity.** Terse means no padding, not telegraphic. Dropping the
 articles and verbs out of a finding — "B2 disarmed pending cap-raise/spend-reduction
 decision" — saves a few words and costs a reread; that trade is never worth it. This applies
@@ -96,6 +102,13 @@ For anything on `github.com` — PRs, issues, diffs, Actions logs, repo files, r
 
 Write tests for any new code I create. Match the style and framework already used in the project.
 
+Size them like the neighbouring test files: roughly one focused test per stated behaviour, in
+the place the repo already keeps tests for that kind of change. Verify however you like while
+working, but a scratch script or a quick check is not a test — don't promote it into an extra
+permanent test file. This governs extras only: every behaviour the task asks for gets its test.
+(Anthropic's Fable 5.1 prompting guide measured this instruction cutting committed test sprawl
+with no change in task success.)
+
 ## Verification & self-checking
 
 You already sanity-check your work as you go, so don't bolt a second pass on top of it — no "final verification step" appended to routine tasks, no re-reading a file you just wrote to confirm the edit landed, no subagent dispatched to double-check something you finished yourself.
@@ -139,6 +152,7 @@ Applies to every session — answers, summaries, research, and anything written 
 Long sessions die of a thousand medium tool calls, never one big one. Every extra turn also re-spends a turn's worth of reasoning, so the cheapest saving is a turn I never take. Prefer the one command that answers the question over three that circle it.
 
 - Never read a whole file to find one symbol — grep for it, then read the hit with an offset.
+- Edit a file surgically rather than rewriting the whole thing, whenever the end result is the same. A whole-file rewrite of a long file costs output tokens and time for an identical result; reserve it for a short file or one where most of the content changes.
 - Bound noisy output at the source: `git log`, `ls -R`, test runs, and build logs all need a `head`/`tail`/`wc` limit.
 - `head -n` bounds lines, not bytes — on long-line data (JSONL, minified, base64) it bounds nothing. Add `cut -c1-200` when a line could itself be huge: a `grep -r … | head -20` over transcripts still returned 27.8 KB.
 - When a result offloads (`<persisted-output>`, above ~30 KB, 0.18% of calls), grep the persisted path rather than re-running the command with a tighter limit.

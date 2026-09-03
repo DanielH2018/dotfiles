@@ -269,7 +269,12 @@
        in agent frontmatter (model + effort) under private_dot_claude/agents/, not here.
        Note this file is fully derived — modify_settings.json.sh.tmpl ignores stdin — so a
        runtime `/effort X` persists into ~/.claude/settings.json only until the next
-       `chezmoi apply`. Reintroduce the key only to pin every turn on purpose. */}}
+       `chezmoi apply`. Reintroduce the key only to pin every turn on purpose.
+       If you ever do pin: Anthropic's Fable 5.1 prompting guide says effort names do not map
+       to the same amount of thinking across models, so a sweep run on one model does not
+       carry to the next; `medium` on Fable 5.1 roughly matches Fable 5 at lower cost, and
+       `xhigh`/`max` make the model draft long deliverables once in thinking and again in
+       the reply. `high` is its recommended starting point. */}}
   {{/* An ARRAY of model names, not a string. A1-36 called this backwards and the string it
        introduced broke far more than the fallback: Claude Code 2.1.220 validates this key as
        an array, and on a type mismatch it discards the WHOLE settings.json, so statusLine,

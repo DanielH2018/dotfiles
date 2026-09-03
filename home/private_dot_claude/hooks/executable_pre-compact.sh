@@ -103,7 +103,13 @@ fi
 MSG="$MSG
 
 Preserve verbatim across this boundary: user corrections, exact error strings, and current task
-state. If this session contains important decisions or feedback, use the remember skill now."
+state. The summary must also keep, exactly: (1) problems that came up and how they were resolved;
+(2) approaches raised, tried, or set aside, and why; (3) anything asked for, decided, ruled out,
+or established as a constraint, in the user's own words; (4) where things stand now — covered,
+settled, completed; (5) anything still open, promised, or expected next; (6) details that are hard
+to reconstruct — names, numbers, dates, paths, links. Be complete on these even at the cost of
+length; condense your own reasoning to what it concluded. If this session contains important
+decisions or feedback, use the remember skill now."
 
 jq -n --arg msg "$MSG" '{
   "continue": true,
