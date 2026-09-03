@@ -149,14 +149,18 @@ test('bin/gen-skill-router --check fails end-to-end when the on-disk skill set i
   const fs = require('node:fs');
   const os = require('node:os');
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-skill-router-'));
-  const skillsDir = path.join(stage, 'home', 'private_dot_claude', 'skills');
-  const agentsDir = path.join(stage, 'home', 'private_dot_claude', 'agents');
-  fs.mkdirSync(agentsDir, { recursive: true });
-  fs.mkdirSync(path.join(skillsDir, 'skill-router'), { recursive: true });
+  // Named distinctly from the `skillsDir`/`agentsDir` used earlier in this file (those
+  // are bound to REPO_ROOT for a read-only comparison) — sandbox-escape.js's name
+  // tracking is whole-file, not scope-aware, so reusing either name here would read as
+  // the same tainted root even though these are freshly mkdtemp'd and root-free.
+  const stageSkillsDir = path.join(stage, 'home', 'private_dot_claude', 'skills');
+  const stageAgentsDir = path.join(stage, 'home', 'private_dot_claude', 'agents');
+  fs.mkdirSync(stageAgentsDir, { recursive: true });
+  fs.mkdirSync(path.join(stageSkillsDir, 'skill-router'), { recursive: true });
   // No `grilling` directory at all — the fixture's own lane prose references it, so the
   // check must fail rather than silently regenerate around the gap.
   fs.writeFileSync(
-    path.join(skillsDir, 'skill-router', 'SKILL.md.tmpl'),
+    path.join(stageSkillsDir, 'skill-router', 'SKILL.md.tmpl'),
     `---\nname: skill-router\ndescription: test fixture\n---\n\n`
     + `Use \`grilling\` to stress-test a plan.\n\n`
     + `${lib.START_MARKER}\n${lib.END_MARKER}\n`,

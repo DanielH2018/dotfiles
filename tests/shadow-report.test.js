@@ -1,4 +1,4 @@
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -10,6 +10,7 @@ const lib = require('../bin/shadow-report-lib.js');
 const BIN = path.join(__dirname, '..', 'bin', 'shadow-report');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-report-'));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 // A small, self-contained stand-in for block-dangerous-bash.sh's M02 section — just enough
 // structure for censusFamiliesFromSource / denyRuleLabelsFromSource to have something real
