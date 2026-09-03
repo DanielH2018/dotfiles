@@ -102,9 +102,12 @@ test('removal is exactly two rm forms plus rmdir', () => {
 
 // Slice 3 deferred rotate/truncate entirely — no `mv`/`tail -n` anywhere in the source.
 // This slice implements them, so the guarantee narrows rather than disappears: the
-// primitives may exist, but only inside the two functions that implement
+// primitives may exist, but only inside the functions that implement
 // rename-then-create-fresh, never reachable from the removal path or anywhere else.
-test('rotate/truncate primitives (mv, tail -n) exist only inside their own functions', () => {
+// write_measurements (slice 4's manifest write-back) joins rotate_by_size and
+// truncate_lines_file here for the same reason it joined them in the source: it is a
+// third legitimate mv, not a leak.
+test('rotate/truncate/measure primitives (mv, tail -n) exist only inside their own functions', () => {
   const codeOnly = codeOf(SWEEP);
 
   const extractFn = (name) => {
@@ -121,23 +124,28 @@ test('rotate/truncate primitives (mv, tail -n) exist only inside their own funct
 
   const rotateFn = extractFn('rotate_by_size');
   const truncateFn = extractFn('truncate_lines_file');
+  const measureFn = extractFn('write_measurements');
   assert.ok(rotateFn.start < truncateFn.start, 'rotate_by_size must be defined before truncate_lines_file');
+  assert.ok(truncateFn.start < measureFn.start, 'truncate_lines_file must be defined before write_measurements');
 
   assert.match(rotateFn.body, /\bmv\b/, 'rotate_by_size must use mv for rename-then-create-fresh');
   assert.doesNotMatch(rotateFn.body, /\btail\s+-n\b/, 'rotate_by_size has no business reading lines');
   assert.match(truncateFn.body, /\btail\s+-n\b/, 'truncate_lines_file must use tail -n to select the kept lines');
   assert.match(truncateFn.body, /\bmv\b/, 'truncate_lines_file must rename the temp file atomically over the original');
+  assert.match(measureFn.body, /\bmv\b/, 'write_measurements must rename the temp file atomically over the manifest');
+  assert.doesNotMatch(measureFn.body, /\btail\s+-n\b/, 'write_measurements has no business reading lines');
 
-  // Outside the two functions, none of the primitives that would let a rule rewrite a
+  // Outside these three functions, none of the primitives that would let a rule rewrite a
   // file in place may appear. "truncate-lines"/"rotate-size" are rule-name literals, not
   // the primitive itself, so they are stripped before scanning for leaks.
   const outside = (codeOnly.slice(0, rotateFn.start)
     + codeOnly.slice(rotateFn.end, truncateFn.start)
-    + codeOnly.slice(truncateFn.end))
+    + codeOnly.slice(truncateFn.end, measureFn.start)
+    + codeOnly.slice(measureFn.end))
     .replace(/truncate-lines/g, '').replace(/rotate-size/g, '');
   const primitive = /\btruncate\b|\bmv\b|\bshred\b|\bdd\b|\bsed\s+-i\b|\btail\s+-n\b|:>\s*\S/i;
   const leaked = outside.match(primitive);
-  assert.strictEqual(leaked, null, `found a rotate/truncate primitive outside its function: ${leaked && leaked[0]}`);
+  assert.strictEqual(leaked, null, `found a rotate/truncate/measure primitive outside its function: ${leaked && leaked[0]}`);
 });
 
 // Recursive removal is the sharpest edge slice 3 adds, so its guard is pinned in source
@@ -151,18 +159,21 @@ test('recursive removal is gated behind the containment check', () => {
   assert.match(codeOnly, /\[ -L "\$entry" \] && return 1/, 'contained() must refuse a symlink outright');
 });
 
-test('the only files the sweeper writes are the run marker and truncate-lines\' own temp file', () => {
+test('the only files the sweeper writes are the run marker, the manifest write-back, and truncate-lines\' own temp file', () => {
   const codeOnly = codeOf(SWEEP);
   const redirects = codeOnly.match(/(?<!-)\d*>>?(&\d+|\s*\S+)/g) || [];
   // Allowed: /dev/null, an fd dup or close, the flock descriptor (a zero-byte mutex, not
-  // data), the run marker, and truncate_lines_file's own "$tmp" -- written once, in the
-  // same directory as the file it will atomically replace, never left behind on success.
+  // data), the run marker, the manifest write-back's own temp file (rename-then-replace,
+  // same shape as truncate_lines_file's), and truncate_lines_file's own "$tmp" -- written
+  // once, in the same directory as the file it will atomically replace, never left behind
+  // on success.
   const bad = redirects.filter((r) => !/\/dev\/null/.test(r)
     && !/^\d*>>?&[\d-]/.test(r)
     && !/\$LOCK/.test(r)
     && !/\$MARKER/.test(r)
-    && !/"\$tmp"/.test(r));
-  assert.deepStrictEqual(bad, [], 'the marker and the truncate temp file are the only real files the sweeper may write');
+    && !/"\$tmp"/.test(r)
+    && !/"\$MANIFEST\.tmp\.\$\$"/.test(r));
+  assert.deepStrictEqual(bad, [], 'the marker, the manifest write-back temp file, and the truncate temp file are the only real files the sweeper may write');
   // No append anywhere: an append is how a log grows without bound, which is the very
   // thing this module exists to prevent. The marker is overwritten each run, and the
   // temp file is written once with `>`, never `>>`.
@@ -257,7 +268,18 @@ test('dry run reports matches but leaves every fixture path untouched', { skip }
 });
 
 test('native and self-managed rows are reported as no-op, never scanned for deletion', { skip }, () => {
-  const output = runSweep(MANIFEST);
+  // A scratch fixture, not the real MANIFEST: runSweep() isolates HOME/state/lock to
+  // dirname(manifestPath), and this test was the one caller that passed MANIFEST
+  // directly — every run took the real lock at home/private_dot_claude/sweep.lock and,
+  // after the measured write-back below, would have rewritten the real
+  // retention-manifest.json in place too. See "the measured write-back never touches
+  // the real manifest" for the regression test this fixes.
+  const root = scratch('retention-native-');
+  const m = manifestFile(root, [
+    { id: 'N1', path: '~/.claude/projects/**/*.jsonl', kind: 'file-glob', rule: 'native', cap: 'cleanupPeriodDays=30', grace: null, owner: 'Claude Code binary', finding: 'test' },
+    { id: 'N2', path: '~/.claude/backups/*', kind: 'file-glob', rule: 'self-managed', cap: 'keep-last-5', grace: null, owner: 'Claude Code binary', finding: 'test' },
+  ]);
+  const output = runSweep(m);
   assert.match(output, /N1: rule=native -> no action/);
   assert.match(output, /N2: rule=self-managed -> no action/);
 });
@@ -727,6 +749,78 @@ test('running the suite never touches the real home or the real lock', { skip },
   assert.strictEqual(stamp(realLock), before.lock, 'a test took the real sweep lock');
   assert.ok(fs.existsSync(path.join(root, '.retention-sweep-last-run')),
     'the marker should have landed inside the scratch home instead');
+});
+
+// --- Slice 4: measurements written back into the manifest ---------------------------
+//
+// The manifest's notes fields ("1180 dirs, 4.7M dirents", "measured 2026-07-30") were
+// hand-typed once and never updated. Every row the sweep scans already produces a live
+// match count and byte total (`count`/`bytes` in the loop above); this writes that back
+// as a `measured: {at, count, bytes}` object rather than leaving the manifest to go
+// stale the moment reality moves on. A red-proof pair: one test proves the write lands,
+// the other proves it touches nothing else.
+
+test('a sweep run adds a `measured` object with at/count/bytes to a processed row', { skip }, () => {
+  const root = scratch('retention-measure-');
+  fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'env', 'b'), { recursive: true });
+  const m = manifestFile(root, [{
+    id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
+    cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'test',
+    notes: 'stale hand-typed note',
+  }]);
+
+  runSweep(m);
+
+  const row = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
+  assert.ok(row.measured, 'expected a measured object after the run');
+  assert.strictEqual(row.measured.count, 2, 'both directories should have been counted');
+  assert.strictEqual(row.measured.bytes, 0, 'empty directories contribute no bytes');
+  assert.match(row.measured.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'at must be an ISO-8601 UTC timestamp');
+});
+
+test('the write-back changes only `measured` — every other field is untouched', { skip }, () => {
+  const root = scratch('retention-measure-preserve-');
+  fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
+  const before = {
+    id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
+    cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'A19-09, A19-05',
+    notes: '1180 dirs, 4.7M dirents, 0 files in any',
+  };
+  const m = manifestFile(root, [before]);
+
+  runSweep(m);
+
+  const after = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
+  const { measured: _measured, ...rest } = after;
+  assert.deepStrictEqual(rest, before, 'every field but measured must round-trip unchanged');
+});
+
+test('a native/self-managed row is never given a measured object', { skip }, () => {
+  const root = scratch('retention-measure-native-');
+  const m = manifestFile(root, [
+    { id: 'N1', path: '~/.claude/projects/**/*.jsonl', kind: 'file-glob', rule: 'native', cap: 'x', grace: null, owner: 'Claude Code binary', finding: 'test' },
+  ]);
+
+  runSweep(m);
+
+  const row = JSON.parse(fs.readFileSync(m, 'utf8'))[0];
+  assert.strictEqual(row.measured, undefined, 'native rows are out of scope for this sweeper and must stay untouched');
+});
+
+test('running the suite never rewrites the real retention-manifest.json', { skip }, () => {
+  const before = fs.readFileSync(MANIFEST, 'utf8');
+  const root = scratch('retention-measure-isolation-');
+  fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
+  const m = manifestFile(root, [{
+    id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
+    cap: 'unconditional once eligible', grace: '1h', owner: 'retention-sweep', finding: 'test',
+  }]);
+
+  runSweep(m);
+
+  assert.strictEqual(fs.readFileSync(MANIFEST, 'utf8'), before,
+    'a scratch-isolated sweep must never touch the tracked manifest — RETENTION_MANIFEST scopes the write-back same as every other seam');
 });
 
 test('an unknown argument is refused rather than ignored', { skip }, () => {

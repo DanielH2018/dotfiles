@@ -80,6 +80,7 @@ command -v jq >/dev/null 2>&1 || { echo "retention-sweep: jq required" >&2; exit
 [ -f "$MANIFEST" ] || { echo "retention-sweep: manifest not found at $MANIFEST" >&2; exit 1; }
 
 NOW=$(date +%s)
+MEASURED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # --- stat/du portability --------------------------------------------------------------
 # `stat -c` and `du -sb` are GNU spellings. Only the systemd timer that drives this is
@@ -249,6 +250,28 @@ truncate_lines_file() {
   mv -f -- "$tmp" "$f"
 }
 
+# Folds this run's per-row measurements back into the manifest as a `measured: {at,
+# count, bytes}` object -- replacing the stale, hand-typed notes prose ("1180 dirs, 4.7M
+# dirents", "measured 2026-07-30") with a number the sweep itself just produced. Runs on
+# every invocation, dry-run included: the measurement reflects what currently matches,
+# independent of whether this run acted on it. `updates` is a JSON array of
+# {id, at, count, bytes} objects, one per row the loop in sweep() processed --
+# native/self-managed rows never reach it, so they keep whatever notes they already
+# have. Every field but `.measured` passes through jq unchanged. Same rename-then-replace
+# shape as truncate_lines_file above: never edits the manifest in place.
+write_measurements() {
+  local manifest=$1 updates=$2 tmp updated
+  [ "$updates" = "[]" ] && return 0
+  updated=$(jq --argjson updates "$updates" '
+      reduce $updates[] as $u (.;
+        map(if .id == $u.id then .measured = {at: $u.at, count: $u.count, bytes: $u.bytes} else . end)
+      )
+    ' "$manifest") || return 1
+  [ -n "$updated" ] || return 1
+  tmp="$manifest.tmp.$$"
+  printf '%s\n' "$updated" > "$tmp" && mv -f -- "$tmp" "$manifest"
+}
+
 # --- the sweep ------------------------------------------------------------------------
 
 sweep() {
@@ -259,6 +282,12 @@ sweep() {
   echo
 
   shopt -s nullglob globstar dotglob
+
+  # Every processed row's live match count/bytes, written back into the manifest as a
+  # `measured` object once the loop finishes -- see the write-back after the loop for
+  # why this replaces the file's stale, hand-typed notes prose ("1180 dirs, 4.7M
+  # dirents", "measured 2026-07-30") with a number the sweep itself produced.
+  local measure_updates='[]'
 
   local row_count i row id rule finding grace cap acting rotating tag
   row_count=$(jq 'length' "$MANIFEST")
@@ -404,7 +433,14 @@ sweep() {
       total_rotated=$((total_rotated + pruned)); total_rotated_bytes=$((total_rotated_bytes + pruned_bytes))
     fi
     echo "$line ($finding)"
+
+    measure_updates=$(printf '%s' "$measure_updates" | jq -c \
+      --arg id "$id" --arg at "$MEASURED_AT" --argjson count "$count" --argjson bytes "$bytes" \
+      '. + [{id: $id, at: $at, count: $count, bytes: $bytes}]')
   done
+
+  write_measurements "$MANIFEST" "$measure_updates" \
+    || echo "retention-sweep: could not write measurements back to $MANIFEST" >&2
 
   echo
   if [ "$APPLY" -eq 1 ]; then
