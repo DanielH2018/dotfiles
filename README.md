@@ -80,22 +80,42 @@ See `docs/RESTORE.md` for the bare-metal bootstrap.
 `settings.base.json`, hooks, agents, skills, `CLAUDE.md` — like code: a change must be consciously
 acknowledged before it counts as reviewed, and is only flagged stable after a soak window.
 
-- `config-soak status [--json]` — fingerprint the tracked config, diff against the committed
-  ledger (`config-soak.json`), and report `unrecorded`/`changed`/`removed`/`soaking`/`stable`.
-  Exits non-zero if any unreviewed change exists (the gate).
+- `config-soak status [--json] [--strict]` — fingerprint the tracked config, diff against the
+  committed ledger (`config-soak.json`), and report
+  `unrecorded`/`changed`/`removed`/`soaking`/`stable`/`neverFired`. Exits non-zero if any
+  unreviewed change exists (the gate); `--strict` also fails it on `neverFired` entries.
 - `config-soak land [PATH...]` — record the current config as reviewed; stamps `landed=now` for
-  new/changed files, preserves the clock for unchanged ones. Commit the ledger to persist it.
+  new/changed files, preserves the clock (and any recorded `outcome`) for unchanged ones. Commit
+  the ledger to persist it.
+- `config-soak outcomes [--since PATH]` — for every hook or `settings.*.json` ledger entry inside
+  its soak window, ask this machine's local Loki (`http://127.0.0.1:3100`, read-only, no other
+  host) whether the landed config actually fired since it landed, and write the answer back as
+  that entry's `outcome: {checkedAt, fired, denied, errors, source, note}`. Attribution is only as
+  fine as Claude Code's OTEL schema allows: a `settings.*.json` change is attributed to the merged
+  permission ruleset's `tool_decision{source="config"}` events (the three templates cannot be told
+  apart); a hook script is attributed only when it is the *sole* hook registered for a
+  PreToolUse/PermissionRequest matcher (a shared matcher, or any other hook event — SessionStart,
+  PostToolUse, Stop, ... — carries no field naming which hook fired, so those get `source:"none"`
+  and an explanatory `note` rather than a false zero). `--since PATH` resumes a partial run
+  (sorted path order), since each entry costs a live query. A `status` entry that soaked out with
+  `outcome.fired === 0` and `source:"loki"` prints as "landed, never fired" — feed those to the
+  `scaffolding-delete-pass` skill as removal candidates.
 - `config-soak list` — print the tracked paths.
 
-All three verbs are allow-listed in `settings.base.json`, so Claude runs them unprompted — including
-`land`, which means Claude can acknowledge config it wrote itself. The gate still records *what*
-changed and *when*; it no longer guarantees a human looked. Invoke it as
+`status`, `land` and `list` are allow-listed in `settings.base.json`, so Claude runs them
+unprompted — including `land`, which means Claude can acknowledge config it wrote itself. The
+gate still records *what* changed and *when*; it no longer guarantees a human looked. `outcomes`
+is deliberately NOT allow-listed (see the comment above the allow-list rules in
+`settings.permissions.json`: the three documented verbs only, never a bare
+`node bin/config-soak:*` wildcard, so a new subcommand is never pre-approved) — it makes a
+network call, however narrow, and that crosses the line the other three don't. Invoke it as
 `cd <repo-or-worktree> && node bin/config-soak <verb>`: the ledger is anchored to the script's own
 location, so a worktree must run its own copy, and that compound form is the shape
-`allow-compound-bash.sh` auto-approves.
+`allow-compound-bash.sh` auto-approves for the allow-listed verbs.
 
 It is the deterministic complement to the LLM-driven `/review-setup` skill. See
-`docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale.
+`docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale, including the
+`outcomes` addition.
 
 ## pre-push gate — one-time install per clone
 

@@ -42,10 +42,12 @@ A small repo-level Node CLI, `bin/config-soak`, backed by a committed JSON ledge
 The logic is split so it is trivially testable:
 
 - `bin/config-soak-lib.js` — **pure** functions (`fingerprint`, `buildReport`, `gateFailures`,
-  `land`). No filesystem, network, or clock: `now` and the scanned inputs are injected. All unit
-  tests exercise this module with in-memory data, so they are deterministic and never flaky.
+  `land`, plus the outcome-attribution functions below). No filesystem, network, or clock: `now`
+  and the scanned inputs are injected. All unit tests exercise this module with in-memory data, so
+  they are deterministic and never flaky.
 - `bin/config-soak` — a thin CLI shell that does the impure work (walk the tree, read/write the
-  ledger, read the wall clock, set the exit code) and delegates all decisions to the lib.
+  ledger, read the wall clock, query Loki, set the exit code) and delegates all decisions to the
+  lib.
 
 ### Tracked surface (declared in `bin/config-soak`)
 
@@ -101,9 +103,10 @@ to match the backlog's stated surface (YAGNI); adding a row to the table extends
 ## Interface
 
 ```
-config-soak status [--json]   # report; exit 1 if any unreviewed change exists, else 0
-config-soak land [PATH...]     # record current config as reviewed (start/keep soak clock)
-config-soak list               # print the tracked config paths
+config-soak status [--json] [--strict]   # report; exit 1 if any unreviewed change exists, else 0
+config-soak land [PATH...]                # record current config as reviewed (start/keep soak clock)
+config-soak outcomes [--since PATH]       # query Loki for evidence a landed config fired
+config-soak list                          # print the tracked config paths
 config-soak --help
 ```
 
@@ -113,15 +116,76 @@ Ledger shape (`config-soak.json`, committed):
 {
   "windowDays": 7,
   "entries": [
-    { "path": "home/.../executable_notify.sh", "hash": "<sha256>", "landed": "2026-07-08T20:17:05.073Z" }
+    {
+      "path": "home/.../executable_notify.sh",
+      "hash": "<sha256>",
+      "landed": "2026-07-08T20:17:05.073Z",
+      "outcome": {
+        "checkedAt": "2026-09-03T12:00:00.000Z",
+        "fired": 41,
+        "denied": 3,
+        "errors": 0,
+        "source": "loki",
+        "note": ""
+      }
+    }
   ]
 }
 ```
 
+`outcome` is optional — absent until `config-soak outcomes` has run at least once for that entry,
+and dropped again the moment the file's content changes (a changed file's prior outcome describes
+content that no longer exists).
+
 ## Testing
 
-`tests/config-soak-lib.test.js` (plain `node:test`, no deps) covers the pure logic: fingerprint
+`tests/bin/config-soak-lib.test.js` (plain `node:test`, no deps) covers the pure logic: fingerprint
 determinism, all five classifications, the window boundary (`>=` is stable), window precedence
-(override > manifest > default), `gateFailures` counting, and `land` semantics (stamp new/changed,
-preserve unchanged clock, drop deleted, path-filtered acknowledge, input immutability). No
-filesystem or clock is touched, so the suite is deterministic.
+(override > manifest > default), `gateFailures` counting (default and `--strict`), `land`
+semantics (stamp new/changed, preserve unchanged clock and its `outcome`, drop a changed file's
+stale `outcome`, drop deleted, path-filtered acknowledge, input immutability), the hooks-config
+parser against a fixture reproducing the real file's template shapes, the hook/settings attribution
+decision (a red-proof pair — a sole-registrant hook attributes, a shared-matcher or lifecycle-event
+hook does not, with the reason named in `note`), the LogQL query builder (single slice, multi-slice
+sum, tool_name filter presence, range rounding), `parseLokiScalar` against fabricated Loki
+responses (single series, summed series, empty result), and the "landed, never fired" rule
+(a red-proof pair — fires only for `stable + source:"loki" + fired:0`, stays quiet for a real
+non-zero count, an unattributed entry, a still-soaking entry, or no outcome at all). No filesystem,
+clock, or network is touched, so the suite is deterministic.
+
+## 2026-09-03 addition: outcome evidence via Loki
+
+`config-soak land` proves a change was *looked at*; it says nothing about whether the config it
+acknowledged ever actually ran, or whether running it did anything. `config-soak outcomes` closes
+that gap for the two tracked-config shapes where Claude Code's OTEL telemetry (see
+`home/claude-otel/README.md`) gives an honest signal:
+
+- **`settings.*.json`** — the three templates merge into one live permission ruleset. An automatic
+  decision with no hook and no human involved logs `tool_decision{source="config"}` in Loki. That
+  is the one signal the ruleset produces; it cannot be split further (which of the three files,
+  which rule decided), so all three entries share the same aggregate count.
+- **`home/private_dot_claude/hooks/<script>`** — only `PreToolUse` and `PermissionRequest` hooks
+  gate a tool call at all; every other hook event (`SessionStart`, `PostToolUse`, `Stop`, ...) is a
+  lifecycle hook with no `tool_decision` counterpart, so a hook registered only for those is
+  unattributable by construction. Within the two attributable events, `tool_decision` carries
+  `source="hook"` but never which script decided — so a hook is attributed only when it is the
+  *sole* hook registered for its `(event, matcher)` pair. `chezmoi`'s `executable_` source-name
+  prefix is stripped before matching, since the hooks config names the *deployed* path.
+
+Everything that fails either test — an agent/skill/rule/output-style file (out of scope
+entirely), a hook sharing a matcher, a lifecycle-only hook, a hook not referenced in the config at
+all, or a Loki query that simply fails to answer — reports `source:"none"` with a `note` naming
+the reason, rather than a false `fired:0`. `buildReport`'s new `neverFired` bucket, and the
+"landed, never fired" line in `status`, apply **only** to `source:"loki"` entries for exactly this
+reason: a `source:"none"` zero is not evidence of anything.
+
+`outcomes` queries a fixed destination, `http://127.0.0.1:3100`, the same defensibility argument
+`home/dot_local/bin/executable_otelq` makes for why a caller-controlled LogQL string over a
+compile-time-fixed host is a smaller grant than `curl`. It does not reach for `otelq`'s ClusterIP
+fallback (see the `otel-review` skill): a workstation running claude-otel's own docker-compose
+stack answers on bare localhost; a k3s host whose Loki sits behind a ClusterIP does not, and
+`outcomes` reports that honestly as `source:"none"` rather than reaching past localhost.
+`config-soak outcomes` is deliberately not added to the `settings.base.json` allow-list alongside
+`status`/`land`/`list` — it makes a network call, however narrow, which the other three verbs do
+not, and the allow-list's own comment already documents that a new subcommand is never
+pre-approved by default.
