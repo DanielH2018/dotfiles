@@ -121,6 +121,14 @@ Scripts
 # that sees it, and without this it deploys the .pyc files as managed dotfiles.
 **/__pycache__
 
+# retention-sweep's lock file, if a misconfigured RETENTION_LOCK or a relative
+# path bug ever writes it directly into the source tree instead of
+# $XDG_RUNTIME_DIR/retention-sweep.lock (4e14f09 committed one this way at
+# home/private_dot_claude/sweep.lock). Matching git-tracking exclusion is in
+# the repo's own .gitignore, since this file has no reason to travel with
+# every other repo's global ignore.
+**/sweep.lock
+
 # Python test and environment scratch, for the same reason and with a worse blast
 # radius: the vault-tooling projects are pytest projects living in the source
 # tree, so `uv sync` or a bare `pytest` there drops a .venv or .pytest_cache next

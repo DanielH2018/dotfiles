@@ -20,3 +20,10 @@
 **/*.local.zsh
 **/*.local.env
 **/local.config
+
+# retention-sweep's lock file, if it ever lands directly in the source tree (a
+# misconfigured RETENTION_LOCK or a relative path bug — 4e14f09 committed one at
+# home/private_dot_claude/sweep.lock by accident). The script's real lock lives at
+# $XDG_RUNTIME_DIR/retention-sweep.lock, never under home/. Matching deploy-time
+# exclusion is in home/.chezmoiignore.
+**/sweep.lock
