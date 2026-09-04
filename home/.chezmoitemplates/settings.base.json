@@ -116,6 +116,13 @@
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "726000",
     "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE": "true",
     "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT": "1",
+    {{/* The model a subagent runs on when neither the Agent call nor the agent's own
+         frontmatter names one. Without it an unpinned agent inherits the session model, so
+         under Fable the built-ins (Explore, general-purpose, Plan) and every reviewer without
+         a `model:` line ran bulk file reading on the top tier. A `model:` in
+         .claude/agents/*.md or on the Agent call still wins; the _FORCE variant would
+         override those too and is deliberately not set. Added 2026-09-04. */}}
+    "CLAUDE_CODE_SUBAGENT_MODEL": "opus",
     {{/* Off because it is the most expensive thing here per unit of value. It generates a
          predicted *next user prompt* after each turn, on the session model, against the
          whole context — so each one is priced like a real turn while answering a question
