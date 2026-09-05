@@ -49,6 +49,31 @@
     "CLAUDE_ARTIFACTS_BASE_URL": "https://artifacts.daniel-hunter.com",
     "CLAUDE_ARTIFACTS_HOST": "{{ .chezmoi.hostname }}",
 {{ end }}
+{{ if has .chezmoi.hostname (list "daniel-box" "daniel-server") }}
+    {{/* Bound the pytest fan-out for a Claude session started outside claude-rc.service —
+         a terminal session, a background job, an IDE session. `addopts` in the server repo's
+         pyproject.toml carries `-n auto`, which pytest-xdist resolves to one worker per core:
+         16 on daniel-box, 8 on daniel-server. xdist reads this variable first in
+         `pytest_xdist_auto_num_workers` and returns it before any CPU detection, so it
+         governs `-n auto` and `-n logical` alike.
+
+         claude-rc.service already sets the same variable for the sessions IT spawns, from
+         `claude_code_rc_pytest_workers` in the server repo's
+         ansible/roles/setup/claude_code/defaults/main.yml. That unit reaches nothing else, so
+         every session started any other way still resolved `auto` at full width — which is
+         what this covers. Keep the two values equal; raising one alone makes the cap depend
+         on how the session happened to start.
+
+         4 matches the rc cap. Do not carry over the rc derivation with it: that arithmetic
+         (workers x capacity against the unit's MemoryHigh) describes a cgroup a non-rc
+         session is not in, and there is no capacity bound on these at all. 4 is the
+         conservative match, not a computed figure.
+
+         This block is the lever rather than ~/.zshenv because the Bash tool spawns its own
+         shell per command and does not read it — the same reason SUDO_ASKPASS above lives
+         here. It is scoped to the two k3s nodes so CI and the desktop keep full width. */}}
+    "PYTEST_XDIST_AUTO_NUM_WORKERS": "4",
+{{ end }}
     {{/* M02 shadow census: re-armed SAMPLED after a stint fully off.
 
          It exists to measure what cmdparse.sh's shared segmentation WOULD decide, so the
