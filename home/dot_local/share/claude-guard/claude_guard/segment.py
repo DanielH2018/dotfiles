@@ -242,21 +242,21 @@ def parse(command: str) -> Parsed:
                     for delim, strip, quoted, hoff in pend:
                         body = ""
                         while True:
-                            rest = s[body_start:]
-                            line_end = rest.find("\n")
-                            if line_end == -1:
-                                line, has_nl = rest, False
-                            else:
-                                line, has_nl = rest[:line_end], True
+                            # Absolute find(), not s[body_start:] then a relative find(): slicing
+                            # the remainder copies it on every line, making a large heredoc body
+                            # quadratic in its own length.
+                            line_end = s.find("\n", body_start)
+                            has_nl = line_end != -1
+                            line = s[body_start:line_end] if has_nl else s[body_start:]
                             cmp = line.lstrip("\t") if strip else line
                             if cmp == delim:
-                                body_start = body_start + line_end + 1 if has_nl else n
+                                body_start = line_end + 1 if has_nl else n
                                 break
                             body += line + "\n"
                             if not has_nl:
                                 body_start = n
                                 break
-                            body_start += line_end + 1
+                            body_start = line_end + 1
                         heredocs.append((hoff, body, quoted))
                     pend.clear()
                     seg_start[depth] = body_start
@@ -271,7 +271,8 @@ def parse(command: str) -> Parsed:
             reason = "unbalanced-quote"
         return _unreadable(reason)
 
-    segs.append([s[seg_start[0] :], "eof", seg_start[0], n + 1])
+    # n, not n + 1: this offset is 0-indexed one-past-end, unlike the awk oracle's 1-indexed n+1.
+    segs.append([s[seg_start[0] :], "eof", seg_start[0], n])
 
     # A trailing separator terminates the last command; it does not start an empty new one.
     # A loop, because `ls &&\n` ends in two separators back to back.
@@ -292,5 +293,9 @@ def parse(command: str) -> Parsed:
 
 
 def visible(parsed: Parsed) -> list[str]:
-    """The split as every consumer sees it: stripped, with empty segments dropped."""
+    """The split as every consumer sees it: stripped, with empty segments dropped.
+
+    Strips Unicode whitespace (`str.strip()`) to match the node suite's `.trim()` oracle,
+    whereas the segment-boundary collapse above strips only `" \\t\\r\\n"` to match bash.
+    """
     return [t for t in (seg.text.strip() for seg in parsed.segments) if t]

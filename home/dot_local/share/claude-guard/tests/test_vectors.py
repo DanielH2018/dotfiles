@@ -59,6 +59,8 @@ def test_corpus_vector(v):
 # absorbs a leading empty body, and `read -d` drops a trailing one, while the port keeps both.
 # Both parity tests below compare the heredoc field with empty bodies dropped from each side;
 # seg, sep and subseg are still compared exactly.
+# A command containing \x1f (the bash --json record separator) cannot be represented by the
+# bash side, so the parity tests cannot see it either.
 @skip_no_fixture
 @skip_no_bash
 @pytest.mark.parametrize("v", vectors() if FIXTURE.exists() else [], ids=lambda v: v["name"])

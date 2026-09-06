@@ -232,6 +232,8 @@ def test_a_heredoc_inside_a_double_quoted_substitution_is_lifted_not_misread_as_
 def test_two_heredocs_on_one_command_are_both_attached_in_order():
     p = parse("diff <(cat <<'A'\none\nA\n) - <<'B'\ntwo\nB")
     assert p.ok
+    assert p.segments[0].heredocs == ("one\n", "two\n")
+    assert p.substitutions == ("cat <<'A'", "")
 
 
 def test_an_unterminated_quoted_delimiter_is_refused():
