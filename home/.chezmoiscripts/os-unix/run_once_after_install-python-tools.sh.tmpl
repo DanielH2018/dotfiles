@@ -64,6 +64,9 @@ fi
 #    moved on to 3.13/3.14 has none of them. Idempotent: uv skips a version it already has.
 #    (~/dev/server pins >=3.14 and keeps resolving to the system interpreter.)
 uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' failed" >&2
+# claude-guard (~/.local/share/claude-guard) is 3.14-only; its shims resolve this interpreter
+# at call time with `uv python find --no-project --managed-python 3.14`.
+uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' failed" >&2
 
 # 3. Global CLIs. `uv tool install` replaces an existing install rather than erroring, so a
 #    re-apply also refreshes a stale ruff/prek in place — the same upgrade-on-apply policy the

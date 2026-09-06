@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# claude-guard — CLI entry for the claude_guard package: explain, replay, segment.
+#
+# Not a hook. The hook shims live in ~/.claude/hooks and carry the per-event failure
+# contracts (spec: docs/specs/2026-09-06-claude-guard-design.md). This one is for a human or
+# a test, so a missing interpreter is an error, not a silent no-decision.
+#
+# The package is 3.14-only and runs under uv's managed interpreter. `--no-project` matters:
+# without it, `uv python find` run inside a uv project answers with that project's venv, which
+# on the server repo is a different 3.14 with a different sys.path. `-S` skips site-packages;
+# the package needs only the stdlib and PYTHONPATH still applies without site.
+set -eu
+SHARE="${CLAUDE_GUARD_HOME:-$HOME/.local/share/claude-guard}"
+if ! PY=$(uv python find --no-project --managed-python 3.14 2>/dev/null); then
+  echo "claude-guard: no uv-managed Python 3.14 found; run: uv python install 3.14" >&2
+  exit 2
+fi
+PYTHONPATH="$SHARE" exec "$PY" -S -m claude_guard.cli "$@"
