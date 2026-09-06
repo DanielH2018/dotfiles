@@ -94,6 +94,20 @@
            The tool is bin/jsonq plus the nine modules in share/jsonq, and the grant covers all ten, so the structure block reads every one of them — discovered from disk, not listed, because a block that named its files would go quiet the moment a tenth appeared. Two further assertions exist because splitting the tool created the risk: every module imports only the standard library or a sibling, and nothing touches sys.path. The second is the sharp one. share/jsonq on sys.path would let an unmanaged json.py dropped there shadow the stdlib for every later import and run under this rule; the shim binds the directory to a package __path__ instead, which resolves _jsonq.* and nothing else, so an unexpected file is inert rather than a shadow. A test also pins that the directory holds exactly the modules the shim loads.
            Residual risk is runaway work, not escape: SIGALRM cannot interrupt a C-level operation, so the caps on **, <<, sequence repetition, range(), int() and format-spec widths are load-bearing. A catastrophically backtracking regex can still hang the CLI past --timeout; that is documented in the tool and costs a Ctrl-C, not a bypass. */}}
       "Bash(jsonq:*)",
+      {{/* stdio-blocking exists so the homelab server repo's uv-python.sh hook can clear
+           O_NONBLOCK on the Bash tool's stdio without its prefix landing on the
+           `Bash(python3 -c:*)` ask rule — that inline form is arbitrary code execution and
+           belongs there, but the whole point of this fixup is that it runs before EVERY
+           ansible invocation, so an ask rule on it prompted for the whole compound chain
+           (64 prompts in 7 days, 16 of them read-only shapes). The blanket allow is
+           defensible for the same reason jsonq's is: an absence, not a check. The script
+           takes no arguments (a stray one is a usage error, checked before anything else
+           runs) and touches nothing but os.set_blocking on fds 0, 1 and 3 of its own
+           process — no path, no network, no subprocess, nothing caller-controlled reaches
+           it because there is nothing for caller data to modify. tests/stdio-blocking.test.js
+           pins both: that an argument is refused, and that the fds it targets end up
+           blocking. */}}
+      "Bash(stdio-blocking)",
       {{/* otelq queries the local Loki/Prometheus stack. curl is ask-listed because it takes an arbitrary URL and can write the response to disk; otelq exposes neither — the host is a hardcoded 127.0.0.1 constant, not a flag, the method is always GET, and output only goes to stdout. LogQL/PromQL cannot spawn a process or read a file, so a free-form query argument stays inert. tests/otelq.test.js pins the loopback bases, the absence of any --host/--url/--output flag, and the GET-only construction. */}}
       "Bash(otelq:*)",
       {{/* otel-sweep is otelq's question asked of every machine, and it earns the same grant the same way — by absence. ssh is ask-listed because it takes a destination and a command, both arbitrary; otel-sweep exposes neither. The destinations are a three-entry dict of literals and --only validates against that dict, so no argument names a host. The program that runs on each machine is PROBE, one module-level constant delivered on stdin to `python3 -`; nothing is ever interpolated into it or into any argv, so there is no position where caller data becomes a command. subprocess is always given an argv list and never shell=True, so there is no shell to escape. There is no --host, --url, --query or --output flag, every request is a GET, and PROBE writes no files — output is JSON on stdout.
@@ -607,6 +621,22 @@
       "Bash(node -e:*)",
       "Bash(python3 -c:*)",
       "Bash(python -c:*)",
+      {{/* A hand-run playbook is a real deploy on the homelab server repo, bypassing that
+           repo's scripts/deploy.sh and the lock it takes. These three prefix forms
+           (bare, uv run, and uv run --frozen) used to be reached only by accident: the
+           uv-python.sh hook prepended an inline `python3 -c '...'` stdio fixup ahead of
+           every ansible-playbook invocation, and that prefix matched the
+           `Bash(python3 -c:*)` ask rule above, so the whole compound command prompted
+           regardless of what followed it. Moving that fixup out to the standalone
+           stdio-blocking script above removes the accidental guard, so it is named
+           explicitly here instead — the posture on a hand-run playbook must not change
+           just because the prefix in front of it did. executable_allow-ansible-readonly.sh
+           narrows this back to unprompted for the genuinely read-only invocation shapes
+           (--check, --list-tasks, --list-tags, --list-hosts, --syntax-check with no
+           file-valued -e/--extra-vars); everything else still asks. */}}
+      "Bash(ansible-playbook:*)",
+      "Bash(uv run ansible-playbook:*)",
+      "Bash(uv run --frozen ansible-playbook:*)",
       "Bash(npx -y:*)",
       "Bash(npx --yes:*)",
       "Bash(npx -c:*)",

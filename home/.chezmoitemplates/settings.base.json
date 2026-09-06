@@ -578,6 +578,21 @@
             "command": "~/.claude/hooks/guard-permission-request.sh",
             "timeout": 10
           },
+          {{/* Same shape again, for ansible-playbook: auto-approves a provably read-only
+               invocation (--check, --list-tasks, --list-tags, --list-hosts, or
+               --syntax-check, with no file-valued -e/--extra-vars) so it stops prompting
+               now that ansible-playbook is ask-listed in its own right rather than
+               reached by accident through the python3-c prefix uv-python.sh (homelab
+               server repo) used to prepend. Also sees through that hook's own
+               `stdio-blocking; ` prefix and `2>&1 | tail -n N` suffix. Everything else
+               still hits the Bash(ansible-playbook:*) / Bash(uv run ansible-playbook:*) /
+               Bash(uv run --frozen ansible-playbook:*) ask rules -- a hand-run playbook is
+               a real deploy that bypasses that repo's scripts/deploy.sh lock. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-ansible-readonly.sh",
+            "timeout": 10
+          },
           {{/* auto-approve-remote-ssh.sh used to be registered here. It picks up where
                allow-readonly-remote.sh stops -- the homelab calls are wrapped in a local
                filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook refuses

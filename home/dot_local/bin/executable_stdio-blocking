@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""stdio-blocking — clear O_NONBLOCK on fds 0, 1 and 3.
+
+Called as a bare prefix (`stdio-blocking; <cmd>`) by the homelab server
+repo's `.claude/hooks/uv-python.sh`, which prepends it to every command that
+runs ansible or the system python. Every ansible CLI calls check_blocking_io()
+at import time and refuses to start on a non-blocking stdin/stdout/stderr —
+the Claude Code Bash tool hands its child a regular file with O_NONBLOCK set,
+so a run from a session died on that check while the same command from a
+terminal worked. Clearing the flag here, before ansible or python ever
+imports, fixes the shell's own descriptors, and fork/exec shares the open
+file description with every child the shell then runs.
+
+fd 3 mirrors the original `python3 -c '...' 3>&2 2>/dev/null` inline fixup
+this replaces: that form redirected fd 2 to /dev/null to keep itself quiet
+and routed the real stderr through fd 3 instead, so fd 3 was the thing that
+actually needed fixing. This script does not require that dance — a bare
+`stdio-blocking;` prefix leaves fd 3 closed, and fds 0 and 1 are already the
+caller's real descriptors — but it still tries fd 3 and tolerates it being
+absent, so a caller that DOES pass one through (as the caller above may, on
+a machine where this script has not yet deployed and falls back to the
+inline form) is still covered by the same binary should that fallback ever
+be retired here instead.
+
+Takes no arguments. Prints nothing on success; a stray argument is a usage
+error, since nothing this script does needs one.
+"""
+import contextlib
+import os
+import sys
+
+
+def main() -> int:
+    if len(sys.argv) > 1:
+        print("stdio-blocking: takes no arguments", file=sys.stderr)
+        return 2
+    for fd in (0, 1, 3):
+        with contextlib.suppress(OSError):
+            os.set_blocking(fd, True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
