@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""stash-mine — touch only the stash entries this worktree created.
+
+Exists because the git stash stack is shared across every worktree of a repo,
+not per-worktree, and several Claude sessions work each repo at once. A bare
+`git stash pop` applied another session's 25-file WIP into a tree once, which
+is why `git stash pop`/`drop`/`clear` are ask-listed and a PreToolUse hook
+denies the bare form. The prescribed protocol — push with a unique tag,
+capture the SHA, apply/drop by that SHA, never pop — is correct but easy to
+get wrong under load; this tool is that protocol with nothing left optional.
+
+What makes a blanket `Bash(stash-mine:*)` rule defensible is not a check, it
+is an absence: there is no --path, --ref, --worktree or --repo flag, and the
+only caller-supplied value that ever reaches a git command is a stash SHA,
+which every write path re-validates against THIS worktree's own tag before
+using it. The tag itself is never a caller-supplied string — it is built once,
+at startup, from `git rev-parse --show-toplevel` (its basename) and the
+current branch, both read from the repository stash-mine is run in. No
+argument can substitute a different worktree's identity, so no argument can
+reach a different worktree's stash entry. subprocess is always called with an
+argv list and never shell=True, so there is no shell to escape either.
+
+  stash-mine push [-m NOTE]   # git stash push -u, tagged with this worktree; prints SHA
+  stash-mine list             # this worktree's own entries: sha, stash@{n}, note
+  stash-mine apply [SHA]      # git stash apply; newest own entry if SHA omitted
+  stash-mine drop [SHA]       # drops by SHA, re-resolving stash@{n} at drop time
+
+There is no `pop` (that's apply + drop, run separately, so a bad apply never
+loses the entry) and no `clear` (it cannot be scoped to one worktree's
+entries). `apply`/`drop` refuse a SHA belonging to another worktree, or to no
+stash entry at all.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+
+PROG = "stash-mine"
+
+
+def run(argv: list[str]) -> subprocess.CompletedProcess:
+    """Run a git command. argv is always a list; there is no shell."""
+    return subprocess.run(argv, capture_output=True, text=True)
+
+
+def git_toplevel() -> str:
+    done = run(["git", "rev-parse", "--show-toplevel"])
+    if done.returncode != 0:
+        sys.exit(f"{PROG}: not a git repository ({done.stderr.strip()})")
+    return done.stdout.strip()
+
+
+def git_branch() -> str:
+    done = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if done.returncode != 0:
+        sys.exit(f"{PROG}: could not read the current branch ({done.stderr.strip()})")
+    return done.stdout.strip()
+
+
+def worktree_id() -> str:
+    """basename(toplevel) + branch — never an argument, always read fresh."""
+    import os
+
+    return os.path.basename(git_toplevel().rstrip("/")) + "@" + git_branch()
+
+
+def tag_prefix() -> str:
+    return f"stash-mine:{worktree_id()}:"
+
+
+def own_entries(tag: str) -> list[tuple[str, int, str]]:
+    """(sha, stash@{n} index, reflog subject) for every entry tagged for THIS worktree.
+
+    Index is the entry's position in `git stash list`, which is also the N in
+    `stash@{N}` — so it is only ever a MOMENT-of-listing fact, never cached
+    across a git command that could itself change the stack.
+    """
+    done = run(["git", "stash", "list", "--format=%H %gs"])
+    if done.returncode != 0:
+        sys.exit(f"{PROG}: git stash list failed ({done.stderr.strip()})")
+    entries = []
+    for idx, line in enumerate(done.stdout.splitlines()):
+        sha, _, subject = line.partition(" ")
+        if tag in subject:
+            entries.append((sha, idx, subject))
+    return entries
+
+
+def resolve_sha(candidate: str) -> str | None:
+    """Normalise an abbreviated or full SHA to the full 40-hex commit id, or None."""
+    done = run(["git", "rev-parse", "--verify", "-q", candidate + "^{commit}"])
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip()
+
+
+def find_own(tag: str, sha: str | None) -> tuple[str, int, str]:
+    """The own entry matching `sha`, or the newest own entry when `sha` is None.
+
+    Refuses (exits) on a SHA that resolves but does not carry this worktree's
+    tag, and on a SHA that does not resolve at all — the two ways a caller
+    could try to point this tool at something that isn't its own.
+    """
+    entries = own_entries(tag)
+    if sha is None:
+        if not entries:
+            sys.exit(f"{PROG}: no stash entries belong to this worktree")
+        return min(entries, key=lambda e: e[1])
+    full = resolve_sha(sha)
+    if full is None:
+        sys.exit(f"{PROG}: {sha!r} is not a commit this repository knows about")
+    for entry in entries:
+        if entry[0] == full:
+            return entry
+    sys.exit(f"{PROG}: {sha!r} is not a stash entry this worktree created")
+
+
+def cmd_push(args: argparse.Namespace) -> int:
+    tag = tag_prefix()
+    message = tag + (args.message or "")
+    done = run(["git", "stash", "push", "-u", "-m", message])
+    sys.stderr.write(done.stderr)
+    if done.returncode != 0:
+        return done.returncode
+    if "No local changes to save" in done.stdout:
+        print(done.stdout.strip())
+        return 1
+    for sha, _idx, subject in own_entries(tag):
+        if subject.endswith(message):
+            print(sha)
+            return 0
+    # Should not happen: the push above just reported success.
+    sys.exit(f"{PROG}: pushed, but could not find the new entry in the stash list")
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    tag = tag_prefix()
+    entries = own_entries(tag)
+    if not entries:
+        print(f"{PROG}: no stash entries belong to this worktree", file=sys.stderr)
+        return 1
+    for sha, idx, subject in entries:
+        note = subject.split(tag, 1)[1] if tag in subject else subject
+        print(f"{sha}  stash@{{{idx}}}  {note}")
+    return 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    tag = tag_prefix()
+    sha, _idx, _subject = find_own(tag, args.sha)
+    done = run(["git", "stash", "apply", sha])
+    sys.stdout.write(done.stdout)
+    sys.stderr.write(done.stderr)
+    return done.returncode
+
+
+def cmd_drop(args: argparse.Namespace) -> int:
+    tag = tag_prefix()
+    sha, _idx, _subject = find_own(tag, args.sha)
+    # Re-resolve stash@{n} for this SHA right before dropping: a concurrent
+    # push from another worktree between find_own() above and here can only
+    # ever shift indices upward (it can add an entry at stash@{0}, never
+    # remove one this tool doesn't own), so the freshest lookup is the only
+    # one that is safe to act on.
+    entries = own_entries(tag)
+    for entry_sha, idx, _subject in entries:
+        if entry_sha == sha:
+            done = run(["git", "stash", "drop", f"stash@{{{idx}}}"])
+            sys.stdout.write(done.stdout)
+            sys.stderr.write(done.stderr)
+            return done.returncode
+    sys.exit(f"{PROG}: {sha} is no longer on the stash (already dropped?)")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog=PROG,
+        description="Touch only the stash entries this worktree created.",
+    )
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p_push = sub.add_parser("push", help="git stash push -u, tagged with this worktree")
+    p_push.add_argument("-m", "--message", help="a note; the tag is added for you")
+    p_push.set_defaults(func=cmd_push)
+
+    p_list = sub.add_parser("list", help="list this worktree's own stash entries")
+    p_list.set_defaults(func=cmd_list)
+
+    p_apply = sub.add_parser("apply", help="git stash apply an own entry")
+    p_apply.add_argument("sha", nargs="?", help="an entry this worktree pushed")
+    p_apply.set_defaults(func=cmd_apply)
+
+    p_drop = sub.add_parser("drop", help="drop an own entry (newest if omitted)")
+    p_drop.add_argument("sha", nargs="?", help="an entry this worktree pushed")
+    p_drop.set_defaults(func=cmd_drop)
+
+    ns = ap.parse_args()
+    return ns.func(ns)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
