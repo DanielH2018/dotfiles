@@ -22,6 +22,9 @@ function sh(cwd, cmd) {
   execFileSync('bash', ['-c', cmd], { cwd, stdio: 'ignore' });
 }
 
+const dirs = [];
+process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function behavior(command, cwd) {
   let out;
   try {
@@ -39,6 +42,7 @@ function behavior(command, cwd) {
 // meaningful fast-forward and a "dirty tracked file" case has something to dirty.
 function makeRepo(branch = 'master') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-reset-'));
+  dirs.push(root);
   const bare = path.join(root, 'origin.git');
   const work = path.join(root, 'work');
   sh(root, `git init -q --bare "${bare}"`);
