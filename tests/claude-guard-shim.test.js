@@ -23,12 +23,12 @@ test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: uvOk ? false : 'uv unav
 });
 
 test('shim fails closed with a message when no managed 3.14 is available', () => {
-  // A PATH with no uv makes `uv python find` fail the same way a missing interpreter does.
-  // /usr/bin:/bin keeps `bash` itself resolvable (spawnSync's own env replaces process.env
-  // wholesale, so bash must be found in the same restricted PATH) while omitting the
-  // directory uv actually lives in on this machine (~/.local/bin).
-  const r = spawnSync('bash', [SHIM, 'explain', 'ls'], {
-    encoding: 'utf8', env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME, CLAUDE_GUARD_HOME: SHARE },
+  // spawnSync's env replaces process.env wholesale, and bash itself would normally need to
+  // be resolved through that same PATH. Using an argv[0] with a slash (`/bin/bash`) bypasses
+  // Node's PATH lookup for bash, so an empty PATH is free to make the bare `uv` the shim
+  // shells out to unresolvable — wherever a real uv lives on the machine running this test.
+  const r = spawnSync('/bin/bash', [SHIM, 'explain', 'ls'], {
+    encoding: 'utf8', env: { PATH: '', HOME: process.env.HOME, CLAUDE_GUARD_HOME: SHARE },
   });
   assert.strictEqual(r.status, 2);
   assert.match(r.stderr, /uv python install 3\.14/);
