@@ -179,3 +179,112 @@ def test_shadow_report_prints_counts_and_never_a_command(tmp_path):
 def test_shadow_report_exits_nonzero_when_there_is_no_log(tmp_path):
     r = run("shadow-report", "--log", str(tmp_path / "absent.jsonl"))
     assert r.returncode == 1
+
+
+HOOKS_DIR = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks"
+
+
+def home_with_allow(tmp_path: Path, *rules: str) -> Path:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": list(rules), "deny": [], "ask": ["Bash(rm:*)"]}})
+    )
+    return home
+
+
+def run_home(home: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-S", "-m", "claude_guard.cli", *args],
+        capture_output=True,
+        text=True,
+        cwd=PKG_DIR,
+        env={"PYTHONPATH": str(PKG_DIR), "PATH": "/usr/bin:/bin", "HOME": str(home)},
+    )
+
+
+def test_explain_prints_the_decision_and_the_rule_per_segment(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
+    r = run_home(home, "explain", "ls; timeout 5 pwd")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[-1] == "decision: allow rule=allow"
+    assert "[1] sep=eof heredocs=0: timeout 5 pwd -> wrapper:pwd" in r.stdout
+
+
+def test_explain_names_the_refusing_segment(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(ls:*)")
+    r = run_home(home, "explain", "ls && frobnicate")
+    assert r.stdout.splitlines()[-1] == "decision: defer rule=segment:1:unlisted"
+
+
+def test_replay_judge_prints_the_allowed_commands_and_the_count(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(
+        json.dumps({"command": "ls; pwd", "cwd": "/tmp"})
+        + "\n"
+        + json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"})
+        + "\n"
+        + json.dumps({"command": "rm -rf /tmp/x && ls", "cwd": "/tmp"})
+        + "\n"
+    )
+    r = run_home(home, "replay", str(corpus), "--judge")
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.splitlines()
+    assert lines[-1] == "ALLOW 2/3"
+    assert "ALLOW: ls; pwd" in lines and "ALLOW: rm -rf /tmp/x && ls" in lines
+
+
+def test_replay_judge_applies_the_records_cwd_as_the_project_scope(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
+    proj = tmp_path / "proj"
+    (proj / ".claude").mkdir(parents=True)
+    (proj / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"deny": ["Bash(pwd)"]}})
+    )
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(json.dumps({"command": "ls; pwd", "cwd": str(proj)}) + "\n")
+    r = run_home(home, "replay", str(corpus), "--judge")
+    assert r.stdout.splitlines()[-1] == "ALLOW 0/1"
+
+
+@pytest.mark.skipif(
+    not (HOOKS_DIR / "executable_allow-compound-bash.sh").exists(),
+    reason="bash hooks not beside a deployed copy",
+)
+def test_replay_compare_hooks_reports_agreement_with_the_bash_chain(tmp_path):
+    home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(
+        json.dumps({"command": "ls; pwd", "cwd": "/tmp"})
+        + "\n"
+        + json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"})
+        + "\n"
+    )
+    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(HOOKS_DIR))
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert r.stdout.splitlines()[-1] == "AGREE 2/2"
+
+
+def test_replay_compare_hooks_exits_nonzero_on_a_mismatch(tmp_path):
+    # A fake chain that allows everything proves the comparison can go red.
+    fake = tmp_path / "hooks"
+    fake.mkdir()
+    (fake / "allow-compound-bash.sh").write_text(
+        '#!/bin/bash\ncat >/dev/null\nprintf \'{"decision":{"behavior":"allow"}}\\n\'\n'
+    )
+    (fake / "allow-compound-bash.sh").chmod(0o755)
+    home = home_with_allow(tmp_path, "Bash(ls:*)")
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"}) + "\n")
+    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(fake))
+    assert r.returncode == 1
+    assert "MISMATCH: ls && frobnicate python=none bash=allow rule=segment:1:unlisted" in r.stdout
+    assert r.stdout.splitlines()[-1] == "AGREE 0/1"
+
+
+def test_replay_refuses_both_modes_or_neither(tmp_path):
+    corpus = tmp_path / "c.jsonl"
+    corpus.write_text(json.dumps({"command": "ls", "cwd": "/tmp"}) + "\n")
+    assert run("replay", str(corpus)).returncode == 2
+    assert run("replay", str(corpus), "--judge", "--compare-bash", "/x").returncode == 2

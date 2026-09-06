@@ -24,8 +24,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from claude_guard.hook import LOG_NAME, permission_request, summarize
+from claude_guard.hook import LOG_NAME, bash_chain_allows, permission_request, summarize
+from claude_guard.judge import judge
+from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
+from claude_guard.tables import scratch_roots
 
 
 def to_json_shape(p: Parsed) -> dict:
@@ -49,10 +52,20 @@ def cmd_segment(args: argparse.Namespace) -> int:
 def cmd_explain(args: argparse.Namespace) -> int:
     p = parse(args.command)
     print(f"status: {p.status}")
+    rules = load_rules()
+    roots = scratch_roots(os.environ.get("HOME", ""), os.environ.get("TMPDIR"))
+    d = judge(args.command, rules, roots)
+    reasons = iter(d.reasons)
     for i, seg in enumerate(p.segments):
-        print(f"[{i}] sep={seg.sep} heredocs={len(seg.heredocs)}: {seg.text.strip()}")
+        text = seg.text.strip()
+        # judge() records one reason per non-empty segment, up to and including the one
+        # that refused; segments after that carry none.
+        reason = next(reasons, None) if text else None
+        suffix = f" -> {reason}" if reason else ""
+        print(f"[{i}] sep={seg.sep} heredocs={len(seg.heredocs)}: {text}{suffix}")
     for i, sub in enumerate(p.substitutions):
         print(f"sub[{i}]: {sub.strip()}")
+    print(f"decision: {'allow' if d.allow else 'defer'} rule={d.rule}")
     return 0 if p.ok else 1
 
 
@@ -82,26 +95,68 @@ def _comparable(shape: dict) -> dict:
     }
 
 
+def _records(path: str) -> list[dict]:
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def _head(command: str) -> str:
+    return command.replace("\n", "⏎")[:90]
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
-    records = [
-        json.loads(line) for line in Path(args.corpus).read_text().splitlines() if line.strip()
-    ]
+    if args.judge == bool(args.compare_bash):
+        print("replay: pass exactly one of --judge or --compare-bash", file=sys.stderr)
+        return 2
+    records = _records(args.corpus)
+    if args.compare_bash:
+        return _replay_compare_bash(records, Path(args.compare_bash))
+    return _replay_judge(records, Path(args.compare_hooks) if args.compare_hooks else None)
+
+
+def _replay_compare_bash(records: list[dict], cmdparse: Path) -> int:
     agree = 0
     for rec in records:
         command = rec["command"]
-        mine = to_json_shape(parse(command))
-        theirs = bash_parse(Path(args.compare_bash), command)
-        mine_c = _comparable(mine)
-        theirs_c = _comparable(theirs)
+        mine_c = _comparable(to_json_shape(parse(command)))
+        theirs_c = _comparable(bash_parse(cmdparse, command))
         if mine_c == theirs_c:
             agree += 1
             continue
-        head = command.replace("\n", "⏎")[:90]
-        print(f"MISMATCH: {head}")
+        print(f"MISMATCH: {_head(command)}")
         for key in ("status", "seg", "sep", "heredoc", "subseg"):
             if mine_c[key] != theirs_c[key]:
                 print(f"  {key}: python={mine_c[key]!r} bash={theirs_c[key]!r}")
     print(f"PARITY {agree}/{len(records)}")
+    return 0 if agree == len(records) else 1
+
+
+def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
+    home = os.environ.get("HOME", "")
+    roots = scratch_roots(home, os.environ.get("TMPDIR"))
+    allowed = 0
+    agree = 0
+    for rec in records:
+        command = rec["command"]
+        cwd = rec.get("cwd", "")
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": cwd}
+        d = judge(command, load_rules(home=home, project_dir=cwd), roots)
+        if d.allow:
+            allowed += 1
+            print(f"ALLOW: {_head(command)}")
+        if hooks_dir is None:
+            continue
+        stdin_text = json.dumps({"tool_input": {"command": command}})
+        bash_hook = bash_chain_allows(hooks_dir, stdin_text, env)
+        if d.allow == bool(bash_hook):
+            agree += 1
+        else:
+            py = "allow" if d.allow else "none"
+            sh = "allow" if bash_hook else "none"
+            print(f"MISMATCH: {_head(command)} python={py} bash={sh} rule={d.rule}")
+    print(f"ALLOW {allowed}/{len(records)}")
+    if hooks_dir is None:
+        return 0
+    print(f"AGREE {agree}/{len(records)}")
     return 0 if agree == len(records) else 1
 
 
@@ -161,9 +216,20 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("corpus")
     r.add_argument(
         "--compare-bash",
-        required=True,
+        default=None,
         metavar="CMDPARSE_SH",
         help="path to cmdparse.sh; report segmentation parity",
+    )
+    r.add_argument(
+        "--judge",
+        action="store_true",
+        help="judge every record against the deployed settings; print the allowed ones",
+    )
+    r.add_argument(
+        "--compare-hooks",
+        default=None,
+        metavar="DIR",
+        help="with --judge: run the bash chain in DIR per record and report agreement",
     )
     r.set_defaults(fn=cmd_replay)
     return ap
