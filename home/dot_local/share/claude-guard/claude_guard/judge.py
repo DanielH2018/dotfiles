@@ -57,12 +57,12 @@ def unwrap_wrapper(segment: str) -> str | None:
     depth = 0
     while depth < 4:  # `timeout 5 nohup nice cmd` nests; a bound stops a cycle
         depth += 1
-        # bash `read -a` (the wrapper's tokenizer) reads only the first line of the
-        # segment; Python's split() also splits on an embedded newline and other Unicode
-        # whitespace, so this port can see MORE tokens than the bash for the same input.
-        # Extra tokens can only trip a stricter branch (an unrecognised flag, a missing
-        # positional) and land on `return None` (defer), never add an allow the bash
-        # wouldn't also give — so the port is never more permissive than the bash it mirrors.
+        # split() also splits on an embedded newline and Unicode whitespace, where bash
+        # `read -a` (the wrapper's tokenizer) reads only the first line. On such a segment
+        # the port may unwrap where the bash defers (e.g. `timeout\n5 ls`: bash `read -a`
+        # sees one token and defers, split() sees three and can unwrap to `ls`). The
+        # segment executes as separate commands either way; slice 3 decides whether the
+        # port must match the bash exactly on inputs like this.
         t = s.split()
         n = len(t)
         if n == 0:

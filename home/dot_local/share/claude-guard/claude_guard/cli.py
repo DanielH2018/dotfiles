@@ -2,7 +2,8 @@
 
     claude-guard permission-request        # hook entry: hook JSON on stdin, allow line or
                                             # nothing on stdout; shadow unless CLAUDE_GUARD_SHADOW=0
-    claude-guard shadow-report [--log P]   # agree / python-only / bash-only counts from the log
+    claude-guard shadow-report [--log P]   # agree / python-only / bash-only / python-error
+                                            # counts from the log
     claude-guard segment --json            # decomposition of the command on stdin,
                                             # cmdparse.sh's shape
     claude-guard explain "<command>"       # the segments, and the decision with its rule
