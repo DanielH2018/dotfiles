@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "15943bf45c12dc47b55d75b15119a359fbbe275f50a81280dfc9bb034c1e0260",
-      "landed": "2026-09-09T22:39:45.424Z"
+      "hash": "c1ac0c061b18b9884bf4c4bac27a49953adc2ab96637056aa0f3c3ea25a7d1c9",
+      "landed": "2026-09-10T01:03:01.977Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "e13bbc29b7095e95cdfb1293adaeee76a3150866132f64e1ce497ae8b5dd8237",
-      "landed": "2026-09-02T13:41:10.106Z"
+      "hash": "6d688e77edb4e8835a968bdea8e994d60ed0268b5950705e43ca48b08abdb1df",
+      "landed": "2026-09-10T01:03:01.977Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -65,6 +65,11 @@
       "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
       "hash": "bcb64f740e04b9c2b7bcf8850b04a3f661beea7889441e1ea001bb281fea0e6d",
       "landed": "2026-08-29T19:12:56.399Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_allow-ansible-readonly.sh",
+      "hash": "c7d150a66a0d451a033b7868899e46873586610186458f5bb7e470fe95413a9a",
+      "landed": "2026-09-10T01:03:01.977Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
