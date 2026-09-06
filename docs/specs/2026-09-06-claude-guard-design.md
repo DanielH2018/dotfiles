@@ -75,7 +75,7 @@ claude-guard/
       git_reset.py  # clean tree, origin/master or origin/main
       ansible.py    # --check / --list-* / --syntax-check, no file-valued extra-vars
       remote.py     # ssh/hl read-only verbs, trusted hosts
-    cli.py          # permission-request | pre-tool-use | explain | replay
+    cli.py          # permission-request | pre-tool-use | explain | replay | segment --json
   tests/
 ```
 
@@ -107,13 +107,15 @@ program is judged. A single segment is judged exactly like a chain of one.
 on stdin and print a decision or nothing. `explain "<cmd>"` prints the segments and the rule
 that decided each, for debugging a surprise prompt. `replay <jsonl>` runs a file of
 `{command, cwd}` records and prints the allow count and the allowed commands, which is the
-cutover gate below.
+cutover gate below. `segment --json` prints `cmdparse.sh --json`'s shape for tests and the
+parity gate.
 
 Two shims in `home/private_dot_claude/hooks/`: `guard-permission-request.sh` and
 `guard-pre-tool-use.sh`. Each resolves the interpreter with `uv python find --no-project --managed-python 3.14` (without `--no-project`, a shim run inside a uv project resolves that project's venv), execs it
 with `-S` on the package's entry point, and implements the failure contract for its event.
 They replace six hook registrations in `settings.base.json`: the five PermissionRequest hooks
-and `block-dangerous-bash.sh`.
+and `block-dangerous-bash.sh`. A third entry point, `~/.local/bin/claude-guard`, is the human
+CLI and is not a hook.
 
 ### `homelab-guard` (server repo)
 
@@ -165,7 +167,8 @@ silent disarm shows in CI rather than in a transcript.
 ## Interpreter
 
 `run_once_after_install-python-tools.sh.tmpl` already runs `uv python install 3.12`; it gains
-3.14. The shims resolve the path at call time with `uv python find 3.14` rather than at
+3.14. The shims resolve the path at call time with `uv python find --no-project
+--managed-python 3.14` rather than at
 `chezmoi apply` time, so an interpreter upgrade cannot leave a stale path in a deployed shim.
 Startup measured for the design: `python3 -S` on an empty script is about 7 ms on this
 machine (10 runs in 69 ms, 2026-09-06, uv-managed 3.14.6); the bash hooks fork `jq` and `awk` several times each and are not faster.

@@ -1394,7 +1394,7 @@ Expected: `PARITY 677/677` (or N/N for the regenerated count) and exit 0. On a m
 
 ```bash
 export PATH="$HOME/.local/share/fnm/aliases/default/bin:$PATH"
-node --test tests/ 2>&1 | grep -E '^ℹ (tests|pass|fail|skipped)'
+git ls-files '*.test.js' '*.test.mjs' | xargs node --test 2>&1 | grep -E '^ℹ (tests|pass|fail|skipped)'
 ```
 
 Expected: `fail 0`.
@@ -1428,7 +1428,7 @@ until slice 3.
 
       PARITY 677/677
 
-- `node --test tests/`: <paste the ℹ pass/fail lines>
+- `git ls-files '*.test.js' '*.test.mjs' | xargs node --test`: <paste the ℹ pass/fail lines>
 
 ## After merge
 

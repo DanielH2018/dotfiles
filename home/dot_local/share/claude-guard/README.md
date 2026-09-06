@@ -14,7 +14,9 @@ On `ok`: `segments` are the top-level commands in order, each with the separator
 terminated it (`&&` `||` `;` `|` `&` `newline` `eof`), its lifted heredoc bodies, and whether
 each heredoc delimiter was quoted. `substitutions` holds the content of every `$( )`,
 `` ` ` ``, `<( )` and `>( )`, flattened across nesting. This is a port of `cmdparse.sh`'s
-awk pass and agrees with it field for field (`tests/test_vectors.py`).
+awk pass and agrees with it field for field (`tests/test_vectors.py`), except that the bash
+`heredoc` field cannot represent an empty body; `_comparable` in `cli.py` drops empty bodies
+on both sides.
 
 ## Running
 
