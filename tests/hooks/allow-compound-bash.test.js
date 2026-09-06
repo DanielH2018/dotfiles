@@ -47,6 +47,22 @@ function allowed(command, home = HOME, projectDir = '') {
   try { return JSON.parse(out).hookSpecificOutput.decision.behavior; } catch { return null; }
 }
 
+// Same as allowed(), but sets the input's `cwd` field explicitly rather than letting the
+// hook fall back to the test process's own $PWD -- the heredoc-write-parity tests need to
+// pin the session cwd to a directory they control.
+function allowedAt(command, cwd, home = HOME, projectDir = '') {
+  let out;
+  try {
+    out = execFileSync('bash', [HOOK], {
+      input: JSON.stringify({ tool_input: { command }, cwd }),
+      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: home, CLAUDE_PROJECT_DIR: projectDir, CMDPARSE_LIB },
+    });
+  } catch (e) { out = e.stdout || ''; }
+  if (!out.trim()) return null;
+  try { return JSON.parse(out).hookSpecificOutput.decision.behavior; } catch { return null; }
+}
+
 test('auto-allows a compound command where every part is allow-listed', { skip }, () => {
   assert.strictEqual(allowed('git status && ls -la'), 'allow');
   assert.strictEqual(allowed('echo hi && cat file.txt && ls'), 'allow');
@@ -89,12 +105,18 @@ const RM_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-rm-'));
 fs.mkdirSync(path.join(RM_HOME, '.claude'), { recursive: true });
 fs.writeFileSync(path.join(RM_HOME, '.claude', 'settings.json'), JSON.stringify({
   permissions: {
-    allow: ['Bash(cd:*)', 'Bash(echo:*)', 'Bash(ls:*)', 'Bash(mkdir:*)'],
+    allow: ['Bash(cd:*)', 'Bash(echo:*)', 'Bash(ls:*)', 'Bash(mkdir:*)', 'Bash(uv run:*)'],
     deny: [],
     ask: ['Bash(rm:*)'],
   },
 }));
 const rmAllowed = (command) => allowed(command, RM_HOME);
+
+// The motivating shape for the rm delegation: a scratch script run then cleaned up in
+// the same chain. `uv run` is allow-listed above for exactly this test.
+test('a delegate-and-cleanup chain is allowed end to end', { skip }, () => {
+  assert.strictEqual(rmAllowed('uv run python /tmp/x.py && rm /tmp/x.py'), 'allow');
+});
 
 test('a provably-confined rm segment resolves its own ask rule', { skip }, () => {
   assert.strictEqual(rmAllowed('cd /tmp && rm -rf /tmp/scratch'), 'allow');
@@ -120,14 +142,22 @@ test('deny still outranks the rm delegation', { skip }, () => {
   assert.strictEqual(allowed('cd /tmp && rm -rf /tmp/scratch'), null);
 });
 
-// DECIDED 2026-07-30: a newline-only or lone-`&`-only compound is not eligible for
-// allow, even now that cmd_parse can see it is genuinely multi-segment. The eligibility
-// gate is the literal && / ; / | substring test, unchanged from before this hook adopted
-// cmd_parse -- widening eligibility to the newline population is a policy call for a
-// later slice, not a side effect of swapping the segmenter (see cmdparse.sh's own header
-// for why a newline was never a separator to the old splitter either).
-test('a newline-only compound is not eligible for allow even when every part is allow-listed', { skip }, () => {
-  assert.strictEqual(allowed('echo hi\nls'), null);
+// DECIDED 2026-09-06, superseding the 2026-07-30 note this replaced: a newline now joins
+// the eligible population and is judged exactly like `;` (see allow-compound-bash.sh's
+// eligibility comment). 76+ prompts/wk (measured 2026-08-29) were a `cd <worktree>` on
+// one line and a grep on the next, refused for no reason a `;`-joined chain wouldn't
+// also refuse. A lone `&` is unaffected -- it never enters the eligible population on
+// its own (see the bare-`&` test above), and the UNJUDGEABLE handling still treats one
+// as unreadable even inside an otherwise-eligible chain.
+test('a newline-only compound is allowed when every part is allow-listed', { skip }, () => {
+  assert.strictEqual(allowed('echo hi\nls'), 'allow');
+  assert.strictEqual(allowed('git status\ngit log --oneline -3\ncat file.txt'), 'allow');
+});
+
+test('a newline-only compound still defers when a segment is denied, ask-listed, or unlisted', { skip }, () => {
+  assert.strictEqual(allowed('ls\nrm -rf build'), null);            // deny
+  assert.strictEqual(allowed('git status\ngit push origin main'), null); // ask
+  assert.strictEqual(allowed('git status\nfrobnicate'), null);      // unlisted
 });
 
 // The hook has no segmentation of its own to fall back to now -- a missing library means
@@ -187,14 +217,20 @@ test('defers when a command substitution could smuggle a segment', { skip }, () 
 });
 
 // cmd_parse lifts a heredoc body out whole and never scans it for a substitution, so an
-// unquoted delimiter could carry a live `$(...)` this hook cannot see. And a bare newline
-// was never a separator to the old splitter, so a command that only becomes multi-segment
-// via one is outside the population that has ever reached judge(). Both stay deferred even
-// though every segment shown here is individually allow-listed and the command is eligible
-// (it contains a literal `&&`).
-test('defers on a heredoc or an internal newline even when every segment is allow-listed', { skip }, () => {
+// unquoted OR non-write heredoc could carry a live `$(...)` this hook cannot see (the one
+// carve-out, a `cat > path`/`cat >> path` write with a QUOTED delimiter, is its own test
+// group below). Stays deferred even though every segment shown here is individually
+// allow-listed and the command is eligible (it contains a literal `&&`).
+test('defers on a heredoc that is not the cat>path write shape, even when every segment is allow-listed', { skip }, () => {
   assert.strictEqual(allowed("git commit -F - <<'EOF' && ls\nmy message\nEOF\n"), null);
-  assert.strictEqual(allowed('echo hi && ls\ncat file.txt'), null);
+});
+
+// An internal newline used to force a defer regardless of content; now that it is judged
+// like `;` (see the newline-only tests above), this is allowed on the strength of every
+// segment earning its own allow entry, same as it would with `;` in its place.
+test('an internal newline inside an eligible chain is judged like `;`', { skip }, () => {
+  assert.strictEqual(allowed('echo hi && ls\ncat file.txt'), 'allow');
+  assert.strictEqual(allowed('echo hi && ls\nfrobnicate'), null);
 });
 
 // A quoted delimiter used to force a prompt: the hook bailed rather than risk a naive
@@ -525,8 +561,100 @@ test('every wrapper the hook unwraps is one the allow list is checked against', 
   }
 });
 
+// ---------------------------------------------------------------------------
+// Heredoc write parity: `cat > path`/`cat >> path` with a QUOTED delimiter is a Write
+// with no expansion possible, so it earns the same auto-approval a Write tool call would
+// -- when the path is confined to a scratch root or to the session's own cwd. An
+// unquoted delimiter can still carry a live $(...) in its body and stays unjudgeable, and
+// every OTHER segment in the chain still has to earn its own allow entry.
+const HEREDOC_CWD = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-cwd-'));
+
+test('a cat>path heredoc write with a quoted delimiter is allowed under a scratch root', { skip }, () => {
+  assert.strictEqual(allowed("cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\n"), 'allow');
+  assert.strictEqual(allowed('cat >> /tmp/x.sh <<"EOF"\nmore\nEOF\n'), 'allow');
+  assert.strictEqual(allowed("cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\ngit status"), 'allow');
+});
+
+test('a cat>path heredoc write with a quoted delimiter is allowed under the session cwd', { skip }, () => {
+  assert.strictEqual(allowedAt("cat > notes.md <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), 'allow');
+  assert.strictEqual(
+    allowedAt(`cat > ${HEREDOC_CWD}/notes.md <<'EOF'\nhi\nEOF\n`, HEREDOC_CWD), 'allow');
+});
+
+// A heredoc body writes inert text -- it is never executed -- so even a body that reads
+// like a dangerous command is safe to write, and this only reads 'allow' if cmd_parse
+// kept the whole body lifted out rather than splitting it into top-level segments. A
+// split would turn "rm -rf /" into its own segment and refuse it on the ask list instead.
+test('a heredoc body containing rm -rf / on its own line is not split into segments', { skip }, () => {
+  assert.strictEqual(allowed("cat > /tmp/x.sh <<'EOF'\nrm -rf /\nEOF\n"), 'allow');
+});
+
+// The stronger discriminating case: a heredoc that is NOT the cat>path write shape (piped
+// to stdin here, same as `sh <<EOF`) whose body is entirely allow-listed text. This must
+// still defer -- if cmd_parse ever mis-lifted the body into top-level segments instead of
+// one opaque blob, "echo hi" and "ls" would each earn their own allow entry and the whole
+// chain would read 'allow', which is exactly the false-positive this test exists to catch.
+test('a non-write heredoc with an all-allow-listed-looking body still defers', { skip }, () => {
+  assert.strictEqual(allowed("cat <<'EOF'\necho hi\nls\nEOF\ngit status"), null);
+});
+
+test('heredoc write parity refuses an unquoted delimiter, a path escape, or an unconfined target', { skip }, () => {
+  // Unquoted delimiter: body can carry a live $(...), stays unjudgeable regardless of path.
+  assert.strictEqual(allowedAt('cat > /tmp/x.sh <<EOF\necho hi\nEOF\n', HEREDOC_CWD), null);
+  // .. component, a leading ~, or a leading $ -- refused outright, scratch root or not.
+  assert.strictEqual(allowedAt("cat > /tmp/../etc/x <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), null);
+  assert.strictEqual(allowedAt("cat > ../etc/passwd <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), null);
+  assert.strictEqual(allowedAt("cat > ~/.bashrc <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), null);
+  assert.strictEqual(allowedAt("cat > $HOME/x <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), null);
+  // Neither scratch nor cwd.
+  assert.strictEqual(allowedAt("cat > /etc/passwd <<'EOF'\nhi\nEOF\n", HEREDOC_CWD), null);
+  // The write earns its own segment's approval only -- the rest of the chain still has
+  // to clear the allow list on its own.
+  assert.strictEqual(
+    allowedAt("cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", HEREDOC_CWD), null);
+});
+
+// ---------------------------------------------------------------------------
+// Benign prefixes: `set -...` is shell-builtin state, not a command, and a leading
+// VAR=value assignment takes no action a later segment's judgment needs to see. Neither
+// earns or needs its own allow entry; they are stripped and the rest of the segment is
+// judged as if they were never there.
+test('set -e / set -euo pipefail / set -o pipefail are stripped and the rest of the chain is judged normally', { skip }, () => {
+  assert.strictEqual(allowed('set -e && git status && git log --oneline -1'), 'allow');
+  assert.strictEqual(allowed('set -euo pipefail && git status'), 'allow');
+  assert.strictEqual(allowed('set -o pipefail; git status'), 'allow');
+});
+
+test('a set prefix does not rescue an otherwise denied or unlisted segment', { skip }, () => {
+  assert.strictEqual(allowed('set -e && frobnicate'), null);
+  assert.strictEqual(allowed('set -e && rm -rf build'), null);
+});
+
+test('a leading VAR=value assignment is stripped before judging the segment', { skip }, () => {
+  // A bare single command, compound or not, is outside this hook's scope entirely (see
+  // the "defers for non-compound commands" test) -- the assignment only matters once the
+  // command is already a chain, so every case here carries a second segment.
+  assert.strictEqual(allowed('FOO=bar git status && git log --oneline -1'), 'allow');
+  assert.strictEqual(allowed('FOO=bar BAZ=1 git status && git log'), 'allow');
+});
+
+test('a VAR=value assignment whose value can expand or execute is judged as itself, not stripped', { skip }, () => {
+  assert.strictEqual(allowed('FOO=$(whoami) git status'), null);
+  assert.strictEqual(allowed('FOO=`whoami` git status'), null);
+  assert.strictEqual(allowed('FOO=$(echo x) git status && ls'), null);
+});
+
+// Stripping the assignment prefix does not resolve $VAR for a LATER segment that uses it
+// as an operand -- the bare assignment segment is skipped as a no-op, but the rm
+// delegation still cannot see through the variable and refuses on principle.
+test('a VAR=value prefix does not resolve $VAR for a later rm operand', { skip }, () => {
+  assert.strictEqual(rmAllowed('FOO=/tmp/scratch\nrm -rf $FOO'), null);
+});
+
 process.on('exit', () => {
   fs.rmSync(HOME, { recursive: true, force: true });
   fs.rmSync(ESC_HOME, { recursive: true, force: true });
   fs.rmSync(PROJ, { recursive: true, force: true });
+  fs.rmSync(RM_HOME, { recursive: true, force: true });
+  fs.rmSync(HEREDOC_CWD, { recursive: true, force: true });
 });

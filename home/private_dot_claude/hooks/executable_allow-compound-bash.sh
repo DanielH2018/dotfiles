@@ -28,6 +28,12 @@ fi
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
 hook_read_input
 COMMAND=$(hook_field '.tool_input.command // ""')
+# The session's cwd, for heredoc_write_ok below. Same fallback bash-write-fanout.sh uses:
+# the field is populated on every real invocation, and $PWD is this hook's own cwd, which
+# the harness already sets to the session's when it runs a hook -- a fallback for a
+# hand-run test, not a path this hook expects to take in production.
+CWD=$(hook_field '.cwd // empty')
+[ -n "$CWD" ] || CWD=$PWD
 
 # --- segmentation: shared cmd_parse library ---------------------------------------------
 #
@@ -48,13 +54,18 @@ fi
 # shellcheck source=/dev/null
 . "${CMDPARSE_LIB:-${BASH_SOURCE[0]%/*}/cmdparse.sh}" 2>/dev/null || exit 0
 
-# Only act on compound commands (chains or pipes). Literal substring test, deliberately --
-# the auto-approval population is unchanged from before this migration. A newline-only or
-# lone-`&`-only command was never eligible for allow (DECIDED, see the "newline-only
-# compounds" test in cmdparse-shadow.test.js), and widening eligibility to that population
-# is a policy call for a later slice, not a side effect of swapping the segmenter. What
-# moves here is the JUDGMENT within the already-eligible population, not who is eligible.
-if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* && "$COMMAND" != *"|"* ]]; then
+# Only act on compound commands (chains, pipes, or a bare newline). Literal substring
+# test. DECIDED 2026-09-06, superseding the earlier "newline-only compounds are not
+# eligible" note (see the retired test of that name in cmdparse-shadow.test.js): outside a
+# heredoc body -- which cmd_parse lifts out whole before this string test ever runs -- a
+# newline is exactly `;` to the shell, and treating it as ineligible only meant a chain
+# written across lines never reached judge() at all. Measured over the week of
+# 2026-08-29: 76+ prompts/wk were a `cd <worktree>` on one line and a grep on the next,
+# refused for no reason a `cd <worktree>; grep ...` wouldn't also refuse. Lone `&` stays
+# OUT of the eligible population -- it never matches this substring test on its own, and
+# that is deliberate: see the UNJUDGEABLE handling below, which still treats a bare `&`
+# as unreadable even inside an otherwise-eligible chain.
+if [[ "$COMMAND" != *"&&"* && "$COMMAND" != *";"* && "$COMMAND" != *"|"* && "$COMMAND" != *$'\n'* ]]; then
   exit 0
 fi
 
@@ -132,6 +143,54 @@ safe_rm_ok() {
   jq -nc --arg c "$1" '{tool_input: {command: $c}}' 2>/dev/null \
     | HOOK_INPUT_LIB="${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}" \
       bash "$SAFE_RM" 2>/dev/null | grep -q '"allow"'
+}
+
+# A `cat > path`/`cat >> path` segment whose heredoc delimiter is QUOTED ('EOF' or "EOF")
+# is a Write with no expansion possible: a quoted delimiter suppresses parameter and
+# command substitution in the body, and the redirect line captured here carries no
+# expansion of its own either. Prints the write target and returns 0 only for that exact
+# shape -- nothing else on the line, and the delimiter itself confined to a bare
+# identifier so a stray quote in the operand can't be mistaken for the closing one. An
+# UNQUOTED delimiter never reaches this function in a position where it matters: the
+# UNJUDGEABLE loop in the decision block below calls this same check to decide whether a
+# heredoc-carrying segment is even readable, and an unquoted delimiter fails the match
+# and stays blanket-refused there, the same as before this change.
+heredoc_write_target() {
+  local s="$1"
+  local re_sq="^cat[[:space:]]+>{1,2}[[:space:]]*([^[:space:]\"']+)[[:space:]]+<<-?[[:space:]]*'([A-Za-z_][A-Za-z0-9_]*)'[[:space:]]*\$"
+  local re_dq="^cat[[:space:]]+>{1,2}[[:space:]]*([^[:space:]\"']+)[[:space:]]+<<-?[[:space:]]*\"([A-Za-z_][A-Za-z0-9_]*)\"[[:space:]]*\$"
+  if [[ "$s" =~ $re_sq ]] || [[ "$s" =~ $re_dq ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+# True when the path heredoc_write_target found is confined to a scratch root or to the
+# session's own cwd. The scratch check is delegated to safe_rm_ok on a synthetic `rm -f`
+# of the same path rather than re-deriving SCRATCH_ROOTS here, same reasoning as the curl
+# and rm delegation above -- one list, one place it can drift. `..`, a leading `~`, and a
+# leading `$` are refused before either check: the first two can walk or alias outside
+# both roots, and a `$` could still be a live expansion the shell resolves before this
+# hook ever sees the literal text.
+heredoc_write_ok() {
+  local p="$1" real
+  case $p in
+    *..*) return 1 ;;
+    '~'*) return 1 ;;
+    '$'*) return 1 ;;
+  esac
+  safe_rm_ok "rm -f $p" && return 0
+  [ -n "${CWD:-}" ] || return 1
+  case $p in
+    /*) real=$p ;;
+    *) real="$CWD/$p" ;;
+  esac
+  real=$(realpath -m -- "$real" 2>/dev/null) || return 1
+  case $real in
+    "$CWD" | "$CWD"/*) return 0 ;;
+  esac
+  return 1
 }
 
 trim() {
@@ -284,11 +343,47 @@ fi
 # as. Reads JSEG/JSEG_N, populated below from cmd_parse's CP_SEG. Returns 0 to allow, 1 to
 # defer.
 judge() {
-  local idx=0 part redir teed teecmd target ffref
+  local idx=0 part redir teed teecmd target ffref hwtarget _hw_first _hw_rest
   while [ "$idx" -lt "$JSEG_N" ]; do
     part=$(trim "${JSEG[idx]}")
     idx=$((idx + 1))
     [ -z "$part" ] && continue
+
+  # A leading `VAR=value` assignment (or several) takes no action of its own -- strip it
+  # before judging the segment's program, the same way a human reads `FOO=bar somecmd` as
+  # "run somecmd". Left alone when the value carries $, a backtick, or ( : any of those
+  # can still expand or execute, so the segment is judged as itself, assignment word and
+  # all, which fails every check below exactly as an unlisted command would. This does
+  # NOT resolve $VAR for a later segment that uses it as an operand -- an rm or curl
+  # delegation that needs the real value still can't see it and stays refused.
+  while :; do
+    _hw_first=${part%%[[:space:]]*}
+    case $_hw_first in
+      [A-Za-z_]*=*)
+        case $_hw_first in *'$'*|*'`'*|*'('*) break ;; esac
+        _hw_rest=${part#*[[:space:]]}
+        [ "$_hw_rest" = "$part" ] && { part=''; break; }
+        part=$(trim "$_hw_rest") ;;
+      *) break ;;
+    esac
+  done
+  [ -z "$part" ] && continue
+
+  # `set -e`, `set -euo pipefail`, `set -o pipefail`: options to the CURRENT shell, not a
+  # command of their own, so they earn no allow entry and cannot be denied or ask-listed
+  # either. 43 prompts/wk (measured 2026-08-29) were a chain opening with exactly one of
+  # these ahead of an otherwise fully allow-listed command.
+  case $part in
+    set\ -[a-zA-Z]*|set\ -o\ *) continue ;;
+  esac
+
+  # A `cat > path`/`cat >> path` heredoc-write vetted by heredoc_write_target above: allow
+  # it here rather than letting it fall into the blanket redirect refusal just below. Any
+  # other segment in the chain still has to clear every check in this loop on its own --
+  # this vouches for the write, not for the rest of the command.
+  if hwtarget=$(heredoc_write_target "$part") && heredoc_write_ok "$hwtarget"; then
+    continue
+  fi
 
   # Redirection turns an allow-listed reader into a writer (`jq . f.json > ~/.bashrc`),
   # and matches_any only ever looks at the command prefix. Quote-aware splitting brought
@@ -401,27 +496,32 @@ judge() {
 # REFUSAL per the library's contract, never a skip.
 DECISION=defer
 if [ "$WHOLE_GLOB_DEFER" = 0 ] && cmd_parse "$COMMAND"; then
-  # Two things stay conservative on purpose, matching what the removed splitter already
-  # refused on -- this migration moves the SEGMENTATION, not the policy:
+  # One separator stays conservative on purpose, matching what the removed splitter
+  # already refused on -- this migration moves the SEGMENTATION, not the policy:
   #
-  # - A bare `&` or a newline separator: split_outside_quotes returned failure outright on
-  #   a lone `&` (backgrounding glued the next command onto the previous one's approval),
-  #   and a newline was never a separator to it at all, so a command that only becomes
-  #   multi-segment via one of these never reached judge() before. Preserve that.
+  # - A bare `&`: split_outside_quotes returned failure outright on it (backgrounding
+  #   glued the next command onto the previous one's approval), and that posture survives
+  #   the newline change in the eligibility gate above untouched -- judge() still cannot
+  #   tell whether a backgrounded segment finishes before the one after it starts.
   # - Any substitution (CP_NSUBSEG -gt 0): a substitution's content is an opaque atom in
   #   CP_SEG (per the library's contract) -- judge() has no way to vet what runs inside
   #   it, so it must not silently pass on the strength of the segment that CONTAINS it.
   #   A heredoc body is the same blind spot for a different reason: cmd_parse lifts it out
   #   whole and never scans it for a substitution, so an unquoted heredoc delimiter could
   #   carry a live `$(...)` this hook cannot see. Treat carrying either as unjudgeable.
+  #   heredoc_write_target() below is the one carve-out: a QUOTED delimiter has no
+  #   expansion to hide, so a `cat >`/`cat >>` heredoc-write of that shape is vetted on
+  #   its own terms rather than blanket-refused here.
   UNJUDGEABLE=0
   [ "$CP_NSUBSEG" -gt 0 ] && UNJUDGEABLE=1
   _i=0
   while [ "$_i" -lt "$CP_NSEG" ]; do
-    [ -n "${CP_HEREDOC[_i]}" ] && UNJUDGEABLE=1
+    if [ -n "${CP_HEREDOC[_i]}" ] && ! heredoc_write_target "$(trim "${CP_SEG[_i]}")" >/dev/null; then
+      UNJUDGEABLE=1
+    fi
     if [ "$_i" -lt "$((CP_NSEG - 1))" ]; then
       case ${CP_SEP[_i]} in
-        '&' | newline) UNJUDGEABLE=1 ;;
+        '&') UNJUDGEABLE=1 ;;
       esac
     fi
     _i=$((_i + 1))
