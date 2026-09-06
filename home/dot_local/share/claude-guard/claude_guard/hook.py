@@ -33,7 +33,7 @@ ALLOW_JSON = (
 # The deployed hooks this one shadows, in registration order (settings.base.json,
 # PermissionRequest). allow-readonly-remote.sh and allow-daniel-server.sh are not ported in
 # this slice and are not compared.
-BASH_CHAIN = ("allow-compound-bash.sh", "allow-safe-rm.sh", "allow-safe-curl.sh")
+BASH_CHAIN = ("allow-compound-bash.sh", "allow-safe-curl.sh", "allow-safe-rm.sh")
 LOG_NAME = "claude-guard-shadow.jsonl"
 _HOOK_TIMEOUT = 3.0
 

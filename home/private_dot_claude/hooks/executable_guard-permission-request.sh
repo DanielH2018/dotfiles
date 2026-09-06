@@ -12,14 +12,18 @@
 # variable in its env block; the default below is the belt to that brace, so a settings.json
 # not yet regenerated cannot run this hook live. Slice 3 flips both in one PR.
 #
-# `--no-project` matters: without it, `uv python find` run inside a uv project answers with
-# that project's venv. `-S` skips site-packages; the package is stdlib-only.
+# `--no-project` stops uv reading a pyproject in cwd; `--system` stops it answering with a
+# virtualenv found in cwd instead — measured returning a `.venv/bin/python3` from a plain
+# directory walk, which may not be 3.14 or may be a dangling symlink after a pruned worktree,
+# and fails silently either way, which this allow-only hook cannot afford. `--managed-python`
+# restricts the answer to a uv-managed install. `-S` skips site-packages; the package is
+# stdlib-only.
 set -u
 : "${CLAUDE_GUARD_SHADOW:=1}"
 export CLAUDE_GUARD_SHADOW
 SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || exit 0
-PY=$(uv python find --no-project --managed-python 3.14 2>/dev/null) || exit 0
+PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || exit 0
 [ -x "$PY" ] || exit 0
 PYTHONPATH="$SHARE" "$PY" -S -m claude_guard.cli permission-request
 exit 0

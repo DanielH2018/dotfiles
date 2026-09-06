@@ -281,9 +281,11 @@ BASH = shutil.which("bash") or "/bin/bash"
 skip_no_uv = pytest.mark.skipif(not shutil.which("uv"), reason="uv unavailable")
 
 
-def run_shim(stdin_text: str, env: dict[str, str]) -> subprocess.CompletedProcess:
+def run_shim(
+    stdin_text: str, env: dict[str, str], cwd: Path | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [BASH, str(SHIM)], input=stdin_text, capture_output=True, text=True, env=env
+        [BASH, str(SHIM)], input=stdin_text, capture_output=True, text=True, env=env, cwd=cwd
     )
 
 
@@ -337,8 +339,27 @@ def test_shim_prints_nothing_and_exits_zero_without_an_interpreter(tmp_path):
     assert (r.returncode, r.stdout) == (0, "")
 
 
+@skip_no_uv
 def test_shim_prints_nothing_and_exits_zero_when_the_package_is_missing(tmp_path):
     home = home_with(tmp_path)
     env = shim_env(home, CLAUDE_GUARD_SHADOW="0", CLAUDE_GUARD_HOME=str(tmp_path / "nowhere"))
     r = run_shim(payload("git status && ls"), env)
     assert (r.returncode, r.stdout) == (0, "")
+
+
+@skip_no_uv
+def test_shim_ignores_a_dangling_venv_found_in_cwd(tmp_path):
+    # `uv python find` without `--system` can answer with a virtualenv it finds by walking up
+    # from cwd, not just a uv-managed install. The harness runs hooks with cwd = the session's
+    # project, so a project whose `.venv` is stale (e.g. after a pruned worktree) would make
+    # this shim resolve a dangling symlink instead of the managed 3.14 -- silently, since the
+    # failure contract is "print nothing". A shadow-log record only appears if the managed
+    # interpreter actually ran, so its presence proves `--system` did its job.
+    home = home_with(tmp_path)
+    cwd = tmp_path / "project"
+    (cwd / ".venv" / "bin").mkdir(parents=True)
+    (cwd / ".venv" / "bin" / "python3").symlink_to("/nonexistent")
+    env = shim_env(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
+    r = run_shim(payload("git status && ls"), env, cwd=cwd)
+    assert (r.returncode, r.stdout) == (0, ""), r.stderr
+    assert (tmp_path / "logs" / LOG_NAME).exists()

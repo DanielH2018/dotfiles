@@ -5,6 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-guard');
@@ -20,6 +22,24 @@ test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: uvOk ? false : 'uv unav
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(r.stdout, /^status: ok/m);
   assert.match(r.stdout, /\[1\] sep=eof heredocs=0: pwd/);
+});
+
+test('shim ignores a dangling venv found in cwd', { skip: uvOk ? false : 'uv unavailable' }, () => {
+  // `uv python find` without `--system` can answer with a virtualenv it discovers by walking
+  // up from cwd, not just a uv-managed install -- and the harness runs a session's hooks (and
+  // a human running this CLI by hand) with cwd = whatever project is open. A stale `.venv`
+  // there (e.g. after a pruned worktree) would make the shim resolve a dangling symlink
+  // instead of the managed 3.14, silently, since the failure contract is "print nothing" for
+  // the hook shims and "error, never a silent no-op" for this one -- either way the WRONG
+  // interpreter must never be the one that runs.
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-guard-dangling-venv-'));
+  fs.mkdirSync(path.join(cwd, '.venv', 'bin'), { recursive: true });
+  fs.symlinkSync('/nonexistent', path.join(cwd, '.venv', 'bin', 'python3'));
+  const r = spawnSync('bash', [SHIM, 'explain', 'ls; pwd'], {
+    encoding: 'utf8', cwd, env: { ...process.env, CLAUDE_GUARD_HOME: SHARE },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^status: ok/m);
 });
 
 test('shim fails closed with a message when no managed 3.14 is available', () => {
