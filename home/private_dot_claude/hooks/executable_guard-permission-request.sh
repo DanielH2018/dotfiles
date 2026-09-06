@@ -13,11 +13,12 @@
 # not yet regenerated cannot run this hook live. Slice 3 flips both in one PR.
 #
 # `--no-project` stops uv reading a pyproject in cwd; `--system` stops it answering with a
-# virtualenv found in cwd instead — measured returning a `.venv/bin/python3` from a plain
-# directory walk, which may not be 3.14 or may be a dangling symlink after a pruned worktree,
-# and fails silently either way, which this allow-only hook cannot afford. `--managed-python`
-# restricts the answer to a uv-managed install. `-S` skips site-packages; the package is
-# stdlib-only.
+# valid, version-matching virtualenv it finds by walking up from cwd instead — measured
+# returning such a worktree's own `.venv/bin/python3` in place of the managed interpreter,
+# which this allow-only hook has no way to notice happened. (A dangling or wrong-version cwd
+# venv is not the risk: uv already probes it and falls back to the managed toolchain on its
+# own.) `--managed-python` restricts the answer to a uv-managed install. `-S` skips
+# site-packages; the package is stdlib-only.
 set -u
 : "${CLAUDE_GUARD_SHADOW:=1}"
 export CLAUDE_GUARD_SHADOW

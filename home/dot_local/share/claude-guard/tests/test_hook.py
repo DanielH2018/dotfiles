@@ -6,6 +6,7 @@ temp HOME the way tests/hooks/allow-compound-bash.test.js drives the bash hook.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -347,19 +348,62 @@ def test_shim_prints_nothing_and_exits_zero_when_the_package_is_missing(tmp_path
     assert (r.returncode, r.stdout) == (0, "")
 
 
+def shim_lookup_argv(shim_path: Path) -> list[str]:
+    """Extract the `uv python find ...` argv straight from a shim's own source text, so this
+    test tracks whatever flags the shim actually passes rather than a hand-copied duplicate
+    that could silently drift out of sync with it."""
+    text = shim_path.read_text()
+    m = re.search(r"uv python find ((?:\S+\s*)+)", text)
+    assert m, f"no `uv python find` invocation found in {shim_path}"
+    tokens = []
+    for tok in m.group(1).split():
+        if tok.startswith("2>") or tok in ("||", ")"):
+            break
+        tokens.append(tok)
+    return ["uv", "python", "find", *tokens]
+
+
 @skip_no_uv
-def test_shim_ignores_a_dangling_venv_found_in_cwd(tmp_path):
-    # `uv python find` without `--system` can answer with a virtualenv it finds by walking up
-    # from cwd, not just a uv-managed install. The harness runs hooks with cwd = the session's
-    # project, so a project whose `.venv` is stale (e.g. after a pruned worktree) would make
-    # this shim resolve a dangling symlink instead of the managed 3.14 -- silently, since the
-    # failure contract is "print nothing". A shadow-log record only appears if the managed
-    # interpreter actually ran, so its presence proves `--system` did its job.
-    home = home_with(tmp_path)
-    cwd = tmp_path / "project"
-    (cwd / ".venv" / "bin").mkdir(parents=True)
-    (cwd / ".venv" / "bin" / "python3").symlink_to("/nonexistent")
-    env = shim_env(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
-    r = run_shim(payload("git status && ls"), env, cwd=cwd)
-    assert (r.returncode, r.stdout) == (0, ""), r.stderr
-    assert (tmp_path / "logs" / LOG_NAME).exists()
+def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_path):
+    # A *dangling* or wrong-version cwd venv is not the risk `--system` guards against: uv
+    # already probes a discovered venv's interpreter and falls back to the managed toolchain
+    # on its own regardless of `--system` (measured directly against this shim before adding
+    # this test). The one shape that actually differs is a REAL, version-matching venv found
+    # by walking up from cwd -- exactly what a project's own `.venv` is -- which uv prefers
+    # over the managed install unless `--system` is present.
+    argv = shim_lookup_argv(SHIM)
+    assert "--system" in argv, argv
+
+    venv = tmp_path / ".venv"
+    created = subprocess.run(
+        ["uv", "venv", "--python", "3.14", str(venv)], capture_output=True, text=True
+    )
+    if created.returncode != 0:
+        pytest.skip(f"uv venv --python 3.14 unavailable: {created.stderr}")
+
+    # This test file itself runs under `uv run --no-project --python 3.14 ...`, which sets
+    # VIRTUAL_ENV to ITS OWN ephemeral build env -- an explicit activation that would outrank
+    # cwd discovery either way and mask what we're testing. The real hook shim never runs
+    # inside a `uv run` wrapper, so strip it to match that ambient reality.
+    clean_env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+
+    r = subprocess.run(argv, capture_output=True, text=True, cwd=tmp_path, env=clean_env)
+    assert r.returncode == 0, r.stderr
+    found = Path(r.stdout.strip())
+    assert tmp_path not in found.parents, f"got the cwd venv instead of managed: {found}"
+    assert "/uv/python/" in str(found), found
+    assert found.is_file(), found
+
+    # Control: the fixture must actually discriminate -- without --system the same lookup,
+    # from the same cwd, must prefer the venv it just proved --system skips. If uv's own
+    # preference for a cwd venv ever changes, skip visibly rather than pass for no reason.
+    argv_no_system = [a for a in argv if a != "--system"]
+    r2 = subprocess.run(argv_no_system, capture_output=True, text=True, cwd=tmp_path, env=clean_env)
+    if r2.returncode != 0:
+        pytest.skip("uv python find without --system did not return 0; behaviour changed")
+    found2 = Path(r2.stdout.strip())
+    if tmp_path not in found2.parents:
+        pytest.skip(
+            "uv no longer prefers a cwd venv without --system; the control no longer discriminates"
+        )
+    assert tmp_path in found2.parents

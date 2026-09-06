@@ -148,8 +148,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
-      "hash": "cd51b8c1a86b14f40f7813bdd5becedcb0125295dafc6ce315c8f10b2354cfaa",
-      "landed": "2026-09-06T21:38:13.665Z"
+      "hash": "1ba47a35dc05326a338c53293405d714b457da0437f4795eec166bb45599fc96",
+      "landed": "2026-09-06T21:53:22.195Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",

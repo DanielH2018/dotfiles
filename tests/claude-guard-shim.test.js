@@ -24,23 +24,62 @@ test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: uvOk ? false : 'uv unav
   assert.match(r.stdout, /\[1\] sep=eof heredocs=0: pwd/);
 });
 
-test('shim ignores a dangling venv found in cwd', { skip: uvOk ? false : 'uv unavailable' }, () => {
-  // `uv python find` without `--system` can answer with a virtualenv it discovers by walking
-  // up from cwd, not just a uv-managed install -- and the harness runs a session's hooks (and
-  // a human running this CLI by hand) with cwd = whatever project is open. A stale `.venv`
-  // there (e.g. after a pruned worktree) would make the shim resolve a dangling symlink
-  // instead of the managed 3.14, silently, since the failure contract is "print nothing" for
-  // the hook shims and "error, never a silent no-op" for this one -- either way the WRONG
-  // interpreter must never be the one that runs.
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-guard-dangling-venv-'));
-  fs.mkdirSync(path.join(cwd, '.venv', 'bin'), { recursive: true });
-  fs.symlinkSync('/nonexistent', path.join(cwd, '.venv', 'bin', 'python3'));
-  const r = spawnSync('bash', [SHIM, 'explain', 'ls; pwd'], {
-    encoding: 'utf8', cwd, env: { ...process.env, CLAUDE_GUARD_HOME: SHARE },
+// Extract the `uv python find ...` argv straight from the shim's own source text, so this
+// test tracks whatever flags the shim actually passes rather than a hand-copied duplicate
+// that could silently drift out of sync with it.
+function shimLookupArgv(shimPath) {
+  const text = fs.readFileSync(shimPath, 'utf8');
+  const m = text.match(/uv python find ((?:\S+\s*)+)/);
+  assert.ok(m, `no \`uv python find\` invocation found in ${shimPath}`);
+  const tokens = [];
+  for (const tok of m[1].split(/\s+/)) {
+    if (tok.startsWith('2>') || tok === '||' || tok === ')') break;
+    tokens.push(tok);
+  }
+  return tokens;
+}
+
+test('the shim\'s own lookup ignores a real cwd venv only because of --system',
+  { skip: uvOk ? false : 'uv unavailable' }, (t) => {
+    // A *dangling* or wrong-version cwd venv is not the risk `--system` guards against: uv
+    // already probes a discovered venv's interpreter and falls back to the managed toolchain
+    // on its own regardless of `--system`. The one shape that actually differs is a REAL,
+    // version-matching venv found by walking up from cwd -- exactly what a project's own
+    // `.venv` is -- which uv prefers over the managed install unless `--system` is present.
+    const argv = shimLookupArgv(SHIM);
+    assert.ok(argv.includes('--system'), argv.join(' '));
+
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-guard-real-venv-'));
+    const venv = path.join(cwd, '.venv');
+    const created = spawnSync('uv', ['venv', '--python', '3.14', venv], { encoding: 'utf8' });
+    if (created.status !== 0) {
+      t.skip(`uv venv --python 3.14 unavailable: ${created.stderr}`);
+      return;
+    }
+
+    const r = spawnSync('uv', ['python', 'find', ...argv], { encoding: 'utf8', cwd });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const found = r.stdout.trim();
+    assert.ok(!found.startsWith(cwd), `got the cwd venv instead of managed: ${found}`);
+    assert.match(found, /\/uv\/python\//);
+    assert.ok(fs.statSync(found).isFile(), found);
+
+    // Control: the fixture must actually discriminate -- without --system the same lookup,
+    // from the same cwd, must prefer the venv it just proved --system skips. If uv's own
+    // preference for a cwd venv ever changes, skip visibly rather than pass for no reason.
+    const argvNoSystem = argv.filter((a) => a !== '--system');
+    const r2 = spawnSync('uv', ['python', 'find', ...argvNoSystem], { encoding: 'utf8', cwd });
+    if (r2.status !== 0) {
+      t.skip('uv python find without --system did not return 0; behaviour changed');
+      return;
+    }
+    const found2 = r2.stdout.trim();
+    if (!found2.startsWith(cwd)) {
+      t.skip('uv no longer prefers a cwd venv without --system; the control no longer discriminates');
+      return;
+    }
+    assert.ok(found2.startsWith(cwd));
   });
-  assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^status: ok/m);
-});
 
 test('shim fails closed with a message when no managed 3.14 is available', () => {
   // spawnSync's env replaces process.env wholesale, and bash itself would normally need to
