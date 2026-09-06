@@ -50,6 +50,7 @@ test('the shim\'s own lookup ignores a real cwd venv only because of --system',
     assert.ok(argv.includes('--system'), argv.join(' '));
 
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-guard-real-venv-'));
+    t.after(() => { try { fs.rmSync(cwd, { recursive: true, force: true }); } catch {} });
     const venv = path.join(cwd, '.venv');
     const created = spawnSync('uv', ['venv', '--python', '3.14', venv], { encoding: 'utf8' });
     if (created.status !== 0) {

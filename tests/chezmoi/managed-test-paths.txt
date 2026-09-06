@@ -55,6 +55,11 @@
 .claude/vault-tooling/vault-index/tests/test_query.py
 .local/share/claude-guard/tests
 .local/share/claude-guard/tests/test_cli.py
+.local/share/claude-guard/tests/test_curl.py
+.local/share/claude-guard/tests/test_hook.py
+.local/share/claude-guard/tests/test_judge.py
 .local/share/claude-guard/tests/test_package.py
+.local/share/claude-guard/tests/test_rules.py
+.local/share/claude-guard/tests/test_scratch.py
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_vectors.py
