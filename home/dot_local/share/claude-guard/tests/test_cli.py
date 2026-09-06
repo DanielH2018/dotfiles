@@ -92,3 +92,78 @@ def test_replay_compare_bash_exits_nonzero_on_a_mismatch(tmp_path, monkeypatch):
     assert r.returncode == 1
     assert "PARITY 0/1" in r.stdout
     assert "MISMATCH" in r.stdout
+
+
+def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": ["Bash(ls:*)", "Bash(pwd)"], "deny": [], "ask": []}})
+    )
+    r = subprocess.run(
+        [sys.executable, "-S", "-m", "claude_guard.cli", "permission-request"],
+        input=json.dumps({"tool_input": {"command": "ls; pwd"}}),
+        capture_output=True,
+        text=True,
+        cwd=PKG_DIR,
+        env={
+            "PYTHONPATH": str(PKG_DIR),
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(home),
+            "CLAUDE_GUARD_SHADOW": "0",
+        },
+    )
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+def test_permission_request_prints_nothing_and_exits_zero_on_garbage(tmp_path):
+    r = subprocess.run(
+        [sys.executable, "-S", "-m", "claude_guard.cli", "permission-request"],
+        input="{ nope",
+        capture_output=True,
+        text=True,
+        cwd=PKG_DIR,
+        env={
+            "PYTHONPATH": str(PKG_DIR),
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "CLAUDE_GUARD_SHADOW": "0",
+        },
+    )
+    assert (r.returncode, r.stdout) == (0, "")
+
+
+def test_shadow_report_prints_counts_and_never_a_command(tmp_path):
+    log = tmp_path / "claude-guard-shadow.jsonl"
+    log.write_text(
+        json.dumps(
+            {
+                "python": "allow",
+                "bash": "allow",
+                "rule": "allow",
+                "bash_hook": "allow-compound-bash.sh",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "python": "none",
+                "bash": "allow",
+                "rule": "segment:1:ask",
+                "bash_hook": "allow-safe-rm.sh",
+            }
+        )
+        + "\n"
+    )
+    r = run("shadow-report", "--log", str(log))
+    assert r.returncode == 0, r.stderr
+    assert "records 2" in r.stdout
+    assert "agree 1 (allow 1, none 0)" in r.stdout
+    assert "bash-only 1" in r.stdout
+    assert "segment:1:ask (allow-safe-rm.sh): 1" in r.stdout
+
+
+def test_shadow_report_exits_nonzero_when_there_is_no_log(tmp_path):
+    r = run("shadow-report", "--log", str(tmp_path / "absent.jsonl"))
+    assert r.returncode == 1

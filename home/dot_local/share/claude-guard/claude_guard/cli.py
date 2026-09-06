@@ -1,23 +1,30 @@
 """claude-guard command line.
 
+    claude-guard permission-request        # hook entry: hook JSON on stdin, allow line or
+                                            # nothing on stdout; shadow when CLAUDE_GUARD_SHADOW=1
+    claude-guard shadow-report [--log P]   # agree / python-only / bash-only counts from the log
     claude-guard segment --json            # decomposition of the command on stdin,
                                             # cmdparse.sh's shape
-    claude-guard explain "<command>"       # the segments and, from slice 2, the rule
-                                            # that decided each
+    claude-guard explain "<command>"       # the segments, and the decision with its rule
     claude-guard replay <jsonl> --compare-bash <cmdparse.sh>
                                             # parity of every {command, cwd} record
                                             # against the bash segmenter
+    claude-guard replay <jsonl> --judge [--compare-hooks DIR]
+                                            # allow count and the allowed commands; with
+                                            # --compare-hooks, agreement with the bash chain
 
-`segment --json` exists for tests and the parity gate, never for the hook path. The hook
-entry points (`permission-request`, `pre-tool-use`) arrive in slice 2.
+`segment --json` exists for tests and the parity gate, never for the hook path. The
+`pre-tool-use` entry point arrives with deny.py in slice 4.
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
+from claude_guard.hook import LOG_NAME, permission_request, summarize
 from claude_guard.segment import Parsed, parse
 
 
@@ -98,9 +105,47 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0 if agree == len(records) else 1
 
 
+def cmd_permission_request(args: argparse.Namespace) -> int:
+    # The allow-path failure contract: nothing on stdout, exit 0, whatever happens.
+    try:
+        out = permission_request(sys.stdin.read(), os.environ)
+    except Exception:
+        return 0
+    if out:
+        print(out)
+    return 0
+
+
+def cmd_shadow_report(args: argparse.Namespace) -> int:
+    default_dir = Path(os.environ.get("CLAUDE_SHADOW_LOG_DIR") or Path.home() / ".claude" / "logs")
+    log = Path(args.log) if args.log else (default_dir / LOG_NAME)
+    if not log.exists():
+        print(f"no shadow log at {log}")
+        return 1
+    s = summarize(log.read_text().splitlines())
+    print(f"records {s['records']} (unparseable {s['unparseable']})")
+    print(f"agree {s['agree']} (allow {s['agree_allow']}, none {s['agree_none']})")
+    print(f"python-only {s['python_only']}")
+    for rule, n in sorted(s["python_only_rules"].items(), key=lambda kv: -kv[1]):
+        print(f"  {rule}: {n}")
+    print(f"bash-only {s['bash_only']}")
+    for rule, n in sorted(s["bash_only_rules"].items(), key=lambda kv: -kv[1]):
+        print(f"  {rule}: {n}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="claude-guard", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("permission-request", help="PermissionRequest hook entry (stdin JSON)")
+    p.set_defaults(fn=cmd_permission_request)
+
+    sr = sub.add_parser("shadow-report", help="summarise the shadow log; counts, never commands")
+    sr.add_argument(
+        "--log", default=None, help=f"path to the log (default: $CLAUDE_SHADOW_LOG_DIR/{LOG_NAME})"
+    )
+    sr.set_defaults(fn=cmd_shadow_report)
 
     s = sub.add_parser("segment", help="decompose the command on stdin")
     s.add_argument(
