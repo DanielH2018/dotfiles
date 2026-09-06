@@ -1,8 +1,9 @@
 # claude-guard
 
-One Python package for Claude Code Bash permission decisions. Slice 1 ships the segmenter
-and the CLI; the judge, the rules loader and the hook shims are later slices of the spec in
-`docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
+One Python package for Claude Code Bash permission decisions. Slice 1 shipped the segmenter
+and the CLI; slice 2 ships the settings loader, the compound judge, the scratch-rm and safe-curl
+checks, and the PermissionRequest hook in shadow. The deny rules and the cutover are later
+slices of the spec in `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
 
 ## The segmenter's contract
 
@@ -23,6 +24,42 @@ on both sides.
     claude-guard explain 'git status && ls & rm -rf /'
     claude-guard replay commands.jsonl --compare-bash ~/.claude/hooks/cmdparse.sh
     printf '%s' 'ls; pwd' | claude-guard segment --json
+
+## The judge
+
+`claude_guard.judge.judge(command, rules, roots)` is `allow-compound-bash.sh`'s decision,
+ported line for line. It allows a chain when every segment is allow-listed or passes a check
+(`checks/scratch.py` for a confined `rm`, `checks/curl.py` for a plain GET/HEAD against an
+allowlisted host, the `git merge --ff-only <ref>` exception) and no segment matches deny or
+ask. A command containing none of `&&`, `;`, `|` gets no decision, as today. `rules.py` reads
+the deployed settings with the scope asymmetry the bash documents: allow from
+`~/.claude/settings.json` alone, deny and ask from that file plus the project's
+`.claude/settings.json` and `settings.local.json`.
+
+    claude-guard explain 'git status && timeout 5 ls'      # segments, then the decision and rule
+
+## The hook, and shadow mode
+
+`~/.claude/hooks/guard-permission-request.sh` runs `claude-guard permission-request` on the
+PermissionRequest event. Cannot run or cannot parse → it prints nothing and the prompt stands.
+
+With `CLAUDE_GUARD_SHADOW=1` (set in `settings.json`'s `env`, and the shim's default) it decides
+nothing: it computes its verdict, runs the three bash hooks it will replace on the same stdin,
+and appends one line to `~/.claude/logs/claude-guard-shadow.jsonl`:
+
+    {"bash": "allow", "bash_hook": "allow-compound-bash.sh", "cmd_sha": "…16 hex…",
+     "python": "allow", "rule": "allow", "ts": "2026-09-06T12:00:00Z"}
+
+The command itself is never written. `CLAUDE_GUARD_SHADOW_SAMPLE=N` samples the log write
+1-in-N; it never changes what is decided.
+
+    claude-guard shadow-report                              # agree / python-only / bash-only, and the rules
+    claude-guard replay commands.jsonl --judge               # allow count and the allowed commands
+    claude-guard replay commands.jsonl --judge --compare-hooks ~/.claude/hooks
+                                                            # agreement with the bash chain per record
+
+The exit criterion for this slice is several days of `shadow-report` agreement; the cutover
+is slice 3.
 
 ## Tests
 

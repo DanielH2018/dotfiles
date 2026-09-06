@@ -272,3 +272,17 @@ test('every Notification matcher names a real notification type', { skip }, () =
     }
   }
 });
+
+// claude-guard slice 2: the Python PermissionRequest hook runs beside the bash hooks it
+// shadows, and the env block keeps it in shadow. Slice 3 changes all three assertions in
+// one PR; until then, losing any one of them is a half-cutover.
+test('claude-guard runs beside the bash PermissionRequest hooks, in shadow', { skip }, () => {
+  const s = JSON.parse(render());
+  const entry = s.hooks.PermissionRequest.find((e) => e.matcher === 'Bash');
+  const cmds = entry.hooks.map((h) => h.command);
+  assert.ok(cmds.includes('~/.claude/hooks/guard-permission-request.sh'), cmds.join(', '));
+  for (const shadowed of ['allow-compound-bash.sh', 'allow-safe-rm.sh', 'allow-safe-curl.sh']) {
+    assert.ok(cmds.includes(`~/.claude/hooks/${shadowed}`), `${shadowed} still registered`);
+  }
+  assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '1');
+});

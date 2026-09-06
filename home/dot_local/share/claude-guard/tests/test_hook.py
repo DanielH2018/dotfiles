@@ -5,7 +5,9 @@ temp HOME the way tests/hooks/allow-compound-bash.test.js drives the bash hook.
 """
 
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -270,3 +272,73 @@ def test_shadow_record_shape():
     rec = hook.shadow_record("ls; pwd", Decision(True, "allow", ("allow-list", "allow-list")), None)
     assert rec["python"] == "allow" and rec["bash"] == "none" and rec["rule"] == "allow"
     assert rec["cmd_sha"] == hook.command_sha("ls; pwd")
+
+
+# --- the shim, driven as the harness drives it ---------------------------------------------
+
+SHIM = HOOKS / "executable_guard-permission-request.sh"
+BASH = shutil.which("bash") or "/bin/bash"
+skip_no_uv = pytest.mark.skipif(not shutil.which("uv"), reason="uv unavailable")
+
+
+def run_shim(stdin_text: str, env: dict[str, str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [BASH, str(SHIM)], input=stdin_text, capture_output=True, text=True, env=env
+    )
+
+
+def shim_env(home: Path, **extra: str) -> dict[str, str]:
+    # XDG_DATA_HOME pins uv's managed-python lookup to the REAL home's install dir: `uv python
+    # find` derives its search path from $HOME (or $XDG_DATA_HOME) at call time, so a fake HOME
+    # here (needed so permission_request() reads an isolated settings.json) would otherwise make
+    # the managed 3.14 toolchain undiscoverable, independent of the shim's own behaviour.
+    return {
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "XDG_DATA_HOME": str(Path.home() / ".local" / "share"),
+        "CLAUDE_GUARD_HOME": str(PKG_DIR),
+        "CLAUDE_GUARD_BASH_HOOKS_DIR": str(HOOKS),
+        **extra,
+    }
+
+
+@skip_no_uv
+def test_shim_prints_the_allow_line_when_told_to_run_live(tmp_path):
+    home = home_with(tmp_path)
+    r = run_shim(payload("git status && ls"), shim_env(home, CLAUDE_GUARD_SHADOW="0"))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+@skip_no_uv
+def test_shim_defaults_to_shadow_when_the_variable_is_absent(tmp_path):
+    home = home_with(tmp_path)
+    r = run_shim(
+        payload("git status && ls"), shim_env(home, CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
+    )
+    assert (r.returncode, r.stdout) == (0, "")
+    assert (tmp_path / "logs" / LOG_NAME).exists()
+
+
+@skip_no_uv
+def test_shim_in_shadow_prints_nothing_for_an_allowed_chain(tmp_path):
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
+    r = run_shim(payload("git status && ls"), env)
+    assert (r.returncode, r.stdout) == (0, "")
+    rec = json.loads((tmp_path / "logs" / LOG_NAME).read_text())
+    assert rec["python"] == "allow"
+
+
+def test_shim_prints_nothing_and_exits_zero_without_an_interpreter(tmp_path):
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_SHADOW="0", PATH="/nonexistent")
+    r = run_shim(payload("git status && ls"), env)
+    assert (r.returncode, r.stdout) == (0, "")
+
+
+def test_shim_prints_nothing_and_exits_zero_when_the_package_is_missing(tmp_path):
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_SHADOW="0", CLAUDE_GUARD_HOME=str(tmp_path / "nowhere"))
+    r = run_shim(payload("git status && ls"), env)
+    assert (r.returncode, r.stdout) == (0, "")
