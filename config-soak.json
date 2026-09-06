@@ -68,8 +68,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-ansible-readonly.sh",
-      "hash": "c7d150a66a0d451a033b7868899e46873586610186458f5bb7e470fe95413a9a",
-      "landed": "2026-09-10T01:03:01.977Z"
+      "hash": "1c41761dec89dff3e16b84984a20cd96077dbd602225d5d909ac46ec058301e0",
+      "landed": "2026-09-10T01:03:07.634Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
