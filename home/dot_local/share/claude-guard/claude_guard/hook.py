@@ -171,6 +171,9 @@ def summarize(lines: Iterable[str]) -> dict:
         except ValueError:
             unparseable += 1
             continue
+        if not isinstance(rec, dict) or "python" not in rec or "bash" not in rec:
+            unparseable += 1
+            continue
         records += 1
         py, sh = rec.get("python"), rec.get("bash")
         if py == sh:

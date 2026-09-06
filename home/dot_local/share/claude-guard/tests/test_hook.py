@@ -9,9 +9,9 @@ import shutil
 from pathlib import Path
 
 import pytest
-from claude_guard.hook import ALLOW_JSON, LOG_NAME, permission_request, shadow_mode, summarize
 
 from claude_guard import hook
+from claude_guard.hook import ALLOW_JSON, LOG_NAME, permission_request, shadow_mode, summarize
 from claude_guard.judge import Decision
 
 PKG_DIR = Path(__file__).resolve().parents[1]
@@ -184,6 +184,43 @@ def test_an_unwritable_log_dir_is_swallowed(tmp_path):
     assert permission_request(payload("git status && ls"), env, log_dir=blocked / "logs") is None
 
 
+def _fake_chain(tmp_path: Path, script: str) -> Path:
+    """A hooks dir where every BASH_CHAIN member is `script`, so the first one hit governs."""
+    fake = tmp_path / "hooks"
+    fake.mkdir()
+    for name in hook.BASH_CHAIN:
+        p = fake / name
+        p.write_text(script)
+        p.chmod(0o755)
+    return fake
+
+
+def test_a_bash_hook_that_exits_nonzero_is_treated_as_no_allow(tmp_path, monkeypatch):
+    fake = _fake_chain(tmp_path, "#!/bin/bash\ncat >/dev/null\nexit 1\n")
+    home = home_with(tmp_path)
+    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
+    log_dir = tmp_path / "logs"
+    # Live mode too: a bash-chain hook failing must not be mistaken for a python decision.
+    assert (
+        permission_request(payload("git status && ls"), env_for(home, CLAUDE_GUARD_SHADOW="0"))
+        is not None
+    )
+    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
+    rec = json.loads((log_dir / LOG_NAME).read_text())
+    assert rec["bash"] == "none" and rec["bash_hook"] is None
+
+
+def test_a_bash_hook_that_hangs_past_the_timeout_is_treated_as_no_allow(tmp_path, monkeypatch):
+    monkeypatch.setattr(hook, "_HOOK_TIMEOUT", 0.2)
+    fake = _fake_chain(tmp_path, "#!/bin/bash\ncat >/dev/null\nsleep 5\n")
+    home = home_with(tmp_path)
+    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
+    log_dir = tmp_path / "logs"
+    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
+    rec = json.loads((log_dir / LOG_NAME).read_text())
+    assert rec["bash"] == "none" and rec["bash_hook"] is None
+
+
 # --- shadow-report -------------------------------------------------------------------------
 
 
@@ -218,6 +255,15 @@ def test_summarize_skips_an_unparseable_line_and_reports_it():
         ["{ nope", json.dumps({"python": "none", "bash": "none", "rule": "x", "bash_hook": None})]
     )
     assert s["records"] == 1 and s["unparseable"] == 1
+
+
+def test_summarize_treats_a_non_dict_or_keyless_record_as_unparseable():
+    lines = [json.dumps(v) for v in (5, [1, 2], {})]
+    good = json.dumps({"python": "none", "bash": "none", "rule": "x", "bash_hook": None})
+    s = summarize([*lines, good])
+    assert s["records"] == 1
+    assert s["unparseable"] == 3
+    assert s["agree"] == 1 and s["agree_none"] == 1
 
 
 def test_shadow_record_shape():

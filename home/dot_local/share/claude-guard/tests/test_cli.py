@@ -155,13 +155,25 @@ def test_shadow_report_prints_counts_and_never_a_command(tmp_path):
             }
         )
         + "\n"
+        # An agreement row whose rule text happens to embed a path: agreeing rows are only
+        # counted, never printed by name, so this must not leak into the report either.
+        + json.dumps(
+            {
+                "python": "allow",
+                "bash": "allow",
+                "rule": "wrapper:/very/secret/path",
+                "bash_hook": "allow-compound-bash.sh",
+            }
+        )
+        + "\n"
     )
     r = run("shadow-report", "--log", str(log))
     assert r.returncode == 0, r.stderr
-    assert "records 2" in r.stdout
-    assert "agree 1 (allow 1, none 0)" in r.stdout
+    assert "records 3" in r.stdout
+    assert "agree 2 (allow 2, none 0)" in r.stdout
     assert "bash-only 1" in r.stdout
     assert "segment:1:ask (allow-safe-rm.sh): 1" in r.stdout
+    assert "secret" not in r.stdout
 
 
 def test_shadow_report_exits_nonzero_when_there_is_no_log(tmp_path):
