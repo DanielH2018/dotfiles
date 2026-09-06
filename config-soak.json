@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "3de429c26ca94519bbb234c1d929e331ba4ab7cbd2d1100fc9bda65ccb41189e",
-      "landed": "2026-09-05T16:30:45.718Z"
+      "hash": "8b015f4054270c3839280226f053f5fda519dfbe91c86de84f3538eda1d95b2a",
+      "landed": "2026-09-06T14:50:06.551Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -65,6 +65,11 @@
       "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
       "hash": "bcb64f740e04b9c2b7bcf8850b04a3f661beea7889441e1ea001bb281fea0e6d",
       "landed": "2026-08-29T19:12:56.399Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_allow-clean-reset.sh",
+      "hash": "89c71b06b5c8dde6c8edf28d8d479be6f7a3f01fbe242d6fe84d6915077ef181",
+      "landed": "2026-09-06T14:50:06.551Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",

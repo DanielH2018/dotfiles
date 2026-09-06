@@ -536,6 +536,22 @@
             "command": "~/.claude/hooks/allow-safe-rm.sh",
             "timeout": 10
           },
+          {{/* Same shape again, for a fourth ask-listed command that takes an arbitrary
+               ref: auto-approves `git reset --hard origin/master`/`origin/main` when the
+               working tree is provably clean (untracked files don't count -- they aren't
+               discarded) and the repo isn't mid-rebase/merge/cherry-pick. Earned on
+               recurrence rather than volume -- 16 of the 7-day prompts on daniel-box were
+               this exact command, every one from the homelab repo's own documented
+               landing procedure ("After a PR Merges" in its CLAUDE.md), which resets a
+               worktree onto origin before a follow-up commit. The ref is a fixed
+               allowlist of two names, never a SHA or a reflog expression, so the
+               Bash(git reset --hard:*) ask rule stands for anything this cannot prove
+               clean. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/allow-clean-reset.sh",
+            "timeout": 10
+          },
           {{/* auto-approve-remote-ssh.sh used to be registered here. It picks up where
                allow-readonly-remote.sh stops -- the homelab calls are wrapped in a local
                filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook refuses
