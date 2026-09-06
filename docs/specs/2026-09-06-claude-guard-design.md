@@ -111,7 +111,7 @@ cutover gate below. `segment --json` prints `cmdparse.sh --json`'s shape for tes
 parity gate.
 
 Two shims in `home/private_dot_claude/hooks/`: `guard-permission-request.sh` and
-`guard-pre-tool-use.sh`. Each resolves the interpreter with `uv python find --no-project --managed-python 3.14` (without `--no-project`, a shim run inside a uv project resolves that project's venv), execs it
+`guard-pre-tool-use.sh`. Each resolves the interpreter with `uv python find --no-project --managed-python --system 3.14` (without `--no-project`, a shim run inside a uv project resolves that project's venv; `--system` stops uv answering with a virtual environment found in the working directory, which a version-matching `.venv` otherwise wins), execs it
 with `-S` on the package's entry point, and implements the failure contract for its event.
 They replace six hook registrations in `settings.base.json`: the five PermissionRequest hooks
 and `block-dangerous-bash.sh`. A third entry point, `~/.local/bin/claude-guard`, is the human
@@ -168,8 +168,10 @@ silent disarm shows in CI rather than in a transcript.
 
 `run_once_after_install-python-tools.sh.tmpl` already runs `uv python install 3.12`; it gains
 3.14. The shims resolve the path at call time with `uv python find --no-project
---managed-python 3.14` rather than at
+--managed-python --system 3.14` rather than at
 `chezmoi apply` time, so an interpreter upgrade cannot leave a stale path in a deployed shim.
+`--system` stops uv answering with a virtual environment found in the working directory,
+which a version-matching `.venv` otherwise wins.
 Startup measured for the design: `python3 -S` on an empty script is about 7 ms on this
 machine (10 runs in 69 ms, 2026-09-06, uv-managed 3.14.6); the bash hooks fork `jq` and `awk` several times each and are not faster.
 
@@ -196,7 +198,7 @@ tooling: the new hook is registered beside the old ones, logs its verdict, and d
 | slice | ships | exit criterion |
 |---|---|---|
 | 1 | package skeleton, `segment.py`, `explain`, `replay` | vector corpus green; replay of the 2026-09-06 corpus (677 commands) segments identically to `cmdparse.sh` on every one |
-| 2 | `rules.py`, `judge.py`, scratch and curl checks, PermissionRequest shim in shadow | several days of live agreement with the bash hooks in `shadow-report` |
+| 2 | `rules.py`, `judge.py`, scratch and curl checks, PermissionRequest shim in shadow | `shadow-report` shows at least 200 records collected over at least 3 days, with zero `python_only`, zero `bash_only`, and zero `python_error` rows; an empty log satisfies none of this |
 | 3 | PermissionRequest cutover; the #477, #474 and ansible rules; the five bash hooks removed | replay allows at least the 84 of 677 the #477 prototype allowed; PRs #474 and #477 closed unmerged, #476's hook half dropped |
 | 4 | `deny.py` in shadow, then cutover; `block-dangerous-bash.sh` removed | its vector file green; shadow agreement |
 | 5 | `homelab-guard`: four hooks and `uv-python` consolidated, private segmenter and tables deleted, `SSH_HOSTS` moved | server suite green; the deployed-import test green |

@@ -43,23 +43,28 @@ the deployed settings with the scope asymmetry the bash documents: allow from
 `~/.claude/hooks/guard-permission-request.sh` runs `claude-guard permission-request` on the
 PermissionRequest event. Cannot run or cannot parse → it prints nothing and the prompt stands.
 
-With `CLAUDE_GUARD_SHADOW=1` (set in `settings.json`'s `env`, and the shim's default) it decides
-nothing: it computes its verdict, runs the three bash hooks it will replace on the same stdin,
-and appends one line to `~/.claude/logs/claude-guard-shadow.jsonl`:
+The hook runs in shadow unless `CLAUDE_GUARD_SHADOW` is set to exactly `"0"` (`settings.json`'s
+`env` sets it to `1`, and the shim also defaults it to `1`, so absent, misspelled, or any
+other truthy-looking value all stay in shadow — only an exact `"0"` goes live). In shadow it
+decides nothing: it computes its verdict, runs the three bash hooks it will replace on the
+same stdin, and appends one line to `~/.claude/logs/claude-guard-shadow.jsonl`:
 
     {"bash": "allow", "bash_hook": "allow-compound-bash.sh", "cmd_sha": "…16 hex…",
      "python": "allow", "rule": "allow", "ts": "2026-09-06T12:00:00Z"}
 
-The command itself is never written. `CLAUDE_GUARD_SHADOW_SAMPLE=N` samples the log write
-1-in-N; it never changes what is decided.
+An exception raised while computing the verdict still leaves a record rather than vanishing:
+`"python": "error", "rule": "exception"`, never the exception text. The command itself is
+never written. `CLAUDE_GUARD_SHADOW_SAMPLE=N` samples the log write 1-in-N; it never changes
+what is decided.
 
-    claude-guard shadow-report                              # agree / python-only / bash-only, and the rules
+    claude-guard shadow-report                              # agree / python-only / bash-only / python-error, and the rules
     claude-guard replay commands.jsonl --judge               # allow count and the allowed commands
     claude-guard replay commands.jsonl --judge --compare-hooks ~/.claude/hooks
                                                             # agreement with the bash chain per record
 
-The exit criterion for this slice is several days of `shadow-report` agreement; the cutover
-is slice 3.
+The cutover to slice 3 needs `shadow-report` to show at least 200 records collected over at
+least 3 days, with zero `python_only`, zero `bash_only`, and zero `python_error` rows. An
+empty log satisfies none of this — no records is not the same claim as agreement.
 
 ## Tests
 
