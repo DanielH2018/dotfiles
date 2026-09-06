@@ -37,7 +37,7 @@
 # Two invocation shapes this hook must also see through, because they are exactly what
 # the homelab server repo's uv-python.sh hook now produces: an optional leading
 # `stdio-blocking; ` (the fd-blocking prefix, replacing the old ask-listed
-# `python3 -c` one), and an optional trailing `2>&1 | tail -n <N>` (bounding output).
+# `python3 -c` one), and an optional trailing `2>&1 | tail -n <N>` or `tail -<N>` (bounding output).
 # Both are stripped by exact pattern before the command is tokenized, so neither
 # smuggles in extra shell structure — the tokenizer below still refuses on any other
 # `;`, `&&`, `|`, or redirection.
@@ -57,7 +57,7 @@ CORE=$COMMAND
 if [[ $CORE =~ ^stdio-blocking\;[[:space:]]*(.*)$ ]]; then
   CORE=${BASH_REMATCH[1]}
 fi
-if [[ $CORE =~ ^(.*[^[:space:]])[[:space:]]*2\>\&1[[:space:]]*\|[[:space:]]*tail[[:space:]]+-n[[:space:]]*[0-9]+[[:space:]]*$ ]]; then
+if [[ $CORE =~ ^(.*[^[:space:]])[[:space:]]*2\>\&1[[:space:]]*\|[[:space:]]*tail[[:space:]]+-(n[[:space:]]*)?[0-9]+[[:space:]]*$ ]]; then
   CORE=${BASH_REMATCH[1]}
 fi
 

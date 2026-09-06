@@ -37,6 +37,8 @@ const ALLOW = [
   'stdio-blocking; uv run ansible-playbook site.yml --check --tags x',
   'ansible-playbook site.yml --check 2>&1 | tail -n 50',
   'stdio-blocking; ansible-playbook site.yml --check 2>&1 | tail -n 12',
+  // The shape uv-python.sh actually produces on the homelab: a bare -N count.
+  'stdio-blocking; uv run ansible-playbook ansible/deploy.yml --tags karakeep --check 2>&1 | tail -3',
   'ansible-playbook site.yml --check -e foo=bar',
 ];
 
