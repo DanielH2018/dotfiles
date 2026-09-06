@@ -17,6 +17,7 @@ const skipPytest = uvOk ? false : 'uv unavailable';
 
 const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
 const VAULT_TOOLING = path.join(__dirname, '..', 'home', 'private_dot_claude', 'vault-tooling');
+const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share');
 
 const SUITES = [
   'test_exec_stream.py',
@@ -104,20 +105,24 @@ for (const name of SUITES) {
 // the suite that is not offline on a cold machine.
 const PYTEST_PROJECTS = [
   // config-map declares no runtime deps and sets pythonpath itself.
-  { dir: 'config-map', deps: ['pytest>=8.0'], env: {} },
+  { root: VAULT_TOOLING, dir: 'config-map', deps: ['pytest>=8.0'], env: {} },
   // vault-index needs duckdb, but not its other dependency: fastembed is
   // imported lazily inside embedder.py, and the suite substitutes a fake
   // embedder, so pulling ~200MB of onnxruntime in would buy nothing. It sets no
   // pythonpath of its own, hence PYTHONPATH here.
-  { dir: 'vault-index', deps: ['pytest>=8.0', 'duckdb>=1.1.0'], env: { PYTHONPATH: '.' } },
+  { root: VAULT_TOOLING, dir: 'vault-index', deps: ['pytest>=8.0', 'duckdb>=1.1.0'], env: { PYTHONPATH: '.' } },
+  // claude-guard is 3.14-only by design (spec: docs/specs/2026-09-06-claude-guard-design.md),
+  // so it names its interpreter; uv fetches a managed 3.14 on a cold machine.
+  { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
 ];
 
 for (const project of PYTEST_PROJECTS) {
   test(`pytest: ${project.dir}`, { skip: skipPytest }, () => {
     const withFlags = project.deps.flatMap((dep) => ['--with', dep]);
+    const pythonFlags = project.python ? ['--python', project.python] : [];
     try {
-      execFileSync('uv', ['run', '--no-project', ...withFlags, 'pytest', '-p', 'no:cacheprovider', '-q'], {
-        cwd: path.join(VAULT_TOOLING, project.dir),
+      execFileSync('uv', ['run', '--no-project', ...pythonFlags, ...withFlags, 'pytest', '-p', 'no:cacheprovider', '-q'], {
+        cwd: path.join(project.root, project.dir),
         env: { ...process.env, ...project.env },
         stdio: 'pipe',
       });
