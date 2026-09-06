@@ -84,10 +84,16 @@ def test_malformed_or_command_less_stdin_is_no_decision(tmp_path):
 # --- the env contract ----------------------------------------------------------------------
 
 
-def test_shadow_mode_is_off_unless_the_variable_is_exactly_1():
-    assert shadow_mode({}) == (False, False)
+def test_shadow_mode_is_on_unless_the_variable_is_exactly_0():
+    assert shadow_mode({}) == (True, True)
     assert shadow_mode({"CLAUDE_GUARD_SHADOW": "0"}) == (False, False)
     assert shadow_mode({"CLAUDE_GUARD_SHADOW": "1"}) == (True, True)
+
+
+def test_shadow_mode_stays_shadow_for_anything_that_is_not_exactly_0():
+    # Fail-safe: a typo or a truthy-looking non-"0" value must never fall through to live.
+    for value in ("true", "01", "yes", " 1"):
+        assert shadow_mode({"CLAUDE_GUARD_SHADOW": value}) == (True, True), value
 
 
 def test_sampling_governs_logging_only_and_the_roll_seam_picks_the_branch():
@@ -187,6 +193,25 @@ def test_an_unwritable_log_dir_is_swallowed(tmp_path):
     assert permission_request(payload("git status && ls"), env, log_dir=blocked / "logs") is None
 
 
+def test_a_decision_exception_in_shadow_still_leaves_a_record(tmp_path, monkeypatch, capsys):
+    # Red-proof for finding 2: an exception raised inside decide() must not vanish the
+    # way it would in live mode -- shadow's whole point is a record of every call.
+    def boom(command, env):
+        raise ValueError("should never reach the log")
+
+    monkeypatch.setattr(hook, "decide", boom)
+    home = home_with(tmp_path)
+    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(tmp_path))
+    log_dir = tmp_path / "logs"
+    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
+    rec = json.loads((log_dir / LOG_NAME).read_text())
+    assert rec["python"] == "error"
+    assert rec["rule"] == "exception"
+    assert "should never reach the log" not in json.dumps(rec)
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
+
+
 def _fake_chain(tmp_path: Path, script: str) -> Path:
     """A hooks dir where every BASH_CHAIN member is `script`, so the first one hit governs."""
     fake = tmp_path / "hooks"
@@ -251,6 +276,22 @@ def test_summarize_counts_agreement_and_names_the_rules_behind_each_disagreement
     assert s["python_only"] == 2 and s["bash_only"] == 1
     assert s["python_only_rules"] == {"allow": 2}
     assert s["bash_only_rules"] == {"segment:0:redirect (allow-safe-curl.sh)": 1}
+    assert s["python_error"] == 0
+
+
+def test_summarize_counts_python_error_in_its_own_bucket():
+    # A python-error row must not be folded into bash-only: the python side didn't
+    # disagree with bash, it never rendered a verdict at all.
+    rows = [
+        {"python": "allow", "bash": "allow", "rule": "allow", "bash_hook": "x"},
+        {"python": "error", "bash": "allow", "rule": "exception", "bash_hook": "x"},
+        {"python": "error", "bash": "none", "rule": "exception", "bash_hook": None},
+    ]
+    s = summarize(json.dumps(r) for r in rows)
+    assert s["records"] == 3
+    assert s["python_error"] == 2
+    assert s["agree"] == 1
+    assert s["python_only"] == 0 and s["bash_only"] == 0
 
 
 def test_summarize_skips_an_unparseable_line_and_reports_it():

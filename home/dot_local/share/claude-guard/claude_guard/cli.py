@@ -1,7 +1,7 @@
 """claude-guard command line.
 
     claude-guard permission-request        # hook entry: hook JSON on stdin, allow line or
-                                            # nothing on stdout; shadow when CLAUDE_GUARD_SHADOW=1
+                                            # nothing on stdout; shadow unless CLAUDE_GUARD_SHADOW=0
     claude-guard shadow-report [--log P]   # agree / python-only / bash-only counts from the log
     claude-guard segment --json            # decomposition of the command on stdin,
                                             # cmdparse.sh's shape
@@ -186,6 +186,7 @@ def cmd_shadow_report(args: argparse.Namespace) -> int:
     print(f"bash-only {s['bash_only']}")
     for rule, n in sorted(s["bash_only_rules"].items(), key=lambda kv: -kv[1]):
         print(f"  {rule}: {n}")
+    print(f"python-error {s['python_error']}")
     return 0
 
 

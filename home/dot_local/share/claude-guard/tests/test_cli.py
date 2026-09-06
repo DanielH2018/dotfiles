@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,14 +13,22 @@ CMDPARSE = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks" / "execu
 
 
 def run(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-S", "-m", "claude_guard.cli", *args],
-        input=stdin,
-        capture_output=True,
-        text=True,
-        cwd=PKG_DIR,
-        env={"PYTHONPATH": str(PKG_DIR), "PATH": "/usr/bin:/bin"},
-    )
+    # CLAUDE_GUARD_SETTINGS_HOME beats HOME (rules.py:14), so pointing it at a fresh,
+    # empty temp dir keeps the real ~/.claude/settings.json out of every test's rules
+    # deliberately -- not as a side effect of HOME being absent from this dict.
+    with tempfile.TemporaryDirectory() as settings_home:
+        return subprocess.run(
+            [sys.executable, "-S", "-m", "claude_guard.cli", *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            cwd=PKG_DIR,
+            env={
+                "PYTHONPATH": str(PKG_DIR),
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_GUARD_SETTINGS_HOME": settings_home,
+            },
+        )
 
 
 def test_segment_json_matches_the_bash_shape():

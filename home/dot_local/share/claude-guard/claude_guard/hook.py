@@ -3,15 +3,19 @@
 Failure contract (spec, *Failure contracts*, allow path): cannot run or cannot parse → emit
 nothing, so the prompt stands. permission_request() therefore never raises.
 
-Shadow mode (spec, *Rollout* row 2): with CLAUDE_GUARD_SHADOW=1 the judge's verdict is
-computed, the deployed bash chain is run on the same stdin the way the harness would (any
-allow wins), one JSON line is appended to the shadow log, and NOTHING is printed. The log
-carries a hash of the command, never the command. `claude-guard shadow-report` reads it.
+Shadow mode (spec, *Rollout* row 2): the hook runs in shadow unless CLAUDE_GUARD_SHADOW is
+exactly "0". In shadow the judge's verdict is computed, the deployed bash chain is run on
+the same stdin the way the harness would (any allow wins), one JSON line is appended to the
+shadow log, and NOTHING is printed. The log carries a hash of the command, never the
+command. `claude-guard shadow-report` reads it. Shadow is the fail-safe default: an unset,
+misspelled, or truthy-but-not-"0" value ("true", "yes", "01") all stay in shadow, so a typo
+in an env override can only suppress a live decision, never cause one.
 
 Sampling: within shadow, CLAUDE_GUARD_SHADOW_SAMPLE=N logs 1 in N calls, chosen fresh each
-call; CLAUDE_GUARD_SHADOW_ROLL overrides the draw for tests. Same idiom as the M02 census in
-block-dangerous-bash.sh:423-435, except that here sampling governs LOGGING only: a sampled
-miss still decides nothing, because deciding is what shadow suppresses.
+call; CLAUDE_GUARD_SHADOW_ROLL is a TEST SEAM ONLY — it overrides the random draw so a test
+can pin which branch runs, and has no reason to be set outside a test. Same idiom as the M02
+census in block-dangerous-bash.sh:423-435, except that here sampling governs LOGGING only: a
+sampled miss still decides nothing, because deciding is what shadow suppresses.
 """
 
 import hashlib
@@ -59,8 +63,12 @@ def decide(command: str, env: Mapping[str, str]) -> Decision:
 
 
 def shadow_mode(env: Mapping[str, str]) -> tuple[bool, bool]:
-    """(shadow, log_this_call)."""
-    if env.get("CLAUDE_GUARD_SHADOW", "") != "1":
+    """(shadow, log_this_call).
+
+    Shadow unless the variable is exactly "0" — fail-safe: absent, misspelled, or any
+    other truthy-looking value ("true", "yes", "01", " 1") all stay in shadow.
+    """
+    if env.get("CLAUDE_GUARD_SHADOW", "1") == "0":
         return False, False
     sample = env.get("CLAUDE_GUARD_SHADOW_SAMPLE", "")
     if not (sample.isdigit() and int(sample) > 0):
@@ -120,6 +128,23 @@ def shadow_record(command: str, decision: Decision, bash_hook: str | None) -> di
     }
 
 
+def shadow_error_record(command: str, bash_hook: str | None) -> dict:
+    """A record for when the decision step itself raised.
+
+    `rule` is the fixed literal "exception", never the exception text — the log carries a
+    hash of the command and nothing else identifying, and an exception message can quote
+    the very command text the log exists to avoid recording.
+    """
+    return {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "cmd_sha": command_sha(command),
+        "python": "error",
+        "bash": "allow" if bash_hook else "none",
+        "rule": "exception",
+        "bash_hook": bash_hook,
+    }
+
+
 def append_log(log_dir: Path, record: dict) -> None:
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -139,10 +164,17 @@ def permission_request(
         command = read_command(stdin_text)
         if command is None:
             return None
-        decision = decide(command, env)
         shadow, log_this = shadow_mode(env)
         if not shadow:
+            decision = decide(command, env)
             return ALLOW_JSON if decision.allow else None
+        # Shadow: the decision step is caught on its own, separately from everything
+        # around it, so an exception in judge()/load_rules() still leaves a record
+        # instead of silently vanishing the way the live-mode contract requires.
+        try:
+            decision: Decision | None = decide(command, env)
+        except Exception:
+            decision = None
         if log_this:
             home = Path(env.get("HOME", ""))
             hooks = hooks_dir or Path(
@@ -150,17 +182,24 @@ def permission_request(
             )
             logs = log_dir or Path(env.get("CLAUDE_SHADOW_LOG_DIR") or home / ".claude" / "logs")
             bash_hook = bash_chain_allows(hooks, stdin_text, env)
-            append_log(logs, shadow_record(command, decision, bash_hook))
+            record = (
+                shadow_error_record(command, bash_hook)
+                if decision is None
+                else shadow_record(command, decision, bash_hook)
+            )
+            append_log(logs, record)
         return None
     except Exception:
         return None
 
 
 def summarize(lines: Iterable[str]) -> dict:
-    """Counts only: agree / python-only / bash-only and the rules behind each disagreement."""
+    """Counts only: agree / python-only / bash-only / python-error and the rules behind
+    each disagreement. A `python_error` row (rule "exception") is its own bucket, never
+    folded into bash-only — the python side didn't disagree, it didn't answer."""
     records = 0
     unparseable = 0
-    agree_allow = agree_none = python_only = bash_only = 0
+    agree_allow = agree_none = python_only = bash_only = python_error = 0
     python_only_rules: Counter[str] = Counter()
     bash_only_rules: Counter[str] = Counter()
     for line in lines:
@@ -176,7 +215,9 @@ def summarize(lines: Iterable[str]) -> dict:
             continue
         records += 1
         py, sh = rec.get("python"), rec.get("bash")
-        if py == sh:
+        if py == "error":
+            python_error += 1
+        elif py == sh:
             if py == "allow":
                 agree_allow += 1
             else:
@@ -195,6 +236,7 @@ def summarize(lines: Iterable[str]) -> dict:
         "agree_none": agree_none,
         "python_only": python_only,
         "bash_only": bash_only,
+        "python_error": python_error,
         "python_only_rules": dict(python_only_rules),
         "bash_only_rules": dict(bash_only_rules),
     }
