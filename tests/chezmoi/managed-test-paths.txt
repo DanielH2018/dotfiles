@@ -53,3 +53,8 @@
 .claude/vault-tooling/vault-index/tests/test_chunker.py
 .claude/vault-tooling/vault-index/tests/test_indexer.py
 .claude/vault-tooling/vault-index/tests/test_query.py
+.local/share/claude-guard/tests
+.local/share/claude-guard/tests/test_cli.py
+.local/share/claude-guard/tests/test_package.py
+.local/share/claude-guard/tests/test_segment.py
+.local/share/claude-guard/tests/test_vectors.py
