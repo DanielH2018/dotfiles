@@ -103,7 +103,7 @@ program is judged. A single segment is judged exactly like a chain of one.
 `deny.py` ports `block-dangerous-bash.sh` rule by rule against
 `tests/hooks/block-dangerous-bash-vectors.js`, which becomes a JSON fixture the pytest reads.
 
-`cli.py` exposes four subcommands. `permission-request` and `pre-tool-use` read the hook JSON
+`cli.py` exposes five subcommands. `permission-request` and `pre-tool-use` read the hook JSON
 on stdin and print a decision or nothing. `explain "<cmd>"` prints the segments and the rule
 that decided each, for debugging a surprise prompt. `replay <jsonl>` runs a file of
 `{command, cwd}` records and prints the allow count and the allowed commands, which is the
