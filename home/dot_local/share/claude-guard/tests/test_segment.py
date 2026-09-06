@@ -1,7 +1,7 @@
-"""Port of tests/hooks/cmdparse.test.js, case for case, plus the shared corpus.
+"""Ports the cases of tests/hooks/cmdparse.test.js, with the same names in snake_case.
 
-Every case names the bash test it mirrors so a divergence can be traced to the
-original. `visible()` is the view every consumer takes: stripped, empties dropped.
+The shared corpus lives in tests/test_vectors.py (Task 5). `visible()` is the view
+every consumer takes: stripped, empties dropped.
 """
 
 from claude_guard.segment import Parsed, Segment, parse, visible
@@ -163,3 +163,82 @@ def test_an_unbalanced_substitution_is_still_refused():
 
 def test_an_unbalanced_quote_inside_a_substitution_reports_the_quote():
     assert parse("echo $(echo 'x)").status == "unreadable:unbalanced-quote"
+
+
+# --- heredocs --------------------------------------------------------------------------
+
+BODY = "line one; rm -rf /\nline two && terraform destroy\n"
+
+
+def test_a_heredoc_body_is_lifted_not_segmented():
+    p = parse(f"cat <<'EOF'\n{BODY}EOF")
+    assert p.ok
+    assert visible(p) == ["cat <<'EOF'"]
+    assert p.segments[0].heredocs == (BODY,)
+    assert p.segments[0].heredoc_quoted == (True,)
+
+
+def test_an_unquoted_delimiter_is_recorded_as_unquoted():
+    p = parse(f"cat <<EOF\n{BODY}EOF")
+    assert p.segments[0].heredocs == (BODY,)
+    assert p.segments[0].heredoc_quoted == (False,)
+
+
+def test_two_heredocs_on_one_command_keep_their_quoted_flags_aligned():
+    p = parse("cat <<A <<'B'\n1\nA\n2\nB")
+    assert p.segments[0].heredocs == ("1\n", "2\n")
+    assert p.segments[0].heredoc_quoted == (False, True)
+
+
+def test_a_redirect_alongside_a_heredoc_stays_visible_in_the_segment():
+    p = parse("cat > /tmp/x <<'EOF'\nhello\nEOF")
+    assert visible(p) == ["cat > /tmp/x <<'EOF'"]
+    assert p.segments[0].heredocs == ("hello\n",)
+
+
+def test_a_command_after_a_terminated_heredoc_is_its_own_segment():
+    p = parse("cat <<'EOF'\nhello\nEOF\nls")
+    assert visible(p) == ["cat <<'EOF'", "ls"]
+    assert p.segments[0].heredocs == ("hello\n",)
+    assert p.segments[1].heredocs == ()
+
+
+def test_dash_strips_leading_tabs_when_matching_the_terminator():
+    p = parse("cat <<-EOF\n\thello\n\tEOF\nls")
+    assert visible(p) == ["cat <<-EOF", "ls"]
+    assert p.segments[0].heredocs == ("\thello\n",)
+
+
+def test_triple_angle_is_a_herestring_not_a_heredoc():
+    p = parse("cat <<< 'hello'; ls")
+    assert visible(p) == ["cat <<< 'hello'", "ls"]
+    assert p.segments[0].heredocs == ()
+
+
+def test_a_heredoc_with_no_terminator_runs_to_the_end_of_input():
+    p = parse("cat <<'EOF'\nhello\nworld")
+    assert p.ok
+    assert p.segments[0].heredocs == ("hello\nworld\n",)
+
+
+def test_a_heredoc_inside_a_double_quoted_substitution_is_lifted_not_misread_as_syntax():
+    cmd = "git commit -am \"$(cat <<'EOF'\nbody; with & shell | syntax\nEOF\n)\""
+    p = parse(cmd)
+    assert p.ok
+    assert len(p.segments) == 1
+    assert "cat <<'EOF'" in p.substitutions[0]
+
+
+def test_two_heredocs_on_one_command_are_both_attached_in_order():
+    p = parse("diff <(cat <<'A'\none\nA\n) - <<'B'\ntwo\nB")
+    assert p.ok
+
+
+def test_an_unterminated_quoted_delimiter_is_refused():
+    assert parse("cat <<'EOF\nhello").status == "unreadable:unbalanced-quote"
+
+
+def test_a_trailing_segment_that_only_carries_a_heredoc_is_not_collapsed():
+    # The collapse drops an EMPTY tail; a tail that owns a heredoc body is not empty.
+    p = parse("ls;\ncat <<'EOF'\nx\nEOF")
+    assert [seg.heredocs for seg in p.segments][-1] == ("x\n",)
