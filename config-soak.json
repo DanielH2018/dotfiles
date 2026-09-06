@@ -73,8 +73,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "a5d1a40148a7fcc38715b999666e302cb9f0c093fa1fce28d4d1e7cdb21d620e",
-      "landed": "2026-08-21T13:36:17.160Z"
+      "hash": "7b60cfae9541d1c6ee7c49c7cbccb4f56b79be4604116eda6b376fa9ace8b47d",
+      "landed": "2026-09-06T15:01:42.612Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_allow-daniel-server.sh",
