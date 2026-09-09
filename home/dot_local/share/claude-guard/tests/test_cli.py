@@ -1,6 +1,11 @@
-"""The CLI, driven as a subprocess the way the shims and a human will drive it."""
+"""The CLI, driven as a subprocess the way the shims and a human will drive it -- except the
+slice-4 tests below, which drive `cli.main()` in-process so they can monkeypatch `cli`'s own
+names (`cli.pre_tool_use`, `cli.deny`)."""
 
+import contextlib
+import io
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -8,8 +13,30 @@ from pathlib import Path
 
 import pytest
 
+from claude_guard import cli
+from claude_guard.deny import NONE
+from claude_guard.hook import ASK_JSON, DENY_LOG_NAME
+
 PKG_DIR = Path(__file__).resolve().parents[1]
 CMDPARSE = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks" / "executable_cmdparse.sh"
+
+
+def run_cli(argv: list[str], stdin: str = "") -> tuple[int, str]:
+    old_stdin = sys.stdin
+    sys.stdin = io.StringIO(stdin)
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            rc = cli.main(argv)
+    finally:
+        sys.stdin = old_stdin
+    return rc, out.getvalue()
+
+
+def write_corpus(tmp_path, commands: list[str]) -> str:
+    p = tmp_path / "corpus.jsonl"
+    p.write_text("".join(json.dumps({"command": c, "cwd": "/tmp"}) + "\n" for c in commands))
+    return str(p)
 
 
 def run(*args: str, stdin: str = "") -> subprocess.CompletedProcess:
@@ -297,3 +324,91 @@ def test_replay_refuses_both_modes_or_neither(tmp_path):
     corpus.write_text(json.dumps({"command": "ls", "cwd": "/tmp"}) + "\n")
     assert run("replay", str(corpus)).returncode == 2
     assert run("replay", str(corpus), "--judge", "--compare-bash", "/x").returncode == 2
+
+
+# --- slice 4: pre-tool-use, shadow-report --deny, replay --deny ------------------------------
+
+DENY_HOOK_SRC = HOOKS_DIR / "executable_block-dangerous-bash.sh"
+
+
+def test_pre_tool_use_prints_the_deny_line_live(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_GUARD_DENY_SHADOW", "0")
+    rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "rm -rf /"}}))
+    assert rc == 0
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_pre_tool_use_prints_nothing_in_shadow(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("CLAUDE_GUARD_BASH_HOOKS_DIR", str(tmp_path / "nohooks"))
+    monkeypatch.delenv("CLAUDE_GUARD_DENY_SHADOW", raising=False)
+    rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "rm -rf /"}}))
+    assert (rc, out) == (0, "")
+    assert (tmp_path / "logs" / DENY_LOG_NAME).exists()
+
+
+def test_pre_tool_use_prints_ask_when_the_hook_function_raises(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(cli, "pre_tool_use", boom)
+    monkeypatch.setenv("CLAUDE_GUARD_DENY_SHADOW", "0")
+    rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "ls"}}))
+    assert (rc, out.strip()) == (0, ASK_JSON)
+
+
+def test_shadow_report_deny_reads_the_deny_log_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path))
+    rows = [
+        {"ts": "t", "cmd_sha": "0" * 16, "python": "deny", "bash": "deny", "rule": "rm-root"},
+        {"ts": "t", "cmd_sha": "1" * 16, "python": "deny", "bash": "none", "rule": "pkill"},
+    ]
+    (tmp_path / DENY_LOG_NAME).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    rc, out = run_cli(["shadow-report", "--deny"])
+    assert rc == 0
+    assert "records 2" in out and "agree 1 (deny 1, ask 0, none 0, allow 0)" in out
+    assert "python-only 1" in out and "  pkill: 1" in out
+    assert "mismatch 0" in out and "python-error 0" in out and "bash-error 0" in out
+
+
+def test_shadow_report_without_deny_still_reads_the_allow_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path))
+    (tmp_path / DENY_LOG_NAME).write_text("")
+    rc, out = run_cli(["shadow-report"])
+    assert rc == 1 and "no shadow log" in out
+
+
+def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):
+    corpus = write_corpus(tmp_path, ["rm -rf /", "ls -la", "git push --force origin feat"])
+    rc, out = run_cli(["replay", corpus, "--deny"])
+    assert rc == 0
+    lines = out.splitlines()
+    assert lines[0] == "DENY rm-root: rm -rf /"
+    assert lines[1] == "ALLOW force-push-upgrade: git push --force origin feat"
+    assert "ls -la" not in out
+
+
+@pytest.mark.skipif(not (shutil.which("bash") and shutil.which("jq")), reason="bash unavailable")
+def test_replay_deny_compare_hook_reports_agreement(tmp_path):
+    corpus = write_corpus(tmp_path, ["rm -rf /", "ls -la", "terraform apply", "env"])
+    rc, out = run_cli(["replay", corpus, "--deny", "--compare-hook", str(DENY_HOOK_SRC)])
+    assert rc == 0
+    assert out.splitlines()[-1] == "AGREE 4/4"
+
+
+@pytest.mark.skipif(not (shutil.which("bash") and shutil.which("jq")), reason="bash unavailable")
+def test_replay_deny_compare_hook_names_a_mismatch_and_exits_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "deny", lambda command, cwd="", env=None: NONE)
+    corpus = write_corpus(tmp_path, ["rm -rf /"])
+    rc, out = run_cli(["replay", corpus, "--deny", "--compare-hook", str(DENY_HOOK_SRC)])
+    assert rc == 1
+    assert "MISMATCH: rm -rf / python=none bash=deny" in out
+    assert out.splitlines()[-1] == "AGREE 0/1"
+
+
+def test_replay_refuses_deny_with_judge(tmp_path):
+    corpus = write_corpus(tmp_path, ["ls"])
+    rc, _ = run_cli(["replay", corpus, "--deny", "--judge"])
+    assert rc == 2

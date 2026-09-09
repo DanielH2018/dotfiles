@@ -13,9 +13,17 @@
     claude-guard replay <jsonl> --judge [--compare-hooks DIR]
                                             # allow count and the allowed commands; with
                                             # --compare-hooks, agreement with the bash chain
+    claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
+                                            # or nothing on stdout; shadow unless
+                                            # CLAUDE_GUARD_DENY_SHADOW=0
+    claude-guard shadow-report --deny [--log P]
+                                            # agree / python-only / bash-only / mismatch
+                                            # counts from the deny shadow log
+    claude-guard replay <jsonl> --deny [--compare-hook <block-dangerous-bash.sh>]
+                                            # deny/ask/allow verdict per record; with
+                                            # --compare-hook, agreement with the bash hook
 
-`segment --json` exists for tests and the parity gate, never for the hook path. The
-`pre-tool-use` entry point arrives with deny.py in slice 4.
+`segment --json` exists for tests and the parity gate, never for the hook path.
 """
 
 import argparse
@@ -25,7 +33,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-from claude_guard.hook import LOG_NAME, bash_chain_allows, permission_request, summarize
+from claude_guard.deny import deny
+from claude_guard.hook import (
+    ASK_JSON,
+    DENY_LOG_NAME,
+    LOG_NAME,
+    bash_chain_allows,
+    bash_deny_verdict,
+    permission_request,
+    pre_tool_use,
+    summarize,
+    summarize_deny,
+)
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
@@ -105,12 +124,15 @@ def _head(command: str) -> str:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    if args.judge == bool(args.compare_bash):
-        print("replay: pass exactly one of --judge or --compare-bash", file=sys.stderr)
+    chosen = sum((args.judge, bool(args.compare_bash), args.deny))
+    if chosen != 1:
+        print("replay: pass exactly one of --judge, --compare-bash or --deny", file=sys.stderr)
         return 2
     records = _records(args.corpus)
     if args.compare_bash:
         return _replay_compare_bash(records, Path(args.compare_bash))
+    if args.deny:
+        return _replay_deny(records, Path(args.compare_hook) if args.compare_hook else None)
     return _replay_judge(records, Path(args.compare_hooks) if args.compare_hooks else None)
 
 
@@ -161,6 +183,33 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
     return 0 if agree == len(records) else 1
 
 
+def _replay_deny(records: list[dict], hook: Path | None) -> int:
+    agree = 0
+    for rec in records:
+        command = rec["command"]
+        env = {**os.environ}
+        v = deny(command, rec.get("cwd", ""), env)
+        if v.kind != "none":
+            print(f"{v.kind.upper()} {v.rule}: {_head(command)}")
+        if hook is None:
+            continue
+        stdin_text = json.dumps({"tool_input": {"command": command}})
+        bash_kind, bash_detail = bash_deny_verdict(hook, stdin_text, env)
+        mine_detail = v.updated_command if v.kind == "allow" else v.reason
+        if (v.kind, mine_detail or "") == (bash_kind, bash_detail):
+            agree += 1
+        elif v.kind == bash_kind:
+            print(f"REASON MISMATCH: {_head(command)} rule={v.rule}")
+            print(f"  python={mine_detail!r}")
+            print(f"  bash={bash_detail!r}")
+        else:
+            print(f"MISMATCH: {_head(command)} python={v.kind} bash={bash_kind} rule={v.rule}")
+    if hook is None:
+        return 0
+    print(f"AGREE {agree}/{len(records)}")
+    return 0 if agree == len(records) else 1
+
+
 def cmd_permission_request(args: argparse.Namespace) -> int:
     # The allow-path failure contract: nothing on stdout, exit 0, whatever happens.
     try:
@@ -172,13 +221,19 @@ def cmd_permission_request(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_shadow_report(args: argparse.Namespace) -> int:
-    default_dir = Path(os.environ.get("CLAUDE_SHADOW_LOG_DIR") or Path.home() / ".claude" / "logs")
-    log = Path(args.log) if args.log else (default_dir / LOG_NAME)
-    if not log.exists():
-        print(f"no shadow log at {log}")
-        return 1
-    s = summarize(log.read_text().splitlines())
+def cmd_pre_tool_use(args: argparse.Namespace) -> int:
+    # The deny-path failure contract: an exception reaching here prints ask, exit 0. In
+    # shadow pre_tool_use() has already swallowed it (the shim prints nothing either way).
+    try:
+        out = pre_tool_use(sys.stdin.read(), os.environ)
+    except Exception:
+        out = ASK_JSON if os.environ.get("CLAUDE_GUARD_DENY_SHADOW", "1") == "0" else None
+    if out:
+        print(out)
+    return 0
+
+
+def _report_allow(s: dict) -> int:
     print(f"records {s['records']} (unparseable {s['unparseable']})")
     print(f"agree {s['agree']} (allow {s['agree_allow']}, none {s['agree_none']})")
     print(f"python-only {s['python_only']}")
@@ -191,6 +246,34 @@ def cmd_shadow_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_shadow_report(args: argparse.Namespace) -> int:
+    default_dir = Path(os.environ.get("CLAUDE_SHADOW_LOG_DIR") or Path.home() / ".claude" / "logs")
+    name = DENY_LOG_NAME if args.deny else LOG_NAME
+    log = Path(args.log) if args.log else (default_dir / name)
+    if not log.exists():
+        print(f"no shadow log at {log}")
+        return 1
+    if not args.deny:
+        return _report_allow(summarize(log.read_text().splitlines()))
+    s = summarize_deny(log.read_text().splitlines())
+    print(f"records {s['records']} (unparseable {s['unparseable']})")
+    print(
+        f"agree {s['agree']} (deny {s['agree_deny']}, ask {s['agree_ask']}, "
+        f"none {s['agree_none']}, allow {s['agree_allow']})"
+    )
+    for label, key in (
+        ("python-only", "python_only"),
+        ("bash-only", "bash_only"),
+        ("mismatch", "mismatch"),
+    ):
+        print(f"{label} {s[key]}")
+        for rule, n in sorted(s[f"{key}_rules"].items(), key=lambda kv: -kv[1]):
+            print(f"  {rule}: {n}")
+    print(f"python-error {s['python_error']}")
+    print(f"bash-error {s['bash_error']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="claude-guard", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -198,9 +281,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("permission-request", help="PermissionRequest hook entry (stdin JSON)")
     p.set_defaults(fn=cmd_permission_request)
 
+    pt = sub.add_parser("pre-tool-use", help="PreToolUse hook entry (stdin JSON): deny rules")
+    pt.set_defaults(fn=cmd_pre_tool_use)
+
     sr = sub.add_parser("shadow-report", help="summarise the shadow log; counts, never commands")
     sr.add_argument(
         "--log", default=None, help=f"path to the log (default: $CLAUDE_SHADOW_LOG_DIR/{LOG_NAME})"
+    )
+    sr.add_argument(
+        "--deny",
+        action="store_true",
+        help=f"summarise the PreToolUse (deny) log, default $CLAUDE_SHADOW_LOG_DIR/{DENY_LOG_NAME}",
     )
     sr.set_defaults(fn=cmd_shadow_report)
 
@@ -232,6 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DIR",
         help="with --judge: run the bash chain in DIR per record and report agreement",
+    )
+    r.add_argument(
+        "--deny",
+        action="store_true",
+        help="run the deny rules on every record; print each non-none verdict",
+    )
+    r.add_argument(
+        "--compare-hook",
+        default=None,
+        metavar="PATH",
+        help="with --deny: run block-dangerous-bash.sh at PATH per record; report agreement",
     )
     r.set_defaults(fn=cmd_replay)
     return ap
