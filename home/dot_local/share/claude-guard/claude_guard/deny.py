@@ -35,7 +35,7 @@ anchored on literals.
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from claude_guard.segment import parse
@@ -194,3 +194,179 @@ def rm_target(home: str) -> str:
 
 
 Rule = Callable[[Scan, str], "Verdict | None"]
+
+
+# --- remote re-scan (:613-659) ------------------------------------------------------------------
+
+SSH_HINT = (
+    "Run privileged or destructive remote commands in a direct session on the server, "
+    "not from an agent session."
+)
+_RM_RF_FLAGS = r"\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-rf|-fr)\b.*"
+
+
+def remote(sc: Scan, target: str) -> Verdict | None:
+    """:625-659. The gate reads the scan set; the payload scan stays WHOLE-STRING (:629-642,
+    measured: narrowing it removes denies and gains nothing). All six arms fold case."""
+    if not bdb_rei(sc.scanset, SSH_AT_RE):
+        return None
+    arms = (
+        ("remote-sudo", r"\bsudo\b", "Blocked: sudo inside a remote (ssh/hl) command."),
+        (
+            "remote-su",
+            r"(^|[;&|(`]|[[:space:]])[[:space:]]*su[[:space:]]+(-|root|[a-z_])",
+            "Blocked: su inside a remote (ssh/hl) command.",
+        ),
+        (
+            "remote-rm-root",
+            _RM_RF_FLAGS + target,
+            "Blocked: rm -rf of home/root on the remote host.",
+        ),
+        ("remote-chown", r"\bchown\b", "Blocked: chown inside a remote (ssh/hl) command."),
+        (
+            "remote-chmod-777",
+            r"\bchmod\s+(-[a-zA-Z]*\s+)*0?777\b",
+            "Blocked: chmod 777 inside a remote (ssh/hl) command.",
+        ),
+        (
+            "remote-power",
+            r"\b(reboot|poweroff|halt|shutdown)\b|\binit\s+[06]\b",
+            "Blocked: power-state change (reboot/shutdown/halt) on the remote host.",
+        ),
+    )
+    for rule, pattern, message in arms:
+        if bdb_rei(sc.scan, pattern):
+            return Verdict("deny", rule, f"{message} {SSH_HINT}")
+    return None
+
+
+# --- rm -rf on home or root (:661-667) -----------------------------------------------------
+
+RM_MSG = "Blocked: rm -rf targeting home or root directory. Use a specific path instead."
+
+
+def rm_root(sc: Scan, target: str) -> Verdict | None:
+    """:662-667. Joined flags first, then the separated spelling (rm -r -f, --recursive
+    --force); the target check on the second arm is case-SENSITIVE (bdb_re), as the bash."""
+    if bdb_rei(sc.scan, _RM_RF_FLAGS + target):
+        return Verdict("deny", "rm-root", RM_MSG)
+    if (
+        bdb_rei(sc.scan, r"\brm\s")
+        and bdb_rei(sc.scan, r"(\s-[a-zA-Z]*r|\s--recursive)")
+        and bdb_rei(sc.scan, r"(\s-[a-zA-Z]*f|\s--force)")
+        and bdb_re(sc.scan, target)
+    ):
+        return Verdict("deny", "rm-root-split-flags", RM_MSG)
+    return None
+
+
+# --- git push (:669-728) ---------------------------------------------------------------------
+
+_FORCE_FLAG = r"git\s+push.*(--force([ ]|$)|[ ]-f([ ]|$))"
+_LEASE = r"\-\-force-with-lease"
+
+
+def force_push(sc: Scan, target: str) -> Verdict | None:
+    """:687-693. The push and its destination must share a segment (bdb_re_pair); the
+    --force-with-lease exemption stays whole-string."""
+    if not bdb_re(sc.scan, _LEASE) and bdb_re_pair(
+        sc.segset, _FORCE_FLAG, r"(^|[[:space:]]|:)(main|master)([[:space:]]|:|\)|`|$)"
+    ):
+        return Verdict(
+            "deny", "force-push-main", "Blocked: force-push to main/master. Use a feature branch."
+        )
+    if bdb_re(sc.scan, r"git\s+push.*\+\s*(main|master|refs/heads/(main|master))\b"):
+        return Verdict(
+            "deny",
+            "force-push-refspec",
+            "Blocked: force-push via +refspec to main/master. Use a feature branch.",
+        )
+    return None
+
+
+def push_main(sc: Scan, target: str) -> Verdict | None:
+    """:725-728. Any push whose DESTINATION is main/master; `:` is deliberately not a
+    terminator here so `main:feature` stays a push to feature."""
+    if bdb_re_pair(
+        sc.segset,
+        r"git[[:space:]]+push\b",
+        r"([[:space:]]|:)(refs/heads/)?(main|master)([[:space:]]|\)|`|$)",
+    ):
+        return Verdict(
+            "deny",
+            "push-main",
+            "Blocked: push targeting main/master. Push a feature branch and open a PR.",
+        )
+    return None
+
+
+# --- gh api (:730-766) -------------------------------------------------------------------------
+
+GH_API_AT = (
+    r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"
+    r"(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?gh[[:space:]]+api\b"
+)
+GH_HINT = "Read-only gh api is fine; a human runs the mutation."
+
+
+def gh_api(sc: Scan, target: str) -> Verdict | None:
+    """:745-766. Gate on the scan set; the flag arms read SCAN. The method arm folds case."""
+    if not bdb_re(sc.scanset, GH_API_AT):
+        return None
+    if bdb_rei(
+        sc.scan,
+        r"(^|[[:space:]])(-X|--method)[[:space:]]*=?[[:space:]]*(POST|PUT|PATCH|DELETE)\b",
+    ):
+        return Verdict(
+            "deny",
+            "gh-api-method",
+            f"Blocked: mutating gh api request (POST/PUT/PATCH/DELETE). {GH_HINT}",
+        )
+    arms = (
+        (
+            "gh-api-field-long",
+            r"(^|[[:space:]])(--field|--raw-field)([[:space:]]|=)",
+            "Blocked: gh api field parameter, which makes the request a POST.",
+        ),
+        (
+            "gh-api-field-short",
+            r"(^|[[:space:]])-[a-zA-Z]*[fF]",
+            "Blocked: gh api field parameter (-f/-F), which makes the request a POST.",
+        ),
+        (
+            "gh-api-input",
+            r"(^|[[:space:]])--input([[:space:]]|=)",
+            "Blocked: gh api reading a request body from a file.",
+        ),
+        (
+            "gh-api-graphql",
+            r"(^|[[:space:]]|/)graphql\b",
+            "Blocked: gh api graphql, which can mutate.",
+        ),
+    )
+    for rule, pattern, message in arms:
+        if bdb_re(sc.scan, pattern):
+            return Verdict("deny", rule, f"{message} {GH_HINT}")
+    return None
+
+
+# --- the decision ------------------------------------------------------------------------------
+
+# Bash order (:625-1142). The first match wins and carries its message; later tasks append.
+RULES: tuple[Rule, ...] = (remote, rm_root, force_push, push_main, gh_api)
+
+
+def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
+    """The bash's decision for one command. `cwd` is accepted for the hook signature the
+    spec names and is unused: no rule in the bash reads the working directory. `env`
+    supplies HOME for the written-out home path (:595-598)."""
+    if not command:  # :23
+        return NONE
+    home = (env or {}).get("HOME", "")
+    sc = build_scan(command)
+    target = rm_target(home)
+    for rule in RULES:
+        verdict = rule(sc, target)
+        if verdict is not None:
+            return verdict
+    return NONE
