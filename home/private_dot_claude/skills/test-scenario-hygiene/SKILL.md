@@ -1,6 +1,6 @@
 ---
 name: test-scenario-hygiene
-description: Use after finishing a feature or bugfix and before requesting review — sweeps the tests this session added, separates durable coverage from scaffolding, and removes what the user agrees to drop. Triggers on "clean up the tests", "did I over-test this", "trim the test additions", or /test-scenario-hygiene. Covers test CONTENT; pr-review-prep covers diff shape and commit history.
+description: Use when a finished change carries more test than it needs — test additions outweighing the implementation they cover, scaffolding written to drive out one line and never removed, a `temp`/`wip`/`scaffold` name about to be committed, an assertion that a stub ran rather than what it did, or an unexplained skip/xfail. Also on "clean up the tests", "did I over-test this", "trim the test additions", and before requesting review after a TDD session. Covers test CONTENT; pr-review-prep covers diff shape and commit history.
 ---
 
 # test-scenario-hygiene
@@ -72,7 +72,9 @@ test the subagent marked `discard` back to `keep` when either applies, and say y
   vacuously once the glob matches nothing, so an assertion that the census contains named
   members (`KNOWN_CONSUMERS`, `assert len(found) >= n`) is load-bearing however trivial it reads.
 
-Both rules and their evidence are in the server repo's `CLAUDE.md` under *Python & Tests*.
+Both carve-outs stand on their own reasoning above. Where a repo states them itself, defer to
+its wording — the server repo's `CLAUDE.md` carries both, with the incidents behind them, under
+*Python & Tests*.
 
 ## Step 4 — Present and ask
 
