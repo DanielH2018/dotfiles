@@ -691,9 +691,82 @@ def inplace_edit(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# --- terraform / tofu / terragrunt (:1086-1118) -----------------------------------------------
+
+TF_HUMAN = "Use plan to preview; a human applies infra changes."
+_TF_VERB = (
+    rf"{TF_AT}{TF_BIN}\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+"
+    r"(apply|destroy|import|taint|untaint|force-unlock)\b"
+)
+
+
+def terraform(sc: Scan, target: str) -> Verdict | None:
+    """:1095-1118. Every arm reads the scan set and folds case."""
+    subject = sc.scanset
+    if bdb_rei(subject, _TF_VERB):
+        return Verdict(
+            "deny",
+            "terraform-apply",
+            "Blocked: state-mutating/destructive terraform command "
+            f"(apply/destroy/import/taint/force-unlock). {TF_HUMAN}",
+        )
+    if bdb_rei(
+        subject,
+        rf"{TF_AT}terragrunt\b([[:space:]]+-[^[:space:]]+)*[[:space:]]+(run-all|run)"
+        r"([[:space:]]+(--all|-[^[:space:]]+))*[[:space:]]+(apply|destroy|import)\b",
+    ):
+        return Verdict(
+            "deny",
+            "terragrunt-run",
+            f"Blocked: destructive terragrunt run-all/run command. {TF_HUMAN}",
+        )
+    if bdb_rei(subject, rf"{TF_AT}{TF_BIN}\b.*\bstate[[:space:]]+(rm|mv|push|replace-provider)\b"):
+        return Verdict(
+            "deny",
+            "terraform-state",
+            "Blocked: terraform state mutation (state rm/mv/push/replace-provider). state "
+            "list/show are fine; mutations must be done by a human.",
+        )
+    if bdb_rei(subject, rf"{TF_AT}{TF_BIN}\b.*\bworkspace[[:space:]]+delete\b"):
+        return Verdict(
+            "deny",
+            "terraform-workspace-delete",
+            "Blocked: terraform/tofu workspace delete drops its state.",
+        )
+    if bdb_rei(subject, rf"{TF_AT}{TF_BIN}\b.*[[:space:]]--?auto-approve\b"):
+        return Verdict(
+            "deny",
+            "terraform-auto-approve",
+            "Blocked: terraform -auto-approve. Non-interactive apply/destroy is not permitted.",
+        )
+    return None
+
+
+# --- the --force upgrade (:1120-1142) ---------------------------------------------------------
+
+UPGRADE_NOTE = (
+    "NOTE: --force was upgraded to --force-with-lease for safety. This prevents overwriting "
+    "commits pushed by others. The push will still succeed if no one else has pushed to this "
+    "branch."
+)
+
+
+def force_push_upgrade(sc: Scan, target: str) -> Verdict | None:
+    """:1130-1142. MUST stay the last rule: its allow covers the whole command, so every deny
+    gets its say first. Raw command, as the bash; `sed -E … g` per line, so MULTILINE."""
+    if not bdb_re(sc.command, _FORCE_FLAG) or bdb_re(sc.command, _LEASE):
+        return None
+    upgraded = re.sub(r"--force([ ]|$)", r"--force-with-lease\1", sc.command, flags=re.MULTILINE)
+    upgraded = re.sub(r"([ ])-f([ ]|$)", r"\1--force-with-lease\2", upgraded, flags=re.MULTILINE)
+    return Verdict(
+        "allow", "force-push-upgrade", "", updated_command=upgraded, context=UPGRADE_NOTE
+    )
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
+# force_push_upgrade MUST be last (:1123-1129). Enforced by test_force_push_upgrade_runs_last…
 RULES: tuple[Rule, ...] = (
     remote,
     rm_root,
@@ -715,6 +788,8 @@ RULES: tuple[Rule, ...] = (
     docker_inspect,
     write_targets,
     inplace_edit,
+    terraform,
+    force_push_upgrade,
 )
 
 
