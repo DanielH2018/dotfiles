@@ -461,6 +461,8 @@ def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_pat
             "uv no longer prefers a cwd venv without --system; the control no longer discriminates"
         )
     assert tmp_path in found2.parents
+
+
 # =============================================================================================
 # The PreToolUse side (slice 4): deny rules, their own shadow, the deny-path failure contract
 # =============================================================================================
@@ -526,10 +528,7 @@ def test_live_mode_prints_the_deny_line_for_a_dangerous_command(tmp_path):
 
 def test_live_mode_prints_nothing_for_a_benign_command(tmp_path):
     home = home_with(tmp_path)
-    assert (
-        pre_tool_use(payload("ls -la"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0"))
-        is None
-    )
+    assert pre_tool_use(payload("ls -la"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0")) is None
 
 
 def test_live_mode_prints_the_upgrade_for_a_feature_branch_force_push(tmp_path):
@@ -555,10 +554,7 @@ def test_live_mode_turns_an_exception_into_ask(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hook, "deny", boom)
     home = home_with(tmp_path)
-    assert (
-        pre_tool_use(payload("ls"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0"))
-        == ASK_JSON
-    )
+    assert pre_tool_use(payload("ls"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0")) == ASK_JSON
 
 
 # --- the env contract ---------------------------------------------------------------------------
@@ -576,9 +572,7 @@ def test_deny_shadow_unless_exactly_zero(tmp_path, value):
 
 def test_the_allow_side_variable_does_not_govern_the_deny_side(tmp_path):
     home = home_with(tmp_path)
-    env = denv(
-        home, CLAUDE_GUARD_SHADOW="0", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
-    )
+    env = denv(home, CLAUDE_GUARD_SHADOW="0", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
     assert pre_tool_use(payload("rm -rf /"), env) is None
 
 
@@ -588,9 +582,7 @@ def test_the_allow_side_variable_does_not_govern_the_deny_side(tmp_path):
 @skip_no_deny_bash
 def test_shadow_logs_one_hashed_line_and_prints_nothing(tmp_path):
     home = home_with(tmp_path)
-    env = denv(
-        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
-    )
+    env = denv(home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
     assert pre_tool_use(payload("rm -rf /"), env) is None
     lines = (tmp_path / "logs" / DENY_LOG_NAME).read_text().splitlines()
     assert len(lines) == 1
@@ -605,9 +597,7 @@ def test_shadow_logs_one_hashed_line_and_prints_nothing(tmp_path):
 @skip_no_deny_bash
 def test_shadow_records_agreement_on_a_benign_command(tmp_path):
     home = home_with(tmp_path)
-    env = denv(
-        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
-    )
+    env = denv(home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
     pre_tool_use(payload("ls -la"), env)
     rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
     assert (rec["python"], rec["bash"], rec["rule"]) == ("none", "none", "")
@@ -616,9 +606,7 @@ def test_shadow_records_agreement_on_a_benign_command(tmp_path):
 @skip_no_deny_bash
 def test_shadow_records_the_upgrade_as_allow_on_both_sides(tmp_path):
     home = home_with(tmp_path)
-    env = denv(
-        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
-    )
+    env = denv(home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
     pre_tool_use(payload("git push --force origin feat"), env)
     rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
     assert (rec["python"], rec["bash"]) == ("allow", "allow")
@@ -631,9 +619,7 @@ def test_shadow_records_a_python_error_rather_than_vanishing(tmp_path, monkeypat
 
     monkeypatch.setattr(hook, "deny", boom)
     home = home_with(tmp_path)
-    env = denv(
-        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
-    )
+    env = denv(home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
     assert pre_tool_use(payload("rm -rf /"), env) is None
     line = (tmp_path / "logs" / DENY_LOG_NAME).read_text()
     rec = json.loads(line)
@@ -701,9 +687,7 @@ def test_bash_deny_verdict_reads_the_deployed_hook_directly():
 
 
 def _rec(py: str, sh: str, rule: str = "") -> str:
-    return json.dumps(
-        {"ts": "t", "cmd_sha": "0" * 16, "python": py, "bash": sh, "rule": rule}
-    )
+    return json.dumps({"ts": "t", "cmd_sha": "0" * 16, "python": py, "bash": sh, "rule": rule})
 
 
 def test_summarize_deny_buckets_every_combination():
@@ -738,3 +722,87 @@ def test_summarize_deny_buckets_every_combination():
 def test_summarize_deny_an_empty_log_is_zero_records_not_agreement():
     s = summarize_deny([])
     assert s["records"] == 0 and s["agree"] == 0
+
+
+# --- the PreToolUse shim, driven as the harness drives it --------------------------------------
+
+DENY_SHIM = HOOKS / "executable_guard-pre-tool-use.sh"
+
+
+def run_deny_shim(stdin_text: str, env: dict[str, str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [BASH, str(DENY_SHIM)], input=stdin_text, capture_output=True, text=True, env=env
+    )
+
+
+def decision(stdout: str) -> str | None:
+    if not stdout.strip():
+        return None
+    return json.loads(stdout)["hookSpecificOutput"]["permissionDecision"]
+
+
+@skip_no_uv
+def test_deny_shim_prints_the_deny_line_when_told_to_run_live(tmp_path):
+    home = home_with(tmp_path)
+    r = run_deny_shim(payload("rm -rf /"), shim_env(home, CLAUDE_GUARD_DENY_SHADOW="0"))
+    assert r.returncode == 0, r.stderr
+    assert decision(r.stdout) == "deny"
+
+
+@skip_no_uv
+def test_deny_shim_prints_nothing_live_for_a_benign_command(tmp_path):
+    home = home_with(tmp_path)
+    r = run_deny_shim(payload("ls -la"), shim_env(home, CLAUDE_GUARD_DENY_SHADOW="0"))
+    assert (r.returncode, r.stdout) == (0, "")
+
+
+@skip_no_uv
+def test_deny_shim_defaults_to_shadow_and_logs(tmp_path):
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
+    r = run_deny_shim(payload("rm -rf /"), env)
+    assert (r.returncode, r.stdout) == (0, "")
+    rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
+    assert rec["python"] == "deny"
+
+
+def test_deny_shim_asks_without_an_interpreter_when_live(tmp_path):
+    # Spec, Failure contracts, claude-guard deny path: the shim emits ask ITSELF, without
+    # Python. PATH has no uv and no python; only bash builtins run.
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_DENY_SHADOW="0", PATH="/nonexistent")
+    r = run_deny_shim(payload("rm -rf /"), env)
+    assert r.returncode == 0
+    assert decision(r.stdout) == "ask"
+
+
+def test_deny_shim_asks_when_the_package_is_missing_when_live(tmp_path):
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_DENY_SHADOW="0", CLAUDE_GUARD_HOME=str(tmp_path / "nowhere"))
+    r = run_deny_shim(payload("rm -rf /"), env)
+    assert (r.returncode, decision(r.stdout)) == (0, "ask")
+
+
+@skip_no_uv
+def test_deny_shim_asks_when_python_exits_non_zero_when_live(tmp_path):
+    # A package whose cli.py dies before the hook's own try/except: the shim, not Python,
+    # owns the ask. Built as a real package so the shim's own `-f cli.py` check passes.
+    fake = tmp_path / "fake" / "claude_guard"
+    fake.mkdir(parents=True)
+    (fake / "__init__.py").write_text("")
+    (fake / "cli.py").write_text("import sys\nsys.exit(3)\n")
+    home = home_with(tmp_path)
+    env = shim_env(home, CLAUDE_GUARD_DENY_SHADOW="0", CLAUDE_GUARD_HOME=str(tmp_path / "fake"))
+    r = run_deny_shim(payload("rm -rf /"), env)
+    assert (r.returncode, decision(r.stdout)) == (0, "ask")
+
+
+def test_deny_shim_is_silent_on_every_failure_in_shadow(tmp_path):
+    home = home_with(tmp_path)
+    for env in (
+        shim_env(home, PATH="/nonexistent"),
+        shim_env(home, CLAUDE_GUARD_HOME=str(tmp_path / "nowhere")),
+        shim_env(home, CLAUDE_GUARD_DENY_SHADOW="1", PATH="/nonexistent"),
+    ):
+        r = run_deny_shim(payload("rm -rf /"), env)
+        assert (r.returncode, r.stdout) == (0, "")

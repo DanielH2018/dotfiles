@@ -124,6 +124,20 @@
          floor wants (shadow-report: at least 200 records over at least 3 days, zero
          python_only/bash_only/python_error rows). */}}
     "CLAUDE_GUARD_SHADOW": "1",
+    {{/* claude-guard DENY shadow (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 4).
+         guard-pre-tool-use.sh is registered beside block-dangerous-bash.sh in the PreToolUse
+         Bash block below. With this set to 1 it computes deny.py's verdict, runs
+         block-dangerous-bash.sh on the same stdin, appends one hashed line to
+         ~/.claude/logs/claude-guard-deny-shadow.jsonl, and decides NOTHING. Read the log
+         with `claude-guard shadow-report --deny`. A separate switch from CLAUDE_GUARD_SHADOW
+         above because the two sides cut over independently and this one lands first. The
+         cutover sets this to 0 and removes block-dangerous-bash.sh in the same PR; hook.py
+         treats every value except exactly `0` as shadow and the shim defaults it to 1, so a
+         stale settings.json cannot run it live. Floor for that cutover: at least 200 records
+         over at least 3 days with zero python_only, bash_only, mismatch, python_error and
+         bash_error rows — an empty log satisfies none of it. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N
+         would sample the log write 1-in-N; unset, every call logs. */}}
+    "CLAUDE_GUARD_DENY_SHADOW": "1",
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
          window unconditionally, and long sessions were compacting 3-6 times each —
          every compaction also truncates history before the remember pipeline can
@@ -812,6 +826,20 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/block-dangerous-bash.sh",
+            "timeout": 10
+          },
+          {{/* The Python port of block-dangerous-bash.sh above, in SHADOW: it logs what it
+               would have decided and decides nothing (env.CLAUDE_GUARD_DENY_SHADOW above).
+               It stays beside the bash until `claude-guard shadow-report --deny` meets the
+               floor stated at that variable; then the cutover PR removes
+               block-dangerous-bash.sh and this entry becomes the decision. Contract when it
+               cannot run: the shim prints `ask` itself — the same posture as the bash on a
+               missing jq — never silence, because this is the deny side. Registered at 10 s
+               like the bash it shadows; in shadow it runs that bash a second time, which is
+               why Task 10 of the slice-4 plan measured it before this landed. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/guard-pre-tool-use.sh",
             "timeout": 10
           },
           {

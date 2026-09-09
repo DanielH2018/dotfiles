@@ -66,6 +66,48 @@ The cutover to slice 3 needs `shadow-report` to show at least 200 records collec
 least 3 days, with zero `python_only`, zero `bash_only`, and zero `python_error` rows. An
 empty log satisfies none of this — no records is not the same claim as agreement.
 
+## The deny rules, and their own shadow
+
+`claude_guard.deny.deny(command, cwd, env)` is `block-dangerous-bash.sh`'s decision, ported
+rule for rule with the bash line ranges cited in each function and the messages verbatim. It
+returns a `Verdict` whose `kind` is `deny`, `allow` (the `--force` → `--force-with-lease`
+upgrade, with `updated_command`), or `none`; `deny()` never returns `ask` itself. The rules
+read three subjects the bash builds: the normalised whole command, that plus one line per
+segment and substitution, and the segment lines alone for the pair rules. A parse refusal
+degrades to the whole-string subject, as the bash does — this is the one place the
+segmenter's "a refusal is never a skip" contract reads differently, and it is deliberate,
+because this is a port.
+
+    claude-guard explain 'ssh homelab sudo reboot'          # unchanged: segments and the judge
+    claude-guard replay commands.jsonl --deny                # one line per non-none verdict
+    claude-guard replay commands.jsonl --deny --compare-hook ~/.claude/hooks/block-dangerous-bash.sh
+                                                            # AGREE n/N, verdict AND message
+
+`~/.claude/hooks/guard-pre-tool-use.sh` runs `claude-guard pre-tool-use` on PreToolUse for
+every Bash call. Its failure contract is the OPPOSITE of the PermissionRequest shim's: cannot
+run → it prints `ask` itself, without Python, the posture the bash takes on a missing `jq`.
+An exception inside Python in live mode prints the same `ask` from `hook.py`.
+
+The deny side runs in shadow unless `CLAUDE_GUARD_DENY_SHADOW` is exactly `"0"` — a separate
+switch from `CLAUDE_GUARD_SHADOW`, so the two sides cut over independently. In shadow it
+computes its verdict, runs the deployed `block-dangerous-bash.sh` on the same stdin (with the
+M02 census switches removed, so that re-run cannot double-count), and appends one line to
+`~/.claude/logs/claude-guard-deny-shadow.jsonl`:
+
+    {"bash": "deny", "cmd_sha": "…16 hex…", "python": "deny", "rule": "rm-root",
+     "ts": "2026-09-06T12:00:00Z"}
+
+`python` is `deny` | `ask` | `allow` | `none` | `error`; `bash` is the same set, where `error`
+means the bash could not be run or read — never folded into `none`, so a missing hook is not
+agreement. `rule` is a fixed literal (`exception` for an error), never text from the command.
+
+    claude-guard shadow-report --deny        # agree (deny/ask/none/allow), python-only,
+                                             # bash-only, mismatch, python-error, bash-error
+
+The cutover needs `shadow-report --deny` to show at least 200 records collected over at least
+3 days, with zero `python_only`, `bash_only`, `mismatch`, `python_error` and `bash_error`
+rows. An empty log satisfies none of this.
+
 ## Tests
 
 From this directory, under uv's managed 3.14, without writing a `.venv` into the source tree:

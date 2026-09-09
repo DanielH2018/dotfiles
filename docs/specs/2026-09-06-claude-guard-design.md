@@ -200,13 +200,21 @@ tooling: the new hook is registered beside the old ones, logs its verdict, and d
 | 1 | package skeleton, `segment.py`, `explain`, `replay` | vector corpus green; replay of the 2026-09-06 corpus (677 commands) segments identically to `cmdparse.sh` on every one |
 | 2 | `rules.py`, `judge.py`, scratch and curl checks, PermissionRequest shim in shadow | `shadow-report` shows at least 200 records collected over at least 3 days, with zero `python_only`, zero `bash_only`, and zero `python_error` rows; an empty log satisfies none of this |
 | 3 | PermissionRequest cutover; the #477, #474 and ansible rules; the five bash hooks removed | replay allows at least the 84 of 677 the #477 prototype allowed; PRs #474 and #477 closed unmerged, #476's hook half dropped |
-| 4 | `deny.py` in shadow, then cutover; `block-dangerous-bash.sh` removed | its vector file green; shadow agreement |
+| 4 | `deny.py` in shadow, then cutover; `block-dangerous-bash.sh` removed | its vector file green; replay --deny --compare-hook gives AGREE N/N on the 2026-09-06 corpus and on every vector; shadow-report --deny shows at least 200 records over at least 3 days with zero python_only, bash_only, mismatch, python_error and bash_error rows (an empty log satisfies none of this); then the cutover PR flips CLAUDE_GUARD_DENY_SHADOW to 0 and removes block-dangerous-bash.sh |
 | 5 | `homelab-guard`: four hooks and `uv-python` consolidated, private segmenter and tables deleted, `SSH_HOSTS` moved | server suite green; the deployed-import test green |
 | 6 | `cmdparse.sh`, the node hook suites, and the doc sections describing the old layering retired | `claude-shell-permissions.md`, the CLAUDE.md permission sections and the settings comments updated in the same PRs |
 
 Slices 1 to 4 and 6 are dotfiles PRs; slice 5 is a server PR that lands after slice 3 has
 deployed. `stash-mine` (#475), the `stdio-blocking` script with its ask entries (#476), and
 the server's `uv-python` change (#1368) land independently and ahead of this.
+
+Shadow is per side. The PermissionRequest shim reads `CLAUDE_GUARD_SHADOW` and logs to
+`claude-guard-shadow.jsonl`; the PreToolUse shim reads `CLAUDE_GUARD_DENY_SHADOW` and logs
+to `claude-guard-deny-shadow.jsonl`. Slice 4 ships before slice 3 because its census is
+independent of slice 2's, and a shared switch would take the deny side live with the allow
+side's cutover. The deny side's verdict has a fourth value the table above does not name:
+`allow` with `updatedInput`, the `--force` → `--force-with-lease` upgrade the bash performs
+at :1130-1142. It ports as-is.
 
 ## Decisions
 

@@ -286,3 +286,19 @@ test('claude-guard runs beside the bash PermissionRequest hooks, in shadow', { s
   }
   assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '1');
 });
+
+// claude-guard slice 4: the Python PreToolUse hook runs beside block-dangerous-bash.sh, in
+// shadow, under its OWN variable. The cutover changes all three in one PR; until then losing
+// any one of them is a half-cutover — and the deny side's variable must not be the allow
+// side's, or slice 3's flip would take this hook live with it.
+test('claude-guard runs beside block-dangerous-bash.sh on PreToolUse, in its own shadow', { skip }, () => {
+  const s = JSON.parse(render());
+  const entry = s.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
+  const cmds = entry.hooks.map((h) => h.command);
+  assert.ok(cmds.includes('~/.claude/hooks/guard-pre-tool-use.sh'), cmds.join(', '));
+  assert.ok(cmds.includes('~/.claude/hooks/block-dangerous-bash.sh'), 'the bash is still registered');
+  assert.strictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, '1');
+  assert.notStrictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, undefined);
+  const shim = entry.hooks.find((h) => h.command.endsWith('guard-pre-tool-use.sh'));
+  assert.strictEqual(shim.timeout, 10);
+});
