@@ -17,8 +17,9 @@
                                             # or nothing on stdout; shadow unless
                                             # CLAUDE_GUARD_DENY_SHADOW=0
     claude-guard shadow-report --deny [--log P]
-                                            # agree / python-only / bash-only / mismatch
-                                            # counts from the deny shadow log
+                                            # agree / python-only / bash-only / mismatch /
+                                            # detail-mismatch / bash-timeout counts from the
+                                            # deny shadow log
     claude-guard replay <jsonl> --deny [--compare-hook <block-dangerous-bash.sh>]
                                             # deny/ask/allow verdict per record; with
                                             # --compare-hook, agreement with the bash hook
@@ -42,6 +43,7 @@ from claude_guard.hook import (
     bash_deny_verdict,
     permission_request,
     pre_tool_use,
+    shadow_mode,
     summarize,
     summarize_deny,
 )
@@ -227,7 +229,7 @@ def cmd_pre_tool_use(args: argparse.Namespace) -> int:
     try:
         out = pre_tool_use(sys.stdin.read(), os.environ)
     except Exception:
-        out = ASK_JSON if os.environ.get("CLAUDE_GUARD_DENY_SHADOW", "1") == "0" else None
+        out = ASK_JSON if not shadow_mode(os.environ, "CLAUDE_GUARD_DENY_SHADOW")[0] else None
     if out:
         print(out)
     return 0
@@ -269,8 +271,10 @@ def cmd_shadow_report(args: argparse.Namespace) -> int:
         print(f"{label} {s[key]}")
         for rule, n in sorted(s[f"{key}_rules"].items(), key=lambda kv: -kv[1]):
             print(f"  {rule}: {n}")
+    print(f"detail-mismatch {s['detail_mismatch']}")
     print(f"python-error {s['python_error']}")
     print(f"bash-error {s['bash_error']}")
+    print(f"bash-timeout {s['bash_timeout']}")
     return 0
 
 

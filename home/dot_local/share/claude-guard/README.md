@@ -105,8 +105,11 @@ agreement. `rule` is a fixed literal (`exception` for an error), never text from
                                              # bash-only, mismatch, python-error, bash-error
 
 The cutover needs `shadow-report --deny` to show at least 200 records collected over at least
-3 days, with zero `python_only`, `bash_only`, `mismatch`, `python_error` and `bash_error`
-rows. An empty log satisfies none of this.
+3 days, with zero `python_only`, `bash_only`, `mismatch`, `detail_mismatch`, `python_error`
+and `bash_error` rows. An empty log satisfies none of this. `bash_timeout` rows are expected
+on large heredocs — the bash hook is quadratic there and exceeds the 5s re-run cap — and do
+not block, but each is a command the bash could not judge in time, and is the subject of a
+follow-up against the bash.
 
 ## Tests
 

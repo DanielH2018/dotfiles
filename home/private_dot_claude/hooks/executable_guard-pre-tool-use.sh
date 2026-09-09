@@ -31,7 +31,9 @@
 # stdlib-named module) would shadow this package ahead of PYTHONPATH in the very process
 # that decides whether to deny a command. Python's stdout is captured rather than passed
 # through so a non-zero exit can replace whatever partial output preceded it with the ask
-# line.
+# line. Its stderr is discarded too — an uncaught Python traceback would otherwise reach the
+# harness's hook-stderr channel verbatim, and a traceback can quote the command text this
+# hook exists to avoid ever printing.
 set -u
 : "${CLAUDE_GUARD_DENY_SHADOW:=1}"
 export CLAUDE_GUARD_DENY_SHADOW
@@ -44,6 +46,6 @@ SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || fail
 PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || fail
 [ -x "$PY" ] || fail
-OUT=$(PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli pre-tool-use) || fail
+OUT=$(PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null) || fail
 [ -n "$OUT" ] && printf '%s\n' "$OUT"
 exit 0

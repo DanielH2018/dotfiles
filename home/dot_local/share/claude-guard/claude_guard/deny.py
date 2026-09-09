@@ -753,11 +753,17 @@ UPGRADE_NOTE = (
 
 def force_push_upgrade(sc: Scan, target: str) -> Verdict | None:
     """:1130-1142. MUST stay the last rule: its allow covers the whole command, so every deny
-    gets its say first. Raw command, as the bash; `sed -E … g` per line, so MULTILINE."""
+    gets its say first. Raw command, as the bash; `sed -E … g` per line, so MULTILINE.
+
+    The bash builds this via `UPGRADED=$(echo "$COMMAND" | sed -E …)`, and command
+    substitution strips ALL trailing newlines from its output — `re.sub` keeps them, so a
+    command ending in one or more newlines disagreed on `updatedInput` with nothing else
+    different. `.rstrip("\\n")` matches the bash's `$(...)` behaviour exactly."""
     if not bdb_re(sc.command, _FORCE_FLAG) or bdb_re(sc.command, _LEASE):
         return None
     upgraded = re.sub(r"--force([ ]|$)", r"--force-with-lease\1", sc.command, flags=re.MULTILINE)
     upgraded = re.sub(r"([ ])-f([ ]|$)", r"\1--force-with-lease\2", upgraded, flags=re.MULTILINE)
+    upgraded = upgraded.rstrip("\n")
     return Verdict(
         "allow", "force-push-upgrade", "", updated_command=upgraded, context=UPGRADE_NOTE
     )

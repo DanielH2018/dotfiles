@@ -751,6 +751,19 @@ def test_force_with_lease_is_not_upgraded_again():
     assert d.deny("git push --force-with-lease origin feature-x", "", ENV) == d.NONE
 
 
+def test_force_push_upgrade_strips_trailing_newlines_like_the_bash_command_substitution():
+    # The bash builds UPGRADED via $(echo ... | sed ...); command substitution strips ALL
+    # trailing newlines. re.sub alone keeps them, so a command ending in one or more
+    # newlines would disagree with the bash on updatedInput with nothing else different.
+    v = d.deny("git push --force origin feature-x\n\n", "", ENV)
+    assert v.updated_command == "git push --force-with-lease origin feature-x"
+
+
+def test_force_push_upgrade_leaves_a_command_with_no_trailing_newline_unchanged():
+    v = d.deny("git push --force origin feature-x", "", ENV)
+    assert v.updated_command == "git push --force-with-lease origin feature-x"
+
+
 # --- the corpus (tests/fixtures/block-dangerous-bash-vectors.json) ---------------------------
 
 # Members the census must contain, so a fixture that loads as [] fails by NAME rather than

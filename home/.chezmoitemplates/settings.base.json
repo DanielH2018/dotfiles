@@ -134,8 +134,11 @@
          cutover sets this to 0 and removes block-dangerous-bash.sh in the same PR; hook.py
          treats every value except exactly `0` as shadow and the shim defaults it to 1, so a
          stale settings.json cannot run it live. Floor for that cutover: at least 200 records
-         over at least 3 days with zero python_only, bash_only, mismatch, python_error and
-         bash_error rows — an empty log satisfies none of it. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N
+         over at least 3 days with zero python_only, bash_only, mismatch, detail_mismatch,
+         python_error and bash_error rows — an empty log satisfies none of it. bash_timeout
+         rows are expected on large heredocs (the bash hook is quadratic there and exceeds
+         the 5s re-run cap) and do not block, but each is a command the bash could not judge
+         in time, and is the subject of a follow-up against the bash. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N
          would sample the log write 1-in-N; unset, every call logs. */}}
     "CLAUDE_GUARD_DENY_SHADOW": "1",
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the

@@ -21,6 +21,7 @@ from claude_guard.hook import (
     DENY_LOG_NAME,
     LOG_NAME,
     bash_deny_verdict,
+    deny_shadow_record,
     permission_request,
     pre_tool_use,
     pre_tool_use_json,
@@ -587,8 +588,9 @@ def test_shadow_logs_one_hashed_line_and_prints_nothing(tmp_path):
     lines = (tmp_path / "logs" / DENY_LOG_NAME).read_text().splitlines()
     assert len(lines) == 1
     rec = json.loads(lines[0])
-    assert set(rec) == {"ts", "cmd_sha", "python", "bash", "rule"}
+    assert set(rec) == {"ts", "cmd_sha", "python", "bash", "rule", "detail_match"}
     assert (rec["python"], rec["bash"], rec["rule"]) == ("deny", "deny", "rm-root")
+    assert rec["detail_match"] is True
     assert re.fullmatch(r"[0-9a-f]{16}", rec["cmd_sha"])
     assert "rm -rf" not in lines[0]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rec["ts"])
@@ -683,11 +685,54 @@ def test_bash_deny_verdict_reads_the_deployed_hook_directly():
     assert bash_deny_verdict(DENY_HOOK_SRC, payload("ls"), env) == ("none", "")
 
 
+def test_bash_deny_verdict_missing_hook_is_error_not_none(tmp_path):
+    env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    assert bash_deny_verdict(tmp_path / "nope.sh", payload("ls"), env) == ("error", "")
+
+
+def test_bash_deny_verdict_timeout_is_its_own_kind_not_error(tmp_path):
+    # The bash segmenter is quadratic on large heredocs (measured 49s on 100KB), so a real
+    # heredoc write can time out here. That must read as "timeout", never as "error" — the
+    # shadow gate's zero-bash_error floor would otherwise block on exactly this case.
+    slow = tmp_path / "slow.sh"
+    slow.write_text("#!/usr/bin/env bash\nsleep 5\n")
+    slow.chmod(0o755)
+    env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    assert bash_deny_verdict(slow, payload("ls"), env, timeout=0.2) == ("timeout", "")
+
+
+# --- detail_match: same kind, different reason is not agreement (I-1) --------------------------
+
+
+def test_deny_shadow_record_detail_match_true_when_reasons_agree():
+    verdict = Verdict("deny", "rm-root", "Blocked: rm -rf /")
+    rec = deny_shadow_record("rm -rf /", verdict, "deny", "Blocked: rm -rf /")
+    assert rec["detail_match"] is True
+
+
+def test_deny_shadow_record_detail_match_false_when_reasons_differ():
+    verdict = Verdict("deny", "rm-root", "Blocked: root delete")
+    rec = deny_shadow_record("rm -rf /", verdict, "deny", "Blocked: a different rule fired")
+    assert rec["detail_match"] is False
+
+
+def test_deny_shadow_record_carries_no_reason_text_only_the_boolean():
+    sentinel = "SENTINELCREDENTIALPATH"
+    verdict = Verdict("deny", "rm-root", f"Blocked: {sentinel}")
+    rec = deny_shadow_record("rm -rf /", verdict, "deny", f"Blocked: {sentinel}")
+    line = json.dumps(rec)
+    assert sentinel not in line
+    assert rec["detail_match"] is True
+
+
 # --- the shadow-report buckets, with a red-proof ----------------------------------------------
 
 
-def _rec(py: str, sh: str, rule: str = "") -> str:
-    return json.dumps({"ts": "t", "cmd_sha": "0" * 16, "python": py, "bash": sh, "rule": rule})
+def _rec(py: str, sh: str, rule: str = "", detail_match: bool | None = None) -> str:
+    rec = {"ts": "t", "cmd_sha": "0" * 16, "python": py, "bash": sh, "rule": rule}
+    if detail_match is not None:
+        rec["detail_match"] = detail_match
+    return json.dumps(rec)
 
 
 def test_summarize_deny_buckets_every_combination():
@@ -722,6 +767,31 @@ def test_summarize_deny_buckets_every_combination():
 def test_summarize_deny_an_empty_log_is_zero_records_not_agreement():
     s = summarize_deny([])
     assert s["records"] == 0 and s["agree"] == 0
+
+
+def test_summarize_deny_same_kind_same_detail_is_agreement():
+    s = summarize_deny([_rec("deny", "deny", "rm-root", detail_match=True)])
+    assert (s["agree_deny"], s["detail_mismatch"]) == (1, 0)
+
+
+def test_summarize_deny_same_kind_different_detail_is_detail_mismatch_not_agreement():
+    # Two sides that both `deny` for DIFFERENT rules (different messages) must not read as
+    # agree_deny: detail_match=False on an agree-kind record moves it to its own bucket.
+    s = summarize_deny([_rec("deny", "deny", "rm-root", detail_match=False)])
+    assert (s["agree_deny"], s["detail_mismatch"], s["records"]) == (0, 1, 1)
+
+
+def test_summarize_deny_bash_timeout_is_its_own_bucket_never_agree_or_python_only():
+    # A timed-out bash re-run must never read as agreement (it didn't decide) or as
+    # python_only (bash wasn't silent, it timed out).
+    s = summarize_deny([_rec("deny", "timeout", "rm-root")])
+    assert s["bash_timeout"] == 1
+    assert (s["agree"], s["python_only"], s["bash_only"], s["mismatch"]) == (0, 0, 0, 0)
+
+
+def test_summarize_deny_unrecognised_kind_is_unparseable_not_agree_none():
+    s = summarize_deny([_rec("bogus", "bogus", "whatever")])
+    assert (s["unparseable"], s["records"], s["agree_none"]) == (1, 0, 0)
 
 
 # --- the PreToolUse shim, driven as the harness drives it --------------------------------------
