@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "08c88f4f9257d88dc2aaef04bba4af30ab95675f1729252b3e3cc219332b7161",
-      "landed": "2026-09-09T16:14:06.719Z"
+      "hash": "845be3c620af9e83e078c5d5ce2658b4c2f3783392859d1d168cbe419c3ca5b6",
+      "landed": "2026-09-09T23:04:34.028Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -563,8 +563,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
-      "hash": "75c1df603baa2f33586634c8fc33bd050b268d9f09313eb90ac51f6baec6879f",
-      "landed": "2026-08-23T14:06:23.158Z"
+      "hash": "f50ad4748b4162be8076eb61ec6a2eb6987ff65cfb0d538b33fb0a0ba5bd10e4",
+      "landed": "2026-09-09T23:04:34.028Z"
     },
     {
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
@@ -690,6 +690,11 @@
       "path": "home/private_dot_claude/skills/skill-router/SKILL.md.tmpl",
       "hash": "7b415273f8a68164e41286e6be88783feb8ffc17e58e7adc43d45e154ce47d8d",
       "landed": "2026-09-03T12:51:50.087Z"
+    },
+    {
+      "path": "home/private_dot_claude/skills/test-scenario-hygiene/SKILL.md",
+      "hash": "27b0df6b8ad30f82952ce9b9a168c9811895d13b22d575e6291dcf7081174686",
+      "landed": "2026-09-09T23:04:34.028Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
