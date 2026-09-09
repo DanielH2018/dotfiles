@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "70e54e3af599cb8d5f217e937411bddd4a349069e519ad5f5aa02ed481cc1c1d",
-      "landed": "2026-09-09T22:39:38.917Z"
+      "hash": "15943bf45c12dc47b55d75b15119a359fbbe275f50a81280dfc9bb034c1e0260",
+      "landed": "2026-09-09T22:39:45.424Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -148,13 +148,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
-      "hash": "1ba47a35dc05326a338c53293405d714b457da0437f4795eec166bb45599fc96",
-      "landed": "2026-09-06T21:53:22.195Z"
+      "hash": "4fb249f6b8cd93a0115c911fd2a9cc1467c7519be0c299c297dce1d01d5167bf",
+      "landed": "2026-09-09T22:39:45.424Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
-      "hash": "741c14425dd558cfdaa2f1dd9a54a0bc1e1c02a687dfbd94fd375359068b027a",
-      "landed": "2026-09-09T22:39:38.917Z"
+      "hash": "d7091ac7a102e10e754bdfc8f5dc8a3d22ef1988deb2f3fe9deb2f8ae0fdb9ff",
+      "landed": "2026-09-09T22:39:45.424Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
