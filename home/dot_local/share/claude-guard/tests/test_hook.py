@@ -14,7 +14,20 @@ from pathlib import Path
 import pytest
 
 from claude_guard import hook
-from claude_guard.hook import ALLOW_JSON, LOG_NAME, permission_request, shadow_mode, summarize
+from claude_guard.deny import NONE, Verdict
+from claude_guard.hook import (
+    ALLOW_JSON,
+    ASK_JSON,
+    DENY_LOG_NAME,
+    LOG_NAME,
+    bash_deny_verdict,
+    permission_request,
+    pre_tool_use,
+    pre_tool_use_json,
+    shadow_mode,
+    summarize,
+    summarize_deny,
+)
 from claude_guard.judge import Decision
 
 PKG_DIR = Path(__file__).resolve().parents[1]
@@ -448,3 +461,280 @@ def test_the_shims_lookup_ignores_a_real_cwd_venv_only_because_of_system(tmp_pat
             "uv no longer prefers a cwd venv without --system; the control no longer discriminates"
         )
     assert tmp_path in found2.parents
+# =============================================================================================
+# The PreToolUse side (slice 4): deny rules, their own shadow, the deny-path failure contract
+# =============================================================================================
+
+DENY_HOOK_SRC = HOOKS / "executable_block-dangerous-bash.sh"
+skip_no_deny_bash = pytest.mark.skipif(
+    not (shutil.which("bash") and shutil.which("jq") and DENY_HOOK_SRC.exists()),
+    reason="bash deny hook unavailable",
+)
+
+
+def denv(home: Path, **extra: str) -> dict[str, str]:
+    return env_for(home, **{"CLAUDE_GUARD_BASH_HOOKS_DIR": str(HOOKS), **extra})
+
+
+# --- the stdout contract (:601-611, hook-input.sh:83, :1133-1140) -----------------------------
+
+
+def test_pre_tool_use_json_prints_the_deny_shape_the_bash_prints():
+    out = json.loads(pre_tool_use_json(Verdict("deny", "rm-root", "Blocked: x")))
+    assert out == {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Blocked: x",
+        }
+    }
+
+
+def test_pre_tool_use_json_prints_the_allow_shape_with_updated_input():
+    v = Verdict(
+        "allow",
+        "force-push-upgrade",
+        "",
+        updated_command="git push --force-with-lease o b",
+        context="NOTE",
+    )
+    out = json.loads(pre_tool_use_json(v))["hookSpecificOutput"]
+    assert out["permissionDecision"] == "allow"
+    assert out["updatedInput"] == {"command": "git push --force-with-lease o b"}
+    assert out["additionalContext"] == "NOTE"
+    assert "permissionDecisionReason" not in out
+
+
+def test_pre_tool_use_json_prints_nothing_for_none():
+    assert pre_tool_use_json(NONE) is None
+
+
+def test_ask_json_is_the_ask_shape():
+    out = json.loads(ASK_JSON)["hookSpecificOutput"]
+    assert (out["hookEventName"], out["permissionDecision"]) == ("PreToolUse", "ask")
+    assert "could not be evaluated" in out["permissionDecisionReason"]
+
+
+# --- live mode ---------------------------------------------------------------------------------
+
+
+def test_live_mode_prints_the_deny_line_for_a_dangerous_command(tmp_path):
+    home = home_with(tmp_path)
+    out = pre_tool_use(payload("rm -rf /"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0"))
+    assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_live_mode_prints_nothing_for_a_benign_command(tmp_path):
+    home = home_with(tmp_path)
+    assert (
+        pre_tool_use(payload("ls -la"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0"))
+        is None
+    )
+
+
+def test_live_mode_prints_the_upgrade_for_a_feature_branch_force_push(tmp_path):
+    home = home_with(tmp_path)
+    env = denv(home, CLAUDE_GUARD_DENY_SHADOW="0")
+    out = pre_tool_use(payload("git push --force origin feat"), env)
+    assert json.loads(out)["hookSpecificOutput"]["updatedInput"]["command"].endswith(
+        "--force-with-lease origin feat"
+    )
+
+
+def test_live_mode_prints_nothing_for_unparseable_stdin(tmp_path):
+    # :22-23: jq yields an empty command and the bash exits 0 with no decision.
+    home = home_with(tmp_path)
+    assert pre_tool_use("not json", denv(home, CLAUDE_GUARD_DENY_SHADOW="0")) is None
+
+
+def test_live_mode_turns_an_exception_into_ask(tmp_path, monkeypatch):
+    # The deny side fails CLOSED to ask (spec, Failure contracts). A crash must never read as
+    # "nothing to worry about here".
+    def boom(command, cwd="", env=None):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(hook, "deny", boom)
+    home = home_with(tmp_path)
+    assert (
+        pre_tool_use(payload("ls"), denv(home, CLAUDE_GUARD_DENY_SHADOW="0"))
+        == ASK_JSON
+    )
+
+
+# --- the env contract ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "01", " 0", "", None])
+def test_deny_shadow_unless_exactly_zero(tmp_path, value):
+    home = home_with(tmp_path)
+    env = denv(home, CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
+    if value is not None:
+        env["CLAUDE_GUARD_DENY_SHADOW"] = value
+    assert pre_tool_use(payload("rm -rf /"), env) is None
+    assert (tmp_path / "logs" / DENY_LOG_NAME).exists()
+
+
+def test_the_allow_side_variable_does_not_govern_the_deny_side(tmp_path):
+    home = home_with(tmp_path)
+    env = denv(
+        home, CLAUDE_GUARD_SHADOW="0", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
+    )
+    assert pre_tool_use(payload("rm -rf /"), env) is None
+
+
+# --- shadow mode ---------------------------------------------------------------------------------
+
+
+@skip_no_deny_bash
+def test_shadow_logs_one_hashed_line_and_prints_nothing(tmp_path):
+    home = home_with(tmp_path)
+    env = denv(
+        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
+    )
+    assert pre_tool_use(payload("rm -rf /"), env) is None
+    lines = (tmp_path / "logs" / DENY_LOG_NAME).read_text().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert set(rec) == {"ts", "cmd_sha", "python", "bash", "rule"}
+    assert (rec["python"], rec["bash"], rec["rule"]) == ("deny", "deny", "rm-root")
+    assert re.fullmatch(r"[0-9a-f]{16}", rec["cmd_sha"])
+    assert "rm -rf" not in lines[0]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rec["ts"])
+
+
+@skip_no_deny_bash
+def test_shadow_records_agreement_on_a_benign_command(tmp_path):
+    home = home_with(tmp_path)
+    env = denv(
+        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
+    )
+    pre_tool_use(payload("ls -la"), env)
+    rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
+    assert (rec["python"], rec["bash"], rec["rule"]) == ("none", "none", "")
+
+
+@skip_no_deny_bash
+def test_shadow_records_the_upgrade_as_allow_on_both_sides(tmp_path):
+    home = home_with(tmp_path)
+    env = denv(
+        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
+    )
+    pre_tool_use(payload("git push --force origin feat"), env)
+    rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
+    assert (rec["python"], rec["bash"]) == ("allow", "allow")
+
+
+@skip_no_deny_bash
+def test_shadow_records_a_python_error_rather_than_vanishing(tmp_path, monkeypatch):
+    def boom(command, cwd="", env=None):
+        raise RuntimeError("synthetic rm -rf /")
+
+    monkeypatch.setattr(hook, "deny", boom)
+    home = home_with(tmp_path)
+    env = denv(
+        home, CLAUDE_GUARD_DENY_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs")
+    )
+    assert pre_tool_use(payload("rm -rf /"), env) is None
+    line = (tmp_path / "logs" / DENY_LOG_NAME).read_text()
+    rec = json.loads(line)
+    assert (rec["python"], rec["bash"], rec["rule"]) == ("error", "deny", "exception")
+    assert "synthetic" not in line
+
+
+def test_shadow_records_bash_error_when_the_hook_is_missing(tmp_path):
+    # A missing hook is NOT agreement: "error", never "none".
+    home = home_with(tmp_path)
+    env = denv(
+        home,
+        CLAUDE_GUARD_DENY_SHADOW="1",
+        CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"),
+        CLAUDE_GUARD_BASH_HOOKS_DIR=str(tmp_path / "nohooks"),
+    )
+    pre_tool_use(payload("rm -rf /"), env)
+    rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
+    assert (rec["python"], rec["bash"]) == ("deny", "error")
+
+
+def test_shadow_sample_governs_logging_only(tmp_path):
+    home = home_with(tmp_path)
+    logs = str(tmp_path / "logs")
+
+    def sampled(roll: str) -> dict[str, str]:
+        return denv(
+            home,
+            CLAUDE_GUARD_DENY_SHADOW="1",
+            CLAUDE_SHADOW_LOG_DIR=logs,
+            CLAUDE_GUARD_DENY_SHADOW_SAMPLE="10",
+            CLAUDE_GUARD_DENY_SHADOW_ROLL=roll,
+        )
+
+    assert pre_tool_use(payload("rm -rf /"), sampled("3")) is None
+    assert not (tmp_path / "logs" / DENY_LOG_NAME).exists()
+    assert pre_tool_use(payload("rm -rf /"), sampled("0")) is None
+    assert (tmp_path / "logs" / DENY_LOG_NAME).exists()
+
+
+@skip_no_deny_bash
+def test_shadow_does_not_write_the_cmdparse_census(tmp_path):
+    # The re-run of the bash in shadow must not double-count the M02 census: the deployed
+    # env carries CMDPARSE_SHADOW_SAMPLE=10, and the real hook run already logs it.
+    home = home_with(tmp_path)
+    env = denv(
+        home,
+        CLAUDE_GUARD_DENY_SHADOW="1",
+        CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"),
+        CMDPARSE_SHADOW="1",
+        CMDPARSE_SHADOW_SAMPLE="1",
+    )
+    pre_tool_use(payload("ls"), env)
+    assert not (tmp_path / "logs" / "cmdparse-shadow.jsonl").exists()
+
+
+@skip_no_deny_bash
+def test_bash_deny_verdict_reads_the_deployed_hook_directly():
+    env = {"HOME": "/home/tester", "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    assert bash_deny_verdict(DENY_HOOK_SRC, payload("rm -rf /"), env)[0] == "deny"
+    assert bash_deny_verdict(DENY_HOOK_SRC, payload("ls"), env) == ("none", "")
+
+
+# --- the shadow-report buckets, with a red-proof ----------------------------------------------
+
+
+def _rec(py: str, sh: str, rule: str = "") -> str:
+    return json.dumps(
+        {"ts": "t", "cmd_sha": "0" * 16, "python": py, "bash": sh, "rule": rule}
+    )
+
+
+def test_summarize_deny_buckets_every_combination():
+    s = summarize_deny(
+        [
+            _rec("deny", "deny", "rm-root"),
+            _rec("ask", "ask", "exception"),
+            _rec("none", "none"),
+            _rec("allow", "allow", "force-push-upgrade"),
+            _rec("deny", "none", "pkill"),
+            _rec("none", "deny"),
+            _rec("deny", "allow", "push-main"),
+            _rec("error", "deny", "exception"),
+            _rec("deny", "error", "rm-root"),
+            "not json",
+            "",
+        ]
+    )
+    assert s["records"] == 9 and s["unparseable"] == 1
+    assert (s["agree_deny"], s["agree_ask"], s["agree_none"], s["agree_allow"]) == (
+        1,
+        1,
+        1,
+        1,
+    )
+    assert (s["python_only"], s["bash_only"], s["mismatch"]) == (1, 1, 1)
+    assert (s["python_error"], s["bash_error"]) == (1, 1)
+    assert s["python_only_rules"] == {"pkill": 1}
+    assert s["mismatch_rules"] == {"push-main": 1}
+
+
+def test_summarize_deny_an_empty_log_is_zero_records_not_agreement():
+    s = summarize_deny([])
+    assert s["records"] == 0 and s["agree"] == 0
