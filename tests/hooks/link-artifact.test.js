@@ -17,8 +17,14 @@ const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hoo
 // The literal 127.0.0.1 is load-bearing — see the hook for why `localhost` hangs on
 // the Windows side of WSL.
 const PORT = process.env.CLAUDE_ARTIFACTS_PORT || shConst(HOOK, 'PORT');
+// darwin joins linux on the loopback URL, for a different reason: the Claude desktop app
+// refuses to grant any path under its own ~/.claude tree, so a file:// link into the
+// artifacts dir never resolves there, and its Browser pane — the only in-app renderer for
+// .html — loads http:// but not file://. Windows and the sandbox keep file://.
 const hostLink = (absPath, rel) =>
-  process.platform === 'linux' ? `http://127.0.0.1:${PORT}/${rel}` : `file://${absPath}`;
+  process.platform === 'linux' || process.platform === 'darwin'
+    ? `http://127.0.0.1:${PORT}/${rel}`
+    : `file://${absPath}`;
 
 // The hook registers every .html it links as the repo's tracked artifact. Without an
 // override that lands in the real ~/.claude/logs/artifact-state, so a test run would
@@ -72,6 +78,15 @@ test('host ~/.claude/artifacts, no sandbox env -> the platform\'s clickable link
     // capture, Ctrl is Ghostty's open-link modifier on Linux. Shift alone does nothing.
     assert.match(ctx, /Shift\+Ctrl\+click/,
       `linux message names the full Shift+Ctrl+click gesture; got: ${ctx}`);
+  }
+  if (process.platform === 'darwin') {
+    // Two surfaces, two instructions. Ghostty keeps Shift+Cmd+click; the desktop app needs
+    // the Browser pane named, because a click there only reaches the external browser and
+    // the app's native preview has no .html handler at all.
+    assert.match(ctx, /Shift\+Cmd\+click/,
+      `darwin message keeps the Ghostty gesture; got: ${ctx}`);
+    assert.match(ctx, /Browser pane/,
+      `darwin message names the Browser pane as the in-app render; got: ${ctx}`);
   }
 });
 
