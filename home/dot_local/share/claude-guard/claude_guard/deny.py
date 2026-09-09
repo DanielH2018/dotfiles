@@ -475,6 +475,222 @@ def disk_wipe(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# --- secret reads (:859-949) -------------------------------------------------------------------
+
+# :881. The four key/cert suffixes are anchored on BOTH sides so `.keys()` and a jq
+# `\(.key)` do not read as a file (:866-880).
+SECRET_PATHS = (
+    r"(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config|\.gnupg/|\.netrc|"
+    r"\.pypirc|\.npmrc|/secrets/|\.git-credentials|\.kube/config|\.docker/config\.json|"
+    r"\.config/gh/hosts\.yml|\.claude/\.credentials\.json|\.claude\.json|/etc/shadow|"
+    r"/etc/gshadow|/proc/[^/[:space:]]+/environ|(^|[A-Za-z0-9_~/-])\.(pem|key|p12|pfx)\b)"
+)
+# :884.
+READERS = (
+    r"(cat|tac|nl|head|tail|less|more|most|bat|batcat|strings|xxd|hexdump|hd|od|base32|base64|"
+    r"uuencode|view|vi|vim|nvim|nano|emacs|ex|pico|grep|egrep|fgrep|rg|ag|ack|awk|gawk|mawk|sed|"
+    r"gpg|openssl|shasum|md5|md5sum|sha1sum|sha256sum|cp|install|rsync|scp|truncate|dd|tar|jq|"
+    r"yq|gojq|jaq)"
+)
+# :922.
+ENV_DUMP = r"(^|[[:space:]])(env|printenv)([[:space:]]+-[^[:space:]]+)*[[:space:]]*$"
+_DOC_LEADERS = frozenset(
+    {"man", "which", "whereis", "type", "command", "echo", "printf", "apropos"}
+)
+_FILTERS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "jq", "yq", "gojq", "jaq"})
+SECRET_READ_MSG = (
+    "Blocked: reading a secrets file via bash. Use a non-sensitive path or ask the user to "
+    "share the specific value needed."
+)
+ENV_DUMP_MSG = (
+    "Blocked: a bare environment dump prints every exported credential. Name the variable "
+    "you need, e.g. `printenv PATH`."
+)
+
+
+def secret_readers(sc: Scan, target: str) -> Verdict | None:
+    """:893-944. SCAN split on every `;&|` character (a NAIVE split, deliberately: it is what
+    catches a read hidden behind quoting), each piece word-split. The env-dump arm fires
+    when the piece matches AND — if the parse succeeded — some quote-aware segment matches
+    too (:911-921). For a filter command the pattern argument is dropped before the
+    readers arm (:931-938)."""
+    for piece in re.split(r"[;&|]", sc.scan):
+        words = piece.split()
+        if not words:
+            continue
+        head = words[0].rsplit("/", 1)[-1]
+        if (
+            head not in _DOC_LEADERS
+            and bdb_re(piece, ENV_DUMP)
+            and (not sc.parsed or bdb_re(sc.segset, ENV_DUMP))
+        ):
+            return Verdict("deny", "env-dump", ENV_DUMP_MSG)
+        if head in _FILTERS:
+            rest = words[1:]
+            while rest:
+                if not rest.pop(0).startswith("-"):
+                    break
+            piece = f"{words[0]} {' '.join(rest)}"
+        if bdb_re(piece, rf"\b{READERS}\b.*{SECRET_PATHS}"):
+            return Verdict("deny", "secret-read", SECRET_READ_MSG)
+    return None
+
+
+def secret_interpreter(sc: Scan, target: str) -> Verdict | None:
+    """:945-949."""
+    if bdb_re(
+        sc.scan,
+        rf"\b(python[0-9.]*|node|deno|bun|perl|ruby|php|Rscript|osascript)\b.*{SECRET_PATHS}",
+    ):
+        return Verdict(
+            "deny",
+            "secret-read-interpreter",
+            "Blocked: reading a secrets file via an interpreter. Ask the user to share the "
+            "specific value needed.",
+        )
+    return None
+
+
+# --- decrypting rather than reading (:951-1044) -----------------------------------------------
+
+# :971-972. DECIDED (:958-963): these are their own arms, not SECRET_PATHS entries.
+SOPS_BASENAMES = r"(secrets?\.(ya?ml|json|env|ini)|[^[:space:]/]+\.sops\.(ya?ml|json|env|ini))"
+SOPS_PATHS = rf"(^|[[:space:]])([^[:space:]]*/)?{SOPS_BASENAMES}\b"
+# :983. Command position with an env assignment or an ssh/hl host allowed before the binary.
+BDB_CMD_AT = (
+    r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
+    r"((ssh|hl)[[:space:]]+[^[:space:]]+[[:space:]]+)*"
+)
+
+
+def sops_decrypt(sc: Scan, target: str) -> Verdict | None:
+    """:985-992."""
+    if bdb_re(
+        sc.scan,
+        rf"{BDB_CMD_AT}sops\b[^;&|]*((^|[[:space:]])--decrypt([[:space:]]|=|$)|"
+        r"(^|[[:space:]])-[A-Za-z]*d([[:space:]]|$)|(^|[[:space:]])(decrypt|exec-env|exec-file)"
+        r"([[:space:]]|$))",
+    ):
+        return Verdict(
+            "deny",
+            "sops-decrypt",
+            "Blocked: this decrypts a SOPS file into the session. Ask the user for the one "
+            "value you need, or use `sops <file>` to edit without printing plaintext.",
+        )
+    return None
+
+
+def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
+    """:994-1014. `--stat`, `--name-only`, `--name-status` emit no content and are exempt."""
+    if bdb_re(
+        sc.scan,
+        rf"{BDB_CMD_AT}git\b[^;&|]*(\bdiff\b|\bshow\b|\blog\b[^;&|]*(-p|--patch)\b)[^;&|]*"
+        rf"{SOPS_PATHS}",
+    ) and not bdb_re(sc.scan, r"(^|[[:space:]])--(stat|name-only|name-status)([[:space:]]|=|$)"):
+        return Verdict(
+            "deny",
+            "git-sops-diff",
+            "Blocked: the sops diff driver decrypts before diffing, so this prints plaintext "
+            "credentials. Use `git diff --stat` or `--name-only` to see THAT it changed, and "
+            "`sops <file>` to inspect it.",
+        )
+    return None
+
+
+def systemctl_env(sc: Scan, target: str) -> Verdict | None:
+    """:1016-1029."""
+    if bdb_re(sc.scan, rf"{BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|$)"):
+        return Verdict(
+            "deny",
+            "systemctl-cat",
+            "Blocked: `systemctl cat` prints the unit file, Environment= lines and all. Use "
+            "`systemctl show -p <Property> <unit>` for a specific field.",
+        )
+    if bdb_re(sc.scan, rf"{BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|$)"):
+        if not bdb_re(sc.scan, r"(^|[[:space:]])(-p|--property)([[:space:]]|=)"):
+            return Verdict(
+                "deny",
+                "systemctl-show",
+                "Blocked: an unnarrowed `systemctl show` prints the unit's resolved "
+                "environment. Add `-p <Property>`.",
+            )
+        if bdb_re(sc.scan, r"\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Environment"):
+            return Verdict(
+                "deny",
+                "systemctl-show-environment",
+                "Blocked: the Environment property holds the unit's secrets. Ask the user for "
+                "the one value you need.",
+            )
+    return None
+
+
+def docker_inspect(sc: Scan, target: str) -> Verdict | None:
+    """:1031-1044."""
+    if not bdb_re(sc.scan, rf"{BDB_CMD_AT}docker\b[^;&|]*(^|[[:space:]])inspect([[:space:]]|$)"):
+        return None
+    if not bdb_re(sc.scan, r"(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)"):
+        return Verdict(
+            "deny",
+            "docker-inspect-unformatted",
+            "Blocked: an unformatted `docker inspect` prints Config.Env in plaintext. Add "
+            "`--format`, e.g. `-f '{{.NetworkSettings.IPAddress}}'`.",
+        )
+    if bdb_re(
+        sc.scan,
+        r"(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)[^;&|]*"
+        r"(\.Config|Env|json[[:space:]]+\.[[:space:]}])",
+    ):
+        return Verdict(
+            "deny",
+            "docker-inspect-env",
+            "Blocked: this format reaches the container's environment. Name the specific "
+            "field you need.",
+        )
+    return None
+
+
+# --- writes and in-place edits (:1046-1084) --------------------------------------------------
+
+# :1064. SOPS basenames on the WRITE side only (:1057-1063).
+WRITE_TARGETS = (
+    rf"({SECRET_PATHS}|{SOPS_BASENAMES}|authorized_keys|\.bashrc|\.zshrc|\.bash_profile|"
+    r"\.zprofile|\.profile|\.claude/settings\.json|\.claude/hooks/)"
+)
+# :1081. Editors that unambiguously rewrite the file they name; cp/mv deliberately absent.
+BDB_INPLACE = (
+    r"((sed|perl)\b[^;&|]*(^|[[:space:]])(-[A-Za-z]*i([[:space:]]|\.)|--in-place)|truncate\b|"
+    r"dd\b[^;&|]*(^|[[:space:]])of=)"
+)
+
+
+def write_targets(sc: Scan, target: str) -> Verdict | None:
+    """:1065-1067."""
+    if bdb_re(
+        sc.scan,
+        rf"(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*"
+        rf"{WRITE_TARGETS}",
+    ):
+        return Verdict(
+            "deny",
+            "write-target",
+            "Blocked: writing to a secrets or shell-startup file. Ask the user to do this "
+            "manually.",
+        )
+    return None
+
+
+def inplace_edit(sc: Scan, target: str) -> Verdict | None:
+    """:1082-1084."""
+    if bdb_re(sc.scan, rf"{BDB_CMD_AT}{BDB_INPLACE}[^;&|]*{WRITE_TARGETS}"):
+        return Verdict(
+            "deny",
+            "inplace-edit",
+            "Blocked: editing a secrets or shell-startup file in place. A SOPS file must go "
+            "through `sops <file>`; ask the user before changing the others.",
+        )
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
@@ -491,6 +707,14 @@ RULES: tuple[Rule, ...] = (
     kill_by_pattern,
     pipe_to_shell,
     disk_wipe,
+    secret_readers,
+    secret_interpreter,
+    sops_decrypt,
+    git_sops_diff,
+    systemctl_env,
+    docker_inspect,
+    write_targets,
+    inplace_edit,
 )
 
 

