@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "5b844076386d5e89746cdd6084f7930ab72d3feae8a017ac484794a009a1bcef",
-      "landed": "2026-09-06T22:35:33.326Z"
+      "hash": "f8aa7b912af17163627335c2b5e545cb1c58cae325a827401a69a8412c4f88f8",
+      "landed": "2026-09-09T16:14:06.719Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "fef643f20ef4ca86450dd15afaafbfba087a06422961c6b66bcce838850fc339",
-      "landed": "2026-09-03T15:49:03.004Z"
+      "hash": "08c88f4f9257d88dc2aaef04bba4af30ab95675f1729252b3e3cc219332b7161",
+      "landed": "2026-09-09T16:14:06.719Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -168,8 +168,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
-      "hash": "adbea9d0e8e557699ea43492247aeedd12a740b367775bbe21aa504e382204ec",
-      "landed": "2026-08-21T15:33:33.868Z"
+      "hash": "ee39f59c423e3d91c4139885f55c9bee730cf910b9a57d1b5bfcf7235a89345c",
+      "landed": "2026-09-09T16:14:06.719Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
@@ -243,8 +243,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_serve-artifacts.sh",
-      "hash": "5ddd397ba54c8eef26adf5852c0cc1c7f134266341c7d7fdefc99d737ddff5af",
-      "landed": "2026-07-11T19:00:28.364Z"
+      "hash": "b2befa21b4b3178e6bf9cc08471c2220bbefd4e112f7f7b108d48353fdbc59b1",
+      "landed": "2026-09-09T16:14:06.719Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
