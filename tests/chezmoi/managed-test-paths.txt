@@ -32,6 +32,8 @@
 .claude/skills/pr-feedback/scripts/test_fetch.sh
 .claude/skills/pr-feedback/scripts/test_render.sh
 .claude/skills/pr-review-prep/references/test_triage.sh
+.claude/skills/test-scenario-hygiene
+.claude/skills/test-scenario-hygiene/SKILL.md
 .claude/vault-tooling/config-map/tests
 .claude/vault-tooling/config-map/tests/conftest.py
 .claude/vault-tooling/config-map/tests/test_categories.py
