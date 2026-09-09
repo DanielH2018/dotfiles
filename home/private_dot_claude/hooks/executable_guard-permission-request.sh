@@ -18,7 +18,13 @@
 # which this allow-only hook has no way to notice happened. (A dangling or wrong-version cwd
 # venv is not the risk: uv already probes it and falls back to the managed toolchain on its
 # own.) `--managed-python` restricts the answer to a uv-managed install. `-S` skips
-# site-packages; the package is stdlib-only.
+# site-packages; the package is stdlib-only. `-P` stops Python prepending cwd (as `''`) to
+# sys.path for `-m` — measured `sys.path[:3] == ['', PYTHONPATH-dir, ...]` without it, so a
+# Claude session working in a directory that happens to hold its own claude_guard.py (or,
+# unset -S, any stdlib-named module) would shadow this package ahead of PYTHONPATH in the
+# very process that decides whether to allow a command. This side is still in shadow, so
+# today that is a wrong verdict logged, not decided — slice 3 flips it live, and a shadowed
+# package on the allow path could print `allow` and skip a prompt.
 set -u
 : "${CLAUDE_GUARD_SHADOW:=1}"
 export CLAUDE_GUARD_SHADOW
@@ -26,5 +32,5 @@ SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || exit 0
 PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || exit 0
 [ -x "$PY" ] || exit 0
-PYTHONPATH="$SHARE" "$PY" -S -m claude_guard.cli permission-request
+PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli permission-request
 exit 0
