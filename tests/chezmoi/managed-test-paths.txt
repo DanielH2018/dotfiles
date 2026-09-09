@@ -56,6 +56,8 @@
 .local/share/claude-guard/tests
 .local/share/claude-guard/tests/test_cli.py
 .local/share/claude-guard/tests/test_curl.py
+.local/share/claude-guard/tests/test_deny.py
+.local/share/claude-guard/tests/test_deny_normalization.py
 .local/share/claude-guard/tests/test_hook.py
 .local/share/claude-guard/tests/test_judge.py
 .local/share/claude-guard/tests/test_package.py
