@@ -350,10 +350,148 @@ def gh_api(sc: Scan, target: str) -> Verdict | None:
     return None
 
 
+# --- pipes into an interpreter (:768-786, :849-852) -------------------------------------------
+
+PIPE_WRAPPERS = (
+    r"((sudo|env|command|exec|nohup|nice|stdbuf|xargs)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)*"
+)
+PIPE_TO_SHELL = (
+    rf"\|[[:space:]]*{PIPE_WRAPPERS}([^[:space:]|;&]*/)?(sh|bash|zsh|dash|fish|ksh|ash)\b"
+)
+# :776-781: only a BARE interpreter — no script, no -c/-m — so stdin is the program.
+PIPE_TO_INTERPRETER = (
+    rf"\|[[:space:]]*{PIPE_WRAPPERS}([^[:space:]|;&]*/)?"
+    r"(python[0-9.]*|node|deno|bun|perl|ruby|php)([[:space:]]+(-|/dev/stdin))?[[:space:]]*([;&|)]|$)"
+)
+DOWNLOAD_MSG = "Download, inspect, then run."
+
+
+def curl_pipe(sc: Scan, target: str) -> Verdict | None:
+    """:783-786."""
+    if bdb_re(sc.scan, rf"(curl|wget)[^|]*({PIPE_TO_SHELL}|{PIPE_TO_INTERPRETER})"):
+        return Verdict(
+            "deny",
+            "curl-pipe-interpreter",
+            f"Blocked: piping remote content to an interpreter. {DOWNLOAD_MSG}",
+        )
+    return None
+
+
+def substitution_download(sc: Scan, target: str) -> Verdict | None:
+    """:788-806. Read on the RAW command: `bash <(curl …)`, `sh -c "$(wget …)"`, a backticked
+    download, and the dot-source branch with its own backtick-safe anchor."""
+    if bdb_re(
+        sc.command,
+        r"(\b(sh|bash|zsh|dash|fish|eval|source|python[0-9.]*|node|deno|bun|perl|ruby|php)\b|"
+        r"(^|[;&|(`])[[:space:]]*\.[[:space:]])[^;&]*([<$]\(|`)[[:space:]]*([^[:space:]]*/)?"
+        r"(curl|wget)\b",
+    ):
+        return Verdict(
+            "deny",
+            "substitution-download",
+            "Blocked: executing downloaded content via process/command substitution. "
+            f"{DOWNLOAD_MSG}",
+        )
+    return None
+
+
+def pipe_to_shell(sc: Scan, target: str) -> Verdict | None:
+    """:849-852. The generic arm, after the kill rules, as in the bash."""
+    if bdb_re(sc.scan, PIPE_TO_SHELL):
+        return Verdict(
+            "deny",
+            "pipe-to-shell",
+            f"Blocked: piping output to a shell interpreter. {DOWNLOAD_MSG}",
+        )
+    return None
+
+
+# --- protected writes, the fork bomb (:808-816) ----------------------------------------------
+
+
+def write_secrets_file(sc: Scan, target: str) -> Verdict | None:
+    """:809-811, raw command."""
+    if bdb_re(sc.command, r">\s*(\.env|~?/\.ssh/|~?/\.aws/credentials)"):
+        return Verdict(
+            "deny",
+            "write-secrets-file",
+            "Blocked: writing to a secrets file. Ask the user to do this manually.",
+        )
+    return None
+
+
+def fork_bomb(sc: Scan, target: str) -> Verdict | None:
+    """:814-816, raw command."""
+    if bdb_re(sc.command, r":\(\)\{.*\};:"):
+        return Verdict("deny", "fork-bomb", "Blocked: fork bomb detected.")
+    return None
+
+
+# --- kill by pattern (:818-847) ------------------------------------------------------------------
+
+KILL_HINT = (
+    "Kill a PID you captured at spawn, or resolve one and confirm it first "
+    "(ss -H -ltnp for a port owner, then check /proc/<pid>/cwd)."
+)
+KILL_AT = (
+    r"(^|[;&|(`])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+|"
+    r"(command|env|exec|sudo|nohup|nice)[[:space:]]+)*([^[:space:];&|()]*/)?"
+)
+KILL_TAIL = r"([[:space:]]|\)|`|$)"
+
+
+def kill_by_pattern(sc: Scan, target: str) -> Verdict | None:
+    """:836-847. pkill/killall on the scan set; a pipe into kill on SCAN; kill of a
+    substitution naming pgrep/ps on the raw command."""
+    if bdb_re(sc.scanset, rf"{KILL_AT}(pkill|killall){KILL_TAIL}"):
+        return Verdict(
+            "deny",
+            "pkill",
+            "Blocked: pkill/killall selects processes by name or command line, which can "
+            f"include this agent session. {KILL_HINT}",
+        )
+    if bdb_re(
+        sc.scan,
+        r"\|[[:space:]]*([^[:space:]|;&]*/)?(xargs[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?"
+        rf"kill{KILL_TAIL}",
+    ):
+        return Verdict("deny", "pipe-kill", f"Blocked: piping matched PIDs into kill. {KILL_HINT}")
+    if bdb_re(sc.command, r"\bkill\b[^;&|]*([<$]\(|`)[^)`]*\b(pgrep|ps)\b"):
+        return Verdict(
+            "deny",
+            "kill-pgrep",
+            f"Blocked: kill of a PID found by pattern matching (pgrep/ps). {KILL_HINT}",
+        )
+    return None
+
+
+# --- disk wipes (:854-857) -------------------------------------------------------------------
+
+
+def disk_wipe(sc: Scan, target: str) -> Verdict | None:
+    """:855-857, raw command."""
+    if bdb_re(sc.command, r"\b(mkfs|dd\s+if=.*of=/dev/|fdisk|parted)\b"):
+        return Verdict("deny", "disk-wipe", "Blocked: low-level disk operation.")
+    return None
+
+
 # --- the decision ------------------------------------------------------------------------------
 
 # Bash order (:625-1142). The first match wins and carries its message; later tasks append.
-RULES: tuple[Rule, ...] = (remote, rm_root, force_push, push_main, gh_api)
+RULES: tuple[Rule, ...] = (
+    remote,
+    rm_root,
+    force_push,
+    push_main,
+    gh_api,
+    curl_pipe,
+    substitution_download,
+    write_secrets_file,
+    fork_bomb,
+    kill_by_pattern,
+    pipe_to_shell,
+    disk_wipe,
+)
 
 
 def deny(command: str, cwd: str = "", env: Mapping[str, str] | None = None) -> Verdict:
