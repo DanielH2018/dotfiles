@@ -50,6 +50,20 @@ to use (for internal questions, prefer internal MCP sources over the web); the e
 and a budget — roughly <5 tool calls (simple) / 5 / ~10 (hard) / up to 15, hard stop ~20. If every
 brief is followed, their union must fully answer the question.
 
+**Name the stop conditions, or the agent improvises past a wrong premise.** A brief that says
+what to do but never what makes the work impossible gets a confident report built on an
+assumption that stopped holding. Four conditions, stated in the brief, that mean stop and
+report rather than continue:
+
+- The live code does not match the assumption the brief is built on.
+- A verification command fails twice after a reasonable fix or retry.
+- The work turns out to need files outside the assigned scope.
+- The agent cannot produce concrete evidence for the claim it is about to make.
+
+Corollary for the dispatcher: **don't delegate the immediate blocker** if your own next step
+depends on its answer. You will wait on it either way, and you lose the ability to react to
+what it finds partway through. (Adapted from `efficient-frontier` on noriskillsets.dev.)
+
 **Bound the return, not just the work.** A subagent's output is read back through a
 summarization pass, and that pass is a real line item. Measured 2026-08-23 over 7 days:
 running subagents cost $988 of list-price tokens and `agent_summary` cost a further $454 —

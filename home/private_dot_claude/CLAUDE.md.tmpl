@@ -109,6 +109,35 @@ permanent test file. This governs extras only: every behaviour the task asks for
 (Anthropic's Fable 5.1 prompting guide measured this instruction cutting committed test sprawl
 with no change in task success.)
 
+The sweep that enforces that at the end of a change is the `test-scenario-hygiene` skill; it
+owns test content, where `pr-review-prep` owns diff shape.
+
+### Anti-patterns
+
+Five ways a test stays green while checking nothing. Adapted from `testing-anti-patterns` on
+noriskillsets.dev, rewritten in pytest idiom.
+
+- **Assert the effect, not the stub.** A test that asserts a `monkeypatch`ed callable ran, or
+  counts how often it ran, passes for a correct and an incorrect implementation alike. Assert
+  the state the call was supposed to produce.
+- **Stub the slow or external call, never the behaviour under test.** Over-stubbing "to be
+  safe" strips the side effect the assertion depends on, so the test passes for the wrong
+  reason. Write the test first and watch it fail against the real implementation — that
+  failure names the seam to stub.
+- **A stub returns the whole shape its caller reads**, including fields this test never
+  touches. A partial return passes here and breaks in the real path, where something
+  downstream reads the missing key.
+- **A method only tests call belongs in a test helper**, not on the production class. A
+  test-only `reset()` can fire in production.
+- **A textual assertion needs an oracle the file under test doesn't supply.** Asserting that a
+  doc contains a sentence copied out of that same doc proves only that the file equals itself:
+  it breaks on any reword and passes while everything around it is wrong. Assert an
+  identifier, a schema or an invariant instead.
+  `ansible/tests/deploy/test_ci_cancelled_is_not_a_verdict.py` is the pattern — it asserts that
+  `_CI_NO_VERDICT_CONCLUSIONS` and `cancelled` appear in CLAUDE.md, not the paragraph around
+  them, so a rename breaks the test and a reword doesn't. A generated file is the other sound
+  case: its generator re-derives the content, which is a real oracle.
+
 ## Verification & self-checking
 
 You already sanity-check your work as you go, so don't bolt a second pass on top of it — no "final verification step" appended to routine tasks, no re-reading a file you just wrote to confirm the edit landed, no subagent dispatched to double-check something you finished yourself.
