@@ -62,23 +62,37 @@ case "$path" in
     exit 0 ;;
 esac
 
-# Default (macOS/Ghostty host): a file:// link, opened with Shift+Cmd+click.
+# Fallback (the sandbox, and any write outside ~/.claude/artifacts): a file:// link,
+# opened with Shift+Cmd+click. The macOS branch below overrides this for artifacts.
 url="file://$host"
 msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to open it with Shift+Cmd+click (or Ctrl+click) — plain Cmd+click does NOT work inside the Claude Code TUI, since v2.1.89 the TUI captures the mouse and only a Shift/Ctrl modifier reaches Ghostty's link handler. Link: "
 
 # Linux host (WSL / VS Code Remote-SSH): a file:// link resolves on the LOCAL client,
 # which lacks the remote path, so it errors. Emit an http:// link served by
 # serve-artifacts.sh instead — WSL2 mirrored networking shares loopback with Windows,
-# and VS Code forwards the port over SSH, so it renders from either. Gated to the
-# non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to ~/.claude/artifacts writes;
-# macOS and the sandbox keep file://.
+# and VS Code forwards the port over SSH, so it renders from either.
+#
+# macOS host: the same http:// link, for a different reason. The Claude desktop app
+# resolves a clicked path against the session's granted folders, and it refuses to
+# grant anything under its own ~/.claude tree — request_directory on
+# ~/.claude/artifacts returns "could not be resolved" where ~/Downloads is granted
+# at once. So every file:// link into the artifacts dir fails there, whether or not
+# it carries a scheme (measured 2026-09-09: both forms error, an in-session file
+# opens). An http:// link sidesteps path resolution entirely and also loads in the
+# app's Browser pane, which refuses file:// even for an in-session file — that pane
+# is the only way an artifact renders inside the app rather than in an external
+# browser. Ghostty is unaffected: it opens either scheme on Shift+Cmd+click.
+#
+# Both gated to the non-sandbox host (CLAUDE_STATE_HOST_DIR unset) and to
+# ~/.claude/artifacts writes; the sandbox keeps file://.
 #
 # The host is 127.0.0.1, NOT localhost: serve-artifacts.sh binds IPv4 loopback only,
 # but Windows resolves localhost to ::1 first, so a browser on the Windows side hangs
 # on the IPv6 attempt and the artifact never renders (measured: localhost:8181 times
 # out from Windows, 127.0.0.1:8181 returns 200). Naming the address family skips the
 # resolution entirely and works from both sides.
-if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
+uname_s=$(uname -s)
+if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && { [ "$uname_s" = "Linux" ] || [ "$uname_s" = "Darwin" ]; }; then
   case "$path" in
     */.claude/artifacts/*)
       PORT="${CLAUDE_ARTIFACTS_PORT:-8181}"
@@ -90,7 +104,16 @@ if [ -z "${CLAUDE_STATE_HOST_DIR:-}" ] && [ "$(uname -s)" = "Linux" ]; then
       # — the counterpart of Cmd in the macOS branch above. Measured on daniel-box
       # 2026-08-01: Shift+click alone does nothing at all, Shift+Ctrl+click opens Firefox.
       # VS Code's terminal does not capture the mouse the same way and wants plain Ctrl.
-      msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+Ctrl+click it (plain Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
+      if [ "$uname_s" = "Darwin" ]; then
+        # Two surfaces share this host. In Ghostty the gesture is the same Shift+Cmd+click
+        # as the file:// branch above. In the Claude desktop app a plain click opens the
+        # EXTERNAL browser — the app has no in-app viewer for a clicked link, and its
+        # native preview handles only .pdf/.doc(x)/.ppt(x)/.xls(x), never .html. Rendering
+        # in-app is a separate action the assistant takes: load the URL in the Browser pane.
+        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it. In the Claude desktop app, ALSO open it in the Browser pane so it renders in-app — a click alone only opens the external browser. In Ghostty, tell the user to open it with Shift+Cmd+click (plain Cmd+click does NOT work inside the TUI). Link: "
+      else
+        msg="An artifact was written. Include this link verbatim as the LAST line of your reply, with nothing after it, and tell the user to Shift+Ctrl+click it (plain Ctrl+click in a VS Code terminal) — it opens rendered in the browser. Link: "
+      fi
       ;;
   esac
 fi

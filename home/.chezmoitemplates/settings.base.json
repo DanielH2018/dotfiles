@@ -721,8 +721,12 @@
             "timeout": 5
           }
         ]
-      }{{ end }}{{ if eq .chezmoi.os "linux" }},
-      {{/* Linux only: serve ~/.claude/artifacts on localhost:8181 so artifact links are click-to-render from a VS Code Remote-SSH TUI (file:// can't cross the remote boundary) */}}
+      }{{ end }}{{ if or (eq .chezmoi.os "linux") (eq .chezmoi.os "darwin") }},
+      {{/* Serve ~/.claude/artifacts on 127.0.0.1:8181 so artifact links are click-to-render.
+           Linux: file:// can't cross the VS Code Remote-SSH boundary — it resolves on the client.
+           darwin: the Claude desktop app refuses to grant any path under its own ~/.claude tree,
+           so every file:// link into the artifacts dir fails, and its Browser pane (the only
+           in-app renderer for .html) loads http:// but not file://. */}}
       {
         "matcher": "startup|resume|clear",
         "hooks": [
