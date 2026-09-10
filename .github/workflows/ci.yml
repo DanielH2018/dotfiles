@@ -59,6 +59,12 @@ jobs:
           set -euo pipefail
           npm install -g oxlint@1
           uv tool install prek
+          # The claude-guard shims resolve their interpreter with
+          # `uv python find --no-project --managed-python --system 3.14`, and
+          # `--managed-python` excludes the hostedtoolcache build actions/setup-python
+          # provides. Without a uv-MANAGED 3.14 the shims take their
+          # interpreter-unavailable fallback, and their tests assert the live path.
+          uv python install 3.14
           sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           shellcheck --version | head -2
