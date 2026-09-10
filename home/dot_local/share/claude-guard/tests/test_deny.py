@@ -569,6 +569,7 @@ DECRYPT_DENY = [
     "systemctl cat gitops-deploy.service",
     "systemctl show gitops-deploy",
     "systemctl show -p Environment gitops-deploy",
+    "systemctl show renovate-agent.service -p ExecStartPost",
     "docker inspect wg-easy",
     "ssh daniel-pi docker inspect wg-easy",
     'docker inspect -f "{{json .Config}}" wg-easy',
@@ -592,6 +593,8 @@ DECRYPT_ALLOW = [
     "git diff --name-only ansible/vars/secrets.yml",
     "git diff --name-status ansible/vars/secrets.yml",
     "systemctl show -p ActiveState gitops-deploy",
+    "systemctl show -p User renovate-agent.service",
+    "systemctl show -p ExecMainPID renovate-agent.service",
     "systemctl show --property=SubState gitops-deploy",
     "systemctl status gitops-deploy",
     "systemctl list-timers",
@@ -610,13 +613,14 @@ DECRYPT_ALLOW = [
 
 def test_decrypting_a_secret_is_denied():
     assert kinds(DECRYPT_DENY) == ["deny"] * len(DECRYPT_DENY)
-    picked = DECRYPT_DENY[0:1] + DECRYPT_DENY[6:7] + DECRYPT_DENY[10:14] + DECRYPT_DENY[15:16]
+    picked = DECRYPT_DENY[0:1] + DECRYPT_DENY[6:7] + DECRYPT_DENY[10:15] + DECRYPT_DENY[16:17]
     assert rules(picked) == [
         "sops-decrypt",
         "git-sops-diff",
         "systemctl-cat",
         "systemctl-show",
         "systemctl-show-environment",
+        "systemctl-show-exec",
         "docker-inspect-unformatted",
         "docker-inspect-env",
     ]

@@ -598,13 +598,15 @@ def git_sops_diff(sc: Scan, target: str) -> Verdict | None:
 
 
 def systemctl_env(sc: Scan, target: str) -> Verdict | None:
-    """:1016-1029."""
+    """:1016-1046."""
     if bdb_re(sc.scan, rf"{BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|$)"):
         return Verdict(
             "deny",
             "systemctl-cat",
             "Blocked: `systemctl cat` prints the unit file, Environment= lines and all. Use "
-            "`systemctl show -p <Property> <unit>` for a specific field.",
+            "`systemctl show -p <Property> <unit>` for a STRUCTURAL field (ActiveState, User, "
+            "NRestarts); the Environment and Exec* properties are denied there too, because "
+            "they render the unit's secrets and its argv.",
         )
     if bdb_re(sc.scan, rf"{BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|$)"):
         if not bdb_re(sc.scan, r"(^|[[:space:]])(-p|--property)([[:space:]]|=)"):
@@ -621,11 +623,27 @@ def systemctl_env(sc: Scan, target: str) -> Verdict | None:
                 "Blocked: the Environment property holds the unit's secrets. Ask the user for "
                 "the one value you need.",
             )
+        # ExecStart/ExecStop/ExecReload/ExecCondition (and their Pre/Post/Ex suffixes) render
+        # the command's full argv. `Exec` alone would also match ExecMainPID, ExecMainStatus
+        # and ExecMainStartTimestamp, which carry no argv and stay allowed.
+        if bdb_re(
+            sc.scan,
+            r"\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*"
+            r"Exec(Start|Stop|Reload|Condition)",
+        ):
+            return Verdict(
+                "deny",
+                "systemctl-show-exec",
+                "Blocked: an Exec* property renders the command's full argv, so a unit that "
+                "passes a token or URL as an argument prints it. Ask the user for the one "
+                "value you need, or read a structural property such as ActiveState, User or "
+                "NRestarts.",
+            )
     return None
 
 
 def docker_inspect(sc: Scan, target: str) -> Verdict | None:
-    """:1031-1044."""
+    """:1048-1061."""
     if not bdb_re(sc.scan, rf"{BDB_CMD_AT}docker\b[^;&|]*(^|[[:space:]])inspect([[:space:]]|$)"):
         return None
     if not bdb_re(sc.scan, r"(^|[[:space:]])inspect\b[^;&|]*(--format|-f)([[:space:]]|=)"):
@@ -664,7 +682,7 @@ BDB_INPLACE = (
 
 
 def write_targets(sc: Scan, target: str) -> Verdict | None:
-    """:1065-1067."""
+    """:1082-1084."""
     if bdb_re(
         sc.scan,
         rf"(>>?|tee[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)[[:space:]]*[^[:space:];&|]*"
@@ -680,7 +698,7 @@ def write_targets(sc: Scan, target: str) -> Verdict | None:
 
 
 def inplace_edit(sc: Scan, target: str) -> Verdict | None:
-    """:1082-1084."""
+    """:1099-1101."""
     if bdb_re(sc.scan, rf"{BDB_CMD_AT}{BDB_INPLACE}[^;&|]*{WRITE_TARGETS}"):
         return Verdict(
             "deny",
@@ -701,7 +719,7 @@ _TF_VERB = (
 
 
 def terraform(sc: Scan, target: str) -> Verdict | None:
-    """:1095-1118. Every arm reads the scan set and folds case."""
+    """:1112-1135. Every arm reads the scan set and folds case."""
     subject = sc.scanset
     if bdb_rei(subject, _TF_VERB):
         return Verdict(
@@ -752,7 +770,7 @@ UPGRADE_NOTE = (
 
 
 def force_push_upgrade(sc: Scan, target: str) -> Verdict | None:
-    """:1130-1142. MUST stay the last rule: its allow covers the whole command, so every deny
+    """:1147-1159. MUST stay the last rule: its allow covers the whole command, so every deny
     gets its say first. Raw command, as the bash; `sed -E … g` per line, so MULTILINE.
 
     The bash builds this via `UPGRADED=$(echo "$COMMAND" | sed -E …)`, and command

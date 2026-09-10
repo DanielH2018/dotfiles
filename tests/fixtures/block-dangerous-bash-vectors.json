@@ -300,11 +300,14 @@
       ]
     },
     {
-      "why": "systemd units carry Environment= lines",
+      "why": "systemd units carry Environment= lines, and an Exec* property renders the command's full argv. On 2026-09-09 `systemctl show renovate-agent.service -p ExecStartPost` printed a rotation-tracked Uptime-Kuma push token on daniel-box, following this hook's own advice on the systemctl cat deny (homelab issue #1489).",
       "commands": [
         "systemctl cat gitops-deploy.service",
         "systemctl show gitops-deploy",
-        "systemctl show -p Environment gitops-deploy"
+        "systemctl show -p Environment gitops-deploy",
+        "systemctl show renovate-agent.service -p ExecStartPost",
+        "systemctl show --property=ExecStart renovate-agent.service",
+        "systemctl show -p ExecStopPost gitops-deploy"
       ]
     },
     {
@@ -534,9 +537,14 @@
       ]
     },
     {
-      "why": "systemctl narrowed to a property, and the verbs that print no environment at all",
+      "why": "systemctl narrowed to a STRUCTURAL property, and the verbs that print no environment at all. ExecMainPID, ExecMainStatus and ExecMainStartTimestamp share the Exec prefix and carry no argv, which is why the Exec* deny matches ExecStart/ExecStop/ExecReload/ExecCondition rather than a bare Exec.",
       "commands": [
         "systemctl show -p ActiveState gitops-deploy",
+        "systemctl show -p User renovate-agent.service",
+        "systemctl show -p WorkingDirectory renovate-agent.service",
+        "systemctl show -p NRestarts renovate-agent.service",
+        "systemctl show -p ExecMainPID renovate-agent.service",
+        "systemctl show -p ExecMainStatus gitops-deploy",
         "systemctl show --property=SubState gitops-deploy",
         "systemctl status gitops-deploy",
         "systemctl list-timers",

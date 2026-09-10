@@ -1016,8 +1016,22 @@ fi
 # `systemctl cat` prints the unit file including its Environment= lines; `systemctl show`
 # prints the resolved environment. Narrowing with -p/--property keeps the ordinary
 # diagnostic (`systemctl show -p ActiveState <unit>`) usable, which is most of the real use.
+#
+# The Exec* arm, and why the cat message no longer names a bare property read as the remedy.
+# `systemctl show -p ExecStartPost <unit>` renders the command's full argv, so a unit that
+# passes a credential as an argument serves it over the system bus to any local user. On
+# 2026-09-09 a session followed this hook's own advice on daniel-box and printed the whole
+# Uptime-Kuma push URL for the `Renovate Agent — Alive` monitor, token included — a value
+# tracked for rotation as `renovate_agent_kuma_push_token` (homelab issue #1489; the token
+# was rotated under #1520). Suggesting a leaking command is worse than suggesting nothing,
+# because the suggestion carries the guard's authority.
+#
+# The prefixes matched are the four that render argv: ExecStart, ExecStop, ExecReload,
+# ExecCondition, each with their Pre/Post/Ex suffixes. `Exec` on its own would also match
+# ExecMainPID, ExecMainStatus and ExecMainStartTimestamp, which are structural scalars
+# carrying no argv and stay allowed alongside User, WorkingDirectory and NRestarts.
 if bdb_re "$SCAN" "${BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])cat([[:space:]]|\$)"; then
-  deny "Blocked: \`systemctl cat\` prints the unit file, Environment= lines and all. Use \`systemctl show -p <Property> <unit>\` for a specific field."
+  deny "Blocked: \`systemctl cat\` prints the unit file, Environment= lines and all. Use \`systemctl show -p <Property> <unit>\` for a STRUCTURAL field (ActiveState, User, NRestarts); the Environment and Exec* properties are denied there too, because they render the unit's secrets and its argv."
 fi
 if bdb_re "$SCAN" "${BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]]|\$)"; then
   if ! bdb_re "$SCAN" '(^|[[:space:]])(-p|--property)([[:space:]]|=)'; then
@@ -1025,6 +1039,9 @@ if bdb_re "$SCAN" "${BDB_CMD_AT}systemctl\b[^;&|]*(^|[[:space:]])show([[:space:]
   fi
   if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Environment'; then
     deny "Blocked: the Environment property holds the unit's secrets. Ask the user for the one value you need."
+  fi
+  if bdb_re "$SCAN" '\bsystemctl\b[^;&|]*(-p|--property)[[:space:]=][^;&|]*Exec(Start|Stop|Reload|Condition)'; then
+    deny "Blocked: an Exec* property renders the command's full argv, so a unit that passes a token or URL as an argument prints it. Ask the user for the one value you need, or read a structural property such as ActiveState, User or NRestarts."
   fi
 fi
 
