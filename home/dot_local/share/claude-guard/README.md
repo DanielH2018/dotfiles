@@ -63,8 +63,16 @@ what is decided.
                                                             # agreement with the bash chain per record
 
 The cutover to slice 3 needs `shadow-report` to show at least 200 records collected over at
-least 3 days, with zero `python_only`, zero `bash_only`, and zero `python_error` rows. An
-empty log satisfies none of this — no records is not the same claim as agreement.
+least 3 days, with zero `python_only`, zero `python_error`, and no `bash_only` row whose
+rule is anything but `not-compound`. An empty log satisfies none of this — no records is not
+the same claim as agreement.
+
+`not-compound` is the one expected `bash_only`. `judge()` ports `allow-compound-bash.sh`’s
+`:51-59` eligibility test, so it declines a single-segment command; the bash allows some of
+those through `allow-safe-rm.sh` and `allow-safe-curl.sh`, which judge a bare command. Slice 3
+adopts the spec’s “a single segment is judged like a chain” decision and the difference goes
+away. Until then the census scores it as a disagreement, so the floor names it rather than
+waiting on a row that cannot reach zero.
 
 ## The deny rules, and their own shadow
 

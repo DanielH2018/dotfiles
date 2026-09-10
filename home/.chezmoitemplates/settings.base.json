@@ -569,8 +569,10 @@
           {{/* The Python port of the three hooks above, in SHADOW: it logs what it would
                have decided and decides nothing (env.CLAUDE_GUARD_SHADOW above). It stays
                beside them until shadow-report shows at least 200 records collected over at
-               least 3 days, with zero python_only, zero bash_only, and zero python_error
-               rows — an empty log satisfies none of this; then slice 3 removes
+               least 3 days, with zero python_only, zero python_error, and no bash_only row
+               whose rule is anything but not-compound (that one is slice 3’s own
+               single-segment change showing up early, and cannot reach zero before
+               the cutover makes it) — an empty log satisfies none of this; then slice 3 removes
                allow-compound-bash.sh, allow-safe-curl.sh and allow-safe-rm.sh and this
                entry becomes the decision. Contract: cannot run → emits nothing. */}}
           {
