@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_guard.checks.remote import readonly_remote_safe
+from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 
 # allow-readonly-remote.test.js ALLOW (27 cases).
 ALLOW = [
@@ -182,3 +182,142 @@ def test_docker_inspect_is_refused():
 
 def test_systemctl_show_environment_is_refused():
     assert readonly_remote_safe("hl systemctl show-environment") is False
+
+
+# --- trusted_host_safe: allow-daniel-server.sh, which has no test file of its own (D3).
+# Written against the bash before the port exists, so the port has an oracle. ---
+
+# The single most important case in this suite: a `;` INSIDE a double-quoted remote
+# payload must not trip the local-split check. Banning `;` anywhere was a measured
+# regression — 67 of 361 ssh prompts over the week of 2026-08-07 (allow-daniel-server.sh:34-39).
+TRUSTED_ALLOW = [
+    "ssh daniel-server uptime",
+    "ssh daniel-pi uptime",
+    "ssh ubuntu@daniel-server uptime",
+    'ssh daniel-server "cd /repo; git status"',
+    "ssh daniel-server 'echo hi; ls'",
+    "ssh daniel-server 'echo $HOME'",
+    "ssh daniel-server echo \\;",
+    # Total trust (D1): the whole payload is allowed once host+shape pass, not just a
+    # read-only verb. daniel-daemon-server.sh:4-6,112.
+    "ssh daniel-server rm -rf /tmp/x",
+]
+
+TRUSTED_DEFER = [
+    "",
+    "ssh daniel-server",  # fewer than three tokens
+    "ssh daniel-server uptime; rm -rf /",  # unquoted `;` is a real local split
+    "ssh daniel-server uptime && rm -rf /",
+    "ssh daniel-server uptime | tee /etc/x",
+    'ssh daniel-server "echo $(whoami)"',  # `$` inside double quotes expands LOCALLY
+    'ssh daniel-server "echo `whoami`"',  # `` ` `` inside double quotes, same reason
+    'ssh daniel-server "unterminated',  # unterminated double quote
+    "ssh daniel-server 'unterminated",  # unterminated single quote
+    "ssh daniel-server-backup uptime",  # host substring: suffix
+    "ssh notdaniel-server uptime",  # host substring: prefix
+    "ssh other-host uptime",  # untrusted host entirely
+    "ssh -o BatchMode=yes daniel-server uptime",  # NO option is ever consumed here
+    "ssh -p 2222 daniel-server uptime",
+    "ssh daniel-server ssh daniel-pi uptime",  # second hop at TOK[2]
+    'ssh daniel-server "cd /tmp; ssh other-host uptime"',  # second hop buried deeper
+    "ssh daniel-server docker exec c rsync -av /a /b",  # hop as an argument, buried deep
+    "docker ssh daniel-server uptime",  # TOK[0] basename is not ssh
+    "hl daniel-server uptime",  # wrong binary entirely
+]
+
+
+@pytest.mark.parametrize("command", TRUSTED_ALLOW)
+def test_a_command_on_a_trusted_host_is_allowed(command):
+    assert trusted_host_safe(command) is True
+
+
+@pytest.mark.parametrize("command", TRUSTED_DEFER)
+def test_a_local_split_untrusted_host_or_second_hop_is_refused(command):
+    assert trusted_host_safe(command) is False
+
+
+# --- Hazard: the quote-state machine's four states, each independently. ---
+
+
+def test_semicolon_outside_quotes_is_a_local_split_risk():
+    assert trusted_host_safe("ssh daniel-server uptime; rm -rf /") is False
+
+
+def test_semicolon_inside_double_quotes_expands_remotely_not_locally():
+    assert trusted_host_safe('ssh daniel-server "cd /repo; git status"') is True
+
+
+def test_dollar_inside_double_quotes_is_a_local_split_risk():
+    assert trusted_host_safe('ssh daniel-server "echo $(whoami)"') is False
+
+
+def test_semicolon_inside_single_quotes_is_not_a_risk():
+    assert trusted_host_safe("ssh daniel-server 'a;b'") is True
+
+
+def test_dollar_inside_single_quotes_is_not_a_risk():
+    assert trusted_host_safe("ssh daniel-server 'echo $HOME'") is True
+
+
+def test_backslash_escapes_a_metacharacter_outside_quotes():
+    # A backslash escapes the next character everywhere but inside single quotes, so the
+    # semicolon here is consumed as a literal, not evaluated as a risk character.
+    assert trusted_host_safe("ssh daniel-server echo \\;") is True
+
+
+# --- Hazard: an unterminated quote at end-of-string is untrustworthy, not benign. ---
+
+
+def test_unterminated_double_quote_is_refused():
+    assert trusted_host_safe('ssh daniel-server "cd /repo') is False
+
+
+def test_unterminated_single_quote_is_refused():
+    assert trusted_host_safe("ssh daniel-server 'cd /repo") is False
+
+
+# --- Hazard: substring host matching is explicitly ruled out (:89-90). ---
+
+
+def test_host_that_has_the_trusted_host_as_a_suffix_is_refused():
+    assert trusted_host_safe("ssh daniel-server-backup uptime") is False
+
+
+def test_host_that_has_the_trusted_host_as_a_substring_prefix_is_refused():
+    assert trusted_host_safe("ssh notdaniel-server uptime") is False
+
+
+# --- Hazard: no ssh option is ever consumed here, unlike readonly_remote_safe's
+# `-O check` / `-o BatchMode=yes` carve-out. Any TOK[1] starting with `-` refuses. ---
+
+
+def test_any_ssh_option_refuses_even_the_sibling_functions_batchmode_carveout():
+    assert trusted_host_safe("ssh -o BatchMode=yes daniel-server uptime") is False
+
+
+# --- Hazard: the second-hop scan covers every token from index 2 onward, not just
+# TOK[2] — a hop can sit mid-payload or as an argument to another command. ---
+
+
+def test_second_hop_at_the_first_remote_token_is_refused():
+    assert trusted_host_safe("ssh daniel-server ssh daniel-pi uptime") is False
+
+
+def test_second_hop_buried_deeper_in_the_payload_is_refused():
+    assert trusted_host_safe('ssh daniel-server "cd /tmp; ssh other-host uptime"') is False
+
+
+def test_second_hop_reached_as_an_arguments_to_another_command_is_refused():
+    assert trusted_host_safe("ssh daniel-server docker exec c rsync -av /a /b") is False
+
+
+# --- Total trust (D1): once host and shape pass, the ENTIRE remote payload is allowed,
+# read-only or not. Do not filter it through REMOTE_READONLY_VERBS. ---
+
+
+def test_a_clearly_non_read_only_payload_on_a_trusted_host_is_allowed():
+    assert trusted_host_safe("ssh daniel-server rm -rf /tmp/x") is True
+
+
+def test_under_three_tokens_is_refused():
+    assert trusted_host_safe("ssh daniel-server") is False

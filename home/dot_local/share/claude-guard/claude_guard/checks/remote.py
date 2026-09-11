@@ -11,7 +11,7 @@ or mutate (:11-15).
 import re
 
 from claude_guard.segment import parse
-from claude_guard.tables import REMOTE_READONLY_VERBS, SECRET_PATH_RE
+from claude_guard.tables import REMOTE_READONLY_VERBS, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
 
 # :47-64. Out of cmd_parse's scope by design ("this slice deliberately stops at
 # segmentation"): redirection (an unquoted `<`/`>` is consumed by the LOCAL shell, not
@@ -185,3 +185,104 @@ def readonly_remote_safe(command: str) -> bool:
     if verb == "systemctl":
         return sub in _SYSTEMCTL_SUB
     return False
+
+
+# D1 (docs/plans/2026-09-11-claude-guard-slice-3-cutover.md): trusted_host_safe is a SEPARATE
+# function, not a tier of readonly_remote_safe above. That function decides on the VERB and
+# has no host filter; this one decides on the HOST and has no verb table — once host and shape
+# pass, it allows the entire remote payload, read-only or not (allow-daniel-server.sh:4-6,112).
+# It also runs its own quote-state machine rather than claude_guard.segment.parse: the bash
+# never used cmd_parse, and reusing readonly_remote_safe's `-O check` / `-o BatchMode=yes`
+# option carve-out here would WIDEN a hook that consumes no option at all (:87).
+
+
+def _local_split_risk(command: str) -> bool:
+    """allow-daniel-server.sh:49-73. Character-by-character quote-state machine over the RAW
+    command string, judging each character in its quote context rather than by presence alone.
+
+    Outside quotes: `; & | < > ( ) $` `` ` `` or a newline all split the LOCAL command or
+    expand locally, and are a risk. Inside double quotes: only `$` and `` ` `` are a risk —
+    they still expand locally before ssh ever runs; every other byte, `;` included, is a
+    literal byte of the payload handed to the remote shell. Inside single quotes: nothing
+    expands, so nothing is a risk. A backslash escapes the next character everywhere except
+    inside single quotes, so the pair is consumed together rather than letting `\\"`
+    desynchronise the quote tracking. An unterminated quote at end-of-string makes the parse
+    untrustworthy and is itself a risk.
+
+    This is the function that lets `ssh daniel-server "cd /repo; git status"` through: a
+    regex banning `;` anywhere reintroduces the regression this state machine fixed — that
+    exact idiom was 67 of 361 ssh prompts measured over the week of 2026-08-07 (:34-39).
+    """
+    q = ""
+    i = 0
+    n = len(command)
+    while i < n:
+        c = command[i]
+        if q == "'":
+            if c == "'":
+                q = ""
+            i += 1
+            continue
+        if q == '"':
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                q = ""
+            elif c in "$`":
+                return True
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c in "'\"":
+            q = c
+        elif c in ";&|<>()$`\n":
+            return True
+        i += 1
+    return bool(q)  # :71. an unterminated quote is a risk, not a pass.
+
+
+def trusted_host_safe(command: str) -> bool:
+    """allow-daniel-server.sh:20-112. True only when `command` is a single, plain
+    `ssh [user@]HOST ...` invocation to a fully-trusted host, in which case the ENTIRE remote
+    payload is allowed — read-only or not (D1, :4-6, :112). False is "no opinion" everywhere
+    else: a local-split risk, fewer than three tokens, a non-ssh binary, any option on TOK[1],
+    an untrusted or merely-substring-matching host, or a second `ssh`/`hl`/`scp`/`sftp`/`rsync`
+    hop anywhere in the payload (:74, :80, :83, :87, :89-95, :106-110).
+    """
+    if not command:
+        return False
+    if _local_split_risk(command):
+        return False
+
+    # :77-79. Local splitting is ruled out, so quotes are pure grouping and can be stripped.
+    stripped = command.replace('"', "").replace("'", "")
+    tokens = stripped.split()
+    if len(tokens) < 3:  # :80
+        return False
+
+    if tokens[0].rsplit("/", 1)[-1] != "ssh":  # :83. basename, so an absolute path still matches
+        return False
+
+    # :87. No option is EVER consumed here (unlike readonly_remote_safe's `-O check` /
+    # `-o BatchMode=yes` carve-out) — any TOK[1] starting with `-` refuses outright, so an
+    # option value is never mistaken for the host and no forwarding/proxy flag rides along.
+    if tokens[1].startswith("-"):
+        return False
+
+    # :89-95. Exact host match only, `user@` stripped from the FIRST `@` (bash's `${TOK[1]#*@}`
+    # removes the shortest leading `*@` match). Substring matching is explicitly ruled out —
+    # `daniel-server-backup` and `notdaniel-server` must both refuse.
+    host = tokens[1].split("@", 1)[-1]
+    if host not in TRUSTED_SSH_HOSTS:
+        return False
+
+    # :97-110. Every token from index 2 onward, basename-matched — not just TOK[2] — since a
+    # hop can sit mid-payload after a `cd /tmp;` or as an argument to `docker exec`.
+    for tok in tokens[2:]:
+        if tok.rsplit("/", 1)[-1] in {"ssh", "hl", "scp", "sftp", "rsync"}:
+            return False
+
+    return True
