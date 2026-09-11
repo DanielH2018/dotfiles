@@ -42,7 +42,7 @@ _SS_MUTATE = re.compile(r"(^| )-[a-zA-Z]*K[a-zA-Z]*($| )|--kill")
 # is itself a member of the allowed set.
 _IP_THIRD = frozenset({"", "show", "list", "ls", "get"})
 
-# :171-184. docker's nested sub-tables, dispatched here beside the check that reads them
+# :171-185. docker's nested sub-tables, dispatched here beside the check that reads them
 # (tables.py holds only the flat, no-subcommand verbs).
 _DOCKER_FLAT = frozenset(
     {
@@ -72,7 +72,7 @@ _DOCKER_NESTED: dict[str, frozenset[str]] = {
     "service": frozenset({"ls", "ps", "logs"}),
     "stack": frozenset({"ls", "ps", "services"}),
 }
-# DECIDED: :173-174. docker inspect/config are deliberately excluded from every docker
+# DECIDED: :172-173. docker inspect/config are deliberately excluded from every docker
 # arm above — they print the container/compose Env[], the same secret-dumping shape as
 # `env`. Do not add them to _DOCKER_FLAT or any _DOCKER_NESTED value.
 
