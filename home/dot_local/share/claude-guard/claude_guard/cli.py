@@ -76,7 +76,8 @@ def cmd_explain(args: argparse.Namespace) -> int:
     print(f"status: {p.status}")
     rules = load_rules()
     roots = scratch_roots(os.environ.get("HOME", ""), os.environ.get("TMPDIR"))
-    d = judge(args.command, rules, roots)
+    cwd = args.cwd if args.cwd is not None else os.getcwd()
+    d = judge(args.command, rules, roots, cwd)
     reasons = iter(d.reasons)
     for i, seg in enumerate(p.segments):
         text = seg.text.strip()
@@ -164,7 +165,7 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
         command = rec["command"]
         cwd = rec.get("cwd", "")
         env = {**os.environ, "CLAUDE_PROJECT_DIR": cwd}
-        d = judge(command, load_rules(home=home, project_dir=cwd), roots)
+        d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd)
         if d.allow:
             allowed += 1
             print(f"ALLOW: {_head(command)}")
@@ -307,6 +308,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("explain", help="show how a command segments")
     e.add_argument("command")
+    e.add_argument(
+        "--cwd",
+        default=None,
+        help="session cwd for git-reset/heredoc-write confinement (default: this process's cwd)",
+    )
     e.set_defaults(fn=cmd_explain)
 
     r = sub.add_parser("replay", help="run a JSONL of {command, cwd} records")

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import pytest
+from test_git_reset import _make_repo
 
 from claude_guard import judge as judge_mod
 from claude_guard.judge import Decision, judge, unwrap_wrapper
@@ -17,6 +18,7 @@ from claude_guard.rules import Rules, load_rules
 from claude_guard.tables import scratch_roots
 
 ROOTS = scratch_roots("/home/testuser")
+CWD = "/home/testuser"
 
 
 def rules_for(tmp: Path, perms: dict, project: dict | None = None) -> Rules:
@@ -95,7 +97,7 @@ def esc(tmp_path):
 
 
 def allowed(command: str, rules: Rules) -> bool:
-    return judge(command, rules, ROOTS).allow
+    return judge(command, rules, ROOTS, CWD).allow
 
 
 # --- the basic gate ------------------------------------------------------------------------
@@ -106,9 +108,26 @@ def test_a_compound_where_every_part_is_allow_listed_is_allowed(main):
     assert allowed("echo hi && cat file.txt && ls", main)
 
 
-def test_a_non_compound_command_is_not_judged(main):
-    d = judge("git status", main, ROOTS)
-    assert d == Decision(False, "not-compound", ())
+def test_a_single_allow_listed_segment_is_judged_like_a_chain_of_one(main):
+    # D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions). judge() used to return
+    # Decision(False, "not-compound", ()) for any command with none of `&&`/`;`/`|`; that
+    # early return is gone (see the DECIDED marker at its old site in judge.py), so a bare
+    # allow-listed command is judged the same way one segment of a chain would be.
+    assert allowed("git status", main)
+
+
+def test_a_single_confined_rm_is_now_allowed_where_it_used_to_read_not_compound(rm):
+    # D2's pinning case from the brief: a bare `rm -f /tmp/x` now reaches rm_confined the
+    # same way it would as one segment of a chain, instead of returning not-compound.
+    assert allowed("rm -f /tmp/x", rm)
+
+
+def test_a_single_segment_matching_no_check_or_rule_still_returns_no_opinion(main):
+    # D2's other pinning case: removing the not-compound gate must never turn an unlisted
+    # bare command into an allow. "No opinion" here is Decision.allow=False with a
+    # segment-level reason, never "deny" — judge() never returns deny.
+    d = judge("frobnicate", main, ROOTS, CWD)
+    assert d == Decision(False, "segment:0:unlisted", ("unlisted",))
 
 
 def test_a_quoted_separator_still_passes_the_literal_gate_and_one_segment_is_judged(main):
@@ -178,14 +197,25 @@ def test_deny_still_outranks_the_rm_delegation(main):
 # --- the unjudgeable population (allow-compound-bash.sh:402-428) -------------------------------
 
 
-def test_a_newline_only_compound_is_not_eligible(main):
-    assert judge("echo hi\nls", main, ROOTS).rule == "not-compound"
+# PR #477's eligibility widening (a newline-only command becomes eligible for judgment) was
+# out of scope for Task 6 (it required deleting judge.py's not-compound gate) and is
+# subsumed by D2's full deletion of that gate: with no substring pre-filter, parse() alone
+# decides, and it already treats a bare newline as a separator equal to `;`.
+def test_a_newline_only_compound_is_allowed_when_every_part_is_allow_listed(main):
+    assert allowed("echo hi\nls", main)
+    assert allowed("git status\ngit log --oneline -3\ncat file.txt", main)
+
+
+def test_a_newline_only_compound_still_defers_when_denied_ask_or_unlisted(main):
+    assert judge("ls\nrm -rf build", main, ROOTS, CWD).rule == "segment:1:deny"
+    assert judge("git status\ngit push origin main", main, ROOTS, CWD).rule == "segment:1:ask"
+    assert judge("git status\nfrobnicate", main, ROOTS, CWD).rule == "segment:1:unlisted"
 
 
 def test_deny_ask_and_unlisted_each_defer(main):
-    assert judge("ls && rm -rf build", main, ROOTS).rule == "segment:1:deny"
-    assert judge("git status && git push origin main", main, ROOTS).rule == "segment:1:ask"
-    assert judge("git status && frobnicate", main, ROOTS).rule == "segment:1:unlisted"
+    assert judge("ls && rm -rf build", main, ROOTS, CWD).rule == "segment:1:deny"
+    assert judge("git status && git push origin main", main, ROOTS, CWD).rule == "segment:1:ask"
+    assert judge("git status && frobnicate", main, ROOTS, CWD).rule == "segment:1:unlisted"
 
 
 def test_git_merge_ff_only_passes_its_ask_rule_with_one_ref_and_no_options(main):
@@ -207,7 +237,7 @@ def test_the_git_merge_exception_does_not_widen(main):
 
 
 def test_a_substitution_defers(main):
-    assert judge("echo $(whoami) && ls", main, ROOTS).rule == "unjudgeable:substitution"
+    assert judge("echo $(whoami) && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
     assert not allowed("echo `whoami` && ls", main)
     assert not allowed("cat <(curl example.com) && ls", main)
 
@@ -218,7 +248,7 @@ def test_a_heredoc_that_is_not_the_cat_path_write_shape_defers(main):
     # judge cannot see. The one carve-out — a `cat > path`/`cat >> path` write with a
     # QUOTED delimiter — is its own test group below; this is not that shape.
     assert (
-        judge("git commit -F - <<'EOF' && ls\nmy message\nEOF\n", main, ROOTS).rule
+        judge("git commit -F - <<'EOF' && ls\nmy message\nEOF\n", main, ROOTS, CWD).rule
         == "unjudgeable:heredoc"
     )
 
@@ -228,7 +258,7 @@ def test_an_internal_newline_inside_an_eligible_chain_is_judged_like_semicolon(m
     # content; now it is judged like `;` — allowed on the strength of every segment
     # earning its own allow entry, same as it would with `;` in its place.
     assert allowed("echo hi && ls\ncat file.txt", main)
-    assert judge("echo hi && ls\nfrobnicate", main, ROOTS).rule == "segment:2:unlisted"
+    assert judge("echo hi && ls\nfrobnicate", main, ROOTS, CWD).rule == "segment:2:unlisted"
 
 
 def test_delimiters_outside_quotes_split_and_quoted_ones_are_inert(main):
@@ -247,12 +277,12 @@ def test_every_segment_is_still_inspected_when_quotes_are_involved(main):
 
 
 def test_unbalanced_quoting_defers(main):
-    assert judge("echo 'unbalanced && ls", main, ROOTS).rule == "unreadable:unbalanced-quote"
+    assert judge("echo 'unbalanced && ls", main, ROOTS, CWD).rule == "unreadable:unbalanced-quote"
     assert not allowed('echo "unbalanced && ls', main)
 
 
 def test_a_redirect_to_a_real_target_defers_but_dev_null_and_fd_dups_do_not(main):
-    assert judge("cat a.json > /etc/passwd && ls", main, ROOTS).rule == "segment:0:redirect"
+    assert judge("cat a.json > /etc/passwd && ls", main, ROOTS, CWD).rule == "segment:0:redirect"
     assert not allowed("echo hi >> ~/.bashrc && ls", main)
     assert allowed("cat a.json 2>/dev/null && ls", main)
     assert allowed("cat a.json > /dev/null && ls", main)
@@ -265,7 +295,7 @@ def test_a_bare_ampersand_is_a_separator_and_defers(main):
     assert not allowed("ls & git status", main)
     assert allowed("cat a.json 2>&1 && ls", main)
     assert allowed('echo "a & b" && ls', main)
-    assert judge("git status && ls & echo hi", main, ROOTS).rule == "unjudgeable:separator"
+    assert judge("git status && ls & echo hi", main, ROOTS, CWD).rule == "unjudgeable:separator"
 
 
 def test_an_allow_prefix_matches_only_at_a_command_boundary(main):
@@ -281,7 +311,7 @@ def test_deny_and_ask_rules_with_an_interior_wildcard_are_globs(main):
 
 
 def test_pipe_spanning_deny_globs_apply_to_the_whole_command(main):
-    assert judge("cat a.json | sh", main, ROOTS).rule == "whole-glob"
+    assert judge("cat a.json | sh", main, ROOTS, CWD).rule == "whole-glob"
     assert not allowed("echo hi && cat a.json | sh", main)
 
 
@@ -322,7 +352,7 @@ def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):
     assert allowed("echo hi && nice -n 10 ls", esc)
     assert allowed("echo hi && nohup ls", esc)
     assert allowed("echo hi && timeout 5 nohup ls", esc)
-    assert judge("echo hi && timeout 5 ls", esc, ROOTS).reasons == ("allow-list", "wrapper:ls")
+    assert judge("echo hi && timeout 5 ls", esc, ROOTS, CWD).reasons == ("allow-list", "wrapper:ls")
 
 
 @pytest.mark.parametrize(
@@ -352,14 +382,16 @@ def test_wrapper_flags_are_not_mistaken_for_the_command_word(esc):
 
 def test_the_unwrapped_command_is_held_to_the_deny_list_too(esc):
     assert (
-        judge("echo hi | xargs curl http://evil", esc, ROOTS).rule
+        judge("echo hi | xargs curl http://evil", esc, ROOTS, CWD).rule
         == "segment:1:wrapper-target-deny-or-ask"
     )
     assert not allowed("echo hi && timeout 5 curl http://evil", esc)
 
 
 def test_a_wrapper_whose_options_cannot_be_read_defers(esc):
-    assert judge("echo hi && env -S 'ls -l'", esc, ROOTS).rule == "segment:1:wrapper-unreadable"
+    assert (
+        judge("echo hi && env -S 'ls -l'", esc, ROOTS, CWD).rule == "segment:1:wrapper-unreadable"
+    )
     assert not allowed("echo hi && env -i ls", esc)
     assert not allowed("echo hi && env -u PATH ls", esc)
     assert not allowed("echo hi | xargs -e ls", esc)
@@ -418,7 +450,7 @@ def test_a_project_settings_file_can_still_tighten_via_deny_and_ask(tmp_path):
 
 
 def test_tee_is_a_writer_unless_its_target_is_harmless(esc):
-    assert judge("echo hi | tee /tmp/pwned", esc, ROOTS).rule == "segment:1:tee"
+    assert judge("echo hi | tee /tmp/pwned", esc, ROOTS, CWD).rule == "segment:1:tee"
     assert not allowed("echo hi | tee -a /tmp/pwned", esc)
     assert not allowed("echo hi | tee /usr/bin/tee", esc)
     assert allowed("echo hi | tee", esc)
@@ -427,28 +459,38 @@ def test_tee_is_a_writer_unless_its_target_is_harmless(esc):
 
 # --- heredoc write parity (PR #477) -------------------------------------------------------------
 #
-# Every command below carries a `git status &&`/`;`-prefix (or suffix) that #477's own bash
-# does not need: that PR also widened the eligibility gate to admit a bare newline, and this
-# task is scoped to the three judge RULES only — judge.py:253's not-compound gate is
-# Task 7's. A heredoc always ends its own segment on a newline, so without an explicit
-# `&&`/`;`/`|` elsewhere in the command these fixtures would read "not-compound" and never
-# reach the heredoc logic at all; the prefix is what the eligibility gate already grants.
-# Also scoped down: the port checks only the scratch-root half of allow-compound-bash.sh's
-# heredoc_write_ok (:150-172) — there is no `cwd` parameter on judge() to confine against,
-# and none of the assertions below need one to reach their expected verdict.
+# Task 6 prefixed every command below with `git status &&`/`;` because judge.py's
+# not-compound gate (judge.py:253 at the time) made a bare heredoc-write line ineligible on
+# its own. D2 removes that gate, so these are restored to #477's original single-segment
+# form. The port checks BOTH confinement arms of allow-compound-bash.sh's heredoc_write_ok
+# (:169-194) — a scratch root or the session's own cwd — so `CWD` below stands in for the
+# session directory the way ROOTS stands in for SCRATCH_ROOTS; a case-by-case cwd is used
+# only where the test is specifically about the cwd arm.
 
 
 def test_a_cat_path_heredoc_write_with_a_quoted_delimiter_is_allowed_under_a_scratch_root(main):
-    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\n", main)
-    assert allowed('git status && cat >> /tmp/x.sh <<"EOF"\nmore\nEOF\n', main)
-    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\ngit status", main)
+    assert allowed("cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\n", main)
+    assert allowed('cat >> /tmp/x.sh <<"EOF"\nmore\nEOF\n', main)
+    assert allowed("cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\ngit status", main)
+
+
+def test_a_cat_path_heredoc_write_with_a_quoted_delimiter_is_allowed_under_the_session_cwd(
+    main, tmp_path
+):
+    # #477's heredoc_write_ok cwd arm (:183-191). roots=() here so the assertion can ONLY
+    # pass through the cwd branch — if the scratch-root check alone were doing the work
+    # this would misread allowed for the wrong reason (tmp_path is itself under /tmp, a
+    # real scratch root, which is why the empty roots tuple is the control).
+    cwd = str(tmp_path)
+    assert judge("cat > notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+    assert judge(f"cat > {cwd}/notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
 
 
 def test_a_heredoc_body_containing_rm_rf_root_on_its_own_line_is_not_split_into_segments(main):
     # The body writes inert text — it is never executed — so even a body that reads like a
     # dangerous command is safe to write, and this only reads allowed if the segmenter kept
     # the whole body lifted out rather than splitting it into top-level segments.
-    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\nrm -rf /\nEOF\n", main)
+    assert allowed("cat > /tmp/x.sh <<'EOF'\nrm -rf /\nEOF\n", main)
 
 
 def test_a_non_write_heredoc_with_an_all_allow_listed_looking_body_still_defers(main):
@@ -456,7 +498,7 @@ def test_a_non_write_heredoc_with_an_all_allow_listed_looking_body_still_defers(
     # (`cat <<'EOF'` with no `>`) whose body is entirely allow-listed text. If the parser
     # ever mis-lifted the body into top-level segments, "echo hi" and "ls" would each earn
     # their own allow entry and this would misread allowed.
-    d = judge("git status && cat <<'EOF'\necho hi\nls\nEOF\ngit status", main, ROOTS)
+    d = judge("cat <<'EOF'\necho hi\nls\nEOF\ngit status", main, ROOTS, CWD)
     assert d.rule == "unjudgeable:heredoc"
 
 
@@ -464,17 +506,17 @@ def test_heredoc_write_parity_refuses_an_unquoted_delimiter_a_path_escape_or_an_
     main,
 ):
     # Unquoted delimiter: body can carry a live $(...), stays unjudgeable regardless of path.
-    assert not allowed("git status && cat > /tmp/x.sh <<EOF\necho hi\nEOF\n", main)
+    assert not allowed("cat > /tmp/x.sh <<EOF\necho hi\nEOF\n", main)
     # `..`, a leading `~`, or a leading `$` — refused outright, scratch root or not.
-    assert not allowed("git status && cat > /tmp/../etc/x <<'EOF'\nhi\nEOF\n", main)
-    assert not allowed("git status && cat > ../etc/passwd <<'EOF'\nhi\nEOF\n", main)
-    assert not allowed("git status && cat > ~/.bashrc <<'EOF'\nhi\nEOF\n", main)
-    assert not allowed("git status && cat > $HOME/x <<'EOF'\nhi\nEOF\n", main)
-    # Not under any scratch root.
-    assert not allowed("git status && cat > /etc/passwd <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("cat > /tmp/../etc/x <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("cat > ../etc/passwd <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("cat > ~/.bashrc <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("cat > $HOME/x <<'EOF'\nhi\nEOF\n", main)
+    # Not under any scratch root, and CWD ("/home/testuser") doesn't confine it either.
+    assert not allowed("cat > /etc/passwd <<'EOF'\nhi\nEOF\n", main)
     # The write earns its own segment's approval only — the rest of the chain still has to
     # clear the allow list on its own.
-    assert not allowed("git status && cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", main)
+    assert not allowed("cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", main)
 
 
 # --- benign prefixes (PR #477) -------------------------------------------------------------------
@@ -502,13 +544,42 @@ def test_a_var_value_assignment_whose_value_can_expand_or_execute_is_judged_as_i
     # a bare `$VAR` reference — not `$(...)`, so the substitution gate never sees it — left
     # in the segment so it fails every check below as itself, the same as an unlisted
     # command would.
-    assert judge("FOO=$(whoami) git status && ls", main, ROOTS).rule == "unjudgeable:substitution"
-    assert judge("FOO=`whoami` git status && ls", main, ROOTS).rule == "unjudgeable:substitution"
-    assert judge("FOO=$BAR git status && ls", main, ROOTS).rule == "segment:0:unlisted"
+    assert (
+        judge("FOO=$(whoami) git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
+    )
+    assert (
+        judge("FOO=`whoami` git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
+    )
+    assert judge("FOO=$BAR git status && ls", main, ROOTS, CWD).rule == "segment:0:unlisted"
 
 
 def test_a_var_value_prefix_does_not_resolve_dollar_var_for_a_later_rm_operand(rm):
     # Stripping the assignment prefix does not resolve $VAR for a LATER segment that uses
     # it as an operand — the bare assignment segment is skipped as a no-op, but the rm
     # delegation still cannot see through the variable and refuses on principle.
-    assert judge("FOO=/tmp/scratch; rm -rf $FOO", rm, ROOTS).rule == "segment:1:ask"
+    assert judge("FOO=/tmp/scratch; rm -rf $FOO", rm, ROOTS, CWD).rule == "segment:1:ask"
+
+
+# --- single-segment check reachability (D2, Task 7) ---------------------------------------------
+#
+# Before D2, `curl`/`rm`/`remote`/`ansible`/`git_reset` were each individually correct but
+# unreachable for a BARE command: judge() returned "not-compound" before any of them ever
+# ran. These pin that each is now reachable on its own, not only as one segment of a chain
+# — "the check exists" and "the check is reachable" are different claims.
+
+
+def test_a_bare_safe_curl_is_now_reachable(main):
+    assert allowed("curl http://127.0.0.1:8000/", main)
+
+
+def test_a_bare_readonly_ssh_is_now_reachable(main):
+    assert allowed("ssh daniel-server true", main)
+
+
+def test_a_bare_readonly_ansible_check_is_now_reachable(main):
+    assert allowed("ansible-playbook site.yml --check", main)
+
+
+def test_a_bare_clean_git_reset_hard_is_now_reachable(main, tmp_path):
+    work = _make_repo(tmp_path)
+    assert judge("git reset --hard origin/master", main, ROOTS, work).allow

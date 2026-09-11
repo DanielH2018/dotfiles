@@ -61,10 +61,24 @@ def read_command(stdin_text: str) -> str | None:
     return command if isinstance(command, str) else None
 
 
-def decide(command: str, env: Mapping[str, str]) -> Decision:
+def read_cwd(stdin_text: str) -> str:
+    """The session's cwd (the hook JSON's top-level `.cwd`), or "" when absent or the
+    payload doesn't parse — "" is judge()'s own fall-through for git_reset/heredoc-write
+    cwd confinement, never mistaken for a real path."""
+    try:
+        data = json.loads(stdin_text)
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    cwd = data.get("cwd")
+    return cwd if isinstance(cwd, str) else ""
+
+
+def decide(command: str, cwd: str, env: Mapping[str, str]) -> Decision:
     rules = load_rules(env=env)
     roots = scratch_roots(env.get("HOME", ""), env.get("TMPDIR"))
-    return judge(command, rules, roots)
+    return judge(command, rules, roots, cwd)
 
 
 def shadow_mode(env: Mapping[str, str], var: str = "CLAUDE_GUARD_SHADOW") -> tuple[bool, bool]:
@@ -183,15 +197,16 @@ def permission_request(
         command = read_command(stdin_text)
         if command is None:
             return None
+        cwd = read_cwd(stdin_text)
         shadow, log_this = shadow_mode(env)
         if not shadow:
-            decision = decide(command, env)
+            decision = decide(command, cwd, env)
             return ALLOW_JSON if decision.allow else None
         # Shadow: the decision step is caught on its own, separately from everything
         # around it, so an exception in judge()/load_rules() still leaves a record
         # instead of silently vanishing the way the live-mode contract requires.
         try:
-            decision: Decision | None = decide(command, env)
+            decision: Decision | None = decide(command, cwd, env)
         except Exception:
             decision = None
         if log_this:

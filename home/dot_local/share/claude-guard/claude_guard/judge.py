@@ -1,19 +1,25 @@
-"""The compound decision, ported from allow-compound-bash.sh as it decides TODAY.
+"""The single-segment/compound decision, ported from allow-compound-bash.sh as it decides
+TODAY, plus D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions — "a single segment
+is judged like a chain").
 
-A chain is allowed when every segment is allow-listed or passes a check, and no segment
+A command is allowed when every segment is allow-listed or passes a check, and no segment
 matches deny or ask. Everything that makes the bash defer makes this defer, in the same
 order, with the bash line cited beside it. This is a PORT: PR #477's three rules — a
-newline judged like `;`, a quoted-delimiter `cat > path` heredoc write, and `VAR=`/`set -`
-stripping — are ported here. The spec's "a single segment is judged like a chain" is
-Task 7. Today a command containing none of `&&`, `;`, `|` gets no decision at all (:51-59),
-and this module keeps that — #477's own eligibility widening (admitting a bare newline)
-is bundled into that same gate and stays out of scope here too.
+newline judged like `;`, a quoted-delimiter `cat > path` heredoc write (both the
+scratch-root AND the session-cwd confinement arms), and `VAR=`/`set -` stripping — are
+ported here, plus D2's removal of the not-compound early return (see the marker at its old
+site) and the four new checks — `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
+`ansible.ansible_readonly_safe`, `git_reset.clean_reset_safe` — wired in alongside the
+pre-existing `curl`/`scratch` delegation.
 """
 
 import re
 from dataclasses import dataclass
 
+from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.curl import curl_safe
+from claude_guard.checks.git_reset import clean_reset_safe
+from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.scratch import rm_confined
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
@@ -48,6 +54,23 @@ def heredoc_write_target(text: str) -> str | None:
     """:150-158. The write path of a quoted-delimiter `cat > path`/`cat >> path`, or None."""
     m = _HEREDOC_CAT_WRITE.match(text)
     return m.group("path") if m else None
+
+
+def _under_session_cwd(path: str, cwd: str) -> bool:
+    """PR #477's heredoc_write_ok, the cwd arm (:169-194, cwd branch :183-191): the path a
+    quoted-delimiter heredoc write targets is ALSO safe when it resolves under the
+    session's own `cwd`, not only under a scratch root. Judged lexically, the same posture
+    as under_scratch (scratch.py): `..`, a leading `~`, or a leading `$` refuse outright,
+    before either confinement arm is tried in the bash — mirrored here even though
+    rm_confined's own tokenizer already refuses `~` and `$` for the scratch-root arm, since
+    this arm can be reached on its own when the scratch check fails.
+    """
+    if not cwd or ".." in path or path.startswith("~") or path.startswith("$"):
+        return False
+    real = path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}"
+    real = real.rstrip("/") or "/"
+    base = cwd.rstrip("/") or "/"
+    return real == base or real.startswith(base + "/")
 
 
 def _strip_assignments(part: str) -> str:
@@ -239,17 +262,19 @@ def unwrap_wrapper(segment: str) -> str | None:
     return None
 
 
-def judge_segment(part: str, rules: Rules, roots: tuple[str, ...]) -> tuple[bool, str]:
+def judge_segment(part: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> tuple[bool, str]:
     """:286-395, one iteration of the loop. (ok, reason)."""
     # PR #477 (:432-436). A quoted-delimiter heredoc write vetted by heredoc_write_target:
     # allow it here rather than letting it fall into the blanket redirect refusal just
-    # below. Delegated to rm_confined on a synthetic `rm <path>`, same reasoning as the
-    # curl and rm delegation further down — one scratch-confinement list, one place it can
-    # drift. Any OTHER segment in the chain still has to clear every check on its own;
-    # this vouches for the write, not for the rest of the command.
+    # below. Confined to a scratch root (delegated to rm_confined on a synthetic
+    # `rm <path>`, same reasoning as the curl and rm delegation further down — one
+    # scratch-confinement list, one place it can drift) OR to the session's own cwd
+    # (_under_session_cwd, PR #477's heredoc_write_ok cwd arm). Any OTHER segment in the
+    # chain still has to clear every check on its own; this vouches for the write, not for
+    # the rest of the command.
     hw_target = heredoc_write_target(part)
     if hw_target is not None:
-        if rm_confined(f"rm {hw_target}", roots):
+        if rm_confined(f"rm {hw_target}", roots) or _under_session_cwd(hw_target, cwd):
             return True, "heredoc-write"
         return False, "heredoc-write:unconfined"
 
@@ -278,13 +303,21 @@ def judge_segment(part: str, rules: Rules, roots: tuple[str, ...]) -> tuple[bool
         if ffref and not ffref.startswith("-") and not re.search(r"\s", ffref):
             return True, "ff-only"
 
-    # :343-357. A provably-safe curl or a confined rm resolves its own ask rule. After
-    # deny, before ask: where the standalone hooks sit relative to this one.
+    # :343-357. A provably-safe curl, a confined rm, a provably read-only remote command
+    # (ssh/hl), a trusted-host ssh hop, a read-only ansible-playbook invocation, or a clean
+    # `git reset --hard origin/master|main` each resolve their own ask rule. After deny,
+    # before ask: where the standalone hooks they port sit relative to this one.
     word = _basename(_first_word(part))
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
     if word == "rm" and rm_confined(part, roots):
         return True, "rm-check"
+    if word in ("ssh", "hl") and (readonly_remote_safe(part) or trusted_host_safe(part)):
+        return True, "remote-check"
+    if word in ("ansible-playbook", "uv") and ansible_readonly_safe(part):
+        return True, "ansible-check"
+    if word == "git" and clean_reset_safe(part, cwd):
+        return True, "git-reset-check"
 
     # :359-363.
     if rules.asks(part):
@@ -310,10 +343,17 @@ def judge_segment(part: str, rules: Rules, roots: tuple[str, ...]) -> tuple[bool
     return True, f"wrapper:{target}"
 
 
-def judge(command: str, rules: Rules, roots: tuple[str, ...]) -> Decision:
-    # :51-59. Only a compound command is eligible: a literal substring test, deliberately.
-    if "&&" not in command and ";" not in command and "|" not in command:
-        return Decision(False, "not-compound", ())
+def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decision:
+    # DECIDED: D2 (docs/specs/2026-09-06-claude-guard-design.md, Decisions — "a single
+    # segment is judged like a chain"). This used to be a literal-substring eligibility
+    # gate — `if "&&" not in command and ";" not in command and "|" not in command: return
+    # Decision(False, "not-compound", ())` — a faithful port of
+    # allow-compound-bash.sh:51-59. Removed: a bare `rm -f /tmp/x` now reaches the same
+    # checks a chained one does, and the segmenter already treats a bare newline as a
+    # separator on its own, so this one deletion also admits a newline-only chain — both
+    # were the standing `not-compound` bash_only row in the slice's shadow census (PR
+    # #487). A command matching no check and no allow/deny/ask entry still returns "no
+    # opinion" (segment:N:unlisted, below) — nothing here ever returns "deny".
 
     # :277-281.
     if rules.whole_glob_defer(command):
@@ -355,7 +395,7 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...]) -> Decision:
         part = _strip_assignments(part)
         if not part or _is_set_options(part):
             continue
-        ok, reason = judge_segment(part, rules, roots)
+        ok, reason = judge_segment(part, rules, roots, cwd)
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
