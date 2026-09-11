@@ -51,7 +51,7 @@ MAIN = {
     "ask": ["Bash(git push:*)", "Bash(gh api *-X DELETE)", "Bash(git merge:*)"],
 }
 RM = {
-    "allow": ["Bash(cd:*)", "Bash(echo:*)", "Bash(ls:*)", "Bash(mkdir:*)"],
+    "allow": ["Bash(cd:*)", "Bash(echo:*)", "Bash(ls:*)", "Bash(mkdir:*)", "Bash(uv run:*)"],
     "deny": [],
     "ask": ["Bash(rm:*)"],
 }
@@ -149,6 +149,12 @@ def test_curl_delegation_vouches_for_the_curl_segment_only(tmp_path):
 # --- rm delegation ---------------------------------------------------------------------------
 
 
+def test_a_delegate_and_cleanup_chain_is_allowed_end_to_end(rm):
+    # The motivating shape for the rm delegation: a scratch script run then cleaned up in
+    # the same chain. `uv run` is allow-listed in the `rm` fixture for exactly this test.
+    assert allowed("uv run python /tmp/x.py && rm /tmp/x.py", rm)
+
+
 def test_a_provably_confined_rm_segment_resolves_its_own_ask_rule(rm):
     assert allowed("cd /tmp && rm -rf /tmp/scratch", rm)
     assert allowed("rm -rf /tmp/a && mkdir -p /tmp/a", rm)
@@ -206,12 +212,23 @@ def test_a_substitution_defers(main):
     assert not allowed("cat <(curl example.com) && ls", main)
 
 
-def test_a_heredoc_or_an_internal_newline_defers_even_when_every_segment_is_allow_listed(main):
+def test_a_heredoc_that_is_not_the_cat_path_write_shape_defers(main):
+    # PR #477. cmd_parse lifts a heredoc body out whole and never scans it for a
+    # substitution, so an unquoted OR non-write heredoc could carry a live `$(...)` this
+    # judge cannot see. The one carve-out — a `cat > path`/`cat >> path` write with a
+    # QUOTED delimiter — is its own test group below; this is not that shape.
     assert (
         judge("git commit -F - <<'EOF' && ls\nmy message\nEOF\n", main, ROOTS).rule
         == "unjudgeable:heredoc"
     )
-    assert judge("echo hi && ls\ncat file.txt", main, ROOTS).rule == "unjudgeable:separator"
+
+
+def test_an_internal_newline_inside_an_eligible_chain_is_judged_like_semicolon(main):
+    # PR #477, judge.py:274 (was): an internal newline used to force a defer regardless of
+    # content; now it is judged like `;` — allowed on the strength of every segment
+    # earning its own allow entry, same as it would with `;` in its place.
+    assert allowed("echo hi && ls\ncat file.txt", main)
+    assert judge("echo hi && ls\nfrobnicate", main, ROOTS).rule == "segment:2:unlisted"
 
 
 def test_delimiters_outside_quotes_split_and_quoted_ones_are_inert(main):
@@ -406,3 +423,92 @@ def test_tee_is_a_writer_unless_its_target_is_harmless(esc):
     assert not allowed("echo hi | tee /usr/bin/tee", esc)
     assert allowed("echo hi | tee", esc)
     assert allowed("echo hi | tee /dev/null", esc)
+
+
+# --- heredoc write parity (PR #477) -------------------------------------------------------------
+#
+# Every command below carries a `git status &&`/`;`-prefix (or suffix) that #477's own bash
+# does not need: that PR also widened the eligibility gate to admit a bare newline, and this
+# task is scoped to the three judge RULES only — judge.py:253's not-compound gate is
+# Task 7's. A heredoc always ends its own segment on a newline, so without an explicit
+# `&&`/`;`/`|` elsewhere in the command these fixtures would read "not-compound" and never
+# reach the heredoc logic at all; the prefix is what the eligibility gate already grants.
+# Also scoped down: the port checks only the scratch-root half of allow-compound-bash.sh's
+# heredoc_write_ok (:150-172) — there is no `cwd` parameter on judge() to confine against,
+# and none of the assertions below need one to reach their expected verdict.
+
+
+def test_a_cat_path_heredoc_write_with_a_quoted_delimiter_is_allowed_under_a_scratch_root(main):
+    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\n", main)
+    assert allowed('git status && cat >> /tmp/x.sh <<"EOF"\nmore\nEOF\n', main)
+    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\necho hi\nEOF\ngit status", main)
+
+
+def test_a_heredoc_body_containing_rm_rf_root_on_its_own_line_is_not_split_into_segments(main):
+    # The body writes inert text — it is never executed — so even a body that reads like a
+    # dangerous command is safe to write, and this only reads allowed if the segmenter kept
+    # the whole body lifted out rather than splitting it into top-level segments.
+    assert allowed("git status && cat > /tmp/x.sh <<'EOF'\nrm -rf /\nEOF\n", main)
+
+
+def test_a_non_write_heredoc_with_an_all_allow_listed_looking_body_still_defers(main):
+    # The stronger discriminating case: a heredoc that is NOT the cat>path write shape
+    # (`cat <<'EOF'` with no `>`) whose body is entirely allow-listed text. If the parser
+    # ever mis-lifted the body into top-level segments, "echo hi" and "ls" would each earn
+    # their own allow entry and this would misread allowed.
+    d = judge("git status && cat <<'EOF'\necho hi\nls\nEOF\ngit status", main, ROOTS)
+    assert d.rule == "unjudgeable:heredoc"
+
+
+def test_heredoc_write_parity_refuses_an_unquoted_delimiter_a_path_escape_or_an_unconfined_target(
+    main,
+):
+    # Unquoted delimiter: body can carry a live $(...), stays unjudgeable regardless of path.
+    assert not allowed("git status && cat > /tmp/x.sh <<EOF\necho hi\nEOF\n", main)
+    # `..`, a leading `~`, or a leading `$` — refused outright, scratch root or not.
+    assert not allowed("git status && cat > /tmp/../etc/x <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("git status && cat > ../etc/passwd <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("git status && cat > ~/.bashrc <<'EOF'\nhi\nEOF\n", main)
+    assert not allowed("git status && cat > $HOME/x <<'EOF'\nhi\nEOF\n", main)
+    # Not under any scratch root.
+    assert not allowed("git status && cat > /etc/passwd <<'EOF'\nhi\nEOF\n", main)
+    # The write earns its own segment's approval only — the rest of the chain still has to
+    # clear the allow list on its own.
+    assert not allowed("git status && cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", main)
+
+
+# --- benign prefixes (PR #477) -------------------------------------------------------------------
+
+
+def test_set_options_are_stripped_and_the_rest_of_the_chain_is_judged_normally(main):
+    assert allowed("set -e && git status && git log --oneline -1", main)
+    assert allowed("set -euo pipefail && git status", main)
+    assert allowed("set -o pipefail; git status", main)
+
+
+def test_a_set_prefix_does_not_rescue_an_otherwise_denied_or_unlisted_segment(main):
+    assert not allowed("set -e && frobnicate", main)
+    assert not allowed("set -e && rm -rf build", main)
+
+
+def test_a_leading_var_value_assignment_is_stripped_before_judging_the_segment(main):
+    assert allowed("FOO=bar git status && git log --oneline -1", main)
+    assert allowed("FOO=bar BAZ=1 git status && git log", main)
+
+
+def test_a_var_value_assignment_whose_value_can_expand_or_execute_is_judged_as_itself(main):
+    # $(...) and a backtick are already refused by the pre-existing global substitution
+    # gate (judge.py:268) regardless of this rule. The case this rule alone must catch is
+    # a bare `$VAR` reference — not `$(...)`, so the substitution gate never sees it — left
+    # in the segment so it fails every check below as itself, the same as an unlisted
+    # command would.
+    assert judge("FOO=$(whoami) git status && ls", main, ROOTS).rule == "unjudgeable:substitution"
+    assert judge("FOO=`whoami` git status && ls", main, ROOTS).rule == "unjudgeable:substitution"
+    assert judge("FOO=$BAR git status && ls", main, ROOTS).rule == "segment:0:unlisted"
+
+
+def test_a_var_value_prefix_does_not_resolve_dollar_var_for_a_later_rm_operand(rm):
+    # Stripping the assignment prefix does not resolve $VAR for a LATER segment that uses
+    # it as an operand — the bare assignment segment is skipped as a no-op, but the rm
+    # delegation still cannot see through the variable and refuses on principle.
+    assert judge("FOO=/tmp/scratch; rm -rf $FOO", rm, ROOTS).rule == "segment:1:ask"
