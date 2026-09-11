@@ -410,16 +410,28 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     # trusted_host_safe via its own local-split-risk character scan, ansible_readonly_safe
     # via scratch.tokenize's special-character refusal — so e.g. `ssh daniel-server uptime
     # && rm -rf /` cannot ride in on the first segment being provably read-only. curl and
-    # rm need no equivalent arm here: curl_safe/rm_confined tokenize the whole string the
-    # same way and already refuse a chain character, so for a bare, one-segment command
-    # the existing per-segment delegation in judge_segment below reaches the identical
-    # verdict a whole-command arm would — adding one would be a no-op.
+    # rm need no equivalent arm here: confirmed directly against the bash oracles, not
+    # just their Python ports — allow-safe-curl.sh:107/allow-safe-rm.sh:88 each refuse an
+    # unquoted `;`/`&`/`|`/`(`/`$`/backtick/etc. inside their own tokenizer's unquoted-
+    # state case, before any curl/rm-specific logic runs, so neither bash hook can ever
+    # say "allow" for a chained command in the first place — curl_safe/rm_confined carry
+    # the identical refusal (checks/curl.py, checks/scratch.py's tokenize). So for a bare,
+    # one-segment command the existing per-segment delegation in judge_segment below
+    # reaches the identical verdict a whole-command arm would — adding one would be a
+    # no-op.
     if readonly_remote_safe(command) or trusted_host_safe(command):
         return Decision(True, "remote-check", ())
     if ansible_readonly_safe(command):
         return Decision(True, "ansible-check", ())
     if clean_reset_safe(command, cwd):
         return Decision(True, "git-reset-check", ())
+
+    # DECIDED: the four whole-command arms above run BEFORE whole_glob_defer, deliberately
+    # — a real PermissionRequest hook is a separate, independent registration from
+    # allow-compound-bash.sh and never consults its deny/ask glob list at all, so a
+    # command one of the four would allow is not filtered through that list in the
+    # deployed chain either. Placing them after whole_glob_defer would be stricter than
+    # the bash, not a faithful port.
 
     # :277-281.
     if rules.whole_glob_defer(command):

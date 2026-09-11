@@ -629,3 +629,26 @@ def test_ansible_check_survives_the_stdio_blocking_prefix_and_trailing_tail_pipe
 def test_a_bare_clean_git_reset_hard_is_now_reachable(main, tmp_path):
     work = _make_repo(tmp_path)
     assert judge("git reset --hard origin/master", main, ROOTS, work).allow
+
+
+def test_a_chained_segment_does_not_earn_a_standalone_hooks_grace(main, tmp_path):
+    # F0's REJECTING half. Every assertion above this one is an allow — none of them goes
+    # red if the four checks are wired back into judge_segment as a per-segment arm
+    # instead of a judge() whole-command arm. These three prove the rejection: each
+    # chains a first segment that is allow-listed on its own ("git status", under MAIN)
+    # with a second segment that the standalone hook it once delegated to would approve
+    # in ISOLATION, but that the real allow-readonly-remote.sh/allow-daniel-server.sh/
+    # allow-ansible-readonly.sh/allow-clean-reset.sh never sees as a segment of a chain —
+    # each is a PermissionRequest hook judging the WHOLE raw command, and all four
+    # self-refuse a compound shape (the comment above judge()'s whole-command arms). Put
+    # the check back in judge_segment and segment 1 here earns its own "-check" reason
+    # from the bare segment text alone, flipping the whole decision to allow.
+    #
+    # `_make_repo` gives a CLEAN repo: read the check without it and `clean_reset_safe`
+    # returns False regardless of wiring (F1's empty/non-absolute cwd refusal doesn't
+    # apply here, but a dirty or missing repo would make this assertion pass under both
+    # wirings, proving nothing).
+    work = _make_repo(tmp_path)
+    assert not judge("git status && git reset --hard origin/master", main, ROOTS, work).allow
+    assert not allowed("git status && ssh daniel-server uptime", main)
+    assert not allowed("git status && ansible-playbook site.yml --check", main)

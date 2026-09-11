@@ -173,6 +173,40 @@ def test_shadow_mode_prints_nothing_and_logs_one_line_that_agrees_with_the_bash_
 
 
 @skip_no_bash
+def test_shadow_mode_agrees_on_a_readonly_remote_and_an_ansible_check(tmp_path):
+    # Fix round 1, F3 red-proof, measured against the REAL bash hooks (HOOKS, the chezmoi
+    # source `allow-readonly-remote.sh`/`allow-ansible-readonly.sh`), not a fake chain.
+    # Before F3, BASH_CHAIN held only allow-compound-bash.sh/allow-safe-curl.sh/
+    # allow-safe-rm.sh, none of which ever answers "allow" for either command below, so
+    # judge()'s own F0 remote/ansible checks (ported in Task 7) made these read
+    # `python_only` in the shadow census -- an artefact of this list being incomplete,
+    # never a real python/bash disagreement. Revert BASH_CHAIN to the 3-entry list and
+    # `bash` drops to "none"/`bash_hook` to None on both lines below.
+    home = home_with(tmp_path)
+    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(HOOKS))
+    log_dir = tmp_path / "logs"
+
+    assert permission_request(payload("ssh daniel-server uptime"), env, log_dir=log_dir) is None
+    rec = json.loads((log_dir / LOG_NAME).read_text().splitlines()[-1])
+    assert (rec["python"], rec["bash"], rec["bash_hook"]) == (
+        "allow",
+        "allow",
+        "allow-readonly-remote.sh",
+    )
+
+    assert (
+        permission_request(payload("ansible-playbook site.yml --check"), env, log_dir=log_dir)
+        is None
+    )
+    rec = json.loads((log_dir / LOG_NAME).read_text().splitlines()[-1])
+    assert (rec["python"], rec["bash"], rec["bash_hook"]) == (
+        "allow",
+        "allow",
+        "allow-ansible-readonly.sh",
+    )
+
+
+@skip_no_bash
 def test_shadow_mode_logs_a_refusal_both_sides_agree_on(tmp_path):
     home = home_with(tmp_path)
     env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(HOOKS))
