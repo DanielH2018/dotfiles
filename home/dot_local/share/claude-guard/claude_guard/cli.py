@@ -163,7 +163,13 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
     agree = 0
     for rec in records:
         command = rec["command"]
-        cwd = rec.get("cwd", "")
+        # Fix round 1, F1: the corpus's own record shape is {command, cwd} (module
+        # docstring above) -- a record missing `cwd` is malformed, and a silent ""
+        # default used to get it wrong twice: it read as the hook PROCESS's own cwd
+        # before clean_reset_safe refused a falsy cwd outright, and even now it would
+        # just silently under-count ALLOW for every cwd-sensitive shape in a malformed
+        # corpus rather than surfacing the bad record. `rec["cwd"]` raises loudly instead.
+        cwd = rec["cwd"]
         env = {**os.environ, "CLAUDE_PROJECT_DIR": cwd}
         d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd)
         if d.allow:
@@ -171,7 +177,11 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
             print(f"ALLOW: {_head(command)}")
         if hooks_dir is None:
             continue
-        stdin_text = json.dumps({"tool_input": {"command": command}})
+        # F3: the bash side must see the same cwd the python side judged against, or a
+        # remote/ansible/git-reset call falls back to the REPLAY PROCESS's own $PWD
+        # inside the bash hook while judge() reads the record's real cwd -- a spurious
+        # disagreement that has nothing to do with either side's rules.
+        stdin_text = json.dumps({"tool_input": {"command": command}, "cwd": cwd})
         bash_hook = bash_chain_allows(hooks_dir, stdin_text, env)
         if d.allow == bool(bash_hook):
             agree += 1

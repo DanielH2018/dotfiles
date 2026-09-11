@@ -486,6 +486,22 @@ def test_a_cat_path_heredoc_write_with_a_quoted_delimiter_is_allowed_under_the_s
     assert judge(f"cat > {cwd}/notes.md <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
 
 
+def test_a_cat_path_heredoc_write_through_a_symlinked_cwd_escape_is_refused(main, tmp_path):
+    # Fix round 1, F2: _under_session_cwd used to compare LEXICALLY, where PR #477's bash
+    # resolves the target with `realpath -m --`. A real symlink under cwd pointing outside
+    # it let a quoted-delimiter heredoc write auto-approve a write far outside the session:
+    # `escape/pwned` lexically starts with cwd, but realpath resolves it through the
+    # symlink to a path that matches neither `cwd` nor `cwd/*`, and bash refuses it. roots=()
+    # is the same control as the test above, isolating this to the cwd arm alone.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    (cwd / "escape").symlink_to(outside)
+    assert not judge("cat > escape/pwned <<'EOF'\nhi\nEOF\n", main, (), str(cwd)).allow
+    assert not judge(f"cat > {cwd}/escape/.bashrc <<'EOF'\nhi\nEOF\n", main, (), str(cwd)).allow
+
+
 def test_a_heredoc_body_containing_rm_rf_root_on_its_own_line_is_not_split_into_segments(main):
     # The body writes inert text — it is never executed — so even a body that reads like a
     # dangerous command is safe to write, and this only reads allowed if the segmenter kept
@@ -572,12 +588,42 @@ def test_a_bare_safe_curl_is_now_reachable(main):
     assert allowed("curl http://127.0.0.1:8000/", main)
 
 
-def test_a_bare_readonly_ssh_is_now_reachable(main):
-    assert allowed("ssh daniel-server true", main)
+def test_a_bare_readonly_remote_command_is_now_reachable(main):
+    # Fix round 1, F4: `ssh daniel-server true` (the original fixture here) satisfies
+    # BOTH readonly_remote_safe (`true` is a REMOTE_READONLY_VERBS member) and
+    # trusted_host_safe (`daniel-server` is a TRUSTED_SSH_HOSTS member) at once, so
+    # deleting either check individually left this single fixture green -- the reviewer
+    # mutation-proved it, 758 passed both ways. These two separate: neither host below is
+    # trusted_host_safe-eligible (`hl` takes no host at all; daniel-box is not in
+    # TRUSTED_SSH_HOSTS), so only readonly_remote_safe can be reaching them.
+    assert allowed("hl uptime", main)
+    assert allowed("ssh daniel-box uptime", main)
+
+
+def test_a_bare_trusted_host_command_is_now_reachable(main):
+    # The other half of F4's separation: `touch` is not in REMOTE_READONLY_VERBS, so only
+    # trusted_host_safe (daniel-server is TRUSTED_SSH_HOSTS) can be reaching this one.
+    assert allowed('ssh daniel-server "touch /tmp/pwned"', main)
 
 
 def test_a_bare_readonly_ansible_check_is_now_reachable(main):
     assert allowed("ansible-playbook site.yml --check", main)
+
+
+def test_ansible_check_survives_the_stdio_blocking_prefix_and_trailing_tail_pipe(main):
+    # Fix round 1, F6: fixed by F0, verified here rather than patched separately. Before
+    # F0, these were judged per-SEGMENT (judge()'s own segmenter splits the `| tail -3`
+    # away from the `2>&1` ahead of it, leaving a bare `2>&1` that ansible_readonly_safe's
+    # `_TRAILING` regex cannot match — it needs the pipe attached). The whole-command arm
+    # hands ansible_readonly_safe the UNSPLIT command, exactly where its own leading/
+    # trailing strips (stdio-blocking.py's fixup prefix, the tail-bounding suffix) expect
+    # to find them. Both are the plan's named live production shape.
+    assert allowed(
+        "stdio-blocking; uv run ansible-playbook ansible/deploy.yml --tags karakeep --check"
+        " 2>&1 | tail -3",
+        main,
+    )
+    assert allowed("ansible-playbook site.yml --check 2>&1 | tail -3", main)
 
 
 def test_a_bare_clean_git_reset_hard_is_now_reachable(main, tmp_path):

@@ -40,9 +40,24 @@ ALLOW_JSON = (
     '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
 )
 # The deployed hooks this one shadows, in registration order (settings.base.json,
-# PermissionRequest). allow-readonly-remote.sh and allow-daniel-server.sh are not ported in
-# this slice and are not compared.
-BASH_CHAIN = ("allow-compound-bash.sh", "allow-safe-curl.sh", "allow-safe-rm.sh")
+# PermissionRequest). Fix round 1, F3: allow-readonly-remote.sh, allow-daniel-server.sh
+# and allow-ansible-readonly.sh were missing here even though judge() has ported all
+# three (Task 7) — judge() already allowed a remote/ansible command on its own, but no
+# member of this 3-entry list would ever allow one, so every such command's shadow
+# record read `python_only` (summarize()'s bucket for "python allowed, bash didn't") —
+# an artefact of this list being incomplete, never a real python/bash disagreement.
+# `replay --compare-hooks` has the identical gap: it asks compound-bash/curl/rm whether
+# they agree and never the hook that would actually allow the command. allow-clean-reset.sh
+# stays OUT: #474 is unmerged, so it is not deployed and has no bash oracle to compare
+# clean_reset_safe against.
+BASH_CHAIN = (
+    "allow-compound-bash.sh",
+    "allow-safe-curl.sh",
+    "allow-safe-rm.sh",
+    "allow-readonly-remote.sh",
+    "allow-daniel-server.sh",
+    "allow-ansible-readonly.sh",
+)
 LOG_NAME = "claude-guard-shadow.jsonl"
 _HOOK_TIMEOUT = 3.0
 
@@ -63,8 +78,15 @@ def read_command(stdin_text: str) -> str | None:
 
 def read_cwd(stdin_text: str) -> str:
     """The session's cwd (the hook JSON's top-level `.cwd`), or "" when absent or the
-    payload doesn't parse — "" is judge()'s own fall-through for git_reset/heredoc-write
-    cwd confinement, never mistaken for a real path."""
+    payload doesn't parse.
+
+    Fix round 1, F1: "" is NOT judge()'s own fall-through for a real path — `git -C ""`
+    is a documented no-op that silently probes the hook PROCESS's own cwd, which is
+    exactly the fail-open this correction closes. clean_reset_safe and
+    _under_session_cwd now refuse outright on a falsy cwd, so "" reaching them from here
+    reads as "no opinion", never as the process's own directory standing in for the
+    session's.
+    """
     try:
         data = json.loads(stdin_text)
     except ValueError:

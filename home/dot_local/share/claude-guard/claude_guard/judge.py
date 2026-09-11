@@ -8,11 +8,22 @@ order, with the bash line cited beside it. This is a PORT: PR #477's three rules
 newline judged like `;`, a quoted-delimiter `cat > path` heredoc write (both the
 scratch-root AND the session-cwd confinement arms), and `VAR=`/`set -` stripping — are
 ported here, plus D2's removal of the not-compound early return (see the marker at its old
-site) and the four new checks — `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
-`ansible.ansible_readonly_safe`, `git_reset.clean_reset_safe` — wired in alongside the
-pre-existing `curl`/`scratch` delegation.
+site).
+
+Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
+`ansible.ansible_readonly_safe` and `git_reset.clean_reset_safe` are STANDALONE
+PermissionRequest hooks in the deployed chain (allow-readonly-remote.sh,
+allow-daniel-server.sh, allow-ansible-readonly.sh, allow-clean-reset.sh) — they are never
+delegated to from inside allow-compound-bash.sh's own segment loop, which only ever calls
+out to curl and rm (:115-120, :128-133). So they are wired in `judge()` below as
+whole-command arms tried against the untouched `command`, not inside `judge_segment` — the
+faithful port is a union: the bash chain allows C when allow-compound-bash.sh allows C OR
+any one of these standalone hooks allows C, regardless of what the segment loop on its own
+concludes. curl and rm stay exactly where they were: they ARE delegated to from inside
+allow-compound-bash.sh's own loop, so they stay a `judge_segment` arm alongside `scratch`.
 """
 
+import os
 import re
 from dataclasses import dataclass
 
@@ -59,16 +70,29 @@ def heredoc_write_target(text: str) -> str | None:
 def _under_session_cwd(path: str, cwd: str) -> bool:
     """PR #477's heredoc_write_ok, the cwd arm (:169-194, cwd branch :183-191): the path a
     quoted-delimiter heredoc write targets is ALSO safe when it resolves under the
-    session's own `cwd`, not only under a scratch root. Judged lexically, the same posture
-    as under_scratch (scratch.py): `..`, a leading `~`, or a leading `$` refuse outright,
-    before either confinement arm is tried in the bash — mirrored here even though
-    rm_confined's own tokenizer already refuses `~` and `$` for the scratch-root arm, since
-    this arm can be reached on its own when the scratch check fails.
+    session's own `cwd`, not only under a scratch root. `..`, a leading `~`, or a leading
+    `$` refuse outright, before either confinement arm is tried in the bash — mirrored here
+    even though rm_confined's own tokenizer already refuses `~` and `$` for the
+    scratch-root arm, since this arm can be reached on its own when the scratch check fails.
+
+    Fix round 1, F2: unlike `under_scratch` (scratch.py), which judges purely lexically,
+    this function resolves the TARGET with `os.path.realpath` (default `strict=False`,
+    same as bash's `realpath -m --`) and compares it against the RAW `cwd` string,
+    unresolved. That asymmetry is the bash's own (:183-191: `real=$(realpath -m -- "$p")`
+    compared against the literal `"$CWD"`/`"$CWD"/*`), and it is deliberate, not an
+    oversight to "fix" by resolving both sides: resolving `cwd` too would allow strictly
+    MORE than the bash whenever the session cwd itself has a symlink component. Lexical
+    comparison on the target alone is a fail-open — with cwd `/tmp/proj` holding a symlink
+    `escape -> /home/ubuntu`, the lexical form of `escape/.bashrc` starts with
+    `/tmp/proj/escape`, so it read as confined, while bash resolves it to
+    `/home/ubuntu/.bashrc`, which matches neither `"$CWD"` nor `"$CWD"/*`, and refuses. A
+    quoted-delimiter heredoc write to `escape/.bashrc` auto-approved a write outside the
+    session under the old lexical check; it does not under this one.
     """
     if not cwd or ".." in path or path.startswith("~") or path.startswith("$"):
         return False
-    real = path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}"
-    real = real.rstrip("/") or "/"
+    candidate = path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}"
+    real = os.path.realpath(candidate)
     base = cwd.rstrip("/") or "/"
     return real == base or real.startswith(base + "/")
 
@@ -303,21 +327,21 @@ def judge_segment(part: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> 
         if ffref and not ffref.startswith("-") and not re.search(r"\s", ffref):
             return True, "ff-only"
 
-    # :343-357. A provably-safe curl, a confined rm, a provably read-only remote command
-    # (ssh/hl), a trusted-host ssh hop, a read-only ansible-playbook invocation, or a clean
-    # `git reset --hard origin/master|main` each resolve their own ask rule. After deny,
-    # before ask: where the standalone hooks they port sit relative to this one.
+    # :343-348,:353. A provably-safe curl or a confined rm each resolve their own ask
+    # rule. These two, and only these two, are delegated to from inside
+    # allow-compound-bash.sh's own per-segment loop (safe_curl_ok/safe_rm_ok), so they stay
+    # a judge_segment arm. The other three standalone-hook ports (remote/ansible/git-reset)
+    # moved to whole-command arms in judge() (fix round 1, F0) — they were never delegated
+    # to from inside this loop in the bash either, so wiring them here let a segment inside
+    # a chain (e.g. `cd /tmp && git reset --hard origin/master`) earn a grace the bash
+    # standalone hook only ever gives a command that is its own entire, single-segment
+    # local invocation. After deny, before ask: where allow-safe-curl.sh/allow-safe-rm.sh
+    # sit relative to this hook.
     word = _basename(_first_word(part))
     if word == "curl" and curl_safe(part):
         return True, "curl-check"
     if word == "rm" and rm_confined(part, roots):
         return True, "rm-check"
-    if word in ("ssh", "hl") and (readonly_remote_safe(part) or trusted_host_safe(part)):
-        return True, "remote-check"
-    if word in ("ansible-playbook", "uv") and ansible_readonly_safe(part):
-        return True, "ansible-check"
-    if word == "git" and clean_reset_safe(part, cwd):
-        return True, "git-reset-check"
 
     # :359-363.
     if rules.asks(part):
@@ -354,6 +378,48 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     # were the standing `not-compound` bash_only row in the slice's shadow census (PR
     # #487). A command matching no check and no allow/deny/ask entry still returns "no
     # opinion" (segment:N:unlisted, below) — nothing here ever returns "deny".
+    #
+    # The reviewer enumerated what D2 newly allows that no bash hook allows, all measured
+    # (fix round 1, finding 7) — an expected widening, not a regression, for the
+    # post-cutover census to tell apart:
+    #   git merge --ff-only origin/main   the compound hook's ask-list carve-out (:324-328
+    #                                      below), now reachable bare
+    #   timeout 5 ls                      bare wrapper unwrapping (unwrap_wrapper)
+    #   FOO=bar git status                bare assignment stripping (_strip_assignments)
+    #   git status / ls -la               a bare allow-list match
+    #   a quoted-delimiter heredoc write   PR #477's own eligibility widening admits it too
+    # The dangerous populations stay closed: deny, ask, the whole-glob deny/ask check
+    # below, substitution, and the bare `&` separator all still run for a single segment,
+    # and a bare unlisted command still returns Decision(False, "segment:0:unlisted", …) —
+    # nothing here ever returns "deny".
+
+    # F0 (fix round 1, findings 3/6/7). readonly_remote_safe, trusted_host_safe,
+    # ansible_readonly_safe and clean_reset_safe port FOUR STANDALONE PermissionRequest
+    # hooks (allow-readonly-remote.sh, allow-daniel-server.sh, allow-ansible-readonly.sh,
+    # allow-clean-reset.sh) — none of them is delegated to from inside
+    # allow-compound-bash.sh's own segment loop (only curl and rm are, :115-120,
+    # :128-133), so they belong here, tried against the WHOLE, unsegmented `command` —
+    # the harness invokes each of the real standalone hooks against the full raw command
+    # the same way, independent of what allow-compound-bash.sh's own loop concludes. No
+    # `word == …` prefilter guards these calls: each check parses the whole command
+    # itself and is the one place that gets to decide whether it applies — a prefilter
+    # keyed on the chain's first segment (a segment-loop optimisation that does not
+    # transfer here) would skip e.g. clean_reset_safe on a command carrying an unrelated
+    # prefix. Each of the four already self-refuses a compound shape on its own terms —
+    # readonly_remote_safe and clean_reset_safe via segment.parse's own segment count,
+    # trusted_host_safe via its own local-split-risk character scan, ansible_readonly_safe
+    # via scratch.tokenize's special-character refusal — so e.g. `ssh daniel-server uptime
+    # && rm -rf /` cannot ride in on the first segment being provably read-only. curl and
+    # rm need no equivalent arm here: curl_safe/rm_confined tokenize the whole string the
+    # same way and already refuse a chain character, so for a bare, one-segment command
+    # the existing per-segment delegation in judge_segment below reaches the identical
+    # verdict a whole-command arm would — adding one would be a no-op.
+    if readonly_remote_safe(command) or trusted_host_safe(command):
+        return Decision(True, "remote-check", ())
+    if ansible_readonly_safe(command):
+        return Decision(True, "ansible-check", ())
+    if clean_reset_safe(command, cwd):
+        return Decision(True, "git-reset-check", ())
 
     # :277-281.
     if rules.whole_glob_defer(command):

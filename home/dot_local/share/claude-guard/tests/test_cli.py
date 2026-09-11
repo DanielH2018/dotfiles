@@ -253,6 +253,27 @@ def test_explain_names_the_refusing_segment(tmp_path):
     assert r.stdout.splitlines()[-1] == "decision: defer rule=segment:1:unlisted"
 
 
+def test_explain_cwd_flag_threads_into_the_git_reset_check(tmp_path):
+    # Fix round 1, F8: `grep -rn -- "--cwd" tests/` returned nothing before this. `--cwd`
+    # is the only way a subprocess-driven `explain` call can exercise a cwd-sensitive
+    # check at all, so without this test the flag's wiring (cli.py's cmd_explain reading
+    # args.cwd rather than always falling back to os.getcwd()) could silently break.
+    from test_git_reset import _make_repo
+
+    home = home_with_allow(tmp_path, "Bash(ls:*)")
+    work = _make_repo(tmp_path)
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+
+    clean = run_home(home, "explain", "--cwd", work, "git reset --hard origin/master")
+    assert clean.stdout.splitlines()[-1] == "decision: allow rule=git-reset-check"
+
+    elsewhere = run_home(
+        home, "explain", "--cwd", str(not_a_repo), "git reset --hard origin/master"
+    )
+    assert elsewhere.stdout.splitlines()[-1] == "decision: defer rule=segment:0:unlisted"
+
+
 def test_replay_judge_prints_the_allowed_commands_and_the_count(tmp_path):
     home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
     corpus = tmp_path / "c.jsonl"

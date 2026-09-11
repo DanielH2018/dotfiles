@@ -166,3 +166,15 @@ def test_git_status_nonzero_exit_yields_no_opinion(tmp_path, monkeypatch):
 @pytest.mark.parametrize("bad_cwd", ["", None])
 def test_empty_or_falsy_command_is_refused(bad_cwd):
     assert clean_reset_safe("", bad_cwd or "") is False
+
+
+def test_an_empty_or_relative_cwd_is_refused_even_with_a_real_reset_command():
+    """Fix round 1, F1 red-proof. The parametrize above pairs a falsy cwd only with an
+    EMPTY command, which short-circuits at the `if not command` guard before cwd is ever
+    read -- so it could never have caught this. `git -C ""` is a documented no-op: it
+    silently probes the hook process's OWN cwd rather than refusing, and a relative cwd
+    makes `_git`'s non-absolute gitdir branch build a path relative to nothing real
+    either. Both must read "no opinion", not fall through to whatever happens to be at
+    the process's own cwd or a relative lookup."""
+    assert clean_reset_safe("git reset --hard origin/master", "") is False
+    assert clean_reset_safe("git reset --hard origin/master", "relative/path") is False

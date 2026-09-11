@@ -75,7 +75,18 @@ def clean_reset_safe(command: str, cwd: str) -> bool:
     substitution, an in-progress rebase/merge/cherry-pick, a dirty tree, or any failure of
     the git probes themselves (:96-97, :104), the same fall-through as the bash's
     unconditional `exit 0`.
+
+    Fix round 1, F1: a falsy or non-absolute `cwd` is refused here, before anything else
+    runs. `git -C ""` is a documented no-op — it silently probes the HOOK PROCESS's own
+    cwd, not the session's, and `"" + "/" + ".git"` (below) can never find a
+    MERGE_HEAD/CHERRY_PICK_HEAD marker, disabling the rebase/merge/cherry-pick guard
+    outright. DECIDED: unlike allow-clean-reset.sh:46-47 (`CWD=$(hook_field '.cwd //
+    ""'); [[ -z $CWD ]] && CWD=$PWD`), this does NOT fall back to the process's own cwd —
+    fail-closed is the right posture for a security gate's fall-through, even diverging
+    from the bash it ports.
     """
+    if not cwd or not cwd.startswith("/"):
+        return False
     if not command:
         return False
 

@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_git_reset import _make_repo
 
 from claude_guard import hook
 from claude_guard.deny import NONE, Verdict
@@ -25,6 +26,7 @@ from claude_guard.hook import (
     permission_request,
     pre_tool_use,
     pre_tool_use_json,
+    read_cwd,
     shadow_mode,
     summarize,
     summarize_deny,
@@ -93,6 +95,37 @@ def test_malformed_or_command_less_stdin_is_no_decision(tmp_path):
     assert permission_request(json.dumps({"tool_input": {}}), env) is None
     assert permission_request(json.dumps({"tool_input": {"command": 5}}), env) is None
     assert permission_request("", env) is None
+
+
+# --- cwd threading (fix round 1, F5) ----------------------------------------------------------
+#
+# `grep -rn "read_cwd" tests/` returned nothing before this: the entire production cwd
+# threading (hook.py's read_cwd, and permission_request passing it into decide()) could be
+# deleted unnoticed. Mutating hook.py's read_cwd to always return "" must turn this red.
+
+
+def test_read_cwd_extracts_the_top_level_cwd():
+    assert read_cwd(json.dumps({"cwd": "/home/testuser/proj", "tool_input": {}})) == (
+        "/home/testuser/proj"
+    )
+
+
+def test_read_cwd_is_empty_on_a_missing_key_a_non_dict_payload_or_unparseable_json():
+    assert read_cwd(json.dumps({"tool_input": {"command": "ls"}})) == ""
+    assert read_cwd(json.dumps([1, 2, 3])) == ""
+    assert read_cwd("{ not json") == ""
+
+
+def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path):
+    # A real, clean repo makes `git reset --hard origin/master` allow ONLY when the hook
+    # actually read `.cwd` off the stdin payload and passed it through decide()/judge() to
+    # clean_reset_safe -- a `cwd = ""` mutation at hook.py's read_cwd call site would make
+    # this refuse instead (F1 now refuses "" outright, rather than silently probing the
+    # hook process's own cwd the way it used to).
+    home = home_with(tmp_path)
+    work = _make_repo(tmp_path)
+    stdin = json.dumps({"tool_input": {"command": "git reset --hard origin/master"}, "cwd": work})
+    assert permission_request(stdin, env_for(home, CLAUDE_GUARD_SHADOW="0")) == ALLOW_JSON
 
 
 # --- the env contract ----------------------------------------------------------------------
