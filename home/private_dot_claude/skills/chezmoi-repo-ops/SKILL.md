@@ -78,7 +78,8 @@ Never take the gate's own `git push --no-verify` suggestion — it bypasses the 
   hooks, agents, skills, `CLAUDE.md`) and needs acknowledging:
   `cd <repo-or-worktree> && node bin/config-soak land`, then commit the updated
   `config-soak.json`. The ledger is anchored to the script's own location, so a worktree must run
-  its own copy; that compound form is the shape `allow-compound-bash.sh` auto-approves.
+  its own copy; that compound form is the shape `guard-permission-request.sh` (claude_guard's
+  judge) auto-approves.
 
 ## Touching an extensionless script
 

@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "511edb0435a11ab1a77ca2d3985d35cb0270c6daaf77deaf51f4fbfd5618f39f",
-      "landed": "2026-09-14T15:48:15.208Z"
+      "hash": "fe884f925c48e0f8c2ec6a9081836950264b7acf85a0be335d2c1d669282cb32",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -67,36 +67,6 @@
       "landed": "2026-08-29T19:12:56.399Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_allow-ansible-readonly.sh",
-      "hash": "1c41761dec89dff3e16b84984a20cd96077dbd602225d5d909ac46ec058301e0",
-      "landed": "2026-09-10T01:03:07.634Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_allow-compound-bash.sh",
-      "hash": "ada1a08d12d989de6423d33166ecdfb42d28b9862655438b35a36175f9650d8c",
-      "landed": "2026-09-16T18:36:46.922Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_allow-daniel-server.sh",
-      "hash": "0cd5f81191f4eb30c690550ecbf7abc7c13c9e5126febc2c775ded11c9c33a90",
-      "landed": "2026-08-15T14:30:21.828Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_allow-readonly-remote.sh",
-      "hash": "b697577abfeb32b8a9bb2ad56b407a5e987a9066d9d8bb760d32706aea6a6061",
-      "landed": "2026-08-07T13:10:46.389Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_allow-safe-curl.sh",
-      "hash": "0c567ec1fbaa9a8acd97466e0ac6d88529d072c8e847324951f1e8497b5bcbc6",
-      "landed": "2026-08-15T14:30:21.828Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_allow-safe-rm.sh",
-      "hash": "6dc362093667acdc1f9f53397a9a93e6fad66a18aa012fd61645092a8ceca54f",
-      "landed": "2026-08-21T13:36:17.160Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
       "hash": "2818281ec1fc5ab3062ed26aa30de4aeb22ca5329627ebc0e63a8a6c87d7567a",
       "landed": "2026-08-18T13:48:56.002Z"
@@ -123,8 +93,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "ca659c559198e437255e6d8625ed445324694c175dec04df66927b79127ab415",
-      "landed": "2026-09-10T03:24:24.256Z"
+      "hash": "3d811b2cb580fad88de496af996591f64bcbaa1239cf2bd79f1b2f4054d0a0bc",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -148,13 +118,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_cmdparse.sh",
-      "hash": "a5f43e2546b32da91fe2f7d2d4583eb0246e4f0a5d643ee73e872971f49a3ae4",
-      "landed": "2026-08-06T21:58:19.622Z"
+      "hash": "a7c6fdabccc5829f7dfbefa2f5fd357026a56c2557255f9a8ceb364b49d7a0fd",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
-      "hash": "4fb249f6b8cd93a0115c911fd2a9cc1467c7519be0c299c297dce1d01d5167bf",
-      "landed": "2026-09-09T22:39:45.424Z"
+      "hash": "c4ed0b1c6f902bb91b5390ed3447cf5e3cccaab41cb153c10ee7b384efdeac93",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
@@ -478,8 +448,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/chezmoi-repo-ops/SKILL.md",
-      "hash": "7024c0fac090bd258fefd79f464bf44ea70dad548b04fb94c50165a12e6ed0eb",
-      "landed": "2026-08-07T17:22:18.929Z"
+      "hash": "65c77e0ec31660b51d5893cbe02560556c865a7015048ae7ca9f3046d3a4b783",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
@@ -553,8 +523,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/homelab/SKILL.md",
-      "hash": "85b9645719b35766771c9a925a41c386abe687ab4373556d41e1881eb76bb229",
-      "landed": "2026-08-02T21:17:22.436Z"
+      "hash": "2a80663710e81375fb7547f5a919d800db9cdae99321afe3d1a787ed0161b541",
+      "landed": "2026-09-17T00:47:57.053Z"
     },
     {
       "path": "home/private_dot_claude/skills/learning-digest/SKILL.md",

@@ -1,9 +1,14 @@
 # claude-guard
 
 One Python package for Claude Code Bash permission decisions. Slice 1 shipped the segmenter
-and the CLI; slice 2 ships the settings loader, the compound judge, the scratch-rm and safe-curl
-checks, and the PermissionRequest hook in shadow. The deny rules and the cutover are later
-slices of the spec in `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
+and the CLI; slice 2 shipped the settings loader, the compound judge, the scratch-rm and
+safe-curl checks, and the PermissionRequest hook in shadow; slice 3 ported the remaining
+PermissionRequest hooks (readonly-remote, daniel-server host trust, ansible-readonly, plus
+#474's clean-reset and #477's compound-bash rule changes), adopted the spec's single-segment
+judging, and cut the hook over to live — `guard-permission-request.sh` is now the sole
+decision for Bash PermissionRequest, and the six bash hooks it replaces are deleted. The deny
+rules and their own cutover are slice 4 of the spec in
+`docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
 
 ## The segmenter's contract
 
@@ -27,52 +32,46 @@ on both sides.
 
 ## The judge
 
-`claude_guard.judge.judge(command, rules, roots)` is `allow-compound-bash.sh`'s decision,
-ported line for line. It allows a chain when every segment is allow-listed or passes a check
+`claude_guard.judge.judge(command, rules, roots, cwd)` is `allow-compound-bash.sh`'s decision,
+ported line for line, plus the standalone PermissionRequest hooks it never delegated to (the
+four whole-command checks below) and the spec's "a single segment is judged like a chain"
+decision: a bare command reaches the same checks a chained one does rather than returning
+`not-compound`. It allows a chain when every segment is allow-listed or passes a check
 (`checks/scratch.py` for a confined `rm`, `checks/curl.py` for a plain GET/HEAD against an
-allowlisted host, the `git merge --ff-only <ref>` exception) and no segment matches deny or
-ask. A command containing none of `&&`, `;`, `|` gets no decision, as today. `rules.py` reads
-the deployed settings with the scope asymmetry the bash documents: allow from
-`~/.claude/settings.json` alone, deny and ask from that file plus the project's
-`.claude/settings.json` and `settings.local.json`.
+allowlisted host, the `git merge --ff-only <ref>` exception), and no segment matches deny or
+ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remote_safe()` /
+`trusted_host_safe()`, `checks/ansible.py`'s `ansible_readonly_safe()`, or
+`checks/git_reset.py`'s `clean_reset_safe()`. `rules.py` reads the deployed settings with the
+scope asymmetry the bash documents: allow from `~/.claude/settings.json` alone, deny and ask
+from that file plus the project's `.claude/settings.json` and `settings.local.json`.
 
     claude-guard explain 'git status && timeout 5 ls'      # segments, then the decision and rule
 
-## The hook, and shadow mode
+## The hook, live
 
 `~/.claude/hooks/guard-permission-request.sh` runs `claude-guard permission-request` on the
-PermissionRequest event. Cannot run or cannot parse → it prints nothing and the prompt stands.
+PermissionRequest event and is the sole decision for Bash PermissionRequest: it computes
+`judge()`'s verdict and allows, or stays silent and the prompt stands. Cannot run or cannot
+parse → it prints nothing and the prompt stands, the same failure contract it had in shadow.
 
-The hook runs in shadow unless `CLAUDE_GUARD_SHADOW` is set to exactly `"0"` (`settings.json`'s
-`env` sets it to `1`, and the shim also defaults it to `1`, so absent, misspelled, or any
-other truthy-looking value all stay in shadow — only an exact `"0"` goes live). In shadow it
-decides nothing: it computes its verdict, runs the three bash hooks it will replace on the
-same stdin, and appends one line to `~/.claude/logs/claude-guard-shadow.jsonl`:
+The hook goes live when `CLAUDE_GUARD_SHADOW` is exactly `"0"` — `settings.json`'s `env` sets
+it, and the shim's own default matches, so a stale `settings.json` that lost the key fails
+toward live rather than toward a shadow mode whose bash chain no longer exists to compare
+against (see `guard-permission-request.sh`'s own comment for why that direction is the safe
+one post-cutover). Any other value still computes the verdict and would log it to
+`~/.claude/logs/claude-guard-shadow.jsonl` for comparison against a bash chain, but the six
+bash hooks it shadowed (`allow-compound-bash.sh`, `allow-readonly-remote.sh`,
+`allow-safe-curl.sh`, `allow-safe-rm.sh`, `allow-ansible-readonly.sh`,
+`allow-daniel-server.sh`) are deleted, so that comparison has nothing left to run.
 
-    {"bash": "allow", "bash_hook": "allow-compound-bash.sh", "cmd_sha": "…16 hex…",
-     "python": "allow", "rule": "allow", "ts": "2026-09-06T12:00:00Z"}
-
-An exception raised while computing the verdict still leaves a record rather than vanishing:
-`"python": "error", "rule": "exception"`, never the exception text. The command itself is
-never written. `CLAUDE_GUARD_SHADOW_SAMPLE=N` samples the log write 1-in-N; it never changes
-what is decided.
-
-    claude-guard shadow-report                              # agree / python-only / bash-only / python-error, and the rules
+    claude-guard shadow-report                              # historical: the pre-cutover agreement record
     claude-guard replay commands.jsonl --judge               # allow count and the allowed commands
     claude-guard replay commands.jsonl --judge --compare-hooks ~/.claude/hooks
-                                                            # agreement with the bash chain per record
+                                                            # agreement with whatever bash hooks remain in the dir
 
-The cutover to slice 3 needs `shadow-report` to show at least 200 records collected over at
-least 3 days, with zero `python_only`, zero `python_error`, and no `bash_only` row whose
-rule is anything but `not-compound`. An empty log satisfies none of this — no records is not
-the same claim as agreement.
-
-`not-compound` is the one expected `bash_only`. `judge()` ports `allow-compound-bash.sh`’s
-`:51-59` eligibility test, so it declines a single-segment command; the bash allows some of
-those through `allow-safe-rm.sh` and `allow-safe-curl.sh`, which judge a bare command. Slice 3
-adopts the spec’s “a single segment is judged like a chain” decision and the difference goes
-away. Until then the census scores it as a disagreement, so the floor names it rather than
-waiting on a row that cannot reach zero.
+The cutover gate (spec row 3) was `replay --judge --compare-hooks` allowing at least 84 of the
+prompted corpus — the floor set by what the #477 prototype allowed — checked against the
+pre-cutover bash chain before the six hooks were deleted.
 
 ## The deny rules, and their own shadow
 

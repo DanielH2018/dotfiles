@@ -4,8 +4,8 @@
 //   1. modify_settings.json.sh.tmpl refuses to generate from an uncommitted tree, so an
 //      unreviewable edit cannot become live policy;
 //   2. bin/config-soak requires review + `config-soak land` before a change ships;
-//   3. tests/hooks/allow-compound-bash.test.js and tests/secret-registry.test.js parse the
-//      permission rules out of the template text.
+//   3. tests/settings/settings-permissions-no-spawners.test.js and tests/secret-registry.test.js
+//      parse the permission rules out of the template text.
 //
 // Splitting the permission model out of settings.base.json turned that set from one file
 // into three, and every one of those gates fails SILENTLY when it stops seeing a file:
@@ -102,7 +102,7 @@ test('the rule-parsing tests read the template that actually holds the rules', (
 
   // Named by path rather than searched for: if one of them moves, this should fail and be
   // repointed, not quietly find nothing to check.
-  for (const t of ['../hooks/allow-compound-bash.test.js', '../secret-registry.test.js']) {
+  for (const t of ['settings-permissions-no-spawners.test.js', '../secret-registry.test.js']) {
     const abs = path.join(__dirname, t);
     assert.ok(fs.existsSync(abs), `${t} has moved — repoint this test at it`);
     assert.match(fs.readFileSync(abs, 'utf8'), /settings\.permissions\.json/,

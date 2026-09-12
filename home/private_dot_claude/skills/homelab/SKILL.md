@@ -28,9 +28,10 @@ Drop to `ssh` only when no tool covers it.
 
 ## Which ssh commands run without a prompt
 
-`ssh` sits in the permission `ask` list, but `allow-readonly-remote.sh` auto-approves a
-narrow allowlist of provably read-only verbs. Anything outside it still prompts — that is
-working as intended, not a failure. Broadly allowed:
+`ssh` sits in the permission `ask` list, but claude_guard's `readonly_remote_safe()` check
+(the claude-guard slice 3 port of `allow-readonly-remote.sh`) auto-approves a narrow
+allowlist of provably read-only verbs. Anything outside it still prompts — that is working as
+intended, not a failure. Broadly allowed:
 
 - **Host state** — `uptime`, `whoami`, `hostname`, `id`, `date`, `uname`, `df`, `free`, `du`,
   `ps`, `top`, `vmstat`, `iostat`, `lscpu`, `lsblk`, `lsof`, `dmesg`, `sensors`, `nvidia-smi`

@@ -305,11 +305,23 @@ def test_replay_judge_applies_the_records_cwd_as_the_project_scope(tmp_path):
     assert r.stdout.splitlines()[-1] == "ALLOW 0/1"
 
 
-@pytest.mark.skipif(
-    not (HOOKS_DIR / "executable_allow-compound-bash.sh").exists(),
-    reason="bash hooks not beside a deployed copy",
-)
 def test_replay_compare_hooks_reports_agreement_with_the_bash_chain(tmp_path):
+    # claude-guard slice 3 cutover deleted every BASH_CHAIN member from the deployed hooks
+    # directory, so a hooks_dir built from HOOKS_DIR answers "none" for every record forever
+    # -- not a transient "not beside a deployed copy" gap a skipif could wait out. A fake
+    # chain (same idiom as test_replay_compare_hooks_exits_nonzero_on_a_mismatch below) is
+    # the only way left to prove --compare-hooks's AGREE path, which is still live: it takes
+    # a caller-supplied hooks directory, not the deployed one.
+    fake = tmp_path / "hooks"
+    fake.mkdir()
+    (fake / "allow-compound-bash.sh").write_text(
+        "#!/bin/bash\n"
+        'read -r line; case "$line" in\n'
+        '  *"ls; pwd"*) printf \'{"decision":{"behavior":"allow"}}\\n\' ;;\n'
+        "  *) ;;\n"
+        "esac\n"
+    )
+    (fake / "allow-compound-bash.sh").chmod(0o755)
     home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
     corpus = tmp_path / "c.jsonl"
     corpus.write_text(
@@ -318,7 +330,7 @@ def test_replay_compare_hooks_reports_agreement_with_the_bash_chain(tmp_path):
         + json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"})
         + "\n"
     )
-    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(HOOKS_DIR))
+    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(fake))
     assert r.returncode == 0, r.stderr + r.stdout
     assert r.stdout.splitlines()[-1] == "AGREE 2/2"
 

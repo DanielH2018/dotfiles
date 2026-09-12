@@ -6,7 +6,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
-const ACB = path.join(HOOKS, 'executable_allow-compound-bash.sh');
 const BDB = path.join(HOOKS, 'executable_block-dangerous-bash.sh');
 // In the source tree the library is still `executable_cmdparse.sh`; chezmoi drops the prefix
 // on apply, so the hooks' default sibling path is the deployed one. CMDPARSE_LIB is the seam
@@ -100,7 +99,6 @@ test('an early deny still censuses the family the whole-string rules missed', ()
 
 test('shadow is off unless CMDPARSE_SHADOW=1, and writes nothing when off', () => {
   const d = logDir('off');
-  run(ACB, 'echo hi && ls', { CLAUDE_SHADOW_LOG_DIR: d });
   run(BDB, 'echo hi && ls', { CLAUDE_SHADOW_LOG_DIR: d });
   assert.deepStrictEqual(readLog(d), []);
 });
@@ -108,7 +106,7 @@ test('shadow is off unless CMDPARSE_SHADOW=1, and writes nothing when off', () =
 // CMDPARSE=off is the per-slice rollback named in the spec's rollback section.
 test('CMDPARSE=off disables the shadow even with CMDPARSE_SHADOW=1', () => {
   const d = logDir('killswitch');
-  run(ACB, 'echo hi && ls', { CMDPARSE_SHADOW: '1', CMDPARSE: 'off', CLAUDE_SHADOW_LOG_DIR: d });
+  run(BDB, 'echo hi && ls', { CMDPARSE_SHADOW: '1', CMDPARSE: 'off', CLAUDE_SHADOW_LOG_DIR: d });
   assert.deepStrictEqual(readLog(d), []);
 });
 

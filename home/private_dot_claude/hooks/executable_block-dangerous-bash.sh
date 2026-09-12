@@ -618,9 +618,10 @@ deny() {
 # over ssh what it's denied locally. Deploys are unaffected: they carry no literal
 # sudo (ansible uses become: internally). mkfs/dd/terraform/fork-bomb are already
 # caught whole-string below; this closes only the quoting/prefix-match gaps.
-# `hl` is covered too: allow-readonly-remote.sh auto-approves read-only `hl` verbs and
-# leans on this block as its deny backstop, but the backstop only ever matched `ssh`,
-# so a destructive `hl` payload degraded from denied to merely prompted.
+# `hl` is covered too: claude_guard's readonly_remote_safe() (the claude-guard slice 3 port
+# of allow-readonly-remote.sh, now deleted) auto-approves read-only `hl` verbs and leans on
+# this block as its deny backstop, but the backstop only ever matched `ssh`, so a destructive
+# `hl` payload degraded from denied to merely prompted.
 # The anchor itself, and why it is anchored, are defined near the top of the file.
 if bdb_rei "$BDB_SCANSET" "$SSH_AT_RE"; then
   # SCAN already stripped quotes and collapsed newline/tab/backslash, so payload

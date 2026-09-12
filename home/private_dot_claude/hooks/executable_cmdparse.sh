@@ -2,11 +2,13 @@
 # shellcheck shell=bash
 # cmdparse.sh — one decomposition of a Bash command, shared by every guard that judges one.
 #
-# Three hooks decide on each Bash tool call: block-dangerous-bash.sh (PreToolUse),
-# allow-compound-bash.sh and allow-readonly-remote.sh (PermissionRequest). Each carries its
-# own idea of where one command ends and the next begins, and the differences are where the
-# bypasses live. Two verified this session, both from the same root cause — a newline is not
-# a separator to any of them:
+# block-dangerous-bash.sh (PreToolUse) sources this library today; allow-compound-bash.sh and
+# allow-readonly-remote.sh (PermissionRequest) did too until claude-guard's slice 3 cutover
+# ported both to claude_guard.judge and deleted them. What follows is the history that
+# motivated writing a shared library in the first place: each of the three hooks had its own
+# idea of where one command ends and the next begins, and the differences were where the
+# bypasses lived. Two verified in that session, both from the same root cause — a newline was
+# not a separator to any of them:
 #
 #   printf 'echo x\nterraform destroy'   -> no decision   (`echo x; terraform destroy` denies)
 #   printf 'echo x\nssh homelab reboot'  -> no decision   (`echo x && ssh …` denies)

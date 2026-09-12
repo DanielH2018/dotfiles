@@ -273,18 +273,22 @@ test('every Notification matcher names a real notification type', { skip }, () =
   }
 });
 
-// claude-guard slice 2: the Python PermissionRequest hook runs beside the bash hooks it
-// shadows, and the env block keeps it in shadow. Slice 3 changes all three assertions in
-// one PR; until then, losing any one of them is a half-cutover.
-test('claude-guard runs beside the bash PermissionRequest hooks, in shadow', { skip }, () => {
+// claude-guard slice 3 cutover: guard-permission-request.sh is now the sole decision for
+// Bash PermissionRequest and CLAUDE_GUARD_SHADOW is live. This is the red-proof for the
+// cutover: it must fail if any of the six bash hooks it replaces is still registered, and
+// it must fail if the env var is anything but exactly "0" (see
+// docs/plans/2026-09-11-claude-guard-slice-3-cutover.md, Task 8).
+test('claude-guard is the sole Bash PermissionRequest decision, live', { skip }, () => {
   const s = JSON.parse(render());
   const entry = s.hooks.PermissionRequest.find((e) => e.matcher === 'Bash');
   const cmds = entry.hooks.map((h) => h.command);
   assert.ok(cmds.includes('~/.claude/hooks/guard-permission-request.sh'), cmds.join(', '));
-  for (const shadowed of ['allow-compound-bash.sh', 'allow-safe-rm.sh', 'allow-safe-curl.sh']) {
-    assert.ok(cmds.includes(`~/.claude/hooks/${shadowed}`), `${shadowed} still registered`);
+  const removed = ['allow-compound-bash.sh', 'allow-readonly-remote.sh', 'allow-safe-curl.sh',
+    'allow-safe-rm.sh', 'allow-ansible-readonly.sh', 'allow-daniel-server.sh'];
+  for (const gone of removed) {
+    assert.ok(!cmds.includes(`~/.claude/hooks/${gone}`), `${gone} is still registered`);
   }
-  assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '1');
+  assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '0');
 });
 
 // claude-guard slice 4: the Python PreToolUse hook runs beside block-dangerous-bash.sh, in

@@ -111,19 +111,23 @@
          CMDPARSE=off remains the harder kill switch: it disables the shared parser
          everywhere, not just the census. */}}
     "CMDPARSE_SHADOW_SAMPLE": "10",
-    {{/* claude-guard shadow (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 2).
-         guard-permission-request.sh is registered beside the bash PermissionRequest hooks
-         below. With this set to 1 it computes its verdict, runs allow-compound-bash.sh,
-         allow-safe-rm.sh and allow-safe-curl.sh on the same stdin, appends one hashed line
-         to ~/.claude/logs/claude-guard-shadow.jsonl, and decides NOTHING. Read the log with
-         `claude-guard shadow-report`. Slice 3 sets this to 0 and removes the three bash
-         hooks in the same PR; hook.py itself treats every value except exactly `0` as
-         shadow, and the shim's own default of 1 is a second belt, so a stale
-         settings.json cannot run it live. CLAUDE_GUARD_SHADOW_SAMPLE=N would sample
-         the log write 1-in-N; unset, every call logs, which is what the slice-3 cutover
-         floor wants (shadow-report: at least 200 records over at least 3 days, zero
-         python_only/bash_only/python_error rows). */}}
-    "CLAUDE_GUARD_SHADOW": "1",
+    {{/* claude-guard LIVE (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 3).
+         guard-permission-request.sh below is now the decision for Bash PermissionRequest:
+         it computes judge()'s verdict and either allows or leaves the prompt standing.
+         Slice 3 cut over here -- set to exactly "0" -- and in the same change removed the
+         six bash hooks it replaces (allow-compound-bash.sh, allow-readonly-remote.sh,
+         allow-safe-curl.sh, allow-safe-rm.sh, allow-ansible-readonly.sh,
+         allow-daniel-server.sh). hook.py treats every value except exactly "0" as shadow,
+         and guard-permission-request.sh's own default is "1" (shadow) for the same
+         reason: the shim's default is a second belt, so a stale settings.json that lost
+         this key cannot run the hook live by accident -- it falls back to shadow, where a
+         missing decision is silent rather than a surprise auto-approve. Exit gate that
+         cleared before this flip: `replay --judge --compare-hooks` allowed at least 84 of
+         the prompted corpus (the #477 prototype's floor). Read `claude-guard shadow-report`
+         for the historical agreement record; going forward it reports only the Python's
+         own verdicts, a different question from agreement, now that there is no bash
+         chain left to compare against live. */}}
+    "CLAUDE_GUARD_SHADOW": "0",
     {{/* claude-guard DENY shadow (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 4).
          guard-pre-tool-use.sh is registered beside block-dangerous-bash.sh in the PreToolUse
          Bash block below. With this set to 1 it computes deny.py's verdict, runs
@@ -535,88 +539,20 @@
       {
         "matcher": "Bash",
         "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-compound-bash.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-readonly-remote.sh",
-            "timeout": 10
-          },
-          {{/* Same shape as allow-readonly-remote.sh, for the other ask-listed command
-               that takes an arbitrary target: auto-approves a plain GET/HEAD curl against
-               loopback or one of the three LAN hosts. The option table is an allowlist, so
-               an unnamed option is not a decision and the Bash(curl:*) ask rule stands. */}}
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-safe-curl.sh",
-            "timeout": 10
-          },
-          {{/* Same shape again, for the third ask-listed command that takes an arbitrary
-               target: auto-approves a delete whose every operand is provably below a
-               scratch root (/tmp, /var/tmp, ~/.claude/jobs, ~/.cache/claude), the root
-               itself excluded. Earned on volume — 51 of the 611 prompts on daniel-box in
-               the week to 2026-08-21. The option table is an allowlist and any `..`,
-               glob, substitution or relative path is a refusal, so the Bash(rm:*) ask
-               rule stands for everything this cannot prove. */}}
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-safe-rm.sh",
-            "timeout": 10
-          },
-          {{/* The Python port of the three hooks above, in SHADOW: it logs what it would
-               have decided and decides nothing (env.CLAUDE_GUARD_SHADOW above). It stays
-               beside them until shadow-report shows at least 200 records collected over at
-               least 3 days, with zero python_only, zero python_error, and no bash_only row
-               whose rule is anything but not-compound (that one is slice 3’s own
-               single-segment change showing up early, and cannot reach zero before
-               the cutover makes it) — an empty log satisfies none of this; then slice 3 removes
-               allow-compound-bash.sh, allow-safe-curl.sh and allow-safe-rm.sh and this
-               entry becomes the decision. Contract: cannot run → emits nothing. */}}
+          {{/* DECIDED: claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md,
+               Rollout row 3). This is now the sole decision for Bash PermissionRequest --
+               judge() ports, rule for rule, the six bash hooks that used to be registered
+               here (allow-compound-bash.sh, allow-readonly-remote.sh, allow-safe-curl.sh,
+               allow-safe-rm.sh, allow-ansible-readonly.sh, allow-daniel-server.sh; each
+               hook's own file:line citations live in the claude_guard check that replaced
+               it). They are deleted, not merely unregistered -- the Python tests are the
+               oracle now. auto-approve-remote-ssh.sh is not among them; its entry moved to
+               the server repo's own settings on 2026-08-29 and was never part of this chain.
+               Contract unchanged from shadow: cannot run or cannot parse -> emits nothing
+               and the prompt stands. */}}
           {
             "type": "command",
             "command": "~/.claude/hooks/guard-permission-request.sh",
-            "timeout": 10
-          },
-          {{/* Same shape again, for ansible-playbook: auto-approves a provably read-only
-               invocation (--check, --list-tasks, --list-tags, --list-hosts, or
-               --syntax-check, with no file-valued -e/--extra-vars) so it stops prompting
-               now that ansible-playbook is ask-listed in its own right rather than
-               reached by accident through the python3-c prefix uv-python.sh (homelab
-               server repo) used to prepend. Also sees through that hook's own
-               `stdio-blocking; ` prefix and `2>&1 | tail -n N` suffix. Everything else
-               still hits the Bash(ansible-playbook:*) / Bash(uv run ansible-playbook:*) /
-               Bash(uv run --frozen ansible-playbook:*) ask rules -- a hand-run playbook is
-               a real deploy that bypasses that repo's scripts/deploy.sh lock. */}}
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-ansible-readonly.sh",
-            "timeout": 10
-          },
-          {{/* auto-approve-remote-ssh.sh used to be registered here. It picks up where
-               allow-readonly-remote.sh stops -- the homelab calls are wrapped in a local
-               filter (`| tail -12`, `2>&1`) or carry connection flags, and that hook refuses
-               any metacharacter or option -- by deferring to the server repo's tested
-               pipeline parser rather than re-deriving it in shell.
-
-               Its entry moved to that repo's own .claude/settings.json on 2026-08-29, because
-               the hook lives there, hardcodes /home/ubuntu/server as its working directory,
-               and runs the repo's uv environment. At user scope it was loaded in every
-               project on this machine and no-opped in all but one, and on a machine without
-               that repo it was a spawn per permission request that could never do anything.
-               A repo-specific hook belongs in the repo that owns it.
-
-               Do not re-add it here. Two registrations means it runs twice per request. */}}
-          {{/* Widens the two hooks above for ONE host: any `ssh daniel-server CMD`, not just a
-               read-only verb. A permission rule can't express this — `Bash(ssh:*)` is an `ask`
-               rule and ask beats allow whatever the specificity, so only a PermissionRequest
-               hook resolves it. block-dangerous-bash.sh still denies sudo/rm -rf/reboot in the
-               remote payload on PreToolUse, which runs first and is unaffected by this. */}}
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/allow-daniel-server.sh",
             "timeout": 10
           }
         ]

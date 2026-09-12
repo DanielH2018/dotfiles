@@ -36,15 +36,6 @@ from claude_guard.judge import Decision
 PKG_DIR = Path(__file__).resolve().parents[1]
 HOOKS = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks"
 
-skip_no_bash = pytest.mark.skipif(
-    not (
-        shutil.which("bash")
-        and shutil.which("jq")
-        and (HOOKS / "executable_allow-compound-bash.sh").exists()
-    ),
-    reason="bash chain unavailable",
-)
-
 PERMS = {
     "allow": ["Bash(git status:*)", "Bash(ls:*)", "Bash(echo:*)"],
     "deny": ["Bash(rm:*)"],
@@ -156,66 +147,18 @@ def test_sampling_governs_logging_only_and_the_roll_seam_picks_the_branch():
 
 # --- shadow mode ---------------------------------------------------------------------------
 
-
-@skip_no_bash
-def test_shadow_mode_prints_nothing_and_logs_one_line_that_agrees_with_the_bash_chain(tmp_path):
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(HOOKS))
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
-    lines = (log_dir / LOG_NAME).read_text().splitlines()
-    assert len(lines) == 1
-    rec = json.loads(lines[0])
-    assert rec["python"] == "allow" and rec["bash"] == "allow"
-    assert rec["bash_hook"] == "allow-compound-bash.sh"
-    assert rec["rule"] == "allow"
-    assert len(rec["cmd_sha"]) == 16 and rec["ts"].endswith("Z")
-
-
-@skip_no_bash
-def test_shadow_mode_agrees_on_a_readonly_remote_and_an_ansible_check(tmp_path):
-    # Fix round 1, F3 red-proof, measured against the REAL bash hooks (HOOKS, the chezmoi
-    # source `allow-readonly-remote.sh`/`allow-ansible-readonly.sh`), not a fake chain.
-    # Before F3, BASH_CHAIN held only allow-compound-bash.sh/allow-safe-curl.sh/
-    # allow-safe-rm.sh, none of which ever answers "allow" for either command below, so
-    # judge()'s own F0 remote/ansible checks (ported in Task 7) made these read
-    # `python_only` in the shadow census -- an artefact of this list being incomplete,
-    # never a real python/bash disagreement. Revert BASH_CHAIN to the 3-entry list and
-    # `bash` drops to "none"/`bash_hook` to None on both lines below.
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(HOOKS))
-    log_dir = tmp_path / "logs"
-
-    assert permission_request(payload("ssh daniel-server uptime"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text().splitlines()[-1])
-    assert (rec["python"], rec["bash"], rec["bash_hook"]) == (
-        "allow",
-        "allow",
-        "allow-readonly-remote.sh",
-    )
-
-    assert (
-        permission_request(payload("ansible-playbook site.yml --check"), env, log_dir=log_dir)
-        is None
-    )
-    rec = json.loads((log_dir / LOG_NAME).read_text().splitlines()[-1])
-    assert (rec["python"], rec["bash"], rec["bash_hook"]) == (
-        "allow",
-        "allow",
-        "allow-ansible-readonly.sh",
-    )
-
-
-# Item 2 (fix round 2): F3's only red-proof for BASH_CHAIN's three-hook widening is the
-# @skip_no_bash-gated test above, and plan Task 8 step 3 deletes the file that gate probes
-# for (executable_allow-compound-bash.sh) -- after Task 8 that test skips silently and
-# forever on every runner, while BASH_CHAIN and bash_chain_allows stay live for
-# `replay --compare-hooks`. On any runner without `jq` it already skips today, so F3 has
-# ZERO red-proof there right now. `grep -rn BASH_CHAIN tests/` otherwise turns up only
-# that test's own comment and the two `for name in hook.BASH_CHAIN` loops below, which
-# iterate whatever length the tuple has -- a shrunk tuple moves a count, never names the
-# missing member. This asserts the six required names as a frozenset, unconditionally (no
-# bash/jq/HOOKS dependency), so a dropped member fails by NAME.
+# claude-guard slice 3 cutover (Task 8 step 3) deleted the six bash hooks this module used to
+# drive directly (executable_allow-compound-bash.sh and friends) and the PermissionRequest
+# registrations that put them in shadow beside claude_guard. The tests that drove them --
+# test_shadow_mode_prints_nothing_and_logs_one_line_that_agrees_with_the_bash_chain,
+# test_shadow_mode_agrees_on_a_readonly_remote_and_an_ansible_check, and
+# test_shadow_mode_logs_a_refusal_both_sides_agree_on -- were skip_no_bash-gated on exactly
+# the file this step deletes, so after the deletion they would skip silently and forever: a
+# permanently-skipping test that still reads green. They and skip_no_bash itself are deleted
+# with their subject rather than left to rot. BASH_CHAIN and bash_chain_allows stay live --
+# `replay --compare-hooks` takes a caller-supplied hooks directory and is not limited to the
+# deployed one -- and the frozenset below is their unconditional (no bash/jq/HOOKS
+# dependency) red-proof: a shrunk BASH_CHAIN tuple fails here by NAME, not by a moved count.
 _REQUIRED_BASH_CHAIN_HOOKS = frozenset(
     {
         "allow-compound-bash.sh",
@@ -231,17 +174,6 @@ _REQUIRED_BASH_CHAIN_HOOKS = frozenset(
 def test_bash_chain_names_every_deployed_hook_it_must_shadow():
     missing = _REQUIRED_BASH_CHAIN_HOOKS - set(hook.BASH_CHAIN)
     assert not missing, f"BASH_CHAIN dropped: {sorted(missing)}"
-
-
-@skip_no_bash
-def test_shadow_mode_logs_a_refusal_both_sides_agree_on(tmp_path):
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(HOOKS))
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && rm -rf /"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text())
-    assert (rec["python"], rec["bash"], rec["bash_hook"]) == ("none", "none", None)
-    assert rec["rule"] == "segment:1:deny"
 
 
 def test_shadow_log_records_a_disagreement_so_the_comparison_can_go_red(tmp_path):
@@ -469,13 +401,15 @@ def test_shim_prints_the_allow_line_when_told_to_run_live(tmp_path):
 
 
 @skip_no_uv
-def test_shim_defaults_to_shadow_when_the_variable_is_absent(tmp_path):
+def test_shim_defaults_to_live_when_the_variable_is_absent(tmp_path):
+    # DECIDED: claude-guard slice 3 cutover. The shim's own default flipped from :=1 (shadow)
+    # to :=0 (live) in the same commit as settings.base.json's CLAUDE_GUARD_SHADOW, so a
+    # generated settings.json that ever lost the key fails toward the live decision rather
+    # than toward a shadow mode with no bash chain left to compare against.
     home = home_with(tmp_path)
-    r = run_shim(
-        payload("git status && ls"), shim_env(home, CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
-    )
-    assert (r.returncode, r.stdout) == (0, "")
-    assert (tmp_path / "logs" / LOG_NAME).exists()
+    r = run_shim(payload("git status && ls"), shim_env(home))
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 
 @skip_no_uv

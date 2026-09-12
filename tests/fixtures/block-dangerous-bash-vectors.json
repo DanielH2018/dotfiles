@@ -102,7 +102,7 @@
       ]
     },
     {
-      "why": "`hl` is the other remote wrapper allow-readonly-remote.sh accepts; the deny backstop used to match only `ssh`, so these degraded to a prompt",
+      "why": "`hl` is the other remote wrapper claude_guard's readonly_remote_safe() accepts (the port of allow-readonly-remote.sh, now deleted); the deny backstop used to match only `ssh`, so these degraded to a prompt",
       "commands": [
         "hl sudo reboot",
         "hl rm -rf /",
