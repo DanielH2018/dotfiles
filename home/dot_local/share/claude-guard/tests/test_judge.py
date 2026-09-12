@@ -551,6 +551,116 @@ def test_heredoc_write_parity_refuses_an_unquoted_delimiter_a_path_escape_or_an_
     assert not allowed("cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", main)
 
 
+# --- H1: a cd/pushd/popd relocates a confined heredoc write (task-8-fix-2-brief.md) --------------
+
+
+def test_a_cd_before_a_heredoc_write_refuses_the_carve_out_on_both_arms(rm, tmp_path):
+    # `rm` (the fixture) allow-lists `cd`, so segment 0 clears on its own the way the
+    # brief's own repro does against the real settings — the defect this closes is that
+    # the write used to ride through on that clearance.
+    cwd = str(tmp_path)
+    # The cwd arm: a RELATIVE target that would resolve under cwd if cwd hadn't moved —
+    # this is the live repro, end to end, through judge() rather than judge_segment alone.
+    d = judge("cd /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, (), cwd)
+    assert not d.allow
+    assert d.rule == "segment:1:heredoc-write:cwd-changed"
+    # The scratch-root arm, gated by the SAME flag even though an ABSOLUTE target there
+    # does not itself depend on cwd — H1's instruction is to refuse the carve-out once
+    # ANY earlier segment changed directory, not narrowed to "only when the write target
+    # itself depends on cwd". `/tmp` is a real scratch root (tables.SCRATCH_ROOTS). Rule
+    # pinned, not just the allow bit, so this can't start passing for a different reason.
+    d2 = judge("cd /tmp && cat > /tmp/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd)
+    assert not d2.allow
+    assert d2.rule == "segment:1:heredoc-write:cwd-changed"
+
+
+def test_a_cd_after_a_heredoc_write_does_not_retroactively_refuse_it(rm, tmp_path):
+    # The flag is set strictly AFTER a segment is judged `ok`, in chain order — a `cd`
+    # later in the chain must not retroactively refuse a write that already happened
+    # first, and the write itself must still clear confinement normally. No `&&`/`;`
+    # between the heredoc terminator and `cd /tmp`: a bare newline there already acts as
+    # the separator, the same shape `test_heredoc_write_parity_...`'s `frobnicate` case
+    # above uses for the segment that follows a heredoc write.
+    cwd = str(tmp_path)
+    assert judge("cat > note.txt <<'EOF'\nhi\nEOF\ncd /tmp", rm, (), cwd).allow
+
+
+def test_a_plain_confined_heredoc_write_with_no_cd_anywhere_in_the_chain_still_allows(rm, tmp_path):
+    # Control for both tests above: remove the `cd` and the same write allows. `ls`, not
+    # `cd`, precedes it — proves the gate is keyed on the command word, not "any earlier
+    # segment at all".
+    cwd = str(tmp_path)
+    assert judge("ls && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, (), cwd).allow
+
+
+def test_pushd_and_popd_refuse_the_carve_out_the_same_way_cd_does(tmp_path):
+    # `rm` (the shared fixture) allow-lists `cd` but not `pushd`/`popd` — using it here
+    # would make segment 0 refuse as `unlisted` BEFORE the heredoc segment is ever
+    # reached, so both asserts would pass without exercising `_changes_cwd` at all. A
+    # dedicated ruleset that allow-lists all three closes that gap.
+    rules = rules_for(
+        tmp_path, {"allow": ["Bash(cd:*)", "Bash(pushd:*)", "Bash(popd:*)"], "deny": [], "ask": []}
+    )
+    cwd = str(tmp_path)
+    d1 = judge("pushd /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rules, (), cwd)
+    assert not d1.allow
+    assert d1.rule == "segment:1:heredoc-write:cwd-changed"
+    d2 = judge("popd && cat > note.txt <<'EOF'\nhi\nEOF\n", rules, (), cwd)
+    assert not d2.allow
+    assert d2.rule == "segment:1:heredoc-write:cwd-changed"
+
+
+def test_a_cd_hidden_behind_a_wrapper_still_refuses_the_heredoc_carve_out(rm, tmp_path):
+    # Found via review after the brief's own text, not named in it: `judge_segment`
+    # resolves `timeout 5 cd /tmp` through `unwrap_wrapper` to the allow-listed `cd /tmp`
+    # and judges segment 0 "ok" on that path, but a check keyed only on the RAW segment's
+    # first word (`timeout`) never saw the `cd` underneath — measured ALLOW end to end
+    # through the real entry point before this re-check was added to `_changes_cwd`.
+    cwd = str(tmp_path)
+    assert not judge("timeout 5 cd /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, (), cwd).allow
+    # Control: the same wrapper shape over a command that is NOT cd-like must not trip
+    # the flag — proves this is keyed on the unwrapped command word, not on "any wrapper".
+    assert judge("timeout 5 ls /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, (), cwd).allow
+
+
+# --- H2: the heredoc carve-out no longer bypasses a deny rule (task-8-fix-2-brief.md) ------------
+
+
+def test_a_deny_rule_matching_the_heredoc_write_segment_itself_wins_over_the_carve_out(tmp_path):
+    # Before this fix, judge_segment returned `True, "heredoc-write"` before ever
+    # consulting rules.denies(part) — a deny rule matching the exact write segment was
+    # silently bypassed. The deny entry below is a PLAIN (non-glob) prefix that matches
+    # this segment's text exactly, so it goes through `matches_any`, not a glob.
+    rules = rules_for(
+        tmp_path, {"allow": [], "deny": ["Bash(cat > /tmp/pwned <<'EOF')"], "ask": []}
+    )
+    d = judge("cat > /tmp/pwned <<'EOF'\nhi\nEOF\n", rules, ROOTS, CWD)
+    assert not d.allow
+    assert d.rule == "segment:0:deny"
+
+
+# --- H4: an unanchored /dev/null match strips a near-miss target too (task-8-fix-2-brief.md) -----
+
+
+def test_a_target_merely_starting_with_devnull_does_not_escape_the_redirect_refusal(main):
+    # `_DEVNULL_REDIRECT` used to match `/dev/null` as a PREFIX with no terminator, so
+    # `/dev/nullx` was stripped down to nothing and the blanket `>` refusal never fired.
+    assert not allowed("ls > /dev/nullx", main)
+    assert not allowed("git status > /dev/nullish", main)
+    # Control: the real /dev/null is unaffected by the anchor.
+    assert allowed("ls > /dev/null", main)
+
+
+def test_a_target_merely_starting_with_devnull_does_not_escape_the_tee_refusal(esc):
+    # The identical defect, one token over, in `_DEVNULL_WORD` — found while fixing H4,
+    # not named in the brief. `tee:*` is allow-listed for real (settings.permissions.json),
+    # so `tee /dev/nullx` stripped to the allow-listed bare `tee` and auto-approved an
+    # arbitrary write target.
+    assert not allowed("tee /dev/nullx", esc)
+    # Control: a real /dev/null target is unaffected.
+    assert allowed("tee /dev/null", esc)
+
+
 # --- benign prefixes (PR #477) -------------------------------------------------------------------
 
 

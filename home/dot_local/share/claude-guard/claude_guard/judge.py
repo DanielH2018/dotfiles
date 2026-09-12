@@ -39,10 +39,29 @@ from claude_guard.segment import parse
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})
 
-_DEVNULL_REDIRECT = re.compile(r"[0-9]*>>?\s*/dev/null")
+# H1 (task-8-fix-2-brief.md). A segment whose command word is one of these can move the
+# shell's own working directory for every segment after it in the chain. Tracked only to
+# gate the heredoc-write carve-out below — never resolved, see the DECIDED marker there.
+_CD_LIKE = frozenset({"cd", "pushd", "popd"})
+
+# H4 (task-8-fix-2-brief.md): both DEVNULL patterns were unanchored at the tail, so a
+# target that only STARTS WITH /dev/null (/dev/nullx, /dev/nullish) matched and was
+# stripped as if it were the real sink. `(?=\s|$)` requires the match end at a word
+# boundary — the next char is whitespace or nothing — without consuming it, so a
+# trailing character defeats the match instead of being silently absorbed into it.
+# Segments are already split on `;`/`&&`/`|`/newline before either pattern runs, so
+# nothing legitimate ever follows a real `/dev/null` target except whitespace or the end
+# of the segment.
+_DEVNULL_REDIRECT = re.compile(r"[0-9]*>>?\s*/dev/null(?=\s|$)")
 _FD_DUP = re.compile(r"[0-9]*>&[0-9-]")
 _OPTION_WORD = re.compile(r"\s+-\S+")
-_DEVNULL_WORD = re.compile(r"\s+/dev/null")
+# H4-adjacent (found while fixing H4, not named in the brief): unanchored the identical
+# way, and live — `tee:*` IS allow-listed in settings.permissions.json:136. `tee
+# /dev/nullx` stripped to `tee` (basename match) and fell through to the plain allow-list
+# check, auto-approving an arbitrary write target. Measured end to end through the real
+# entry point before this fix: `tee /dev/nullx` ALLOW, `tee /dev/null` ALLOW (unaffected,
+# confirms the anchor doesn't touch the real case).
+_DEVNULL_WORD = re.compile(r"\s+/dev/null(?=\s|$)")
 
 # PR #477 (:150-158). A `cat > path`/`cat >> path` write whose heredoc delimiter is QUOTED
 # has no expansion possible: a quoted delimiter suppresses parameter and command
@@ -50,15 +69,23 @@ _DEVNULL_WORD = re.compile(r"\s+/dev/null")
 # delimiter itself is confined to a bare identifier so a stray quote in the path can't be
 # mistaken for the closing one.
 #
-# DECIDED (G3, task-8-fix-1-brief.md): verified "no" for the same question G1 asks of
-# VAR=/timeout — can what is not judged here change what IS judged? The regex is anchored
-# `^...$` over the WHOLE segment, so nothing is discarded the way a wrapper's prefix
-# tokens are: the one piece this carve-out never inspects, the heredoc BODY, is never
-# executed either — `cat` writes it to `path` byte for byte, it does not `eval` it, and
-# the quoted delimiter already rules out substitution inside it. `path` itself is read
-# straight out of the match, not derived from anything stripped away. So the part this
-# carve-out does not scrutinize (the body) has no path to changing the part it does
-# (the write target) or to executing on its own.
+# DECIDED (G3, task-8-fix-1-brief.md; amended H1, task-8-fix-2-brief.md): verified "no"
+# for the same question G1 asks of VAR=/timeout — can what is not judged here change what
+# IS judged? The regex is anchored `^...$` over the WHOLE segment, so nothing is discarded
+# the way a wrapper's prefix tokens are: the one piece this carve-out never inspects, the
+# heredoc BODY, is never executed either — `cat` writes it to `path` byte for byte, it
+# does not `eval` it, and the quoted delimiter already rules out substitution inside it.
+# `path` itself is read straight out of the match, not derived from anything stripped
+# away. So the part THIS REGEX does not scrutinize (the body) has no path to changing the
+# part it does (the write target) or to executing on its own.
+#
+# Scope of that "no", stated so the next reviewer does not stop here the way this sweep
+# did: it covers the heredoc BODY only, never the chain PREFIX. This regex is matched
+# against one already-segmented `part` in isolation — it has no visibility into, and
+# makes no claim about, any segment that ran before it in the same chain. Whether an
+# earlier segment can change what `path` resolves to (H1: a `cd`/`pushd`/`popd` moves the
+# cwd the confinement arms measure against) is answered at the carve-out's CALL site in
+# `judge_segment`/`judge`, by the `cwd_changed` gate, not by this regex.
 _HEREDOC_CAT_WRITE = re.compile(
     r"""^cat\s+>{1,2}\s*(?P<path>[^\s"']+)\s+<<-?\s*"""
     r"""(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")\s*$"""
@@ -128,6 +155,38 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
 def _is_set_options(part: str) -> bool:
     """:415-421. True for `set -e`/`set -euo pipefail`/`set -o pipefail`."""
     return bool(_SET_OPTIONS.match(part))
+
+
+def _changes_cwd(part: str) -> bool:
+    """H1 (task-8-fix-2-brief.md). True when the segment's OWN command word, OR the word
+    it resolves to once a leading wrapper is stripped, is `cd`, `pushd` or `popd` — the
+    three builtins that can move the shell's working directory for every segment after
+    this one in the chain. No attempt at tracking WHERE it moves to: the brief's own
+    instruction is not to, since resolving a `cd` target means resolving variables,
+    `cd -`, and a directory-stack, and every gap in that resolution is its own fail-open.
+    This is a pure detector, consulted by `judge()` to gate the heredoc-write carve-out
+    (see the `cwd_changed` DECIDED marker in `judge_segment`).
+
+    The wrapper re-check (found via review after the brief's own text, not named in it):
+    `timeout 5 cd /tmp && cat > note.txt <<'EOF'` measured ALLOW end to end through the
+    real entry point before this re-check existed — `judge_segment` resolves `timeout 5
+    cd /tmp` through `unwrap_wrapper` to the allow-listed `cd /tmp` and judges it "ok" on
+    that path, but this function was checking only the RAW segment's first word
+    (`timeout`), so the flag never set and the write behind it rode through exactly the
+    way a bare `cd` used to before the rest of this fix. `unwrap_wrapper` already peels
+    every wrapper layer in one call (its own internal loop), so one re-resolution here
+    closes it without re-implementing that loop.
+
+    Still out of scope, deliberately: a `cd` buried inside a pipeline stage that
+    subshells (`ls | (cd /x && cat)`) — the shape H1 measured and fixed is a `cd` in an
+    earlier CHAIN segment, not one hidden inside a parenthesised subshell, and `(` is not
+    among the wrappers `unwrap_wrapper` understands. A `cd` inside `$(...)` or `` `...` ``
+    never reaches here at all — `judge()` refuses the whole command at
+    `unjudgeable:substitution` before the segment loop runs."""
+    if _basename(_first_word(part)) in _CD_LIKE:
+        return True
+    target = unwrap_wrapper(part)
+    return target is not None and target != part and _basename(_first_word(target)) in _CD_LIKE
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,8 +377,38 @@ def unwrap_wrapper(segment: str) -> str | None:
     return None
 
 
-def judge_segment(part: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> tuple[bool, str]:
-    """:286-395, one iteration of the loop. (ok, reason)."""
+def judge_segment(
+    part: str, rules: Rules, roots: tuple[str, ...], cwd: str, cwd_changed: bool
+) -> tuple[bool, str]:
+    """:286-395, one iteration of the loop. (ok, reason).
+
+    `cwd_changed` is H1's gate (task-8-fix-2-brief.md): True when an EARLIER segment in
+    the same chain was `cd`/`pushd`/`popd` (`judge()`'s own loop sets it, via
+    `_changes_cwd`, after judging each segment in turn). It has exactly one consumer
+    below — the heredoc-write carve-out — and is otherwise unused by design: every other
+    check in this function judges the segment's own text and is unaffected by where the
+    shell happens to be.
+    """
+    # H2 (task-8-fix-2-brief.md): deny hoisted to the top of this function, ahead of the
+    # heredoc-write carve-out below. The carve-out used to return an early `True` before
+    # this ran at all, silently bypassing a deny rule that matched the very segment it
+    # was vouching for — exactly the exception ":315-319"'s own comment ("no exception
+    # below reaches past this") said could not happen. This hoist is allow-set-neutral
+    # for every OTHER segment shape: deny already ran ahead of ff-only/curl-rm/ask
+    # (:393-430 below), so moving it here only changes its position relative to the
+    # redirect and tee checks, and both of those return False unconditionally — so the
+    # only possible effect of the hoist is relabelling a `False, "redirect"` or `False,
+    # "tee"` as `False, "deny"` when a segment happens to match both; the ALLOW/DEFER
+    # boundary itself cannot move. `rules.asks(part)` is deliberately NOT hoisted here:
+    # curl_safe/rm_confined are placed "after deny, before ask" on purpose (see the
+    # comment at that check below), and hoisting ask would run it ahead of curl/rm too,
+    # inverting that documented precedence. The reviewer confirmed no ask rule matches a
+    # `cat > path <<'EOF'` segment today, so the heredoc carve-out bypassing ask remains
+    # exactly as unreachable as it was before this fix — unlike the deny bypass, it is
+    # not being newly closed, only left where it already was.
+    if rules.denies(part):
+        return False, "deny"
+
     # PR #477 (:432-436). A quoted-delimiter heredoc write vetted by heredoc_write_target:
     # allow it here rather than letting it fall into the blanket redirect refusal just
     # below. Confined to a scratch root (delegated to rm_confined on a synthetic
@@ -330,6 +419,42 @@ def judge_segment(part: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> 
     # the rest of the command.
     hw_target = heredoc_write_target(part)
     if hw_target is not None:
+        # DECIDED (H1, task-8-fix-2-brief.md): refuse the carve-out outright — for BOTH
+        # confinement arms, not only `_under_session_cwd` — once an earlier segment in
+        # this chain could have moved the shell's cwd. `_under_session_cwd` compares the
+        # write target against the `cwd` the PermissionRequest hook was invoked with,
+        # which goes stale the moment an earlier segment runs `cd`; `cd /home/ubuntu/.config
+        # && cat > note.txt <<'EOF'` vetted `note.txt` against the SESSION cwd while the
+        # shell wrote it relative to `/home/ubuntu/.config` — the guard vetted a path the
+        # shell never wrote to. `rm_confined`'s scratch arm has the same shape in kind: it
+        # is handed a synthetic `rm <hw_target>`, and a relative target there resolves
+        # against a cwd this guard never measured either. (`under_scratch`,
+        # checks/scratch.py:79, already refuses a relative path outright today, so that
+        # arm is not independently exploitable right now — this gate is not resting on
+        # that fact: the two arms are tied to ONE flag on purpose, so a later change that
+        # made `under_scratch` lexical-relative-aware, the way F2's docstring warns
+        # `_under_session_cwd` itself not to become, would not silently reopen this.)
+        #
+        # Not resolving `cd` itself — no variable expansion, no `cd -`, no directory
+        # stack for `pushd`/`popd` — is deliberate, per the brief: every one of those
+        # resolutions is its own fail-open surface, so the whole carve-out fails closed
+        # instead once ANY `cd`-like segment has run, full stop. Cost: a prompt on a
+        # confined heredoc write that happens to follow an unrelated `cd` in the same
+        # chain, even a `cd` back to the original directory — overbroad by construction,
+        # never narrowed to "did the net effect move it".
+        #
+        # An ABSOLUTE target does not depend on cwd at all, so exempting one from this
+        # gate would be sound in principle — considered and declined: one more branch on
+        # this path is one more place a future edit can get the condition backwards, for
+        # a carve-out whose failure mode is a silent arbitrary-write allow. The brief's
+        # own instruction is not to get clever here.
+        #
+        # A `cd` that runs inside a PIPELINE stage (`ls | (cd /x; cat) `) executes in a
+        # subshell and never relocates the parent shell `cat` runs in — this flag cannot
+        # tell the two apart and refuses both, which is the fail-closed direction and is
+        # intentional, not a bug to later "fix" by trying to tell them apart.
+        if cwd_changed:
+            return False, "heredoc-write:cwd-changed"
         if rm_confined(f"rm {hw_target}", roots) or _under_session_cwd(hw_target, cwd):
             return True, "heredoc-write"
         return False, "heredoc-write:unconfined"
@@ -346,10 +471,6 @@ def judge_segment(part: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> 
     teecmd = _first_word(teed)
     if _basename(teecmd) == "tee" and teed != teecmd:
         return False, "tee"
-
-    # :315-319. Deny → defer. No exception below reaches past this.
-    if rules.denies(part):
-        return False, "deny"
 
     # :321-341. The one ask-listed segment named as safe here: `git merge --ff-only <ref>`
     # with exactly one ref that does not look like an option, read off the
@@ -512,6 +633,11 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
             return Decision(False, "unjudgeable:separator", ())
 
     reasons: list[str] = []
+    # H1 (task-8-fix-2-brief.md). True once a `cd`/`pushd`/`popd` segment has been judged
+    # `ok` earlier in THIS chain — set after judging each segment, never before, so a
+    # `cd` segment itself is still judged against its own cwd. Threaded into
+    # `judge_segment` to gate the heredoc-write carve-out; see the DECIDED marker there.
+    cwd_changed = False
     for i, seg in enumerate(parsed.segments):
         part = _trim(seg.text)
         if not part:
@@ -546,8 +672,10 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
         if _ASSIGNMENT_WORD.match(_first_word(part)):
             reasons.append("assignment")
             return Decision(False, f"segment:{i}:assignment", tuple(reasons))
-        ok, reason = judge_segment(part, rules, roots, cwd)
+        ok, reason = judge_segment(part, rules, roots, cwd, cwd_changed)
         reasons.append(reason)
         if not ok:
             return Decision(False, f"segment:{i}:{reason}", tuple(reasons))
+        if _changes_cwd(part):
+            cwd_changed = True
     return Decision(True, "allow", tuple(reasons))

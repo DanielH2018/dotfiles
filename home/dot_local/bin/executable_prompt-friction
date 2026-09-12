@@ -8,9 +8,11 @@ PermissionRequest hook chain as it stands today, so "did that auto-approver chan
 help?" is a command rather than an afternoon.
 
 It exists because the answer is not guessable. Fixing allow-safe-curl.sh's host list
-on 2026-08-14 looked like it should recover ~104 prompts a week; replaying the actual
-traffic recovered 1, because 118 of the 147 curl calls were pipelines the hook never
-parses. Every estimate made that day was wrong until it was replayed.
+on 2026-08-14 (since ported to claude_guard.checks.curl; the standalone hook itself was
+deleted at the claude-guard slice 3 cutover) looked like it should recover ~104 prompts
+a week; replaying the actual traffic recovered 1, because 118 of the 147 curl calls
+were pipelines the hook never parses. Every estimate made that day was wrong until it
+was replayed.
 
     prompt-friction                       # last 7 days, summary
     prompt-friction --since 24h

@@ -14,10 +14,10 @@
 #   printf 'echo x\nssh homelab reboot'  -> no decision   (`echo x && ssh …` denies)
 #
 # block-dangerous-bash.sh:31 flattens `\n` to a SPACE before matching, so a rule anchored at
-# a command position can never see the second command. allow-compound-bash.sh doesn't treat
-# a newline as a separator either, and additionally re-splits its segments on `\n` when it
-# transports them as text — so a heredoc body line becomes its own "segment" and ordinary
-# `gh pr create --body-file - <<EOF` prompts every time.
+# a command position can never see the second command. allow-compound-bash.sh didn't treat
+# a newline as a separator either, and additionally re-split its segments on `\n` when it
+# transported them as text — so a heredoc body line became its own "segment" and ordinary
+# `gh pr create --body-file - <<EOF` prompted every time.
 #
 # This library is the single segmentation. It is deliberately a sourced bash library rather
 # than a python/node helper: the three hooks are on the hot path of every Bash call, and an
@@ -77,9 +77,9 @@
 # CP_SUBSEG is how a consumer sees inside it.
 #
 # A trailing separator terminates the last CP_SEG rather than starting an empty one
-# (`ls;` -> 1 segment, not 2) — allow-compound-bash.sh's compound gate keys on CP_NSEG, and a
-# trailing newline is ordinary in a multi-line prompt. CP_SUBSEG does not collapse a trailing
-# empty entry; consumers already skip empty segments regardless.
+# (`ls;` -> 1 segment, not 2) — allow-compound-bash.sh's now-deleted compound gate keyed on
+# CP_NSEG, and a trailing newline is ordinary in a multi-line prompt. CP_SUBSEG does not
+# collapse a trailing empty entry; consumers already skip empty segments regardless.
 #
 # Heredoc lifting and substitution scanning share the same pass and the same quote/frame
 # state, not two passes with two different ideas of "inside a quote". That is load-bearing,
@@ -408,7 +408,7 @@ cmd_parse() {
   # A trailing separator terminates the last command; it does not start an empty new one.
   # This matters beyond tidiness. `ls\n` and `ls;` are single commands, and a trailing
   # newline is ordinary in a multi-line prompt — but they would otherwise report 2 segments,
-  # and the compound gate in allow-compound-bash.sh keys on exactly that. Running the
+  # and allow-compound-bash.sh's now-deleted compound gate keyed on exactly that. Running the
   # approver over a genuinely single command WIDENS it: it would auto-approve things native
   # prefix matching would have prompted for. The empty tail is dropped and the separator it
   # consumed becomes `eof`, because nothing follows it.

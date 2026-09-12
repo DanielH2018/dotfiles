@@ -52,8 +52,9 @@ const readLog = (d) => {
 //
 // BDB only: ACB's shadow computation (CMDPARSE_SHADOW toggling a log without changing the
 // decision) was retired when cmd_parse became ACB's authoritative segmentation — there is
-// no second decision path left to compare against. ACB's own behavioral coverage lives in
-// allow-compound-bash.test.js now.
+// no second decision path left to compare against. ACB itself, and its own behavioral
+// coverage (allow-compound-bash.test.js), were deleted at the claude-guard slice 3
+// cutover; that coverage lives in home/dot_local/share/claude-guard/tests/test_judge.py now.
 test('shadow mode changes no decision in either hook', () => {
   const cases = [
     'echo hi && ls',

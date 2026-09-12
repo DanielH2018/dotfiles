@@ -111,7 +111,7 @@ is deliberately NOT allow-listed (see the comment above the allow-list rules in
 network call, however narrow, and that crosses the line the other three don't. Invoke it as
 `cd <repo-or-worktree> && node bin/config-soak <verb>`: the ledger is anchored to the script's own
 location, so a worktree must run its own copy, and that compound form is the shape
-`allow-compound-bash.sh` auto-approves for the allow-listed verbs.
+`claude_guard.judge` auto-approves for the allow-listed verbs.
 
 It is the deterministic complement to the LLM-driven `/review-setup` skill. See
 `docs/specs/2026-07-08-config-soak-gate-design.md` for the design rationale, including the

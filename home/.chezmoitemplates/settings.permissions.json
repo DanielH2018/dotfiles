@@ -74,9 +74,10 @@
            It cannot stay: timeout's next token IS an arbitrary command, so the prefix rule
            auto-approved `timeout 5 bash -c '<anything>'` — the same hole as the `env`
            wrapper above, and deny globs can't cover it without enumerating every
-           interpreter. Getting the convenience back safely needs allow-compound-bash.sh to
-           unwrap a leading wrapper (timeout/env/nice/stdbuf/nohup) and match the command it
-           wraps, so `timeout 200 node --test` is allowed because `node --test` is. */}}
+           interpreter. The convenience comes back safely through claude_guard.judge's own
+           `unwrap_wrapper`, which unwraps a leading wrapper (timeout/env/nice/stdbuf/
+           nohup/setsid/xargs) and matches the command it wraps, so `timeout 200 node
+           --test` is allowed because `node --test` is. */}}
       "Bash(history)",
       "Bash(man:*)",
       "Bash(less:*)",
@@ -127,11 +128,11 @@
            `ruby -e` all auto-approved, measured 2026-07-29), while a substring glob also
            matched an ordinary FILENAME, so `xargs grep foo build.sh` was refused for
            containing "sh". A glob cannot tell the command xargs runs from a path it is
-           merely handed, and this rule is the only defence for a NON-compound command,
-           which allow-compound-bash.sh never sees.
-           The everyday pipeline is not lost: `… | xargs wc -l` is compound, so the hook
-           resolves xargs to the command it will exec and judges that instead. Bare
-           `xargs …` now prompts. */}}
+           merely handed, and this rule is the only defence for a bare `xargs` invocation
+           with no command of its own to unwrap.
+           The everyday pipeline is not lost: `… | xargs wc -l` resolves through
+           claude_guard.judge's `unwrap_wrapper`, which judges `wc -l` in xargs's place.
+           Bare `xargs …` with nothing after it to unwrap still prompts. */}}
       "Bash(tr:*)",
       "Bash(tee:*)",
       "Bash(basename:*)",
@@ -178,7 +179,7 @@
       "Bash(git cat-file:*)",
       "Bash(git name-rev:*)",
       {{/* Branch-level git the reflog recovers. autoMode.allow already calls this routine
-           in prose, which the classifier honours — but allow-compound-bash.sh reads Bash()
+           in prose, which the classifier honours — but claude_guard.judge reads Bash()
            prefixes, not prose, so every `cd X && git switch Y` chain prompted anyway (56 of
            the 611 prompts on daniel-box in the week to 2026-08-21). `git checkout` as a bare
            prefix is deliberately absent: `git checkout -- <path>` discards working-tree
@@ -246,7 +247,7 @@
       "Bash(gh org list:*)",
       {{/* Read-only kubectl against the homelab k3s cluster. autoMode.allow states these
            verbs are routine because the default credential is a read-only ServiceAccount —
-           the same reasoning, restated as prefixes so allow-compound-bash.sh can act on it.
+           the same reasoning, restated as prefixes so claude_guard.judge can act on it.
            Authority is unchanged: RBAC refuses anything these verbs could reach that the
            prose did not already bless, and `kubectl delete` stays in the deny list below.
            Mutating verbs (apply, patch, edit, scale, drain, taint, exec, cp, port-forward)
@@ -350,7 +351,7 @@
            Relative path because the ledger is anchored to the script's own location
            (REPO_ROOT = __dirname/..), so a worktree must run ITS copy: the invocation is always
            `cd <root> && node bin/config-soak <verb>`, and that compound form is what
-           allow-compound-bash.sh matches (prefix only, no mid-path globs, so an absolute rule
+           claude_guard.judge matches (prefix only, no mid-path globs, so an absolute rule
            spanning every worktree under .claude cannot be written). Same relative-executable risk shape
            as the already-allowed ./gradlew and make. `land` is included deliberately: it lets
            Claude self-certify config it just wrote, trading the gate's independence for an
@@ -548,13 +549,13 @@
       "Bash(* | sh*)",
       "Bash(* | bash*)",
       "Bash(* | zsh*)",
-      {{/* allow-compound-bash.sh strips a trailing wildcard, so every allow rule is a bare
+      {{/* claude_guard.rules strips a trailing wildcard, so every allow rule is a bare
            command prefix matched on "prefix + space". find/awk/xargs are everyday tools and
            stay allow-listed, but each takes a command as an argument, so the allow rule alone
            auto-approved `find . -exec id \;`, `awk 'BEGIN{system("id")}'` and `xargs sh -c 'id'`
            with no prompt — the payload is an argument, so no other deny rule ever saw it.
-           Deny beats allow in the hook, so these cover the execution forms while the ordinary
-           search/print/batch forms keep working.
+           Deny beats allow in judge_segment, so these cover the execution forms while the
+           ordinary search/print/batch forms keep working.
 
            xargs is no longer covered here: its allow entry is gone (see above), so there is
            no grant left for a deny glob to claw back. find and awk keep theirs because they
