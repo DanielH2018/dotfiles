@@ -348,11 +348,27 @@ def test_a_wrapper_is_judged_on_the_command_it_will_actually_run(esc):
     assert allowed("echo hi | xargs -0 -n 1 wc -l", esc)
     assert allowed("echo hi && timeout 5 ls", esc)
     assert allowed("echo hi && timeout -s KILL 5s ls", esc)
-    assert allowed("echo hi && env FOO=bar ls", esc)
     assert allowed("echo hi && nice -n 10 ls", esc)
     assert allowed("echo hi && nohup ls", esc)
     assert allowed("echo hi && timeout 5 nohup ls", esc)
     assert judge("echo hi && timeout 5 ls", esc, ROOTS, CWD).reasons == ("allow-list", "wrapper:ls")
+
+
+def test_g1_extended_env_cannot_carry_an_assignment_past_its_own_wrapper_grant(esc):
+    # Found while verifying G1 (task-8-fix-1-brief.md) this fix round, not named in the
+    # brief's text: `env`'s OWN wrapper-unwrap consumed `VAR=VALUE` tokens and handed the
+    # bare command on to be judged alone, which is the identical hazard G1 closes for a
+    # bare `VAR=value cmd` segment, reached through `env` instead. Unlike G1's own arm,
+    # this one IS how the pre-cutover bash behaves today (origin/main's
+    # allow-compound-bash.sh:225-235, confirmed against the real snapshot hook: it also
+    # allows `echo hi && env PATH=/tmp ls -la`), so refusing it here is a narrowing
+    # relative to the bash, never a widening — safe to fix in this round rather than file
+    # separately, since G2's floor only guards against allowing MORE than the bash did.
+    assert not allowed("echo hi && env PATH=/tmp ls -la", esc)
+    assert not allowed("echo hi && env FOO=bar ls", esc)
+    # A bare `env cmd`, with no assignment at all, carries nothing to smuggle and still
+    # unwraps normally.
+    assert allowed("echo hi && env ls", esc)
 
 
 @pytest.mark.parametrize(
@@ -549,31 +565,57 @@ def test_a_set_prefix_does_not_rescue_an_otherwise_denied_or_unlisted_segment(ma
     assert not allowed("set -e && rm -rf build", main)
 
 
-def test_a_leading_var_value_assignment_is_stripped_before_judging_the_segment(main):
-    assert allowed("FOO=bar git status && git log --oneline -1", main)
-    assert allowed("FOO=bar BAZ=1 git status && git log", main)
+def test_g1_an_assignment_prefix_is_refused_not_stripped(main):
+    # G1 (task-8-fix-1-brief.md): #477's strip-and-judge-what's-left arm is not ported.
+    # Every segment whose first word is a `VAR=value` assignment refuses outright, with
+    # its own distinct rule label, rather than being stripped and the remainder judged.
+    assert not allowed("FOO=bar git status && git log --oneline -1", main)
+    assert not allowed("FOO=bar BAZ=1 git status && git log", main)
+    assert (
+        judge("FOO=bar git status && git log --oneline -1", main, ROOTS, CWD).rule
+        == "segment:0:assignment"
+    )
 
 
-def test_a_var_value_assignment_whose_value_can_expand_or_execute_is_judged_as_itself(main):
-    # $(...) and a backtick are already refused by the pre-existing global substitution
-    # gate (judge.py:268) regardless of this rule. The case this rule alone must catch is
-    # a bare `$VAR` reference — not `$(...)`, so the substitution gate never sees it — left
-    # in the segment so it fails every check below as itself, the same as an unlisted
-    # command would.
+def test_g1_red_proof_an_assignment_prefix_refuses_the_plain_form_still_allows(main):
+    # The reviewer's own measured fail-open on 96da9d4: stripping `PATH=/tmp` turned
+    # `PATH=/tmp ls -la` into `ls -la`, an allow-listed command — auto-approving a
+    # command that actually resolves `ls` out of an attacker-writable /tmp. The plain
+    # form, with no assignment prefix, must stay allowed; that's the rejecting half of
+    # the pair, not an incidental fact.
+    assert not allowed("PATH=/tmp ls -la", main)
+    assert judge("PATH=/tmp ls -la", main, ROOTS, CWD).rule == "segment:0:assignment"
+    assert allowed("ls -la", main)
+
+
+def test_a_var_value_assignment_refuses_regardless_of_what_its_value_can_do(main):
+    # Before G1, a value carrying a live $, backtick or `(` was left unstripped and judged
+    # as itself, failing every check the same way an unlisted command would. Now every
+    # assignment-prefixed segment refuses uniformly BEFORE any value-content reasoning
+    # runs — except where the pre-existing global substitution gate (parsed.substitutions,
+    # judged over the whole command before the per-segment loop starts) fires first, which
+    # it still does for a real $(...) or backtick.
     assert (
         judge("FOO=$(whoami) git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
     )
     assert (
         judge("FOO=`whoami` git status && ls", main, ROOTS, CWD).rule == "unjudgeable:substitution"
     )
-    assert judge("FOO=$BAR git status && ls", main, ROOTS, CWD).rule == "segment:0:unlisted"
+    # A bare $VAR reference is not a substitution to the segmenter, so this one reaches
+    # the per-segment loop — and is refused there as "assignment", not "unlisted" the way
+    # it read before G1 (it still fails every check, just under the distinct label the
+    # census needs to tell the two refusal reasons apart).
+    assert judge("FOO=$BAR git status && ls", main, ROOTS, CWD).rule == "segment:0:assignment"
 
 
-def test_a_var_value_prefix_does_not_resolve_dollar_var_for_a_later_rm_operand(rm):
-    # Stripping the assignment prefix does not resolve $VAR for a LATER segment that uses
-    # it as an operand — the bare assignment segment is skipped as a no-op, but the rm
-    # delegation still cannot see through the variable and refuses on principle.
-    assert judge("FOO=/tmp/scratch; rm -rf $FOO", rm, ROOTS, CWD).rule == "segment:1:ask"
+def test_a_bare_assignment_with_no_command_following_still_refuses(rm):
+    # G1 removed stripping outright, including the "nothing left after stripping" shape
+    # the old code read as a no-op and skipped. A standalone `VAR=value` segment with no
+    # command after it persists in the CURRENT shell for a later segment in the same
+    # chain — `PATH=/tmp; ls` is the `;`-separated sibling of `PATH=/tmp ls`, not a safer
+    # shape — so it earns the same refusal the prefixed form does, and the chain never
+    # reaches the later segment to find out whether that one alone would have been safe.
+    assert judge("FOO=/tmp/scratch; rm -rf $FOO", rm, ROOTS, CWD).rule == "segment:0:assignment"
 
 
 # --- single-segment check reachability (D2, Task 7) ---------------------------------------------

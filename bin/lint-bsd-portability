@@ -54,7 +54,7 @@
 #   * Comment-only lines, in any of the scanned languages. Prose about these bugs is all over
 #     the repo — including in this file — and none of it runs.
 #   * `sha256sum`, `md5sum`, `nproc`, `base64 -w` and friends, which macOS also lacks. They were
-#     considered with pattern 4 and dropped for cost: allow-readonly-remote.sh and
+#     considered with pattern 4 and dropped for cost: claude_guard/tables.py and
 #     block-dangerous-bash.sh list those names as DATA inside allowlist alternations, and the
 #     sandbox Dockerfile/image scripts use them inside container builds that are Linux by
 #     construction. The exclusion list would end up longer than the rule.
@@ -90,15 +90,13 @@ excluded() {
     home/.chezmoiscripts/os-linux/* | home/.chezmoiscripts/os-windows/*) return 0 ;;
     home/.chezmoitemplates/linux-install.sh) return 0 ;;
 
-    # A quoted string that is DATA ABOUT a command ('hl sed -i s/a/b/ f' as a permission-rule
-    # fixture), not shell that runs. Excluding the file also blinds this check to a future real
-    # shell stub in it; that is the cost of not being able to annotate the line.
-    tests/hooks/allow-readonly-remote.test.js) return 0 ;;
-    # Same shape, and here the bare spelling is load-bearing rather than incidental:
-    # block-dangerous-bash.sh gained an arm that denies an in-place edit of a secrets file, and
-    # `sed -i s/a/b/ ansible/vars/secrets.yml` is the exact command that returned no decision
-    # when it was measured. Rewriting the fixture to `sed -i.bak` to satisfy this check would
-    # stop testing the spelling the guard exists for. Same cost as above.
+    # A quoted string that is DATA ABOUT a command, not shell that runs, and here the bare
+    # spelling is load-bearing rather than incidental: block-dangerous-bash.sh gained an arm
+    # that denies an in-place edit of a secrets file, and `sed -i s/a/b/ ansible/vars/secrets.yml`
+    # is the exact command that returned no decision when it was measured. Rewriting the
+    # fixture to `sed -i.bak` to satisfy this check would stop testing the spelling the guard
+    # exists for. Excluding the file also blinds this check to a future real shell stub in
+    # it; that is the cost of not being able to annotate the line.
     tests/hooks/block-dangerous-bash-vectors.js) return 0 ;;
 
     # These two hold the known-bad patterns literally, by construction.

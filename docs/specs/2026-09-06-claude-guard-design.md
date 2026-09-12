@@ -95,10 +95,14 @@ allowlist; every table it reads comes from `tables.py`. Adding a delegate is add
 and one line in `judge.py`.
 
 `judge.py` allows a chain when every segment is allow-listed or passes a check, and no segment
-matches deny or ask. It carries the four rules from PR #477: a newline separates like `;`; a
+matches deny or ask. It carries three of PR #477's four rules: a newline separates like `;`; a
 `cat > path <<'EOF'` with a quoted delimiter is judged as a write to `path`; `set -…`
-segments are skipped; a literal `VAR=value` prefix and `timeout N` are stripped before the
-program is judged. A single segment is judged exactly like a chain of one.
+segments are skipped; `timeout N` is stripped before the program is judged. A single segment
+is judged exactly like a chain of one. CORRECTED (Task 8 fix round 1, G1): #477's fourth rule,
+stripping a literal `VAR=value` prefix, is NOT ported — it is a fail-open (an assignment can
+change what the rest of the segment executes, e.g. `PATH=/tmp ls -la`), and removing it
+restores parity with the deployed hook it replaces, which never stripped one. A segment
+carrying a leading assignment refuses instead, under its own `assignment` rule label.
 
 `deny.py` ports `block-dangerous-bash.sh` rule by rule against
 `tests/hooks/block-dangerous-bash-vectors.js`, which becomes a JSON fixture the pytest reads.

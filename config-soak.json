@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "fe884f925c48e0f8c2ec6a9081836950264b7acf85a0be335d2c1d669282cb32",
-      "landed": "2026-09-17T00:47:57.053Z"
+      "hash": "23c67e6a931d15db369a9330efa370ee700df2192ab04b481e7dd670592f281f",
+      "landed": "2026-09-17T00:48:03.403Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "b3047869e8fd5ec62b3b2989197a12b8e835eaf985311a137a185e9f821dbcf6",
-      "landed": "2026-09-10T02:10:09.820Z"
+      "hash": "2b5292b4014ea71ea35053e35390e41cbad169508369ecc5ec84dbc7650a6faf",
+      "landed": "2026-09-17T00:48:03.403Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -325,11 +325,6 @@
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
       "hash": "8a465cbf48c9bc762a55f1a82c316fd443139aaca55812feb8230ce22114216d",
       "landed": "2026-08-26T23:52:32.913Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/test_allow_daniel_server.py",
-      "hash": "8a7f20e24fef742439299fd889639639ae9268b4d621891d7b8b43515f29e28e",
-      "landed": "2026-08-15T14:30:21.828Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",

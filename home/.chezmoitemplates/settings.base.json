@@ -117,11 +117,14 @@
          Slice 3 cut over here -- set to exactly "0" -- and in the same change removed the
          six bash hooks it replaces (allow-compound-bash.sh, allow-readonly-remote.sh,
          allow-safe-curl.sh, allow-safe-rm.sh, allow-ansible-readonly.sh,
-         allow-daniel-server.sh). hook.py treats every value except exactly "0" as shadow,
-         and guard-permission-request.sh's own default is "1" (shadow) for the same
-         reason: the shim's default is a second belt, so a stale settings.json that lost
-         this key cannot run the hook live by accident -- it falls back to shadow, where a
-         missing decision is silent rather than a surprise auto-approve. Exit gate that
+         allow-daniel-server.sh). hook.py treats every value except exactly "0" as shadow.
+         guard-permission-request.sh's own default was flipped the OTHER way, to "0"
+         (live), in the same commit: the pre-cutover default of "1" was the second belt
+         back when shadow was the safe fallback, but now that the bash chain it compared
+         against is deleted, falling back to shadow on a missing key would leave the hook
+         silently never deciding anything, with nothing left to report it -- so a stale
+         settings.json that lost this key now fails toward the live decision the cutover
+         made, not away from it. Exit gate that
          cleared before this flip: `replay --judge --compare-hooks` allowed at least 84 of
          the prompted corpus (the #477 prototype's floor). Read `claude-guard shadow-report`
          for the historical agreement record; going forward it reports only the Python's

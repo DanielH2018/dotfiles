@@ -49,9 +49,11 @@ test('a lone & separates and does not glue the tail onto the previous segment', 
 
 // --- F4: heredocs -------------------------------------------------------------------------
 //
-// ACB-02: allow-compound-bash.sh transports segments as text and re-splits them on `\n`, so
-// every body line became its own "segment" and ordinary `gh pr create --body-file -` always
-// prompted. Bodies are lifted before segmentation, so this is structural now.
+// ACB-02: allow-compound-bash.sh used to transport segments as text and re-split them on
+// `\n`, so every body line became its own "segment" and ordinary `gh pr create --body-file -`
+// always prompted. That hook is gone (claude-guard slice 3); block-dangerous-bash.sh is now
+// the only consumer of this parser's segments, and bodies are lifted before segmentation, so
+// this is structural rather than specific to either consumer.
 test('a heredoc body is lifted, not segmented', () => {
   const cmd = "gh pr create --body-file - <<'EOF'\nsome body\nrm -rf /\nEOF";
   const r = parse(cmd);
@@ -239,10 +241,13 @@ test('a single command reports one segment terminated by eof', () => {
 });
 
 // A trailing separator terminates the last command rather than starting an empty new one.
-// This is a widening guard, not cosmetics: allow-compound-bash.sh keys its compound gate on
-// the segment count, and a trailing newline is ordinary in a multi-line prompt. Reporting
-// `ls\n` as 2 segments would run the approver over a single command and auto-approve what
-// native prefix matching would have prompted for.
+// This is a widening guard, not cosmetics: allow-compound-bash.sh used to key its own
+// compound gate on the segment count, and a trailing newline is ordinary in a multi-line
+// prompt, so reporting `ls\n` as 2 segments there would have run the approver over a single
+// command and auto-approved what native prefix matching would have prompted for. That hook
+// is gone (claude-guard slice 3); block-dangerous-bash.sh is now the only consumer of this
+// parser's segment count, and it reads that count to build the set it scans for dangerous
+// patterns, so the same "is this really N segments" correctness still matters to it.
 test('a trailing separator does not create an empty second command', () => {
   for (const cmd of ['ls\n', 'ls;', 'ls ;  ', 'ls &&\n']) {
     const r = parse(cmd);

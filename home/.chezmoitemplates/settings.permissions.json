@@ -10,9 +10,10 @@
         new fragment is covered on creation; do not narrow it back to a list.
       * bin/config-soak tracks this path, so a change here needs review + `config-soak
         land` before it can ship.
-      * tests/hooks/allow-compound-bash.test.js and tests/secret-registry.test.js read
-        this file's RAW TEXT and parse the allow/deny arrays out of it. They anchor on
-        finding the arrays first, so moving rules out of here fails them loudly.
+      * tests/settings/settings-permissions-no-spawners.test.js and
+        tests/secret-registry.test.js read this file's RAW TEXT and parse the allow/deny
+        arrays out of it. They anchor on finding the arrays first, so moving rules out of
+        here fails them loudly.
       * tests/settings/settings-templates-tracked.test.js asserts the three above still
         point at every fragment.
 
@@ -436,7 +437,6 @@
       "mcp__homelab__list_files",
       "mcp__homelab__read_file",
       "Bash(~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
-      "Bash(/bin/bash ~/.claude/hooks/allow-compound-bash.sh)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
       "Bash(~/.claude/hooks/block-dangerous-bash.sh)",
       "Skill(keybindings-help)",
@@ -524,13 +524,18 @@
       "Bash(git push origin master -f*)",
       {{/* DECIDED: every rule from here down that carries an INTERIOR `*` -- the --no-verify
            pair, the three pipe-to-shell rules, the find/awk execution forms below, and the
-           `gh api -X`/`npx -p` families in the ask tier -- is enforced by
-           allow-compound-bash.sh, NOT by Claude Code's own matcher. The hook routes any
-           pattern with an interior wildcard to matches_glob and tests it against the WHOLE
-           command before splitting (allow-compound-bash.sh:78-81, :278). Proof both ways in
-           tests/hooks/allow-compound-bash.test.js: 'evaluates deny/ask rules with an interior
-           wildcard as globs' fires them, and 'deny globs leave the everyday form of each
-           spawner allowed' proves they do not over-match.
+           `gh api -X`/`npx -p` families in the ask tier -- is enforced by claude_guard's
+           rules.py/judge(), NOT by Claude Code's own matcher. allow-compound-bash.sh did this
+           until claude-guard slice 3 cut over and deleted it; rules.matches_glob /
+           Rules.whole_glob_defer now route any pattern with an interior wildcard against the
+           WHOLE command before it is split into segments, the same thing the hook's
+           matches_glob/:78-81,:278 did. Proof both ways in
+           home/dot_local/share/claude-guard/tests/test_judge.py:
+           test_deny_and_ask_rules_with_an_interior_wildcard_are_globs fires them, and
+           test_deny_globs_leave_the_everyday_form_of_each_spawner_allowed proves they do not
+           over-match -- both ported case-for-case from the deleted JS file's tests of the
+           same two names before this cutover, so this marker is rewritten to name the
+           surviving enforcer rather than relocating a proof that already has a home.
 
            This matters because docs/claude-shell-permissions.md in the server repo measures
            the NATIVE matcher and concludes a flag-level guard "cannot be written at all".
@@ -634,7 +639,7 @@
            regardless of what followed it. Moving that fixup out to the standalone
            stdio-blocking script above removes the accidental guard, so it is named
            explicitly here instead — the posture on a hand-run playbook must not change
-           just because the prefix in front of it did. executable_allow-ansible-readonly.sh
+           just because the prefix in front of it did. claude_guard's ansible_readonly_safe()
            narrows this back to unprompted for the genuinely read-only invocation shapes
            (--check, --list-tasks, --list-tags, --list-hosts, --syntax-check with no
            file-valued -e/--extra-vars); everything else still asks. */}}
@@ -707,10 +712,12 @@
            against the trusted hosts and domains named in autoMode.environment.
 
            Consequence worth knowing: an ask rule is what routes a call through the
-           PermissionRequest hooks, so allow-safe-curl.sh / allow-readonly-remote.sh /
+           PermissionRequest hooks, so claude_guard's curl_safe() / readonly_remote_safe() /
            auto-approve-remote-ssh.sh no longer fast-path these in auto mode — the classifier
-           does. The hooks are retained because they still carry Manual mode, where no
-           classifier runs. */}}
+           does. claude_guard's checks are retained because they still carry Manual mode,
+           where no classifier runs (curl_safe/readonly_remote_safe ran as the standalone
+           bash hooks allow-safe-curl.sh/allow-readonly-remote.sh until claude-guard slice 3
+           deleted them and moved the same decision into guard-permission-request.sh). */}}
       {{/* the hooks are this config's own enforcement layer — never editable without a prompt (Edit rules also cover Write) */}}
       "Edit(~/.claude/hooks/**)",
       "Edit(~/.claude/settings.json)",

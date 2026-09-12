@@ -6,9 +6,10 @@ A command is allowed when every segment is allow-listed or passes a check, and n
 matches deny or ask. Everything that makes the bash defer makes this defer, in the same
 order, with the bash line cited beside it. This is a PORT: PR #477's three rules — a
 newline judged like `;`, a quoted-delimiter `cat > path` heredoc write (both the
-scratch-root AND the session-cwd confinement arms), and `VAR=`/`set -` stripping — are
-ported here, plus D2's removal of the not-compound early return (see the marker at its old
-site).
+scratch-root AND the session-cwd confinement arms), and `set -` stripping — are ported
+here, plus D2's removal of the not-compound early return (see the marker at its old site).
+`VAR=` stripping is the one #477 rule deliberately NOT ported — see the DECIDED marker at
+its refusal site in `judge()` below.
 
 Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_host_safe`,
 `ansible.ansible_readonly_safe` and `git_reset.clean_reset_safe` are STANDALONE
@@ -48,12 +49,25 @@ _DEVNULL_WORD = re.compile(r"\s+/dev/null")
 # substitution in the body, and this line carries no expansion of its own either. The
 # delimiter itself is confined to a bare identifier so a stray quote in the path can't be
 # mistaken for the closing one.
+#
+# DECIDED (G3, task-8-fix-1-brief.md): verified "no" for the same question G1 asks of
+# VAR=/timeout — can what is not judged here change what IS judged? The regex is anchored
+# `^...$` over the WHOLE segment, so nothing is discarded the way a wrapper's prefix
+# tokens are: the one piece this carve-out never inspects, the heredoc BODY, is never
+# executed either — `cat` writes it to `path` byte for byte, it does not `eval` it, and
+# the quoted delimiter already rules out substitution inside it. `path` itself is read
+# straight out of the match, not derived from anything stripped away. So the part this
+# carve-out does not scrutinize (the body) has no path to changing the part it does
+# (the write target) or to executing on its own.
 _HEREDOC_CAT_WRITE = re.compile(
     r"""^cat\s+>{1,2}\s*(?P<path>[^\s"']+)\s+<<-?\s*"""
     r"""(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")\s*$"""
 )
 
-# PR #477 (:392-405). A leading `VAR=value` assignment word: identifier, `=`, anything.
+# PR #477 (:392-405) read a leading `VAR=value` assignment word with this shape and
+# STRIPPED it before judging the rest of the segment. Fix round (G1, task-8-fix-1-brief.md):
+# that arm is not ported. `_ASSIGNMENT_WORD` is kept only to DETECT the shape, at the
+# refusal site in `judge()` below — see the DECIDED marker there for why.
 _ASSIGNMENT_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # PR #477 (:415-421). `set -e`, `set -euo pipefail`, `set -o pipefail`: options to the
@@ -109,26 +123,6 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     real = os.path.realpath(candidate)
     base = cwd.rstrip("/") or "/"
     return real == base or real.startswith(base + "/")
-
-
-def _strip_assignments(part: str) -> str:
-    """:392-405. Strip a leading `VAR=value` assignment (or several) — it takes no action
-    of its own, the same way a human reads `FOO=bar somecmd` as "run somecmd". Left alone
-    when the value carries a live `$`, backtick or `(`: any of those can still expand or
-    execute, so the segment is judged as itself, assignment word and all, and fails every
-    check below exactly as an unlisted command would. This does NOT resolve $VAR for a
-    later segment that uses it as an operand.
-    """
-    while True:
-        first = _first_word(part)
-        if not _ASSIGNMENT_WORD.match(first):
-            return part
-        if "$" in first or "`" in first or "(" in first:
-            return part
-        rest = re.split(r"\s", part, maxsplit=1)
-        if len(rest) == 1:
-            return ""
-        part = _trim(rest[1])
 
 
 def _is_set_options(part: str) -> bool:
@@ -201,6 +195,15 @@ def unwrap_wrapper(segment: str) -> str | None:
                     return None
                 break
         elif w == "timeout":
+            # DECIDED (G3, task-8-fix-1-brief.md): verified "no" for can-the-stripped-part-
+            # change-what-the-surviving-part-executes, the G1 question applied to this
+            # wrapper. `--preserve-status`/`--foreground`/`-v`/`--verbose` take no value at
+            # all; `-s`/`--signal=` name a signal to send TIMEOUT's own kill, never a
+            # command to exec; `-k`/`--kill-after=` is a duration for the same kill timer.
+            # None of timeout(1)'s own flags take a command as an argument or can cause one
+            # to execute — only the duration and the command word that follow do, and both
+            # stay in the unstripped remainder `unwrap_wrapper` returns for the caller to
+            # judge. Unlike VAR=, nothing stripped here can change the surviving command.
             while i < n:
                 tok = t[i]
                 if tok in ("--preserve-status", "--foreground", "-v", "--verbose"):
@@ -223,15 +226,30 @@ def unwrap_wrapper(segment: str) -> str | None:
                 return None
             i += 1
         elif w == "env":
-            # :225-235. Only the plain `env VAR=VALUE... cmd` shape; every option refused.
-            while i < n:
-                tok = t[i]
-                if tok.startswith("-"):
-                    return None
-                if "=" in tok:
-                    i += 1
-                    continue
-                break
+            # :225-235 let `env VAR=VALUE... cmd` consume its assignment tokens and hand
+            # the bare `cmd` on to be judged alone — origin/main:225-235 (the hook THIS
+            # commit retires) has this exact shape TODAY, so it is not a #477-prototype
+            # regression the way G1's bare `VAR=value cmd` stripping was.
+            #
+            # DECIDED (G1's own reasoning, extended — found by testing this fix round,
+            # not named in task-8-fix-1-brief.md's text): it is the identical hazard G1
+            # exists to close, reached through `env` instead of bare assignment syntax.
+            # `env PATH=/tmp ls -la` consumed `PATH=/tmp` and handed `ls -la` to the allow
+            # list exactly the way bare `PATH=/tmp ls -la` used to — confirmed against the
+            # real pre-cutover snapshot, which also allows `echo hi && env PATH=/tmp ls
+            # -la` today. G1's own rationale ("`env` is deliberately absent from the allow
+            # list for exactly this reason... this rule reintroduced the same capability
+            # through the shell's own assignment syntax") describes this branch word for
+            # word. Refusing to unwrap when env carries ANY assignment is a strict
+            # NARROWING relative to the bash (python refuses where bash would have
+            # allowed), never a widening, so it cannot move G2's ALLOW floor the wrong way
+            # — the opposite of G1's own direction, which is why it is safe to fix here
+            # rather than file as a separate finding. A bare `env cmd` (no VAR=) carries no
+            # assignment and still unwraps normally below. (The loop this replaced could
+            # consume several VAR= tokens in a row; refusing on the first means it can
+            # never loop more than once, so there is nothing left here to iterate.)
+            if i < n and (t[i].startswith("-") or "=" in t[i]):
+                return None
         elif w == "stdbuf":
             while i < n:
                 tok = t[i]
@@ -402,7 +420,6 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     #   git merge --ff-only origin/main   the compound hook's ask-list carve-out (:324-328
     #                                      below), now reachable bare
     #   timeout 5 ls                      bare wrapper unwrapping (unwrap_wrapper)
-    #   FOO=bar git status                bare assignment stripping (_strip_assignments)
     #   git status / ls -la               a bare allow-list match
     #   a quoted-delimiter heredoc write   PR #477's own eligibility widening admits it too
     #   a clean `git reset --hard <ref>`   clean_reset_safe has NO deployed bash oracle at
@@ -499,12 +516,36 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
         part = _trim(seg.text)
         if not part:
             continue
-        # PR #477. Benign prefixes are skipped before the program is judged: a leading
-        # VAR=value assignment (or several) and a `set -...`/`set -o ...` segment take no
-        # action of their own and earn no allow entry of their own either.
-        part = _strip_assignments(part)
-        if not part or _is_set_options(part):
+        # PR #477. A `set -...`/`set -o ...` segment is an option to the CURRENT shell, not
+        # a command of its own — it takes no action and earns no allow entry, so it is
+        # skipped rather than judged.
+        if _is_set_options(part):
             continue
+        # DECIDED (G1, task-8-fix-1-brief.md, fix round 1 on 96da9d4): #477's own leading
+        # `VAR=value` STRIP is not ported, full stop — not narrowed to an allowlist or
+        # denylist of variable names. Three reasons. (1) The deployed
+        # allow-compound-bash.sh being replaced never stripped assignments at all — this
+        # arm came only from the unmerged #477 prototype, so removing it restores exact
+        # parity with the chain this commit retires. (2) An assignment can change what the
+        # REST of the segment executes (`PATH=/tmp ls -la` resolves `ls` from the attacker
+        # path; `LD_PRELOAD=/tmp/x.so git status` loads an arbitrary `.so`;
+        # `GIT_SSH_COMMAND=/tmp/x git fetch origin` execs `/tmp/x` directly) — stripping the
+        # prefix and judging only `ls -la` / `git status` / `git fetch origin` judges a
+        # command the shell never actually runs. `env` is deliberately absent from the
+        # allow list for exactly this reason (SPAWNERS in
+        # tests/settings/settings-permissions-no-spawners.test.js); this rule reintroduced
+        # the identical capability through assignment syntax instead of `env`. (3) No
+        # allowlist of "inert" variable names is enumerable — PATH, LD_PRELOAD,
+        # GIT_SSH_COMMAND, BASH_ENV, GIT_DIR, GIT_CONFIG_GLOBAL, NODE_OPTIONS and
+        # PYTHONPATH all arrived as one evidence list; a denylist only ever protects the
+        # names already measured. A segment carrying a leading assignment therefore gets
+        # its OWN rule label — never silently falls through to `unlisted` — so the census
+        # can tell "declined for an assignment prefix" apart from "declined because
+        # nothing matched," which is what would let a narrow, evidence-based allowlist be
+        # designed later instead of guessed at now.
+        if _ASSIGNMENT_WORD.match(_first_word(part)):
+            reasons.append("assignment")
+            return Decision(False, f"segment:{i}:assignment", tuple(reasons))
         ok, reason = judge_segment(part, rules, roots, cwd)
         reasons.append(reason)
         if not ok:

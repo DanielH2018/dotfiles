@@ -305,7 +305,7 @@ def test_replay_judge_applies_the_records_cwd_as_the_project_scope(tmp_path):
     assert r.stdout.splitlines()[-1] == "ALLOW 0/1"
 
 
-def test_replay_compare_hooks_reports_agreement_with_the_bash_chain(tmp_path):
+def test_replay_compare_hooks_reports_agreement_against_a_caller_supplied_hooks_dir(tmp_path):
     # claude-guard slice 3 cutover deleted every BASH_CHAIN member from the deployed hooks
     # directory, so a hooks_dir built from HOOKS_DIR answers "none" for every record forever
     # -- not a transient "not beside a deployed copy" gap a skipif could wait out. A fake

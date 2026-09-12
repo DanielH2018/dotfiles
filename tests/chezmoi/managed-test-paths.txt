@@ -2,7 +2,6 @@
 # Regenerate deliberately:  chezmoi managed --source home | grep -iE 'test|fixture|conftest' | sort
 # A path appearing here means: this test file is MEANT to deploy into ~/.claude.
 # See tests/chezmoi/managed-test-drift.test.js for why this exists.
-.claude/hooks/test_allow_daniel_server.py
 .claude/hooks/test_bash_write_fanout.py
 .claude/hooks/test_isolation_guard.py
 .claude/hooks/test_memory_index_size.py

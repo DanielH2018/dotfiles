@@ -35,7 +35,7 @@ Recorded here so a reviewer does not re-derive them. Each also gets a `# DECIDED
 
 **D2 — a single segment is judged like a chain.** From the spec's *Decisions*. `judge()` currently returns `not-compound` for a command with no `&&`, `;` or `|`, a faithful port of `allow-compound-bash.sh:51-59`. Slice 3 removes that early return so a bare `rm -rf ./build` or `curl -sS https://…` reaches the same checks a chained one does. This is the one policy change in the slice and the reason its census carried a standing `not-compound` `bash_only` row (PR #487).
 
-**D3 — `allow-daniel-server.sh` ships tests it never had.** It has no test file today. The port writes one against the bash's behaviour *before* the Python exists, so the port has an oracle rather than only the reimplementation's own say-so.
+**D3 — `allow-daniel-server.sh`'s port writes its own test suite from the bash, not by porting the existing one.** CORRECTED (Task 8 fix round 1, G7): the original text here claimed the hook "has no test file today"; that was false — `home/private_dot_claude/hooks/test_allow_daniel_server.py` already had 36 cases. Task 3 wrote a Python suite from reading the bash directly rather than porting that existing oracle. No behaviour regression came of it: a later reviewer replayed all 36 of the existing suite's cases through `trusted_host_safe` and got 36/36 agreement.
 
 ---
 
@@ -108,7 +108,7 @@ The bash's shape, in order — keep it:
 
 **Signature:** `trusted_host_safe(command: str) -> bool`.
 
-Per **D3**, write the tests first, derived from reading the bash — there is no existing suite to port.
+Per **D3**, write the tests first, derived from reading the bash directly (see D3's correction: an existing suite turned out to exist, `home/private_dot_claude/hooks/test_allow_daniel_server.py`, but was not the one ported from).
 
 1. `local_split_risk()` — a character-by-character quote-state machine over the **raw** string (`:49-73`). Outside quotes, any of `; & | < > ( ) $ \`` or a newline is a risk. Inside double quotes, only `$` and `` ` `` are (they expand locally before ssh runs). Inside single quotes, nothing is. A backslash escapes the next character everywhere except inside single quotes. An unterminated quote at end-of-string is a risk.
    **Hazard:** do not approximate this with a regex. Banning `;` anywhere reintroduces a measured regression — `ssh daniel-server "cd /repo; git status"` was 67 of 361 prompts before the state machine fixed it (`:34-39`).
@@ -164,7 +164,7 @@ Three rules, and `judge.py:5-6` already names them as the target:
 
 1. **A newline separates like `;`.** `judge.py:274` currently refuses a segment whose separator is `newline` or `&`. The segmenter already reports both correctly (slice 1); the judge stops treating `newline` as unjudgeable. A bare `&` stays refused — it backgrounds, which is not the same statement.
 2. **A quoted-delimiter heredoc write is judged as a write to its path.** `judge.py:272-273` currently returns `unjudgeable:heredoc` for any segment carrying one. A heredoc whose delimiter was **quoted** cannot carry a live substitution — the segmenter records `heredoc_quoted` for exactly this — so `cat > path <<'EOF'` is judged as a write to `path` and reaches `scratch.py`. An **unquoted** delimiter stays unjudgeable.
-3. **Benign prefixes are skipped before the program is judged.** A literal `VAR=value` prefix and `timeout N` are stripped; `set -…` segments are skipped entirely. `judge.py:58` and `:115` already carry the wrapper-unwrapping machinery this extends.
+3. **Benign prefixes are skipped before the program is judged.** `timeout N` is stripped; `set -…` segments are skipped entirely. `judge.py:58` and `:115` already carry the wrapper-unwrapping machinery this extends. CORRECTED (Task 8 fix round 1, G1): this step originally also stripped a literal `VAR=value` prefix the way #477 did; that arm was not shipped — it is a fail-open, not ported, and removing it restores parity with the deployed hook, which never stripped one. A leading assignment refuses the segment instead.
 
 Port #477's 160 test lines alongside.
 
