@@ -161,15 +161,27 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
     roots = scratch_roots(home, os.environ.get("TMPDIR"))
     allowed = 0
     agree = 0
-    for rec in records:
-        command = rec["command"]
+    for i, rec in enumerate(records):
         # Fix round 1, F1: the corpus's own record shape is {command, cwd} (module
-        # docstring above) -- a record missing `cwd` is malformed, and a silent ""
-        # default used to get it wrong twice: it read as the hook PROCESS's own cwd
-        # before clean_reset_safe refused a falsy cwd outright, and even now it would
-        # just silently under-count ALLOW for every cwd-sensitive shape in a malformed
-        # corpus rather than surfacing the bad record. `rec["cwd"]` raises loudly instead.
-        cwd = rec["cwd"]
+        # docstring above) -- a record missing `command` or `cwd` is malformed, and a
+        # silent "" default used to get `cwd` wrong twice: it read as the hook PROCESS's
+        # own cwd before clean_reset_safe refused a falsy cwd outright, and even now it
+        # would just silently under-count ALLOW for every cwd-sensitive shape in a
+        # malformed corpus rather than surfacing the bad record. Indexing raises loudly
+        # instead of defaulting to "" -- fail-closed, same posture as clean_reset_safe's
+        # own refusal. Item 5 (fix round 2): an uncaught KeyError here used to escape
+        # main() as a bare traceback, silently dropping the partial ALLOW/AGREE tally a
+        # gate reading this command's output needs even on a malformed record. Catch it,
+        # name the record and the missing key, and still print what was tallied so far.
+        try:
+            command = rec["command"]
+            cwd = rec["cwd"]
+        except KeyError as exc:
+            print(f"MALFORMED RECORD {i}: missing key {exc.args[0]!r}", file=sys.stderr)
+            print(f"ALLOW {allowed}/{len(records)}")
+            if hooks_dir is not None:
+                print(f"AGREE {agree}/{len(records)}")
+            return 1
         env = {**os.environ, "CLAUDE_PROJECT_DIR": cwd}
         d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd)
         if d.allow:
@@ -200,13 +212,19 @@ def _replay_deny(records: list[dict], hook: Path | None) -> int:
     agree = 0
     for rec in records:
         command = rec["command"]
+        cwd = rec.get("cwd", "")
         env = {**os.environ}
-        v = deny(command, rec.get("cwd", ""), env)
+        v = deny(command, cwd, env)
         if v.kind != "none":
             print(f"{v.kind.upper()} {v.rule}: {_head(command)}")
         if hook is None:
             continue
-        stdin_text = json.dumps({"tool_input": {"command": command}})
+        # Item 4 (fix round 2): the same asymmetry F3 fixed at the --judge replay path
+        # (above) -- block-dangerous-bash.sh falls back to the replay PROCESS's own $PWD
+        # when `cwd` is absent from stdin, while the python side is handed the record's
+        # real cwd, which is a spurious disagreement that has nothing to do with either
+        # side's deny rules.
+        stdin_text = json.dumps({"tool_input": {"command": command}, "cwd": cwd})
         bash_kind, bash_detail = bash_deny_verdict(hook, stdin_text, env)
         mine_detail = v.updated_command if v.kind == "allow" else v.reason
         if (v.kind, mine_detail or "") == (bash_kind, bash_detail):

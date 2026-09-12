@@ -596,14 +596,24 @@ def test_a_bare_readonly_remote_command_is_now_reachable(main):
     # mutation-proved it, 758 passed both ways. These two separate: neither host below is
     # trusted_host_safe-eligible (`hl` takes no host at all; daniel-box is not in
     # TRUSTED_SSH_HOSTS), so only readonly_remote_safe can be reaching them.
+    #
+    # Fix round 2, finding 6: pin the rule label too, not only the allow bit. The two
+    # checks now return distinct rules (remote-readonly-check / trusted-host-check,
+    # judge.py) so the shadow census can attribute a python_only row to the check that
+    # produced it -- that's the entire point of finding 6, and without an assertion on
+    # the label itself, collapsing the two rules back into one shared string goes green.
     assert allowed("hl uptime", main)
     assert allowed("ssh daniel-box uptime", main)
+    assert judge("hl uptime", main, ROOTS, CWD).rule == "remote-readonly-check"
 
 
 def test_a_bare_trusted_host_command_is_now_reachable(main):
     # The other half of F4's separation: `touch` is not in REMOTE_READONLY_VERBS, so only
     # trusted_host_safe (daniel-server is TRUSTED_SSH_HOSTS) can be reaching this one.
     assert allowed('ssh daniel-server "touch /tmp/pwned"', main)
+    assert (
+        judge('ssh daniel-server "touch /tmp/pwned"', main, ROOTS, CWD).rule == "trusted-host-check"
+    )
 
 
 def test_a_bare_readonly_ansible_check_is_now_reachable(main):

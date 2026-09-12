@@ -15,7 +15,7 @@ Fix round 1 (finding 3/6/7), F0: `remote.readonly_remote_safe`, `remote.trusted_
 PermissionRequest hooks in the deployed chain (allow-readonly-remote.sh,
 allow-daniel-server.sh, allow-ansible-readonly.sh, allow-clean-reset.sh) — they are never
 delegated to from inside allow-compound-bash.sh's own segment loop, which only ever calls
-out to curl and rm (:115-120, :128-133). So they are wired in `judge()` below as
+out to curl and rm (:117-122, :130-135). So they are wired in `judge()` below as
 whole-command arms tried against the untouched `command`, not inside `judge_segment` — the
 faithful port is a union: the bash chain allows C when allow-compound-bash.sh allows C OR
 any one of these standalone hooks allows C, regardless of what the segment loop on its own
@@ -88,8 +88,22 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     `/home/ubuntu/.bashrc`, which matches neither `"$CWD"` nor `"$CWD"/*`, and refuses. A
     quoted-delimiter heredoc write to `escape/.bashrc` auto-approved a write outside the
     session under the old lexical check; it does not under this one.
+
+    Finding 7 (no live defect, stated for the record): `os.path.realpath` always returns
+    an absolute path, so it can never equal or start with a relative `base` — a relative
+    `cwd` already measures False here without this guard. But that refusal was incidental
+    rather than stated, and a future edit that made the comparison lexical again (as
+    `under_scratch` already is) would silently reopen it. DECIDED: require an absolute
+    `cwd` explicitly, the same contract `git_reset.py:88` states for its own cwd consumer,
+    so the two cwd consumers in this package agree on what a valid cwd is.
     """
-    if not cwd or ".." in path or path.startswith("~") or path.startswith("$"):
+    if (
+        not cwd
+        or not cwd.startswith("/")
+        or ".." in path
+        or path.startswith("~")
+        or path.startswith("$")
+    ):
         return False
     candidate = path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}"
     real = os.path.realpath(candidate)
@@ -381,13 +395,22 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     #
     # The reviewer enumerated what D2 newly allows that no bash hook allows, all measured
     # (fix round 1, finding 7) — an expected widening, not a regression, for the
-    # post-cutover census to tell apart:
+    # post-cutover census to tell apart. The last entry is NOT a D2 widening — it has
+    # nothing to do with single-segment judging — but an absent bash oracle; it is
+    # recorded in the same place because it produces the same symptom, a python_only row
+    # the census must not chase as a disagreement:
     #   git merge --ff-only origin/main   the compound hook's ask-list carve-out (:324-328
     #                                      below), now reachable bare
     #   timeout 5 ls                      bare wrapper unwrapping (unwrap_wrapper)
     #   FOO=bar git status                bare assignment stripping (_strip_assignments)
     #   git status / ls -la               a bare allow-list match
     #   a quoted-delimiter heredoc write   PR #477's own eligibility widening admits it too
+    #   a clean `git reset --hard <ref>`   clean_reset_safe has NO deployed bash oracle at
+    #                                      all — allow-clean-reset.sh is absent from the
+    #                                      hooks dir because PR #474 is unmerged, so every
+    #                                      `rule=git-reset-check` row in the post-cutover
+    #                                      census reads `python_only` by construction, not
+    #                                      as a disagreement to chase
     # The dangerous populations stay closed: deny, ask, the whole-glob deny/ask check
     # below, substitution, and the bare `&` separator all still run for a single segment,
     # and a bare unlisted command still returns Decision(False, "segment:0:unlisted", …) —
@@ -397,8 +420,8 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     # ansible_readonly_safe and clean_reset_safe port FOUR STANDALONE PermissionRequest
     # hooks (allow-readonly-remote.sh, allow-daniel-server.sh, allow-ansible-readonly.sh,
     # allow-clean-reset.sh) — none of them is delegated to from inside
-    # allow-compound-bash.sh's own segment loop (only curl and rm are, :115-120,
-    # :128-133), so they belong here, tried against the WHOLE, unsegmented `command` —
+    # allow-compound-bash.sh's own segment loop (only curl and rm are, :117-122,
+    # :130-135), so they belong here, tried against the WHOLE, unsegmented `command` —
     # the harness invokes each of the real standalone hooks against the full raw command
     # the same way, independent of what allow-compound-bash.sh's own loop concludes. No
     # `word == …` prefilter guards these calls: each check parses the whole command
@@ -419,8 +442,17 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
     # one-segment command the existing per-segment delegation in judge_segment below
     # reaches the identical verdict a whole-command arm would — adding one would be a
     # no-op.
-    if readonly_remote_safe(command) or trusted_host_safe(command):
-        return Decision(True, "remote-check", ())
+    # Fix round 1, finding 6: two distinct rule labels, not one shared `remote-check`.
+    # D1 ruled readonly_remote_safe/trusted_host_safe are two separate checks (no host
+    # filter in allow-readonly-remote.sh, no verb table in allow-daniel-server.sh,
+    # different outer parsers); summarize() buckets python_only_rules by `rule` while the
+    # bash side records `bash_hook` distinctly, so a shared label re-collapses exactly the
+    # pair the census needs apart — a disagreement could not be attributed to either check
+    # without re-running the command.
+    if readonly_remote_safe(command):
+        return Decision(True, "remote-readonly-check", ())
+    if trusted_host_safe(command):
+        return Decision(True, "trusted-host-check", ())
     if ansible_readonly_safe(command):
         return Decision(True, "ansible-check", ())
     if clean_reset_safe(command, cwd):

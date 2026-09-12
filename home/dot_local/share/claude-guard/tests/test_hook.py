@@ -206,6 +206,33 @@ def test_shadow_mode_agrees_on_a_readonly_remote_and_an_ansible_check(tmp_path):
     )
 
 
+# Item 2 (fix round 2): F3's only red-proof for BASH_CHAIN's three-hook widening is the
+# @skip_no_bash-gated test above, and plan Task 8 step 3 deletes the file that gate probes
+# for (executable_allow-compound-bash.sh) -- after Task 8 that test skips silently and
+# forever on every runner, while BASH_CHAIN and bash_chain_allows stay live for
+# `replay --compare-hooks`. On any runner without `jq` it already skips today, so F3 has
+# ZERO red-proof there right now. `grep -rn BASH_CHAIN tests/` otherwise turns up only
+# that test's own comment and the two `for name in hook.BASH_CHAIN` loops below, which
+# iterate whatever length the tuple has -- a shrunk tuple moves a count, never names the
+# missing member. This asserts the six required names as a frozenset, unconditionally (no
+# bash/jq/HOOKS dependency), so a dropped member fails by NAME.
+_REQUIRED_BASH_CHAIN_HOOKS = frozenset(
+    {
+        "allow-compound-bash.sh",
+        "allow-safe-curl.sh",
+        "allow-safe-rm.sh",
+        "allow-readonly-remote.sh",
+        "allow-daniel-server.sh",
+        "allow-ansible-readonly.sh",
+    }
+)
+
+
+def test_bash_chain_names_every_deployed_hook_it_must_shadow():
+    missing = _REQUIRED_BASH_CHAIN_HOOKS - set(hook.BASH_CHAIN)
+    assert not missing, f"BASH_CHAIN dropped: {sorted(missing)}"
+
+
 @skip_no_bash
 def test_shadow_mode_logs_a_refusal_both_sides_agree_on(tmp_path):
     home = home_with(tmp_path)
@@ -277,7 +304,13 @@ def test_an_unwritable_log_dir_is_swallowed(tmp_path):
 def test_a_decision_exception_in_shadow_still_leaves_a_record(tmp_path, monkeypatch, capsys):
     # Red-proof for finding 2: an exception raised inside decide() must not vanish the
     # way it would in live mode -- shadow's whole point is a record of every call.
-    def boom(command, env):
+    #
+    # Item 3 (fix round 2): this carried a stale 2-arg signature against the real call
+    # site, hook.py:231's `decide(command, cwd, env)` -- monkeypatch.setattr swaps in
+    # whatever signature is written here, so the test passed on the resulting
+    # `TypeError: boom() takes 2 positional arguments but 3 were given` rather than the
+    # ValueError it names below.
+    def boom(command, cwd, env):
         raise ValueError("should never reach the log")
 
     monkeypatch.setattr(hook, "decide", boom)
