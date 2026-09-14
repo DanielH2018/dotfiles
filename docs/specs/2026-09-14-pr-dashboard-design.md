@@ -65,7 +65,8 @@ there is no reason to round-trip to the server to regroup.
 
 | Module | Purpose | I/O |
 |---|---|---|
-| `src/github.ts` | GraphQL query, pagination, token acquisition | network |
+| `src/github.ts` | GraphQL transport: `query()`, pagination, token acquisition | network |
+| `src/queries.ts` | The PR fragment, plus fetch-many and fetch-one built from it | none |
 | `src/normalize.ts` | raw response nodes to flat PR records | none |
 | `src/stacks.ts` | PR records to a forest of stacks | none |
 | `src/server.ts` | `node:http`, static files, `/api/prs`, cache | filesystem |
@@ -102,6 +103,7 @@ query reaches through `commits(last: 1)`.
 
 ```ts
 type PrRecord = {
+  id: string;            // "owner/name#123" — stable, unique, survives a refetch
   repo: string;          // "owner/name"
   number: number;
   title: string;
@@ -173,6 +175,10 @@ reason is invisible.
 The server holds the normalized payload in memory with a 60-second TTL. A refresh control
 in the page bypasses the TTL.
 
+The cache is a small object exposing `get()`, `set()`, and `invalidate()` rather than a
+bare timestamp compared inline at the call site. The behavior in v1 is identical; the
+difference is that an action which changes state on GitHub has something to call.
+
 The last successful payload is retained. When a refresh fails, the page continues to show
 that data behind a banner naming the failure and the time of the last success. Going blank
 on a transient network error would be a worse failure than showing data a few minutes old.
@@ -181,16 +187,40 @@ on a transient network error would be a worse failure than showing data a few mi
 - **GraphQL partial errors:** render the rows that did arrive, with a banner listing what failed.
 - **Rate limit exhausted:** banner naming the reset time, serving cached data until then.
 
-## Authentication
+## Authentication and local-server hardening
 
 This touches a GitHub credential, so the handling is explicit. The server reads a token by
 invoking `gh auth token` at startup and holds it in memory for the process lifetime. It is
 never written to disk, never logged, and never sent to the browser — the client talks only
-to `127.0.0.1` and receives normalized PR records. The dashboard performs no mutating
-operation, so a read-scoped token is sufficient.
+to `127.0.0.1` and receives normalized PR records.
 
 `GH_TOKEN` in the environment overrides the `gh` lookup, for the case where `gh`'s config
 is unreadable.
+
+### Why the guard exists in v1
+
+`127.0.0.1` is not a security boundary. Any page open in the same browser can issue requests
+to a loopback server, and a server holding a GitHub token is worth attacking: reading my
+private PR titles today, and merging or closing PRs once actions exist. Nothing about that
+threat is created by adding actions later — actions only raise the severity from disclosure
+to writes against my repositories.
+
+Retrofitting this guard onto an endpoint surface designed without it is how this class of
+tool gets it wrong, so the three controls below ship in v1, while there is one endpoint to
+apply them to.
+
+1. **Bind to `127.0.0.1` only,** never `0.0.0.0`. Nothing off the machine can connect.
+2. **Reject unexpected `Host` and `Origin` headers.** `Host` must be `127.0.0.1:<port>` or
+   `localhost:<port>`; any other value means a DNS-rebinding attacker resolved their own
+   hostname to loopback. `Origin`, when present, must match the server's own. No CORS
+   headers are ever sent, so a cross-origin page cannot read a response even if it connects.
+3. **Require a per-launch secret.** `bin/pr-dash` generates a random token at startup,
+   opens the browser at `http://127.0.0.1:<port>/#<secret>`, and the client sends it as a
+   header on every request. A page that did not receive the secret cannot use the API even
+   from a permitted origin. The secret lives in memory and dies with the process.
+
+None of the three depends on what the endpoints do, which is the point — the guard is
+written once against a read-only surface and does not change when mutating routes arrive.
 
 Note for development: this repository's Claude sandbox denies reads of `~/.config/gh` and
 denies network access to `github.com`, so `gh auth token` fails inside a sandboxed shell.
@@ -218,6 +248,9 @@ runtime.
 - Grouping and sorting — one test per axis, over a shared fixture.
 - `server.ts` — a single smoke test: start with a stubbed fetch, request `/api/prs`,
   assert the response shape.
+- The request guard — a rejected `Host`, a mismatched `Origin`, and a missing secret each
+  get a test. This is the one piece of v1 whose failure mode is silent, so it is the one
+  piece that does not rely on the smoke test to cover it.
 
 No test performs network I/O.
 
@@ -227,6 +260,37 @@ No test performs network I/O.
 `home/dot_local/bin/executable_pr-dash`. The source modules live alongside it under
 `home/dot_local/share/pr-dash/`.
 
+## Designing for actions later
+
+v1 is read-only, but merge, close, comment, approve, and re-run CI are likely enough that
+the design should not have to be unpicked to add them. The decisions below cost nothing
+now and are expensive to reverse.
+
+What is deliberately **not** built now: no action registry, no abstract `Action` interface,
+no permission model, no undo stack. Scaffolding built against imagined requirements is how
+a small tool acquires a framework nobody needed. The list is short on purpose.
+
+| Decision | Made now because |
+|---|---|
+| Origin, `Host`, and per-launch-secret guard on every request | The only item that is a vulnerability if retrofitted. See the hardening section. |
+| `PrRecord.id` as `"owner/name#123"` | Gives the client stable row identity, so a single row can be patched after an action instead of re-rendering the list. |
+| `github.ts` is a transport with `query()`, not a function per screen | Adding `mutate()` beside `query()` is a few lines. A module shaped around the read path would need restructuring. |
+| Shared PR fragment in `queries.ts`, used by fetch-many and fetch-one | An action needs to refetch exactly one PR. The fragment guarantees the refetched row has the same shape as the rows around it. |
+| Cache exposes `invalidate()` | An action that changes GitHub state must be able to drop stale data. |
+
+Two rules recorded here so a later session inherits them rather than deciding freshly:
+
+**The token scope changes and must be re-stated.** v1 needs read access only. Merge, close,
+and approve need write. Whoever adds the first mutating route states the new scope in the
+spec and in the startup error message — a tool that silently starts wanting write access to
+every repository I can see is a change worth noticing.
+
+**Irreversible actions get a confirmation step, reversible ones do not.** Merge and close
+are irreversible in practice and must name the specific PR in a confirmation before
+proceeding. Comment, approve, and re-run CI are recoverable and can act on a single click.
+Wiring merge to a bare click in a dense grouped list is a mis-click away from merging the
+wrong PR.
+
 ## Deferred
 
 - **`needsRebase` from `gh stack view --json`,** as an enrichment where a local clone
@@ -234,5 +298,6 @@ No test performs network I/O.
   marker proves too coarse.
 - **Other PR scopes** — review-requested, bot-authored, recently merged. The query is one
   search string; the work is in the grouping defaults each would want.
-- **Actions.** Would require a write-scoped token and a confirmation step on anything
-  irreversible. Deliberately excluded from v1.
+- **Actions** — merge, close, comment, approve, re-run CI. Excluded from v1, but the design
+  is shaped to take them; see *Designing for actions later* above for what is already in
+  place and the two rules that apply when they land.
