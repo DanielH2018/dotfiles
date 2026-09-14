@@ -1,7 +1,7 @@
 // The claim hook fires on every Edit/Write. What matters is that it calls the
 // CLI exactly once per session and never lets a failure reach the caller — it
 // sits on the edit path, where a slow or broken board must cost nothing.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -13,8 +13,17 @@ const HOOK = path.join(
   'executable_planka-claim.sh',
 );
 
+// Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
+// only collects leftovers six hours later.
+const scratch = [];
+after(() => {
+  for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function tmpdir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'planka-claim-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-claim-'));
+  scratch.push(dir);
+  return dir;
 }
 
 // A stub `planka` on PATH that appends one line per invocation.

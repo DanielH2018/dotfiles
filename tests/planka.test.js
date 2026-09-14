@@ -6,7 +6,7 @@
 // Stop paths of every session on every machine, but its config lives only in
 // the private work overlay — so "no config means silence and exit 0" is what
 // keeps this tool inert everywhere else.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -22,8 +22,17 @@ try {
   skip = true;
 }
 
+// Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
+// only collects leftovers six hours later.
+const scratch = [];
+after(() => {
+  for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function tmpdir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'planka-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-test-'));
+  scratch.push(dir);
+  return dir;
 }
 
 // Run the CLI with a scratch environment. `config` null means "no config file

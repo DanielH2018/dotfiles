@@ -182,7 +182,9 @@ land() {
   # direction — planka exits 0 when it is not configured, and a landing must not
   # report failure because a Kanban board was unreachable.
   if command -v planka >/dev/null 2>&1; then
-    planka card move --list done --branch "$BRANCH" >/dev/null 2>&1 || true
+    # "done" is quoted so shellcheck reads it as this flag's value rather than as
+    # the loop keyword (SC1010).
+    planka card move --list "done" --branch "$BRANCH" >/dev/null 2>&1 || true
     planka card comment --branch "$BRANCH" \
       --text "Landed on main as $(git rev-parse --short HEAD) (PR #$PR)." >/dev/null 2>&1 || true
   fi

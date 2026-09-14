@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "6caa81195acd629ca167c4e8585202285480917af832934d522ec3b796a3375b",
-      "landed": "2026-09-10T14:12:33.199Z"
+      "hash": "511edb0435a11ab1a77ca2d3985d35cb0270c6daaf77deaf51f4fbfd5618f39f",
+      "landed": "2026-09-14T15:48:15.208Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -200,6 +200,21 @@
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
       "hash": "2a487cb6e91e7ef63be6fb84cca6a574a97be531d017c23b29ce25508a99f715",
       "landed": "2026-09-14T15:12:58.899Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_planka-claim.sh",
+      "hash": "42336ec6125ce16d8087f3cd8eadbdf3a5db81634ef7c98e7c8e45081238b8bc",
+      "landed": "2026-09-14T15:48:15.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_planka-plan.sh",
+      "hash": "feaadb4775abdc1c8fc611a0494a336a0195a0ec4addfcadfe8499a8cde8ac85",
+      "landed": "2026-09-14T15:48:15.208Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_planka-stop.sh",
+      "hash": "689bc20f133d0003e56d3c1d8c34c7d776f18b4a3cfd3c3a0a3fa16d764da061",
+      "landed": "2026-09-14T15:48:15.208Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
@@ -577,6 +592,11 @@
       "landed": "2026-08-23T14:06:23.158Z"
     },
     {
+      "path": "home/private_dot_claude/skills/planka-tracking/SKILL.md",
+      "hash": "e41149435e2dd1cad475da411857a2e7c9e9ce48937b7ed6724b6073e9b63b4c",
+      "landed": "2026-09-14T15:48:15.208Z"
+    },
+    {
       "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
       "hash": "8cc2b23a03f38b51d936ba94b5d9fdeebf60d769cd3a02dbfaac69011587b64c",
       "landed": "2026-08-29T16:29:26.208Z"
@@ -693,8 +713,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/skill-router/SKILL.md.tmpl",
-      "hash": "e58051706f999591caacee95efa2eeac89866684e672ed764e250b818e1664f2",
-      "landed": "2026-09-09T23:11:08.364Z"
+      "hash": "560bf83616dd7ae246841d869451f5895f4cdd8bae5d8f3f9a938b59e5107ccd",
+      "landed": "2026-09-14T15:48:15.208Z"
     },
     {
       "path": "home/private_dot_claude/skills/test-scenario-hygiene/SKILL.md",

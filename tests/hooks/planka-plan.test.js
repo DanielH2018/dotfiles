@@ -1,6 +1,6 @@
 // The plan hook's whole job is to hand its stdin payload to the CLI without
 // blocking or failing the TodoWrite call that triggered it.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -11,6 +11,19 @@ const HOOK = path.join(
   __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
   'executable_planka-plan.sh',
 );
+
+// Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
+// only collects leftovers six hours later.
+const scratch = [];
+after(() => {
+  for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function tmpdir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-plan-'));
+  scratch.push(dir);
+  return dir;
+}
 
 function stubBin(dir, script) {
   const bin = path.join(dir, 'bin');
@@ -34,7 +47,7 @@ function waitForContent(file) {
 }
 
 test('forwards the payload to the CLI on stdin and exits 0', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-plan-'));
+  const dir = tmpdir();
   const captured = path.join(dir, 'captured');
   const bin = stubBin(dir, `#!/bin/sh\ncat > ${captured}\nexit 0\n`);
   const payload = JSON.stringify({
@@ -52,7 +65,7 @@ test('forwards the payload to the CLI on stdin and exits 0', () => {
 });
 
 test('PLANKA_TRACKING=0 forwards nothing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-plan-'));
+  const dir = tmpdir();
   const captured = path.join(dir, 'captured');
   const bin = stubBin(dir, `#!/bin/sh\ncat > ${captured}\n`);
   const r = spawnSync('bash', [HOOK], {
@@ -65,7 +78,7 @@ test('PLANKA_TRACKING=0 forwards nothing', () => {
 });
 
 test('a CLI that fails does not fail the hook', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-plan-'));
+  const dir = tmpdir();
   const bin = stubBin(dir, '#!/bin/sh\nexit 4\n');
   const r = spawnSync('bash', [HOOK], {
     encoding: 'utf8',

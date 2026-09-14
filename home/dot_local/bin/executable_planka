@@ -12,6 +12,7 @@ would block on Touch ID behind a session nobody is watching.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -42,7 +43,7 @@ def cache_dir():
 def log(msg):
     try:
         with open(os.path.join(state_dir(), "log"), "a") as fh:
-            fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg))
+            fh.write("{} {}\n".format(time.strftime("%Y-%m-%dT%H:%M:%S"), msg))
     except OSError:
         pass
 
@@ -51,7 +52,7 @@ def soft_fail(msg):
     """Log and exit 0 — or, under --strict, complain and exit 1."""
     log(msg)
     if STRICT:
-        sys.stderr.write("planka: %s\n" % msg)
+        sys.stderr.write(f"planka: {msg}\n")
         sys.exit(1)
     sys.exit(0)
 
@@ -117,7 +118,8 @@ def seed_password(cfg):
     ref = cred.get("opRef")
     service = cred.get("keychainService")
     if not ref or not service:
-        soft_fail("auth --refresh: credential.opRef and credential.keychainService required")
+        soft_fail("auth --refresh: credential.opRef and "
+                  "credential.keychainService are both required")
     proc = subprocess.run(["op", "read", ref], capture_output=True, text=True)
     if proc.returncode != 0 or not proc.stdout.strip():
         soft_fail("auth --refresh: op read failed (is the 1Password app running?)")
@@ -168,7 +170,8 @@ def write_cached_token(token):
 def mint_token(cfg):
     password = read_password(cfg)
     if password is None:
-        soft_fail("no keychain entry for the Planka password; run: planka auth --refresh")
+        soft_fail("no keychain entry for the Planka login; "
+                  "run: planka auth --refresh")
     body = {
         "emailOrUsername": cfg.get("credential", {}).get("username", ""),
         "password": password,
@@ -176,13 +179,13 @@ def mint_token(cfg):
     try:
         resp = api(cfg, "POST", "/access-tokens", body)
     except Exception as exc:  # noqa: BLE001 - every failure is soft here
-        soft_fail("mint: %s" % exc)
+        soft_fail(f"mint: {exc}")
     token = resp.get("item")
     if not isinstance(token, str):
         # A step (ACCEPT_TERMS) rather than a token. Terms are not enabled on
         # this deployment; enabling them later must degrade to silence, not to
         # a hook retrying a login it cannot complete.
-        soft_fail("login returned a step, not a token: %s" % sorted(resp))
+        soft_fail(f"login returned a step, not a token: {sorted(resp)}")
     write_cached_token(token)
     return token
 
@@ -198,38 +201,32 @@ def call(cfg, method, path, body=None):
         return api(cfg, method, path, body, token)
     except urllib.error.HTTPError as exc:
         if exc.code != 401:
-            soft_fail("%s %s: HTTP %s" % (method, path, exc.code))
-        try:
+            soft_fail(f"{method} {path}: HTTP {exc.code}")
+        with contextlib.suppress(OSError):
             os.unlink(token_path())
-        except OSError:
-            pass
         try:
             return api(cfg, method, path, body, mint_token(cfg))
         except Exception as exc2:  # noqa: BLE001
-            soft_fail("%s %s after re-mint: %s" % (method, path, exc2))
+            soft_fail(f"{method} {path} after re-mint: {exc2}")
     except Exception as exc:  # noqa: BLE001
-        soft_fail("%s %s: %s" % (method, path, exc))
+        soft_fail(f"{method} {path}: {exc}")
 
 
 def cmd_auth(args):
     cfg = require_config()
     if args.forget:
         forget_password(cfg)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(token_path())
-        except OSError:
-            pass
         print("forgot the keychain entry and the cached token")
         return
     if args.refresh:
         service = seed_password(cfg)
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(token_path())
-        except OSError:
-            pass
-        print("seeded keychain service %s" % service)
+        print(f"seeded keychain service {service}")
     token = token_for(cfg)
-    print("token ok (%d chars)" % len(token))
+    print(f"token ok ({len(token)} chars)")
 
 
 def cmd_board_show(args):
@@ -238,20 +235,20 @@ def cmd_board_show(args):
     if not board_id:
         projects = call(cfg, "GET", "/projects")
         for board in projects.get("included", {}).get("boards", []):
-            print("board\t%s\t%s" % (board.get("id"), board.get("name")))
+            print("board\t{}\t{}".format(board.get("id"), board.get("name")))
         return
-    board = call(cfg, "GET", "/boards/%s" % board_id)
+    board = call(cfg, "GET", f"/boards/{board_id}")
     included = board.get("included", {})
     item = board.get("item", {})
-    print("board\t%s\t%s" % (item.get("id"), item.get("name")))
+    print("board\t{}\t{}".format(item.get("id"), item.get("name")))
     for lst in included.get("lists", []):
-        print("list\t%s\t%s" % (lst.get("id"), lst.get("name")))
+        print("list\t{}\t{}".format(lst.get("id"), lst.get("name")))
     for group in included.get("customFieldGroups", []):
-        print("fieldGroup\t%s\t%s" % (group.get("id"), group.get("name")))
+        print("fieldGroup\t{}\t{}".format(group.get("id"), group.get("name")))
     for field in included.get("customFields", []):
-        print("field\t%s\t%s" % (field.get("id"), field.get("name")))
+        print("field\t{}\t{}".format(field.get("id"), field.get("name")))
     for label in included.get("labels", []):
-        print("label\t%s\t%s" % (label.get("id"), label.get("name")))
+        print("label\t{}\t{}".format(label.get("id"), label.get("name")))
 
 
 def slugify(value):
@@ -284,7 +281,7 @@ def current_branch():
 def sidecar_path(repo, branch):
     d = os.path.join(state_dir(), "branch")
     os.makedirs(d, mode=0o700, exist_ok=True)
-    return os.path.join(d, "%s--%s.json" % (repo, slugify(branch)))
+    return os.path.join(d, f"{repo}--{slugify(branch)}.json")
 
 
 def read_sidecar(repo, branch):
@@ -300,11 +297,11 @@ def write_sidecar(repo, branch, data):
         with open(sidecar_path(repo, branch), "w") as fh:
             json.dump(data, fh)
     except OSError:
-        log("could not write the sidecar for %s/%s" % (repo, branch))
+        log(f"could not write the sidecar for {repo}/{branch}")
 
 
 def card_url(cfg, card_id):
-    return "%s/cards/%s" % (cfg["baseUrl"].rstrip("/"), card_id)
+    return "{}/cards/{}".format(cfg["baseUrl"].rstrip("/"), card_id)
 
 
 def find_card_by_branch(cfg, branch):
@@ -314,7 +311,7 @@ def find_card_by_branch(cfg, branch):
     board_id = cfg.get("boardId")
     if not field_id or not board_id:
         return None
-    board = call(cfg, "GET", "/boards/%s" % board_id)
+    board = call(cfg, "GET", f"/boards/{board_id}")
     for value in board.get("included", {}).get("customFieldValues", []):
         if value.get("customFieldId") == field_id and value.get("content") == branch:
             return {"id": value.get("cardId")}
@@ -331,9 +328,8 @@ def set_field(cfg, card_id, field_key, value):
     field_id = fields.get(field_key)
     if not group_id or not field_id:
         return
-    path = "/cards/%s/custom-field-values/customFieldGroupId:%s:customFieldId:%s" % (
-        card_id, group_id, field_id,
-    )
+    path = (f"/cards/{card_id}/custom-field-values"
+            f"/customFieldGroupId:{group_id}:customFieldId:{field_id}")
     call(cfg, "PATCH", path, {"content": value})
 
 
@@ -344,7 +340,7 @@ def create_card(cfg, branch, title=None):
     list_id = cfg.get("lists", {}).get("active")
     if not list_id:
         soft_fail("create: lists.active is not configured")
-    card = call(cfg, "POST", "/lists/%s/cards" % list_id,
+    card = call(cfg, "POST", f"/lists/{list_id}/cards",
                 {"name": title or branch, "position": 65536})
     card_id = card.get("item", {}).get("id")
     if not card_id:
@@ -370,11 +366,12 @@ def cmd_card_resolve(args):
         return
     found = find_card_by_branch(cfg, branch)
     if found and found.get("id"):
-        write_sidecar(repo, branch, {"cardId": found["id"], "url": card_url(cfg, found["id"])})
+        write_sidecar(repo, branch,
+                      {"cardId": found["id"], "url": card_url(cfg, found["id"])})
         print(found["id"])
         return
     if not getattr(args, "create", False):
-        log("card resolve: no card for %s/%s" % (repo, branch))
+        log(f"card resolve: no card for {repo}/{branch}")
         return
     card_id = create_card(cfg, branch, getattr(args, "title", None))
     write_sidecar(repo, branch, {"cardId": card_id, "url": card_url(cfg, card_id)})
@@ -385,10 +382,10 @@ def tracked_card(cfg, args, what):
     """The card id for this branch, or a soft exit saying it is not tracked."""
     branch = resolve_branch(args)
     if not branch:
-        soft_fail("%s: no branch" % what)
+        soft_fail(f"{what}: no branch")
     side = read_sidecar(repo_slug(), branch)
     if not side or not side.get("cardId"):
-        log("%s: %s is not tracked" % (what, branch))
+        log(f"{what}: {branch} is not tracked")
         sys.exit(0)
     return side["cardId"]
 
@@ -397,9 +394,9 @@ def cmd_card_move(args):
     cfg = require_config()
     list_id = cfg.get("lists", {}).get(args.list)
     if not list_id:
-        soft_fail("card move: no list configured for key %r" % args.list)
+        soft_fail(f"card move: no list configured for key {args.list!r}")
     card_id = tracked_card(cfg, args, "card move")
-    call(cfg, "PATCH", "/cards/%s" % card_id, {"listId": list_id})
+    call(cfg, "PATCH", f"/cards/{card_id}", {"listId": list_id})
 
 
 def cmd_card_field(args):
@@ -408,47 +405,47 @@ def cmd_card_field(args):
     for pair in args.set:
         key, sep, value = pair.partition("=")
         if not key or not sep:
-            soft_fail("card field: expected key=value, got %r" % pair)
+            soft_fail(f"card field: expected key=value, got {pair!r}")
         if key == "title":
-            call(cfg, "PATCH", "/cards/%s" % card_id, {"name": value})
+            call(cfg, "PATCH", f"/cards/{card_id}", {"name": value})
         else:
             set_field(cfg, card_id, key, value)
 
 
 def cmd_status(args):
-    cfg = require_config()
+    require_config()
     branch = resolve_branch(args)
     if not branch:
         soft_fail("status: no branch")
     repo = repo_slug()
     side = read_sidecar(repo, branch)
     if not side:
-        print("%s/%s: not tracked" % (repo, branch))
+        print(f"{repo}/{branch}: not tracked")
         return
-    print("%s/%s\tcard %s\t%s" % (repo, branch, side.get("cardId"), side.get("url")))
+    print(f"{repo}/{branch}\tcard {side.get('cardId')}\t{side.get('url')}")
 
 
 def cmd_task_promote(args):
     """A checklist item that turned out to want its own PR. The task stays in the
     parent's checklist and gains a linkedCardId, so the parent still shows it."""
     cfg = require_config()
-    task_list = call(cfg, "GET", "/task-lists/%s" % args.task_list)
+    task_list = call(cfg, "GET", f"/task-lists/{args.task_list}")
     name = None
     for task in task_list.get("included", {}).get("tasks", []):
         if task.get("id") == args.task_id:
             name = task.get("name")
             break
     if not name:
-        soft_fail("task promote: no task %s in list %s" % (args.task_id, args.task_list))
+        soft_fail(f"task promote: no task {args.task_id} in list {args.task_list}")
     list_id = cfg.get("lists", {}).get("active")
     if not list_id:
         soft_fail("task promote: lists.active is not configured")
-    created = call(cfg, "POST", "/lists/%s/cards" % list_id,
+    created = call(cfg, "POST", f"/lists/{list_id}/cards",
                    {"name": name, "position": 65536})
     card_id = created.get("item", {}).get("id")
     if not card_id:
         soft_fail("task promote: no card id in the response")
-    call(cfg, "PATCH", "/tasks/%s" % args.task_id, {"linkedCardId": card_id})
+    call(cfg, "PATCH", f"/tasks/{args.task_id}", {"linkedCardId": card_id})
     print(card_id)
 
 
@@ -461,17 +458,17 @@ def cmd_card_detach(args):
         os.unlink(sidecar_path(repo_slug(), branch))
     except OSError:
         return
-    print("detached %s" % branch)
+    print(f"detached {branch}")
 
 
 def cmd_open(args):
-    cfg = require_config()
+    require_config()
     branch = resolve_branch(args)
     if not branch:
         soft_fail("open: no branch")
     side = read_sidecar(repo_slug(), branch)
     if not side or not side.get("url"):
-        log("open: %s is not tracked" % branch)
+        log(f"open: {branch} is not tracked")
         return
     subprocess.run(["open", side["url"]], capture_output=True)
 
@@ -483,18 +480,18 @@ def cmd_card_comment(args):
     text = (text or "").strip()
     if not text:
         return
-    call(cfg, "POST", "/cards/%s/comments" % card_id, {"text": text})
+    call(cfg, "POST", f"/cards/{card_id}/comments", {"text": text})
 
 
 def ensure_task_list(cfg, card_id):
     """The card's Plan task list, created on first use. Matched by name rather
     than by a stored id, so this still works when the sidecar is lost."""
     name = cfg.get("taskLists", {}).get("plan", "Plan")
-    card = call(cfg, "GET", "/cards/%s" % card_id)
+    card = call(cfg, "GET", f"/cards/{card_id}")
     for task_list in card.get("included", {}).get("taskLists", []):
         if task_list.get("name") == name:
             return task_list.get("id")
-    created = call(cfg, "POST", "/cards/%s/task-lists" % card_id,
+    created = call(cfg, "POST", f"/cards/{card_id}/task-lists",
                    {"name": name, "position": 65536})
     return created.get("item", {}).get("id")
 
@@ -515,7 +512,7 @@ def cmd_plan_sync(args):
     if not task_list_id:
         soft_fail("plan sync: no task list")
 
-    card = call(cfg, "GET", "/cards/%s" % card_id)
+    card = call(cfg, "GET", f"/cards/{card_id}")
     existing = {}
     for task in card.get("included", {}).get("tasks", []):
         if task.get("taskListId") == task_list_id:
@@ -529,12 +526,12 @@ def cmd_plan_sync(args):
         done = todo.get("status") == "completed"
         task = existing.get(content)
         if task is None:
-            call(cfg, "POST", "/task-lists/%s/tasks" % task_list_id,
+            call(cfg, "POST", f"/task-lists/{task_list_id}/tasks",
                  {"name": content, "position": position})
             position += 65536
             continue
         if bool(task.get("isCompleted")) != done:
-            call(cfg, "PATCH", "/tasks/%s" % task.get("id"), {"isCompleted": done})
+            call(cfg, "PATCH", f"/tasks/{task.get('id')}", {"isCompleted": done})
 
 
 def build_parser():
@@ -545,7 +542,7 @@ def build_parser():
 
     auth = sub.add_parser("auth", help="mint or refresh the access token")
     auth.add_argument("--refresh", action="store_true",
-                      help="re-read the password from 1Password (interactive; Touch ID)")
+                      help="re-read the login from 1Password (interactive; Touch ID)")
     auth.add_argument("--forget", action="store_true",
                       help="drop the keychain entry and the cached token")
     auth.set_defaults(func=cmd_auth)
@@ -567,7 +564,8 @@ def build_parser():
 
     move = card_sub.add_parser("move", help="move the card to a configured list")
     move.add_argument("--list", required=True,
-                      help="a config lists key: backlog, onDeck, active, review, blocked, done")
+                      help="a config lists key: backlog, onDeck, active, review, "
+                           "blocked, done")
     move.add_argument("--branch")
     move.set_defaults(func=cmd_card_move)
 
@@ -587,7 +585,8 @@ def build_parser():
 
     task = sub.add_parser("task", help="task operations")
     task_sub = task.add_subparsers(dest="task_command", required=True)
-    promote = task_sub.add_parser("promote", help="turn a task into its own linked card")
+    promote = task_sub.add_parser("promote",
+                                  help="turn a task into its own linked card")
     promote.add_argument("task_id")
     promote.add_argument("--task-list", required=True, help="the task's task-list id")
     promote.set_defaults(func=cmd_task_promote)

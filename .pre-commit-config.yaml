@@ -52,7 +52,7 @@ repos:
       # `git update-index --chmod=+x`.
       - id: ruff-check
         types_or: [python]
-        files: (\.py$|^home/dot_local/bin/executable_(tq|jsonq|otelq|otel-sweep|prompt-friction|stash-mine|stdio-blocking|streamdeck-usb-reset|wl-bmp2png|wpe-pick)$)
+        files: (\.py$|^home/dot_local/bin/executable_(tq|jsonq|otelq|otel-sweep|planka|prompt-friction|stash-mine|stdio-blocking|streamdeck-usb-reset|wl-bmp2png|wpe-pick)$)
 
   - repo: local
     hooks:
