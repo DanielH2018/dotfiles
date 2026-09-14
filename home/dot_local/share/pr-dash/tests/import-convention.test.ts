@@ -30,28 +30,90 @@ type Violation = Hit & { message: string };
 // matches when this runs against the whole file text rather than one line at a time.
 const RELATIVE_JS_SPECIFIER = /(?:from\s+|import\(\s*)['"](\.\.?\/[^'"]*\.js)['"]/g;
 
-// A comment quoting the pattern in prose (a doc example, a code-review note) is not a
-// violation. This is deliberately not a real comment parser — it only catches the common
-// case of a `//` line or a `*`-prefixed block-comment continuation line, which is what a
-// hand-written note looks like in this codebase.
-function isCommentLine(line: string): boolean {
-  const trimmed = line.trimStart();
-  return trimmed.startsWith('//') || trimmed.startsWith('*');
+// Replaces every comment span with spaces, keeping newlines so that every byte offset in the
+// result still maps to the same line as in the original text. A comment quoting the pattern
+// in prose (a doc example, a code-review note) therefore cannot match at all, which matters
+// because this project documents the very trap the guard checks for — a JSDoc example would
+// otherwise block a push with a message indistinguishable from a real violation.
+//
+// A string literal is left intact: the specifier the scan is looking for lives inside one,
+// and `//` inside a URL string is not a comment opener. Single, double and backtick quotes
+// are all tracked. Two cases are knowingly out of reach without a real tokenizer, and both
+// are left alone rather than half-handled:
+//
+//   - A regex literal whose character class holds a slash-star (`/[/*]/`) reads as a block
+//     comment opener, blanking everything up to the next `*/`. That direction is a false
+//     negative — a real violation below it would be missed silently.
+//   - `${...}` interpolation inside a template literal is treated as string content, so a
+//     comment written inside one is not stripped. That direction is a false positive.
+//
+// Neither pattern appears in this codebase's import style, which is what the guard scans.
+function stripComments(text: string): string {
+  const out = text.split('');
+  const blank = (from: number, to: number): void => {
+    for (let j = from; j < to; j += 1) {
+      if (out[j] !== '\n') out[j] = ' ';
+    }
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (ch === '/' && next === '/') {
+      const end = text.indexOf('\n', i);
+      const stop = end === -1 ? text.length : end;
+      blank(i, stop);
+      i = stop;
+    } else if (ch === '/' && next === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      blank(i, stop);
+      i = stop;
+    } else if (ch === "'" || ch === '"' || ch === '`') {
+      i = skipStringLiteral(text, i);
+    } else {
+      i += 1;
+    }
+  }
+  return out.join('');
+}
+
+// Returns the offset just past the string literal opening at `start`. An unterminated single-
+// or double-quoted string ends at the newline: that is invalid JavaScript, and stopping there
+// keeps one stray quote from swallowing the rest of the file.
+function skipStringLiteral(text: string, start: number): number {
+  const quote = text[start];
+  let i = start + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === quote) return i + 1;
+    if (ch === '\n' && quote !== '`') return i;
+    i += 1;
+  }
+  return i;
 }
 
 // Scans the whole file text (not line by line — a per-line scan is what let a `from` clause
-// split across two lines slip through with zero hits) for relative .js specifiers, and
-// drops any that land on a comment line.
+// split across two lines slip through with zero hits) for relative .js specifiers, with
+// comments stripped out beforehand so a prose mention cannot match.
 function findJsSpecifiers(text: string): Hit[] {
-  const lines = text.split('\n');
+  const code = stripComments(text);
   const hits: Hit[] = [];
   RELATIVE_JS_SPECIFIER.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = RELATIVE_JS_SPECIFIER.exec(text))) {
-    const line = text.slice(0, match.index).split('\n').length;
-    const lineText = lines[line - 1] ?? '';
-    if (isCommentLine(lineText)) continue;
-    hits.push({ line, specifier: match[1]! });
+  while ((match = RELATIVE_JS_SPECIFIER.exec(code))) {
+    // The line must come from the specifier's own offset, not from `match.index` — that
+    // points at `from`/`import(`, which can sit on an earlier line. Locating the specifier
+    // inside the match is exact rather than approximate: everything preceding it in the
+    // match is `from`/`import(` plus whitespace and a quote, none of which can contain the
+    // `./` or `../` the specifier must start with, so the first occurrence is the right one.
+    const specifier = match[1]!;
+    const specifierStart = match.index + match[0].indexOf(specifier);
+    hits.push({ line: code.slice(0, specifierStart).split('\n').length, specifier });
   }
   return hits;
 }
@@ -119,9 +181,55 @@ test('fixture: a from-clause split across lines is still found', () => {
 
 test('fixture: a comment mentioning the pattern in prose is not flagged', () => {
   const lineComment = "// see import { x } from './foo.js' for the old shape\n";
-  const blockCommentContinuation = " * import { x } from './foo.js'\n";
+  const blockComment = "/*\n * import { x } from './foo.js'\n */\n";
   assert.equal(findJsSpecifiers(lineComment).length, 0);
-  assert.equal(findJsSpecifiers(blockCommentContinuation).length, 0);
+  assert.equal(findJsSpecifiers(blockComment).length, 0);
+});
+
+test('fixture: a JSDoc comment quoting the pattern is not flagged', () => {
+  const text = "/** example: import { x } from './types.js' */\n";
+  assert.equal(findJsSpecifiers(text).length, 0);
+});
+
+test('fixture: a trailing comment after real code does not hide the code', () => {
+  const text = "import { x } from './types.js'; // note\n";
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.specifier, './types.js');
+});
+
+test('fixture: the reported line is the specifier’s, not the from keyword’s', () => {
+  const text = "import {\n  groupBy,\n} from\n  './group.js';\n";
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.line, 4);
+});
+
+test('fixture: a `* as ns` continuation line is code, not a comment', () => {
+  const text = "import\n  * as ns from './types.js';\n";
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.line, 2);
+});
+
+// Blanking a comment span must keep its newlines, or every line below any block comment
+// shifts upward. The violation here sits eight lines down with two separate block comments
+// and real code above it, so a reported line of 8 is only reachable if all seven preceding
+// newlines survived — a fixture with the violation directly under one comment would still
+// pass if newlines were dropped from only some spans.
+test('fixture: block comments above a violation do not shift its reported line', () => {
+  const text =
+    '/**\n' + // 1
+    " * import { x } from './types.js'\n" + // 2
+    ' */\n' + // 3
+    'const a = 1;\n' + // 4
+    '/* a second comment,\n' + // 5
+    '   also spanning lines */\n' + // 6
+    'const b = 2;\n' + // 7
+    "import { x } from './types.js';\n"; // 8
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.line, 8);
 });
 
 test('fixture: a dynamic import() specifier is found by the text scan', () => {
