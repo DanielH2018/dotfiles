@@ -84,7 +84,8 @@ At the end of this slice: `pr-dash` starts, refuses hostile requests, and `curl`
   "private": true,
   "type": "module",
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "@types/node": "^24.0.0"
   },
   "scripts": {
     "check": "tsc --noEmit",
@@ -102,12 +103,13 @@ At the end of this slice: `pr-dash` starts, refuses hostile requests, and `curl`
   "compilerOptions": {
     "target": "es2022",
     "lib": ["es2022", "dom"],
-    "module": "esnext",
-    "moduleResolution": "bundler",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "allowJs": true,
     "checkJs": true,
     "noEmit": true,
     "strict": true,
+    "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true
@@ -117,6 +119,10 @@ At the end of this slice: `pr-dash` starts, refuses hostile requests, and `curl`
 ```
 
 `erasableSyntaxOnly` is load-bearing: it makes `tsc` reject enums, namespaces, and parameter properties — the TypeScript features Node's type stripping cannot run. Without it the type check passes and the server crashes at startup.
+
+`nodenext` resolution is equally load-bearing. With no bundler, `tsc` is the only check on import specifiers, and `bundler` resolution accepts extensionless imports that Node's ESM loader rejects at runtime.
+
+**Import specifiers always carry the `.ts` extension.** `nodenext` also accepts `./foo.js` pointing at a real `foo.ts`, and Node does not — it throws `ERR_MODULE_NOT_FOUND`. Worse, `TS2835` (the error for an extensionless import) suggests `./foo.js` by name, so the compiler's own advice leads into the trap. `tests/import-convention.test.ts` guards against it.
 
 - [ ] **Step 3: Define the shared types**
 
