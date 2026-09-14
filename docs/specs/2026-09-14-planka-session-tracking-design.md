@@ -126,8 +126,9 @@ by `install.sh`. Symlinked files are live immediately — no `chezmoi apply`, un
 {
   "enabled": true,
   "baseUrl": "http://127.0.0.1:3001",
-  "credential": { "opRef": "op://<vault>/<item>/username",
-                  "opPasswordRef": "op://<vault>/<item>/password" },
+  "credential": { "username": "<planka login>",
+                  "keychainService": "planka.password",
+                  "opRef": "op://<vault>/<item>/password" },
   "boardId": "<board id>",
   "lists": { "active": "<id>", "review": "<id>", "blocked": "<id>",
              "backlog": "<id>", "onDeck": "<id>", "done": "<id>" },
@@ -143,13 +144,27 @@ board.
 
 ### Credentials
 
-The config holds `op://` references, never a password. `planka` shells out to `op read`
-at mint time, exchanges the credential for a JWT, and caches the token at
-`~/.cache/planka/token.json`, mode 0600, created with an explicit `umask 077` because the
-login shell's `umask 0007` would otherwise leave it group-readable. A 401 discards the
-cached token and re-mints once.
+This follows the pattern `_op_load_keys` already establishes in
+`work-laptop-config/.config/zsh/local.zsh` for the Anthropic, Grafana, and Cargo
+credentials: **the login keychain is the cache, and `op read` runs only on a miss.**
 
-No secret material reaches either repository. The token cache sits outside both.
+`planka` reads the Planka password with
+`security find-generic-password -a "$USER" -s planka.password -w`. The login keychain
+unlocks automatically at login, so this needs no 1Password connection, no Touch ID, and
+no interactive terminal — which is what makes it safe to call from a hook. Verified from
+inside the Bash-tool sandbox against an existing entry.
+
+On a miss, `planka auth --refresh` does the `op read` against the `opRef` in the config
+and writes the result into the keychain. That path needs Touch ID, so it runs by hand,
+once, the same way the existing three credentials are seeded. `planka auth --forget`
+clears the entry, matching `op-refresh-keys`.
+
+The minted JWT is cached separately at `~/.cache/planka/token.json`, mode 0600, created
+under an explicit `umask 077` — the login shell's `umask 0007` would otherwise leave it
+group-readable. A 401 discards the token and re-mints once from the keychain password.
+
+No secret material reaches either repository: the config holds a keychain service name
+and an `op://` reference, nothing more.
 
 ### Correlation: repo + branch, stored outside the worktree
 
@@ -232,7 +247,9 @@ entirely for a machine.
 - No config, `enabled:false`, or `PLANKA_TRACKING=0` — exit 0, no output, no network.
 - Planka unreachable, or any HTTP error — log to `~/.claude/planka/log`, exit 0. A
   tracking tool must never fail an edit or block a `Stop`.
-- `op` unavailable or locked — same: log and exit 0.
+- Keychain entry missing — log a line naming `planka auth --refresh`, exit 0. Never
+  attempt an `op read` from a hook: it would block on Touch ID behind a session the
+  operator is not looking at.
 - 401 — discard the cached token, re-mint once, then give up for the session.
 - Card deleted from the board underneath a sidecar — `resolve` finds nothing, recreates,
   and rewrites the sidecar.
@@ -255,9 +272,9 @@ API calls are stubbed against a fixture server. No test touches the live board.
 
 Vertical slices, each exercisable by hand before the next begins.
 
-1. `planka auth` and `planka board show`. Proves the token mint, proves `op read` works
-   from a hook's environment, and prints the real list and custom-field ids to fill the
-   overlay config with. Writes nothing to the board.
+1. `planka auth --refresh` (seed the keychain once, Touch ID), then `planka auth` and
+   `planka board show`. Proves the keychain read and the token mint, and prints the real
+   list and custom-field ids to fill the overlay config with. Writes nothing to the board.
 2. `planka card resolve --branch` read-only, plus `planka status`. No creation.
 3. `resolve --create` and `card move`, driven by hand. Then the `PostToolUse` claim, gated
    behind `PLANKA_TRACKING=1` so it is opt-in per session.
@@ -265,8 +282,7 @@ Vertical slices, each exercisable by hand before the next begins.
 5. The `Stop` comment, and `bin/land` → Done.
 6. `task promote` to a linked card, and the statusline segment.
 
-Slice 1 exists mostly to answer the `op` question below. If `op` does not work from a
-hook, slices 2 onward change mechanism, not shape.
+Slice 1 also decides the JWT question below, by reading the minted token's `exp`.
 
 ## Decisions
 
@@ -285,15 +301,16 @@ hook, slices 2 onward change mechanism, not shape.
   worktree was deleted under a live session while this spec was being written.
 - **Named list keys, not discovered ids.** The board's shape lives in the overlay, so the
   public repo carries no knowledge of it.
+- **Keychain first, `op read` only to seed it.** Reusing the `_op_load_keys` pattern from
+  `local.zsh` rather than calling `op` at hook time. The login keychain is unlocked at
+  login, so a hook reads it with no prompt and no 1Password connection; `op` needs the
+  desktop app, which is unreachable from a sandboxed context. The CLI does its own
+  keychain read, so nothing depends on the shell having sourced `local.zsh` — but
+  `op-refresh-keys` should learn the new service name so a rotation clears it with the
+  others.
 
 ## Open questions
 
-- **Does `op read` work from a hook?** `op` cannot reach the 1Password desktop app from
-  inside the Bash-tool sandbox — verified: "1Password CLI couldn't connect to the
-  1Password desktop app." Hooks are spawned by Claude Code rather than through the Bash
-  tool, so they should not be under that sandbox, but this is unverified. Slice 1 settles
-  it. If it fails, the fallback is minting the token in an interactive shell and caching
-  it, with the CLI reporting an expired token rather than trying to re-mint.
 - **How long is a Planka JWT valid on this instance?** It determines whether re-minting is
   rare or routine. Read it from the token's `exp` in slice 1.
 - **Should a card auto-created by a session land in In Progress, or in Backlog?** The
