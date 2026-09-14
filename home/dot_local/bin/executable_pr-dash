@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launch the PR dashboard on a loopback port and open it.
+set -euo pipefail
+
+SHARE_DIR="${HOME}/.local/share/pr-dash"
+PORT="${PR_DASH_PORT:-8770}"
+PR_DASH_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
+export PR_DASH_SECRET PR_DASH_PORT="$PORT"
+
+node "${SHARE_DIR}/src/main.ts" &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+sleep 0.4
+open "http://127.0.0.1:${PORT}/#${PR_DASH_SECRET}"
+wait "$SERVER_PID"

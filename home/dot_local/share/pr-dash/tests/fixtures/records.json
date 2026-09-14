@@ -1,0 +1,18 @@
+[
+  {
+    "id": "acme/api#12", "repo": "acme/api", "number": 12,
+    "title": "Add retry budget", "url": "https://github.com/acme/api/pull/12",
+    "headRef": "retry-budget", "baseRef": "main", "isDraft": false,
+    "ci": "success", "review": "approved",
+    "openedAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+    "ageDays": 13, "staleDays": 4, "additions": 120, "deletions": 8
+  },
+  {
+    "id": "acme/web#7", "repo": "acme/web", "number": 7,
+    "title": "Fix nav overflow", "url": "https://github.com/acme/web/pull/7",
+    "headRef": "nav-overflow", "baseRef": "main", "isDraft": true,
+    "ci": "failure", "review": "none",
+    "openedAt": "2026-09-12T00:00:00Z", "updatedAt": "2026-09-13T00:00:00Z",
+    "ageDays": 2, "staleDays": 1, "additions": 9, "deletions": 3
+  }
+]
