@@ -70,11 +70,13 @@ there is no reason to round-trip to the server to regroup.
 | `src/normalize.ts` | raw response nodes to flat PR records | none |
 | `src/stacks.ts` | PR records to a forest of stacks | none |
 | `src/server.ts` | `node:http`, static files, `/api/prs`, cache | filesystem |
-| `src/client/*.ts` | rendering, grouping, filtering, sorting | none |
+| `public/app.js` | rendering and control wiring (DOM) | none |
+| `public/group.js` | grouping, filtering, sorting (pure) | none |
 | `bin/pr-dash` | port selection, launch, open browser | process |
 
-`normalize.ts`, `stacks.ts`, and the client's grouping logic are pure functions over plain
-data. They are the whole testable core and none of them touch the network.
+`normalize.ts`, `stacks.ts`, and `public/group.js` are pure functions over plain data. They
+are the whole testable core and none of them touch the network. Grouping lives in its own
+module rather than inside `app.js` precisely so it can be tested without a DOM.
 
 ## The GraphQL query
 
@@ -266,11 +268,26 @@ written once against a read-only surface and does not change when mutating route
 
 ## Language and tooling
 
-TypeScript throughout, checked by `tsc --noEmit`.
+TypeScript on the server, JSDoc-annotated JavaScript in the browser, both checked by
+`tsc --noEmit`. **There is no build step and no bundler.**
 
-Node 24 strips type annotations natively, so `src/server.ts` and its imports run with no
-build step. The browser cannot do the same, so `src/client/` is bundled with esbuild into
-`public/app.js`. Two execution paths, one type system, one check command.
+Node 24 strips type annotations natively, so `src/server.ts` and its imports run as written.
+The browser cannot execute `.ts` — but that is a constraint on syntax, not on modules. The
+client is plain `.js` with `// @ts-check`, loaded as native ES modules, annotated with
+JSDoc, and type-checked against the same `src/types.ts` the server uses via
+`/** @type {import("./types.ts").PrRecord} */`. Verified: `tsc --checkJs` resolves types
+across that boundary and reports real errors in the `.js` files.
+
+Adding esbuild to write the client in TypeScript would buy uniform syntax at the cost of a
+build step, a committed or generated bundle, and a way for the deployed bundle to drift
+from its source. Two syntaxes with one type system and zero build is the better trade for
+a tool deployed by copying files into place.
+
+`tsconfig.json` sets `erasableSyntaxOnly`, which rejects the TypeScript features Node's
+stripping cannot run — enums, namespaces, parameter properties. Without it a type check
+passes and the server fails at startup.
+
+TypeScript is the only dependency.
 
 Types for the GraphQL response are generated from GitHub's published schema rather than
 written by hand, so a schema change surfaces as a type error instead of as a null at
