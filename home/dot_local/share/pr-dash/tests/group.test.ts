@@ -50,15 +50,24 @@ test('groups by repository, alphabetically', () => {
   assert.strictEqual(groups[0]!.records.length, 1);
 });
 
-test('groups by ci status', () => {
-  const groups = groupBy(records, 'ci');
-  const keys = groups.map((g) => g.key).sort();
-  assert.deepStrictEqual(keys, ['failure', 'success']);
+test('groups by ci status, most actionable first', () => {
+  const ciRecords = [
+    makeRecord({ id: 'c#1', ci: 'success' }),
+    makeRecord({ id: 'c#2', ci: 'none' }),
+    makeRecord({ id: 'c#3', ci: 'failure' }),
+    makeRecord({ id: 'c#4', ci: 'pending' }),
+  ];
+  const groups = groupBy(ciRecords, 'ci');
+  assert.deepStrictEqual(groups.map((g) => g.key), ['failure', 'pending', 'none', 'success']);
 });
 
-test('groups by draft state', () => {
-  const groups = groupBy(records, 'draft');
-  assert.deepStrictEqual(groups.map((g) => g.key).sort(), ['draft', 'ready']);
+test('groups by draft state, ready before draft', () => {
+  const draftRecords = [
+    makeRecord({ id: 'd#1', isDraft: true }),
+    makeRecord({ id: 'd#2', isDraft: false }),
+  ];
+  const groups = groupBy(draftRecords, 'draft');
+  assert.deepStrictEqual(groups.map((g) => g.key), ['ready', 'draft']);
 });
 
 test('groups by staleness in chronological order, not alphabetical', () => {
@@ -121,6 +130,11 @@ test('sorts by size, largest diff first', () => {
 test('sorts by age, oldest first', () => {
   const sorted = sortWithin(orderRecords, 'age');
   assert.deepStrictEqual(sorted.map((r) => r.id), ['a/b#3', 'x/y#1', 'a/b#4', 'x/y#2']);
+});
+
+test('sorts by title, ascending', () => {
+  const sorted = sortWithin(orderRecords, 'title');
+  assert.deepStrictEqual(sorted.map((r) => r.id), ['x/y#2', 'a/b#4', 'x/y#1', 'a/b#3']);
 });
 
 test('does not mutate its input', () => {
