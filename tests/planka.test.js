@@ -165,3 +165,127 @@ test('a branch slug with slashes maps to one flat sidecar filename', { skip }, (
   assert.strictEqual(res.status, 0);
   assert.strictEqual(res.stdout.trim(), 'c99');
 });
+
+// A fake Planka on a loopback port: records every request and answers the
+// handful of routes the CLI uses. Keeps the write tests hermetic and off the
+// real board.
+function fakePlanka(handlers = {}) {
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+      const handler = handlers[`${req.method} ${req.url}`];
+      const payload = handler ? handler(body) : { item: {} };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  return { server, seen, port: () => server.address().port };
+}
+
+// The fake server lives in this process, so the CLI must NOT be run with
+// spawnSync: it blocks the event loop, the server never gets to answer, and
+// every request dies on the client timeout instead.
+function runAsync({ cfgPath, state, dir }, args, env = {}) {
+  const { spawn } = require('node:child_process');
+  return new Promise((resolve) => {
+    const child = spawn('python3', [PLANKA, ...args], {
+      env: {
+        ...process.env,
+        PLANKA_CONFIG: cfgPath,
+        PLANKA_STATE_DIR: state,
+        PLANKA_CACHE_DIR: path.join(dir, 'cache'),
+        PLANKA_REPO: 'myrepo',
+        PLANKA_TIMEOUT: '5',
+        ...env,
+      },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (c) => { stdout += c; });
+    child.stderr.on('data', (c) => { stderr += c; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+function onlineCtx(port, extra = {}) {
+  const dir = tmpdir();
+  const cfgPath = path.join(dir, 'config.json');
+  fs.writeFileSync(cfgPath, JSON.stringify({
+    enabled: true,
+    baseUrl: `http://127.0.0.1:${port}`,
+    boardId: 'b1',
+    credential: { username: 'u', keychainService: 'nope' },
+    ...extra,
+  }));
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(path.join(state, 'branch'), { recursive: true });
+  return { dir, cfgPath, state };
+}
+
+test('card resolve --create creates in the active list and stamps the branch',
+  { skip }, async () => {
+    const fake = fakePlanka({
+      'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+      'GET /api/boards/b1': () => ({ item: { id: 'b1' }, included: { customFieldValues: [] } }),
+      'POST /api/lists/list-active/cards': () => ({ item: { id: 'new-card' } }),
+    });
+    await new Promise((r) => fake.server.once('listening', r));
+    const ctx = onlineCtx(fake.port(), {
+      lists: { active: 'list-active', done: 'list-done' },
+      customFields: { groupId: 'g1', branch: 'f-branch', repo: 'f-repo' },
+    });
+    const res = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', 'feature-y'],
+      { PLANKA_PASSWORD: 'pw' });
+    fake.server.close();
+    assert.strictEqual(res.status, 0);
+    assert.strictEqual(res.stdout.trim(), 'new-card');
+
+    assert.ok(fake.seen.find((r) => r.url === '/api/lists/list-active/cards'),
+      'the card was created in the active list, not the backlog');
+
+    const stamped = fake.seen.filter(
+      (r) => r.url.startsWith('/api/cards/new-card/custom-field-values/'));
+    assert.ok(stamped.some((r) => r.body && r.body.content === 'feature-y'),
+      'the branch is stamped on the card');
+
+    const sidecar = JSON.parse(fs.readFileSync(
+      path.join(ctx.state, 'branch', 'myrepo--feature-y.json'), 'utf8'));
+    assert.strictEqual(sidecar.cardId, 'new-card');
+  });
+
+test('card move sends the configured list id, not its name', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'PATCH /api/cards/c42': () => ({ item: { id: 'c42' } }),
+  });
+  await new Promise((r) => fake.server.once('listening', r));
+  const ctx = onlineCtx(fake.port(), { lists: { active: 'list-active', done: 'list-done' } });
+  fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
+    JSON.stringify({ cardId: 'c42' }));
+  const res = await runAsync(ctx, ['card', 'move', '--list', 'done', '--branch', 'feature-y'],
+    { PLANKA_PASSWORD: 'pw' });
+  fake.server.close();
+  assert.strictEqual(res.status, 0);
+  const patch = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/cards/c42');
+  assert.strictEqual(patch.body.listId, 'list-done');
+});
+
+test('card move with an unknown list key is silent and exits 0', { skip }, () => {
+  const ctx = withSidecar({ ...OFFLINE_CFG, lists: { active: 'list-active' } },
+    { 'myrepo--feature-y.json': { cardId: 'c42' } });
+  const res = runIn(ctx, ['card', 'move', '--list', 'nonesuch', '--branch', 'feature-y'],
+    { PLANKA_PASSWORD: 'pw' });
+  assert.strictEqual(res.status, 0);
+});
+
+test('card move on an untracked branch touches nothing', { skip }, () => {
+  const ctx = withSidecar({ ...OFFLINE_CFG, lists: { done: 'list-done' } }, {});
+  const res = runIn(ctx, ['card', 'move', '--list', 'done', '--branch', 'untracked'],
+    { PLANKA_PASSWORD: 'pw' });
+  assert.strictEqual(res.status, 0);
+});

@@ -325,6 +325,39 @@ def resolve_branch(args):
     return getattr(args, "branch", None) or current_branch()
 
 
+def set_field(cfg, card_id, field_key, value):
+    fields = cfg.get("customFields", {})
+    group_id = fields.get("groupId")
+    field_id = fields.get(field_key)
+    if not group_id or not field_id:
+        return
+    path = "/cards/%s/custom-field-values/customFieldGroupId:%s:customFieldId:%s" % (
+        card_id, group_id, field_id,
+    )
+    call(cfg, "PATCH", path, {"content": value})
+
+
+def create_card(cfg, branch, title=None):
+    """Created directly in the active list: the session is editing by definition,
+    and Planka records a createCard action naming the list, so a Backlog hop adds
+    no history — only a window where a failed move strands the card there."""
+    list_id = cfg.get("lists", {}).get("active")
+    if not list_id:
+        soft_fail("create: lists.active is not configured")
+    card = call(cfg, "POST", "/lists/%s/cards" % list_id,
+                {"name": title or branch, "position": 65536})
+    card_id = card.get("item", {}).get("id")
+    if not card_id:
+        soft_fail("create: no card id in the response")
+    set_field(cfg, card_id, "branch", branch)
+    set_field(cfg, card_id, "repo", repo_slug())
+    session = os.environ.get("CLAUDE_SESSION_ID")
+    if session:
+        set_field(cfg, card_id, "session", session)
+    set_field(cfg, card_id, "worktree", os.getcwd())
+    return card_id
+
+
 def cmd_card_resolve(args):
     cfg = require_config()
     branch = resolve_branch(args)
@@ -340,7 +373,46 @@ def cmd_card_resolve(args):
         write_sidecar(repo, branch, {"cardId": found["id"], "url": card_url(cfg, found["id"])})
         print(found["id"])
         return
-    log("card resolve: no card for %s/%s" % (repo, branch))
+    if not getattr(args, "create", False):
+        log("card resolve: no card for %s/%s" % (repo, branch))
+        return
+    card_id = create_card(cfg, branch, getattr(args, "title", None))
+    write_sidecar(repo, branch, {"cardId": card_id, "url": card_url(cfg, card_id)})
+    print(card_id)
+
+
+def tracked_card(cfg, args, what):
+    """The card id for this branch, or a soft exit saying it is not tracked."""
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("%s: no branch" % what)
+    side = read_sidecar(repo_slug(), branch)
+    if not side or not side.get("cardId"):
+        log("%s: %s is not tracked" % (what, branch))
+        sys.exit(0)
+    return side["cardId"]
+
+
+def cmd_card_move(args):
+    cfg = require_config()
+    list_id = cfg.get("lists", {}).get(args.list)
+    if not list_id:
+        soft_fail("card move: no list configured for key %r" % args.list)
+    card_id = tracked_card(cfg, args, "card move")
+    call(cfg, "PATCH", "/cards/%s" % card_id, {"listId": list_id})
+
+
+def cmd_card_field(args):
+    cfg = require_config()
+    card_id = tracked_card(cfg, args, "card field")
+    for pair in args.set:
+        key, sep, value = pair.partition("=")
+        if not key or not sep:
+            soft_fail("card field: expected key=value, got %r" % pair)
+        if key == "title":
+            call(cfg, "PATCH", "/cards/%s" % card_id, {"name": value})
+        else:
+            set_field(cfg, card_id, key, value)
 
 
 def cmd_status(args):
@@ -379,7 +451,21 @@ def build_parser():
     card_sub = card.add_subparsers(dest="card_command", required=True)
     resolve = card_sub.add_parser("resolve", help="print the card id for a branch")
     resolve.add_argument("--branch", help="branch name (default: the current branch)")
+    resolve.add_argument("--create", action="store_true",
+                         help="create the card in the active list when none exists")
+    resolve.add_argument("--title", help="card title (default: the branch name)")
     resolve.set_defaults(func=cmd_card_resolve)
+
+    move = card_sub.add_parser("move", help="move the card to a configured list")
+    move.add_argument("--list", required=True,
+                      help="a config lists key: backlog, onDeck, active, review, blocked, done")
+    move.add_argument("--branch")
+    move.set_defaults(func=cmd_card_move)
+
+    field = card_sub.add_parser("field", help="set custom field values, or title=")
+    field.add_argument("--set", action="append", required=True, metavar="KEY=VALUE")
+    field.add_argument("--branch")
+    field.set_defaults(func=cmd_card_field)
 
     status = sub.add_parser("status", help="what card this branch maps to")
     status.add_argument("--branch", help="branch name (default: the current branch)")

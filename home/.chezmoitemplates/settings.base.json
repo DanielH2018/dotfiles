@@ -962,6 +962,25 @@
             "type": "command",
             "command": "~/.claude/hooks/link-artifact.sh",
             "timeout": 10
+          },
+          {{/* First edit of a session claims the branch's Planka card. A marker
+               file in the state dir makes it once-per-session rather than
+               once-per-edit, and the CLI exits 0 in silence on a machine with no
+               work overlay, so this costs one process spawn there. */}}
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/planka-claim.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/planka-plan.sh",
+            "timeout": 10
           }
         ]
       },
