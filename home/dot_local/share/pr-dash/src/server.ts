@@ -32,7 +32,18 @@ async function handle(
   res: import('node:http').ServerResponse,
   opts: ServerOpts,
 ): Promise<void> {
-  const hostHeader = req.headers.host ?? '';
+  // HTTP/1.1 requires a Host header; without one there is no host to build the
+  // request URL against, and no host to check the guard against either. Refuse
+  // outright rather than substituting a default, which is how an absent Host
+  // used to reach `new URL()` and throw, turning into a 500 below instead of
+  // the 403 a missing Host should be.
+  const hostHeader = req.headers.host;
+  if (hostHeader === undefined || hostHeader === '') {
+    res.writeHead(403, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'missing Host header' }));
+    return;
+  }
+
   // The expected host here is the request's own Host header, which makes this
   // particular check a tautology — it can never disagree with itself. Task 12
   // replaces it with the launcher's configured host. Until then, the Origin and

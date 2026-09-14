@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import { createServer } from '../src/server.ts';
 import { createCache } from '../src/cache.ts';
 import type { PrRecord } from '../src/types.ts';
@@ -36,6 +37,31 @@ test('rejects /api/prs without the secret', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/prs`);
     assert.strictEqual(res.status, 403);
+  });
+});
+
+// fetch() always sets a Host header from the URL, so a missing Host can only be
+// exercised with a raw socket — this is what `nc` does manually against the real
+// server. HTTP/1.0 does not require the client to send Host, which is exactly the
+// case that used to reach `new URL()` with an empty host and throw, turning into
+// a 500 instead of the 403 an absent Host should get.
+function rawRequest(port: number, request: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1', () => socket.write(request));
+    let response = '';
+    socket.on('data', (chunk) => {
+      response += chunk.toString();
+    });
+    socket.on('end', () => resolve(response));
+    socket.on('error', reject);
+  });
+}
+
+test('returns 403, not 500, when the Host header is missing', async () => {
+  await withServer(async (base) => {
+    const port = Number(new URL(base).port);
+    const response = await rawRequest(port, 'GET /api/prs HTTP/1.0\r\n\r\n');
+    assert.match(response, /^HTTP\/1\.1 403 /);
   });
 });
 

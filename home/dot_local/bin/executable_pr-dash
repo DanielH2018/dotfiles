@@ -12,5 +12,14 @@ SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
 sleep 0.4
-open "http://127.0.0.1:${PORT}/#${PR_DASH_SECRET}"
+URL="http://127.0.0.1:${PORT}/#${PR_DASH_SECRET}"
+# `open`'s exit status must not reach `set -e`: under -e, a failing command that
+# isn't part of a condition ends the script, which fires the EXIT trap and kills
+# the server this script just started over a browser launch that never mattered
+# to the server's own lifetime — e.g. no GUI session over SSH, or no default
+# handler registered. Testing it in an `if` keeps the failure from tripping -e.
+if ! open "$URL"; then
+  echo "Could not open a browser automatically. Open this URL yourself:" >&2
+  echo "$URL" >&2
+fi
 wait "$SERVER_PID"
