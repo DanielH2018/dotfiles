@@ -54,6 +54,53 @@ const validRecord: PrRecord = {
   deletions: 2,
 };
 
+type FieldKind = 'string' | 'number' | 'boolean' | 'enum';
+
+/**
+ * One row per field `validateRecord` checks in `render-guards.js`.
+ * `edgeValid`, when present, is a legitimate value for that field that must
+ * NOT be rejected. Both test tables below are generated from this single
+ * list, so covering a field `validateRecord` gains means adding one row
+ * here rather than a new test block.
+ */
+const FIELD_SPECS: { field: string; kind: FieldKind; edgeValid?: unknown }[] = [
+  { field: 'repo', kind: 'string' },
+  { field: 'title', kind: 'string', edgeValid: '' },
+  { field: 'url', kind: 'string' },
+  { field: 'number', kind: 'number', edgeValid: 0 },
+  { field: 'staleDays', kind: 'number', edgeValid: 0 },
+  { field: 'ageDays', kind: 'number', edgeValid: 0 },
+  { field: 'additions', kind: 'number', edgeValid: 0 },
+  { field: 'deletions', kind: 'number', edgeValid: 0 },
+  { field: 'isDraft', kind: 'boolean' },
+  { field: 'ci', kind: 'enum' },
+  { field: 'review', kind: 'enum' },
+];
+
+/**
+ * Breaks one field of `validRecord` the way that field can actually arrive
+ * wrong: a missing string, a numeric string where a number belongs, a
+ * non-boolean for `isDraft`, or a value outside `ci`/`review`'s union.
+ */
+function breakField(field: string, kind: FieldKind): Record<string, unknown> {
+  const record = { ...validRecord } as Record<string, unknown>;
+  switch (kind) {
+    case 'string':
+      delete record[field];
+      break;
+    case 'number':
+      record[field] = String(record[field]);
+      break;
+    case 'boolean':
+      record[field] = String(record[field]);
+      break;
+    case 'enum':
+      record[field] = 'not-a-real-value';
+      break;
+  }
+  return record;
+}
+
 test('AXES matches the #group-by <select> options in index.html', () => {
   assert.deepStrictEqual(AXES, optionValues(indexHtml, 'group-by'));
 });
@@ -134,6 +181,23 @@ test('parsePrsBody names the offending record among several, not just the first'
     /record 1 has an invalid "ci"/,
   );
 });
+
+for (const { field, kind } of FIELD_SPECS) {
+  test(`parsePrsBody throws naming "${field}" when it is broken`, () => {
+    assert.throws(
+      () => parsePrsBody({ prs: [breakField(field, kind)] }),
+      new RegExp(`record 0 has an invalid "${field}"`),
+    );
+  });
+}
+
+for (const { field, edgeValid } of FIELD_SPECS) {
+  if (edgeValid === undefined) continue;
+  test(`parsePrsBody accepts the edge value ${JSON.stringify(edgeValid)} for "${field}"`, () => {
+    const record = { ...validRecord, [field]: edgeValid };
+    assert.doesNotThrow(() => parsePrsBody({ prs: [record] }));
+  });
+}
 
 test(
   'a malformed record throws before "current" is reassigned, so a fallback ' +
