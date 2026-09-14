@@ -183,19 +183,61 @@ The last successful payload is retained. When a refresh fails, the page continue
 that data behind a banner naming the failure and the time of the last success. Going blank
 on a transient network error would be a worse failure than showing data a few minutes old.
 
-- **No token at startup:** exit with the literal `gh auth login` command to run.
+- **No token at startup:** exit with the literal `op read` command to run, naming the item.
+- **401 from GitHub:** the token is expired or revoked — banner naming its 1Password item
+  and the renewal step, distinct from a network failure.
 - **GraphQL partial errors:** render the rows that did arrive, with a banner listing what failed.
 - **Rate limit exhausted:** banner naming the reset time, serving cached data until then.
 
 ## Authentication and local-server hardening
 
-This touches a GitHub credential, so the handling is explicit. The server reads a token by
-invoking `gh auth token` at startup and holds it in memory for the process lifetime. It is
-never written to disk, never logged, and never sent to the browser — the client talks only
-to `127.0.0.1` and receives normalized PR records.
+This touches a GitHub credential, so the handling is explicit. The server resolves a token
+once at startup and holds it in memory for the process lifetime. It is never written to
+disk, never logged, and never sent to the browser — the client talks only to `127.0.0.1`
+and receives normalized PR records.
 
-`GH_TOKEN` in the environment overrides the `gh` lookup, for the case where `gh`'s config
-is unreadable.
+### The token comes from 1Password
+
+```
+op read "op://Private/GitHub PR Dashboard/token"
+```
+
+`PR_DASH_OP_ITEM` overrides the item reference. `GH_TOKEN` in the environment overrides
+everything, for debugging and for running without 1Password available.
+
+**There is deliberately no fallback to `gh auth token`.** That was the original design and
+it is wrong, for a reason worth recording: `gh auth token` returns whatever scopes
+`gh auth login` negotiated — in practice `repo`, which grants write, plus `read:org`,
+`gist`, and `workflow`. A read-only dashboard holding a token that can push to every
+repository I can see is a scope mismatch, and this spec claimed a read-scoped token was
+sufficient while using a mechanism that could not provide one.
+
+A dedicated token makes the claim true. Silently falling back to `gh` would re-broaden the
+scope at the moment 1Password is unavailable, which is precisely when nobody is watching,
+so the failure is a clear error naming the `op` command to run instead.
+
+Three further reasons this is the better source: the token at rest is encrypted in the
+vault rather than sitting in a config file; rotation happens in one place; and 1Password
+already holds the SSH key that signs every commit in this repository, so the credential
+story stays in one system rather than two.
+
+### Practical notes
+
+- **A fine-grained PAT is the goal; a classic PAT may be the reality.** Fine-grained tokens
+  can be restricted to read-only pull request access, which is exactly right. Against
+  organization-owned repositories they often require organization approval. A classic token
+  with `repo` scope works without approval but grants write. Start by requesting the
+  fine-grained token; if approval is not forthcoming, use a classic one and record in the
+  1Password item that its scope is broader than the tool needs.
+- **Expiry is a real failure mode, unlike the others.** Fine-grained tokens expire. GitHub
+  answers an expired token with a 401, which must render as a banner naming the token's
+  1Password item and the renewal step — not as a generic authentication failure that looks
+  identical to a network problem.
+- **`op` prompts once.** The read happens at startup, so unlocking costs one biometric
+  prompt per server launch, not one per refresh.
+- **This repository's Claude sandbox cannot run `op read`.** It permits the 1Password SSH
+  agent socket, which is a different channel from the one the `op` CLI uses. The server
+  runs outside the sandbox regardless, so this affects debugging sessions only.
 
 ### Why the guard exists in v1
 
@@ -222,10 +264,6 @@ apply them to.
 None of the three depends on what the endpoints do, which is the point — the guard is
 written once against a read-only surface and does not change when mutating routes arrive.
 
-Note for development: this repository's Claude sandbox denies reads of `~/.config/gh` and
-denies network access to `github.com`, so `gh auth token` fails inside a sandboxed shell.
-The server must be run from an ordinary shell.
-
 ## Language and tooling
 
 TypeScript throughout, checked by `tsc --noEmit`.
@@ -248,6 +286,8 @@ runtime.
 - Grouping and sorting — one test per axis, over a shared fixture.
 - `server.ts` — a single smoke test: start with a stubbed fetch, request `/api/prs`,
   assert the response shape.
+- Token resolution — `GH_TOKEN` wins over `op`, and a failed `op read` produces the error
+  naming the item rather than starting with no token.
 - The request guard — a rejected `Host`, a mismatched `Origin`, and a missing secret each
   get a test. This is the one piece of v1 whose failure mode is silent, so it is the one
   piece that does not rely on the smoke test to cover it.
@@ -280,10 +320,13 @@ a small tool acquires a framework nobody needed. The list is short on purpose.
 
 Two rules recorded here so a later session inherits them rather than deciding freshly:
 
-**The token scope changes and must be re-stated.** v1 needs read access only. Merge, close,
-and approve need write. Whoever adds the first mutating route states the new scope in the
-spec and in the startup error message — a tool that silently starts wanting write access to
-every repository I can see is a change worth noticing.
+**The token scope changes, and sourcing it from 1Password makes that a deliberate act.**
+v1 needs read access only. Merge, close, and approve need write. Because the token is a
+dedicated item rather than whatever `gh` happens to hold, granting write means editing that
+item — visible, dated, and reversible. Whoever adds the first mutating route re-scopes the
+token, states the new scope in the spec and in the startup error, and records it on the
+1Password item. A tool that silently starts wanting write access to every repository I can
+see is a change worth noticing.
 
 **Irreversible actions get a confirmation step, reversible ones do not.** Merge and close
 are irreversible in practice and must name the specific PR in a confirmation before
