@@ -71,19 +71,21 @@ typed metadata, so branch and PR never have to be parsed back out of a descripti
 
 ### Board shape
 
-The board has five lists: **To Do**, **Waiting on PRs**, **Waiting/Blocked**,
-**Backlog**, **Done**. There is no "In Progress" list, so **To Do doubles as the active
-list** — a card a session is working on sits in To Do.
+The board has six lists: **Backlog**, **On Deck**, **In Progress**, **Waiting on
+Review**, **Blocked**, **Done**. The integration writes three of them. Backlog and On
+Deck are the operator's queue and are never written automatically; a card only leaves
+them when a session starts editing.
 
 The design never refers to a list by name in code. It refers to named config keys, which
 the overlay maps to real list ids:
 
 | Config key | This board's list | Set by |
 |---|---|---|
-| `lists.active` | To Do | First edit of a session |
-| `lists.review` | Waiting on PRs | PR opened |
-| `lists.blocked` | Waiting/Blocked | `/planka pause`, manual only |
+| `lists.active` | In Progress | First edit of a session |
+| `lists.review` | Waiting on Review | PR opened |
+| `lists.blocked` | Blocked | `/planka pause`, manual only |
 | `lists.backlog` | Backlog | Never written automatically |
+| `lists.onDeck` | On Deck | Never written automatically |
 | `lists.done` | Done | `bin/land` merge |
 
 ## Architecture
@@ -128,7 +130,7 @@ by `install.sh`. Symlinked files are live immediately — no `chezmoi apply`, un
                   "opPasswordRef": "op://<vault>/<item>/password" },
   "boardId": "<board id>",
   "lists": { "active": "<id>", "review": "<id>", "blocked": "<id>",
-             "backlog": "<id>", "done": "<id>" },
+             "backlog": "<id>", "onDeck": "<id>", "done": "<id>" },
   "taskLists": { "plan": "Plan" },
   "customFields": { "groupId": "<id>", "branch": "<id>", "repo": "<id>",
                     "pr": "<id>", "worktree": "<id>", "session": "<id>" },
@@ -210,14 +212,16 @@ Every state the integration can put a card into has a way back and a way to see 
 | State | Way in | Way back | Way to see |
 |---|---|---|---|
 | Tracked | First edit | `/planka detach` drops the sidecar and stops tracking the branch | `planka status` |
-| Active (To Do) | First edit | `planka card move --list backlog` | Statusline segment, `planka open` |
-| Review | PR opened | `planka card move --list active` | `planka status` |
+| In Progress | First edit | `planka card move --list onDeck` | Statusline segment, `planka open` |
+| Waiting on Review | PR opened | `planka card move --list active` | `planka status` |
 | Blocked | `/planka pause`, manual only | `planka card move --list active` | Board |
 | Done | `bin/land` merge | `planka card move --list active` | Board |
 
-A session that ends without landing leaves the card in To Do and adds a session-log
+A session that ends without landing leaves the card in In Progress and adds a session-log
 comment. Stale work is visible as a card whose last comment is old, rather than as a card
-in a list nobody set. Waiting/Blocked is never written automatically.
+in a list nobody set. Blocked is never written automatically — a card is blocked because
+the operator says so, and nothing a session can observe distinguishes blocked from
+paused.
 
 Kill switches: `PLANKA_TRACKING=0` in the environment for one session,
 `"enabled": false` in the config for all of them, and removing the overlay config
@@ -292,7 +296,7 @@ hook, slices 2 onward change mechanism, not shape.
   it, with the CLI reporting an expired token rather than trying to re-mint.
 - **How long is a Planka JWT valid on this instance?** It determines whether re-minting is
   rare or routine. Read it from the token's `exp` in slice 1.
-- **Should `To Do` gain a sibling `In Progress` list?** The board has none, so To Do
-  carries both meanings. Workable, but it means the board cannot distinguish queued work
-  from work a session is touching right now. Operator's call; the design needs only a
-  config key change either way.
+- **Should a card auto-created by a session land in In Progress, or in Backlog?** The
+  design puts it straight in In Progress, because the session is by definition editing
+  when it creates one. The alternative — create in Backlog and move — leaves a truer
+  audit trail in the card's activity feed at the cost of two API calls.
