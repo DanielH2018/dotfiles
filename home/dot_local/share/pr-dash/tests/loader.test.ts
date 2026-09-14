@@ -44,12 +44,19 @@ test('a cache miss fetches, normalizes, and populates the cache', async () => {
   const cache = createCache<LoadResult>(60_000);
   const loadPrs = createPrLoader(client, cache);
 
+  const before = Date.now();
   const result = await loadPrs();
+  const after = Date.now();
 
   assert.strictEqual(calls, 1);
   assert.strictEqual(result.prs.length, 1);
   assert.strictEqual(result.prs[0]?.id, 'acme/api#1');
   assert.deepStrictEqual(cache.get(), result);
+  // Pins the actual value loader.ts stamps on a fresh fetch, not just that whatever value
+  // it picked round-trips through the cache unchanged (deepStrictEqual above would pass
+  // just the same if fetchedAt were hardcoded to any fixed string).
+  const fetchedAt = Date.parse(result.fetchedAt);
+  assert.ok(fetchedAt >= before && fetchedAt <= after, `expected ${result.fetchedAt} within [${before}, ${after}]`);
 });
 
 test('a cache hit does not re-fetch', async () => {
@@ -79,12 +86,15 @@ test('a failed fetch leaves the previously cached value intact', async () => {
   // reach cache.set(), so whatever the cache held before (a fresh value, an expired one, or
   // nothing) is left exactly as it was — not cleared, not replaced with an empty result.
   let setCalls = 0;
+  let invalidateCalls = 0;
   const cache: Cache<LoadResult> = {
     get: () => undefined,
     set: () => {
       setCalls += 1;
     },
-    invalidate: () => {},
+    invalidate: () => {
+      invalidateCalls += 1;
+    },
   };
 
   const client = createClient({
@@ -97,6 +107,11 @@ test('a failed fetch leaves the previously cached value intact', async () => {
 
   await assert.rejects(() => loadPrs(), /network down/);
   assert.strictEqual(setCalls, 0);
+  // "Poisoning or clearing" covers both directions: nothing about a throwing fetch should
+  // call cache.invalidate() either, even though the shipped loadPrs never does today —
+  // this guards against a later "clean up on error" instinct wiping a value that was still
+  // good.
+  assert.strictEqual(invalidateCalls, 0);
 });
 
 test('a cache hit reports the original fetch time, not the time of the read', async () => {

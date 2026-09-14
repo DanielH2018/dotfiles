@@ -36,24 +36,32 @@ export function createClient(opts: ClientOpts): Client {
         );
       }
       if (!res.ok) {
-        // Rate limiting is identified by the GraphQL API's own signals — a 429, a
-        // Retry-After header (GitHub's secondary/abuse rate limiting returns this on a
-        // 403 without necessarily zeroing x-ratelimit-remaining), or x-ratelimit-remaining:
-        // 0 — not by status code alone: GitHub returns a bare 403 for a plain scope/SSO
-        // problem far more often than for rate limiting, and primary rate-limit exhaustion
-        // on this endpoint actually surfaces as HTTP 200 with a RATE_LIMITED entry in
-        // `errors` (handled below, not here). A 403 carrying none of these signals falls
-        // through to the generic branch, whose body from GitHub names the real scope/SSO
-        // problem. `res.headers?.` guards a test double that omits headers; a real fetch
-        // Response always has one, so ordering these checks relative to the 401 check
-        // above is not load-bearing either way.
+        // Rate limiting is identified by the GraphQL API's own signals on the status codes
+        // where it actually occurs — a plain 429, or a 403 carrying a Retry-After header
+        // (GitHub's secondary/abuse rate limiting, which doesn't necessarily zero
+        // x-ratelimit-remaining) or x-ratelimit-remaining: 0 — not by status code alone,
+        // and not by Retry-After alone: GitHub returns a bare 403 for a plain scope/SSO
+        // problem far more often than for rate limiting, and a Retry-After on some other
+        // status (a 503 during a maintenance window, say) is an outage, not a rate limit.
+        // Primary rate-limit exhaustion on this endpoint actually surfaces as HTTP 200 with
+        // a RATE_LIMITED entry in `errors` (handled below, not here). Anything that isn't
+        // flagged as rate-limited falls through to the generic branch, whose body from
+        // GitHub names the real problem. `res.headers?.` guards a test double that omits
+        // headers so a missing headers object degrades to "no signal" instead of crashing;
+        // a real fetch Response always has one.
         const retryAfter = res.headers?.get('retry-after') ?? null;
         const remaining = res.headers?.get('x-ratelimit-remaining') ?? null;
-        if (res.status === 429 || retryAfter !== null || remaining === '0') {
-          throw new Error(
-            `GitHub rate-limited this request (${res.status}).` +
-              (retryAfter !== null ? ` Retry after ${retryAfter}s.` : ' Wait for the rate limit to reset.'),
-          );
+        const isRateLimitStatus = res.status === 403 || res.status === 429;
+        if (res.status === 429 || (isRateLimitStatus && (retryAfter !== null || remaining === '0'))) {
+          // Retry-After is either delay-seconds or an HTTP-date (RFC 9110 section 10.2.3);
+          // only the numeric form reads naturally with a unit appended.
+          const retrySuffix =
+            retryAfter === null
+              ? ' Wait for the rate limit to reset.'
+              : /^\d+$/.test(retryAfter)
+                ? ` Retry after ${retryAfter}s.`
+                : ` Retry after ${retryAfter}.`;
+          throw new Error(`GitHub rate-limited this request (${res.status}).${retrySuffix}`);
         }
         throw new Error(`GitHub returned ${res.status}: ${await res.text()}`);
       }

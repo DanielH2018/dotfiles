@@ -114,6 +114,40 @@ test('a 403 carrying Retry-After is secondary rate limiting, not a scope problem
   await assert.rejects(() => fetchAllPrs(client), (e: Error) => /rate.limited/i.test(e.message) && /60s/.test(e.message));
 });
 
+test('a Retry-After given as an HTTP-date is reported without a bogus "s" unit', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'retry-after': 'Wed, 21 Oct 2015 07:28:00 GMT' }),
+        text: async () => 'rate limited',
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => e.message.includes('Retry after Wed, 21 Oct 2015 07:28:00 GMT.') && !e.message.includes('GMTs'),
+  );
+});
+
+test('a 503 carrying Retry-After surfaces as a generic failure, not rate limiting', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 503,
+        headers: new Headers({ 'retry-after': '120' }),
+        text: async () => 'Service Unavailable: scheduled maintenance',
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => /scheduled maintenance/.test(e.message) && !/rate.limited/i.test(e.message),
+  );
+});
+
 test('pagination terminates when hasNextPage stays true but the cursor never advances', async () => {
   let calls = 0;
   const client = createClient({
