@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""planka — record Claude Code session work on the local Planka board.
+
+Every expected failure exits 0 with a line in the log. This tool sits on the
+PostToolUse and Stop paths: it must never fail an edit or block a stop. Only a
+usage error, and only under --strict, exits non-zero.
+
+Secrets: the Planka password lives in the macOS login keychain, following the
+pattern _op_load_keys already uses in the work overlay's local.zsh. `op` is
+called only by `auth --refresh`, run by hand — never from a hook, where it
+would block on Touch ID behind a session nobody is watching.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_CONFIG = "~/.config/planka/config.json"
+DEFAULT_STATE = "~/.claude/planka"
+DEFAULT_CACHE = "~/.cache/planka"
+
+STRICT = False
+
+
+def state_dir():
+    d = os.path.expanduser(os.environ.get("PLANKA_STATE_DIR") or DEFAULT_STATE)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def cache_dir():
+    d = os.path.expanduser(os.environ.get("PLANKA_CACHE_DIR") or DEFAULT_CACHE)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def log(msg):
+    try:
+        with open(os.path.join(state_dir(), "log"), "a") as fh:
+            fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg))
+    except OSError:
+        pass
+
+
+def soft_fail(msg):
+    """Log and exit 0 — or, under --strict, complain and exit 1."""
+    log(msg)
+    if STRICT:
+        sys.stderr.write("planka: %s\n" % msg)
+        sys.exit(1)
+    sys.exit(0)
+
+
+def load_config():
+    """The config, or None when tracking is off or not configured on this machine."""
+    if os.environ.get("PLANKA_TRACKING") == "0":
+        return None
+    path = os.path.expanduser(os.environ.get("PLANKA_CONFIG") or DEFAULT_CONFIG)
+    try:
+        with open(path) as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not cfg.get("enabled"):
+        return None
+    return cfg
+
+
+def require_config():
+    cfg = load_config()
+    if cfg is None:
+        if STRICT:
+            sys.stderr.write("planka: no usable config\n")
+            sys.exit(1)
+        sys.exit(0)
+    return cfg
+
+
+def api(cfg, method, path, body=None, token=None):
+    url = cfg["baseUrl"].rstrip("/") + "/api" + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    timeout = float(os.environ.get("PLANKA_TIMEOUT") or 5)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+    return json.loads(raw or b"{}")
+
+
+def read_password(cfg):
+    env = os.environ.get("PLANKA_PASSWORD")
+    if env:
+        return env
+    service = cfg.get("credential", {}).get("keychainService")
+    if not service:
+        return None
+    proc = subprocess.run(
+        ["security", "find-generic-password", "-a", os.environ.get("USER", ""),
+         "-s", service, "-w"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def seed_password(cfg):
+    """Interactive only: op read -> login keychain. Touch ID fires here."""
+    cred = cfg.get("credential", {})
+    ref = cred.get("opRef")
+    service = cred.get("keychainService")
+    if not ref or not service:
+        soft_fail("auth --refresh: credential.opRef and credential.keychainService required")
+    proc = subprocess.run(["op", "read", ref], capture_output=True, text=True)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        soft_fail("auth --refresh: op read failed (is the 1Password app running?)")
+    # -U updates in place; local.zsh's delete-then-add dance predates it.
+    add = subprocess.run(
+        ["security", "add-generic-password", "-U", "-a", os.environ.get("USER", ""),
+         "-s", service, "-w", proc.stdout.strip()],
+        capture_output=True, text=True,
+    )
+    if add.returncode != 0:
+        soft_fail("auth --refresh: could not write the keychain entry")
+    return service
+
+
+def forget_password(cfg):
+    service = cfg.get("credential", {}).get("keychainService")
+    if not service:
+        return
+    subprocess.run(
+        ["security", "delete-generic-password", "-a", os.environ.get("USER", ""),
+         "-s", service],
+        capture_output=True, text=True,
+    )
+
+
+def token_path():
+    return os.path.join(cache_dir(), "token.json")
+
+
+def read_cached_token():
+    try:
+        with open(token_path()) as fh:
+            return json.load(fh).get("token") or None
+    except (OSError, ValueError):
+        return None
+
+
+def write_cached_token(token):
+    path = token_path()
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"token": token, "mintedAt": int(time.time())}, fh)
+    except OSError:
+        log("could not write the token cache")
+
+
+def mint_token(cfg):
+    password = read_password(cfg)
+    if password is None:
+        soft_fail("no keychain entry for the Planka password; run: planka auth --refresh")
+    body = {
+        "emailOrUsername": cfg.get("credential", {}).get("username", ""),
+        "password": password,
+    }
+    try:
+        resp = api(cfg, "POST", "/access-tokens", body)
+    except Exception as exc:  # noqa: BLE001 - every failure is soft here
+        soft_fail("mint: %s" % exc)
+    token = resp.get("item")
+    if not isinstance(token, str):
+        # A step (ACCEPT_TERMS) rather than a token. Terms are not enabled on
+        # this deployment; enabling them later must degrade to silence, not to
+        # a hook retrying a login it cannot complete.
+        soft_fail("login returned a step, not a token: %s" % sorted(resp))
+    write_cached_token(token)
+    return token
+
+
+def token_for(cfg):
+    return read_cached_token() or mint_token(cfg)
+
+
+def call(cfg, method, path, body=None):
+    """An API call that re-mints once on 401 and is soft on everything else."""
+    token = token_for(cfg)
+    try:
+        return api(cfg, method, path, body, token)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 401:
+            soft_fail("%s %s: HTTP %s" % (method, path, exc.code))
+        try:
+            os.unlink(token_path())
+        except OSError:
+            pass
+        try:
+            return api(cfg, method, path, body, mint_token(cfg))
+        except Exception as exc2:  # noqa: BLE001
+            soft_fail("%s %s after re-mint: %s" % (method, path, exc2))
+    except Exception as exc:  # noqa: BLE001
+        soft_fail("%s %s: %s" % (method, path, exc))
+
+
+def cmd_auth(args):
+    cfg = require_config()
+    if args.forget:
+        forget_password(cfg)
+        try:
+            os.unlink(token_path())
+        except OSError:
+            pass
+        print("forgot the keychain entry and the cached token")
+        return
+    if args.refresh:
+        service = seed_password(cfg)
+        try:
+            os.unlink(token_path())
+        except OSError:
+            pass
+        print("seeded keychain service %s" % service)
+    token = token_for(cfg)
+    print("token ok (%d chars)" % len(token))
+
+
+def cmd_board_show(args):
+    cfg = require_config()
+    board_id = args.board or cfg.get("boardId")
+    if not board_id:
+        projects = call(cfg, "GET", "/projects")
+        for board in projects.get("included", {}).get("boards", []):
+            print("board\t%s\t%s" % (board.get("id"), board.get("name")))
+        return
+    board = call(cfg, "GET", "/boards/%s" % board_id)
+    included = board.get("included", {})
+    item = board.get("item", {})
+    print("board\t%s\t%s" % (item.get("id"), item.get("name")))
+    for lst in included.get("lists", []):
+        print("list\t%s\t%s" % (lst.get("id"), lst.get("name")))
+    for group in included.get("customFieldGroups", []):
+        print("fieldGroup\t%s\t%s" % (group.get("id"), group.get("name")))
+    for field in included.get("customFields", []):
+        print("field\t%s\t%s" % (field.get("id"), field.get("name")))
+    for label in included.get("labels", []):
+        print("label\t%s\t%s" % (label.get("id"), label.get("name")))
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="planka", description=__doc__)
+    parser.add_argument("--strict", action="store_true",
+                        help="exit non-zero instead of going quiet")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    auth = sub.add_parser("auth", help="mint or refresh the access token")
+    auth.add_argument("--refresh", action="store_true",
+                      help="re-read the password from 1Password (interactive; Touch ID)")
+    auth.add_argument("--forget", action="store_true",
+                      help="drop the keychain entry and the cached token")
+    auth.set_defaults(func=cmd_auth)
+
+    board = sub.add_parser("board", help="board operations")
+    board_sub = board.add_subparsers(dest="board_command", required=True)
+    show = board_sub.add_parser("show", help="print ids for lists, fields, and labels")
+    show.add_argument("--board", help="board id (default: config boardId)")
+    show.set_defaults(func=cmd_board_show)
+
+    return parser
+
+
+def main(argv=None):
+    global STRICT
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    STRICT = args.strict
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
