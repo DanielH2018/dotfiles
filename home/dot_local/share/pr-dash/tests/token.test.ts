@@ -34,3 +34,19 @@ test('a failing op read raises an error naming the command', async () => {
 test('an empty op result is treated as failure, not as an empty token', async () => {
   await assert.rejects(() => resolveToken({}, async () => '  '));
 });
+
+test('GH_TOKEN resolves even when op fails, proving the documented escape hatch works', async () => {
+  const token = await resolveToken({ GH_TOKEN: 'from-env' }, async () => {
+    throw new Error('not signed in');
+  });
+  assert.strictEqual(token, 'from-env');
+});
+
+test('does not call op when GH_TOKEN is present', async () => {
+  let called = false;
+  await resolveToken({ GH_TOKEN: 'from-env' }, async () => {
+    called = true;
+    return 'from-op';
+  });
+  assert.strictEqual(called, false);
+});
