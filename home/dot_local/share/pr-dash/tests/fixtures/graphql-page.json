@@ -1,0 +1,34 @@
+[
+  {
+    "number": 12, "title": "Add retry budget", "url": "https://github.com/acme/api/pull/12",
+    "isDraft": false, "baseRefName": "main", "headRefName": "retry-budget",
+    "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
+    "additions": 120, "deletions": 8, "reviewDecision": "APPROVED",
+    "repository": { "nameWithOwner": "acme/api" },
+    "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
+  },
+  {
+    "number": 7, "title": "No checks configured", "url": "https://github.com/acme/web/pull/7",
+    "isDraft": true, "baseRefName": "main", "headRefName": "nav-overflow",
+    "createdAt": "2026-09-12T00:00:00Z", "updatedAt": "2026-09-13T00:00:00Z",
+    "additions": 9, "deletions": 3, "reviewDecision": null,
+    "repository": { "nameWithOwner": "acme/web" },
+    "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
+  },
+  {
+    "number": 8, "title": "Changes requested", "url": "https://github.com/acme/web/pull/8",
+    "isDraft": false, "baseRefName": "main", "headRefName": "fix-auth",
+    "createdAt": "2026-09-05T00:00:00Z", "updatedAt": "2026-09-06T00:00:00Z",
+    "additions": 40, "deletions": 40, "reviewDecision": "CHANGES_REQUESTED",
+    "repository": { "nameWithOwner": "acme/web" },
+    "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] }
+  },
+  {
+    "number": 9, "title": "No commits edge case", "url": "https://github.com/acme/web/pull/9",
+    "isDraft": false, "baseRefName": "main", "headRefName": "empty",
+    "createdAt": "2026-09-05T00:00:00Z", "updatedAt": "2026-09-05T00:00:00Z",
+    "additions": 0, "deletions": 0, "reviewDecision": "REVIEW_REQUIRED",
+    "repository": { "nameWithOwner": "acme/web" },
+    "commits": { "nodes": [] }
+  }
+]
