@@ -428,6 +428,57 @@ def cmd_status(args):
     print("%s/%s\tcard %s\t%s" % (repo, branch, side.get("cardId"), side.get("url")))
 
 
+def ensure_task_list(cfg, card_id):
+    """The card's Plan task list, created on first use. Matched by name rather
+    than by a stored id, so this still works when the sidecar is lost."""
+    name = cfg.get("taskLists", {}).get("plan", "Plan")
+    card = call(cfg, "GET", "/cards/%s" % card_id)
+    for task_list in card.get("included", {}).get("taskLists", []):
+        if task_list.get("name") == name:
+            return task_list.get("id")
+    created = call(cfg, "POST", "/cards/%s/task-lists" % card_id,
+                   {"name": name, "position": 65536})
+    return created.get("item", {}).get("id")
+
+
+def cmd_plan_sync(args):
+    cfg = require_config()
+    card_id = tracked_card(cfg, args, "plan sync")
+
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError:
+        soft_fail("plan sync: stdin is not JSON")
+    todos = payload.get("tool_input", {}).get("todos") or payload.get("todos") or []
+    if not todos:
+        return
+
+    task_list_id = ensure_task_list(cfg, card_id)
+    if not task_list_id:
+        soft_fail("plan sync: no task list")
+
+    card = call(cfg, "GET", "/cards/%s" % card_id)
+    existing = {}
+    for task in card.get("included", {}).get("tasks", []):
+        if task.get("taskListId") == task_list_id:
+            existing[task.get("name")] = task
+
+    position = 65536
+    for todo in todos:
+        content = (todo.get("content") or "").strip()
+        if not content:
+            continue
+        done = todo.get("status") == "completed"
+        task = existing.get(content)
+        if task is None:
+            call(cfg, "POST", "/task-lists/%s/tasks" % task_list_id,
+                 {"name": content, "position": position})
+            position += 65536
+            continue
+        if bool(task.get("isCompleted")) != done:
+            call(cfg, "PATCH", "/tasks/%s" % task.get("id"), {"isCompleted": done})
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="planka", description=__doc__)
     parser.add_argument("--strict", action="store_true",
@@ -466,6 +517,13 @@ def build_parser():
     field.add_argument("--set", action="append", required=True, metavar="KEY=VALUE")
     field.add_argument("--branch")
     field.set_defaults(func=cmd_card_field)
+
+    plan = sub.add_parser("plan", help="plan operations")
+    plan_sub = plan.add_subparsers(dest="plan_command", required=True)
+    sync = plan_sub.add_parser("sync",
+                               help="mirror a TodoWrite payload on stdin into the card")
+    sync.add_argument("--branch")
+    sync.set_defaults(func=cmd_plan_sync)
 
     status = sub.add_parser("status", help="what card this branch maps to")
     status.add_argument("--branch", help="branch name (default: the current branch)")

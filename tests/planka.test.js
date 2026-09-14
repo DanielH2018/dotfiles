@@ -169,6 +169,18 @@ test('a branch slug with slashes maps to one flat sidecar filename', { skip }, (
 // A fake Planka on a loopback port: records every request and answers the
 // handful of routes the CLI uses. Keeps the write tests hermetic and off the
 // real board.
+// Always close a fake through this: an assertion that throws before an
+// explicit close leaves the server handle open, and `node --test` then hangs
+// forever instead of reporting the failure.
+async function withFake(fake, body) {
+  await new Promise((r) => fake.server.once('listening', r));
+  try {
+    return await body();
+  } finally {
+    fake.server.close();
+  }
+}
+
 function fakePlanka(handlers = {}) {
   const http = require('node:http');
   const seen = [];
@@ -190,7 +202,7 @@ function fakePlanka(handlers = {}) {
 // The fake server lives in this process, so the CLI must NOT be run with
 // spawnSync: it blocks the event loop, the server never gets to answer, and
 // every request dies on the client timeout instead.
-function runAsync({ cfgPath, state, dir }, args, env = {}) {
+function runAsync({ cfgPath, state, dir }, args, env = {}, stdin = null) {
   const { spawn } = require('node:child_process');
   return new Promise((resolve) => {
     const child = spawn('python3', [PLANKA, ...args], {
@@ -208,6 +220,8 @@ function runAsync({ cfgPath, state, dir }, args, env = {}) {
     let stderr = '';
     child.stdout.on('data', (c) => { stdout += c; });
     child.stderr.on('data', (c) => { stderr += c; });
+    if (stdin !== null) child.stdin.write(stdin);
+    child.stdin.end();
     child.on('close', (status) => resolve({ status, stdout, stderr }));
   });
 }
@@ -234,28 +248,28 @@ test('card resolve --create creates in the active list and stamps the branch',
       'GET /api/boards/b1': () => ({ item: { id: 'b1' }, included: { customFieldValues: [] } }),
       'POST /api/lists/list-active/cards': () => ({ item: { id: 'new-card' } }),
     });
-    await new Promise((r) => fake.server.once('listening', r));
-    const ctx = onlineCtx(fake.port(), {
-      lists: { active: 'list-active', done: 'list-done' },
-      customFields: { groupId: 'g1', branch: 'f-branch', repo: 'f-repo' },
+    await withFake(fake, async () => {
+      const ctx = onlineCtx(fake.port(), {
+        lists: { active: 'list-active', done: 'list-done' },
+        customFields: { groupId: 'g1', branch: 'f-branch', repo: 'f-repo' },
+      });
+      const res = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', 'feature-y'],
+        { PLANKA_PASSWORD: 'pw' });
+      assert.strictEqual(res.status, 0);
+      assert.strictEqual(res.stdout.trim(), 'new-card');
+
+      assert.ok(fake.seen.find((r) => r.url === '/api/lists/list-active/cards'),
+        'the card was created in the active list, not the backlog');
+
+      const stamped = fake.seen.filter(
+        (r) => r.url.startsWith('/api/cards/new-card/custom-field-values/'));
+      assert.ok(stamped.some((r) => r.body && r.body.content === 'feature-y'),
+        'the branch is stamped on the card');
+
+      const sidecar = JSON.parse(fs.readFileSync(
+        path.join(ctx.state, 'branch', 'myrepo--feature-y.json'), 'utf8'));
+      assert.strictEqual(sidecar.cardId, 'new-card');
     });
-    const res = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', 'feature-y'],
-      { PLANKA_PASSWORD: 'pw' });
-    fake.server.close();
-    assert.strictEqual(res.status, 0);
-    assert.strictEqual(res.stdout.trim(), 'new-card');
-
-    assert.ok(fake.seen.find((r) => r.url === '/api/lists/list-active/cards'),
-      'the card was created in the active list, not the backlog');
-
-    const stamped = fake.seen.filter(
-      (r) => r.url.startsWith('/api/cards/new-card/custom-field-values/'));
-    assert.ok(stamped.some((r) => r.body && r.body.content === 'feature-y'),
-      'the branch is stamped on the card');
-
-    const sidecar = JSON.parse(fs.readFileSync(
-      path.join(ctx.state, 'branch', 'myrepo--feature-y.json'), 'utf8'));
-    assert.strictEqual(sidecar.cardId, 'new-card');
   });
 
 test('card move sends the configured list id, not its name', { skip }, async () => {
@@ -263,16 +277,16 @@ test('card move sends the configured list id, not its name', { skip }, async () 
     'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
     'PATCH /api/cards/c42': () => ({ item: { id: 'c42' } }),
   });
-  await new Promise((r) => fake.server.once('listening', r));
-  const ctx = onlineCtx(fake.port(), { lists: { active: 'list-active', done: 'list-done' } });
-  fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
-    JSON.stringify({ cardId: 'c42' }));
-  const res = await runAsync(ctx, ['card', 'move', '--list', 'done', '--branch', 'feature-y'],
-    { PLANKA_PASSWORD: 'pw' });
-  fake.server.close();
-  assert.strictEqual(res.status, 0);
-  const patch = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/cards/c42');
-  assert.strictEqual(patch.body.listId, 'list-done');
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), { lists: { active: 'list-active', done: 'list-done' } });
+    fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
+      JSON.stringify({ cardId: 'c42' }));
+    const res = await runAsync(ctx, ['card', 'move', '--list', 'done', '--branch', 'feature-y'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(res.status, 0);
+    const patch = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/cards/c42');
+    assert.strictEqual(patch.body.listId, 'list-done');
+  });
 });
 
 test('card move with an unknown list key is silent and exits 0', { skip }, () => {
@@ -287,5 +301,85 @@ test('card move on an untracked branch touches nothing', { skip }, () => {
   const ctx = withSidecar({ ...OFFLINE_CFG, lists: { done: 'list-done' } }, {});
   const res = runIn(ctx, ['card', 'move', '--list', 'done', '--branch', 'untracked'],
     { PLANKA_PASSWORD: 'pw' });
+  assert.strictEqual(res.status, 0);
+});
+
+const TODO_PAYLOAD = JSON.stringify({
+  tool_input: {
+    todos: [
+      { content: 'Write the failing test', status: 'completed' },
+      { content: 'Implement it', status: 'in_progress' },
+    ],
+  },
+});
+
+test('plan sync is idempotent: syncing twice leaves one task per item',
+  { skip }, async () => {
+    let taskLists = [];
+    let tasks = [];
+    const fake = fakePlanka({
+      'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+      'GET /api/cards/c42': () => ({ item: { id: 'c42' }, included: { taskLists, tasks } }),
+      'POST /api/cards/c42/task-lists': () => {
+        taskLists = [{ id: 'tl1', cardId: 'c42', name: 'Plan' }];
+        return { item: taskLists[0] };
+      },
+    });
+    await withFake(fake, async () => {
+      const ctx = onlineCtx(fake.port(), { taskLists: { plan: 'Plan' } });
+      fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
+        JSON.stringify({ cardId: 'c42' }));
+
+      const first = await runAsync(ctx, ['plan', 'sync', '--branch', 'feature-y'],
+        { PLANKA_PASSWORD: 'pw' }, TODO_PAYLOAD);
+      assert.strictEqual(first.status, 0);
+
+      const createdFirst = fake.seen.filter((r) => r.url === '/api/task-lists/tl1/tasks').length;
+      assert.strictEqual(createdFirst, 2);
+
+      // Reflect the tasks the first run created, so the second run sees them.
+      tasks = fake.seen
+        .filter((r) => r.url === '/api/task-lists/tl1/tasks')
+        .map((r, i) => ({ id: `t${i}`, taskListId: 'tl1', name: r.body.name, isCompleted: false }));
+
+      const second = await runAsync(ctx, ['plan', 'sync', '--branch', 'feature-y'],
+        { PLANKA_PASSWORD: 'pw' }, TODO_PAYLOAD);
+      assert.strictEqual(second.status, 0);
+
+      const createdTotal = fake.seen.filter((r) => r.url === '/api/task-lists/tl1/tasks').length;
+      assert.strictEqual(createdTotal, createdFirst,
+        'the second sync created no duplicate tasks');
+    });
+  });
+
+test('plan sync ticks a task whose todo is completed', { skip }, async () => {
+  const taskLists = [{ id: 'tl1', cardId: 'c42', name: 'Plan' }];
+  const tasks = [
+    { id: 't0', taskListId: 'tl1', name: 'Write the failing test', isCompleted: false },
+  ];
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'GET /api/cards/c42': () => ({ item: { id: 'c42' }, included: { taskLists, tasks } }),
+    'PATCH /api/tasks/t0': () => ({ item: { id: 't0', isCompleted: true } }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), { taskLists: { plan: 'Plan' } });
+    fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
+      JSON.stringify({ cardId: 'c42' }));
+    const res = await runAsync(ctx, ['plan', 'sync', '--branch', 'feature-y'],
+      { PLANKA_PASSWORD: 'pw' },
+      JSON.stringify({
+        tool_input: { todos: [{ content: 'Write the failing test', status: 'completed' }] },
+      }));
+    assert.strictEqual(res.status, 0);
+    const patch = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/tasks/t0');
+    assert.ok(patch, 'the completed todo ticked its task');
+    assert.strictEqual(patch.body.isCompleted, true);
+  });
+});
+
+test('plan sync on an untracked branch is silent and exits 0', { skip }, () => {
+  const ctx = withSidecar({ ...OFFLINE_CFG, taskLists: { plan: 'Plan' } }, {});
+  const res = runIn(ctx, ['plan', 'sync', '--branch', 'untracked'], { PLANKA_PASSWORD: 'pw' });
   assert.strictEqual(res.status, 0);
 });
