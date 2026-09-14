@@ -35,7 +35,28 @@ if command -v osascript >/dev/null 2>&1; then
   # macOS — play the sound directly so the audible cue never depends on
   # Notification Center delivery (osascript banners are attributed to Script
   # Editor and are silently dropped if it lacks notification permission).
-  afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
+  #
+  # Playing it directly is also why it needs a gain knob. afplay is ordinary playback, so
+  # it rides the system OUTPUT volume and ignores the Alert volume slider that every other
+  # app's notification sound respects. Turning Alert volume down leaves this cue alone at
+  # full blast, which is the complaint. macOS offers no per-app notification volume — the
+  # per-app control in System Settings is on/off only — so the knob has to live here.
+  #
+  # 25% by analogy to the Windows branch below, NOT picked by ear: Glass is a short bright
+  # sample like the Windows system beep, and the file's own note warns off the 35/50 gains,
+  # which are for the soft `complete` sample. Treat the figure as unverified.
+  #
+  # CLAUDE_SOUND_VOLUME (0-100) overrides it, matching play-sound.sh's contract exactly:
+  # anything that isn't a plain integer in range falls back to the default rather than
+  # passing garbage to afplay. The default is named once, for the reason play-sound.sh
+  # gives — written twice, invalid input would silently play at a different level.
+  MACOS_CUE_VOLUME_PCT=25
+  PCT="${CLAUDE_SOUND_VOLUME:-$MACOS_CUE_VOLUME_PCT}"
+  if ! [[ "$PCT" =~ ^[0-9]+$ ]] || [[ "$PCT" -gt 100 ]]; then
+    PCT="$MACOS_CUE_VOLUME_PCT"
+  fi
+  printf -v CUE_VOLUME '%d.%02d' $(( PCT / 100 )) $(( PCT % 100 ))  # afplay: float 0.0-1.0
+  afplay -v "$CUE_VOLUME" /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 &
   # Banner is best-effort; no `sound name` here to avoid a double chime once
   # Script Editor notification permission is granted.
   # argv passing avoids shell injection via message content.
