@@ -7,6 +7,7 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from .model import CascadeNode, Category, Item, Layer, SetupMap
 from .provenance import (
@@ -33,7 +34,17 @@ HOOK_CMD_RE = re.compile(r"~/\.claude/hooks/([\w.\-]+)")
 INCLUDE_RE = re.compile(r"^@(\S+)\s*$", re.MULTILINE)
 HEADING_RE = re.compile(r"^(#{1,2})\s+(.+?)\s*$", re.MULTILINE)
 RUN_SKILL_RE = re.compile(r"run-skill\.sh\s+(\S+)\s+(\S+)")
-WEEKDAY_NAMES = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
+WEEKDAY_NAMES = {
+    0: "Sun",
+    1: "Mon",
+    2: "Tue",
+    3: "Wed",
+    4: "Thu",
+    5: "Fri",
+    6: "Sat",
+    7: "Sun",
+}
+
 
 def _resolve_include(token: str, base_dir: Path) -> Path:
     if token.startswith("~"):
@@ -49,10 +60,14 @@ def _display_label(path: Path) -> str:
 
 
 def _section_headings(text: str) -> tuple[tuple[int, str], ...]:
-    return tuple((len(m.group(1)), m.group(2).strip()) for m in HEADING_RE.finditer(text))
+    return tuple(
+        (len(m.group(1)), m.group(2).strip()) for m in HEADING_RE.finditer(text)
+    )
 
 
-def _cascade_node(path: Path, seen: frozenset[Path] = frozenset()) -> CascadeNode | None:
+def _cascade_node(
+    path: Path, seen: frozenset[Path] = frozenset()
+) -> CascadeNode | None:
     if path in seen or len(seen) > 20 or not path.exists():
         return None
     provenance, _ = provenance_for(path)
@@ -89,7 +104,12 @@ def _layer_from_settings(name: str, path: Path) -> Layer:
     ]
     skill_overrides = data.get("skillOverrides") or {}
     if skill_overrides:
-        fields.append(("skillOverrides", ", ".join(f"{k}={v}" for k, v in sorted(skill_overrides.items()))))
+        fields.append(
+            (
+                "skillOverrides",
+                ", ".join(f"{k}={v}" for k, v in sorted(skill_overrides.items())),
+            )
+        )
     sandbox = data.get("sandbox")
     if sandbox:
         net = sandbox.get("network", {}) or {}
@@ -152,8 +172,17 @@ def scan_hooks() -> Category:
                     fields.append(("matcher", matcher))
                 if hook.get("timeout") is not None:
                     fields.append(("timeout", str(hook["timeout"])))
-                items.append(Item(name=f"{event}: {label}", purpose=purpose, provenance=provenance, fields=tuple(fields)))
-    return Category(key="hooks", title="Hooks", items=tuple(items), note=f"{len(hooks_cfg)} events")
+                items.append(
+                    Item(
+                        name=f"{event}: {label}",
+                        purpose=purpose,
+                        provenance=provenance,
+                        fields=tuple(fields),
+                    )
+                )
+    return Category(
+        key="hooks", title="Hooks", items=tuple(items), note=f"{len(hooks_cfg)} events"
+    )
 
 
 def _scan_flat_md_category(dirname: str, key: str, title: str) -> Category:
@@ -162,7 +191,9 @@ def _scan_flat_md_category(dirname: str, key: str, title: str) -> Category:
     if deployed_dir.is_dir():
         for path in sorted(deployed_dir.glob("*.md")):
             provenance, _ = provenance_for(path)
-            items.append(Item(name=path.stem, purpose=purpose_for(path), provenance=provenance))
+            items.append(
+                Item(name=path.stem, purpose=purpose_for(path), provenance=provenance)
+            )
     return Category(key=key, title=title, items=tuple(items))
 
 
@@ -184,7 +215,13 @@ def scan_rules() -> Category:
     if deployed_dir.is_dir():
         for path in sorted(deployed_dir.glob("*.md")):
             provenance, _ = provenance_for(path)
-            items.append(Item(name=path.stem, purpose=humanize_filename(path), provenance=provenance))
+            items.append(
+                Item(
+                    name=path.stem,
+                    purpose=humanize_filename(path),
+                    provenance=provenance,
+                )
+            )
     return Category(key="rules", title="Rules", items=tuple(items))
 
 
@@ -197,7 +234,13 @@ def scan_skills() -> Category:
             if not skill_md.exists():
                 continue
             provenance, _ = provenance_for(skill_md)
-            items.append(Item(name=skill_dir.name, purpose=purpose_for(skill_md), provenance=provenance))
+            items.append(
+                Item(
+                    name=skill_dir.name,
+                    purpose=purpose_for(skill_md),
+                    provenance=provenance,
+                )
+            )
     return Category(key="skills", title="Skills", items=tuple(items))
 
 
@@ -213,7 +256,9 @@ def _plugin_description(record: dict) -> str | None:
 
 def scan_plugins() -> Category:
     installed = read_json(CLAUDE_DIR / "plugins/installed_plugins.json") or {}
-    enabled_map = (read_json(CLAUDE_DIR / "settings.json") or {}).get("enabledPlugins", {}) or {}
+    enabled_map = (read_json(CLAUDE_DIR / "settings.json") or {}).get(
+        "enabledPlugins", {}
+    ) or {}
     plugins = installed.get("plugins", {}) or {}
     marketplaces = read_json(CLAUDE_DIR / "plugins/known_marketplaces.json") or {}
     items = []
@@ -227,13 +272,17 @@ def scan_plugins() -> Category:
         records = plugins[key]
         record = records[0] if records else {}
         name, _, marketplace = key.rpartition("@")
-        description = _plugin_description(record) or f"plugin in {marketplace or 'unknown'}"
+        description = (
+            _plugin_description(record) or f"plugin in {marketplace or 'unknown'}"
+        )
         fields = (
             ("marketplace", marketplace or "unknown"),
             ("scope", record.get("scope", "unknown")),
             ("version", record.get("version", "unknown")),
         )
-        items.append(Item(name=name or key, purpose=description, provenance="", fields=fields))
+        items.append(
+            Item(name=name or key, purpose=description, provenance="", fields=fields)
+        )
     note = f"{len(items)} enabled plugins across {len(marketplaces)} marketplaces: {', '.join(sorted(marketplaces))}"
     if hidden:
         note += f"; {hidden} disabled/unlisted hidden"
@@ -262,7 +311,12 @@ def scan_mcp() -> Category:
     # render their names or ids — the cache holds server ids we treat as secret.
     needs_auth_count = len(read_json(MCP_NEEDS_AUTH_CACHE) or {})
     items = tuple(
-        Item(name=name, purpose="local MCP server (~/.claude.json)", provenance="", fields=(("kind", "local"),))
+        Item(
+            name=name,
+            purpose="local MCP server (~/.claude.json)",
+            provenance="",
+            fields=(("kind", "local"),),
+        )
         for name in local_keys
     )
     note = "Only active servers shown."
@@ -307,7 +361,11 @@ def scan_scheduled() -> Category:
             try:
                 with path.open("rb") as fh:
                     plist = plistlib.load(fh)
-            except (OSError, ValueError):
+            # ExpatError is neither OSError nor ValueError, so malformed XML used
+            # to escape this guard and abort the whole scan. This map is a report
+            # about the machine: one unreadable file costs that entry, never the
+            # report.
+            except (OSError, ValueError, ExpatError, plistlib.InvalidFileException):
                 continue
             joined = " ".join(plist.get("ProgramArguments", []))
             match = RUN_SKILL_RE.search(joined)
@@ -315,7 +373,14 @@ def scan_scheduled() -> Category:
             mode = match.group(2) if match else "unknown"
             schedule = _summarize_schedule(plist.get("StartCalendarInterval"))
             fields = (("schedule", schedule), ("skill", skill), ("mode", mode))
-            items.append(Item(name=path.stem, purpose=f"runs /{skill} ({mode})", provenance=provenance, fields=fields))
+            items.append(
+                Item(
+                    name=path.stem,
+                    purpose=f"runs /{skill} ({mode})",
+                    provenance=provenance,
+                    fields=fields,
+                )
+            )
     return Category(key="scheduled", title="Scheduled tasks", items=tuple(items))
 
 
@@ -362,4 +427,3 @@ def build_setup_map() -> SetupMap:
         categories=categories,
         counts=counts,
     )
-
