@@ -9,6 +9,8 @@ import {
   parsePrsBody,
   isSafeUrl,
 } from '../public/render-guards.js';
+import { groupBy } from '../public/group.js';
+import type { PrRecord } from '../src/types.ts';
 
 const indexHtml = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
@@ -22,13 +24,35 @@ function optionValues(html: string, selectId: string): string[] {
   const select = new RegExp(`<select id="${selectId}">([\\s\\S]*?)</select>`).exec(html);
   assert.ok(select, `no <select id="${selectId}"> found in index.html`);
   const values: string[] = [];
-  const optionPattern = /<option value="([^"]+)"/g;
+  // `[^"]*`, not `[^"]+`: an empty value="" is a real (if currently unused) option and must
+  // be counted, not silently skipped.
+  const optionPattern = /<option value="([^"]*)"/g;
   let match: RegExpExecArray | null;
   while ((match = optionPattern.exec(select[1]!))) {
     values.push(match[1]!);
   }
   return values;
 }
+
+/** A fully well-formed PR record, for tests to override fields on. */
+const validRecord: PrRecord = {
+  id: 'x/y#1',
+  repo: 'x/y',
+  number: 1,
+  title: 'Add feature',
+  url: 'https://github.com/x/y/pull/1',
+  headRef: 'feature',
+  baseRef: 'main',
+  isDraft: false,
+  ci: 'success',
+  review: 'approved',
+  openedAt: '2026-09-01T00:00:00Z',
+  updatedAt: '2026-09-10T00:00:00Z',
+  ageDays: 5,
+  staleDays: 2,
+  additions: 10,
+  deletions: 2,
+};
 
 test('AXES matches the #group-by <select> options in index.html', () => {
   assert.deepStrictEqual(AXES, optionValues(indexHtml, 'group-by'));
@@ -67,7 +91,7 @@ test('toSort falls back to stale for the empty string', () => {
 });
 
 test('parsePrsBody returns the prs array from a well-formed body', () => {
-  const body = { prs: [{ id: 'x/y#1' }], fetchedAt: '2026-09-14T00:00:00Z' };
+  const body = { prs: [validRecord], fetchedAt: '2026-09-14T00:00:00Z' };
   assert.deepStrictEqual(parsePrsBody(body), body.prs);
 });
 
@@ -83,6 +107,71 @@ test('parsePrsBody throws on a non-object body', () => {
   assert.throws(() => parsePrsBody(null));
   assert.throws(() => parsePrsBody('nope'));
 });
+
+test('parsePrsBody throws, naming the index and field, when a record is missing a required field', () => {
+  const { repo, ...withoutRepo } = validRecord;
+  assert.throws(
+    () => parsePrsBody({ prs: [withoutRepo] }),
+    /record 0 has an invalid "repo"/,
+  );
+});
+
+test('parsePrsBody throws, naming the index and field, when a field has the wrong type', () => {
+  assert.throws(
+    () => parsePrsBody({ prs: [{ ...validRecord, staleDays: '2' }] }),
+    /record 0 has an invalid "staleDays"/,
+  );
+});
+
+test('parsePrsBody throws, naming the index, for a non-object element', () => {
+  assert.throws(() => parsePrsBody({ prs: [null] }), /record 0 is not an object/);
+  assert.throws(() => parsePrsBody({ prs: ['nope'] }), /record 0 is not an object/);
+});
+
+test('parsePrsBody names the offending record among several, not just the first', () => {
+  assert.throws(
+    () => parsePrsBody({ prs: [validRecord, { ...validRecord, ci: 'unknown' }] }),
+    /record 1 has an invalid "ci"/,
+  );
+});
+
+test(
+  'a malformed record throws before "current" is reassigned, so a fallback ' +
+    're-render of the previous rows does not throw a second time',
+  () => {
+    // Mirrors app.js's refresh(): `current` is assigned only from the awaited
+    // load's result, so a load that throws leaves `current` at its previous
+    // value, and the catch's fallback re-renders that value instead of the
+    // bad one. Reproduces the reviewer's repro directly: with the per-element
+    // check removed, groupBy's `a.key.localeCompare(b.key)` throws on the
+    // second (malformed) record's undefined `repo`, inside the fallback
+    // render too, uncaught.
+    const previousGoodRecords = [validRecord];
+    let current: PrRecord[] = previousGoodRecords;
+    let renderCount = 0;
+    const render = (records: PrRecord[]): void => {
+      renderCount += 1;
+      groupBy(records, 'repo');
+    };
+    const load = (): PrRecord[] =>
+      parsePrsBody({
+        prs: [validRecord, { id: 'bad', number: 1, title: 'Untitled' }],
+      });
+
+    let bannerMessage: string | null = null;
+    try {
+      current = load();
+      render(current);
+    } catch (err) {
+      bannerMessage = String(err);
+      if (current.length > 0) render(current);
+    }
+
+    assert.deepStrictEqual(current, previousGoodRecords);
+    assert.strictEqual(renderCount, 1);
+    assert.ok(bannerMessage !== null);
+  },
+);
 
 test('isSafeUrl accepts https and http', () => {
   assert.strictEqual(isSafeUrl('https://github.com/acme/api/pull/12'), true);
