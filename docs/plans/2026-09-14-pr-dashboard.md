@@ -19,7 +19,11 @@
 - **Read-only.** No endpoint mutates GitHub state. Every mutating affordance is an `<a href>` to github.com.
 - **Token from 1Password only.** `op read "op://Private/GitHub PR Dashboard/token"`, overridable by `PR_DASH_OP_ITEM` (item path) and `GH_TOKEN` (raw token). No `gh auth token` fallback — it returns write scopes.
 - **No test performs network I/O.** Every GitHub interaction is behind an injected `fetch`.
-- **`tsc --noEmit` is the type gate.** TypeScript is the only devDependency.
+- **`tsc --noEmit` is the type gate.** No runtime dependencies. devDependencies are
+  `typescript` and `@types/node` only — both types-only, neither deployed. Without
+  `@types/node` the gate cannot resolve `node:http` or `node:fs`.
+- **`moduleResolution` is `nodenext`.** With no bundler, `tsc` is the only check on import
+  specifiers, and `bundler` resolution accepts extensionless imports Node rejects at runtime.
 
 ---
 

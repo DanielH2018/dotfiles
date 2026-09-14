@@ -287,7 +287,13 @@ a tool deployed by copying files into place.
 stripping cannot run — enums, namespaces, parameter properties. Without it a type check
 passes and the server fails at startup.
 
-TypeScript is the only dependency.
+There are no runtime dependencies. The only devDependencies are `typescript` and
+`@types/node`, both types-only and neither deployed — without `@types/node` the type check
+cannot resolve `node:http` or `node:fs` and fails on the first server file.
+
+`moduleResolution` is `nodenext`, not `bundler`. Since there is no bundler, `tsc` is the
+only thing standing between an extensionless relative import and a failed launch, and
+`bundler` resolution accepts imports Node's ESM loader rejects.
 
 Types for the GraphQL response are generated from GitHub's published schema rather than
 written by hand, so a schema change surfaces as a type error instead of as a null at
