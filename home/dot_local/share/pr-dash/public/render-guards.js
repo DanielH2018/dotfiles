@@ -85,7 +85,13 @@ function validateRecord(record, index) {
     if (typeof fields[field] !== 'string') invalidField(index, field);
   }
   for (const field of NUMBER_FIELDS) {
-    if (typeof fields[field] !== 'number') invalidField(index, field);
+    // `typeof x === 'number'` is true for NaN and Infinity too, and both corrupt the render
+    // path the same way a wrong type would — sortWithin's comparator returns 0 for any
+    // comparison touching NaN, leaving stale/age sort undefined. This boundary exists to
+    // catch what upstream got wrong, so it rejects non-finite values, not just wrong types.
+    if (typeof fields[field] !== 'number' || !Number.isFinite(fields[field])) {
+      invalidField(index, field);
+    }
   }
   if (typeof fields['isDraft'] !== 'boolean') invalidField(index, 'isDraft');
   if (!CI_VALUES.includes(/** @type {string} */ (fields['ci']))) invalidField(index, 'ci');

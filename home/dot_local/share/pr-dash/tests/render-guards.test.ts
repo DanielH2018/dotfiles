@@ -63,12 +63,21 @@ type FieldKind = 'string' | 'number' | 'boolean' | 'enum';
  * list, so covering a field `validateRecord` gains means adding one row
  * here rather than a new test block.
  */
-const FIELD_SPECS: { field: string; kind: FieldKind; edgeValid?: unknown }[] = [
+const FIELD_SPECS: {
+  field: string;
+  kind: FieldKind;
+  edgeValid?: unknown;
+  edgeInvalid?: unknown;
+}[] = [
   { field: 'repo', kind: 'string' },
   { field: 'title', kind: 'string', edgeValid: '' },
   { field: 'url', kind: 'string' },
   { field: 'number', kind: 'number', edgeValid: 0 },
-  { field: 'staleDays', kind: 'number', edgeValid: 0 },
+  // NaN and Infinity both pass `typeof x === 'number'`, so a numeric field needs its own
+  // edgeInvalid case rather than relying on breakField's "wrong type" coverage: normalize.ts
+  // has its own reasons never to emit either, but this guard exists precisely to catch what
+  // upstream got wrong, so it must reject a non-finite number even if nothing here does.
+  { field: 'staleDays', kind: 'number', edgeValid: 0, edgeInvalid: NaN },
   { field: 'ageDays', kind: 'number', edgeValid: 0 },
   { field: 'additions', kind: 'number', edgeValid: 0 },
   { field: 'deletions', kind: 'number', edgeValid: 0 },
@@ -196,6 +205,17 @@ for (const { field, edgeValid } of FIELD_SPECS) {
   test(`parsePrsBody accepts the edge value ${JSON.stringify(edgeValid)} for "${field}"`, () => {
     const record = { ...validRecord, [field]: edgeValid };
     assert.doesNotThrow(() => parsePrsBody({ prs: [record] }));
+  });
+}
+
+for (const { field, edgeInvalid } of FIELD_SPECS) {
+  if (edgeInvalid === undefined) continue;
+  test(`parsePrsBody throws naming "${field}" for the invalid edge value ${String(edgeInvalid)}`, () => {
+    const record = { ...validRecord, [field]: edgeInvalid };
+    assert.throws(
+      () => parsePrsBody({ prs: [record] }),
+      new RegExp(`record 0 has an invalid "${field}"`),
+    );
   });
 }
 
