@@ -64,6 +64,14 @@ sidecar and the board stay in step.
 | This branch should stop being tracked | `planka card detach` |
 | Where did this branch's card go | `planka status`, `planka open` |
 
+## Branches that are never tracked
+
+`main` and `master` never get a card created for them — a card is one unit of work and a
+default branch is not one. Editing the primary checkout directly therefore leaves the
+board alone. An existing card on such a branch still resolves; only creation stops.
+Override with `skipBranches` in the config, which replaces the default rather than adding
+to it.
+
 ## When nothing happens
 
 `planka` exits 0 in silence whenever it is not configured, which is correct on any

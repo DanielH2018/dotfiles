@@ -22,10 +22,16 @@ const skip = toolsOk ? false : 'bash/git unavailable';
 // bin/land's own rebase run under this, so nothing here inherits the machine's identity, hooks,
 // templates or commit signing — the signing in particular would send each commit to an agent
 // for an approval no test can give.
+// PLANKA_TRACKING is here for the same reason: land now calls `planka card move`
+// and `planka card comment` after a successful merge, and those reach the real
+// local board. The fixtures land a branch called `feature`, so without this every
+// run of this suite hits the operator's live Kanban board — and would move a real
+// card to Done if one ever existed for that name.
 const CLEAN_ENV = {
   ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))),
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_SYSTEM: '/dev/null',
+  PLANKA_TRACKING: '0',
 };
 
 const dirs = [];

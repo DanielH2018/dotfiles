@@ -21,6 +21,8 @@ import time
 import urllib.error
 import urllib.request
 
+DEFAULT_SKIP_BRANCHES = ("main", "master")
+
 DEFAULT_CONFIG = "~/.config/planka/config.json"
 DEFAULT_STATE = "~/.claude/planka"
 DEFAULT_CACHE = "~/.cache/planka"
@@ -373,6 +375,13 @@ def cmd_card_resolve(args):
         return
     if not getattr(args, "create", False):
         log(f"card resolve: no card for {repo}/{branch}")
+        return
+    # A card is one unit of work, and a default branch is not one. Without this a
+    # session editing the primary checkout directly claims a card named "main" —
+    # which is what the first deployment of these hooks did. An existing card on
+    # such a branch still resolves above; only creation stops here.
+    if branch in cfg.get("skipBranches", DEFAULT_SKIP_BRANCHES):
+        log(f"card resolve: {branch} is not a trackable branch; no card created")
         return
     card_id = create_card(cfg, branch, getattr(args, "title", None))
     write_sidecar(repo, branch, {"cardId": card_id, "url": card_url(cfg, card_id)})

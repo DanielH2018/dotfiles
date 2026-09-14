@@ -142,6 +142,13 @@ test('card resolve prefers the sidecar and makes no network call', { skip }, () 
   assert.strictEqual(res.stdout.trim(), 'c42');
 });
 
+test('card resolve still reports an existing card on a skipped branch', { skip }, () => {
+  const ctx = withSidecar(OFFLINE_CFG, { 'myrepo--main.json': { cardId: 'c7' } });
+  const res = runIn(ctx, ['card', 'resolve', '--branch', 'main']);
+  assert.strictEqual(res.status, 0);
+  assert.strictEqual(res.stdout.trim(), 'c7');
+});
+
 test('card resolve without a sidecar and without --create prints nothing', { skip }, () => {
   const ctx = withSidecar(OFFLINE_CFG, {});
   const res = runIn(ctx, ['card', 'resolve', '--branch', 'unknown-branch']);
@@ -283,6 +290,62 @@ test('card resolve --create creates in the active list and stamps the branch',
       assert.strictEqual(sidecar.cardId, 'new-card');
     });
   });
+
+// A card is one unit of work. `main` is not one, and a session editing the
+// primary checkout directly would otherwise claim a card called "main" — which
+// is what happened the first time these hooks were deployed. The board must be
+// REACHABLE for this to prove anything: against a closed port the create path
+// soft-fails on the lookup and the test passes without the guard existing.
+for (const branch of ['main', 'master']) {
+  test(`card resolve --create refuses to create one for ${branch}`, { skip }, async () => {
+    const fake = fakePlanka({
+      'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+      'GET /api/boards/b1': () => ({ item: { id: 'b1' }, included: { customFieldValues: [] } }),
+      'POST /api/lists/list-active/cards': () => ({ item: { id: 'should-not-exist' } }),
+    });
+    await withFake(fake, async () => {
+      const ctx = onlineCtx(fake.port(), {
+        lists: { active: 'list-active' },
+        customFields: { groupId: 'g1', branch: 'f-branch' },
+      });
+      const res = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', branch],
+        { PLANKA_PASSWORD: 'pw' });
+      assert.strictEqual(res.status, 0);
+      assert.strictEqual(res.stdout.trim(), '');
+      assert.strictEqual(
+        fake.seen.filter((r) => r.url === '/api/lists/list-active/cards').length, 0,
+        'no card is created for a branch that is not a unit of work',
+      );
+      assert.strictEqual(
+        fs.existsSync(path.join(ctx.state, 'branch', `myrepo--${branch}.json`)), false,
+        'and no sidecar is written for it either',
+      );
+    });
+  });
+}
+
+test('a configured skipBranches list replaces the default', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'GET /api/boards/b1': () => ({ item: { id: 'b1' }, included: { customFieldValues: [] } }),
+    'POST /api/lists/list-active/cards': () => ({ item: { id: 'made' } }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), {
+      lists: { active: 'list-active' },
+      customFields: { groupId: 'g1', branch: 'f-branch' },
+      skipBranches: ['trunk'],
+    });
+    const blocked = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', 'trunk'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(blocked.stdout.trim(), '');
+
+    // main is no longer skipped once the list is given explicitly.
+    const allowed = await runAsync(ctx, ['card', 'resolve', '--create', '--branch', 'main'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(allowed.stdout.trim(), 'made');
+  });
+});
 
 test('card move sends the configured list id, not its name', { skip }, async () => {
   const fake = fakePlanka({
