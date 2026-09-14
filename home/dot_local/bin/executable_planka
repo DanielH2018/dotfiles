@@ -254,6 +254,108 @@ def cmd_board_show(args):
         print("label\t%s\t%s" % (label.get("id"), label.get("name")))
 
 
+def slugify(value):
+    """One flat filename per repo+branch. Slashes in branch names are the reason."""
+    out = []
+    for ch in value:
+        out.append(ch if (ch.isalnum() or ch in "-_.") else "-")
+    return "".join(out).strip("-") or "unknown"
+
+
+def repo_slug():
+    env = os.environ.get("PLANKA_REPO")
+    if env:
+        return slugify(env)
+    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return "unknown"
+    return slugify(os.path.basename(proc.stdout.strip()))
+
+
+def current_branch():
+    proc = subprocess.run(["git", "branch", "--show-current"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def sidecar_path(repo, branch):
+    d = os.path.join(state_dir(), "branch")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return os.path.join(d, "%s--%s.json" % (repo, slugify(branch)))
+
+
+def read_sidecar(repo, branch):
+    try:
+        with open(sidecar_path(repo, branch)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def write_sidecar(repo, branch, data):
+    try:
+        with open(sidecar_path(repo, branch), "w") as fh:
+            json.dump(data, fh)
+    except OSError:
+        log("could not write the sidecar for %s/%s" % (repo, branch))
+
+
+def card_url(cfg, card_id):
+    return "%s/cards/%s" % (cfg["baseUrl"].rstrip("/"), card_id)
+
+
+def find_card_by_branch(cfg, branch):
+    """The sidecar is a cache; the board is the record. One GET returns the whole
+    board, including every custom field value, so this is a single call."""
+    field_id = cfg.get("customFields", {}).get("branch")
+    board_id = cfg.get("boardId")
+    if not field_id or not board_id:
+        return None
+    board = call(cfg, "GET", "/boards/%s" % board_id)
+    for value in board.get("included", {}).get("customFieldValues", []):
+        if value.get("customFieldId") == field_id and value.get("content") == branch:
+            return {"id": value.get("cardId")}
+    return None
+
+
+def resolve_branch(args):
+    return getattr(args, "branch", None) or current_branch()
+
+
+def cmd_card_resolve(args):
+    cfg = require_config()
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("card resolve: no branch")
+    repo = repo_slug()
+    side = read_sidecar(repo, branch)
+    if side and side.get("cardId"):
+        print(side["cardId"])
+        return
+    found = find_card_by_branch(cfg, branch)
+    if found and found.get("id"):
+        write_sidecar(repo, branch, {"cardId": found["id"], "url": card_url(cfg, found["id"])})
+        print(found["id"])
+        return
+    log("card resolve: no card for %s/%s" % (repo, branch))
+
+
+def cmd_status(args):
+    cfg = require_config()
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("status: no branch")
+    repo = repo_slug()
+    side = read_sidecar(repo, branch)
+    if not side:
+        print("%s/%s: not tracked" % (repo, branch))
+        return
+    print("%s/%s\tcard %s\t%s" % (repo, branch, side.get("cardId"), side.get("url")))
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="planka", description=__doc__)
     parser.add_argument("--strict", action="store_true",
@@ -272,6 +374,16 @@ def build_parser():
     show = board_sub.add_parser("show", help="print ids for lists, fields, and labels")
     show.add_argument("--board", help="board id (default: config boardId)")
     show.set_defaults(func=cmd_board_show)
+
+    card = sub.add_parser("card", help="card operations")
+    card_sub = card.add_subparsers(dest="card_command", required=True)
+    resolve = card_sub.add_parser("resolve", help="print the card id for a branch")
+    resolve.add_argument("--branch", help="branch name (default: the current branch)")
+    resolve.set_defaults(func=cmd_card_resolve)
+
+    status = sub.add_parser("status", help="what card this branch maps to")
+    status.add_argument("--branch", help="branch name (default: the current branch)")
+    status.set_defaults(func=cmd_status)
 
     return parser
 
