@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkRequest } from './guard.ts';
+import { buildStacks } from './stacks.ts';
 import type { PrRecord } from './types.ts';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
@@ -70,7 +71,7 @@ async function handle(
     }
     const { prs, fetchedAt } = await opts.loadPrs();
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ prs, fetchedAt }));
+    res.end(JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt }));
     return;
   }
 
