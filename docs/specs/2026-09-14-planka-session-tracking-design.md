@@ -54,6 +54,23 @@ The endpoints this design uses, all confirmed present in the bundle:
 | Attach a custom field group | `POST /api/cards/:id/custom-field-groups` |
 | Write a custom field value | `PATCH /api/cards/:id/custom-field-values/customFieldGroupId::g:customFieldId::f` |
 
+### Token behaviour, read from the running container
+
+The deployment is `ghcr.io/plankanban/planka:latest` as `kanban-planka-1`, with
+`BASE_URL=http://localhost:3001`, alongside `kanban-postgres-1`.
+
+- **A token is valid for 365 days.** `config/custom.js:48` computes `tokenExpiresIn` from
+  `TOKEN_EXPIRES_IN`, defaulting to 365 days, and that variable is unset here. Re-minting
+  is therefore an annual event, not a routine one — the keychain seeding really is
+  once-and-forget, and the 401 path exists for a password change more than for expiry.
+- **The token comes back in the response body.** `HTTP_ONLY_TOKEN` is unset, so Planka
+  does not switch to its cookie-only mode. The CLI reads the token out of the JSON.
+- **No terms gate.** `POST /api/access-tokens` can answer with an `ACCEPT_TERMS` step
+  instead of a token (`constants.js`, `controllers/access-tokens/create.js:126`), but
+  `TERMS_UPDATED_AT` is unset on this deployment, so it will not.
+- **Card creation and moves are both recorded** as `createCard` and `moveCard` actions
+  (`api/models/Action.js:71`), as are `completeTask` and `uncompleteTask`.
+
 ### Nesting
 
 Planka 2.x nests work two ways, and this design uses both.
@@ -251,6 +268,9 @@ entirely for a machine.
   attempt an `op read` from a hook: it would block on Touch ID behind a session the
   operator is not looking at.
 - 401 — discard the cached token, re-mint once, then give up for the session.
+- A token response that carries a step rather than a token (`ACCEPT_TERMS`) — log and
+  exit 0. Terms are not enabled on this deployment, but enabling them later must degrade
+  to silence, not to a hook that retries a login it cannot complete.
 - Card deleted from the board underneath a sidecar — `resolve` finds nothing, recreates,
   and rewrites the sidecar.
 
@@ -282,7 +302,9 @@ Vertical slices, each exercisable by hand before the next begins.
 5. The `Stop` comment, and `bin/land` → Done.
 6. `task promote` to a linked card, and the statusline segment.
 
-Slice 1 also decides the JWT question below, by reading the minted token's `exp`.
+Slice 1 is the only slice whose output is configuration rather than behaviour: the board
+id, the six list ids, and the custom-field ids all have to be read off the live board
+before anything else can be written.
 
 ## Decisions
 
@@ -308,12 +330,14 @@ Slice 1 also decides the JWT question below, by reading the minted token's `exp`
   keychain read, so nothing depends on the shell having sourced `local.zsh` — but
   `op-refresh-keys` should learn the new service name so a rotation clears it with the
   others.
+- **A new card is created directly in In Progress.** The session is by definition editing
+  when it creates one, and Planka records a `createCard` action naming the list, so the
+  history is intact without a Backlog hop. Creating in Backlog and then moving would
+  record a card as having sat in a list it never really sat in — less true, not more —
+  and a failure between the two calls would strand it there.
 
 ## Open questions
 
-- **How long is a Planka JWT valid on this instance?** It determines whether re-minting is
-  rare or routine. Read it from the token's `exp` in slice 1.
-- **Should a card auto-created by a session land in In Progress, or in Backlog?** The
-  design puts it straight in In Progress, because the session is by definition editing
-  when it creates one. The alternative — create in Backlog and move — leaves a truer
-  audit trail in the card's activity feed at the cost of two API calls.
+None. The two that stood — the token's lifetime and where an auto-created card lands —
+are settled above, the first by reading the running container and the second as a
+decision.
