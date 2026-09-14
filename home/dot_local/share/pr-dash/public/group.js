@@ -4,6 +4,19 @@
 /** @typedef {'stale' | 'age' | 'title' | 'size'} Sort */
 
 /**
+ * Declares the display order for every axis except `repo`, most actionable
+ * first. `repo` has no fixed set of values, so it sorts alphabetically
+ * instead and has no entry here.
+ * @type {{ [K in Exclude<Axis, 'repo'>]: readonly string[] }}
+ */
+const GROUP_ORDER = {
+  staleness: ['<1d', '1-3d', '3-7d', '>7d'],
+  ci: ['failure', 'pending', 'none', 'success'],
+  review: ['changes_requested', 'review_required', 'none', 'approved'],
+  draft: ['ready', 'draft'],
+};
+
+/**
  * @param {number} staleDays
  * @returns {string}
  */
@@ -30,6 +43,20 @@ function keyFor(pr, axis) {
 }
 
 /**
+ * Ranks a group key within its axis's declared order. A key absent from
+ * that order (data the axis's type doesn't admit) sorts last rather than
+ * throwing.
+ * @param {Exclude<Axis, 'repo'>} axis
+ * @param {string} key
+ * @returns {number}
+ */
+function groupRank(axis, key) {
+  const order = GROUP_ORDER[axis];
+  const index = order.indexOf(key);
+  return index === -1 ? order.length : index;
+}
+
+/**
  * @param {readonly PrRecord[]} records
  * @param {Axis} axis
  * @returns {{ key: string, records: PrRecord[] }[]}
@@ -43,9 +70,9 @@ export function groupBy(records, axis) {
     if (existing === undefined) buckets.set(key, [pr]);
     else existing.push(pr);
   }
-  return [...buckets.entries()]
-    .map(([key, rs]) => ({ key, records: rs }))
-    .sort((a, b) => a.key.localeCompare(b.key));
+  const groups = [...buckets.entries()].map(([key, rs]) => ({ key, records: rs }));
+  if (axis === 'repo') return groups.sort((a, b) => a.key.localeCompare(b.key));
+  return groups.sort((a, b) => groupRank(axis, a.key) - groupRank(axis, b.key));
 }
 
 /**
