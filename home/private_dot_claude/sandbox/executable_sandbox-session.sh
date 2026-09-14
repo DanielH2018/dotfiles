@@ -11,9 +11,11 @@
 #
 # CONTRACT — both are launcher-global consumers, neither is pure.
 #
-# resolve_session_context READS INSTANCE_ID, AUDIT_BASE, SESSIONS_BASE, ARTIFACTS_BASE,
-# STATE_DIR, FRESH_SESSION, WORK_PATH, USE_WORKTREE, WT_BRANCH and DOCKERFILE, and SETS
-# AUDIT_DIR, SESSIONS_DIR, ARTIFACTS_DIR, RESUME_SESSION, AUTH_MARKER and TOOLCHAIN_LIST
+# resolve_session_context READS INSTANCE_ID, REPO_PATH, AUDIT_BASE, SESSIONS_BASE,
+# ARTIFACTS_BASE, PRIVATE_BASE, STATE_DIR, FRESH_SESSION, WORK_PATH, USE_WORKTREE,
+# WT_BRANCH and DOCKERFILE, and SETS
+# AUDIT_DIR, SESSIONS_DIR, ARTIFACTS_DIR, PRIVATE_DIR, RESUME_SESSION, AUTH_MARKER
+# and TOOLCHAIN_LIST
 # — every one of which the docker args assembled after it depend on. It also creates the
 # per-instance directories.
 #
@@ -32,10 +34,18 @@ resolve_session_context() {
   AUDIT_DIR="$AUDIT_BASE/$INSTANCE_ID"
   SESSIONS_DIR="$SESSIONS_BASE/$INSTANCE_ID"
   ARTIFACTS_DIR="$ARTIFACTS_BASE/$INSTANCE_ID"
+  PRIVATE_DIR="$PRIVATE_BASE/$INSTANCE_ID"
   # $STATE_DIR/hooks is the parent of the per-hook :ro mount points below. Create it
   # here so Docker doesn't materialise it root-owned on the host when it makes the
   # mount points (the state dir lives under the user's real ~/.claude tree).
   mkdir -p "$AUDIT_DIR" "$SESSIONS_DIR" "$ARTIFACTS_DIR" "$STATE_DIR" "$STATE_DIR/hooks"
+  # Per-instance replacements for the pooled parts of $STATE_DIR. They have to
+  # exist before the mounts are assembled: Docker materialises a missing bind
+  # source itself, and for history.jsonl — a FILE — it would materialise a
+  # root-owned DIRECTORY on the host, which Claude then cannot write. Same
+  # reason $STATE_DIR/hooks is created above.
+  mkdir -p "$PRIVATE_DIR/file-history" "$PRIVATE_DIR/shell-snapshots"
+  [[ -f "$PRIVATE_DIR/history.jsonl" ]] || : > "$PRIVATE_DIR/history.jsonl"
 
   # --- Auto-resume: continue the most recent conversation for this instance ---
   # The container cwd is always /workspace, which Claude escapes to the "-workspace"
@@ -44,9 +54,33 @@ resolve_session_context() {
   # picks up where it left off instead of starting cold. Only replays a transcript
   # already persisted on the host — not boundary-affecting.
   RESUME_SESSION=false
+  RESUME_SESSION_ID=""
   if [[ "$FRESH_SESSION" == false ]]; then
     if [[ -n "$(find "$SESSIONS_DIR/-workspace" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
       RESUME_SESSION=true
+    else
+      # A session that made its own worktree and moved into it re-keys its
+      # project directory to the new cwd, so its transcript lands under
+      # "-workspace--claude-worktrees-<name>" and never under "-workspace".
+      # Confirmed on the host: ~/.claude/projects holds exactly those slugs for
+      # worktrees made with EnterWorktree. Without this the instance looks cold
+      # on every relaunch while its conversation sits one directory over.
+      #
+      # --continue cannot reach it — it resolves against the container's cwd,
+      # which is /workspace — so this path resumes by id instead. `claude
+      # --resume <id>` was verified to work from an unrelated cwd.
+      #
+      # maxdepth 2 from here is maxdepth 1 within each slug, which keeps
+      # subagent transcripts (written under <slug>/<id>/) out, exactly as the
+      # -workspace probe above does.
+      local newest
+      newest="$(find "$SESSIONS_DIR" -mindepth 2 -maxdepth 2 -name '*.jsonl' -print0 2>/dev/null \
+        | xargs -0 ls -t 2>/dev/null | head -1 || true)"
+      if [[ -n "$newest" ]]; then
+        RESUME_SESSION=true
+        # shellcheck disable=SC2034  # read by append_resume_args() in the launcher, across the source boundary
+        RESUME_SESSION_ID="$(basename "$newest" .jsonl)"
+      fi
     fi
   fi
 
@@ -64,6 +98,20 @@ resolve_session_context() {
   echo "  Sessions: $SESSIONS_DIR -> /home/claudebot/.claude/projects"
   if [[ "$RESUME_SESSION" == true ]]; then
     echo "  Session: resuming most recent conversation (--continue) — pass --fresh to start clean"
+  else
+    # The cold path used to print nothing, so an INSTANCE_ID that missed by a
+    # character looked exactly like a first run. Name the id that was looked up,
+    # and point at --list: the prior conversation is almost always still on disk
+    # under a neighbouring id (a different -b branch, or a different casing of
+    # the same one). Unconditional rather than enumerated — list_orphan_sessions
+    # reports only instances whose worktree is gone, so a live sibling worktree
+    # would not show up in a nudge built on it.
+    if [[ "$FRESH_SESSION" == true ]]; then
+      echo "  Session: starting a new conversation (--fresh)"
+    else
+      echo "  Session: no prior conversation for $INSTANCE_ID — starting cold"
+      echo "           Expected one? claude-sandbox --list $REPO_PATH"
+    fi
   fi
   echo "  Plugins: ~/.claude/plugins -> /home/claudebot/.claude/plugins (read-only)"
   echo "  Commands/Agents: ~/.claude/{commands,agents} -> /home/claudebot/.claude/{commands,agents} (read-only)"
@@ -116,6 +164,7 @@ cleanup() {
   if [[ "$USE_WORKTREE" == true ]]; then
     cleanup_worktree
   fi
+  repair_container_worktrees
   # Deregister this session's Agent View row. RUN_ID-guarded: if a newer session ever
   # reused the deterministic INSTANCE_ID key, this exit can't delete the newer row.
   if [[ "${AV_REGISTERED:-false}" == true ]] && declare -f av_guarded_remove >/dev/null 2>&1; then

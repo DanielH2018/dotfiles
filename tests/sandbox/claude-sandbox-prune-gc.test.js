@@ -290,3 +290,56 @@ test('gc does not stamp .last-gc when the user cancels', { skip }, () => {
   assert.match(r.stdout, /Cancelled/);
   assert.strictEqual(r.stamped, null);
 });
+
+// --- delete_worktree retention ----------------------------------------------
+
+// The two sweeps above share delete_worktree, but they must not treat the saved
+// conversation the same way. --prune is a picker where the user names each
+// worktree, so deleting its data is what was asked for. --gc selects on "the
+// remote branch is gone", which is what a MERGED PR looks like, and the startup
+// nudge invites the user into it — so it removes the worktree and branch and
+// leaves the transcript. Asserted against the filesystem rather than against a
+// stubbed call, because the argument only matters for what survives on disk.
+const DELETE_SRC = skip ? '' : extractFunction('delete_worktree');
+
+function runDelete(keep) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-del-'));
+  const sessions = path.join(dir, 'sessions', 'demo-abc123-alpha');
+  fs.mkdirSync(path.join(sessions, '-workspace'), { recursive: true });
+  fs.writeFileSync(path.join(sessions, '-workspace', 'c0ffee.jsonl'), '{}\n');
+  fs.mkdirSync(path.join(dir, 'audit', 'demo-abc123-alpha'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'artifacts', 'demo-abc123-alpha'), { recursive: true });
+
+  const r = run(`
+set -uo pipefail
+REPO_PATH=${dir}/repo
+REPO_NAME=demo
+SESSIONS_BASE=${dir}/sessions
+AUDIT_BASE=${dir}/audit
+ARTIFACTS_BASE=${dir}/artifacts
+mkdir -p "$REPO_PATH"
+resolve_worktree_branch() { printf 'claude/%s\\n' "$1"; }
+compact_session() { :; }
+git() { :; }
+${DELETE_SRC}
+delete_worktree alpha demo-abc123-alpha ${keep}
+`);
+  const survives = (base) => fs.existsSync(path.join(dir, base, 'demo-abc123-alpha'));
+  const state = { stdout: r.stdout, sessions: survives('sessions'), audit: survives('audit'), artifacts: survives('artifacts') };
+  fs.rmSync(dir, { recursive: true, force: true });
+  return state;
+}
+
+test('delete_worktree keeps session data when passed keep', { skip }, () => {
+  const r = runDelete('keep');
+  assert.ok(r.sessions, 'the conversation must survive a --gc sweep');
+  assert.ok(r.audit && r.artifacts, 'audit and artifacts ride along with the conversation');
+  assert.match(r.stdout, /Conversation kept/);
+});
+
+test('delete_worktree removes session data when not passed keep', { skip }, () => {
+  const r = runDelete('');
+  assert.ok(!r.sessions && !r.audit && !r.artifacts,
+    '--prune is an explicit per-worktree selection; it still deletes everything');
+  assert.match(r.stdout, /Removed session data/);
+});

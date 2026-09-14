@@ -406,7 +406,11 @@ test('sessions whose worktree is gone are listed as orphaned', { skip }, () => {
   const f = sessionsFixture([]);
   const hash = repoHash(f.repo);
   const sessionsBase = path.join(f.root, 'sessions');
-  fs.mkdirSync(path.join(sessionsBase, `demo-${hash}-ghost`), { recursive: true });
+  // A transcript under the project slug, not a bare instance dir: an instance
+  // dir with nothing in it is an aborted launch, and --list skips those.
+  const ghostProj = path.join(sessionsBase, `demo-${hash}-ghost`, '-workspace');
+  fs.mkdirSync(ghostProj, { recursive: true });
+  fs.writeFileSync(path.join(ghostProj, 'conv.jsonl'), '{}\n');
   const { rows } = listRun(f, { sessionsBase });
   const ghost = rows.find((l) => l.includes('ghost'));
   assert.ok(ghost, `expected an orphaned row, got ${JSON.stringify(rows)}`);

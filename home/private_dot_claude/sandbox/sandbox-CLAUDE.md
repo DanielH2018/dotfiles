@@ -12,6 +12,21 @@ You are running inside a **Docker container** (Pattern C sandbox), not on the ho
 - **Audit**: Every tool use is logged by a PostToolUse hook to `/audit/`
 - **Artifacts**: `/artifacts` is bind-mounted to a host directory outside the repo/worktree
 
+## Branches and worktrees
+
+When the launcher was given no `-w` or `-b`, `/workspace` is the user's **real repository
+checkout**, not a throwaway copy. Its current branch is the branch the user has out on the
+host. Do not `git switch` or `git checkout` a different branch there: that moves the host's
+HEAD out from under them.
+
+Isolate with a worktree instead — `EnterWorktree`, or `git worktree add
+.claude/worktrees/<name> -b <branch>`. The worktree lands inside `/workspace`, so it persists
+on the host after the container exits, and the launcher repairs the absolute paths git records
+in it (they read `/workspace`, which does not exist on the host) as it shuts down.
+
+`.git/hooks` and `.git/config` are mounted read-only: both are executed by the user's git on
+the host. A write there failing is the boundary working, not a bug to route around.
+
 ## Git signing
 
 Commits are GPG-signed via 1Password SSH agent socket at `/run/1password/agent.sock`.

@@ -139,14 +139,76 @@ cleanup_worktree() {
     else
       git -C "$REPO_PATH" branch -d "$WT_BRANCH" 2>/dev/null || true
     fi
+    # The conversation outlives the worktree: session data stays under
+    # $SESSIONS_BASE/$INSTANCE_ID whatever happens to the checkout. Print the
+    # invocation that reaches it — after this returns, the only handle left is
+    # the suffix of a directory name under ~/.claude/sandbox/sessions. The dirty
+    # branch above already prints a block of next steps; this one printed only
+    # the removal, which read as "nothing survived".
+    if [[ -n "$(find "$SESSIONS_BASE/$INSTANCE_ID" -mindepth 2 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
+      echo "  Conversation kept — resume it with:"
+      if [[ "$BRANCH_MODE" == true ]]; then
+        echo "    claude-sandbox -b $WT_BRANCH $REPO_PATH"
+      else
+        echo "    claude-sandbox -w $WT_NAME $REPO_PATH"
+      fi
+    fi
   fi
+}
+
+# --- Repair worktrees the agent created inside the container ---
+# A session that runs EnterWorktree (or plain `git worktree add`) makes its
+# worktree under /workspace/.claude/worktrees/<name>, and git records ABSOLUTE
+# paths in two places: .git/worktrees/<name>/gitdir, and the worktree's own .git
+# file. Both then say /workspace, which exists only inside the container. On the
+# host `git worktree list` shows the entry as `prunable` against a path that is
+# not there, so `git worktree prune` — or any `git gc` that runs one — drops the
+# administrative entry and strands the checkout.
+#
+# `git worktree repair <path>` is git's own fix for exactly this and rewrites
+# both directions; verified against container-spelled paths, after which the
+# entry lists normally and `git status` works inside it. Running it on exit
+# keeps the host's view correct without the launcher parsing or rewriting any
+# git internals itself.
+#
+# Called unconditionally from cleanup(), which is the EXIT trap — so it runs on
+# paths where the container never started and REPO_PATH may be unset. Every
+# failure is swallowed: this is a repair, and a run that cannot do it must not
+# turn a successful session into a non-zero exit.
+repair_container_worktrees() {
+  local repo="${REPO_PATH:-}" wt_root
+  [[ -n "$repo" && -d "$repo/.git" ]] || return 0
+  wt_root="$repo/.claude/worktrees"
+  [[ -d "$wt_root" ]] || return 0
+  local -a paths=()
+  local p
+  # Guarded against the unexpanded glob: nullglob is not set here, so an empty
+  # directory would otherwise hand git a literal '*' and a non-zero exit inside
+  # the trap.
+  for p in "$wt_root"/*; do
+    [[ -d "$p" ]] && paths+=("$p")
+  done
+  [[ ${#paths[@]} -gt 0 ]] || return 0
+  git -C "$repo" worktree repair "${paths[@]}" >/dev/null 2>&1 || true
 }
 
 # --- Delete a single worktree and its data ---
 delete_worktree() {
-  # Usage: delete_worktree <wt-name> <instance-id>
+  # Usage: delete_worktree <wt-name> <instance-id> [keep-sessions]
+  #
+  # A third argument of "keep" removes the worktree and its branch but leaves the
+  # session, audit and artifact data on disk. --gc passes it; --prune does not.
+  # The split is explicitness: --prune is an interactive picker where the user
+  # names each worktree, so deletion there is what was asked for. --gc is a sweep
+  # the startup nudge invites you into, and it selects on "the remote branch is
+  # gone" — which is what a MERGED PR looks like. Answering "y" to "clean up
+  # worktrees with deleted remote branches" used to also wipe the conversation,
+  # and neither the prompt nor the table column said so. Session data that
+  # outlives its worktree resurfaces through list_orphan_sessions, so it stays
+  # reachable from --list and deletable from --prune.
   local wt_name="$1"
   local instance_id="$2"
+  local keep_sessions="${3:-}"
   local wt_path="$REPO_PATH/../$REPO_NAME-wt-$wt_name"
   # Resolve the branch BEFORE removing the worktree (removal detaches the ref).
   local wt_branch
@@ -173,6 +235,13 @@ delete_worktree() {
   if [[ -n "$wt_branch" ]] && git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$wt_branch" 2>/dev/null; then
     echo "  Deleting branch: $wt_branch"
     git -C "$REPO_PATH" branch -D "$wt_branch" 2>/dev/null || true
+  fi
+
+  if [[ "$keep_sessions" == "keep" ]]; then
+    if [[ -n "$(find "$SESSIONS_BASE/$instance_id" -mindepth 2 -name '*.jsonl' -print -quit 2>/dev/null)" ]]; then
+      echo "  Conversation kept: $instance_id (claude-sandbox --list to find it, --prune to delete)"
+    fi
+    return
   fi
 
   # Remove session and audit data. `${instance_id:?}` rather than a bare

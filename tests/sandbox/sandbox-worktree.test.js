@@ -30,6 +30,16 @@ function scratch() {
   return fs.realpathSync(d);
 }
 
+// A session directory as the launcher leaves it: the instance dir, the cwd-derived
+// project slug under it, and a transcript in that. list_orphan_sessions probes at
+// mindepth 2 for exactly this shape.
+function transcript(sessions, instance, slug = '-workspace') {
+  const dir = path.join(sessions, instance, slug);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'c0ffee.jsonl'), '{}\n');
+  return dir;
+}
+
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', env: GIT_ENV });
 
@@ -138,11 +148,27 @@ test('list_orphan_sessions lists session dirs whose worktree is gone', { skip },
   const sessions = scratch();
   const base = `${repoName}-abcd1234`;
   // One live, one orphaned, plus the base instance (the no-worktree main session).
-  for (const d of [base, `${base}-alive`, `${base}-ghost`]) fs.mkdirSync(path.join(sessions, d));
+  // Each carries a transcript: an instance directory with none is an aborted
+  // launch, not a session, and is skipped (see the next test).
+  for (const d of [base, `${base}-alive`, `${base}-ghost`]) transcript(sessions, d);
 
   const out = sh(`list_orphan_sessions ${repo} ${repoName} ${sessions} ${base}`).trim();
   assert.deepStrictEqual(out.split('\n').filter(Boolean), ['ghost'],
     'only the session with no matching worktree, and never the base instance');
+});
+
+test('list_orphan_sessions skips an instance dir holding no transcript', { skip }, () => {
+  const { repo, repoName } = repoWithWorktrees();
+  const sessions = scratch();
+  const base = `${repoName}-abcd1234`;
+  // resolve_session_context creates the instance dir before the container starts,
+  // so every aborted launch leaves an empty one. Offering it as a resumable
+  // session sends --list and --prune chasing a conversation that never happened.
+  fs.mkdirSync(path.join(sessions, `${base}-aborted`), { recursive: true });
+  transcript(sessions, `${base}-real`);
+
+  const out = sh(`list_orphan_sessions ${repo} ${repoName} ${sessions} ${base}`).trim();
+  assert.deepStrictEqual(out.split('\n').filter(Boolean), ['real']);
 });
 
 test('list_orphan_sessions prints nothing when no session data exists', { skip }, () => {
@@ -279,4 +305,55 @@ test('worktree_exists_at is false for a path that is not a worktree', { skip }, 
   `);
   assert.deepStrictEqual(out.trim().split('\n'), ['no', 'no'],
     'an existing non-worktree dir and a missing one must both be false');
+});
+
+// --- repair_container_worktrees ---------------------------------------------
+
+// Lives in sandbox-worktree-ops.sh rather than this lib, but it is pure enough to
+// source the same way: it exits nothing and touches only git.
+const OPS_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-worktree-ops.sh');
+
+function ops(script, env = {}) {
+  const r = spawnSync('bash', ['-c', `set -uo pipefail; . "$1"; ${script}`, 'bash', OPS_LIB], {
+    encoding: 'utf8',
+    env: { ...GIT_ENV, HOME: scratch(), ...env },
+  });
+  assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+  return r.stdout;
+}
+
+test('repair_container_worktrees fixes a worktree git recorded at container paths', { skip }, () => {
+  const repo = scratch();
+  git(repo, 'init', '-q', '.');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+  git(repo, 'worktree', 'add', '-q', '.claude/worktrees/alpha', '-b', 'alpha');
+
+  // What a session inside the container leaves behind: both absolute paths point
+  // at /workspace, which exists only in the container.
+  fs.writeFileSync(path.join(repo, '.git', 'worktrees', 'alpha', 'gitdir'),
+    '/workspace/.claude/worktrees/alpha/.git\n');
+  fs.writeFileSync(path.join(repo, '.claude', 'worktrees', 'alpha', '.git'),
+    'gitdir: /workspace/.git/worktrees/alpha\n');
+  const before = execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+  assert.match(before, /prunable/, 'precondition: the host cannot resolve the container-spelled path');
+
+  ops('repair_container_worktrees', { REPO_PATH: repo });
+
+  const after = execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8', env: GIT_ENV });
+  assert.doesNotMatch(after, /prunable/, 'a prunable entry is one `git gc` away from being dropped');
+  assert.ok(after.includes(path.join(repo, '.claude', 'worktrees', 'alpha')),
+    'the worktree must list at its real host path');
+});
+
+test('repair_container_worktrees is a no-op when there is nothing to repair', { skip }, () => {
+  // It runs from the EXIT trap, so it fires on paths where the container never
+  // started. An unexpanded glob or a missing repo must not fail the trap.
+  const repo = scratch();
+  git(repo, 'init', '-q', '.');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+  fs.mkdirSync(path.join(repo, '.claude', 'worktrees'), { recursive: true });
+  ops('repair_container_worktrees; echo SURVIVED', { REPO_PATH: repo });
+  ops('repair_container_worktrees; echo SURVIVED', { REPO_PATH: path.join(repo, 'nope') });
+  assert.strictEqual(ops('repair_container_worktrees; echo SURVIVED').trim(), 'SURVIVED',
+    'REPO_PATH unset must return cleanly, not trip set -u');
 });

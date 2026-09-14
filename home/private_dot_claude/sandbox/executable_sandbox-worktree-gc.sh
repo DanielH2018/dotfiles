@@ -142,6 +142,8 @@ prune_worktrees() {
     echo "  - $name ($sel_branch)"
   done
   echo ""
+  echo "This deletes the worktree, its branch, AND its saved conversation."
+  echo ""
   echo -n "Proceed? (y/n): "
   read -r confirm
   if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -209,9 +211,12 @@ gc_worktrees() {
         pr_status="none found"
       fi
     fi
-    printf '  %-16s %-28s %-12s %s\n' "$name" "$branch" "$pr_status" "compact + delete"
+    printf '  %-16s %-28s %-12s %s\n' "$name" "$branch" "$pr_status" "remove worktree + branch"
   done
 
+  echo ""
+  echo "Conversations are kept — only the worktree and branch are removed."
+  echo "Use 'claude-sandbox --prune $REPO_PATH' to delete session data as well."
   echo ""
   echo -n "Clean up ${#gone_names[@]} worktree(s) with deleted remote branches? (y/n): "
   read -r confirm
@@ -224,7 +229,7 @@ gc_worktrees() {
   for name in "${gone_names[@]}"; do
     local instance="${base_instance}-${name}"
     echo "Cleaning up $name..."
-    delete_worktree "$name" "$instance"
+    delete_worktree "$name" "$instance" keep
     echo ""
   done
 

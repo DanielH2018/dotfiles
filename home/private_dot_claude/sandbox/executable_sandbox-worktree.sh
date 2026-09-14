@@ -129,6 +129,12 @@ list_orphan_sessions() {
     suffix="${session_name#"${base_instance}"-}"
     # grep -x against the live set rather than a glob: a name is a whole line.
     printf '%s\n' "$live_names" | grep -qxF "$suffix" && continue
+    # An instance directory is created by resolve_session_context before the
+    # container starts, so every aborted launch leaves an empty one behind. With
+    # no transcript in it there is no conversation to offer, and reporting it as
+    # an orphaned session sends --list and --prune chasing nothing. mindepth 2:
+    # the transcripts live one level down, under the cwd-derived project slug.
+    [[ -n "$(find "$session_dir" -mindepth 2 -name '*.jsonl' -print -quit 2>/dev/null)" ]] || continue
     printf '%s\n' "$suffix"
   done
 }

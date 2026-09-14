@@ -117,12 +117,13 @@ const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'ignore', env: G
 
 // --- resolve_session_context -------------------------------------------------
 
-function sessionRun({ priorSession = false, nestedOnly = false, fresh = false, worktree = false, dockerfile = null } = {}) {
+function sessionRun({ priorSession = false, nestedOnly = false, wtSlug = false, fresh = false, worktree = false, dockerfile = null } = {}) {
   const base = scratch();
   const bases = {
     AUDIT_BASE: path.join(base, 'audit'),
     SESSIONS_BASE: path.join(base, 'sessions'),
     ARTIFACTS_BASE: path.join(base, 'artifacts'),
+    PRIVATE_BASE: path.join(base, 'state-private'),
     STATE_DIR: path.join(base, 'state'),
   };
   const instance = 'demo-abc123';
@@ -130,6 +131,13 @@ function sessionRun({ priorSession = false, nestedOnly = false, fresh = false, w
     const proj = path.join(bases.SESSIONS_BASE, instance, '-workspace', nestedOnly ? 'nested' : '.');
     fs.mkdirSync(proj, { recursive: true });
     fs.writeFileSync(path.join(proj, 'conv.jsonl'), '{}\n');
+  }
+  // A session that made its own worktree and moved into it re-keys its project
+  // directory to the new cwd, so the transcript lands beside "-workspace".
+  if (wtSlug) {
+    const proj = path.join(bases.SESSIONS_BASE, instance, '-workspace--claude-worktrees-alpha');
+    fs.mkdirSync(proj, { recursive: true });
+    fs.writeFileSync(path.join(proj, 'dead-beef.jsonl'), '{}\n');
   }
   let dockerfilePath = path.join(base, 'Dockerfile.missing');
   if (dockerfile !== null) {
@@ -140,13 +148,14 @@ function sessionRun({ priorSession = false, nestedOnly = false, fresh = false, w
     env: {
       ...bases,
       INSTANCE_ID: instance,
+      REPO_PATH: path.join(base, 'repo'),
       WORK_PATH: path.join(base, 'work'),
       FRESH_SESSION: String(fresh),
       USE_WORKTREE: String(worktree),
       WT_BRANCH: 'claude/alpha',
       DOCKERFILE: dockerfilePath,
     },
-    dump: ['RESUME_SESSION', 'AUDIT_DIR', 'SESSIONS_DIR', 'ARTIFACTS_DIR', 'AUTH_MARKER', 'TOOLCHAIN_LIST'],
+    dump: ['RESUME_SESSION', 'RESUME_SESSION_ID', 'AUDIT_DIR', 'SESSIONS_DIR', 'ARTIFACTS_DIR', 'PRIVATE_DIR', 'AUTH_MARKER', 'TOOLCHAIN_LIST'],
   });
   return { ...r, base, bases, instance };
 }
@@ -155,12 +164,19 @@ test('session context creates every per-instance directory it announces', { skip
   // Docker materialises a missing bind-mount source as a root-owned dir on the
   // host, and these live under the user's real ~/.claude tree.
   const r = sessionRun();
-  for (const key of ['AUDIT_DIR', 'SESSIONS_DIR', 'ARTIFACTS_DIR']) {
+  for (const key of ['AUDIT_DIR', 'SESSIONS_DIR', 'ARTIFACTS_DIR', 'PRIVATE_DIR']) {
     assert.ok(fs.existsSync(r.vars[key]), `${key} (${r.vars[key]}) must exist after the call`);
   }
   assert.ok(fs.existsSync(path.join(r.bases.STATE_DIR, 'hooks')),
     'the hooks dir is the parent of per-hook mount points and must be pre-created');
   assert.ok(r.vars.AUDIT_DIR.endsWith(r.instance), 'dirs are namespaced per instance');
+  // history.jsonl is a FILE. Left absent, Docker materialises a root-owned
+  // DIRECTORY in its place and Claude cannot write its prompt history at all.
+  assert.ok(fs.statSync(path.join(r.vars.PRIVATE_DIR, 'history.jsonl')).isFile(),
+    'the per-instance history.jsonl must be pre-created as a file');
+  for (const d of ['file-history', 'shell-snapshots']) {
+    assert.ok(fs.existsSync(path.join(r.vars.PRIVATE_DIR, d)), `${d} must be pre-created`);
+  }
 });
 
 test('a prior conversation makes the launch resume', { skip }, () => {
@@ -184,6 +200,38 @@ test('only top-level transcripts count towards resuming', { skip }, () => {
   // conversation for this project dir, and resuming on one would replay the
   // wrong transcript.
   assert.strictEqual(sessionRun({ nestedOnly: true }).vars.RESUME_SESSION, 'false');
+});
+
+test('a transcript under a worktree slug resumes by session id, not --continue', { skip }, () => {
+  // --continue resolves against the container cwd (/workspace) and cannot reach a
+  // conversation keyed to a worktree the agent made for itself. Without this the
+  // instance reads as cold on every relaunch while its transcript sits one
+  // directory over — the reported "I don't see the session I was in".
+  const r = sessionRun({ wtSlug: true });
+  assert.strictEqual(r.vars.RESUME_SESSION, 'true');
+  assert.strictEqual(r.vars.RESUME_SESSION_ID, 'dead-beef');
+});
+
+test('a -workspace transcript resumes by --continue, with no session id', { skip }, () => {
+  // The cwd-scoped path still wins when the conversation is where cwd is: an id
+  // is set only when the transcript lives under some other project slug.
+  const r = sessionRun({ priorSession: true });
+  assert.strictEqual(r.vars.RESUME_SESSION, 'true');
+  assert.strictEqual(r.vars.RESUME_SESSION_ID, '');
+});
+
+test('--fresh ignores a worktree-slug transcript too', { skip }, () => {
+  const r = sessionRun({ wtSlug: true, fresh: true });
+  assert.strictEqual(r.vars.RESUME_SESSION, 'false');
+  assert.strictEqual(r.vars.RESUME_SESSION_ID, '');
+});
+
+test('the cold path names the instance it looked for', { skip }, () => {
+  // The cold path used to print nothing, so an instance id that missed by a
+  // character was indistinguishable from a genuine first run.
+  const r = sessionRun();
+  assert.match(r.stdout, /no prior conversation for demo-abc123/);
+  assert.match(r.stdout, /--list/);
 });
 
 test('the worktree branch is announced only for worktree sessions', { skip }, () => {

@@ -223,13 +223,29 @@ test('entrypoint.sh clears settings.local.json, which nothing manages and every 
 
 // --- host code-execution paths reachable through the read-write mounts ---
 
-test('the worktree gitdir mount re-mounts hooks/ and config read-only', () => {
+test('hooks/ and config are re-mounted read-only on BOTH the worktree and plain-repo paths', () => {
   // The whole .git is RW so in-container commits resolve, but hooks/ and config
   // (core.fsmonitor, aliases, core.hooksPath) are executed by the HOST's git.
-  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/hooks:$REPO_PATH/.git/hooks:ro"'),
+  //
+  // The container sees the gitdir at a different path in each mode: a worktree
+  // run mounts the main repo's .git at its own host path, a plain-repo run
+  // reaches it through the /workspace mount of the checkout. Both spellings must
+  // exist, or the guard silently covers only one mode — which is what it did
+  // when it lived inside the `USE_WORKTREE == true` branch, leaving the ordinary
+  // `claude-sandbox <repo>` invocation with a writable .git/hooks.
+  assert.ok(LAUNCHER_SRC.includes('GIT_RO_PREFIX="$REPO_PATH/.git"'),
+    'the worktree path must define the gitdir prefix as the host repo path');
+  assert.ok(LAUNCHER_SRC.includes('GIT_RO_PREFIX="/workspace/.git"'),
+    'the plain-repo path must define the gitdir prefix as the container workspace path');
+  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/hooks:$GIT_RO_PREFIX/hooks:ro"'),
     'a writable .git/hooks in the mounted repo is host code execution on the next host git command');
-  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/config:$REPO_PATH/.git/config:ro"'),
+  assert.ok(LAUNCHER_SRC.includes('-v "$REPO_PATH/.git/config:$GIT_RO_PREFIX/config:ro"'),
     'a writable .git/config lets core.fsmonitor or an alias run on the host');
+  // Both :ro mounts must sit AFTER the if/else that picks the prefix, not inside
+  // its worktree arm — the bug this replaced.
+  const elseAt = LAUNCHER_SRC.indexOf('GIT_RO_PREFIX="/workspace/.git"');
+  assert.ok(LAUNCHER_SRC.indexOf('-v "$REPO_PATH/.git/hooks:$GIT_RO_PREFIX/hooks:ro"') > elseAt,
+    'the :ro mounts must be unconditional, not nested inside the worktree branch');
 });
 
 test('the read-write chezmoi source mount re-mounts .chezmoiscripts and .git/hooks read-only', () => {

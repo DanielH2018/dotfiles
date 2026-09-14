@@ -25,6 +25,16 @@ AUDIT_BASE="$SANDBOX_DIR/audit"
 SESSIONS_BASE="$SANDBOX_DIR/sessions"
 ARTIFACTS_BASE="$SANDBOX_DIR/artifacts"
 STATE_DIR="$SANDBOX_DIR/state"
+# $STATE_DIR is ONE directory shared by every instance — that is what makes a
+# single OAuth login and one Snowflake token serve all of them. The cost is that
+# everything else Claude writes under ~/.claude is pooled too, so a session in
+# one repo reads another repo's prompt history, edit history and shell snapshots.
+# $PRIVATE_BASE holds the per-instance replacements for exactly those three,
+# layered over the shared state mount (the nested-mount trick used for plugins,
+# commands and the :ro hooks). Credentials, auth markers, plugins and the
+# Snowflake cache deliberately stay shared: splitting them would re-prompt for
+# login in every repo.
+PRIVATE_BASE="$SANDBOX_DIR/state-private"
 # shellcheck disable=SC1091  # deployed next to this script, not resolvable from the chezmoi source tree
 . "$SANDBOX_DIR/sandbox-lib.sh"        # resolve_repo_path()
 # shellcheck disable=SC1091  # ditto
@@ -76,6 +86,10 @@ PROXY_IMAGE="lscr.io/linuxserver/socket-proxy:latest"
 usage() {
   echo "Usage: claude-sandbox [OPTIONS] <repo-path>"
   echo ""
+  echo "With no -w/-b, the repo's own checkout is mounted and the session isolates itself"
+  echo "by creating worktrees under <repo>/.claude/worktrees. Your main checkout keeps the"
+  echo "branch it has out. -w/-b instead set the worktree up on the host before launching."
+  echo ""
   echo "Options:"
   echo "  --rebuild          Force rebuild the per-repo Docker image"
   echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base);"
@@ -92,8 +106,10 @@ usage() {
   echo "  --list             List all sandbox sessions (worktrees + main) for a repo."
   echo "                     Shows branch, path, running status, and resume command."
   echo "  --rename OLD NEW   Rename a worktree: branch, directory, and session data."
-  echo "  --prune            Interactively select and delete worktrees (fzf picker)."
-  echo "  --gc               Clean up worktrees whose remote branches were deleted."
+  echo "  --prune            Interactively select and delete worktrees (fzf picker), along"
+  echo "                     with their saved conversations."
+  echo "  --gc               Remove worktrees whose remote branches were deleted. Keeps the"
+  echo "                     conversations — use --prune to delete those."
   echo "  --no-vault         Don't mount the curated read-only vault subset."
   echo "  --no-chezmoi       Don't mount the chezmoi dotfiles source (vault runs mount it RW)."
   echo "  --no-work-config   Don't mount the work-laptop-config source (vault runs mount it RW)."
@@ -582,6 +598,31 @@ list_sessions() {
     printf "  %-12s %-30s %-10s %s\n" "$suffix" "claude/$suffix (orphaned)" "no worktree" "--worktree $suffix recreates it"
   done < <(list_orphan_sessions "$REPO_PATH" "$repo_name_safe" "$SESSIONS_BASE" "$base_instance")
 
+  # Worktrees the agent made for itself, under <repo>/.claude/worktrees. These are
+  # NOT sandbox instances: they live inside the (main) session's own workspace and
+  # share its instance id, so they have no separate session data and --prune and
+  # --rename do not act on them. Listed anyway because the launcher can now leave
+  # them behind, and a worktree nothing reports is a worktree nobody cleans up.
+  local in_repo_root="$REPO_PATH/.claude/worktrees" p wt_name wt_branch
+  if [[ -d "$in_repo_root" ]]; then
+    local header_printed=false
+    for p in "$in_repo_root"/*; do
+      # -e "$p/.git", not just -d "$p": an ordinary directory under here (a
+      # leftover, a half-removed worktree) is not a worktree, but `git -C` inside
+      # it walks UP to the parent repo and cheerfully reports the main checkout's
+      # branch — listing a non-worktree beside a remove command that cannot work.
+      [[ -d "$p" && -e "$p/.git" ]] || continue
+      wt_name="$(basename "$p")"
+      wt_branch="$(git -C "$p" branch --show-current 2>/dev/null || echo "detached")"
+      if [[ "$header_printed" == false ]]; then
+        echo ""
+        echo "  In-repo worktrees (made by the agent; part of the (main) session):"
+        header_printed=true
+      fi
+      printf "  %-12s %-30s %-10s %s\n" "$wt_name" "$wt_branch" "-" "git -C $REPO_PATH worktree remove $p"
+    done
+  fi
+
   echo ""
 }
 
@@ -798,6 +839,13 @@ DOCKER_ARGS=(
   # written under ~/.claude/artifacts into a clickable host file:// link (not /home/...).
   -e "CLAUDE_STATE_HOST_DIR=$STATE_DIR"
   -v "$SESSIONS_DIR:/home/claudebot/.claude/projects"
+  # Per-instance, layered over the shared $STATE_DIR mount above (see PRIVATE_BASE).
+  # These three are the only parts of ~/.claude that carry CONTENT from one repo's
+  # work: the prompt history, the pre-edit file snapshots, and the captured shell
+  # environments. Pooling them let a session in one repo read another's.
+  -v "$PRIVATE_DIR/history.jsonl:/home/claudebot/.claude/history.jsonl"
+  -v "$PRIVATE_DIR/file-history:/home/claudebot/.claude/file-history"
+  -v "$PRIVATE_DIR/shell-snapshots:/home/claudebot/.claude/shell-snapshots"
   -v "$HOME/.claude/plugins:/home/claudebot/.claude/plugins:ro"
   -v "$HOME/.claude/plugins:$HOME/.claude/plugins:ro"
   # User-level commands and agents (read-only). Nested mounts inside the
@@ -900,25 +948,35 @@ if [[ -n "${ANTHROPIC_API_KEY:-}" && ! -f "$AUTH_MARKER" ]]; then
   DOCKER_ARGS+=(-e ANTHROPIC_API_KEY)
 fi
 
-# Forward worktree branch if applicable
+# .git holds two things the HOST's git executes: hooks/ and config (core.fsmonitor,
+# aliases, core.hooksPath). Both are plain file writes needing no `git config` call,
+# so a writable gitdir is host code execution the next time Daniel runs any git
+# command in that repo. Re-mount just those two :ro — objects/, refs/, index and
+# logs/ stay writable, so commits still work.
+#
+# GIT_RO_PREFIX is where the container sees the gitdir, which differs by path:
+# a worktree run mounts the main repo's .git at its own HOST path (below), while
+# a plain-repo run reaches it through the /workspace mount of the checkout. This
+# guard used to be inside the worktree branch and so covered only the first —
+# leaving the plain-repo path, which is the ordinary invocation, with a fully
+# writable .git/hooks. Worktrees share $GIT_COMMON_DIR/hooks, so a worktree the
+# agent creates for itself inherits the :ro mount rather than escaping it.
 if [[ "$USE_WORKTREE" == true && -n "$WT_BRANCH" ]]; then
   DOCKER_ARGS+=(-e SANDBOX_BRANCH="$WT_BRANCH")
   # Worktree .git points into the main repo; mount it so in-container git
   # resolves the gitdir + shared object store (read-write enables commits).
   DOCKER_ARGS+=(-v "$REPO_PATH/.git:$REPO_PATH/.git")
-  # …but .git holds two things the HOST's git executes: hooks/ and config
-  # (core.fsmonitor, aliases, core.hooksPath). Both are plain file writes needing
-  # no `git config` call, so a RW mount of the whole gitdir is host code execution
-  # the next time Daniel runs any git command in that repo. Re-mount just those
-  # two :ro — objects/, refs/, index and logs/ stay writable, so commits still
-  # work. Nested mounts, so Docker layers them over the RW gitdir above.
-  # if/then, not &&: under set -e a false test at statement level exits the script.
-  if [[ -d "$REPO_PATH/.git/hooks" ]]; then
-    DOCKER_ARGS+=(-v "$REPO_PATH/.git/hooks:$REPO_PATH/.git/hooks:ro")
-  fi
-  if [[ -f "$REPO_PATH/.git/config" ]]; then
-    DOCKER_ARGS+=(-v "$REPO_PATH/.git/config:$REPO_PATH/.git/config:ro")
-  fi
+  GIT_RO_PREFIX="$REPO_PATH/.git"
+else
+  GIT_RO_PREFIX="/workspace/.git"
+fi
+# Nested mounts, so Docker layers them over the writable gitdir.
+# if/then, not &&: under set -e a false test at statement level exits the script.
+if [[ -d "$REPO_PATH/.git/hooks" ]]; then
+  DOCKER_ARGS+=(-v "$REPO_PATH/.git/hooks:$GIT_RO_PREFIX/hooks:ro")
+fi
+if [[ -f "$REPO_PATH/.git/config" ]]; then
+  DOCKER_ARGS+=(-v "$REPO_PATH/.git/config:$GIT_RO_PREFIX/config:ro")
 fi
 
 configure_gh_auth
@@ -962,6 +1020,19 @@ if [[ -S "$OP_SOCKET" && -x "$OP_ENSURE" ]]; then
     || echo "  Warning: signing key not confirmed — commits inside the sandbox may fail to sign until you unlock 1Password." >&2
 fi
 
+# --continue resolves against the container's cwd (/workspace), so it reaches only a
+# conversation held there. resolve_session_context sets RESUME_SESSION_ID when the
+# transcript it found belongs to a worktree the agent made for itself, whose project
+# slug is not "-workspace"; that one has to be resumed by id.
+append_resume_args() {
+  [[ "$RESUME_SESSION" == true ]] || return 0
+  if [[ -n "${RESUME_SESSION_ID:-}" ]]; then
+    CLAUDE_ARGS+=(--resume "$RESUME_SESSION_ID")
+  else
+    CLAUDE_ARGS+=(--continue)
+  fi
+}
+
 if [[ "$SHELL_MODE" == true ]]; then
   # Standalone hardened shell: same container/mounts as a Claude session, but bash
   # instead of claude. entrypoint.sh's `exec "$@"` runs it after the usual setup.
@@ -973,7 +1044,7 @@ elif [[ "$EXEC_MODE" == true ]]; then
   # tee'd to /audit; exec-stream.py renders readable progress to stderr and the clean final
   # result to stdout between <<<EXEC_RESULT>>> markers. entrypoint.sh's `exec "$@"` runs it.
   CLAUDE_ARGS=(claude -p "$EXEC_PROMPT" --dangerously-skip-permissions --output-format stream-json --verbose)
-  [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+  append_resume_args
   EXEC_LOG="$AUDIT_DIR/exec-$RUN_ID.jsonl"
   echo "Dispatching headless implementer (trace: $EXEC_LOG)…" >&2
   relabel_docker_args
@@ -991,7 +1062,7 @@ else
   # append --continue keeps the same base invocation. entrypoint.sh's `exec "$@"`
   # runs it as-is.
   CLAUDE_ARGS=(claude --dangerously-skip-permissions)
-  [[ "$RESUME_SESSION" == true ]] && CLAUDE_ARGS+=(--continue)
+  append_resume_args
 fi
 
 
