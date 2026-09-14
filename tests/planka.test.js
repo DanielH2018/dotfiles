@@ -408,3 +408,43 @@ test('card comment with blank text posts nothing', { skip }, () => {
     { PLANKA_PASSWORD: 'pw' });
   assert.strictEqual(res.status, 0);
 });
+
+test('task promote creates a card and links it back to the task', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'GET /api/task-lists/tl1': () => ({
+      item: { id: 'tl1', cardId: 'c42', name: 'Plan' },
+      included: { tasks: [{ id: 't7', taskListId: 'tl1', name: 'Extract the retry policy' }] },
+    }),
+    'POST /api/lists/list-active/cards': () => ({ item: { id: 'child-card' } }),
+    'PATCH /api/tasks/t7': () => ({ item: { id: 't7', linkedCardId: 'child-card' } }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), {
+      lists: { active: 'list-active' },
+      customFields: { groupId: 'g1', branch: 'f-branch', repo: 'f-repo' },
+    });
+    const res = await runAsync(ctx, ['task', 'promote', 't7', '--task-list', 'tl1'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(res.status, 0);
+    assert.strictEqual(res.stdout.trim(), 'child-card');
+    const created = fake.seen.find((r) => r.url === '/api/lists/list-active/cards');
+    assert.strictEqual(created.body.name, 'Extract the retry policy');
+    const linked = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/tasks/t7');
+    assert.strictEqual(linked.body.linkedCardId, 'child-card');
+  });
+});
+
+test('card detach removes the sidecar and leaves the board alone', { skip }, () => {
+  const ctx = withSidecar(OFFLINE_CFG, { 'myrepo--feature-y.json': { cardId: 'c42' } });
+  const sidecar = path.join(ctx.state, 'branch', 'myrepo--feature-y.json');
+  const res = runIn(ctx, ['card', 'detach', '--branch', 'feature-y']);
+  assert.strictEqual(res.status, 0);
+  assert.strictEqual(fs.existsSync(sidecar), false);
+});
+
+test('card detach on an untracked branch is silent and exits 0', { skip }, () => {
+  const ctx = withSidecar(OFFLINE_CFG, {});
+  const res = runIn(ctx, ['card', 'detach', '--branch', 'never-tracked']);
+  assert.strictEqual(res.status, 0);
+});

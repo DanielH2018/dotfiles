@@ -428,6 +428,54 @@ def cmd_status(args):
     print("%s/%s\tcard %s\t%s" % (repo, branch, side.get("cardId"), side.get("url")))
 
 
+def cmd_task_promote(args):
+    """A checklist item that turned out to want its own PR. The task stays in the
+    parent's checklist and gains a linkedCardId, so the parent still shows it."""
+    cfg = require_config()
+    task_list = call(cfg, "GET", "/task-lists/%s" % args.task_list)
+    name = None
+    for task in task_list.get("included", {}).get("tasks", []):
+        if task.get("id") == args.task_id:
+            name = task.get("name")
+            break
+    if not name:
+        soft_fail("task promote: no task %s in list %s" % (args.task_id, args.task_list))
+    list_id = cfg.get("lists", {}).get("active")
+    if not list_id:
+        soft_fail("task promote: lists.active is not configured")
+    created = call(cfg, "POST", "/lists/%s/cards" % list_id,
+                   {"name": name, "position": 65536})
+    card_id = created.get("item", {}).get("id")
+    if not card_id:
+        soft_fail("task promote: no card id in the response")
+    call(cfg, "PATCH", "/tasks/%s" % args.task_id, {"linkedCardId": card_id})
+    print(card_id)
+
+
+def cmd_card_detach(args):
+    require_config()
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("card detach: no branch")
+    try:
+        os.unlink(sidecar_path(repo_slug(), branch))
+    except OSError:
+        return
+    print("detached %s" % branch)
+
+
+def cmd_open(args):
+    cfg = require_config()
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("open: no branch")
+    side = read_sidecar(repo_slug(), branch)
+    if not side or not side.get("url"):
+        log("open: %s is not tracked" % branch)
+        return
+    subprocess.run(["open", side["url"]], capture_output=True)
+
+
 def cmd_card_comment(args):
     cfg = require_config()
     card_id = tracked_card(cfg, args, "card comment")
@@ -532,6 +580,21 @@ def build_parser():
     field.add_argument("--set", action="append", required=True, metavar="KEY=VALUE")
     field.add_argument("--branch")
     field.set_defaults(func=cmd_card_field)
+
+    detach = card_sub.add_parser("detach", help="stop tracking this branch")
+    detach.add_argument("--branch")
+    detach.set_defaults(func=cmd_card_detach)
+
+    task = sub.add_parser("task", help="task operations")
+    task_sub = task.add_subparsers(dest="task_command", required=True)
+    promote = task_sub.add_parser("promote", help="turn a task into its own linked card")
+    promote.add_argument("task_id")
+    promote.add_argument("--task-list", required=True, help="the task's task-list id")
+    promote.set_defaults(func=cmd_task_promote)
+
+    opencmd = sub.add_parser("open", help="open this branch's card in a browser")
+    opencmd.add_argument("--branch")
+    opencmd.set_defaults(func=cmd_open)
 
     plan = sub.add_parser("plan", help="plan operations")
     plan_sub = plan.add_subparsers(dest="plan_command", required=True)

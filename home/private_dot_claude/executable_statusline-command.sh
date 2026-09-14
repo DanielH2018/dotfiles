@@ -318,6 +318,14 @@ if [[ -n "$dur_ms" ]]; then
   add '\033[38;2;108;112;134m%s \033[0m' "$dstr"
 fi
 
+# Segment: Planka card (blue) — `planka status` reads the sidecar only, so this costs no
+# network call and no token. It prints nothing for an untracked branch or on a machine
+# with no work overlay, which is every machine but this one.
+if command -v planka >/dev/null 2>&1; then
+  planka_card="$(planka status 2>/dev/null | awk -F'\t' '$2 ~ /^card /{sub(/^card /, "", $2); print $2}')"
+  [[ -n "$planka_card" ]] && add '\033[38;2;137;180;250m▤ %s \033[0m' "$planka_card"
+fi
+
 # Pack the buffered segments into terminal-width rows. Claude Code renders every line a status
 # line command emits but truncates any single line wider than the terminal, so without this the
 # right-hand segments (rate limits, cost, duration) just fall off the edge. COLUMNS is set by the
