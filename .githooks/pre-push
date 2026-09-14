@@ -232,7 +232,7 @@ if [ "$tree_cached" -eq 0 ]; then
   #    suite added under any future dot-directory — home/.chezmoiscripts/, .chezmoitemplates/,
   #    .chezmoidata/ are all invisible to node's walk — is picked up by construction rather
   #    than by remembering this constraint.
-  TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs')
+  TEST_FILES=$(git ls-files '*.test.js' '*.test.mjs' '*.test.ts')
   if [ -z "$TEST_FILES" ]; then
     # Bare `node --test` would silently fall back to its own discovery, i.e. the bug above.
     printf '%s✗ unit tests: git ls-files matched no test files%s\n' "$R" "$Z" >&2

@@ -1,0 +1,12 @@
+{
+  "name": "pr-dash",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/"
+  }
+}

@@ -7,6 +7,16 @@ Brewfile
 # the sweep — chezmoi would restore whatever the sweep deleted.
 .claude/artifacts
 
+# pr-dash's dev-only files: npm's dependency tree, its test suite, and the manifests that
+# drive `npm install`/`tsc`. None of them belong in $HOME — deploying node_modules or the
+# tests would put build tooling on every machine that applies this repo, not just the one
+# being developed on.
+.local/share/pr-dash/node_modules
+.local/share/pr-dash/tests
+.local/share/pr-dash/package.json
+.local/share/pr-dash/package-lock.json
+.local/share/pr-dash/tsconfig.json
+
 {{ if eq .chezmoi.os "windows" }}
 .local/bin/ct
 .local/bin/cts

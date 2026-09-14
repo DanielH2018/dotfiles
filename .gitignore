@@ -27,3 +27,6 @@
 # $XDG_RUNTIME_DIR/retention-sweep.lock, never under home/. Matching deploy-time
 # exclusion is in home/.chezmoiignore.
 **/sweep.lock
+
+# pr-dash's dependency tree (npm install, not chezmoi-managed content).
+node_modules/
