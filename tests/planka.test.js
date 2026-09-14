@@ -347,6 +347,84 @@ test('a configured skipBranches list replaces the default', { skip }, async () =
   });
 });
 
+// The gap adopt closes: a card written by hand carries no branch field, so
+// `card resolve` cannot see it and the claim hook creates a duplicate beside
+// it. That happened on the very first run — the board already had a card for
+// the work the integration was being built for.
+test('card adopt stamps the branch onto an existing card and writes the sidecar',
+  { skip }, async () => {
+    const fake = fakePlanka({
+      'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+      'GET /api/cards/hand-made': () => ({
+        item: { id: 'hand-made', name: 'Better integrate Claude with the Kanban board' },
+        included: { taskLists: [], tasks: [], customFieldValues: [] },
+      }),
+    });
+    await withFake(fake, async () => {
+      const ctx = onlineCtx(fake.port(), {
+        lists: { active: 'list-active' },
+        customFields: { groupId: 'g1', branch: 'f-branch', repo: 'f-repo' },
+      });
+      const res = await runAsync(ctx, ['card', 'adopt', 'hand-made', '--branch', 'feature-z'],
+        { PLANKA_PASSWORD: 'pw' });
+      assert.strictEqual(res.status, 0);
+      assert.strictEqual(res.stdout.trim(), 'hand-made');
+
+      const stamped = fake.seen.filter(
+        (r) => r.url.startsWith('/api/cards/hand-made/custom-field-values/'));
+      assert.ok(stamped.some((r) => r.body && r.body.content === 'feature-z'),
+        'the branch is stamped, which is what makes resolve find it next time');
+
+      assert.strictEqual(
+        fake.seen.filter((r) => r.url === '/api/lists/list-active/cards').length, 0,
+        'adopt never creates a card',
+      );
+
+      const sidecar = JSON.parse(fs.readFileSync(
+        path.join(ctx.state, 'branch', 'myrepo--feature-z.json'), 'utf8'));
+      assert.strictEqual(sidecar.cardId, 'hand-made');
+    });
+  });
+
+test('card adopt on a card that does not exist writes no sidecar', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), {
+      customFields: { groupId: 'g1', branch: 'f-branch' },
+    });
+    // The fake answers {item:{}} for an unknown route, so the card comes back
+    // with no id — the same shape a deleted card would give.
+    const res = await runAsync(ctx, ['card', 'adopt', 'ghost', '--branch', 'feature-z'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(res.status, 0);
+    assert.strictEqual(
+      fs.existsSync(path.join(ctx.state, 'branch', 'myrepo--feature-z.json')), false,
+    );
+  });
+});
+
+test('card adopt works on a branch that would never be auto-created', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'GET /api/cards/c5': () => ({
+      item: { id: 'c5', name: 'Long-running main work' },
+      included: { taskLists: [], tasks: [], customFieldValues: [] },
+    }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port(), {
+      customFields: { groupId: 'g1', branch: 'f-branch' },
+    });
+    // skipBranches stops the hook CREATING a card for main; it must not stop
+    // the operator deliberately pointing one at it.
+    const res = await runAsync(ctx, ['card', 'adopt', 'c5', '--branch', 'main'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(res.stdout.trim(), 'c5');
+  });
+});
+
 test('card move sends the configured list id, not its name', { skip }, async () => {
   const fake = fakePlanka({
     'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),

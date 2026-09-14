@@ -16,6 +16,25 @@ No PANs, no transaction detail, no account or card identifiers in a card title, 
 task, or custom field. The PAN-redaction hook redacts *command output*; it never sees
 what `planka` posts, so this rule is the only control on this path.
 
+## If a card for this work already exists, adopt it
+
+The hooks find a card by its `branch` custom field, which only a card they created
+carries. A card written by hand is invisible to them, so the claim hook makes a second
+one beside it — which is what happened the first time these hooks ran, on a board that
+already had a card for the work.
+
+When you know the work already has a card, adopt it before or after the first edit:
+
+```bash
+planka card adopt <card-id>
+```
+
+That stamps the branch onto the existing card and points the sidecar at it. Everything
+else then treats it as this branch's card. The id is in the card's URL.
+
+Adopt also works on `main` and `master`, which the hooks refuse to create cards for —
+the guard is against accidents, not against you naming the card yourself.
+
 ## Retitle the card once the work has a shape
 
 A card created by the claim hook is named after the branch. As soon as you know what the

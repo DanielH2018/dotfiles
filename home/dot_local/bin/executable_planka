@@ -462,6 +462,32 @@ def cmd_task_promote(args):
     print(card_id)
 
 
+def cmd_card_adopt(args):
+    """Point this branch at a card that already exists.
+
+    A card written by hand carries no branch field, so `card resolve` cannot see
+    it and the claim hook creates a duplicate beside it. Adopting stamps the
+    branch on the existing card and writes the sidecar, after which every other
+    subcommand treats it as the branch's card. This is the one place a skipped
+    branch may still be tracked: refusing to CREATE a card for main is a guard
+    against accidents, not against the operator saying which card to use.
+    """
+    cfg = require_config()
+    branch = resolve_branch(args)
+    if not branch:
+        soft_fail("card adopt: no branch")
+    card = call(cfg, "GET", f"/cards/{args.card_id}")
+    card_id = card.get("item", {}).get("id")
+    if not card_id:
+        soft_fail(f"card adopt: no card {args.card_id}")
+    repo = repo_slug()
+    set_field(cfg, card_id, "branch", branch)
+    set_field(cfg, card_id, "repo", repo)
+    set_field(cfg, card_id, "worktree", os.getcwd())
+    write_sidecar(repo, branch, {"cardId": card_id, "url": card_url(cfg, card_id)})
+    print(card_id)
+
+
 def cmd_card_detach(args):
     require_config()
     branch = resolve_branch(args)
@@ -678,6 +704,11 @@ def build_parser():
     field.add_argument("--set", action="append", required=True, metavar="KEY=VALUE")
     field.add_argument("--branch")
     field.set_defaults(func=cmd_card_field)
+
+    adopt = card_sub.add_parser("adopt", help="point this branch at an existing card")
+    adopt.add_argument("card_id")
+    adopt.add_argument("--branch")
+    adopt.set_defaults(func=cmd_card_adopt)
 
     detach = card_sub.add_parser("detach", help="stop tracking this branch")
     detach.add_argument("--branch")
