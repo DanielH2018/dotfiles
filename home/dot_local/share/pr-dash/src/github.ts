@@ -36,15 +36,20 @@ export function createClient(opts: ClientOpts): Client {
         );
       }
       if (!res.ok) {
-        // Rate limiting is identified by the GraphQL API's own signal (a 429, or
-        // x-ratelimit-remaining: 0), not by status code alone: GitHub returns a bare 403
-        // for a plain scope/SSO problem far more often than for rate limiting, and primary
-        // rate-limit exhaustion on this endpoint actually surfaces as HTTP 200 with a
-        // RATE_LIMITED entry in `errors` (handled below, not here). A 403 that isn't
-        // flagged as rate-limited falls through to the generic branch, whose body from
-        // GitHub names the real scope/SSO problem.
-        if (res.status === 429 || res.headers.get('x-ratelimit-remaining') === '0') {
-          const retryAfter = res.headers.get('retry-after');
+        // Rate limiting is identified by the GraphQL API's own signals — a 429, a
+        // Retry-After header (GitHub's secondary/abuse rate limiting returns this on a
+        // 403 without necessarily zeroing x-ratelimit-remaining), or x-ratelimit-remaining:
+        // 0 — not by status code alone: GitHub returns a bare 403 for a plain scope/SSO
+        // problem far more often than for rate limiting, and primary rate-limit exhaustion
+        // on this endpoint actually surfaces as HTTP 200 with a RATE_LIMITED entry in
+        // `errors` (handled below, not here). A 403 carrying none of these signals falls
+        // through to the generic branch, whose body from GitHub names the real scope/SSO
+        // problem. `res.headers?.` guards a test double that omits headers; a real fetch
+        // Response always has one, so ordering these checks relative to the 401 check
+        // above is not load-bearing either way.
+        const retryAfter = res.headers?.get('retry-after') ?? null;
+        const remaining = res.headers?.get('x-ratelimit-remaining') ?? null;
+        if (res.status === 429 || retryAfter !== null || remaining === '0') {
           throw new Error(
             `GitHub rate-limited this request (${res.status}).` +
               (retryAfter !== null ? ` Retry after ${retryAfter}s.` : ' Wait for the rate limit to reset.'),

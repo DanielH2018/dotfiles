@@ -10,9 +10,15 @@ const records: PrRecord[] = JSON.parse(
   readFileSync(new URL('./fixtures/records.json', import.meta.url), 'utf8'),
 );
 
-async function withServer(fn: (base: string, secret: string) => Promise<void>) {
+async function withServer(
+  fn: (base: string, secret: string) => Promise<void>,
+  loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string }> = async () => ({
+    prs: records,
+    fetchedAt: new Date().toISOString(),
+  }),
+) {
   const secret = 'test-secret';
-  const server = createServer({ secret, loadPrs: async () => records });
+  const server = createServer({ secret, loadPrs });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address();
   if (addr === null || typeof addr === 'string') throw new Error('no port');
@@ -31,6 +37,18 @@ test('serves records on /api/prs with the secret', async () => {
     assert.strictEqual(body.prs.length, 2);
     assert.strictEqual(body.prs[0].id, 'acme/api#12');
   });
+});
+
+test('/api/prs reports the fetch time loadPrs gives it, not the response time', async () => {
+  const fixedFetchedAt = '2020-01-01T00:00:00.000Z';
+  await withServer(
+    async (base, secret) => {
+      const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+      const body = await res.json();
+      assert.strictEqual(body.fetchedAt, fixedFetchedAt);
+    },
+    async () => ({ prs: records, fetchedAt: fixedFetchedAt }),
+  );
 });
 
 test('rejects /api/prs without the secret', async () => {

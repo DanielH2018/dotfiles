@@ -15,7 +15,11 @@ const MIME: Record<string, string> = {
 
 export type ServerOpts = {
   secret: string;
-  loadPrs: () => Promise<PrRecord[]>;
+  // loadPrs carries its own fetchedAt rather than this module stamping one at response
+  // time: a cache hit must report when the data was actually fetched, not the instant of
+  // this particular request, or a client polling every few seconds would see a "just now"
+  // timestamp on data that is up to the cache's TTL old.
+  loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string }>;
 };
 
 export function createServer(opts: ServerOpts): Server {
@@ -64,9 +68,9 @@ async function handle(
       res.end(JSON.stringify({ error: guard.reason }));
       return;
     }
-    const prs = await opts.loadPrs();
+    const { prs, fetchedAt } = await opts.loadPrs();
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ prs, fetchedAt: new Date().toISOString() }));
+    res.end(JSON.stringify({ prs, fetchedAt }));
     return;
   }
 

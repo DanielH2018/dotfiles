@@ -1,10 +1,8 @@
 import { createServer } from './server.ts';
 import { createClient } from './github.ts';
-import { fetchAllPrs } from './queries.ts';
-import { normalize } from './normalize.ts';
+import { createPrLoader, type LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
-import type { PrRecord } from './types.ts';
 
 const secret = process.env['PR_DASH_SECRET'];
 if (secret === undefined || secret === '') {
@@ -22,15 +20,8 @@ try {
 }
 
 const client = createClient({ token });
-const cache = createCache<PrRecord[]>(60_000);
-
-async function loadPrs(): Promise<PrRecord[]> {
-  const hit = cache.get();
-  if (hit !== undefined) return hit;
-  const records = normalize(await fetchAllPrs(client));
-  cache.set(records);
-  return records;
-}
+const cache = createCache<LoadResult>(60_000);
+const loadPrs = createPrLoader(client, cache);
 
 const server = createServer({ secret, loadPrs });
 server.listen(port, '127.0.0.1', () => {

@@ -44,7 +44,13 @@ test('follows pagination until hasNextPage is false', async () => {
 test('a 401 raises an error naming the 1Password item', async () => {
   const client = createClient({
     token: 'tok',
-    fetchImpl: async () => ({ ok: false, status: 401, text: async () => 'Bad credentials' } as Response),
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 401,
+        headers: new Headers(),
+        text: async () => 'Bad credentials',
+      } as unknown as Response),
   });
   await assert.rejects(() => fetchAllPrs(client), (e: Error) => /expired or revoked/.test(e.message));
 });
@@ -92,6 +98,20 @@ test('a bare 403 falls through to the generic message rather than being called r
     () => fetchAllPrs(client),
     (e: Error) => /missing scope/.test(e.message) && !/rate.limited/i.test(e.message),
   );
+});
+
+test('a 403 carrying Retry-After is secondary rate limiting, not a scope problem', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 403,
+        headers: new Headers({ 'retry-after': '60' }),
+        text: async () => 'You have exceeded a secondary rate limit',
+      } as unknown as Response),
+  });
+  await assert.rejects(() => fetchAllPrs(client), (e: Error) => /rate.limited/i.test(e.message) && /60s/.test(e.message));
 });
 
 test('pagination terminates when hasNextPage stays true but the cursor never advances', async () => {
