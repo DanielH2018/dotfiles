@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PR Dashboard</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header>
+  <h1>Open PRs</h1>
+  <label>Group by
+    <select id="group-by">
+      <option value="repo">Repository</option>
+      <option value="ci">CI status</option>
+      <option value="review">Review state</option>
+      <option value="staleness">Staleness</option>
+      <option value="draft">Draft</option>
+    </select>
+  </label>
+  <label>Sort
+    <select id="sort-by">
+      <option value="stale">Staleness</option>
+      <option value="age">Age</option>
+      <option value="title">Title</option>
+      <option value="size">Size</option>
+    </select>
+  </label>
+  <button id="refresh" type="button">Refresh</button>
+</header>
+<div id="banner" hidden></div>
+<main id="groups"></main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
