@@ -267,8 +267,11 @@ test('card resolve --create creates in the active list and stamps the branch',
       assert.strictEqual(res.status, 0);
       assert.strictEqual(res.stdout.trim(), 'new-card');
 
-      assert.ok(fake.seen.find((r) => r.url === '/api/lists/list-active/cards'),
-        'the card was created in the active list, not the backlog');
+      const post = fake.seen.find((r) => r.url === '/api/lists/list-active/cards');
+      assert.ok(post, 'the card was created in the active list, not the backlog');
+      // `type` is required by POST /cards and the fake will accept a body without
+      // it — the live board answered 400 while these tests were green.
+      assert.strictEqual(post.body.type, 'project');
 
       const stamped = fake.seen.filter(
         (r) => r.url.startsWith('/api/cards/new-card/custom-field-values/'));
@@ -295,6 +298,8 @@ test('card move sends the configured list id, not its name', { skip }, async () 
     assert.strictEqual(res.status, 0);
     const patch = fake.seen.find((r) => r.method === 'PATCH' && r.url === '/api/cards/c42');
     assert.strictEqual(patch.body.listId, 'list-done');
+    // Without position the live board answers 422 "Position must be present".
+    assert.strictEqual(typeof patch.body.position, 'number');
   });
 });
 
@@ -343,8 +348,17 @@ test('plan sync is idempotent: syncing twice leaves one task per item',
         { PLANKA_PASSWORD: 'pw' }, TODO_PAYLOAD);
       assert.strictEqual(first.status, 0);
 
-      const createdFirst = fake.seen.filter((r) => r.url === '/api/task-lists/tl1/tasks').length;
+      const posts = fake.seen.filter((r) => r.url === '/api/task-lists/tl1/tasks');
+      const createdFirst = posts.length;
       assert.strictEqual(createdFirst, 2);
+
+      // A todo already completed on the FIRST sync must be created ticked. The
+      // tick below only runs for tasks that already exist, so creating it
+      // unticked left it wrong forever — which is what the live board showed.
+      const done = posts.find((r) => r.body.name === 'Write the failing test');
+      assert.strictEqual(done.body.isCompleted, true);
+      const open = posts.find((r) => r.body.name === 'Implement it');
+      assert.strictEqual(open.body.isCompleted, false);
 
       // Reflect the tasks the first run created, so the second run sees them.
       tasks = fake.seen
@@ -416,6 +430,39 @@ test('card comment with blank text posts nothing', { skip }, () => {
   const res = runIn(ctx, ['card', 'comment', '--branch', 'feature-y', '--text', '   '],
     { PLANKA_PASSWORD: 'pw' });
   assert.strictEqual(res.status, 0);
+});
+
+test('board init-fields creates the group and the five fields once', { skip }, async () => {
+  let groups = [];
+  let fields = [];
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'GET /api/boards/b1': () => ({
+      item: { id: 'b1' },
+      included: { lists: [], customFieldGroups: groups, customFields: fields, labels: [] },
+    }),
+    'POST /api/boards/b1/custom-field-groups': () => {
+      groups = [{ id: 'g1', boardId: 'b1', name: 'Claude' }];
+      return { item: groups[0] };
+    },
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port());
+    const first = await runAsync(ctx, ['board', 'init-fields'], { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(first.status, 0);
+    const made = fake.seen.filter((r) => r.url === '/api/custom-field-groups/g1/custom-fields');
+    assert.deepStrictEqual(made.map((r) => r.body.name).sort(),
+      ['branch', 'pr', 'repo', 'session', 'worktree']);
+
+    // Reflect what the first run created, then re-run: nothing more is made.
+    fields = made.map((r, i) => ({ id: `f${i}`, customFieldGroupId: 'g1', name: r.body.name }));
+    const second = await runAsync(ctx, ['board', 'init-fields'], { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(second.status, 0);
+    const total = fake.seen.filter((r) => r.url === '/api/custom-field-groups/g1/custom-fields');
+    assert.strictEqual(total.length, made.length, 'the second run created no duplicates');
+    const groupPosts = fake.seen.filter((r) => r.url === '/api/boards/b1/custom-field-groups');
+    assert.strictEqual(groupPosts.length, 1, 'the group is created once');
+  });
 });
 
 test('task promote creates a card and links it back to the task', { skip }, async () => {

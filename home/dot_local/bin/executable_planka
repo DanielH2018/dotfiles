@@ -341,7 +341,8 @@ def create_card(cfg, branch, title=None):
     if not list_id:
         soft_fail("create: lists.active is not configured")
     card = call(cfg, "POST", f"/lists/{list_id}/cards",
-                {"name": title or branch, "position": 65536})
+                {"name": title or branch, "position": 65536,
+                 "type": cfg.get("cardType", "project")})
     card_id = card.get("item", {}).get("id")
     if not card_id:
         soft_fail("create: no card id in the response")
@@ -396,7 +397,9 @@ def cmd_card_move(args):
     if not list_id:
         soft_fail(f"card move: no list configured for key {args.list!r}")
     card_id = tracked_card(cfg, args, "card move")
-    call(cfg, "PATCH", f"/cards/{card_id}", {"listId": list_id})
+    # position travels with listId or the update is rejected 422
+    # ("Position must be present"); Planka has nowhere to put the card otherwise.
+    call(cfg, "PATCH", f"/cards/{card_id}", {"listId": list_id, "position": 65536})
 
 
 def cmd_card_field(args):
@@ -441,7 +444,8 @@ def cmd_task_promote(args):
     if not list_id:
         soft_fail("task promote: lists.active is not configured")
     created = call(cfg, "POST", f"/lists/{list_id}/cards",
-                   {"name": name, "position": 65536})
+                   {"name": name, "position": 65536,
+                    "type": cfg.get("cardType", "project")})
     card_id = created.get("item", {}).get("id")
     if not card_id:
         soft_fail("task promote: no card id in the response")
@@ -471,6 +475,31 @@ def cmd_open(args):
         log(f"open: {branch} is not tracked")
         return
     subprocess.run(["open", side["url"]], capture_output=True)
+
+
+def cmd_card_show(args):
+    """The card as the other subcommands see it, plus the task-list and task ids
+    `task promote` needs."""
+    cfg = require_config()
+    card_id = tracked_card(cfg, args, "card show")
+    card = call(cfg, "GET", f"/cards/{card_id}")
+    item = card.get("item", {})
+    included = card.get("included", {})
+    print(f"card\t{item.get('id')}\t{item.get('name')}")
+    print(f"list\t{item.get('listId')}")
+    for task_list in included.get("taskLists", []):
+        print(f"taskList\t{task_list.get('id')}\t{task_list.get('name')}")
+        for task in included.get("tasks", []):
+            if task.get("taskListId") == task_list.get("id"):
+                mark = "x" if task.get("isCompleted") else " "
+                print(f"task\t{task.get('id')}\t[{mark}] {task.get('name')}")
+    # GET /cards/:id returns the values but not the field definitions, so the
+    # readable names come from the config's own id -> key mapping.
+    names = {fid: key for key, fid in cfg.get("customFields", {}).items()
+             if key != "groupId"}
+    for value in included.get("customFieldValues", []):
+        label = names.get(value.get("customFieldId"), value.get("customFieldId"))
+        print(f"field\t{label}\t{value.get('content')}")
 
 
 def cmd_card_comment(args):
@@ -526,12 +555,66 @@ def cmd_plan_sync(args):
         done = todo.get("status") == "completed"
         task = existing.get(content)
         if task is None:
+            # isCompleted at creation, not a follow-up PATCH: a todo already
+            # ticked when the card is first synced would otherwise land unticked
+            # and stay that way, because the tick below only runs for tasks that
+            # already exist.
             call(cfg, "POST", f"/task-lists/{task_list_id}/tasks",
-                 {"name": content, "position": position})
+                 {"name": content, "position": position, "isCompleted": done})
             position += 65536
             continue
         if bool(task.get("isCompleted")) != done:
             call(cfg, "PATCH", f"/tasks/{task.get('id')}", {"isCompleted": done})
+
+
+FIELD_NAMES = ("branch", "repo", "pr", "worktree", "session")
+FIELD_GROUP_NAME = "Claude"
+
+
+def cmd_board_init_fields(args):
+    """Create the custom field group and fields this integration stamps on cards.
+
+    A fresh board has none, and without them a lost sidecar cannot be recovered —
+    the branch field is what `card resolve` searches on. Idempotent: matched by
+    name, so re-running adds nothing. Prints the ids to paste into the config.
+    """
+    cfg = require_config()
+    board_id = args.board or cfg.get("boardId")
+    if not board_id:
+        soft_fail("board init-fields: no board id")
+
+    board = call(cfg, "GET", f"/boards/{board_id}")
+    included = board.get("included", {})
+
+    group_id = None
+    for group in included.get("customFieldGroups", []):
+        if group.get("name") == FIELD_GROUP_NAME:
+            group_id = group.get("id")
+            break
+    if group_id is None:
+        created = call(cfg, "POST", f"/boards/{board_id}/custom-field-groups",
+                       {"name": FIELD_GROUP_NAME, "position": 65536})
+        group_id = created.get("item", {}).get("id")
+        if not group_id:
+            soft_fail("board init-fields: no group id in the response")
+
+    have = {}
+    for field in included.get("customFields", []):
+        if field.get("customFieldGroupId") == group_id:
+            have[field.get("name")] = field.get("id")
+
+    position = 65536
+    for name in FIELD_NAMES:
+        if name in have:
+            continue
+        made = call(cfg, "POST", f"/custom-field-groups/{group_id}/custom-fields",
+                    {"name": name, "position": position, "showOnFrontOfCard": False})
+        have[name] = made.get("item", {}).get("id")
+        position += 65536
+
+    print(f"fieldGroup\t{group_id}\t{FIELD_GROUP_NAME}")
+    for name in FIELD_NAMES:
+        print(f"field\t{have.get(name)}\t{name}")
 
 
 def build_parser():
@@ -552,6 +635,10 @@ def build_parser():
     show = board_sub.add_parser("show", help="print ids for lists, fields, and labels")
     show.add_argument("--board", help="board id (default: config boardId)")
     show.set_defaults(func=cmd_board_show)
+    init = board_sub.add_parser("init-fields",
+                                help="create the custom fields this tool stamps")
+    init.add_argument("--board", help="board id (default: config boardId)")
+    init.set_defaults(func=cmd_board_init_fields)
 
     card = sub.add_parser("card", help="card operations")
     card_sub = card.add_subparsers(dest="card_command", required=True)
@@ -568,6 +655,10 @@ def build_parser():
                            "blocked, done")
     move.add_argument("--branch")
     move.set_defaults(func=cmd_card_move)
+
+    cshow = card_sub.add_parser("show", help="print the card, its tasks and fields")
+    cshow.add_argument("--branch")
+    cshow.set_defaults(func=cmd_card_show)
 
     comment = card_sub.add_parser("comment", help="add a comment to the card")
     comment.add_argument("--text", help="comment body (default: read stdin)")
