@@ -176,6 +176,16 @@ land() {
   fi
 
   printf 'landed %s (PR #%s)\n' "$BRANCH" "$PR"
+
+  # Done is the one transition nobody should have to make by hand: a merged PR is
+  # the unambiguous end of the unit of work a card tracks. Soft in every
+  # direction — planka exits 0 when it is not configured, and a landing must not
+  # report failure because a Kanban board was unreachable.
+  if command -v planka >/dev/null 2>&1; then
+    planka card move --list done --branch "$BRANCH" >/dev/null 2>&1 || true
+    planka card comment --branch "$BRANCH" \
+      --text "Landed on main as $(git rev-parse --short HEAD) (PR #$PR)." >/dev/null 2>&1 || true
+  fi
   # The push moved origin/main; local main is untouched, and chezmoi deploys from the
   # primary checkout's working tree. A header comment did not stop this being missed
   # three times in one day, so say it here, where it is read — but only when it is

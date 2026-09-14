@@ -428,6 +428,16 @@ def cmd_status(args):
     print("%s/%s\tcard %s\t%s" % (repo, branch, side.get("cardId"), side.get("url")))
 
 
+def cmd_card_comment(args):
+    cfg = require_config()
+    card_id = tracked_card(cfg, args, "card comment")
+    text = args.text if args.text is not None else sys.stdin.read()
+    text = (text or "").strip()
+    if not text:
+        return
+    call(cfg, "POST", "/cards/%s/comments" % card_id, {"text": text})
+
+
 def ensure_task_list(cfg, card_id):
     """The card's Plan task list, created on first use. Matched by name rather
     than by a stored id, so this still works when the sidecar is lost."""
@@ -512,6 +522,11 @@ def build_parser():
                       help="a config lists key: backlog, onDeck, active, review, blocked, done")
     move.add_argument("--branch")
     move.set_defaults(func=cmd_card_move)
+
+    comment = card_sub.add_parser("comment", help="add a comment to the card")
+    comment.add_argument("--text", help="comment body (default: read stdin)")
+    comment.add_argument("--branch")
+    comment.set_defaults(func=cmd_card_comment)
 
     field = card_sub.add_parser("field", help="set custom field values, or title=")
     field.add_argument("--set", action="append", required=True, metavar="KEY=VALUE")

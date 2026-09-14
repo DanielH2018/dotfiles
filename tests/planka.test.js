@@ -383,3 +383,28 @@ test('plan sync on an untracked branch is silent and exits 0', { skip }, () => {
   const res = runIn(ctx, ['plan', 'sync', '--branch', 'untracked'], { PLANKA_PASSWORD: 'pw' });
   assert.strictEqual(res.status, 0);
 });
+
+test('card comment posts the text to the card', { skip }, async () => {
+  const fake = fakePlanka({
+    'POST /api/access-tokens': () => ({ item: 'fake-jwt' }),
+    'POST /api/cards/c42/comments': () => ({ item: { id: 'cm1' } }),
+  });
+  await withFake(fake, async () => {
+    const ctx = onlineCtx(fake.port());
+    fs.writeFileSync(path.join(ctx.state, 'branch', 'myrepo--feature-y.json'),
+      JSON.stringify({ cardId: 'c42' }));
+    const res = await runAsync(ctx,
+      ['card', 'comment', '--branch', 'feature-y', '--text', 'landed as abc1234'],
+      { PLANKA_PASSWORD: 'pw' });
+    assert.strictEqual(res.status, 0);
+    const posted = fake.seen.find((r) => r.url === '/api/cards/c42/comments');
+    assert.strictEqual(posted.body.text, 'landed as abc1234');
+  });
+});
+
+test('card comment with blank text posts nothing', { skip }, () => {
+  const ctx = withSidecar(OFFLINE_CFG, { 'myrepo--feature-y.json': { cardId: 'c42' } });
+  const res = runIn(ctx, ['card', 'comment', '--branch', 'feature-y', '--text', '   '],
+    { PLANKA_PASSWORD: 'pw' });
+  assert.strictEqual(res.status, 0);
+});
