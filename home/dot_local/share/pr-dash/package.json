@@ -8,6 +8,6 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test tests/"
+    "test": "node --test 'tests/**/*.test.ts'"
   }
 }
