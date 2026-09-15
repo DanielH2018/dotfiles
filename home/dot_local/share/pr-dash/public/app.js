@@ -98,17 +98,11 @@ async function loadPrs() {
   const res = await fetch('/api/prs', { headers: { 'x-pr-dash-secret': secret } });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const body = await res.json();
-  const prs = parsePrsBody(body);
+  const { prs, stale, error, fetchedAt } = parsePrsBody(body);
   // The server builds stacks from the same prs this request just validated, so no
   // separate validation is needed here — unlike prs, which travels over the network
   // as the one boundary tsc cannot enforce PrRecord[] across.
   const stacks = /** @type {StackNode[]} */ (body.stacks);
-  // stale/error/fetchedAt aren't run through a validator the way prs is: a wrong type
-  // here only affects banner text, not the render path, so String(...) below is
-  // enough to keep a malformed value from reaching the DOM as anything but a string.
-  const stale = body.stale === true;
-  const error = typeof body.error === 'string' ? body.error : undefined;
-  const fetchedAt = typeof body.fetchedAt === 'string' ? body.fetchedAt : '';
   return { prs, stacks, stale, error, fetchedAt };
 }
 

@@ -120,16 +120,36 @@ function validateRecord(record, index) {
 }
 
 /**
- * Validates a parsed `/api/prs` response body, throwing when `prs` is not
- * an array or one of its elements fails {@link validateRecord}.
+ * A parsed and validated `/api/prs` response body.
+ * @typedef {object} ParsedPrsBody
+ * @property {PrRecord[]} prs
+ * @property {boolean} stale
+ * @property {string} [error]
+ * @property {string} fetchedAt
+ */
+
+/**
+ * Validates and parses a `/api/prs` response body, throwing when `prs` is
+ * not an array or one of its elements fails {@link validateRecord}.
  * `fetch().json()` is typed `any`, so this is the one boundary in the
  * client `tsc` cannot enforce the `PrRecord[]` contract at. Without this
  * check a malformed body — or a single malformed record inside an
  * otherwise-fine array — is assigned to the caller's "last good" state on
  * the success path, before any catch runs; a later fallback render then
  * throws a second, uncaught error instead of recovering.
+ *
+ * Also extracts `stale`, `error`, and `fetchedAt` — the fields
+ * {@link staleBanner} needs — so `app.js` never reads them off the raw
+ * body itself; that decision used to live in `app.js`, which cannot be
+ * imported under `node --test`, so a broken extraction there went
+ * untested. These three are coerced, not validated the way `prs` is:
+ * throwing on a malformed `stale` would blank the page over a
+ * server-side type slip in the one field that exists to prevent exactly
+ * that. Anything not exactly `false` counts as stale — over-reporting
+ * staleness is the safe direction, since under-reporting it would
+ * present genuinely stale data as fresh.
  * @param {unknown} body
- * @returns {PrRecord[]}
+ * @returns {ParsedPrsBody}
  */
 export function parsePrsBody(body) {
   if (
@@ -139,8 +159,13 @@ export function parsePrsBody(body) {
   ) {
     throw new Error('malformed /api/prs response: "prs" is not an array');
   }
-  const prs = /** @type {{ prs: unknown[] }} */ (body).prs;
-  return prs.map((record, index) => validateRecord(record, index));
+  const fields = /** @type {Record<string, unknown>} */ (body);
+  const rawPrs = /** @type {unknown[]} */ (fields['prs']);
+  const prs = rawPrs.map((record, index) => validateRecord(record, index));
+  const stale = fields['stale'] !== false;
+  const error = typeof fields['error'] === 'string' ? fields['error'] : undefined;
+  const fetchedAt = typeof fields['fetchedAt'] === 'string' ? fields['fetchedAt'] : '';
+  return { prs, stale, error, fetchedAt };
 }
 
 /**

@@ -187,7 +187,48 @@ test('toSort falls back to stale for the empty string', () => {
 
 test('parsePrsBody returns the prs array from a well-formed body', () => {
   const body = { prs: [validRecord], fetchedAt: '2026-09-14T00:00:00Z' };
-  assert.deepStrictEqual(parsePrsBody(body), body.prs);
+  assert.deepStrictEqual(parsePrsBody(body).prs, body.prs);
+});
+
+test('parsePrsBody reports stale exactly as given when it is false', () => {
+  const body = { prs: [], stale: false, fetchedAt: '2026-09-14T00:00:00Z' };
+  assert.strictEqual(parsePrsBody(body).stale, false);
+});
+
+test('parsePrsBody reports stale exactly as given when it is true', () => {
+  const body = { prs: [], stale: true, fetchedAt: '2026-09-14T00:00:00Z' };
+  assert.strictEqual(parsePrsBody(body).stale, true);
+});
+
+test('parsePrsBody treats a non-boolean stale as stale, not as fresh', () => {
+  // Over-reporting staleness is the safe direction: a server-side type slip on `stale`
+  // must not read as "fresh" and hide genuinely stale data behind no banner at all.
+  assert.strictEqual(parsePrsBody({ prs: [], stale: 'no', fetchedAt: '' }).stale, true);
+  assert.strictEqual(parsePrsBody({ prs: [], stale: 0, fetchedAt: '' }).stale, true);
+});
+
+test('parsePrsBody treats a missing stale field as stale', () => {
+  assert.strictEqual(parsePrsBody({ prs: [], fetchedAt: '' }).stale, true);
+});
+
+test('parsePrsBody passes through a string error', () => {
+  const body = { prs: [], stale: true, error: 'network down', fetchedAt: '' };
+  assert.strictEqual(parsePrsBody(body).error, 'network down');
+});
+
+test('parsePrsBody drops a non-string error rather than passing it through', () => {
+  assert.strictEqual(parsePrsBody({ prs: [], stale: true, error: 12, fetchedAt: '' }).error, undefined);
+  assert.strictEqual(parsePrsBody({ prs: [], stale: true, fetchedAt: '' }).error, undefined);
+});
+
+test('parsePrsBody passes through a string fetchedAt', () => {
+  const body = { prs: [], stale: false, fetchedAt: '2026-09-14T00:00:00Z' };
+  assert.strictEqual(parsePrsBody(body).fetchedAt, '2026-09-14T00:00:00Z');
+});
+
+test('parsePrsBody falls back to an empty fetchedAt when it is missing or the wrong type', () => {
+  assert.strictEqual(parsePrsBody({ prs: [], stale: false }).fetchedAt, '');
+  assert.strictEqual(parsePrsBody({ prs: [], stale: false, fetchedAt: 123 }).fetchedAt, '');
 });
 
 test('parsePrsBody throws when prs is not an array', () => {
@@ -279,7 +320,7 @@ test(
     const load = (): PrRecord[] =>
       parsePrsBody({
         prs: [validRecord, { id: 'bad', number: 1, title: 'Untitled' }],
-      });
+      }).prs;
 
     let bannerMessage: string | null = null;
     try {
