@@ -501,3 +501,44 @@ test('a throwing onSuccess is re-offered the same result on the next call', asyn
   assert.strictEqual(calls, 2, 'a throw must not mark the result as already notified');
   assert.deepStrictEqual(seen, ['NEW']);
 });
+
+test('a throw on the first of two concurrent cold-start calls notifies onSuccess twice for one fetch', async () => {
+  // Documents the retry's one side effect rather than suppressing it: a cold start with no
+  // seed skips the retained-payload shortcut, so both concurrent calls join createPrLoader's
+  // in-flight fetch and both land in the branch that calls onSuccess. If the first of them
+  // throws, the fix for the throw-then-retry case above also leaves this result eligible for
+  // the second -- two notifications for the one real fetch. Ruled benign and kept: this
+  // repo's only onSuccess (main.ts's store.write) does an atomic rename to a randomUUID temp
+  // file, so a second write of identical bytes cannot race destructively. A future onSuccess
+  // that is not idempotent needs its own guard; this test exists so removing the second
+  // notification without updating FallbackOpts.onSuccess's doc comment fails loudly.
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      await gate;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  let calls = 0;
+  const seen: LoadResult[] = [];
+  const loadPrs = createLoadPrs(client, cache, {
+    onSuccess: (r) => {
+      calls += 1;
+      seen.push(r);
+      if (calls === 1) throw new Error('disk full');
+    },
+  });
+
+  const first = loadPrs();
+  const second = loadPrs();
+  release();
+  await Promise.all([first, second]);
+
+  assert.strictEqual(calls, 2);
+  assert.strictEqual(seen[0], seen[1], 'both notifications receive the same result object');
+});

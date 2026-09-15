@@ -103,9 +103,13 @@ export type FallbackOpts = {
    */
   initial?: LoadResult;
   /**
-   * Called once per distinct successful result `load` produces. A cache hit and a
-   * dedup-joined in-flight fetch both resolve to the exact same object a prior call
-   * already handed here, and are not re-notified — only a genuinely new fetch is.
+   * Called once per distinct successful result `load` produces, with two exceptions that
+   * combine: a result is not re-notified once a call to this has already returned for it,
+   * but a call that throws leaves that result eligible again. So when two concurrent
+   * callers join the same in-flight fetch (a cold start with no seed, before either has a
+   * retained payload to answer from) and this throws on the first of them, the second
+   * still sees the result as un-notified and this is called again with the same result. A
+   * consumer that is not idempotent must guard against that itself.
    * Synchronous and fire-and-forget by contract: a slow or failing disk must not delay
    * or fail the request that produced the payload. Must not return a Promise: the
    * wrapping try/catch below is synchronous and cannot catch a later rejection from an

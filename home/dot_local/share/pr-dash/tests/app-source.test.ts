@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments } from './strip-comments.ts';
+import { braceBlock } from './brace-block.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_JS = path.join(__dirname, '..', 'public', 'app.js');
@@ -28,25 +29,6 @@ function functionBody(text: string, startMarker: string): string {
   const end = text.indexOf('\n}', start);
   assert.notStrictEqual(end, -1, `expected a closing brace for "${startMarker}" in app.js`);
   return text.slice(start, end);
-}
-
-/** The balanced `{ ... }` block starting at the first `{` at or after `from`. */
-function braceBlock(text: string, from: number): string {
-  const start = text.indexOf('{', from);
-  assert.notStrictEqual(start, -1, 'expected a { at or after the given position');
-  let depth = 0;
-  let i = start;
-  for (; i < text.length; i += 1) {
-    if (text[i] === '{') depth += 1;
-    else if (text[i] === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        i += 1;
-        break;
-      }
-    }
-  }
-  return text.slice(start, i);
 }
 
 test('refresh calls schedulePoll after rendering a response', () => {

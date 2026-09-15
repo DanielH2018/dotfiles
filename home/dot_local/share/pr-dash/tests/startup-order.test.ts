@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments } from './strip-comments.ts';
+import { braceBlock } from './brace-block.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_TS = path.join(__dirname, '..', 'src', 'main.ts');
@@ -83,11 +84,11 @@ test('main.ts persists a successful fetch back to the payload store', () => {
   const match = /onSuccess:\s*\((\w+)\)\s*=>/.exec(MAIN_TS_STRIPPED);
   assert.ok(match, 'expected an onSuccess: (param) => ... callback in main.ts');
   const param = match[1]!;
-  // A bounded window rather than a full parse of the callback's body: this repo's
-  // structural tests read text, not an AST, and 200 characters comfortably covers a
-  // callback this short without assuming it is block- rather than expression-bodied.
-  const windowStart = match.index + match[0].length;
-  const window = MAIN_TS_STRIPPED.slice(windowStart, windowStart + 200);
+  // The callback's own body, not a fixed-size window after it: a window breaks on correct
+  // code once a comment or a reformat pushes store.write past its length, where a
+  // brace-balanced extraction is exact regardless of how the body is laid out. This assumes
+  // a block-bodied arrow, matching main.ts's actual style.
+  const body = braceBlock(MAIN_TS_STRIPPED, match.index + match[0].length);
   const writePattern = new RegExp(`store\\.write\\(\\s*${param}\\s*\\)`);
-  assert.match(window, writePattern, `expected onSuccess's body to call store.write(${param})`);
+  assert.match(body, writePattern, `expected onSuccess's body to call store.write(${param})`);
 });
