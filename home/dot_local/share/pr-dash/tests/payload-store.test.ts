@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { createPayloadStore, DIR_MODE, FILE_MODE, type FsSeam } from '../src/payload-store.ts';
+import { homedir } from 'node:os';
+import { createPayloadStore, DEFAULT_STATE_DIR, DIR_MODE, FILE_MODE, type FsSeam } from '../src/payload-store.ts';
 import type { LoadResult } from '../src/loader.ts';
 import type { PrRecord } from '../src/types.ts';
 
@@ -24,10 +25,36 @@ const RECORD: PrRecord = {
   defaultBranch: 'main',
 };
 
+const RECORD2: PrRecord = {
+  id: 'acme/api#13',
+  repo: 'acme/api',
+  number: 13,
+  title: 'Improve error handling',
+  url: 'https://github.com/acme/api/pull/13',
+  headRef: 'error-handling',
+  baseRef: 'main',
+  isDraft: false,
+  ci: 'pending',
+  review: 'none',
+  openedAt: '2026-09-02T00:00:00Z',
+  updatedAt: '2026-09-11T00:00:00Z',
+  ageDays: 12,
+  staleDays: 3,
+  additions: 40,
+  deletions: 2,
+  defaultBranch: 'main',
+};
+
+// Two records and a non-empty partialErrors: a fixture of one record and no errors would
+// round-trip even if read() dropped every record after the first, or write() silently
+// discarded partialErrors — both are real mutations that stayed green against a thinner
+// fixture. partialErrors matters beyond this module too: src/main-lib.ts's withFallback
+// keeps it riding along with a retained payload precisely so a partial fetch never later
+// renders as complete.
 const PAYLOAD: LoadResult = {
-  prs: [RECORD],
+  prs: [RECORD, RECORD2],
   fetchedAt: '2026-09-15T09:00:00.000Z',
-  partialErrors: [],
+  partialErrors: ['github: rate limited while paging acme/other'],
 };
 
 /** An in-memory FsSeam that records what it was asked to do. */
@@ -35,18 +62,33 @@ function fakeFs(seed: Record<string, string> = {}) {
   const files = new Map<string, string>(Object.entries(seed));
   const calls: string[] = [];
   const modes = new Map<string, number>();
+  const createdDirs = new Set<string>();
+  const writes: string[] = [];
+  const renames: { from: string; to: string }[] = [];
   const seam: FsSeam = {
     async mkdir(path, opts) {
       calls.push(`mkdir ${path}`);
       modes.set(path, opts.mode);
+      createdDirs.add(path);
     },
     async writeFile(path, data, opts) {
       calls.push(`writeFile ${path}`);
+      writes.push(path);
+      // Mirrors a real filesystem: writing into a directory that was never created
+      // fails with ENOENT. Without this, an implementation that calls writeFile before
+      // mkdir looks identical to the suite to one that gets the order right.
+      const dir = path.slice(0, path.lastIndexOf('/')) || '/';
+      if (!createdDirs.has(dir)) {
+        throw new Error(`ENOENT: directory not created: ${dir}`);
+      }
       files.set(path, data);
       modes.set(path, opts.mode);
     },
     async rename(from, to) {
       calls.push(`rename ${from} -> ${to}`);
+      // Recorded before the lookup below can throw, so a test can see what a rename was
+      // asked to do even when the fake then rejects it as impossible.
+      renames.push({ from, to });
       const data = files.get(from);
       if (data === undefined) throw new Error(`no such file: ${from}`);
       files.set(to, data);
@@ -63,8 +105,12 @@ function fakeFs(seed: Record<string, string> = {}) {
       }
       return data;
     },
+    async unlink(path) {
+      calls.push(`unlink ${path}`);
+      files.delete(path);
+    },
   };
-  return { seam, files, calls, modes };
+  return { seam, files, calls, modes, createdDirs, writes, renames };
 }
 
 test('a written payload reads back unchanged', async () => {
@@ -90,6 +136,29 @@ test('the write is atomic: a temp file is renamed over the target', async () => 
   );
   // A kill between writeFile and rename must not leave a half-written target.
   assert.ok(!fs.calls.includes('writeFile /state/last-payload.json'));
+});
+
+test('the rename source is exactly what writeFile was called with, in the same directory as the target', async () => {
+  // Distinct from the atomicity test above: replacing the rename call with
+  // `fs.rename(temp + '.nope', target)` still ends in "-> /state/last-payload.json" and
+  // still avoids writing the target directly, so that test stays green. This one catches
+  // it, because the renamed-from path no longer matches what writeFile actually wrote.
+  const fs = fakeFs();
+  const store = createPayloadStore('/state', fs.seam);
+
+  await store.write(PAYLOAD);
+
+  assert.strictEqual(fs.writes.length, 1);
+  assert.strictEqual(fs.renames.length, 1);
+  const [renameCall] = fs.renames;
+  const [writtenPath] = fs.writes;
+  assert.strictEqual(renameCall!.from, writtenPath);
+  assert.strictEqual(renameCall!.to, '/state/last-payload.json');
+  // A rename that crosses filesystems fails with EXDEV, and the temp-and-target-on-one-
+  // filesystem case is exactly what makes a rename atomic in the first place.
+  const sourceDir = renameCall!.from.slice(0, renameCall!.from.lastIndexOf('/'));
+  const targetDir = renameCall!.to.slice(0, renameCall!.to.lastIndexOf('/'));
+  assert.strictEqual(sourceDir, targetDir);
 });
 
 test('the directory and the file are created with owner-only modes', async () => {
@@ -143,6 +212,14 @@ for (const [label, contents] of [
   ['prs missing', '{"fetchedAt":"T","partialErrors":[]}'],
   ['prs not an array', '{"prs":{},"fetchedAt":"T","partialErrors":[]}'],
   ['a null record', '{"prs":[null],"fetchedAt":"T","partialErrors":[]}'],
+  // Two bare objects: the shape that used to pass looksLikePayload (both are objects)
+  // and then crashed src/stacks.ts server-side, since buildStacks sorts stack siblings
+  // with `a.repo.localeCompare(b.repo)` and a single such record never invokes the
+  // comparator (Array.prototype.sort skips it for a one-element array).
+  ['two records missing every field buildStacks reads', '{"prs":[{},{}],"fetchedAt":"T","partialErrors":[]}'],
+  ['a record with a non-string repo', '{"prs":[{"id":"x","repo":1,"headRef":"h","baseRef":"b","number":1}],"fetchedAt":"T","partialErrors":[]}'],
+  ['a record with a non-string id', '{"prs":[{"id":1,"repo":"r","headRef":"h","baseRef":"b","number":1}],"fetchedAt":"T","partialErrors":[]}'],
+  ['a record missing number', '{"prs":[{"id":"x","repo":"r","headRef":"h","baseRef":"b"}],"fetchedAt":"T","partialErrors":[]}'],
   ['fetchedAt missing', '{"prs":[],"partialErrors":[]}'],
   ['fetchedAt empty', '{"prs":[],"fetchedAt":"","partialErrors":[]}'],
   ['partialErrors not an array', '{"prs":[],"fetchedAt":"T","partialErrors":"x"}'],
@@ -175,4 +252,35 @@ test('a write failure does not propagate', async () => {
   const store = createPayloadStore('/state', seam);
   // A full disk must not turn a successful fetch into a failed request.
   await store.write(PAYLOAD);
+});
+
+test('a failed rename removes the orphaned temp file', async () => {
+  const fs = fakeFs();
+  const seam: FsSeam = {
+    ...fs.seam,
+    async rename() {
+      throw new Error('EXDEV');
+    },
+  };
+  const store = createPayloadStore('/state', seam);
+
+  await store.write(PAYLOAD);
+
+  // writeFile still ran (on the underlying fake, not the overridden seam), so the temp
+  // path it was given is recorded there.
+  assert.strictEqual(fs.writes.length, 1);
+  assert.deepStrictEqual(fs.calls.filter((c) => c.startsWith('unlink ')), [`unlink ${fs.writes[0]}`]);
+});
+
+test('the default state directory sits under the home directory, outside chezmoi and outside any git checkout', () => {
+  // Property-based rather than an exact-path comparison: an exact match to
+  // `join(homedir(), '.local', 'state', 'pr-dash')` would stay true even if that formula
+  // were rewritten to point inside the chezmoi source tree, since both sides would move
+  // together. This instead pins the doc comment's actual claim.
+  assert.ok(
+    DEFAULT_STATE_DIR.startsWith(`${homedir()}/`),
+    `expected ${DEFAULT_STATE_DIR} under the home directory`,
+  );
+  assert.ok(!DEFAULT_STATE_DIR.includes('chezmoi'), 'must not reach the chezmoi source tree');
+  assert.ok(!DEFAULT_STATE_DIR.includes('.git'), 'must not sit inside a git checkout');
 });

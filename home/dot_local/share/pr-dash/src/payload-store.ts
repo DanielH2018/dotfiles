@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { LoadResult } from './loader.ts';
@@ -19,7 +19,7 @@ const FILE_NAME = 'last-payload.json';
 export const DEFAULT_STATE_DIR = join(homedir(), '.local', 'state', 'pr-dash');
 
 /**
- * The four filesystem calls this module makes. Injected so a test asserts the atomic
+ * The five filesystem calls this module makes. Injected so a test asserts the atomic
  * write and the modes without writing to the operator's real state directory.
  */
 export type FsSeam = {
@@ -27,6 +27,7 @@ export type FsSeam = {
   writeFile(path: string, data: string, opts: { mode: number }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   readFile(path: string): Promise<string>;
+  unlink(path: string): Promise<void>;
 };
 
 export type PayloadStore = {
@@ -41,6 +42,7 @@ const realFs: FsSeam = {
   writeFile: (path, data, opts) => writeFile(path, data, opts),
   rename: (from, to) => rename(from, to),
   readFile: (path) => readFile(path, 'utf8'),
+  unlink: (path) => unlink(path),
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,20 +54,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // the import-convention guard bans relative .js imports outside public/, and the browser
 // and the server are separate module graphs on purpose.
 //
-// This check only has to be good enough not to hand something structurally broken
-// downstream. A restored payload travels the same /api/prs response path as a fetched
-// one, so a record with a subtly wrong field still meets validateRecord in the browser
-// and produces its existing, diagnosable error banner rather than a crash.
-//
-// The narrowing to `value is LoadResult` is therefore unsound on purpose: it checks the
-// shape of the envelope and that each element of `prs` is at least an object, not that
-// every PrRecord field is present and correctly typed. That gap is deliberate — see above.
+// This is not a full PrRecord validator. It checks exactly the fields src/stacks.ts reads
+// before a restored payload is serialized: buildStacks sorts stack siblings with
+// `a.repo.localeCompare(b.repo) || a.number - b.number`, and keys its parent/child lookups
+// on `id`, `headRef` and `baseRef`. A bare `{}` passes a mere "is an object" check, and
+// `undefined.localeCompare` then throws — a stored payload with two such records used to
+// 500 the /api/prs endpoint (a single one didn't, because Array.prototype.sort never calls
+// the comparator on one element). Checking these five fields is what stops that. Anything
+// else wrong in a record (title, url, ci, ...) still reaches the browser's validateRecord,
+// which is the second line of defence for the rest of PrRecord.
+function looksLikeServerSafeRecord(value: Record<string, unknown>): boolean {
+  return (
+    typeof value['id'] === 'string' &&
+    typeof value['repo'] === 'string' &&
+    typeof value['headRef'] === 'string' &&
+    typeof value['baseRef'] === 'string' &&
+    typeof value['number'] === 'number'
+  );
+}
+
+// The narrowing to `value is LoadResult` is unsound on purpose: it checks the shape of the
+// envelope and the fields above, not that every PrRecord field is present and correctly
+// typed. That gap is deliberate — see looksLikeServerSafeRecord.
 function looksLikePayload(value: unknown): value is LoadResult {
   if (!isRecord(value)) return false;
   const prs = value['prs'];
   const fetchedAt = value['fetchedAt'];
   const partialErrors = value['partialErrors'];
-  if (!Array.isArray(prs) || !prs.every(isRecord)) return false;
+  if (!Array.isArray(prs) || !prs.every((pr) => isRecord(pr) && looksLikeServerSafeRecord(pr))) {
+    return false;
+  }
   if (typeof fetchedAt !== 'string' || fetchedAt === '') return false;
   if (!Array.isArray(partialErrors)) return false;
   if (!partialErrors.every((e) => typeof e === 'string')) return false;
@@ -109,9 +127,22 @@ export function createPayloadStore(dir: string, fs: FsSeam = realFs): PayloadSto
       try {
         await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
         await fs.writeFile(temp, JSON.stringify(result), { mode: FILE_MODE });
-        // Rename rather than writing the target in place, so a kill mid-write cannot
-        // leave truncated JSON for the next launch to reject.
-        await fs.rename(temp, target);
+        try {
+          // Rename rather than writing the target in place, so a kill mid-write cannot
+          // leave truncated JSON for the next launch to reject.
+          await fs.rename(temp, target);
+        } catch (err) {
+          // The temp file survived the write but failed to land (EXDEV, a full directory
+          // entry table, ...). Remove it so a directory that keeps failing to rename does
+          // not accumulate an unbounded number of full payload copies. A hard kill right
+          // here still orphans one temp file, which is an acceptable one-time leak.
+          try {
+            await fs.unlink(temp);
+          } catch {
+            // Best effort — the outer catch below already treats this write as failed.
+          }
+          throw err;
+        }
       } catch {
         // A full disk or an unwritable directory must not turn a successful fetch into a
         // failed request. The next launch simply starts cold.
