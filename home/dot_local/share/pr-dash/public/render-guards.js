@@ -291,6 +291,7 @@ export function isSafeUrl(url) {
  * @property {Review[]} review
  * @property {StalenessBucket[]} staleness
  * @property {DraftState[]} draft
+ * @property {string[]} collapsed
  */
 
 /** @type {StoredView} */
@@ -301,6 +302,7 @@ const DEFAULT_VIEW = {
   review: [],
   staleness: [],
   draft: [],
+  collapsed: [],
 };
 
 /**
@@ -361,6 +363,23 @@ export function toDraftValues(value) {
 }
 
 /**
+ * The collapsed section keys from a stored value: repository names for group headers and
+ * PR ids for stack roots. Non-strings are dropped and duplicates collapsed, so a hand-
+ * edited or older stored value cannot put anything but strings into the set.
+ *
+ * Unlike the axis and status validators, this one does not check membership in a known
+ * list, because there is no such list: a key naming a merged PR or a repository with
+ * nothing open is normal, and the section it named is simply not rendered. Rejecting
+ * unknown keys would un-collapse everything the first time a PR merged.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function toCollapsedKeys(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((v) => typeof v === 'string'))];
+}
+
+/**
  * Parses the `pr-dash:view` localStorage value into a view the controls
  * can trust. Falls back to {@link DEFAULT_VIEW} — in whole or field by
  * field — for a value that isn't valid JSON, doesn't parse to a plain
@@ -392,6 +411,7 @@ export function parseStoredView(raw) {
     review: toReviewValues(obj['review']),
     staleness: toStalenessValues(obj['staleness']),
     draft: toDraftValues(obj['draft']),
+    collapsed: toCollapsedKeys(obj['collapsed']),
   };
 }
 

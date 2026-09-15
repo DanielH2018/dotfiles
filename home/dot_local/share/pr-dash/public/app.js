@@ -54,7 +54,13 @@ function setCheckedValues(fieldsetId, values) {
   }
 }
 
-/** @returns {StoredView} */
+/**
+ * The filter/sort controls have no DOM element of their own for collapsed
+ * sections, so a save triggered by a filter change carries forward whatever
+ * is already persisted rather than wiping it — collapsing a section is
+ * wired up by the header click handler, not this function.
+ * @returns {StoredView}
+ */
 function readControls() {
   const groupSel = document.getElementById('group-by');
   const sortSel = document.getElementById('sort-by');
@@ -65,6 +71,7 @@ function readControls() {
     review: toReviewValues(checkedValues('filter-review')),
     staleness: toStalenessValues(checkedValues('filter-staleness')),
     draft: toDraftValues(checkedValues('filter-draft')),
+    collapsed: loadStoredView(localStorage).collapsed,
   };
 }
 

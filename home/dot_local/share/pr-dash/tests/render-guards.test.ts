@@ -12,6 +12,7 @@ import {
   toReviewValues,
   toStalenessValues,
   toDraftValues,
+  toCollapsedKeys,
   parsePrsBody,
   emptyStateMessage,
   isSafeUrl,
@@ -602,6 +603,7 @@ const DEFAULT_VIEW: StoredView = {
   review: [],
   staleness: [],
   draft: [],
+  collapsed: [],
 };
 
 test('parseStoredView returns the default view for null (nothing stored yet)', () => {
@@ -740,6 +742,7 @@ test('saveStoredView writes the view as JSON under VIEW_KEY', () => {
     review: ['approved'],
     staleness: ['>7d'],
     draft: ['ready'],
+    collapsed: ['acme/api'],
   };
   saveStoredView(storage, view);
   assert.deepStrictEqual([...storage.written.keys()], [VIEW_KEY]);
@@ -751,6 +754,54 @@ test('clearStoredView removes the value under VIEW_KEY', () => {
   storage.written.set(VIEW_KEY, JSON.stringify(DEFAULT_VIEW));
   clearStoredView(storage);
   assert.strictEqual(storage.written.has(VIEW_KEY), false);
+});
+
+test('toCollapsedKeys keeps strings, drops everything else, and dedupes', () => {
+  assert.deepStrictEqual(
+    toCollapsedKeys(['acme/api', 'acme/api', 42, null, 'acme/web', undefined]),
+    ['acme/api', 'acme/web'],
+  );
+});
+
+test('toCollapsedKeys of a non-array is empty', () => {
+  assert.deepStrictEqual(toCollapsedKeys('acme/api'), []);
+  assert.deepStrictEqual(toCollapsedKeys({ 0: 'acme/api' }), []);
+  assert.deepStrictEqual(toCollapsedKeys(undefined), []);
+});
+
+test('an unknown collapse key survives parsing rather than being rejected', () => {
+  // Collapse keys legitimately outlive the payload they described: a merged PR or a
+  // repository with nothing open leaves a key nothing reads. Dropping the whole view over
+  // one would un-collapse everything after any PR merged.
+  const view = parseStoredView(JSON.stringify({ collapsed: ['gone/repo', 'acme/api#9'] }));
+  assert.deepStrictEqual(view.collapsed, ['gone/repo', 'acme/api#9']);
+});
+
+test('the default view collapses nothing', () => {
+  assert.deepStrictEqual(parseStoredView(null).collapsed, []);
+});
+
+test('a corrupt collapsed field falls back without discarding the rest of the view', () => {
+  const view = parseStoredView(JSON.stringify({ sort: 'age', collapsed: 'nope' }));
+  assert.deepStrictEqual(view.collapsed, []);
+  assert.strictEqual(view.sort, 'age', 'one bad field must not reset the others');
+});
+
+test('collapse state round-trips through storage', () => {
+  const store = fakeStorage();
+  saveStoredView(store, { ...parseStoredView(null), collapsed: ['acme/api'] });
+  assert.deepStrictEqual(loadStoredView(store).collapsed, ['acme/api']);
+});
+
+test('clearStoredView clears collapse state along with the filters', () => {
+  // Reset exists to un-stick a view the user can no longer see or change. A dashboard
+  // collapsed to nothing is exactly that trap, so collapse must not survive a reset.
+  const store = fakeStorage();
+  saveStoredView(store, { ...parseStoredView(null), collapsed: ['acme/api'], ci: ['failure'] });
+  clearStoredView(store);
+  const after = loadStoredView(store);
+  assert.deepStrictEqual(after.collapsed, []);
+  assert.deepStrictEqual(after.ci, []);
 });
 
 test('toCiValues keeps only known CI statuses', () => {
