@@ -54,6 +54,9 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
   width: 1em;
   color: var(--dim);
 }
+.section-name {
+  font-weight: 600;
+}
 .section-count {
   color: var(--dim);
   font-size: 0.8em;
@@ -72,4 +75,17 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
 .stack-toggle {
   width: auto;
   margin-right: 6px;
+}
+/* The toggle and the PR's own link are siblings here, not nested: an anchor must not contain
+   interactive content. `.row` keeps its own border so a flat (non-stack) row is unaffected;
+   the wrapper owns the line and the indent so the rule spans the toggle too, and the anchor
+   takes the remaining width instead of colliding with it. */
+.stack-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.stack-row .row {
+  flex: 1;
+  border-bottom: none;
 }

@@ -56,9 +56,12 @@ function setCheckedValues(fieldsetId, values) {
 }
 
 /**
- * Keys of the sections the user has folded shut: a repository name for a group header, a
- * root PR's id for a stack. Held as a Set for the membership test `render` does per
- * section, and written back to storage as an array.
+ * Keys of the sections the user has folded shut: `axis:key` for a group header (see
+ * {@link groupCollapseKey}), a bare PR id for a stack root. Held as a Set for the membership
+ * test `render` does per section, and written back to storage as an array. A key outlives the
+ * section it named — switching axes or filtering a group out of view never removes its key —
+ * so the set can carry keys naming nothing currently on screen. Reset view and Expand all are
+ * the only ways to clear them.
  * @type {Set<string>}
  */
 let collapsed = new Set();
@@ -222,65 +225,119 @@ function addStackBadges(row, node) {
 }
 
 /**
+ * The `▾`/`▸` glyph a disclosure button shows. `aria-hidden`: the glyph is decorative in both
+ * callers — a header button's own name already comes from the repo name, count and chips
+ * beside it, and a stack toggle carries an explicit `aria-label` instead of relying on this
+ * text for its accessible name.
+ * @param {boolean} isCollapsed
+ * @returns {HTMLElement}
+ */
+function chevron(isCollapsed) {
+  const el = document.createElement('span');
+  el.className = 'chevron';
+  el.setAttribute('aria-hidden', 'true');
+  el.textContent = isCollapsed ? '▸' : '▾';
+  return el;
+}
+
+/**
+ * Whether collapsing `node` would actually hide anything: true when some descendant, at any
+ * depth, is currently in `allowed`. Gates the stack toggle so a root whose children the active
+ * filters have already excluded doesn't offer a control that folds nothing.
+ * @param {StackNode} node
+ * @param {ReadonlySet<string>} allowed
+ * @returns {boolean}
+ */
+function hasVisibleChild(node, allowed) {
+  return node.children.some((child) => allowed.has(child.pr.id) || hasVisibleChild(child, allowed));
+}
+
+/**
  * Renders a stack's nodes in depth order, skipping any node not in
  * `allowed` while still recursing into its children — a filtered-out PR
  * in the middle of a stack hides its own row but not its descendants',
  * since the stack's shape (not the filter) decides what nests under what.
+ * A collapsed root only stops that recursion when its own row actually rendered: a root the
+ * filter excludes has no toggle anyone could have collapsed, so its children show through it
+ * exactly as any other filtered-out node's would.
  * @param {StackNode} node
  * @param {DocumentFragment | HTMLElement} into
  * @param {ReadonlySet<string>} allowed
  */
 function renderStack(node, into, allowed) {
-  if (allowed.has(node.pr.id)) {
+  const isRoot = node.depth === 0;
+  const rowRendered = allowed.has(node.pr.id);
+  if (rowRendered) {
     const row = renderRow(node.pr);
-    row.style.marginLeft = `${node.depth * 20}px`;
     addStackBadges(row, node);
-    // Only a root with children is worth a toggle: a single PR has nothing to fold, and a
-    // child's own subtree folds with its root.
-    if (node.depth === 0 && node.children.length > 0) {
+    // A sibling wrapper, not a child of `row`: `row` is the PR's own link anchor, and an
+    // anchor must not contain interactive content — a nested button breaks tab order and
+    // screen-reader browse mode, and a middle-click dispatches `auxclick` rather than
+    // `click`, so a handler on the button could never stop the anchor's own navigation.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'stack-row';
+    wrapper.style.marginLeft = `${node.depth * 20}px`;
+    // Only a root with a currently visible descendant is worth a toggle: a single PR has
+    // nothing to fold, a child's own subtree folds with its root, and a root whose children
+    // the filter has already excluded would offer a control that folds nothing.
+    if (isRoot && hasVisibleChild(node, allowed)) {
       const toggle = document.createElement('button');
       toggle.type = 'button';
       toggle.className = 'disclosure stack-toggle';
+      toggle.dataset.key = node.pr.id;
       const isCollapsed = collapsed.has(node.pr.id);
       toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-      toggle.textContent = isCollapsed ? '▸' : '▾';
-      // The toggle sits inside `row`, which is the PR's own link anchor, so an unguarded
-      // click bubbles up and follows that link instead of only folding the stack.
-      toggle.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleCollapsed(node.pr.id);
-      });
-      row.prepend(toggle);
+      // The chevron alone would leave the accessible name a glyph with nothing to say what
+      // it folds, so the toggle names its target explicitly instead of relying on text
+      // content the way the header button does.
+      toggle.setAttribute(
+        'aria-label',
+        `${isCollapsed ? 'Expand' : 'Collapse'} the ${node.pr.repo}#${node.pr.number} stack`,
+      );
+      toggle.append(chevron(isCollapsed));
+      toggle.addEventListener('click', () => toggleCollapsed(node.pr.id));
+      wrapper.append(toggle);
     }
-    into.append(row);
+    wrapper.append(row);
+    into.append(wrapper);
   }
-  if (node.depth === 0 && collapsed.has(node.pr.id)) return;
+  if (isRoot && rowRendered && collapsed.has(node.pr.id)) return;
   for (const child of node.children) renderStack(child, into, allowed);
 }
 
 /**
- * A section header that folds its contents away. The disclosure state lives on the button
- * as `aria-expanded`, and the header keeps the group's size and a state summary while
- * collapsed so folding a repository away never hides that something inside is failing.
+ * The key {@link collapsed} tracks a group header under: the axis and the group's own key,
+ * joined so the same key text under two axes — both `ci` and `review` have a `none` group —
+ * can't collide and fold a section nobody collapsed. A stack key is a bare PR id instead,
+ * never axis-qualified; a PR id always contains `#`, which none of these joined strings do,
+ * so the two kinds of key can never collide with each other either.
+ * @param {import('./group.js').Axis} axis
  * @param {string} key
- * @param {string} label
+ * @returns {string}
+ */
+function groupCollapseKey(axis, key) {
+  return `${axis}:${key}`;
+}
+
+/**
+ * A section header that folds its contents away. The disclosure state lives on the button as
+ * `aria-expanded`, and the count and chips render in both states, not just while collapsed, so
+ * folding a repository away never hides that something inside is failing.
+ * @param {string} collapseKey The axis-qualified key {@link collapsed} tracks this section under.
+ * @param {string} label The unqualified text the button shows — a bare repo name or group key.
  * @param {import('./group.js').GroupSummary} summary
  * @returns {HTMLElement}
  */
-function collapsibleHeader(key, label, summary) {
-  const isCollapsed = collapsed.has(key);
+function collapsibleHeader(collapseKey, label, summary) {
+  const isCollapsed = collapsed.has(collapseKey);
   const h2 = document.createElement('h2');
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'disclosure';
+  button.dataset.key = collapseKey;
   button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
-  button.addEventListener('click', () => toggleCollapsed(key));
-
-  const chevron = document.createElement('span');
-  chevron.className = 'chevron';
-  chevron.textContent = isCollapsed ? '▸' : '▾';
-  button.append(chevron);
+  button.addEventListener('click', () => toggleCollapsed(collapseKey));
+  button.append(chevron(isCollapsed));
 
   const name = document.createElement('span');
   name.className = 'section-name';
@@ -327,6 +384,12 @@ function render(records, stacks) {
   const filtered = applyFilters(records, filters);
   const allowed = new Set(filtered.map((pr) => pr.id));
 
+  // `replaceChildren` below destroys whatever disclosure button currently has focus, which
+  // would otherwise drop keyboard focus to <body> on every toggle. `data-key` identifies the
+  // same section or stack across the rebuild, so focus can move to its replacement.
+  const focused = document.activeElement;
+  const focusedKey = focused instanceof HTMLElement && host.contains(focused) ? focused.dataset.key : undefined;
+
   host.replaceChildren();
 
   // Zero groups used to render nothing at all, so a user with no open PRs and a user whose
@@ -342,9 +405,10 @@ function render(records, stacks) {
   }
 
   for (const group of groupBy(filtered, axis)) {
+    const collapseKey = groupCollapseKey(axis, group.key);
     const section = document.createElement('section');
-    section.append(collapsibleHeader(group.key, group.key, groupSummary(group.records)));
-    if (!collapsed.has(group.key)) {
+    section.append(collapsibleHeader(collapseKey, group.key, groupSummary(group.records)));
+    if (!collapsed.has(collapseKey)) {
       if (axis === 'repo') {
         // The tree, not the flat sort-selectable row list every other axis gets, since a
         // stack's shape is the point of grouping by repo. The Sort control still applies,
@@ -362,6 +426,11 @@ function render(records, stacks) {
       }
     }
     host.append(section);
+  }
+
+  if (focusedKey !== undefined) {
+    const toFocus = host.querySelector(`[data-key="${CSS.escape(focusedKey)}"]`);
+    if (toFocus instanceof HTMLElement) toFocus.focus();
   }
 }
 
@@ -460,11 +529,15 @@ document.getElementById('refresh')?.addEventListener('click', () => void refresh
 document.getElementById('reset')?.addEventListener('click', resetView);
 
 // A way in needs a way out at the same granularity: per-section toggles alone leave no way
-// to undo a session's worth of collapsing.
+// to undo a session's worth of collapsing. Folds stack roots along with group headers so
+// Collapse all and Expand all stay inverses of each other — otherwise expanding a repository
+// afterward would reveal stacks Collapse all never touched.
 document.getElementById('collapse-all')?.addEventListener('click', () => {
-  const groupSel = document.getElementById('group-by');
-  const axis = toAxis(groupSel instanceof HTMLSelectElement ? groupSel.value : '');
-  for (const group of groupBy(current, axis)) collapsed.add(group.key);
+  const axis = readControls().axis;
+  for (const group of groupBy(current, axis)) collapsed.add(groupCollapseKey(axis, group.key));
+  for (const root of currentStacks) {
+    if (root.children.length > 0) collapsed.add(root.pr.id);
+  }
   saveView();
   render(current, currentStacks);
 });

@@ -21,6 +21,7 @@ import { braceBlock } from './brace-block.ts';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_JS = path.join(__dirname, '..', 'public', 'app.js');
 const STRIPPED = stripComments(readFileSync(APP_JS, 'utf8'));
+const INDEX_HTML = readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
 /** The text of a top-level function declaration starting at `startMarker`, up to its closing brace. */
 function functionBody(text: string, startMarker: string): string {
@@ -92,5 +93,54 @@ test('a forced refresh clears any armed poll timer before issuing its request', 
     ifBody,
     /clearTimeout\(\s*pollTimer\s*\)/,
     "expected the guard's own body to clear pollTimer, not an unconditional call elsewhere",
+  );
+});
+
+test('every id app.js looks up by getElementById names a real element in index.html, and the controls app.js binds are the ones app.js actually looks up', () => {
+  // Two independently-derived sets: `boundIds` comes from app.js's own source, and each
+  // control id below is checked against index.html directly — so a rename on either side
+  // (the id in the markup, or the string literal in the getElementById call) fails one side
+  // without needing the other to hardcode what the first one found.
+  const boundIds = new Set(
+    [...STRIPPED.matchAll(/getElementById\('([^']+)'\)/g)].map((match) => match[1]!),
+  );
+  for (const id of ['group-by', 'sort-by', 'collapse-all', 'expand-all', 'reset', 'refresh']) {
+    assert.ok(boundIds.has(id), `expected app.js to call getElementById('${id}')`);
+    assert.ok(INDEX_HTML.includes(`id="${id}"`), `expected index.html to carry an element with id="${id}"`);
+  }
+});
+
+test('renderStack only skips a collapsed root\'s children once its own row actually rendered', () => {
+  // A root the active filters exclude has no row and so no toggle anyone could have
+  // collapsed; an early return keyed on `collapsed.has(node.pr.id)` alone would still fire
+  // for such a root (its id can be in `collapsed` from before the filter changed) and hide
+  // children a user has no way to bring back. The guard must also require the row to have
+  // rendered this pass.
+  const body = functionBody(STRIPPED, 'function renderStack');
+  // `[^()]|\([^()]*\)` allows one level of nested parens, since the condition itself calls
+  // `collapsed.has(node.pr.id)`.
+  const returnMatch = /if\s*\(((?:[^()]|\([^()]*\))*)\)\s*return;/.exec(body);
+  assert.ok(returnMatch, 'expected an early-return guard in renderStack');
+  const condition = returnMatch[1]!;
+  assert.match(condition, /rowRendered/, 'expected the early return to require the row to have rendered');
+  assert.match(condition, /collapsed\.has\(/, 'expected the early return to still check collapsed');
+});
+
+test('readControls reports the in-memory collapsed set unconditionally', () => {
+  // An implementation that falls back to storage when the set is empty
+  // (`collapsed.size > 0 ? [...collapsed] : loadStoredView(localStorage).collapsed`)
+  // type-checks and passes every behavioral test, since it agrees with the spread on every
+  // input except the one that matters: it silently drops the "nothing is collapsed anymore"
+  // state on the next save, so expand-all and the last per-section expand don't persist.
+  const body = functionBody(STRIPPED, 'function readControls');
+  assert.match(
+    body,
+    /collapsed:\s*\[\.\.\.collapsed\]/,
+    'expected readControls to spread the in-memory collapsed Set unconditionally',
+  );
+  assert.doesNotMatch(
+    body,
+    /loadStoredView/,
+    'expected readControls to never read collapsed back from storage',
   );
 });

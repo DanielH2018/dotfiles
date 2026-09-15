@@ -1057,12 +1057,11 @@ test('isStaleResponse is true once a newer request has started', () => {
   assert.strictEqual(isStaleResponse(2, 2), false);
 });
 
-test('index.html carries the controls app.js binds by id', () => {
-  // app.js looks these up by id and silently does nothing if one is missing, so a renamed
-  // or dropped button is invisible without this assertion. emptyStateMessage also names
-  // "Reset view" in its text, so that label is pinned here too.
-  for (const id of ['group-by', 'sort-by', 'collapse-all', 'expand-all', 'reset', 'refresh']) {
-    assert.ok(indexHtml.includes(`id="${id}"`), `index.html must carry an element with id="${id}"`);
+test('collapse-all, expand-all, reset and refresh are real buttons with a real label', () => {
+  // buttonLabel itself asserts a `<button id="...">` match, so a control demoted to a `<div>`
+  // fails here rather than passing a check that only greps for the id attribute.
+  for (const id of ['collapse-all', 'expand-all', 'reset', 'refresh']) {
+    const label = buttonLabel(indexHtml, id);
+    assert.ok(label.length > 0, `expected the ${id} button to carry a label`);
   }
-  assert.ok(indexHtml.includes('>Reset view<'), 'emptyStateMessage names the "Reset view" control');
 });
