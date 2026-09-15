@@ -72,10 +72,18 @@ export function createClient(opts: ClientOpts): Client {
         // GitHub names the real problem. `res.headers?.` guards a test double that omits
         // headers so a missing headers object degrades to "no signal" instead of crashing;
         // a real fetch Response always has one.
-        const retryAfter = res.headers?.get('retry-after') ?? null;
+        //
+        // Scoping both header signals to 403 is also what makes the order of this check
+        // and the 401 above irrelevant: a 401 carrying either header still reports as an
+        // expired token, whichever check runs first, so nothing here rests on that order.
+        //
+        // `headers.get` returns '' for a present-but-empty header, which is not null, so an
+        // empty Retry-After used to enter this branch and then fail the digit test below,
+        // rendering the sentence "Retry after ." An empty header is no signal.
+        const retryAfterHeader = res.headers?.get('retry-after') ?? null;
+        const retryAfter = retryAfterHeader === '' ? null : retryAfterHeader;
         const remaining = res.headers?.get('x-ratelimit-remaining') ?? null;
-        const isRateLimitStatus = res.status === 403 || res.status === 429;
-        if (res.status === 429 || (isRateLimitStatus && (retryAfter !== null || remaining === '0'))) {
+        if (res.status === 429 || (res.status === 403 && (retryAfter !== null || remaining === '0'))) {
           // Retry-After is either delay-seconds or an HTTP-date (RFC 9110 section 10.2.3);
           // only the numeric form reads naturally with a unit appended.
           const retrySuffix =

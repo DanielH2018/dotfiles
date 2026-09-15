@@ -38,16 +38,16 @@ const RELATIVE_JS_SPECIFIER = /(?:from\s+|import\(\s*)['"](\.\.?\/[^'"]*\.js)['"
 //
 // A string literal is left intact: the specifier the scan is looking for lives inside one,
 // and `//` inside a URL string is not a comment opener. Single, double and backtick quotes
-// are all tracked. Two cases are knowingly out of reach without a real tokenizer, and both
-// are left alone rather than half-handled:
+// are all tracked, and so are regex literals — a regex is skipped rather than blanked,
+// since it is code, but its contents must not be read as comment openers. `/\//` and
+// `/[/*]/` are the two shapes that mattered: the first reads as a line comment from its
+// escaped slash onward, the second as a block comment running to the next `*/`, and either
+// silently hid a real violation on the same line.
 //
-//   - A regex literal whose character class holds a slash-star (`/[/*]/`) reads as a block
-//     comment opener, blanking everything up to the next `*/`. That direction is a false
-//     negative — a real violation below it would be missed silently.
-//   - `${...}` interpolation inside a template literal is treated as string content, so a
-//     comment written inside one is not stripped. That direction is a false positive.
-//
-// Neither pattern appears in this codebase's import style, which is what the guard scans.
+// One case is knowingly out of reach without a real tokenizer and is left alone rather than
+// half-handled: `${...}` interpolation inside a template literal is treated as string
+// content, so a comment written inside one is not stripped. That direction is a false
+// positive, and the pattern does not appear in this codebase's import style.
 function stripComments(text: string): string {
   const out = text.split('');
   const blank = (from: number, to: number): void => {
@@ -71,11 +71,79 @@ function stripComments(text: string): string {
       i = stop;
     } else if (ch === "'" || ch === '"' || ch === '`') {
       i = skipStringLiteral(text, i);
+    } else if (ch === '/' && opensRegexLiteral(out, i)) {
+      // The comment branches above come first deliberately: neither `//` nor `/*` can open
+      // a regex literal, since an empty regex is not valid JavaScript.
+      const end = skipRegexLiteral(text, i);
+      i = end === -1 ? i + 1 : end;
     } else {
       i += 1;
     }
   }
   return out.join('');
+}
+
+// Where a value can begin, a `/` opens a regex literal; after a value, it is division.
+// Distinguishing them exactly needs a tokenizer, so this reads the preceding significant
+// character instead. `)` and `]` are deliberately absent: they end a value, so a slash after
+// one is division. Getting this wrong in the permissive direction would let a division run
+// to the next slash and swallow whatever followed, which is why there is a fixture for it.
+const REGEX_PRECEDING_CHARS = new Set([
+  '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>',
+  '~', '^', '\n',
+]);
+
+// Keywords a regex literal can directly follow. An identifier or a literal before the slash
+// means division; these are the words that read as operators instead.
+const REGEX_PRECEDING_WORDS = [
+  'return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'yield',
+  'await',
+];
+
+/**
+ * Whether the `/` at `slash` in `chars` opens a regex literal rather than dividing. Reads
+ * `chars` — the partially stripped output — not the original text, so a comment already
+ * blanked to spaces does not count as the preceding token.
+ */
+function opensRegexLiteral(chars: readonly string[], slash: number): boolean {
+  let i = slash - 1;
+  while (i >= 0 && (chars[i] === ' ' || chars[i] === '\t')) i -= 1;
+  if (i < 0) return true;
+  const ch = chars[i]!;
+  if (REGEX_PRECEDING_CHARS.has(ch)) return true;
+  if (!/[A-Za-z0-9_$]/.test(ch)) return false;
+  // Longest keyword above is 6 characters, plus one for the boundary character before it.
+  const window = chars.slice(Math.max(0, i - 7), i + 1).join('');
+  return REGEX_PRECEDING_WORDS.some((word) =>
+    new RegExp(`(^|[^A-Za-z0-9_$])${word}$`).test(window),
+  );
+}
+
+/**
+ * The offset just past the regex literal opening at `start`, or -1 when the literal does
+ * not close before the end of its line — in which case the `/` was not one after all.
+ * Tracks character classes, because a `/` inside `[...]` does not close the literal.
+ */
+function skipRegexLiteral(text: string, start: number): number {
+  let i = start + 1;
+  let inClass = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === '\n') return -1;
+    if (inClass) {
+      if (ch === ']') inClass = false;
+    } else if (ch === '[') {
+      inClass = true;
+    } else if (ch === '/') {
+      return i + 1;
+    }
+    i += 1;
+  }
+  return -1;
 }
 
 // Returns the offset just past the string literal opening at `start`. An unterminated single-
@@ -230,6 +298,46 @@ test('fixture: block comments above a violation do not shift its reported line',
   const hits = findJsSpecifiers(text);
   assert.equal(hits.length, 1);
   assert.equal(hits[0]!.line, 8);
+});
+
+// A regex literal holding a comment-opener sequence used to blind the scan for the rest of
+// the line, or as far as the next `*/`. Both idioms defeated it: `/\//` reads as a line
+// comment from its escaped slash onward, and `/[/*]/` reads as a block comment. The escaped
+// slash is much the commoner of the two, and neither was covered.
+test('fixture: an escaped slash in a regex does not hide an import on the same line', () => {
+  const text = "const re = /\\//; import { x } from './sibling.js';\n";
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.specifier, './sibling.js');
+});
+
+test('fixture: a slash-star character class does not hide an import on the same line', () => {
+  const text = "const re = /[/*]/; import { x } from './sibling.js';\n";
+  const hits = findJsSpecifiers(text);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]!.specifier, './sibling.js');
+});
+
+test('fixture: a real comment after a regex literal is still stripped', () => {
+  // The other direction of the same fix. Skipping the regex must stop at its closing
+  // delimiter, or a prose mention after one becomes a push-blocking false positive.
+  const text = "const re = /\\d+/; // import { x } from './types.js'\n";
+  assert.equal(findJsSpecifiers(text).length, 0);
+});
+
+test('fixture: a division is not mistaken for a regex literal', () => {
+  // Deciding whether `/` opens a regex reads the preceding token, so an over-eager rule
+  // would treat `total / 2` as a literal running to the next slash and swallow what
+  // follows. An identifier or `)` before the slash means division.
+  const divisions = [
+    "const half = total / 2; import { x } from './sibling.js';\n",
+    "const r = (a + b) / c; import { x } from './sibling.js';\n",
+  ];
+  for (const text of divisions) {
+    const hits = findJsSpecifiers(text);
+    assert.equal(hits.length, 1, text);
+    assert.equal(hits[0]!.specifier, './sibling.js');
+  }
 });
 
 test('fixture: a dynamic import() specifier is found by the text scan', () => {

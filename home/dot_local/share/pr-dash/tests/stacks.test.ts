@@ -144,6 +144,20 @@ test('a null defaultBranch falls back to the conventional trunk-name list', () =
   assert.strictEqual(roots[0]!.ambiguousBase, false);
 });
 
+// `undefined` is not reachable through normalize.ts, which always sets the field via
+// `?? null`, so this needs a producer that bypasses normalize -- a cast stands in for one.
+// It is pinned anyway because a `!== null` guard treats undefined as a known branch name,
+// skips the name-list fallback, compares `baseRef === undefined` (never true), and so marks
+// every trunk-based PR in the batch "base merged" -- a systemic false positive on the one
+// marker that means "act on this", on the exact line that broke three times during its own
+// fix rounds. Neither spelling of the guard was pinned before this.
+test('an undefined defaultBranch falls back to the list, like a null one', () => {
+  const record = { ...pr('a/b', 1, 'f1', 'main'), defaultBranch: undefined as unknown as null };
+  const roots = buildStacks([record]);
+  assert.strictEqual(roots[0]!.danglingBase, false);
+  assert.strictEqual(roots[0]!.ambiguousBase, false);
+});
+
 // Fix round 2: a base that names a headRef shared by more than one open PR is a real
 // candidate parent, just not a determinable one -- distinct from a merged-away parent,
 // which is what danglingBase means. The round-1 fix for finding 2 (stopping the false

@@ -13,6 +13,7 @@ import {
   toStalenessValues,
   toDraftValues,
   parsePrsBody,
+  emptyStateMessage,
   isSafeUrl,
   parseStoredView,
   loadStoredView,
@@ -95,6 +96,15 @@ type FieldKind = 'string' | 'number' | 'boolean' | 'enum';
  * NOT be rejected. Both test tables below are generated from this single
  * list, so covering a field `validateRecord` gains means adding one row
  * here rather than a new test block.
+ *
+ * `edgeInvalid` carries the cases `breakField` cannot express. For a string
+ * field that is a value of the wrong type, which is a different check from
+ * `breakField`'s absence: with only the absence case, narrowing
+ * `typeof x !== 'string'` to `x === undefined` leaves the whole suite green
+ * while a numeric `repo` reaches `localeCompare` and throws deep inside
+ * group.js. The three string rows use three different wrong types rather
+ * than one shape copied twice, since a validator can be wrong about a
+ * number and right about an array.
  */
 const FIELD_SPECS: {
   field: string;
@@ -102,17 +112,19 @@ const FIELD_SPECS: {
   edgeValid?: unknown;
   edgeInvalid?: unknown;
 }[] = [
-  { field: 'repo', kind: 'string' },
-  { field: 'title', kind: 'string', edgeValid: '' },
-  { field: 'url', kind: 'string' },
+  { field: 'repo', kind: 'string', edgeInvalid: 42 },
+  { field: 'title', kind: 'string', edgeValid: '', edgeInvalid: null },
+  { field: 'url', kind: 'string', edgeInvalid: ['https://github.com/x/y/pull/1'] },
   { field: 'number', kind: 'number', edgeValid: 0 },
   // NaN and Infinity both pass `typeof x === 'number'`, so a numeric field needs its own
   // edgeInvalid case rather than relying on breakField's "wrong type" coverage: normalize.ts
   // has its own reasons never to emit either, but this guard exists precisely to catch what
   // upstream got wrong, so it must reject a non-finite number even if nothing here does.
+  // Both halves of `Number.isFinite` need a case: with NaN alone, narrowing the check to
+  // `Number.isNaN` leaves the suite green and an infinite staleDays passes validation.
   { field: 'staleDays', kind: 'number', edgeValid: 0, edgeInvalid: NaN },
-  { field: 'ageDays', kind: 'number', edgeValid: 0 },
-  { field: 'additions', kind: 'number', edgeValid: 0 },
+  { field: 'ageDays', kind: 'number', edgeValid: 0, edgeInvalid: Infinity },
+  { field: 'additions', kind: 'number', edgeValid: 0, edgeInvalid: -Infinity },
   { field: 'deletions', kind: 'number', edgeValid: 0 },
   { field: 'isDraft', kind: 'boolean' },
   { field: 'ci', kind: 'enum' },
@@ -323,16 +335,22 @@ for (const { field, edgeInvalid } of FIELD_SPECS) {
 }
 
 test(
-  'a malformed record throws before "current" is reassigned, so a fallback ' +
-    're-render of the previous rows does not throw a second time',
+  'parsePrsBody throws before it returns, so a caller that assigns only from its ' +
+    'result keeps the previous rows and can re-render them without throwing again',
   () => {
-    // Mirrors app.js's refresh(): `current` is assigned only from the awaited
-    // load's result, so a load that throws leaves `current` at its previous
-    // value, and the catch's fallback re-renders that value instead of the
-    // bad one. Reproduces the reviewer's repro directly: with the per-element
-    // check removed, groupBy's `a.key.localeCompare(b.key)` throws on the
-    // second (malformed) record's undefined `repo`, inside the fallback
-    // render too, uncaught.
+    // What this pins is parsePrsBody's own timing: it validates every element before
+    // returning anything, so a caller assigning only from its result still holds the last
+    // good value when it throws. That is the property the recovery path depends on, and it
+    // is exercised here through the real parsePrsBody and the real groupBy.
+    //
+    // The refresh()-shaped scaffolding around them is a mirror, not a gate: it
+    // re-implements app.js's control flow rather than importing it, so it cannot catch a
+    // change in app.js. app.js stays unpinned by design — it reads `location.hash` at
+    // module scope, so it cannot be imported under `node --test` and there is no jsdom.
+    //
+    // With the per-element check removed, groupBy's `a.key.localeCompare(b.key)` throws on
+    // the second (malformed) record's undefined `repo`, inside the fallback render too,
+    // uncaught. That is the double fault this boundary exists to prevent.
     const previousGoodRecords = [validRecord];
     let current: PrRecord[] = previousGoodRecords;
     let renderCount = 0;
@@ -389,6 +407,81 @@ test('parsePrsBody drops non-string partialErrors entries rather than throwing',
 test('parsePrsBody treats a non-array partialErrors as nothing having failed', () => {
   const parsed = parsePrsBody({ prs: [validRecord], partialErrors: 'everything broke' });
   assert.deepStrictEqual(parsed.partialErrors, []);
+});
+
+test('parsePrsBody validates a stack node, naming where in the forest it sits', () => {
+  // `stacks` is the other field the render path consumes, and it used to be cast straight
+  // off the raw body while `prs` went through this boundary. A node missing `children`
+  // crashes indexStacks, and the catch would then re-render the same bad value and throw
+  // again, uncaught — the exact double fault the prs check exists to prevent.
+  assert.throws(
+    () => parsePrsBody({ prs: [validRecord], stacks: [{ pr: validRecord, depth: 0 }] }),
+    /stack node 0/,
+  );
+  assert.throws(
+    () =>
+      parsePrsBody({
+        prs: [validRecord],
+        stacks: [
+          {
+            pr: validRecord,
+            children: [{ pr: { ...validRecord, repo: 7 }, children: [], depth: 1, position: 2, stackSize: 2, danglingBase: false, ambiguousBase: false }],
+            depth: 0,
+            position: 1,
+            stackSize: 2,
+            danglingBase: false,
+            ambiguousBase: false,
+          },
+        ],
+      }),
+    /stack node 0\.0 has an invalid "repo"/,
+  );
+});
+
+test('parsePrsBody returns a well-formed forest unchanged, nesting included', () => {
+  const child = {
+    pr: { ...validRecord, id: 'x/y#2', number: 2 },
+    children: [],
+    depth: 1,
+    position: 2,
+    stackSize: 2,
+    danglingBase: false,
+    ambiguousBase: false,
+  };
+  const root = {
+    pr: validRecord,
+    children: [child],
+    depth: 0,
+    position: 1,
+    stackSize: 2,
+    danglingBase: false,
+    ambiguousBase: true,
+  };
+  const parsed = parsePrsBody({ prs: [validRecord], stacks: [root] });
+  assert.deepStrictEqual(parsed.stacks, [root]);
+});
+
+test('parsePrsBody treats an absent stacks as an empty forest', () => {
+  // Rows then render flat with no badges, which is what a response carrying no forest
+  // means. A present-but-malformed `stacks` is a type violation and throws instead.
+  assert.deepStrictEqual(parsePrsBody({ prs: [validRecord] }).stacks, []);
+});
+
+test('emptyStateMessage tells "no open PRs" apart from "filters hid them all"', () => {
+  // spec:172-173 justifies the Reset control with exactly this problem: a saved filter
+  // state that cannot be cleared is a trap because the dashboard looks empty and the
+  // reason is invisible. Two blank pages for two unrelated situations is that trap.
+  const noPrs = emptyStateMessage(0, 0);
+  const allFiltered = emptyStateMessage(4, 0);
+  assert.notStrictEqual(noPrs, null);
+  assert.notStrictEqual(allFiltered, null);
+  assert.notStrictEqual(noPrs, allFiltered);
+  assert.match(String(allFiltered), /Reset view/);
+  assert.doesNotMatch(String(noPrs), /filter/i);
+});
+
+test('emptyStateMessage returns null when there is anything to render', () => {
+  assert.strictEqual(emptyStateMessage(4, 1), null);
 });
 
 test('isSafeUrl accepts https and http', () => {

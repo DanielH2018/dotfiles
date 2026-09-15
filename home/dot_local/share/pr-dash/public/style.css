@@ -12,6 +12,7 @@ legend { padding:0 4px; font-size:11px; text-transform:uppercase; letter-spacing
 fieldset label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
 input[type=checkbox] { accent-color:var(--line); }
 main { padding:8px 24px 48px; }
+.empty { color:var(--dim); margin:28px 0; }
 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
      color:var(--dim); margin:28px 0 8px; }
 /* align-items:center keeps a badge chip vertically centered against the title text

@@ -292,6 +292,73 @@ test('a Retry-After given as an HTTP-date is reported without a bogus "s" unit',
   );
 });
 
+test('a 403 with x-ratelimit-remaining: 0 is rate limiting', async () => {
+  // The positive half of the scoping below. Primary rate-limit exhaustion zeroes this
+  // header without necessarily sending Retry-After, so it is its own signal.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 403,
+        headers: new Headers({ 'x-ratelimit-remaining': '0' }),
+        text: async () => 'API rate limit exceeded',
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => /rate.limited/i.test(e.message) && /Wait for the rate limit/.test(e.message),
+  );
+});
+
+test('a 500 with x-ratelimit-remaining: 0 is an outage, not rate limiting', async () => {
+  // The scoping of both rate-limit signals to 403 and 429 is what makes the branch order
+  // in `query` irrelevant, so it is pinned rather than left to a hand check: a 5xx that
+  // happens to carry a rate-limit header is GitHub being down, and telling someone to wait
+  // for a limit to reset would send them away from the real problem.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 500,
+        headers: new Headers({ 'x-ratelimit-remaining': '0' }),
+        text: async () => 'Internal Server Error',
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => /Internal Server Error/.test(e.message) && !/rate.limited/i.test(e.message),
+  );
+});
+
+test('an empty Retry-After is no signal at all, on either status', async () => {
+  // `headers.get` returns '' for a present-but-empty header, which is `!== null`, so it
+  // entered the rate-limit branch and then failed the digit test — rendering the sentence
+  // "Retry after ." Real GitHub does not send this; an intermediary might.
+  const respond = (status: number, body: string) =>
+    createClient({
+      token: 'tok',
+      fetchImpl: async () =>
+        ({
+          ok: false,
+          status,
+          headers: new Headers({ 'retry-after': '' }),
+          text: async () => body,
+        } as unknown as Response),
+    });
+
+  await assert.rejects(
+    () => fetchAllPrs(respond(429, 'rate limited')),
+    (e: Error) => /rate.limited/i.test(e.message) && !/Retry after \./.test(e.message),
+  );
+  // On a 403 an empty header carries no rate-limit signal, so this is a scope problem.
+  await assert.rejects(
+    () => fetchAllPrs(respond(403, 'Resource not accessible: missing scope')),
+    (e: Error) => /missing scope/.test(e.message) && !/rate.limited/i.test(e.message),
+  );
+});
+
 test('a 503 carrying Retry-After surfaces as a generic failure, not rate limiting', async () => {
   const client = createClient({
     token: 'tok',

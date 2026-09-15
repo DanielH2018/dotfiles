@@ -8,6 +8,7 @@ import {
   toStalenessValues,
   toDraftValues,
   parsePrsBody,
+  emptyStateMessage,
   isSafeUrl,
   loadStoredView,
   saveStoredView,
@@ -104,19 +105,18 @@ function resetView() {
  * cache TTL" — the Refresh button's whole job. Without it the server may answer from
  * its 60-second cache, which is what a first load and any later poll want.
  * @param {boolean} force
- * @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string, partialErrors: string[] }>}
+ * @returns {Promise<import('./render-guards.js').ParsedPrsBody>}
  */
 async function loadPrs(force) {
   const path = force ? '/api/prs?refresh=1' : '/api/prs';
   const res = await fetch(path, { headers: { 'x-pr-dash-secret': secret } });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const body = await res.json();
-  const { prs, stale, error, fetchedAt, partialErrors } = parsePrsBody(body);
-  // The server builds stacks from the same prs this request just validated, so no
-  // separate validation is needed here — unlike prs, which travels over the network
-  // as the one boundary tsc cannot enforce PrRecord[] across.
-  const stacks = /** @type {StackNode[]} */ (body.stacks);
-  return { prs, stacks, stale, error, fetchedAt, partialErrors };
+  // Both fields the render path consumes come back through parsePrsBody. `stacks` used to
+  // be cast straight off the raw body on the grounds that the server derives it from the
+  // same prs — true, and still no reason for one of the two to skip the boundary tsc
+  // cannot enforce across the network.
+  return parsePrsBody(body);
 }
 
 /** @param {string} message */
@@ -236,6 +236,19 @@ function render(records, stacks) {
   const allowed = new Set(filtered.map((pr) => pr.id));
 
   host.replaceChildren();
+
+  // Zero groups used to render nothing at all, so a user with no open PRs and a user whose
+  // filters exclude every PR saw the same blank page. Which of the two it is decides what
+  // to do next, so the page says.
+  const empty = emptyStateMessage(records.length, filtered.length);
+  if (empty !== null) {
+    const message = document.createElement('p');
+    message.className = 'empty';
+    message.textContent = empty;
+    host.append(message);
+    return;
+  }
+
   for (const group of groupBy(filtered, axis)) {
     const section = document.createElement('section');
     const h2 = document.createElement('h2');

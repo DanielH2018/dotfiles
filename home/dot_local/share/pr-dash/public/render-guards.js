@@ -6,6 +6,7 @@ import { DRAFT_STATES, STALENESS_BUCKETS } from './group.js';
 /** @typedef {import('./group.js').StalenessBucket} StalenessBucket */
 /** @typedef {import('./group.js').DraftState} DraftState */
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
+/** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {import('../src/types.ts').Ci} Ci */
 /** @typedef {import('../src/types.ts').Review} Review */
 
@@ -84,29 +85,30 @@ export const CI_VALUES = ['success', 'failure', 'pending', 'none'];
 export const REVIEW_VALUES = ['approved', 'changes_requested', 'review_required', 'none'];
 
 /**
- * @param {number} index
+ * @param {string} label
  * @param {string} field
  * @returns {never}
  */
-function invalidField(index, field) {
-  throw new Error(`malformed /api/prs response: record ${index} has an invalid "${field}"`);
+function invalidField(label, field) {
+  throw new Error(`malformed /api/prs response: ${label} has an invalid "${field}"`);
 }
 
 /**
- * Validates one element of a parsed `/api/prs` body against the fields the
- * render path reads, throwing with the record's index and the offending
- * field so a bad response is diagnosable rather than just rejected.
+ * Validates one PR record against the fields the render path reads, throwing with `label`
+ * and the offending field so a bad response is diagnosable rather than just rejected.
+ * `label` names where the record sits — `record 3` in `prs`, `stack node 0.1` in the
+ * forest — because the same record shape arrives by both routes.
  * @param {unknown} record
- * @param {number} index
+ * @param {string} label
  * @returns {PrRecord}
  */
-function validateRecord(record, index) {
+function validateRecord(record, label) {
   if (record === null || typeof record !== 'object') {
-    throw new Error(`malformed /api/prs response: record ${index} is not an object`);
+    throw new Error(`malformed /api/prs response: ${label} is not an object`);
   }
   const fields = /** @type {Record<string, unknown>} */ (record);
   for (const field of STRING_FIELDS) {
-    if (typeof fields[field] !== 'string') invalidField(index, field);
+    if (typeof fields[field] !== 'string') invalidField(label, field);
   }
   for (const field of NUMBER_FIELDS) {
     // `typeof x === 'number'` is true for NaN and Infinity too, and both corrupt the render
@@ -114,19 +116,59 @@ function validateRecord(record, index) {
     // comparison touching NaN, leaving stale/age sort undefined. This boundary exists to
     // catch what upstream got wrong, so it rejects non-finite values, not just wrong types.
     if (typeof fields[field] !== 'number' || !Number.isFinite(fields[field])) {
-      invalidField(index, field);
+      invalidField(label, field);
     }
   }
-  if (typeof fields['isDraft'] !== 'boolean') invalidField(index, 'isDraft');
-  if (!CI_VALUES.includes(/** @type {Ci} */ (fields['ci']))) invalidField(index, 'ci');
-  if (!REVIEW_VALUES.includes(/** @type {Review} */ (fields['review']))) invalidField(index, 'review');
+  if (typeof fields['isDraft'] !== 'boolean') invalidField(label, 'isDraft');
+  if (!CI_VALUES.includes(/** @type {Ci} */ (fields['ci']))) invalidField(label, 'ci');
+  if (!REVIEW_VALUES.includes(/** @type {Review} */ (fields['review']))) invalidField(label, 'review');
   return /** @type {PrRecord} */ (record);
+}
+
+/** The numeric fields every stack node carries, all of them read by the render path. */
+const STACK_NUMBER_FIELDS = ['depth', 'position', 'stackSize'];
+
+/** The boolean flags every stack node carries, each one a badge on the row. */
+const STACK_BOOLEAN_FIELDS = ['danglingBase', 'ambiguousBase'];
+
+/**
+ * Validates one stack node and its descendants. `path` is the node's position in the
+ * forest, so `stack node 0.1` is the second child of the first root.
+ *
+ * The render path reads every field checked here: `indexStacks` walks `children`,
+ * `renderStack` reads `depth` and calls `renderRow(node.pr)`, and `addStackBadges` reads
+ * the rest. A node missing one of them throws inside the render, where the caller's catch
+ * re-renders the same value and throws again, uncaught.
+ * @param {unknown} node
+ * @param {string} path
+ * @returns {StackNode}
+ */
+function validateStackNode(node, path) {
+  const label = `stack node ${path}`;
+  if (node === null || typeof node !== 'object') {
+    throw new Error(`malformed /api/prs response: ${label} is not an object`);
+  }
+  const fields = /** @type {Record<string, unknown>} */ (node);
+  validateRecord(fields['pr'], label);
+  for (const field of STACK_NUMBER_FIELDS) {
+    if (typeof fields[field] !== 'number' || !Number.isFinite(fields[field])) {
+      invalidField(label, field);
+    }
+  }
+  for (const field of STACK_BOOLEAN_FIELDS) {
+    if (typeof fields[field] !== 'boolean') invalidField(label, field);
+  }
+  if (!Array.isArray(fields['children'])) invalidField(label, 'children');
+  const children = /** @type {unknown[]} */ (fields['children']);
+  children.forEach((child, index) => validateStackNode(child, `${path}.${index}`));
+  return /** @type {StackNode} */ (node);
 }
 
 /**
  * A parsed and validated `/api/prs` response body.
  * @typedef {object} ParsedPrsBody
  * @property {PrRecord[]} prs
+ * @property {StackNode[]} stacks
  * @property {boolean} stale
  * @property {string} [error]
  * @property {string} fetchedAt
@@ -166,7 +208,19 @@ export function parsePrsBody(body) {
   }
   const fields = /** @type {Record<string, unknown>} */ (body);
   const rawPrs = /** @type {unknown[]} */ (fields['prs']);
-  const prs = rawPrs.map((record, index) => validateRecord(record, index));
+  const prs = rawPrs.map((record, index) => validateRecord(record, `record ${index}`));
+  // `stacks` goes through the boundary too. It used to be cast straight off the raw body in
+  // app.js while `prs` was validated here, and one of the two fields the render path
+  // consumes opting out is how the untrusted-input invariant rots. An absent `stacks` is a
+  // response carrying no forest, which renders flat; a present one that is not a
+  // well-formed forest is a type violation and throws, like a malformed `prs`.
+  const rawStacks = fields['stacks'];
+  const stacks =
+    rawStacks === undefined
+      ? []
+      : Array.isArray(rawStacks)
+        ? rawStacks.map((node, index) => validateStackNode(node, String(index)))
+        : invalidField('response body', 'stacks');
   const stale = fields['stale'] !== false;
   const error = typeof fields['error'] === 'string' ? fields['error'] : undefined;
   const fetchedAt = typeof fields['fetchedAt'] === 'string' ? fields['fetchedAt'] : '';
@@ -176,7 +230,27 @@ export function parsePrsBody(body) {
   // banner, and a non-array degrades to "nothing known to have failed".
   const raw = fields['partialErrors'];
   const partialErrors = Array.isArray(raw) ? raw.filter((e) => typeof e === 'string') : [];
-  return { prs, stale, error, fetchedAt, partialErrors };
+  return { prs, stacks, stale, error, fetchedAt, partialErrors };
+}
+
+/**
+ * The message to show in place of the group list, or `null` when there is at least one row
+ * to render.
+ *
+ * Two different situations reach zero rows and a blank page cannot tell them apart: the
+ * user has no open PRs, or the active filters exclude every PR they have. spec:172-173
+ * justifies the Reset control with exactly that — a filter state the user cannot see is a
+ * trap because the dashboard looks empty and the reason is invisible — so the second case
+ * names the control that undoes it.
+ * @param {number} totalRecords How many PRs the payload carries.
+ * @param {number} visibleRecords How many survive the active filters.
+ * @returns {string | null}
+ */
+export function emptyStateMessage(totalRecords, visibleRecords) {
+  if (visibleRecords > 0) return null;
+  if (totalRecords === 0) return 'No open pull requests.';
+  const plural = totalRecords === 1 ? 'PR' : 'PRs';
+  return `All ${totalRecords} ${plural} are hidden by the active filters. Reset view clears them.`;
 }
 
 /**
