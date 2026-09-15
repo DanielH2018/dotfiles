@@ -22,6 +22,8 @@ import {
   VIEW_KEY,
   staleBanner,
   formatRelativeTime,
+  shouldPollAgain,
+  REFRESH_POLL_TIMEOUT_MS,
 } from '../public/render-guards.js';
 import { DRAFT_STATES, groupBy, STALENESS_BUCKETS, stalenessBucket } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
@@ -867,4 +869,82 @@ test('formatRelativeTime reports days once past 24 hours', () => {
 
 test('formatRelativeTime reports an unknown time for an unparseable timestamp', () => {
   assert.strictEqual(formatRelativeTime('not a date', Date.now()), 'an unknown time ago');
+});
+
+test('parsePrsBody reports a refreshing response', () => {
+  const parsed = parsePrsBody({
+    prs: [],
+    stacks: [],
+    stale: true,
+    fetchedAt: 'OLD',
+    partialErrors: [],
+    refreshing: true,
+  });
+
+  assert.strictEqual(parsed.refreshing, true);
+});
+
+test('parsePrsBody treats an absent or non-true refreshing as not refreshing', () => {
+  const base = { prs: [], stacks: [], stale: false, fetchedAt: 'NEW', partialErrors: [] };
+
+  assert.strictEqual(parsePrsBody(base).refreshing, false);
+  assert.strictEqual(parsePrsBody({ ...base, refreshing: 'yes' }).refreshing, false);
+});
+
+test('a refreshing payload is named as the last saved list, not as a failed refresh', () => {
+  const message = staleBanner(
+    {
+      stale: true,
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: [],
+      refreshing: true,
+    },
+    Date.parse('2026-09-15T09:00:00.000Z'),
+  );
+
+  assert.strictEqual(message, 'Showing the last saved list (3 hours ago) while it refreshes.');
+});
+
+test('a refreshing payload that was itself partial says both', () => {
+  const message = staleBanner(
+    {
+      stale: true,
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: ['acme/api timed out'],
+      refreshing: true,
+    },
+    Date.parse('2026-09-15T09:00:00.000Z'),
+  );
+
+  assert.strictEqual(
+    message,
+    'Showing the last saved list (3 hours ago) while it refreshes. Some PRs are missing: acme/api timed out',
+  );
+});
+
+test('a failed refresh still names the failure, not the refresh', () => {
+  const message = staleBanner(
+    {
+      stale: true,
+      error: 'network down',
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: [],
+    },
+    Date.parse('2026-09-15T09:00:00.000Z'),
+  );
+
+  assert.strictEqual(message, 'Could not refresh (last success 3 hours ago): network down.');
+});
+
+test('polling continues while a fetch is in flight and stops when it is not', () => {
+  const refreshing = { refreshing: true };
+  const settled = { refreshing: false };
+
+  assert.strictEqual(shouldPollAgain(refreshing, 0), true);
+  assert.strictEqual(shouldPollAgain(refreshing, REFRESH_POLL_TIMEOUT_MS - 1), true);
+  assert.strictEqual(shouldPollAgain(settled, 0), false);
+});
+
+test('polling gives up rather than asking forever', () => {
+  assert.strictEqual(shouldPollAgain({ refreshing: true }, REFRESH_POLL_TIMEOUT_MS), false);
 });

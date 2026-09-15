@@ -41,3 +41,14 @@ test('main.ts calls startPreload before server.listen', () => {
       "launcher's readiness poll and the browser's cold start",
   );
 });
+
+test('main.ts reads the payload store before server.listen', () => {
+  const text = readFileSync(MAIN_TS, 'utf8');
+  const readIndex = text.indexOf('store.read(');
+  const listenIndex = text.indexOf('server.listen(');
+  assert.notStrictEqual(readIndex, -1, 'expected to find store.read( in main.ts');
+  assert.ok(
+    readIndex < listenIndex,
+    'expected the restored payload to be in hand before the server accepts requests',
+  );
+});

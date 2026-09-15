@@ -35,8 +35,8 @@ try {
 const client = createClient({ token });
 const cache = createCache<LoadResult>(60_000);
 const store = createPayloadStore(DEFAULT_STATE_DIR);
-// Read before the server starts: it is one small local file, and having it in hand means
-// the very first /api/prs can answer from it while the pre-loaded fetch is still running.
+// Read before the server starts, so the first /api/prs can answer from it while the
+// pre-loaded fetch started below is still running.
 const restored = await store.read();
 const loadPrs = createLoadPrs(client, cache, {
   initial: restored,
@@ -45,8 +45,9 @@ const loadPrs = createLoadPrs(client, cache, {
   },
 });
 
-// Before listen(), and not awaited: the fetch runs while the launcher polls for the port
-// and the browser starts, so the first /api/prs is served from a warm cache.
+// Started before listen() and not awaited, so it overlaps the launcher's port poll and the
+// browser's start instead of delaying them. The one request it does not beat is answered
+// from the restored payload above rather than waiting on this fetch.
 startPreload(loadPrs, (message) => {
   console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
 });

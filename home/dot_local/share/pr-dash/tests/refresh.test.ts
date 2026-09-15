@@ -337,3 +337,110 @@ test('a throwing onSuccess does not fail the request', async () => {
 
   assert.strictEqual(result.stale, false);
 });
+
+test('a request arriving during an in-flight fetch is served the seed at once', async () => {
+  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fresh: LoadResult = { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+  const loadPrs = withFallback(async () => {
+    await gate;
+    return fresh;
+  }, { initial: seeded });
+
+  const pending = loadPrs();
+  const during = await loadPrs();
+
+  assert.strictEqual(during.refreshing, true, 'the client must be told to ask again');
+  assert.strictEqual(during.stale, true, 'a seed served mid-fetch is not fresh');
+  assert.strictEqual(during.error, undefined, 'nothing failed, so there is no error to name');
+  assert.strictEqual(during.fetchedAt, seeded.fetchedAt);
+  assert.deepStrictEqual(during.prs, one);
+
+  release();
+  const after = await pending;
+  assert.strictEqual(after.stale, false, 'the awaited call still returns the fresh payload');
+  assert.strictEqual(after.fetchedAt, 'NEW');
+});
+
+test('a forced request waits for GitHub rather than taking the seed', async () => {
+  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const loadPrs = withFallback(async () => {
+    await gate;
+    return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+  }, { initial: seeded });
+
+  const pending = loadPrs();
+  const forced = loadPrs({ force: true });
+  release();
+
+  const result = await forced;
+  assert.strictEqual(result.refreshing, undefined, 'a Refresh click is never answered from the seed');
+  assert.strictEqual(result.stale, false);
+  assert.strictEqual(result.fetchedAt, 'NEW');
+  await pending;
+});
+
+test('the shortcut closes once the fetch settles', async () => {
+  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  const loadPrs = withFallback(async () => ({ prs: [], fetchedAt: 'NEW', partialErrors: [] }), {
+    initial: seeded,
+  });
+
+  await loadPrs();
+  const second = await loadPrs();
+
+  assert.strictEqual(second.refreshing, undefined, 'no fetch is running, so nothing is pending');
+  assert.strictEqual(second.stale, false);
+  assert.strictEqual(second.fetchedAt, 'NEW');
+});
+
+test('a cold start with no seed waits for the fetch instead of answering empty', async () => {
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const loadPrs = withFallback(async () => {
+    await gate;
+    return { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  });
+
+  const pending = loadPrs();
+  const during = loadPrs();
+  release();
+
+  const result = await during;
+  assert.strictEqual(result.refreshing, undefined, 'there is nothing to serve, so it must wait');
+  assert.strictEqual(result.stale, false);
+  assert.deepStrictEqual(result.prs, one);
+  await pending;
+});
+
+test('the seed served mid-fetch is not recorded as a success', async () => {
+  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seen: string[] = [];
+  const loadPrs = withFallback(
+    async () => {
+      await gate;
+      return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+    },
+    { initial: seeded, onSuccess: (r) => seen.push(r.fetchedAt) },
+  );
+
+  const pending = loadPrs();
+  await loadPrs();
+  release();
+  await pending;
+
+  assert.deepStrictEqual(seen, ['NEW'], 'only a real fetch is worth persisting');
+});

@@ -170,6 +170,7 @@ function validateStackNode(node, path) {
  * @property {PrRecord[]} prs
  * @property {StackNode[]} stacks
  * @property {boolean} stale
+ * @property {boolean} refreshing
  * @property {string} [error]
  * @property {string} fetchedAt
  * @property {string[]} partialErrors
@@ -225,6 +226,11 @@ export function parsePrsBody(body) {
         ? rawStacks.map((node, index) => validateStackNode(node, String(index)))
         : invalidField('response body', 'stacks');
   const stale = fields['stale'] !== false;
+  // Strict `=== true`, the opposite direction from `stale` above: over-reporting staleness
+  // is safe, but over-reporting a refresh would make the client poll a server that is not
+  // fetching anything. A server-side slip therefore degrades to one render with no poll,
+  // which the Refresh button already recovers from.
+  const refreshing = fields['refreshing'] === true;
   const error = typeof fields['error'] === 'string' ? fields['error'] : undefined;
   const fetchedAt = typeof fields['fetchedAt'] === 'string' ? fields['fetchedAt'] : '';
   // Coerced like the three fields above rather than validated: a malformed
@@ -233,7 +239,7 @@ export function parsePrsBody(body) {
   // banner, and a non-array degrades to "nothing known to have failed".
   const raw = fields['partialErrors'];
   const partialErrors = Array.isArray(raw) ? raw.filter((e) => typeof e === 'string') : [];
-  return { prs, stacks, stale, error, fetchedAt, partialErrors };
+  return { prs, stacks, stale, refreshing, error, fetchedAt, partialErrors };
 }
 
 /**
@@ -455,6 +461,7 @@ export function clearStoredView(storage) {
  * `app.js`'s `loadPrs()` already normalizes off the response body.
  * @typedef {object} RefreshOutcome
  * @property {boolean} stale
+ * @property {boolean} [refreshing]
  * @property {string} [error]
  * @property {string} fetchedAt
  * @property {string[]} partialErrors
@@ -467,13 +474,15 @@ export function clearStoredView(storage) {
  * than checking `stale` itself, because `app.js` cannot be imported under `node --test`
  * (see the module comment above) and a check left there would go untested.
  *
- * Three outcomes need three different sentences. A stale response is a failed refresh
+ * Four outcomes need four different sentences. A stale response is a failed refresh
  * behind retained data, so it names the failure and when the data was last good. A
  * partial response is the opposite case: the fetch succeeded just now and returned only
  * some of the user's PRs, so saying "could not refresh (last success ...)" would be
  * false — the rows are exactly as fresh as `fetchedAt` says. A retained payload that was
  * itself partial is both, and says so, because a user who cannot see the rest of their
- * PRs should not have to infer that from a banner about a refresh failure.
+ * PRs should not have to infer that from a banner about a refresh failure. The fourth is
+ * a payload restored from disk or retained in memory while a fetch runs behind it — not a
+ * failure at all, so it gets its own sentence rather than borrowing the stale one's.
  * @param {RefreshOutcome} data
  * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
  * @returns {string | null}
@@ -483,6 +492,11 @@ export function staleBanner(data, now = Date.now()) {
   const incomplete =
     data.partialErrors.length > 0 ? ` Some PRs are missing: ${data.partialErrors.join('; ')}` : '';
 
+  // Checked before the stale branch, which would otherwise read the absent `error` as
+  // "unknown error" and tell the user a refresh failed while it is still running.
+  if (data.refreshing === true) {
+    return `Showing the last saved list (${when}) while it refreshes.${incomplete}`;
+  }
   if (data.stale) {
     const reason = data.error ?? 'unknown error';
     // The reason comes from upstream and mostly does not end in a full stop, so the
@@ -516,4 +530,24 @@ export function formatRelativeTime(iso, now = Date.now()) {
   if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
   const days = Math.round(hours / 24);
   return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** How long the page waits before asking `/api/prs` again while a fetch is in flight. */
+export const REFRESH_POLL_MS = 600;
+/**
+ * How long it keeps asking before giving up. A fetch still running after this long is
+ * broken rather than slow, and an uncapped poll would hammer the loopback server for the
+ * life of the tab. The Refresh button is the way back from a give-up.
+ */
+export const REFRESH_POLL_TIMEOUT_MS = 60_000;
+
+/**
+ * Whether to ask `/api/prs` again, given the response just rendered and how long this page
+ * has been waiting on the fetch behind it.
+ * @param {{ refreshing?: boolean }} data
+ * @param {number} waitedMs
+ * @returns {boolean}
+ */
+export function shouldPollAgain(data, waitedMs) {
+  return data.refreshing === true && waitedMs < REFRESH_POLL_TIMEOUT_MS;
 }

@@ -15,6 +15,9 @@ import {
   clearStoredView,
   parseStoredView,
   staleBanner,
+  shouldPollAgain,
+  REFRESH_POLL_MS,
+  REFRESH_POLL_TIMEOUT_MS,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
@@ -277,6 +280,37 @@ function render(records, stacks) {
 let current = [];
 /** @type {StackNode[]} */
 let currentStacks = [];
+/**
+ * When the current run of refreshing responses began, or null when none is in progress.
+ * @type {number | null}
+ */
+let refreshingSince = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let pollTimer = null;
+
+/**
+ * Asks `/api/prs` again shortly when the response just rendered was the retained payload
+ * served behind an in-flight fetch. Without this the page paints the restored rows and then
+ * shows them indefinitely, which is worse than the wait it replaces — the rows would be
+ * presented as the current state of the world with no further request to correct them.
+ * @param {{ refreshing?: boolean }} data
+ */
+function schedulePoll(data) {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  if (data.refreshing !== true) {
+    refreshingSince = null;
+    return;
+  }
+  if (refreshingSince === null) refreshingSince = Date.now();
+  if (!shouldPollAgain(data, Date.now() - refreshingSince)) return;
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    void refresh();
+  }, REFRESH_POLL_MS);
+}
 
 /**
  * Loads `/api/prs` and re-renders. `force` is true only for a Refresh click, so the
@@ -297,6 +331,7 @@ async function refresh(force = false) {
     if (message !== null) showBanner(message);
     else hideBanner();
     render(current, currentStacks);
+    schedulePoll(data);
   } catch (err) {
     // Reached only when the request itself failed outright (network error, or a
     // 500 with no retained payload behind it) rather than the server returning a

@@ -85,6 +85,13 @@ export type FallbackResult = {
   partialErrors: string[];
   stale: boolean;
   error?: string;
+  /**
+   * True only on a retained payload served while a fetch is running, which tells the client
+   * to ask again shortly instead of waiting. Absent on every other outcome, including a
+   * retained payload behind a *failed* fetch — there, `error` names the failure and asking
+   * again would just repeat it.
+   */
+  refreshing?: boolean;
 };
 
 export type FallbackOpts = {
@@ -122,11 +129,28 @@ export function withFallback(
   opts: FallbackOpts = {},
 ): (loadOpts?: LoadOpts) => Promise<FallbackResult> {
   let lastGood: LoadResult | undefined = opts.initial;
+  // How many calls are inside `load` right now. A count, not a boolean: two requests can be
+  // awaiting at once, and the shortcut below must stay open until the last of them settles.
+  let fetching = 0;
 
   // `loadOpts` is forwarded rather than dropped: this wrapper is what main.ts hands the
   // server, so a `force` that stops here never reaches the cache and the Refresh button
   // goes back to doing nothing.
   return async (loadOpts?: LoadOpts) => {
+    // Answer from the retained payload rather than joining a fetch already in progress.
+    // This is what the startup restore is for: the browser's first request arrives while
+    // the pre-load is mid-flight, and joining it would make the page wait out the rest of
+    // the GitHub round trip before painting anything. `refreshing` is how the fresh rows
+    // still arrive without a click — the client asks again, and the poll lands on the
+    // cache the pre-load populated rather than on a second GitHub fetch.
+    //
+    // Never for a forced call. The Refresh button exists to reach GitHub, so answering a
+    // click from the retained payload would look like a button that does nothing.
+    if (loadOpts?.force !== true && lastGood !== undefined && fetching > 0) {
+      return { ...lastGood, stale: true, refreshing: true };
+    }
+
+    fetching += 1;
     try {
       const result = await load(loadOpts);
       // A partial result is retained like any other success. It is the most recent view of
@@ -150,6 +174,11 @@ export function withFallback(
         stale: true,
         error: err instanceof Error ? err.message : String(err),
       };
+    } finally {
+      // Decremented on rejection as well as on success. A counter left above zero would
+      // keep the shortcut open forever, so every later request would answer from the
+      // retained payload and the dashboard would never show a fresh fetch again.
+      fetching -= 1;
     }
   };
 }
