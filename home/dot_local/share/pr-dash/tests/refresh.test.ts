@@ -198,9 +198,6 @@ test('startPreload calls the loader without being awaited', async () => {
   };
 
   startPreload(loadPrs);
-  // startPreload returns void, so the fetch it started is still settling here. Yielding
-  // once is enough to let the microtask run.
-  await Promise.resolve();
 
   assert.strictEqual(calls, 1);
 });
@@ -211,9 +208,7 @@ test('a rejected preload neither throws nor leaves an unhandled rejection', asyn
     throw new Error('network down');
   };
 
-  // Throwing synchronously, or returning a promise nobody catches, would take the process
-  // down at startup over a fetch the page would have retried on its own.
-  assert.doesNotThrow(() => startPreload(loadPrs, (m) => seen.push(m)));
+  startPreload(loadPrs, (m) => seen.push(m));
   await new Promise((r) => setTimeout(r, 0));
 
   assert.deepStrictEqual(seen, ['network down']);
