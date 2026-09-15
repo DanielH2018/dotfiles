@@ -285,6 +285,39 @@ apply them to.
 None of the four depends on what the endpoints do, which is the point — the guard is
 written once against a read-only surface and does not change when mutating routes arrive.
 
+### Accepted exposures
+
+Three states below are correct by design rather than defects waiting to be fixed. They are
+written down so a later reviewer finds the decision already made instead of finding a gap.
+
+**The per-launch secret is visible in `ps` while the browser starts.** `bin/pr-dash` hands
+`open` the URL `http://127.0.0.1:<port>/#<secret>`, so the secret appears in that process's
+argv, and on the fallback path — when `open` fails — it is printed to stderr. Any local
+process can read it from `ps` during the launch. This is accepted. Passing the URL to the
+browser is how the fragment design delivers the secret at all, and the fallback has to print
+the URL or the user cannot reach the dashboard. What the secret protects is a loopback
+endpoint that already requires a matching `Host`, so reading it buys an attacker nothing
+they could not get by other means: anyone who can read your `ps` output can read your home
+directory, which is where the 1Password-backed token path and everything else lives. The
+secret also dies with the process, so the window is one browser launch.
+
+**A partial result is cached for the full 60-second TTL.** The cache does not distinguish a
+complete fetch from one carrying `partialErrors`, so a transient GraphQL timeout keeps the
+dashboard incomplete for up to a minute. Not retaining it would be worse: on a cold start
+the page would go blank rather than show the rows that did arrive. Refresh escapes it
+immediately, and the banner names what is missing throughout. The one rough edge is the
+timestamp — the banner reads "fetched just now" for as long as a minute after that stopped
+being true.
+
+**`stacks` validation is asymmetric, and deliberately so.** In `parsePrsBody`, an absent
+`stacks` field yields an empty forest while a present-but-malformed one throws. An absent
+field is a response from a producer that does not build stacks, which the non-repo axes
+render as their flat row lists; a malformed one is a type violation, and the render path
+reads those fields. The asymmetry is visible on the default repo axis, where an empty forest
+renders group headings with no rows under them, because that axis draws only what the forest
+holds. This server always sends the array, so the empty forest is unreachable today — a
+second producer would have to send it.
+
 ## Language and tooling
 
 TypeScript on the server, JSDoc-annotated JavaScript in the browser, both checked by
