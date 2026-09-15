@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { withFallback, createLoadPrs } from '../src/main-lib.ts';
+import { withFallback, createLoadPrs, startPreload } from '../src/main-lib.ts';
 import { createClient } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import type { LoadResult } from '../src/loader.ts';
@@ -188,4 +188,49 @@ test('a forced refresh that fails still falls back to the retained payload', asy
   assert.strictEqual(second.stale, true);
   assert.match(String(second.error), /network down/);
   assert.deepStrictEqual(second.prs, first.prs);
+});
+
+test('startPreload calls the loader without being awaited', async () => {
+  let calls = 0;
+  const loadPrs = async () => {
+    calls += 1;
+    return { prs: one, fetchedAt: 'T1', partialErrors: [], stale: false };
+  };
+
+  startPreload(loadPrs);
+  // startPreload returns void, so the fetch it started is still settling here. Yielding
+  // once is enough to let the microtask run.
+  await Promise.resolve();
+
+  assert.strictEqual(calls, 1);
+});
+
+test('a rejected preload neither throws nor leaves an unhandled rejection', async () => {
+  const seen: string[] = [];
+  const loadPrs = async () => {
+    throw new Error('network down');
+  };
+
+  // Throwing synchronously, or returning a promise nobody catches, would take the process
+  // down at startup over a fetch the page would have retried on its own.
+  assert.doesNotThrow(() => startPreload(loadPrs, (m) => seen.push(m)));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.deepStrictEqual(seen, ['network down']);
+});
+
+test('a rejected preload leaves the loader usable', async () => {
+  let calls = 0;
+  const loadPrs = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('network down');
+    return { prs: one, fetchedAt: 'T1', partialErrors: [], stale: false };
+  };
+
+  startPreload(loadPrs);
+  await new Promise((r) => setTimeout(r, 0));
+  const result = await loadPrs();
+
+  assert.strictEqual(result.stale, false);
+  assert.deepStrictEqual(result.prs, one);
 });

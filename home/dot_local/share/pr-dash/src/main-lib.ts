@@ -137,3 +137,26 @@ export function createLoadPrs(
 ): (opts?: LoadOpts) => Promise<FallbackResult> {
   return withFallback(createPrLoader(client, cache));
 }
+
+/**
+ * Starts the first fetch without waiting for it, so the GitHub round trip overlaps the
+ * launcher's readiness poll and the browser's cold start. By the time `app.js` requests
+ * `/api/prs` the payload is already cached.
+ *
+ * Deliberately not awaited by the caller: awaiting before `listen()` delays the port past
+ * the launcher's `curl` probe, which reintroduces the serial wait this exists to remove
+ * and can push startup past the launcher's 60-second deadline.
+ *
+ * A failure here is not fatal and is not the page's problem. The loader caches only on
+ * success, so the browser's own request retries against GitHub and renders the normal
+ * error banner if that fails too. `onError` exists so the server can say so on stderr
+ * rather than failing silently.
+ */
+export function startPreload(
+  loadPrs: (opts?: LoadOpts) => Promise<FallbackResult>,
+  onError: (message: string) => void = () => {},
+): void {
+  void loadPrs().catch((err: unknown) => {
+    onError(err instanceof Error ? err.message : String(err));
+  });
+}

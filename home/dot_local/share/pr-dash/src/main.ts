@@ -3,7 +3,13 @@ import { createClient } from './github.ts';
 import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
-import { createLoadPrs, expectedHost, listenErrorMessage, parsePort } from './main-lib.ts';
+import {
+  createLoadPrs,
+  expectedHost,
+  listenErrorMessage,
+  parsePort,
+  startPreload,
+} from './main-lib.ts';
 
 const secret = process.env['PR_DASH_SECRET'];
 if (secret === undefined || secret === '') {
@@ -28,6 +34,12 @@ try {
 const client = createClient({ token });
 const cache = createCache<LoadResult>(60_000);
 const loadPrs = createLoadPrs(client, cache);
+
+// Before listen(), and not awaited: the fetch runs while the launcher polls for the port
+// and the browser starts, so the first /api/prs is served from a warm cache.
+startPreload(loadPrs, (message) => {
+  console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
+});
 
 const server = createServer({ secret, host: expectedHost(port), loadPrs });
 // Attached before listen(): without a handler, an occupied port reaches Node's default
