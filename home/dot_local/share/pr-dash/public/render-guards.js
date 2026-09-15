@@ -301,3 +301,50 @@ export function clearStoredView(storage) {
     // Nothing was persisted, or the store is unavailable either way.
   }
 }
+
+/**
+ * The `/api/prs` response fields the banner decision reads. Matches the fields
+ * `app.js`'s `loadPrs()` already normalizes off the response body.
+ * @typedef {object} RefreshOutcome
+ * @property {boolean} stale
+ * @property {string} [error]
+ * @property {string} fetchedAt
+ */
+
+/**
+ * The banner text for a `/api/prs` response, or `null` when the response is fresh and
+ * no banner should show. This is the whole staleness decision, not just its wording:
+ * `app.js` calls this and only this to decide whether to show a banner, rather than
+ * checking `stale` itself, because `app.js` cannot be imported under `node --test` (see
+ * the module comment above) and a check left there would go untested.
+ * @param {RefreshOutcome} data
+ * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
+ * @returns {string | null}
+ */
+export function staleBanner(data, now = Date.now()) {
+  if (!data.stale) return null;
+  const reason = data.error ?? 'unknown error';
+  return `Could not refresh (last success ${formatRelativeTime(data.fetchedAt, now)}): ${reason}`;
+}
+
+/**
+ * Renders the gap between `iso` and `now` as "just now", "N minutes ago", "N hours
+ * ago", or "N days ago". Elapsed time, not the raw timestamp: a viewer's clock isn't
+ * guaranteed to match the server's, and a raw ISO string makes a payload that is two
+ * minutes old and one that is five hours old look identical at a glance.
+ * @param {string} iso
+ * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`.
+ * @returns {string}
+ */
+export function formatRelativeTime(iso, now = Date.now()) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return 'an unknown time ago';
+  const seconds = Math.max(0, Math.round((now - then) / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}

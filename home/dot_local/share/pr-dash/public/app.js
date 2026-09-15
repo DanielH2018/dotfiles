@@ -11,6 +11,7 @@ import {
   saveStoredView,
   clearStoredView,
   parseStoredView,
+  staleBanner,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
@@ -117,6 +118,12 @@ function showBanner(message) {
   if (el === null) return;
   el.textContent = message;
   el.hidden = false;
+}
+
+/** Hides the banner shown by {@link showBanner}. */
+function hideBanner() {
+  const el = document.getElementById('banner');
+  if (el !== null) el.hidden = true;
 }
 
 /** @param {PrRecord} pr */
@@ -254,14 +261,13 @@ async function refresh() {
     current = data.prs;
     currentStacks = data.stacks;
     // A stale response is still a 200: the server retained the last good payload
-    // instead of failing the request, so it never reaches the catch below. The
-    // banner has to be driven from `data.stale`, not from whether this call threw.
-    if (data.stale) {
-      showBanner(`Could not refresh (last success ${data.fetchedAt}): ${data.error ?? 'unknown error'}`);
-    } else {
-      const banner = document.getElementById('banner');
-      if (banner !== null) banner.hidden = true;
-    }
+    // instead of failing the request, so it never reaches the catch below. Whether
+    // to show a banner, and what it says, is staleBanner's call, not a `data.stale`
+    // check inlined here — that decision lives in render-guards.js so it can be
+    // covered by a real test, the same reasoning as every other guard imported above.
+    const message = staleBanner(data);
+    if (message !== null) showBanner(message);
+    else hideBanner();
     render(current, currentStacks);
   } catch (err) {
     // Reached only when the request itself failed outright (network error, or a

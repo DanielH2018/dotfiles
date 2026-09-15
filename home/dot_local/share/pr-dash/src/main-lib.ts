@@ -1,6 +1,9 @@
+import type { Client } from './github.ts';
+import type { Cache } from './cache.ts';
+import { createPrLoader, type LoadPrs, type LoadResult } from './loader.ts';
 import type { PrRecord } from './types.ts';
 
-export type LoadResult = {
+export type FallbackResult = {
   prs: PrRecord[];
   fetchedAt: string;
   stale: boolean;
@@ -11,30 +14,38 @@ export type LoadResult = {
 // token, network, or clock — main.ts had no test at all before this, which is how
 // `cache.set([])` on a failed refresh went unnoticed.
 //
-// `load`'s own success/failure is the only signal this needs: it doesn't know or care
-// whether a success came from a fresh fetch or a cache hit, only that the page must never
-// go blank on a failure that follows a success. `fetchedAt` here is stamped at the instant
-// this wrapper last saw `load()` succeed — callers that need the underlying loader's own
-// fetch timestamp (preserved across a cache hit) track that separately and override this
-// field before handing the result to the server; see main.ts.
-export function withFallback(load: () => Promise<PrRecord[]>): () => Promise<LoadResult> {
-  let lastGood: PrRecord[] | undefined;
-  let lastGoodAt = '';
+// `load` returns its own `fetchedAt` alongside `prs`, and both are captured in the one
+// `lastGood` assignment below — not tracked as two separate variables written at
+// different times. That single source of truth is what a cache hit's true fetch time
+// (as opposed to the instant this wrapper happens to run) actually needs: splitting
+// `prs` and `fetchedAt` into two variables, one inside this closure and one held by a
+// caller, lets two concurrent calls interleave and pair one call's retained `prs` with
+// a different call's `fetchedAt`.
+export function withFallback(load: LoadPrs): () => Promise<FallbackResult> {
+  let lastGood: LoadResult | undefined;
 
   return async () => {
     try {
-      const prs = await load();
-      lastGood = prs;
-      lastGoodAt = new Date().toISOString();
-      return { prs, fetchedAt: lastGoodAt, stale: false };
+      const result = await load();
+      lastGood = result;
+      return { ...result, stale: false };
     } catch (err) {
       if (lastGood === undefined) throw err;
       return {
-        prs: lastGood,
-        fetchedAt: lastGoodAt,
+        ...lastGood,
         stale: true,
         error: err instanceof Error ? err.message : String(err),
       };
     }
   };
+}
+
+// The composition main.ts wires together at startup: a real GitHub client and cache
+// feed createPrLoader, and withFallback sits on top so a failed refresh retains the
+// last good payload instead of going blank. Kept here rather than inline in main.ts so
+// this assembly is itself covered by a test (see refresh.test.ts) — main.ts carries no
+// test coverage at all, being a process shell that reads env vars and calls
+// process.exit, so any wiring left there is untested by construction.
+export function createLoadPrs(client: Client, cache: Cache<LoadResult>): () => Promise<FallbackResult> {
+  return withFallback(createPrLoader(client, cache));
 }

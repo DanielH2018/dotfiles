@@ -71,7 +71,9 @@ async function handle(
     }
     const { prs, fetchedAt, stale, error } = await opts.loadPrs();
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt, stale: stale ?? false, error }));
+    res.end(
+      JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt, stale: stale ?? false, error: error ?? null }),
+    );
     return;
   }
 

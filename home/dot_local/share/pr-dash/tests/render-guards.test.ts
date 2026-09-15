@@ -17,6 +17,8 @@ import {
   saveStoredView,
   clearStoredView,
   VIEW_KEY,
+  staleBanner,
+  formatRelativeTime,
 } from '../public/render-guards.js';
 import { groupBy } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
@@ -410,4 +412,53 @@ test('toCiValues keeps only known CI statuses', () => {
 
 test('toReviewValues keeps only known review states', () => {
   assert.deepStrictEqual(toReviewValues(['approved', 'bogus']), ['approved']);
+});
+
+test('staleBanner returns null for a fresh response', () => {
+  assert.strictEqual(staleBanner({ stale: false, fetchedAt: '2026-01-01T00:00:00.000Z' }), null);
+});
+
+test('staleBanner names the error and the last-success time for a stale response', () => {
+  const now = Date.parse('2026-01-01T03:00:00.000Z');
+  const message = staleBanner(
+    { stale: true, error: 'network down', fetchedAt: '2026-01-01T00:00:00.000Z' },
+    now,
+  );
+  assert.match(String(message), /network down/);
+  assert.match(String(message), /3 hours ago/);
+});
+
+test('staleBanner falls back to "unknown error" when the response carries none', () => {
+  const now = Date.parse('2026-01-01T00:00:30.000Z');
+  const message = staleBanner({ stale: true, fetchedAt: '2026-01-01T00:00:00.000Z' }, now);
+  assert.match(String(message), /unknown error/);
+});
+
+test('formatRelativeTime reports "just now" under a minute', () => {
+  const now = Date.parse('2026-01-01T00:00:30.000Z');
+  assert.strictEqual(formatRelativeTime('2026-01-01T00:00:00.000Z', now), 'just now');
+});
+
+test('formatRelativeTime uses singular "minute" for exactly one', () => {
+  const now = Date.parse('2026-01-01T00:01:00.000Z');
+  assert.strictEqual(formatRelativeTime('2026-01-01T00:00:00.000Z', now), '1 minute ago');
+});
+
+test('formatRelativeTime pluralizes minutes', () => {
+  const now = Date.parse('2026-01-01T00:05:00.000Z');
+  assert.strictEqual(formatRelativeTime('2026-01-01T00:00:00.000Z', now), '5 minutes ago');
+});
+
+test('formatRelativeTime reports hours once past 60 minutes', () => {
+  const now = Date.parse('2026-01-01T02:00:00.000Z');
+  assert.strictEqual(formatRelativeTime('2026-01-01T00:00:00.000Z', now), '2 hours ago');
+});
+
+test('formatRelativeTime reports days once past 24 hours', () => {
+  const now = Date.parse('2026-01-03T00:00:00.000Z');
+  assert.strictEqual(formatRelativeTime('2026-01-01T00:00:00.000Z', now), '2 days ago');
+});
+
+test('formatRelativeTime reports an unknown time for an unparseable timestamp', () => {
+  assert.strictEqual(formatRelativeTime('not a date', Date.now()), 'an unknown time ago');
 });

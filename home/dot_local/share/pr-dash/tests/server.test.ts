@@ -118,6 +118,14 @@ test('/api/prs reports stale as false, not omitted, when loadPrs does not set it
   });
 });
 
+test('/api/prs reports error as null, not omitted, when loadPrs does not set it', async () => {
+  await withServer(async (base, secret) => {
+    const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+    const body = await res.json();
+    assert.strictEqual(body.error, null);
+  });
+});
+
 test('rejects /api/prs without the secret', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/prs`);
