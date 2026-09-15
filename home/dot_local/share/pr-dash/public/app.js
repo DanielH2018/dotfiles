@@ -98,19 +98,19 @@ function resetView() {
  * cache TTL" — the Refresh button's whole job. Without it the server may answer from
  * its 60-second cache, which is what a first load and any later poll want.
  * @param {boolean} force
- * @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string }>}
+ * @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string, partialErrors: string[] }>}
  */
 async function loadPrs(force) {
   const path = force ? '/api/prs?refresh=1' : '/api/prs';
   const res = await fetch(path, { headers: { 'x-pr-dash-secret': secret } });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const body = await res.json();
-  const { prs, stale, error, fetchedAt } = parsePrsBody(body);
+  const { prs, stale, error, fetchedAt, partialErrors } = parsePrsBody(body);
   // The server builds stacks from the same prs this request just validated, so no
   // separate validation is needed here — unlike prs, which travels over the network
   // as the one boundary tsc cannot enforce PrRecord[] across.
   const stacks = /** @type {StackNode[]} */ (body.stacks);
-  return { prs, stacks, stale, error, fetchedAt };
+  return { prs, stacks, stale, error, fetchedAt, partialErrors };
 }
 
 /** @param {string} message */

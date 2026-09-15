@@ -4,7 +4,10 @@ import { normalize } from './normalize.ts';
 import type { Cache } from './cache.ts';
 import type { PrRecord } from './types.ts';
 
-export type LoadResult = { prs: PrRecord[]; fetchedAt: string };
+// `partialErrors` is empty on a complete fetch. Non-empty means `prs` is the subset of the
+// user's PRs that GitHub actually returned, with these errors explaining the rest — a
+// state distinct from both a complete fetch and a retained stale payload.
+export type LoadResult = { prs: PrRecord[]; fetchedAt: string; partialErrors: string[] };
 
 // `force` is what the page's Refresh control sends. It is a per-call option rather than a
 // separate function so the one code path serves both: an automatic poll or a first page
@@ -32,8 +35,12 @@ export function createPrLoader(client: Client, cache: Cache<LoadResult>): LoadPr
     // propagates out of this function before either runs, so a failed refresh leaves
     // whatever was previously cached (or nothing, on a cold cache) untouched instead of
     // being overwritten with an empty or partial result.
-    const prs = normalize(await fetchAllPrs(client));
-    const result: LoadResult = { prs, fetchedAt: new Date().toISOString() };
+    const fetched = await fetchAllPrs(client);
+    const result: LoadResult = {
+      prs: normalize(fetched.prs),
+      fetchedAt: new Date().toISOString(),
+      partialErrors: fetched.errors,
+    };
     cache.set(result);
     return result;
   };

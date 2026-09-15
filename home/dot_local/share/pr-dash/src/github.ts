@@ -4,8 +4,14 @@ export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
 export type ClientOpts = { token: string; fetchImpl?: FetchImpl };
 
+// GraphQL can answer one request with both data and errors, so a query result carries
+// both rather than being either/or. `errors` is empty on a complete response; a caller
+// with a non-empty `errors` holds a partial result and must say so, not treat `data` as
+// the whole picture.
+export type QueryResult<T> = { data: T; errors: string[] };
+
 export type Client = {
-  query<T>(query: string, variables: Record<string, unknown>): Promise<T>;
+  query<T>(query: string, variables: Record<string, unknown>): Promise<QueryResult<T>>;
 };
 
 const ENDPOINT = 'https://api.github.com/graphql';
@@ -14,7 +20,7 @@ export function createClient(opts: ClientOpts): Client {
   const doFetch = opts.fetchImpl ?? fetch;
 
   return {
-    async query<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    async query<T>(query: string, variables: Record<string, unknown>): Promise<QueryResult<T>> {
       const res = await doFetch(ENDPOINT, {
         method: 'POST',
         headers: {
@@ -66,17 +72,23 @@ export function createClient(opts: ClientOpts): Client {
         throw new Error(`GitHub returned ${res.status}: ${await res.text()}`);
       }
 
-      const body = (await res.json()) as { data?: T; errors?: { message: string }[] };
-      // GraphQL returns HTTP 200 even when the query failed server-side, so `errors` must
-      // be checked before trusting `data` — an empty `data.search.nodes` here would read as
-      // "you have no open PRs" instead of the actual rate-limit or query error.
-      if (body.errors !== undefined && body.errors.length > 0) {
-        throw new Error(`GraphQL error: ${body.errors.map((e) => e.message).join('; ')}`);
+      const body = (await res.json()) as { data?: T | null; errors?: { message: string }[] };
+      const errors = (body.errors ?? []).map((e) => String(e?.message ?? e));
+
+      // GraphQL returns HTTP 200 even when the query failed server-side, and a query that
+      // failed outright still carries `data: null`. Both are failures: an empty result
+      // returned as success would read as "you have no open PRs" instead of the actual
+      // rate-limit or query error. A response carrying `data` *and* `errors` is neither —
+      // GitHub nulls the field that timed out and reports it here — so it returns both and
+      // the caller decides how much of `data` is usable.
+      if (body.data === undefined || body.data === null) {
+        throw new Error(
+          errors.length > 0
+            ? `GraphQL error: ${errors.join('; ')}`
+            : 'GraphQL response contained no data',
+        );
       }
-      if (body.data === undefined) {
-        throw new Error('GraphQL response contained no data');
-      }
-      return body.data;
+      return { data: body.data, errors };
     },
   };
 }

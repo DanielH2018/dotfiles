@@ -116,7 +116,7 @@ test('a failed fetch leaves the previously cached value intact', async () => {
 
 test('a cache hit reports the original fetch time, not the time of the read', async () => {
   const cache = createCache<LoadResult>(60_000);
-  const seeded: LoadResult = { prs: [], fetchedAt: '2020-01-01T00:00:00.000Z' };
+  const seeded: LoadResult = { prs: [], fetchedAt: '2020-01-01T00:00:00.000Z', partialErrors: [] };
   cache.set(seeded);
 
   const client = createClient({

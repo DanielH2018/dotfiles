@@ -3,9 +3,15 @@ import type { Cache } from './cache.ts';
 import { createPrLoader, type LoadOpts, type LoadPrs, type LoadResult } from './loader.ts';
 import type { PrRecord } from './types.ts';
 
+// `stale` and `partialErrors` are independent, and the three states they describe are
+// distinct: a complete fetch (neither), a partial fetch (errors, not stale — the rows are
+// as fresh as `fetchedAt` says), and a retained payload after a failed refresh (stale). A
+// retained payload that was itself partial carries both, which is why the flag travels
+// with the payload rather than being recomputed per response.
 export type FallbackResult = {
   prs: PrRecord[];
   fetchedAt: string;
+  partialErrors: string[];
   stale: boolean;
   error?: string;
 };
@@ -30,6 +36,11 @@ export function withFallback(load: LoadPrs): (opts?: LoadOpts) => Promise<Fallba
   return async (opts?: LoadOpts) => {
     try {
       const result = await load(opts);
+      // A partial result is retained like any other success. It is the most recent view of
+      // the world, and not retaining it would mean a partial fetch followed by a failure
+      // goes blank on a cold start — the outcome the spec calls worse than showing old
+      // data. Its `partialErrors` ride along, so a retained partial never later renders
+      // as complete.
       lastGood = result;
       return { ...result, stale: false };
     } catch (err) {

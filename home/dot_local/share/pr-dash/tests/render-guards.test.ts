@@ -337,6 +337,37 @@ test(
   },
 );
 
+test('parsePrsBody extracts partialErrors from the response body', () => {
+  const parsed = parsePrsBody({
+    prs: [validRecord],
+    stale: false,
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    partialErrors: ['timeout on search'],
+  });
+  assert.deepStrictEqual(parsed.partialErrors, ['timeout on search']);
+  assert.deepStrictEqual(parsed.prs, [validRecord]);
+});
+
+test('parsePrsBody treats an absent partialErrors as nothing having failed', () => {
+  const parsed = parsePrsBody({ prs: [validRecord], stale: false, fetchedAt: '' });
+  assert.deepStrictEqual(parsed.partialErrors, []);
+});
+
+test('parsePrsBody drops non-string partialErrors entries rather than throwing', () => {
+  // Coerced, not validated: junk here must not blank a page whose rows parsed fine, and a
+  // non-string entry would otherwise render as "[object Object]" in the banner.
+  const parsed = parsePrsBody({
+    prs: [validRecord],
+    partialErrors: ['real failure', { message: 'nested' }, 7, null],
+  });
+  assert.deepStrictEqual(parsed.partialErrors, ['real failure']);
+});
+
+test('parsePrsBody treats a non-array partialErrors as nothing having failed', () => {
+  const parsed = parsePrsBody({ prs: [validRecord], partialErrors: 'everything broke' });
+  assert.deepStrictEqual(parsed.partialErrors, []);
+});
+
 test('isSafeUrl accepts https and http', () => {
   assert.strictEqual(isSafeUrl('https://github.com/acme/api/pull/12'), true);
   assert.strictEqual(isSafeUrl('http://github.com/acme/api/pull/12'), true);
@@ -455,14 +486,17 @@ test('toReviewValues keeps only known review states', () => {
   assert.deepStrictEqual(toReviewValues(['approved', 'bogus']), ['approved']);
 });
 
-test('staleBanner returns null for a fresh response', () => {
-  assert.strictEqual(staleBanner({ stale: false, fetchedAt: '2026-01-01T00:00:00.000Z' }), null);
+test('staleBanner returns null for a fresh, complete response', () => {
+  assert.strictEqual(
+    staleBanner({ stale: false, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] }),
+    null,
+  );
 });
 
 test('staleBanner names the error and the last-success time for a stale response', () => {
   const now = Date.parse('2026-01-01T03:00:00.000Z');
   const message = staleBanner(
-    { stale: true, error: 'network down', fetchedAt: '2026-01-01T00:00:00.000Z' },
+    { stale: true, error: 'network down', fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] },
     now,
   );
   assert.match(String(message), /network down/);
@@ -471,8 +505,52 @@ test('staleBanner names the error and the last-success time for a stale response
 
 test('staleBanner falls back to "unknown error" when the response carries none', () => {
   const now = Date.parse('2026-01-01T00:00:30.000Z');
-  const message = staleBanner({ stale: true, fetchedAt: '2026-01-01T00:00:00.000Z' }, now);
+  const message = staleBanner(
+    { stale: true, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] },
+    now,
+  );
   assert.match(String(message), /unknown error/);
+});
+
+test('staleBanner reports a fresh partial response as partial, not as a failed refresh', () => {
+  const now = Date.parse('2026-01-01T00:00:10.000Z');
+  const message = staleBanner(
+    { stale: false, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: ['timeout on search'] },
+    now,
+  );
+  // A banner is required: spec:191 asks for the rows that arrived plus what failed, and
+  // silence here is the bug — the user cannot tell an incomplete list from a complete one.
+  assert.notStrictEqual(message, null);
+  assert.match(String(message), /timeout on search/);
+  // The fetch just succeeded, so "could not refresh" and "last success N ago" would both
+  // be false. This is the assertion that separates partial from stale.
+  assert.doesNotMatch(String(message), /could not refresh/i);
+  assert.match(String(message), /just now/);
+});
+
+test('staleBanner lists every error a partial response carries', () => {
+  const message = staleBanner({
+    stale: false,
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    partialErrors: ['timeout on search', 'rate limited on checks'],
+  });
+  assert.match(String(message), /timeout on search/);
+  assert.match(String(message), /rate limited on checks/);
+});
+
+test('staleBanner reports a retained payload that was itself partial as both', () => {
+  const now = Date.parse('2026-01-01T03:00:00.000Z');
+  const message = staleBanner(
+    {
+      stale: true,
+      error: 'network down',
+      fetchedAt: '2026-01-01T00:00:00.000Z',
+      partialErrors: ['timeout on search'],
+    },
+    now,
+  );
+  assert.match(String(message), /network down/);
+  assert.match(String(message), /timeout on search/);
 });
 
 test('formatRelativeTime reports "just now" under a minute', () => {

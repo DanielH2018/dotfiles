@@ -126,6 +126,7 @@ function validateRecord(record, index) {
  * @property {boolean} stale
  * @property {string} [error]
  * @property {string} fetchedAt
+ * @property {string[]} partialErrors
  */
 
 /**
@@ -165,7 +166,13 @@ export function parsePrsBody(body) {
   const stale = fields['stale'] !== false;
   const error = typeof fields['error'] === 'string' ? fields['error'] : undefined;
   const fetchedAt = typeof fields['fetchedAt'] === 'string' ? fields['fetchedAt'] : '';
-  return { prs, stale, error, fetchedAt };
+  // Coerced like the three fields above rather than validated: a malformed
+  // `partialErrors` must not blank a page whose rows parsed fine. Keeping only the string
+  // members means a junk entry drops out instead of rendering as "[object Object]" in the
+  // banner, and a non-array degrades to "nothing known to have failed".
+  const raw = fields['partialErrors'];
+  const partialErrors = Array.isArray(raw) ? raw.filter((e) => typeof e === 'string') : [];
+  return { prs, stale, error, fetchedAt, partialErrors };
 }
 
 /**
@@ -334,22 +341,38 @@ export function clearStoredView(storage) {
  * @property {boolean} stale
  * @property {string} [error]
  * @property {string} fetchedAt
+ * @property {string[]} partialErrors
  */
 
 /**
  * The banner text for a `/api/prs` response, or `null` when the response is fresh and
- * no banner should show. This is the whole staleness decision, not just its wording:
- * `app.js` calls this and only this to decide whether to show a banner, rather than
- * checking `stale` itself, because `app.js` cannot be imported under `node --test` (see
- * the module comment above) and a check left there would go untested.
+ * complete and no banner should show. This is the whole banner decision, not just its
+ * wording: `app.js` calls this and only this to decide whether to show a banner, rather
+ * than checking `stale` itself, because `app.js` cannot be imported under `node --test`
+ * (see the module comment above) and a check left there would go untested.
+ *
+ * Three outcomes need three different sentences. A stale response is a failed refresh
+ * behind retained data, so it names the failure and when the data was last good. A
+ * partial response is the opposite case: the fetch succeeded just now and returned only
+ * some of the user's PRs, so saying "could not refresh (last success ...)" would be
+ * false — the rows are exactly as fresh as `fetchedAt` says. A retained payload that was
+ * itself partial is both, and says so, because a user who cannot see the rest of their
+ * PRs should not have to infer that from a banner about a refresh failure.
  * @param {RefreshOutcome} data
  * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
  * @returns {string | null}
  */
 export function staleBanner(data, now = Date.now()) {
-  if (!data.stale) return null;
-  const reason = data.error ?? 'unknown error';
-  return `Could not refresh (last success ${formatRelativeTime(data.fetchedAt, now)}): ${reason}`;
+  const when = formatRelativeTime(data.fetchedAt, now);
+  const incomplete =
+    data.partialErrors.length > 0 ? ` Some PRs are missing: ${data.partialErrors.join('; ')}` : '';
+
+  if (data.stale) {
+    const reason = data.error ?? 'unknown error';
+    return `Could not refresh (last success ${when}): ${reason}${incomplete}`;
+  }
+  if (incomplete !== '') return `Showing partial data (fetched ${when}).${incomplete}`;
+  return null;
 }
 
 /**

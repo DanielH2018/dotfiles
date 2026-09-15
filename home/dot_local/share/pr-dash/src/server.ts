@@ -25,9 +25,13 @@ export type ServerOpts = {
   // time: a cache hit must report when the data was actually fetched, not the instant of
   // this particular request, or a client polling every few seconds would see a "just now"
   // timestamp on data that is up to the cache's TTL old.
-  loadPrs: (opts?: {
-    force?: boolean;
-  }) => Promise<{ prs: PrRecord[]; fetchedAt: string; stale?: boolean; error?: string }>;
+  loadPrs: (opts?: { force?: boolean }) => Promise<{
+    prs: PrRecord[];
+    fetchedAt: string;
+    stale?: boolean;
+    error?: string;
+    partialErrors?: string[];
+  }>;
 };
 
 export function createServer(opts: ServerOpts): Server {
@@ -76,10 +80,17 @@ async function handle(
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.
     const force = url.searchParams.get('refresh') === '1';
-    const { prs, fetchedAt, stale, error } = await opts.loadPrs({ force });
+    const { prs, fetchedAt, stale, error, partialErrors } = await opts.loadPrs({ force });
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
-      JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt, stale: stale ?? false, error: error ?? null }),
+      JSON.stringify({
+        prs,
+        stacks: buildStacks(prs),
+        fetchedAt,
+        stale: stale ?? false,
+        error: error ?? null,
+        partialErrors: partialErrors ?? [],
+      }),
     );
     return;
   }

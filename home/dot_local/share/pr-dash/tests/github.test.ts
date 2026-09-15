@@ -36,9 +36,9 @@ test('follows pagination until hasNextPage is false', async () => {
         : pageResponse([{ number: 2 }], false, null);
     },
   });
-  const nodes = await fetchAllPrs(client);
+  const result = await fetchAllPrs(client);
   assert.strictEqual(calls, 2);
-  assert.deepStrictEqual(nodes.map((n: { number: number }) => n.number), [1, 2]);
+  assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [1, 2]);
 });
 
 test('a 401 raises an error naming the 1Password item', async () => {
@@ -67,6 +67,100 @@ test('GraphQL errors surface rather than yielding an empty list', async () => {
       } as Response),
   });
   await assert.rejects(() => fetchAllPrs(client), (e: Error) => /rate limited/.test(e.message));
+});
+
+// GitHub answers a large `search` query with HTTP 200 carrying both usable `data` and an
+// `errors` array when one field timed out. Spec:191 requires rendering the rows that did
+// arrive and naming what failed, so these four tests pin the line between a partial
+// success (usable data, keep it) and a failure (no usable data, throw).
+
+test('a 200 carrying both rows and errors keeps the rows and reports the errors', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ number: 7 }] } },
+          errors: [{ message: 'Something went wrong while executing your query.' }],
+        }),
+        text: async () => '',
+      } as Response),
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [7]);
+  assert.deepStrictEqual(result.errors, ['Something went wrong while executing your query.']);
+});
+
+test('a complete 200 reports no errors', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => pageResponse([{ number: 1 }], false, null),
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(result.errors, []);
+});
+
+test('errors with a null search field are a failure, not a partial success', async () => {
+  // The realistic shape when the whole `search` field is what timed out. There is no row
+  // to keep here, so retaining it as a partial success would present "no open PRs".
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { search: null }, errors: [{ message: 'timeout on search' }] }),
+        text: async () => '',
+      } as Response),
+  });
+  await assert.rejects(() => fetchAllPrs(client), (e: Error) => /timeout on search/.test(e.message));
+});
+
+test('a null search field after a good page keeps the rows already collected', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return pageResponse([{ number: 1 }], true, 'cur');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { search: null }, errors: [{ message: 'timeout on page 2' }] }),
+        text: async () => '',
+      } as Response;
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [1]);
+  assert.deepStrictEqual(result.errors, ['timeout on page 2']);
+});
+
+test('a partial page stops pagination rather than trusting its pageInfo', async () => {
+  // A page that carries errors may carry a null or garbage pageInfo alongside its rows.
+  // Reading hasNextPage off it would throw; following it would be chasing a cursor the
+  // server never really issued.
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { search: { pageInfo: null, nodes: [{ number: calls }] } },
+          errors: [{ message: 'partial page' }],
+        }),
+        text: async () => '',
+      } as Response;
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.strictEqual(calls, 1);
+  assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [1]);
 });
 
 test('a 429 raises a rate-limit error naming the retry delay', async () => {

@@ -32,7 +32,7 @@ const one: PrRecord[] = [
 ];
 
 test('a successful load is not stale', async () => {
-  const load = withFallback(async () => ({ prs: one, fetchedAt: '2026-01-01T00:00:00.000Z' }));
+  const load = withFallback(async () => ({ prs: one, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] }));
   const r = await load();
   assert.strictEqual(r.stale, false);
   assert.strictEqual(r.error, undefined);
@@ -42,7 +42,7 @@ test('a failure after a success returns the last good payload, marked stale', as
   let fail = false;
   const load = withFallback(async () => {
     if (fail) throw new Error('network down');
-    return { prs: one, fetchedAt: '2026-01-01T00:00:00.000Z' };
+    return { prs: one, fetchedAt: '2026-01-01T00:00:00.000Z', partialErrors: [] };
   });
   await load();
   fail = true;
