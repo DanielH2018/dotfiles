@@ -8,12 +8,15 @@ import {
   REVIEW_VALUES,
   toAxis,
   toSort,
+  toCiValues,
+  toReviewValues,
   parsePrsBody,
   isSafeUrl,
   parseStoredView,
   loadStoredView,
   saveStoredView,
   clearStoredView,
+  VIEW_KEY,
 } from '../public/render-guards.js';
 import { groupBy } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
@@ -336,12 +339,20 @@ test('parseStoredView treats a non-array ci field as no constraint', () => {
   assert.deepStrictEqual(parseStoredView(stored), DEFAULT_VIEW);
 });
 
-/** A storage double whose methods can be told to throw, mirroring the localStorage contract. */
-function fakeStorage(overrides: Partial<{ getItem: () => string | null; setItem: () => void; removeItem: () => void }>) {
+/**
+ * A storage double backed by a real `Map`, mirroring the localStorage
+ * contract closely enough for `saveStoredView`/`clearStoredView` to
+ * round-trip against it. `overrides` replaces one method with a throwing
+ * stub for the throw-path tests below; the rest keep reading and writing
+ * `written`, so a round-trip test can inspect it directly.
+ */
+function fakeStorage(overrides: Partial<{ getItem: () => string | null; setItem: () => void; removeItem: () => void }> = {}) {
+  const written = new Map<string, string>();
   return {
-    getItem: overrides.getItem ?? (() => null),
-    setItem: overrides.setItem ?? (() => {}),
-    removeItem: overrides.removeItem ?? (() => {}),
+    written,
+    getItem: overrides.getItem ?? ((key: string) => written.get(key) ?? null),
+    setItem: overrides.setItem ?? ((key: string, value: string) => void written.set(key, value)),
+    removeItem: overrides.removeItem ?? ((key: string) => void written.delete(key)),
   };
 }
 
@@ -376,4 +387,27 @@ test('clearStoredView does not throw when removeItem throws', () => {
     },
   });
   assert.doesNotThrow(() => clearStoredView(storage));
+});
+
+test('saveStoredView writes the view as JSON under VIEW_KEY', () => {
+  const storage = fakeStorage();
+  const view: StoredView = { axis: 'ci', sort: 'age', ci: ['failure'], review: ['approved'] };
+  saveStoredView(storage, view);
+  assert.deepStrictEqual([...storage.written.keys()], [VIEW_KEY]);
+  assert.deepStrictEqual(JSON.parse(storage.written.get(VIEW_KEY)!), view);
+});
+
+test('clearStoredView removes the value under VIEW_KEY', () => {
+  const storage = fakeStorage();
+  storage.written.set(VIEW_KEY, JSON.stringify(DEFAULT_VIEW));
+  clearStoredView(storage);
+  assert.strictEqual(storage.written.has(VIEW_KEY), false);
+});
+
+test('toCiValues keeps only known CI statuses', () => {
+  assert.deepStrictEqual(toCiValues(['success', 'bogus', 'failure']), ['success', 'failure']);
+});
+
+test('toReviewValues keeps only known review states', () => {
+  assert.deepStrictEqual(toReviewValues(['approved', 'bogus']), ['approved']);
 });

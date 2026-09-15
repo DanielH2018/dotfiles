@@ -186,3 +186,12 @@ test('filters combine as OR within one axis', () => {
   const out = applyFilters(ciRecords, { ci: ['failure', 'success'], review: [], draft: [] });
   assert.deepStrictEqual(out.map((r) => r.id), ['p#1', 'p#2']);
 });
+
+test('filters by draft state', () => {
+  const draftRecords = [
+    makeRecord({ id: 'q#1', isDraft: true }),
+    makeRecord({ id: 'q#2', isDraft: false }),
+  ];
+  const out = applyFilters(draftRecords, { ci: [], review: [], draft: ['draft'] });
+  assert.deepStrictEqual(out.map((r) => r.id), ['q#1']);
+});
