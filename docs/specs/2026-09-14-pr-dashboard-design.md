@@ -21,7 +21,8 @@ This spec designs a local dashboard that does that grouping.
 In scope:
 
 - Open pull requests I authored, across every repository I can see.
-- Grouping and filtering by repository, CI status, review state, staleness, and draft state.
+- Grouping by repository, CI status, review state, staleness, or draft state; filtering by
+  CI status, review state, staleness, and draft state.
 - Stacked PRs rendered as a nested tree rather than as unrelated rows.
 - Read-only. Every mutating action is a deep link out to GitHub.
 
@@ -72,7 +73,7 @@ there is no reason to round-trip to the server to regroup.
 | `src/server.ts` | `node:http`, static files, `/api/prs`, cache | filesystem |
 | `public/app.js` | rendering and control wiring (DOM) | none |
 | `public/group.js` | grouping, filtering, sorting (pure) | none |
-| `bin/pr-dash` | port selection, launch, open browser | process |
+| `bin/pr-dash` | generate the secret, launch the server, wait for it, open browser | process |
 
 `normalize.ts`, `stacks.ts`, and `public/group.js` are pure functions over plain data. They
 are the whole testable core and none of them touch the network. Grouping lives in its own
@@ -158,15 +159,20 @@ Group-by is a single control with five settings rather than five separate views:
 **repository** (default), **CI status**, **review state**, **staleness bucket**
 (`<1d`, `1-3d`, `3-7d`, `>7d`), and **draft vs ready**.
 
-Filters are independent toggles over those same axes, so grouping by repository while
-filtering to failing CI is an ordinary combination rather than a special case.
+Filters are independent toggles over four of those axes — CI status, review state,
+staleness and draft state — so grouping by repository while filtering to failing CI is an
+ordinary combination rather than a special case. There is deliberately no repository
+filter: repository is the default grouping axis, which already answers the question a
+repository filter would, and the original request was to group by repository rather than
+filter by it.
 
 Sorting within a group defaults to staleness, and switches to age, title, or diff size.
 
 Stacks stay nested when grouping by repository. Under any other axis a stack's members
-belong to different groups by definition, so the stack collapses to a badge linking its
-siblings. Nesting a tree inside a grouping that cuts across it would show the same PR twice
-or hide it entirely.
+belong to different groups by definition, so the stack collapses to a badge giving the
+PR's position in its stack (`2/4`). Nesting a tree inside a grouping that cuts across it
+would show the same PR twice or hide it entirely. The badge carries the position and
+nothing else — it is not a link to the sibling PRs, which was never asked for.
 
 Group-by, active filters, and sort persist to `localStorage`, with a visible reset control.
 A saved filter state that cannot be cleared is a trap: the dashboard looks empty and the
@@ -175,7 +181,11 @@ reason is invisible.
 ## Refresh, caching, error handling
 
 The server holds the normalized payload in memory with a 60-second TTL. A refresh control
-in the page bypasses the TTL.
+in the page bypasses the TTL: the button requests `/api/prs?refresh=1`, and only that exact
+value counts, so no value from the query string reaches the loader — just a boolean. The
+loader invalidates the cache entry and fetches, rather than skipping the cache read, so the
+fetch it just made repopulates the entry and the TTL restarts from it. Without that,
+every later request would re-fetch.
 
 The cache is a small object exposing `get()`, `set()`, and `invalidate()` rather than a
 bare timestamp compared inline at the call site. The behavior in v1 is identical; the
@@ -303,10 +313,6 @@ cannot resolve `node:http` or `node:fs` and fails on the first server file.
 `moduleResolution` is `nodenext`, not `bundler`. Since there is no bundler, `tsc` is the
 only thing standing between an extensionless relative import and a failed launch, and
 `bundler` resolution accepts imports Node's ESM loader rejects.
-
-Types for the GraphQL response are generated from GitHub's published schema rather than
-written by hand, so a schema change surfaces as a type error instead of as a null at
-runtime.
 
 ## Testing
 

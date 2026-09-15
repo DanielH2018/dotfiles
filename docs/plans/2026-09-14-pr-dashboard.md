@@ -2,13 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A local, read-only web dashboard listing my open GitHub PRs, grouped and filtered by repository, CI status, review state, staleness, or draft state, with stacked PRs nested.
+**Goal:** A local, read-only web dashboard listing my open GitHub PRs, grouped by repository, CI status, review state, staleness, or draft state and filtered by all of those but repository, with stacked PRs nested.
 
 **Architecture:** One Node process on `127.0.0.1` serves a static page plus `/api/prs`. The server fetches all open PRs I authored in a single GraphQL query, normalizes them to flat records, and reconstructs stacks by chaining `baseRefName` to `headRefName`. The browser does all grouping, filtering, and sorting client-side against one payload.
 
 **Tech Stack:** Node 24 (native TypeScript type stripping, `node:http`, `node --test`), TypeScript for the server, JSDoc-annotated JavaScript for the browser, 1Password CLI (`op`) for the token. No bundler, no build step.
 
 **Spec:** [`docs/specs/2026-09-14-pr-dashboard-design.md`](../specs/2026-09-14-pr-dashboard-design.md)
+
+## How to read this plan now that it has been executed
+
+The code blocks below are the plan **as written before execution**, not a description of
+what shipped. Execution overrode several of them, each time because the prescribed code was
+demonstrably wrong; the blocks that were superseded carry a note saying so and naming what
+replaced them. The rulings and their reasoning live in
+[`.superpowers/sdd/2026-09-14-pr-dashboard/progress.md`](../../.superpowers/sdd/2026-09-14-pr-dashboard/progress.md),
+which is authoritative where it and this plan disagree. The shipped code is authoritative
+over both.
 
 ## Global Constraints
 
@@ -292,6 +302,15 @@ Expected: FAIL — cannot find module `../src/guard.ts`.
 
 `home/dot_local/share/pr-dash/src/guard.ts`:
 
+> **Superseded.** This snippet fails this task's own test 2: the test overrides
+> `expected.host` to `localhost:8770` while leaving `origin` at `http://127.0.0.1:8770`, so
+> the bare comparisons below refuse it. What shipped canonicalizes `localhost` and
+> `127.0.0.1` as one loopback host, and matches `Origin` with an anchored regex rather than
+> `new URL()`, which accepted trailing slashes, query strings and uppercase schemes. The
+> guard also ended up split in two — `checkHost` for the rebinding half, which the server
+> applies to every request, and `checkRequest` for that plus the secret, which only
+> `/api/prs` needs.
+
 ```ts
 export type GuardResult = { ok: true } | { ok: false; reason: string };
 
@@ -482,6 +501,15 @@ export function createCache<T>(ttlMs: number): Cache<T> {
 - [ ] **Step 5: Implement the server**
 
 `home/dot_local/share/pr-dash/src/server.ts`:
+
+> **Superseded.** `checkRequest(req.headers, { host: hostHeader, ... })` below compares the
+> request's own `Host` header against itself, so every host matches and there is no DNS
+> rebinding defence at all. Task 12 was written to remove what looked like a tautology in a
+> test; the tautology was in this production snippet, which is why the test could not fail.
+> What shipped passes `opts.host` — the host the launcher bound — and applies the host and
+> origin checks to every path, not just `/api/prs`. The request URL is also built against a
+> fixed base rather than the `Host` header, since only `pathname` and `searchParams` are
+> read from it and passing an unvalidated header in turned a refused request into a 500.
 
 ```ts
 import { createServer as createHttpServer, type Server } from 'node:http';
@@ -1664,23 +1692,40 @@ Expected: FAIL — cannot find module `../src/stacks.ts`.
 
 `home/dot_local/share/pr-dash/src/stacks.ts`:
 
+> **Superseded, and this block was itself a defect.** The `${pr.repo}` / `${pr.headRef}`
+> separator in the template literals below was a raw NUL byte, which made both this plan and
+> the `stacks.ts` copied from it binary as far as git is concerned — no diff on GitHub, and
+> `grep` and `sed` skipping the file silently. Every gate in this project reads a file's
+> meaning; nothing checked its bytes. The separator is now the plain space that shipped.
+>
+> Three things in the logic were overridden too. The hardcoded trunk-name list decides
+> trunk-versus-orphaned, so a repo whose default branch is named anything else had every
+> ordinary PR permanently marked "base merged"; what shipped reads
+> `repository.defaultBranchRef.name` and falls back to the list only when that is absent.
+> `byHead.set` unconditionally lets whichever PR a plain `set()` saw last win as the stack
+> parent, so a branch that is the head of two open PRs attached children to an
+> iteration-order-dependent parent; what shipped leaves such a ref out of the index and
+> reports the state as `ambiguousBase`, which is different information from a merged-away
+> parent. And trunk status has to be checked before the ambiguity count, or an ordinary
+> trunk-based PR gets the ambiguous chip.
+
 ```ts
 import type { PrRecord, StackNode } from './types.ts';
 
 function inCycle(pr: PrRecord, byHead: Map<string, PrRecord>): boolean {
   const seen = new Set<string>([pr.id]);
-  let cursor = byHead.get(`${pr.repo} ${pr.baseRef}`);
+  let cursor = byHead.get(`${pr.repo} ${pr.baseRef}`);
   while (cursor !== undefined) {
     if (seen.has(cursor.id)) return true;
     seen.add(cursor.id);
-    cursor = byHead.get(`${cursor.repo} ${cursor.baseRef}`);
+    cursor = byHead.get(`${cursor.repo} ${cursor.baseRef}`);
   }
   return false;
 }
 
 export function buildStacks(records: readonly PrRecord[]): StackNode[] {
   const byHead = new Map<string, PrRecord>();
-  for (const pr of records) byHead.set(`${pr.repo} ${pr.headRef}`, pr);
+  for (const pr of records) byHead.set(`${pr.repo} ${pr.headRef}`, pr);
 
   const childrenOf = new Map<string, PrRecord[]>();
   const roots: PrRecord[] = [];
@@ -1689,7 +1734,7 @@ export function buildStacks(records: readonly PrRecord[]): StackNode[] {
   for (const pr of records) {
     const parent = inCycle(pr, byHead)
       ? undefined
-      : byHead.get(`${pr.repo} ${pr.baseRef}`);
+      : byHead.get(`${pr.repo} ${pr.baseRef}`);
 
     if (parent === undefined) {
       roots.push(pr);
@@ -1905,6 +1950,18 @@ Add to `index.html` inside `<header>`, before the refresh button:
 
 Add to `app.js`:
 
+> **Superseded.** `JSON.parse(raw)` is typed `any`, so the `@returns` annotation above it is
+> a claim `tsc` cannot check: a stored `'[1,2,3]'` would throw at module scope before the
+> first render, giving a blank page with no banner. What shipped parses through
+> `parseStoredView`, which falls back to the default view field by field.
+>
+> `location.reload()` was also dropped. A reload re-fetches `/api/prs`, and on an expired
+> token or an exhausted rate limit that answers 500 — so the user who clicked Reset to
+> escape an empty dashboard lands on an empty dashboard, with `refresh()`'s retained-rows
+> fallback unable to help because the reload already zeroed it. Reset clears storage and
+> re-renders from memory instead, which also avoids the browser restoring the user-modified
+> checkbox state that the reset had just cleared.
+
 ```js
 const VIEW_KEY = 'pr-dash:view';
 
@@ -2017,6 +2074,21 @@ Expected: FAIL — cannot find module `../src/main-lib.ts`.
 - [ ] **Step 3: Implement the fallback**
 
 `home/dot_local/share/pr-dash/src/main-lib.ts`:
+
+> **Superseded.** The `load: () => Promise<PrRecord[]>` signature below is the root cause of
+> `lastGoodAt` being dead bookkeeping: stamping the time here reports the instant this
+> wrapper ran rather than when the data was actually fetched, which is a cache hit reading
+> "just now" on data up to the TTL old. What shipped widens `load` to return its own
+> `fetchedAt` alongside `prs`, so `lastGood` and its timestamp are assigned together from
+> one source. Two separate variables written at different times also let two concurrent
+> requests interleave and pair one request's retained rows with the other's newer
+> timestamp — reachable from a page load plus a Refresh click, since the loader has no
+> in-flight dedup.
+>
+> The composition also moved out of `main.ts` into this module. `main.ts` is a process shell
+> that reads env vars and calls `process.exit`, so it carries no test coverage by
+> construction — replacing its wiring with `const loadPrs = loadPrsRaw` deleted this task's
+> whole integration and left the suite green.
 
 ```ts
 import type { PrRecord } from './types.ts';
