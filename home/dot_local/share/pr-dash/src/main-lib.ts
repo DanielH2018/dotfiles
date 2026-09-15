@@ -8,6 +8,57 @@ import type { PrRecord } from './types.ts';
 // as fresh as `fetchedAt` says), and a retained payload after a failed refresh (stale). A
 // retained payload that was itself partial carries both, which is why the flag travels
 // with the payload rather than being recomputed per response.
+/** The loopback port the dashboard listens on when `PR_DASH_PORT` is unset. */
+export const DEFAULT_PORT = 8770;
+
+export type ParsedPort = { ok: true; port: number } | { ok: false; reason: string };
+
+// Validated with a regex and a range check rather than `Number()`, which accepts far too
+// much: `Number('')` is 0, `Number('0x22')` is 34, `Number(' 8770 ')` strips the spaces,
+// and `Number.isInteger(Number('8770.0'))` is true. The empty string is the case that
+// actually broke the dashboard — `listen(0)` binds a random port while the guard still
+// expects `127.0.0.1:0`, so every request 403s behind a banner the user cannot escape.
+/**
+ * Reads the port from a raw `PR_DASH_PORT` value, falling back to {@link DEFAULT_PORT}
+ * when it is unset. A value that is not a positive integer in the 1-65535 range is
+ * rejected with a message naming both the variable and what was read.
+ */
+export function parsePort(raw: string | undefined): ParsedPort {
+  if (raw === undefined) return { ok: true, port: DEFAULT_PORT };
+  const reject = {
+    ok: false as const,
+    reason: `PR_DASH_PORT must be a port number between 1 and 65535, but it is "${raw}".`,
+  };
+  if (!/^\d+$/.test(raw)) return reject;
+  const port = Number(raw);
+  if (port < 1 || port > 65535) return reject;
+  return { ok: true, port };
+}
+
+/**
+ * The message to print when `server.listen` fails. Without an `'error'` handler Node
+ * prints a raw `node:events` stack trace over a condition the user can simply act on, so
+ * an occupied port names the port and the variable that moves it. Every other failure is
+ * reported as itself: calling an EACCES "port in use" would send the user hunting for a
+ * process that does not exist.
+ */
+export function listenErrorMessage(err: unknown, port: number): string {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code: unknown }).code)
+      : '';
+  if (code === 'EADDRINUSE') {
+    return (
+      `Port ${port} is already in use, so pr-dash cannot start. Another pr-dash may ` +
+      'already be running — open http://127.0.0.1:' +
+      `${port}/ to check — or set PR_DASH_PORT to a free port.`
+    );
+  }
+  const detail = err instanceof Error ? err.message : String(err);
+  const codeSuffix = code === '' ? '' : ` (${code})`;
+  return `pr-dash could not listen on 127.0.0.1:${port}${codeSuffix}: ${detail}`;
+}
+
 export type FallbackResult = {
   prs: PrRecord[];
   fetchedAt: string;
