@@ -185,7 +185,11 @@ in the page bypasses the TTL: the button requests `/api/prs?refresh=1`, and only
 value counts, so no value from the query string reaches the loader — just a boolean. The
 loader invalidates the cache entry and fetches, rather than skipping the cache read, so the
 fetch it just made repopulates the entry and the TTL restarts from it. Without that,
-every later request would re-fetch.
+every later request would re-fetch. A forced request arriving while a fetch is already in
+flight joins that fetch instead of invalidating and starting its own: the loader checks for
+an in-flight fetch before it checks `force`, so invalidation happens only when nothing is
+already running. Joining an in-flight fetch is exactly as fresh as starting a new one,
+since both reach GitHub the same way.
 
 The cache is a small object exposing `get()`, `set()`, and `invalidate()` rather than a
 bare timestamp compared inline at the call site. The behavior in v1 is identical; the
@@ -195,16 +199,14 @@ The last successful payload is retained. When a refresh fails, the page continue
 that data behind a banner naming the failure and the time of the last success. Going blank
 on a transient network error would be a worse failure than showing data a few minutes old.
 
-The retained payload also persists to disk, at `~/.local/state/pr-dash/last-payload.json`
-(file mode `0600`, directory mode `0700`), and is read back at the next launch so the
+The retained payload also persists to disk and is read back at the next launch, so the
 dashboard can answer the very first request before a fetch to GitHub has returned anything.
 A payload restored this way renders exactly as the retained-payload case above does: stale,
-with its original fetch time, never presented as fresh. The startup fetch is itself
-pre-loaded — started before the server begins listening rather than awaited first — so the
-in-memory cache is normally warm by the time the browser makes that first request, and the
-restored payload answers whichever request arrives before that pre-loaded fetch completes.
-`docs/specs/2026-09-15-pr-dash-startup-and-collapse-design.md` covers the pre-load and the
-persistence mechanism in full, along with the collapsible grouping it also adds.
+never presented as fresh. The startup fetch is itself pre-loaded, so the in-memory cache is
+normally warm by the time the browser makes that first request.
+`docs/specs/2026-09-15-pr-dash-startup-and-collapse-design.md` covers the file's path and
+modes, the pre-load, and the persistence mechanism in full, along with the collapsible
+grouping it also adds.
 
 - **No token at startup:** exit with the literal `op read` command to run, naming the item.
 - **401 from GitHub:** the token is expired or revoked — banner naming its 1Password item

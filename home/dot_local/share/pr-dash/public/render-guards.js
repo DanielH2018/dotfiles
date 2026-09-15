@@ -363,9 +363,10 @@ export function toDraftValues(value) {
 }
 
 /**
- * The collapsed section keys from a stored value: repository names for group headers and
- * PR ids for stack roots. Non-strings are dropped and duplicates collapsed, so a hand-
- * edited or older stored value cannot put anything but strings into the set.
+ * The collapsed section keys from a stored value: an axis-qualified `axis:key` string (see
+ * `groupCollapseKey` in `group.js`) for a group header, and a bare PR id for a stack root.
+ * Non-strings are dropped and duplicates collapsed, so a hand-edited or older stored value
+ * cannot put anything but strings into the set.
  *
  * Unlike the axis and status validators, this one does not check membership in a known
  * list, because there is no such list: a key naming a merged PR or a repository with

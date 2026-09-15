@@ -25,7 +25,7 @@ currently interesting.
 |---|---|
 | in | Pre-loading the first fetch so it overlaps browser startup |
 | in | In-flight deduplication in the loader |
-| in | Persisting the last good payload to disk, restored on the next launch |
+| in | Persisting the retained payload to disk, restored on the next launch |
 | in | Collapsible repository groups and collapsible stacks, with state summaries |
 | out | A resident background daemon |
 | out | Any change to the guard, the token source, or the GraphQL query |
@@ -70,7 +70,7 @@ This closes a finding the previous cycle's whole-branch review parked: "no in-fl
 two concurrent cache misses both fetch". That finding was tolerable while nothing ran
 concurrently. The pre-load makes concurrency the normal case.
 
-## Part 2 — Persist the last good payload
+## Part 2 — Persist the retained payload
 
 The payload is written to `~/.local/state/pr-dash/last-payload.json` after each successful
 fetch, and read at startup so the first `/api/prs` can be answered immediately from disk while
@@ -102,11 +102,15 @@ silent omission.
 The client asks again while a response reports `refreshing`, through `nextPollState` in
 `public/render-guards.js`. It waits `REFRESH_POLL_MS` (600ms) between polls and gives up
 after `REFRESH_POLL_TIMEOUT_MS` (60 seconds) of continuous refreshing, at which point Refresh
-is the way to try again. `staleBanner` shows a fourth message for this case, checked before
-the stale-failure branch so a fetch still in flight never reads as a failed one: "Showing the
-last saved list ({when}) while it refreshes." Restored rows still cannot render as fresh,
-which is the property the parent spec insists on: stale data presented as fresh is the
-failure mode to avoid.
+is the way to try again. `staleBanner`'s fourth message is `Showing the last saved list
+({when}) while it refreshes.{incomplete}`, where `{incomplete}` is the same "Some PRs are
+missing" clause the partial-response case uses, so a response that is both refreshing and
+missing PRs states both facts. It is selected by `data.refreshing === true && data.error ===
+undefined`, checked before the stale-failure branch. Both conjuncts matter: a response
+carrying `refreshing` alongside an `error` falls through to the failure branch instead,
+since a fetch that already failed takes precedence over one merely still running. Restored
+rows still cannot render as fresh, which is the property the parent spec insists on: stale
+data presented as fresh is the failure mode to avoid.
 
 ### At rest
 
@@ -116,7 +120,7 @@ alternative, because only the full payload paints the real dashboard offline.
 
 - File mode **0600**, directory mode **0700**.
 - The mode is set explicitly rather than left to the umask. This machine's login shell runs
-  `umask 0007`, which would otherwise produce a group-readable 0640 file.
+  `umask 0007`, which would otherwise produce a group-writable 0660 file.
 - `~/.local/state/` is outside chezmoi's managed tree, so the file can never reach the source
   repository. It is not added to `.chezmoiignore` because it was never a candidate for
   deployment.
@@ -142,9 +146,11 @@ and a successful parse does not make it the right shape.
 
 The shape check itself is narrower than a full `PrRecord`. It validates only the fields
 `src/stacks.ts` reads before a restored payload is serialized — `id`, `repo`, `headRef`,
-`baseRef`, and `number` — because a record missing one of those would otherwise reach
-`buildStacks` and throw. Everything else `PrRecord` defines is left to the browser's own
-`validateRecord`, the second line of defense.
+`baseRef`, and `number` — because two records missing one of those can crash `buildStacks`.
+A single malformed record cannot: `buildStacks` sorts stack siblings by comparing `repo` and
+`number`, and `Array.prototype.sort` never calls its comparator on a one-element array, so
+the crash needs two records sharing a sort group. Everything else `PrRecord` defines is left
+to the browser's own `validateRecord`, the second line of defense.
 
 A read failure is never fatal. The dashboard's normal cold-start path is the fallback.
 
@@ -168,14 +174,16 @@ rather than `click`.
 
 ### A collapsed header keeps its signal
 
-A collapsed header shows the number of PRs folded inside **and** a state summary, so folding a
-repository away never hides that something inside is failing or waiting on you. Collapsing is
-for triage, not only for decluttering.
+A header carries its count and its state-summary chips in both states, not only while
+collapsed — `collapsibleHeader` appends them unconditionally, and the collapse toggle
+governs only whether the rows beneath it render. Folding a repository away therefore never
+hides that something inside is failing or waiting on you. Collapsing is for triage, not only
+for decluttering.
 
 ```
 ▸ privacy-com/core-server          3 PRs   ●2 failing  ●1 approved
 ▸ DanielH2018/dotfiles             1 PR    ●1 pending
-▾ privacy-com/dbt                  2 PRs
+▾ privacy-com/dbt                  2 PRs   ●1 pending  ●1 approved
     Add staging model for disputes        success · approved · 2d
     Backfill cashback marts               pending · none · 5d
 ```
@@ -204,6 +212,10 @@ produce the same bare key — `ci` and `review` each have a `none` group — so 
 would fold both groups from one collapse action. Stack keys stay a bare PR id, which is
 already `owner/name#123` and already unique; a PR id always contains `#`, which no
 axis-qualified key does, so the two kinds of key can never collide with each other either.
+`collapsed` is a single set that switching the group-by control never clears, so a group
+collapsed under one axis stays collapsed when the operator switches to a different axis and
+back: the axis qualifier is what keeps that key distinct from anything the other axis wrote
+to the same set in the meantime.
 
 A key naming a repository, group, or stack that no longer appears — a PR merged, a
 repository with nothing open — is simply unused. Unknown keys are ignored rather than
@@ -246,26 +258,32 @@ this project has ever talked to GitHub or 1Password from a test, by design.
 
 - **A resident daemon.** See *Scope*. Revisit only if the 1Password prompt becomes the
   dominant cost, which the current measurement says it is not.
-- **Pruning the persisted payload.** The whole file is replaced on each successful fetch, so
-  individual stale entries never need removing.
-- **Pruning collapse keys.** A key naming a section absent from the current payload stays in
-  the collapsed set rather than being dropped, because pruning it would discard the collapse
-  state of a group the active filters merely hide, not one that is gone for good. Reset view
-  and Expand all are the ways to clear it.
-- **Migrating collapse keys across the axis-qualification change.** A key written before
-  `groupCollapseKey` joined the axis to the group key is a bare string and never matches a
-  qualified key, so a repository or group collapsed under an earlier version renders expanded
-  after the upgrade, with no prompt saying so. A stack key is unaffected, since it was always
-  a bare PR id. No migration converts old keys: the failure mode is a section rendering open,
-  not corrupted or hidden.
-- **`collapse-all` folding stack keys outside the active axis.** It folds every stack root
+
+## Accepted
+
+These states are correct by design rather than defects waiting to be fixed, matching the
+parent spec's own *Accepted exposures*: written down so a later reviewer finds the decision
+already made instead of finding a gap.
+
+- **The persisted payload is never pruned.** The whole file is replaced on each successful
+  fetch, so individual stale entries never need removing.
+- **Collapse keys are never pruned.** A key naming a section absent from the current payload
+  stays in the collapsed set rather than being dropped, because pruning it would discard the
+  collapse state of a group the active filters merely hide, not one that is gone for good.
+  Reset view and Expand all are the ways to clear it.
+- **An axis-qualified key has no migration from the format it replaced.** A key written
+  before `groupCollapseKey` joined the axis to the group key is a bare string and never
+  matches a qualified key, so a repository or group collapsed under an earlier version
+  renders expanded after the upgrade, with no prompt saying so. A stack key is unaffected,
+  since it was always a bare PR id. The failure mode is a section rendering open, not
+  corrupted or hidden, which is why no migration converts old keys.
+- **`collapse-all` folds stack keys outside the active axis.** It folds every stack root
   regardless of the grouping axis in view, so collapsing all while grouped by CI stores stack
-  keys for stacks the CI axis does not currently render. Accepted because the stored set is a
-  superset of what the current axis can toggle, and Expand all clears every key it holds,
-  stack and group alike.
+  keys for stacks the CI axis does not currently render. The stored set is a superset of what
+  the current axis can toggle, and Expand all clears every key it holds, stack and group
+  alike.
 - **No `aria-controls` on the disclosure buttons.** `aria-expanded` alone is a permitted
   disclosure pattern. Adding `aria-controls` would require turning a collapse key into a DOM
   id, which means escaping a repository name — arbitrary text — into an id-safe form.
-- **Collapse state across browser tabs.** It persists to the same `localStorage` key as the
-  rest of the view, so two tabs open on the dashboard are last-write-wins, the same as every
-  other control here.
+- **Collapse state is last-write-wins across browser tabs.** It persists to the same
+  `localStorage` key as the rest of the view, the same as every other control here.
