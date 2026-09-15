@@ -67,6 +67,17 @@ function checkboxValues(html: string, fieldsetId: string): string[] {
   return values;
 }
 
+/**
+ * Extracts the label text of the `<button id="buttonId">` in `index.html` — the button
+ * equivalent of {@link optionValues} and {@link checkboxValues}, so a message that names a
+ * control and the control's own label cannot silently drift apart.
+ */
+function buttonLabel(html: string, buttonId: string): string {
+  const button = new RegExp(`<button id="${buttonId}"[^>]*>([^<]*)</button>`).exec(html);
+  assert.ok(button, `no <button id="${buttonId}"> found in index.html`);
+  return button[1]!.trim();
+}
+
 /** A fully well-formed PR record, for tests to override fields on. */
 const validRecord: PrRecord = {
   id: 'x/y#1',
@@ -539,6 +550,31 @@ test('emptyStateMessage tells "no open PRs" apart from "filters hid them all"', 
 
 test('emptyStateMessage returns null when there is anything to render', () => {
   assert.strictEqual(emptyStateMessage(4, 1), null);
+});
+
+// The plural helper covered PR/PRs but not is/are, so a single hidden PR read "All 1 PR are
+// hidden by the active filters."
+test('emptyStateMessage agrees in number with a single hidden PR', () => {
+  const one = String(emptyStateMessage(1, 0));
+  assert.match(one, /All 1 PR is hidden/);
+  assert.doesNotMatch(one, /PRs/);
+});
+
+test('emptyStateMessage stays plural for more than one hidden PR', () => {
+  assert.match(String(emptyStateMessage(2, 0)), /All 2 PRs are hidden/);
+});
+
+// The message points the user at a control by name. Every other control label in this
+// markup has a sync test; this one was hardcoded in two places, so renaming the button in
+// index.html would leave the message naming a control that no longer exists.
+test('emptyStateMessage names the reset control by its real label in index.html', () => {
+  const label = buttonLabel(indexHtml, 'reset');
+  assert.ok(label.length > 0, 'expected the reset button to carry a label');
+  const message = String(emptyStateMessage(4, 0));
+  assert.ok(
+    message.includes(label),
+    `expected ${JSON.stringify(message)} to name the reset button's label ${JSON.stringify(label)}`,
+  );
 });
 
 test('isSafeUrl accepts https and http', () => {

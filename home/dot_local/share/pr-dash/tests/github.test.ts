@@ -441,6 +441,58 @@ function rawResponse(body: unknown) {
   } as Response;
 }
 
+// One upstream failure repeated per affected field reached the banner as "Some PRs are
+// missing: Something timed out; Something timed out; Something timed out". The distinct
+// reasons are what the user needs; the repetition is noise.
+test('a repeated error message is reported once, not once per occurrence', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      rawResponse({
+        data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ number: 1 }] } },
+        errors: [
+          { message: 'Something timed out' },
+          { message: 'Something timed out' },
+          { message: 'a different failure' },
+          { message: 'Something timed out' },
+        ],
+      }),
+  });
+  const result = await fetchAllPrs(client);
+  // First occurrence wins, so the order distinct reasons arrived in is preserved.
+  assert.deepStrictEqual(result.errors, ['Something timed out', 'a different failure']);
+});
+
+// The other route to a duplicate, and the one that really does cross pages: the dropped-row
+// message is composed per page, so two pages each losing one row compose the same sentence
+// twice. A page carrying GraphQL errors ends pagination, so that channel cannot repeat
+// across pages -- this one can.
+test('a dropped-row message repeated across pages is reported once', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      const more = calls === 1;
+      return rawResponse({
+        data: {
+          search: {
+            pageInfo: { hasNextPage: more, endCursor: more ? 'cur' : null },
+            nodes: [null, { number: calls }],
+          },
+        },
+      });
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.strictEqual(calls, 2);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [1, 2],
+  );
+  assert.strictEqual(result.errors.length, 1, result.errors.join(' | '));
+});
+
 // A null pageInfo beside rows and *no* errors is the truncation case. Stopping the loop and
 // reporting a complete fetch is how 100 of 250 open PRs present as all of them — worse than
 // an obviously-empty list, because a truncated one looks right.

@@ -48,6 +48,18 @@ const MAX_PAGES = 100;
 export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
   const all: RawPr[] = [];
   const errors: string[] = [];
+  // One upstream failure repeated per affected field reached the banner as "Some PRs are
+  // missing: Something timed out; Something timed out; Something timed out". The distinct
+  // reasons are what the user needs. First occurrence wins, so the order they arrived in
+  // survives.
+  const seen = new Set<string>();
+  const addErrors = (messages: readonly string[]): void => {
+    for (const message of messages) {
+      if (seen.has(message)) continue;
+      seen.add(message);
+      errors.push(message);
+    }
+  };
   let cursor: string | null = null;
   let pages = 0;
 
@@ -56,7 +68,7 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     // bottom of the loop, and without the annotation that circles back through `page` and
     // tsc gives up with an implicit `any` (TS7022).
     const page: QueryResult<SearchData> = await client.query<SearchData>(SEARCH, { cursor });
-    errors.push(...page.errors);
+    addErrors(page.errors);
     const search = page.data.search;
 
     // A partial response nulls the field that failed, so `search` itself can be null
@@ -84,9 +96,9 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     const rows = search.nodes.filter((n): n is RawPr => n !== null);
     const dropped = search.nodes.length - rows.length;
     if (dropped > 0) {
-      errors.push(
+      addErrors([
         `GitHub returned ${dropped} pull request row(s) it could not read, so this list is incomplete.`,
-      );
+      ]);
     }
     all.push(...rows);
 
@@ -118,9 +130,9 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     // violate the GraphQL spec), so this takes the safe reading rather than betting on the
     // server's conformance.
     if (search.pageInfo === null || search.pageInfo === undefined) {
-      errors.push(
+      addErrors([
         'GitHub did not report whether more pull requests remain, so this list is incomplete.',
-      );
+      ]);
       // Same rule as the zero-row cases above: with nothing collected there is nothing to
       // present as partial, and a zero-row success would replace rows the user can still
       // see with "no open PRs" behind a banner, since `withFallback` only retains on a throw.

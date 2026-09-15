@@ -252,8 +252,12 @@ export function parsePrsBody(body) {
 export function emptyStateMessage(totalRecords, visibleRecords) {
   if (visibleRecords > 0) return null;
   if (totalRecords === 0) return 'No open pull requests.';
-  const plural = totalRecords === 1 ? 'PR' : 'PRs';
-  return `All ${totalRecords} ${plural} are hidden by the active filters. Reset view clears them.`;
+  // The verb agrees as well as the noun: "All 1 PR are hidden" was the previous reading.
+  const one = totalRecords === 1;
+  const noun = one ? 'PR' : 'PRs';
+  const verb = one ? 'is' : 'are';
+  // "them" is the filters, which are always plural, so it does not vary with the count.
+  return `All ${totalRecords} ${noun} ${verb} hidden by the active filters. Reset view clears them.`;
 }
 
 /**

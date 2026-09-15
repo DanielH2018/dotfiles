@@ -1,9 +1,33 @@
+import { timingSafeEqual } from 'node:crypto';
+
 export type GuardResult = { ok: true } | { ok: false; reason: string };
 
 type Headers = Record<string, string | string[] | undefined>;
 
 function one(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
+}
+
+/**
+ * Whether `actual` is the expected secret, compared in constant time.
+ *
+ * There is no practical timing attack on this endpoint: an attacker has to be sending a
+ * matching `Host` already, which means local code execution, and at that point they can
+ * read the secret out of the launcher's argv. `timingSafeEqual` is used anyway because
+ * non-constant-time secret comparison is a pattern PCI-DSS and SOC 2 reviewers look for by
+ * name, and one line here removes a question rather than answering it later.
+ *
+ * `timingSafeEqual` throws on unequal-length buffers, so lengths are compared first. That
+ * short-circuit leaks only the length of the expected secret, which is not secret: the
+ * launcher generates a fixed 24 random bytes as 48 hex characters, so the length is the
+ * same every launch and is readable in `bin/pr-dash`.
+ */
+function secretMatches(actual: string | undefined, expected: string): boolean {
+  if (actual === undefined) return false;
+  const actualBytes = Buffer.from(actual, 'utf8');
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  if (actualBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(actualBytes, expectedBytes);
 }
 
 // 'localhost' and '127.0.0.1' name the same loopback interface, so the launcher's expected
@@ -77,7 +101,7 @@ export function checkHost(headers: Headers, expected: { host: string }): GuardRe
  */
 export function checkSecret(headers: Headers, expected: { secret: string }): GuardResult {
   const secret = one(headers['x-pr-dash-secret']);
-  if (secret !== expected.secret) {
+  if (!secretMatches(secret, expected.secret)) {
     return { ok: false, reason: 'missing or incorrect secret' };
   }
 
