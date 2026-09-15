@@ -8,10 +8,19 @@ h1 { font-size:18px; margin:0 auto 0 0; }
 main { padding:8px 24px 48px; }
 h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
      color:var(--dim); margin:28px 0 8px; }
-.row { display:flex; justify-content:space-between; gap:16px; padding:8px 12px;
+/* align-items:center keeps a badge chip vertically centered against the title text
+   beside it. justify-content is deliberately left at its flex-start default: a badge
+   prepended before the title is just another flex item in source order, and
+   space-between would spread the gap across every item instead of only pushing .meta
+   to the right -- so .meta gets its own margin-left:auto to reach the right edge
+   regardless of how many badges precede the title. */
+.row { display:flex; align-items:center; gap:16px; padding:8px 12px;
        border-bottom:1px solid var(--line); color:var(--fg); text-decoration:none; }
 .row:hover { background:#313244; }
-.meta { color:var(--dim); font-size:13px; white-space:nowrap; }
+.badge { flex:none; padding:2px 6px; border-radius:4px; font-size:11px;
+         font-weight:600; color:var(--fg); background:var(--line); }
+.badge.flag { color:var(--bg); background:var(--red); }
+.meta { margin-left:auto; color:var(--dim); font-size:13px; white-space:nowrap; }
 .ci-success .meta { color:var(--green); }
 .ci-failure .meta { color:var(--red); }
 .ci-pending .meta { color:var(--yellow); }

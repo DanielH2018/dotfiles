@@ -12,7 +12,7 @@ export type RawPr = {
   additions: number;
   deletions: number;
   reviewDecision: string | null;
-  repository: { nameWithOwner: string };
+  repository: { nameWithOwner: string; defaultBranchRef: { name: string } | null };
   commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
 };
 
@@ -107,6 +107,7 @@ export function normalize(nodes: readonly RawPr[], now: Date = new Date()): PrRe
       staleDays: days(n.updatedAt, now),
       additions: n.additions,
       deletions: n.deletions,
+      defaultBranch: n.repository.defaultBranchRef?.name ?? null,
     };
   });
 }

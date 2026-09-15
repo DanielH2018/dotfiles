@@ -4,7 +4,7 @@
     "isDraft": false, "baseRefName": "main", "headRefName": "retry-budget",
     "createdAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
     "additions": 120, "deletions": 8, "reviewDecision": "APPROVED",
-    "repository": { "nameWithOwner": "acme/api" },
+    "repository": { "nameWithOwner": "acme/api", "defaultBranchRef": { "name": "main" } },
     "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
   },
   {

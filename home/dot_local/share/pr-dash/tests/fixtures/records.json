@@ -5,7 +5,8 @@
     "headRef": "retry-budget", "baseRef": "main", "isDraft": false,
     "ci": "success", "review": "approved",
     "openedAt": "2026-09-01T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z",
-    "ageDays": 13, "staleDays": 4, "additions": 120, "deletions": 8
+    "ageDays": 13, "staleDays": 4, "additions": 120, "deletions": 8,
+    "defaultBranch": "main"
   },
   {
     "id": "acme/web#7", "repo": "acme/web", "number": 7,
@@ -13,6 +14,7 @@
     "headRef": "nav-overflow", "baseRef": "main", "isDraft": true,
     "ci": "failure", "review": "none",
     "openedAt": "2026-09-12T00:00:00Z", "updatedAt": "2026-09-13T00:00:00Z",
-    "ageDays": 2, "staleDays": 1, "additions": 9, "deletions": 3
+    "ageDays": 2, "staleDays": 1, "additions": 9, "deletions": 3,
+    "defaultBranch": "main"
   }
 ]

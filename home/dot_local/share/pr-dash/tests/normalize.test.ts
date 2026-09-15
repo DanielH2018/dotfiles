@@ -100,6 +100,20 @@ test('an unparseable createdAt is treated as maximally old, not freshly opened',
   assert.ok(Number.isFinite(record.ageDays));
 });
 
+// Fix round 1, finding 4: buildStacks compares a PR's baseRef against the repo's
+// actual default branch instead of a fixed name list, so this field has to survive
+// the trip from GitHub's response onto the record.
+test('defaultBranchRef.name becomes defaultBranch on the record', () => {
+  assert.strictEqual(normalize(nodes, NOW)[0]!.defaultBranch, 'main');
+});
+
+// An empty repository has no default branch, so GitHub's defaultBranchRef comes back
+// null; fixture node 1 has no defaultBranchRef at all, exercising the same optional-
+// chaining fallback a missing or null field takes.
+test('a missing or null defaultBranchRef becomes a null defaultBranch, not a crash', () => {
+  assert.strictEqual(normalize(nodes, NOW)[1]!.defaultBranch, null);
+});
+
 test('an unrecognized rollup state falls back to pending, not none or success', () => {
   const record = normalize(
     [

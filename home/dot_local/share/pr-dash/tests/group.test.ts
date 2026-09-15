@@ -29,6 +29,7 @@ function makeRecord(overrides: Partial<PrRecord> & { id: string }): PrRecord {
     staleDays: 1,
     additions: 1,
     deletions: 0,
+    defaultBranch: 'main',
     ...overrides,
   };
 }

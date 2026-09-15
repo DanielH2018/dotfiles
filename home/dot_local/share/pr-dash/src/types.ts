@@ -18,6 +18,10 @@ export type PrRecord = {
   staleDays: number;
   additions: number;
   deletions: number;
+  // The repo's actual default branch name, or null for an empty repository (GitHub's
+  // defaultBranchRef is itself null there). buildStacks compares baseRef against this
+  // instead of a fixed list of conventional trunk names.
+  defaultBranch: string | null;
 };
 
 export type StackNode = {

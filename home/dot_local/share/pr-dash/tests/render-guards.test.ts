@@ -52,6 +52,7 @@ const validRecord: PrRecord = {
   staleDays: 2,
   additions: 10,
   deletions: 2,
+  defaultBranch: 'main',
 };
 
 type FieldKind = 'string' | 'number' | 'boolean' | 'enum';

@@ -39,6 +39,19 @@ test('serves records on /api/prs with the secret', async () => {
   });
 });
 
+// Fix round 1: /api/prs sends stacks alongside prs and fetchedAt. Task 9's manual
+// curl proved this once; nothing stops a later refactor dropping it silently.
+test('/api/prs returns stacks alongside prs and fetchedAt', async () => {
+  await withServer(async (base, secret) => {
+    const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+    const body = await res.json();
+    assert.ok(Array.isArray(body.prs));
+    assert.ok(Array.isArray(body.stacks));
+    assert.strictEqual(typeof body.fetchedAt, 'string');
+    assert.strictEqual(body.stacks.length, body.prs.length);
+  });
+});
+
 test('/api/prs reports the fetch time loadPrs gives it, not the response time', async () => {
   const fixedFetchedAt = '2020-01-01T00:00:00.000Z';
   await withServer(

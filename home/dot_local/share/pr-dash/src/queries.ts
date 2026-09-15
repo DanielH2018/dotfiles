@@ -9,7 +9,7 @@ import type { RawPr } from './normalize.ts';
 export const PR_FIELDS = `
   number title url isDraft baseRefName headRefName
   createdAt updatedAt additions deletions reviewDecision
-  repository { nameWithOwner }
+  repository { nameWithOwner defaultBranchRef { name } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 `;
 
