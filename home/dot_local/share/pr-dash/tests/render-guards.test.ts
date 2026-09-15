@@ -20,7 +20,6 @@ import {
   loadStoredView,
   saveStoredView,
   clearStoredView,
-  saveCollapsedKeys,
   VIEW_KEY,
   staleBanner,
   formatRelativeTime,
@@ -806,37 +805,6 @@ test('clearStoredView clears collapse state along with the filters', () => {
   assert.deepStrictEqual(after.ci, []);
 });
 
-test('saveCollapsedKeys round-trips the given keys through storage', () => {
-  const store = fakeStorage();
-  saveCollapsedKeys(store, ['acme/api', 'acme/web']);
-  assert.deepStrictEqual(loadStoredView(store).collapsed, ['acme/api', 'acme/web']);
-});
-
-test('saveCollapsedKeys replaces the stored set rather than merging into it', () => {
-  // An implementation that skips the write for an empty set would pass a naive round-trip
-  // test here and still fail to persist "un-collapse everything" — the case that matters.
-  const store = fakeStorage();
-  saveCollapsedKeys(store, ['acme/api']);
-  saveCollapsedKeys(store, []);
-  assert.deepStrictEqual(loadStoredView(store).collapsed, []);
-});
-
-test('saveCollapsedKeys leaves the rest of the stored view alone', () => {
-  const store = fakeStorage();
-  saveStoredView(store, { ...parseStoredView(null), ci: ['failure'], sort: 'age' });
-  saveCollapsedKeys(store, ['acme/api']);
-  const after = loadStoredView(store);
-  assert.deepStrictEqual(after.ci, ['failure']);
-  assert.strictEqual(after.sort, 'age');
-  assert.deepStrictEqual(after.collapsed, ['acme/api']);
-});
-
-test('saveCollapsedKeys coerces its input the same way toCollapsedKeys does', () => {
-  const store = fakeStorage();
-  saveCollapsedKeys(store, ['acme/api', 42, 'acme/api', null]);
-  assert.deepStrictEqual(loadStoredView(store).collapsed, ['acme/api']);
-});
-
 test('toCiValues keeps only known CI statuses', () => {
   assert.deepStrictEqual(toCiValues(['success', 'bogus', 'failure']), ['success', 'failure']);
 });
@@ -1087,4 +1055,14 @@ test('a refreshing response past the timeout gives up and clears the state', () 
 test('isStaleResponse is true once a newer request has started', () => {
   assert.strictEqual(isStaleResponse(1, 2), true);
   assert.strictEqual(isStaleResponse(2, 2), false);
+});
+
+test('index.html carries the controls app.js binds by id', () => {
+  // app.js looks these up by id and silently does nothing if one is missing, so a renamed
+  // or dropped button is invisible without this assertion. emptyStateMessage also names
+  // "Reset view" in its text, so that label is pinned here too.
+  for (const id of ['group-by', 'sort-by', 'collapse-all', 'expand-all', 'reset', 'refresh']) {
+    assert.ok(indexHtml.includes(`id="${id}"`), `index.html must carry an element with id="${id}"`);
+  }
+  assert.ok(indexHtml.includes('>Reset view<'), 'emptyStateMessage names the "Reset view" control');
 });

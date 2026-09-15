@@ -35,3 +35,41 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
 .ci-failure .meta { color:var(--red); }
 .ci-pending .meta { color:var(--yellow); }
 #banner { margin:0; padding:10px 24px; background:#45293a; color:var(--red); }
+/* The header is a button so the whole row is a click target and screen readers get the
+   disclosure state from aria-expanded. Stripped back to look like the h2 it replaced. */
+.disclosure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chevron {
+  width: 1em;
+  color: var(--dim);
+}
+.section-count {
+  color: var(--dim);
+  font-size: 0.8em;
+  font-weight: 400;
+}
+.summary-chip {
+  font-size: 0.72em;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.summary-chip.bad { color: var(--red); }
+.summary-chip.warn { color: var(--yellow); }
+.summary-chip.good { color: var(--green); }
+.stack-toggle {
+  width: auto;
+  margin-right: 6px;
+}

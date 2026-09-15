@@ -1,5 +1,5 @@
 // @ts-check
-import { applyFilters, groupBy, sortStackRoots, sortWithin } from './group.js';
+import { applyFilters, groupBy, groupSummary, summaryChips, sortStackRoots, sortWithin } from './group.js';
 import {
   toAxis,
   toSort,
@@ -7,6 +7,7 @@ import {
   toReviewValues,
   toStalenessValues,
   toDraftValues,
+  toCollapsedKeys,
   parsePrsBody,
   emptyStateMessage,
   isSafeUrl,
@@ -55,10 +56,25 @@ function setCheckedValues(fieldsetId, values) {
 }
 
 /**
- * The filter/sort controls have no DOM element of their own for collapsed sections, so
- * `collapsed` here is read fresh from storage rather than from an in-memory value, and
- * carried forward unchanged. A collapse toggle must persist through `saveCollapsedKeys`
- * instead, so it is never routed through this function or `saveView`.
+ * Keys of the sections the user has folded shut: a repository name for a group header, a
+ * root PR's id for a stack. Held as a Set for the membership test `render` does per
+ * section, and written back to storage as an array.
+ * @type {Set<string>}
+ */
+let collapsed = new Set();
+
+/** @param {string} key */
+function toggleCollapsed(key) {
+  if (collapsed.has(key)) collapsed.delete(key);
+  else collapsed.add(key);
+  saveView();
+  render(current, currentStacks);
+}
+
+/**
+ * Reports the controls' current state, `collapsed` included — it is read from the
+ * in-memory Set here, not from storage, since that Set is the one place collapse state lives
+ * while the page is open.
  * @returns {StoredView}
  */
 function readControls() {
@@ -71,14 +87,13 @@ function readControls() {
     review: toReviewValues(checkedValues('filter-review')),
     staleness: toStalenessValues(checkedValues('filter-staleness')),
     draft: toDraftValues(checkedValues('filter-draft')),
-    collapsed: loadStoredView(localStorage).collapsed,
+    collapsed: [...collapsed],
   };
 }
 
 /**
- * Persists the controls' current state so the next page load can restore it. This must
- * never be the path that persists a collapse toggle — use `saveCollapsedKeys` for that,
- * so a toggle isn't lost behind whatever `readControls` happens to carry forward.
+ * Persists the controls' current state, including a collapse toggle, so the next page
+ * load can restore it.
  */
 function saveView() {
   saveStoredView(localStorage, readControls());
@@ -94,6 +109,7 @@ function applyView(view) {
   setCheckedValues('filter-review', view.review);
   setCheckedValues('filter-staleness', view.staleness);
   setCheckedValues('filter-draft', view.draft);
+  collapsed = new Set(toCollapsedKeys(view.collapsed));
 }
 
 /**
@@ -219,9 +235,72 @@ function renderStack(node, into, allowed) {
     const row = renderRow(node.pr);
     row.style.marginLeft = `${node.depth * 20}px`;
     addStackBadges(row, node);
+    // Only a root with children is worth a toggle: a single PR has nothing to fold, and a
+    // child's own subtree folds with its root.
+    if (node.depth === 0 && node.children.length > 0) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'disclosure stack-toggle';
+      const isCollapsed = collapsed.has(node.pr.id);
+      toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      toggle.textContent = isCollapsed ? '▸' : '▾';
+      // The toggle sits inside `row`, which is the PR's own link anchor, so an unguarded
+      // click bubbles up and follows that link instead of only folding the stack.
+      toggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleCollapsed(node.pr.id);
+      });
+      row.prepend(toggle);
+    }
     into.append(row);
   }
+  if (node.depth === 0 && collapsed.has(node.pr.id)) return;
   for (const child of node.children) renderStack(child, into, allowed);
+}
+
+/**
+ * A section header that folds its contents away. The disclosure state lives on the button
+ * as `aria-expanded`, and the header keeps the group's size and a state summary while
+ * collapsed so folding a repository away never hides that something inside is failing.
+ * @param {string} key
+ * @param {string} label
+ * @param {import('./group.js').GroupSummary} summary
+ * @returns {HTMLElement}
+ */
+function collapsibleHeader(key, label, summary) {
+  const isCollapsed = collapsed.has(key);
+  const h2 = document.createElement('h2');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'disclosure';
+  button.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+  button.addEventListener('click', () => toggleCollapsed(key));
+
+  const chevron = document.createElement('span');
+  chevron.className = 'chevron';
+  chevron.textContent = isCollapsed ? '▸' : '▾';
+  button.append(chevron);
+
+  const name = document.createElement('span');
+  name.className = 'section-name';
+  name.textContent = label;
+  button.append(name);
+
+  const count = document.createElement('span');
+  count.className = 'section-count';
+  count.textContent = summary.total === 1 ? '1 PR' : `${summary.total} PRs`;
+  button.append(count);
+
+  for (const chip of summaryChips(summary)) {
+    const el = document.createElement('span');
+    el.className = `summary-chip ${chip.tone}`;
+    el.textContent = chip.label;
+    button.append(el);
+  }
+
+  h2.append(button);
+  return h2;
 }
 
 /**
@@ -264,22 +343,22 @@ function render(records, stacks) {
 
   for (const group of groupBy(filtered, axis)) {
     const section = document.createElement('section');
-    const h2 = document.createElement('h2');
-    h2.textContent = `${group.key} (${group.records.length})`;
-    section.append(h2);
-    if (axis === 'repo') {
-      // The tree, not the flat sort-selectable row list every other axis gets, since a
-      // stack's shape is the point of grouping by repo. The Sort control still applies,
-      // to the stack roots: without that it had no effect at all in the default view,
-      // because buildStacks orders roots by number. Children keep their stack order.
-      // `allowed` hides a filtered-out row without dropping its place in the tree.
-      const roots = stacks.filter((s) => s.pr.repo === group.key);
-      for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
-    } else {
-      for (const pr of sortWithin(group.records, sort)) {
-        const row = renderRow(pr);
-        addStackBadges(row, byId.get(pr.id));
-        section.append(row);
+    section.append(collapsibleHeader(group.key, group.key, groupSummary(group.records)));
+    if (!collapsed.has(group.key)) {
+      if (axis === 'repo') {
+        // The tree, not the flat sort-selectable row list every other axis gets, since a
+        // stack's shape is the point of grouping by repo. The Sort control still applies,
+        // to the stack roots: without that it had no effect at all in the default view,
+        // because buildStacks orders roots by number. Children keep their stack order.
+        // `allowed` hides a filtered-out row without dropping its place in the tree.
+        const roots = stacks.filter((s) => s.pr.repo === group.key);
+        for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
+      } else {
+        for (const pr of sortWithin(group.records, sort)) {
+          const row = renderRow(pr);
+          addStackBadges(row, byId.get(pr.id));
+          section.append(row);
+        }
       }
     }
     host.append(section);
@@ -379,6 +458,22 @@ for (const id of [
 }
 document.getElementById('refresh')?.addEventListener('click', () => void refresh(true));
 document.getElementById('reset')?.addEventListener('click', resetView);
+
+// A way in needs a way out at the same granularity: per-section toggles alone leave no way
+// to undo a session's worth of collapsing.
+document.getElementById('collapse-all')?.addEventListener('click', () => {
+  const groupSel = document.getElementById('group-by');
+  const axis = toAxis(groupSel instanceof HTMLSelectElement ? groupSel.value : '');
+  for (const group of groupBy(current, axis)) collapsed.add(group.key);
+  saveView();
+  render(current, currentStacks);
+});
+
+document.getElementById('expand-all')?.addEventListener('click', () => {
+  collapsed.clear();
+  saveView();
+  render(current, currentStacks);
+});
 
 applyView(loadStoredView(localStorage));
 void refresh();
