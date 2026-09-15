@@ -72,20 +72,26 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
 .summary-chip.bad { color: var(--red); }
 .summary-chip.warn { color: var(--yellow); }
 .summary-chip.good { color: var(--green); }
-.stack-toggle {
-  width: auto;
-  margin-right: 6px;
-}
 /* The toggle and the PR's own link are siblings here, not nested: an anchor must not contain
    interactive content. `.row` keeps its own border so a flat (non-stack) row is unaffected;
    the wrapper owns the line and the indent so the rule spans the toggle too, and the anchor
-   takes the remaining width instead of colliding with it. */
+   takes the remaining width instead of colliding with it.
+   A fixed first column, not a flex item that collapses to zero width when absent: a root with
+   no toggle (nothing to fold, or nothing the filters leave visible under it) would otherwise
+   sit 21px left of its own toggled siblings, so every title in a section starts at the same
+   x regardless of which of its rows happen to carry a toggle. */
 .stack-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 21px 1fr;
   align-items: center;
   border-bottom: 1px solid var(--line);
 }
 .stack-row .row {
-  flex: 1;
+  grid-column: 2;
   border-bottom: none;
+}
+.stack-toggle {
+  grid-column: 1;
+  justify-self: start;
+  width: auto;
 }

@@ -169,6 +169,9 @@ function hideBanner() {
 function renderRow(pr) {
   const row = document.createElement('a');
   row.className = `row ci-${pr.ci} review-${pr.review}`;
+  // `row:` prefixed so this can never collide with a stack toggle's bare PR id or a header's
+  // axis-qualified key — the three key kinds share one lookup in `render`'s focus restore.
+  row.dataset.key = `row:${pr.id}`;
   if (isSafeUrl(pr.url)) row.href = pr.url;
   row.target = '_blank';
   row.rel = 'noreferrer';
@@ -394,43 +397,46 @@ function render(records, stacks) {
 
   // Zero groups used to render nothing at all, so a user with no open PRs and a user whose
   // filters exclude every PR saw the same blank page. Which of the two it is decides what
-  // to do next, so the page says.
+  // to do next, so the page says. Held in an `else` below rather than an early return, so the
+  // focus restore at the end runs on every path out of this function, not just the common one
+  // — a poll landing a payload the active filters exclude entirely must not strand focus.
   const empty = emptyStateMessage(records.length, filtered.length);
   if (empty !== null) {
     const message = document.createElement('p');
     message.className = 'empty';
     message.textContent = empty;
     host.append(message);
-    return;
-  }
-
-  for (const group of groupBy(filtered, axis)) {
-    const collapseKey = groupCollapseKey(axis, group.key);
-    const section = document.createElement('section');
-    section.append(collapsibleHeader(collapseKey, group.key, groupSummary(group.records)));
-    if (!collapsed.has(collapseKey)) {
-      if (axis === 'repo') {
-        // The tree, not the flat sort-selectable row list every other axis gets, since a
-        // stack's shape is the point of grouping by repo. The Sort control still applies,
-        // to the stack roots: without that it had no effect at all in the default view,
-        // because buildStacks orders roots by number. Children keep their stack order.
-        // `allowed` hides a filtered-out row without dropping its place in the tree.
-        const roots = stacks.filter((s) => s.pr.repo === group.key);
-        for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
-      } else {
-        for (const pr of sortWithin(group.records, sort)) {
-          const row = renderRow(pr);
-          addStackBadges(row, byId.get(pr.id));
-          section.append(row);
+  } else {
+    for (const group of groupBy(filtered, axis)) {
+      const collapseKey = groupCollapseKey(axis, group.key);
+      const section = document.createElement('section');
+      section.append(collapsibleHeader(collapseKey, group.key, groupSummary(group.records)));
+      if (!collapsed.has(collapseKey)) {
+        if (axis === 'repo') {
+          // The tree, not the flat sort-selectable row list every other axis gets, since a
+          // stack's shape is the point of grouping by repo. The Sort control still applies,
+          // to the stack roots: without that it had no effect at all in the default view,
+          // because buildStacks orders roots by number. Children keep their stack order.
+          // `allowed` hides a filtered-out row without dropping its place in the tree.
+          const roots = stacks.filter((s) => s.pr.repo === group.key);
+          for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
+        } else {
+          for (const pr of sortWithin(group.records, sort)) {
+            const row = renderRow(pr);
+            addStackBadges(row, byId.get(pr.id));
+            section.append(row);
+          }
         }
       }
+      host.append(section);
     }
-    host.append(section);
   }
 
   if (focusedKey !== undefined) {
     const toFocus = host.querySelector(`[data-key="${CSS.escape(focusedKey)}"]`);
-    if (toFocus instanceof HTMLElement) toFocus.focus();
+    // `preventScroll`: this same path runs on every poll while a user reads on, and a plain
+    // `focus()` would yank the page back to whatever was focused every time one lands.
+    if (toFocus instanceof HTMLElement) toFocus.focus({ preventScroll: true });
   }
 }
 
