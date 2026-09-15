@@ -211,10 +211,21 @@ and receives normalized PR records.
 ### The token comes from 1Password
 
 ```
-op read "op://Private/GitHub PR Dashboard/token"
+op item get "GitHub PR Dashboard" --fields label=token --reveal --format json
 ```
 
-`PR_DASH_OP_ITEM` overrides the item reference. `GH_TOKEN` in the environment overrides
+The lookup is by item title, searched across every vault the user can see, not by a fixed
+`op://vault/item/field` path. The vault holding this item is not a portable name: a personal
+1Password account calls it `Private`, and a Business account names each member's own vault
+differently. A hardcoded vault segment ties the tool to one account's naming and breaks on
+the other — which is why an earlier version of this spec named `Private` and the tool did not
+run under a Business account.
+
+`PR_DASH_OP_ITEM` set to a plain title overrides which item to search for, still across every
+vault. Set to a precise `op://vault/item/field` reference, it bypasses the title search: the
+tool runs `op read` on it directly, unchanged from that flow's original design. Pin a
+reference this way when the title is ambiguous across vaults, or when `op` runs as a service
+account, which the CLI requires a vault for. `GH_TOKEN` in the environment overrides
 everything, for debugging and for running without 1Password available.
 
 **There is deliberately no fallback to `gh auth token`.** That was the original design and
@@ -247,9 +258,16 @@ story stays in one system rather than two.
   identical to a network problem.
 - **`op` prompts once.** The read happens at startup, so unlocking costs one biometric
   prompt per server launch, not one per refresh.
-- **This repository's Claude sandbox cannot run `op read`.** It permits the 1Password SSH
+- **This repository's Claude sandbox cannot run `op`.** It permits the 1Password SSH
   agent socket, which is a different channel from the one the `op` CLI uses. The server
   runs outside the sandbox regardless, so this affects debugging sessions only.
+- **The exact JSON shape of `op item get --fields ... --format json` is unverified in
+  this environment**, for the same sandbox reason. `token.ts` parses defensively — it
+  accepts an array of field objects, the full-item `{ fields: [...] }` shape, or a single
+  field object, and matches the field label case-insensitively — rather than assuming one
+  shape. Run `op item get "GitHub PR Dashboard" --fields label=token --format json | jq
+  'if type == "array" then map(keys) else keys end'` (no `--reveal`, so the token itself
+  never prints) to confirm the shape in a real environment.
 
 ### Why the guard exists in v1
 
@@ -357,8 +375,10 @@ only thing standing between an extensionless relative import and a failed launch
 - Grouping and sorting — one test per axis, over a shared fixture.
 - `server.ts` — a single smoke test: start with a stubbed fetch, request `/api/prs`,
   assert the response shape.
-- Token resolution — `GH_TOKEN` wins over `op`, and a failed `op read` produces the error
-  naming the item rather than starting with no token.
+- Token resolution — `GH_TOKEN` wins over 1Password, `PR_DASH_OP_ITEM` dispatches to a
+  direct `op read` or a title lookup depending on whether it looks like an `op://`
+  reference, and a failed lookup produces an error naming the exact command attempted
+  rather than starting with no token.
 - The request guard — a rejected `Host`, a mismatched `Origin`, and a missing secret each
   get a test. This is the one piece of v1 whose failure mode is silent, so it is the one
   piece that does not rely on the smoke test to cover it.
