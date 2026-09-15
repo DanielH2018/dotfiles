@@ -4,7 +4,7 @@ import { createPrLoader } from '../src/loader.ts';
 import { createClient } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import type { Cache } from '../src/cache.ts';
-import type { LoadResult } from '../src/loader.ts';
+import type { LoadResult, LoadPrs } from '../src/loader.ts';
 
 function pageResponse(nodes: unknown[]) {
   return {
@@ -249,4 +249,46 @@ test('a force arriving mid-fetch joins it rather than starting a second', async 
   // leave calls at 1.
   assert.strictEqual(b.prs.length, 1, 'the forced call must resolve to the real fetched payload');
   assert.deepStrictEqual(a, b, 'both callers see the same payload');
+});
+
+test('a force landing as the fetch settles does not empty the cache', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+
+  const inner = createCache<LoadResult>(60_000);
+  let loadPrs: LoadPrs = async () => {
+    throw new Error('loadPrs called before it was assigned');
+  };
+  let reentered = false;
+  // Re-enters from inside set(), which is the only moment the defect is reachable: the
+  // fetch has written the cache but the outer finally has not yet cleared `inFlight`.
+  const cache: Cache<LoadResult> = {
+    get: () => inner.get(),
+    set: (value) => {
+      inner.set(value);
+      if (!reentered) {
+        reentered = true;
+        void loadPrs({ force: true });
+      }
+    },
+    invalidate: () => inner.invalidate(),
+  };
+  loadPrs = createPrLoader(client, cache);
+
+  await loadPrs();
+  await Promise.resolve();
+
+  assert.ok(reentered, 'the re-entrant force must actually have run');
+  assert.notStrictEqual(
+    inner.get(),
+    undefined,
+    'a force that joins an in-flight fetch must not discard what that fetch just cached',
+  );
+  assert.strictEqual(calls, 1);
 });
