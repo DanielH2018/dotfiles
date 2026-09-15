@@ -28,7 +28,7 @@ authoritative over both, and it is in the repo.
 - **Shared types live in `src/types.ts`** and are consumed from `.js` via `/** @type {import("./types.ts").PrRecord} */`. Verified: `tsc --checkJs` resolves these and reports real errors.
 - **ESM everywhere in this tool.** The repo root has no `package.json`, so it is CommonJS by default. `home/dot_local/share/pr-dash/package.json` with `{"type": "module"}` scopes ESM to this tree only. Verified: ESM `.ts` tests and the repo's CommonJS tests pass in one `node --test` run.
 - **Read-only.** No endpoint mutates GitHub state. Every mutating affordance is an `<a href>` to github.com.
-- **Token from 1Password only.** `op read "op://Private/GitHub PR Dashboard/token"`, overridable by `PR_DASH_OP_ITEM` (item path) and `GH_TOKEN` (raw token). No `gh auth token` fallback — it returns write scopes.
+- **Token from 1Password only.** `op item get "GitHub PR Dashboard" --fields label=token --reveal --format json`, searched across every vault rather than through a fixed `op://vault/item/field` path, because no vault name is portable between a personal and a Business account. Overridable by `PR_DASH_OP_ITEM` (a precise `op://` reference, or a bare item title) and `GH_TOKEN` (raw token). No `gh auth token` fallback — it returns write scopes. This constraint originally named `op read "op://Private/…"`; the hardcoded vault was wrong on the machine this runs on.
 - **No test performs network I/O.** Every GitHub interaction is behind an injected `fetch`.
 - **`tsc --noEmit` is the type gate.** No runtime dependencies. devDependencies are
   `typescript` and `@types/node` only — both types-only, neither deployed. Without
@@ -1105,6 +1105,9 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+// Superseded: the shipped code exports DEFAULT_TITLE = 'GitHub PR Dashboard' and looks the
+// item up across every vault. A hardcoded vault segment is not portable — see the spec's
+// authentication section. The line below is what this task originally prescribed.
 export const DEFAULT_ITEM = 'op://Private/GitHub PR Dashboard/token';
 
 export type Env = Record<string, string | undefined>;
