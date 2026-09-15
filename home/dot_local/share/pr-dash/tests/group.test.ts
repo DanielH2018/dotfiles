@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { applyFilters, groupBy, sortWithin, stalenessBucket } from '../public/group.js';
-import type { PrRecord } from '../src/types.ts';
+import { applyFilters, groupBy, sortStackRoots, sortWithin, stalenessBucket } from '../public/group.js';
+import type { Sort } from '../public/group.js';
+import type { PrRecord, StackNode } from '../src/types.ts';
 
 const records: PrRecord[] = JSON.parse(
   readFileSync(new URL('./fixtures/records.json', import.meta.url), 'utf8'),
@@ -157,6 +158,73 @@ test('does not mutate its input', () => {
   const before = orderRecords.map((r) => r.id);
   sortWithin(orderRecords, 'stale');
   assert.deepStrictEqual(orderRecords.map((r) => r.id), before);
+});
+
+/**
+ * Builds a stack node around `pr`, with `children` nested under it. The positional
+ * fields are the arbitrary-but-valid defaults buildStacks would have filled in;
+ * sortStackRoots reads none of them.
+ */
+function makeNode(pr: PrRecord, children: StackNode[] = []): StackNode {
+  return { pr, children, depth: 0, position: 1, stackSize: 1 + children.length, danglingBase: false, ambiguousBase: false };
+}
+
+// Three roots whose buildStacks order (repo, then number) is r1, r2, r3 — an order that
+// differs from every one of the four sorts below. A fixture where one sort happened to
+// agree with source order would pass against an implementation that never sorted at all,
+// which is exactly how three sort assertions passed against a no-op earlier in this
+// project.
+const rootRecords = {
+  r1: makeRecord({ id: 'x/y#1', repo: 'x/y', title: 'Charlie', staleDays: 2, ageDays: 5, additions: 10 }),
+  r2: makeRecord({ id: 'x/y#2', repo: 'x/y', title: 'Alpha', staleDays: 8, ageDays: 1, additions: 50 }),
+  r3: makeRecord({ id: 'x/y#3', repo: 'x/y', title: 'Bravo', staleDays: 5, ageDays: 9, additions: 5 }),
+};
+
+// r1 carries two children whose own stale/age/title/size order is the reverse of their
+// stack order, so a sort that wrongly recursed into the stack would reorder them.
+const childA = makeRecord({ id: 'x/y#10', repo: 'x/y', title: 'Zulu', staleDays: 1, ageDays: 1, additions: 1 });
+const childB = makeRecord({ id: 'x/y#11', repo: 'x/y', title: 'Yankee', staleDays: 9, ageDays: 9, additions: 99 });
+
+function rootsInStackOrder(): StackNode[] {
+  return [
+    makeNode(rootRecords.r1, [makeNode(childA), makeNode(childB)]),
+    makeNode(rootRecords.r2),
+    makeNode(rootRecords.r3),
+  ];
+}
+
+const rootExpectations: [Sort, string[]][] = [
+  ['stale', ['x/y#2', 'x/y#3', 'x/y#1']],
+  ['age', ['x/y#3', 'x/y#1', 'x/y#2']],
+  ['title', ['x/y#2', 'x/y#3', 'x/y#1']],
+  ['size', ['x/y#2', 'x/y#1', 'x/y#3']],
+];
+
+for (const [sort, expected] of rootExpectations) {
+  test(`sortStackRoots orders roots by ${sort}`, () => {
+    const sorted = sortStackRoots(rootsInStackOrder(), sort);
+    assert.deepStrictEqual(sorted.map((n) => n.pr.id), expected);
+  });
+}
+
+test('sortStackRoots leaves a stack\'s children in stack order', () => {
+  // The stack's shape is its meaning: #10 bases on #1 and #11 on #10, so reordering them
+  // by staleness would render a stack that does not exist.
+  for (const [sort] of rootExpectations) {
+    const sorted = sortStackRoots(rootsInStackOrder(), sort);
+    const withChildren = sorted.find((n) => n.pr.id === 'x/y#1');
+    assert.deepStrictEqual(
+      withChildren?.children.map((c) => c.pr.id),
+      ['x/y#10', 'x/y#11'],
+      `children were reordered under the ${sort} sort`,
+    );
+  }
+});
+
+test('sortStackRoots does not mutate its input', () => {
+  const roots = rootsInStackOrder();
+  sortStackRoots(roots, 'stale');
+  assert.deepStrictEqual(roots.map((n) => n.pr.id), ['x/y#1', 'x/y#2', 'x/y#3']);
 });
 
 test('an empty filter set matches everything', () => {

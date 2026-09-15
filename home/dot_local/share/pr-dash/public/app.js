@@ -1,5 +1,5 @@
 // @ts-check
-import { applyFilters, groupBy, sortWithin } from './group.js';
+import { applyFilters, groupBy, sortStackRoots, sortWithin } from './group.js';
 import {
   toAxis,
   toSort,
@@ -235,11 +235,13 @@ function render(records, stacks) {
     h2.textContent = `${group.key} (${group.records.length})`;
     section.append(h2);
     if (axis === 'repo') {
-      // Stack roots for this repo, already ordered by number by buildStacks — nest
-      // the tree instead of the flat, sort-selectable row list every other axis
-      // gets, since a stack's shape is the point of grouping by repo. `allowed`
-      // hides a filtered-out row without dropping its place in the tree.
-      for (const root of stacks.filter((s) => s.pr.repo === group.key)) renderStack(root, section, allowed);
+      // The tree, not the flat sort-selectable row list every other axis gets, since a
+      // stack's shape is the point of grouping by repo. The Sort control still applies,
+      // to the stack roots: without that it had no effect at all in the default view,
+      // because buildStacks orders roots by number. Children keep their stack order.
+      // `allowed` hides a filtered-out row without dropping its place in the tree.
+      const roots = stacks.filter((s) => s.pr.repo === group.key);
+      for (const root of sortStackRoots(roots, sort)) renderStack(root, section, allowed);
     } else {
       for (const pr of sortWithin(group.records, sort)) {
         const row = renderRow(pr);

@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
+/** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {'repo' | 'ci' | 'review' | 'staleness' | 'draft'} Axis */
 /** @typedef {'stale' | 'age' | 'title' | 'size'} Sort */
 
@@ -103,19 +104,43 @@ export function applyFilters(records, filters) {
 }
 
 /**
+ * The comparator for one sort setting, shared by {@link sortWithin} and
+ * {@link sortStackRoots} so the flat row list and the stack roots can never
+ * disagree about what "sorted by age" means. The switch stays exhaustive over
+ * `Sort` with no default branch, so adding a sort fails `tsc` here.
+ * @param {Sort} sort
+ * @returns {(a: PrRecord, b: PrRecord) => number}
+ */
+function comparatorFor(sort) {
+  switch (sort) {
+    case 'stale': return (a, b) => b.staleDays - a.staleDays;
+    case 'age': return (a, b) => b.ageDays - a.ageDays;
+    case 'title': return (a, b) => a.title.localeCompare(b.title);
+    case 'size': return (a, b) => (b.additions + b.deletions) - (a.additions + a.deletions);
+  }
+}
+
+/**
  * @param {readonly PrRecord[]} records
  * @param {Sort} sort
  * @returns {PrRecord[]}
  */
 export function sortWithin(records, sort) {
-  const copy = [...records];
-  switch (sort) {
-    case 'stale': return copy.sort((a, b) => b.staleDays - a.staleDays);
-    case 'age': return copy.sort((a, b) => b.ageDays - a.ageDays);
-    case 'title': return copy.sort((a, b) => a.title.localeCompare(b.title));
-    case 'size':
-      return copy.sort(
-        (a, b) => (b.additions + b.deletions) - (a.additions + a.deletions),
-      );
-  }
+  return [...records].sort(comparatorFor(sort));
+}
+
+/**
+ * Orders stack roots by `sort`, comparing each root's own PR.
+ *
+ * Only the roots move. A stack's children stay in stack order, because that order is
+ * the stack's meaning — each child bases on the one above it — and re-sorting them by
+ * staleness would render a stack that does not exist. This is what makes the Sort
+ * control work under the repo grouping without breaking the nesting.
+ * @param {readonly StackNode[]} roots
+ * @param {Sort} sort
+ * @returns {StackNode[]}
+ */
+export function sortStackRoots(roots, sort) {
+  const compare = comparatorFor(sort);
+  return [...roots].sort((a, b) => compare(a.pr, b.pr));
 }
