@@ -78,16 +78,35 @@ the pre-loaded fetch is still running.
 
 ### Where it plugs in, and where it must not
 
-The restore seeds **`withFallback`'s last-good payload, not the cache.** Seeding the
+The restore seeds **`withFallback`'s retained payload, not the cache.** Seeding the
 60-second cache would make the pre-load a cache *hit* and skip the fetch entirely, so the
 dashboard would show yesterday's rows and never refresh them.
 
-`withFallback` already presents a retained payload as stale, with a banner naming how long ago
-the last success was. `fetchedAt` is read from the file, so that sentence stays true across
-launches — a payload written three hours ago reads as three hours old. Restored rows therefore
-cannot render as fresh, which is the property the parent spec insists on: stale data presented
-as fresh is the failure mode to avoid. No new banner state and no new presentation logic are
-introduced.
+`withFallback` counts its own in-flight `load()` calls rather than tracking a boolean,
+because two callers can be awaiting a fetch at once and the count must stay above zero until
+the last of them settles. A non-forced call answers from the retained payload, marked
+`stale: true, refreshing: true`, when one already exists and that count is above zero,
+rather than joining the fetch already running. This is the mechanism that lets a restored
+payload answer the first `/api/prs` while the pre-loaded fetch is still in flight — a cold
+start with nothing restored has no retained payload to answer from, so its first caller
+still awaits `load()` as before. A forced call never takes this shortcut either: the Refresh
+button always awaits `load()`, since a click that returned retained data would look like a
+button that does nothing.
+
+`FallbackResult` carries this state as an optional `refreshing` field, and `FallbackOpts` is
+`{ initial?, onSuccess? }`. The `/api/prs` response type is derived from `loadPrs`'s own
+return type with every field made required, rather than hand-written as its own literal, so
+a field set upstream and left out of the response object is a compile error rather than a
+silent omission.
+
+The client asks again while a response reports `refreshing`, through `nextPollState` in
+`public/render-guards.js`. It waits `REFRESH_POLL_MS` (600ms) between polls and gives up
+after `REFRESH_POLL_TIMEOUT_MS` (60 seconds) of continuous refreshing, at which point Refresh
+is the way to try again. `staleBanner` shows a fourth message for this case, checked before
+the stale-failure branch so a fetch still in flight never reads as a failed one: "Showing the
+last saved list ({when}) while it refreshes." Restored rows still cannot render as fresh,
+which is the property the parent spec insists on: stale data presented as fresh is the
+failure mode to avoid.
 
 ### At rest
 
@@ -106,9 +125,14 @@ alternative, because only the full payload paints the real dashboard offline.
 
 ### Writing and reading
 
-Writes are atomic: write a temporary file in the same directory, then rename over the target.
-A crash or a kill mid-write therefore cannot leave truncated JSON that the next launch would
-have to reject.
+Writes are atomic: write a uniquely named temporary file in the same directory, then rename
+it over the target. The name is unique per write, because a write's file mode applies only
+when it creates the file, so reusing one name across writes would silently keep whatever mode
+a crashed run left behind. A crash or a kill mid-write therefore cannot leave truncated JSON
+that the next launch would have to reject. If the rename itself fails, the temporary file is
+removed rather than left behind, so a directory that keeps failing to rename does not
+accumulate full payload copies; a kill at that exact instant still orphans one file, accepted
+as a one-time leak.
 
 Reads tolerate every way the file can be wrong — absent, empty, truncated, valid JSON of the
 wrong shape, or written by an older version with a different schema. Each case discards the
@@ -116,12 +140,31 @@ file and starts cold rather than throwing. This is the discipline `parseStoredVi
 applies to `localStorage`, for the same reason: the stored value is whatever was there last,
 and a successful parse does not make it the right shape.
 
+The shape check itself is narrower than a full `PrRecord`. It validates only the fields
+`src/stacks.ts` reads before a restored payload is serialized — `id`, `repo`, `headRef`,
+`baseRef`, and `number` — because a record missing one of those would otherwise reach
+`buildStacks` and throw. Everything else `PrRecord` defines is left to the browser's own
+`validateRecord`, the second line of defense.
+
 A read failure is never fatal. The dashboard's normal cold-start path is the fallback.
+
+`withFallback`'s `onSuccess` option is how a successful fetch reaches this store, and it is
+called once per distinct successful result rather than once per call into `withFallback`. A
+result already handed to `onSuccess` is not re-notified, so a cache hit or a call that joins
+an in-flight fetch — both resolving to the same object a prior call already persisted — does
+not write it to disk again. A call that throws leaves its result eligible again, so a failed
+write retries on the next successful fetch rather than being skipped forever. Two concurrent
+calls that land on one fetch's result can therefore both invoke `onSuccess` if the first
+invocation throws; this is accepted, because the atomic write above means two writes of
+identical bytes cannot race destructively.
 
 ## Part 3 — Collapsible repositories and stacks
 
 Repository group headers and stack roots each carry a disclosure toggle. Everything is
-expanded by default.
+expanded by default. A stack root's toggle is a sibling of its PR's own link, not nested
+inside it: an anchor must not contain interactive content, and a nested button would still
+leave a middle click free to follow the link, since a middle click dispatches `auxclick`
+rather than `click`.
 
 ### A collapsed header keeps its signal
 
@@ -155,13 +198,18 @@ of collapsing.
 
 ### Keys
 
-Repository groups key on the repository name. Stacks key on the root PR's `id`, which is
-already `owner/name#123` and already unique.
+A group key is axis-qualified: `groupCollapseKey(axis, key)` joins the grouping axis to the
+group's own key, for example `repo:privacy-com/core-server` or `ci:none`. Two axes can
+produce the same bare key — `ci` and `review` each have a `none` group — so a flat namespace
+would fold both groups from one collapse action. Stack keys stay a bare PR id, which is
+already `owner/name#123` and already unique; a PR id always contains `#`, which no
+axis-qualified key does, so the two kinds of key can never collide with each other either.
 
-A key naming a repository or stack that no longer appears — a PR merged, a repository with
-nothing open — is simply unused. Unknown keys are ignored rather than treated as corruption,
-because the stored state legitimately outlives the payload it described. This follows from the
-same validation discipline as Part 2: tolerate what is there, use what makes sense.
+A key naming a repository, group, or stack that no longer appears — a PR merged, a
+repository with nothing open — is simply unused. Unknown keys are ignored rather than
+treated as corruption, because the stored state legitimately outlives the payload it
+described. This follows from the same validation discipline as Part 2: tolerate what is
+there, use what makes sense.
 
 Filters and collapse do not interact. A group whose every member is filtered out does not
 render at all, which is existing behaviour, so its collapse key goes unread.
@@ -178,6 +226,10 @@ Per part, the behaviour that must be pinned by a test that fails when it is brok
 - A rejected in-flight fetch clears its entry, so the next request fetches again rather than
   inheriting the failure.
 - A rejected pre-load leaves the server answering requests normally.
+- A request arriving while a fetch is already in flight is served the retained payload at
+  once, marked `refreshing`, rather than waiting out that fetch.
+- A forced request always waits for the fetch itself, never taking the retained payload's
+  shortcut.
 - A payload written and then read back round-trips, under the expected mode.
 - Each corrupt-file case — absent, truncated, wrong shape, unknown schema — yields a cold
   start rather than an exception.
@@ -196,6 +248,24 @@ this project has ever talked to GitHub or 1Password from a test, by design.
   dominant cost, which the current measurement says it is not.
 - **Pruning the persisted payload.** The whole file is replaced on each successful fetch, so
   individual stale entries never need removing.
-- **Remembering collapse state per grouping axis.** Collapse keys are repository names and PR
-  ids, so switching the grouping axis leaves them unread rather than misapplied. Per-axis
-  state would be a refinement, not a fix.
+- **Pruning collapse keys.** A key naming a section absent from the current payload stays in
+  the collapsed set rather than being dropped, because pruning it would discard the collapse
+  state of a group the active filters merely hide, not one that is gone for good. Reset view
+  and Expand all are the ways to clear it.
+- **Migrating collapse keys across the axis-qualification change.** A key written before
+  `groupCollapseKey` joined the axis to the group key is a bare string and never matches a
+  qualified key, so a repository or group collapsed under an earlier version renders expanded
+  after the upgrade, with no prompt saying so. A stack key is unaffected, since it was always
+  a bare PR id. No migration converts old keys: the failure mode is a section rendering open,
+  not corrupted or hidden.
+- **`collapse-all` folding stack keys outside the active axis.** It folds every stack root
+  regardless of the grouping axis in view, so collapsing all while grouped by CI stores stack
+  keys for stacks the CI axis does not currently render. Accepted because the stored set is a
+  superset of what the current axis can toggle, and Expand all clears every key it holds,
+  stack and group alike.
+- **No `aria-controls` on the disclosure buttons.** `aria-expanded` alone is a permitted
+  disclosure pattern. Adding `aria-controls` would require turning a collapse key into a DOM
+  id, which means escaping a repository name — arbitrary text — into an id-safe form.
+- **Collapse state across browser tabs.** It persists to the same `localStorage` key as the
+  rest of the view, so two tabs open on the dashboard are last-write-wins, the same as every
+  other control here.
