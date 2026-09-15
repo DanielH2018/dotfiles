@@ -114,7 +114,7 @@ test('createLoadPrs falls back to the retained payload when a later fetch fails'
   assert.deepStrictEqual(second.prs, first.prs);
 });
 
-test("createLoadPrs reports the loader's real fetch time, not the time of a later poll", async () => {
+test("a poll within the TTL reports the loader's real fetch time, not the time of the poll", async () => {
   const client = createClient({
     token: 'tok',
     fetchImpl: async () => pageResponse([RAW_NODE]),
@@ -136,4 +136,56 @@ test("createLoadPrs reports the loader's real fetch time, not the time of a late
   await new Promise((resolve) => setTimeout(resolve, 50));
   const second = await loadPrs();
   assert.strictEqual(second.fetchedAt, first.fetchedAt);
+});
+
+test('a forced refresh through createLoadPrs re-fetches inside the TTL', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const loadPrs = createLoadPrs(client, cache);
+
+  const first = await loadPrs();
+  assert.strictEqual(calls, 1);
+
+  // The assembled function is what main.ts hands the server, so this is the layer where
+  // a `force` dropped by withFallback would go unnoticed — createPrLoader honouring it
+  // in isolation is not enough. The real gap is needed for the same reason as in the
+  // poll test above: two `new Date().toISOString()` calls in the same millisecond are
+  // the same string, so a forced re-fetch would be indistinguishable from a cache hit.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const forced = await loadPrs({ force: true });
+
+  assert.strictEqual(calls, 2);
+  assert.strictEqual(forced.stale, false);
+  assert.notStrictEqual(forced.fetchedAt, first.fetchedAt);
+});
+
+test('a forced refresh that fails still falls back to the retained payload', async () => {
+  let fail = false;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      if (fail) throw new Error('network down');
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const loadPrs = createLoadPrs(client, cache);
+
+  const first = await loadPrs();
+  fail = true;
+  // Forcing clears the cache before fetching, so this is the case where the only copy of
+  // the data left is withFallback's retained one. Going blank here would be the spec's
+  // worst outcome: the user clicked Refresh and lost the rows they could already see.
+  const second = await loadPrs({ force: true });
+
+  assert.strictEqual(second.stale, true);
+  assert.match(String(second.error), /network down/);
+  assert.deepStrictEqual(second.prs, first.prs);
 });

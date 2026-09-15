@@ -130,3 +130,64 @@ test('a cache hit reports the original fetch time, not the time of the read', as
   const result = await loadPrs();
   assert.strictEqual(result.fetchedAt, '2020-01-01T00:00:00.000Z');
 });
+
+test('a forced load bypasses a warm cache and re-fetches', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const loadPrs = createPrLoader(client, cache);
+
+  await loadPrs();
+  assert.strictEqual(calls, 1);
+
+  // The cache is warm and well inside its 60s TTL, so an unforced call here would be a
+  // hit. This is what the Refresh control needs: a click must reach GitHub rather than
+  // being served the payload the user is trying to replace.
+  await loadPrs({ force: true });
+  assert.strictEqual(calls, 2);
+});
+
+test('a forced load repopulates the cache, so the next poll is a hit', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const loadPrs = createPrLoader(client, cache);
+
+  const forced = await loadPrs({ force: true });
+  assert.strictEqual(calls, 1);
+  // Invalidating without repopulating would leave every later poll fetching too, turning
+  // the TTL off for good after the first click.
+  assert.deepStrictEqual(cache.get(), forced);
+  await loadPrs();
+  assert.strictEqual(calls, 1);
+});
+
+test('an unforced load is a poll: force defaults to off', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const loadPrs = createPrLoader(client, cache);
+
+  await loadPrs();
+  await loadPrs({ force: false });
+  await loadPrs({});
+  assert.strictEqual(calls, 1);
+});

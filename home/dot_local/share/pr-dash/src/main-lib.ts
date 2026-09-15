@@ -1,6 +1,6 @@
 import type { Client } from './github.ts';
 import type { Cache } from './cache.ts';
-import { createPrLoader, type LoadPrs, type LoadResult } from './loader.ts';
+import { createPrLoader, type LoadOpts, type LoadPrs, type LoadResult } from './loader.ts';
 import type { PrRecord } from './types.ts';
 
 export type FallbackResult = {
@@ -21,12 +21,15 @@ export type FallbackResult = {
 // `prs` and `fetchedAt` into two variables, one inside this closure and one held by a
 // caller, lets two concurrent calls interleave and pair one call's retained `prs` with
 // a different call's `fetchedAt`.
-export function withFallback(load: LoadPrs): () => Promise<FallbackResult> {
+export function withFallback(load: LoadPrs): (opts?: LoadOpts) => Promise<FallbackResult> {
   let lastGood: LoadResult | undefined;
 
-  return async () => {
+  // `opts` is forwarded rather than dropped: this wrapper is what main.ts hands the
+  // server, so a `force` that stops here never reaches the cache and the Refresh button
+  // goes back to doing nothing.
+  return async (opts?: LoadOpts) => {
     try {
-      const result = await load();
+      const result = await load(opts);
       lastGood = result;
       return { ...result, stale: false };
     } catch (err) {
@@ -46,6 +49,9 @@ export function withFallback(load: LoadPrs): () => Promise<FallbackResult> {
 // this assembly is itself covered by a test (see refresh.test.ts) — main.ts carries no
 // test coverage at all, being a process shell that reads env vars and calls
 // process.exit, so any wiring left there is untested by construction.
-export function createLoadPrs(client: Client, cache: Cache<LoadResult>): () => Promise<FallbackResult> {
+export function createLoadPrs(
+  client: Client,
+  cache: Cache<LoadResult>,
+): (opts?: LoadOpts) => Promise<FallbackResult> {
   return withFallback(createPrLoader(client, cache));
 }

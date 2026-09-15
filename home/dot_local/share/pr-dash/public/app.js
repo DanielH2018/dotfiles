@@ -93,9 +93,16 @@ function resetView() {
   render(current, currentStacks);
 }
 
-/** @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string }>} */
-async function loadPrs() {
-  const res = await fetch('/api/prs', { headers: { 'x-pr-dash-secret': secret } });
+/**
+ * Fetches `/api/prs`. `force` adds the `refresh=1` the server reads as "bypass the
+ * cache TTL" — the Refresh button's whole job. Without it the server may answer from
+ * its 60-second cache, which is what a first load and any later poll want.
+ * @param {boolean} force
+ * @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string }>}
+ */
+async function loadPrs(force) {
+  const path = force ? '/api/prs?refresh=1' : '/api/prs';
+  const res = await fetch(path, { headers: { 'x-pr-dash-secret': secret } });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const body = await res.json();
   const { prs, stale, error, fetchedAt } = parsePrsBody(body);
@@ -249,9 +256,14 @@ let current = [];
 /** @type {StackNode[]} */
 let currentStacks = [];
 
-async function refresh() {
+/**
+ * Loads `/api/prs` and re-renders. `force` is true only for a Refresh click, so the
+ * initial load below is served from the server's cache like any other poll.
+ * @param {boolean} [force]
+ */
+async function refresh(force = false) {
   try {
-    const data = await loadPrs();
+    const data = await loadPrs(force);
     current = data.prs;
     currentStacks = data.stacks;
     // A stale response is still a 200: the server retained the last good payload
@@ -278,7 +290,7 @@ for (const id of ['group-by', 'sort-by', 'filter-ci', 'filter-review']) {
     render(current, currentStacks);
   });
 }
-document.getElementById('refresh')?.addEventListener('click', () => void refresh());
+document.getElementById('refresh')?.addEventListener('click', () => void refresh(true));
 document.getElementById('reset')?.addEventListener('click', resetView);
 
 applyView(loadStoredView(localStorage));

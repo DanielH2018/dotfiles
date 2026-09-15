@@ -34,7 +34,7 @@ async function freePort(): Promise<number> {
 
 async function withServer(
   fn: (base: string, secret: string) => Promise<void>,
-  loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string }> = async () => ({
+  loadPrs: (opts?: { force?: boolean }) => Promise<{ prs: PrRecord[]; fetchedAt: string }> = async () => ({
     prs: records,
     fetchedAt: new Date().toISOString(),
   }),
@@ -137,6 +137,27 @@ test('/api/prs reports error as null, not omitted, when loadPrs does not set it'
     const body = await res.json();
     assert.strictEqual(body.error, null);
   });
+});
+
+test('/api/prs?refresh=1 asks loadPrs to bypass the cache', async () => {
+  /** Every `force` value loadPrs was called with, in request order. */
+  const forces: (boolean | undefined)[] = [];
+  await withServer(
+    async (base, secret) => {
+      const headers = { 'x-pr-dash-secret': secret };
+      await fetch(`${base}/api/prs`, { headers });
+      await fetch(`${base}/api/prs?refresh=1`, { headers });
+      // Only the literal `1` counts: a poll that happens to carry some other query
+      // string must not silently turn into a forced GitHub fetch.
+      await fetch(`${base}/api/prs?refresh=0`, { headers });
+      await fetch(`${base}/api/prs?refresh=yes`, { headers });
+      assert.deepStrictEqual(forces, [false, true, false, false]);
+    },
+    async (opts) => {
+      forces.push(opts?.force);
+      return { prs: records, fetchedAt: new Date().toISOString() };
+    },
+  );
 });
 
 test('rejects /api/prs without the secret', async () => {
