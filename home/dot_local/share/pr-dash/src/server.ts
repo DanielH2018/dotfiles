@@ -20,7 +20,7 @@ export type ServerOpts = {
   // time: a cache hit must report when the data was actually fetched, not the instant of
   // this particular request, or a client polling every few seconds would see a "just now"
   // timestamp on data that is up to the cache's TTL old.
-  loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string }>;
+  loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string; stale?: boolean; error?: string }>;
 };
 
 export function createServer(opts: ServerOpts): Server {
@@ -69,9 +69,9 @@ async function handle(
       res.end(JSON.stringify({ error: guard.reason }));
       return;
     }
-    const { prs, fetchedAt } = await opts.loadPrs();
+    const { prs, fetchedAt, stale, error } = await opts.loadPrs();
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt }));
+    res.end(JSON.stringify({ prs, stacks: buildStacks(prs), fetchedAt, stale: stale ?? false, error }));
     return;
   }
 

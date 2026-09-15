@@ -92,7 +92,7 @@ function resetView() {
   render(current, currentStacks);
 }
 
-/** @returns {Promise<{ prs: PrRecord[], stacks: StackNode[] }>} */
+/** @returns {Promise<{ prs: PrRecord[], stacks: StackNode[], stale: boolean, error?: string, fetchedAt: string }>} */
 async function loadPrs() {
   const res = await fetch('/api/prs', { headers: { 'x-pr-dash-secret': secret } });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -102,7 +102,13 @@ async function loadPrs() {
   // separate validation is needed here — unlike prs, which travels over the network
   // as the one boundary tsc cannot enforce PrRecord[] across.
   const stacks = /** @type {StackNode[]} */ (body.stacks);
-  return { prs, stacks };
+  // stale/error/fetchedAt aren't run through a validator the way prs is: a wrong type
+  // here only affects banner text, not the render path, so String(...) below is
+  // enough to keep a malformed value from reaching the DOM as anything but a string.
+  const stale = body.stale === true;
+  const error = typeof body.error === 'string' ? body.error : undefined;
+  const fetchedAt = typeof body.fetchedAt === 'string' ? body.fetchedAt : '';
+  return { prs, stacks, stale, error, fetchedAt };
 }
 
 /** @param {string} message */
@@ -247,10 +253,20 @@ async function refresh() {
     const data = await loadPrs();
     current = data.prs;
     currentStacks = data.stacks;
-    const banner = document.getElementById('banner');
-    if (banner !== null) banner.hidden = true;
+    // A stale response is still a 200: the server retained the last good payload
+    // instead of failing the request, so it never reaches the catch below. The
+    // banner has to be driven from `data.stale`, not from whether this call threw.
+    if (data.stale) {
+      showBanner(`Could not refresh (last success ${data.fetchedAt}): ${data.error ?? 'unknown error'}`);
+    } else {
+      const banner = document.getElementById('banner');
+      if (banner !== null) banner.hidden = true;
+    }
     render(current, currentStacks);
   } catch (err) {
+    // Reached only when the request itself failed outright (network error, or a
+    // 500 with no retained payload behind it) rather than the server returning a
+    // retained payload marked stale.
     showBanner(`Could not refresh: ${String(err)}`);
     if (current.length > 0) render(current, currentStacks);
   }

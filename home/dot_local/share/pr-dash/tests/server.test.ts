@@ -98,6 +98,26 @@ test('/api/prs reports the fetch time loadPrs gives it, not the response time', 
   );
 });
 
+test('/api/prs forwards stale and error from loadPrs', async () => {
+  await withServer(
+    async (base, secret) => {
+      const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+      const body = await res.json();
+      assert.strictEqual(body.stale, true);
+      assert.strictEqual(body.error, 'network down');
+    },
+    async () => ({ prs: records, fetchedAt: new Date().toISOString(), stale: true, error: 'network down' }),
+  );
+});
+
+test('/api/prs reports stale as false, not omitted, when loadPrs does not set it', async () => {
+  await withServer(async (base, secret) => {
+    const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+    const body = await res.json();
+    assert.strictEqual(body.stale, false);
+  });
+});
+
 test('rejects /api/prs without the secret', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/prs`);
