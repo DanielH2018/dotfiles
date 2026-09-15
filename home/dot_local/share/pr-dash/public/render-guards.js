@@ -404,7 +404,12 @@ export function staleBanner(data, now = Date.now()) {
 
   if (data.stale) {
     const reason = data.error ?? 'unknown error';
-    return `Could not refresh (last success ${when}): ${reason}${incomplete}`;
+    // The reason comes from upstream and mostly does not end in a full stop, so the
+    // "Some PRs are missing" clause needs one supplied — without it the two run together
+    // as "... network down Some PRs are missing: ...". Conditional rather than appended
+    // unconditionally, because github.ts's rate-limit message is already two sentences.
+    const sentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
+    return `Could not refresh (last success ${when}): ${sentence}${incomplete}`;
   }
   if (incomplete !== '') return `Showing partial data (fetched ${when}).${incomplete}`;
   return null;

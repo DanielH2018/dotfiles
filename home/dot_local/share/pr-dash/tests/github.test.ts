@@ -41,7 +41,11 @@ test('follows pagination until hasNextPage is false', async () => {
   assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [1, 2]);
 });
 
-test('a 401 raises an error naming the 1Password item', async () => {
+test('a 401 says how to renew the token without disclosing where it is stored', async () => {
+  // This message reaches the browser banner (via a 200 /api/prs body carrying a retained
+  // payload, and via server.ts's 500 path), so the 1Password item reference it used to
+  // embed was a client-visible statement of where the credential lives. token.ts already
+  // prints the exact `op read` command at startup, which is where an operator needs it.
   const client = createClient({
     token: 'tok',
     fetchImpl: async () =>
@@ -52,7 +56,14 @@ test('a 401 raises an error naming the 1Password item', async () => {
         text: async () => 'Bad credentials',
       } as unknown as Response),
   });
-  await assert.rejects(() => fetchAllPrs(client), (e: Error) => /expired or revoked/.test(e.message));
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) =>
+      /expired or revoked/.test(e.message) &&
+      /1Password/.test(e.message) &&
+      /restart pr-dash/.test(e.message) &&
+      !e.message.includes('op://'),
+  );
 });
 
 test('GraphQL errors surface rather than yielding an empty list', async () => {
@@ -295,6 +306,44 @@ test('a 503 carrying Retry-After surfaces as a generic failure, not rate limitin
   await assert.rejects(
     () => fetchAllPrs(client),
     (e: Error) => /scheduled maintenance/.test(e.message) && !/rate.limited/i.test(e.message),
+  );
+});
+
+test('a huge upstream body is truncated rather than becoming the whole banner', async () => {
+  // The generic branch quotes GitHub's response body, and that message reaches the browser
+  // banner. It renders through textContent, so it cannot inject anything, but an HTML error
+  // page or a long proxy diagnostic would otherwise be the entire banner.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 500,
+        headers: new Headers(),
+        text: async () => 'x'.repeat(5000),
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) =>
+      e.message.length < 500 && /GitHub returned 500/.test(e.message) && /truncated/.test(e.message),
+  );
+});
+
+test('a short upstream body is quoted whole, with no truncation marker', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: false,
+        status: 502,
+        headers: new Headers(),
+        text: async () => 'Bad gateway',
+      } as unknown as Response),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => e.message.includes('Bad gateway') && !/truncated/.test(e.message),
   );
 });
 

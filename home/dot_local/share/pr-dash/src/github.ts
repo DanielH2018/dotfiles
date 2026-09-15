@@ -1,5 +1,3 @@
-import { DEFAULT_ITEM } from './token.ts';
-
 export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
 export type ClientOpts = { token: string; fetchImpl?: FetchImpl };
@@ -16,6 +14,21 @@ export type Client = {
 
 const ENDPOINT = 'https://api.github.com/graphql';
 
+// How much of an upstream response body an error message quotes. GitHub's own GraphQL
+// errors are a sentence or two, but an intermediary can answer with an HTML page or a long
+// proxy diagnostic, and this message is what the browser banner shows.
+const MAX_BODY_CHARS = 300;
+
+/**
+ * Shortens `body` to something a one-line banner can hold, marking it when anything was
+ * dropped so a reader can tell a short upstream message from a clipped one.
+ */
+function quoteBody(body: string): string {
+  return body.length <= MAX_BODY_CHARS
+    ? body
+    : `${body.slice(0, MAX_BODY_CHARS)}… (truncated, ${body.length} chars)`;
+}
+
 export function createClient(opts: ClientOpts): Client {
   const doFetch = opts.fetchImpl ?? fetch;
 
@@ -30,15 +43,19 @@ export function createClient(opts: ClientOpts): Client {
         body: JSON.stringify({ query, variables }),
       });
 
-      // A 401 means the token itself is bad, not that the network or the query is —
-      // name the 1Password item and the renewal step rather than a generic failure. The
-      // item ref named here is the DEFAULT_ITEM token.ts falls back to; a caller running
-      // with PR_DASH_OP_ITEM set uses a different item, which this message can't know.
+      // A 401 means the token itself is bad, not that the network or the query is — name
+      // the renewal step rather than a generic failure.
+      //
+      // The item reference is deliberately NOT named here. This message travels to the
+      // client: it reaches the banner through a 200 /api/prs body carrying a retained
+      // payload, and through server.ts's 500 path. The literal `op://...` path is not the
+      // secret, but it does state where the credential lives, and an operator does not need
+      // it here — token.ts prints the exact `op read` command at startup, which is the point
+      // where someone is actually about to renew the token.
       if (res.status === 401) {
         throw new Error(
-          'GitHub rejected the token (401): it is expired or revoked. ' +
-            `Renew it in 1Password at "${DEFAULT_ITEM}" (or whatever item PR_DASH_OP_ITEM ` +
-            'points at), then restart pr-dash.',
+          'GitHub rejected the token (401): it is expired or revoked. Renew the token in ' +
+            'its 1Password item and restart pr-dash.',
         );
       }
       if (!res.ok) {
@@ -69,7 +86,7 @@ export function createClient(opts: ClientOpts): Client {
                 : ` Retry after ${retryAfter}.`;
           throw new Error(`GitHub rate-limited this request (${res.status}).${retrySuffix}`);
         }
-        throw new Error(`GitHub returned ${res.status}: ${await res.text()}`);
+        throw new Error(`GitHub returned ${res.status}: ${quoteBody(await res.text())}`);
       }
 
       const body = (await res.json()) as { data?: T | null; errors?: { message: string }[] };

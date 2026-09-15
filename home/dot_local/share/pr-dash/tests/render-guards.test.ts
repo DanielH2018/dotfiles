@@ -636,6 +636,22 @@ test('staleBanner reports a retained payload that was itself partial as both', (
   );
   assert.match(String(message), /network down/);
   assert.match(String(message), /timeout on search/);
+  // Both clauses in one banner need a sentence break between them, or the upstream reason
+  // runs straight into the next sentence: "... network down Some PRs are missing: ...".
+  assert.match(String(message), /network down\. Some PRs are missing/);
+});
+
+test('staleBanner does not double the full stop when the reason ends in one', () => {
+  // github.ts's rate-limit message is already a pair of sentences, so the separator above
+  // has to be conditional rather than appended unconditionally.
+  const message = staleBanner({
+    stale: true,
+    error: 'GitHub rate-limited this request (429). Retry after 30s.',
+    fetchedAt: '2026-01-01T00:00:00.000Z',
+    partialErrors: ['timeout on search'],
+  });
+  assert.doesNotMatch(String(message), /\.\./);
+  assert.match(String(message), /Retry after 30s\. Some PRs are missing/);
 });
 
 test('formatRelativeTime reports "just now" under a minute', () => {
