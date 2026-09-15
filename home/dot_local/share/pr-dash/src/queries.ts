@@ -67,6 +67,19 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     }
 
     all.push(...search.nodes);
+
+    // The other shape a failed page takes: `nodes` arrives as a well-formed empty array
+    // beside the errors. Zero rows collected anywhere means there is still nothing to
+    // show, and calling that a partial success would be worse than throwing — since
+    // `withFallback` only retains on a throw, a zero-row success replaces the rows the
+    // user can already see with "no open PRs" behind a banner.
+    //
+    // An empty page with no errors is a different thing: a user with genuinely no open
+    // PRs. That falls through to the pagination checks below rather than failing.
+    if (all.length === 0 && errors.length > 0) {
+      throw new Error(`GraphQL error: ${errors.join('; ')}`);
+    }
+
     pages += 1;
 
     // A page carrying errors may carry a null or meaningless pageInfo beside its rows, so

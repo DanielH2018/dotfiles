@@ -138,6 +138,62 @@ test('a null search field after a good page keeps the rows already collected', a
   assert.deepStrictEqual(result.errors, ['timeout on page 2']);
 });
 
+test('errors with zero rows collected are a failure, not an empty result', async () => {
+  // `nodes: []` passes an "is it an array" check while carrying nothing. Returning that
+  // as a partial success would hand the loader an empty payload to cache and retain,
+  // replacing the rows the user can already see with "no open PRs" behind a banner.
+  // withFallback only retains on a throw, so this has to throw.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+          errors: [{ message: 'timeout on search' }],
+        }),
+        text: async () => '',
+      } as Response),
+  });
+  await assert.rejects(() => fetchAllPrs(client), (e: Error) => /timeout on search/.test(e.message));
+});
+
+test('an empty result with no errors is a real answer: no open PRs', async () => {
+  // The other side of the test above. Zero rows is only a failure when something failed;
+  // a user with no open PRs must not see an error.
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => pageResponse([], false, null),
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(result.prs, []);
+  assert.deepStrictEqual(result.errors, []);
+});
+
+test('an empty page with errors after a good page keeps the earlier rows', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return pageResponse([{ number: 1 }], true, 'cur');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } },
+          errors: [{ message: 'timeout on page 2' }],
+        }),
+        text: async () => '',
+      } as Response;
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(result.prs.map((n: { number: number }) => n.number), [1]);
+  assert.deepStrictEqual(result.errors, ['timeout on page 2']);
+});
+
 test('a partial page stops pagination rather than trusting its pageInfo', async () => {
   // A page that carries errors may carry a null or garbage pageInfo alongside its rows.
   // Reading hasNextPage off it would throw; following it would be chasing a cursor the
