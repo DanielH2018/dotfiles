@@ -114,6 +114,40 @@ test('createLoadPrs falls back to the retained payload when a later fetch fails'
   assert.deepStrictEqual(second.prs, first.prs);
 });
 
+test('createLoadPrs forwards its opts (initial and onSuccess) to withFallback', async () => {
+  let fail = true;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      if (fail) throw new Error('network down');
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const seen: LoadResult[] = [];
+  const loadPrs = createLoadPrs(client, cache, {
+    initial: seeded,
+    onSuccess: (result) => seen.push(result),
+  });
+
+  // The cache is cold and the fetch fails, so this result can only come from `initial` —
+  // it proves createLoadPrs actually hands its opts to withFallback rather than dropping
+  // them (as `createLoadPrs(client, cache, {})` would, since main.ts has no test of its
+  // own to catch that).
+  const first = await loadPrs();
+  assert.strictEqual(first.stale, true);
+  assert.strictEqual(first.fetchedAt, seeded.fetchedAt);
+  assert.deepStrictEqual(first.prs, one);
+
+  fail = false;
+  const second = await loadPrs();
+
+  assert.strictEqual(second.stale, false);
+  assert.strictEqual(seen.length, 1, 'onSuccess must be forwarded through createLoadPrs');
+  assert.strictEqual(seen[0]?.fetchedAt, second.fetchedAt);
+});
+
 test("a poll within the TTL reports the loader's real fetch time, not the time of the poll", async () => {
   const client = createClient({
     token: 'tok',
@@ -254,12 +288,24 @@ test('a cold start with no seed still throws, so the server can 500', async () =
 test('a successful fetch replaces the seeded payload', async () => {
   const seeded: LoadResult = { prs: [], fetchedAt: 'OLD', partialErrors: [] };
   const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
-  const loadPrs = withFallback(async () => fresh, { initial: seeded });
+  let calls = 0;
+  const load = async () => {
+    calls += 1;
+    if (calls === 1) return fresh;
+    throw new Error('network down');
+  };
+  const loadPrs = withFallback(load, { initial: seeded });
 
   const first = await loadPrs();
-
   assert.strictEqual(first.stale, false);
   assert.strictEqual(first.fetchedAt, 'NEW');
+
+  // A second, failing call is what actually proves the seed was replaced: its stale
+  // fallback carries whatever withFallback thinks is the last good payload, so if the
+  // first call's success never overwrote the seed, this would still read 'OLD'.
+  const second = await loadPrs();
+  assert.strictEqual(second.stale, true);
+  assert.strictEqual(second.fetchedAt, 'NEW');
 });
 
 test('onSuccess receives each successful payload, and not a stale one', async () => {

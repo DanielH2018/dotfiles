@@ -90,14 +90,18 @@ export type FallbackResult = {
 export type FallbackOpts = {
   /**
    * A payload restored from disk. Seeds the retained-payload slot, **not** the cache: a
-   * seeded cache would make the startup pre-load a cache hit and skip the fetch, so the
-   * dashboard would show the restored rows and never refresh them.
+   * seeded cache would make the startup pre-load a cache hit and skip the fetch, leaving
+   * the restored rows on screen for up to the cache's TTL (or until a manual Refresh)
+   * instead of the first fetch replacing them right away.
    */
   initial?: LoadResult;
   /**
-   * Called with each successful payload, for persisting it. Synchronous and
-   * fire-and-forget by contract — a slow or failing disk must not delay or fail the
-   * request that produced the payload.
+   * Called after every successful resolution of `load` — a cache hit returning
+   * previously-fetched data counts, not only a new GitHub fetch — for persisting the
+   * payload. Synchronous and fire-and-forget by contract: a slow or failing disk must
+   * not delay or fail the request that produced the payload. Must not return a Promise:
+   * the wrapping try/catch below is synchronous and cannot catch a later rejection from
+   * an async callback.
    */
   onSuccess?: (result: LoadResult) => void;
 };
