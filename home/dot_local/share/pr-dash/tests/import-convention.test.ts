@@ -86,8 +86,14 @@ function stripComments(text: string): string {
 // Where a value can begin, a `/` opens a regex literal; after a value, it is division.
 // Distinguishing them exactly needs a tokenizer, so this reads the preceding significant
 // character instead. `)` and `]` are deliberately absent: they end a value, so a slash after
-// one is division. Getting this wrong in the permissive direction would let a division run
-// to the next slash and swallow whatever followed, which is why there is a fixture for it.
+// one is division.
+//
+// Getting this wrong in the permissive direction does not swallow the text that follows —
+// the regex branch in `stripComments` advances `i` without calling `blank()`, so a misread
+// division skips text rather than blanking it, and a specifier after one is still found.
+// What it actually costs is a false positive: the skip runs to the first slash of a
+// following `//`, leaving that comment unstripped, so a prose mention inside it matches and
+// blocks a push. That is the direction the fixture asserts.
 const REGEX_PRECEDING_CHARS = new Set([
   '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>',
   '~', '^', '\n',
@@ -326,9 +332,8 @@ test('fixture: a real comment after a regex literal is still stripped', () => {
 });
 
 test('fixture: a division is not mistaken for a regex literal', () => {
-  // Deciding whether `/` opens a regex reads the preceding token, so an over-eager rule
-  // would treat `total / 2` as a literal running to the next slash and swallow what
-  // follows. An identifier or `)` before the slash means division.
+  // Deciding whether `/` opens a regex reads the preceding token. An identifier or `)`
+  // before the slash means division, and the specifier after it must still be found.
   const divisions = [
     "const half = total / 2; import { x } from './sibling.js';\n",
     "const r = (a + b) / c; import { x } from './sibling.js';\n",
@@ -337,6 +342,29 @@ test('fixture: a division is not mistaken for a regex literal', () => {
     const hits = findJsSpecifiers(text);
     assert.equal(hits.length, 1, text);
     assert.equal(hits[0]!.specifier, './sibling.js');
+  }
+});
+
+// The fixture above cannot detect an over-eager `opensRegexLiteral`: making it return true
+// unconditionally left the whole suite green. The reason is that the regex branch advances
+// `i` without calling `blank()`, so misreading a division *skips* text rather than
+// swallowing it, and the specifier still gets found by the scan.
+//
+// The consequence runs the other way — a false positive. A division followed by a real
+// comment is the shape that shows it: misreading the `/` of `total / 2` consumes as far as
+// the first slash of the `//`, and the comment is then never blanked, so a prose mention
+// inside it matches and blocks a push over nothing.
+test('fixture: a division before a real comment does not leave the comment unstripped', () => {
+  const divisions = [
+    "const half = total / 2; // import { x } from './types.js'\n",
+    "const r = (a + b) / c; // see import { x } from './group.js'\n",
+    // A block comment after a division, and two divisions before one: each reaches the
+    // branch by a different route than the single-slash case above.
+    "const ratio = a / b; /* import { x } from './types.js' */\n",
+    "const n = a / b / c; // import { x } from './sibling.js'\n",
+  ];
+  for (const text of divisions) {
+    assert.equal(findJsSpecifiers(text).length, 0, text);
   }
 });
 

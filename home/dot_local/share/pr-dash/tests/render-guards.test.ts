@@ -438,6 +438,63 @@ test('parsePrsBody validates a stack node, naming where in the forest it sits', 
   );
 });
 
+/** A well-formed root node, for the non-finite cases below to break one field of. */
+const validStackNode = {
+  pr: validRecord,
+  children: [],
+  depth: 0,
+  position: 1,
+  stackSize: 1,
+  danglingBase: false,
+  ambiguousBase: false,
+};
+
+// `validateRecord`'s numeric loop rejects non-finite values and three tests pin that.
+// `validateStackNode`'s own loop over depth/position/stackSize had the same check and
+// nothing exercising it: dropping `|| !Number.isFinite(...)` from it left the whole suite
+// green. A node with `depth: Infinity` renders `marginLeft: 'Infinitypx'` and a position of
+// `NaN/3`, so the check is right — it was only unpinned.
+//
+// Each field gets a different non-finite value rather than three copies of one: Infinity,
+// -Infinity and NaN reach `Number.isFinite` by different routes, and a fixture set that
+// shares one shape is how a defect hides behind five passing tests.
+for (const [field, value] of [
+  ['depth', Number.POSITIVE_INFINITY],
+  ['position', Number.NEGATIVE_INFINITY],
+  ['stackSize', Number.NaN],
+] as const) {
+  test(`parsePrsBody rejects a stack node whose ${field} is not finite`, () => {
+    assert.throws(
+      () => parsePrsBody({ prs: [validRecord], stacks: [{ ...validStackNode, [field]: value }] }),
+      new RegExp(`stack node 0 has an invalid "${field}"`),
+    );
+  });
+}
+
+// The absent-stacks test above says in prose that a present-but-malformed `stacks` throws
+// instead. Nothing backed that claim: changing the non-array branch from `invalidField` to
+// `[]` left the suite green, because every existing fixture puts its malformation *inside*
+// the array or omits the field. A false coverage claim is worse than a silent gap — the
+// next reader stops looking.
+for (const stacks of ['nope', 7, true, { 0: validStackNode }] as const) {
+  test(`parsePrsBody throws on a present but non-array stacks (${typeof stacks})`, () => {
+    assert.throws(
+      () => parsePrsBody({ prs: [validRecord], stacks }),
+      /response body has an invalid "stacks"/,
+    );
+  });
+}
+
+// `null` is its own case: it is the one non-array value that `Array.isArray` and a
+// `=== undefined` check disagree about, so a guard written as `stacks == null ? [] : ...`
+// would treat it as absent rather than malformed.
+test('parsePrsBody throws on a null stacks rather than treating it as absent', () => {
+  assert.throws(
+    () => parsePrsBody({ prs: [validRecord], stacks: null }),
+    /response body has an invalid "stacks"/,
+  );
+});
+
 test('parsePrsBody returns a well-formed forest unchanged, nesting included', () => {
   const child = {
     pr: { ...validRecord, id: 'x/y#2', number: 2 },
