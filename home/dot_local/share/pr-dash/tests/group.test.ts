@@ -71,6 +71,21 @@ test('groups by draft state, ready before draft', () => {
   assert.deepStrictEqual(groups.map((g) => g.key), ['ready', 'draft']);
 });
 
+test('a draft PR lands in the draft group and a non-draft PR in ready', () => {
+  // The ordering test above pins the key sequence but not which record
+  // ended up under which key, so an inverted isDraft-to-key mapping would
+  // still pass it (both keys are still present, just with swapped
+  // membership). This test pins the contents instead.
+  const draftRecords = [
+    makeRecord({ id: 'd#1', isDraft: true }),
+    makeRecord({ id: 'd#2', isDraft: false }),
+  ];
+  const groups = groupBy(draftRecords, 'draft');
+  const byKey = new Map(groups.map((g) => [g.key, g.records.map((r) => r.id)]));
+  assert.deepStrictEqual(byKey.get('draft'), ['d#1']);
+  assert.deepStrictEqual(byKey.get('ready'), ['d#2']);
+});
+
 test('groups by staleness in chronological order, not alphabetical', () => {
   const stalenessRecords = [
     makeRecord({ id: 'p#1', staleDays: 10 }), // >7d
@@ -160,6 +175,14 @@ test('filters combine as AND across axes', () => {
 });
 
 test('filters combine as OR within one axis', () => {
-  const out = applyFilters(records, { ci: ['failure', 'success'], review: [], draft: [] });
-  assert.strictEqual(out.length, 2);
+  // The fixture's two records are the whole domain of ci: ['failure', 'success'], so that
+  // filter is indistinguishable from no constraint at all on records alone — a third
+  // record outside the pair makes the OR a strict subset of the input, not just everything.
+  const ciRecords = [
+    makeRecord({ id: 'p#1', ci: 'success' }),
+    makeRecord({ id: 'p#2', ci: 'failure' }),
+    makeRecord({ id: 'p#3', ci: 'pending' }),
+  ];
+  const out = applyFilters(ciRecords, { ci: ['failure', 'success'], review: [], draft: [] });
+  assert.deepStrictEqual(out.map((r) => r.id), ['p#1', 'p#2']);
 });

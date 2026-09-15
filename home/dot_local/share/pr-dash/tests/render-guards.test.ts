@@ -11,9 +11,13 @@ import {
   parsePrsBody,
   isSafeUrl,
   parseStoredView,
+  loadStoredView,
+  saveStoredView,
+  clearStoredView,
 } from '../public/render-guards.js';
 import { groupBy } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
+import type { StoredView } from '../public/render-guards.js';
 
 const indexHtml = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 
@@ -301,7 +305,7 @@ test('isSafeUrl rejects a malformed URL', () => {
   assert.strictEqual(isSafeUrl('not a url'), false);
 });
 
-const DEFAULT_VIEW = { axis: 'repo', sort: 'stale', ci: [], review: [] };
+const DEFAULT_VIEW: StoredView = { axis: 'repo', sort: 'stale', ci: [], review: [] };
 
 test('parseStoredView returns the default view for null (nothing stored yet)', () => {
   assert.deepStrictEqual(parseStoredView(null), DEFAULT_VIEW);
@@ -330,4 +334,46 @@ test('parseStoredView drops a ci value outside CI_VALUES instead of throwing', (
 test('parseStoredView treats a non-array ci field as no constraint', () => {
   const stored = JSON.stringify({ axis: 'repo', sort: 'stale', ci: 'failure', review: [] });
   assert.deepStrictEqual(parseStoredView(stored), DEFAULT_VIEW);
+});
+
+/** A storage double whose methods can be told to throw, mirroring the localStorage contract. */
+function fakeStorage(overrides: Partial<{ getItem: () => string | null; setItem: () => void; removeItem: () => void }>) {
+  return {
+    getItem: overrides.getItem ?? (() => null),
+    setItem: overrides.setItem ?? (() => {}),
+    removeItem: overrides.removeItem ?? (() => {}),
+  };
+}
+
+test('loadStoredView falls back to the default view when getItem throws', () => {
+  const storage = fakeStorage({
+    getItem: () => {
+      throw new Error('blocked');
+    },
+  });
+  assert.deepStrictEqual(loadStoredView(storage), DEFAULT_VIEW);
+});
+
+test('loadStoredView returns the parsed view when the store has one', () => {
+  const stored = JSON.stringify({ axis: 'ci', sort: 'age', ci: ['failure'], review: [] });
+  const storage = fakeStorage({ getItem: () => stored });
+  assert.deepStrictEqual(loadStoredView(storage), { axis: 'ci', sort: 'age', ci: ['failure'], review: [] });
+});
+
+test('saveStoredView does not throw when setItem throws', () => {
+  const storage = fakeStorage({
+    setItem: () => {
+      throw new Error('quota exceeded');
+    },
+  });
+  assert.doesNotThrow(() => saveStoredView(storage, DEFAULT_VIEW));
+});
+
+test('clearStoredView does not throw when removeItem throws', () => {
+  const storage = fakeStorage({
+    removeItem: () => {
+      throw new Error('blocked');
+    },
+  });
+  assert.doesNotThrow(() => clearStoredView(storage));
 });

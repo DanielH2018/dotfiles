@@ -2,6 +2,8 @@
 /** @typedef {import('./group.js').Axis} Axis */
 /** @typedef {import('./group.js').Sort} Sort */
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
+/** @typedef {import('../src/types.ts').Ci} Ci */
+/** @typedef {import('../src/types.ts').Review} Review */
 
 // Pulled out of app.js so these can be unit-tested under `node --test`: app.js reads
 // `location.hash` at module scope, which throws when imported outside a browser, so
@@ -61,15 +63,19 @@ const NUMBER_FIELDS = ['number', 'staleDays', 'ageDays', 'additions', 'deletions
  * Every value the `#filter-ci` fieldset's checkboxes carry, in the order
  * `index.html` declares them. A test in render-guards.test.ts asserts these
  * stay in sync with that markup, the same way AXES/SORTS do for the
- * `<select>`s.
- * @type {readonly string[]}
+ * `<select>`s. Typed `readonly Ci[]`, not `readonly string[]`: this is also
+ * `validateRecord`'s allowlist for `PrRecord.ci`, so a member outside `Ci`
+ * added here must fail `tsc` at the declaration rather than only surface
+ * once a real PR record makes `validateRecord` throw.
+ * @type {readonly Ci[]}
  */
 export const CI_VALUES = ['success', 'failure', 'pending', 'none'];
 
 /**
  * Every value the `#filter-review` fieldset's checkboxes carry, in the
- * order `index.html` declares them.
- * @type {readonly string[]}
+ * order `index.html` declares them. Same reasoning as {@link CI_VALUES}
+ * for the `readonly Review[]` type.
+ * @type {readonly Review[]}
  */
 export const REVIEW_VALUES = ['approved', 'changes_requested', 'review_required', 'none'];
 
@@ -108,8 +114,8 @@ function validateRecord(record, index) {
     }
   }
   if (typeof fields['isDraft'] !== 'boolean') invalidField(index, 'isDraft');
-  if (!CI_VALUES.includes(/** @type {string} */ (fields['ci']))) invalidField(index, 'ci');
-  if (!REVIEW_VALUES.includes(/** @type {string} */ (fields['review']))) invalidField(index, 'review');
+  if (!CI_VALUES.includes(/** @type {Ci} */ (fields['ci']))) invalidField(index, 'ci');
+  if (!REVIEW_VALUES.includes(/** @type {Review} */ (fields['review']))) invalidField(index, 'review');
   return /** @type {PrRecord} */ (record);
 }
 
@@ -158,8 +164,8 @@ export function isSafeUrl(url) {
  * @typedef {object} StoredView
  * @property {Axis} axis
  * @property {Sort} sort
- * @property {string[]} ci
- * @property {string[]} review
+ * @property {Ci[]} ci
+ * @property {Review[]} review
  */
 
 /** @type {StoredView} */
@@ -170,13 +176,36 @@ const DEFAULT_VIEW = { axis: DEFAULT_AXIS, sort: DEFAULT_SORT, ci: [], review: [
  * `allowed`, dropping anything else — a value of the wrong type, or one an
  * axis no longer admits because the code that wrote it predates a change
  * to that axis's set of values.
+ * @template {string} T
  * @param {unknown} value
- * @param {readonly string[]} allowed
- * @returns {string[]}
+ * @param {readonly T[]} allowed
+ * @returns {T[]}
  */
 function toKnownArray(value, allowed) {
   if (!Array.isArray(value)) return [];
-  return value.filter((v) => typeof v === 'string' && allowed.includes(v));
+  return /** @type {T[]} */ (value.filter((v) => typeof v === 'string' && allowed.includes(/** @type {T} */ (v))));
+}
+
+/**
+ * Keeps only the members of `value` that are valid CI statuses, the same
+ * "drop what's unknown, don't throw" contract {@link toAxis}/{@link toSort}
+ * give the `<select>` reads. Used for both the `#filter-ci` checkbox reads
+ * and the persisted view's `ci` field, so the two paths that read an
+ * untrusted `ci` list — the DOM and localStorage — can't drift apart.
+ * @param {unknown} value
+ * @returns {Ci[]}
+ */
+export function toCiValues(value) {
+  return toKnownArray(value, CI_VALUES);
+}
+
+/**
+ * Same contract as {@link toCiValues}, for review states.
+ * @param {unknown} value
+ * @returns {Review[]}
+ */
+export function toReviewValues(value) {
+  return toKnownArray(value, REVIEW_VALUES);
 }
 
 /**
@@ -207,7 +236,68 @@ export function parseStoredView(raw) {
   return {
     axis: toAxis(typeof obj['axis'] === 'string' ? obj['axis'] : ''),
     sort: toSort(typeof obj['sort'] === 'string' ? obj['sort'] : ''),
-    ci: toKnownArray(obj['ci'], CI_VALUES),
-    review: toKnownArray(obj['review'], REVIEW_VALUES),
+    ci: toCiValues(obj['ci']),
+    review: toReviewValues(obj['review']),
   };
+}
+
+/**
+ * The `getItem`/`setItem`/`removeItem` contract `loadStoredView`,
+ * `saveStoredView` and `clearStoredView` need — `localStorage`'s own shape,
+ * so it can be passed in directly, and a test double's too.
+ * @typedef {object} ViewStorage
+ * @property {(key: string) => string | null} getItem
+ * @property {(key: string, value: string) => void} setItem
+ * @property {(key: string) => void} removeItem
+ */
+
+/** The localStorage key the view is persisted under. */
+export const VIEW_KEY = 'pr-dash:view';
+
+/**
+ * Reads and parses the persisted view from `storage`. A private window,
+ * blocked site data, or a store that otherwise throws on `getItem` must
+ * not stop the page rendering, so that case falls back to the same
+ * default view a corrupt stored value does.
+ * @param {ViewStorage} storage
+ * @returns {StoredView}
+ */
+export function loadStoredView(storage) {
+  /** @type {string | null} */
+  let raw = null;
+  try {
+    raw = storage.getItem(VIEW_KEY);
+  } catch {
+    // Falls through to parseStoredView(null), which is the default view.
+  }
+  return parseStoredView(raw);
+}
+
+/**
+ * Persists `view` to `storage`. A store that throws on `setItem` (quota
+ * exhausted, private window) must not propagate — the view just doesn't
+ * persist this time, which isn't worth interrupting the user for.
+ * @param {ViewStorage} storage
+ * @param {StoredView} view
+ */
+export function saveStoredView(storage, view) {
+  try {
+    storage.setItem(VIEW_KEY, JSON.stringify(view));
+  } catch {
+    // Not persisted this time; the page keeps working either way.
+  }
+}
+
+/**
+ * Clears the persisted view from `storage`. Reset's whole point is to
+ * un-stick a filter the user can no longer see or change, so a throw here
+ * must not stop the reset itself.
+ * @param {ViewStorage} storage
+ */
+export function clearStoredView(storage) {
+  try {
+    storage.removeItem(VIEW_KEY);
+  } catch {
+    // Nothing was persisted, or the store is unavailable either way.
+  }
 }

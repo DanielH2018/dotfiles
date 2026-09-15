@@ -1,14 +1,23 @@
 // @ts-check
 import { applyFilters, groupBy, sortWithin } from './group.js';
-import { toAxis, toSort, parsePrsBody, isSafeUrl, parseStoredView } from './render-guards.js';
+import {
+  toAxis,
+  toSort,
+  toCiValues,
+  toReviewValues,
+  parsePrsBody,
+  isSafeUrl,
+  loadStoredView,
+  saveStoredView,
+  clearStoredView,
+  parseStoredView,
+} from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {import('./render-guards.js').StoredView} StoredView */
 
 const secret = location.hash.replace(/^#/, '');
-
-const VIEW_KEY = 'pr-dash:view';
 
 /**
  * The checked values of the checkboxes inside the fieldset with `fieldsetId`.
@@ -46,39 +55,14 @@ function readControls() {
   return {
     axis: toAxis(groupSel instanceof HTMLSelectElement ? groupSel.value : ''),
     sort: toSort(sortSel instanceof HTMLSelectElement ? sortSel.value : ''),
-    ci: checkedValues('filter-ci'),
-    review: checkedValues('filter-review'),
+    ci: toCiValues(checkedValues('filter-ci')),
+    review: toReviewValues(checkedValues('filter-review')),
   };
 }
 
-/**
- * Persists the controls' current state so the next page load can restore
- * it. A private window, blocked site data, or a full quota makes
- * `setItem` throw; the view just will not persist, which is not worth
- * interrupting the user for.
- */
+/** Persists the controls' current state so the next page load can restore it. */
 function saveView() {
-  try {
-    localStorage.setItem(VIEW_KEY, JSON.stringify(readControls()));
-  } catch {
-    // Not persisted this time; the page keeps working either way.
-  }
-}
-
-/**
- * Reads the persisted view, tolerating a store that throws on access (a
- * private window, blocked site data) the same way {@link saveView} does.
- * @returns {StoredView}
- */
-function loadView() {
-  /** @type {string | null} */
-  let raw = null;
-  try {
-    raw = localStorage.getItem(VIEW_KEY);
-  } catch {
-    // Falls through to parseStoredView(null), which is the default view.
-  }
-  return parseStoredView(raw);
+  saveStoredView(localStorage, readControls());
 }
 
 /** @param {StoredView} view */
@@ -92,18 +76,20 @@ function applyView(view) {
 }
 
 /**
- * Clears the persisted view and reloads. A saved filter that cannot be
- * cleared makes the dashboard look empty with no visible cause, so this
- * removes the stored value itself rather than only resetting the controls
- * in memory.
+ * Clears the persisted view and re-renders from the already-loaded
+ * `current`/`currentStacks` in memory — it does not reload the page. A
+ * reload would re-fetch `/api/prs`, and on an expired token or an
+ * exhausted rate limit that fetch 500s, so a user who clicked Reset to
+ * escape an empty filtered view would land on a truly empty dashboard
+ * with an error banner instead. Clearing storage without a reload is also
+ * what keeps this a real reset: a browser restores user-modified checkbox
+ * state across a soft reload, which could re-tick the boxes this just
+ * cleared.
  */
 function resetView() {
-  try {
-    localStorage.removeItem(VIEW_KEY);
-  } catch {
-    // Nothing was persisted, or the store is unavailable either way.
-  }
-  location.reload();
+  clearStoredView(localStorage);
+  applyView(parseStoredView(null));
+  render(current, currentStacks);
 }
 
 /** @returns {Promise<{ prs: PrRecord[], stacks: StackNode[] }>} */
@@ -221,8 +207,8 @@ function render(records, stacks) {
 
   /** @type {import('./group.js').Filters} */
   const filters = {
-    ci: /** @type {import('../src/types.ts').Ci[]} */ (checkedValues('filter-ci')),
-    review: /** @type {import('../src/types.ts').Review[]} */ (checkedValues('filter-review')),
+    ci: toCiValues(checkedValues('filter-ci')),
+    review: toReviewValues(checkedValues('filter-review')),
     draft: [],
   };
   const filtered = applyFilters(records, filters);
@@ -279,5 +265,5 @@ for (const id of ['group-by', 'sort-by', 'filter-ci', 'filter-review']) {
 document.getElementById('refresh')?.addEventListener('click', () => void refresh());
 document.getElementById('reset')?.addEventListener('click', resetView);
 
-applyView(loadView());
+applyView(loadStoredView(localStorage));
 void refresh();
