@@ -86,8 +86,11 @@ export function buildStacks(records: readonly PrRecord[]): StackNode[] {
     if (parent === undefined) {
       roots.push(pr);
       // A cyclic PR is never flagged either way: its "root" status is an artifact
-      // of cycle-breaking, not a merged or ambiguous parent.
-      if (!cyclic) {
+      // of cycle-breaking, not a merged or ambiguous parent. Trunk is checked
+      // first and gates both flags: a PR based on the repo's actual trunk is
+      // neither dangling nor ambiguous, however many other open PRs happen to
+      // share its base as their headRef.
+      if (!cyclic && !isTrunk(pr)) {
         const baseCount = counts.get(headKey) ?? 0;
         if (baseCount > 1) {
           // baseRef names a headRef that exists -- more than once -- so there is a
@@ -95,7 +98,7 @@ export function buildStacks(records: readonly PrRecord[]): StackNode[] {
           // same as a merged-away parent, and flagging it dangling would tell the
           // user to rebase when there is nothing to rebase onto.
           ambiguous.add(pr.id);
-        } else if (!isTrunk(pr)) {
+        } else {
           // A base that resolves to no open PR's head at all and isn't the repo's
           // trunk means the parent merged while this PR stayed open -- exactly the
           // state where a stack needs a rebase, so it is flagged rather than

@@ -159,3 +159,20 @@ test('an ambiguous base is not the same as a merged one', () => {
   assert.strictEqual(r3.ambiguousBase, true);
   assert.strictEqual(r3.danglingBase, false);
 });
+
+// Fix round 3: two PRs opened FROM trunk (headRef "main") into different release
+// branches make trunk itself an ambiguous headRef by the same counts-based check
+// that flags PR#3's "f1" above. An ordinary PR#3 based on trunk must still read as
+// neither dangling nor ambiguous -- trunk status has to gate both flags, checked
+// before baseCount, or a repo-wide false positive fires on every trunk-based PR the
+// moment two PRs happen to share trunk as their headRef.
+test('a PR based on trunk is not flagged even when trunk is itself an ambiguous headRef', () => {
+  const roots = buildStacks([
+    pr('a/b', 1, 'main', 'release-1'),
+    pr('a/b', 2, 'main', 'release-2'),
+    pr('a/b', 3, 'f1', 'main'),
+  ]);
+  const r3 = roots.find((r) => r.pr.number === 3)!;
+  assert.strictEqual(r3.danglingBase, false);
+  assert.strictEqual(r3.ambiguousBase, false);
+});

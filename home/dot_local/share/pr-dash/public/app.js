@@ -82,6 +82,7 @@ function addStackBadges(row, node) {
     const flag = document.createElement('span');
     flag.className = 'badge ambiguous';
     flag.textContent = 'ambiguous base';
+    flag.title = 'This base branch is the head of more than one open PR, so which is the real parent cannot be determined.';
     row.prepend(flag);
   }
 }
