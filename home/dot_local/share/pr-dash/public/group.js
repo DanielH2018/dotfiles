@@ -208,6 +208,13 @@ export function groupSummary(records) {
 }
 
 /**
+ * One chip to show on a collapsed section header.
+ * @typedef {object} SummaryChip
+ * @property {string} label
+ * @property {'bad' | 'warn' | 'good'} tone
+ */
+
+/**
  * One chip per state worth surfacing on a collapsed header, ordered so a problem is read
  * first, with empty states omitted.
  *
@@ -215,10 +222,6 @@ export function groupSummary(records) {
  * something inside it is failing or waiting on you, or collapsing becomes a way to lose
  * track of work. A clean group produces no chips at all — the count in the header already
  * says how much is in there.
- * @typedef {object} SummaryChip
- * @property {string} label
- * @property {'bad' | 'warn' | 'good'} tone
- *
  * @param {GroupSummary} summary
  * @returns {SummaryChip[]}
  */

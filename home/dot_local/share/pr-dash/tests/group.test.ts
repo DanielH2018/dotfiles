@@ -318,7 +318,7 @@ test('staleness and draft are ANDed with each other and with ci', () => {
 });
 
 test('groupSummary counts every ci and review state', () => {
-  const records = [
+  const summaryRecords = [
     makeRecord({ id: 'a#1', ci: 'failure', review: 'changes_requested' }),
     makeRecord({ id: 'a#2', ci: 'failure', review: 'approved' }),
     makeRecord({ id: 'a#3', ci: 'success', review: 'approved' }),
@@ -326,7 +326,7 @@ test('groupSummary counts every ci and review state', () => {
     makeRecord({ id: 'a#5', ci: 'none', review: 'none' }),
   ];
 
-  const summary = groupSummary(records);
+  const summary = groupSummary(summaryRecords);
 
   assert.strictEqual(summary.total, 5);
   assert.deepStrictEqual(summary.ci, { success: 1, failure: 2, pending: 1, none: 1 });
@@ -353,13 +353,13 @@ test('groupSummary of no records is all zeroes', () => {
 });
 
 test('summaryChips leads with problems and omits empty states', () => {
-  const records = [
+  const chipRecords = [
     makeRecord({ id: 'a#1', ci: 'failure', review: 'approved' }),
     makeRecord({ id: 'a#2', ci: 'failure', review: 'approved' }),
     makeRecord({ id: 'a#3', ci: 'success', review: 'approved' }),
   ];
 
-  const chips = summaryChips(groupSummary(records));
+  const chips = summaryChips(groupSummary(chipRecords));
 
   assert.deepStrictEqual(chips, [
     { label: '2 failing', tone: 'bad' },
@@ -368,14 +368,36 @@ test('summaryChips leads with problems and omits empty states', () => {
 });
 
 test('summaryChips puts failing CI before changes requested', () => {
-  const records = [
+  const chipOrderRecords = [
     makeRecord({ id: 'a#1', ci: 'failure', review: 'review_required' }),
     makeRecord({ id: 'a#2', ci: 'success', review: 'changes_requested' }),
   ];
 
-  const chips = summaryChips(groupSummary(records));
+  const chips = summaryChips(groupSummary(chipOrderRecords));
 
   assert.deepStrictEqual(chips.map((c) => c.label), ['1 failing', '1 changes', '1 waiting']);
+});
+
+test('summaryChips pins every chip label, tone and position, including pending CI', () => {
+  // Every one of the five chip-worthy states appears exactly once, so this single
+  // assertion pins each chip's label, tone and position all at once. Nothing else in
+  // this file exercises `ci: 'pending'` as a summaryChips input, so without this test
+  // the pending chip's existence, label, tone and position are all unverified.
+  const allStatesRecords = [
+    makeRecord({ id: 'a#1', ci: 'failure', review: 'changes_requested' }),
+    makeRecord({ id: 'a#2', ci: 'pending', review: 'review_required' }),
+    makeRecord({ id: 'a#3', ci: 'success', review: 'approved' }),
+  ];
+
+  const chips = summaryChips(groupSummary(allStatesRecords));
+
+  assert.deepStrictEqual(chips, [
+    { label: '1 failing', tone: 'bad' },
+    { label: '1 changes', tone: 'bad' },
+    { label: '1 waiting', tone: 'warn' },
+    { label: '1 pending', tone: 'warn' },
+    { label: '1 approved', tone: 'good' },
+  ]);
 });
 
 test('summaryChips of a clean group is empty', () => {
