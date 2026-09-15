@@ -10,6 +10,8 @@ import {
   toSort,
   toCiValues,
   toReviewValues,
+  toStalenessValues,
+  toDraftValues,
   parsePrsBody,
   isSafeUrl,
   parseStoredView,
@@ -20,7 +22,7 @@ import {
   staleBanner,
   formatRelativeTime,
 } from '../public/render-guards.js';
-import { groupBy } from '../public/group.js';
+import { DRAFT_STATES, groupBy, STALENESS_BUCKETS, stalenessBucket } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
 import type { StoredView } from '../public/render-guards.js';
 
@@ -155,6 +157,27 @@ test('CI_VALUES matches the #filter-ci fieldset checkboxes in index.html', () =>
 
 test('REVIEW_VALUES matches the #filter-review fieldset checkboxes in index.html', () => {
   assert.deepStrictEqual(REVIEW_VALUES, checkboxValues(indexHtml, 'filter-review'));
+});
+
+// The staleness and draft filters reuse group.js's own value lists rather than declaring a
+// second copy, so these read the same constants groupBy and stalenessBucket use. A bucket
+// renamed in group.js therefore fails here unless index.html is renamed with it.
+test('STALENESS_BUCKETS matches the #filter-staleness fieldset checkboxes in index.html', () => {
+  assert.deepStrictEqual(STALENESS_BUCKETS, checkboxValues(indexHtml, 'filter-staleness'));
+});
+
+test('DRAFT_STATES matches the #filter-draft fieldset checkboxes in index.html', () => {
+  assert.deepStrictEqual(DRAFT_STATES, checkboxValues(indexHtml, 'filter-draft'));
+});
+
+test('every staleness checkbox value is a bucket stalenessBucket can actually return', () => {
+  // The markup-sync test above compares two lists that could agree with each other and
+  // both be wrong. This one goes through the function: a bucket no staleDays maps to would
+  // be a filter option that always matches nothing.
+  const reachable = new Set([0, 1, 2, 3, 4, 7, 8, 30, 365].map((d) => stalenessBucket(d)));
+  for (const value of checkboxValues(indexHtml, 'filter-staleness')) {
+    assert.ok(reachable.has(value as (typeof STALENESS_BUCKETS)[number]), `no staleDays maps to "${value}"`);
+  }
 });
 
 test('toAxis passes through every known axis unchanged', () => {
@@ -382,7 +405,14 @@ test('isSafeUrl rejects a malformed URL', () => {
   assert.strictEqual(isSafeUrl('not a url'), false);
 });
 
-const DEFAULT_VIEW: StoredView = { axis: 'repo', sort: 'stale', ci: [], review: [] };
+const DEFAULT_VIEW: StoredView = {
+  axis: 'repo',
+  sort: 'stale',
+  ci: [],
+  review: [],
+  staleness: [],
+  draft: [],
+};
 
 test('parseStoredView returns the default view for null (nothing stored yet)', () => {
   assert.deepStrictEqual(parseStoredView(null), DEFAULT_VIEW);
@@ -406,6 +436,49 @@ test('parseStoredView falls back to the default axis for a value outside AXES', 
 test('parseStoredView drops a ci value outside CI_VALUES instead of throwing', () => {
   const stored = JSON.stringify({ axis: 'repo', sort: 'stale', ci: ['success', 'bogus'], review: [] });
   assert.deepStrictEqual(parseStoredView(stored), { ...DEFAULT_VIEW, ci: ['success'] });
+});
+
+test('toStalenessValues keeps known buckets and drops the rest', () => {
+  assert.deepStrictEqual(toStalenessValues(['>7d', '1-3d']), ['>7d', '1-3d']);
+  assert.deepStrictEqual(toStalenessValues(['>7d', '4-9d', 7, null]), ['>7d']);
+  assert.deepStrictEqual(toStalenessValues('>7d'), []);
+});
+
+test('toDraftValues keeps known states and drops the rest', () => {
+  assert.deepStrictEqual(toDraftValues(['draft']), ['draft']);
+  assert.deepStrictEqual(toDraftValues(['ready', 'maybe']), ['ready']);
+  assert.deepStrictEqual(toDraftValues({ draft: true }), []);
+});
+
+test('an empty staleness or draft list is no constraint, not "match nothing"', () => {
+  // An inversion here makes the dashboard start blank, with nothing on screen saying why.
+  assert.deepStrictEqual(toStalenessValues([]), []);
+  assert.deepStrictEqual(toDraftValues([]), []);
+  assert.deepStrictEqual(parseStoredView(null).staleness, []);
+  assert.deepStrictEqual(parseStoredView(null).draft, []);
+});
+
+test('parseStoredView round-trips the staleness and draft axes', () => {
+  const stored = JSON.stringify({
+    axis: 'repo',
+    sort: 'stale',
+    ci: [],
+    review: [],
+    staleness: ['1-3d', '>7d'],
+    draft: ['draft'],
+  });
+  assert.deepStrictEqual(parseStoredView(stored), {
+    ...DEFAULT_VIEW,
+    staleness: ['1-3d', '>7d'],
+    draft: ['draft'],
+  });
+});
+
+test('parseStoredView drops a staleness bucket the current code does not know', () => {
+  const stored = JSON.stringify({ staleness: ['1-3d', '4-9d'], draft: ['almost-ready'] });
+  const parsed = parseStoredView(stored);
+  assert.deepStrictEqual(parsed.staleness, ['1-3d']);
+  assert.deepStrictEqual(parsed.draft, []);
 });
 
 test('parseStoredView treats a non-array ci field as no constraint', () => {
@@ -442,7 +515,12 @@ test('loadStoredView falls back to the default view when getItem throws', () => 
 test('loadStoredView returns the parsed view when the store has one', () => {
   const stored = JSON.stringify({ axis: 'ci', sort: 'age', ci: ['failure'], review: [] });
   const storage = fakeStorage({ getItem: () => stored });
-  assert.deepStrictEqual(loadStoredView(storage), { axis: 'ci', sort: 'age', ci: ['failure'], review: [] });
+  assert.deepStrictEqual(loadStoredView(storage), {
+    ...DEFAULT_VIEW,
+    axis: 'ci',
+    sort: 'age',
+    ci: ['failure'],
+  });
 });
 
 test('saveStoredView does not throw when setItem throws', () => {
@@ -465,7 +543,14 @@ test('clearStoredView does not throw when removeItem throws', () => {
 
 test('saveStoredView writes the view as JSON under VIEW_KEY', () => {
   const storage = fakeStorage();
-  const view: StoredView = { axis: 'ci', sort: 'age', ci: ['failure'], review: ['approved'] };
+  const view: StoredView = {
+    axis: 'ci',
+    sort: 'age',
+    ci: ['failure'],
+    review: ['approved'],
+    staleness: ['>7d'],
+    draft: ['ready'],
+  };
   saveStoredView(storage, view);
   assert.deepStrictEqual([...storage.written.keys()], [VIEW_KEY]);
   assert.deepStrictEqual(JSON.parse(storage.written.get(VIEW_KEY)!), view);

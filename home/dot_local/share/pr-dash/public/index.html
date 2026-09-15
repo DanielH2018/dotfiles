@@ -37,6 +37,16 @@
     <label><input type="checkbox" value="review_required"> waiting</label>
     <label><input type="checkbox" value="none"> none</label>
   </fieldset>
+  <fieldset id="filter-staleness"><legend>Staleness</legend>
+    <label><input type="checkbox" value="<1d"> &lt;1d</label>
+    <label><input type="checkbox" value="1-3d"> 1-3d</label>
+    <label><input type="checkbox" value="3-7d"> 3-7d</label>
+    <label><input type="checkbox" value=">7d"> &gt;7d</label>
+  </fieldset>
+  <fieldset id="filter-draft"><legend>Draft</legend>
+    <label><input type="checkbox" value="ready"> ready</label>
+    <label><input type="checkbox" value="draft"> draft</label>
+  </fieldset>
   <button id="reset" type="button">Reset view</button>
   <button id="refresh" type="button">Refresh</button>
 </header>

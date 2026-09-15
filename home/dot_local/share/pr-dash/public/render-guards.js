@@ -1,6 +1,10 @@
 // @ts-check
+import { DRAFT_STATES, STALENESS_BUCKETS } from './group.js';
+
 /** @typedef {import('./group.js').Axis} Axis */
 /** @typedef {import('./group.js').Sort} Sort */
+/** @typedef {import('./group.js').StalenessBucket} StalenessBucket */
+/** @typedef {import('./group.js').DraftState} DraftState */
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').Ci} Ci */
 /** @typedef {import('../src/types.ts').Review} Review */
@@ -198,10 +202,19 @@ export function isSafeUrl(url) {
  * @property {Sort} sort
  * @property {Ci[]} ci
  * @property {Review[]} review
+ * @property {StalenessBucket[]} staleness
+ * @property {DraftState[]} draft
  */
 
 /** @type {StoredView} */
-const DEFAULT_VIEW = { axis: DEFAULT_AXIS, sort: DEFAULT_SORT, ci: [], review: [] };
+const DEFAULT_VIEW = {
+  axis: DEFAULT_AXIS,
+  sort: DEFAULT_SORT,
+  ci: [],
+  review: [],
+  staleness: [],
+  draft: [],
+};
 
 /**
  * Keeps only the members of `value` that are strings appearing in
@@ -241,6 +254,26 @@ export function toReviewValues(value) {
 }
 
 /**
+ * Same contract as {@link toCiValues}, for staleness buckets. The allowed set is
+ * `group.js`'s own {@link STALENESS_BUCKETS} rather than a copy declared here, so
+ * the filter cannot end up admitting a bucket `stalenessBucket` never returns.
+ * @param {unknown} value
+ * @returns {StalenessBucket[]}
+ */
+export function toStalenessValues(value) {
+  return toKnownArray(value, STALENESS_BUCKETS);
+}
+
+/**
+ * Same contract as {@link toCiValues}, for draft state.
+ * @param {unknown} value
+ * @returns {DraftState[]}
+ */
+export function toDraftValues(value) {
+  return toKnownArray(value, DRAFT_STATES);
+}
+
+/**
  * Parses the `pr-dash:view` localStorage value into a view the controls
  * can trust. Falls back to {@link DEFAULT_VIEW} — in whole or field by
  * field — for a value that isn't valid JSON, doesn't parse to a plain
@@ -270,6 +303,8 @@ export function parseStoredView(raw) {
     sort: toSort(typeof obj['sort'] === 'string' ? obj['sort'] : ''),
     ci: toCiValues(obj['ci']),
     review: toReviewValues(obj['review']),
+    staleness: toStalenessValues(obj['staleness']),
+    draft: toDraftValues(obj['draft']),
   };
 }
 

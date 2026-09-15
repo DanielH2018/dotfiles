@@ -3,6 +3,26 @@
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {'repo' | 'ci' | 'review' | 'staleness' | 'draft'} Axis */
 /** @typedef {'stale' | 'age' | 'title' | 'size'} Sort */
+/** @typedef {'<1d' | '1-3d' | '3-7d' | '>7d'} StalenessBucket */
+/** @typedef {'draft' | 'ready'} DraftState */
+
+/**
+ * Every bucket {@link stalenessBucket} can return, in display order. The one
+ * definition of the set: it is the `staleness` grouping order, the staleness
+ * filter's allowed values, and `stalenessBucket`'s own return type, so a bucket
+ * renamed in one place cannot keep matching in another. Typed
+ * `readonly StalenessBucket[]`, not `readonly string[]`, so a member outside the
+ * union fails `tsc` at the declaration.
+ * @type {readonly StalenessBucket[]}
+ */
+export const STALENESS_BUCKETS = ['<1d', '1-3d', '3-7d', '>7d'];
+
+/**
+ * Both draft states, ready first. Same role as {@link STALENESS_BUCKETS} for the
+ * `draft` axis, and typed against its union for the same reason.
+ * @type {readonly DraftState[]}
+ */
+export const DRAFT_STATES = ['ready', 'draft'];
 
 /**
  * Declares the display order for every axis except `repo`, most actionable
@@ -11,15 +31,19 @@
  * @type {{ [K in Exclude<Axis, 'repo'>]: readonly string[] }}
  */
 const GROUP_ORDER = {
-  staleness: ['<1d', '1-3d', '3-7d', '>7d'],
+  staleness: STALENESS_BUCKETS,
   ci: ['failure', 'pending', 'none', 'success'],
   review: ['changes_requested', 'review_required', 'none', 'approved'],
-  draft: ['ready', 'draft'],
+  draft: DRAFT_STATES,
 };
 
 /**
+ * The staleness bucket `staleDays` falls in. The return type is the union rather
+ * than `string`: it is what makes a mismatch between these thresholds and
+ * {@link STALENESS_BUCKETS} a `tsc` error instead of a filter that silently
+ * matches nothing.
  * @param {number} staleDays
- * @returns {string}
+ * @returns {StalenessBucket}
  */
 export function stalenessBucket(staleDays) {
   if (staleDays < 1) return '<1d';
@@ -80,13 +104,14 @@ export function groupBy(records, axis) {
  * @typedef {object} Filters
  * @property {import('../src/types.ts').Ci[]} ci
  * @property {import('../src/types.ts').Review[]} review
- * @property {('draft'|'ready')[]} draft
+ * @property {DraftState[]} draft
+ * @property {StalenessBucket[]} staleness
  */
 
 /**
  * Keeps the records matching every axis's constraint (AND across `ci`,
- * `review` and `draft`), where any one axis matches a record if the
- * record's value is among that axis's list (OR within the axis). An empty
+ * `review`, `draft` and `staleness`), where any one axis matches a record if
+ * the record's value is among that axis's list (OR within the axis). An empty
  * list for an axis is not a "match nothing" filter — it means the axis
  * imposes no constraint at all, so the default all-unchecked state shows
  * every record.
@@ -99,6 +124,12 @@ export function applyFilters(records, filters) {
     if (filters.ci.length > 0 && !filters.ci.includes(pr.ci)) return false;
     if (filters.review.length > 0 && !filters.review.includes(pr.review)) return false;
     if (filters.draft.length > 0 && !filters.draft.includes(pr.isDraft ? 'draft' : 'ready')) return false;
+    // Reuses stalenessBucket rather than comparing staleDays against thresholds of its
+    // own, so the filter and the staleness grouping can never disagree about which
+    // bucket a PR is in.
+    if (filters.staleness.length > 0 && !filters.staleness.includes(stalenessBucket(pr.staleDays))) {
+      return false;
+    }
     return true;
   });
 }

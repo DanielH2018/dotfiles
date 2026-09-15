@@ -5,6 +5,8 @@ import {
   toSort,
   toCiValues,
   toReviewValues,
+  toStalenessValues,
+  toDraftValues,
   parsePrsBody,
   isSafeUrl,
   loadStoredView,
@@ -58,6 +60,8 @@ function readControls() {
     sort: toSort(sortSel instanceof HTMLSelectElement ? sortSel.value : ''),
     ci: toCiValues(checkedValues('filter-ci')),
     review: toReviewValues(checkedValues('filter-review')),
+    staleness: toStalenessValues(checkedValues('filter-staleness')),
+    draft: toDraftValues(checkedValues('filter-draft')),
   };
 }
 
@@ -74,6 +78,8 @@ function applyView(view) {
   if (sortSel instanceof HTMLSelectElement) sortSel.value = view.sort;
   setCheckedValues('filter-ci', view.ci);
   setCheckedValues('filter-review', view.review);
+  setCheckedValues('filter-staleness', view.staleness);
+  setCheckedValues('filter-draft', view.draft);
 }
 
 /**
@@ -223,7 +229,8 @@ function render(records, stacks) {
   const filters = {
     ci: toCiValues(checkedValues('filter-ci')),
     review: toReviewValues(checkedValues('filter-review')),
-    draft: [],
+    staleness: toStalenessValues(checkedValues('filter-staleness')),
+    draft: toDraftValues(checkedValues('filter-draft')),
   };
   const filtered = applyFilters(records, filters);
   const allowed = new Set(filtered.map((pr) => pr.id));
@@ -286,7 +293,14 @@ async function refresh(force = false) {
   }
 }
 
-for (const id of ['group-by', 'sort-by', 'filter-ci', 'filter-review']) {
+for (const id of [
+  'group-by',
+  'sort-by',
+  'filter-ci',
+  'filter-review',
+  'filter-staleness',
+  'filter-draft',
+]) {
   document.getElementById(id)?.addEventListener('change', () => {
     saveView();
     render(current, currentStacks);

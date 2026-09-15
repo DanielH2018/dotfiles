@@ -228,17 +228,17 @@ test('sortStackRoots does not mutate its input', () => {
 });
 
 test('an empty filter set matches everything', () => {
-  const out = applyFilters(records, { ci: [], review: [], draft: [] });
+  const out = applyFilters(records, { ci: [], review: [], draft: [], staleness: [] });
   assert.strictEqual(out.length, records.length);
 });
 
 test('filters by ci status', () => {
-  const out = applyFilters(records, { ci: ['failure'], review: [], draft: [] });
+  const out = applyFilters(records, { ci: ['failure'], review: [], draft: [], staleness: [] });
   assert.deepStrictEqual(out.map((r) => r.id), ['acme/web#7']);
 });
 
 test('filters combine as AND across axes', () => {
-  const out = applyFilters(records, { ci: ['failure'], review: ['approved'], draft: [] });
+  const out = applyFilters(records, { ci: ['failure'], review: ['approved'], draft: [], staleness: [] });
   assert.strictEqual(out.length, 0);
 });
 
@@ -251,7 +251,7 @@ test('filters combine as OR within one axis', () => {
     makeRecord({ id: 'p#2', ci: 'failure' }),
     makeRecord({ id: 'p#3', ci: 'pending' }),
   ];
-  const out = applyFilters(ciRecords, { ci: ['failure', 'success'], review: [], draft: [] });
+  const out = applyFilters(ciRecords, { ci: ['failure', 'success'], review: [], draft: [], staleness: [] });
   assert.deepStrictEqual(out.map((r) => r.id), ['p#1', 'p#2']);
 });
 
@@ -260,6 +260,51 @@ test('filters by draft state', () => {
     makeRecord({ id: 'q#1', isDraft: true }),
     makeRecord({ id: 'q#2', isDraft: false }),
   ];
-  const out = applyFilters(draftRecords, { ci: [], review: [], draft: ['draft'] });
+  const out = applyFilters(draftRecords, { ci: [], review: [], draft: ['draft'], staleness: [] });
   assert.deepStrictEqual(out.map((r) => r.id), ['q#1']);
+});
+
+// One record per bucket, so a filter naming one bucket has three records it must exclude
+// and an off-by-one threshold changes which id comes back.
+const stalenessRecords: PrRecord[] = [
+  makeRecord({ id: 's#1', staleDays: 0 }),
+  makeRecord({ id: 's#2', staleDays: 2 }),
+  makeRecord({ id: 's#3', staleDays: 5 }),
+  makeRecord({ id: 's#4', staleDays: 30 }),
+];
+
+test('filters by staleness bucket', () => {
+  const out = applyFilters(stalenessRecords, { ci: [], review: [], draft: [], staleness: ['3-7d'] });
+  assert.deepStrictEqual(out.map((r) => r.id), ['s#3']);
+});
+
+test('the staleness axis is OR within itself', () => {
+  const out = applyFilters(stalenessRecords, {
+    ci: [],
+    review: [],
+    draft: [],
+    staleness: ['<1d', '>7d'],
+  });
+  assert.deepStrictEqual(out.map((r) => r.id), ['s#1', 's#4']);
+});
+
+test('an empty staleness list imposes no constraint', () => {
+  const out = applyFilters(stalenessRecords, { ci: [], review: [], draft: [], staleness: [] });
+  assert.deepStrictEqual(out.map((r) => r.id), ['s#1', 's#2', 's#3', 's#4']);
+});
+
+test('staleness and draft are ANDed with each other and with ci', () => {
+  const mixed = [
+    makeRecord({ id: 'm#1', staleDays: 30, isDraft: false, ci: 'failure' }),
+    makeRecord({ id: 'm#2', staleDays: 30, isDraft: true, ci: 'failure' }),
+    makeRecord({ id: 'm#3', staleDays: 0, isDraft: false, ci: 'failure' }),
+    makeRecord({ id: 'm#4', staleDays: 30, isDraft: false, ci: 'success' }),
+  ];
+  const out = applyFilters(mixed, {
+    ci: ['failure'],
+    review: [],
+    draft: ['ready'],
+    staleness: ['>7d'],
+  });
+  assert.deepStrictEqual(out.map((r) => r.id), ['m#1']);
 });
