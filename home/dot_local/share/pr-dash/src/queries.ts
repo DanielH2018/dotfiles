@@ -21,11 +21,17 @@ query($cursor: String) {
   }
 }`;
 
-// `search` and its `pageInfo` are nullable because a partial response nulls exactly the
-// field that failed while still returning HTTP 200 — the shape this module has to survive,
-// not a hypothetical one.
+// `search`, its `pageInfo` and the individual `nodes` are all nullable because a partial
+// response nulls exactly the field that failed while still returning HTTP 200 — the shape
+// this module has to survive, not a hypothetical one. `pageInfo` is additionally typed
+// `| undefined` because nothing validates the body against this type before it arrives
+// here: an omitted key is indistinguishable from a null one at the point of use, and the
+// query always asks for the field, so a missing one is the same server misbehaviour.
 type SearchData = {
-  search: { pageInfo: { hasNextPage: boolean; endCursor: string | null } | null; nodes: RawPr[] } | null;
+  search: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null } | null | undefined;
+    nodes: (RawPr | null)[];
+  } | null;
 };
 
 // The rows that arrived plus the GraphQL errors that came with them. `errors` is empty on
@@ -66,7 +72,23 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
       );
     }
 
-    all.push(...search.nodes);
+    // A row GitHub could not read arrives as a null element, with the `errors` array beside
+    // it explaining why. Handing that null to normalize() throws a TypeError off
+    // `n.commits`, and the throw discards those errors — so the user reads "Cannot read
+    // properties of null" where the reason should be, and on a `nodes: [null]` carrying no
+    // errors at all nothing explains the gap. Dropping the row here and naming the count
+    // keeps both halves: the rows that did arrive, and why the others did not.
+    //
+    // This is the boundary that guarantees normalize()'s `readonly RawPr[]` input, which is
+    // why normalize() itself has no null branch — it would be unreachable from a real call.
+    const rows = search.nodes.filter((n): n is RawPr => n !== null);
+    const dropped = search.nodes.length - rows.length;
+    if (dropped > 0) {
+      errors.push(
+        `GitHub returned ${dropped} pull request row(s) it could not read, so this list is incomplete.`,
+      );
+    }
+    all.push(...rows);
 
     // The other shape a failed page takes: `nodes` arrives as a well-formed empty array
     // beside the errors. Zero rows collected anywhere means there is still nothing to
@@ -86,7 +108,26 @@ export async function fetchAllPrs(client: Client): Promise<FetchAllResult> {
     // stop here rather than reading a cursor the server never really issued. The rows
     // collected so far are the partial result.
     if (page.errors.length > 0) break;
-    if (search.pageInfo === null || !search.pageInfo.hasNextPage) break;
+
+    // A null or missing pageInfo is not a clean end of pagination: the field that says
+    // whether more pages remain arrived absent, so the rows collected so far may be a
+    // truncated view of the user's PRs. Reading it as "no more pages" is how 100 of 250
+    // open PRs present as all of them, with a fresh timestamp and no banner — worse than
+    // the empty list, because a truncated list looks right. Whether GitHub can actually
+    // produce this shape is unresolved (nulling a field without an `errors` entry would
+    // violate the GraphQL spec), so this takes the safe reading rather than betting on the
+    // server's conformance.
+    if (search.pageInfo === null || search.pageInfo === undefined) {
+      errors.push(
+        'GitHub did not report whether more pull requests remain, so this list is incomplete.',
+      );
+      // Same rule as the zero-row cases above: with nothing collected there is nothing to
+      // present as partial, and a zero-row success would replace rows the user can still
+      // see with "no open PRs" behind a banner, since `withFallback` only retains on a throw.
+      if (all.length === 0) throw new Error(errors.join('; '));
+      break;
+    }
+    if (!search.pageInfo.hasNextPage) break;
 
     const nextCursor = search.pageInfo.endCursor;
     // A cursor that doesn't advance (null, or repeating the same value) alongside

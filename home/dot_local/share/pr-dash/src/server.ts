@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkHost, checkRequest } from './guard.ts';
+import { checkHost, checkSecret } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { PrRecord } from './types.ts';
 
@@ -16,10 +16,11 @@ const MIME: Record<string, string> = {
 
 export type ServerOpts = {
   secret: string;
-  // The host the launcher actually binds to and expects requests to arrive on. Passed
-  // through to the guard as `expected.host` rather than read off the request's own Host
+  // The host the launcher actually binds to and expects requests to arrive on. This is the
+  // guard's expectation, and it must come from here rather than from the request's own Host
   // header — comparing a header to itself can never disagree, which is how the DNS
-  // rebinding check went missing while every test still passed.
+  // rebinding check went missing while every test still passed. It is read in exactly one
+  // place, the `checkHost` call at the top of `handle`.
   host: string;
   // loadPrs carries its own fetchedAt rather than this module stamping one at response
   // time: a cache hit must report when the data was actually fetched, not the instant of
@@ -89,7 +90,9 @@ async function handle(
   }
 
   if (url.pathname === '/api/prs') {
-    const guard = checkRequest(req.headers, { host: opts.host, secret: opts.secret });
+    // Only the secret is checked here. The host was checked at the top of this function,
+    // unconditionally and before any route was dispatched, which is the one place it lives.
+    const guard = checkSecret(req.headers, { secret: opts.secret });
     if (!guard.ok) return refuse(res, 403, guard.reason);
     // `?refresh=1` is the page's Refresh click, and only that exact value counts —
     // anything else in the query string is an ordinary poll served from the cache. The

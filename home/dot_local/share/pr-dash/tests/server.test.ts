@@ -250,6 +250,12 @@ test('rejects a Host header that is not the configured one', async () => {
       headers: { 'x-pr-dash-secret': 'test-secret' },
     });
     assert.strictEqual(res.status, 403);
+    // The secret sent here is the right one, so a refusal naming the secret would mean the
+    // host check had not run. The reason distinguishes which half refused, and the host
+    // half is the one that has to: it is the only defence against a rebinding attacker,
+    // who can read the secret out of the URL fragment they were handed.
+    const body = await res.json();
+    assert.match(body.error, /Host/);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }

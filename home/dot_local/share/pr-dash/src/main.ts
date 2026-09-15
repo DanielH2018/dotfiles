@@ -3,7 +3,7 @@ import { createClient } from './github.ts';
 import type { LoadResult } from './loader.ts';
 import { resolveToken } from './token.ts';
 import { createCache } from './cache.ts';
-import { createLoadPrs, listenErrorMessage, parsePort } from './main-lib.ts';
+import { createLoadPrs, expectedHost, listenErrorMessage, parsePort } from './main-lib.ts';
 
 const secret = process.env['PR_DASH_SECRET'];
 if (secret === undefined || secret === '') {
@@ -29,7 +29,7 @@ const client = createClient({ token });
 const cache = createCache<LoadResult>(60_000);
 const loadPrs = createLoadPrs(client, cache);
 
-const server = createServer({ secret, host: `127.0.0.1:${port}`, loadPrs });
+const server = createServer({ secret, host: expectedHost(port), loadPrs });
 // Attached before listen(): without a handler, an occupied port reaches Node's default
 // 'error' behaviour and prints a `node:events` throw trace over a condition the user can
 // act on in one step.

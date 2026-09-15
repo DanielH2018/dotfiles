@@ -1,7 +1,5 @@
 export type GuardResult = { ok: true } | { ok: false; reason: string };
 
-export type Expected = { host: string; secret: string };
-
 type Headers = Record<string, string | string[] | undefined>;
 
 function one(v: string | string[] | undefined): string | undefined {
@@ -34,7 +32,7 @@ function originHost(origin: string): string | undefined {
 
 /**
  * The DNS-rebinding half of the guard: `Host` must be the host the launcher bound to, and
- * `Origin`, when present, must name that same host. Separate from {@link checkRequest}
+ * `Origin`, when present, must name that same host. Separate from {@link checkSecret}
  * because the server applies this half to *every* request — a mismatched `Host` must not be
  * served the page shell or `app.js` either — while the secret applies only to `/api/prs`.
  * The browser cannot attach a custom header to the address-bar navigation that loads the
@@ -65,14 +63,19 @@ export function checkHost(headers: Headers, expected: { host: string }): GuardRe
 }
 
 /**
- * The full guard for `/api/prs`: {@link checkHost} plus the per-launch secret. The secret
- * is what actually authenticates an API request, since `Origin` is optional and `Host` only
+ * The per-launch secret half of the guard, which applies to `/api/prs` alone. The secret is
+ * what actually authenticates an API request, since `Origin` is optional and `Host` only
  * rules out rebinding.
+ *
+ * This deliberately does *not* re-check the host. It used to, and that check was
+ * unreachable: the server calls {@link checkHost} on every request before dispatching a
+ * route, so by the time this runs a mismatched host has already been refused. A second
+ * check that can never disagree with the first is one nothing can test through the server —
+ * swapping its expectation for the request's own `Host` header, the very defect that left
+ * this dashboard with no rebinding defence, left the whole suite green. Host defence now
+ * lives in exactly one place, so there is no second copy to rot.
  */
-export function checkRequest(headers: Headers, expected: Expected): GuardResult {
-  const hostResult = checkHost(headers, expected);
-  if (!hostResult.ok) return hostResult;
-
+export function checkSecret(headers: Headers, expected: { secret: string }): GuardResult {
   const secret = one(headers['x-pr-dash-secret']);
   if (secret !== expected.secret) {
     return { ok: false, reason: 'missing or incorrect secret' };

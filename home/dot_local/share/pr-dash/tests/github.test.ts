@@ -428,3 +428,160 @@ test('pagination terminates when hasNextPage stays true but the cursor never adv
   await assert.rejects(() => fetchAllPrs(client), /pagination/i);
   assert.ok(calls < 1000, `expected the loop to bail out well before ${calls} calls`);
 });
+
+// A response body with an arbitrary `search` shape. `pageResponse` above always builds a
+// well-formed pageInfo and well-formed nodes, which are precisely the shapes the two
+// defects below are about not receiving, so these tests hand the loop the raw body.
+function rawResponse(body: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+    text: async () => '',
+  } as Response;
+}
+
+// A null pageInfo beside rows and *no* errors is the truncation case. Stopping the loop and
+// reporting a complete fetch is how 100 of 250 open PRs present as all of them — worse than
+// an obviously-empty list, because a truncated one looks right.
+test('a null pageInfo with no errors is reported as partial, not as a clean end', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return rawResponse({ data: { search: { pageInfo: null, nodes: [{ number: calls }] } } });
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.strictEqual(calls, 1);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [1],
+  );
+  assert.strictEqual(result.errors.length, 1);
+  assert.match(result.errors[0]!, /incomplete/i);
+});
+
+// The same defect one shape over: the field is absent rather than null. Nothing validates
+// the body against the declared `| null` type, so an omitted key arrives as undefined and
+// reading `.hasNextPage` off it throws.
+test('a missing pageInfo with no errors is reported as partial too', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => rawResponse({ data: { search: { nodes: [{ number: 5 }] } } }),
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [5],
+  );
+  assert.strictEqual(result.errors.length, 1);
+  assert.match(result.errors[0]!, /incomplete/i);
+});
+
+// With no rows anywhere there is nothing to present as partial, and calling it a success
+// would replace rows the user can still see with an empty list behind a banner — the same
+// reasoning fetchAllPrs already applies to an empty page carrying errors.
+test('a null pageInfo with zero rows is a failure, not an empty result', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => rawResponse({ data: { search: { pageInfo: null, nodes: [] } } }),
+  });
+  await assert.rejects(() => fetchAllPrs(client), /incomplete/i);
+});
+
+test('a null pageInfo after a good page keeps the rows already collected', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return pageResponse([{ number: 1 }], true, 'cur');
+      return rawResponse({ data: { search: { pageInfo: null, nodes: [{ number: 2 }] } } });
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [1, 2],
+  );
+  assert.match(result.errors.join('; '), /incomplete/i);
+});
+
+// `nodes: [null]` is GitHub nulling a row it could not read. Mapping over the null throws a
+// TypeError inside normalize(), and that throw discards the `errors` array that explained
+// the failure — so the user reads "Cannot read properties of null" instead of the reason.
+test('a null node beside errors keeps the errors that explain it', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      rawResponse({
+        data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [null] } },
+        errors: [{ message: 'timeout reading a pull request' }],
+      }),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) =>
+      e.message.includes('timeout reading a pull request') &&
+      !/Cannot read properties/.test(e.message),
+  );
+});
+
+// The worse variant: a null row with no errors at all, where nothing explains the gap.
+test('a null node with no errors still produces a reason rather than a TypeError', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      rawResponse({
+        data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [null] } },
+      }),
+  });
+  await assert.rejects(
+    () => fetchAllPrs(client),
+    (e: Error) => /could not read/i.test(e.message) && !/Cannot read properties/.test(e.message),
+  );
+});
+
+test('a null node beside a readable one keeps the readable row and names the loss', async () => {
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () =>
+      rawResponse({
+        data: {
+          search: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [null, { number: 9 }],
+          },
+        },
+      }),
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [9],
+  );
+  assert.strictEqual(result.errors.length, 1);
+  assert.match(result.errors[0]!, /could not read/i);
+});
+
+test('a null node on a later page keeps the earlier pages rows', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return pageResponse([{ number: 1 }], true, 'cur');
+      return rawResponse({
+        data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [null] } },
+      });
+    },
+  });
+  const result = await fetchAllPrs(client);
+  assert.deepStrictEqual(
+    result.prs.map((n: { number: number }) => n.number),
+    [1],
+  );
+  assert.match(result.errors.join('; '), /could not read/i);
+});

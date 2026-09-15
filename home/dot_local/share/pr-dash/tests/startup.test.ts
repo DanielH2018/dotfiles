@@ -4,7 +4,23 @@
 // what the user is told when listening on it fails.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parsePort, listenErrorMessage, DEFAULT_PORT } from '../src/main-lib.ts';
+import { parsePort, listenErrorMessage, expectedHost, DEFAULT_PORT } from '../src/main-lib.ts';
+
+// Item 5 of the final review: `127.0.0.1:${port}` is wrong for port 80. Browsers and curl
+// both omit a default port from the Host header, so the guard's expectation has to omit it
+// too or every request 403s — including the launcher's readiness probe, which then reports
+// "did not start listening within 60s" about a server that is listening fine.
+test('the expected host omits port 80, which clients do not send', () => {
+  assert.strictEqual(expectedHost(80), '127.0.0.1');
+});
+
+test('the expected host carries every other port, which clients do send', () => {
+  assert.strictEqual(expectedHost(DEFAULT_PORT), `127.0.0.1:${DEFAULT_PORT}`);
+  assert.strictEqual(expectedHost(8080), '127.0.0.1:8080');
+  // 443 is the *https* default. This server only ever speaks http, so a client asking for
+  // http://127.0.0.1:443 sends the port explicitly and the expectation must keep it.
+  assert.strictEqual(expectedHost(443), '127.0.0.1:443');
+});
 
 test('an unset PR_DASH_PORT falls back to the default port', () => {
   const parsed = parsePort(undefined);

@@ -35,6 +35,26 @@ export function parsePort(raw: string | undefined): ParsedPort {
   return { ok: true, port };
 }
 
+/** The port a client omits from an http `Host` header, being the scheme's default. */
+const HTTP_DEFAULT_PORT = 80;
+
+/**
+ * The loopback authority the guard must expect for a server listening on `port`.
+ *
+ * Port 80 is left off, because browsers and curl both omit a scheme's default port from the
+ * `Host` header: a server on port 80 receives `Host: 127.0.0.1`, so expecting
+ * `127.0.0.1:80` refuses every request. That takes the launcher's readiness probe with it —
+ * the probe gets the same 403, its loop never exits, and it reports "did not start
+ * listening within 60s" about a server that is listening fine. `parsePort` accepts 80, so
+ * this is reachable, if only for a caller running as root.
+ *
+ * 443 is not special here: this server speaks http only, so a client reaching
+ * `http://127.0.0.1:443` sends that port explicitly.
+ */
+export function expectedHost(port: number): string {
+  return port === HTTP_DEFAULT_PORT ? '127.0.0.1' : `127.0.0.1:${port}`;
+}
+
 /**
  * The message to print when `server.listen` fails. Without an `'error'` handler Node
  * prints a raw `node:events` stack trace over a condition the user can simply act on, so
