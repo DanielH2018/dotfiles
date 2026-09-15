@@ -24,7 +24,7 @@ const client = createClient({ token });
 const cache = createCache<LoadResult>(60_000);
 const loadPrs = createLoadPrs(client, cache);
 
-const server = createServer({ secret, loadPrs });
+const server = createServer({ secret, host: `127.0.0.1:${port}`, loadPrs });
 server.listen(port, '127.0.0.1', () => {
   console.log(`pr-dash listening on http://127.0.0.1:${port}`);
 });

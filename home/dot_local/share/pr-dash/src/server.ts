@@ -16,6 +16,11 @@ const MIME: Record<string, string> = {
 
 export type ServerOpts = {
   secret: string;
+  // The host the launcher actually binds to and expects requests to arrive on. Passed
+  // through to the guard as `expected.host` rather than read off the request's own Host
+  // header — comparing a header to itself can never disagree, which is how the DNS
+  // rebinding check went missing while every test still passed.
+  host: string;
   // loadPrs carries its own fetchedAt rather than this module stamping one at response
   // time: a cache hit must report when the data was actually fetched, not the instant of
   // this particular request, or a client polling every few seconds would see a "just now"
@@ -49,11 +54,7 @@ async function handle(
     return;
   }
 
-  // The expected host here is the request's own Host header, which makes this
-  // particular check a tautology — it can never disagree with itself. Task 12
-  // replaces it with the launcher's configured host. Until then, the Origin and
-  // secret checks below are what actually carry the guard.
-  const guard = checkRequest(req.headers, { host: hostHeader, secret: opts.secret });
+  const guard = checkRequest(req.headers, { host: opts.host, secret: opts.secret });
 
   const url = new URL(req.url ?? '/', `http://${hostHeader}`);
 

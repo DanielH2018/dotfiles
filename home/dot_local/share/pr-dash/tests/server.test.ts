@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { connect } from 'node:net';
+import { connect, createServer as createNetServer } from 'node:net';
 import { createServer } from '../src/server.ts';
 import { createCache } from '../src/cache.ts';
 import type { PrRecord, StackNode } from '../src/types.ts';
@@ -18,6 +18,20 @@ function flattenIds(nodes: readonly StackNode[]): string[] {
   return nodes.flatMap((node) => [node.pr.id, ...flattenIds(node.children)]);
 }
 
+// createServer's `host` option must be known before construction, but an ephemeral
+// port (`listen(0, ...)`) is only known after the real server is already listening.
+// Probing with a throwaway listener first, then closing it and reusing the port it
+// found, breaks that chicken-and-egg problem for the test helper below.
+async function freePort(): Promise<number> {
+  const probe = createNetServer();
+  await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
+  const addr = probe.address();
+  if (addr === null || typeof addr === 'string') throw new Error('no port');
+  const port = addr.port;
+  await new Promise<void>((r) => probe.close(() => r()));
+  return port;
+}
+
 async function withServer(
   fn: (base: string, secret: string) => Promise<void>,
   loadPrs: () => Promise<{ prs: PrRecord[]; fetchedAt: string }> = async () => ({
@@ -26,12 +40,11 @@ async function withServer(
   }),
 ) {
   const secret = 'test-secret';
-  const server = createServer({ secret, loadPrs });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  const addr = server.address();
-  if (addr === null || typeof addr === 'string') throw new Error('no port');
+  const port = await freePort();
+  const server = createServer({ secret, host: `127.0.0.1:${port}`, loadPrs });
+  await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
-    await fn(`http://127.0.0.1:${addr.port}`, secret);
+    await fn(`http://127.0.0.1:${port}`, secret);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
@@ -171,4 +184,23 @@ test('cache expires after its ttl', () => {
   const c = createCache<number>(-1);
   c.set(1);
   assert.strictEqual(c.get(), undefined);
+});
+
+test('rejects a Host header that is not the configured one', async () => {
+  const server = createServer({
+    secret: 'test-secret',
+    host: '127.0.0.1:9999',
+    loadPrs: async () => ({ prs: records, fetchedAt: new Date().toISOString() }),
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const addr = server.address();
+  if (addr === null || typeof addr === 'string') throw new Error('no port');
+  try {
+    const res = await fetch(`http://127.0.0.1:${addr.port}/api/prs`, {
+      headers: { 'x-pr-dash-secret': 'test-secret' },
+    });
+    assert.strictEqual(res.status, 403);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
 });
