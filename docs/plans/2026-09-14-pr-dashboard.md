@@ -15,10 +15,11 @@
 The code blocks below are the plan **as written before execution**, not a description of
 what shipped. Execution overrode several of them, each time because the prescribed code was
 demonstrably wrong; the blocks that were superseded carry a note saying so and naming what
-replaced them. The rulings and their reasoning live in
-[`.superpowers/sdd/2026-09-14-pr-dashboard/progress.md`](../../.superpowers/sdd/2026-09-14-pr-dashboard/progress.md),
-which is authoritative where it and this plan disagree. The shipped code is authoritative
-over both.
+replaced them. The rulings and their reasoning live in the execution ledger,
+`.superpowers/sdd/2026-09-14-pr-dashboard/progress.md`, which is authoritative where it and
+this plan disagree. That path is not linked because `.superpowers/` is gitignored: the
+ledger is session-local and a clone of this repo does not carry it. The shipped code is
+authoritative over both, and it is in the repo.
 
 ## Global Constraints
 

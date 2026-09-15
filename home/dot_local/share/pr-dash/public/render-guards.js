@@ -211,9 +211,12 @@ export function parsePrsBody(body) {
   const prs = rawPrs.map((record, index) => validateRecord(record, `record ${index}`));
   // `stacks` goes through the boundary too. It used to be cast straight off the raw body in
   // app.js while `prs` was validated here, and one of the two fields the render path
-  // consumes opting out is how the untrusted-input invariant rots. An absent `stacks` is a
-  // response carrying no forest, which renders flat; a present one that is not a
-  // well-formed forest is a type violation and throws, like a malformed `prs`.
+  // consumes opting out is how the untrusted-input invariant rots. A present `stacks` that
+  // is not a well-formed forest is a type violation and throws, like a malformed `prs`. An
+  // absent one is an empty forest, which the non-repo axes render as their flat row lists
+  // but the default repo axis renders as group headings with no rows under them, since that
+  // axis draws only what the forest holds. This server always sends the array, so the empty
+  // forest is unreachable; a second producer would have to send it too.
   const rawStacks = fields['stacks'];
   const stacks =
     rawStacks === undefined

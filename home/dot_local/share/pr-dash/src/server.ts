@@ -116,7 +116,7 @@ async function handle(
 /**
  * Ends `res` with a JSON `{ error }` body. One helper rather than a `writeHead`/`end` pair
  * per refusal, so every refused request answers in the same shape whatever refused it — the
- * three separate 403 bodies this replaced could not be told apart by a client.
+ * three separate 403 bodies this replaced each had their own shape, one of them empty.
  */
 function refuse(res: import('node:http').ServerResponse, status: number, reason: string): void {
   res.writeHead(status, { 'content-type': 'application/json' });
