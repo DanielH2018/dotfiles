@@ -11,6 +11,11 @@
 // property, because the failure it prevents is invisible: if someone restores a bare
 // `node --test`, every suite under a dot-directory silently stops running and the push still
 // reports green.
+//
+// The glob list carries `*.test.ts` as well, for pr-dash, whose suite is TypeScript that
+// Node 24 runs directly by stripping the annotations. The assertions below pin the exact
+// glob list, so adding a fourth extension means editing this file too — deliberate, since
+// an extension the hook does not name is a suite nothing runs.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -21,7 +26,11 @@ const REPO = path.join(__dirname, '..');
 const HOOK = path.join(REPO, '.githooks', 'pre-push');
 const hookText = fs.readFileSync(HOOK, 'utf8');
 
-const trackedTests = execFileSync('git', ['ls-files', '*.test.js', '*.test.mjs'], { cwd: REPO })
+const trackedTests = execFileSync(
+  'git',
+  ['ls-files', '*.test.js', '*.test.mjs', '*.test.ts'],
+  { cwd: REPO },
+)
   .toString()
   .split('\n')
   .filter(Boolean);
@@ -29,7 +38,7 @@ const trackedTests = execFileSync('git', ['ls-files', '*.test.js', '*.test.mjs']
 test('the hook derives its test list from git rather than node discovery', () => {
   assert.match(
     hookText,
-    /TEST_FILES=\$\(git ls-files '\*\.test\.js' '\*\.test\.mjs'\)/,
+    /TEST_FILES=\$\(git ls-files '\*\.test\.js' '\*\.test\.mjs' '\*\.test\.ts'\)/,
     'pre-push must build the unit-test file list with git ls-files',
   );
 });
@@ -54,7 +63,7 @@ test('every tracked test file under a dot-directory is still covered', () => {
   const hidden = trackedTests.filter((p) => p.split('/').some((seg) => seg.startsWith('.')));
   for (const file of hidden) {
     assert.ok(
-      /\.test\.(js|mjs)$/.test(file),
+      /\.test\.(js|mjs|ts)$/.test(file),
       `${file} sits under a dot-directory but does not match the globs in pre-push, so nothing runs it`,
     );
   }
