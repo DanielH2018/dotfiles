@@ -175,3 +175,66 @@ export function sortStackRoots(roots, sort) {
   const compare = comparatorFor(sort);
   return [...roots].sort((a, b) => compare(a.pr, b.pr));
 }
+
+/**
+ * Counts of each CI and review state within one group, plus the group's size. Every
+ * state is present with a count of 0 rather than omitted, so a caller can read
+ * `summary.ci.failure` without guarding the lookup.
+ * @typedef {object} GroupSummary
+ * @property {number} total
+ * @property {Record<import('../src/types.ts').Ci, number>} ci
+ * @property {Record<import('../src/types.ts').Review, number>} review
+ */
+
+/**
+ * Summarises a group's records. Pure, and here rather than in `app.js`, because
+ * `app.js` cannot be imported under `node --test` — a count that silently drifts is
+ * exactly the kind of thing a test has to hold.
+ * @param {readonly PrRecord[]} records
+ * @returns {GroupSummary}
+ */
+export function groupSummary(records) {
+  /** @type {GroupSummary} */
+  const summary = {
+    total: records.length,
+    ci: { success: 0, failure: 0, pending: 0, none: 0 },
+    review: { approved: 0, changes_requested: 0, review_required: 0, none: 0 },
+  };
+  for (const pr of records) {
+    summary.ci[pr.ci] += 1;
+    summary.review[pr.review] += 1;
+  }
+  return summary;
+}
+
+/**
+ * One chip per state worth surfacing on a collapsed header, ordered so a problem is read
+ * first, with empty states omitted.
+ *
+ * A collapsed header has to keep its signal: folding a repository away must not hide that
+ * something inside it is failing or waiting on you, or collapsing becomes a way to lose
+ * track of work. A clean group produces no chips at all — the count in the header already
+ * says how much is in there.
+ * @typedef {object} SummaryChip
+ * @property {string} label
+ * @property {'bad' | 'warn' | 'good'} tone
+ *
+ * @param {GroupSummary} summary
+ * @returns {SummaryChip[]}
+ */
+export function summaryChips(summary) {
+  /** @type {SummaryChip[]} */
+  const chips = [];
+  if (summary.ci.failure > 0) chips.push({ label: `${summary.ci.failure} failing`, tone: 'bad' });
+  if (summary.review.changes_requested > 0) {
+    chips.push({ label: `${summary.review.changes_requested} changes`, tone: 'bad' });
+  }
+  if (summary.review.review_required > 0) {
+    chips.push({ label: `${summary.review.review_required} waiting`, tone: 'warn' });
+  }
+  if (summary.ci.pending > 0) chips.push({ label: `${summary.ci.pending} pending`, tone: 'warn' });
+  if (summary.review.approved > 0) {
+    chips.push({ label: `${summary.review.approved} approved`, tone: 'good' });
+  }
+  return chips;
+}

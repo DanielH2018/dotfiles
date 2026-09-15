@@ -1,7 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { applyFilters, groupBy, sortStackRoots, sortWithin, stalenessBucket } from '../public/group.js';
+import {
+  applyFilters,
+  groupBy,
+  groupSummary,
+  sortStackRoots,
+  sortWithin,
+  stalenessBucket,
+  summaryChips,
+} from '../public/group.js';
 import type { Sort } from '../public/group.js';
 import type { PrRecord, StackNode } from '../src/types.ts';
 
@@ -307,4 +315,71 @@ test('staleness and draft are ANDed with each other and with ci', () => {
     staleness: ['>7d'],
   });
   assert.deepStrictEqual(out.map((r) => r.id), ['m#1']);
+});
+
+test('groupSummary counts every ci and review state', () => {
+  const records = [
+    makeRecord({ id: 'a#1', ci: 'failure', review: 'changes_requested' }),
+    makeRecord({ id: 'a#2', ci: 'failure', review: 'approved' }),
+    makeRecord({ id: 'a#3', ci: 'success', review: 'approved' }),
+    makeRecord({ id: 'a#4', ci: 'pending', review: 'review_required' }),
+    makeRecord({ id: 'a#5', ci: 'none', review: 'none' }),
+  ];
+
+  const summary = groupSummary(records);
+
+  assert.strictEqual(summary.total, 5);
+  assert.deepStrictEqual(summary.ci, { success: 1, failure: 2, pending: 1, none: 1 });
+  assert.deepStrictEqual(summary.review, {
+    approved: 2,
+    changes_requested: 1,
+    review_required: 1,
+    none: 1,
+  });
+});
+
+test('groupSummary reports zeroes rather than omitting a state', () => {
+  // A caller reading summary.ci.failure must get 0, not undefined, or the chip logic has
+  // to guard every lookup.
+  const summary = groupSummary([makeRecord({ id: 'a#1', ci: 'success', review: 'approved' })]);
+  assert.strictEqual(summary.ci.failure, 0);
+  assert.strictEqual(summary.review.changes_requested, 0);
+});
+
+test('groupSummary of no records is all zeroes', () => {
+  const summary = groupSummary([]);
+  assert.strictEqual(summary.total, 0);
+  assert.deepStrictEqual(summary.ci, { success: 0, failure: 0, pending: 0, none: 0 });
+});
+
+test('summaryChips leads with problems and omits empty states', () => {
+  const records = [
+    makeRecord({ id: 'a#1', ci: 'failure', review: 'approved' }),
+    makeRecord({ id: 'a#2', ci: 'failure', review: 'approved' }),
+    makeRecord({ id: 'a#3', ci: 'success', review: 'approved' }),
+  ];
+
+  const chips = summaryChips(groupSummary(records));
+
+  assert.deepStrictEqual(chips, [
+    { label: '2 failing', tone: 'bad' },
+    { label: '3 approved', tone: 'good' },
+  ]);
+});
+
+test('summaryChips puts failing CI before changes requested', () => {
+  const records = [
+    makeRecord({ id: 'a#1', ci: 'failure', review: 'review_required' }),
+    makeRecord({ id: 'a#2', ci: 'success', review: 'changes_requested' }),
+  ];
+
+  const chips = summaryChips(groupSummary(records));
+
+  assert.deepStrictEqual(chips.map((c) => c.label), ['1 failing', '1 changes', '1 waiting']);
+});
+
+test('summaryChips of a clean group is empty', () => {
+  // Nothing to say is better than a chip saying so. The count is already in the header.
+  const chips = summaryChips(groupSummary([makeRecord({ id: 'a#1', ci: 'success', review: 'none' })]));
+  assert.deepStrictEqual(chips, []);
 });
