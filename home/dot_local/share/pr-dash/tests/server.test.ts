@@ -139,6 +139,35 @@ test('/api/prs reports error as null, not omitted, when loadPrs does not set it'
   });
 });
 
+test('/api/prs forwards partialErrors from loadPrs', async () => {
+  // The banner's only source for "some PRs are missing" is this field on the wire.
+  // Without a test that reads it back off a real response, dropping it from the JSON
+  // body leaves every test green and the banner permanently silent, because
+  // parsePrsBody coerces the absent field to an empty array.
+  await withServer(
+    async (base, secret) => {
+      const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+      const body = await res.json();
+      assert.deepStrictEqual(body.partialErrors, ['search timed out']);
+      // A partial fetch has just succeeded, so it is not stale.
+      assert.strictEqual(body.stale, false);
+    },
+    async () => ({
+      prs: records,
+      fetchedAt: new Date().toISOString(),
+      partialErrors: ['search timed out'],
+    }),
+  );
+});
+
+test('/api/prs reports partialErrors as an empty array, not omitted, on a complete fetch', async () => {
+  await withServer(async (base, secret) => {
+    const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+    const body = await res.json();
+    assert.deepStrictEqual(body.partialErrors, []);
+  });
+});
+
 test('/api/prs?refresh=1 asks loadPrs to bypass the cache', async () => {
   /** Every `force` value loadPrs was called with, in request order. */
   const forces: (boolean | undefined)[] = [];
