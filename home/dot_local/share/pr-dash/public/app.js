@@ -1,5 +1,13 @@
 // @ts-check
-import { applyFilters, groupBy, groupSummary, summaryChips, sortStackRoots, sortWithin } from './group.js';
+import {
+  applyFilters,
+  groupBy,
+  groupCollapseKey,
+  groupSummary,
+  summaryChips,
+  sortStackRoots,
+  sortWithin,
+} from './group.js';
 import {
   toAxis,
   toSort,
@@ -306,20 +314,6 @@ function renderStack(node, into, allowed) {
   }
   if (isRoot && rowRendered && collapsed.has(node.pr.id)) return;
   for (const child of node.children) renderStack(child, into, allowed);
-}
-
-/**
- * The key {@link collapsed} tracks a group header under: the axis and the group's own key,
- * joined so the same key text under two axes — both `ci` and `review` have a `none` group —
- * can't collide and fold a section nobody collapsed. A stack key is a bare PR id instead,
- * never axis-qualified; a PR id always contains `#`, which none of these joined strings do,
- * so the two kinds of key can never collide with each other either.
- * @param {import('./group.js').Axis} axis
- * @param {string} key
- * @returns {string}
- */
-function groupCollapseKey(axis, key) {
-  return `${axis}:${key}`;
 }
 
 /**

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   applyFilters,
   groupBy,
+  groupCollapseKey,
   groupSummary,
   sortStackRoots,
   sortWithin,
@@ -404,4 +405,22 @@ test('summaryChips of a clean group is empty', () => {
   // Nothing to say is better than a chip saying so. The count is already in the header.
   const chips = summaryChips(groupSummary([makeRecord({ id: 'a#1', ci: 'success', review: 'none' })]));
   assert.deepStrictEqual(chips, []);
+});
+
+test('groupCollapseKey keeps the same group name distinct across two axes', () => {
+  // Both the ci and the review axis have a `none` group. Under a bare group key, collapsing
+  // one folded the other — a section nobody touched.
+  assert.notStrictEqual(groupCollapseKey('ci', 'none'), groupCollapseKey('review', 'none'));
+});
+
+test('groupCollapseKey is stable for one axis and key', () => {
+  assert.strictEqual(groupCollapseKey('repo', 'acme/api'), groupCollapseKey('repo', 'acme/api'));
+});
+
+test('a group collapse key can never equal a stack key', () => {
+  // Stack keys are bare PR ids, which src/normalize.ts always builds as `owner/repo#number`.
+  // Group keys are joined with a colon and carry no `#`, so the two namespaces stay disjoint
+  // even when a repository is both a group and the home of a stack.
+  assert.ok(!groupCollapseKey('repo', 'acme/api').includes('#'));
+  assert.notStrictEqual(groupCollapseKey('repo', 'acme/api'), 'acme/api#7');
 });

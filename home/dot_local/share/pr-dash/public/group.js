@@ -241,3 +241,21 @@ export function summaryChips(summary) {
   }
   return chips;
 }
+
+/**
+ * The key a collapsed group header is tracked under: the axis and the group's own key,
+ * joined so the same key text under two axes — both `ci` and `review` have a `none` group —
+ * can't collide and fold a section nobody collapsed. A stack key is a bare PR id instead,
+ * never axis-qualified; a PR id always contains `#`, which none of these joined strings do,
+ * so the two kinds of key can never collide with each other either.
+ *
+ * Here rather than in `app.js` so the suite can call it: `app.js` cannot be imported under
+ * `node --test`, and a source-reading test could only assert that the right return statement
+ * appears somewhere in the body — which a `return key;` inserted above it satisfies.
+ * @param {Axis} axis
+ * @param {string} key
+ * @returns {string}
+ */
+export function groupCollapseKey(axis, key) {
+  return `${axis}:${key}`;
+}

@@ -134,14 +134,16 @@ test('every id app.js looks up (directly, via the change-listener loop, or via c
   }
 });
 
-test('groupCollapseKey joins axis and key rather than returning the bare key', () => {
-  // The bare key alone would let two axes that share a group name — both `ci` and `review`
-  // have a `none` group — collapse a section nobody touched (finding 8's axis collision).
-  const body = functionBody(STRIPPED, 'function groupCollapseKey');
+test('render derives its group collapse key from groupCollapseKey, not the bare group key', () => {
+  // groupCollapseKey itself lives in group.js and is unit-tested there, where a real call can
+  // observe its return value. What only a source read can check is that `render` actually
+  // routes the group key through it: passing `group.key` straight to `collapsed.has` would
+  // reinstate finding 8's axis collision while groupCollapseKey sat correct and unused.
+  const body = functionBody(STRIPPED, 'function render(records, stacks)');
   assert.match(
     body,
-    /return\s*`\$\{axis\}:\$\{key\}`;/,
-    'expected groupCollapseKey to prefix the key with its axis',
+    /groupCollapseKey\(\s*axis\s*,\s*group\.key\s*\)/,
+    'expected render to build the group collapse key with groupCollapseKey(axis, group.key)',
   );
 });
 
