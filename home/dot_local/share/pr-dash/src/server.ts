@@ -36,21 +36,19 @@ export type ServerOpts = {
   }>;
 };
 
-// Every field here is required, with no optional ones, unlike opts.loadPrs's own return
-// type above. A bare object literal passed straight to JSON.stringify is typed `any`, so
-// omitting a field there is not a compile error — that is exactly how `refreshing` was
-// dropped from the wire once before: `withFallback` set it, the handler destructured
-// `stale`/`error`/`partialErrors` but not `refreshing`, and nothing here caught the gap.
-// Annotating the response object with this type turns that omission into a compile error
-// instead of a silent one.
-type PrsResponseBody = {
-  prs: PrRecord[];
+// Derived from opts.loadPrs's own return type rather than restating it: a hand-maintained
+// copy closes the omission this round found (`refreshing` dropped at the wire) but not the
+// class of it, since a field added only to FallbackResult and to loadPrs's declared return
+// type still leaves a fourth copy, this one, unaware of it, and tsc has nothing to compare
+// against. Deriving instead means a field added there flows into this type automatically,
+// so the response literal below is the one place still missing it and `tsc` reports the
+// same error that caught the original omission. `Required` strips every optional field's
+// `?`, so nothing here can be silently left out; `error` is re-added as `string | null`
+// because the handler coerces the optional `error?: string` to `null`, and `stacks` is
+// added because it is not part of loadPrs's own return type at all.
+type PrsResponseBody = Omit<Required<Awaited<ReturnType<ServerOpts['loadPrs']>>>, 'error'> & {
   stacks: StackNode[];
-  fetchedAt: string;
-  stale: boolean;
   error: string | null;
-  partialErrors: string[];
-  refreshing: boolean;
 };
 
 export function createServer(opts: ServerOpts): Server {

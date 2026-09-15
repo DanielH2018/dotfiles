@@ -5,16 +5,23 @@
 // poll on a forced click — has no way to be exercised. Reading the source and asserting the
 // identifiers that wiring must contain is this repo's existing convention for exactly that
 // gap; see startup-order.test.ts.
+//
+// Every assertion below reads `STRIPPED`, not the raw file: without stripping comments
+// first, a mutation that deletes a real call and replaces it with a comment describing it
+// (e.g. `// see isStaleResponse( above`) satisfies a substring or count check just as well
+// as the real code would.
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments } from './strip-comments.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_JS = path.join(__dirname, '..', 'public', 'app.js');
+const STRIPPED = stripComments(readFileSync(APP_JS, 'utf8'));
 
-/** The text of a top-level function declaration starting at `name(`, up to its closing brace. */
+/** The text of a top-level function declaration starting at `startMarker`, up to its closing brace. */
 function functionBody(text: string, startMarker: string): string {
   const start = text.indexOf(startMarker);
   assert.notStrictEqual(start, -1, `expected to find "${startMarker}" in app.js`);
@@ -23,38 +30,85 @@ function functionBody(text: string, startMarker: string): string {
   return text.slice(start, end);
 }
 
+/** The balanced `{ ... }` block starting at the first `{` at or after `from`. */
+function braceBlock(text: string, from: number): string {
+  const start = text.indexOf('{', from);
+  assert.notStrictEqual(start, -1, 'expected a { at or after the given position');
+  let depth = 0;
+  let i = start;
+  for (; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    else if (text[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        i += 1;
+        break;
+      }
+    }
+  }
+  return text.slice(start, i);
+}
+
 test('refresh calls schedulePoll after rendering a response', () => {
-  const text = readFileSync(APP_JS, 'utf8');
-  const body = functionBody(text, 'async function refresh');
+  const body = functionBody(STRIPPED, 'async function refresh');
   assert.ok(body.includes('schedulePoll('), 'expected refresh to call schedulePoll');
 });
 
 test('schedulePoll arms a timer with setTimeout', () => {
-  const text = readFileSync(APP_JS, 'utf8');
-  const body = functionBody(text, 'function schedulePoll');
+  const body = functionBody(STRIPPED, 'function schedulePoll');
   assert.ok(body.includes('setTimeout('), 'expected schedulePoll to arm a timer with setTimeout');
 });
 
-test('refresh discards a response from a superseded request on both the success and failure paths', () => {
-  const text = readFileSync(APP_JS, 'utf8');
-  const body = functionBody(text, 'async function refresh');
-  // Counted, not just checked for presence: refresh has a try branch and a catch branch,
-  // and a guard removed from only one of them (say, the success path) would still leave a
-  // single `isStaleResponse(` in the body for a presence check to find.
-  const matches = body.match(/isStaleResponse\(/g) ?? [];
+test('refresh discards a superseded response before touching state in the success branch, and once in the catch branch', () => {
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  assert.notStrictEqual(tryStart, -1, 'expected a try block in refresh');
+  const catchStart = body.indexOf('} catch', tryStart);
+  assert.notStrictEqual(catchStart, -1, 'expected a catch block in refresh');
+  const tryBody = body.slice(tryStart, catchStart);
+  const catchBody = body.slice(catchStart);
+
+  // Position, not just presence: a guard moved to after `current` is assigned would still
+  // satisfy a check that only asks whether isStaleResponse appears somewhere in the branch,
+  // but "without touching state" means it must run first.
+  const guardIndex = tryBody.indexOf('isStaleResponse(');
+  const assignIndex = tryBody.search(/\bcurrent\s*=(?!=)/);
+  assert.notStrictEqual(guardIndex, -1, 'expected the try branch to call isStaleResponse');
+  assert.notStrictEqual(assignIndex, -1, 'expected the try branch to assign to current');
+  assert.ok(guardIndex < assignIndex, 'expected isStaleResponse to run before current is assigned');
+
+  // Counted in the catch branch alone, not across the whole function: duplicating the try
+  // branch's guard while deleting the catch branch's would still total 2 across the body.
+  const catchMatches = catchBody.match(/isStaleResponse\(/g) ?? [];
   assert.strictEqual(
-    matches.length,
-    2,
-    'expected isStaleResponse to guard both the try and catch branches of refresh',
+    catchMatches.length,
+    1,
+    'expected exactly one isStaleResponse guard in the catch branch',
   );
 });
 
-test('a forced refresh cancels any armed poll timer', () => {
-  const text = readFileSync(APP_JS, 'utf8');
-  const body = functionBody(text, 'async function refresh');
-  assert.ok(
-    body.includes('if (force && pollTimer !== null)'),
-    'expected refresh to clear pollTimer when force is true',
+test('a forced refresh clears any armed poll timer before issuing its request', () => {
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  assert.notStrictEqual(tryStart, -1, 'expected a try block in refresh');
+  const preamble = body.slice(0, tryStart);
+
+  // The property under test is that the guard checks both force and pollTimer, not which
+  // operand comes first in a commutative &&, so the condition text is matched for both
+  // identifiers rather than one fixed expression.
+  const ifMatch = /if\s*\(([^)]*)\)\s*\{/.exec(preamble);
+  assert.ok(ifMatch, 'expected a conditional in refresh before its try block');
+  const condition = ifMatch[1]!;
+  assert.match(condition, /\bforce\b/, 'expected the pre-request guard to test force');
+  assert.match(condition, /\bpollTimer\b/, 'expected the pre-request guard to test pollTimer');
+
+  // Nested inside the guard's own braces, not merely present somewhere in refresh: an
+  // unconditional clearTimeout(pollTimer) placed elsewhere in the function would satisfy a
+  // plain substring check without actually being gated on force.
+  const ifBody = braceBlock(preamble, ifMatch.index);
+  assert.match(
+    ifBody,
+    /clearTimeout\(\s*pollTimer\s*\)/,
+    "expected the guard's own body to clear pollTimer, not an unconditional call elsewhere",
   );
-  assert.ok(body.includes('clearTimeout(pollTimer)'), 'expected refresh to actually clear the timer');
 });

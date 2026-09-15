@@ -11,9 +11,11 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripComments } from './strip-comments.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MAIN_TS = path.join(__dirname, '..', 'src', 'main.ts');
+const MAIN_TS_STRIPPED = stripComments(readFileSync(MAIN_TS, 'utf8'));
 
 // `\s` already matches newlines, so this catches `await startPreload(` split across a line
 // break as well as on one line.
@@ -55,19 +57,37 @@ test('main.ts reads the payload store before server.listen', () => {
 });
 
 test("main.ts passes the value it read from the store into createLoadPrs's initial", () => {
-  const text = readFileSync(MAIN_TS, 'utf8');
+  // Pins the wiring, not the formatting: whatever main.ts names the variable it reads from
+  // the store, that same identifier must reach createLoadPrs as `initial`. Earlier phrasing
+  // pinned the literal names `client`/`cache` and a trailing comma, so renaming either
+  // unrelated argument broke this test for no behavioural reason.
+  const readMatch = /const\s+(\w+)\s*=\s*await\s+store\.read\(\)/.exec(MAIN_TS_STRIPPED);
+  assert.ok(readMatch, 'expected "const <name> = await store.read()" in main.ts');
+  const storeVar = readMatch[1]!;
+  const callIndex = MAIN_TS_STRIPPED.indexOf('createLoadPrs(');
+  assert.notStrictEqual(callIndex, -1, 'expected a createLoadPrs( call in main.ts');
+  const callEnd = MAIN_TS_STRIPPED.indexOf(');', callIndex);
+  assert.notStrictEqual(callEnd, -1, 'expected the createLoadPrs( call to close with );');
+  const callText = MAIN_TS_STRIPPED.slice(callIndex, callEnd);
+  const initialPattern = new RegExp(`initial:\\s*${storeVar}\\b`);
   assert.match(
-    text,
-    /createLoadPrs\(\s*client\s*,\s*cache\s*,\s*\{\s*initial:\s*restored\s*,/,
-    'expected createLoadPrs to be called with initial: restored',
+    callText,
+    initialPattern,
+    `expected createLoadPrs's call to pass initial: ${storeVar}`,
   );
 });
 
 test('main.ts persists a successful fetch back to the payload store', () => {
-  const text = readFileSync(MAIN_TS, 'utf8');
-  assert.match(
-    text,
-    /onSuccess:\s*\(result\)\s*=>\s*\{\s*void store\.write\(result\)/,
-    'expected onSuccess to call store.write(result)',
-  );
+  // Pins that onSuccess's own parameter, whatever it is named, is what reaches
+  // store.write — not the literal name `result`, which a harmless rename would break.
+  const match = /onSuccess:\s*\((\w+)\)\s*=>/.exec(MAIN_TS_STRIPPED);
+  assert.ok(match, 'expected an onSuccess: (param) => ... callback in main.ts');
+  const param = match[1]!;
+  // A bounded window rather than a full parse of the callback's body: this repo's
+  // structural tests read text, not an AST, and 200 characters comfortably covers a
+  // callback this short without assuming it is block- rather than expression-bodied.
+  const windowStart = match.index + match[0].length;
+  const window = MAIN_TS_STRIPPED.slice(windowStart, windowStart + 200);
+  const writePattern = new RegExp(`store\\.write\\(\\s*${param}\\s*\\)`);
+  assert.match(window, writePattern, `expected onSuccess's body to call store.write(${param})`);
 });

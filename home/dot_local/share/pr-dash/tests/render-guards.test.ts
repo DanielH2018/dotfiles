@@ -955,6 +955,17 @@ test('a refreshing payload that also carries an error is named as a failure, not
   assert.strictEqual(message, 'Could not refresh (last success 3 hours ago): network down.');
 });
 
+test('REFRESH_POLL_MS is 600', () => {
+  // Pinned against a literal, not derived from the module under test: the behavioural
+  // tests below assert waitMs === REFRESH_POLL_MS, which pins the logic but not the value
+  // itself -- REFRESH_POLL_MS = 0 would still make that comparison true.
+  assert.strictEqual(REFRESH_POLL_MS, 600);
+});
+
+test('REFRESH_POLL_TIMEOUT_MS is 60000', () => {
+  assert.strictEqual(REFRESH_POLL_TIMEOUT_MS, 60_000);
+});
+
 test('a response that is not refreshing clears the poll state', () => {
   const { state, waitMs } = nextPollState({ since: 1000 }, { refreshing: false }, 2000);
   assert.deepStrictEqual(state, { since: null });

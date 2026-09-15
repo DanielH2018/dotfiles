@@ -482,3 +482,22 @@ test('two sequential calls served from the same cached object fire onSuccess onc
 
   assert.strictEqual(seen.length, 1, 'the second call is a cache hit returning the same object, not a new fetch');
 });
+
+test('a throwing onSuccess is re-offered the same result on the next call', async () => {
+  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  let calls = 0;
+  const seen: string[] = [];
+  const loadPrs = withFallback(async () => fresh, {
+    onSuccess: (r) => {
+      calls += 1;
+      if (calls === 1) throw new Error('disk full');
+      seen.push(r.fetchedAt);
+    },
+  });
+
+  await loadPrs();
+  await loadPrs();
+
+  assert.strictEqual(calls, 2, 'a throw must not mark the result as already notified');
+  assert.deepStrictEqual(seen, ['NEW']);
+});

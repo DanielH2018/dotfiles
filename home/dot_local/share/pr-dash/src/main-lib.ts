@@ -168,11 +168,13 @@ export function withFallback(
       // as complete.
       lastGood = result;
       if (result !== lastNotified) {
-        lastNotified = result;
         // Wrapped: onSuccess writes to disk, and a full disk must not turn a successful
-        // fetch into a failed request.
+        // fetch into a failed request. lastNotified is set only after onSuccess returns,
+        // so a throw leaves this result eligible to be offered again on the next call
+        // instead of being skipped forever.
         try {
           opts.onSuccess?.(result);
+          lastNotified = result;
         } catch {
           // Not persisted this time; the next successful fetch tries again.
         }
