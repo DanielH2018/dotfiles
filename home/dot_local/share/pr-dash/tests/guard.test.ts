@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { checkRequest } from '../src/guard.ts';
+import { checkHost, checkRequest } from '../src/guard.ts';
 
 const expected = { host: '127.0.0.1:8770', secret: 'sekrit' };
 const good = {
@@ -42,4 +42,17 @@ test('rejects a wrong secret', () => {
 test('allows an absent Origin, which same-origin GETs omit', () => {
   const { origin: _omit, ...noOrigin } = good;
   assert.deepStrictEqual(checkRequest(noOrigin, expected), { ok: true });
+});
+
+test('checkHost accepts a secretless request, which the page-shell navigation is', () => {
+  // The whole reason the host half is a separate function: the server applies it to every
+  // request, and the browser cannot attach `x-pr-dash-secret` to the address-bar navigation
+  // that loads index.html. A checkHost that demanded the secret would 403 the page itself.
+  const { 'x-pr-dash-secret': _omit, ...noSecret } = good;
+  assert.deepStrictEqual(checkHost(noSecret, { host: expected.host }), { ok: true });
+});
+
+test('checkHost rejects an empty Host, which carries no host to compare', () => {
+  const r = checkHost({ ...good, host: '' }, { host: expected.host });
+  assert.strictEqual(r.ok, false);
 });

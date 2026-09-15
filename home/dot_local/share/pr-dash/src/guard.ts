@@ -32,16 +32,27 @@ function originHost(origin: string): string | undefined {
   return ORIGIN_PATTERN.exec(origin)?.[1];
 }
 
-export function checkRequest(headers: Headers, expected: Expected): GuardResult {
+/**
+ * The DNS-rebinding half of the guard: `Host` must be the host the launcher bound to, and
+ * `Origin`, when present, must name that same host. Separate from {@link checkRequest}
+ * because the server applies this half to *every* request — a mismatched `Host` must not be
+ * served the page shell or `app.js` either — while the secret applies only to `/api/prs`.
+ * The browser cannot attach a custom header to the address-bar navigation that loads the
+ * shell, so requiring the secret there would stop the dashboard loading at all.
+ *
+ * An absent `Host` is refused rather than defaulted: HTTP/1.1 requires it, there is nothing
+ * to compare without it, and the server has no other host to fall back to.
+ */
+export function checkHost(headers: Headers, expected: { host: string }): GuardResult {
   const host = one(headers['host']);
-  if (host === undefined || canonicalHost(host) !== canonicalHost(expected.host)) {
+  if (host === undefined || host === '' || canonicalHost(host) !== canonicalHost(expected.host)) {
     return { ok: false, reason: `unexpected Host: ${String(host)}` };
   }
 
   // Same-origin navigations and plain GETs omit Origin entirely, so refusing an absent
   // header here would break the page itself. That means Origin is not what authenticates
-  // these requests — the per-launch secret checked below is — and this check exists only
-  // to reject a *present* cross-origin (or otherwise invalid) Origin, not to require one.
+  // these requests — the per-launch secret is — and this check exists only to reject a
+  // *present* cross-origin (or otherwise invalid) Origin, not to require one.
   const origin = one(headers['origin']);
   if (origin !== undefined) {
     const originAuthority = originHost(origin);
@@ -49,6 +60,18 @@ export function checkRequest(headers: Headers, expected: Expected): GuardResult 
       return { ok: false, reason: `cross-origin request from ${origin}` };
     }
   }
+
+  return { ok: true };
+}
+
+/**
+ * The full guard for `/api/prs`: {@link checkHost} plus the per-launch secret. The secret
+ * is what actually authenticates an API request, since `Origin` is optional and `Host` only
+ * rules out rebinding.
+ */
+export function checkRequest(headers: Headers, expected: Expected): GuardResult {
+  const hostResult = checkHost(headers, expected);
+  if (!hostResult.ok) return hostResult;
 
   const secret = one(headers['x-pr-dash-secret']);
   if (secret !== expected.secret) {

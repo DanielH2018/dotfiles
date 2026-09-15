@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkRequest } from './guard.ts';
+import { checkHost, checkRequest } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { PrRecord } from './types.ts';
 
@@ -48,21 +48,39 @@ async function handle(
   res: import('node:http').ServerResponse,
   opts: ServerOpts,
 ): Promise<void> {
-  // HTTP/1.1 requires a Host header; without one there is no host to build the
-  // request URL against, and no host to check the guard against either. Refuse
-  // outright rather than substituting a default, which is how an absent Host
-  // used to reach `new URL()` and throw, turning into a 500 below instead of
-  // the 403 a missing Host should be.
-  const hostHeader = req.headers.host;
-  if (hostHeader === undefined || hostHeader === '') {
-    res.writeHead(403, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'missing Host header' }));
+  // The rebinding check runs first and covers every path, static assets included. Serving
+  // index.html and app.js to a mismatched Host let an attacker's page host the dashboard's
+  // own client code, and an absent Host is refused here too rather than defaulted: HTTP/1.1
+  // requires it and there is nothing to compare the expectation against without it.
+  const hostCheck = checkHost(req.headers, { host: opts.host });
+  if (!hostCheck.ok) return refuse(res, 403, hostCheck.reason);
+
+  // Only reads are served. No route here changes GitHub state and a cross-origin form POST
+  // cannot set the secret header, so this closes nothing exploitable today; it is here
+  // because this is the endpoint surface a later mutating route is added to, and a method
+  // gate costs less to add before that route exists than after.
+  if (req.method !== 'GET') {
+    res.writeHead(405, { 'content-type': 'application/json', allow: 'GET' });
+    res.end(JSON.stringify({ error: `method ${String(req.method)} is not allowed` }));
     return;
   }
 
-  const guard = checkRequest(req.headers, { host: opts.host, secret: opts.secret });
-
-  const url = new URL(req.url ?? '/', `http://${hostHeader}`);
+  // The base is a fixed literal, never the request's own Host. Only `pathname` and
+  // `searchParams` are read from this URL, so the base is irrelevant to the result — and
+  // passing an unvalidated header in is how `Host: [` reached `new URL()` and threw, turning
+  // a request the guard above had already refused into a 500 whose body named a TypeError.
+  //
+  // The request target is the other unvalidated value feeding this constructor, and Node's
+  // HTTP parser does pass targets it rejects through verbatim: `//[` and `/\` both arrive at
+  // this handler and both throw here. A malformed target is the client's error, so it is
+  // answered as one rather than escaping to the 500 handler as an internal TypeError.
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://pr-dash.invalid');
+  } catch {
+    refuse(res, 400, 'malformed request target');
+    return;
+  }
 
   // The shell is fetched by the browser's address bar, which cannot send a
   // header, so it is served before the secret check. It contains no PR data.
@@ -71,11 +89,8 @@ async function handle(
   }
 
   if (url.pathname === '/api/prs') {
-    if (!guard.ok) {
-      res.writeHead(403, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: guard.reason }));
-      return;
-    }
+    const guard = checkRequest(req.headers, { host: opts.host, secret: opts.secret });
+    if (!guard.ok) return refuse(res, 403, guard.reason);
     // `?refresh=1` is the page's Refresh click, and only that exact value counts —
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.
@@ -98,11 +113,21 @@ async function handle(
   return serveStatic(url.pathname.replace(/^\//, ''), res);
 }
 
+/**
+ * Ends `res` with a JSON `{ error }` body. One helper rather than a `writeHead`/`end` pair
+ * per refusal, so every refused request answers in the same shape whatever refused it — the
+ * three separate 403 bodies this replaced could not be told apart by a client.
+ */
+function refuse(res: import('node:http').ServerResponse, status: number, reason: string): void {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ error: reason }));
+}
+
 async function serveStatic(name: string, res: import('node:http').ServerResponse): Promise<void> {
   const safe = normalize(name).replace(/^(\.\.[/\\])+/, '');
   const path = join(PUBLIC_DIR, safe);
   if (!path.startsWith(PUBLIC_DIR)) {
-    res.writeHead(403).end();
+    refuse(res, 403, 'path outside the public directory');
     return;
   }
   try {

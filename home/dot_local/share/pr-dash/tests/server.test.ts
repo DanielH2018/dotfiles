@@ -254,3 +254,133 @@ test('rejects a Host header that is not the configured one', async () => {
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+// The host and origin halves of the guard apply to every request, not just /api/prs. Only
+// the per-launch secret is scoped to the API, because the browser cannot attach a custom
+// header to the navigation that loads the page shell. Every test below drives a raw socket:
+// `fetch` derives Host from the URL and forbids overriding it, so a mismatched or malformed
+// Host is only reachable this way.
+
+function rawAt(base: string, request: string): Promise<string> {
+  return rawRequest(Number(new URL(base).port), request);
+}
+
+test('serves the page shell at / to the expected Host', async () => {
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    assert.match(response, /^HTTP\/1\.1 200 /);
+    assert.match(response, /<title>PR Dashboard<\/title>/);
+  });
+});
+
+test('serves the page shell to the localhost spelling of the expected Host', async () => {
+  // The guard's documented 127.0.0.1/localhost aliasing has to survive being applied to the
+  // static branch too, or a launcher URL spelled `localhost` would 403 the page it opened.
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `GET / HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    assert.match(response, /^HTTP\/1\.1 200 /);
+  });
+});
+
+test('rejects / from a mismatched Host instead of serving the page shell', async () => {
+  await withServer(async (base) => {
+    const response = await rawAt(
+      base,
+      'GET / HTTP/1.1\r\nHost: evil.example.com:8770\r\nConnection: close\r\n\r\n',
+    );
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.doesNotMatch(response, /<title>PR Dashboard<\/title>/);
+  });
+});
+
+test('rejects a static asset from a mismatched Host', async () => {
+  await withServer(async (base) => {
+    const response = await rawAt(
+      base,
+      'GET /app.js HTTP/1.1\r\nHost: evil.example.com:8770\r\nConnection: close\r\n\r\n',
+    );
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.doesNotMatch(response, /render-guards/);
+  });
+});
+
+test('rejects a cross-origin Origin on the page shell, not only on the API', async () => {
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n` +
+        'Origin: https://evil.example.com\r\nConnection: close\r\n\r\n',
+    );
+    assert.match(response, /^HTTP\/1\.1 403 /);
+  });
+});
+
+test('answers a malformed Host with 403, not a 500 carrying a TypeError', async () => {
+  // `Host: [` is not a parseable URL authority. The guard has already decided to refuse
+  // this request; passing the header on into `new URL()` afterwards is what turned the
+  // refusal into `{"error":"TypeError: Invalid URL"}` at 500.
+  await withServer(async (base) => {
+    const response = await rawAt(
+      base,
+      'GET /api/prs HTTP/1.1\r\nHost: [\r\nConnection: close\r\n\r\n',
+    );
+    assert.match(response, /^HTTP\/1\.1 403 /);
+    assert.doesNotMatch(response, /TypeError/);
+  });
+});
+
+test('answers an unparseable request target with 400, not a 500 carrying a TypeError', async () => {
+  // The same defect as the malformed-Host case above, reached through the other value that
+  // feeds `new URL()`. Node's HTTP parser passes `//[` and `/\` through to the handler
+  // verbatim (verified over a raw socket), and both throw in the URL constructor, so
+  // without this the refusal arrives as a 500 whose body names an internal TypeError.
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    for (const target of ['//[', '/\\']) {
+      const response = await rawAt(
+        base,
+        `GET ${target} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+      );
+      assert.match(response, /^HTTP\/1\.1 400 /, `target ${target}`);
+      assert.doesNotMatch(response, /TypeError/, `target ${target}`);
+    }
+  });
+});
+
+test('refuses POST /api/prs with 405 even when the host and secret are right', async () => {
+  // Nothing on this surface mutates GitHub state and a cross-origin form POST cannot set
+  // the secret header, so this is not a live hole. The check is here because this endpoint
+  // surface is what a later mutating route gets added to, and a method gate costs less
+  // before that route exists than after.
+  await withServer(async (base, secret) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `POST /api/prs HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n` +
+        `x-pr-dash-secret: ${secret}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+    );
+    assert.match(response, /^HTTP\/1\.1 405 /);
+    assert.match(response, /allow: GET/i);
+  });
+});
+
+test('refuses DELETE / with 405 instead of serving the page shell', async () => {
+  await withServer(async (base) => {
+    const port = new URL(base).port;
+    const response = await rawAt(
+      base,
+      `DELETE / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    assert.match(response, /^HTTP\/1\.1 405 /);
+    assert.doesNotMatch(response, /<title>PR Dashboard<\/title>/);
+  });
+});

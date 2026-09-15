@@ -250,20 +250,29 @@ threat is created by adding actions later — actions only raise the severity fr
 to writes against my repositories.
 
 Retrofitting this guard onto an endpoint surface designed without it is how this class of
-tool gets it wrong, so the three controls below ship in v1, while there is one endpoint to
+tool gets it wrong, so the four controls below ship in v1, while there is one endpoint to
 apply them to.
 
 1. **Bind to `127.0.0.1` only,** never `0.0.0.0`. Nothing off the machine can connect.
-2. **Reject unexpected `Host` and `Origin` headers.** `Host` must be `127.0.0.1:<port>` or
-   `localhost:<port>`; any other value means a DNS-rebinding attacker resolved their own
-   hostname to loopback. `Origin`, when present, must match the server's own. No CORS
-   headers are ever sent, so a cross-origin page cannot read a response even if it connects.
-3. **Require a per-launch secret.** `bin/pr-dash` generates a random token at startup,
-   opens the browser at `http://127.0.0.1:<port>/#<secret>`, and the client sends it as a
-   header on every request. A page that did not receive the secret cannot use the API even
-   from a permitted origin. The secret lives in memory and dies with the process.
+2. **Reject unexpected `Host` and `Origin` headers, on every request.** `Host` must be
+   `127.0.0.1:<port>` or `localhost:<port>`; any other value means a DNS-rebinding attacker
+   resolved their own hostname to loopback. `Origin`, when present, must match the server's
+   own. No CORS headers are ever sent, so a cross-origin page cannot read a response even if
+   it connects. This check covers the static files too, not just `/api/prs`: serving the
+   dashboard's own client code to an attacker's hostname is a foothold in its own right.
+3. **Require a per-launch secret on `/api/prs`.** `bin/pr-dash` generates a random token at
+   startup, opens the browser at `http://127.0.0.1:<port>/#<secret>`, and the client sends
+   it as a header on every API request. A page that did not receive the secret cannot use
+   the API even from a permitted origin. The secret lives in memory and dies with the
+   process. It is scoped to the API rather than to every path because a browser cannot
+   attach a custom header to the address-bar navigation that loads the page shell —
+   requiring it there would stop the dashboard loading at all. The shell carries no PR data.
+4. **Serve `GET` and nothing else.** No route in v1 changes GitHub state and a cross-origin
+   form POST cannot set the secret header, so this closes nothing exploitable today. It is
+   here for the same reason as the rest: a method gate costs less to add before a mutating
+   route exists than after.
 
-None of the three depends on what the endpoints do, which is the point — the guard is
+None of the four depends on what the endpoints do, which is the point — the guard is
 written once against a read-only surface and does not change when mutating routes arrive.
 
 ## Language and tooling
@@ -335,7 +344,7 @@ a small tool acquires a framework nobody needed. The list is short on purpose.
 
 | Decision | Made now because |
 |---|---|
-| Origin, `Host`, and per-launch-secret guard on every request | The only item that is a vulnerability if retrofitted. See the hardening section. |
+| `Host` and `Origin` guard on every request, a per-launch secret on `/api/prs`, and `GET`-only routing | The only item that is a vulnerability if retrofitted. See the hardening section. |
 | `PrRecord.id` as `"owner/name#123"` | Gives the client stable row identity, so a single row can be patched after an action instead of re-rendering the list. |
 | `github.ts` is a transport with `query()`, not a function per screen | Adding `mutate()` beside `query()` is a few lines. A module shaped around the read path would need restructuring. |
 | Shared PR fragment in `queries.ts`, used by fetch-many and fetch-one | An action needs to refetch exactly one PR. The fragment guarantees the refetched row has the same shape as the rows around it. |
