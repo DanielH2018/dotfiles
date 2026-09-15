@@ -70,6 +70,56 @@ test('refresh discards a superseded response before touching state in the succes
   );
 });
 
+test('a caught refresh failure arms a bounded retry through schedulePoll rather than returning', () => {
+  // A hard failure used to show the banner and return, arming no timer — one failed
+  // request stopped the poll loop permanently, and a stored payload the server accepts
+  // but the browser cannot render (looksLikeServerSafeRecord's five fields vs.
+  // validateRecord's eleven) left the dashboard blank until a manual Refresh. Routing the
+  // retry through schedulePoll instead means the next poll can read a fresher cached
+  // payload and render it, bounded by the same give-up budget nextPollState already
+  // enforces for a `refreshing: true` response.
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  assert.notStrictEqual(tryStart, -1, 'expected a try block in refresh');
+  const catchStart = body.indexOf('} catch', tryStart);
+  assert.notStrictEqual(catchStart, -1, 'expected a catch block in refresh');
+  const catchBody = body.slice(catchStart);
+
+  assert.match(
+    catchBody,
+    /schedulePoll\(\s*\{\s*refreshing:\s*true\s*\}\s*\)/,
+    'expected the catch branch to arm a retry through schedulePoll, tied to the same budget',
+  );
+  // Not a bare setTimeout: that would be an unbounded retry, exactly what nextPollState's
+  // give-up budget exists to prevent.
+  assert.doesNotMatch(
+    catchBody,
+    /\bsetTimeout\(/,
+    'expected the catch branch to retry through schedulePoll, not its own setTimeout',
+  );
+});
+
+test('refresh swaps the banner for the give-up message when schedulePoll reports giving up', () => {
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  const catchStart = body.indexOf('} catch', tryStart);
+  assert.notStrictEqual(catchStart, -1, 'expected a catch block in refresh');
+  const tryBody = body.slice(tryStart, catchStart);
+
+  const scheduleMatch = /(\w+)\s*=\s*schedulePoll\(\s*data\s*\)/.exec(tryBody);
+  assert.ok(scheduleMatch, 'expected the try branch to capture schedulePoll(data)\'s return value');
+  const gaveUpVar = scheduleMatch![1];
+
+  // Gated on schedulePoll's own return, not a fresh `data.refreshing` check that cannot
+  // tell "still within budget" from "budget just spent" — the server reports the same
+  // `refreshing: true` for both.
+  assert.match(
+    tryBody,
+    new RegExp(`${gaveUpVar}\\s*\\?\\s*pollGaveUpBanner\\(\\)\\s*:\\s*staleBanner\\(`),
+    'expected the give-up message to replace staleBanner\'s, gated on schedulePoll\'s result',
+  );
+});
+
 test('a forced refresh clears any armed poll timer before issuing its request', () => {
   const body = functionBody(STRIPPED, 'async function refresh');
   const tryStart = body.indexOf('try {');

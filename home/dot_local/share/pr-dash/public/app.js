@@ -25,6 +25,7 @@ import {
   parseStoredView,
   staleBanner,
   nextPollState,
+  pollGaveUpBanner,
   isStaleResponse,
 } from './render-guards.js';
 
@@ -455,6 +456,8 @@ let requestGeneration = 0;
  * is worse than the wait it replaces — the rows would be presented as the current state of
  * the world with no further request to correct them.
  * @param {{ refreshing?: boolean }} data
+ * @returns {boolean} Whether this call is the one where the poll loop gave up, so the
+ *   caller can swap the banner for {@link pollGaveUpBanner}'s message.
  */
 function schedulePoll(data) {
   if (pollTimer !== null) {
@@ -463,11 +466,13 @@ function schedulePoll(data) {
   }
   const next = nextPollState(pollState, data);
   pollState = next.state;
-  if (next.waitMs === null) return;
-  pollTimer = setTimeout(() => {
-    pollTimer = null;
-    void refresh();
-  }, next.waitMs);
+  if (next.waitMs !== null) {
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      void refresh();
+    }, next.waitMs);
+  }
+  return next.gaveUp;
 }
 
 /**
@@ -492,23 +497,34 @@ async function refresh(force = false) {
     if (isStaleResponse(generation, requestGeneration)) return;
     current = data.prs;
     currentStacks = data.stacks;
+    render(current, currentStacks);
+    // schedulePoll runs before the banner is chosen: a response can be the one that
+    // crosses the give-up timeout, and only schedulePoll's own return says so — a
+    // `data.refreshing` check here can't tell "still within budget" from "budget just
+    // spent", since the server reports the same `refreshing: true` either way.
+    const gaveUp = schedulePoll(data);
     // A stale response is still a 200: the server retained the last good payload
     // instead of failing the request, so it never reaches the catch below. Whether
     // to show a banner, and what it says, is staleBanner's call, not a `data.stale`
     // check inlined here — that decision lives in render-guards.js so it can be
     // covered by a real test, the same reasoning as every other guard imported above.
-    const message = staleBanner(data);
+    const message = gaveUp ? pollGaveUpBanner() : staleBanner(data);
     if (message !== null) showBanner(message);
     else hideBanner();
-    render(current, currentStacks);
-    schedulePoll(data);
   } catch (err) {
     if (isStaleResponse(generation, requestGeneration)) return;
     // Reached only when the request itself failed outright (network error, or a
     // 500 with no retained payload behind it) rather than the server returning a
-    // retained payload marked stale.
+    // retained payload marked stale. Still routed through schedulePoll rather than
+    // returning: a hard failure must not end the poll loop, since the cache this
+    // failure is answering from can still hold a payload the next poll can parse and
+    // render (a stale-but-server-safe restored record the browser's own validator
+    // rejects, until the pre-load's real fetch replaces it). The same give-up budget
+    // that bounds a `refreshing: true` response bounds this retry too, rather than
+    // arming an unbounded bare setTimeout.
     showBanner(`Could not refresh: ${String(err)}`);
     if (current.length > 0) render(current, currentStacks);
+    schedulePoll({ refreshing: true });
   }
 }
 

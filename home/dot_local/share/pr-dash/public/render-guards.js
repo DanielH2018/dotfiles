@@ -581,17 +581,35 @@ export const REFRESH_POLL_TIMEOUT_MS = 60_000;
  * @param {PollState} state
  * @param {{ refreshing?: boolean }} data
  * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
- * @returns {{ state: PollState, waitMs: number | null }} `waitMs` is `null` when no poll should be armed.
+ * @returns {{ state: PollState, waitMs: number | null, gaveUp: boolean }} `waitMs` is `null`
+ *   when no poll should be armed. `gaveUp` is true only when this call is the one that
+ *   crossed the timeout — `app.js` uses it to swap the banner for {@link pollGaveUpBanner},
+ *   since nothing here arms another poll once that happens.
  */
 export function nextPollState(state, data, now = Date.now()) {
-  if (data.refreshing !== true) return { state: { since: null }, waitMs: null };
+  if (data.refreshing !== true) return { state: { since: null }, waitMs: null, gaveUp: false };
   const since = state.since ?? now;
   // A run past the timeout resets `since` rather than only stopping: without this, one
   // fetch stuck open for a full minute would spend the give-up budget for the rest of the
   // tab's life, and every later refreshing response would be measured against that spent
   // start time instead of getting its own allowance.
-  if (now - since >= REFRESH_POLL_TIMEOUT_MS) return { state: { since: null }, waitMs: null };
-  return { state: { since }, waitMs: REFRESH_POLL_MS };
+  if (now - since >= REFRESH_POLL_TIMEOUT_MS) {
+    return { state: { since: null }, waitMs: null, gaveUp: true };
+  }
+  return { state: { since }, waitMs: REFRESH_POLL_MS, gaveUp: false };
+}
+
+/**
+ * The banner text once the poll loop has given up. `nextPollState` stops arming further
+ * polls after `REFRESH_POLL_TIMEOUT_MS` of continuous refreshing, but the banner shown for
+ * the response that crossed that boundary is {@link staleBanner}'s "while it refreshes"
+ * message — which becomes false the instant nothing is asking again. Refresh is named
+ * because it is the only way back: nothing here retries on its own once the budget is
+ * spent.
+ * @returns {string}
+ */
+export function pollGaveUpBanner() {
+  return 'Refreshing timed out. Click Refresh to try again.';
 }
 
 /**

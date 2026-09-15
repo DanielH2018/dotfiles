@@ -24,6 +24,7 @@ import {
   staleBanner,
   formatRelativeTime,
   nextPollState,
+  pollGaveUpBanner,
   isStaleResponse,
   REFRESH_POLL_MS,
   REFRESH_POLL_TIMEOUT_MS,
@@ -1019,29 +1020,34 @@ test('REFRESH_POLL_TIMEOUT_MS is 60000', () => {
 });
 
 test('a response that is not refreshing clears the poll state', () => {
-  const { state, waitMs } = nextPollState({ since: 1000 }, { refreshing: false }, 2000);
+  const { state, waitMs, gaveUp } = nextPollState({ since: 1000 }, { refreshing: false }, 2000);
   assert.deepStrictEqual(state, { since: null });
   assert.strictEqual(waitMs, null);
+  // Not refreshing at all is a normal stop, not a give-up: the banner must not be
+  // replaced with "click Refresh" every time a plain, complete response arrives.
+  assert.strictEqual(gaveUp, false);
 });
 
 test('the first refreshing response starts the budget at now and asks for a wait', () => {
-  const { state, waitMs } = nextPollState({ since: null }, { refreshing: true }, 1000);
+  const { state, waitMs, gaveUp } = nextPollState({ since: null }, { refreshing: true }, 1000);
   assert.deepStrictEqual(state, { since: 1000 });
   assert.strictEqual(waitMs, REFRESH_POLL_MS);
+  assert.strictEqual(gaveUp, false);
 });
 
 test('a refreshing response inside the budget keeps the original start time', () => {
-  const { state, waitMs } = nextPollState(
+  const { state, waitMs, gaveUp } = nextPollState(
     { since: 1000 },
     { refreshing: true },
     1000 + REFRESH_POLL_TIMEOUT_MS - 1,
   );
   assert.deepStrictEqual(state, { since: 1000 });
   assert.strictEqual(waitMs, REFRESH_POLL_MS);
+  assert.strictEqual(gaveUp, false);
 });
 
 test('a refreshing response past the timeout gives up and clears the state', () => {
-  const { state, waitMs } = nextPollState(
+  const { state, waitMs, gaveUp } = nextPollState(
     { since: 1000 },
     { refreshing: true },
     1000 + REFRESH_POLL_TIMEOUT_MS,
@@ -1050,6 +1056,13 @@ test('a refreshing response past the timeout gives up and clears the state', () 
   // than being measured against this spent start time.
   assert.deepStrictEqual(state, { since: null });
   assert.strictEqual(waitMs, null);
+  // This is the one transition `app.js` must tell apart from an ordinary "stopped
+  // refreshing": only here has the poll loop actually given up rather than finished.
+  assert.strictEqual(gaveUp, true);
+});
+
+test('pollGaveUpBanner names Refresh as the way forward', () => {
+  assert.match(pollGaveUpBanner(), /Refresh/);
 });
 
 test('isStaleResponse is true once a newer request has started', () => {
