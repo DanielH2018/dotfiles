@@ -229,3 +229,65 @@ test('a rejected preload leaves the loader usable', async () => {
   assert.strictEqual(result.stale, false);
   assert.deepStrictEqual(result.prs, one);
 });
+
+test('a seeded payload is served, marked stale, when the first fetch fails', async () => {
+  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const load = async () => {
+    throw new Error('network down');
+  };
+
+  const result = await withFallback(load, { initial: seeded })();
+
+  assert.strictEqual(result.stale, true, 'a restored payload must never render as fresh');
+  assert.strictEqual(result.fetchedAt, seeded.fetchedAt, 'the banner must name the real last success');
+  assert.deepStrictEqual(result.prs, one);
+  assert.strictEqual(result.error, 'network down');
+});
+
+test('a cold start with no seed still throws, so the server can 500', async () => {
+  const load = async () => {
+    throw new Error('network down');
+  };
+  await assert.rejects(() => withFallback(load)());
+});
+
+test('a successful fetch replaces the seeded payload', async () => {
+  const seeded: LoadResult = { prs: [], fetchedAt: 'OLD', partialErrors: [] };
+  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const loadPrs = withFallback(async () => fresh, { initial: seeded });
+
+  const first = await loadPrs();
+
+  assert.strictEqual(first.stale, false);
+  assert.strictEqual(first.fetchedAt, 'NEW');
+});
+
+test('onSuccess receives each successful payload, and not a stale one', async () => {
+  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const seen: string[] = [];
+  let calls = 0;
+  const load = async () => {
+    calls += 1;
+    if (calls === 2) throw new Error('network down');
+    return fresh;
+  };
+  const loadPrs = withFallback(load, { onSuccess: (r) => seen.push(r.fetchedAt) });
+
+  await loadPrs();
+  await loadPrs();
+
+  assert.deepStrictEqual(seen, ['NEW'], 'only the successful fetch is worth persisting');
+});
+
+test('a throwing onSuccess does not fail the request', async () => {
+  const fresh: LoadResult = { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  const loadPrs = withFallback(async () => fresh, {
+    onSuccess: () => {
+      throw new Error('disk full');
+    },
+  });
+
+  const result = await loadPrs();
+
+  assert.strictEqual(result.stale, false);
+});

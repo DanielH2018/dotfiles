@@ -87,6 +87,21 @@ export type FallbackResult = {
   error?: string;
 };
 
+export type FallbackOpts = {
+  /**
+   * A payload restored from disk. Seeds the retained-payload slot, **not** the cache: a
+   * seeded cache would make the startup pre-load a cache hit and skip the fetch, so the
+   * dashboard would show the restored rows and never refresh them.
+   */
+  initial?: LoadResult;
+  /**
+   * Called with each successful payload, for persisting it. Synchronous and
+   * fire-and-forget by contract — a slow or failing disk must not delay or fail the
+   * request that produced the payload.
+   */
+  onSuccess?: (result: LoadResult) => void;
+};
+
 // Extracted out of main.ts so poisoning the retained payload is testable without a real
 // token, network, or clock — main.ts had no test at all before this, which is how
 // `cache.set([])` on a failed refresh went unnoticed.
@@ -98,21 +113,31 @@ export type FallbackResult = {
 // `prs` and `fetchedAt` into two variables, one inside this closure and one held by a
 // caller, lets two concurrent calls interleave and pair one call's retained `prs` with
 // a different call's `fetchedAt`.
-export function withFallback(load: LoadPrs): (opts?: LoadOpts) => Promise<FallbackResult> {
-  let lastGood: LoadResult | undefined;
+export function withFallback(
+  load: LoadPrs,
+  opts: FallbackOpts = {},
+): (loadOpts?: LoadOpts) => Promise<FallbackResult> {
+  let lastGood: LoadResult | undefined = opts.initial;
 
-  // `opts` is forwarded rather than dropped: this wrapper is what main.ts hands the
+  // `loadOpts` is forwarded rather than dropped: this wrapper is what main.ts hands the
   // server, so a `force` that stops here never reaches the cache and the Refresh button
   // goes back to doing nothing.
-  return async (opts?: LoadOpts) => {
+  return async (loadOpts?: LoadOpts) => {
     try {
-      const result = await load(opts);
+      const result = await load(loadOpts);
       // A partial result is retained like any other success. It is the most recent view of
       // the world, and not retaining it would mean a partial fetch followed by a failure
       // goes blank on a cold start — the outcome the spec calls worse than showing old
       // data. Its `partialErrors` ride along, so a retained partial never later renders
       // as complete.
       lastGood = result;
+      // Wrapped: onSuccess writes to disk, and a full disk must not turn a successful
+      // fetch into a failed request.
+      try {
+        opts.onSuccess?.(result);
+      } catch {
+        // Not persisted this time; the next successful fetch tries again.
+      }
       return { ...result, stale: false };
     } catch (err) {
       if (lastGood === undefined) throw err;
@@ -134,8 +159,9 @@ export function withFallback(load: LoadPrs): (opts?: LoadOpts) => Promise<Fallba
 export function createLoadPrs(
   client: Client,
   cache: Cache<LoadResult>,
+  opts: FallbackOpts = {},
 ): (opts?: LoadOpts) => Promise<FallbackResult> {
-  return withFallback(createPrLoader(client, cache));
+  return withFallback(createPrLoader(client, cache), opts);
 }
 
 /**

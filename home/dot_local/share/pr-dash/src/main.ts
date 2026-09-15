@@ -10,6 +10,7 @@ import {
   parsePort,
   startPreload,
 } from './main-lib.ts';
+import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
 
 const secret = process.env['PR_DASH_SECRET'];
 if (secret === undefined || secret === '') {
@@ -33,7 +34,16 @@ try {
 
 const client = createClient({ token });
 const cache = createCache<LoadResult>(60_000);
-const loadPrs = createLoadPrs(client, cache);
+const store = createPayloadStore(DEFAULT_STATE_DIR);
+// Read before the server starts: it is one small local file, and having it in hand means
+// the very first /api/prs can answer from it while the pre-loaded fetch is still running.
+const restored = await store.read();
+const loadPrs = createLoadPrs(client, cache, {
+  initial: restored,
+  onSuccess: (result) => {
+    void store.write(result);
+  },
+});
 
 // Before listen(), and not awaited: the fetch runs while the launcher polls for the port
 // and the browser starts, so the first /api/prs is served from a warm cache.
