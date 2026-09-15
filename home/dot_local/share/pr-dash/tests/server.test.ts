@@ -218,6 +218,10 @@ test('returns 403, not 500, when the Host header is missing', async () => {
     const port = Number(new URL(base).port);
     const response = await rawRequest(port, 'GET /api/prs HTTP/1.0\r\n\r\n');
     assert.match(response, /^HTTP\/1\.1 403 /);
+    // Not just "something refused": the reorder this branch guards against leaves this
+    // request 403ing on the *secret* instead, since a raw socket sends neither header. The
+    // status alone cannot tell those apart, so the reason is what pins the host half.
+    assert.match(response, /unexpected Host/);
   });
 });
 
