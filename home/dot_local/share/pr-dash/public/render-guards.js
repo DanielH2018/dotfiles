@@ -477,6 +477,22 @@ export function clearStoredView(storage) {
 }
 
 /**
+ * Persists `keys` as the collapsed section set, leaving the rest of the stored view
+ * untouched. This is the function a collapse toggle must call — not `saveStoredView` with a
+ * view built from the DOM controls, since collapse state lives only in memory and has no
+ * control of its own to read back. Replaces the stored set rather than merging into it, so
+ * un-collapsing everything (`keys` empty) actually persists an empty list instead of leaving
+ * the previous keys behind. Reading the current view fresh from `storage` rather than taking
+ * one from the caller also means a stale in-memory copy in one tab can't clobber what another
+ * tab already wrote.
+ * @param {ViewStorage} storage
+ * @param {unknown} keys
+ */
+export function saveCollapsedKeys(storage, keys) {
+  saveStoredView(storage, { ...loadStoredView(storage), collapsed: toCollapsedKeys(keys) });
+}
+
+/**
  * The `/api/prs` response fields the banner decision reads. Matches the fields
  * `app.js`'s `loadPrs()` already normalizes off the response body.
  * @typedef {object} RefreshOutcome

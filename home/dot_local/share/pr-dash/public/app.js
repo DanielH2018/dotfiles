@@ -55,10 +55,10 @@ function setCheckedValues(fieldsetId, values) {
 }
 
 /**
- * The filter/sort controls have no DOM element of their own for collapsed
- * sections, so a save triggered by a filter change carries forward whatever
- * is already persisted rather than wiping it — collapsing a section is
- * wired up by the header click handler, not this function.
+ * The filter/sort controls have no DOM element of their own for collapsed sections, so
+ * `collapsed` here is read fresh from storage rather than from an in-memory value, and
+ * carried forward unchanged. A collapse toggle must persist through `saveCollapsedKeys`
+ * instead, so it is never routed through this function or `saveView`.
  * @returns {StoredView}
  */
 function readControls() {
@@ -75,7 +75,11 @@ function readControls() {
   };
 }
 
-/** Persists the controls' current state so the next page load can restore it. */
+/**
+ * Persists the controls' current state so the next page load can restore it. This must
+ * never be the path that persists a collapse toggle — use `saveCollapsedKeys` for that,
+ * so a toggle isn't lost behind whatever `readControls` happens to carry forward.
+ */
 function saveView() {
   saveStoredView(localStorage, readControls());
 }

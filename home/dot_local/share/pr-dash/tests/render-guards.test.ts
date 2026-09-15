@@ -20,6 +20,7 @@ import {
   loadStoredView,
   saveStoredView,
   clearStoredView,
+  saveCollapsedKeys,
   VIEW_KEY,
   staleBanner,
   formatRelativeTime,
@@ -763,10 +764,11 @@ test('toCollapsedKeys keeps strings, drops everything else, and dedupes', () => 
   );
 });
 
-test('toCollapsedKeys of a non-array is empty', () => {
+test('toCollapsedKeys of a non-array is empty, but a valid array still passes through', () => {
   assert.deepStrictEqual(toCollapsedKeys('acme/api'), []);
   assert.deepStrictEqual(toCollapsedKeys({ 0: 'acme/api' }), []);
   assert.deepStrictEqual(toCollapsedKeys(undefined), []);
+  assert.deepStrictEqual(toCollapsedKeys(['acme/api']), ['acme/api']);
 });
 
 test('an unknown collapse key survives parsing rather than being rejected', () => {
@@ -802,6 +804,37 @@ test('clearStoredView clears collapse state along with the filters', () => {
   const after = loadStoredView(store);
   assert.deepStrictEqual(after.collapsed, []);
   assert.deepStrictEqual(after.ci, []);
+});
+
+test('saveCollapsedKeys round-trips the given keys through storage', () => {
+  const store = fakeStorage();
+  saveCollapsedKeys(store, ['acme/api', 'acme/web']);
+  assert.deepStrictEqual(loadStoredView(store).collapsed, ['acme/api', 'acme/web']);
+});
+
+test('saveCollapsedKeys replaces the stored set rather than merging into it', () => {
+  // An implementation that skips the write for an empty set would pass a naive round-trip
+  // test here and still fail to persist "un-collapse everything" — the case that matters.
+  const store = fakeStorage();
+  saveCollapsedKeys(store, ['acme/api']);
+  saveCollapsedKeys(store, []);
+  assert.deepStrictEqual(loadStoredView(store).collapsed, []);
+});
+
+test('saveCollapsedKeys leaves the rest of the stored view alone', () => {
+  const store = fakeStorage();
+  saveStoredView(store, { ...parseStoredView(null), ci: ['failure'], sort: 'age' });
+  saveCollapsedKeys(store, ['acme/api']);
+  const after = loadStoredView(store);
+  assert.deepStrictEqual(after.ci, ['failure']);
+  assert.strictEqual(after.sort, 'age');
+  assert.deepStrictEqual(after.collapsed, ['acme/api']);
+});
+
+test('saveCollapsedKeys coerces its input the same way toCollapsedKeys does', () => {
+  const store = fakeStorage();
+  saveCollapsedKeys(store, ['acme/api', 42, 'acme/api', null]);
+  assert.deepStrictEqual(loadStoredView(store).collapsed, ['acme/api']);
 });
 
 test('toCiValues keeps only known CI statuses', () => {
