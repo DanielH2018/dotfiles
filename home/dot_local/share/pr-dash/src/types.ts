@@ -31,4 +31,8 @@ export type StackNode = {
   position: number;
   stackSize: number;
   danglingBase: boolean;
+  // True when baseRef names a headRef shared by more than one open PR, so no single
+  // parent can be determined. Distinct from danglingBase: an ambiguous base hasn't
+  // merged away, so telling the user to rebase would be wrong advice.
+  ambiguousBase: boolean;
 };

@@ -78,6 +78,12 @@ function addStackBadges(row, node) {
     flag.textContent = 'base merged';
     row.prepend(flag);
   }
+  if (node.ambiguousBase) {
+    const flag = document.createElement('span');
+    flag.className = 'badge ambiguous';
+    flag.textContent = 'ambiguous base';
+    row.prepend(flag);
+  }
 }
 
 /**
