@@ -112,6 +112,18 @@ since a fetch that already failed takes precedence over one merely still running
 rows still cannot render as fresh, which is the property the parent spec insists on: stale
 data presented as fresh is the failure mode to avoid.
 
+### Out-of-order responses
+
+Polling and a manual Refresh can each have a request in flight at once, and the two do
+not always settle in the order they were sent. A poll issued just before a Refresh click
+can still resolve after it. `app.js` tags each call to `refresh()` with a generation
+number and discards a response whose generation is no longer the latest, through
+`isStaleResponse` in `public/render-guards.js`. Without this guard, the older response
+would land last and revert the page to rows the newer request already replaced. The
+check runs immediately after a response arrives, before either the success or the
+failure path touches `current`, `currentStacks`, or the banner, so a discarded response
+never partially applies.
+
 ### At rest
 
 The file holds the full payload — repository names, PR titles, branch names, CI and review

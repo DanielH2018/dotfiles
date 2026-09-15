@@ -236,16 +236,39 @@ test('startPreload calls the loader without being awaited', async () => {
   assert.strictEqual(calls, 1);
 });
 
-test('a rejected preload neither throws nor leaves an unhandled rejection', async () => {
+test('a rejected preload neither throws nor leaves an unhandled rejection (cold start)', async () => {
+  // Composed with withFallback rather than a bare rejecting loadPrs: main.ts never hands
+  // startPreload a bare loader, so a test that does can't disagree with the composition
+  // main.ts actually builds. A cold start has no seed, so withFallback still rejects and
+  // onError is the only way the operator learns about the failure.
   const seen: string[] = [];
-  const loadPrs = async () => {
+  const loadPrs = withFallback(async () => {
     throw new Error('network down');
-  };
+  });
 
   startPreload(loadPrs, (m) => seen.push(m));
   await new Promise((r) => setTimeout(r, 0));
 
   assert.deepStrictEqual(seen, ['network down']);
+});
+
+test('a warm start never calls onError, since the stale banner already says so', async () => {
+  // With a restored payload seeded as `initial`, withFallback resolves to it marked stale
+  // rather than rejecting — the page's own banner names the failure and the last-good
+  // time, so onError firing here would be a second, redundant channel for the same fact.
+  const seen: string[] = [];
+  const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
+  const loadPrs = withFallback(
+    async () => {
+      throw new Error('network down');
+    },
+    { initial: seeded },
+  );
+
+  startPreload(loadPrs, (m) => seen.push(m));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.deepStrictEqual(seen, []);
 });
 
 test('a rejected preload leaves the loader usable', async () => {
