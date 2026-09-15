@@ -191,3 +191,57 @@ test('an unforced load is a poll: force defaults to off', async () => {
   await loadPrs({});
   assert.strictEqual(calls, 1);
 });
+
+test('two concurrent cache misses produce exactly one fetch', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000));
+
+  const [a, b] = await Promise.all([loadPrs(), loadPrs()]);
+
+  assert.strictEqual(calls, 1, 'the second caller must join the in-flight fetch');
+  assert.deepStrictEqual(a, b, 'both callers see the same payload');
+});
+
+test('a rejected in-flight fetch is not retained, so the next call fetches again', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('network down');
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000));
+
+  await assert.rejects(() => loadPrs());
+  // A retained rejected promise would replay 'network down' here forever, turning one
+  // transient failure into a permanently broken dashboard.
+  const result = await loadPrs();
+
+  assert.strictEqual(calls, 2);
+  assert.strictEqual(result.prs.length, 1);
+});
+
+test('a force arriving mid-fetch joins it rather than starting a second', async () => {
+  let calls = 0;
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      calls += 1;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000));
+
+  await Promise.all([loadPrs(), loadPrs({ force: true })]);
+
+  assert.strictEqual(calls, 1, 'an in-flight fetch is already as fresh as a forced one');
+});

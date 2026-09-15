@@ -22,6 +22,11 @@ export type LoadPrs = (opts?: LoadOpts) => Promise<LoadResult>;
 // network, or a real clock; main.ts stays the thin process-level shell that builds the
 // client and cache from the environment and hands them here.
 export function createPrLoader(client: Client, cache: Cache<LoadResult>): LoadPrs {
+  // The fetch currently running, if any. Without this, the startup pre-load and the
+  // browser's first /api/prs both miss the cache and both run a full paginated query
+  // against the rate limit, racing to cache.set.
+  let inFlight: Promise<LoadResult> | undefined;
+
   return async function loadPrs(opts: LoadOpts = {}): Promise<LoadResult> {
     // Invalidating before the read, rather than skipping the read, is what makes the
     // TTL's own clock restart from this fetch: the fetch below repopulates the cache, so
@@ -31,17 +36,33 @@ export function createPrLoader(client: Client, cache: Cache<LoadResult>): LoadPr
     const hit = cache.get();
     if (hit !== undefined) return hit;
 
+    // A force that arrives while a fetch is already running joins it. That fetch is
+    // already as fresh as a new one would be, and starting a second doubles the API
+    // calls to produce the same answer.
+    if (inFlight !== undefined) return inFlight;
+
     // normalize() and cache.set() run only after fetchAllPrs resolves. A rejected fetch
-    // propagates out of this function before either runs, so a failed refresh leaves
-    // whatever was previously cached (or nothing, on a cold cache) untouched instead of
-    // being overwritten with an empty or partial result.
-    const fetched = await fetchAllPrs(client);
-    const result: LoadResult = {
-      prs: normalize(fetched.prs),
-      fetchedAt: new Date().toISOString(),
-      partialErrors: fetched.errors,
-    };
-    cache.set(result);
-    return result;
+    // propagates before either runs, so a failed refresh leaves whatever was previously
+    // cached (or nothing, on a cold cache) untouched instead of being overwritten with
+    // an empty or partial result.
+    const pending = (async (): Promise<LoadResult> => {
+      const fetched = await fetchAllPrs(client);
+      const result: LoadResult = {
+        prs: normalize(fetched.prs),
+        fetchedAt: new Date().toISOString(),
+        partialErrors: fetched.errors,
+      };
+      cache.set(result);
+      return result;
+    })();
+
+    inFlight = pending;
+    try {
+      return await pending;
+    } finally {
+      // Cleared on rejection as well as on success. A retained rejected promise would be
+      // handed to every later caller, so one transient failure would never heal.
+      inFlight = undefined;
+    }
   };
 }
