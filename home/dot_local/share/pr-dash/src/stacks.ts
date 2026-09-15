@@ -2,9 +2,9 @@ import type { PrRecord, StackNode } from './types.ts';
 
 // Branch names are only unique within a repository, so every lookup key below combines
 // the repo with the ref, not just the bare ref -- otherwise two repos sharing a branch
-// name (e.g. both using "main") would link into one false stack. The separator is
-// written as an explicit escape, not a literal space, so the source stays plain text
-// no matter how an editor or tool normalizes whitespace in a template literal.
+// name (e.g. both using "main") would link into one false stack. The separator is a
+// plain space: a ref can't contain one (git itself rejects it) and repo is always
+// "owner/name", so neither half can ever contain the separator either.
 function refKey(repo: string, ref: string): string {
   return `${repo} ${ref}`;
 }
