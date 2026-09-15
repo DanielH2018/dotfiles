@@ -241,7 +241,12 @@ test('a force arriving mid-fetch joins it rather than starting a second', async 
   });
   const loadPrs = createPrLoader(client, createCache<LoadResult>(60_000));
 
-  await Promise.all([loadPrs(), loadPrs({ force: true })]);
+  const [a, b] = await Promise.all([loadPrs(), loadPrs({ force: true })]);
 
   assert.strictEqual(calls, 1, 'an in-flight fetch is already as fresh as a forced one');
+  // Distinguishes "joined the in-flight fetch" from "returned anything without fetching
+  // again" — a join that fabricates a result instead of awaiting `inFlight` would still
+  // leave calls at 1.
+  assert.strictEqual(b.prs.length, 1, 'the forced call must resolve to the real fetched payload');
+  assert.deepStrictEqual(a, b, 'both callers see the same payload');
 });

@@ -28,6 +28,11 @@ export function createPrLoader(client: Client, cache: Cache<LoadResult>): LoadPr
   let inFlight: Promise<LoadResult> | undefined;
 
   return async function loadPrs(opts: LoadOpts = {}): Promise<LoadResult> {
+    // Joining an in-flight fetch never touches the cache: that fetch is already as fresh as
+    // a new one would be, and invalidating on the way past can discard a result it has
+    // just written.
+    if (inFlight !== undefined) return inFlight;
+
     // Invalidating before the read, rather than skipping the read, is what makes the
     // TTL's own clock restart from this fetch: the fetch below repopulates the cache, so
     // polls resume hitting it instead of every later request re-fetching.
@@ -35,11 +40,6 @@ export function createPrLoader(client: Client, cache: Cache<LoadResult>): LoadPr
 
     const hit = cache.get();
     if (hit !== undefined) return hit;
-
-    // A force that arrives while a fetch is already running joins it. That fetch is
-    // already as fresh as a new one would be, and starting a second doubles the API
-    // calls to produce the same answer.
-    if (inFlight !== undefined) return inFlight;
 
     // normalize() and cache.set() run only after fetchAllPrs resolves. A rejected fetch
     // propagates before either runs, so a failed refresh leaves whatever was previously
