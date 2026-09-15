@@ -103,12 +103,13 @@ export type FallbackOpts = {
    */
   initial?: LoadResult;
   /**
-   * Called after every successful resolution of `load` — a cache hit returning
-   * previously-fetched data counts, not only a new GitHub fetch — for persisting the
-   * payload. Synchronous and fire-and-forget by contract: a slow or failing disk must
-   * not delay or fail the request that produced the payload. Must not return a Promise:
-   * the wrapping try/catch below is synchronous and cannot catch a later rejection from
-   * an async callback.
+   * Called once per distinct successful result `load` produces. A cache hit and a
+   * dedup-joined in-flight fetch both resolve to the exact same object a prior call
+   * already handed here, and are not re-notified — only a genuinely new fetch is.
+   * Synchronous and fire-and-forget by contract: a slow or failing disk must not delay
+   * or fail the request that produced the payload. Must not return a Promise: the
+   * wrapping try/catch below is synchronous and cannot catch a later rejection from an
+   * async callback.
    */
   onSuccess?: (result: LoadResult) => void;
 };
@@ -132,6 +133,13 @@ export function withFallback(
   // How many calls are inside `load` right now. A count, not a boolean: two requests can be
   // awaiting at once, and the shortcut below must stay open until the last of them settles.
   let fetching = 0;
+  // The last result object handed to onSuccess, tracked by reference so a cache hit or a
+  // dedup-joined in-flight fetch — both of which resolve to the exact same object a prior
+  // call already persisted — does not write it to disk a second time. On a cold start with
+  // no seed, two concurrent callers both skip the shortcut above (there is nothing to serve
+  // yet) and both land here once `load` resolves; without this check both would call
+  // onSuccess for what is, underneath, one real fetch.
+  let lastNotified: LoadResult | undefined;
 
   // `loadOpts` is forwarded rather than dropped: this wrapper is what main.ts hands the
   // server, so a `force` that stops here never reaches the cache and the Refresh button
@@ -159,12 +167,15 @@ export function withFallback(
       // data. Its `partialErrors` ride along, so a retained partial never later renders
       // as complete.
       lastGood = result;
-      // Wrapped: onSuccess writes to disk, and a full disk must not turn a successful
-      // fetch into a failed request.
-      try {
-        opts.onSuccess?.(result);
-      } catch {
-        // Not persisted this time; the next successful fetch tries again.
+      if (result !== lastNotified) {
+        lastNotified = result;
+        // Wrapped: onSuccess writes to disk, and a full disk must not turn a successful
+        // fetch into a failed request.
+        try {
+          opts.onSuccess?.(result);
+        } catch {
+          // Not persisted this time; the next successful fetch tries again.
+        }
       }
       return { ...result, stale: false };
     } catch (err) {

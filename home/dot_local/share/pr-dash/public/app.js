@@ -15,9 +15,8 @@ import {
   clearStoredView,
   parseStoredView,
   staleBanner,
-  shouldPollAgain,
-  REFRESH_POLL_MS,
-  REFRESH_POLL_TIMEOUT_MS,
+  nextPollState,
+  isStaleResponse,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
@@ -280,19 +279,22 @@ function render(records, stacks) {
 let current = [];
 /** @type {StackNode[]} */
 let currentStacks = [];
-/**
- * When the current run of refreshing responses began, or null when none is in progress.
- * @type {number | null}
- */
-let refreshingSince = null;
+/** @type {import('./render-guards.js').PollState} */
+let pollState = { since: null };
 /** @type {ReturnType<typeof setTimeout> | null} */
 let pollTimer = null;
+/**
+ * The most recent `refresh()` call's ordinal. `isStaleResponse` compares a settled
+ * response's own generation against this, so a response that resolves after a newer
+ * request has already started is discarded instead of applied.
+ */
+let requestGeneration = 0;
 
 /**
- * Asks `/api/prs` again shortly when the response just rendered was the retained payload
- * served behind an in-flight fetch. Without this the page paints the restored rows and then
- * shows them indefinitely, which is worse than the wait it replaces — the rows would be
- * presented as the current state of the world with no further request to correct them.
+ * Arms or clears the timer that asks `/api/prs` again, per `nextPollState`'s decision.
+ * Without this the page paints the restored rows once and shows them indefinitely, which
+ * is worse than the wait it replaces — the rows would be presented as the current state of
+ * the world with no further request to correct them.
  * @param {{ refreshing?: boolean }} data
  */
 function schedulePoll(data) {
@@ -300,16 +302,13 @@ function schedulePoll(data) {
     clearTimeout(pollTimer);
     pollTimer = null;
   }
-  if (data.refreshing !== true) {
-    refreshingSince = null;
-    return;
-  }
-  if (refreshingSince === null) refreshingSince = Date.now();
-  if (!shouldPollAgain(data, Date.now() - refreshingSince)) return;
+  const next = nextPollState(pollState, data);
+  pollState = next.state;
+  if (next.waitMs === null) return;
   pollTimer = setTimeout(() => {
     pollTimer = null;
     void refresh();
-  }, REFRESH_POLL_MS);
+  }, next.waitMs);
 }
 
 /**
@@ -318,8 +317,20 @@ function schedulePoll(data) {
  * @param {boolean} [force]
  */
 async function refresh(force = false) {
+  if (force && pollTimer !== null) {
+    // The button exists to reach GitHub now. Left armed, that timer could fire mid-click
+    // and issue a non-forced request that hits the server's in-flight shortcut, answering
+    // with the very payload this click is trying to replace.
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  requestGeneration += 1;
+  const generation = requestGeneration;
   try {
     const data = await loadPrs(force);
+    // A poll issued before this call can still resolve after it — see isStaleResponse.
+    // Applying it here would revert the page to what a newer request already replaced.
+    if (isStaleResponse(generation, requestGeneration)) return;
     current = data.prs;
     currentStacks = data.stacks;
     // A stale response is still a 200: the server retained the last good payload
@@ -333,6 +344,7 @@ async function refresh(force = false) {
     render(current, currentStacks);
     schedulePoll(data);
   } catch (err) {
+    if (isStaleResponse(generation, requestGeneration)) return;
     // Reached only when the request itself failed outright (network error, or a
     // 500 with no retained payload behind it) rather than the server returning a
     // retained payload marked stale.

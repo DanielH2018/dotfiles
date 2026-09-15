@@ -22,7 +22,9 @@ import {
   VIEW_KEY,
   staleBanner,
   formatRelativeTime,
-  shouldPollAgain,
+  nextPollState,
+  isStaleResponse,
+  REFRESH_POLL_MS,
   REFRESH_POLL_TIMEOUT_MS,
 } from '../public/render-guards.js';
 import { DRAFT_STATES, groupBy, STALENESS_BUCKETS, stalenessBucket } from '../public/group.js';
@@ -936,15 +938,58 @@ test('a failed refresh still names the failure, not the refresh', () => {
   assert.strictEqual(message, 'Could not refresh (last success 3 hours ago): network down.');
 });
 
-test('polling continues while a fetch is in flight and stops when it is not', () => {
-  const refreshing = { refreshing: true };
-  const settled = { refreshing: false };
+test('a refreshing payload that also carries an error is named as a failure, not a refresh', () => {
+  // Fix round 2: refreshing and a failed refresh both set stale: true with nothing else
+  // distinguishing them, so a response carrying both must not be read as the harmless case.
+  const message = staleBanner(
+    {
+      stale: true,
+      error: 'network down',
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: [],
+      refreshing: true,
+    },
+    Date.parse('2026-09-15T09:00:00.000Z'),
+  );
 
-  assert.strictEqual(shouldPollAgain(refreshing, 0), true);
-  assert.strictEqual(shouldPollAgain(refreshing, REFRESH_POLL_TIMEOUT_MS - 1), true);
-  assert.strictEqual(shouldPollAgain(settled, 0), false);
+  assert.strictEqual(message, 'Could not refresh (last success 3 hours ago): network down.');
 });
 
-test('polling gives up rather than asking forever', () => {
-  assert.strictEqual(shouldPollAgain({ refreshing: true }, REFRESH_POLL_TIMEOUT_MS), false);
+test('a response that is not refreshing clears the poll state', () => {
+  const { state, waitMs } = nextPollState({ since: 1000 }, { refreshing: false }, 2000);
+  assert.deepStrictEqual(state, { since: null });
+  assert.strictEqual(waitMs, null);
+});
+
+test('the first refreshing response starts the budget at now and asks for a wait', () => {
+  const { state, waitMs } = nextPollState({ since: null }, { refreshing: true }, 1000);
+  assert.deepStrictEqual(state, { since: 1000 });
+  assert.strictEqual(waitMs, REFRESH_POLL_MS);
+});
+
+test('a refreshing response inside the budget keeps the original start time', () => {
+  const { state, waitMs } = nextPollState(
+    { since: 1000 },
+    { refreshing: true },
+    1000 + REFRESH_POLL_TIMEOUT_MS - 1,
+  );
+  assert.deepStrictEqual(state, { since: 1000 });
+  assert.strictEqual(waitMs, REFRESH_POLL_MS);
+});
+
+test('a refreshing response past the timeout gives up and clears the state', () => {
+  const { state, waitMs } = nextPollState(
+    { since: 1000 },
+    { refreshing: true },
+    1000 + REFRESH_POLL_TIMEOUT_MS,
+  );
+  // Cleared, not just stopped: a later refreshing response must get a fresh budget rather
+  // than being measured against this spent start time.
+  assert.deepStrictEqual(state, { since: null });
+  assert.strictEqual(waitMs, null);
+});
+
+test('isStaleResponse is true once a newer request has started', () => {
+  assert.strictEqual(isStaleResponse(1, 2), true);
+  assert.strictEqual(isStaleResponse(2, 2), false);
 });

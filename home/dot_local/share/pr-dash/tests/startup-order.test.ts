@@ -47,8 +47,27 @@ test('main.ts reads the payload store before server.listen', () => {
   const readIndex = text.indexOf('store.read(');
   const listenIndex = text.indexOf('server.listen(');
   assert.notStrictEqual(readIndex, -1, 'expected to find store.read( in main.ts');
+  assert.notStrictEqual(listenIndex, -1, 'expected to find server.listen( in main.ts');
   assert.ok(
     readIndex < listenIndex,
     'expected the restored payload to be in hand before the server accepts requests',
+  );
+});
+
+test("main.ts passes the value it read from the store into createLoadPrs's initial", () => {
+  const text = readFileSync(MAIN_TS, 'utf8');
+  assert.match(
+    text,
+    /createLoadPrs\(\s*client\s*,\s*cache\s*,\s*\{\s*initial:\s*restored\s*,/,
+    'expected createLoadPrs to be called with initial: restored',
+  );
+});
+
+test('main.ts persists a successful fetch back to the payload store', () => {
+  const text = readFileSync(MAIN_TS, 'utf8');
+  assert.match(
+    text,
+    /onSuccess:\s*\(result\)\s*=>\s*\{\s*void store\.write\(result\)/,
+    'expected onSuccess to call store.write(result)',
   );
 });

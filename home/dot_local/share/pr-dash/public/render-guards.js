@@ -493,8 +493,11 @@ export function staleBanner(data, now = Date.now()) {
     data.partialErrors.length > 0 ? ` Some PRs are missing: ${data.partialErrors.join('; ')}` : '';
 
   // Checked before the stale branch, which would otherwise read the absent `error` as
-  // "unknown error" and tell the user a refresh failed while it is still running.
-  if (data.refreshing === true) {
+  // "unknown error" and tell the user a refresh failed while it is still running. Gated on
+  // `error` being absent too: `refreshing` and a failed refresh both set `stale: true` with
+  // no other field distinguishing them, so a response that somehow carries both must fall
+  // through to the failure branch below rather than swallow the error text.
+  if (data.refreshing === true && data.error === undefined) {
     return `Showing the last saved list (${when}) while it refreshes.${incomplete}`;
   }
   if (data.stale) {
@@ -542,12 +545,43 @@ export const REFRESH_POLL_MS = 600;
 export const REFRESH_POLL_TIMEOUT_MS = 60_000;
 
 /**
- * Whether to ask `/api/prs` again, given the response just rendered and how long this page
- * has been waiting on the fetch behind it.
+ * The poll loop's state carried from one `/api/prs` response to the next: when the current
+ * run of refreshing responses began, or `null` when none is in progress.
+ * @typedef {object} PollState
+ * @property {number | null} since
+ */
+
+/**
+ * Decides what `app.js` should do after rendering a `/api/prs` response: carry forward (or
+ * reset) the poll state, and either wait `REFRESH_POLL_MS` and ask again or stop. A pure
+ * function rather than `app.js`'s own `setTimeout` bookkeeping, because `app.js` cannot be
+ * imported under `node --test` (see the module comment above) — the whole stateful decision,
+ * including the give-up timeout, would otherwise have no test coverage at all.
+ * @param {PollState} state
  * @param {{ refreshing?: boolean }} data
- * @param {number} waitedMs
+ * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
+ * @returns {{ state: PollState, waitMs: number | null }} `waitMs` is `null` when no poll should be armed.
+ */
+export function nextPollState(state, data, now = Date.now()) {
+  if (data.refreshing !== true) return { state: { since: null }, waitMs: null };
+  const since = state.since ?? now;
+  // A run past the timeout resets `since` rather than only stopping: without this, one
+  // fetch stuck open for a full minute would spend the give-up budget for the rest of the
+  // tab's life, and every later refreshing response would be measured against that spent
+  // start time instead of getting its own allowance.
+  if (now - since >= REFRESH_POLL_TIMEOUT_MS) return { state: { since: null }, waitMs: null };
+  return { state: { since }, waitMs: REFRESH_POLL_MS };
+}
+
+/**
+ * Whether a response for `generation` arrived after a newer request already started, and so
+ * must be discarded rather than applied. Two overlapping fetches can settle out of order — a
+ * poll issued before a Refresh click can still resolve after it — and applying the older one
+ * last would revert the page to what the click was meant to replace.
+ * @param {number} generation
+ * @param {number} latestGeneration
  * @returns {boolean}
  */
-export function shouldPollAgain(data, waitedMs) {
-  return data.refreshing === true && waitedMs < REFRESH_POLL_TIMEOUT_MS;
+export function isStaleResponse(generation, latestGeneration) {
+  return generation !== latestGeneration;
 }

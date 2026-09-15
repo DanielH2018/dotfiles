@@ -444,3 +444,41 @@ test('the seed served mid-fetch is not recorded as a success', async () => {
 
   assert.deepStrictEqual(seen, ['NEW'], 'only a real fetch is worth persisting');
 });
+
+test('a cold start with two concurrent calls fires onSuccess exactly once', async () => {
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const client = createClient({
+    token: 'tok',
+    fetchImpl: async () => {
+      await gate;
+      return pageResponse([RAW_NODE]);
+    },
+  });
+  const cache = createCache<LoadResult>(60_000);
+  const seen: string[] = [];
+  const loadPrs = createLoadPrs(client, cache, { onSuccess: (r) => seen.push(r.fetchedAt) });
+
+  // Neither call has a seed to be served from, so both skip the shortcut and reach
+  // createPrLoader's own in-flight dedup, which resolves both to the same object.
+  const first = loadPrs();
+  const second = loadPrs();
+  release();
+  await Promise.all([first, second]);
+
+  assert.strictEqual(seen.length, 1, 'both calls join one real fetch, not two');
+});
+
+test('two sequential calls served from the same cached object fire onSuccess once', async () => {
+  const client = createClient({ token: 'tok', fetchImpl: async () => pageResponse([RAW_NODE]) });
+  const cache = createCache<LoadResult>(60_000);
+  const seen: string[] = [];
+  const loadPrs = createLoadPrs(client, cache, { onSuccess: (r) => seen.push(r.fetchedAt) });
+
+  await loadPrs();
+  await loadPrs();
+
+  assert.strictEqual(seen.length, 1, 'the second call is a cache hit returning the same object, not a new fetch');
+});

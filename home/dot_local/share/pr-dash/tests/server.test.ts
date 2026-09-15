@@ -168,6 +168,33 @@ test('/api/prs reports partialErrors as an empty array, not omitted, on a comple
   });
 });
 
+test('/api/prs forwards refreshing from loadPrs', async () => {
+  // Fix round 2: the handler used to destructure five named fields into an explicit
+  // object literal, which dropped refreshing at the wire silently -- a bare object
+  // literal handed to JSON.stringify is typed any, so tsc caught nothing.
+  await withServer(
+    async (base, secret) => {
+      const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+      const body = await res.json();
+      assert.strictEqual(body.refreshing, true);
+    },
+    async () => ({
+      prs: records,
+      fetchedAt: new Date().toISOString(),
+      stale: true,
+      refreshing: true,
+    }),
+  );
+});
+
+test('/api/prs reports refreshing as false, not omitted, when loadPrs does not set it', async () => {
+  await withServer(async (base, secret) => {
+    const res = await fetch(`${base}/api/prs`, { headers: { 'x-pr-dash-secret': secret } });
+    const body = await res.json();
+    assert.strictEqual(body.refreshing, false);
+  });
+});
+
 test('/api/prs?refresh=1 asks loadPrs to bypass the cache', async () => {
   /** Every `force` value loadPrs was called with, in request order. */
   const forces: (boolean | undefined)[] = [];

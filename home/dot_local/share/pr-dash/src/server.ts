@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkHost, checkSecret } from './guard.ts';
 import { buildStacks } from './stacks.ts';
-import type { PrRecord } from './types.ts';
+import type { PrRecord, StackNode } from './types.ts';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 
@@ -32,7 +32,25 @@ export type ServerOpts = {
     stale?: boolean;
     error?: string;
     partialErrors?: string[];
+    refreshing?: boolean;
   }>;
+};
+
+// Every field here is required, with no optional ones, unlike opts.loadPrs's own return
+// type above. A bare object literal passed straight to JSON.stringify is typed `any`, so
+// omitting a field there is not a compile error — that is exactly how `refreshing` was
+// dropped from the wire once before: `withFallback` set it, the handler destructured
+// `stale`/`error`/`partialErrors` but not `refreshing`, and nothing here caught the gap.
+// Annotating the response object with this type turns that omission into a compile error
+// instead of a silent one.
+type PrsResponseBody = {
+  prs: PrRecord[];
+  stacks: StackNode[];
+  fetchedAt: string;
+  stale: boolean;
+  error: string | null;
+  partialErrors: string[];
+  refreshing: boolean;
 };
 
 export function createServer(opts: ServerOpts): Server {
@@ -98,18 +116,18 @@ async function handle(
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.
     const force = url.searchParams.get('refresh') === '1';
-    const { prs, fetchedAt, stale, error, partialErrors } = await opts.loadPrs({ force });
+    const { prs, fetchedAt, stale, error, partialErrors, refreshing } = await opts.loadPrs({ force });
+    const body: PrsResponseBody = {
+      prs,
+      stacks: buildStacks(prs),
+      fetchedAt,
+      stale: stale ?? false,
+      error: error ?? null,
+      partialErrors: partialErrors ?? [],
+      refreshing: refreshing ?? false,
+    };
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        prs,
-        stacks: buildStacks(prs),
-        fetchedAt,
-        stale: stale ?? false,
-        error: error ?? null,
-        partialErrors: partialErrors ?? [],
-      }),
-    );
+    res.end(JSON.stringify(body));
     return;
   }
 

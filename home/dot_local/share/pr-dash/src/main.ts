@@ -47,7 +47,8 @@ const loadPrs = createLoadPrs(client, cache, {
 
 // Started before listen() and not awaited, so it overlaps the launcher's port poll and the
 // browser's start instead of delaying them. The one request it does not beat is answered
-// from the restored payload above rather than waiting on this fetch.
+// from the restored payload above when there is one; on a first-ever launch, with nothing
+// restored, that request instead waits out this same fetch.
 startPreload(loadPrs, (message) => {
   console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
 });
