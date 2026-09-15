@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { groupBy, sortWithin, stalenessBucket } from '../public/group.js';
+import { applyFilters, groupBy, sortWithin, stalenessBucket } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
 
 const records: PrRecord[] = JSON.parse(
@@ -142,4 +142,24 @@ test('does not mutate its input', () => {
   const before = orderRecords.map((r) => r.id);
   sortWithin(orderRecords, 'stale');
   assert.deepStrictEqual(orderRecords.map((r) => r.id), before);
+});
+
+test('an empty filter set matches everything', () => {
+  const out = applyFilters(records, { ci: [], review: [], draft: [] });
+  assert.strictEqual(out.length, records.length);
+});
+
+test('filters by ci status', () => {
+  const out = applyFilters(records, { ci: ['failure'], review: [], draft: [] });
+  assert.deepStrictEqual(out.map((r) => r.id), ['acme/web#7']);
+});
+
+test('filters combine as AND across axes', () => {
+  const out = applyFilters(records, { ci: ['failure'], review: ['approved'], draft: [] });
+  assert.strictEqual(out.length, 0);
+});
+
+test('filters combine as OR within one axis', () => {
+  const out = applyFilters(records, { ci: ['failure', 'success'], review: [], draft: [] });
+  assert.strictEqual(out.length, 2);
 });

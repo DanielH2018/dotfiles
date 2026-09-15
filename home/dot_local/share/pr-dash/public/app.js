@@ -1,11 +1,110 @@
 // @ts-check
-import { groupBy, sortWithin } from './group.js';
-import { toAxis, toSort, parsePrsBody, isSafeUrl } from './render-guards.js';
+import { applyFilters, groupBy, sortWithin } from './group.js';
+import { toAxis, toSort, parsePrsBody, isSafeUrl, parseStoredView } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
+/** @typedef {import('./render-guards.js').StoredView} StoredView */
 
 const secret = location.hash.replace(/^#/, '');
+
+const VIEW_KEY = 'pr-dash:view';
+
+/**
+ * The checked values of the checkboxes inside the fieldset with `fieldsetId`.
+ * @param {string} fieldsetId
+ * @returns {string[]}
+ */
+function checkedValues(fieldsetId) {
+  const fieldset = document.getElementById(fieldsetId);
+  if (fieldset === null) return [];
+  return Array.from(fieldset.querySelectorAll('input[type=checkbox]:checked')).map(
+    (el) => /** @type {HTMLInputElement} */ (el).value,
+  );
+}
+
+/**
+ * Checks exactly the checkboxes inside the fieldset with `fieldsetId` whose
+ * value is in `values`, without dispatching a `change` event — so restoring
+ * a saved view on load never triggers the `change` handler that would save
+ * it again.
+ * @param {string} fieldsetId
+ * @param {readonly string[]} values
+ */
+function setCheckedValues(fieldsetId, values) {
+  const fieldset = document.getElementById(fieldsetId);
+  if (fieldset === null) return;
+  for (const el of Array.from(fieldset.querySelectorAll('input[type=checkbox]'))) {
+    /** @type {HTMLInputElement} */ (el).checked = values.includes(/** @type {HTMLInputElement} */ (el).value);
+  }
+}
+
+/** @returns {StoredView} */
+function readControls() {
+  const groupSel = document.getElementById('group-by');
+  const sortSel = document.getElementById('sort-by');
+  return {
+    axis: toAxis(groupSel instanceof HTMLSelectElement ? groupSel.value : ''),
+    sort: toSort(sortSel instanceof HTMLSelectElement ? sortSel.value : ''),
+    ci: checkedValues('filter-ci'),
+    review: checkedValues('filter-review'),
+  };
+}
+
+/**
+ * Persists the controls' current state so the next page load can restore
+ * it. A private window, blocked site data, or a full quota makes
+ * `setItem` throw; the view just will not persist, which is not worth
+ * interrupting the user for.
+ */
+function saveView() {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(readControls()));
+  } catch {
+    // Not persisted this time; the page keeps working either way.
+  }
+}
+
+/**
+ * Reads the persisted view, tolerating a store that throws on access (a
+ * private window, blocked site data) the same way {@link saveView} does.
+ * @returns {StoredView}
+ */
+function loadView() {
+  /** @type {string | null} */
+  let raw = null;
+  try {
+    raw = localStorage.getItem(VIEW_KEY);
+  } catch {
+    // Falls through to parseStoredView(null), which is the default view.
+  }
+  return parseStoredView(raw);
+}
+
+/** @param {StoredView} view */
+function applyView(view) {
+  const groupSel = document.getElementById('group-by');
+  const sortSel = document.getElementById('sort-by');
+  if (groupSel instanceof HTMLSelectElement) groupSel.value = view.axis;
+  if (sortSel instanceof HTMLSelectElement) sortSel.value = view.sort;
+  setCheckedValues('filter-ci', view.ci);
+  setCheckedValues('filter-review', view.review);
+}
+
+/**
+ * Clears the persisted view and reloads. A saved filter that cannot be
+ * cleared makes the dashboard look empty with no visible cause, so this
+ * removes the stored value itself rather than only resetting the controls
+ * in memory.
+ */
+function resetView() {
+  try {
+    localStorage.removeItem(VIEW_KEY);
+  } catch {
+    // Nothing was persisted, or the store is unavailable either way.
+  }
+  location.reload();
+}
 
 /** @returns {Promise<{ prs: PrRecord[], stacks: StackNode[] }>} */
 async function loadPrs() {
@@ -88,15 +187,22 @@ function addStackBadges(row, node) {
 }
 
 /**
+ * Renders a stack's nodes in depth order, skipping any node not in
+ * `allowed` while still recursing into its children — a filtered-out PR
+ * in the middle of a stack hides its own row but not its descendants',
+ * since the stack's shape (not the filter) decides what nests under what.
  * @param {StackNode} node
  * @param {DocumentFragment | HTMLElement} into
+ * @param {ReadonlySet<string>} allowed
  */
-function renderStack(node, into) {
-  const row = renderRow(node.pr);
-  row.style.marginLeft = `${node.depth * 20}px`;
-  addStackBadges(row, node);
-  into.append(row);
-  for (const child of node.children) renderStack(child, into);
+function renderStack(node, into, allowed) {
+  if (allowed.has(node.pr.id)) {
+    const row = renderRow(node.pr);
+    row.style.marginLeft = `${node.depth * 20}px`;
+    addStackBadges(row, node);
+    into.append(row);
+  }
+  for (const child of node.children) renderStack(child, into, allowed);
 }
 
 /**
@@ -113,8 +219,17 @@ function render(records, stacks) {
   const sort = toSort(sortSel.value);
   const byId = indexStacks(stacks);
 
+  /** @type {import('./group.js').Filters} */
+  const filters = {
+    ci: /** @type {import('../src/types.ts').Ci[]} */ (checkedValues('filter-ci')),
+    review: /** @type {import('../src/types.ts').Review[]} */ (checkedValues('filter-review')),
+    draft: [],
+  };
+  const filtered = applyFilters(records, filters);
+  const allowed = new Set(filtered.map((pr) => pr.id));
+
   host.replaceChildren();
-  for (const group of groupBy(records, axis)) {
+  for (const group of groupBy(filtered, axis)) {
     const section = document.createElement('section');
     const h2 = document.createElement('h2');
     h2.textContent = `${group.key} (${group.records.length})`;
@@ -122,8 +237,9 @@ function render(records, stacks) {
     if (axis === 'repo') {
       // Stack roots for this repo, already ordered by number by buildStacks — nest
       // the tree instead of the flat, sort-selectable row list every other axis
-      // gets, since a stack's shape is the point of grouping by repo.
-      for (const root of stacks.filter((s) => s.pr.repo === group.key)) renderStack(root, section);
+      // gets, since a stack's shape is the point of grouping by repo. `allowed`
+      // hides a filtered-out row without dropping its place in the tree.
+      for (const root of stacks.filter((s) => s.pr.repo === group.key)) renderStack(root, section, allowed);
     } else {
       for (const pr of sortWithin(group.records, sort)) {
         const row = renderRow(pr);
@@ -154,9 +270,14 @@ async function refresh() {
   }
 }
 
-for (const id of ['group-by', 'sort-by']) {
-  document.getElementById(id)?.addEventListener('change', () => render(current, currentStacks));
+for (const id of ['group-by', 'sort-by', 'filter-ci', 'filter-review']) {
+  document.getElementById(id)?.addEventListener('change', () => {
+    saveView();
+    render(current, currentStacks);
+  });
 }
 document.getElementById('refresh')?.addEventListener('click', () => void refresh());
+document.getElementById('reset')?.addEventListener('click', resetView);
 
+applyView(loadView());
 void refresh();

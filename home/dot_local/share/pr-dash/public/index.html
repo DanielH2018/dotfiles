@@ -25,6 +25,19 @@
       <option value="size">Size</option>
     </select>
   </label>
+  <fieldset id="filter-ci"><legend>CI</legend>
+    <label><input type="checkbox" value="success"> ok</label>
+    <label><input type="checkbox" value="failure"> red</label>
+    <label><input type="checkbox" value="pending"> running</label>
+    <label><input type="checkbox" value="none"> none</label>
+  </fieldset>
+  <fieldset id="filter-review"><legend>Review</legend>
+    <label><input type="checkbox" value="approved"> approved</label>
+    <label><input type="checkbox" value="changes_requested"> changes</label>
+    <label><input type="checkbox" value="review_required"> waiting</label>
+    <label><input type="checkbox" value="none"> none</label>
+  </fieldset>
+  <button id="reset" type="button">Reset view</button>
   <button id="refresh" type="button">Refresh</button>
 </header>
 <div id="banner" hidden></div>

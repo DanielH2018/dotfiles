@@ -56,8 +56,22 @@ export function toSort(value) {
 // ">7d" bucket with no error at all.
 const STRING_FIELDS = ['repo', 'title', 'url'];
 const NUMBER_FIELDS = ['number', 'staleDays', 'ageDays', 'additions', 'deletions'];
-const CI_VALUES = ['success', 'failure', 'pending', 'none'];
-const REVIEW_VALUES = ['approved', 'changes_requested', 'review_required', 'none'];
+
+/**
+ * Every value the `#filter-ci` fieldset's checkboxes carry, in the order
+ * `index.html` declares them. A test in render-guards.test.ts asserts these
+ * stay in sync with that markup, the same way AXES/SORTS do for the
+ * `<select>`s.
+ * @type {readonly string[]}
+ */
+export const CI_VALUES = ['success', 'failure', 'pending', 'none'];
+
+/**
+ * Every value the `#filter-review` fieldset's checkboxes carry, in the
+ * order `index.html` declares them.
+ * @type {readonly string[]}
+ */
+export const REVIEW_VALUES = ['approved', 'changes_requested', 'review_required', 'none'];
 
 /**
  * @param {number} index
@@ -138,4 +152,62 @@ export function isSafeUrl(url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * @typedef {object} StoredView
+ * @property {Axis} axis
+ * @property {Sort} sort
+ * @property {string[]} ci
+ * @property {string[]} review
+ */
+
+/** @type {StoredView} */
+const DEFAULT_VIEW = { axis: DEFAULT_AXIS, sort: DEFAULT_SORT, ci: [], review: [] };
+
+/**
+ * Keeps only the members of `value` that are strings appearing in
+ * `allowed`, dropping anything else — a value of the wrong type, or one an
+ * axis no longer admits because the code that wrote it predates a change
+ * to that axis's set of values.
+ * @param {unknown} value
+ * @param {readonly string[]} allowed
+ * @returns {string[]}
+ */
+function toKnownArray(value, allowed) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v) => typeof v === 'string' && allowed.includes(v));
+}
+
+/**
+ * Parses the `pr-dash:view` localStorage value into a view the controls
+ * can trust. Falls back to {@link DEFAULT_VIEW} — in whole or field by
+ * field — for a value that isn't valid JSON, doesn't parse to a plain
+ * object, or carries a field the current code doesn't recognize: an axis
+ * or sort outside AXES/SORTS, or a `ci`/`review` array holding a status
+ * outside {@link CI_VALUES}/{@link REVIEW_VALUES}. The value can also just
+ * be old — written by an earlier version of this code — so nothing here is
+ * trusted merely because it parsed.
+ * @param {string | null} raw
+ * @returns {StoredView}
+ */
+export function parseStoredView(raw) {
+  if (raw === null) return { ...DEFAULT_VIEW };
+  /** @type {unknown} */
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_VIEW };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ...DEFAULT_VIEW };
+  }
+  const obj = /** @type {Record<string, unknown>} */ (parsed);
+  return {
+    axis: toAxis(typeof obj['axis'] === 'string' ? obj['axis'] : ''),
+    sort: toSort(typeof obj['sort'] === 'string' ? obj['sort'] : ''),
+    ci: toKnownArray(obj['ci'], CI_VALUES),
+    review: toKnownArray(obj['review'], REVIEW_VALUES),
+  };
 }

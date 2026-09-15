@@ -4,10 +4,13 @@ import { readFileSync } from 'node:fs';
 import {
   AXES,
   SORTS,
+  CI_VALUES,
+  REVIEW_VALUES,
   toAxis,
   toSort,
   parsePrsBody,
   isSafeUrl,
+  parseStoredView,
 } from '../public/render-guards.js';
 import { groupBy } from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
@@ -29,6 +32,24 @@ function optionValues(html: string, selectId: string): string[] {
   const optionPattern = /<option value="([^"]*)"/g;
   let match: RegExpExecArray | null;
   while ((match = optionPattern.exec(select[1]!))) {
+    values.push(match[1]!);
+  }
+  return values;
+}
+
+/**
+ * Extracts the `value` of every checkbox `<input>` inside the
+ * `<fieldset id="fieldsetId">` in `index.html`, in document order — the
+ * checkbox equivalent of {@link optionValues}, so a filter fieldset and
+ * its guard's allowed values can never silently drift apart either.
+ */
+function checkboxValues(html: string, fieldsetId: string): string[] {
+  const fieldset = new RegExp(`<fieldset id="${fieldsetId}">([\\s\\S]*?)</fieldset>`).exec(html);
+  assert.ok(fieldset, `no <fieldset id="${fieldsetId}"> found in index.html`);
+  const values: string[] = [];
+  const inputPattern = /<input type="checkbox" value="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = inputPattern.exec(fieldset[1]!))) {
     values.push(match[1]!);
   }
   return values;
@@ -117,6 +138,14 @@ test('AXES matches the #group-by <select> options in index.html', () => {
 
 test('SORTS matches the #sort-by <select> options in index.html', () => {
   assert.deepStrictEqual(SORTS, optionValues(indexHtml, 'sort-by'));
+});
+
+test('CI_VALUES matches the #filter-ci fieldset checkboxes in index.html', () => {
+  assert.deepStrictEqual(CI_VALUES, checkboxValues(indexHtml, 'filter-ci'));
+});
+
+test('REVIEW_VALUES matches the #filter-review fieldset checkboxes in index.html', () => {
+  assert.deepStrictEqual(REVIEW_VALUES, checkboxValues(indexHtml, 'filter-review'));
 });
 
 test('toAxis passes through every known axis unchanged', () => {
@@ -270,4 +299,35 @@ test('isSafeUrl rejects javascript: and data: schemes', () => {
 
 test('isSafeUrl rejects a malformed URL', () => {
   assert.strictEqual(isSafeUrl('not a url'), false);
+});
+
+const DEFAULT_VIEW = { axis: 'repo', sort: 'stale', ci: [], review: [] };
+
+test('parseStoredView returns the default view for null (nothing stored yet)', () => {
+  assert.deepStrictEqual(parseStoredView(null), DEFAULT_VIEW);
+});
+
+test('parseStoredView falls back to the default view for a value that is not JSON', () => {
+  assert.deepStrictEqual(parseStoredView('not json'), DEFAULT_VIEW);
+});
+
+test('parseStoredView falls back to the default view when the parsed value is the wrong shape', () => {
+  assert.deepStrictEqual(parseStoredView('[1, 2, 3]'), DEFAULT_VIEW);
+  assert.deepStrictEqual(parseStoredView('"a string"'), DEFAULT_VIEW);
+  assert.deepStrictEqual(parseStoredView('null'), DEFAULT_VIEW);
+});
+
+test('parseStoredView falls back to the default axis for a value outside AXES', () => {
+  const stored = JSON.stringify({ axis: 'bogus-axis', sort: 'age', ci: [], review: [] });
+  assert.deepStrictEqual(parseStoredView(stored), { ...DEFAULT_VIEW, axis: 'repo', sort: 'age' });
+});
+
+test('parseStoredView drops a ci value outside CI_VALUES instead of throwing', () => {
+  const stored = JSON.stringify({ axis: 'repo', sort: 'stale', ci: ['success', 'bogus'], review: [] });
+  assert.deepStrictEqual(parseStoredView(stored), { ...DEFAULT_VIEW, ci: ['success'] });
+});
+
+test('parseStoredView treats a non-array ci field as no constraint', () => {
+  const stored = JSON.stringify({ axis: 'repo', sort: 'stale', ci: 'failure', review: [] });
+  assert.deepStrictEqual(parseStoredView(stored), DEFAULT_VIEW);
 });

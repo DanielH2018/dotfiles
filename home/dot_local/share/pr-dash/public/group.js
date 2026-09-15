@@ -76,6 +76,33 @@ export function groupBy(records, axis) {
 }
 
 /**
+ * @typedef {object} Filters
+ * @property {import('../src/types.ts').Ci[]} ci
+ * @property {import('../src/types.ts').Review[]} review
+ * @property {('draft'|'ready')[]} draft
+ */
+
+/**
+ * Keeps the records matching every axis's constraint (AND across `ci`,
+ * `review` and `draft`), where any one axis matches a record if the
+ * record's value is among that axis's list (OR within the axis). An empty
+ * list for an axis is not a "match nothing" filter — it means the axis
+ * imposes no constraint at all, so the default all-unchecked state shows
+ * every record.
+ * @param {readonly PrRecord[]} records
+ * @param {Filters} filters
+ * @returns {PrRecord[]}
+ */
+export function applyFilters(records, filters) {
+  return records.filter((pr) => {
+    if (filters.ci.length > 0 && !filters.ci.includes(pr.ci)) return false;
+    if (filters.review.length > 0 && !filters.review.includes(pr.review)) return false;
+    if (filters.draft.length > 0 && !filters.draft.includes(pr.isDraft ? 'draft' : 'ready')) return false;
+    return true;
+  });
+}
+
+/**
  * @param {readonly PrRecord[]} records
  * @param {Sort} sort
  * @returns {PrRecord[]}
