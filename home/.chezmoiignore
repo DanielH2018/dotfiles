@@ -105,6 +105,20 @@ Scripts
 .local/bin/mx-ergo-watch
 .local/bin/otel-sweep-watch
 .local/bin/streamcontroller-health
+
+# run-skill.sh is the Linux implementation of a contract macOS satisfies from somewhere else.
+# Its own header says so: the macOS side ships from work-laptop-config, which installs it at
+# ~/.claude/scheduled/run-skill.sh as a symlink. Deploying this copy on a Mac overwrites that
+# symlink with a script written for a systemd host, so the work laptop loses the runner it
+# actually uses — and because the file chezmoi then owns is not the file work-laptop-config
+# owns, `chezmoi status` reports MM forever and every full `chezmoi apply` refuses.
+#
+# Gated on the OS rather than on `.work`: a personal Mac has no work-laptop-config either, so
+# it has no macOS implementation to deploy and no use for the Linux one. `session-end.sh` is
+# the only caller and it guards with `[ -x "$RUNNER" ] || return 0`, so an absent runner skips
+# the digest and leaves the queue entry for the next drain, which is what the script's header
+# says a missed drain costs.
+.claude/scheduled/run-skill.sh
 {{ end }}
 
 # tasklist.exe / taskkill.exe symlinks point into /mnt/c (taskkill is used by agentview to

@@ -24,10 +24,15 @@
 #   - already fired once this session
 #
 # Known overlap, deliberately not solved here: an output style can mandate a prep
-# intake on every non-trivial prompt without the user typing `/prep` (this
-# machine's "Fintech Terse" style does). Under such a style the gate is redundant
-# and will double-ask. Reading settings.json from a hook to detect that would be
-# clever and fragile; leave the gate off under those styles instead.
+# intake on every non-trivial prompt without the user typing `/prep`. Under such a
+# style the gate is redundant and double-asks. Reading settings.json from a hook to
+# detect that would be clever and fragile, so the answer is to leave the gate off
+# (`CLAUDE_LEARN_GATE` unset) on a machine whose style already does the intake.
+#
+# No style on this machine does. `daniel-voice` is the only one installed, and it
+# mandates no intake — the "Fintech Terse" style this note used to name as the live
+# example was removed from work-laptop-config, which was also the only thing setting
+# `outputStyle` in the work overlay.
 #
 # Portability: /bin/bash here is 3.2, so no ${var,,} and no bash-4 syntax. Word
 # boundaries go through grep -E, never a bash [[ =~ ]] — Darwin's ERE has no \b
