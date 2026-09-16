@@ -449,7 +449,11 @@ export type IdleExit = {
 // is exiting a process that already has nothing left to serve.
 export function createIdleExit(opts: IdleExitOpts = {}): IdleExit {
   const timeoutMs = opts.timeoutMs ?? IDLE_TIMEOUT_MS;
-  const exit = opts.exit ?? process.exit;
+  // Wrapped rather than passed as `process.exit`, which would be an unbound method. It
+  // works — Node's implementation closes over `process` rather than reading `this` — but no
+  // test covers this path, since every test here injects its own `exit`, so the arrow
+  // removes the dependency on that internal detail instead of resting on it.
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
   const scheduleTimeout: (callback: () => void, ms: number) => TimerHandle =
     opts.setTimeoutFn ?? ((callback, ms) => setTimeout(callback, ms));
   const cancelTimeout: (handle: TimerHandle) => void =

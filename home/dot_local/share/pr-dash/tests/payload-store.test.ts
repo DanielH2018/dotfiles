@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { homedir, tmpdir } from 'node:os';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPayloadStore, DEFAULT_STATE_DIR, DIR_MODE, FILE_MODE, type FsSeam } from '../src/payload-store.ts';
 import type { LoadResult } from '../src/loader.ts';
@@ -72,6 +72,10 @@ function fakeFs(seed: Record<string, string> = {}) {
       calls.push(`mkdir ${path}`);
       modes.set(path, opts.mode);
       createdDirs.add(path);
+    },
+    async chmod(path, mode) {
+      calls.push(`chmod ${path}`);
+      modes.set(path, mode);
     },
     async writeFile(path, data, opts) {
       calls.push(`writeFile ${path}`);
@@ -316,6 +320,26 @@ test('the real filesystem seam actually applies the owner-only modes and an atom
     // target file missing (or holding stale bytes from a previous run) rather than the
     // payload just written.
     assert.deepStrictEqual(await store.read(), PAYLOAD);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a state directory that already exists at a looser mode is tightened to 0700', async () => {
+  // mkdir's mode applies only to a directory it creates, so a directory made by hand under
+  // this host's umask 0007 stays 0770 and the 0600 payload sits in a group-readable
+  // directory. chmod after the mkdir is what closes that; the mode is set here explicitly
+  // rather than left to mkdir, whose own mode the umask would mask.
+  const root = mkdtempSync(join(tmpdir(), 'pr-dash-store-'));
+  const dir = join(root, 'state');
+  try {
+    mkdirSync(dir);
+    chmodSync(dir, 0o770);
+
+    await createPayloadStore(dir).write(PAYLOAD);
+
+    const dirMode = statSync(dir).mode & 0o777;
+    assert.strictEqual(dirMode, DIR_MODE, `expected ${DIR_MODE.toString(8)}, got ${dirMode.toString(8)}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

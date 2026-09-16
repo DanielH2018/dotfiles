@@ -614,11 +614,21 @@ export function nextPollState(state, data, now = Date.now()) {
 
 /**
  * Whether `status` names a permanent failure — an HTTP client error (4xx) that retrying
- * without changing anything (the URL, the request's Host) cannot fix. A rejected
- * request is not worth retrying: every one of those requests only adds load for a
- * response that can never succeed. `undefined` (a network error, or a malformed body that
- * never reached an HTTP status at all) and a 5xx are both treated as not permanent — a
- * transient condition on the wire or upstream, which the next poll might find cleared.
+ * without changing anything cannot fix. A rejected request is not worth retrying: every one
+ * of those requests only adds load for a response that can never succeed.
+ *
+ * With the per-launch credential gone, no 4xx is reachable from the page's own fetches: the
+ * page's origin is by construction the authority the server expects, so `checkHost` cannot
+ * refuse it, and the remaining 4xx (a 405 on a non-GET, a 400 on a malformed request
+ * target) describe requests this client does not make. What a 4xx names now is a caller
+ * that is not this page — which is exactly the caller that should stop retrying.
+ *
+ * `undefined` (a network error, or a malformed body that never reached an HTTP status at
+ * all) and a 5xx are both treated as not permanent — a transient condition on the wire or
+ * upstream, which the next poll might find cleared. The failure the always-on design
+ * introduces, a 500 from a failed token resolution, takes that transient branch on purpose:
+ * a locked vault or a dismissed prompt clears when the operator answers the next one, so
+ * treating it as permanent would make a recoverable condition final.
  * @param {number | undefined} status
  * @returns {boolean}
  */

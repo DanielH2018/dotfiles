@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { LoadResult } from './loader.ts';
@@ -24,6 +24,7 @@ export const DEFAULT_STATE_DIR = join(homedir(), '.local', 'state', 'pr-dash');
  */
 export type FsSeam = {
   mkdir(path: string, opts: { recursive: true; mode: number }): Promise<unknown>;
+  chmod(path: string, mode: number): Promise<void>;
   writeFile(path: string, data: string, opts: { mode: number }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   readFile(path: string): Promise<string>;
@@ -39,6 +40,7 @@ export type PayloadStore = {
 
 const realFs: FsSeam = {
   mkdir: (path, opts) => mkdir(path, opts),
+  chmod: (path, mode) => chmod(path, mode),
   writeFile: (path, data, opts) => writeFile(path, data, opts),
   rename: (from, to) => rename(from, to),
   readFile: (path) => readFile(path, 'utf8'),
@@ -126,6 +128,10 @@ export function createPayloadStore(dir: string, fs: FsSeam = realFs): PayloadSto
       const temp = `${target}.${randomUUID()}.tmp`;
       try {
         await fs.mkdir(dir, { recursive: true, mode: DIR_MODE });
+        // mkdir applies its mode only to a directory it creates, so an existing directory
+        // keeps whatever it had — 0770 for one made by hand under this host's umask 0007,
+        // which leaves the 0600 payload sitting in a group-readable directory.
+        await fs.chmod(dir, DIR_MODE);
         await fs.writeFile(temp, JSON.stringify(result), { mode: FILE_MODE });
         try {
           // Rename rather than writing the target in place, so a kill mid-write cannot
