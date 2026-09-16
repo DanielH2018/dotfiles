@@ -308,6 +308,22 @@ apply them to.
    process. It is scoped to the API rather than to every path because a browser cannot
    attach a custom header to the address-bar navigation that loads the page shell —
    requiring it there would stop the dashboard loading at all. The shell carries no PR data.
+
+   The page caches the fragment in `localStorage` under `pr-dash:secret` and clears the
+   fragment from the address bar with `history.replaceState`, so `http://127.0.0.1:<port>`
+   is bookmarkable and no URL the user keeps holds a credential. Only a value matching the
+   launcher's own shape — 48 lowercase hex characters — is cached or sent, so an arbitrary
+   fragment from someone else's link never becomes a stored credential or a request header.
+
+   Web storage rather than a cookie, which is the textbook carrier: cookies ignore port, so
+   a `127.0.0.1` cookie is sent to every other HTTP server on loopback, a wide population on
+   a development machine. Web storage is keyed by origin including port, so nothing served
+   from another local port can reach the cached secret.
+
+   A cached secret outlives the process that minted it, so the bare URL reaches a `403`
+   whenever no launch has run since the cache was seeded. The page drops the cached value on
+   that response and says to run `pr-dash`, rather than retrying a credential that can never
+   work again — the one permanent failure with an instruction attached.
 4. **Serve `GET` and nothing else.** No route in v1 changes GitHub state and a cross-origin
    form POST cannot set the secret header, so this closes nothing exploitable today. It is
    here for the same reason as the rest: a method gate costs less to add before a mutating
@@ -318,7 +334,7 @@ written once against a read-only surface and does not change when mutating route
 
 ### Accepted exposures
 
-Three states below are correct by design rather than defects waiting to be fixed. They are
+The states below are correct by design rather than defects waiting to be fixed. They are
 written down so a later reviewer finds the decision already made instead of finding a gap.
 
 **The per-launch secret is visible in `ps` while the browser starts.** `bin/pr-dash` hands
@@ -330,7 +346,17 @@ the URL or the user cannot reach the dashboard. What the secret protects is a lo
 endpoint that already requires a matching `Host`, so reading it buys an attacker nothing
 they could not get by other means: anyone who can read your `ps` output can read your home
 directory, which is where the 1Password-backed token path and everything else lives. The
-secret also dies with the process, so the window is one browser launch.
+secret also dies with the process, so the window for reading it from `ps` is one browser
+launch.
+
+**The cached secret outlives the process that minted it.** `localStorage` is on disk in the
+browser profile, so the cached copy survives both the server exiting and the browser
+restarting, until a refused request clears it. Any process that can read the browser profile
+can read it. This is accepted, and for the same reason as the `ps` exposure above: such a
+process can already read the home directory that holds the 1Password-backed token path. What
+the cached value grants is a loopback endpoint that still requires a matching `Host`, and
+only for as long as the minting process is alive — a stale cached secret authenticates
+nothing, because the server compares it against the secret of the launch that is running.
 
 **A partial result is cached for the full 60-second TTL.** The cache does not distinguish a
 complete fetch from one carrying `partialErrors`, so a transient GraphQL timeout keeps the

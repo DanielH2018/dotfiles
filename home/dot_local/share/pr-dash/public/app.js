@@ -27,13 +27,23 @@ import {
   nextPollState,
   isPermanentFailure,
   isStaleResponse,
+  resolveSecret,
+  clearStoredSecret,
+  relaunchBanner,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {import('./render-guards.js').StoredView} StoredView */
 
-const secret = location.hash.replace(/^#/, '');
+const resolved = resolveSecret(location.hash, localStorage);
+const secret = resolved.secret;
+if (resolved.fromHash) {
+  // Strip the fragment now that it is cached, so the address bar and this history entry
+  // hold a bookmarkable URL with no secret in it. replaceState rather than pushState: a new
+  // entry would leave the secret-bearing URL one Back press away.
+  history.replaceState(null, '', location.pathname + location.search);
+}
 
 /**
  * The checked values of the checkboxes inside the fieldset with `fieldsetId`.
@@ -557,7 +567,17 @@ async function refresh(force = false) {
     // That budget is shared with the ordinary poll loop's own refreshing responses: a
     // failure here inherits whatever time a prior refreshing run already spent, and vice
     // versa, rather than each getting its own 60 seconds.
-    const permanent = isPermanentFailure(errorStatus(err));
+    const status = errorStatus(err);
+    const permanent = isPermanentFailure(status);
+    // A 403 is the one permanent failure with an instruction attached, and the bare
+    // bookmarked URL reaches it whenever no launch has run since the cache was seeded. The
+    // cached secret is dropped first: it belongs to a process that has exited, so keeping it
+    // would fail every later visit the same way.
+    if (status === 403) {
+      clearStoredSecret(localStorage);
+      showBanner(relaunchBanner());
+      return;
+    }
     const gaveUp = permanent ? false : schedulePoll({ refreshing: true });
     showBanner(
       gaveUp

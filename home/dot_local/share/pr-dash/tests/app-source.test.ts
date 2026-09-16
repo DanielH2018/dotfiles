@@ -109,13 +109,37 @@ test('the catch branch skips the retry entirely for a permanent (4xx) failure', 
   const catchStart = body.indexOf('} catch', tryStart);
   const catchBody = body.slice(catchStart);
 
+  // The status may be read into a local before classifying, so each half is pinned on its
+  // own rather than as one nested expression — the property is that the catch classifies
+  // the failure and gates the retry on it, not how the two calls are spelled.
+  assert.match(catchBody, /errorStatus\(\s*err\s*\)/, 'expected the catch branch to read the status');
   assert.match(
     catchBody,
-    /isPermanentFailure\(\s*errorStatus\(\s*err\s*\)\s*\)/,
-    'expected the catch branch to classify the failure with isPermanentFailure(errorStatus(err))',
+    /isPermanentFailure\(/,
+    'expected the catch branch to classify the failure with isPermanentFailure',
   );
   const gateMatch = /\w+\s*=\s*(\w+)\s*\?\s*false\s*:\s*schedulePoll\(/.exec(catchBody);
   assert.ok(gateMatch, 'expected schedulePoll to run only when the classification says not permanent');
+});
+
+test('a refused secret clears the cached one and says to relaunch, before the retry gate', () => {
+  // The bare bookmarked URL reaches a 403 whenever no launch has run since the cache was
+  // seeded. Keeping the dead secret would fail every later visit the same way, and the
+  // generic "Could not refresh: Error: 403 ..." names no fix — only a new launch mints a
+  // secret. Position matters: this must return before the retry gate, or the 403 falls
+  // through to the banner that tells the user to click Refresh, which cannot help.
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const catchStart = body.indexOf('} catch', body.indexOf('try {'));
+  const catchBody = body.slice(catchStart);
+
+  const clearIndex = catchBody.search(/clearStoredSecret\(\s*localStorage\s*\)/);
+  const bannerIndex = catchBody.search(/showBanner\(\s*relaunchBanner\(\s*\)\s*\)/);
+  const gateIndex = catchBody.search(/schedulePoll\(/);
+  assert.notStrictEqual(clearIndex, -1, 'expected the catch branch to clear the cached secret');
+  assert.notStrictEqual(bannerIndex, -1, 'expected the catch branch to show relaunchBanner()');
+  assert.notStrictEqual(gateIndex, -1, 'expected the catch branch to still have a retry gate');
+  assert.ok(clearIndex < gateIndex, 'expected the secret to be cleared before the retry gate');
+  assert.ok(bannerIndex < gateIndex, 'expected the relaunch banner to replace the retry banner');
 });
 
 test('refresh passes schedulePoll\'s result to staleBanner as its gaveUp argument', () => {

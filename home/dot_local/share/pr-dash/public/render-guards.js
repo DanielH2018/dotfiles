@@ -481,6 +481,95 @@ export function clearStoredView(storage) {
 }
 
 /**
+ * The localStorage key the per-launch secret is cached under.
+ *
+ * Separate from {@link VIEW_KEY} so Reset, which exists to un-stick a filter the user
+ * cannot see, never takes the page's own credentials with it.
+ */
+export const SECRET_KEY = 'pr-dash:secret';
+
+/**
+ * The shape `bin/pr-dash` generates: 24 random bytes as 48 lowercase hex characters.
+ * Anchored, so a fragment that merely contains a hex run does not qualify.
+ */
+const SECRET_PATTERN = /^[0-9a-f]{48}$/;
+
+/**
+ * The secret to authenticate `/api/prs` with, and where it came from.
+ *
+ * The launcher opens `#<secret>`, and a fragment is never sent to a server — which is what
+ * made it a safe carrier in the first place. Caching it here is what makes the bare
+ * `http://127.0.0.1:<port>` bookmarkable: the fragment seeds the cache on the launcher's own
+ * open, and every later visit to the clean URL reads it back.
+ *
+ * Why `localStorage` rather than a cookie, which is the textbook answer: cookies ignore
+ * port, so a `127.0.0.1` cookie is sent to every other HTTP server on loopback — a wide
+ * population on a development machine. Web storage is keyed by origin *including* port, so
+ * nothing served from another local port can reach this value.
+ *
+ * Only a value matching the launcher's own shape is stored or returned. An arbitrary
+ * fragment — someone else's link, a stale bookmark carrying junk — is neither cached nor
+ * sent, so the request fails the guard rather than putting an attacker-chosen string in
+ * storage.
+ * @param {string} hash `location.hash`, with or without its leading `#`.
+ * @param {ViewStorage} storage
+ * @returns {{ secret: string, fromHash: boolean }} `fromHash` is true when this call took
+ *   the secret from the URL, which is the caller's cue to strip the fragment.
+ */
+export function resolveSecret(hash, storage) {
+  const fromUrl = hash.replace(/^#/, '');
+  if (SECRET_PATTERN.test(fromUrl)) {
+    try {
+      storage.setItem(SECRET_KEY, fromUrl);
+    } catch {
+      // Not cached this time, so the bare URL will not work until the next launch. The
+      // page itself still loads: this visit has the secret in hand either way.
+    }
+    return { secret: fromUrl, fromHash: true };
+  }
+
+  /** @type {string | null} */
+  let cached = null;
+  try {
+    cached = storage.getItem(SECRET_KEY);
+  } catch {
+    // A private window or blocked site data reads as no cached secret, which surfaces as
+    // the same "run pr-dash" message an expired one does.
+  }
+  if (cached !== null && SECRET_PATTERN.test(cached)) return { secret: cached, fromHash: false };
+  return { secret: '', fromHash: false };
+}
+
+/**
+ * Drops the cached secret from `storage`.
+ *
+ * Called when the server refuses it. The secret is per-launch, so a refusal means this one
+ * belongs to a process that has exited; keeping it would leave a dead credential in storage
+ * and make every later visit fail the same way without saying why.
+ * @param {ViewStorage} storage
+ */
+export function clearStoredSecret(storage) {
+  try {
+    storage.removeItem(SECRET_KEY);
+  } catch {
+    // Nothing cached, or the store is unavailable — either way there is nothing to clear.
+  }
+}
+
+/**
+ * The message for a page whose secret the server refused, or that never had one.
+ *
+ * Distinct from every other banner because the fix is neither Refresh nor waiting: this
+ * page load cannot authenticate at all, and only a new `pr-dash` run mints a secret. The
+ * bare bookmarked URL reaches this state whenever no launch has run since the cache was
+ * last seeded.
+ * @returns {string}
+ */
+export function relaunchBanner() {
+  return 'This page is not authorised for the running dashboard. Run `pr-dash` to open a fresh one.';
+}
+
+/**
  * The `/api/prs` response fields the banner decision reads. Matches the fields
  * `app.js`'s `loadPrs()` already normalizes off the response body.
  * @typedef {object} RefreshOutcome
