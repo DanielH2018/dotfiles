@@ -3,11 +3,6 @@ import type { Cache } from './cache.ts';
 import { createPrLoader, type LoadOpts, type LoadPrs, type LoadResult } from './loader.ts';
 import type { PrRecord } from './types.ts';
 
-// `stale` and `partialErrors` are independent, and the three states they describe are
-// distinct: a complete fetch (neither), a partial fetch (errors, not stale — the rows are
-// as fresh as `fetchedAt` says), and a retained payload after a failed refresh (stale). A
-// retained payload that was itself partial carries both, which is why the flag travels
-// with the payload rather than being recomputed per response.
 /** The loopback port the dashboard listens on when `PR_DASH_PORT` is unset. */
 export const DEFAULT_PORT = 8770;
 
@@ -79,6 +74,11 @@ export function listenErrorMessage(err: unknown, port: number): string {
   return `pr-dash could not listen on 127.0.0.1:${port}${codeSuffix}: ${detail}`;
 }
 
+// `stale` and `partialErrors` are independent, and the three states they describe are
+// distinct: a complete fetch (neither), a partial fetch (errors, not stale — the rows are
+// as fresh as `fetchedAt` says), and a retained payload after a failed refresh (stale). A
+// retained payload that was itself partial carries both, which is why the flag travels
+// with the payload rather than being recomputed per response.
 export type FallbackResult = {
   prs: PrRecord[];
   fetchedAt: string;

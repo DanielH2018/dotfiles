@@ -365,8 +365,10 @@ export function toDraftValues(value) {
 /**
  * The collapsed section keys from a stored value: an axis-qualified `axis:key` string (see
  * `groupCollapseKey` in `group.js`) for a group header, and a bare PR id for a stack root.
- * Non-strings are dropped and duplicates collapsed, so a hand-edited or older stored value
- * cannot put anything but strings into the set.
+ * Non-strings are dropped, so a hand-edited or older stored value cannot put anything but
+ * strings into the set. Duplicates are left in place rather than collapsed here: the one
+ * caller, `applyView`, immediately wraps this in `new Set(...)`, which already dedupes —
+ * doing it twice was one job done in two places.
  *
  * Unlike the axis and status validators, this one does not check membership in a known
  * list, because there is no such list: a key naming a merged PR or a repository with
@@ -377,7 +379,7 @@ export function toDraftValues(value) {
  */
 export function toCollapsedKeys(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((v) => typeof v === 'string'))];
+  return value.filter((v) => typeof v === 'string');
 }
 
 /**

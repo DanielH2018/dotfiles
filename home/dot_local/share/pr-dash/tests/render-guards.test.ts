@@ -757,10 +757,12 @@ test('clearStoredView removes the value under VIEW_KEY', () => {
   assert.strictEqual(storage.written.has(VIEW_KEY), false);
 });
 
-test('toCollapsedKeys keeps strings, drops everything else, and dedupes', () => {
+test('toCollapsedKeys keeps strings and drops everything else', () => {
+  // Duplicates are left in place, not collapsed here: applyView, the one caller, wraps
+  // the result in `new Set(...)`, which already dedupes.
   assert.deepStrictEqual(
     toCollapsedKeys(['acme/api', 'acme/api', 42, null, 'acme/web', undefined]),
-    ['acme/api', 'acme/web'],
+    ['acme/api', 'acme/api', 'acme/web'],
   );
 });
 
