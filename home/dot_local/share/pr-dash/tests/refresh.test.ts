@@ -140,6 +140,10 @@ test('createLoadPrs forwards its opts (initial and onSuccess) to withFallback', 
   assert.strictEqual(first.fetchedAt, seeded.fetchedAt);
   assert.deepStrictEqual(first.prs, one);
 
+  // That first call took withFallback's prime path, which answers from `initial` and runs
+  // the fetch behind the response. Draining lets that fetch fail before the next call, so
+  // the assertions below are about a request that starts with nothing in flight.
+  await new Promise((r) => setTimeout(r, 0));
   fail = false;
   const second = await loadPrs();
 
@@ -292,8 +296,17 @@ test('a seeded payload is served, marked stale, when the first fetch fails', asy
   const load = async () => {
     throw new Error('network down');
   };
+  const loadPrs = withFallback(load, { initial: seeded });
 
-  const result = await withFallback(load, { initial: seeded })();
+  // The first call is the prime path, whose whole point is not to wait for the fetch — so
+  // it cannot name a failure that has not happened yet, and its swallowed rejection is why
+  // the error surfaces on the next request instead.
+  const primeResult = await loadPrs();
+  assert.strictEqual(primeResult.refreshing, true, 'the prime path tells the client to ask again');
+  assert.strictEqual(primeResult.error, undefined, 'the fetch has not failed yet');
+  await new Promise((r) => setTimeout(r, 0));
+
+  const result = await loadPrs();
 
   assert.strictEqual(result.stale, true, 'a restored payload must never render as fresh');
   assert.strictEqual(result.fetchedAt, seeded.fetchedAt, 'the banner must name the real last success');
@@ -319,9 +332,11 @@ test('a successful fetch replaces the seeded payload', async () => {
   };
   const loadPrs = withFallback(load, { initial: seeded });
 
+  // The successful fetch is the one the prime path starts behind its own response, so the
+  // seed is what the first call returns and the drain is what lets that fetch land.
   const first = await loadPrs();
-  assert.strictEqual(first.stale, false);
-  assert.strictEqual(first.fetchedAt, 'NEW');
+  assert.strictEqual(first.fetchedAt, 'OLD', 'the prime path answers from the seed');
+  await new Promise((r) => setTimeout(r, 0));
 
   // A second, failing call is what actually proves the seed was replaced: its stale
   // fallback carries whatever withFallback thinks is the last good payload, so if the
@@ -361,31 +376,117 @@ test('a throwing onSuccess does not fail the request', async () => {
   assert.strictEqual(result.stale, false);
 });
 
-test('a request arriving during an in-flight fetch is served the seed at once', async () => {
+// The launchd path, which is the only one the agent uses: PR_DASH_PRELOAD is unset, so
+// nothing is in flight when the browser's first /api/prs arrives. Before the prime path that
+// request awaited createLazyToken -> resolveToken -> the `op` process -> the Touch ID prompt
+// -> the paginated GraphQL query, and the page was blank for all of it.
+test('the first request is answered from the restored payload while the fetch runs behind it', async () => {
   const seeded: LoadResult = { prs: one, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [] };
   let release = (): void => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const fresh: LoadResult = { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+  let calls = 0;
   const loadPrs = withFallback(async () => {
+    calls += 1;
     await gate;
     return fresh;
   }, { initial: seeded });
 
-  const pending = loadPrs();
-  const during = await loadPrs();
+  // The gate is still shut, so this call resolving at all is the property under test: a
+  // slow GitHub cannot hold up the first paint.
+  const first = await loadPrs();
+  assert.strictEqual(first.refreshing, true, 'the client must be told to ask again');
+  assert.strictEqual(first.stale, true, 'a restored payload must never render as fresh');
+  assert.strictEqual(first.error, undefined, 'nothing failed, so there is no error to name');
+  assert.strictEqual(first.fetchedAt, seeded.fetchedAt);
+  assert.deepStrictEqual(first.prs, one);
+  assert.strictEqual(calls, 1, 'the fetch must have started behind that response');
 
-  assert.strictEqual(during.refreshing, true, 'the client must be told to ask again');
-  assert.strictEqual(during.stale, true, 'a seed served mid-fetch is not fresh');
-  assert.strictEqual(during.error, undefined, 'nothing failed, so there is no error to name');
+  // A poll landing while that fetch is still running takes the `fetching > 0` shortcut and
+  // answers from the same payload rather than starting a second fetch.
+  const during = await loadPrs();
+  assert.strictEqual(during.refreshing, true);
   assert.strictEqual(during.fetchedAt, seeded.fetchedAt);
-  assert.deepStrictEqual(during.prs, one);
+  assert.strictEqual(calls, 1, 'a request behind the prime must not start a second fetch');
 
   release();
-  const after = await pending;
-  assert.strictEqual(after.stale, false, 'the awaited call still returns the fresh payload');
+  await new Promise((r) => setTimeout(r, 0));
+  const after = await loadPrs();
+  assert.strictEqual(after.stale, false, 'once the fetch has landed, a later request is fresh');
   assert.strictEqual(after.fetchedAt, 'NEW');
+});
+
+test('a failing background fetch does not start a second fetch on the next poll', async () => {
+  // The 4xx retry storm this project has already shipped once, in the other direction: if
+  // each poll took the prime path it would start its own background fetch on top of the one
+  // it awaits, so one unreachable GitHub would be two requests per poll.
+  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  let calls = 0;
+  const loadPrs = withFallback(async () => {
+    calls += 1;
+    throw new Error('network down');
+  }, { initial: seeded });
+
+  await loadPrs();
+  await new Promise((r) => setTimeout(r, 0));
+  const secondPoll = await loadPrs();
+  const thirdPoll = await loadPrs();
+
+  assert.strictEqual(calls, 3, 'one fetch behind the prime, then exactly one per poll');
+  assert.strictEqual(secondPoll.fetchedAt, 'OLD', 'the retained payload is unchanged');
+  assert.strictEqual(secondPoll.error, 'network down');
+  assert.strictEqual(thirdPoll.error, 'network down');
+  assert.strictEqual(thirdPoll.refreshing, undefined, 'no fetch is running behind this one');
+});
+
+test('a forced first call bypasses the prime path, and the next poll starts no extra fetch', async () => {
+  // The operator whose first action is clicking Refresh. `primed` is set before the force
+  // check for this case: if a forced call left it false, this poll would take the prime path
+  // and start a second background fetch alongside the one it awaits.
+  const seeded: LoadResult = { prs: one, fetchedAt: 'OLD', partialErrors: [] };
+  let calls = 0;
+  const loadPrs = withFallback(async () => {
+    calls += 1;
+    return { prs: [], fetchedAt: 'NEW', partialErrors: [] };
+  }, { initial: seeded });
+
+  const forced = await loadPrs({ force: true });
+  assert.strictEqual(forced.stale, false, 'a Refresh click waits for GitHub');
+  assert.strictEqual(forced.refreshing, undefined, 'and is never answered from the seed');
+
+  const poll = await loadPrs();
+
+  assert.strictEqual(calls, 2, 'one fetch for the click and one for the poll, not three');
+  assert.strictEqual(poll.refreshing, undefined, 'nothing is running behind this response');
+});
+
+test('a first-ever launch with nothing restored still waits for the fetch', async () => {
+  // The prime path has nothing to answer with here, so the behaviour is unchanged: the
+  // request awaits GitHub rather than painting an empty dashboard.
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const loadPrs = withFallback(async () => {
+    await gate;
+    return { prs: one, fetchedAt: 'NEW', partialErrors: [] };
+  });
+
+  let settled = false;
+  const pending = loadPrs().then((result) => {
+    settled = true;
+    return result;
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(settled, false, 'with nothing restored there is nothing to answer with');
+
+  release();
+  const result = await pending;
+  assert.strictEqual(result.stale, false);
+  assert.strictEqual(result.refreshing, undefined);
+  assert.deepStrictEqual(result.prs, one);
 });
 
 test('a forced request waits for GitHub rather than taking the seed', async () => {
@@ -416,7 +517,10 @@ test('the shortcut closes once the fetch settles', async () => {
     initial: seeded,
   });
 
+  // The prime path's own fetch has to land first, or the shortcut this test is about is
+  // still open for the wrong reason.
   await loadPrs();
+  await new Promise((r) => setTimeout(r, 0));
   const second = await loadPrs();
 
   assert.strictEqual(second.refreshing, undefined, 'no fetch is running, so nothing is pending');
@@ -463,7 +567,10 @@ test('the seed served mid-fetch is not recorded as a success', async () => {
   const pending = loadPrs();
   await loadPrs();
   release();
+  // The prime path's fetch is the one that produces 'NEW', and it settles behind the
+  // response rather than with `pending`, so the drain is what gives it time to notify.
   await pending;
+  await new Promise((r) => setTimeout(r, 0));
 
   assert.deepStrictEqual(seen, ['NEW'], 'only a real fetch is worth persisting');
 });

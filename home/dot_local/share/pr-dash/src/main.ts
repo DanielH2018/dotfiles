@@ -47,8 +47,10 @@ const loadPrs = createLoadPrs(client, cache, {
 // is about to open a browser, and starting the fetch before listen() overlaps the launcher's
 // port poll and the browser's own cold start. The launchd agent does not set it: its server
 // is listening long before anyone opens the bookmark, so there is no browser start left to
-// overlap, and the restored payload above already paints instantly while the first real
-// fetch runs. An unconditional pre-load would also resolve the token at every respawn — a
+// overlap, and the restored payload above paints instantly anyway — withFallback's prime
+// path answers the first request from it and runs the fetch behind that response, so nothing
+// here has to be in flight for the page to paint. An unconditional pre-load would also
+// resolve the token at every respawn — a
 // Touch ID prompt with nobody present, defeating the idle exit's only purpose of not holding
 // the token in memory between requests.
 if (preloadEnabled(process.env)) {

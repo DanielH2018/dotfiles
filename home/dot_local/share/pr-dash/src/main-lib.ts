@@ -146,24 +146,19 @@ export function withFallback(
   // yet) and both land here once `load` resolves; without this check both would call
   // onSuccess for what is, underneath, one real fetch.
   let lastNotified: LoadResult | undefined;
+  // False until the first call has been answered. Under the launchd agent nothing pre-loads,
+  // so the browser's first request is the one that would otherwise wait out the whole token
+  // resolution and GitHub round trip. That request gets the restored payload and the fetch
+  // starts behind it; every later request takes the normal path, where `fetching > 0` covers
+  // the overlap and a completed fetch is a cache hit.
+  let primed = false;
 
-  // `loadOpts` is forwarded rather than dropped: this wrapper is what main.ts hands the
-  // server, so a `force` that stops here never reaches the cache and the Refresh button
-  // goes back to doing nothing.
-  return async (loadOpts?: LoadOpts) => {
-    // Answer from the retained payload rather than joining a fetch already in progress.
-    // This is what the startup restore is for: the browser's first request arrives while
-    // the pre-load is mid-flight, and joining it would make the page wait out the rest of
-    // the GitHub round trip before painting anything. `refreshing` is how the fresh rows
-    // still arrive without a click — the client asks again, and the poll lands on the
-    // cache the pre-load populated rather than on a second GitHub fetch.
-    //
-    // Never for a forced call. The Refresh button exists to reach GitHub, so answering a
-    // click from the retained payload would look like a button that does nothing.
-    if (loadOpts?.force !== true && lastGood !== undefined && fetching > 0) {
-      return { ...lastGood, stale: true, refreshing: true };
-    }
-
+  // The awaited path, extracted so the background fetch the prime path starts runs exactly
+  // the same code — including the retained-payload catch and the `fetching` bookkeeping —
+  // rather than a second copy of it. `fetching += 1` is the first statement and runs
+  // synchronously, before the caller's `await`, which is what lets the prime path return
+  // while a request arriving behind it still sees `fetching > 0`.
+  async function callLoad(loadOpts?: LoadOpts): Promise<FallbackResult> {
     fetching += 1;
     try {
       const result = await load(loadOpts);
@@ -199,6 +194,48 @@ export function withFallback(
       // retained payload and the dashboard would never show a fresh fetch again.
       fetching -= 1;
     }
+  }
+
+  // `loadOpts` is forwarded rather than dropped: this wrapper is what main.ts hands the
+  // server, so a `force` that stops here never reaches the cache and the Refresh button
+  // goes back to doing nothing.
+  return async (loadOpts?: LoadOpts) => {
+    // Set before the force check, and unconditionally. If a forced call could leave this
+    // false, an operator whose first action is clicking Refresh would leave the flag unset,
+    // and the next poll would take the prime path and start a second background fetch while
+    // the forced one is still running.
+    const firstCall = !primed;
+    primed = true;
+
+    // The first request is answered from the restored payload with the fetch started behind
+    // it, rather than waiting for it. This is the path the launchd agent actually uses: it
+    // sets no PR_DASH_PRELOAD, so nothing is in flight when the browser's first /api/prs
+    // arrives, and awaiting here means a blank page for the whole of the token resolution,
+    // the Touch ID prompt and the paginated GraphQL query.
+    if (loadOpts?.force !== true && lastGood !== undefined && firstCall && fetching === 0) {
+      // Rejection is swallowed on purpose: this response is already committed, and the next
+      // request takes the normal path, where a persistent failure surfaces through the catch
+      // in callLoad as an error on the retained payload. Re-throwing here would reach an
+      // unhandled rejection with nobody to receive it.
+      void callLoad(loadOpts).catch(() => {});
+      return { ...lastGood, stale: true, refreshing: true };
+    }
+
+    // Answer from the retained payload rather than joining a fetch already in progress.
+    // This covers both the pre-load path, where the browser's first request arrives while
+    // the pre-loaded fetch is mid-flight, and the request that lands behind the prime path
+    // above; joining either would make the page wait out the rest of the GitHub round trip
+    // before painting anything. `refreshing` is how the fresh rows still arrive without a
+    // click — the client asks again, and the poll lands on the cache that fetch populated
+    // rather than on a second GitHub fetch.
+    //
+    // Never for a forced call. The Refresh button exists to reach GitHub, so answering a
+    // click from the retained payload would look like a button that does nothing.
+    if (loadOpts?.force !== true && lastGood !== undefined && fetching > 0) {
+      return { ...lastGood, stale: true, refreshing: true };
+    }
+
+    return callLoad(loadOpts);
   };
 }
 

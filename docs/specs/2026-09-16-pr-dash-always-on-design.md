@@ -116,7 +116,11 @@ dropped it.
 
 There is also nothing left to overlap. The agent's server is listening long before the operator
 opens a bookmark, so the fetch has no browser startup to hide behind, and the restored payload
-already paints instantly while the first real fetch runs.
+paints instantly without a pre-load: `withFallback` answers the first request of the process's
+life from the retained payload and starts the fetch behind that response — the **prime path**,
+marked by its `primed` flag. Removing that flag reinstates the blank first paint this section
+claims not to have, because on the agent path nothing else puts a fetch in flight before the
+browser's first `/api/prs` arrives.
 
 So the pre-load is **off by default** and enabled by `PR_DASH_PRELOAD=1`, which `bin/pr-dash`
 sets because that path is about to open a browser. The agent does not set it. This keeps the
