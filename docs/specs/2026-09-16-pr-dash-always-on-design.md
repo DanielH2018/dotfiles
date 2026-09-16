@@ -45,8 +45,9 @@ has no dependencies and no build step — adding a native module to reach it wou
 the design it saves.
 
 So the agent uses `KeepAlive` instead, and the idle exit lives in the server. launchd respawns
-within `ThrottleInterval`, so the port is effectively always held; what the idle exit buys is
-not an idle machine but a bound on how long the token stays in memory.
+within `ThrottleInterval`, so the port is held except during a respawn — see the respawn gap
+under Deferred, which rejecting socket activation leaves unmitigated. What the idle exit buys
+is not an idle machine but a bound on how long the token stays in memory.
 
 ## Dropping the per-launch secret
 
@@ -79,6 +80,29 @@ receives the PR list. That is a real reduction, bounded to metadata: repository 
 names, PR titles, review and CI states. No cardholder data and no credential, so PCI-DSS is
 not implicated. It is a SOC 2 access-control question, and the answer is that the loss was
 accepted knowingly in exchange for a dashboard that opens from a bookmark.
+
+### Two properties this argument has to name
+
+**Version control is an egress path, and it is not about who can read the file on the host.**
+`~/.local/state/pr-dash/` holds `last-payload.json` and `agent.log`, and both carry every
+private repository name, branch name and PR title the API returned. A recursive `chezmoi add`
+— by hand, by an autocommit sweep, or by `chezmoi-guard.sh`'s auto-resync on a managed path —
+would commit them into the dotfiles repo, and the secret-scanning pre-commit hook would not
+fire, because there is no credential in either file. Two things block that path: the agent
+plist lives in `scheduled/`, outside `home/`, so no part of this feature makes the state
+directory a chezmoi target; and `home/.chezmoiignore` carries `.local/state`, which refuses a
+`chezmoi add` of either file.
+
+**Dropping the credential makes the server drivable, not merely readable.** "Readable by
+anything on this machine that speaks HTTP" undersells the change. Any local process can force
+`/api/prs?refresh=1`, which makes the operator's GitHub credential issue API calls on that
+process's behalf, and — on a cold start — can trigger a 1Password biometric prompt at will, a
+prompt the operator may well approve, since it is a genuine `op` process started by their own
+tooling. That is a confused-deputy property, not just an information disclosure: the server
+holds an authority the caller does not have and spends it on request.
+`FORCE_MIN_INTERVAL_MS` in `main-lib.ts` is the bound — one forced fetch per ten seconds, so
+360 an hour rather than as many as a caller can issue — and `TOKEN_FAILURE_TTL_MS` bounds the
+prompts behind a failing resolution.
 
 ### What replaces it
 
@@ -149,9 +173,22 @@ An exit is not a failure and must not be reported as one: launchd sees status 0,
 
 ## The launchd agent
 
-A chezmoi-managed plist under `~/Library/LaunchAgents/`. It sets `PR_DASH_PORT`, runs the
-server directly rather than through `bin/pr-dash`, keeps the job alive, and writes stdout and
-stderr to a log under `~/.local/state/pr-dash/`.
+A plist in the repo's `scheduled/` directory, **outside `home/`**, so `chezmoi apply` never
+deploys it. The operator renders it to `~/Library/LaunchAgents/` and bootstraps it by hand,
+from the activate block in the plist's own header — which also carries deactivate, reload and
+check commands, per the convention `README.md` records for that directory.
+
+Why not deploy it: launchd reads a plist only at bootstrap. An auto-deployed plist means an
+apply rewrites the file while the loaded job keeps the old definition, so a port or path
+change looks applied and is not. Keeping the file out of `~/Library/LaunchAgents` makes
+re-activation an explicit step instead of a silently skipped one. The reload block is also
+what a code change needs: `chezmoi apply` deploys new `public/` assets under the running
+server while `src/` stays at whatever the process loaded.
+
+It sets `PR_DASH_PORT`, runs the server directly rather than through `bin/pr-dash`, keeps the
+job alive, and writes stdout and stderr to a log under `~/.local/state/pr-dash/`. The activate
+block creates that directory at mode 700 first, because launchd creates the log file but not
+its parent.
 
 `bin/pr-dash` survives as the foreground path — useful for watching the log live and for a
 machine where the agent is not installed. It loses its secret generation and its port-in-use
@@ -178,4 +215,30 @@ could not authenticate.
   a local proxy, not a secret in a URL.
 - **Restarting on a changed build.** `chezmoi apply` deploys new files under a running server,
   which serves the new static assets immediately and the old server code until the next idle
-  exit. Acceptable while the idle window is 30 minutes.
+  exit. Acceptable while the idle window is 30 minutes, and the plist header's reload block is
+  the operator's way to skip the wait after a change to the `/api/prs` response shape.
+- **The respawn gap.** Between an idle exit and launchd's respawn, `127.0.0.1:8770` refuses
+  connections. A browser handed ERR_CONNECTION_REFUSED does not retry, so the operator gets a
+  browser error page with nothing about pr-dash on it and has to reload. The window is short —
+  the process ran 30 minutes, so `ThrottleInterval` has long expired and launchd respawns
+  promptly — but rejecting socket activation means there is no mitigation, only a reload.
+- **A foreground `pr-dash` that wins the port wedges the agent.** The probe and the bind are
+  not atomic, so if the agent has just idle-exited, the launcher can take 8770 first. Every
+  launchd respawn then fails `EADDRINUSE` and retries every `ThrottleInterval` for as long as
+  the foreground run lives — six appends a minute to `agent.log`. Accepted: the symptom is
+  launchd churn and a growing log, not data loss, and the plist header's deactivate block is
+  the operator's way out.
+- **`agent.log` is unrotated**, one file taking both stdout and stderr. Steady state is
+  roughly 48 lines a day, one per respawn; it is unbounded only under the case above.
+- **The credential-failure poll.** A dismissed Touch ID prompt on a cold start leaves the page
+  polling a 500 every 600ms for 60 seconds before the give-up banner. `TOKEN_FAILURE_TTL_MS`
+  bounds that to roughly a dozen `op` spawns rather than one per poll. Two alternatives were
+  rejected: inverting the client's 4xx/5xx contract would make a locked vault permanent when
+  it is not, and identifying the error type at the server would mean modifying `src/token.ts`,
+  whose `op` runners must stay unexported because their rejections carry the credential.
+- **The agent's node path on a fresh machine.** `ProgramArguments[0]` is fnm's
+  `aliases/default/bin/node`, which does not exist until fnm has installed a Node and set a
+  default alias. Under unconditional `KeepAlive` that is a 10-second crash loop whose failures
+  land in the unified log rather than in `agent.log`, because node never runs and so nothing
+  writes to `StandardErrorPath`. Accepted: activation is a deliberate operator step on a
+  machine that already has fnm.
