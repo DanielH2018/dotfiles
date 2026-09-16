@@ -366,9 +366,10 @@ export function toDraftValues(value) {
  * The collapsed section keys from a stored value: an axis-qualified `axis:key` string (see
  * `groupCollapseKey` in `group.js`) for a group header, and a bare PR id for a stack root.
  * Non-strings are dropped, so a hand-edited or older stored value cannot put anything but
- * strings into the set. Duplicates are left in place rather than collapsed here: the one
- * caller, `applyView`, immediately wraps this in `new Set(...)`, which already dedupes —
- * doing it twice was one job done in two places.
+ * strings into the set. Duplicates are left in place rather than collapsed here: this has
+ * two callers — `parseStoredView` below, which keeps the array as-is, and `app.js`'s
+ * `applyView`, which wraps the result in `new Set(...)` and so already dedupes there —
+ * doing it here too would be one job done in two places for the caller that already does it.
  *
  * Unlike the axis and status validators, this one does not check membership in a known
  * list, because there is no such list: a key naming a merged PR or a repository with
@@ -497,7 +498,7 @@ export function clearStoredView(storage) {
  * than checking `stale` itself, because `app.js` cannot be imported under `node --test`
  * (see the module comment above) and a check left there would go untested.
  *
- * Four outcomes need four different sentences. A stale response is a failed refresh
+ * Five outcomes need five different sentences. A stale response is a failed refresh
  * behind retained data, so it names the failure and when the data was last good. A
  * partial response is the opposite case: the fetch succeeded just now and returned only
  * some of the user's PRs, so saying "could not refresh (last success ...)" would be
@@ -505,12 +506,19 @@ export function clearStoredView(storage) {
  * itself partial is both, and says so, because a user who cannot see the rest of their
  * PRs should not have to infer that from a banner about a refresh failure. The fourth is
  * a payload restored from disk or retained in memory while a fetch runs behind it — not a
- * failure at all, so it gets its own sentence rather than borrowing the stale one's.
+ * failure at all, so it gets its own sentence rather than borrowing the stale one's. The
+ * fifth, `gaveUp`, is that same in-progress response once `nextPollState` has stopped
+ * asking again: `when` and `incomplete` still apply — the operator still needs the
+ * last-good time and which PRs are missing — so this only swaps the "while it refreshes"
+ * clause for one naming Refresh as the way forward, rather than replacing the whole
+ * message and losing the rest of it.
  * @param {RefreshOutcome} data
  * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
+ * @param {boolean} [gaveUp] True once the poll loop has stopped asking again for this
+ *   refreshing response — see `nextPollState`'s own `gaveUp` field.
  * @returns {string | null}
  */
-export function staleBanner(data, now = Date.now()) {
+export function staleBanner(data, now = Date.now(), gaveUp = false) {
   const when = formatRelativeTime(data.fetchedAt, now);
   const incomplete =
     data.partialErrors.length > 0 ? ` Some PRs are missing: ${data.partialErrors.join('; ')}` : '';
@@ -521,6 +529,9 @@ export function staleBanner(data, now = Date.now()) {
   // no other field distinguishing them, so a response that somehow carries both must fall
   // through to the failure branch below rather than swallow the error text.
   if (data.refreshing === true && data.error === undefined) {
+    if (gaveUp) {
+      return `Refreshing timed out (last saved ${when}). Click Refresh to try again.${incomplete}`;
+    }
     return `Showing the last saved list (${when}) while it refreshes.${incomplete}`;
   }
   if (data.stale) {
@@ -585,8 +596,8 @@ export const REFRESH_POLL_TIMEOUT_MS = 60_000;
  * @param {number} [now] Milliseconds since epoch; defaults to `Date.now()`, overridable so tests are deterministic.
  * @returns {{ state: PollState, waitMs: number | null, gaveUp: boolean }} `waitMs` is `null`
  *   when no poll should be armed. `gaveUp` is true only when this call is the one that
- *   crossed the timeout — `app.js` uses it to swap the banner for {@link pollGaveUpBanner},
- *   since nothing here arms another poll once that happens.
+ *   crossed the timeout — `app.js` passes it to {@link staleBanner} as its `gaveUp`
+ *   argument, since nothing here arms another poll once that happens.
  */
 export function nextPollState(state, data, now = Date.now()) {
   if (data.refreshing !== true) return { state: { since: null }, waitMs: null, gaveUp: false };
@@ -602,16 +613,17 @@ export function nextPollState(state, data, now = Date.now()) {
 }
 
 /**
- * The banner text once the poll loop has given up. `nextPollState` stops arming further
- * polls after `REFRESH_POLL_TIMEOUT_MS` of continuous refreshing, but the banner shown for
- * the response that crossed that boundary is {@link staleBanner}'s "while it refreshes"
- * message — which becomes false the instant nothing is asking again. Refresh is named
- * because it is the only way back: nothing here retries on its own once the budget is
- * spent.
- * @returns {string}
+ * Whether `status` names a permanent failure — an HTTP client error (4xx) that retrying
+ * without changing anything (the URL, the `#secret` fragment) cannot fix. A rejected
+ * request is not worth retrying: every one of those requests only adds load for a
+ * response that can never succeed. `undefined` (a network error, or a malformed body that
+ * never reached an HTTP status at all) and a 5xx are both treated as not permanent — a
+ * transient condition on the wire or upstream, which the next poll might find cleared.
+ * @param {number | undefined} status
+ * @returns {boolean}
  */
-export function pollGaveUpBanner() {
-  return 'Refreshing timed out. Click Refresh to try again.';
+export function isPermanentFailure(status) {
+  return typeof status === 'number' && status >= 400 && status < 500;
 }
 
 /**

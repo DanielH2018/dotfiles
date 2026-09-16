@@ -24,7 +24,7 @@ import {
   staleBanner,
   formatRelativeTime,
   nextPollState,
-  pollGaveUpBanner,
+  isPermanentFailure,
   isStaleResponse,
   REFRESH_POLL_MS,
   REFRESH_POLL_TIMEOUT_MS,
@@ -1063,8 +1063,64 @@ test('a refreshing response past the timeout gives up and clears the state', () 
   assert.strictEqual(gaveUp, true);
 });
 
-test('pollGaveUpBanner names Refresh as the way forward', () => {
-  assert.match(pollGaveUpBanner(), /Refresh/);
+test('staleBanner names Refresh, not just "Refreshing", when gaveUp is true', () => {
+  // /Refresh/ alone also matches "Refreshing timed out", the sentence that opens this
+  // message -- deleting the clause that actually names Refresh as the way forward would
+  // still pass that looser check.
+  const message = staleBanner(
+    { stale: true, fetchedAt: '2026-09-15T06:00:00.000Z', partialErrors: [], refreshing: true },
+    Date.parse('2026-09-15T06:30:00.000Z'),
+    true,
+  );
+  assert.match(String(message), /\bRefresh\b/);
+  assert.match(String(message), /30 minutes ago/);
+});
+
+test('staleBanner keeps the last-good time and the partial-errors clause when giving up', () => {
+  // Fix B originally replaced staleBanner's whole message rather than extending it, which
+  // meant an operator on the give-up path lost the last-good time and never learned a
+  // repository was missing from the list. This composite -- refreshing, past the budget,
+  // and carrying partialErrors -- is what that regression looked like.
+  const message = staleBanner(
+    {
+      stale: true,
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: ['acme/web: 502 from GitHub'],
+      refreshing: true,
+    },
+    Date.parse('2026-09-15T06:30:00.000Z'),
+    true,
+  );
+  assert.match(String(message), /30 minutes ago/);
+  assert.match(String(message), /acme\/web: 502 from GitHub/);
+  assert.match(String(message), /\bRefresh\b/);
+});
+
+test('gaveUp is ignored once a refreshing response also carries a failure', () => {
+  // The failure branch already takes precedence over "while it refreshes" for a response
+  // carrying both refreshing and error (see the fix-round-2 test above); gaveUp must not
+  // resurrect the refreshing wording for that case.
+  const message = staleBanner(
+    {
+      stale: true,
+      error: 'network down',
+      fetchedAt: '2026-09-15T06:00:00.000Z',
+      partialErrors: [],
+      refreshing: true,
+    },
+    Date.parse('2026-09-15T09:00:00.000Z'),
+    true,
+  );
+  assert.strictEqual(message, 'Could not refresh (last success 3 hours ago): network down.');
+});
+
+test('isPermanentFailure treats 4xx as permanent and everything else as worth retrying', () => {
+  assert.strictEqual(isPermanentFailure(400), true);
+  assert.strictEqual(isPermanentFailure(403), true);
+  assert.strictEqual(isPermanentFailure(499), true);
+  assert.strictEqual(isPermanentFailure(500), false);
+  assert.strictEqual(isPermanentFailure(399), false);
+  assert.strictEqual(isPermanentFailure(undefined), false);
 });
 
 test('isStaleResponse is true once a newer request has started', () => {

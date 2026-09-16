@@ -99,7 +99,26 @@ test('a caught refresh failure arms a bounded retry through schedulePoll rather 
   );
 });
 
-test('refresh swaps the banner for the give-up message when schedulePoll reports giving up', () => {
+test('the catch branch skips the retry entirely for a permanent (4xx) failure', () => {
+  // A rejected request (wrong Host, wrong secret) cannot succeed on a retry, so spending
+  // the give-up budget on it is waste for a class of failure that can never clear —
+  // measured at 100 requests over 60 seconds for exactly this case before this gate
+  // existed.
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  const catchStart = body.indexOf('} catch', tryStart);
+  const catchBody = body.slice(catchStart);
+
+  assert.match(
+    catchBody,
+    /isPermanentFailure\(\s*errorStatus\(\s*err\s*\)\s*\)/,
+    'expected the catch branch to classify the failure with isPermanentFailure(errorStatus(err))',
+  );
+  const gateMatch = /\w+\s*=\s*(\w+)\s*\?\s*false\s*:\s*schedulePoll\(/.exec(catchBody);
+  assert.ok(gateMatch, 'expected schedulePoll to run only when the classification says not permanent');
+});
+
+test('refresh passes schedulePoll\'s result to staleBanner as its gaveUp argument', () => {
   const body = functionBody(STRIPPED, 'async function refresh');
   const tryStart = body.indexOf('try {');
   const catchStart = body.indexOf('} catch', tryStart);
@@ -112,12 +131,40 @@ test('refresh swaps the banner for the give-up message when schedulePoll reports
 
   // Gated on schedulePoll's own return, not a fresh `data.refreshing` check that cannot
   // tell "still within budget" from "budget just spent" — the server reports the same
-  // `refreshing: true` for both.
+  // `refreshing: true` for both. staleBanner owns the wording (including the give-up
+  // sentence) rather than a second function replacing its output outright, so the
+  // last-good time and the partial-errors clause survive a give-up.
   assert.match(
     tryBody,
-    new RegExp(`${gaveUpVar}\\s*\\?\\s*pollGaveUpBanner\\(\\)\\s*:\\s*staleBanner\\(`),
-    'expected the give-up message to replace staleBanner\'s, gated on schedulePoll\'s result',
+    new RegExp(`staleBanner\\(\\s*data\\s*,\\s*undefined\\s*,\\s*${gaveUpVar}\\s*\\)`),
+    "expected staleBanner to receive schedulePoll's result as its gaveUp argument",
   );
+});
+
+test('the catch branch also names Refresh once its own retry has given up', () => {
+  // Fix B named Refresh on the success path; the catch path's own retry can give up too,
+  // and left unfixed it would keep saying only "Could not refresh: ..." with no way out.
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  const catchStart = body.indexOf('} catch', tryStart);
+  const catchBody = body.slice(catchStart);
+
+  const gateMatch = /(\w+)\s*=\s*\w+\s*\?\s*false\s*:\s*schedulePoll\(/.exec(catchBody);
+  assert.ok(gateMatch, 'expected the catch branch to capture its own gaveUp');
+  const gaveUpVar = gateMatch![1];
+  const ternaryMatch = new RegExp(`${gaveUpVar}\\s*\\?[\\s\\S]{0,120}?\\bRefresh\\b`).exec(catchBody);
+  assert.ok(ternaryMatch, 'expected the catch branch\'s banner to name Refresh when its own gaveUp is true');
+});
+
+test('a forced refresh clears the banner before awaiting the fetch', () => {
+  // github.ts sets no fetch timeout, so a forced round trip can run long; a give-up
+  // banner left showing for that whole time would keep inviting a click that only adds
+  // load, since the fetch this click started is already under way.
+  const body = functionBody(STRIPPED, 'async function refresh');
+  const tryStart = body.indexOf('try {');
+  assert.notStrictEqual(tryStart, -1, 'expected a try block in refresh');
+  const preamble = body.slice(0, tryStart);
+  assert.match(preamble, /if\s*\(\s*force\s*\)\s*hideBanner\(\)\s*;/);
 });
 
 test('a forced refresh clears any armed poll timer before issuing its request', () => {
@@ -320,21 +367,19 @@ test('readControls reports the in-memory collapsed set unconditionally', () => {
   );
 });
 
-test('the per-launch secret never reaches localStorage', () => {
-  // saveView/loadStoredView/clearStoredView are app.js's only localStorage touchpoints.
-  // Every real use of `secret` sits on the line that reads it from location.hash or the
-  // line that sends it as the x-pr-dash-secret header — never anywhere `localStorage`
-  // also appears on the same line, which is what `localStorage.setItem('pr-dash:token',
-  // secret)` inside saveView would do.
-  const secretLines = STRIPPED.split('\n').filter((line) => /\bsecret\b/.test(line));
-  assert.ok(secretLines.length > 0, 'expected to find the secret variable in app.js');
-  for (const line of secretLines) {
-    assert.match(
-      line,
-      /location\.hash|x-pr-dash-secret/,
-      `expected every use of secret to be its declaration or the fetch header, not: ${line}`,
-    );
-  }
+test('app.js never calls localStorage.setItem directly', () => {
+  // A test that only scans lines mentioning `secret` misses a write of some other value
+  // (say, `location.hash` copied under a second key) to localStorage — that line never
+  // contains the word `secret` at all. Pin the stronger property instead: app.js writes
+  // to localStorage only through saveStoredView/clearStoredView (render-guards.js), never
+  // by calling setItem itself, so any direct setItem call — on the per-launch secret,
+  // on location.hash, or on anything else — is caught regardless of what it stores or
+  // what key it uses.
+  assert.doesNotMatch(
+    STRIPPED,
+    /\.setItem\(/,
+    'expected app.js to never call .setItem itself — go through saveStoredView instead',
+  );
 });
 
 test('renderRow only assigns href when isSafeUrl approves the url', () => {

@@ -46,5 +46,9 @@ test('the search operation in src/queries.ts still opens with the query keyword,
   // implicit query, but that is not what this asserts; it pins the explicit keyword this
   // module actually sends.
   const stripped = stripComments(readFileSync(QUERIES_TS, 'utf8'));
-  assert.match(stripped, /`\s*query\(\$cursor: String\) \{/);
+  assert.match(
+    stripped,
+    /`\s*query\(\$cursor: String\) \{/,
+    'expected queries.ts to open its search operation with the explicit query keyword',
+  );
 });

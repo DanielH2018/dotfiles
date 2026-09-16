@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { LoadResult } from './loader.ts';
 
-/** Owner-only. Set explicitly: this machine's login shell umask would give 0640. */
+/** Owner-only. Set explicitly: this machine's login shell umask would give 0660. */
 export const FILE_MODE = 0o600;
 /** Owner-only. Same reason as {@link FILE_MODE}. */
 export const DIR_MODE = 0o700;

@@ -25,7 +25,7 @@ import {
   parseStoredView,
   staleBanner,
   nextPollState,
-  pollGaveUpBanner,
+  isPermanentFailure,
   isStaleResponse,
 } from './render-guards.js';
 
@@ -142,6 +142,18 @@ function resetView() {
 }
 
 /**
+ * An `Error` carrying the HTTP status that produced it, so a caller can tell a permanent
+ * client error (4xx — the secret or Host is wrong for this page load, and no retry can fix
+ * that) from a transient one without re-parsing the message string.
+ * @param {number} status
+ * @param {string} body
+ * @returns {Error & { status: number }}
+ */
+function httpError(status, body) {
+  return Object.assign(new Error(`${status} ${body}`), { status });
+}
+
+/**
  * Fetches `/api/prs`. `force` adds the `refresh=1` the server reads as "bypass the
  * cache TTL" — the Refresh button's whole job. Without it the server may answer from
  * its 60-second cache, which is what a first load and any later poll want.
@@ -151,13 +163,26 @@ function resetView() {
 async function loadPrs(force) {
   const path = force ? '/api/prs?refresh=1' : '/api/prs';
   const res = await fetch(path, { headers: { 'x-pr-dash-secret': secret } });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw httpError(res.status, await res.text());
   const body = await res.json();
   // Both fields the render path consumes come back through parsePrsBody. `stacks` used to
   // be cast straight off the raw body on the grounds that the server derives it from the
   // same prs — true, and still no reason for one of the two to skip the boundary tsc
   // cannot enforce across the network.
   return parsePrsBody(body);
+}
+
+/**
+ * The HTTP status an error thrown by `loadPrs` carries, or `undefined` for anything else —
+ * a network error `fetch` itself threw, or a `parsePrsBody` validation error, neither of
+ * which ever reached an HTTP status.
+ * @param {unknown} err
+ * @returns {number | undefined}
+ */
+function errorStatus(err) {
+  if (!(err instanceof Error)) return undefined;
+  const status = /** @type {{ status?: unknown }} */ (err).status;
+  return typeof status === 'number' ? status : undefined;
 }
 
 /** @param {string} message */
@@ -488,6 +513,12 @@ async function refresh(force = false) {
     clearTimeout(pollTimer);
     pollTimer = null;
   }
+  // A give-up banner from an earlier poll must not sit there claiming Refresh is the way
+  // out for the whole length of the round trip this click just started — github.ts sets
+  // no fetch timeout, so that round trip can run long. Cleared unconditionally rather than
+  // only when a give-up banner happens to be showing: whatever was on screen is about to
+  // be replaced by this request's own outcome either way.
+  if (force) hideBanner();
   requestGeneration += 1;
   const generation = requestGeneration;
   try {
@@ -508,23 +539,31 @@ async function refresh(force = false) {
     // to show a banner, and what it says, is staleBanner's call, not a `data.stale`
     // check inlined here — that decision lives in render-guards.js so it can be
     // covered by a real test, the same reasoning as every other guard imported above.
-    const message = gaveUp ? pollGaveUpBanner() : staleBanner(data);
+    const message = staleBanner(data, undefined, gaveUp);
     if (message !== null) showBanner(message);
     else hideBanner();
   } catch (err) {
     if (isStaleResponse(generation, requestGeneration)) return;
-    // Reached only when the request itself failed outright (network error, or a
-    // 500 with no retained payload behind it) rather than the server returning a
-    // retained payload marked stale. Still routed through schedulePoll rather than
-    // returning: a hard failure must not end the poll loop, since the cache this
-    // failure is answering from can still hold a payload the next poll can parse and
-    // render (a stale-but-server-safe restored record the browser's own validator
-    // rejects, until the pre-load's real fetch replaces it). The same give-up budget
-    // that bounds a `refreshing: true` response bounds this retry too, rather than
-    // arming an unbounded bare setTimeout.
-    showBanner(`Could not refresh: ${String(err)}`);
     if (current.length > 0) render(current, currentStacks);
-    schedulePoll({ refreshing: true });
+    // Reached when the request itself failed outright rather than the server returning
+    // a retained payload marked stale. Not every such failure is worth retrying: a 4xx
+    // means the Host or the secret is wrong for this page load, which asking again can
+    // never fix, so isPermanentFailure skips schedulePoll entirely for that class rather
+    // than spending the give-up budget on requests that cannot succeed. Everything else
+    // (a network error, or a parsePrsBody validation error — a stale-but-server-safe
+    // restored record the browser's own stricter validator rejects, until the pre-load's
+    // real fetch replaces it) is transient, and is routed through schedulePoll/
+    // nextPollState's existing give-up budget rather than an unbounded bare setTimeout.
+    // That budget is shared with the ordinary poll loop's own refreshing responses: a
+    // failure here inherits whatever time a prior refreshing run already spent, and vice
+    // versa, rather than each getting its own 60 seconds.
+    const permanent = isPermanentFailure(errorStatus(err));
+    const gaveUp = permanent ? false : schedulePoll({ refreshing: true });
+    showBanner(
+      gaveUp
+        ? `Could not refresh: ${String(err)}. Refreshing timed out — click Refresh to try again.`
+        : `Could not refresh: ${String(err)}`,
+    );
   }
 }
 

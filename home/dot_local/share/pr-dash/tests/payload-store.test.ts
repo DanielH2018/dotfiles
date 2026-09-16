@@ -172,7 +172,7 @@ test('the directory and the file are created with owner-only modes', async () =>
   assert.strictEqual(fs.modes.get('/state'), DIR_MODE);
   assert.strictEqual(fs.modes.get('/state/last-payload.json'), FILE_MODE);
   // This machine's login shell runs `umask 0007`, so leaving the mode to the umask would
-  // produce a group-readable 0640 file holding private PR titles.
+  // produce a group-readable 0660 file holding private PR titles.
   assert.strictEqual(FILE_MODE, 0o600);
   assert.strictEqual(DIR_MODE, 0o700);
 });

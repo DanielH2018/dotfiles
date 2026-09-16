@@ -93,35 +93,24 @@ test('main.ts persists a successful fetch back to the payload store', () => {
   assert.match(body, writePattern, `expected onSuccess's body to call store.write(${param})`);
 });
 
-/** The balanced `(...)` argument list of the call opening at or after `from`. */
-function parenBlock(text: string, from: number): string {
-  const start = text.indexOf('(', from);
-  assert.notStrictEqual(start, -1, 'expected a ( at or after the given position');
-  let depth = 0;
-  let i = start;
-  for (; i < text.length; i += 1) {
-    if (text[i] === '(') depth += 1;
-    else if (text[i] === ')') {
-      depth -= 1;
-      if (depth === 0) {
-        i += 1;
-        break;
-      }
-    }
-  }
-  return text.slice(start, i);
-}
-
-test('main.ts never logs the token', () => {
+test('main.ts uses the identifier token only in its known-safe places', () => {
   // main.ts is the one module holding the plaintext token in a variable, and it carries no
   // test coverage otherwise (it is a process shell that reads env vars and calls
-  // process.exit), so a stray `console.error(...token...)` has nothing else to catch it.
-  // Untested by construction is exactly why this has to be a structural assertion rather
-  // than a behavioral one: there is no way to call main.ts and observe its stderr here.
-  for (const match of MAIN_TS_STRIPPED.matchAll(/console\.\w+\(/g)) {
-    const call = parenBlock(MAIN_TS_STRIPPED, match.index);
-    assert.doesNotMatch(call, /\btoken\b/, `expected no console call to log token: ${call}`);
-  }
+  // process.exit), so a stray log of it has nothing else to catch it. A scan restricted to
+  // `console.\w+(` calls misses `process.stderr.write(token)`, and a paren-balance scanner
+  // that does not track string state stops at the first `)` inside a string literal, so
+  // `console.error('oops :)' + token)` slips past it too. Counting every occurrence of the
+  // bare word `token` sidesteps both: it does not need to know which sink the leak went
+  // through, only that a new mention of the identifier appeared. Four is the count for the
+  // import path (`./token.ts`), the `let token` declaration, the assignment from
+  // resolveToken, and the `{ token }` passed to createClient — any fifth mention is a
+  // potential leak.
+  const occurrences = MAIN_TS_STRIPPED.match(/\btoken\b/g) ?? [];
+  assert.strictEqual(
+    occurrences.length,
+    4,
+    `expected token to appear exactly 4 times in main.ts (found ${occurrences.length})`,
+  );
 });
 
 test('the /api/prs cache TTL is 60 seconds', () => {

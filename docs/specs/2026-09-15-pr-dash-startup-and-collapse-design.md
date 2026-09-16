@@ -99,31 +99,6 @@ return type with every field made required, rather than hand-written as its own 
 a field set upstream and left out of the response object is a compile error rather than a
 silent omission.
 
-The client asks again while a response reports `refreshing`, through `nextPollState` in
-`public/render-guards.js`. It waits `REFRESH_POLL_MS` (600ms) between polls and gives up
-after `REFRESH_POLL_TIMEOUT_MS` (60 seconds) of continuous refreshing, at which point Refresh
-is the way to try again. `staleBanner`'s fourth message is `Showing the last saved list
-({when}) while it refreshes.{incomplete}`, where `{incomplete}` is the same "Some PRs are
-missing" clause the partial-response case uses, so a response that is both refreshing and
-missing PRs states both facts. It is selected by `data.refreshing === true && data.error ===
-undefined`, checked before the stale-failure branch. Both conjuncts matter: a response
-carrying `refreshing` alongside an `error` falls through to the failure branch instead,
-since a fetch that already failed takes precedence over one merely still running. Restored
-rows still cannot render as fresh, which is the property the parent spec insists on: stale
-data presented as fresh is the failure mode to avoid.
-
-### Out-of-order responses
-
-Polling and a manual Refresh can each have a request in flight at once, and the two do
-not always settle in the order they were sent. A poll issued just before a Refresh click
-can still resolve after it. `app.js` tags each call to `refresh()` with a generation
-number and discards a response whose generation is no longer the latest, through
-`isStaleResponse` in `public/render-guards.js`. Without this guard, the older response
-would land last and revert the page to rows the newer request already replaced. The
-check runs immediately after a response arrives, before either the success or the
-failure path touches `current`, `currentStacks`, or the banner, so a discarded response
-never partially applies.
-
 ### At rest
 
 The file holds the full payload — repository names, PR titles, branch names, CI and review
@@ -176,7 +151,46 @@ calls that land on one fetch's result can therefore both invoke `onSuccess` if t
 invocation throws; this is accepted, because the atomic write above means two writes of
 identical bytes cannot race destructively.
 
-## Part 3 — Collapsible repositories and stacks
+## Part 3 — Refreshing in the browser
+
+The client asks again while a response reports `refreshing`, through `nextPollState` in
+`public/render-guards.js`. It waits `REFRESH_POLL_MS` (600ms) between polls and gives up
+after `REFRESH_POLL_TIMEOUT_MS` (60 seconds) of continuous refreshing. `staleBanner` selects
+one of five messages from `data` and this timeout state. Its fourth message is `Showing the
+last saved list ({when}) while it refreshes.{incomplete}`, where `{incomplete}` is the same
+"Some PRs are missing" clause the partial-response case uses, so a response that is both
+refreshing and missing PRs states both facts. It is selected by `data.refreshing === true &&
+data.error === undefined`, checked before the stale-failure branch. Both conjuncts matter: a
+response carrying `refreshing` alongside an `error` falls through to the failure branch
+instead, since a fetch that already failed takes precedence over one merely still running.
+Restored rows still cannot render as fresh, which is the property the parent spec insists on:
+stale data presented as fresh is the failure mode to avoid.
+
+A request can also fail outright, rather than the server returning a retained payload marked
+stale: a network error, an HTTP rejection, or a `parsePrsBody` validation error all reach the
+client this way. Not every such failure is worth retrying. An HTTP 4xx means the Host or the
+secret is wrong for this page load, which asking again cannot fix, so `isPermanentFailure`
+excludes that class from the retry entirely. Everything else — a network error, a 5xx, or a
+validation error — is transient, and is retried through the same `schedulePoll`/
+`nextPollState` give-up budget the ordinary poll loop uses, rather than an unbounded bare
+retry. `staleBanner`'s fifth message, `Refreshing timed out (last saved {when}). Click
+Refresh to try again.{incomplete}`, is shown once that budget is spent. The budget is shared
+with the ordinary poll loop's own refreshing responses, so a failure here inherits whatever
+time a prior refreshing run already spent, and vice versa, rather than each getting its own
+60 seconds.
+
+### Out-of-order responses
+
+Polling and a manual Refresh can each have a request in flight at once. The two do not
+always settle in the order they were sent, so a poll issued just before a Refresh click can
+still resolve after it. `app.js` tags each call to `refresh()` with a generation number and
+discards a response whose generation is no longer the latest, through `isStaleResponse` in
+`public/render-guards.js`. Without this guard, the older response would land last and revert
+the page to rows the newer request already replaced. The check runs immediately after a
+response arrives, before either the success or the failure path touches `current`,
+`currentStacks`, or the banner, so a discarded response never partially applies.
+
+## Part 4 — Collapsible repositories and stacks
 
 Repository group headers and stack roots each carry a disclosure toggle. Everything is
 expanded by default. A stack root's toggle is a sibling of its PR's own link, not nested
