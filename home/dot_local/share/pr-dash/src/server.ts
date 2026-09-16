@@ -2,7 +2,7 @@ import { createServer as createHttpServer, type Server } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkHost, checkSecret } from './guard.ts';
+import { checkHost } from './guard.ts';
 import { buildStacks } from './stacks.ts';
 import type { PrRecord, StackNode } from './types.ts';
 
@@ -15,7 +15,6 @@ const MIME: Record<string, string> = {
 };
 
 export type ServerOpts = {
-  secret: string;
   // The host the launcher actually binds to and expects requests to arrive on. This is the
   // guard's expectation, and it must come from here rather than from the request's own Host
   // header — comparing a header to itself can never disagree, which is how the DNS
@@ -72,10 +71,11 @@ async function handle(
   const hostCheck = checkHost(req.headers, { host: opts.host });
   if (!hostCheck.ok) return refuse(res, 403, hostCheck.reason);
 
-  // Only reads are served. No route here changes GitHub state and a cross-origin form POST
-  // cannot set the secret header, so this closes nothing exploitable today; it is here
-  // because this is the endpoint surface a later mutating route is added to, and a method
-  // gate costs less to add before that route exists than after.
+  // Only reads are served. No route here changes GitHub state, and a cross-origin form
+  // POST is already refused above by the Host/Origin check, so this closes nothing
+  // exploitable today; it is here because this is the endpoint surface a later mutating
+  // route is added to, and a method gate costs less to add before that route exists than
+  // after.
   if (req.method !== 'GET') {
     res.writeHead(405, { 'content-type': 'application/json', allow: 'GET' });
     res.end(JSON.stringify({ error: `method ${String(req.method)} is not allowed` }));
@@ -99,17 +99,15 @@ async function handle(
     return;
   }
 
-  // The shell is fetched by the browser's address bar, which cannot send a
-  // header, so it is served before the secret check. It contains no PR data.
+  // The shell contains no PR data, and nothing beyond the Host/Origin check above gates it.
   if (url.pathname === '/' || url.pathname === '/index.html') {
     return serveStatic('index.html', res);
   }
 
   if (url.pathname === '/api/prs') {
-    // Only the secret is checked here. The host was checked at the top of this function,
-    // unconditionally and before any route was dispatched, which is the one place it lives.
-    const guard = checkSecret(req.headers, { secret: opts.secret });
-    if (!guard.ok) return refuse(res, 403, guard.reason);
+    // The host was checked at the top of this function, unconditionally and before any
+    // route was dispatched, which is the one place it lives. Nothing further gates this
+    // route.
     // `?refresh=1` is the page's Refresh click, and only that exact value counts —
     // anything else in the query string is an ordinary poll served from the cache. The
     // comparison is the validation: no value from the URL reaches loadPrs, only a boolean.

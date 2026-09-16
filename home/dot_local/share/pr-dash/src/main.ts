@@ -12,11 +12,6 @@ import {
 } from './main-lib.ts';
 import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
 
-const secret = process.env['PR_DASH_SECRET'];
-if (secret === undefined || secret === '') {
-  console.error('PR_DASH_SECRET is not set. Start the dashboard with `pr-dash`.');
-  process.exit(1);
-}
 const parsedPort = parsePort(process.env['PR_DASH_PORT']);
 if (!parsedPort.ok) {
   console.error(parsedPort.reason);
@@ -53,7 +48,7 @@ startPreload(loadPrs, (message) => {
   console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
 });
 
-const server = createServer({ secret, host: expectedHost(port), loadPrs });
+const server = createServer({ host: expectedHost(port), loadPrs });
 // Attached before listen(): without a handler, an occupied port reaches Node's default
 // 'error' behaviour and prints a `node:events` throw trace over a condition the user can
 // act on in one step.

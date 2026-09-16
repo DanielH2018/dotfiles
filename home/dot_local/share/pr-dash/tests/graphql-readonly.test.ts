@@ -1,7 +1,7 @@
 // This dashboard's whole read-only posture rests on every GraphQL operation it sends being
 // a `query`, never a `mutation` — the one kind of request that can actually change state on
-// GitHub. The 405 method gate (server.ts) and the secret gate (guard.ts) both have tests
-// that redden when removed, but nothing asserted the GraphQL boundary itself: rewriting
+// GitHub. The 405 method gate (server.ts) and the Host/Origin gate (guard.ts) both have
+// tests that redden when removed, but nothing asserted the GraphQL boundary itself: rewriting
 // queries.ts's `query($cursor: String) {` to `mutation($cursor: String) {` left the whole
 // suite green, since every fixture in github.test.ts and refresh.test.ts stubs `fetchImpl`
 // and never inspects the request body it was sent.

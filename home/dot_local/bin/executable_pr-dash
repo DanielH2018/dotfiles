@@ -4,8 +4,7 @@ set -euo pipefail
 
 SHARE_DIR="${HOME}/.local/share/pr-dash"
 PORT="${PR_DASH_PORT:-8770}"
-PR_DASH_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
-export PR_DASH_SECRET PR_DASH_PORT="$PORT"
+export PR_DASH_PORT="$PORT"
 
 node "${SHARE_DIR}/src/main.ts" &
 SERVER_PID=$!
@@ -16,9 +15,8 @@ trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 # raises a Touch ID prompt which can sit for as long as the user takes to touch the sensor,
 # so the browser showed ERR_CONNECTION_REFUSED and the user had to reload by hand.
 #
-# `/` is the probe, not `/api/prs`: the server serves the page shell before the secret
-# check, because the browser's address bar cannot send a header. `/api/prs` would answer
-# 403 to a curl with no secret, which reads as "not ready" for the whole timeout.
+# `/` is the probe: it answers as soon as the server is listening, with no dependency on
+# GitHub or the cache.
 #
 # `SECONDS` and the loop counter carry the deadline rather than `timeout(1)`, which is GNU
 # coreutils and is not on a script's PATH on this machine.
@@ -40,7 +38,7 @@ until curl -fs -o /dev/null "http://127.0.0.1:${PORT}/"; do
   sleep 0.1
 done
 
-URL="http://127.0.0.1:${PORT}/#${PR_DASH_SECRET}"
+URL="http://127.0.0.1:${PORT}/"
 # `open`'s exit status must not reach `set -e`: under -e, a failing command that
 # isn't part of a condition ends the script, which fires the EXIT trap and kills
 # the server this script just started over a browser launch that never mattered

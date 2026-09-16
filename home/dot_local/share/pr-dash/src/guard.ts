@@ -1,33 +1,9 @@
-import { timingSafeEqual } from 'node:crypto';
-
 export type GuardResult = { ok: true } | { ok: false; reason: string };
 
 type Headers = Record<string, string | string[] | undefined>;
 
 function one(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
-}
-
-/**
- * Whether `actual` is the expected secret, compared in constant time.
- *
- * There is no practical timing attack on this endpoint: an attacker has to be sending a
- * matching `Host` already, which means local code execution, and at that point they can
- * read the secret out of the launcher's argv. `timingSafeEqual` is used anyway because
- * non-constant-time secret comparison is a pattern PCI-DSS and SOC 2 reviewers look for by
- * name, and one line here removes a question rather than answering it later.
- *
- * `timingSafeEqual` throws on unequal-length buffers, so lengths are compared first. That
- * short-circuit leaks only the length of the expected secret, which is not secret: the
- * launcher generates a fixed 24 random bytes as 48 hex characters, so the length is the
- * same every launch and is readable in `bin/pr-dash`.
- */
-function secretMatches(actual: string | undefined, expected: string): boolean {
-  if (actual === undefined) return false;
-  const actualBytes = Buffer.from(actual, 'utf8');
-  const expectedBytes = Buffer.from(expected, 'utf8');
-  if (actualBytes.length !== expectedBytes.length) return false;
-  return timingSafeEqual(actualBytes, expectedBytes);
 }
 
 // 'localhost' and '127.0.0.1' name the same loopback interface, so the launcher's expected
@@ -55,12 +31,9 @@ function originHost(origin: string): string | undefined {
 }
 
 /**
- * The DNS-rebinding half of the guard: `Host` must be the host the launcher bound to, and
- * `Origin`, when present, must name that same host. Separate from {@link checkSecret}
- * because the server applies this half to *every* request — a mismatched `Host` must not be
- * served the page shell or `app.js` either — while the secret applies only to `/api/prs`.
- * The browser cannot attach a custom header to the address-bar navigation that loads the
- * shell, so requiring the secret there would stop the dashboard loading at all.
+ * The whole request boundary: `Host` must be the host the launcher bound to, and `Origin`,
+ * when present, must name that same host. Applied to *every* request — a mismatched `Host`
+ * must not be served the page shell or `app.js` either.
  *
  * An absent `Host` is refused rather than defaulted: HTTP/1.1 requires it, there is nothing
  * to compare without it, and the server has no other host to fall back to.
@@ -72,37 +45,15 @@ export function checkHost(headers: Headers, expected: { host: string }): GuardRe
   }
 
   // Same-origin navigations and plain GETs omit Origin entirely, so refusing an absent
-  // header here would break the page itself. That means Origin is not what authenticates
-  // these requests — the per-launch secret is — and this check exists only to reject a
-  // *present* cross-origin (or otherwise invalid) Origin, not to require one.
+  // header here would break the page itself. Host and Origin are now the whole request
+  // boundary, and this check exists only to reject a *present* cross-origin (or otherwise
+  // invalid) Origin, not to require one.
   const origin = one(headers['origin']);
   if (origin !== undefined) {
     const originAuthority = originHost(origin);
     if (originAuthority === undefined || canonicalHost(originAuthority) !== canonicalHost(expected.host)) {
       return { ok: false, reason: `cross-origin request from ${origin}` };
     }
-  }
-
-  return { ok: true };
-}
-
-/**
- * The per-launch secret half of the guard, which applies to `/api/prs` alone. The secret is
- * what actually authenticates an API request, since `Origin` is optional and `Host` only
- * rules out rebinding.
- *
- * This deliberately does *not* re-check the host. It used to, and that check was
- * unreachable: the server calls {@link checkHost} on every request before dispatching a
- * route, so by the time this runs a mismatched host has already been refused. A second
- * check that can never disagree with the first is one nothing can test through the server —
- * swapping its expectation for the request's own `Host` header, the very defect that left
- * this dashboard with no rebinding defence, left the whole suite green. Host defence now
- * lives in exactly one place, so there is no second copy to rot.
- */
-export function checkSecret(headers: Headers, expected: { secret: string }): GuardResult {
-  const secret = one(headers['x-pr-dash-secret']);
-  if (!secretMatches(secret, expected.secret)) {
-    return { ok: false, reason: 'missing or incorrect secret' };
   }
 
   return { ok: true };

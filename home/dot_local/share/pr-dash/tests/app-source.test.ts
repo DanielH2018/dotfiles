@@ -100,10 +100,9 @@ test('a caught refresh failure arms a bounded retry through schedulePoll rather 
 });
 
 test('the catch branch skips the retry entirely for a permanent (4xx) failure', () => {
-  // A rejected request (wrong Host, wrong secret) cannot succeed on a retry, so spending
-  // the give-up budget on it is waste for a class of failure that can never clear —
-  // measured at 100 requests over 60 seconds for exactly this case before this gate
-  // existed.
+  // A rejected request (wrong Host) cannot succeed on a retry, so spending the give-up
+  // budget on it is waste for a class of failure that can never clear — measured at 100
+  // requests over 60 seconds for exactly this case before this gate existed.
   const body = functionBody(STRIPPED, 'async function refresh');
   const tryStart = body.indexOf('try {');
   const catchStart = body.indexOf('} catch', tryStart);
@@ -120,26 +119,6 @@ test('the catch branch skips the retry entirely for a permanent (4xx) failure', 
   );
   const gateMatch = /\w+\s*=\s*(\w+)\s*\?\s*false\s*:\s*schedulePoll\(/.exec(catchBody);
   assert.ok(gateMatch, 'expected schedulePoll to run only when the classification says not permanent');
-});
-
-test('a refused secret clears the cached one and says to relaunch, before the retry gate', () => {
-  // The bare bookmarked URL reaches a 403 whenever no launch has run since the cache was
-  // seeded. Keeping the dead secret would fail every later visit the same way, and the
-  // generic "Could not refresh: Error: 403 ..." names no fix — only a new launch mints a
-  // secret. Position matters: this must return before the retry gate, or the 403 falls
-  // through to the banner that tells the user to click Refresh, which cannot help.
-  const body = functionBody(STRIPPED, 'async function refresh');
-  const catchStart = body.indexOf('} catch', body.indexOf('try {'));
-  const catchBody = body.slice(catchStart);
-
-  const clearIndex = catchBody.search(/clearStoredSecret\(\s*localStorage\s*\)/);
-  const bannerIndex = catchBody.search(/showBanner\(\s*relaunchBanner\(\s*\)\s*\)/);
-  const gateIndex = catchBody.search(/schedulePoll\(/);
-  assert.notStrictEqual(clearIndex, -1, 'expected the catch branch to clear the cached secret');
-  assert.notStrictEqual(bannerIndex, -1, 'expected the catch branch to show relaunchBanner()');
-  assert.notStrictEqual(gateIndex, -1, 'expected the catch branch to still have a retry gate');
-  assert.ok(clearIndex < gateIndex, 'expected the secret to be cleared before the retry gate');
-  assert.ok(bannerIndex < gateIndex, 'expected the relaunch banner to replace the retry banner');
 });
 
 test('refresh passes schedulePoll\'s result to staleBanner as its gaveUp argument', () => {
@@ -392,13 +371,11 @@ test('readControls reports the in-memory collapsed set unconditionally', () => {
 });
 
 test('app.js never calls localStorage.setItem directly', () => {
-  // A test that only scans lines mentioning `secret` misses a write of some other value
-  // (say, `location.hash` copied under a second key) to localStorage — that line never
-  // contains the word `secret` at all. Pin the stronger property instead: app.js writes
-  // to localStorage only through saveStoredView/clearStoredView (render-guards.js), never
-  // by calling setItem itself, so any direct setItem call — on the per-launch secret,
-  // on location.hash, or on anything else — is caught regardless of what it stores or
-  // what key it uses.
+  // A test that only scans for a specific key misses a write of some other value under a
+  // different one. Pin the stronger property instead: app.js writes to localStorage only
+  // through saveStoredView/clearStoredView (render-guards.js), never by calling setItem
+  // itself, so any direct setItem call is caught regardless of what it stores or what key
+  // it uses.
   assert.doesNotMatch(
     STRIPPED,
     /\.setItem\(/,

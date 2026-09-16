@@ -27,23 +27,11 @@ import {
   nextPollState,
   isPermanentFailure,
   isStaleResponse,
-  resolveSecret,
-  clearStoredSecret,
-  relaunchBanner,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
 /** @typedef {import('../src/types.ts').StackNode} StackNode */
 /** @typedef {import('./render-guards.js').StoredView} StoredView */
-
-const resolved = resolveSecret(location.hash, localStorage);
-const secret = resolved.secret;
-if (resolved.fromHash) {
-  // Strip the fragment now that it is cached, so the address bar and this history entry
-  // hold a bookmarkable URL with no secret in it. replaceState rather than pushState: a new
-  // entry would leave the secret-bearing URL one Back press away.
-  history.replaceState(null, '', location.pathname + location.search);
-}
 
 /**
  * The checked values of the checkboxes inside the fieldset with `fieldsetId`.
@@ -153,8 +141,8 @@ function resetView() {
 
 /**
  * An `Error` carrying the HTTP status that produced it, so a caller can tell a permanent
- * client error (4xx — the secret or Host is wrong for this page load, and no retry can fix
- * that) from a transient one without re-parsing the message string.
+ * client error (4xx — the Host is wrong for this page load, and no retry can fix that) from
+ * a transient one without re-parsing the message string.
  * @param {number} status
  * @param {string} body
  * @returns {Error & { status: number }}
@@ -172,7 +160,7 @@ function httpError(status, body) {
  */
 async function loadPrs(force) {
   const path = force ? '/api/prs?refresh=1' : '/api/prs';
-  const res = await fetch(path, { headers: { 'x-pr-dash-secret': secret } });
+  const res = await fetch(path);
   if (!res.ok) throw httpError(res.status, await res.text());
   const body = await res.json();
   // Both fields the render path consumes come back through parsePrsBody. `stacks` used to
@@ -557,9 +545,9 @@ async function refresh(force = false) {
     if (current.length > 0) render(current, currentStacks);
     // Reached when the request itself failed outright rather than the server returning
     // a retained payload marked stale. Not every such failure is worth retrying: a 4xx
-    // means the Host or the secret is wrong for this page load, which asking again can
-    // never fix, so isPermanentFailure skips schedulePoll entirely for that class rather
-    // than spending the give-up budget on requests that cannot succeed. Everything else
+    // means the Host is wrong for this page load, which asking again can never fix, so
+    // isPermanentFailure skips schedulePoll entirely for that class rather than spending
+    // the give-up budget on requests that cannot succeed. Everything else
     // (a network error, or a parsePrsBody validation error — a stale-but-server-safe
     // restored record the browser's own stricter validator rejects, until the pre-load's
     // real fetch replaces it) is transient, and is routed through schedulePoll/
@@ -569,15 +557,6 @@ async function refresh(force = false) {
     // versa, rather than each getting its own 60 seconds.
     const status = errorStatus(err);
     const permanent = isPermanentFailure(status);
-    // A 403 is the one permanent failure with an instruction attached, and the bare
-    // bookmarked URL reaches it whenever no launch has run since the cache was seeded. The
-    // cached secret is dropped first: it belongs to a process that has exited, so keeping it
-    // would fail every later visit the same way.
-    if (status === 403) {
-      clearStoredSecret(localStorage);
-      showBanner(relaunchBanner());
-      return;
-    }
     const gaveUp = permanent ? false : schedulePoll({ refreshing: true });
     showBanner(
       gaveUp

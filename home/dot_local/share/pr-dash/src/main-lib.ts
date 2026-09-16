@@ -65,8 +65,8 @@ export function listenErrorMessage(err: unknown, port: number): string {
   if (code === 'EADDRINUSE') {
     return (
       `Port ${port} is already in use, so pr-dash cannot start. Another pr-dash may ` +
-      'already be running — open http://127.0.0.1:' +
-      `${port}/ to check — or set PR_DASH_PORT to a free port.`
+      `already be running — run \`lsof -i :${port}\` to see what holds it, or set ` +
+      'PR_DASH_PORT to a free port.'
     );
   }
   const detail = err instanceof Error ? err.message : String(err);
