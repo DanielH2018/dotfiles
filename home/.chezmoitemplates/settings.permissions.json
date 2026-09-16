@@ -128,8 +128,10 @@
            `ruby -e` all auto-approved, measured 2026-07-29), while a substring glob also
            matched an ordinary FILENAME, so `xargs grep foo build.sh` was refused for
            containing "sh". A glob cannot tell the command xargs runs from a path it is
-           merely handed, and this rule is the only defence for a bare `xargs` invocation
-           with no command of its own to unwrap.
+           merely handed, and that absence — no xargs allow entry, and no glob strict
+           enough to safely stand in for one — is the only defence for a bare `xargs`
+           invocation with no command of its own to unwrap. (J4, task-8-fix-3-brief.md:
+           "this rule" used to point here; there is no rule left to name, only the gap.)
            The everyday pipeline is not lost: `… | xargs wc -l` resolves through
            claude_guard.judge's `unwrap_wrapper`, which judges `wc -l` in xargs's place.
            Bare `xargs …` with nothing after it to unwrap still prompts. */}}

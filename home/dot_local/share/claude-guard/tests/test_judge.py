@@ -551,6 +551,59 @@ def test_heredoc_write_parity_refuses_an_unquoted_delimiter_a_path_escape_or_an_
     assert not allowed("cat > /tmp/x.sh <<'EOF'\nhi\nEOF\nfrobnicate", main)
 
 
+# --- J1/J2: a shell metacharacter in the heredoc target (task-8-fix-3-brief.md) -------------------
+#
+# `_HEREDOC_CAT_WRITE`'s path capture (`[^\s"']+`) admits any character that isn't
+# whitespace or a quote — including every shell metacharacter. Both bugs measured ALLOW
+# through the real entry point (`CLAUDE_GUARD_SHADOW=0`, cwd `/home/ubuntu/server`)
+# before the `tokenize(hw_target) is None` gate closed them; reproduced here through
+# `judge()` with the roots/cwd `rules_for`'s fixtures already use.
+
+
+def test_j1_a_second_redirect_hidden_in_the_target_is_refused_on_the_cwd_arm(main, tmp_path):
+    # Bash tokenizes `a>/etc/x` as TWO redirects (`>a` then `>/etc/x`), and the LAST one
+    # wins — so the guard would be vetting `a>/etc/x` under cwd confinement while the
+    # shell actually writes to `/etc/x`, entirely outside it. roots=() isolates this to
+    # the cwd arm alone, the same control the parity tests above use.
+    cwd = str(tmp_path)
+    d = judge("cat > a>/etc/x <<'EOF'\nhi\nEOF\n", main, (), cwd)
+    assert not d.allow
+    assert d.rule == "segment:0:heredoc-write:special-char"
+    # `<` carries the identical capture shape (lower impact: input redirect, not write).
+    assert not judge("cat > a<b <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+    # `>>` append and `>&` fd-dup forms measured ALLOW too.
+    assert not judge("cat >> a>&/etc/x <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+
+
+def test_j1_a_second_redirect_hidden_in_the_target_is_refused_on_the_scratch_arm(main):
+    # Same defect, scratch-root arm: an absolute-looking prefix under a real scratch root
+    # (`/tmp`) with a `>` hidden inside still must not confine on the PREFIX alone.
+    d = judge("cat > /tmp/a>/etc/x <<'EOF'\nhi\nEOF\n", main, ROOTS, CWD)
+    assert not d.allow
+    assert d.rule == "segment:0:heredoc-write:special-char"
+
+
+def test_j2_a_mid_word_parameter_expansion_in_the_target_is_refused(main, tmp_path):
+    # `_under_session_cwd` used to refuse `$` only as the FIRST character of the target.
+    # `${X:-.}` expands to `.` wherever it sits in the word, so `.${X:-.}/x` becomes
+    # `../x` once bash expands it — a write one level above cwd that the old check never
+    # saw, because the `$` here is not at position 0.
+    cwd = str(tmp_path)
+    d = judge("cat > .${X:-.}/x <<'EOF'\nhi\nEOF\n", main, (), cwd)
+    assert not d.allow
+    assert d.rule == "segment:0:heredoc-write:special-char"
+    # A backtick command substitution embedded the same way.
+    assert not judge("cat > a`b`c <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+
+
+def test_j1_j2_control_a_plain_relative_heredoc_write_still_allows_on_both_arms(main, tmp_path):
+    # The gate must not cost anything it wasn't scoped to: a plain path with none of the
+    # refused characters still clears both arms exactly as before.
+    cwd = str(tmp_path)
+    assert judge("cat > note.txt <<'EOF'\nhi\nEOF\n", main, (), cwd).allow  # cwd arm
+    assert judge("cat > /tmp/note.txt <<'EOF'\nhi\nEOF\n", main, ROOTS, CWD).allow  # scratch arm
+
+
 # --- H1: a cd/pushd/popd relocates a confined heredoc write (task-8-fix-2-brief.md) --------------
 
 
@@ -659,6 +712,32 @@ def test_a_target_merely_starting_with_devnull_does_not_escape_the_tee_refusal(e
     assert not allowed("tee /dev/nullx", esc)
     # Control: a real /dev/null target is unaffected.
     assert allowed("tee /dev/null", esc)
+
+
+# --- J5: Python \s is broader than bash's word boundary (task-8-fix-3-brief.md), conf. 30 --------
+
+
+def test_a_trailing_cr_after_devnull_no_longer_reads_as_the_boundary(main):
+    # `(?=\s|$)` used Python's `\s`, which admits `\r` where bash's real word boundary
+    # after a redirect target is space or tab. `ls > /dev/null\r` measured ALLOW before
+    # this fix: the lookahead treated the trailing CR as a boundary and stripped
+    # "> /dev/null" as the harmless sink, while bash's actual filename is `/dev/nullCR` —
+    # not the real device. `(?=[ \t]|$)` no longer treats CR as a boundary, so the `>`
+    # survives the substitution and the blanket redirect refusal fires instead — deferring
+    # rather than silently reading a made-up target as harmless.
+    assert not allowed("ls > /dev/null\r", main)
+    # Control: the real /dev/null (space-terminated, or end of segment) is unaffected.
+    assert allowed("ls > /dev/null", main)
+
+
+# No sibling test for `_DEVNULL_WORD` (judge.py:64): mutation-checked while writing this —
+# reverting that one pattern's lookahead to bare `\s` does NOT flip any assertion. The
+# lookahead never consumes what follows, so ANY trailing character survives into `teed`
+# (judge_segment's `teed = _DEVNULL_WORD.sub(...)`) regardless of which class the
+# lookahead accepts; the downstream `teed != teecmd` comparison — not this regex — is
+# what actually refuses a target carrying trailing junk, `\r` included, and it does so
+# either way. Fixed for parity with `_DEVNULL_REDIRECT` per the brief (one character
+# class, harmless), not because it closes an independently observable gap here.
 
 
 # --- benign prefixes (PR #477) -------------------------------------------------------------------

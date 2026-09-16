@@ -32,7 +32,7 @@ from claude_guard.checks.ansible import ansible_readonly_safe
 from claude_guard.checks.curl import curl_safe
 from claude_guard.checks.git_reset import clean_reset_safe
 from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
-from claude_guard.checks.scratch import rm_confined
+from claude_guard.checks.scratch import rm_confined, tokenize
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
 
@@ -52,7 +52,19 @@ _CD_LIKE = frozenset({"cd", "pushd", "popd"})
 # Segments are already split on `;`/`&&`/`|`/newline before either pattern runs, so
 # nothing legitimate ever follows a real `/dev/null` target except whitespace or the end
 # of the segment.
-_DEVNULL_REDIRECT = re.compile(r"[0-9]*>>?\s*/dev/null(?=\s|$)")
+#
+# J5 (task-8-fix-3-brief.md), confidence 30, no live defect: `(?=\s|$)` used Python's
+# `\s`, which admits `\r`/`\f`/`\v` where bash's real word boundary after a redirect
+# target is space or tab (segments are already newline-split before either pattern
+# runs). `ls > /dev/null\r` measured ALLOW: the lookahead treated the trailing `\r` as
+# a boundary and stripped "> /dev/null" as the harmless sink, while bash's actual
+# filename is `/dev/nullCR` — a different, non-harmless target in principle. Not
+# exploitable as measured: the path always sits directly under root-owned `/dev/`, so
+# the sandbox write gets `Permission denied` as ubuntu regardless. `(?=[ \t]|$)` is
+# exact. `_first_word` (below) uses the same-LOOKING `\s` for a different purpose — it
+# ports `${s%%[[:space:]]*}`, and POSIX `[[:space:]]` already includes \r/\f/\v, so
+# that one is correctly matching its own bash source and is not the same looseness.
+_DEVNULL_REDIRECT = re.compile(r"[0-9]*>>?\s*/dev/null(?=[ \t]|$)")
 _FD_DUP = re.compile(r"[0-9]*>&[0-9-]")
 _OPTION_WORD = re.compile(r"\s+-\S+")
 # H4-adjacent (found while fixing H4, not named in the brief): unanchored the identical
@@ -61,7 +73,14 @@ _OPTION_WORD = re.compile(r"\s+-\S+")
 # check, auto-approving an arbitrary write target. Measured end to end through the real
 # entry point before this fix: `tee /dev/nullx` ALLOW, `tee /dev/null` ALLOW (unaffected,
 # confirms the anchor doesn't touch the real case).
-_DEVNULL_WORD = re.compile(r"\s+/dev/null(?=\s|$)")
+#
+# J5's `[ \t]` tightening is applied here too for parity, but — checked by mutation while
+# writing the J5 fix above, see tests/test_judge.py's note beside the redirect-side
+# red-proof — it has no independently observable effect on THIS pattern: the lookahead
+# never consumes what follows the match, so any trailing character (`\r` included)
+# survives into `judge_segment`'s `teed`, and the `teed != teecmd` comparison downstream
+# refuses on that leftover regardless of which class the lookahead accepts.
+_DEVNULL_WORD = re.compile(r"\s+/dev/null(?=[ \t]|$)")
 
 # PR #477 (:150-158). A `cat > path`/`cat >> path` write whose heredoc delimiter is QUOTED
 # has no expansion possible: a quoted delimiter suppresses parameter and command
@@ -115,6 +134,18 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     `$` refuse outright, before either confinement arm is tried in the bash — mirrored here
     even though rm_confined's own tokenizer already refuses `~` and `$` for the
     scratch-root arm, since this arm can be reached on its own when the scratch check fails.
+
+    J1/J2 (task-8-fix-3-brief.md): the sole caller (`judge_segment`'s heredoc-write
+    carve-out) now runs `scratch.tokenize(hw_target) is None` ahead of BOTH confinement
+    arms, and `tokenize` refuses `$` and `~` unconditionally, not just as a leading
+    character. So the `path.startswith("~")`/`path.startswith("$")` checks just below are
+    now unreachable from that call site — `hw_target` can never carry either by the time
+    it gets here — same idiom as the `cwd_changed` DECIDED marker above this function's
+    call site: kept anyway, not resting on that fact, because this function's own contract
+    ("`..`, a leading `~`, or a leading `$` refuse outright") should hold on its own if a
+    future caller ever reaches it without that gate. `".." in path` is NOT covered by
+    `tokenize` (`.` is not a shell metacharacter) and stays the one check still doing
+    independent work against the current caller.
 
     Fix round 1, F2: unlike `under_scratch` (scratch.py), which judges purely lexically,
     this function resolves the TARGET with `os.path.realpath` (default `strict=False`,
@@ -449,12 +480,53 @@ def judge_segment(
         # a carve-out whose failure mode is a silent arbitrary-write allow. The brief's
         # own instruction is not to get clever here.
         #
+        # Shape recorded for whoever needs the rows next (task-8-fix-3-brief.md, "Not in
+        # scope this round"): `hw_target.startswith("/") and rm_confined(f"rm {hw_target}",
+        # roots)` — SCRATCH arm only, gated on an absolute target, tried before this
+        # `cwd_changed` refusal rather than after it. `rm_confined`/`under_scratch`
+        # already refuse a relative operand outright, so this exemption is cwd-independent
+        # by construction: it cannot be reached by a target this `cwd_changed` gate exists
+        # to protect. It recovers the four lost H1 rows (a worktree PR/commit-body write
+        # pattern: `cd <worktree> && cat > /tmp/<body> <<'EOF' ... rm -f /tmp/<body>`), all
+        # under an absolute /tmp path. Not added this round: the gate is at zero headroom
+        # (floor 84, no margin), and this round's J1/J2 fix is floor-neutral on its own —
+        # headroom is not needed yet.
+        #
         # A `cd` that runs inside a PIPELINE stage (`ls | (cd /x; cat) `) executes in a
         # subshell and never relocates the parent shell `cat` runs in — this flag cannot
         # tell the two apart and refuses both, which is the fail-closed direction and is
         # intentional, not a bug to later "fix" by trying to tell them apart.
         if cwd_changed:
             return False, "heredoc-write:cwd-changed"
+
+        # DECIDED (J1/J2, task-8-fix-3-brief.md): refuse the carve-out for BOTH
+        # confinement arms when the write target itself carries a shell metacharacter,
+        # via the exact tokenizer the scratch arm already runs on it (`scratch.tokenize`)
+        # rather than a second, independently-typed character class — so the two arms
+        # are provably testing the same "plain path" contract, not two copies that
+        # could drift apart later. Measured ALLOW before this gate existed, cwd
+        # `/home/ubuntu/server`: `cat > a>/etc/x <<'EOF'` (J1 — the capture
+        # `[^\s"']+` in `_HEREDOC_CAT_WRITE` admits `>`; bash tokenizes `a>/etc/x` as
+        # `>a` then `>/etc/x`, and the LAST redirect wins, so the guard vets `a>/etc/x`
+        # while the shell writes `/etc/x`) and `cat > .${X:-.}/x <<'EOF'` (J2 —
+        # `_under_session_cwd` refused a leading `$` only; bash expands `${X:-.}`
+        # wherever it sits in the word, turning the target into `../x`). `tokenize`
+        # refuses `$` unconditionally, at any position, plus every other shell
+        # metacharacter (`;&|<>(){}` backtick `\*?[]`), so both measured inputs now
+        # refuse here, before either arm runs. `rm_confined`'s own tokenization of
+        # `f"rm {hw_target}"` already refused both on the scratch arm (the same
+        # characters are in its `_SPECIAL` set); this closes the identical gap in
+        # `_under_session_cwd`, which had no metacharacter check of its own. Floor-
+        # neutral, on two different kinds of evidence for two different claims: the brief
+        # verified all 17 corpus rows riding this carve-out are free of `>`, `<`, `$`, `\`
+        # and backtick specifically (task-8-fix-3-brief.md); `tokenize` refuses a larger
+        # set than that (also `;&|(){}*?[]~` and bare CR/LF), which the brief's own
+        # evidence does not cover — that wider claim rests instead on re-running the
+        # replay gate after this change and reading ALLOW 84/1058 unchanged, not on an
+        # inspection of the 17 targets against the full `_SPECIAL` set.
+        if tokenize(hw_target) is None:
+            return False, "heredoc-write:special-char"
+
         if rm_confined(f"rm {hw_target}", roots) or _under_session_cwd(hw_target, cwd):
             return True, "heredoc-write"
         return False, "heredoc-write:unconfined"

@@ -77,10 +77,16 @@
     {{/* M02 shadow census: re-armed SAMPLED after a stint fully off.
 
          It exists to measure what cmdparse.sh's shared segmentation WOULD decide, so the
-         three Bash guards could adopt it on evidence rather than on faith. All three now
-         have — allow-compound-bash and allow-readonly-remote in #285, block-dangerous-bash
-         in #288 — so the gap it was built to measure is closed, and the behaviour it found
-         is pinned directly by tests. That is why it was turned OFF, not why it stays off:
+         three Bash guards could adopt it on evidence rather than on faith. All three did —
+         allow-compound-bash and allow-readonly-remote in #285, block-dangerous-bash in
+         #288 — so the gap it was built to measure was closed, and the behaviour it found
+         is pinned directly by tests. J4 (task-8-fix-3-brief.md): the claude-guard slice-3
+         cutover deleted allow-compound-bash.sh and allow-readonly-remote.sh outright,
+         replacing both with claude_guard's own Python port of this same segmenter
+         (home/dot_local/share/claude-guard/claude_guard/segment.py); block-dangerous-bash
+         is the only one of the three still a LIVE cmdparse.sh adopter in bash.
+
+         That is why it was turned OFF, not why it stays off:
          it is kept armed as the same instrument for the next unknown gap — it is what
          found the command-substitution bypass (#286) — and "closed" is a property of the
          three known families, not a guarantee about a fourth.
