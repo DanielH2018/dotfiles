@@ -11,6 +11,7 @@ import {
   expectedHost,
   listenErrorMessage,
   parsePort,
+  preloadEnabled,
   startPreload,
 } from './main-lib.ts';
 import { createPayloadStore, DEFAULT_STATE_DIR } from './payload-store.ts';
@@ -42,14 +43,19 @@ const loadPrs = createLoadPrs(client, cache, {
   },
 });
 
-// Started before listen() and not awaited, so it overlaps the launcher's port poll and the
-// browser's start instead of delaying them. The one request it does not beat is answered
-// from the restored payload above when there is one; on a first-ever launch, with nothing
-// restored, that request instead waits out this same fetch — which now also resolves the
-// token (see getToken above), so a Touch ID prompt can be part of that wait too.
-startPreload(loadPrs, (message) => {
-  console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
-});
+// Opt-in, via PR_DASH_PRELOAD — see preloadEnabled. `bin/pr-dash` sets it because that path
+// is about to open a browser, and starting the fetch before listen() overlaps the launcher's
+// port poll and the browser's own cold start. The launchd agent does not set it: its server
+// is listening long before anyone opens the bookmark, so there is no browser start left to
+// overlap, and the restored payload above already paints instantly while the first real
+// fetch runs. An unconditional pre-load would also resolve the token at every respawn — a
+// Touch ID prompt with nobody present, defeating the idle exit's only purpose of not holding
+// the token in memory between requests.
+if (preloadEnabled(process.env)) {
+  startPreload(loadPrs, (message) => {
+    console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);
+  });
+}
 
 // Exits the process after 30 minutes with no request, so the token this process resolved
 // does not stay in memory indefinitely — see createIdleExit. Created before the server so

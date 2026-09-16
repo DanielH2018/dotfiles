@@ -32,6 +32,24 @@ test('main.ts does not await the startPreload call', () => {
   assert.doesNotMatch(text, AWAITED_PRELOAD);
 });
 
+// Guards against the always-on regression this slice closes: an unconditional startPreload
+// resolves the token at every launchd respawn, prompting for Touch ID with nobody present.
+// Asserting only that both identifiers appear somewhere in the file would pass against an
+// unconditional startPreload call followed by an unrelated preloadEnabled use elsewhere, so
+// this takes the actual brace block the `if (preloadEnabled(` guards and checks that
+// startPreload( is inside it.
+test('startPreload is called only inside a block guarded by preloadEnabled', () => {
+  const GUARD = 'if (preloadEnabled(';
+  const guardIndex = MAIN_TS_STRIPPED.indexOf(GUARD);
+  assert.notStrictEqual(guardIndex, -1, 'expected `if (preloadEnabled(` in main.ts');
+  const block = braceBlock(MAIN_TS_STRIPPED, guardIndex);
+  assert.match(
+    block,
+    /startPreload\(/,
+    'expected startPreload( inside the preloadEnabled-guarded block',
+  );
+});
+
 test('main.ts calls startPreload before server.listen', () => {
   const text = readFileSync(MAIN_TS, 'utf8');
   const preloadIndex = text.indexOf('startPreload(');

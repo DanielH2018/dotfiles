@@ -1,10 +1,16 @@
 // main.ts is a process shell — it reads env vars and calls process.exit, so it carries no
-// test coverage by construction. The two decisions it makes before the server can serve a
-// request are extracted into main-lib.ts and tested here: what counts as a usable port, and
-// what the user is told when listening on it fails.
+// test coverage by construction. The decisions it makes before the server can serve a
+// request are extracted into main-lib.ts and tested here: what counts as a usable port,
+// what the user is told when listening on it fails, and whether the startup pre-load runs.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parsePort, listenErrorMessage, expectedHost, DEFAULT_PORT } from '../src/main-lib.ts';
+import {
+  parsePort,
+  listenErrorMessage,
+  expectedHost,
+  preloadEnabled,
+  DEFAULT_PORT,
+} from '../src/main-lib.ts';
 
 // Item 5 of the final review: `127.0.0.1:${port}` is wrong for port 80. Browsers and curl
 // both omit a default port from the Host header, so the guard's expectation has to omit it
@@ -90,3 +96,16 @@ test('a thrown non-Error does not break the message', () => {
   assert.match(message, /8770/);
   assert.match(message, /just a string/);
 });
+
+test('preloadEnabled is true only for exactly "1"', () => {
+  assert.strictEqual(preloadEnabled({ PR_DASH_PRELOAD: '1' }), true);
+});
+
+// The narrow contract is deliberate — this is a knob bin/pr-dash sets, not a user-facing
+// boolean, so every other spelling of "on" stays off.
+for (const raw of [undefined, '', '0', 'true', 'yes']) {
+  test(`preloadEnabled is false for ${JSON.stringify(raw)}`, () => {
+    const env = raw === undefined ? {} : { PR_DASH_PRELOAD: raw };
+    assert.strictEqual(preloadEnabled(env), false);
+  });
+}

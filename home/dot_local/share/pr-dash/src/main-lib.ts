@@ -246,6 +246,21 @@ export function startPreload(
   });
 }
 
+/**
+ * Whether the startup pre-load should run — see the always-on design's "The pre-load
+ * becomes opt-in". `bin/pr-dash` is the single caller that sets this, because that path is
+ * about to open a browser and the fetch can overlap the wait. Under launchd there is no
+ * browser start to overlap and no operator present to answer the Touch ID prompt an
+ * unconditional pre-load would raise at every respawn, so the agent leaves it unset.
+ *
+ * The comparison is strict and exactly `'1'`. This is a knob one script sets, not a
+ * user-facing boolean, so `'true'`, `'yes'` and `'0'` are all off — the narrow contract
+ * makes the enabled case unambiguous at the single call site that sets it.
+ */
+export function preloadEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env['PR_DASH_PRELOAD'] === '1';
+}
+
 /** A function that resolves the GitHub token, such as `resolveToken` bound to `process.env`. */
 export type TokenSource = () => Promise<string>;
 
