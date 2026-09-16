@@ -173,8 +173,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
-      "hash": "df5169d84af2b58ad0acf9b15703737c64d354fd54419c096727ed187c66de19",
-      "landed": "2026-08-19T18:24:31.120Z"
+      "hash": "4933c16a287c91caf6d3a67145d3838cea794abf0a3b60baaa23a17616063d76",
+      "landed": "2026-09-16T17:51:19.501Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
