@@ -430,3 +430,30 @@ h2 .disclosure:hover { background: var(--surface0); }
   .stack-row.nested::before { left: 21px; }
   #banner { padding-left: 14px; padding-right: 14px; }
 }
+
+/*
+ * Below this width the states and the staleness take their own line under the title.
+ *
+ * On one line the title is the only element that can shrink — the chips and the day count are
+ * `flex:none` and wrap nowhere — so at 372px a two-chip row left the title 0px wide and
+ * truncated it away entirely. The title is the thing being scanned; it is the last element
+ * that should give way, not the first. Two lines costs vertical space and loses nothing.
+ */
+@media (max-width: 600px) {
+  .row {
+    flex-wrap: wrap;
+    row-gap: 3px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  /* `flex-basis: 0` rather than the `auto` above: with the row wrapping, an `auto` basis is
+     the title's full content width, which never fits beside the number and pushed the title
+     to a third line. A zero basis keeps it on the number's line and truncates instead. */
+  .row-title { flex-basis: 0; }
+
+  .meta {
+    flex: 1 0 100%;
+    margin-left: 0;
+  }
+}
