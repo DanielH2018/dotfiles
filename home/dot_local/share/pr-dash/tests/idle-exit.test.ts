@@ -13,13 +13,18 @@ test('the idle window is 30 minutes', () => {
 // it, the same as a real cleared setTimeout never invoking its callback. That is the
 // property "does not stack" actually depends on — a bare count of clearTimeout calls would
 // pass just as well against an implementation that clears the wrong handle.
-type FakeHandle = { cb: () => void; cancelled: boolean; unref: () => void };
+// `ms` is recorded, not discarded: asserting IDLE_TIMEOUT_MS as a constant says nothing
+// about the delay createIdleExit actually schedules, so `}, 1)` in place of `}, timeoutMs)`
+// left the whole suite green. At a 1-millisecond window the process exits seconds after
+// each request and launchd respawns it, so the browser's poll lands either on a process
+// about to exit or inside a respawn gap.
+type FakeHandle = { cb: () => void; ms: number; cancelled: boolean; unref: () => void };
 
 function fakeTimers() {
   const scheduled: FakeHandle[] = [];
   return {
-    setTimeoutFn: (cb: () => void, _ms: number): FakeHandle => {
-      const handle: FakeHandle = { cb, cancelled: false, unref: () => {} };
+    setTimeoutFn: (cb: () => void, ms: number): FakeHandle => {
+      const handle: FakeHandle = { cb, ms, cancelled: false, unref: () => {} };
       scheduled.push(handle);
       return handle;
     },
@@ -46,6 +51,37 @@ test('touch schedules a timer that unrefs itself', () => {
   };
   createIdleExit({ setTimeoutFn, clearTimeoutFn: () => {} });
   assert.strictEqual(unreffed, 1, 'the scheduled handle must be unref\'d immediately');
+});
+
+test('the scheduled delay is the idle window, not just a constant declared alongside it', () => {
+  const timers = fakeTimers();
+  createIdleExit({
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+    exit: () => {},
+  });
+
+  assert.strictEqual(timers.scheduled[0]!.ms, IDLE_TIMEOUT_MS);
+});
+
+test('an injected timeoutMs is the delay actually scheduled', () => {
+  // Covers the other half of `opts.timeoutMs ?? IDLE_TIMEOUT_MS`: substituting a literal
+  // for the injected value is as invisible as substituting one for the default.
+  const timers = fakeTimers();
+  const idleExit = createIdleExit({
+    timeoutMs: 1_234,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+    exit: () => {},
+  });
+
+  idleExit.touch();
+
+  assert.deepStrictEqual(
+    timers.scheduled.map((handle) => handle.ms),
+    [1_234, 1_234],
+    'both the constructor and touch must schedule the injected window',
+  );
 });
 
 test('the idle timer exits with status 0 after the window elapses', () => {

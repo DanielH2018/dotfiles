@@ -1,6 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { resolveToken, DEFAULT_TITLE } from '../src/token.ts';
+import { stripComments } from './strip-comments.ts';
+
+const TOKEN_TS = path.join(import.meta.dirname, '..', 'src', 'token.ts');
+
+test('the op runners stay unexported, so no other module can catch their rejections', () => {
+  // token.ts's own comment above them is the specification for this test: "both op commands
+  // write the token to stdout, so a rejection from execFile here carries the token in its
+  // .stdout property. No caller may log this rejection or attach it as an Error `cause` —
+  // resolveToken's catch below discards it for that reason. Keep these unexported so the
+  // only caller stays the one that already does that." A later module that imported one
+  // directly and handled the rejection the ordinary way (`console.error(err)`) would print
+  // the item JSON, credential included, into ~/.local/state/pr-dash/agent.log.
+  const stripped = stripComments(readFileSync(TOKEN_TS, 'utf8'));
+  assert.doesNotMatch(stripped, /export\s+(async\s+)?function\s+runOp/);
+  assert.doesNotMatch(stripped, /export\s*\{[^}]*\brunOp/);
+});
 
 test('GH_TOKEN wins over op', async () => {
   const token = await resolveToken({ GH_TOKEN: 'from-env' }, async () => 'from-op');

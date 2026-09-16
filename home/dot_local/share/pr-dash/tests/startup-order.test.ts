@@ -134,6 +134,63 @@ test('main.ts uses the identifier token only in its known-safe places', () => {
   );
 });
 
+// The same scan lazy-token.test.ts runs over main-lib.ts, which has no legitimate write at
+// all. main.ts does have some, so this file cannot simply assert the scan finds nothing:
+// each known call site is removed from the text by its exact source, and what remains must
+// contain no write. Counting mentions of the word `token` is not enough on its own —
+// `console.error(await getToken())` leaks the credential and leaves that count at 3, because
+// `getToken` carries a capital T. Under the launchd agent main.ts's stderr is
+// ~/.local/state/pr-dash/agent.log, so a leak there survives a reboot rather than scrolling
+// past in a terminal.
+const WRITE_CALL = /console\.\w+\s*\(|process\.(stdout|stderr)\.write\s*\(/;
+
+// Every write main.ts is allowed to make, by exact source text: the parsedPort failure, the
+// pre-load failure, the listen-error handler, and the listening line. None of them can carry
+// a token — the first two print a message composed elsewhere, the third prints
+// listenErrorMessage, and the fourth prints a literal and the port.
+const ALLOWED_WRITES = [
+  'console.error(parsedPort.reason);',
+  'console.error(`pr-dash could not pre-load PRs (the page will retry): ${message}`);',
+  'console.error(listenErrorMessage(err, port));',
+  'console.log(`pr-dash listening on http://127.0.0.1:${port}`);',
+];
+
+test('main.ts writes to stdout and stderr only at its four known call sites', () => {
+  let remaining = MAIN_TS_STRIPPED;
+  for (const site of ALLOWED_WRITES) {
+    assert.ok(
+      remaining.includes(site),
+      `expected main.ts to still contain the allowlisted write \`${site}\` — if it was ` +
+        'reworded, update ALLOWED_WRITES deliberately rather than widening the scan',
+    );
+    // A string pattern replaces the first occurrence only, so a second copy of an
+    // allowlisted line is still caught below.
+    remaining = remaining.replace(site, ' ');
+  }
+  assert.doesNotMatch(
+    remaining,
+    WRITE_CALL,
+    'main.ts writes to stdout or stderr somewhere other than its four known call sites; ' +
+      'under launchd that stream is a persistent log file',
+  );
+});
+
+test('main.ts gives the server the guard expectation derived from the port it binds', () => {
+  // `host: '127.0.0.1'` compiles, passes tsc (no noUnusedLocals) and leaves every test
+  // green, and the effect is a total outage: the guard then expects an authority no request
+  // to port 8770 carries, so every path 403s — the page shell, app.js, /api/prs, and
+  // bin/pr-dash's own readiness probe, which reports a 60-second timeout about a server
+  // that is listening fine.
+  const createServerIndex = MAIN_TS_STRIPPED.indexOf('createServer(');
+  assert.notStrictEqual(createServerIndex, -1, 'expected a createServer( call in main.ts');
+  const args = braceBlock(MAIN_TS_STRIPPED, createServerIndex);
+  assert.match(
+    args,
+    /host:\s*expectedHost\(/,
+    "expected createServer's host to come from expectedHost(port), not a literal",
+  );
+});
+
 // main.ts must not call resolveToken directly at startup — see createLazyToken above. It
 // is only ever mentioned wrapped in the arrow function passed to createLazyToken, so an
 // `await resolveToken(` (or a bare call outside that wrapper) would reintroduce the
