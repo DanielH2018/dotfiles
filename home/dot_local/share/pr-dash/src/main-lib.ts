@@ -100,8 +100,9 @@ export type FallbackOpts = {
   /**
    * A payload restored from disk. Seeds the retained-payload slot, **not** the cache: a
    * seeded cache would make the startup pre-load a cache hit and skip the fetch, leaving
-   * the restored rows on screen for up to the cache's TTL (or until a manual Refresh)
-   * instead of the first fetch replacing them right away.
+   * the restored rows on screen for up to the cache's TTL (or until a manual Refresh).
+   * Seeded here instead, the rows answer the first request through the prime path and the
+   * fetch still runs, so the rows the fetch returns replace them as soon as it lands.
    */
   initial?: LoadResult;
   /**

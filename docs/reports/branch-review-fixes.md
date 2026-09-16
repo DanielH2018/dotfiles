@@ -362,9 +362,19 @@ file: `tests/terminal/warp-tab-config-gate.test.js`,
 `tests/tmux/tmux-askpass.test.js` and `tests/install/workstation-defaults.test.js` — 57 tests,
 40 pass, 0 fail (the rest skip off their host).
 
+`tests/scheduled-launchd.test.js` enumerates `scheduled/*.plist.tmpl` and asserts properties of
+every file it finds, so moving the plist into that directory put it under four checks this
+round did not write: the render is well-formed XML, the body after the DOCTYPE contains no
+`/Users/` literal, `Label` equals the filename stem, and every `ProgramArguments` path under
+`$HOME` that resolves to `~/.local/bin/` has a source in this repo. It passes — 6 tests, 6
+pass, 0 fail — with `com.danielhunter.pr-dash.plist.tmpl` in the enumerated set of four. The
+Label check is the one that could have caught a rename: `com.danielhunter.pr-dash` matches its
+stem, so finding 17's naming drift against the `com.daniel.claude.*` neighbours is a
+convention question and not a test failure.
+
 Not run, per the brief: `launchctl`, `chezmoi apply`, `bin/try`, `bin/land`, the network, `op`.
 The whole repo suite was not re-run; the findings report measured 11 environmental failures
-there before this round, none of them in pr-dash's tree, and the seven suites above are the
+there before this round, none of them in pr-dash's tree, and the eight suites above are the
 ones this round's edits could reach.
 
 ## Concerns
