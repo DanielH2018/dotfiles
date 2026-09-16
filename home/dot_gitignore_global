@@ -109,3 +109,8 @@ Dockerfile.claudebot
 **/.claude/settings.local.json
 
 **/.claude/.cc-writes/
+
+# =============================================================================
+# Local scratch git worktrees (machine-specific, never committed)
+# =============================================================================
+**/.worktrees/
