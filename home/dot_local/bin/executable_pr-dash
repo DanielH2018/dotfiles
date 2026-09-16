@@ -5,15 +5,33 @@ set -euo pipefail
 SHARE_DIR="${HOME}/.local/share/pr-dash"
 PORT="${PR_DASH_PORT:-8770}"
 export PR_DASH_PORT="$PORT"
+# This path is about to hand the URL to a browser, so overlapping the first GitHub fetch
+# with the server's startup still pays for itself here. The launchd agent does not set this
+# — see the spec's "The pre-load becomes opt-in".
+export PR_DASH_PRELOAD=1
+
+URL="http://127.0.0.1:${PORT}/"
+# The launchd agent holds this port permanently, so finding it already occupied is the
+# normal case now, not an error: open the URL against whatever is already serving it
+# instead of trying (and failing) to start a second server. This must run before the trap
+# below: under `set -euo pipefail`, an EXIT trap that references SERVER_PID would error on
+# this early exit, since SERVER_PID is never assigned on this path.
+if curl -fs -o /dev/null "$URL"; then
+  echo "pr-dash is already serving ${URL} (launchd agent or another run); opening it."
+  if ! open "$URL"; then
+    echo "Could not open a browser automatically. Open this URL yourself:" >&2
+    echo "$URL" >&2
+  fi
+  exit 0
+fi
 
 node "${SHARE_DIR}/src/main.ts" &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
 # Wait until the server actually answers before handing the URL to the browser. A fixed
-# sleep opened a dead port: the server resolves its token through 1Password first, and that
-# raises a Touch ID prompt which can sit for as long as the user takes to touch the sensor,
-# so the browser showed ERR_CONNECTION_REFUSED and the user had to reload by hand.
+# sleep opened a dead port: process start plus the payload-store read can take a moment, so
+# the browser showed ERR_CONNECTION_REFUSED and the user had to reload by hand.
 #
 # `/` is the probe: it answers as soon as the server is listening, with no dependency on
 # GitHub or the cache.
@@ -38,7 +56,6 @@ until curl -fs -o /dev/null "http://127.0.0.1:${PORT}/"; do
   sleep 0.1
 done
 
-URL="http://127.0.0.1:${PORT}/"
 # `open`'s exit status must not reach `set -e`: under -e, a failing command that
 # isn't part of a condition ends the script, which fires the EXIT trap and kills
 # the server this script just started over a browser launch that never mattered
