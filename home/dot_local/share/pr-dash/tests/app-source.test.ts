@@ -319,3 +319,124 @@ test('readControls reports the in-memory collapsed set unconditionally', () => {
     'expected readControls to never read collapsed back from storage',
   );
 });
+
+test('the per-launch secret never reaches localStorage', () => {
+  // saveView/loadStoredView/clearStoredView are app.js's only localStorage touchpoints.
+  // Every real use of `secret` sits on the line that reads it from location.hash or the
+  // line that sends it as the x-pr-dash-secret header — never anywhere `localStorage`
+  // also appears on the same line, which is what `localStorage.setItem('pr-dash:token',
+  // secret)` inside saveView would do.
+  const secretLines = STRIPPED.split('\n').filter((line) => /\bsecret\b/.test(line));
+  assert.ok(secretLines.length > 0, 'expected to find the secret variable in app.js');
+  for (const line of secretLines) {
+    assert.match(
+      line,
+      /location\.hash|x-pr-dash-secret/,
+      `expected every use of secret to be its declaration or the fetch header, not: ${line}`,
+    );
+  }
+});
+
+test('renderRow only assigns href when isSafeUrl approves the url', () => {
+  // isSafeUrl is unit-tested in render-guards.test.ts, but that only proves the function
+  // itself is correct — not that renderRow actually calls it before trusting pr.url as a
+  // clickable href.
+  const body = functionBody(STRIPPED, 'function renderRow');
+  assert.match(
+    body,
+    /if\s*\(\s*isSafeUrl\(pr\.url\)\s*\)\s*row\.href\s*=\s*pr\.url;/,
+    'expected renderRow to gate row.href on isSafeUrl(pr.url)',
+  );
+});
+
+test('no file under public/ uses an HTML-injection sink', () => {
+  // A PR title is attacker-influenced text (anyone can open a PR against a public
+  // repository) and reaches the row from both the live fetch and the restored file, so
+  // row.textContent (and group.js's name.textContent) must never become innerHTML or an
+  // equivalent sink.
+  for (const name of ['app.js', 'group.js', 'render-guards.js']) {
+    const text = stripComments(readFileSync(path.join(__dirname, '..', 'public', name), 'utf8'));
+    assert.doesNotMatch(
+      text,
+      /\b(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval)\b/,
+      `expected no HTML-injection sink in public/${name}`,
+    );
+  }
+});
+
+test('schedulePoll never falls back to a default wait once nextPollState says to stop', () => {
+  // `next.waitMs ?? 600` would poll every 600ms forever once nextPollState reports
+  // giving up — the exact outcome REFRESH_POLL_TIMEOUT_MS's own doc comment says it
+  // prevents.
+  const body = functionBody(STRIPPED, 'function schedulePoll');
+  const guardMatch = /if\s*\(\s*next\.waitMs\s*!==\s*null\s*\)\s*\{/.exec(body);
+  assert.ok(guardMatch, 'expected schedulePoll to gate the timer on next.waitMs !== null');
+  const guardBody = braceBlock(body, guardMatch.index);
+  assert.match(guardBody, /setTimeout\(/, 'expected the guarded body to arm setTimeout');
+  assert.doesNotMatch(body, /next\.waitMs\s*\?\?/, 'expected no fallback wait value for waitMs');
+});
+
+test('schedulePoll carries nextPollState\'s state forward', () => {
+  // Without this, the give-up budget never accrues: every call would hand nextPollState
+  // the same starting state instead of the one it returned last time.
+  const body = functionBody(STRIPPED, 'function schedulePoll');
+  assert.match(
+    body,
+    /pollState\s*=\s*next\.state\s*;/,
+    'expected schedulePoll to update pollState from next.state',
+  );
+});
+
+test('resetView clears the persisted view, not only the in-memory one', () => {
+  const body = functionBody(STRIPPED, 'function resetView');
+  assert.match(
+    body,
+    /clearStoredView\(\s*localStorage\s*\)/,
+    'expected resetView to call clearStoredView(localStorage)',
+  );
+});
+
+test('applyView always replaces the collapsed set, even for an empty view.collapsed', () => {
+  // A guard like `if (view.collapsed.length > 0) collapsed = new Set(...)` would make
+  // Reset's empty view.collapsed silently keep whatever was collapsed before it ran —
+  // invisibly defeating the spec's "Reset clears collapse state" contract.
+  const body = functionBody(STRIPPED, 'function applyView');
+  assert.match(
+    body,
+    /collapsed\s*=\s*new Set\(toCollapsedKeys\(view\.collapsed\)\)\s*;/,
+    'expected applyView to unconditionally replace collapsed',
+  );
+  assert.doesNotMatch(
+    body,
+    /view\.collapsed\.length\s*>\s*0/,
+    'expected no length guard around the collapsed assignment',
+  );
+});
+
+test('toggleCollapsed persists the change with saveView', () => {
+  const body = functionBody(STRIPPED, 'function toggleCollapsed');
+  assert.match(
+    body,
+    /saveView\(\)/,
+    'expected toggleCollapsed to call saveView so collapse state persists',
+  );
+});
+
+test('#expand-all clears the collapsed set, the way out of #collapse-all', () => {
+  const marker = "getElementById('expand-all')?.addEventListener('click', () => {";
+  const start = STRIPPED.indexOf(marker);
+  assert.notStrictEqual(start, -1, 'expected a click handler on #expand-all');
+  const body = braceBlock(STRIPPED, start);
+  assert.match(body, /collapsed\.clear\(\)/, 'expected the handler to clear collapsed');
+});
+
+test('loadPrs sends refresh=1 only for a forced call, not for a poll', () => {
+  // Flipping this ternary would make Refresh answer from the cache while every 600ms
+  // poll forced a GitHub fetch — a request storm against the rate limit.
+  const body = functionBody(STRIPPED, 'async function loadPrs');
+  assert.match(
+    body,
+    /const path = force \? '\/api\/prs\?refresh=1' : '\/api\/prs';/,
+    'expected the forced branch, not the poll branch, to carry refresh=1',
+  );
+});

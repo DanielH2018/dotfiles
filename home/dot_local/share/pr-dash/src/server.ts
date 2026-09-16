@@ -142,7 +142,15 @@ function refuse(res: import('node:http').ServerResponse, status: number, reason:
   res.end(JSON.stringify({ error: reason }));
 }
 
-async function serveStatic(name: string, res: import('node:http').ServerResponse): Promise<void> {
+// Exported so a test can call it directly with a `name` that never goes through the real
+// request flow's own `new URL()` — see server.test.ts. The WHATWG URL parser resolves `..`
+// and `%2e%2e` dot segments before `handle` ever reads `pathname`, so neither of this
+// function's own two containment layers (the `safe` computation, the `startsWith` check)
+// is reachable from a real HTTP request today. They stay load-bearing anyway: this is the
+// one function a later caller — one that hands it an unnormalized name directly — would
+// have to go through, and exporting it is what lets a test exercise that case now rather
+// than after such a caller exists.
+export async function serveStatic(name: string, res: import('node:http').ServerResponse): Promise<void> {
   const safe = normalize(name).replace(/^(\.\.[/\\])+/, '');
   const path = join(PUBLIC_DIR, safe);
   if (!path.startsWith(PUBLIC_DIR)) {

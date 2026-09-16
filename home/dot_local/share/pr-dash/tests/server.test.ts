@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { connect, createServer as createNetServer } from 'node:net';
-import { createServer } from '../src/server.ts';
+import { createServer, serveStatic } from '../src/server.ts';
 import { createCache } from '../src/cache.ts';
 import type { PrRecord, StackNode } from '../src/types.ts';
 
@@ -420,4 +420,55 @@ test('refuses DELETE / with 405 instead of serving the page shell', async () => 
     assert.match(response, /^HTTP\/1\.1 405 /);
     assert.doesNotMatch(response, /<title>PR Dashboard<\/title>/);
   });
+});
+
+// serveStatic's own two containment layers — normalizing and stripping a leading `..` run,
+// then checking the joined path still starts with PUBLIC_DIR — are never reached from a
+// real request: `new URL()` in `handle` already resolves `..` and `%2e%2e` dot segments out
+// of `pathname` before serveStatic ever sees a `name`. Seven traversal payloads confirmed
+// none escape through the real request path, because of that upstream resolution, not
+// because of these two layers. They stay worth defending on their own terms: serveStatic is
+// exported so a test can call it directly with a `name` a real request can never produce,
+// the way any future caller that skips `new URL()` would.
+//
+// Node's own `path.normalize`+`path.join` mean a *relative* name with excess `..` always
+// collapses to a leading `../` run before this function runs, which the `safe` computation
+// strips — so an ordinary "climb out with enough .." payload never actually exercises the
+// second `startsWith` layer; the first layer already closes it. A *bare* `..` (no trailing
+// separator) is the one shape that layer's regex does not match, and it is exactly what the
+// second layer catches. The two tests below isolate each layer's own contribution.
+
+/** A minimal fake `ServerResponse` recording the status a call ended with. */
+function fakeRes() {
+  const fake = {
+    statusCode: undefined as number | undefined,
+    writeHead(code: number) {
+      fake.statusCode = code;
+      return fake;
+    },
+    end() {},
+  };
+  return fake;
+}
+
+test('serveStatic refuses a bare ".." (no trailing separator), which the strip regex does not match', async () => {
+  // `normalize('..').replace(/^(\.\.[/\\])+/, '')` leaves '..' untouched, since the regex
+  // requires a separator after each pair of dots — the join then climbs to PUBLIC_DIR's own
+  // parent, and only the second layer's startsWith check refuses it. Disabling that check
+  // (`if (false && !path.startsWith(PUBLIC_DIR))`) would let this fall through to readFile
+  // on a directory instead of a 403.
+  const res = fakeRes();
+  await serveStatic('..', res as unknown as import('node:http').ServerResponse);
+  assert.strictEqual(res.statusCode, 403);
+});
+
+test('serveStatic lands inside the public directory for an ordinary traversal payload, not escapes and gets caught', async () => {
+  // With the strip layer intact, '../../../../etc/passwd' normalizes and strips down to
+  // 'etc/passwd', which joins to a path inside PUBLIC_DIR (missing there, so 404). Dropping
+  // the strip (`const safe = name;`) would instead land outside PUBLIC_DIR and get refused
+  // by the second layer as 403 — the wrong status proves the first layer stopped doing its
+  // job, even though the request still ends up refused either way.
+  const res = fakeRes();
+  await serveStatic('../../../../etc/passwd', res as unknown as import('node:http').ServerResponse);
+  assert.strictEqual(res.statusCode, 404);
 });

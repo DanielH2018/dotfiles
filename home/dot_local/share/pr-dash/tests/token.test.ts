@@ -127,3 +127,33 @@ test('a malformed JSON response fails without leaking the raw output', async () 
     (err: Error) => !err.message.includes('ghp_SENTINEL'),
   );
 });
+
+test('a response with no field labeled token fails without leaking the raw output', async () => {
+  // The sibling branch to the malformed-JSON case above: same function, same secret risk,
+  // but this one is the response that parsed fine and simply carries no "token" field —
+  // still JSON that op printed with --reveal, so it can still hold the token in the clear
+  // under some other label.
+  await assert.rejects(
+    () =>
+      resolveToken({}, async () =>
+        JSON.stringify([{ label: 'username', value: 'ghp_SENTINEL_NO_TOKEN_FIELD' }]),
+      ),
+    (err: Error) => !err.message.includes('ghp_SENTINEL_NO_TOKEN_FIELD'),
+  );
+});
+
+test('an op failure does not attach the underlying rejection as a cause', async () => {
+  // op's rejection carries the raw command output — which can include the token — on its
+  // .stdout property. Attaching it as an Error `cause` would let a later structured log
+  // that walks the cause chain print it, even though the thrown message itself never does.
+  await assert.rejects(
+    () =>
+      resolveToken({}, async () => {
+        throw new Error('not signed in');
+      }),
+    (err: Error) => {
+      assert.strictEqual((err as Error & { cause?: unknown }).cause, undefined);
+      return true;
+    },
+  );
+});

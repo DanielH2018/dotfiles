@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { createPayloadStore, DEFAULT_STATE_DIR, DIR_MODE, FILE_MODE, type FsSeam } from '../src/payload-store.ts';
 import type { LoadResult } from '../src/loader.ts';
 import type { PrRecord } from '../src/types.ts';
@@ -283,4 +285,38 @@ test('the default state directory sits under the home directory, outside chezmoi
   );
   assert.ok(!DEFAULT_STATE_DIR.includes('chezmoi'), 'must not reach the chezmoi source tree');
   assert.ok(!DEFAULT_STATE_DIR.includes('.git'), 'must not sit inside a git checkout');
+});
+
+test('the real filesystem seam actually applies the owner-only modes and an atomic rename', async () => {
+  // Every mode assertion above runs against the injected fake seam. `realFs` — the seam
+  // `createPayloadStore` uses by default, and the only one main.ts ever wires up — is
+  // never exercised: dropping writeFile's mode, dropping mkdir's mode, or swapping
+  // rename's arguments (rename(to, from)) all leave the rest of this file green. Under
+  // this machine's umask 0007, a dropped file mode is a 0660 group-readable file holding
+  // every repository name, branch name and PR title.
+  //
+  // The target directory must not exist yet: mkdtempSync already creates its directory
+  // at 0700, so pointing the store straight at it would let `mkdir`'s mode argument go
+  // unapplied (the directory already exists) while this test's own assertion passed on
+  // mkdtemp's bits rather than on what createPayloadStore actually did. A fresh
+  // subdirectory forces a real mkdir call.
+  const root = mkdtempSync(join(tmpdir(), 'pr-dash-store-'));
+  const dir = join(root, 'state');
+  try {
+    const store = createPayloadStore(dir);
+
+    await store.write(PAYLOAD);
+
+    const dirMode = statSync(dir).mode & 0o777;
+    const fileMode = statSync(join(dir, 'last-payload.json')).mode & 0o777;
+    assert.strictEqual(dirMode, DIR_MODE, `expected directory mode ${DIR_MODE.toString(8)}, got ${dirMode.toString(8)}`);
+    assert.strictEqual(fileMode, FILE_MODE, `expected file mode ${FILE_MODE.toString(8)}, got ${fileMode.toString(8)}`);
+
+    // Reads back through the real rename too: a swapped rename(to, from) would leave the
+    // target file missing (or holding stale bytes from a previous run) rather than the
+    // payload just written.
+    assert.deepStrictEqual(await store.read(), PAYLOAD);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

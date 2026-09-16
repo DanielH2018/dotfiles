@@ -92,3 +92,41 @@ test('main.ts persists a successful fetch back to the payload store', () => {
   const writePattern = new RegExp(`store\\.write\\(\\s*${param}\\s*\\)`);
   assert.match(body, writePattern, `expected onSuccess's body to call store.write(${param})`);
 });
+
+/** The balanced `(...)` argument list of the call opening at or after `from`. */
+function parenBlock(text: string, from: number): string {
+  const start = text.indexOf('(', from);
+  assert.notStrictEqual(start, -1, 'expected a ( at or after the given position');
+  let depth = 0;
+  let i = start;
+  for (; i < text.length; i += 1) {
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        i += 1;
+        break;
+      }
+    }
+  }
+  return text.slice(start, i);
+}
+
+test('main.ts never logs the token', () => {
+  // main.ts is the one module holding the plaintext token in a variable, and it carries no
+  // test coverage otherwise (it is a process shell that reads env vars and calls
+  // process.exit), so a stray `console.error(...token...)` has nothing else to catch it.
+  // Untested by construction is exactly why this has to be a structural assertion rather
+  // than a behavioral one: there is no way to call main.ts and observe its stderr here.
+  for (const match of MAIN_TS_STRIPPED.matchAll(/console\.\w+\(/g)) {
+    const call = parenBlock(MAIN_TS_STRIPPED, match.index);
+    assert.doesNotMatch(call, /\btoken\b/, `expected no console call to log token: ${call}`);
+  }
+});
+
+test('the /api/prs cache TTL is 60 seconds', () => {
+  // REFRESH_POLL_MS and REFRESH_POLL_TIMEOUT_MS both have their own value tests; this third
+  // startup clock had none, so `createCache<LoadResult>(600_000)` — ten times the real
+  // value — left the suite green.
+  assert.match(MAIN_TS_STRIPPED, /createCache<[^>]*>\(\s*60_?000\s*\)/);
+});
