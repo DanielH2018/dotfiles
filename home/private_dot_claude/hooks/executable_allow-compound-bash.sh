@@ -174,21 +174,35 @@ heredoc_write_target() {
 # both roots, and a `$` could still be a live expansion the shell resolves before this
 # hook ever sees the literal text.
 heredoc_write_ok() {
-  local p="$1" real
+  local p="$1" real cwd_raw cwd_phys
   case $p in
     *..*) return 1 ;;
     '~'*) return 1 ;;
     '$'*) return 1 ;;
+    *//*) return 1 ;;               # collapsed separators: refuse rather than guess
+  esac
+  p=${p#./}                         # one leading `./` is cosmetic
+  case $p in
+    ./* | */./*) return 1 ;;        # any remaining `.` component: refuse rather than guess
   esac
   safe_rm_ok "rm -f $p" && return 0
   [ -n "${CWD:-}" ] || return 1
+  cwd_raw=${CWD%/}
+  [ -n "$cwd_raw" ] || return 1
+  # Compare against the cwd both as given and symlink-resolved. `realpath -m` used to do
+  # this normalization, but `-m` is GNU-only and hooks do not run under the interactive
+  # gnubin PATH, so on macOS it failed outright and this whole branch silently refused.
+  # `cd ... && pwd -P` is the same physical resolve worktree-context.sh uses, and it works
+  # on a directory that exists -- which the cwd always is. The target itself stays LEXICAL,
+  # for under_scratch's reason: resolving it would need it to exist, and it usually does not.
+  cwd_phys=$(cd "$cwd_raw" 2>/dev/null && pwd -P) || return 1
   case $p in
     /*) real=$p ;;
-    *) real="$CWD/$p" ;;
+    *) real="$cwd_raw/$p" ;;
   esac
-  real=$(realpath -m -- "$real" 2>/dev/null) || return 1
+  real=${real%/}
   case $real in
-    "$CWD" | "$CWD"/*) return 0 ;;
+    "$cwd_raw"/?* | "$cwd_phys"/?*) return 0 ;;
   esac
   return 1
 }

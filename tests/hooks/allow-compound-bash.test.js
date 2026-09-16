@@ -581,6 +581,30 @@ test('a cat>path heredoc write with a quoted delimiter is allowed under the sess
     allowedAt(`cat > ${HEREDOC_CWD}/notes.md <<'EOF'\nhi\nEOF\n`, HEREDOC_CWD), 'allow');
 });
 
+// The cwd arrives from the hook's `.cwd` input field exactly as the harness wrote it, which
+// is not necessarily its physical path -- on macOS $TMPDIR lives under /var, itself a symlink
+// to /private/var. The check has to hold whichever form it gets, so it resolves the cwd both
+// ways and compares the target against each. A symlinked cwd reproduces that mismatch on any
+// platform, which matters because the bug this covers was invisible to Linux CI: the previous
+// implementation normalized the target with `realpath -m`, a GNU-only flag, and resolved only
+// one side of the comparison.
+//
+// The target itself stays lexical, so only the two forms the cwd arrives in are recognized. A
+// target spelled in a THIRD form -- the physical path, where the cwd came through as the
+// symlink -- is refused, and deliberately: resolving it would need it to exist, which is
+// exactly the trade-off under_scratch documents and refuses to make.
+const HEREDOC_CWD_REAL = fs.mkdtempSync(path.join(os.tmpdir(), 'acb-real-'));
+const HEREDOC_CWD_LINK = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'acb-link-')), 'via');
+fs.symlinkSync(HEREDOC_CWD_REAL, HEREDOC_CWD_LINK);
+
+test('a heredoc write under a symlinked session cwd is still allowed', { skip }, () => {
+  assert.strictEqual(
+    allowedAt("cat > notes.md <<'EOF'\nhi\nEOF\n", HEREDOC_CWD_LINK), 'allow');
+  assert.strictEqual(
+    allowedAt(`cat > ${HEREDOC_CWD_LINK}/notes.md <<'EOF'\nhi\nEOF\n`, HEREDOC_CWD_LINK),
+    'allow');
+});
+
 // A heredoc body writes inert text -- it is never executed -- so even a body that reads
 // like a dangerous command is safe to write, and this only reads 'allow' if cmd_parse
 // kept the whole body lifted out rather than splitting it into top-level segments. A
