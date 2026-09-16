@@ -81,7 +81,7 @@ names, PR titles, review and CI states. No cardholder data and no credential, so
 not implicated. It is a SOC 2 access-control question, and the answer is that the loss was
 accepted knowingly in exchange for a dashboard that opens from a bookmark.
 
-### Two properties this argument has to name
+### Three properties this argument has to name
 
 **Version control is an egress path, and it is not about who can read the file on the host.**
 `~/.local/state/pr-dash/` holds `last-payload.json` and `agent.log`, and both carry every
@@ -103,6 +103,30 @@ holds an authority the caller does not have and spends it on request.
 `FORCE_MIN_INTERVAL_MS` in `main-lib.ts` is the bound — one forced fetch per ten seconds, so
 360 an hour rather than as many as a caller can issue — and `TOKEN_FAILURE_TTL_MS` bounds the
 prompts behind a failing resolution.
+
+**The credential is a classic personal access token carrying `repo`, which grants write.** The
+sentence above — "no cardholder data and no credential" — describes the *payload*, and stays
+true. It does not describe the process: an always-on server holds a token that can push to,
+and open and merge pull requests in, every repository the operator can reach. Nothing about
+the read-only posture comes from the credential. It comes from the code — no endpoint mutates
+GitHub state, `graphql-readonly.test.ts` pins the absence of a mutating operation anywhere in
+`src/`, and there is deliberately no fallback to `gh auth token`, which would re-broaden scope
+exactly when 1Password is unavailable.
+
+Three consequences a reviewer should see stated rather than derive:
+
+- The confused-deputy property above is bounded by the server's own routes, not by the token.
+  A local process can spend the credential only through `/api/prs`, so what it can obtain is
+  PR metadata and rate-limit consumption. Add one mutating route and the same caller gains
+  write access to the operator's repositories.
+- The residual after the idle exit is a write-capable token in the memory of a process that
+  lives up to 30 minutes past its last use. That is what bounds the window, and it is the
+  reason the window was not widened to hold the credential all day.
+- **A read-only token would close most of this, and is the right follow-up.** A fine-grained
+  token scoped to `pull_requests: read` and `metadata: read` serves every query this dashboard
+  issues. The dashboard works today with the token it has; narrowing the token is a change to
+  the 1Password item and its scopes, not to this code, so it is recorded here rather than
+  done here.
 
 ### What replaces it
 
