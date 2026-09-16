@@ -28,8 +28,19 @@ import {
   isStaleResponse,
   REFRESH_POLL_MS,
   REFRESH_POLL_TIMEOUT_MS,
+  ciChip,
+  reviewChip,
+  stackIndentPx,
+  STACK_INDENT_CAP,
+  STACK_INDENT_STEP,
 } from '../public/render-guards.js';
-import { DRAFT_STATES, groupBy, STALENESS_BUCKETS, stalenessBucket } from '../public/group.js';
+import {
+  DRAFT_STATES,
+  groupBy,
+  STALENESS_BUCKETS,
+  stalenessBucket,
+  summaryChips,
+} from '../public/group.js';
 import type { PrRecord } from '../src/types.ts';
 import type { StoredView } from '../public/render-guards.js';
 
@@ -1126,6 +1137,62 @@ test('isPermanentFailure treats 4xx as permanent and everything else as worth re
 test('isStaleResponse is true once a newer request has started', () => {
   assert.strictEqual(isStaleResponse(1, 2), true);
   assert.strictEqual(isStaleResponse(2, 2), false);
+});
+
+test('ciChip renders an absent CI state as nothing, and every present one as a toned chip', () => {
+  assert.deepStrictEqual(ciChip('success'), { label: 'passing', tone: 'good' });
+  assert.deepStrictEqual(ciChip('failure'), { label: 'failing', tone: 'bad' });
+  assert.deepStrictEqual(ciChip('pending'), { label: 'pending', tone: 'warn' });
+  // Not a chip reading "none": the row used to print `none · none · 12d`.
+  assert.strictEqual(ciChip('none'), null);
+});
+
+test('reviewChip renders an absent review state as nothing, and every present one as a toned chip', () => {
+  assert.deepStrictEqual(reviewChip('approved'), { label: 'approved', tone: 'good' });
+  assert.deepStrictEqual(reviewChip('changes_requested'), { label: 'changes', tone: 'bad' });
+  assert.deepStrictEqual(reviewChip('review_required'), { label: 'waiting', tone: 'warn' });
+  assert.strictEqual(reviewChip('none'), null);
+});
+
+test('a row chip and the header chip for the same state read the same word', () => {
+  // The oracle is group.js, not this file: `summaryChips` owns the words a header shows, so
+  // renaming a row chip in isolation fails here. A header reading "3 failing" beside rows
+  // reading anything else is two vocabularies for one state.
+  const headerWords = new Map(
+    summaryChips({
+      total: 4,
+      ci: { success: 1, failure: 1, pending: 1, none: 1 },
+      review: { approved: 1, changes_requested: 1, review_required: 1, none: 1 },
+    }).map((chip) => [chip.label.replace(/^\d+ /, ''), chip.tone]),
+  );
+
+  for (const [chip, state] of [
+    [ciChip('failure'), 'ci failure'],
+    [ciChip('pending'), 'ci pending'],
+    [reviewChip('approved'), 'review approved'],
+    [reviewChip('changes_requested'), 'review changes_requested'],
+    [reviewChip('review_required'), 'review review_required'],
+  ] as const) {
+    assert.ok(chip !== null, `expected a chip for ${state}`);
+    assert.strictEqual(
+      headerWords.get(chip.label),
+      chip.tone,
+      `expected the header chip "${chip.label}" for ${state} to carry the same tone as the row's`,
+    );
+  }
+});
+
+test('stackIndentPx indents up to the cap and no further', () => {
+  assert.strictEqual(stackIndentPx(0), 0);
+  assert.strictEqual(stackIndentPx(1), STACK_INDENT_STEP);
+  assert.strictEqual(stackIndentPx(STACK_INDENT_CAP), STACK_INDENT_CAP * STACK_INDENT_STEP);
+  // A 10-deep stack is real on this dashboard; uncapped it started its last title ~200px in.
+  assert.strictEqual(stackIndentPx(9), STACK_INDENT_CAP * STACK_INDENT_STEP);
+  assert.strictEqual(stackIndentPx(400), STACK_INDENT_CAP * STACK_INDENT_STEP);
+});
+
+test('stackIndentPx never returns a negative indent', () => {
+  assert.strictEqual(stackIndentPx(-1), 0);
 });
 
 test('collapse-all, expand-all, reset and refresh are real buttons with a real label', () => {

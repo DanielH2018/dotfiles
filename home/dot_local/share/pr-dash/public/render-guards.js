@@ -648,3 +648,65 @@ export function isPermanentFailure(status) {
 export function isStaleResponse(generation, latestGeneration) {
   return generation !== latestGeneration;
 }
+
+/** @typedef {import('./group.js').SummaryChip} SummaryChip */
+
+/**
+ * The chip a row shows for its CI state, or `null` when there is nothing to say.
+ *
+ * `none` returns `null` rather than a chip reading "none". The row used to print the raw
+ * enum — `none · none · 12d` — which spends the most legible part of the row saying that two
+ * things are absent. An absent state is best rendered as nothing at all.
+ *
+ * The labels reuse `summaryChips`' words deliberately: a header chip reading "3 failing" and
+ * a row chip reading "failing" have to be the same word, or they read as two vocabularies.
+ * @param {Ci} ci
+ * @returns {SummaryChip | null}
+ */
+export function ciChip(ci) {
+  if (ci === 'success') return { label: 'passing', tone: 'good' };
+  if (ci === 'failure') return { label: 'failing', tone: 'bad' };
+  if (ci === 'pending') return { label: 'pending', tone: 'warn' };
+  return null;
+}
+
+/**
+ * The chip a row shows for its review state, or `null` when there is nothing to say.
+ * Same reasoning as {@link ciChip} for the absent state and the shared labels.
+ * @param {Review} review
+ * @returns {SummaryChip | null}
+ */
+export function reviewChip(review) {
+  if (review === 'approved') return { label: 'approved', tone: 'good' };
+  if (review === 'changes_requested') return { label: 'changes', tone: 'bad' };
+  if (review === 'review_required') return { label: 'waiting', tone: 'warn' };
+  return null;
+}
+
+/** The pixels of indent one level of stack depth adds, until the cap. */
+export const STACK_INDENT_STEP = 18;
+
+/**
+ * The deepest level that still earns indent. Beyond it every row shares one indent.
+ *
+ * Uncapped indent multiplied depth by the step, so a 10-deep stack — which this dashboard
+ * really does show — started its last title roughly 200px in and squeezed the titles that
+ * matter into whatever was left. Depth past the cap is read from the `n/N` badge and the
+ * rule down the left of the stack instead, and titles stay in one column however deep the
+ * stack runs.
+ */
+export const STACK_INDENT_CAP = 3;
+
+/**
+ * The left indent, in pixels, for a stack row at `depth`. Clamped at {@link STACK_INDENT_CAP}
+ * levels, and never negative for a nonsense depth.
+ *
+ * Here rather than in `app.js` because it returns a value: `app.js` cannot be imported under
+ * `node --test`, and a source-reading test can only assert that some expression appears in
+ * the body, which any dead code above the real `return` satisfies.
+ * @param {number} depth
+ * @returns {number}
+ */
+export function stackIndentPx(depth) {
+  return Math.min(Math.max(depth, 0), STACK_INDENT_CAP) * STACK_INDENT_STEP;
+}

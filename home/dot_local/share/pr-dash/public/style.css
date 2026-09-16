@@ -1,97 +1,432 @@
-:root { color-scheme: dark; --bg:#1e1e2e; --fg:#cdd6f4; --dim:#a6adc8; --line:#45475a;
-        --green:#a6e3a1; --red:#f38ba8; --yellow:#f9e2af; }
-body { margin:0; background:var(--bg); color:var(--fg);
-       font:15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-header { display:flex; gap:16px; align-items:center; flex-wrap:wrap;
-         padding:16px 24px; border-bottom:1px solid var(--line); }
-h1 { font-size:18px; margin:0 auto 0 0; }
-fieldset { display:flex; align-items:center; gap:10px; margin:0; padding:4px 10px;
-           border:1px solid var(--line); border-radius:4px; font-size:13px; }
-legend { padding:0 4px; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
-         color:var(--dim); }
-fieldset label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
-input[type=checkbox] { accent-color:var(--line); }
-main { padding:8px 24px 48px; }
-.empty { color:var(--dim); margin:28px 0; }
-h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em;
-     color:var(--dim); margin:28px 0 8px; }
-/* align-items:center keeps a badge chip vertically centered against the title text
-   beside it. justify-content is deliberately left at its flex-start default: a badge
-   prepended before the title is just another flex item in source order, and
-   space-between would spread the gap across every item instead of only pushing .meta
-   to the right -- so .meta gets its own margin-left:auto to reach the right edge
-   regardless of how many badges precede the title. */
-.row { display:flex; align-items:center; gap:16px; padding:8px 12px;
-       border-bottom:1px solid var(--line); color:var(--fg); text-decoration:none; }
-.row:hover { background:#313244; }
-.badge { flex:none; padding:2px 6px; border-radius:4px; font-size:11px;
-         font-weight:600; color:var(--fg); background:var(--line); }
-.badge.flag { color:var(--bg); background:var(--red); }
-/* Yellow, not red: an ambiguous base hasn't merged away like .flag's case -- it's an
-   unresolved "can't tell" rather than an "act on this now". */
-.badge.ambiguous { color:var(--bg); background:var(--yellow); }
-.meta { margin-left:auto; color:var(--dim); font-size:13px; white-space:nowrap; }
-.ci-success .meta { color:var(--green); }
-.ci-failure .meta { color:var(--red); }
-.ci-pending .meta { color:var(--yellow); }
-#banner { margin:0; padding:10px 24px; background:#45293a; color:var(--red); }
+/*
+ * Catppuccin Mocha, the same palette the terminal this dashboard was built from uses.
+ * Every colour in this file comes from a token below — a raw hex in a rule is drift, and two
+ * of them (a row hover and the banner) had already drifted out of the declared set.
+ *
+ * Text on a filled accent is always --crust. Mocha's accents are pastel, so light text on a
+ * filled badge disappears.
+ */
+:root {
+  color-scheme: dark;
+
+  --base: #1e1e2e;
+  --mantle: #181825;
+  --crust: #11111b;
+  --surface0: #313244;
+  --surface1: #45475a;
+  --surface2: #585b70;
+
+  --text: #cdd6f4;
+  --subtext0: #a6adc8;
+  --overlay0: #6c7086;
+
+  --blue: #89b4fa;
+  --green: #a6e3a1;
+  --yellow: #f9e2af;
+  --red: #f38ba8;
+  --mauve: #cba6f7;
+
+  /* The banner's ground: red at low saturation over the recessed panel. The flat hex is the
+     fallback for an engine without color-mix; the declaration after it wins everywhere else. */
+  --banner-bg: #3a2432;
+  --banner-bg: color-mix(in srgb, var(--red) 16%, var(--mantle));
+
+  --row-height: 40px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--base);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+
+/* Sticky, because the list is long enough to scroll well past it and Refresh is the control
+   most often wanted from the bottom of a long list. */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px;
+  background: var(--mantle);
+  border-bottom: 1px solid var(--surface1);
+}
+
+.bar,
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+select {
+  padding: 4px 6px;
+  background: var(--surface0);
+  color: var(--text);
+  border: 1px solid var(--surface1);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+/* Pushed right, and kept together so the four actions read as one cluster rather than as the
+   tail of the filter row. `margin-left:auto` on the group, not on the first button. */
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+button {
+  padding: 5px 10px;
+  white-space: nowrap;
+  background: var(--surface0);
+  color: var(--text);
+  border: 1px solid var(--surface1);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover { background: var(--surface1); border-color: var(--surface2); }
+
+button.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: var(--crust);
+  font-weight: 600;
+}
+
+button.primary:hover { filter: brightness(1.1); }
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+/* ---- filter chips ------------------------------------------------------ */
+
+/*
+ * Segmented chip toggles built out of the checkboxes themselves. The input stays in the DOM
+ * and stays a checkbox — `readControls` reads `input[type=checkbox]:checked`, and the native
+ * control brings keyboard and screen-reader behaviour for free. `appearance:none` plus a
+ * `:has(:checked)` rule on the wrapping label is the whole of the restyle.
+ */
+fieldset {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+legend {
+  float: left;
+  padding: 0 8px 0 0;
+  color: var(--overlay0);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 24px;
+}
+
+fieldset label {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  background: var(--base);
+  color: var(--subtext0);
+  border: 1px solid var(--surface1);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Segmented: one shared border between neighbours, rounded only at the two ends. */
+fieldset label + label { border-left: 0; }
+fieldset label:first-of-type { border-radius: 5px 0 0 5px; }
+fieldset label:last-of-type { border-radius: 0 5px 5px 0; }
+
+fieldset label:hover { background: var(--surface0); color: var(--text); }
+
+fieldset label:has(:checked) {
+  background: var(--surface1);
+  color: var(--text);
+  font-weight: 600;
+}
+
+fieldset label:has(:focus-visible) {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+fieldset input[type=checkbox] {
+  appearance: none;
+  width: 0;
+  height: 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+}
+
+/* ---- banner ------------------------------------------------------------ */
+
+#banner {
+  margin: 0;
+  padding: 8px 20px;
+  background: var(--banner-bg);
+  color: var(--red);
+  border-bottom: 1px solid var(--surface1);
+  font-size: 13px;
+}
+
+/* ---- sections ---------------------------------------------------------- */
+
+section { margin: 0 0 4px; }
+
+h2 {
+  margin: 0;
+  border-bottom: 1px solid var(--surface1);
+  background: var(--mantle);
+}
+
 /* The header is a button so the whole row is a click target and screen readers get the
-   disclosure state from aria-expanded. Stripped back to look like the h2 it replaced. */
+   disclosure state from aria-expanded. */
 .disclosure {
   display: flex;
   align-items: center;
+  /* A repo with four summary chips is wider than a narrow window. Wrapping the chips onto a
+     second line keeps the header inside the viewport; without it the widest header set the
+     width of the whole document and every row scrolled sideways. */
+  flex-wrap: wrap;
   gap: 8px;
   width: 100%;
   padding: 0;
   background: none;
   border: none;
+  border-radius: 0;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
+
+h2 .disclosure { padding: 9px 20px; }
+h2 .disclosure:hover { background: var(--surface0); }
+
 .chevron {
   width: 1em;
-  color: var(--dim);
+  flex: none;
+  color: var(--overlay0);
+  font-size: 11px;
 }
+
+/* Sized and weighted past the rows under it — a group header set at body weight left the
+   sections reading as one undifferentiated list. */
 .section-name {
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
 }
+
 .section-count {
-  color: var(--dim);
-  font-size: 0.8em;
+  color: var(--overlay0);
+  font-size: 11px;
   font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
-.summary-chip {
-  font-size: 0.72em;
+
+/* ---- chips ------------------------------------------------------------- */
+
+/*
+ * One chip pattern, used by both the header summary and the row states: coloured text on a
+ * transparent ground with a matching border. Outline rather than filled, because a row
+ * carries up to two of these beside a repo name and a title, and two filled pastels at that
+ * density read as the loudest thing on the page.
+ */
+.summary-chip,
+.state-chip {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
+  line-height: 1.5;
+  white-space: nowrap;
 }
-.summary-chip.bad { color: var(--red); }
-.summary-chip.warn { color: var(--yellow); }
-.summary-chip.good { color: var(--green); }
-/* The toggle and the PR's own link are siblings here, not nested: an anchor must not contain
-   interactive content. `.row` keeps its own border so a flat (non-stack) row is unaffected;
-   the wrapper owns the line and the indent so the rule spans the toggle too, and the anchor
-   takes the remaining width instead of colliding with it.
-   A fixed first column, not a flex item that collapses to zero width when absent: a root with
-   no toggle (nothing to fold, or nothing the filters leave visible under it) would otherwise
-   sit 21px left of its own toggled siblings, so every title in a section starts at the same
-   x regardless of which of its rows happen to carry a toggle. */
-.stack-row {
-  display: grid;
-  grid-template-columns: 21px 1fr;
+
+.summary-chip.bad,
+.state-chip.bad { color: var(--red); }
+.summary-chip.warn,
+.state-chip.warn { color: var(--yellow); }
+.summary-chip.good,
+.state-chip.good { color: var(--green); }
+
+/* ---- rows -------------------------------------------------------------- */
+
+.row {
+  display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  gap: 10px;
+  min-height: var(--row-height);
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--surface0);
+  color: var(--text);
+  text-decoration: none;
 }
+
+.row:hover { background: var(--surface0); }
+
+.row-number {
+  flex: none;
+  color: var(--overlay0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The title takes the slack and truncates, so a long one can never push the states off the
+   right edge of a narrow window. */
+.row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+}
+
+.stale {
+  color: var(--overlay0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * CI and review each colour their own chip, so the two carry independent weight. The whole
+ * `.meta` used to take the CI colour, which meant a PR with green CI and changes requested
+ * read as entirely green. The `ci-*` and `review-*` classes on the row stay unstyled: a rail
+ * drawn on the row lands after a stack row's indent, so it reads as a stray mark partway
+ * across the list rather than as an edge marker.
+ */
+
+/* ---- stacks ------------------------------------------------------------ */
+
+/*
+ * `padding-left` on the wrapper, not `margin-left`: the wrapper stays full width at every
+ * depth, so its bottom border and the depth rule below both run the width of the list.
+ */
+.stack-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  border-bottom: 1px solid var(--surface0);
+}
+
+/*
+ * The depth cue that survives the indent cap. `stackIndentPx` stops indenting past three
+ * levels, so a 10-deep stack no longer walks its titles off to the right — the rule says the
+ * row belongs to the stack above it and the `n/N` badge says how deep.
+ */
+.stack-row.nested::before {
+  content: "";
+  position: absolute;
+  left: 27px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--surface1);
+}
+
+/* `min-width:0`: a grid item defaults to `min-width:auto`, which refuses to shrink below its
+   content and would let one long title widen the whole document instead of truncating. */
 .stack-row .row {
   grid-column: 2;
+  min-width: 0;
   border-bottom: none;
 }
+
 .stack-toggle {
   grid-column: 1;
   justify-self: start;
   width: auto;
+  padding: 0 0 0 20px;
+}
+
+.badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface1);
+  color: var(--subtext0);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.badge.flag { color: var(--crust); background: var(--red); }
+.badge.ambiguous { color: var(--crust); background: var(--yellow); }
+
+/* ---- empty state ------------------------------------------------------- */
+
+.empty {
+  margin: 0;
+  padding: 32px 20px;
+  color: var(--subtext0);
+  text-align: center;
+}
+
+/* ---- narrow ------------------------------------------------------------ */
+
+/*
+ * At pane width the actions no longer fit beside the selects, so they take their own line
+ * rather than wrapping one button at a time.
+ */
+@media (max-width: 860px) {
+  header { padding: 10px 14px; }
+  .actions { margin-left: 0; width: 100%; }
+  .row { padding-left: 14px; padding-right: 14px; }
+  h2 .disclosure { padding-left: 14px; padding-right: 14px; }
+  .stack-toggle { padding-left: 14px; }
+  .stack-row.nested::before { left: 21px; }
+  #banner { padding-left: 14px; padding-right: 14px; }
 }

@@ -27,6 +27,9 @@ import {
   nextPollState,
   isPermanentFailure,
   isStaleResponse,
+  ciChip,
+  reviewChip,
+  stackIndentPx,
 } from './render-guards.js';
 
 /** @typedef {import('../src/types.ts').PrRecord} PrRecord */
@@ -207,11 +210,37 @@ function renderRow(pr) {
   if (isSafeUrl(pr.url)) row.href = pr.url;
   row.target = '_blank';
   row.rel = 'noreferrer';
-  row.textContent = `#${pr.number} ${pr.title}`;
+
+  const number = document.createElement('span');
+  number.className = 'row-number';
+  number.textContent = `#${pr.number}`;
+  row.append(number);
+
+  const title = document.createElement('span');
+  title.className = 'row-title';
+  title.textContent = pr.title;
+  row.append(title);
 
   const meta = document.createElement('span');
   meta.className = 'meta';
-  meta.textContent = `${pr.ci} · ${pr.review} · ${pr.staleDays}d`;
+
+  // Spans, not buttons. `.row` is an `<a>`, and a nested `<button>` is invalid there: a
+  // `preventDefault` on click does not stop a middle-click, which dispatches `auxclick` and
+  // opens the PR anyway. Nothing in the row is interactive except the row itself.
+  for (const chip of [ciChip(pr.ci), reviewChip(pr.review)]) {
+    if (chip === null) continue;
+    const el = document.createElement('span');
+    el.className = `state-chip ${chip.tone}`;
+    el.textContent = chip.label;
+    meta.append(el);
+  }
+
+  const stale = document.createElement('span');
+  stale.className = 'stale';
+  stale.textContent = pr.staleDays === 1 ? '1 day' : `${pr.staleDays} days`;
+  stale.title = 'Days since the last commit on this branch.';
+  meta.append(stale);
+
   row.append(meta);
   return row;
 }
@@ -311,7 +340,8 @@ function renderStack(node, into, allowed) {
     // `click`, so a handler on the button could never stop the anchor's own navigation.
     const wrapper = document.createElement('div');
     wrapper.className = 'stack-row';
-    wrapper.style.marginLeft = `${node.depth * 20}px`;
+    if (node.depth > 0) wrapper.classList.add('nested');
+    wrapper.style.paddingLeft = `${stackIndentPx(node.depth)}px`;
     // Only a root with a currently visible descendant is worth a toggle: a single PR has
     // nothing to fold, a child's own subtree folds with its root, and a root whose children
     // the filter has already excluded would offer a control that folds nothing.

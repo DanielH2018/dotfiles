@@ -210,9 +210,16 @@ for decluttering.
 ▸ privacy-com/core-server          3 PRs   ●2 failing  ●1 approved
 ▸ DanielH2018/dotfiles             1 PR    ●1 pending
 ▾ privacy-com/dbt                  2 PRs   ●1 pending  ●1 approved
-    Add staging model for disputes        success · approved · 2d
-    Backfill cashback marts               pending · none · 5d
+    #418  Add staging model for disputes     passing  approved   2 days
+    #421  Backfill cashback marts            pending             5 days
 ```
+
+A row shows a chip per state it actually has. An absent state renders as nothing: the rows
+used to print the raw enum, so a PR with neither CI nor a reviewer read `none · none · 12d`
+and spent the most legible part of the row saying that two things are absent. `ciChip` and
+`reviewChip` in `public/render-guards.js` return `null` for `none`, and each chip carries its
+own tone — colouring the whole metadata block by CI state, as it first did, made a PR with
+green CI and changes requested read as entirely green.
 
 The summary is a pure function over the group's records. It lives in `public/group.js` and is
 tested there, because `public/app.js` cannot be imported under `node --test` — `location.hash`

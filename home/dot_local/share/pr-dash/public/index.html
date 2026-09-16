@@ -7,50 +7,67 @@
 </head>
 <body>
 <header>
-  <h1>Open PRs</h1>
-  <label>Group by
-    <select id="group-by">
-      <option value="repo">Repository</option>
-      <option value="ci">CI status</option>
-      <option value="review">Review state</option>
-      <option value="staleness">Staleness</option>
-      <option value="draft">Draft</option>
-    </select>
-  </label>
-  <label>Sort
-    <select id="sort-by">
-      <option value="stale">Staleness</option>
-      <option value="age">Age</option>
-      <option value="title">Title</option>
-      <option value="size">Size</option>
-    </select>
-  </label>
-  <fieldset id="filter-ci"><legend>CI</legend>
-    <label><input type="checkbox" value="success"> ok</label>
-    <label><input type="checkbox" value="failure"> red</label>
-    <label><input type="checkbox" value="pending"> running</label>
-    <label><input type="checkbox" value="none"> none</label>
-  </fieldset>
-  <fieldset id="filter-review"><legend>Review</legend>
-    <label><input type="checkbox" value="approved"> approved</label>
-    <label><input type="checkbox" value="changes_requested"> changes</label>
-    <label><input type="checkbox" value="review_required"> waiting</label>
-    <label><input type="checkbox" value="none"> none</label>
-  </fieldset>
-  <fieldset id="filter-staleness"><legend>Staleness</legend>
-    <label><input type="checkbox" value="<1d"> &lt;1d</label>
-    <label><input type="checkbox" value="1-3d"> 1-3d</label>
-    <label><input type="checkbox" value="3-7d"> 3-7d</label>
-    <label><input type="checkbox" value=">7d"> &gt;7d</label>
-  </fieldset>
-  <fieldset id="filter-draft"><legend>Draft</legend>
-    <label><input type="checkbox" value="ready"> ready</label>
-    <label><input type="checkbox" value="draft"> draft</label>
-  </fieldset>
-  <button id="collapse-all" type="button">Collapse all</button>
-  <button id="expand-all" type="button">Expand all</button>
-  <button id="reset" type="button">Reset view</button>
-  <button id="refresh" type="button">Refresh</button>
+  <!--
+    Two rows: what the list is and how it is arranged, then what it excludes. The four filter
+    fieldsets and the two selects used to share one wrapping flex row, which at anything under
+    about 1100px broke into a jumble whose reading order no longer matched anything.
+
+    Every checkbox `value` here is also a key `saveStoredView` persists under `pr-dash:view`,
+    so relabel the visible text freely and leave the values alone — a changed value orphans
+    the saved view. The inputs themselves stay inputs, restyled by CSS into chips: they are
+    what `readControls` reads, and they carry keyboard and screen-reader behaviour that an
+    `aria-pressed` button would have to reimplement.
+  -->
+  <div class="bar">
+    <h1>Open PRs</h1>
+    <label class="field">Group by
+      <select id="group-by">
+        <option value="repo">Repository</option>
+        <option value="ci">CI status</option>
+        <option value="review">Review state</option>
+        <option value="staleness">Staleness</option>
+        <option value="draft">Draft</option>
+      </select>
+    </label>
+    <label class="field">Sort
+      <select id="sort-by">
+        <option value="stale">Staleness</option>
+        <option value="age">Age</option>
+        <option value="title">Title</option>
+        <option value="size">Size</option>
+      </select>
+    </label>
+    <div class="actions">
+      <button id="collapse-all" type="button">Collapse all</button>
+      <button id="expand-all" type="button">Expand all</button>
+      <button id="reset" type="button">Reset view</button>
+      <button id="refresh" type="button" class="primary">Refresh</button>
+    </div>
+  </div>
+  <div class="filters">
+    <fieldset id="filter-ci"><legend>CI</legend>
+      <label><input type="checkbox" value="success"> passing</label>
+      <label><input type="checkbox" value="failure"> failing</label>
+      <label><input type="checkbox" value="pending"> pending</label>
+      <label><input type="checkbox" value="none"> no CI</label>
+    </fieldset>
+    <fieldset id="filter-review"><legend>Review</legend>
+      <label><input type="checkbox" value="approved"> approved</label>
+      <label><input type="checkbox" value="changes_requested"> changes</label>
+      <label><input type="checkbox" value="review_required"> waiting</label>
+      <label><input type="checkbox" value="none"> no review</label>
+    </fieldset>
+    <fieldset id="filter-staleness"><legend>Staleness</legend>
+      <label><input type="checkbox" value="<1d"> &lt;1d</label>
+      <label><input type="checkbox" value="1-3d"> 1-3d</label>
+      <label><input type="checkbox" value="3-7d"> 3-7d</label>
+      <label><input type="checkbox" value=">7d"> &gt;7d</label>
+    </fieldset>
+    <fieldset id="filter-draft"><legend>Draft</legend>
+      <label><input type="checkbox" value="ready"> ready</label>
+      <label><input type="checkbox" value="draft"> draft</label>
+    </fieldset>
+  </div>
 </header>
 <div id="banner" hidden></div>
 <main id="groups"></main>

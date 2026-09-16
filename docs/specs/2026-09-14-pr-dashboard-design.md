@@ -137,6 +137,14 @@ into `"pending"` would paint every PR in a repository without CI permanently yel
 trunk. Roots render at top level, children nested beneath with a depth indent and a
 position badge reading `2/4`.
 
+The indent stops after three levels (`stackIndentPx` in `public/render-guards.js`). This
+dashboard really does show ten-deep stacks, and one indent step per level started the last
+title roughly 200px in, squeezing the titles into whatever was left. Past the cap, depth is
+read from the position badge and from a rule down the left of the stack, and titles stay in
+one column however deep the stack runs. The cap is safe here only because no stack branches:
+every one is a linear chain, so `2/4` and depth carry the same information. A root with two
+children would lose that, and the rule is what would have to carry the relationship.
+
 Cases the algorithm must handle, each with a test:
 
 | Case | Expected behavior |
