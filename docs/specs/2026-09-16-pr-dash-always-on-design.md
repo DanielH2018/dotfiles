@@ -31,7 +31,7 @@ Three consequences follow, and each is a deliberate decision rather than a side 
 - **The per-launch secret is removed.** `Host` and `Origin` become the whole request boundary.
 - **The token is resolved lazily.** Listening needs no credential, so the agent starts
   instantly at login and the first Touch ID prompt arrives when the operator first opens the
-  dashboard.
+  dashboard — which also requires the startup pre-load to become opt-in, for the reason below.
 - **The process is disposable.** Any failure state — a wedged fetch, an exhausted retry
   budget, a corrupt anything — is cleared by an idle exit and a restart that costs nothing,
   because there is no per-launch state left to lose.
@@ -100,6 +100,28 @@ first `/api/prs` triggers `resolveToken`, and the result is cached in memory for
 life. A failure becomes a `500` carrying the message `resolveToken` already composes — the same
 message that used to reach a terminal, now reaching the banner the page already renders for a
 failed refresh.
+
+### The pre-load becomes opt-in
+
+The startup pre-load exists to overlap the first GitHub fetch with the launcher's port poll and
+the browser's own start, so that a `pr-dash` run paints fresh rows sooner. It calls `loadPrs`
+unawaited before `listen()`, which under a lazy token means **it resolves the token at process
+start** — and that fires a Touch ID prompt with no operator present.
+
+Under an always-on agent that is not a small cost. `KeepAlive` plus a 30-minute idle exit means
+a respawn roughly every 30 minutes, so an unconditional pre-load would prompt for biometrics
+all day, unprompted, whether or not anyone opened the dashboard. It would also defeat the idle
+exit's only purpose: the token would be re-resolved and resident again seconds after each exit
+dropped it.
+
+There is also nothing left to overlap. The agent's server is listening long before the operator
+opens a bookmark, so the fetch has no browser startup to hide behind, and the restored payload
+already paints instantly while the first real fetch runs.
+
+So the pre-load is **off by default** and enabled by `PR_DASH_PRELOAD=1`, which `bin/pr-dash`
+sets because that path is about to open a browser. The agent does not set it. This keeps the
+foreground launcher's original behaviour intact and stops the agent from asking for credentials
+nobody requested.
 
 Two properties hold, and both need tests:
 
