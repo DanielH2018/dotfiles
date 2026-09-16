@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLazyClient, createLazyToken } from '../src/main-lib.ts';
+import { createLazyClient, createLazyToken, TOKEN_FAILURE_TTL_MS } from '../src/main-lib.ts';
 import { createClient } from '../src/github.ts';
 import { stripComments } from './strip-comments.ts';
 
@@ -54,30 +54,84 @@ test('a successful resolution is reused for later calls, not re-run', async () =
   assert.strictEqual(second, first, 'a later call must reuse the cached token, not a new one');
 });
 
+// A clock these tests move by hand, so the negative cache's window can be crossed without
+// waiting for it. Every test that retries after a failure needs one: the retry is inside
+// TOKEN_FAILURE_TTL_MS by construction, and the real Date.now would keep it there.
+function fakeClock(start = 1_000) {
+  let ms = start;
+  return {
+    now: () => ms,
+    advance: (by: number) => {
+      ms += by;
+    },
+  };
+}
+
 test('a rejected resolution is not cached, so the next call tries again', async () => {
   let calls = 0;
+  const clock = fakeClock();
   const getToken = createLazyToken(async () => {
     calls += 1;
     if (calls === 1) throw new Error('touch id dismissed');
     return 'tok';
-  });
+  }, { now: clock.now });
 
   await assert.rejects(() => getToken(), /touch id dismissed/);
   // A retained rejected promise would replay 'touch id dismissed' here forever, which is
-  // exactly the poisoned-process failure this function exists to avoid.
+  // exactly the poisoned-process failure this function exists to avoid. The negative cache
+  // bounds how long the replay lasts; it must not make it permanent.
+  clock.advance(TOKEN_FAILURE_TTL_MS);
   const token = await getToken();
 
   assert.strictEqual(calls, 2);
   assert.strictEqual(token, 'tok');
 });
 
+test('a retry inside the failure TTL rethrows without starting another op process', async () => {
+  // The spawn storm this bounds: a cold-start credential failure has the page polling a 500
+  // every 600ms for 60 seconds, and without this each poll would start a fresh `op` and
+  // re-prompt for the biometrics the operator just dismissed.
+  let calls = 0;
+  const clock = fakeClock();
+  const getToken = createLazyToken(async () => {
+    calls += 1;
+    throw new Error('touch id dismissed');
+  }, { now: clock.now });
+
+  await assert.rejects(() => getToken(), /touch id dismissed/);
+  clock.advance(TOKEN_FAILURE_TTL_MS - 1);
+  await assert.rejects(() => getToken(), /touch id dismissed/);
+
+  assert.strictEqual(calls, 1, 'the retained failure must answer without resolving again');
+});
+
+test('a success after a failure is what later calls see, not the retained failure', async () => {
+  let calls = 0;
+  const clock = fakeClock();
+  const getToken = createLazyToken(async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('vault locked');
+    return 'tok';
+  }, { now: clock.now });
+
+  await assert.rejects(() => getToken(), /vault locked/);
+  clock.advance(TOKEN_FAILURE_TTL_MS);
+  await getToken();
+
+  // Inside the TTL measured from the failure, so a negative cache consulted ahead of the
+  // resolved token would rethrow 'vault locked' here.
+  assert.strictEqual(await getToken(), 'tok');
+  assert.strictEqual(calls, 2, 'the cached token answers this, with no third resolution');
+});
+
 test('two concurrent callers who both hit a rejection see the same error, and both retry after', async () => {
   let calls = 0;
+  const clock = fakeClock();
   const getToken = createLazyToken(async () => {
     calls += 1;
     if (calls === 1) throw new Error('first attempt failed');
     return 'tok';
-  });
+  }, { now: clock.now });
 
   const results = await Promise.allSettled([getToken(), getToken()]);
   assert.strictEqual(calls, 1, 'both concurrent callers must share the one failed attempt');
@@ -85,6 +139,7 @@ test('two concurrent callers who both hit a rejection see the same error, and bo
     assert.strictEqual(result.status, 'rejected');
   }
 
+  clock.advance(TOKEN_FAILURE_TTL_MS);
   const token = await getToken();
   assert.strictEqual(calls, 2);
   assert.strictEqual(token, 'tok');

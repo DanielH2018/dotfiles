@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { withFallback, createLoadPrs, startPreload } from '../src/main-lib.ts';
+import {
+  createLoadPrs,
+  FORCE_MIN_INTERVAL_MS,
+  startPreload,
+  withFallback,
+} from '../src/main-lib.ts';
 import { createClient } from '../src/github.ts';
 import { createCache } from '../src/cache.ts';
 import type { LoadResult } from '../src/loader.ts';
@@ -226,6 +231,62 @@ test('a forced refresh that fails still falls back to the retained payload', asy
   assert.strictEqual(second.stale, true);
   assert.match(String(second.error), /network down/);
   assert.deepStrictEqual(second.prs, first.prs);
+});
+
+// With the per-launch credential gone, `?refresh=1` is an unauthenticated, uncapped
+// cache-invalidating path to the operator's GitHub rate limit: any local process can loop it,
+// and createPrLoader's dedup makes that sequential rather than parallel but bounds nothing.
+// These three assert the effect — whether the cache was invalidated — rather than that a
+// stub was called.
+function throttleFixture(clock: { now: () => number }) {
+  let invalidations = 0;
+  const cache = createCache<LoadResult>(60_000);
+  const countingCache = {
+    ...cache,
+    invalidate: () => {
+      invalidations += 1;
+      cache.invalidate();
+    },
+  };
+  const client = createClient({ token: 'tok', fetchImpl: async () => pageResponse([RAW_NODE]) });
+  return {
+    loadPrs: createLoadPrs(client, countingCache, { now: clock.now }),
+    invalidations: () => invalidations,
+  };
+}
+
+test('a forced fetch inside the minimum interval is downgraded to an ordinary request', async () => {
+  let ms = 100_000;
+  const fixture = throttleFixture({ now: () => ms });
+
+  await fixture.loadPrs({ force: true });
+  assert.strictEqual(fixture.invalidations(), 1, 'the first Refresh click always reaches GitHub');
+
+  ms += 1_000;
+  const downgraded = await fixture.loadPrs({ force: true });
+
+  assert.strictEqual(fixture.invalidations(), 1, 'a second force one second later must not invalidate');
+  // Downgraded, not rejected: it falls through to the cache and answers promptly, where an
+  // error would render a failure over rows that are a second old.
+  assert.strictEqual(downgraded.stale, false);
+  assert.strictEqual(downgraded.error, undefined);
+});
+
+test('a forced fetch after the minimum interval reaches GitHub again', async () => {
+  let ms = 100_000;
+  const fixture = throttleFixture({ now: () => ms });
+
+  await fixture.loadPrs({ force: true });
+  ms += FORCE_MIN_INTERVAL_MS + 1_000;
+  await fixture.loadPrs({ force: true });
+
+  assert.strictEqual(fixture.invalidations(), 2);
+});
+
+test('the forced-fetch interval is ten seconds', () => {
+  // A loop of forced fetches is bounded to 360 an hour by this value, so a change to it
+  // moves that bound and should be deliberate.
+  assert.strictEqual(FORCE_MIN_INTERVAL_MS, 10_000);
 });
 
 test('startPreload calls the loader without being awaited', async () => {

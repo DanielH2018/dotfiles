@@ -118,7 +118,19 @@ export type FallbackOpts = {
    * async callback.
    */
   onSuccess?: (result: LoadResult) => void;
+  /**
+   * The clock the force throttle reads. Defaults to `Date.now`, and is injectable for the
+   * same reason `createIdleExit` takes its timer: a test must be able to move time without
+   * waiting for it.
+   */
+  now?: () => number;
 };
+
+// A forced fetch invalidates the cache and reaches GitHub, and with the per-launch secret
+// gone any local process can ask for one — see the always-on spec's "Dropping the per-launch
+// secret". Ten seconds is below what an operator clicking Refresh would notice and bounds a
+// loop to 360 fetches an hour rather than as many as the caller can issue.
+export const FORCE_MIN_INTERVAL_MS = 10_000;
 
 // Extracted out of main.ts so poisoning the retained payload is testable without a real
 // token, network, or clock — main.ts had no test at all before this, which is how
@@ -152,6 +164,23 @@ export function withFallback(
   // starts behind it; every later request takes the normal path, where `fetching > 0` covers
   // the overlap and a completed fetch is a cache hit.
   let primed = false;
+  const now = opts.now ?? Date.now;
+  // When the last forced fetch was allowed through, or undefined before the first one. The
+  // first force is never throttled: the bound is on the interval between them, so a single
+  // Refresh click always reaches GitHub however long the process has been up.
+  let lastForcedAt: number | undefined;
+
+  // Whether this call may reach GitHub with the cache invalidated. A force inside
+  // FORCE_MIN_INTERVAL_MS is downgraded to an ordinary request rather than rejected: it
+  // falls through to the cache and answers promptly, which is what a caller asking too
+  // often should get, where an error would make the page render a failure over rows that
+  // are seconds old.
+  function allowForce(): boolean {
+    const at = now();
+    if (lastForcedAt !== undefined && at - lastForcedAt < FORCE_MIN_INTERVAL_MS) return false;
+    lastForcedAt = at;
+    return true;
+  }
 
   // The awaited path, extracted so the background fetch the prime path starts runs exactly
   // the same code — including the retained-payload catch and the `fetching` bookkeeping —
@@ -207,17 +236,23 @@ export function withFallback(
     const firstCall = !primed;
     primed = true;
 
+    // A downgraded force is forwarded as an ordinary request, so it reads the cache instead
+    // of invalidating it; an allowed one is forwarded exactly as it arrived.
+    const forced = loadOpts?.force === true && allowForce();
+    const effectiveOpts: LoadOpts | undefined =
+      loadOpts?.force === true && !forced ? { ...loadOpts, force: false } : loadOpts;
+
     // The first request is answered from the restored payload with the fetch started behind
     // it, rather than waiting for it. This is the path the launchd agent actually uses: it
     // sets no PR_DASH_PRELOAD, so nothing is in flight when the browser's first /api/prs
     // arrives, and awaiting here means a blank page for the whole of the token resolution,
     // the Touch ID prompt and the paginated GraphQL query.
-    if (loadOpts?.force !== true && lastGood !== undefined && firstCall && fetching === 0) {
+    if (!forced && lastGood !== undefined && firstCall && fetching === 0) {
       // Rejection is swallowed on purpose: this response is already committed, and the next
       // request takes the normal path, where a persistent failure surfaces through the catch
       // in callLoad as an error on the retained payload. Re-throwing here would reach an
       // unhandled rejection with nobody to receive it.
-      void callLoad(loadOpts).catch(() => {});
+      void callLoad(effectiveOpts).catch(() => {});
       return { ...lastGood, stale: true, refreshing: true };
     }
 
@@ -231,11 +266,11 @@ export function withFallback(
     //
     // Never for a forced call. The Refresh button exists to reach GitHub, so answering a
     // click from the retained payload would look like a button that does nothing.
-    if (loadOpts?.force !== true && lastGood !== undefined && fetching > 0) {
+    if (!forced && lastGood !== undefined && fetching > 0) {
       return { ...lastGood, stale: true, refreshing: true };
     }
 
-    return callLoad(loadOpts);
+    return callLoad(effectiveOpts);
   };
 }
 
@@ -301,23 +336,43 @@ export function preloadEnabled(env: NodeJS.ProcessEnv): boolean {
 /** A function that resolves the GitHub token, such as `resolveToken` bound to `process.env`. */
 export type TokenSource = () => Promise<string>;
 
+// A failed resolution is not retained for the process's life — a dismissed prompt must not
+// poison the process, which is the invariant lazy-token.test.ts pins. It is retained for a
+// few seconds, because the page polls a 500 every 600ms for a minute and each retry would
+// otherwise spawn another `op`, re-prompting for biometrics the operator just dismissed.
+export const TOKEN_FAILURE_TTL_MS = 5_000;
+
+export type LazyTokenOpts = {
+  /** The clock the negative cache reads. Defaults to `Date.now`; injectable for tests. */
+  now?: () => number;
+};
+
 // Extracted out of main.ts so the concurrency and failure-caching properties are testable
 // without a real `op` process or an actual Touch ID prompt. This is the seam the always-on
 // design's "Lazy token resolution" section describes: main.ts no longer resolves the token
 // before it listens, so `resolve` here only ever runs once something (the startup pre-load,
 // or the browser's own first /api/prs) actually needs GitHub.
 //
-// Only success is remembered. A rejection — the operator dismissing a biometric prompt, or
-// `op` failing for any other reason — must not poison the process for its remaining life, so
-// `cached` stays unset on that path and the next call starts a fresh resolution instead of
-// replaying the same failure forever.
-export function createLazyToken(resolve: TokenSource): TokenSource {
+// Only success is remembered indefinitely. A rejection — the operator dismissing a biometric
+// prompt, or `op` failing for any other reason — must not poison the process for its
+// remaining life, so `cached` stays unset on that path and a later call starts a fresh
+// resolution instead of replaying the same failure forever. A failure is retained for
+// TOKEN_FAILURE_TTL_MS, no longer, for the reason on that constant.
+export function createLazyToken(resolve: TokenSource, opts: LazyTokenOpts = {}): TokenSource {
+  const now = opts.now ?? Date.now;
   let cached: string | undefined;
   let pending: Promise<string> | undefined;
+  let failure: { error: unknown; at: number } | undefined;
 
   return async function getToken(): Promise<string> {
+    // Ahead of the negative cache, so a success can never be shadowed by an earlier
+    // failure — which is also why nothing clears `failure` on the success path.
     if (cached !== undefined) return cached;
     if (pending !== undefined) return pending;
+    if (failure !== undefined) {
+      if (now() - failure.at < TOKEN_FAILURE_TTL_MS) throw failure.error;
+      failure = undefined;
+    }
 
     // Assigned before the await, the same way createPrLoader's own inFlight is: a second
     // caller arriving before this one resumes must see `pending` already set and return
@@ -329,6 +384,9 @@ export function createLazyToken(resolve: TokenSource): TokenSource {
       const token = await attempt;
       cached = token;
       return token;
+    } catch (err) {
+      failure = { error: err, at: now() };
+      throw err;
     } finally {
       pending = undefined;
     }
