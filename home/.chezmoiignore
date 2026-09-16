@@ -1,5 +1,7 @@
 {{ if ne .chezmoi.os "darwin" }}
 Brewfile
+# launchd is macOS-only, so the pr-dash agent plist has nothing to load it elsewhere.
+Library/LaunchAgents
 {{ end }}
 
 # Generated plans and reports, not config. They are per-machine working documents with
