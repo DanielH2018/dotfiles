@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Definition only — this file is outside `home/`, so chezmoi never deploys it.
+  Kept out of the source root for a reason specific to launchd: it reads a plist only at
+  bootstrap, so an auto-deployed copy means `chezmoi apply` rewrites the file while the
+  loaded job keeps the old definition. A port or a path change then looks applied and is
+  not. Rendering by hand makes re-activation an explicit step instead of a skipped one.
+
+  A TEMPLATE, so activation renders it rather than symlinking it. launchd expands nothing
+  in a plist — not $HOME, not ~ — and both ProgramArguments and StandardOutPath have to be
+  absolute, so a hardcoded /Users/daniel would work on one machine under one account.
+
+  Activate on a machine that wants the dashboard always listening on 127.0.0.1:8770:
+
+    mkdir -p -m 700 ~/.local/state/pr-dash
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.danielhunter.pr-dash.plist.tmpl \
+            > ~/Library/LaunchAgents/com.danielhunter.pr-dash.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.danielhunter.pr-dash.plist
+
+  The mkdir is not optional: launchd creates the log file but not its parent, and the
+  payload store only creates that directory after the process has already spawned. Mode
+  700 matches DIR_MODE in src/payload-store.ts — the directory holds private PR titles,
+  and this host's `umask 0007` would otherwise leave it group-writable.
+
+  Deactivate:
+
+    launchctl bootout "gui/$(id -u)/com.danielhunter.pr-dash"
+    rm ~/Library/LaunchAgents/com.danielhunter.pr-dash.plist
+
+  What that costs: the bookmark stops working, since nothing holds the port any more.
+  `pr-dash` in a terminal still starts a server and opens the browser on it.
+
+  Reload after editing this file. launchd read the old definition at bootstrap and will
+  keep serving it until the job is replaced, so this is the step whose absence makes an
+  edit look applied when it is not:
+
+    launchctl bootout "gui/$(id -u)/com.danielhunter.pr-dash"
+    chezmoi execute-template \
+            < ~/.local/share/chezmoi/scheduled/com.danielhunter.pr-dash.plist.tmpl \
+            > ~/Library/LaunchAgents/com.danielhunter.pr-dash.plist
+    launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.danielhunter.pr-dash.plist
+
+  Check it:
+
+    launchctl print "gui/$(id -u)/com.danielhunter.pr-dash"
+    tail -f ~/.local/state/pr-dash/agent.log
+
+  The same reload block is what a code change needs. `chezmoi apply` deploys new `public/`
+  assets under the running server, which serves them per request, while `src/` stays at
+  whatever the process loaded — so a change to the /api/prs response shape leaves a new
+  app.js validating an old server's body. That is a 60-second poll and a give-up banner
+  for up to the idle window, and reloading the job is the fix rather than waiting it out.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.danielhunter.pr-dash</string>
+	<key>ProgramArguments</key>
+	<array>
+		<!-- Reached through fnm's aliases/default symlink, not a version-pinned path, so an
+		     fnm upgrade does not silently strand this agent on a removed Node version. -->
+		<string>{{ .chezmoi.homeDir }}/.local/share/fnm/aliases/default/bin/node</string>
+		<string>{{ .chezmoi.homeDir }}/.local/share/pr-dash/src/main.ts</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PR_DASH_PORT</key>
+		<string>8770</string>
+		<!-- src/token.ts invokes `op` by bare name through execFile, and launchd's default
+		     PATH is just /usr/bin:/bin:/usr/sbin:/sbin. Without /opt/homebrew/bin here, the
+		     first /api/prs comes back as a 500 carrying an ENOENT. -->
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Bare <true/>, never a dict with SuccessfulExit <false/>. The idle exit (main-lib.ts's
+	     createIdleExit) exits status 0 by design. Under SuccessfulExit: false, launchd reads
+	     a clean exit as "do not restart", so the port would go dead until the next login and
+	     nothing in this suite would notice. -->
+	<key>KeepAlive</key>
+	<true/>
+	<!-- launchd's own default, named explicitly so the dependency is visible rather than
+	     inherited. It bounds how long the port sits unheld after an idle exit. -->
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>{{ .chezmoi.homeDir }}/.local/state/pr-dash/agent.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{ .chezmoi.homeDir }}/.local/state/pr-dash/agent.log</string>
+</dict>
+</plist>

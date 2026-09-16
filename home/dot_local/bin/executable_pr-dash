@@ -11,12 +11,42 @@ export PR_DASH_PORT="$PORT"
 export PR_DASH_PRELOAD=1
 
 URL="http://127.0.0.1:${PORT}/"
+API_URL="http://127.0.0.1:${PORT}/api/prs"
+
+# Whether pr-dash itself is what holds the port — not merely that something answers there.
+# `curl -f` against `/` accepted any 2xx from any server, so another development server on
+# 8770 made this script announce "pr-dash is already serving ..." and open the browser on an
+# unrelated application.
+#
+# The property relied on is the shape of every /api/prs response pr-dash can produce. A
+# success carries `partialErrors`, which cannot go missing: PrsResponseBody in src/server.ts
+# is derived from loadPrs's own return type through `Required`, so tsc refuses a response
+# literal that omits it. The only other status this route answers with is the 500 from
+# createServer's catch-all, whose body is `{"error": ...}` — which is why the check accepts
+# it: a failed token resolution still proves pr-dash is the thing on the port, and the probe
+# must not depend on GitHub, on `op`, or on a warm cache. `curl -f` is deliberately absent,
+# since it would discard that 500 body.
+#
+# No /healthz route: a new endpoint is a new surface on a server whose entire request
+# boundary is checkHost.
+serving() {
+  local response status body newline=$'\n'
+  response="$(curl -s -m 5 -w '\n%{http_code}' "$API_URL")" || return 1
+  status="${response##*"$newline"}"
+  body="${response%"$newline"*}"
+  case "$status" in
+    200) [[ "$body" == *'"partialErrors"'* ]] ;;
+    500) [[ "$body" == *'"error"'* ]] ;;
+    *) return 1 ;;
+  esac
+}
+
 # The launchd agent holds this port permanently, so finding it already occupied is the
 # normal case now, not an error: open the URL against whatever is already serving it
 # instead of trying (and failing) to start a second server. This must run before the trap
 # below: under `set -euo pipefail`, an EXIT trap that references SERVER_PID would error on
 # this early exit, since SERVER_PID is never assigned on this path.
-if curl -fs -o /dev/null "$URL"; then
+if serving; then
   echo "pr-dash is already serving ${URL} (launchd agent or another run); opening it."
   if ! open "$URL"; then
     echo "Could not open a browser automatically. Open this URL yourself:" >&2
@@ -39,7 +69,7 @@ trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 # `SECONDS` and the loop counter carry the deadline rather than `timeout(1)`, which is GNU
 # coreutils and is not on a script's PATH on this machine.
 READY_DEADLINE=$((SECONDS + 60))
-until curl -fs -o /dev/null "http://127.0.0.1:${PORT}/"; do
+until curl -fs -o /dev/null "$URL"; do
   # A server that has already exited will never answer, so stop waiting for it. It has
   # printed its own reason — no token, a bad port, a port already in use — and burying
   # that under a 60-second wait is what made the old failure hard to read.

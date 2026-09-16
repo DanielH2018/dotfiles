@@ -1,7 +1,5 @@
 {{ if ne .chezmoi.os "darwin" }}
 Brewfile
-# launchd is macOS-only, so the pr-dash agent plist has nothing to load it elsewhere.
-Library/LaunchAgents
 {{ end }}
 
 # Generated plans and reports, not config. They are per-machine working documents with
@@ -155,6 +153,13 @@ Scripts
 # were there. It stays in the checkout rather than joining tests/chezmoi/managed-test-paths.txt,
 # which is for tests that genuinely travel with ~/.claude.
 .local/share/tools-inventory/tools-inventory.test.js
+
+# pr-dash's runtime state: ~/.local/state/pr-dash holds last-payload.json and agent.log,
+# and both carry private repository names, branch names and PR titles. Blocks `chezmoi add`
+# on them, so a recursive add — by hand, by an autocommit sweep, or by chezmoi-guard's own
+# auto-resync habit — cannot commit them into a repo this project treats as public. No
+# secret scanner would object: there is no credential in either file, only metadata.
+.local/state
 
 # claude artifacts: ~/.claude/artifacts is local scratch for plan/spec renders.
 # Don't manage the dir by default — blocks `chezmoi add` on ad-hoc artifacts so

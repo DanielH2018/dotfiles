@@ -1,28 +1,32 @@
-// The always-on design's "The launchd agent": a chezmoi-managed plist under
-// ~/Library/LaunchAgents/ owns the server's lifecycle. This reads the plist *source*
-// template and bin/pr-dash's source, and checks the facts that must agree between them and
-// the server's own code. It never calls launchctl, chezmoi, or op, and never spawns a
-// process — the whole point is to catch a drift between the plist and the code it launches
-// without needing a real launchd, a real GitHub token, or a real filesystem outside this
-// package.
+// The always-on design's "The launchd agent": a plist in the repo's `scheduled/`
+// directory owns the server's lifecycle, and the operator renders and bootstraps it by hand
+// from the commands in its own header. This reads the plist *source* template and
+// bin/pr-dash's source, and checks the facts that must agree between them and the server's
+// own code. It never calls launchctl, chezmoi, or op, and never spawns a process — except
+// `plutil -lint`, a local macOS binary that reads one file and changes nothing — the whole
+// point being to catch a drift between the plist and the code it launches without needing a
+// real launchd, a real GitHub token, or a real filesystem outside this package.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { DEFAULT_STATE_DIR } from '../src/payload-store.ts';
+import { DEFAULT_STATE_DIR, DIR_MODE } from '../src/payload-store.ts';
 
 // Four levels above the package root (home/dot_local/share/pr-dash), landing on the
-// worktree/repo root that contains `home/`. Named once here instead of a `../../../../`
-// chain at each use below, so the relationship between the two roots is stated once.
+// worktree/repo root — the one that contains both `home/` and `scheduled/`. Named once here
+// instead of a `../../../../` chain at each use below, so the relationship between the two
+// roots is stated once.
 const PACKAGE_ROOT = path.join(import.meta.dirname, '..');
 const REPO_ROOT = path.join(PACKAGE_ROOT, '..', '..', '..', '..');
 
+// Outside `home/`, so `chezmoi apply` never deploys it: launchd reads a plist only at
+// bootstrap, and an auto-deployed copy would let an apply rewrite the file while the loaded
+// job kept the old definition. See README.md's `scheduled/` entry for the convention.
 const PLIST_PATH = path.join(
   REPO_ROOT,
-  'home',
-  'Library',
-  'LaunchAgents',
+  'scheduled',
   'com.danielhunter.pr-dash.plist.tmpl',
 );
 const BIN_PR_DASH_PATH = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_pr-dash');
@@ -83,6 +87,41 @@ test('the agent PATH includes /opt/homebrew/bin, where op lives', () => {
 
 test('the Label is com.danielhunter.pr-dash', () => {
   assert.match(plistText, /<key>Label<\/key>\s*<string>com\.danielhunter\.pr-dash<\/string>/);
+});
+
+test('the plist template is well-formed XML', () => {
+  // Deleting RunAtLoad, ThrottleInterval and the closing </dict> all at once left this
+  // whole suite green while `plutil -lint` reported "Close tag on line 38 does not match
+  // open tag dict". launchctl bootstrap refuses a plist like that and the dashboard simply
+  // never starts. The lint runs on the raw .tmpl because the template braces sit inside
+  // <string> text, so an unrendered template is still valid XML.
+  if (process.platform !== 'darwin') return;
+  execFileSync('plutil', ['-lint', PLIST_PATH], { stdio: 'pipe' });
+});
+
+test('ThrottleInterval is 10 seconds', () => {
+  // It bounds how long the port sits unheld after an idle exit — the window in which the
+  // bookmark gets ERR_CONNECTION_REFUSED — so a change to it moves that gap.
+  assert.match(plistText, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
+});
+
+test('RunAtLoad is true', () => {
+  // Removing it is in fact benign under this job's unconditional KeepAlive, which starts
+  // the job at load anyway. Pinned so a change to it is a deliberate one.
+  assert.match(plistText, /<key>RunAtLoad<\/key>\s*<true\/>/);
+});
+
+test("the activate block's mkdir creates the same directory the log paths name", () => {
+  // The header's install commands are the only thing that creates this directory before the
+  // process spawns: launchd creates the log file but not its parent, and the payload store
+  // gets there only after the first successful fetch. A mkdir naming a different directory
+  // means the documented install leaves the job unable to write its log at all.
+  const stateDirSuffix = DEFAULT_STATE_DIR.slice(homedir().length);
+  const mkdir = `mkdir -p -m ${DIR_MODE.toString(8)} ~${stateDirSuffix}`;
+  assert.ok(
+    plistText.includes(mkdir),
+    `expected the activate block to run \`${mkdir}\``,
+  );
 });
 
 test("the log paths' directory matches payload-store's DEFAULT_STATE_DIR", () => {
