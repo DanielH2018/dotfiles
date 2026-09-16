@@ -94,22 +94,60 @@ test('main.ts persists a successful fetch back to the payload store', () => {
 });
 
 test('main.ts uses the identifier token only in its known-safe places', () => {
-  // main.ts is the one module holding the plaintext token in a variable, and it carries no
-  // test coverage otherwise (it is a process shell that reads env vars and calls
-  // process.exit), so a stray log of it has nothing else to catch it. A scan restricted to
-  // `console.\w+(` calls misses `process.stderr.write(token)`, and a paren-balance scanner
-  // that does not track string state stops at the first `)` inside a string literal, so
-  // `console.error('oops :)' + token)` slips past it too. Counting every occurrence of the
-  // bare word `token` sidesteps both: it does not need to know which sink the leak went
-  // through, only that a new mention of the identifier appeared. Four is the count for the
-  // import path (`./token.ts`), the `let token` declaration, the assignment from
-  // resolveToken, and the `{ token }` passed to createClient — any fifth mention is a
-  // potential leak.
+  // main.ts no longer holds the plaintext token in a variable of its own — createLazyToken
+  // resolves it lazily and keeps it in a closure in main-lib.ts (see that module's own
+  // no-logging test in lazy-token.test.ts) — but main.ts still touches it once, in the
+  // `(token) => createClient({ token })` passed to createLazyClient, so a scan here still
+  // has something to check. A scan restricted to `console.\w+(` calls misses
+  // `process.stderr.write(token)`, and a paren-balance scanner that does not track string
+  // state stops at the first `)` inside a string literal, so `console.error('oops :)' +
+  // token)` slips past it too. Counting every occurrence of the bare word `token` sidesteps
+  // both: it does not need to know which sink the leak went through, only that a new
+  // mention of the identifier appeared. Three is the count for the import path
+  // (`./token.ts`), the `(token)` parameter, and the `{ token }` shorthand passed to
+  // createClient — `resolveToken`, `getToken`, and `createLazyToken` all carry a capital
+  // `Token` and do not match this lowercase-word regex. Any fourth mention is a potential
+  // leak.
   const occurrences = MAIN_TS_STRIPPED.match(/\btoken\b/g) ?? [];
   assert.strictEqual(
     occurrences.length,
-    4,
-    `expected token to appear exactly 4 times in main.ts (found ${occurrences.length})`,
+    3,
+    `expected token to appear exactly 3 times in main.ts (found ${occurrences.length})`,
+  );
+});
+
+// main.ts must not call resolveToken directly at startup — see createLazyToken above. It
+// is only ever mentioned wrapped in the arrow function passed to createLazyToken, so an
+// `await resolveToken(` (or a bare call outside that wrapper) would reintroduce the
+// blocking startup this design removes.
+const AWAITED_RESOLVE_TOKEN = /\bawait\s+resolveToken\s*\(/;
+
+test('main.ts does not await resolveToken directly', () => {
+  assert.doesNotMatch(MAIN_TS_STRIPPED, AWAITED_RESOLVE_TOKEN);
+});
+
+test('main.ts wires the token through createLazyToken before it builds the client', () => {
+  const lazyTokenIndex = MAIN_TS_STRIPPED.indexOf('createLazyToken(');
+  const lazyClientIndex = MAIN_TS_STRIPPED.indexOf('createLazyClient(');
+  const listenIndex = MAIN_TS_STRIPPED.indexOf('server.listen(');
+  assert.notStrictEqual(lazyTokenIndex, -1, 'expected a createLazyToken( call in main.ts');
+  assert.notStrictEqual(lazyClientIndex, -1, 'expected a createLazyClient( call in main.ts');
+  assert.ok(lazyTokenIndex < lazyClientIndex, 'the token wrapper must exist before the client wraps it');
+  assert.ok(lazyClientIndex < listenIndex, 'both must be built before listen(), same as every other seam here');
+});
+
+test('main.ts arms an idle exit and touches it from every server request', () => {
+  const idleExitIndex = MAIN_TS_STRIPPED.indexOf('createIdleExit(');
+  assert.notStrictEqual(idleExitIndex, -1, 'expected a createIdleExit( call in main.ts');
+  const createServerIndex = MAIN_TS_STRIPPED.indexOf('createServer(');
+  assert.notStrictEqual(createServerIndex, -1, 'expected a createServer( call in main.ts');
+  const callEnd = MAIN_TS_STRIPPED.indexOf(');', createServerIndex);
+  assert.notStrictEqual(callEnd, -1, 'expected the createServer( call to close with );');
+  const callText = MAIN_TS_STRIPPED.slice(createServerIndex, callEnd);
+  assert.match(
+    callText,
+    /onRequest:\s*\(\)\s*=>\s*idleExit\.touch\(\)/,
+    'expected createServer to be given an onRequest that touches the idle exit',
   );
 });
 

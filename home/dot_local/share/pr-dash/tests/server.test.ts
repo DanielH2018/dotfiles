@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { connect, createServer as createNetServer } from 'node:net';
 import { createServer, serveStatic } from '../src/server.ts';
 import { createCache } from '../src/cache.ts';
+import { createLazyClient, createLazyToken, createLoadPrs } from '../src/main-lib.ts';
+import type { LoadResult } from '../src/loader.ts';
 import type { PrRecord, StackNode } from '../src/types.ts';
 
 const records: PrRecord[] = JSON.parse(
@@ -38,9 +40,10 @@ async function withServer(
     prs: records,
     fetchedAt: new Date().toISOString(),
   }),
+  onRequest?: () => void,
 ) {
   const port = await freePort();
-  const server = createServer({ host: `127.0.0.1:${port}`, loadPrs });
+  const server = createServer({ host: `127.0.0.1:${port}`, loadPrs, onRequest });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
     await fn(`http://127.0.0.1:${port}`);
@@ -458,4 +461,76 @@ test('serveStatic lands inside the public directory for an ordinary traversal pa
   const res = fakeRes();
   await serveStatic('../../../../etc/passwd', res as unknown as import('node:http').ServerResponse);
   assert.strictEqual(res.statusCode, 404);
+});
+
+// The always-on design's idle exit re-arms on every request (see main-lib.ts's
+// createIdleExit). onRequest is that re-arm hook, and it has to fire for every request
+// this server handles — a successful one, a static asset, and one the Host check goes on
+// to refuse alike — or a process being repeatedly probed by a mismatched Host, or one
+// only ever asked for its static assets, would idle-exit out from under real traffic.
+test('onRequest fires for a successful /api/prs request and a successful static asset', async () => {
+  let count = 0;
+  await withServer(
+    async (base) => {
+      const apiRes = await fetch(`${base}/api/prs`);
+      assert.strictEqual(apiRes.status, 200);
+      assert.strictEqual(count, 1, 'a successful /api/prs request must re-arm the timer');
+
+      const assetRes = await fetch(`${base}/app.js`);
+      assert.strictEqual(assetRes.status, 200);
+      assert.strictEqual(count, 2, 'a successful static-asset request must re-arm the timer too');
+    },
+    undefined,
+    () => {
+      count += 1;
+    },
+  );
+});
+
+test('onRequest fires even for a request the Host check goes on to refuse', async () => {
+  let count = 0;
+  await withServer(
+    async (base) => {
+      const response = await rawAt(
+        base,
+        'GET /app.js HTTP/1.1\r\nHost: evil.example.com\r\nConnection: close\r\n\r\n',
+      );
+      assert.match(response, /^HTTP\/1\.1 403 /);
+      assert.strictEqual(count, 1, 'onRequest must fire ahead of the Host check, not after it');
+    },
+    undefined,
+    () => {
+      count += 1;
+    },
+  );
+});
+
+// End-to-end for the always-on design's "Lazy token resolution": a real request through
+// the real createServer/createLoadPrs/createLazyClient/createLazyToken composition, with
+// no restored payload, so a token failure has nothing to fall back on and must reach the
+// client as a 500 — not just as a rejection at the createLazyToken/createLazyClient seam,
+// which two narrower unit tests already cover but which do not by themselves prove this
+// composition still surfaces it the same way (see lazy-token.test.ts).
+test('a token resolution failure on a cold start reaches the client as a 500 carrying resolveToken\'s message, with the token itself never in the body', async () => {
+  const client = createLazyClient(
+    createLazyToken(async () => {
+      throw new Error('Could not read the GitHub token from 1Password. Run: op read op://vault/item/token');
+    }),
+    () => {
+      throw new Error('makeClient must not run when the token failed to resolve');
+    },
+  );
+  const loadPrs = createLoadPrs(client, createCache<LoadResult>(60_000));
+
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/prs`);
+    assert.strictEqual(res.status, 500);
+    const body = await res.text();
+    assert.match(body, /Could not read the GitHub token from 1Password/);
+    assert.match(body, /op read op:\/\/vault\/item\/token/);
+    // The constraint is that the resolved secret value never appears, not the op reference
+    // in resolveToken's own remediation text (which is not the credential) — see token.ts's
+    // own comment on why the reference is safe to print but the field's value is not.
+    assert.doesNotMatch(body, /ghp_[A-Za-z0-9]+/);
+  }, loadPrs);
 });

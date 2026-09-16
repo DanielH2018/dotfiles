@@ -21,6 +21,13 @@ export type ServerOpts = {
   // rebinding check went missing while every test still passed. It is read in exactly one
   // place, the `checkHost` call at the top of `handle`.
   host: string;
+  // Fired once per request, before the Host check and every other route decision — a
+  // request refused with a 403, a static asset, and a poll all reach it the same way. This
+  // is the always-on design's idle-exit re-arm: the timer's job is to bound how long an
+  // unused process holds the resolved token in memory, and a request this server had to
+  // spend cycles refusing is still activity, not idleness. Optional so every existing
+  // caller (every test that builds a ServerOpts without it) keeps compiling.
+  onRequest?: () => void;
   // loadPrs carries its own fetchedAt rather than this module stamping one at response
   // time: a cache hit must report when the data was actually fetched, not the instant of
   // this particular request, or a client polling every few seconds would see a "just now"
@@ -64,6 +71,10 @@ async function handle(
   res: import('node:http').ServerResponse,
   opts: ServerOpts,
 ): Promise<void> {
+  // Fired before the Host check and unconditionally, so a refused request still counts —
+  // see the field's own doc comment on ServerOpts for why that matters.
+  opts.onRequest?.();
+
   // The rebinding check runs first and covers every path, static assets included. Serving
   // index.html and app.js to a mismatched Host let an attacker's page host the dashboard's
   // own client code, and an absent Host is refused here too rather than defaulted: HTTP/1.1

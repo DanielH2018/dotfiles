@@ -1,4 +1,4 @@
-import type { Client } from './github.ts';
+import type { Client, QueryResult } from './github.ts';
 import type { Cache } from './cache.ts';
 import { createPrLoader, type LoadOpts, type LoadPrs, type LoadResult } from './loader.ts';
 import type { PrRecord } from './types.ts';
@@ -230,6 +230,12 @@ export function createLoadPrs(
  * the page's own stale banner instead — `onError` never runs on that path. It runs only on
  * a cold start with nothing restored, where `withFallback` still rejects and the page has
  * no prior payload to show a banner over, so stderr is the only place left to say so.
+ *
+ * That cold-start case is also the one place a dismissed Touch ID prompt on the very first
+ * launch surfaces at all: `loadPrs` now resolves the GitHub token as part of this same
+ * fetch (see `createLazyToken`/`createLazyClient`), and under launchd stderr is the launchd
+ * log, so `resolveToken`'s message — the exact `op` command to run — is what an operator
+ * who never opened the browser would find there.
  */
 export function startPreload(
   loadPrs: (opts?: LoadOpts) => Promise<FallbackResult>,
@@ -238,4 +244,123 @@ export function startPreload(
   void loadPrs().catch((err: unknown) => {
     onError(err instanceof Error ? err.message : String(err));
   });
+}
+
+/** A function that resolves the GitHub token, such as `resolveToken` bound to `process.env`. */
+export type TokenSource = () => Promise<string>;
+
+// Extracted out of main.ts so the concurrency and failure-caching properties are testable
+// without a real `op` process or an actual Touch ID prompt. This is the seam the always-on
+// design's "Lazy token resolution" section describes: main.ts no longer resolves the token
+// before it listens, so `resolve` here only ever runs once something (the startup pre-load,
+// or the browser's own first /api/prs) actually needs GitHub.
+//
+// Only success is remembered. A rejection — the operator dismissing a biometric prompt, or
+// `op` failing for any other reason — must not poison the process for its remaining life, so
+// `cached` stays unset on that path and the next call starts a fresh resolution instead of
+// replaying the same failure forever.
+export function createLazyToken(resolve: TokenSource): TokenSource {
+  let cached: string | undefined;
+  let pending: Promise<string> | undefined;
+
+  return async function getToken(): Promise<string> {
+    if (cached !== undefined) return cached;
+    if (pending !== undefined) return pending;
+
+    // Assigned before the await, the same way createPrLoader's own inFlight is: a second
+    // caller arriving before this one resumes must see `pending` already set and return
+    // the same promise, or the startup pre-load and the browser's first request each start
+    // their own `op` process and the operator sees two Touch ID prompts for one page load.
+    const attempt = resolve();
+    pending = attempt;
+    try {
+      const token = await attempt;
+      cached = token;
+      return token;
+    } finally {
+      pending = undefined;
+    }
+  };
+}
+
+/**
+ * A {@link Client} whose token is resolved by `getToken` on first use rather than at
+ * construction, so it can be built and handed to `createLoadPrs` before a token exists.
+ *
+ * `getToken` is expected to memoize its own resolution (see {@link createLazyToken}); this
+ * wrapper adds no caching of its own. `makeClient` runs again on every query rather than
+ * once, on the strength of `createClient` being stateless — it only closes over the token
+ * and an optional `fetchImpl` — so rebuilding it per call costs nothing worth caching.
+ */
+export function createLazyClient(
+  getToken: TokenSource,
+  makeClient: (token: string) => Client,
+): Client {
+  return {
+    async query<T>(query: string, variables: Record<string, unknown>): Promise<QueryResult<T>> {
+      const token = await getToken();
+      return makeClient(token).query<T>(query, variables);
+    },
+  };
+}
+
+/**
+ * How long the server waits with no request before exiting — see the always-on design's
+ * "The idle exit". A security knob, not a performance one: it bounds how long the resolved
+ * GitHub token stays in memory, not how efficiently the process runs. Asserted against the
+ * literal `1_800_000` in idle-exit.test.ts, so a future change to this value is visible
+ * there instead of silently changing the window.
+ */
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+/** The minimal shape this module needs from a scheduled timer, real or injected in a test. */
+type TimerHandle = { unref?: () => void };
+
+export type IdleExitOpts = {
+  timeoutMs?: number;
+  /** Defaults to `process.exit`. Injectable so a test never actually ends the process. */
+  exit?: (code: number) => void;
+  setTimeoutFn?: (callback: () => void, ms: number) => TimerHandle;
+  clearTimeoutFn?: (handle: TimerHandle) => void;
+};
+
+export type IdleExit = {
+  /** Re-arms the idle window. Called once per request, from every route, refused or not. */
+  touch: () => void;
+};
+
+// The process's listening socket, not this timer, is what keeps the event loop alive: it is
+// a ref'd handle for as long as the server is open, independent of anything scheduled here.
+// `unref` below just keeps this timer from being an additional reason to stay alive on its
+// own — it does not stop the callback from firing on an otherwise-idle process, because the
+// loop is still ticking on the socket's account, not this timer's. It matters only if some
+// later change closes the server out from under a pending timer: without `unref` the process
+// would then sit for up to another IDLE_TIMEOUT_MS waiting to run a callback whose only job
+// is exiting a process that already has nothing left to serve.
+export function createIdleExit(opts: IdleExitOpts = {}): IdleExit {
+  const timeoutMs = opts.timeoutMs ?? IDLE_TIMEOUT_MS;
+  const exit = opts.exit ?? process.exit;
+  const scheduleTimeout: (callback: () => void, ms: number) => TimerHandle =
+    opts.setTimeoutFn ?? ((callback, ms) => setTimeout(callback, ms));
+  const cancelTimeout: (handle: TimerHandle) => void =
+    opts.clearTimeoutFn ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
+
+  let handle: TimerHandle | undefined;
+
+  function touch(): void {
+    // Cancelled before the next one is scheduled, not after — a burst of requests must
+    // leave exactly one pending timer, never one more piled up per request.
+    if (handle !== undefined) cancelTimeout(handle);
+    handle = scheduleTimeout(() => {
+      // Status 0, not a thrown error: under launchd's KeepAlive this is the intended way
+      // the process ends, and anything else would make launchd log a crash for what is,
+      // on purpose, just the token's turn to be forgotten and the port's turn to be
+      // reclaimed by a fresh process.
+      exit(0);
+    }, timeoutMs);
+    handle.unref?.();
+  }
+
+  touch();
+  return { touch };
 }
