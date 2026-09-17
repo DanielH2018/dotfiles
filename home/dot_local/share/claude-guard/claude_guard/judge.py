@@ -35,6 +35,7 @@ from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.scratch import rm_confined, tokenize
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
+from claude_guard.tables import WS
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})
@@ -56,9 +57,10 @@ _CD_LIKE = frozenset({"cd", "pushd", "popd"})
 # for a different pair of regexes. Round 3 (J5) found the drift once, in the two DEVNULL
 # lookaheads' tails; round 4 (K1/K2) found it live twice more — a heredoc delimiter
 # (segment.py's own copy of this fix sits beside the quoted-delimiter branch) and an
-# fd-dup redirect target. `_first_word` below is the one deliberate exception: it ports a
-# POSIX `[[:space:]]` bash construct, not IFS splitting, so it keeps `\s`, not `WS`.
-WS = " \t"
+# fd-dup redirect target. `WS` itself lives in tables.py so checks/ansible.py reads the
+# same definition without a circular import. `_first_word` below is the one deliberate
+# exception: it ports a POSIX `[[:space:]]` bash construct, not IFS splitting, so it keeps
+# `\s`, not `WS`.
 
 # H4 (task-8-fix-2-brief.md): both DEVNULL patterns were unanchored at the tail, so a
 # target that only STARTS WITH /dev/null (/dev/nullx, /dev/nullish) matched and was

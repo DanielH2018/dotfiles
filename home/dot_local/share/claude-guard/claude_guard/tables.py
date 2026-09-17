@@ -2,6 +2,16 @@
 
 import re
 
+# K3 (task-8-fix-4-brief.md), the class fix. Bash's own word boundary — after a redirect
+# target, a flag, a heredoc delimiter, an fd-dup operand, anywhere IFS field-splits two
+# tokens apart — is space and tab. A literal newline is handled by the segmenter before any
+# consuming regex runs: a `Segment.text` never carries one. Python's `\s` is wider: it also
+# matches `\r`, `\f`, `\v` and Unicode whitespace, none of which is a bash word boundary.
+# One definition, imported by every module that means "bash word boundary" — judge.py and
+# checks/ansible.py both read it from here, because judge imports ansible and a copy in
+# each was the two-literals-that-drift hazard the J1/J2 marker in judge.py names.
+WS = " \t"
+
 # allow-safe-rm.sh:44-49. An operand must sit strictly BELOW one of these; the root itself
 # is refused by the check. `~` is the caller's HOME, expanded by scratch_roots().
 SCRATCH_ROOTS: tuple[str, ...] = ("/tmp", "/var/tmp", "~/.claude/jobs", "~/.cache/claude")
