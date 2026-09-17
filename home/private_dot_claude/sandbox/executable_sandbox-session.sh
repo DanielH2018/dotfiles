@@ -75,7 +75,7 @@ resolve_session_context() {
       # -workspace probe above does.
       local newest
       newest="$(find "$SESSIONS_DIR" -mindepth 2 -maxdepth 2 -name '*.jsonl' -print0 2>/dev/null \
-        | xargs -0 ls -t 2>/dev/null | head -1 || true)"
+        | xargs -0 -r ls -t 2>/dev/null | head -1 || true)"
       if [[ -n "$newest" ]]; then
         RESUME_SESSION=true
         # shellcheck disable=SC2034  # read by append_resume_args() in the launcher, across the source boundary
