@@ -114,8 +114,8 @@ The host hook goes live when `CLAUDE_GUARD_DENY_SHADOW` is exactly `"0"` — `se
 `env` sets it, and the shim's own default matches, so a stale `settings.json` that lost the key
 fails toward live rather than toward a shadow mode whose bash comparison no longer runs on the
 host (see `guard-pre-tool-use.sh`'s own comment for why that direction is the safe one
-post-cutover; a separate switch from `CLAUDE_GUARD_SHADOW`, so the two sides cut over
-independently). Any other value still computes the verdict, runs the deployed
+post-cutover; it was a separate switch from the allow side's, now retired, so the two sides
+cut over independently). Any other value still computes the verdict, runs the deployed
 `block-dangerous-bash.sh` on the same stdin (with the M02 census switches removed, so that
 re-run cannot double-count), and appends one line to
 `~/.claude/logs/claude-guard-deny-shadow.jsonl`:

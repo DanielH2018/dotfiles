@@ -250,11 +250,13 @@ Slices 1 to 4 and 6 are dotfiles PRs; slice 5 is a server PR that lands after sl
 deployed. `stash-mine` (#475), the `stdio-blocking` script with its ask entries (#476), and
 the server's `uv-python` change (#1368) land independently and ahead of this.
 
-Shadow is per side. The PermissionRequest shim reads `CLAUDE_GUARD_SHADOW` and logs to
-`claude-guard-shadow.jsonl`; the PreToolUse shim reads `CLAUDE_GUARD_DENY_SHADOW` and logs
-to `claude-guard-deny-shadow.jsonl`. Slice 4 ships before slice 3 because its census is
-independent of slice 2's, and a shared switch would take the deny side live with the allow
-side's cutover. The deny side's verdict has a fourth value the table above does not name:
+Shadow was per side. The PermissionRequest shim read `CLAUDE_GUARD_SHADOW` and logged to
+`claude-guard-shadow.jsonl` until slice 6 retired that switch (the bash chain it compared
+against was deleted in slice 3); the PreToolUse shim still reads `CLAUDE_GUARD_DENY_SHADOW`
+and logs to `claude-guard-deny-shadow.jsonl`, because `block-dangerous-bash.sh` is still live
+in the sandbox. Slice 4 shipped before slice 3 because its census was independent of slice
+2's, and a shared switch would have taken the deny side live with the allow side's cutover.
+The deny side's verdict has a fourth value the table above does not name:
 `allow` with `updatedInput`, the `--force` → `--force-with-lease` upgrade the bash performs
 at :1130-1142. It ports as-is.
 

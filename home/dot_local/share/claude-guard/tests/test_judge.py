@@ -546,7 +546,6 @@ def test_a_heredoc_write_is_confined_when_the_session_cwd_is_itself_a_symlink(es
     assert not _under_session_cwd(str(link), str(link))
 
 
-
 def test_a_heredoc_body_containing_rm_rf_root_on_its_own_line_is_not_split_into_segments(main):
     # The body writes inert text — it is never executed — so even a body that reads like a
     # dangerous command is safe to write, and this only reads allowed if the segmenter kept
@@ -584,7 +583,7 @@ def test_heredoc_write_parity_refuses_an_unquoted_delimiter_a_path_escape_or_an_
 #
 # `_HEREDOC_CAT_WRITE`'s path capture (`[^\s"']+`) admits any character that isn't
 # whitespace or a quote — including every shell metacharacter. Both bugs measured ALLOW
-# through the real entry point (`CLAUDE_GUARD_SHADOW=0`, cwd `/home/ubuntu/server`)
+# through the real entry point (live mode, cwd `/home/ubuntu/server`)
 # before the `tokenize(hw_target) is None` gate closed them; reproduced here through
 # `judge()` with the roots/cwd `rules_for`'s fixtures already use.
 
