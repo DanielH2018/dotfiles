@@ -173,8 +173,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-claim.sh",
-      "hash": "42336ec6125ce16d8087f3cd8eadbdf3a5db81634ef7c98e7c8e45081238b8bc",
-      "landed": "2026-09-14T15:48:15.208Z"
+      "hash": "75f1d2c810335d1706db320ae4e50b75e1e2409ea37f774088597dee0c71577c",
+      "landed": "2026-09-17T12:31:13.731Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-plan.sh",
@@ -183,8 +183,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_planka-stop.sh",
-      "hash": "689bc20f133d0003e56d3c1d8c34c7d776f18b4a3cfd3c3a0a3fa16d764da061",
-      "landed": "2026-09-14T15:48:15.208Z"
+      "hash": "b6f3e32f601ba5d656edd746dc53e44545b117832754eaef2749fe4b0741ac7d",
+      "landed": "2026-09-17T12:31:13.731Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_play-sound.sh",
