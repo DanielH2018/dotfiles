@@ -40,7 +40,18 @@ function transcript(sessions, instance, slug = '-workspace') {
   return dir;
 }
 
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+// The config files are pinned to /dev/null on purpose, which also drops the identity a
+// commit needs; supply one, or the two tests that commit fail wherever no GIT_AUTHOR_*
+// is exported — the CI runner, and a host shell without one.
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_AUTHOR_NAME: 't',
+  GIT_AUTHOR_EMAIL: 't@e',
+  GIT_COMMITTER_NAME: 't',
+  GIT_COMMITTER_EMAIL: 't@e',
+};
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', env: GIT_ENV });
 
 // Source the lib and run one command against it. HOME is redirected so
