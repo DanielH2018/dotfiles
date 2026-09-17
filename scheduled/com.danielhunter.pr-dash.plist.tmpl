@@ -68,6 +68,15 @@
 	<dict>
 		<key>PR_DASH_PORT</key>
 		<string>8770</string>
+		<!-- The GitHub owners whose repositories the dashboard shows by default; everything
+		     else is hidden until the Personal chip is on. Comma-separated, and the name
+		     itself stays out of this repo, which is public-posture: it comes from
+		     `prDashWorkOrgs` in the machine-local ~/.config/chezmoi/chezmoi.toml, under
+		     [data]. Rendering on a machine that sets no such key emits an empty string,
+		     which src/main-lib.ts's parseWorkOrgs reads as no work organizations at all —
+		     every repository then counts as work and the chip stays hidden. -->
+		<key>PR_DASH_WORK_ORGS</key>
+		<string>{{ if hasKey . "prDashWorkOrgs" }}{{ .prDashWorkOrgs }}{{ end }}</string>
 		<!-- src/token.ts invokes `op` by bare name through execFile, and launchd's default
 		     PATH is just /usr/bin:/bin:/usr/sbin:/sbin. Without /opt/homebrew/bin here, the
 		     first /api/prs comes back as a 500 carrying an ENOENT. -->

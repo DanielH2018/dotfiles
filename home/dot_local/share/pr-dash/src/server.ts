@@ -15,6 +15,11 @@ const MIME: Record<string, string> = {
 };
 
 export type ServerOpts = {
+  // The GitHub owners whose repositories count as work, lowercased — see `parseWorkOrgs`
+  // in main-lib.ts. Sent to the client, which decides what the Personal toggle hides;
+  // nothing here filters on it. An empty list means no constraint, so the toggle hides
+  // nothing and the page shows every PR.
+  workOrgs: string[];
   // The host the launcher actually binds to and expects requests to arrive on. This is the
   // guard's expectation, and it must come from here rather than from the request's own Host
   // header — comparing a header to itself can never disagree, which is how the DNS
@@ -55,6 +60,11 @@ export type ServerOpts = {
 type PrsResponseBody = Omit<Required<Awaited<ReturnType<ServerOpts['loadPrs']>>>, 'error'> & {
   stacks: StackNode[];
   error: string | null;
+  // Added here rather than to loadPrs's return type, for the same reason `stacks` is: this
+  // is configuration, not fetched data. On FallbackResult it would be written into the
+  // payload the store persists, so a payload retained across a config change would hand
+  // the client the work-org list as it stood when that payload was fetched.
+  workOrgs: string[];
 };
 
 export function createServer(opts: ServerOpts): Server {
@@ -132,6 +142,7 @@ async function handle(
       error: error ?? null,
       partialErrors: partialErrors ?? [],
       refreshing: refreshing ?? false,
+      workOrgs: opts.workOrgs,
     };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));

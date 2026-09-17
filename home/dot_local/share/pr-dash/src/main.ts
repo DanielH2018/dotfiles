@@ -11,6 +11,7 @@ import {
   expectedHost,
   listenErrorMessage,
   parsePort,
+  parseWorkOrgs,
   preloadEnabled,
   startPreload,
 } from './main-lib.ts';
@@ -65,6 +66,10 @@ if (preloadEnabled(process.env)) {
 const idleExit = createIdleExit();
 const server = createServer({
   host: expectedHost(port),
+  // Unset on a machine that never configured it, which parseWorkOrgs reads as an empty
+  // list — the client then treats every repository as work and the Personal toggle has
+  // nothing to hide. The launchd agent takes its value from the rendered plist.
+  workOrgs: parseWorkOrgs(process.env['PR_DASH_WORK_ORGS']),
   loadPrs,
   onRequest: () => idleExit.touch(),
 });

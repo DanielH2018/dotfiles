@@ -67,6 +67,17 @@
       <label><input type="checkbox" value="ready"> ready</label>
       <label><input type="checkbox" value="draft"> draft</label>
     </fieldset>
+    <!--
+      Unlike the four fieldsets above, this one widens the list rather than narrowing it:
+      unchecked hides the repositories outside PR_DASH_WORK_ORGS, checked shows them too.
+      `hidden` until app.js learns from /api/prs that any work organization is configured
+      at all — with none, every repository counts as work and this would be a control that
+      provably does nothing. Note `fieldset[hidden]` in style.css: the fieldset rule sets
+      `display: flex`, which overrides the attribute's own `display: none`.
+    -->
+    <fieldset id="filter-personal" hidden><legend>Repos</legend>
+      <label><input type="checkbox" value="personal"> Personal</label>
+    </fieldset>
   </div>
 </header>
 <div id="banner" hidden></div>

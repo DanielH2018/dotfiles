@@ -30,6 +30,29 @@ export function parsePort(raw: string | undefined): ParsedPort {
   return { ok: true, port };
 }
 
+/**
+ * Reads the work organizations from a raw `PR_DASH_WORK_ORGS` value: a comma-separated
+ * list of GitHub owner names, such as `acme,acme-labs`.
+ *
+ * Unset, empty, or all-whitespace yields an empty list, which the client reads as "no
+ * constraint" — every PR counts as work and the Personal toggle hides nothing (see
+ * `isWorkRepo` in public/group.js). That is the behaviour on a machine that never
+ * configured the variable, and it is why the name lives in the environment rather than in
+ * this repo, which is public-posture. The plist template's header says where the agent's
+ * value comes from.
+ *
+ * Each entry is trimmed, so a value written for readability (`acme, acme-labs`) works, and
+ * lowercased once here: GitHub owner names are case-insensitive, while the `nameWithOwner`
+ * the records carry preserves whatever casing the owner registered.
+ */
+export function parseWorkOrgs(raw: string | undefined): string[] {
+  if (raw === undefined) return [];
+  return raw
+    .split(',')
+    .map((org) => org.trim().toLowerCase())
+    .filter((org) => org !== '');
+}
+
 /** The port a client omits from an http `Host` header, being the scheme's default. */
 const HTTP_DEFAULT_PORT = 80;
 

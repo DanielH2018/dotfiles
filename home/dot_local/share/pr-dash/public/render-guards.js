@@ -174,6 +174,7 @@ function validateStackNode(node, path) {
  * @property {string} [error]
  * @property {string} fetchedAt
  * @property {string[]} partialErrors
+ * @property {string[]} workOrgs
  */
 
 /**
@@ -239,31 +240,49 @@ export function parsePrsBody(body) {
   // banner, and a non-array degrades to "nothing known to have failed".
   const raw = fields['partialErrors'];
   const partialErrors = Array.isArray(raw) ? raw.filter((e) => typeof e === 'string') : [];
-  return { prs, stacks, stale, refreshing, error, fetchedAt, partialErrors };
+  // Configuration, not data: the owners `isWorkRepo` in group.js treats as work. Coerced
+  // rather than validated, and an absent field is an empty list, which that function reads
+  // as "no constraint". That default is what keeps the page working across the gap the
+  // plist's header describes — `chezmoi apply` deploys this file under a still-running
+  // older server, whose response carries no `workOrgs` at all. Throwing there would fail
+  // every poll until the launchd job is reloaded; degrading to an empty list instead shows
+  // every PR, which is what the dashboard did before the Personal toggle existed.
+  const rawWorkOrgs = fields['workOrgs'];
+  const workOrgs = Array.isArray(rawWorkOrgs)
+    ? rawWorkOrgs.filter((o) => typeof o === 'string')
+    : [];
+  return { prs, stacks, stale, refreshing, error, fetchedAt, partialErrors, workOrgs };
 }
 
 /**
  * The message to show in place of the group list, or `null` when there is at least one row
  * to render.
  *
- * Two different situations reach zero rows and a blank page cannot tell them apart: the
- * user has no open PRs, or the active filters exclude every PR they have. spec:172-173
- * justifies the Reset control with exactly that — a filter state the user cannot see is a
- * trap because the dashboard looks empty and the reason is invisible — so the second case
- * names the control that undoes it.
- * @param {number} totalRecords How many PRs the payload carries.
- * @param {number} visibleRecords How many survive the active filters.
+ * Three different situations reach zero rows and a blank page cannot tell them apart: the
+ * user has no open PRs, the Personal toggle is hiding the only PRs they have, or the active
+ * filters exclude every PR that survived that toggle. spec:172-173 justifies the Reset
+ * control with exactly that — a filter state the user cannot see is a trap because the
+ * dashboard looks empty and the reason is invisible — so each case names the control that
+ * undoes it, and the two hidden cases must not be merged: Reset view leaves Personal off,
+ * so telling a user with only personal PRs to reset would name a control that changes
+ * nothing.
+ * @param {object} counts
+ * @param {number} counts.total How many PRs the payload carries.
+ * @param {number} counts.inScope How many survive the Personal toggle.
+ * @param {number} counts.visible How many survive the active filters as well.
  * @returns {string | null}
  */
-export function emptyStateMessage(totalRecords, visibleRecords) {
-  if (visibleRecords > 0) return null;
-  if (totalRecords === 0) return 'No open pull requests.';
+export function emptyStateMessage({ total, inScope, visible }) {
+  if (visible > 0) return null;
+  if (total === 0) return 'No open pull requests.';
   // The verb agrees as well as the noun: "All 1 PR are hidden" was the previous reading.
-  const one = totalRecords === 1;
-  const noun = one ? 'PR' : 'PRs';
-  const verb = one ? 'is' : 'are';
+  /** @param {number} count */
+  const subject = (count) => (count === 1 ? `${count} PR is` : `${count} PRs are`);
+  // Counted against `total`, because when `inScope` is 0 every PR in the payload is a
+  // personal one and there is no other subset to name.
+  if (inScope === 0) return `All ${subject(total)} in personal repositories. Personal shows them.`;
   // "them" is the filters, which are always plural, so it does not vary with the count.
-  return `All ${totalRecords} ${noun} ${verb} hidden by the active filters. Reset view clears them.`;
+  return `All ${subject(inScope)} hidden by the active filters. Reset view clears them.`;
 }
 
 /**
@@ -291,7 +310,9 @@ export function isSafeUrl(url) {
  * @property {Review[]} review
  * @property {StalenessBucket[]} staleness
  * @property {DraftState[]} draft
+ * @property {boolean} personal
  * @property {string[]} collapsed
+ * @property {string[]} expandedStacks
  */
 
 /** @type {StoredView} */
@@ -302,7 +323,14 @@ const DEFAULT_VIEW = {
   review: [],
   staleness: [],
   draft: [],
+  // Off by default: the dashboard opens on work PRs alone, and the Personal chip is the
+  // way to bring the rest in. An older stored view carrying no `personal` key lands here
+  // too, which is the same default rather than a migration.
+  personal: false,
   collapsed: [],
+  // Empty by default, and it is an *expanded* list rather than a collapsed one: a stack
+  // starts folded, so the set records the exception the user made, not the rule.
+  expandedStacks: [],
 };
 
 /**
@@ -415,7 +443,12 @@ export function parseStoredView(raw) {
     review: toReviewValues(obj['review']),
     staleness: toStalenessValues(obj['staleness']),
     draft: toDraftValues(obj['draft']),
+    // Strict `=== true`: anything else, including a missing key and a stored `"true"`
+    // string, is the default-off state. Over-reporting "on" would show personal PRs to a
+    // view that never asked for them.
+    personal: obj['personal'] === true,
     collapsed: toCollapsedKeys(obj['collapsed']),
+    expandedStacks: toCollapsedKeys(obj['expandedStacks']),
   };
 }
 

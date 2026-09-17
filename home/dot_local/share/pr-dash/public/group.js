@@ -101,6 +101,52 @@ export function groupBy(records, axis) {
 }
 
 /**
+ * The owner segment of a `owner/name` repository string, lowercased. GitHub owner names are
+ * case-insensitive, and `nameWithOwner` preserves whatever casing the owner registered, so
+ * both sides of every comparison go through this.
+ * @param {string} repo
+ * @returns {string}
+ */
+export function repoOwner(repo) {
+  const slash = repo.indexOf('/');
+  return (slash === -1 ? repo : repo.slice(0, slash)).toLowerCase();
+}
+
+/**
+ * Whether `repo` belongs to one of the work organizations in `workOrgs`.
+ *
+ * An empty `workOrgs` makes this true for every repository, matching the "an empty list is
+ * no constraint" rule {@link applyFilters} already follows. That is the case on a machine
+ * that sets no `PR_DASH_WORK_ORGS`: nothing is personal, so the Personal toggle hides
+ * nothing and the dashboard behaves as it did before the toggle existed.
+ * @param {string} repo
+ * @param {readonly string[]} workOrgs Already lowercased by `parseWorkOrgs` in src/main-lib.ts.
+ * @returns {boolean}
+ */
+export function isWorkRepo(repo, workOrgs) {
+  if (workOrgs.length === 0) return true;
+  return workOrgs.includes(repoOwner(repo));
+}
+
+/**
+ * Keeps the records the Personal toggle admits: every record when the toggle is on or no
+ * work organizations are configured, and only work-owned records when it is off.
+ *
+ * Deliberately separate from {@link applyFilters} rather than a fifth axis inside it. The
+ * two cuts need telling apart downstream: Reset view clears the filters but leaves Personal
+ * off, so an empty page caused by the toggle must name the toggle rather than Reset —
+ * see `emptyStateMessage` in render-guards.js.
+ * @param {readonly PrRecord[]} records
+ * @param {boolean} personal Whether the Personal toggle is on.
+ * @param {readonly string[]} workOrgs
+ * @returns {PrRecord[]}
+ */
+export function applyPersonalCut(records, personal, workOrgs) {
+  if (personal) return [...records];
+  return records.filter((pr) => isWorkRepo(pr.repo, workOrgs));
+}
+
+/**
  * @typedef {object} Filters
  * @property {import('../src/types.ts').Ci[]} ci
  * @property {import('../src/types.ts').Review[]} review

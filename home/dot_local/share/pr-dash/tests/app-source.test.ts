@@ -273,8 +273,10 @@ test('renderStack only skips a collapsed root\'s children once its own row actua
   );
 
   const condition = returnMatch[1]!;
-  // Polarity, not just presence: `!rowRendered` or `!collapsed.has(...)` would satisfy a bare
-  // substring/word check for the identifier while inverting the guard's meaning entirely.
+  // Polarity, not just presence: `!rowRendered` or `!isStackCollapsed(...)` would satisfy a
+  // bare substring/word check for the identifier while inverting the guard's meaning
+  // entirely. The predicate is `isStackCollapsed`, not a `collapsed.has` read, because a
+  // stack renders folded unless its root is in `expandedStacks` — see that function.
   assert.match(
     condition,
     /(?<!!\s*)\browRendered\b/,
@@ -282,8 +284,21 @@ test('renderStack only skips a collapsed root\'s children once its own row actua
   );
   assert.match(
     condition,
-    /(?<!!\s*)collapsed\.has\(/,
-    'expected the early return to still check collapsed, not its negation',
+    /(?<!!\s*)isStackCollapsed\(/,
+    'expected the early return to ask isStackCollapsed, not its negation',
+  );
+});
+
+test('a stack renders folded unless its root is in expandedStacks', () => {
+  // The whole of "stacks start collapsed" rests on this one negation. Dropping it — making
+  // the predicate `expandedStacks.has(id)` — inverts the default back to open, and every
+  // other test about folding still passes, since they only ever assert that the toggle
+  // changes something.
+  const body = functionBody(STRIPPED, 'function isStackCollapsed');
+  assert.match(
+    body,
+    /return\s*!\s*expandedStacks\.has\(\s*id\s*\)\s*;/,
+    'expected isStackCollapsed to report the absence of an expanded key',
   );
 });
 
@@ -315,16 +330,52 @@ test('the stack toggle sets an aria-label, and the shared chevron helper sets ar
 
 test('#collapse-all folds stack roots along with group headers', () => {
   // Folding only group headers left Collapse all and Expand all as non-inverses: expanding a
-  // repository afterward revealed its stacks still open (finding 10).
+  // repository afterward revealed its stacks still open (finding 10). Since stacks fold by
+  // default, folding them all is clearing the expanded set rather than filling a collapsed
+  // one.
   const marker = "getElementById('collapse-all')?.addEventListener('click', () => {";
   const start = STRIPPED.indexOf(marker);
   assert.notStrictEqual(start, -1, 'expected a click handler on #collapse-all');
   const body = braceBlock(STRIPPED, start);
+  assert.match(
+    body,
+    /expandedStacks\.clear\(\)/,
+    'expected the handler to clear expandedStacks, which is what folds every stack',
+  );
+  // Pinned alongside the clear: a handler that folds the stacks and forgets the group
+  // headers is the same "Collapse all missed half the page" defect from the other side.
+  assert.match(
+    body,
+    /collapsed\.add\(\s*groupCollapseKey\(\s*axis\s*,\s*group\.key\s*\)\s*\)/,
+    'expected the handler to fold the group headers too',
+  );
+});
+
+test('a complete payload prunes expanded-stack keys for PRs it no longer carries', () => {
+  // The set gains a PR id per stack ever unfolded and those ids vanish once merged, so
+  // without this the saved view grows without bound. Gated on a complete, fresh payload:
+  // a stale or partial one is missing PRs that still exist, and pruning against it would
+  // re-fold stacks the user opened.
+  const body = functionBody(STRIPPED, 'function pruneExpandedStacks');
+  assert.match(
+    body,
+    /if\s*\(\s*data\.stale\s*\|\|\s*data\.partialErrors\.length\s*>\s*0\s*\)\s*return;/,
+    'expected pruning to skip a stale or partial payload',
+  );
+  assert.match(body, /expandedStacks\.delete\(/, 'expected the prune to drop dead keys');
+  assert.match(body, /saveView\(\)/, 'expected a prune that dropped something to persist');
+});
+
+test('#expand-all is the inverse: it unfolds every stack root that has one', () => {
+  const marker = "getElementById('expand-all')?.addEventListener('click', () => {";
+  const start = STRIPPED.indexOf(marker);
+  assert.notStrictEqual(start, -1, 'expected a click handler on #expand-all');
+  const body = braceBlock(STRIPPED, start);
   assert.match(body, /\bcurrentStacks\b/, 'expected the handler to iterate currentStacks');
   assert.match(
     body,
-    /collapsed\.add\(\s*root\.pr\.id\s*\)/,
-    "expected the handler to add a root's pr.id to collapsed",
+    /expandedStacks\.add\(\s*root\.pr\.id\s*\)/,
+    "expected the handler to add a root's pr.id to expandedStacks",
   );
 });
 
@@ -456,6 +507,30 @@ test('applyView always replaces the collapsed set, even for an empty view.collap
     body,
     /view\.collapsed\.length\s*>\s*0/,
     'expected no length guard around the collapsed assignment',
+  );
+  // Same contract for the stack set: Reset view's empty expandedStacks has to fold every
+  // stack again, not quietly keep whatever the user had open.
+  assert.match(
+    body,
+    /expandedStacks\s*=\s*new Set\(toCollapsedKeys\(view\.expandedStacks\)\)\s*;/,
+    'expected applyView to unconditionally replace expandedStacks',
+  );
+});
+
+test('render cuts by the Personal toggle before applying the filters, and tells the two apart', () => {
+  // Folding the personal cut into applyFilters as a fifth axis would leave
+  // emptyStateMessage unable to distinguish them, so a user whose only PRs are personal
+  // would be told to click Reset view — which leaves Personal off and changes nothing.
+  const body = functionBody(STRIPPED, 'function render(records, stacks)');
+  const cutIndex = body.search(/applyPersonalCut\(\s*records\s*,/);
+  const filterIndex = body.search(/applyFilters\(\s*inScope\s*,/);
+  assert.notStrictEqual(cutIndex, -1, 'expected render to apply the personal cut to records');
+  assert.notStrictEqual(filterIndex, -1, 'expected render to filter the in-scope records');
+  assert.ok(cutIndex < filterIndex, 'expected the personal cut to run before the filters');
+  assert.match(
+    body,
+    /emptyStateMessage\(\{[\s\S]{0,160}?inScope:\s*inScope\.length/,
+    'expected emptyStateMessage to receive the in-scope count, not only the total',
   );
 });
 

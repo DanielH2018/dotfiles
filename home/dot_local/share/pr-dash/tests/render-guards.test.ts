@@ -73,7 +73,10 @@ function optionValues(html: string, selectId: string): string[] {
  * its guard's allowed values can never silently drift apart either.
  */
 function checkboxValues(html: string, fieldsetId: string): string[] {
-  const fieldset = new RegExp(`<fieldset id="${fieldsetId}">([\\s\\S]*?)</fieldset>`).exec(html);
+  // `[^>]*` after the id: #filter-personal carries a `hidden` attribute as well.
+  const fieldset = new RegExp(
+    `<fieldset id="${fieldsetId}"[^>]*>([\\s\\S]*?)</fieldset>`,
+  ).exec(html);
   assert.ok(fieldset, `no <fieldset id="${fieldsetId}"> found in index.html`);
   const values: string[] = [];
   const inputPattern = /<input type="checkbox" value="([^"]*)"/g;
@@ -552,12 +555,29 @@ test('parsePrsBody treats an absent stacks as an empty forest', () => {
   assert.deepStrictEqual(parsePrsBody({ prs: [validRecord] }).stacks, []);
 });
 
+test('parsePrsBody passes the work organizations through, keeping only the strings', () => {
+  const body = { prs: [], stale: false, fetchedAt: '', workOrgs: ['acme', 7, null, 'acme-labs'] };
+  assert.deepStrictEqual(parsePrsBody(body).workOrgs, ['acme', 'acme-labs']);
+});
+
+test('parsePrsBody reads a missing or malformed workOrgs as no constraint', () => {
+  // `chezmoi apply` deploys this client under a still-running older server whose response
+  // carries no `workOrgs` at all. Throwing there would fail every poll until the launchd
+  // job is reloaded; an empty list means every repository counts as work, which is what
+  // the dashboard showed before the toggle existed.
+  assert.deepStrictEqual(parsePrsBody({ prs: [], stale: false, fetchedAt: '' }).workOrgs, []);
+  assert.deepStrictEqual(
+    parsePrsBody({ prs: [], stale: false, fetchedAt: '', workOrgs: 'acme' }).workOrgs,
+    [],
+  );
+});
+
 test('emptyStateMessage tells "no open PRs" apart from "filters hid them all"', () => {
   // spec:172-173 justifies the Reset control with exactly this problem: a saved filter
   // state that cannot be cleared is a trap because the dashboard looks empty and the
   // reason is invisible. Two blank pages for two unrelated situations is that trap.
-  const noPrs = emptyStateMessage(0, 0);
-  const allFiltered = emptyStateMessage(4, 0);
+  const noPrs = emptyStateMessage({ total: 0, inScope: 0, visible: 0 });
+  const allFiltered = emptyStateMessage({ total: 4, inScope: 4, visible: 0 });
   assert.notStrictEqual(noPrs, null);
   assert.notStrictEqual(allFiltered, null);
   assert.notStrictEqual(noPrs, allFiltered);
@@ -566,19 +586,41 @@ test('emptyStateMessage tells "no open PRs" apart from "filters hid them all"', 
 });
 
 test('emptyStateMessage returns null when there is anything to render', () => {
-  assert.strictEqual(emptyStateMessage(4, 1), null);
+  assert.strictEqual(emptyStateMessage({ total: 4, inScope: 4, visible: 1 }), null);
 });
 
 // The plural helper covered PR/PRs but not is/are, so a single hidden PR read "All 1 PR are
 // hidden by the active filters."
 test('emptyStateMessage agrees in number with a single hidden PR', () => {
-  const one = String(emptyStateMessage(1, 0));
+  const one = String(emptyStateMessage({ total: 1, inScope: 1, visible: 0 }));
   assert.match(one, /All 1 PR is hidden/);
   assert.doesNotMatch(one, /PRs/);
 });
 
 test('emptyStateMessage stays plural for more than one hidden PR', () => {
-  assert.match(String(emptyStateMessage(2, 0)), /All 2 PRs are hidden/);
+  assert.match(
+    String(emptyStateMessage({ total: 2, inScope: 2, visible: 0 })),
+    /All 2 PRs are hidden/,
+  );
+});
+
+// Reset view clears the filters and leaves Personal off, so the two hidden cases need
+// different messages: telling a user whose only PRs are personal to reset would name a
+// control that changes nothing about why the page is blank.
+test('emptyStateMessage names Personal, not Reset view, when the toggle hid everything', () => {
+  const message = String(emptyStateMessage({ total: 3, inScope: 0, visible: 0 }));
+  assert.match(message, /Personal/);
+  assert.doesNotMatch(message, /Reset view/);
+  assert.match(message, /All 3 PRs are/);
+});
+
+test('emptyStateMessage counts only the in-scope PRs when the filters hid the rest', () => {
+  // `total` includes the personal PRs the toggle already removed, so reporting it here
+  // would tell the user the filters are hiding PRs those filters never saw.
+  assert.match(
+    String(emptyStateMessage({ total: 9, inScope: 2, visible: 0 })),
+    /All 2 PRs are hidden by the active filters/,
+  );
 });
 
 // The message points the user at a control by name. Every other control label in this
@@ -587,11 +629,20 @@ test('emptyStateMessage stays plural for more than one hidden PR', () => {
 test('emptyStateMessage names the reset control by its real label in index.html', () => {
   const label = buttonLabel(indexHtml, 'reset');
   assert.ok(label.length > 0, 'expected the reset button to carry a label');
-  const message = String(emptyStateMessage(4, 0));
+  const message = String(emptyStateMessage({ total: 4, inScope: 4, visible: 0 }));
   assert.ok(
     message.includes(label),
     `expected ${JSON.stringify(message)} to name the reset button's label ${JSON.stringify(label)}`,
   );
+});
+
+// Same reasoning as the reset-label test above: the message points at a control by name,
+// and the two would otherwise be two independent hardcodings of the same word.
+test('the personal-only message names the toggle by its real value in index.html', () => {
+  const values = checkboxValues(indexHtml, 'filter-personal');
+  assert.deepStrictEqual(values, ['personal'], 'expected one checkbox, valued "personal"');
+  const message = String(emptyStateMessage({ total: 2, inScope: 0, visible: 0 }));
+  assert.match(message, new RegExp(values[0]!, 'i'));
 });
 
 test('isSafeUrl accepts https and http', () => {
@@ -615,8 +666,27 @@ const DEFAULT_VIEW: StoredView = {
   review: [],
   staleness: [],
   draft: [],
+  personal: false,
   collapsed: [],
+  expandedStacks: [],
 };
+
+test('parseStoredView defaults personal to off, so the dashboard opens on work PRs alone', () => {
+  assert.strictEqual(parseStoredView(null).personal, false);
+  // A view written before the toggle existed carries no `personal` key at all, and must
+  // land on the same default rather than on `undefined`.
+  assert.strictEqual(parseStoredView(JSON.stringify({ axis: 'repo' })).personal, false);
+  assert.strictEqual(parseStoredView(JSON.stringify({ personal: 'yes' })).personal, false);
+  assert.strictEqual(parseStoredView(JSON.stringify({ personal: true })).personal, true);
+});
+
+test('parseStoredView keeps expandedStacks as the stack exceptions, defaulting to none', () => {
+  // Empty means every stack is folded, which is the default state — the inverse of
+  // `collapsed`, where empty means everything is open.
+  assert.deepStrictEqual(parseStoredView(null).expandedStacks, []);
+  const stored = JSON.stringify({ expandedStacks: ['acme/api#1', 7, null] });
+  assert.deepStrictEqual(parseStoredView(stored).expandedStacks, ['acme/api#1']);
+});
 
 test('parseStoredView returns the default view for null (nothing stored yet)', () => {
   assert.deepStrictEqual(parseStoredView(null), DEFAULT_VIEW);
@@ -754,7 +824,9 @@ test('saveStoredView writes the view as JSON under VIEW_KEY', () => {
     review: ['approved'],
     staleness: ['>7d'],
     draft: ['ready'],
+    personal: true,
     collapsed: ['acme/api'],
+    expandedStacks: ['acme/api#1'],
   };
   saveStoredView(storage, view);
   assert.deepStrictEqual([...storage.written.keys()], [VIEW_KEY]);

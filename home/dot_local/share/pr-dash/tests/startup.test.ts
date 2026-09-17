@@ -6,11 +6,29 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   parsePort,
+  parseWorkOrgs,
   listenErrorMessage,
   expectedHost,
   preloadEnabled,
   DEFAULT_PORT,
 } from '../src/main-lib.ts';
+
+test('an unset PR_DASH_WORK_ORGS yields no work organizations', () => {
+  // Which the client reads as "no constraint": every repository counts as work and the
+  // Personal toggle hides nothing. The opposite reading would open a blank dashboard on
+  // any machine that never configured the variable.
+  assert.deepStrictEqual(parseWorkOrgs(undefined), []);
+  assert.deepStrictEqual(parseWorkOrgs(''), []);
+  assert.deepStrictEqual(parseWorkOrgs('  ,  ,'), []);
+});
+
+test('work organizations are split on commas, trimmed, and lowercased', () => {
+  // Lowercased because GitHub owner names are case-insensitive while the nameWithOwner the
+  // records carry preserves the owner's own casing.
+  assert.deepStrictEqual(parseWorkOrgs('Acme'), ['acme']);
+  assert.deepStrictEqual(parseWorkOrgs('acme, Acme-Labs '), ['acme', 'acme-labs']);
+  assert.deepStrictEqual(parseWorkOrgs('acme,,acme-labs'), ['acme', 'acme-labs']);
+});
 
 // Item 5 of the final review: `127.0.0.1:${port}` is wrong for port 80. Browsers and curl
 // both omit a default port from the Host header, so the guard's expectation has to omit it

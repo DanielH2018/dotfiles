@@ -1,6 +1,7 @@
 // @ts-check
 import {
   applyFilters,
+  applyPersonalCut,
   groupBy,
   groupCollapseKey,
   groupSummary,
@@ -66,8 +67,9 @@ function setCheckedValues(fieldsetId, values) {
 }
 
 /**
- * Keys of the sections the user has folded shut: `axis:key` for a group header (see
- * {@link groupCollapseKey}), a bare PR id for a stack root. Held as a Set for the membership
+ * Keys of the group headers the user has folded shut: `axis:key`, see
+ * {@link groupCollapseKey}. Stack roots are not in here — they fold by default, which
+ * {@link expandedStacks} tracks the exceptions to. Held as a Set for the membership
  * test `render` does per section, and written back to storage as an array. A key outlives the
  * section it named — switching axes or filtering a group out of view never removes its key —
  * so the set can carry keys naming nothing currently on screen. Reset view and Expand all are
@@ -75,6 +77,19 @@ function setCheckedValues(fieldsetId, values) {
  * @type {Set<string>}
  */
 let collapsed = new Set();
+
+/**
+ * Ids of the stack roots the user has folded open. The inverse of {@link collapsed}, and
+ * deliberately so: a stack renders collapsed unless its root's id is in here, so this set
+ * holds the exceptions rather than the rule. A collapsed-by-default stack cannot be
+ * tracked by a "collapsed" set at all — an empty set would mean every stack is open, which
+ * is the state this replaces.
+ *
+ * Like {@link collapsed}, a key here outlives the stack it names: a merged root's id stays
+ * until Collapse all or Reset view clears it.
+ * @type {Set<string>}
+ */
+let expandedStacks = new Set();
 
 /** @param {string} key */
 function toggleCollapsed(key) {
@@ -85,9 +100,52 @@ function toggleCollapsed(key) {
 }
 
 /**
- * Reports the controls' current state, `collapsed` included — it is read from the
- * in-memory Set here, not from storage, since that Set is the one place collapse state lives
- * while the page is open.
+ * Whether the stack rooted at `id` renders folded. Absence means collapsed, which is what
+ * makes a stack fold by default on a first visit and after Reset view.
+ * @param {string} id
+ * @returns {boolean}
+ */
+function isStackCollapsed(id) {
+  return !expandedStacks.has(id);
+}
+
+/**
+ * Drops expanded-stack keys naming PRs the payload no longer carries, and persists the
+ * result when anything went.
+ *
+ * {@link collapsed} can carry a key for a section that no longer exists without cost: its
+ * keys are `axis:key` pairs drawn from a small fixed set. This set is different — it gains
+ * a PR id every time a stack is unfolded, and that id disappears from the payload for good
+ * once the PR merges, so without pruning the saved view accumulates merged ids forever.
+ *
+ * Only a complete, fresh payload prunes. A stale or partial one is missing PRs that still
+ * exist, and pruning against it would silently re-fold stacks the user opened.
+ * @param {import('./render-guards.js').ParsedPrsBody} data
+ */
+function pruneExpandedStacks(data) {
+  if (data.stale || data.partialErrors.length > 0) return;
+  const live = new Set(data.prs.map((pr) => pr.id));
+  let dropped = false;
+  for (const id of [...expandedStacks]) {
+    if (live.has(id)) continue;
+    expandedStacks.delete(id);
+    dropped = true;
+  }
+  if (dropped) saveView();
+}
+
+/** @param {string} id */
+function toggleStackExpanded(id) {
+  if (expandedStacks.has(id)) expandedStacks.delete(id);
+  else expandedStacks.add(id);
+  saveView();
+  render(current, currentStacks);
+}
+
+/**
+ * Reports the controls' current state, both fold sets included — they are read from the
+ * in-memory Sets here, not from storage, since those Sets are the one place fold state
+ * lives while the page is open.
  * @returns {StoredView}
  */
 function readControls() {
@@ -100,7 +158,9 @@ function readControls() {
     review: toReviewValues(checkedValues('filter-review')),
     staleness: toStalenessValues(checkedValues('filter-staleness')),
     draft: toDraftValues(checkedValues('filter-draft')),
+    personal: checkedValues('filter-personal').includes('personal'),
     collapsed: [...collapsed],
+    expandedStacks: [...expandedStacks],
   };
 }
 
@@ -122,7 +182,9 @@ function applyView(view) {
   setCheckedValues('filter-review', view.review);
   setCheckedValues('filter-staleness', view.staleness);
   setCheckedValues('filter-draft', view.draft);
+  setCheckedValues('filter-personal', view.personal ? ['personal'] : []);
   collapsed = new Set(toCollapsedKeys(view.collapsed));
+  expandedStacks = new Set(toCollapsedKeys(view.expandedStacks));
 }
 
 /**
@@ -192,6 +254,17 @@ function showBanner(message) {
   if (el === null) return;
   el.textContent = message;
   el.hidden = false;
+}
+
+/**
+ * Shows or hides the Personal fieldset. Its state is left alone either way: a hidden
+ * toggle must not silently flip what the saved view says, in case a later response
+ * restores the work-org list.
+ * @param {boolean} show
+ */
+function showPersonalToggle(show) {
+  const el = document.getElementById('filter-personal');
+  if (el !== null) el.hidden = !show;
 }
 
 /** Hides the banner shown by {@link showBanner}. */
@@ -322,8 +395,9 @@ function hasVisibleChild(node, allowed) {
  * in the middle of a stack hides its own row but not its descendants',
  * since the stack's shape (not the filter) decides what nests under what.
  * A collapsed root only stops that recursion when its own row actually rendered: a root the
- * filter excludes has no toggle anyone could have collapsed, so its children show through it
- * exactly as any other filtered-out node's would.
+ * filter excludes renders no toggle, so nothing on screen could unfold it, and its children
+ * show through it exactly as any other filtered-out node's would. That case is the common
+ * one now that a stack folds by default, not a leftover from a stale collapse key.
  * @param {StackNode} node
  * @param {DocumentFragment | HTMLElement} into
  * @param {ReadonlySet<string>} allowed
@@ -350,7 +424,7 @@ function renderStack(node, into, allowed) {
       toggle.type = 'button';
       toggle.className = 'disclosure stack-toggle';
       toggle.dataset.key = node.pr.id;
-      const isCollapsed = collapsed.has(node.pr.id);
+      const isCollapsed = isStackCollapsed(node.pr.id);
       toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
       // The chevron alone would leave the accessible name a glyph with nothing to say what
       // it folds, so the toggle names its target explicitly instead of relying on text
@@ -360,13 +434,13 @@ function renderStack(node, into, allowed) {
         `${isCollapsed ? 'Expand' : 'Collapse'} the ${node.pr.repo}#${node.pr.number} stack`,
       );
       toggle.append(chevron(isCollapsed));
-      toggle.addEventListener('click', () => toggleCollapsed(node.pr.id));
+      toggle.addEventListener('click', () => toggleStackExpanded(node.pr.id));
       wrapper.append(toggle);
     }
     wrapper.append(row);
     into.append(wrapper);
   }
-  if (isRoot && rowRendered && collapsed.has(node.pr.id)) return;
+  if (isRoot && rowRendered && isStackCollapsed(node.pr.id)) return;
   for (const child of node.children) renderStack(child, into, allowed);
 }
 
@@ -432,7 +506,13 @@ function render(records, stacks) {
     staleness: toStalenessValues(checkedValues('filter-staleness')),
     draft: toDraftValues(checkedValues('filter-draft')),
   };
-  const filtered = applyFilters(records, filters);
+  const personal = checkedValues('filter-personal').includes('personal');
+  // Two cuts, in order, and kept apart on purpose. The Personal toggle decides which
+  // repositories are in scope at all; the four filter fieldsets then narrow what is left.
+  // `emptyStateMessage` needs both counts to name the control that undoes an empty page,
+  // since Reset view clears the filters and leaves Personal alone.
+  const inScope = applyPersonalCut(records, personal, currentWorkOrgs);
+  const filtered = applyFilters(inScope, filters);
   const allowed = new Set(filtered.map((pr) => pr.id));
 
   // `replaceChildren` below destroys whatever disclosure button currently has focus, which
@@ -448,7 +528,11 @@ function render(records, stacks) {
   // to do next, so the page says. Held in an `else` below rather than an early return, so the
   // focus restore at the end runs on every path out of this function, not just the common one
   // — a poll landing a payload the active filters exclude entirely must not strand focus.
-  const empty = emptyStateMessage(records.length, filtered.length);
+  const empty = emptyStateMessage({
+    total: records.length,
+    inScope: inScope.length,
+    visible: filtered.length,
+  });
   if (empty !== null) {
     const message = document.createElement('p');
     message.className = 'empty';
@@ -492,6 +576,13 @@ function render(records, stacks) {
 let current = [];
 /** @type {StackNode[]} */
 let currentStacks = [];
+/**
+ * The work organizations the server reports, lowercased. Empty until the first response
+ * lands, and empty for good on a machine that configures none — `applyPersonalCut` reads
+ * that as "no constraint", so the page shows every PR rather than none while it waits.
+ * @type {string[]}
+ */
+let currentWorkOrgs = [];
 /** @type {import('./render-guards.js').PollState} */
 let pollState = { since: null };
 /** @type {ReturnType<typeof setTimeout> | null} */
@@ -556,6 +647,12 @@ async function refresh(force = false) {
     if (isStaleResponse(generation, requestGeneration)) return;
     current = data.prs;
     currentStacks = data.stacks;
+    currentWorkOrgs = data.workOrgs;
+    pruneExpandedStacks(data);
+    // The control appears only once a response says some organization counts as work.
+    // With none configured the toggle would hide nothing whichever way it sat, and a
+    // control that provably does nothing is worse than no control.
+    showPersonalToggle(currentWorkOrgs.length > 0);
     render(current, currentStacks);
     // schedulePoll runs before the banner is chosen: a response can be the one that
     // crosses the give-up timeout, and only schedulePoll's own return says so — a
@@ -603,6 +700,7 @@ for (const id of [
   'filter-review',
   'filter-staleness',
   'filter-draft',
+  'filter-personal',
 ]) {
   document.getElementById(id)?.addEventListener('change', () => {
     saveView();
@@ -619,15 +717,20 @@ document.getElementById('reset')?.addEventListener('click', resetView);
 document.getElementById('collapse-all')?.addEventListener('click', () => {
   const axis = readControls().axis;
   for (const group of groupBy(current, axis)) collapsed.add(groupCollapseKey(axis, group.key));
-  for (const root of currentStacks) {
-    if (root.children.length > 0) collapsed.add(root.pr.id);
-  }
+  // Clearing the expanded set is what folds every stack, since a stack renders folded
+  // unless its root is in there. The two sets move in opposite directions here.
+  expandedStacks.clear();
   saveView();
   render(current, currentStacks);
 });
 
 document.getElementById('expand-all')?.addEventListener('click', () => {
   collapsed.clear();
+  // Only roots with children: a single-PR root has no toggle, so adding its id would
+  // leave a key in the saved view that no control can ever clear.
+  for (const root of currentStacks) {
+    if (root.children.length > 0) expandedStacks.add(root.pr.id);
+  }
   saveView();
   render(current, currentStacks);
 });

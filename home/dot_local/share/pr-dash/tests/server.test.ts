@@ -41,9 +41,10 @@ async function withServer(
     fetchedAt: new Date().toISOString(),
   }),
   onRequest?: () => void,
+  workOrgs: string[] = [],
 ) {
   const port = await freePort();
-  const server = createServer({ host: `127.0.0.1:${port}`, loadPrs, onRequest });
+  const server = createServer({ host: `127.0.0.1:${port}`, loadPrs, onRequest, workOrgs });
   await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
   try {
     await fn(`http://127.0.0.1:${port}`);
@@ -59,6 +60,27 @@ test('serves records on /api/prs', async () => {
     const body = await res.json();
     assert.strictEqual(body.prs.length, 2);
     assert.strictEqual(body.prs[0].id, 'acme/api#12');
+  });
+});
+
+test('/api/prs carries the work organizations the server was configured with', async () => {
+  // The client cannot read the process environment, so this field is the only way the
+  // Personal toggle learns which owners count as work.
+  await withServer(
+    async (base) => {
+      const body = await (await fetch(`${base}/api/prs`)).json();
+      assert.deepStrictEqual(body.workOrgs, ['acme']);
+    },
+    undefined,
+    undefined,
+    ['acme'],
+  );
+});
+
+test('/api/prs reports workOrgs as an empty array, not omitted, when none are configured', async () => {
+  await withServer(async (base) => {
+    const body = await (await fetch(`${base}/api/prs`)).json();
+    assert.deepStrictEqual(body.workOrgs, []);
   });
 });
 
@@ -268,6 +290,7 @@ test('cache expires after its ttl', () => {
 test('rejects a Host header that is not the configured one, even on /api/prs', async () => {
   const server = createServer({
     host: '127.0.0.1:9999',
+    workOrgs: [],
     loadPrs: async () => ({ prs: records, fetchedAt: new Date().toISOString() }),
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));

@@ -145,6 +145,10 @@ fieldset {
   border: 0;
 }
 
+/* `display: flex` above beats the `hidden` attribute's own `display: none`, so #filter-personal
+   would stay on screen when app.js hides it for an unconfigured work-org list. */
+fieldset[hidden] { display: none; }
+
 legend {
   float: left;
   padding: 0 8px 0 0;

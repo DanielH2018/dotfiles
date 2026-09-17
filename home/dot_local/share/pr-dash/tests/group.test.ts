@@ -3,7 +3,10 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import {
   applyFilters,
+  applyPersonalCut,
   groupBy,
+  isWorkRepo,
+  repoOwner,
   groupCollapseKey,
   groupSummary,
   sortStackRoots,
@@ -234,6 +237,49 @@ test('sortStackRoots does not mutate its input', () => {
   const roots = rootsInStackOrder();
   sortStackRoots(roots, 'stale');
   assert.deepStrictEqual(roots.map((n) => n.pr.id), ['x/y#1', 'x/y#2', 'x/y#3']);
+});
+
+const scopeRecords: PrRecord[] = [
+  makeRecord({ id: 'acme/api#1', repo: 'acme/api' }),
+  makeRecord({ id: 'ACME/ops#2', repo: 'ACME/ops' }),
+  makeRecord({ id: 'me/dotfiles#3', repo: 'me/dotfiles' }),
+];
+
+test('repoOwner reads the owner segment, lowercased', () => {
+  assert.strictEqual(repoOwner('ACME/api'), 'acme');
+  assert.strictEqual(repoOwner('acme/api'), 'acme');
+  // No slash at all is not a shape GitHub's nameWithOwner produces, but a record that
+  // reached the page with one must not match every work org by accident.
+  assert.strictEqual(repoOwner('acme'), 'acme');
+});
+
+test('isWorkRepo matches an owner in the list regardless of case', () => {
+  assert.strictEqual(isWorkRepo('ACME/ops', ['acme']), true);
+  assert.strictEqual(isWorkRepo('me/dotfiles', ['acme']), false);
+});
+
+test('an empty work-org list makes every repository work, so the toggle hides nothing', () => {
+  // The state on a machine that sets no PR_DASH_WORK_ORGS. Inverting this would open the
+  // dashboard blank with nothing on screen saying why.
+  assert.strictEqual(isWorkRepo('me/dotfiles', []), true);
+  const out = applyPersonalCut(scopeRecords, false, []);
+  assert.strictEqual(out.length, scopeRecords.length);
+});
+
+test('personal off keeps only the work-owned records', () => {
+  const out = applyPersonalCut(scopeRecords, false, ['acme']);
+  assert.deepStrictEqual(out.map((r) => r.id), ['acme/api#1', 'ACME/ops#2']);
+});
+
+test('personal on keeps everything, work and personal alike', () => {
+  const out = applyPersonalCut(scopeRecords, true, ['acme']);
+  assert.deepStrictEqual(out.map((r) => r.id), scopeRecords.map((r) => r.id));
+});
+
+test('applyPersonalCut does not mutate its input', () => {
+  const input = [...scopeRecords];
+  applyPersonalCut(input, false, ['acme']);
+  assert.strictEqual(input.length, scopeRecords.length);
 });
 
 test('an empty filter set matches everything', () => {
