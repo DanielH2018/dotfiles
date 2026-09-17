@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "23c67e6a931d15db369a9330efa370ee700df2192ab04b481e7dd670592f281f",
-      "landed": "2026-09-17T00:48:03.403Z"
+      "hash": "7116027fe136262da4f45fbf6046f3097e9da5482b88d2791dedbc26a124fb98",
+      "landed": "2026-09-17T00:48:03.759Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "b7cd2ccc5631784a7f0cd9c20e14455b937721dcf4933269aab6936499052a3b",
-      "landed": "2026-09-17T00:48:03.549Z"
+      "hash": "8258659067c4607d76634b7f4087351cb703daa0d1dd29a42ca5de0293aa2dc9",
+      "landed": "2026-09-17T00:48:03.759Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
