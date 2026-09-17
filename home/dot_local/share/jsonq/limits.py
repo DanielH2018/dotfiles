@@ -16,11 +16,13 @@ MAX_SEQUENCE = 10_000_000  # elements produced by `seq * n` or range()
 MAX_DEPTH = 200  # interpreter nesting, kept under CPython's own recursion limit
 MAX_SOURCE_BYTES = 200_000  # ast.parse is recursive; do not hand it a novel
 
-# Mirror of SECRET_PATHS in ~/.claude/hooks/block-dangerous-bash.sh. jsonq opens
-# files directly, so without this it would be a way around that hook's guard —
-# ~/.claude.json, ~/.docker/config.json and ~/.kube/config are all JSON *and*
-# secret. tests/jsonq.test.js asserts the two stay in sync; the only permitted
-# difference is POSIX [:space:] rewritten as \s for Python's re.
+# Mirror of SECRET_PATHS in claude_guard.deny (claude-guard's PreToolUse deny rules,
+# ported from block-dangerous-bash.sh; that hook is unregistered on the host as of the
+# claude-guard slice 4 cutover, so deny.py is the live decision-maker and oracle here).
+# jsonq opens files directly, so without this it would be a way around that guard —
+# ~/.claude.json, ~/.docker/config.json and ~/.kube/config are all JSON *and* secret.
+# tests/jsonq.test.js asserts the two stay in sync; the only permitted difference is
+# POSIX [:space:] rewritten as \s for Python's re.
 SECRET_PATHS = (
     r"(\.env|\.ssh/|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.aws/config"
     r"|\.gnupg/|\.netrc|\.pypirc|\.npmrc|/secrets/|\.git-credentials"

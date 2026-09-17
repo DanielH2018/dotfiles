@@ -441,7 +441,11 @@
       "mcp__homelab__read_file",
       "Bash(~/.claude/plugins/cache/claude-plugins-official/ralph-loop/*)",
       "Bash(bash ~/.claude/hooks/session-context.sh)",
-      "Bash(~/.claude/hooks/block-dangerous-bash.sh)",
+      {{/* claude-guard slice 4 cutover (Rollout row 4) unregistered block-dangerous-bash.sh
+           from PreToolUse here (deny.py decides instead now); this rule let an agent drive
+           the deny hook directly to self-test without a prompt (the plan's "verify the
+           change, not the workload" step), and moved to the hook that decides on this host. */}}
+      "Bash(~/.claude/hooks/guard-pre-tool-use.sh)",
       "Skill(keybindings-help)",
       {{/* Dependabot PR triage. The agent pushes branches, opens combined PRs and closes the
            superseded originals, so this is not a read-only grant — it is allowed because the
@@ -574,11 +578,11 @@
       "Edit(~/.config/gcloud/**)",
       "Read(~/.config/gh/**)",
       "Edit(~/.config/gh/**)",
-      {{/* block-dangerous-bash.sh has denied these to Bash for a long time; the Read/Edit
-           side had nothing, so `cat ~/.claude.json` was blocked while Read(~/.claude.json)
-           handed over the OAuth token. protect-secrets.sh is the primary gate and gives a
-           reason — these are the layer that still stands if the hook is bypassed or its
-           jq preflight fails open. */}}
+      {{/* claude_guard.deny (block-dangerous-bash.sh until the claude-guard slice 4 cutover)
+           has denied these to Bash for a long time; the Read/Edit side had nothing, so
+           `cat ~/.claude.json` was blocked while Read(~/.claude.json) handed over the OAuth
+           token. protect-secrets.sh is the primary gate and gives a reason — these are the
+           layer that still stands if the hook is bypassed or its jq preflight fails open. */}}
       {{/* The OAuth token store on Linux and WSL — a different file from ~/.claude.json below, and the one the deny list missed. Declared in .chezmoidata/secrets.toml; tests/secret-registry.test.js fails if the dialects drift apart. */}}
       "Read(~/.claude/.credentials.json)",
       "Edit(~/.claude/.credentials.json)",

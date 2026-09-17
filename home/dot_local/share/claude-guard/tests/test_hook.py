@@ -861,13 +861,15 @@ def test_deny_shim_prints_nothing_live_for_a_benign_command(tmp_path):
 
 
 @skip_no_uv
-def test_deny_shim_defaults_to_shadow_and_logs(tmp_path):
+def test_deny_shim_defaults_to_live_when_the_variable_is_absent(tmp_path):
+    # DECIDED: claude-guard slice 4 cutover. The shim's own default flipped from :=1 (shadow)
+    # to :=0 (live) in the same commit as settings.base.json's CLAUDE_GUARD_DENY_SHADOW, so a
+    # generated settings.json that ever lost the key fails toward the live decision rather
+    # than toward a shadow mode with no bash left to compare against.
     home = home_with(tmp_path)
-    env = shim_env(home, CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
-    r = run_deny_shim(payload("rm -rf /"), env)
-    assert (r.returncode, r.stdout) == (0, "")
-    rec = json.loads((tmp_path / "logs" / DENY_LOG_NAME).read_text())
-    assert rec["python"] == "deny"
+    r = run_deny_shim(payload("rm -rf /"), shim_env(home))
+    assert r.returncode == 0, r.stderr
+    assert decision(r.stdout) == "deny"
 
 
 def test_deny_shim_asks_without_an_interpreter_when_live(tmp_path):
@@ -903,10 +905,20 @@ def test_deny_shim_asks_when_python_exits_non_zero_when_live(tmp_path):
 
 def test_deny_shim_is_silent_on_every_failure_in_shadow(tmp_path):
     home = home_with(tmp_path)
+    r = run_deny_shim(
+        payload("rm -rf /"), shim_env(home, CLAUDE_GUARD_DENY_SHADOW="1", PATH="/nonexistent")
+    )
+    assert (r.returncode, r.stdout) == (0, "")
+
+
+def test_deny_shim_asks_on_failure_when_the_variable_is_absent(tmp_path):
+    # Companion to test_deny_shim_defaults_to_live_when_the_variable_is_absent: the default is
+    # now live, so a failure with no CLAUDE_GUARD_DENY_SHADOW set must ask, the same as an
+    # explicit "0" -- not stay silent the way the pre-slice-4 shadow default did.
+    home = home_with(tmp_path)
     for env in (
         shim_env(home, PATH="/nonexistent"),
         shim_env(home, CLAUDE_GUARD_HOME=str(tmp_path / "nowhere")),
-        shim_env(home, CLAUDE_GUARD_DENY_SHADOW="1", PATH="/nonexistent"),
     ):
         r = run_deny_shim(payload("rm -rf /"), env)
-        assert (r.returncode, r.stdout) == (0, "")
+        assert (r.returncode, decision(r.stdout)) == (0, "ask")

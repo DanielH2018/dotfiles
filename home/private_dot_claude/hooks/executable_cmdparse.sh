@@ -2,13 +2,26 @@
 # shellcheck shell=bash
 # cmdparse.sh — one decomposition of a Bash command, shared by every guard that judges one.
 #
-# block-dangerous-bash.sh (PreToolUse) sources this library today; allow-compound-bash.sh and
-# allow-readonly-remote.sh (PermissionRequest) did too until claude-guard's slice 3 cutover
-# ported both to claude_guard.judge and deleted them. What follows is the history that
+# DECIDED: no hook on THIS HOST sources this library any longer. block-dangerous-bash.sh
+# (PreToolUse) was its last host consumer; claude-guard's slice 4 cutover ported its decision
+# to claude_guard.deny and unregistered it here, the same way slice 3 ported
+# allow-compound-bash.sh and allow-readonly-remote.sh (PermissionRequest) to claude_guard.judge
+# and deleted both outright. block-dangerous-bash.sh itself is NOT deleted this time (see its
+# own header comment and docs/plans/2026-09-17-claude-guard-slice-4-cutover.md): the sandbox
+# (home/private_dot_claude/sandbox/) still bind-mounts and registers the deployed copy as its
+# own in-container deny hook, has no interpreter to run the Python port instead, and Docker
+# turns a missing bind-mount source into a silently-empty directory rather than a failed run --
+# so the file, and everything it sources, stays live there. This means cmdparse.sh keeps a real
+# consumer (in the sandbox only) and the M02 shadow census inside block-dangerous-bash.sh
+# (_bdb_shadow_log, CMDPARSE_SHADOW/CMDPARSE_SHADOW_SAMPLE) is still a real, running feature,
+# not a retired one -- its test file, cmdparse-shadow.test.js, stays for exactly that reason.
+# Both this file and block-dangerous-bash.sh are retired together once the sandbox runs the
+# Python port instead (filed as a follow-up, not solved here). What follows is the history that
 # motivated writing a shared library in the first place: each of the three hooks had its own
 # idea of where one command ends and the next begins, and the differences were where the
 # bypasses lived. Two verified in that session, both from the same root cause — a newline was
-# not a separator to any of them:
+# not a
+# separator to any of them:
 #
 #   printf 'echo x\nterraform destroy'   -> no decision   (`echo x; terraform destroy` denies)
 #   printf 'echo x\nssh homelab reboot'  -> no decision   (`echo x && ssh …` denies)

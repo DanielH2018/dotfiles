@@ -24,7 +24,13 @@ const os = require('node:os');
 const path = require('node:path');
 
 const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
-const HOOK = path.join(__dirname, '..', 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh');
+// claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
+// deployed for the sandbox -- see its own header comment); deny.py (claude_guard's port,
+// ported rule for rule -- see docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) is now
+// the host's live decision-maker and the oracle SECRET_PATHS mirrors.
+const DENY_PY = path.join(
+  __dirname, '..', 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
+);
 
 let python = 'python3';
 let skip = false;
@@ -591,12 +597,15 @@ test('refuses a symlink that launders a secret path', { skip }, () => {
   assert.match(r.err, /secret-path pattern/);
 });
 
-test('jsonq SECRET_PATHS matches the hook it mirrors', { skip }, () => {
-  const hook = fs.readFileSync(HOOK, 'utf8');
-  const hookMatch = hook.match(/^SECRET_PATHS='(.+)'$/m);
-  assert.ok(hookMatch, 'could not find SECRET_PATHS in block-dangerous-bash.sh');
+test('jsonq SECRET_PATHS matches the oracle it mirrors', { skip }, () => {
+  const denyPy = fs.readFileSync(DENY_PY, 'utf8');
+  const denyBlock = denyPy.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
+  assert.ok(denyBlock, 'could not find SECRET_PATHS in deny.py');
+  const fromDenyPy = [...denyBlock[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
   // POSIX bracket classes are the one permitted divergence — Python's re has no [:space:].
-  const fromHook = hookMatch[1].replace(/\[:space:\]/g, '\\s');
+  // deny.py keeps them (it has its own POSIX-class translation for the bash-ported matchers);
+  // limits.py, driving Python's re directly, spells the same class \s.
+  const fromHook = fromDenyPy.replace(/\[:space:\]/g, '\\s');
 
   const limits = fs.readFileSync(path.join(SHARE, 'limits.py'), 'utf8');
   const block = limits.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
@@ -604,7 +613,7 @@ test('jsonq SECRET_PATHS matches the hook it mirrors', { skip }, () => {
   const fromJsonq = [...block[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('');
 
   assert.strictEqual(fromJsonq, fromHook,
-    'jsonq and block-dangerous-bash.sh have drifted apart');
+    'jsonq and claude_guard.deny have drifted apart');
 });
 
 test('reports bad input without a traceback', { skip }, () => {

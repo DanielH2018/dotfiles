@@ -3,13 +3,13 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "7116027fe136262da4f45fbf6046f3097e9da5482b88d2791dedbc26a124fb98",
-      "landed": "2026-09-17T00:48:03.759Z"
+      "hash": "44795785c5c3a719ec44cd1906958d85b0d11e83dc21a38202fd2d7901c7c988",
+      "landed": "2026-09-17T02:00:19.017Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
-      "hash": "8258659067c4607d76634b7f4087351cb703daa0d1dd29a42ca5de0293aa2dc9",
-      "landed": "2026-09-17T00:48:03.759Z"
+      "hash": "d61d9f109dc5e34b78a43cbdb2f0269c2693a071a62609433821c8b4d8b8c8ca",
+      "landed": "2026-09-17T02:00:19.017Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.safe-floor.json",
@@ -93,8 +93,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_block-dangerous-bash.sh",
-      "hash": "3d811b2cb580fad88de496af996591f64bcbaa1239cf2bd79f1b2f4054d0a0bc",
-      "landed": "2026-09-17T00:47:57.053Z"
+      "hash": "e8a023fa0472c19510849af48bae2054baa53ec42b734a105368c172672d9126",
+      "landed": "2026-09-17T02:00:19.017Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -118,8 +118,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_cmdparse.sh",
-      "hash": "116f27ac96289294a6031515ba124ae0fa7723e55e600b64579fbcb8dfee2013",
-      "landed": "2026-09-17T00:48:03.549Z"
+      "hash": "00ddda2cf245337dfc899de71786efd5452585bdde88a42f7820c0c37ad06838",
+      "landed": "2026-09-17T02:00:19.017Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
@@ -128,8 +128,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
-      "hash": "d7091ac7a102e10e754bdfc8f5dc8a3d22ef1988deb2f3fe9deb2f8ae0fdb9ff",
-      "landed": "2026-09-09T22:39:45.424Z"
+      "hash": "622025c0221a34145c2712f7080e0d24be550915273098a6cfce99ceb15dae87",
+      "landed": "2026-09-17T02:00:19.017Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",

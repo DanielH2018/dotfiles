@@ -291,18 +291,17 @@ test('claude-guard is the sole Bash PermissionRequest decision, live', { skip },
   assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '0');
 });
 
-// claude-guard slice 4: the Python PreToolUse hook runs beside block-dangerous-bash.sh, in
-// shadow, under its OWN variable. The cutover changes all three in one PR; until then losing
-// any one of them is a half-cutover — and the deny side's variable must not be the allow
-// side's, or slice 3's flip would take this hook live with it.
-test('claude-guard runs beside block-dangerous-bash.sh on PreToolUse, in its own shadow', { skip }, () => {
+// claude-guard slice 4 cutover: guard-pre-tool-use.sh is now the sole decision for Bash
+// PreToolUse and CLAUDE_GUARD_DENY_SHADOW is live. This is the red-proof for the cutover: it
+// must fail if block-dangerous-bash.sh is still registered, and it must fail if the env var
+// is anything but exactly "0" (see docs/plans/2026-09-17-claude-guard-slice-4-cutover.md).
+test('claude-guard is the sole Bash PreToolUse deny decision, live', { skip }, () => {
   const s = JSON.parse(render());
   const entry = s.hooks.PreToolUse.find((e) => e.matcher === 'Bash');
   const cmds = entry.hooks.map((h) => h.command);
   assert.ok(cmds.includes('~/.claude/hooks/guard-pre-tool-use.sh'), cmds.join(', '));
-  assert.ok(cmds.includes('~/.claude/hooks/block-dangerous-bash.sh'), 'the bash is still registered');
-  assert.strictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, '1');
-  assert.notStrictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, undefined);
+  assert.ok(!cmds.includes('~/.claude/hooks/block-dangerous-bash.sh'), 'block-dangerous-bash.sh is still registered');
+  assert.strictEqual(s.env.CLAUDE_GUARD_DENY_SHADOW, '0');
   const shim = entry.hooks.find((h) => h.command.endsWith('guard-pre-tool-use.sh'));
   assert.strictEqual(shim.timeout, 10);
 });

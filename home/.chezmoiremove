@@ -1,0 +1,31 @@
+# Targets chezmoi should remove from the destination directory on apply, one per line,
+# relative to $HOME (the destination dir) -- chezmoi's own PatternSet format, the same one
+# .chezmoiignore uses. Dropping a file from the source tree does NOT delete its deployed
+# copy; chezmoi's own remove-on-apply mechanism (this file) is what makes the diff actually
+# stick. Without an entry here, a retired file survives `chezmoi apply` as an unmanaged
+# leftover: slice 3 found this the hard way -- a rc=0 apply left all six of its deleted
+# allow hooks executable in ~/.claude/hooks/, discovered only by driving them by hand.
+
+# claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 3):
+# the six bash PermissionRequest hooks it replaced, plus the allow-daniel-server test oracle
+# that had no chezmoi-managed sibling once its source (executable_allow-daniel-server.sh) was
+# deleted.
+.claude/hooks/allow-compound-bash.sh
+.claude/hooks/allow-readonly-remote.sh
+.claude/hooks/allow-safe-curl.sh
+.claude/hooks/allow-safe-rm.sh
+.claude/hooks/allow-ansible-readonly.sh
+.claude/hooks/allow-daniel-server.sh
+.claude/hooks/test_allow_daniel_server.py
+
+# claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 4)
+# has no entry here. block-dangerous-bash.sh is UNREGISTERED from PreToolUse on the host, but
+# its source (executable_block-dangerous-bash.sh) is NOT deleted and there is nothing for this
+# file to remove: home/private_dot_claude/sandbox/executable_claude-sandbox bind-mounts the
+# deployed copy read-only into the sandbox container as its own in-container deny hook, and
+# that sandbox has no uv, no managed Python 3.14, and no mount for ~/.local/share/claude-guard
+# to run deny.py instead — see the hook's own header comment and
+# docs/plans/2026-09-17-claude-guard-slice-4-cutover.md for the long form. Do not add an entry
+# for it here without first repointing the sandbox's mount and registration at
+# guard-pre-tool-use.sh and shipping uv + the package into its container image (filed as a
+# follow-up, not done in this PR).

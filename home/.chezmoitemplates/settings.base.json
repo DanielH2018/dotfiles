@@ -84,9 +84,25 @@
          cutover deleted allow-compound-bash.sh and allow-readonly-remote.sh outright,
          replacing both with claude_guard's own Python port of this same segmenter
          (home/dot_local/share/claude-guard/claude_guard/segment.py); block-dangerous-bash
-         is the only one of the three still a LIVE cmdparse.sh adopter in bash.
+         was the only one of the three still a LIVE cmdparse.sh adopter in bash on this host.
 
-         That is why it was turned OFF, not why it stays off:
+         DECIDED: claude-guard's slice 4 cutover unregistered block-dangerous-bash.sh from
+         PreToolUse here (deny.py decides instead) but did NOT delete the file — see its own
+         header comment and docs/plans/2026-09-17-claude-guard-slice-4-cutover.md. THIS HOST's
+         copies of CMDPARSE_SHADOW/CMDPARSE_SHADOW_SAMPLE below are now read by nothing, since
+         nothing here runs the hook any more. The census they gate (_bdb_shadow_log, living
+         inside the hook, not in cmdparse.sh itself) is still real code, still tested
+         (tests/hooks/cmdparse-shadow.test.js) and still runs in the one place that still
+         executes the hook: the sandbox, which bind-mounts this deployed copy as its own
+         in-container deny hook and has no interpreter to run deny.py instead. The sandbox's
+         own settings (home/private_dot_claude/sandbox/settings.base.json) do not set either
+         key, so the census is dormant there too by default, not actively sampling — but the
+         code path stays live and tested rather than inert. Left set rather than removed here
+         because cmdparse.sh itself is also kept for the same sandbox reason; pulling these two
+         keys is the sandbox-port follow-up's job, not this PR's.
+
+         The paragraph below is why it was turned OFF, not why it stays off, and predates this
+         cutover:
          it is kept armed as the same instrument for the next unknown gap — it is what
          found the command-substitution bypass (#286) — and "closed" is a property of the
          three known families, not a guarantee about a fourth.
@@ -109,10 +125,14 @@
          pay the cost and get a census row, via $RANDOM (CMDPARSE_SHADOW_ROLL overrides it,
          for tests). CMDPARSE_SHADOW=1 remains the old deterministic every-call switch —
          restore it here for a short, complete corpus rather than a sampled one; the
-         existing cmdparse-shadow.test.js suite already pins that path. `bin/shadow-report`
-         reads the accumulated ~/.claude/logs/cmdparse-shadow.jsonl and is the intended way
-         to consume either mode's output — see its header for what it can and cannot say
-         from the log's fields.
+         existing cmdparse-shadow.test.js suite still pins that path (its subject,
+         block-dangerous-bash.sh, is unregistered on this host as of slice 4 but not deleted —
+         see the claude-guard DENY shadow comment below). `bin/shadow-report` reads the
+         accumulated ~/.claude/logs/cmdparse-shadow.jsonl and is the intended way to consume
+         either mode's output — see its header for what it can and cannot say from the log's
+         fields; that log stops growing on THIS HOST once this PR ships, since nothing here
+         runs the hook any more, but the same hook still runs (and could still write it) in
+         the sandbox.
 
          CMDPARSE=off remains the harder kill switch: it disables the shared parser
          everywhere, not just the census. */}}
@@ -137,23 +157,29 @@
          own verdicts, a different question from agreement, now that there is no bash
          chain left to compare against live. */}}
     "CLAUDE_GUARD_SHADOW": "0",
-    {{/* claude-guard DENY shadow (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 4).
-         guard-pre-tool-use.sh is registered beside block-dangerous-bash.sh in the PreToolUse
-         Bash block below. With this set to 1 it computes deny.py's verdict, runs
-         block-dangerous-bash.sh on the same stdin, appends one hashed line to
-         ~/.claude/logs/claude-guard-deny-shadow.jsonl, and decides NOTHING. Read the log
-         with `claude-guard shadow-report --deny`. A separate switch from CLAUDE_GUARD_SHADOW
-         above because the two sides cut over independently and this one lands first. The
-         cutover sets this to 0 and removes block-dangerous-bash.sh in the same PR; hook.py
-         treats every value except exactly `0` as shadow and the shim defaults it to 1, so a
-         stale settings.json cannot run it live. Floor for that cutover: at least 200 records
-         over at least 3 days with zero python_only, bash_only, mismatch, detail_mismatch,
-         python_error and bash_error rows — an empty log satisfies none of it. bash_timeout
-         rows are expected on large heredocs (the bash hook is quadratic there and exceeds
-         the 5s re-run cap) and do not block, but each is a command the bash could not judge
-         in time, and is the subject of a follow-up against the bash. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N
-         would sample the log write 1-in-N; unset, every call logs. */}}
-    "CLAUDE_GUARD_DENY_SHADOW": "1",
+    {{/* DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
+         Rollout row 4). guard-pre-tool-use.sh below is now the sole decision for Bash
+         PreToolUse on this host -- deny.py ports, rule for rule, block-dangerous-bash.sh,
+         which is UNREGISTERED here, not deleted: the file stays deployed, frozen, because the
+         sandbox still bind-mounts and runs it as its own in-container deny hook (see the
+         hook's own header comment and docs/plans/2026-09-17-claude-guard-slice-4-cutover.md).
+         Exit gate that cleared before this flip: vector file green (`tests/test_deny.py`
+         against `tests/fixtures/block-dangerous-bash-vectors.json`, 32 deny / 27 allow groups,
+         281 commands, package suite 822); `replay --deny --compare-hook` AGREE 1058/1058 on
+         the 2026-09-06 prompted corpus and AGREE 281/281 on every vector; `shadow-report
+         --deny` over 11,973 records across 6.6 days with zero python_only, bash_only,
+         mismatch, detail_mismatch, python_error, bash_error and bash_timeout rows (floor:
+         >=200 over >=3 days, an empty log satisfies none of it). Read `claude-guard
+         shadow-report --deny` for the historical agreement record; going forward it reports
+         only the Python's own verdicts, a different question from agreement, now that no
+         host-side shadow comparison runs by default. hook.py treats every value except
+         exactly `0` as shadow and the shim's own default is flipped the OTHER way, to "0"
+         (live), in the same commit -- same two-place reason as CLAUDE_GUARD_SHADOW above: a
+         stale settings.json that lost this key must fail toward
+         the live decision the cutover made, not toward a shadow mode with no bash left to
+         compare against. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N would sample the log write
+         1-in-N; unset, every call logs -- moot now that this is 0. */}}
+    "CLAUDE_GUARD_DENY_SHADOW": "0",
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
          window unconditionally, and long sessions were compacting 3-6 times each —
          every compaction also truncates history before the remember pipeline can
@@ -788,20 +814,15 @@
             "command": "~/.claude/hooks/artifact-commit-track.sh pre",
             "timeout": 10
           },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/block-dangerous-bash.sh",
-            "timeout": 10
-          },
-          {{/* The Python port of block-dangerous-bash.sh above, in SHADOW: it logs what it
-               would have decided and decides nothing (env.CLAUDE_GUARD_DENY_SHADOW above).
-               It stays beside the bash until `claude-guard shadow-report --deny` meets the
-               floor stated at that variable; then the cutover PR removes
-               block-dangerous-bash.sh and this entry becomes the decision. Contract when it
-               cannot run: the shim prints `ask` itself — the same posture as the bash on a
-               missing jq — never silence, because this is the deny side. Registered at 10 s
-               like the bash it shadows; in shadow it runs that bash a second time, which is
-               why Task 10 of the slice-4 plan measured it before this landed. */}}
+          {{/* DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
+               Rollout row 4). This is now the sole decision for Bash PreToolUse -- deny.py
+               ports, rule for rule, block-dangerous-bash.sh, which was registered here and is
+               removed from this registration only, not deleted -- the file stays deployed and
+               frozen for the sandbox (see its own header comment and the CLAUDE_GUARD_DENY_SHADOW
+               comment above for the exit-gate numbers). Contract when it cannot run: the shim
+               prints `ask` itself -- the same posture the bash takes on a missing jq -- never
+               silence, because this is the deny side. Registered at the same 10 s timeout the
+               bash carried. */}}
           {
             "type": "command",
             "command": "~/.claude/hooks/guard-pre-tool-use.sh",

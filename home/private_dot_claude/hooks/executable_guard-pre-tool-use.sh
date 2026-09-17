@@ -1,25 +1,33 @@
 #!/usr/bin/env bash
-# guard-pre-tool-use.sh — PreToolUse/Bash shim for the claude-guard deny rules (deny.py, the
-# port of block-dangerous-bash.sh).
+# guard-pre-tool-use.sh — PreToolUse/Bash shim for the claude-guard package.
 #
 # Failure contract (spec docs/specs/2026-09-06-claude-guard-design.md, "Failure contracts",
 # claude-guard deny path): cannot run → this shim emits `ask` ITSELF, without Python. That is
-# the posture block-dangerous-bash.sh takes on a missing jq (its :20): a deny list that cannot
-# be evaluated must not fail open, and denying every Bash call would be indistinguishable from
-# a hang. So a missing uv, a missing managed 3.14, a missing package, or a Python process that
-# exits non-zero all print the ask line below and exit 0. hook.py owns the other half: an
-# exception INSIDE Python in live mode prints the same ask from there.
+# the posture block-dangerous-bash.sh takes on a missing jq (see its own header comment: it is
+# unregistered here as of slice 4, but the file itself is NOT deleted -- the sandbox still
+# runs it): a deny list that cannot be evaluated must not fail open, and denying every Bash
+# call would be indistinguishable from a hang. So a missing uv, a missing managed 3.14, a
+# missing package, or a Python process that exits non-zero all print the ask line below and
+# exit 0. hook.py owns the other half: an exception INSIDE Python in live mode prints the same
+# ask from there.
 #
-# Shadow (spec "Rollout" row 4): with CLAUDE_GUARD_DENY_SHADOW=1 the Python side computes its
-# verdict, runs the deployed block-dangerous-bash.sh on the same stdin, appends one hashed
-# line to ~/.claude/logs/claude-guard-deny-shadow.jsonl and prints nothing. In shadow this
-# shim prints nothing on failure either — shadow decides nothing, whatever happens.
-# settings.base.json sets the variable in its env block; the default below is the belt to
-# that brace, so a settings.json not yet regenerated cannot run this hook live. The cutover
-# flips both in one PR and removes block-dangerous-bash.sh from the registration.
+# Live (spec "Rollout" row 4, slice 4): with CLAUDE_GUARD_DENY_SHADOW=0 the Python side's
+# verdict decides -- ask, deny, or the `--force`→`--force-with-lease` upgrade, or silence, per
+# the failure contract above. Any other value (shadow, the pre-slice-4 default) computes the
+# verdict, logs it to ~/.claude/logs/claude-guard-deny-shadow.jsonl against the deployed
+# block-dangerous-bash.sh, and decides nothing -- but nothing on this host sets that value any
+# more, since the bash is no longer registered here to run a comparison against. settings.base.json
+# sets the variable in its env block and flipped to "0" in the same commit that flipped the
+# default below from :=1 to :=0. Both must agree: if the generated settings.json ever lost this
+# key (a stale regeneration, a host-conditional template branch that never sets it), the OLD
+# default of :=1 would leave the hook permanently in shadow with no host-side comparison ever
+# reaching it -- the deny check stops firing and nothing reports it.
+# DECIDED: the shim's default now matches the template's post-cutover value for exactly this
+# reason; a missing key fails toward the live decision the cutover made, not toward a shadow
+# mode that nothing on this host runs a comparison for any more.
 #
 # This is a SEPARATE switch from CLAUDE_GUARD_SHADOW (the PermissionRequest side): the two
-# sides cut over independently, and slice 4 ships before slice 3.
+# sides cut over independently, and slice 4 shipped after slice 3.
 #
 # `--no-project` stops uv reading a pyproject in cwd; `--system` stops it answering with a
 # valid, version-matching virtualenv it finds by walking up from cwd instead — measured
@@ -35,7 +43,7 @@
 # harness's hook-stderr channel verbatim, and a traceback can quote the command text this
 # hook exists to avoid ever printing.
 set -u
-: "${CLAUDE_GUARD_DENY_SHADOW:=1}"
+: "${CLAUDE_GUARD_DENY_SHADOW:=0}"
 export CLAUDE_GUARD_DENY_SHADOW
 ASK='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). Review this command yourself."}}'
 fail() {

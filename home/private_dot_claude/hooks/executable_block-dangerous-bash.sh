@@ -1,4 +1,17 @@
 #!/bin/bash
+# DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md, Rollout
+# row 4; long form: docs/plans/2026-09-17-claude-guard-slice-4-cutover.md). This hook is
+# UNREGISTERED on the host as of slice 4 -- claude_guard.deny (deny.py), run through
+# guard-pre-tool-use.sh, is the PreToolUse decision there now. This file is kept ONLY because
+# home/private_dot_claude/sandbox/executable_claude-sandbox bind-mounts the deployed copy of
+# this exact file read-only into the sandbox container and
+# home/private_dot_claude/sandbox/settings.base.json registers it there as the container's own
+# PreToolUse deny hook -- the sandbox has no uv, no managed Python 3.14, and no mount for
+# ~/.local/share/claude-guard, so it cannot run the Python port instead. No behaviour change
+# lands here without landing in deny.py first: the two must stay at parity (see deny.py's own
+# port-lineage comments) until the sandbox can run the port, at which point removing this file
+# is that follow-up's job, not this one's.
+#
 # PreToolUse hook for Bash: deny patterns that are usually mistakes.
 # Returns a structured PreToolUse decision via JSON on stdout.
 

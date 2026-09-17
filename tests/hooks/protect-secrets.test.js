@@ -97,16 +97,24 @@ test('token stores denied to Bash are denied to Read/Edit/Write too', { skip }, 
 });
 
 // The two gates guard the same secrets and drifted apart once already. This is the
-// check that says so: every path in block-dangerous-bash.sh's SECRET_PATHS must be
-// denied here too, derived from that file rather than hand-copied, so adding one
-// there and forgetting this hook fails instead of passing quietly.
-test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip }, () => {
-  const bashGate = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh'),
+// check that says so: every path in claude_guard.deny's SECRET_PATHS must be denied
+// here too, derived from that file rather than hand-copied, so adding one there and
+// forgetting this hook fails instead of passing quietly. claude-guard's slice 4 cutover
+// unregistered block-dangerous-bash.sh from the host (deny.py:482 has the ported
+// SECRET_PATHS); deny.py is the host's oracle now.
+test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip }, () => {
+  const denyPy = fs.readFileSync(
+    path.join(
+      __dirname, '..', '..', 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
+    ),
     'utf8',
   );
-  const m = /^SECRET_PATHS='\((.+)\)'$/m.exec(bashGate);
-  assert.ok(m, 'located SECRET_PATHS in block-dangerous-bash.sh');
+  const block = /^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m.exec(denyPy);
+  assert.ok(block, 'located SECRET_PATHS in deny.py');
+  const joined = [...block[1].matchAll(/r"([^"]*)"/g)].map((x) => x[1]).join('');
+  assert.ok(joined.startsWith('(') && joined.endsWith(')'), 'SECRET_PATHS is not a single (...) group');
+  // Strip the outer (...) group, the same content the old bash-string extraction captured.
+  const inner = joined.slice(1, -1);
 
   // Turn each alternation branch into a concrete path this hook can be asked about.
   const SAMPLE = {
@@ -166,7 +174,7 @@ test('every SECRET_PATHS entry in the Bash gate is covered by this one', { skip 
     return group ? group[1].split('|').map((ext) => `\\.${ext}`) : [branch];
   };
 
-  const branches = splitTopLevel(m[1]).flatMap(expand);
+  const branches = splitTopLevel(inner).flatMap(expand);
   const unmapped = branches.filter((b) => !(b in SAMPLE));
   assert.deepStrictEqual(unmapped, [],
     `SECRET_PATHS gained ${unmapped.join(', ')} — add a sample path here and an arm in protect-secrets.sh`);

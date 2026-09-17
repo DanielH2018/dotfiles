@@ -1,8 +1,11 @@
 // Which paths count as secret is declared once, in .chezmoidata/secrets.toml, and
-// re-expressed in four dialects that share no source: a regex in block-dangerous-bash.sh,
-// `case` arms in protect-secrets.sh, Read/Edit globs in the settings template, and (later)
-// dotsync's ignore list. `~/.claude/.credentials.json` — the live OAuth token on Linux and
-// WSL — was missing from every one of them independently (BDB-01, PS-01, A1-01, A1-18).
+// re-expressed in four dialects that share no source: a regex in claude_guard.deny
+// (block-dangerous-bash.sh's SECRET_PATHS, ported there; that hook is unregistered on
+// the host as of the claude-guard slice 4 cutover, so deny.py is the host's live
+// decision-maker), `case` arms in protect-secrets.sh, Read/Edit globs in the settings
+// template, and (later) dotsync's ignore list. `~/.claude/.credentials.json` — the live
+// OAuth token on Linux and WSL — was missing from every one of them independently
+// (BDB-01, PS-01, A1-01, A1-18).
 //
 // Until the dialects are generated from the registry, this is what holds them together:
 // an entry that is not carried by every dialect it declares fails the suite.
@@ -14,7 +17,9 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const REGISTRY = path.join(ROOT, 'home', '.chezmoidata', 'secrets.toml');
-const BDB = path.join(ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_block-dangerous-bash.sh');
+const DENY_PY = path.join(
+  ROOT, 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
+);
 const PS = path.join(ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
 // The deny rules moved out of settings.base.json when the permission model was split into
 // its own template; base now only splices it in. The assertion below requires each rule to
@@ -45,10 +50,16 @@ function parseEntries(src, table) {
 const registry = fs.readFileSync(REGISTRY, 'utf8');
 const entries = parseEntries(registry, 'secretPaths.entries');
 const cases = parseEntries(registry, 'secretPaths.cases');
-const bdb = fs.readFileSync(BDB, 'utf8');
+const denyPy = fs.readFileSync(DENY_PY, 'utf8');
 const ps = fs.readFileSync(PS, 'utf8');
 const settings = fs.readFileSync(SETTINGS, 'utf8');
-const secretPathsLine = bdb.match(/^SECRET_PATHS='(.*)'$/m);
+// deny.py spells SECRET_PATHS as a parenthesised Python string concatenation
+// (r"..." per line), not a single shell-quoted line -- join it back into one
+// string, the same shape secretPathsLine[1] used to be when it came from bash.
+const denySecretPathsBlock = denyPy.match(/^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m);
+const secretPathsLine = denySecretPathsBlock
+  ? [null, [...denySecretPathsBlock[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('')]
+  : null;
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
@@ -62,10 +73,10 @@ test('the registry parses and is not empty', () => {
   }
 });
 
-test('every entry appears in block-dangerous-bash SECRET_PATHS', () => {
+test('every entry appears in claude_guard.deny SECRET_PATHS', () => {
   assert.ok(secretPathsLine, 'located SECRET_PATHS');
   const missing = entries.filter((e) => e.bash_re && !secretPathsLine[1].includes(e.bash_re));
-  assert.deepStrictEqual(missing.map((e) => e.id), [], 'entries absent from the bash guard');
+  assert.deepStrictEqual(missing.map((e) => e.id), [], 'entries absent from the deny guard');
 });
 
 test('every entry appears in protect-secrets case arms', () => {
