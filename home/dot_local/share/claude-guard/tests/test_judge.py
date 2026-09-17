@@ -473,6 +473,16 @@ def test_tee_is_a_writer_unless_its_target_is_harmless(esc):
     assert allowed("echo hi | tee /dev/null", esc)
 
 
+def test_a_control_char_glued_to_a_tee_option_does_not_hide_the_target(esc):
+    # Round-4 review. `_OPTION_WORD` ports sed's `[[:space:]]+-[^[:space:]]+`; written as
+    # `[^{WS}]+` the complement was broader than bash's, so `-a\rfile` was one option word,
+    # the strip left bare `tee`, and the write refusal compared equal strings. Bash's
+    # `[^[:space:]]` stops at `\r`, so `file` survives the strip and the refusal fires.
+    assert judge("tee -a\rfile", esc, ROOTS, CWD).rule == "segment:0:tee"
+    assert judge("tee -a\x0bfile", esc, ROOTS, CWD).rule == "segment:0:tee"
+    assert not allowed("tee -a file", esc)
+
+
 # --- heredoc write parity (PR #477) -------------------------------------------------------------
 #
 # Task 6 prefixed every command below with `git status &&`/`;` because judge.py's

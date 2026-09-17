@@ -12,6 +12,15 @@ import re
 # each was the two-literals-that-drift hazard the J1/J2 marker in judge.py names.
 WS = " \t"
 
+# The OTHER whitespace class bash uses, and it is wider: POSIX `[[:space:]]` is space, tab,
+# newline, vertical tab, form feed and carriage return. A bash line written as a `%%`
+# pattern or a sed `[[:space:]]` class means THIS set, not IFS. The two are not
+# interchangeable in either direction — `_OPTION_WORD` ported sed's `[^[:space:]]+` as
+# `[^{WS}]+` in fix round 4 and turned a narrow complement into a broad one, so
+# `tee -a\rfile` stripped to bare `tee` and the write refusal never fired. A regex that
+# ports a `[[:space:]]` construct reads off this constant; one that ports IFS reads `WS`.
+POSIX_SPACE = " \t\n\v\f\r"
+
 # allow-safe-rm.sh:44-49. An operand must sit strictly BELOW one of these; the root itself
 # is refused by the check. `~` is the caller's HOME, expanded by scratch_roots().
 SCRATCH_ROOTS: tuple[str, ...] = ("/tmp", "/var/tmp", "~/.claude/jobs", "~/.cache/claude")

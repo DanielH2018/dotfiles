@@ -35,7 +35,7 @@ from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
 from claude_guard.checks.scratch import rm_confined, tokenize
 from claude_guard.rules import Rules
 from claude_guard.segment import parse
-from claude_guard.tables import WS
+from claude_guard.tables import POSIX_SPACE, WS
 
 # :191. Wrapper commands take another command as an ARGUMENT and exec it.
 WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xargs"})
@@ -58,9 +58,9 @@ _CD_LIKE = frozenset({"cd", "pushd", "popd"})
 # lookaheads' tails; round 4 (K1/K2) found it live twice more — a heredoc delimiter
 # (segment.py's own copy of this fix sits beside the quoted-delimiter branch) and an
 # fd-dup redirect target. `WS` itself lives in tables.py so checks/ansible.py reads the
-# same definition without a circular import. `_first_word` below is the one deliberate
-# exception: it ports a POSIX `[[:space:]]` bash construct, not IFS splitting, so it keeps
-# `\s`, not `WS`.
+# same definition without a circular import. `_first_word` and `_OPTION_WORD` below port
+# a POSIX `[[:space:]]` construct, not IFS splitting, so they read `POSIX_SPACE` instead —
+# the wider class, and the one those two bash lines actually name.
 
 # H4 (task-8-fix-2-brief.md): both DEVNULL patterns were unanchored at the tail, so a
 # target that only STARTS WITH /dev/null (/dev/nullx, /dev/nullish) matched and was
@@ -91,7 +91,14 @@ _DEVNULL_REDIRECT = re.compile(rf"[0-9]*>>?[{WS}]*/dev/null(?=[{WS}]|$)")
 # named `1`; `mkdir 1 && ls >&1/../../canary.txt` supplies that directory in the same
 # command. The `WS`-built lookahead closes it the same way H4 closed the DEVNULL case.
 _FD_DUP = re.compile(rf"[0-9]*>&[0-9-](?=[{WS}]|$)")
-_OPTION_WORD = re.compile(rf"[{WS}]+-[^{WS}]+")
+# allow-compound-bash.sh:309, `s@[[:space:]]+-[^[:space:]]+@@g`. Ports the POSIX class, not
+# IFS. Fix round 4 wrote this as `[{WS}]+-[^{WS}]+`, which is the wrong direction at the
+# complement: `[^{WS}]` is BROADER than sed's `[^[:space:]]`, so the strip consumed a
+# `\r`-glued target as part of the option word and `tee -a\rfile` collapsed to bare `tee`
+# (allow-listed) — the tee-write refusal below compares `teed != teecmd` and saw them equal.
+# `POSIX_SPACE` on both sides is the exact port; the complement is now exactly as narrow as
+# bash's.
+_OPTION_WORD = re.compile(rf"[{POSIX_SPACE}]+-[^{POSIX_SPACE}]+")
 # H4-adjacent (found while fixing H4, not named in the brief): unanchored the identical
 # way, and live — `tee:*` IS allow-listed in settings.permissions.json:136. `tee
 # /dev/nullx` stripped to `tee` (basename match) and fell through to the plain allow-list
@@ -279,28 +286,17 @@ def _trim(s: str) -> str:
 
 
 def _first_word(s: str) -> str:
-    """`${s%%[[:space:]]*}`: everything before the first whitespace character.
+    """`${s%%[[:space:]]*}` (allow-compound-bash.sh:310): the command word.
 
-    K3 (task-8-fix-4-brief.md) swept every other `\\s` on the judging path to `WS`
-    (space/tab, bash's IFS word boundary) and considered this one too. Decided KEEP: this
-    is not IFS field-splitting, it is a literal port of a bash `%%` pattern match against
-    the POSIX `[[:space:]]` GLOB CLASS — a different bash construct with a different,
-    WIDER definition (POSIX `[[:space:]]` already includes `\\r`/`\\f`/`\\v`/`\\n`, not
-    only space/tab). Swapping in `WS` here would make the port narrower than the bash
-    line it ports, not just differently-scoped — the opposite of every other change in
-    this sweep, all of which narrow an over-wide `\\s` toward bash's real (narrower) IFS
-    boundary. Nothing downstream of `_first_word` depends on catching every POSIX-space
-    character either: its two callers (`_changes_cwd`'s cd/pushd/popd detection and the
-    `tee` check's command-word extraction) only need the command word up to the FIRST
-    boundary of any kind, and stopping early on a narrower class would just leave trailing
-    whitespace-class bytes glued onto the word instead of splitting them off — a fail
-    OPEN in the same shape `_HEREDOC_CAT_WRITE`'s old `[^\\s"']` capture was (K1): the
-    word compared against `_CD_LIKE`/`"tee"` would come out wrong-but-different rather
-    than correctly split. So this one stays wide on purpose. Next sweep: this docstring
-    is the second write-up of the same conclusion (first: the J5-era comment beside `WS`
-    above) — a third independent review reaching it again is confirmation, not news.
+    Ports a POSIX `[[:space:]]` glob-class match, not IFS splitting, so it reads
+    `POSIX_SPACE` rather than `WS`. Fix round 4 kept this on Python's `\\s` as a deliberate
+    exception, reasoning that `\\s` ⊇ POSIX space so the port could only split earlier,
+    never later. That was true, but it left two classes in play for one bash construct
+    (`_OPTION_WORD` ports the sibling line, :309) and the round-4 review found the
+    complement inverted there. One constant for the construct is the fix that survives
+    the next sweep; the exception did not need to exist.
     """
-    return re.split(r"\s", s, maxsplit=1)[0]
+    return re.split(rf"[{POSIX_SPACE}]", s, maxsplit=1)[0]
 
 
 def _basename(word: str) -> str:
