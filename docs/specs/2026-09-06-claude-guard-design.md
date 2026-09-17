@@ -210,9 +210,24 @@ tooling: the new hook is registered beside the old ones, logs its verdict, and d
 
 ### Sandbox port
 
+**Shipped 2026-09-17, unmeasured in a container.** `Dockerfile.base` installs a pinned `uv`
+and, as `claudebot`, a managed 3.14; the launcher mounts the shim and the package `:ro`; and
+`sandbox/settings.base.json` registers `guard-pre-tool-use.sh` in place of
+`block-dangerous-bash.sh`. The deny-on-failure variant the fourth point below calls for is
+`CLAUDE_GUARD_FAIL_CLOSED=1`, set as a `docker run -e` and repeated in the settings `env`
+block: `fail()` then prints a `deny`, writes the reason to stderr, and exits 2. Exit 2 is the
+half that does not depend on the operator's undocumented `ask` claim being right.
+
+Two gates are still open, both needing `claude-sandbox --rebuild-base`: the 281-vector deny
+corpus replayed against the interpreter the image resolves, and one end-to-end deny inside a
+running sandbox. Row 6's deletions wait on those, not on the code below. One thing the port
+changed outside its own files: `executable_sandbox-image.sh`'s per-repo `uv` install
+(`curl | sh`, unpinned, landing ahead of `/usr/local/bin/uv` on `PATH`) is gone, because it
+decided which `uv` resolved the hook's interpreter, per repo.
+
 The rest of row 6 — retiring `cmdparse.sh`, `block-dangerous-bash.sh` and the deny-side
-shadow twins — is blocked on porting the sandbox's in-container deny hook from bash to the
-Python package, which needs all of the following and has none of them today:
+shadow twins — was blocked on porting the sandbox's in-container deny hook from bash to the
+Python package, which needed all of the following and had none of them before that:
 
 - **No `uv` guaranteed.** The sandbox image installs `uv` only when `detect_uv_need()` matches
   the REPO being sandboxed (a `uv.lock`, or `uv`/`uv run` mentioned in that repo's `CLAUDE.md`

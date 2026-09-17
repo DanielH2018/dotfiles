@@ -142,9 +142,15 @@ ENV PATH=\"/usr/local/go/bin:/home/claudebot/go/bin:\$PATH\"
 
     local uv_layer=""
     if detect_uv_need; then
+      # uv itself now comes from the base image, pinned and checksum-verified
+      # (Dockerfile.base, UV_VERSION). This layer used to install its own via
+      # `curl -LsSf https://astral.sh/uv/install.sh | sh`, which put an unpinned uv at
+      # /home/claudebot/.local/bin/uv -- ahead of /usr/local/bin/uv on the PATH set below.
+      # The claude-guard deny hook resolves its interpreter with a bare `uv python find`,
+      # so that install decided which uv judged every Bash call, per repo, unpinned.
+      # The PATH entry stays: `uv tool install` targets ~/.local/bin regardless of which
+      # uv binary runs it.
       uv_layer="
-# uv package manager
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=\"/home/claudebot/.local/bin:\$PATH\"
 "
     fi
@@ -163,7 +169,7 @@ $uv_layer"
   # host tfenv default (1.5.7 — last MPL/pre-BUSL release); a repo can override
   # via .terraform-version. Downloaded + SHA256-verified against the published
   # sums. Read-only/plan work only: the destructive-terraform deny in
-  # block-dangerous-bash.sh (RO-mounted, registered PreToolUse) still blocks
+  # guard-pre-tool-use.sh (RO-mounted, registered PreToolUse) still blocks
   # apply/destroy/import/state-mutation in-container.
   if [[ -f "$REPO_PATH/.terraform-version" ]] || find "$REPO_PATH" -maxdepth 8 -name '*.tf' -print -quit 2>/dev/null | grep -q .; then
     local tf_version="1.5.7"
