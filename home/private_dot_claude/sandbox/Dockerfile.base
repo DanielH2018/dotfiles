@@ -68,6 +68,29 @@ RUN set -eux; \
     rm -f "${file}" "chezmoi_${CHEZMOI_VERSION}_checksums.txt" chezmoi; \
     chezmoi --version
 
+# uv
+# Resolves and runs the managed Python 3.14 that claude-guard's PreToolUse deny hook needs:
+# hooks/executable_guard-pre-tool-use.sh finds its interpreter with
+# `uv python find --no-project --managed-python --system 3.14`. Pinned + checksum-verified,
+# the same shape as chezmoi above. executable_sandbox-image.sh installs uv per repo with
+# `curl | sh`, which is not a shape to bake into the base image.
+#
+# `uname -m` here, not the chezmoi layer's `dpkg --print-architecture`: uv names its release
+# assets aarch64/x86_64, where dpkg says arm64/amd64. Copying the line above 404s at build.
+ARG UV_VERSION=0.12.13
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    base="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}"; \
+    file="uv-${arch}-unknown-linux-gnu.tar.gz"; \
+    cd /tmp; \
+    curl -fsSL -O "${base}/${file}"; \
+    curl -fsSL -O "${base}/${file}.sha256"; \
+    sha256sum -c "${file}.sha256"; \
+    tar -xzf "${file}" --strip-components=1; \
+    install -m 0755 uv /usr/local/bin/uv; \
+    rm -f "${file}" "${file}.sha256" uv uvx; \
+    uv --version
+
 # Non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 claudebot
 USER claudebot
@@ -86,6 +109,17 @@ WORKDIR /workspace
 RUN mkdir -p /home/claudebot/.claude-defaults/hooks \
              /home/claudebot/.claude/hooks \
              /home/claudebot/.cache
+
+# The managed interpreter the deny hook resolves, installed as claudebot rather than root.
+# `uv python find --managed-python` only answers with an install in the RUNNING user's data
+# dir (~/.local/share/uv/python), and the hook runs as claudebot. Installed as root it lands
+# in /root, the lookup fails, and every Bash call in the container denies — the fail-closed
+# contract working as designed, on a build mistake.
+#
+# Requested as `3.14`, matching the hook's own request, so the patch level floats to whatever
+# is current at build time. The package is stdlib-only, so any 3.14.x serves; the in-container
+# replay gate is what confirms the interpreter a given image resolved.
+RUN uv python install 3.14
 
 # --- vault-index semantic search tooling (shared layer) ---
 # Used when a sandbox mounts a curated read-only vault subset: the host builds a

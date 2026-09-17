@@ -29,6 +29,23 @@
 # This is a SEPARATE switch from CLAUDE_GUARD_SHADOW (the PermissionRequest side): the two
 # sides cut over independently, and slice 4 shipped after slice 3.
 #
+# CLAUDE_GUARD_FAIL_CLOSED=1 (the sandbox sets it; see sandbox/executable_claude-sandbox and
+# sandbox/settings.base.json) replaces the ask above with a deny and exit 2. The ask is
+# fail-closed on the host, where it stops the call and waits for a human. It is NOT
+# fail-closed in the sandbox: that CMD is `claude --dangerously-skip-permissions`, which
+# skips an ask, so a container missing uv, the managed 3.14 or the package would run with no
+# deny check and nothing would say so. Exit 2 is what closes it -- hooks.md, "Exit code 2
+# behavior per event": exit 2 blocks whether or not you print JSON, and even a JSON
+# permissionDecision of "allow" cannot override it. The JSON is still printed because
+# Claude Code still reads stdout on that path, and the reason also goes to stderr, which is
+# exit 2's own documented feedback channel; whichever the harness surfaces, the reason
+# survives. Writing to stderr here does not contradict the stderr note below: that discards
+# PYTHON's stderr, where a traceback could quote the command text. This reason is a fixed
+# string containing no command text.
+# DECIDED: the switch is read before CLAUDE_GUARD_DENY_SHADOW and wins over it. A shadow run
+# decides nothing by design, which in a fail-closed container is the same silent hole the
+# switch exists to close.
+#
 # `--no-project` stops uv reading a pyproject in cwd; `--system` stops it answering with a
 # valid, version-matching virtualenv it finds by walking up from cwd instead — measured
 # returning such a worktree's own `.venv/bin/python3` in place of the managed interpreter.
@@ -44,9 +61,16 @@
 # hook exists to avoid ever printing.
 set -u
 : "${CLAUDE_GUARD_DENY_SHADOW:=0}"
+: "${CLAUDE_GUARD_FAIL_CLOSED:=0}"
 export CLAUDE_GUARD_DENY_SHADOW
 ASK='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). Review this command yourself."}}'
+DENY_REASON='claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). This container fails closed, so the command was blocked without being run.'
 fail() {
+  if [ "$CLAUDE_GUARD_FAIL_CLOSED" = 1 ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$DENY_REASON"
+    printf '%s\n' "$DENY_REASON" >&2
+    exit 2
+  fi
   [ "$CLAUDE_GUARD_DENY_SHADOW" = 0 ] && printf '%s\n' "$ASK"
   exit 0
 }

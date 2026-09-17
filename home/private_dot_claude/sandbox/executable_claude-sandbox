@@ -876,12 +876,21 @@ DOCKER_ARGS=(
   # These hooks have no sandbox-specific variant — mount the single canonical host
   # copy (one source of truth, no drift-prone parallel copy). link-artifact reads
   # CLAUDE_ARTIFACTS_HOST_DIR (set above) so the one file works host and container.
-  # screen-injection, block-dangerous-bash and protect-secrets add in-container
+  # screen-injection, guard-pre-tool-use and protect-secrets add in-container
   # defense-in-depth (injection screening; deny secret reads/writes, disk wipes, fork
   # bombs, pipe-to-shell) beyond what the settings deny-list covers.
+  #
+  # guard-pre-tool-use.sh replaced block-dangerous-bash.sh here: the shim is a few lines of
+  # bash over the claude-guard package, so the package directory is mounted beside it. The
+  # shim reads SHARE="${CLAUDE_GUARD_HOME:-$HOME/.local/share/claude-guard}", so this target
+  # path is what makes the default resolve inside the container. Both are deployed chezmoi
+  # targets on the host, mounted the same way the hooks are, and :ro for the reason the
+  # comment above gives — a guard the agent it fences can rewrite is no guard, and the
+  # package is the half of this control that holds the rules.
   -v "$HOME/.claude/hooks/link-artifact.sh:/home/claudebot/.claude/hooks/link-artifact.sh:ro"
   -v "$HOME/.claude/hooks/screen-injection.sh:/home/claudebot/.claude/hooks/screen-injection.sh:ro"
-  -v "$HOME/.claude/hooks/block-dangerous-bash.sh:/home/claudebot/.claude/hooks/block-dangerous-bash.sh:ro"
+  -v "$HOME/.claude/hooks/guard-pre-tool-use.sh:/home/claudebot/.claude/hooks/guard-pre-tool-use.sh:ro"
+  -v "$HOME/.local/share/claude-guard:/home/claudebot/.local/share/claude-guard:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
   # CLAUDE.md is the one managed file that stays staged-and-copied: entrypoint.sh
   # appends the dynamic environment context to it, so it has to be writable.
@@ -899,6 +908,15 @@ DOCKER_ARGS=(
   -v "$SANDBOX_DIR/gitconfig:/home/claudebot/.gitconfig:ro"
   -e SANDBOX_REPO_NAME="$REPO_NAME"
   -e SANDBOX_TOOLCHAINS="$TOOLCHAIN_LIST"
+  # Turns guard-pre-tool-use.sh's unevaluable-rules path from `ask` into `deny` + exit 2.
+  # Required here and not on the host: the container launches with
+  # --dangerously-skip-permissions, under which an ask is skipped, so the shim's host
+  # posture is a silent fail-open in a container missing uv, the managed 3.14 or the package.
+  # Set as a docker env var rather than only in settings.base.json's `env` block, because
+  # nothing measured shows a settings `env` value reaching a hook subprocess — and the whole
+  # point of this switch is the case where the guard cannot run. settings.base.json carries
+  # it too, as the second place (see the two-place note on CLAUDE_GUARD_DENY_SHADOW there).
+  -e CLAUDE_GUARD_FAIL_CLOSED=1
 )
 
 add_host_integration_mounts

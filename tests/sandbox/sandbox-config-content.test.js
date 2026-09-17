@@ -190,6 +190,16 @@ test('every hook is mounted read-only at its live ~/.claude/hooks path', () => {
   }
 });
 
+test('the claude-guard package is mounted read-only beside the shim that runs it', () => {
+  // guard-pre-tool-use.sh is a few lines of bash over this package, so the package holds the
+  // deny rules the hook enforces. It sits outside ~/.claude/hooks/, so the floor above does
+  // not cover it, and a writable copy would let the agent rewrite the rules that fence it.
+  const pkg = MOUNTS.filter(([t]) => t === '/home/claudebot/.local/share/claude-guard');
+  assert.ok(pkg.length > 0,
+    'the shim resolves $HOME/.local/share/claude-guard by default — without this mount it finds nothing and, fail-closed, denies every Bash call');
+  for (const [, mode] of pkg) assert.strictEqual(mode, 'ro');
+});
+
 test('the statusline script is mounted read-only at its live path (it is executed, so it is code)', () => {
   const sl = MOUNTS.filter(([t]) => t === '/home/claudebot/.claude/statusline-command.sh');
   assert.ok(sl.length > 0, 'statusline-command.sh must be mounted at its live path');

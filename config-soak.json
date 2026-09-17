@@ -128,8 +128,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
-      "hash": "622025c0221a34145c2712f7080e0d24be550915273098a6cfce99ceb15dae87",
-      "landed": "2026-09-17T02:00:19.017Z"
+      "hash": "4c56330abc21d7022a9e876afd6c4c68396753913fa80feee72722426945f1ec",
+      "landed": "2026-09-17T13:54:24.140Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",

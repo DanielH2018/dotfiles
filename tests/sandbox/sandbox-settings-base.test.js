@@ -50,19 +50,29 @@ test('every Bash() permission rule has balanced parentheses', () => {
     'these rules are silently skipped at startup and enforce nothing');
 });
 
-test('block-dangerous-bash.sh stays registered as the sandbox PreToolUse deny hook', () => {
-  // Slice 4 (docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) unregistered this hook
-  // on the HOST and kept the file only because the sandbox bind-mounts and registers the
-  // deployed copy as its own deny check. That is the whole reason the file still exists, and
-  // nothing else in the tree asserted it -- a later edit dropping this entry would leave the
-  // sandbox with no deny hook and every test green.
+test('guard-pre-tool-use.sh is registered as the sandbox PreToolUse deny hook', () => {
+  // The sandbox port replaced block-dangerous-bash.sh with the claude-guard shim here, which
+  // is the last thing that ran the bash hook anywhere (slice 4 unregistered it on the host).
+  // Nothing else in the tree asserts this entry, so without this test an edit dropping it
+  // would leave the sandbox with no deny hook and every test green.
   const cmds = JSON.stringify(parsed.hooks?.PreToolUse ?? []);
-  assert.ok(cmds.includes('block-dangerous-bash.sh'),
-    'the sandbox PreToolUse block no longer registers block-dangerous-bash.sh');
+  assert.ok(cmds.includes('guard-pre-tool-use.sh'),
+    'the sandbox PreToolUse block no longer registers guard-pre-tool-use.sh');
+});
+
+test('the sandbox env fails the deny hook closed', () => {
+  // The shim's unevaluable-rules path prints `ask`, which the container's
+  // --dangerously-skip-permissions skips -- so without this key a container missing uv, the
+  // managed 3.14 or the package runs with no deny check and says nothing. The launcher passes
+  // the same value as a docker env var; this is the second place, and both must agree.
+  assert.strictEqual(parsed.env?.CLAUDE_GUARD_FAIL_CLOSED, '1',
+    'CLAUDE_GUARD_FAIL_CLOSED=1 is what makes the sandbox deny rather than ask');
+  assert.strictEqual(parsed.env?.CLAUDE_GUARD_DENY_SHADOW, '0',
+    'a shadow run decides nothing, which in the sandbox is the hole fail-closed exists to shut');
 });
 
 test('the process-substitution denies survive parsing', () => {
-  // Belt and braces with block-dangerous-bash.sh, which this same file wires as
+  // Belt and braces with guard-pre-tool-use.sh, which this same file wires as
   // a PreToolUse hook and which is the control that actually stops downloaded
   // content being fed to a shell. These rules are the declarative second layer.
   for (const shell of ['bash', 'sh']) {

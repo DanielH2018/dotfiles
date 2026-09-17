@@ -167,6 +167,10 @@
   "tui": "fullscreen",
   "editorMode": "normal",
   "skipDangerousModePermissionPrompt": true,
+  "env": {
+    "CLAUDE_GUARD_FAIL_CLOSED": "1",
+    "CLAUDE_GUARD_DENY_SHADOW": "0"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -174,7 +178,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/claudebot/.claude/hooks/block-dangerous-bash.sh",
+            "command": "/home/claudebot/.claude/hooks/guard-pre-tool-use.sh",
             "timeout": 10
           },
           {
