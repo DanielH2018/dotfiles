@@ -29,7 +29,22 @@ process.on('exit', () => {
   }
 });
 
-const tmux = (sock, ...args) => execFileSync('tmux', ['-S', sock, ...args], { encoding: 'utf8' });
+// The pane title below carries U+00B7, and tmux decides whether to render a non-ASCII
+// character or substitute `_` from whether LC_ALL/LC_CTYPE/LANG name a UTF-8 locale. That is
+// the *reading* client's decision, not the server's: pane_title holds the right bytes either
+// way, and only `display-message -p` mangles them. So a runner whose environment has no
+// locale set — a launchd job, a CI container, or a tool-driven shell, all of which this suite
+// has hit — failed these tests over its own environment rather than over tmux's behaviour.
+//
+// LC_ALL is pinned here rather than left to the ambient environment for that reason. The
+// value need not be a locale the host has generated: tmux substring-matches these variables
+// for "UTF-8"/"UTF8" instead of calling setlocale, so C.UTF-8 works on a host that lists it
+// and on one that does not.
+const tmux = (sock, ...args) =>
+  execFileSync('tmux', ['-S', sock, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, LC_ALL: 'C.UTF-8' },
+  });
 
 function newSession() {
   const sock = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-titles-')), 's');
