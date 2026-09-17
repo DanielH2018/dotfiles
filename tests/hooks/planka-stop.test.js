@@ -12,6 +12,12 @@ const HOOK = path.join(
   'executable_planka-stop.sh',
 );
 
+// Same gate as planka-claim.test.js: the board is set up on one machine, and these
+// hooks race a backgrounded CLI call everywhere else.
+const skip = fs.existsSync(path.join(os.homedir(), '.config', 'planka', 'config.json'))
+  ? false
+  : 'no ~/.config/planka/config.json: the Planka board is not set up on this machine';
+
 // Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
 // only collects leftovers six hours later.
 const scratch = [];
@@ -56,14 +62,14 @@ function claim(state, sessionId = 'sess-1') {
   fs.writeFileSync(path.join(state, 'claimed', sessionId), '');
 }
 
-test('a session that never claimed a card comments nothing', () => {
+test('a session that never claimed a card comments nothing', { skip }, () => {
   const { bin, state, captured } = setup();
   const r = fire({ bin, state });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(fs.existsSync(captured), false);
 });
 
-test('a claimed session posts its summary file', () => {
+test('a claimed session posts its summary file', { skip }, () => {
   const { bin, state, captured } = setup();
   claim(state);
   fs.mkdirSync(path.join(state, 'summary'), { recursive: true });
@@ -73,7 +79,7 @@ test('a claimed session posts its summary file', () => {
   assert.match(waitForContent(captured), /Reconciled the ledger writer\./);
 });
 
-test('a claimed session with no summary still says something true', () => {
+test('a claimed session with no summary still says something true', { skip }, () => {
   const { bin, state, captured } = setup();
   claim(state);
   const r = fire({ bin, state });
@@ -81,7 +87,7 @@ test('a claimed session with no summary still says something true', () => {
   assert.match(waitForContent(captured), /paused/i);
 });
 
-test('PLANKA_TRACKING=0 comments nothing even for a claimed session', () => {
+test('PLANKA_TRACKING=0 comments nothing even for a claimed session', { skip }, () => {
   const { bin, state, captured } = setup();
   claim(state);
   const r = spawnSync('bash', [HOOK], {

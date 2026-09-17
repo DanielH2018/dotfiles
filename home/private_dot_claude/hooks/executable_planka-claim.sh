@@ -18,7 +18,9 @@ command -v planka >/dev/null 2>&1 || exit 0
 # shellcheck source=./hook-input.sh
 . "$(dirname "${BASH_SOURCE[0]}")/hook-input.sh"
 hook_read_input
-SESSION_ID="$(hook_field '.session_id')"
+# `// empty`, not a bare `.session_id`: jq -r prints the string `null` for a missing key,
+# which passed the -n test below and claimed a card under the marker name "null".
+SESSION_ID="$(hook_field '.session_id // empty')"
 [ -n "$SESSION_ID" ] || exit 0
 
 STATE_DIR="${PLANKA_STATE_DIR:-$HOME/.claude/planka}"
