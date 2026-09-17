@@ -234,11 +234,16 @@ failure contract fails closed to `ask` (spec, *Failure contracts*). Per the Clau
 docs, a PreToolUse `permissionDecision: "deny"` is **documented** to block the tool call even
 under `--dangerously-skip-permissions` — "PreToolUse hooks fire before any permission-mode
 check, in every permission mode" (code.claude.com/docs/en/hooks-guide.md, "Hooks and
-permission modes"). What `"ask"` does under that mode is **undocumented**, and the sandbox's
-`claude-sandbox` CMD runs with `--dangerously-skip-permissions` — so whether the shim's
-`ask`-on-failure contract is honoured there is the port's first thing to measure, not assume,
-and it is **unmeasured on this host (no docker)**. If `ask` is a no-op under that flag, the
-port needs a deny-on-failure variant, not a registration swap. Separately (code.claude.com
+permission modes"). What `"ask"` does under that mode is **undocumented**; the operator's
+own answer (2026-09-17) is that an `ask` is **skipped** — treated as no decision — under
+`--dangerously-skip-permissions`, which is the sandbox's `claude-sandbox` CMD. So the shim's
+`ask`-on-failure contract is a silent fail-open there: a sandbox whose `uv`, Python 3.14 or
+package is missing would run with no deny hook at all. **The port therefore needs a
+deny-on-failure variant**, not a registration swap — `fail()` in the sandbox's copy answers
+`permissionDecision: "deny"` (or exits 2, which blocks regardless of JSON) rather than `ask`.
+That is a design input the port starts from, not something it measures first; measure it
+anyway once a docker host is available, since the claim is the operator's, not the docs'.
+Separately (code.claude.com
 /docs/en/hooks.md, "Exit code output" and the per-event exit-code table): for PreToolUse, any
 non-2 exit code with valid decision JSON on stdout is honoured and the exit code itself is
 ignored, while exit 2 blocks regardless of what JSON accompanies it; for PermissionRequest,
