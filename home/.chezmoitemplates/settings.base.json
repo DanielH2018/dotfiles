@@ -138,25 +138,17 @@
          everywhere, not just the census. */}}
     "CMDPARSE_SHADOW_SAMPLE": "10",
     {{/* claude-guard LIVE (docs/specs/2026-09-06-claude-guard-design.md, Rollout row 3).
-         guard-permission-request.sh below is now the decision for Bash PermissionRequest:
-         it computes judge()'s verdict and either allows or leaves the prompt standing.
-         Slice 3 cut over here -- set to exactly "0" -- and in the same change removed the
-         six bash hooks it replaces (allow-compound-bash.sh, allow-readonly-remote.sh,
-         allow-safe-curl.sh, allow-safe-rm.sh, allow-ansible-readonly.sh,
-         allow-daniel-server.sh). hook.py treats every value except exactly "0" as shadow.
-         guard-permission-request.sh's own default was flipped the OTHER way, to "0"
-         (live), in the same commit: the pre-cutover default of "1" was the second belt
-         back when shadow was the safe fallback, but now that the bash chain it compared
-         against is deleted, falling back to shadow on a missing key would leave the hook
-         silently never deciding anything, with nothing left to report it -- so a stale
-         settings.json that lost this key now fails toward the live decision the cutover
-         made, not away from it. Exit gate that
-         cleared before this flip: `replay --judge --compare-hooks` allowed at least 84 of
-         the prompted corpus (the #477 prototype's floor). Read `claude-guard shadow-report`
-         for the historical agreement record; going forward it reports only the Python's
-         own verdicts, a different question from agreement, now that there is no bash
-         chain left to compare against live. */}}
-    "CLAUDE_GUARD_SHADOW": "0",
+         guard-permission-request.sh is the decision for Bash PermissionRequest: it computes
+         judge()'s verdict and either allows or leaves the prompt standing. It is always live
+         and takes no env switch -- slice 3 cut it over and removed the six bash hooks it
+         replaced (allow-compound-bash.sh, allow-readonly-remote.sh, allow-safe-curl.sh,
+         allow-safe-rm.sh, allow-ansible-readonly.sh, allow-daniel-server.sh); slice 6
+         (2026-09-17) retired the CLAUDE_GUARD_SHADOW switch and the shadow apparatus it fed
+         (BASH_CHAIN, the shadow log, shadow-report's allow half), because by then every
+         BASH_CHAIN member was already gone and the comparison it logged was against nothing.
+         Exit gate that cleared the slice 3 cutover: `replay --judge --compare-hooks` allowed
+         at least 84 of the prompted corpus (the #477 prototype's floor); `replay --judge`
+         alone still prints that ALLOW tally. */}}
     {{/* DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
          Rollout row 4). guard-pre-tool-use.sh below is now the sole decision for Bash
          PreToolUse on this host -- deny.py ports, rule for rule, block-dangerous-bash.sh,
@@ -170,15 +162,16 @@
          --deny` over 11,973 records across 6.6 days with zero python_only, bash_only,
          mismatch, detail_mismatch, python_error, bash_error and bash_timeout rows (floor:
          >=200 over >=3 days, an empty log satisfies none of it). Read `claude-guard
-         shadow-report --deny` for the historical agreement record; going forward it reports
+         shadow-report` for the historical agreement record; going forward it reports
          only the Python's own verdicts, a different question from agreement, now that no
          host-side shadow comparison runs by default. hook.py treats every value except
-         exactly `0` as shadow and the shim's own default is flipped the OTHER way, to "0"
-         (live), in the same commit -- same two-place reason as CLAUDE_GUARD_SHADOW above: a
-         stale settings.json that lost this key must fail toward
-         the live decision the cutover made, not toward a shadow mode with no bash left to
-         compare against. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N would sample the log write
-         1-in-N; unset, every call logs -- moot now that this is 0. */}}
+         exactly `0` as shadow, and the shim's own default is flipped the OTHER way, to "0"
+         (live), in the same commit: a stale settings.json that lost this key must fail
+         toward the live decision the cutover made, not toward a shadow mode with no bash
+         left to compare against. CLAUDE_GUARD_DENY_SHADOW_SAMPLE=N would sample the log
+         write 1-in-N; unset, every call logs -- moot now that this is 0. This is the ONLY
+         claude-guard shadow switch left; the allow side's own CLAUDE_GUARD_SHADOW was
+         retired in slice 6 (2026-09-17), see the comment above. */}}
     "CLAUDE_GUARD_DENY_SHADOW": "0",
     {{/* Compact at 85% rather than the previous 60%. At 60% we discarded 40% of the
          window unconditionally, and long sessions were compacting 3-6 times each —

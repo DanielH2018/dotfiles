@@ -1,36 +1,29 @@
 """claude-guard command line.
 
     claude-guard permission-request        # hook entry: hook JSON on stdin, allow line or
-                                            # nothing on stdout; shadow unless CLAUDE_GUARD_SHADOW=0
-    claude-guard shadow-report [--log P]   # agree / python-only / bash-only / python-error
-                                            # counts from the log
+                                            # nothing on stdout (live only; no shadow mode --
+                                            # slice 6 retired it, see claude_guard.hook)
     claude-guard segment --json            # decomposition of the command on stdin,
                                             # cmdparse.sh's shape
     claude-guard explain "<command>"       # the segments, and the decision with its rule
-    claude-guard replay <jsonl> --compare-bash <cmdparse.sh>
-                                            # parity of every {command, cwd} record
-                                            # against the bash segmenter
-    claude-guard replay <jsonl> --judge [--compare-hooks DIR]
-                                            # allow count and the allowed commands; with
-                                            # --compare-hooks, agreement with the bash chain
+    claude-guard replay <jsonl> --judge    # allow count and the allowed commands, judged
+                                            # against the deployed settings
     claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
                                             # or nothing on stdout; shadow unless
                                             # CLAUDE_GUARD_DENY_SHADOW=0
-    claude-guard shadow-report --deny [--log P]
-                                            # agree / python-only / bash-only / mismatch /
-                                            # detail-mismatch / bash-timeout counts from the
-                                            # deny shadow log
+    claude-guard shadow-report [--log P]   # deny-side only: agree / python-only / bash-only /
+                                            # mismatch / detail-mismatch / bash-timeout counts
+                                            # from the PreToolUse shadow log
     claude-guard replay <jsonl> --deny [--compare-hook <block-dangerous-bash.sh>]
                                             # deny/ask/allow verdict per record; with
                                             # --compare-hook, agreement with the bash hook
 
-`segment --json` exists for tests and the parity gate, never for the hook path.
+`segment --json` exists for tests and to inspect the segmenter's shape, never for the hook path.
 """
 
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,13 +31,10 @@ from claude_guard.deny import deny
 from claude_guard.hook import (
     ASK_JSON,
     DENY_LOG_NAME,
-    LOG_NAME,
-    bash_chain_allows,
     bash_deny_verdict,
     permission_request,
     pre_tool_use,
     shadow_mode,
-    summarize,
     summarize_deny,
 )
 from claude_guard.judge import judge
@@ -92,32 +82,6 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0 if p.ok else 1
 
 
-def bash_parse(cmdparse: Path, command: str) -> dict:
-    out = subprocess.run(
-        ["bash", str(cmdparse), "--json"], input=command, capture_output=True, text=True, check=True
-    ).stdout
-    return json.loads(out)
-
-
-def _comparable(shape: dict) -> dict:
-    """Normalise a `to_json_shape`-style dict for parity comparison.
-
-    Drops `nseg` (it is `len(seg)`, redundant with `seg`). Replaces `heredoc` with a
-    list-of-lists of its non-empty bodies: the bash side's `\x1f`-joined heredoc field
-    loses EMPTY heredoc bodies (the awk join absorbs a leading empty one, and its
-    `read -d` drops a trailing one), so comparing raw joined strings would report a
-    mismatch the bash segmenter itself cannot represent. Applying the same drop to both
-    sides makes the comparison exact on everything bash can actually express.
-    """
-    return {
-        "status": shape["status"],
-        "seg": shape["seg"],
-        "sep": shape["sep"],
-        "heredoc": [[h for h in field.split("\x1f") if h] for field in shape["heredoc"]],
-        "subseg": shape["subseg"],
-    }
-
-
 def _records(path: str) -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
@@ -127,40 +91,26 @@ def _head(command: str) -> str:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    chosen = sum((args.judge, bool(args.compare_bash), args.deny))
+    chosen = sum((args.judge, args.deny))
     if chosen != 1:
-        print("replay: pass exactly one of --judge, --compare-bash or --deny", file=sys.stderr)
+        print("replay: pass exactly one of --judge or --deny", file=sys.stderr)
         return 2
     records = _records(args.corpus)
-    if args.compare_bash:
-        return _replay_compare_bash(records, Path(args.compare_bash))
     if args.deny:
         return _replay_deny(records, Path(args.compare_hook) if args.compare_hook else None)
-    return _replay_judge(records, Path(args.compare_hooks) if args.compare_hooks else None)
+    return _replay_judge(records)
 
 
-def _replay_compare_bash(records: list[dict], cmdparse: Path) -> int:
-    agree = 0
-    for rec in records:
-        command = rec["command"]
-        mine_c = _comparable(to_json_shape(parse(command)))
-        theirs_c = _comparable(bash_parse(cmdparse, command))
-        if mine_c == theirs_c:
-            agree += 1
-            continue
-        print(f"MISMATCH: {_head(command)}")
-        for key in ("status", "seg", "sep", "heredoc", "subseg"):
-            if mine_c[key] != theirs_c[key]:
-                print(f"  {key}: python={mine_c[key]!r} bash={theirs_c[key]!r}")
-    print(f"PARITY {agree}/{len(records)}")
-    return 0 if agree == len(records) else 1
-
-
-def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
+def _replay_judge(records: list[dict]) -> int:
+    """Judge every record against the deployed settings; print the allowed ones and the
+    tally. This is the slice-3 cutover gate (spec row 3, `ALLOW 84/1058` on the prompted
+    corpus) with its bash-chain comparison removed in slice 6 -- every BASH_CHAIN member it
+    compared against was already deleted from disk in slice 3, so `--compare-hooks` was
+    computing an AGREE tally against hooks that could not run. The ALLOW tally alone is
+    still the load-bearing gate; see claude_guard.hook's module docstring."""
     home = os.environ.get("HOME", "")
     roots = scratch_roots(home, os.environ.get("TMPDIR"))
     allowed = 0
-    agree = 0
     for i, rec in enumerate(records):
         # Fix round 1, F1: the corpus's own record shape is {command, cwd} (module
         # docstring above) -- a record missing `command` or `cwd` is malformed, and a
@@ -170,42 +120,22 @@ def _replay_judge(records: list[dict], hooks_dir: Path | None) -> int:
         # malformed corpus rather than surfacing the bad record. Indexing raises loudly
         # instead of defaulting to "" -- fail-closed, same posture as clean_reset_safe's
         # own refusal. Item 5 (fix round 2): an uncaught KeyError here used to escape
-        # main() as a bare traceback, silently dropping the partial ALLOW/AGREE tally a
-        # gate reading this command's output needs even on a malformed record. Catch it,
-        # name the record and the missing key, and still print what was tallied so far.
+        # main() as a bare traceback, silently dropping the partial ALLOW tally a gate
+        # reading this command's output needs even on a malformed record. Catch it, name
+        # the record and the missing key, and still print what was tallied so far.
         try:
             command = rec["command"]
             cwd = rec["cwd"]
         except KeyError as exc:
             print(f"MALFORMED RECORD {i}: missing key {exc.args[0]!r}", file=sys.stderr)
             print(f"ALLOW {allowed}/{len(records)}")
-            if hooks_dir is not None:
-                print(f"AGREE {agree}/{len(records)}")
             return 1
-        env = {**os.environ, "CLAUDE_PROJECT_DIR": cwd}
         d = judge(command, load_rules(home=home, project_dir=cwd), roots, cwd)
         if d.allow:
             allowed += 1
             print(f"ALLOW: {_head(command)}")
-        if hooks_dir is None:
-            continue
-        # F3: the bash side must see the same cwd the python side judged against, or a
-        # remote/ansible/git-reset call falls back to the REPLAY PROCESS's own $PWD
-        # inside the bash hook while judge() reads the record's real cwd -- a spurious
-        # disagreement that has nothing to do with either side's rules.
-        stdin_text = json.dumps({"tool_input": {"command": command}, "cwd": cwd})
-        bash_hook = bash_chain_allows(hooks_dir, stdin_text, env)
-        if d.allow == bool(bash_hook):
-            agree += 1
-        else:
-            py = "allow" if d.allow else "none"
-            sh = "allow" if bash_hook else "none"
-            print(f"MISMATCH: {_head(command)} python={py} bash={sh} rule={d.rule}")
     print(f"ALLOW {allowed}/{len(records)}")
-    if hooks_dir is None:
-        return 0
-    print(f"AGREE {agree}/{len(records)}")
-    return 0 if agree == len(records) else 1
+    return 0
 
 
 def _replay_deny(records: list[dict], hook: Path | None) -> int:
@@ -264,28 +194,16 @@ def cmd_pre_tool_use(args: argparse.Namespace) -> int:
     return 0
 
 
-def _report_allow(s: dict) -> int:
-    print(f"records {s['records']} (unparseable {s['unparseable']})")
-    print(f"agree {s['agree']} (allow {s['agree_allow']}, none {s['agree_none']})")
-    print(f"python-only {s['python_only']}")
-    for rule, n in sorted(s["python_only_rules"].items(), key=lambda kv: -kv[1]):
-        print(f"  {rule}: {n}")
-    print(f"bash-only {s['bash_only']}")
-    for rule, n in sorted(s["bash_only_rules"].items(), key=lambda kv: -kv[1]):
-        print(f"  {rule}: {n}")
-    print(f"python-error {s['python_error']}")
-    return 0
-
-
 def cmd_shadow_report(args: argparse.Namespace) -> int:
+    """Deny-side only (slice 6 retired the allow-side shadow log and its report half --
+    claude_guard.hook's module docstring): agree / python-only / bash-only / mismatch /
+    detail-mismatch / python-error / bash-error / bash-timeout counts from the PreToolUse
+    shadow log."""
     default_dir = Path(os.environ.get("CLAUDE_SHADOW_LOG_DIR") or Path.home() / ".claude" / "logs")
-    name = DENY_LOG_NAME if args.deny else LOG_NAME
-    log = Path(args.log) if args.log else (default_dir / name)
+    log = Path(args.log) if args.log else (default_dir / DENY_LOG_NAME)
     if not log.exists():
         print(f"no shadow log at {log}")
         return 1
-    if not args.deny:
-        return _report_allow(summarize(log.read_text().splitlines()))
     s = summarize_deny(log.read_text().splitlines())
     print(f"records {s['records']} (unparseable {s['unparseable']})")
     print(
@@ -317,14 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
     pt = sub.add_parser("pre-tool-use", help="PreToolUse hook entry (stdin JSON): deny rules")
     pt.set_defaults(fn=cmd_pre_tool_use)
 
-    sr = sub.add_parser("shadow-report", help="summarise the shadow log; counts, never commands")
-    sr.add_argument(
-        "--log", default=None, help=f"path to the log (default: $CLAUDE_SHADOW_LOG_DIR/{LOG_NAME})"
+    sr = sub.add_parser(
+        "shadow-report",
+        help="summarise the PreToolUse (deny) shadow log; counts, never commands",
     )
     sr.add_argument(
-        "--deny",
-        action="store_true",
-        help=f"summarise the PreToolUse (deny) log, default $CLAUDE_SHADOW_LOG_DIR/{DENY_LOG_NAME}",
+        "--log",
+        default=None,
+        help=f"path to the log (default: $CLAUDE_SHADOW_LOG_DIR/{DENY_LOG_NAME})",
     )
     sr.set_defaults(fn=cmd_shadow_report)
 
@@ -346,21 +264,9 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("replay", help="run a JSONL of {command, cwd} records")
     r.add_argument("corpus")
     r.add_argument(
-        "--compare-bash",
-        default=None,
-        metavar="CMDPARSE_SH",
-        help="path to cmdparse.sh; report segmentation parity",
-    )
-    r.add_argument(
         "--judge",
         action="store_true",
         help="judge every record against the deployed settings; print the allowed ones",
-    )
-    r.add_argument(
-        "--compare-hooks",
-        default=None,
-        metavar="DIR",
-        help="with --judge: run the bash chain in DIR per record and report agreement",
     )
     r.add_argument(
         "--deny",

@@ -20,7 +20,6 @@ from claude_guard.hook import (
     ALLOW_JSON,
     ASK_JSON,
     DENY_LOG_NAME,
-    LOG_NAME,
     bash_deny_verdict,
     deny_shadow_record,
     permission_request,
@@ -28,10 +27,8 @@ from claude_guard.hook import (
     pre_tool_use_json,
     read_cwd,
     shadow_mode,
-    summarize,
     summarize_deny,
 )
-from claude_guard.judge import Decision
 
 PKG_DIR = Path(__file__).resolve().parents[1]
 HOOKS = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks"
@@ -63,25 +60,17 @@ def env_for(home: Path, **extra: str) -> dict[str, str]:
 
 def test_live_mode_prints_the_allow_line_for_an_allowed_chain(tmp_path):
     home = home_with(tmp_path)
-    assert (
-        permission_request(payload("git status && ls"), env_for(home, CLAUDE_GUARD_SHADOW="0"))
-        == ALLOW_JSON
-    )
+    assert permission_request(payload("git status && ls"), env_for(home)) == ALLOW_JSON
 
 
 def test_live_mode_prints_nothing_for_a_refused_chain(tmp_path):
     home = home_with(tmp_path)
-    assert (
-        permission_request(
-            payload("git status && rm -rf /"), env_for(home, CLAUDE_GUARD_SHADOW="0")
-        )
-        is None
-    )
+    assert permission_request(payload("git status && rm -rf /"), env_for(home)) is None
 
 
 def test_malformed_or_command_less_stdin_is_no_decision(tmp_path):
     home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="0")
+    env = env_for(home)
     assert permission_request("{ not json", env) is None
     assert permission_request(json.dumps({"tool_input": {}}), env) is None
     assert permission_request(json.dumps({"tool_input": {"command": 5}}), env) is None
@@ -116,250 +105,7 @@ def test_permission_request_threads_the_sessions_cwd_into_the_decision(tmp_path)
     home = home_with(tmp_path)
     work = _make_repo(tmp_path)
     stdin = json.dumps({"tool_input": {"command": "git reset --hard origin/master"}, "cwd": work})
-    assert permission_request(stdin, env_for(home, CLAUDE_GUARD_SHADOW="0")) == ALLOW_JSON
-
-
-# --- the env contract ----------------------------------------------------------------------
-
-
-def test_shadow_mode_is_on_unless_the_variable_is_exactly_0():
-    assert shadow_mode({}) == (True, True)
-    assert shadow_mode({"CLAUDE_GUARD_SHADOW": "0"}) == (False, False)
-    assert shadow_mode({"CLAUDE_GUARD_SHADOW": "1"}) == (True, True)
-
-
-def test_shadow_mode_stays_shadow_for_anything_that_is_not_exactly_0():
-    # Fail-safe: a typo or a truthy-looking non-"0" value must never fall through to live.
-    for value in ("true", "01", "yes", " 1"):
-        assert shadow_mode({"CLAUDE_GUARD_SHADOW": value}) == (True, True), value
-
-
-def test_sampling_governs_logging_only_and_the_roll_seam_picks_the_branch():
-    on = {"CLAUDE_GUARD_SHADOW": "1", "CLAUDE_GUARD_SHADOW_SAMPLE": "10"}
-    assert shadow_mode({**on, "CLAUDE_GUARD_SHADOW_ROLL": "0"}) == (True, True)
-    assert shadow_mode({**on, "CLAUDE_GUARD_SHADOW_ROLL": "3"}) == (True, False)
-    # A malformed denominator falls back to logging every call, never to deciding.
-    assert shadow_mode({"CLAUDE_GUARD_SHADOW": "1", "CLAUDE_GUARD_SHADOW_SAMPLE": "x"}) == (
-        True,
-        True,
-    )
-
-
-# --- shadow mode ---------------------------------------------------------------------------
-
-# claude-guard slice 3 cutover (Task 8 step 3) deleted the six bash hooks this module used to
-# drive directly (executable_allow-compound-bash.sh and friends) and the PermissionRequest
-# registrations that put them in shadow beside claude_guard. The tests that drove them --
-# test_shadow_mode_prints_nothing_and_logs_one_line_that_agrees_with_the_bash_chain,
-# test_shadow_mode_agrees_on_a_readonly_remote_and_an_ansible_check, and
-# test_shadow_mode_logs_a_refusal_both_sides_agree_on -- were skip_no_bash-gated on exactly
-# the file this step deletes, so after the deletion they would skip silently and forever: a
-# permanently-skipping test that still reads green. They and skip_no_bash itself are deleted
-# with their subject rather than left to rot. BASH_CHAIN and bash_chain_allows stay live --
-# `replay --compare-hooks` takes a caller-supplied hooks directory and is not limited to the
-# deployed one -- and the frozenset below is their unconditional (no bash/jq/HOOKS
-# dependency) red-proof: a shrunk BASH_CHAIN tuple fails here by NAME, not by a moved count.
-_REQUIRED_BASH_CHAIN_HOOKS = frozenset(
-    {
-        "allow-compound-bash.sh",
-        "allow-safe-curl.sh",
-        "allow-safe-rm.sh",
-        "allow-readonly-remote.sh",
-        "allow-daniel-server.sh",
-        "allow-ansible-readonly.sh",
-    }
-)
-
-
-def test_bash_chain_names_every_deployed_hook_it_must_shadow():
-    missing = _REQUIRED_BASH_CHAIN_HOOKS - set(hook.BASH_CHAIN)
-    assert not missing, f"BASH_CHAIN dropped: {sorted(missing)}"
-
-
-def test_shadow_log_records_a_disagreement_so_the_comparison_can_go_red(tmp_path):
-    # A fake bash chain that allows everything: python says none, bash says allow.
-    fake = tmp_path / "hooks"
-    fake.mkdir()
-    for name in hook.BASH_CHAIN:
-        p = fake / name
-        p.write_text(
-            "#!/bin/bash\ncat >/dev/null\n"
-            'printf \'{"hookSpecificOutput":{"decision":{"behavior":"allow"}}}\\n\'\n'
-        )
-        p.chmod(0o755)
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && frobnicate"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text())
-    assert (rec["python"], rec["bash"], rec["bash_hook"]) == (
-        "none",
-        "allow",
-        "allow-compound-bash.sh",
-    )
-
-
-def test_the_shadow_log_never_carries_the_command(tmp_path):
-    fake = tmp_path / "hooks"
-    fake.mkdir()  # no hooks at all: bash side is "none"
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
-    log_dir = tmp_path / "logs"
-    permission_request(payload("git status && ls /very/secret/path"), env, log_dir=log_dir)
-    text = (log_dir / LOG_NAME).read_text()
-    assert "secret" not in text
-    assert set(json.loads(text)) == {"ts", "cmd_sha", "python", "bash", "rule", "bash_hook"}
-
-
-def test_a_sampled_miss_still_decides_nothing_and_writes_nothing(tmp_path):
-    home = home_with(tmp_path)
-    env = env_for(
-        home,
-        CLAUDE_GUARD_SHADOW="1",
-        CLAUDE_GUARD_SHADOW_SAMPLE="10",
-        CLAUDE_GUARD_SHADOW_ROLL="7",
-        CLAUDE_GUARD_BASH_HOOKS_DIR=str(tmp_path),
-    )
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
-    assert not (log_dir / LOG_NAME).exists()
-
-
-def test_an_unwritable_log_dir_is_swallowed(tmp_path):
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(tmp_path))
-    blocked = tmp_path / "file-not-dir"
-    blocked.write_text("")
-    assert permission_request(payload("git status && ls"), env, log_dir=blocked / "logs") is None
-
-
-def test_a_decision_exception_in_shadow_still_leaves_a_record(tmp_path, monkeypatch, capsys):
-    # Red-proof for finding 2: an exception raised inside decide() must not vanish the
-    # way it would in live mode -- shadow's whole point is a record of every call.
-    #
-    # Item 3 (fix round 2): this carried a stale 2-arg signature against the real call
-    # site, hook.py:231's `decide(command, cwd, env)` -- monkeypatch.setattr swaps in
-    # whatever signature is written here, so the test passed on the resulting
-    # `TypeError: boom() takes 2 positional arguments but 3 were given` rather than the
-    # ValueError it names below.
-    def boom(command, cwd, env):
-        raise ValueError("should never reach the log")
-
-    monkeypatch.setattr(hook, "decide", boom)
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(tmp_path))
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text())
-    assert rec["python"] == "error"
-    assert rec["rule"] == "exception"
-    assert "should never reach the log" not in json.dumps(rec)
-    out = capsys.readouterr()
-    assert out.out == "" and out.err == ""
-
-
-def _fake_chain(tmp_path: Path, script: str) -> Path:
-    """A hooks dir where every BASH_CHAIN member is `script`, so the first one hit governs."""
-    fake = tmp_path / "hooks"
-    fake.mkdir()
-    for name in hook.BASH_CHAIN:
-        p = fake / name
-        p.write_text(script)
-        p.chmod(0o755)
-    return fake
-
-
-def test_a_bash_hook_that_exits_nonzero_is_treated_as_no_allow(tmp_path, monkeypatch):
-    fake = _fake_chain(tmp_path, "#!/bin/bash\ncat >/dev/null\nexit 1\n")
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
-    log_dir = tmp_path / "logs"
-    # Live mode too: a bash-chain hook failing must not be mistaken for a python decision.
-    assert (
-        permission_request(payload("git status && ls"), env_for(home, CLAUDE_GUARD_SHADOW="0"))
-        is not None
-    )
-    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text())
-    assert rec["bash"] == "none" and rec["bash_hook"] is None
-
-
-def test_a_bash_hook_that_hangs_past_the_timeout_is_treated_as_no_allow(tmp_path, monkeypatch):
-    monkeypatch.setattr(hook, "_HOOK_TIMEOUT", 0.2)
-    fake = _fake_chain(tmp_path, "#!/bin/bash\ncat >/dev/null\nsleep 5\n")
-    home = home_with(tmp_path)
-    env = env_for(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_GUARD_BASH_HOOKS_DIR=str(fake))
-    log_dir = tmp_path / "logs"
-    assert permission_request(payload("git status && ls"), env, log_dir=log_dir) is None
-    rec = json.loads((log_dir / LOG_NAME).read_text())
-    assert rec["bash"] == "none" and rec["bash_hook"] is None
-
-
-# --- shadow-report -------------------------------------------------------------------------
-
-
-def test_summarize_counts_agreement_and_names_the_rules_behind_each_disagreement():
-    rows = [
-        {
-            "python": "allow",
-            "bash": "allow",
-            "rule": "allow",
-            "bash_hook": "allow-compound-bash.sh",
-        },
-        {"python": "none", "bash": "none", "rule": "segment:1:deny", "bash_hook": None},
-        {
-            "python": "none",
-            "bash": "allow",
-            "rule": "segment:0:redirect",
-            "bash_hook": "allow-safe-curl.sh",
-        },
-        {"python": "allow", "bash": "none", "rule": "allow", "bash_hook": None},
-        {"python": "allow", "bash": "none", "rule": "allow", "bash_hook": None},
-    ]
-    s = summarize(json.dumps(r) for r in rows)
-    assert s["records"] == 5
-    assert s["agree"] == 2 and s["agree_allow"] == 1 and s["agree_none"] == 1
-    assert s["python_only"] == 2 and s["bash_only"] == 1
-    assert s["python_only_rules"] == {"allow": 2}
-    assert s["bash_only_rules"] == {"segment:0:redirect (allow-safe-curl.sh)": 1}
-    assert s["python_error"] == 0
-
-
-def test_summarize_counts_python_error_in_its_own_bucket():
-    # A python-error row must not be folded into bash-only: the python side didn't
-    # disagree with bash, it never rendered a verdict at all.
-    rows = [
-        {"python": "allow", "bash": "allow", "rule": "allow", "bash_hook": "x"},
-        {"python": "error", "bash": "allow", "rule": "exception", "bash_hook": "x"},
-        {"python": "error", "bash": "none", "rule": "exception", "bash_hook": None},
-    ]
-    s = summarize(json.dumps(r) for r in rows)
-    assert s["records"] == 3
-    assert s["python_error"] == 2
-    assert s["agree"] == 1
-    assert s["python_only"] == 0 and s["bash_only"] == 0
-
-
-def test_summarize_skips_an_unparseable_line_and_reports_it():
-    s = summarize(
-        ["{ nope", json.dumps({"python": "none", "bash": "none", "rule": "x", "bash_hook": None})]
-    )
-    assert s["records"] == 1 and s["unparseable"] == 1
-
-
-def test_summarize_treats_a_non_dict_or_keyless_record_as_unparseable():
-    lines = [json.dumps(v) for v in (5, [1, 2], {})]
-    good = json.dumps({"python": "none", "bash": "none", "rule": "x", "bash_hook": None})
-    s = summarize([*lines, good])
-    assert s["records"] == 1
-    assert s["unparseable"] == 3
-    assert s["agree"] == 1 and s["agree_none"] == 1
-
-
-def test_shadow_record_shape():
-    rec = hook.shadow_record("ls; pwd", Decision(True, "allow", ("allow-list", "allow-list")), None)
-    assert rec["python"] == "allow" and rec["bash"] == "none" and rec["rule"] == "allow"
-    assert rec["cmd_sha"] == hook.command_sha("ls; pwd")
+    assert permission_request(stdin, env_for(home)) == ALLOW_JSON
 
 
 # --- the shim, driven as the harness drives it ---------------------------------------------
@@ -393,38 +139,18 @@ def shim_env(home: Path, **extra: str) -> dict[str, str]:
 
 
 @skip_no_uv
-def test_shim_prints_the_allow_line_when_told_to_run_live(tmp_path):
-    home = home_with(tmp_path)
-    r = run_shim(payload("git status && ls"), shim_env(home, CLAUDE_GUARD_SHADOW="0"))
-    assert r.returncode == 0, r.stderr
-    assert json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"] == "allow"
-
-
-@skip_no_uv
-def test_shim_defaults_to_live_when_the_variable_is_absent(tmp_path):
-    # DECIDED: claude-guard slice 3 cutover. The shim's own default flipped from :=1 (shadow)
-    # to :=0 (live) in the same commit as settings.base.json's CLAUDE_GUARD_SHADOW, so a
-    # generated settings.json that ever lost the key fails toward the live decision rather
-    # than toward a shadow mode with no bash chain left to compare against.
+def test_shim_prints_the_allow_line_live(tmp_path):
+    # The shim is live-only -- slice 6 retired CLAUDE_GUARD_SHADOW and the switch it fed, so
+    # there is no variable left to set here (module docstring, claude_guard.hook).
     home = home_with(tmp_path)
     r = run_shim(payload("git status && ls"), shim_env(home))
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout)["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 
-@skip_no_uv
-def test_shim_in_shadow_prints_nothing_for_an_allowed_chain(tmp_path):
-    home = home_with(tmp_path)
-    env = shim_env(home, CLAUDE_GUARD_SHADOW="1", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
-    r = run_shim(payload("git status && ls"), env)
-    assert (r.returncode, r.stdout) == (0, "")
-    rec = json.loads((tmp_path / "logs" / LOG_NAME).read_text())
-    assert rec["python"] == "allow"
-
-
 def test_shim_prints_nothing_and_exits_zero_without_an_interpreter(tmp_path):
     home = home_with(tmp_path)
-    env = shim_env(home, CLAUDE_GUARD_SHADOW="0", PATH="/nonexistent")
+    env = shim_env(home, PATH="/nonexistent")
     r = run_shim(payload("git status && ls"), env)
     assert (r.returncode, r.stdout) == (0, "")
 
@@ -432,7 +158,7 @@ def test_shim_prints_nothing_and_exits_zero_without_an_interpreter(tmp_path):
 @skip_no_uv
 def test_shim_prints_nothing_and_exits_zero_when_the_package_is_missing(tmp_path):
     home = home_with(tmp_path)
-    env = shim_env(home, CLAUDE_GUARD_SHADOW="0", CLAUDE_GUARD_HOME=str(tmp_path / "nowhere"))
+    env = shim_env(home, CLAUDE_GUARD_HOME=str(tmp_path / "nowhere"))
     r = run_shim(payload("git status && ls"), env)
     assert (r.returncode, r.stdout) == (0, "")
 
@@ -593,6 +319,53 @@ def test_live_mode_turns_an_exception_into_ask(tmp_path, monkeypatch):
 
 
 # --- the env contract ---------------------------------------------------------------------------
+#
+# shadow_mode() is generic (spec, Rollout row 4), but pre_tool_use() is its only caller left --
+# slice 6 retired the allow side's own CLAUDE_GUARD_SHADOW switch and its shadow_mode() call
+# site (claude_guard.hook's module docstring), so `var` is now always "CLAUDE_GUARD_DENY_SHADOW"
+# in practice. These tests exercise the pure function directly, with that name.
+
+
+def test_shadow_mode_is_on_unless_the_variable_is_exactly_0():
+    assert shadow_mode({}, "CLAUDE_GUARD_DENY_SHADOW") == (True, True)
+    assert shadow_mode({"CLAUDE_GUARD_DENY_SHADOW": "0"}, "CLAUDE_GUARD_DENY_SHADOW") == (
+        False,
+        False,
+    )
+    assert shadow_mode({"CLAUDE_GUARD_DENY_SHADOW": "1"}, "CLAUDE_GUARD_DENY_SHADOW") == (
+        True,
+        True,
+    )
+
+
+def test_shadow_mode_stays_shadow_for_anything_that_is_not_exactly_0():
+    # Fail-safe: a typo or a truthy-looking non-"0" value must never fall through to live.
+    for value in ("true", "01", "yes", " 1"):
+        assert shadow_mode({"CLAUDE_GUARD_DENY_SHADOW": value}, "CLAUDE_GUARD_DENY_SHADOW") == (
+            True,
+            True,
+        ), value
+
+
+def test_sampling_governs_logging_only_and_the_roll_seam_picks_the_branch():
+    on = {"CLAUDE_GUARD_DENY_SHADOW": "1", "CLAUDE_GUARD_DENY_SHADOW_SAMPLE": "10"}
+    assert shadow_mode(
+        {**on, "CLAUDE_GUARD_DENY_SHADOW_ROLL": "0"}, "CLAUDE_GUARD_DENY_SHADOW"
+    ) == (
+        True,
+        True,
+    )
+    assert shadow_mode(
+        {**on, "CLAUDE_GUARD_DENY_SHADOW_ROLL": "3"}, "CLAUDE_GUARD_DENY_SHADOW"
+    ) == (
+        True,
+        False,
+    )
+    # A malformed denominator falls back to logging every call, never to deciding.
+    assert shadow_mode(
+        {"CLAUDE_GUARD_DENY_SHADOW": "1", "CLAUDE_GUARD_DENY_SHADOW_SAMPLE": "x"},
+        "CLAUDE_GUARD_DENY_SHADOW",
+    ) == (True, True)
 
 
 @pytest.mark.parametrize("value", ["1", "true", "yes", "01", " 0", "", None])
@@ -603,12 +376,6 @@ def test_deny_shadow_unless_exactly_zero(tmp_path, value):
         env["CLAUDE_GUARD_DENY_SHADOW"] = value
     assert pre_tool_use(payload("rm -rf /"), env) is None
     assert (tmp_path / "logs" / DENY_LOG_NAME).exists()
-
-
-def test_the_allow_side_variable_does_not_govern_the_deny_side(tmp_path):
-    home = home_with(tmp_path)
-    env = denv(home, CLAUDE_GUARD_SHADOW="0", CLAUDE_SHADOW_LOG_DIR=str(tmp_path / "logs"))
-    assert pre_tool_use(payload("rm -rf /"), env) is None
 
 
 # --- shadow mode ---------------------------------------------------------------------------------

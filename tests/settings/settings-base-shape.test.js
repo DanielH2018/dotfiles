@@ -274,10 +274,13 @@ test('every Notification matcher names a real notification type', { skip }, () =
 });
 
 // claude-guard slice 3 cutover: guard-permission-request.sh is now the sole decision for
-// Bash PermissionRequest and CLAUDE_GUARD_SHADOW is live. This is the red-proof for the
-// cutover: it must fail if any of the six bash hooks it replaces is still registered, and
-// it must fail if the env var is anything but exactly "0" (see
-// docs/plans/2026-09-11-claude-guard-slice-3-cutover.md, Task 8).
+// Bash PermissionRequest, always live. Slice 6 (2026-09-17) retired the CLAUDE_GUARD_SHADOW
+// switch and the shadow apparatus it fed -- every bash hook it compared against was already
+// gone from disk in slice 3. This is the red-proof for both cutovers: it must fail if any of
+// the six bash hooks is still registered, and it must fail if CLAUDE_GUARD_SHADOW is
+// re-added -- a shadow switch with no chain behind it to compare against is the regression
+// slice 6 closed (see docs/plans/2026-09-11-claude-guard-slice-3-cutover.md, Task 8, and
+// docs/specs/2026-09-06-claude-guard-design.md row 6).
 test('claude-guard is the sole Bash PermissionRequest decision, live', { skip }, () => {
   const s = JSON.parse(render());
   const entry = s.hooks.PermissionRequest.find((e) => e.matcher === 'Bash');
@@ -288,7 +291,7 @@ test('claude-guard is the sole Bash PermissionRequest decision, live', { skip },
   for (const gone of removed) {
     assert.ok(!cmds.includes(`~/.claude/hooks/${gone}`), `${gone} is still registered`);
   }
-  assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, '0');
+  assert.strictEqual(s.env.CLAUDE_GUARD_SHADOW, undefined);
 });
 
 // claude-guard slice 4 cutover: guard-pre-tool-use.sh is now the sole decision for Bash

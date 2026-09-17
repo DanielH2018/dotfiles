@@ -9,8 +9,14 @@ judging, and cut the hook over to live — `guard-permission-request.sh` is now 
 decision for Bash PermissionRequest, and the six bash hooks it replaces are deleted; slice 4
 ported the PreToolUse deny rules and cut `guard-pre-tool-use.sh` over to live, unregistering
 `block-dangerous-bash.sh` from the host (the file itself stays, frozen, for the sandbox — see
-"The deny rules, live" below). Spec: `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles
-repo).
+"The deny rules, live" below); slice 6 (2026-09-17, narrowed) retired the allow-side shadow
+apparatus that slice 3 left behind (`CLAUDE_GUARD_SHADOW`, `BASH_CHAIN`, `bash_chain_allows`,
+`claude-guard-shadow.jsonl`, `shadow-report`'s allow half, `replay --compare-bash` /
+`--compare-hooks`) — every `BASH_CHAIN` member was already deleted from disk in slice 3, so
+shadow mode was comparing against nothing. `cmdparse.sh`, `block-dangerous-bash.sh` and the
+deny-side shadow stay: the sandbox still bind-mounts and runs `block-dangerous-bash.sh` as its
+own in-container deny hook and cannot yet run the Python port (see "Sandbox port" in the spec).
+Spec: `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
 
 ## The segmenter's contract
 
@@ -23,13 +29,12 @@ terminated it (`&&` `||` `;` `|` `&` `newline` `eof`), its lifted heredoc bodies
 each heredoc delimiter was quoted. `substitutions` holds the content of every `$( )`,
 `` ` ` ``, `<( )` and `>( )`, flattened across nesting. This is a port of `cmdparse.sh`'s
 awk pass and agrees with it field for field (`tests/test_vectors.py`), except that the bash
-`heredoc` field cannot represent an empty body; `_comparable` in `cli.py` drops empty bodies
-on both sides.
+`heredoc` field cannot represent an empty body — the parity tests there drop empty bodies on
+both sides before comparing.
 
 ## Running
 
     claude-guard explain 'git status && ls & rm -rf /'
-    claude-guard replay commands.jsonl --compare-bash ~/.claude/hooks/cmdparse.sh
     printf '%s' 'ls; pwd' | claude-guard segment --json
 
 ## The judge
@@ -54,26 +59,23 @@ from that file plus the project's `.claude/settings.json` and `settings.local.js
 `~/.claude/hooks/guard-permission-request.sh` runs `claude-guard permission-request` on the
 PermissionRequest event and is the sole decision for Bash PermissionRequest: it computes
 `judge()`'s verdict and allows, or stays silent and the prompt stands. Cannot run or cannot
-parse → it prints nothing and the prompt stands, the same failure contract it had in shadow.
+parse → it prints nothing and the prompt stands.
 
-The hook goes live when `CLAUDE_GUARD_SHADOW` is exactly `"0"` — `settings.json`'s `env` sets
-it, and the shim's own default matches, so a stale `settings.json` that lost the key fails
-toward live rather than toward a shadow mode whose bash chain no longer exists to compare
-against (see `guard-permission-request.sh`'s own comment for why that direction is the safe
-one post-cutover). Any other value still computes the verdict and would log it to
-`~/.claude/logs/claude-guard-shadow.jsonl` for comparison against a bash chain, but the six
-bash hooks it shadowed (`allow-compound-bash.sh`, `allow-readonly-remote.sh`,
+The hook is always live and takes no env switch. Slice 3 cut it over from shadow; slice 6
+(2026-09-17, narrowed) retired the `CLAUDE_GUARD_SHADOW` switch itself and the shadow
+apparatus it fed (`BASH_CHAIN`, `bash_chain_allows`, `claude-guard-shadow.jsonl`,
+`shadow-report`'s allow half, `replay --compare-bash` and `replay --judge --compare-hooks`) —
+every `BASH_CHAIN` member (`allow-compound-bash.sh`, `allow-readonly-remote.sh`,
 `allow-safe-curl.sh`, `allow-safe-rm.sh`, `allow-ansible-readonly.sh`,
-`allow-daniel-server.sh`) are deleted, so that comparison has nothing left to run.
+`allow-daniel-server.sh`) was already deleted from disk in slice 3, so shadow mode was
+computing a verdict it could compare to nothing.
 
-    claude-guard shadow-report                              # historical: the pre-cutover agreement record
     claude-guard replay commands.jsonl --judge               # allow count and the allowed commands
-    claude-guard replay commands.jsonl --judge --compare-hooks ~/.claude/hooks
-                                                            # agreement with whatever bash hooks remain in the dir
 
-The cutover gate (spec row 3) was `replay --judge --compare-hooks` allowing at least 84 of the
-prompted corpus — the floor set by what the #477 prototype allowed — checked against the
-pre-cutover bash chain before the six hooks were deleted.
+The slice 3 cutover gate (spec row 3) was `replay --judge --compare-hooks` allowing at least
+84 of the prompted corpus — the floor set by what the #477 prototype allowed — checked
+against the pre-cutover bash chain before the six hooks were deleted. `replay --judge` alone
+still prints that ALLOW tally and remains the load-bearing gate going forward.
 
 ## The deny rules, live
 
@@ -125,10 +127,12 @@ re-run cannot double-count), and appends one line to
 means the bash could not be run or read — never folded into `none`, so a missing hook is not
 agreement. `rule` is a fixed literal (`exception` for an error), never text from the command.
 
-    claude-guard shadow-report --deny        # historical: the pre-cutover agreement record
+    claude-guard shadow-report               # deny-side only; historical: the pre-cutover
+                                              # agreement record
 
-The cutover gate (spec row 4) was `shadow-report --deny` showing at least 200 records
-collected over at least 3 days, with zero `python_only`, `bash_only`, `mismatch`,
+The cutover gate (spec row 4) was `shadow-report --deny` (the flag has since been dropped --
+`shadow-report` is deny-only now that slice 6 retired the allow side's log and report half)
+showing at least 200 records collected over at least 3 days, with zero `python_only`, `bash_only`, `mismatch`,
 `detail_mismatch`, `python_error`, `bash_error` and `bash_timeout` rows, checked against the
 host-registered bash before this cutover; measured 11,973 records over 6.6 days at zero across
 the board. `bash_timeout` rows were expected on large heredocs — the bash is quadratic there

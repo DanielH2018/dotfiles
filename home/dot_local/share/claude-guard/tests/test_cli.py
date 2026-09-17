@@ -18,7 +18,6 @@ from claude_guard.deny import NONE
 from claude_guard.hook import ASK_JSON, DENY_LOG_NAME
 
 PKG_DIR = Path(__file__).resolve().parents[1]
-CMDPARSE = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks" / "executable_cmdparse.sh"
 
 
 def run_cli(argv: list[str], stdin: str = "") -> tuple[int, str]:
@@ -99,37 +98,6 @@ def test_explain_on_a_refusal_exits_nonzero_and_says_why():
     assert "status: unreadable:unbalanced-quote" in r.stdout
 
 
-@pytest.mark.skipif(not CMDPARSE.exists(), reason="bash segmenter not beside a deployed copy")
-def test_replay_compare_bash_reports_parity(tmp_path):
-    corpus = tmp_path / "c.jsonl"
-    corpus.write_text(
-        json.dumps({"command": "ls; pwd", "cwd": "/tmp"})
-        + "\n"
-        + json.dumps({"command": "cat <<'EOF'\nx\nEOF\nls", "cwd": "/tmp"})
-        + "\n"
-    )
-    r = run("replay", str(corpus), "--compare-bash", str(CMDPARSE))
-    assert r.returncode == 0, r.stderr + r.stdout
-    assert r.stdout.strip().splitlines()[-1] == "PARITY 2/2"
-
-
-@pytest.mark.skipif(not CMDPARSE.exists(), reason="bash segmenter not beside a deployed copy")
-def test_replay_compare_bash_exits_nonzero_on_a_mismatch(tmp_path, monkeypatch):
-    # A fake bash segmenter that disagrees on purpose proves the comparison can go red.
-    fake = tmp_path / "fake-cmdparse.sh"
-    fake_json = json.dumps(
-        {"status": "ok", "nseg": 1, "seg": ["nope"], "sep": ["eof"], "heredoc": [""], "subseg": []}
-    )
-    fake.write_text(f"#!/bin/bash\ncat >/dev/null\nprintf '{fake_json}\\n'\n")
-    fake.chmod(0o755)
-    corpus = tmp_path / "c.jsonl"
-    corpus.write_text(json.dumps({"command": "ls", "cwd": "/tmp"}) + "\n")
-    r = run("replay", str(corpus), "--compare-bash", str(fake))
-    assert r.returncode == 1
-    assert "PARITY 0/1" in r.stdout
-    assert "MISMATCH" in r.stdout
-
-
 def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
@@ -146,7 +114,6 @@ def test_permission_request_prints_the_allow_line_in_live_mode(tmp_path):
             "PYTHONPATH": str(PKG_DIR),
             "PATH": "/usr/bin:/bin",
             "HOME": str(home),
-            "CLAUDE_GUARD_SHADOW": "0",
         },
     )
     assert r.returncode == 0, r.stderr
@@ -164,52 +131,9 @@ def test_permission_request_prints_nothing_and_exits_zero_on_garbage(tmp_path):
             "PYTHONPATH": str(PKG_DIR),
             "PATH": "/usr/bin:/bin",
             "HOME": str(tmp_path),
-            "CLAUDE_GUARD_SHADOW": "0",
         },
     )
     assert (r.returncode, r.stdout) == (0, "")
-
-
-def test_shadow_report_prints_counts_and_never_a_command(tmp_path):
-    log = tmp_path / "claude-guard-shadow.jsonl"
-    log.write_text(
-        json.dumps(
-            {
-                "python": "allow",
-                "bash": "allow",
-                "rule": "allow",
-                "bash_hook": "allow-compound-bash.sh",
-            }
-        )
-        + "\n"
-        + json.dumps(
-            {
-                "python": "none",
-                "bash": "allow",
-                "rule": "segment:1:ask",
-                "bash_hook": "allow-safe-rm.sh",
-            }
-        )
-        + "\n"
-        # An agreement row whose rule text happens to embed a path: agreeing rows are only
-        # counted, never printed by name, so this must not leak into the report either.
-        + json.dumps(
-            {
-                "python": "allow",
-                "bash": "allow",
-                "rule": "wrapper:/very/secret/path",
-                "bash_hook": "allow-compound-bash.sh",
-            }
-        )
-        + "\n"
-    )
-    r = run("shadow-report", "--log", str(log))
-    assert r.returncode == 0, r.stderr
-    assert "records 3" in r.stdout
-    assert "agree 2 (allow 2, none 0)" in r.stdout
-    assert "bash-only 1" in r.stdout
-    assert "segment:1:ask (allow-safe-rm.sh): 1" in r.stdout
-    assert "secret" not in r.stdout
 
 
 def test_shadow_report_exits_nonzero_when_there_is_no_log(tmp_path):
@@ -305,58 +229,11 @@ def test_replay_judge_applies_the_records_cwd_as_the_project_scope(tmp_path):
     assert r.stdout.splitlines()[-1] == "ALLOW 0/1"
 
 
-def test_replay_compare_hooks_reports_agreement_against_a_caller_supplied_hooks_dir(tmp_path):
-    # claude-guard slice 3 cutover deleted every BASH_CHAIN member from the deployed hooks
-    # directory, so a hooks_dir built from HOOKS_DIR answers "none" for every record forever
-    # -- not a transient "not beside a deployed copy" gap a skipif could wait out. A fake
-    # chain (same idiom as test_replay_compare_hooks_exits_nonzero_on_a_mismatch below) is
-    # the only way left to prove --compare-hooks's AGREE path, which is still live: it takes
-    # a caller-supplied hooks directory, not the deployed one.
-    fake = tmp_path / "hooks"
-    fake.mkdir()
-    (fake / "allow-compound-bash.sh").write_text(
-        "#!/bin/bash\n"
-        'read -r line; case "$line" in\n'
-        '  *"ls; pwd"*) printf \'{"decision":{"behavior":"allow"}}\\n\' ;;\n'
-        "  *) ;;\n"
-        "esac\n"
-    )
-    (fake / "allow-compound-bash.sh").chmod(0o755)
-    home = home_with_allow(tmp_path, "Bash(ls:*)", "Bash(pwd)")
-    corpus = tmp_path / "c.jsonl"
-    corpus.write_text(
-        json.dumps({"command": "ls; pwd", "cwd": "/tmp"})
-        + "\n"
-        + json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"})
-        + "\n"
-    )
-    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(fake))
-    assert r.returncode == 0, r.stderr + r.stdout
-    assert r.stdout.splitlines()[-1] == "AGREE 2/2"
-
-
-def test_replay_compare_hooks_exits_nonzero_on_a_mismatch(tmp_path):
-    # A fake chain that allows everything proves the comparison can go red.
-    fake = tmp_path / "hooks"
-    fake.mkdir()
-    (fake / "allow-compound-bash.sh").write_text(
-        '#!/bin/bash\ncat >/dev/null\nprintf \'{"decision":{"behavior":"allow"}}\\n\'\n'
-    )
-    (fake / "allow-compound-bash.sh").chmod(0o755)
-    home = home_with_allow(tmp_path, "Bash(ls:*)")
-    corpus = tmp_path / "c.jsonl"
-    corpus.write_text(json.dumps({"command": "ls && frobnicate", "cwd": "/tmp"}) + "\n")
-    r = run_home(home, "replay", str(corpus), "--judge", "--compare-hooks", str(fake))
-    assert r.returncode == 1
-    assert "MISMATCH: ls && frobnicate python=none bash=allow rule=segment:1:unlisted" in r.stdout
-    assert r.stdout.splitlines()[-1] == "AGREE 0/1"
-
-
-def test_replay_refuses_both_modes_or_neither(tmp_path):
+def test_replay_refuses_neither_mode(tmp_path):
+    # The --judge+--deny case is test_replay_refuses_deny_with_judge below.
     corpus = tmp_path / "c.jsonl"
     corpus.write_text(json.dumps({"command": "ls", "cwd": "/tmp"}) + "\n")
     assert run("replay", str(corpus)).returncode == 2
-    assert run("replay", str(corpus), "--judge", "--compare-bash", "/x").returncode == 2
 
 
 # --- slice 4: pre-tool-use, shadow-report --deny, replay --deny ------------------------------
@@ -392,25 +269,20 @@ def test_pre_tool_use_prints_ask_when_the_hook_function_raises(monkeypatch):
     assert (rc, out.strip()) == (0, ASK_JSON)
 
 
-def test_shadow_report_deny_reads_the_deny_log_by_default(tmp_path, monkeypatch):
+def test_shadow_report_reads_the_deny_log_by_default(tmp_path, monkeypatch):
+    # shadow-report is deny-only (slice 6 retired the allow side's log and report half --
+    # claude_guard.hook's module docstring), so no --deny flag is needed or accepted.
     monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path))
     rows = [
         {"ts": "t", "cmd_sha": "0" * 16, "python": "deny", "bash": "deny", "rule": "rm-root"},
         {"ts": "t", "cmd_sha": "1" * 16, "python": "deny", "bash": "none", "rule": "pkill"},
     ]
     (tmp_path / DENY_LOG_NAME).write_text("".join(json.dumps(r) + "\n" for r in rows))
-    rc, out = run_cli(["shadow-report", "--deny"])
+    rc, out = run_cli(["shadow-report"])
     assert rc == 0
     assert "records 2" in out and "agree 1 (deny 1, ask 0, none 0, allow 0)" in out
     assert "python-only 1" in out and "  pkill: 1" in out
     assert "mismatch 0" in out and "python-error 0" in out and "bash-error 0" in out
-
-
-def test_shadow_report_without_deny_still_reads_the_allow_log(tmp_path, monkeypatch):
-    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path))
-    (tmp_path / DENY_LOG_NAME).write_text("")
-    rc, out = run_cli(["shadow-report"])
-    assert rc == 1 and "no shadow log" in out
 
 
 def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):

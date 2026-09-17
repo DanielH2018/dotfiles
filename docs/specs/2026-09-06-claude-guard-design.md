@@ -206,7 +206,45 @@ tooling: the new hook is registered beside the old ones, logs its verdict, and d
 | 3 | PermissionRequest cutover; the #477, #474 and ansible rules; the five bash hooks removed | **Done.** Exit criterion was replay allows at least the 84 of 677 the #477 prototype allowed; PRs #474 and #477 closed unmerged, #476's hook half dropped. Measured: the corpus was rebuilt at 1058 records, not 677 -- it is transcript-derived and not committed, so slice 1's count was already stale by slice 3. `replay --judge --compare-hooks` reads `ALLOW 84/1058`, exactly the floor: the gate was met, not cleared with margin. |
 | 4 | `deny.py` in shadow, then cutover; `block-dangerous-bash.sh` unregistered on the host (kept, frozen, for the sandbox) | **Done, with one change from plan.** Vector file green (`tests/test_deny.py` against 32 deny / 27 allow groups, 281 commands; package suite 822). `replay --deny --compare-hook` gave `AGREE 1058/1058` on the 2026-09-06 corpus and `AGREE 281/281` on every vector. `shadow-report --deny` read 11,973 records over 6.6 days (2026-09-10T11:40Z–2026-09-17T01:10Z) with zero `python_only`, `bash_only`, `mismatch`, `detail_mismatch`, `python_error`, `bash_error` and `bash_timeout` rows — clear of the >=200-over->=3-days floor with a wide margin. The cutover PR flipped `CLAUDE_GUARD_DENY_SHADOW` to `0` and removed `block-dangerous-bash.sh`'s PreToolUse registration, but the file itself is **unregistered on the host and frozen, not deleted**: the sandbox (`home/private_dot_claude/sandbox/`) bind-mounts and registers the deployed copy as its own in-container deny hook and cannot yet run the Python port, so removing the file would have shipped a silent fail-open there on every new machine. Removed when the sandbox runs the port (follow-up, not this PR). See `docs/plans/2026-09-17-claude-guard-slice-4-cutover.md`, "What shipped differently," for the long form. The `bash_timeout` clause that used to sit here (large heredocs, the bash's quadratic segmenter) no longer gates a host-side shadow comparison — that comparison stopped when the hook was unregistered — but the underlying cost is still real for the sandbox's own operation, unchanged by this PR. |
 | 5 | **Narrowed 2026-09-17** to the policy-neutral part: the guarded `sys.path` bootstrap (`_claude_guard.py`), `SSH_HOSTS` → `TRUSTED_SSH_HOSTS` and `_SSH_SECRET` → `SECRET_PATH_RE` (the only two of seven server tables that are equal), the deployed-import test. The hook consolidation is re-planned from the survey in `docs/plans/2026-09-17-claude-guard-slice-5-survey.md`: the server has four segmenters not one, `_hook_common.py` is a dependency of every hook and absent from the layout above, `grants.py` as described is mostly `permissions.allow` rules not hook logic, `TIER1` differs from `REMOTE_READONLY_VERBS` by 32+11 names (moving it is a policy change), and `uv-python.sh` is 263 lines of bash with 59 subprocess tests | server suite green; the deployed-import test green — it was red before this slice: `import claude_guard` fails under the server's `uv run` without the bootstrap |
-| 6 | `cmdparse.sh`, the node hook suites, and the doc sections describing the old layering retired | `claude-shell-permissions.md`, the CLAUDE.md permission sections and the settings comments updated in the same PRs |
+| 6 | **Narrowed 2026-09-17.** Shipped: the allow-side shadow apparatus and its switch retired (`CLAUDE_GUARD_SHADOW`, `BASH_CHAIN`, `bash_chain_allows`, `shadow_record`/`shadow_error_record`, `summarize`, `claude-guard-shadow.jsonl`, `shadow-report`'s allow half, `replay --compare-bash` and `replay --judge --compare-hooks`) — every `BASH_CHAIN` member was already deleted from disk in slice 3 (PR #501), so shadow mode was comparing a live verdict against files that did not exist. Measured 2026-09-17: `ls ~/.claude/hooks/allow-*.sh` returns nothing on this host. Blocked, not shipped: retiring `cmdparse.sh`, `block-dangerous-bash.sh`, their node suites, `bin/lint-bsd-portability`, and the DENY-side shadow twins in the package (`DENY_LOG_NAME`, `DENY_HOOK`, `bash_deny_verdict`, `deny_shadow_record`, `summarize_deny`, `replay --deny --compare-hook`, `CLAUDE_GUARD_DENY_SHADOW`) — see "Sandbox port" below for why. | `claude-shell-permissions.md`, the CLAUDE.md permission sections and the settings comments updated in the same PRs. This one row's own PR updated only this doc, the settings comments, the shim, and the package/tests; `claude-shell-permissions.md` had no allow-side-shadow content to remove |
+
+### Sandbox port
+
+The rest of row 6 — retiring `cmdparse.sh`, `block-dangerous-bash.sh` and the deny-side
+shadow twins — is blocked on porting the sandbox's in-container deny hook from bash to the
+Python package, which needs all of the following and has none of them today:
+
+- **No `uv` guaranteed.** The sandbox image installs `uv` only when `detect_uv_need()` matches
+  the REPO being sandboxed (a `uv.lock`, or `uv`/`uv run` mentioned in that repo's `CLAUDE.md`
+  or `Makefile` — `executable_sandbox-image.sh:44-51`); the hook's own interpreter is not a
+  sandbox-infrastructure concern the way `git`/`jq`/`bash` are.
+- **No managed Python 3.14.** Even where `uv` lands, nothing pins or verifies a 3.14 toolchain
+  for it — the package's failure contract (missing interpreter → the shim prints `ask` itself,
+  no Python) has never been exercised inside a container.
+- **The package is never mounted.** `grep -n claude-guard\|claude_guard executable_claude-sandbox`
+  returns nothing: only `block-dangerous-bash.sh` is bind-mounted in
+  (`executable_claude-sandbox:884`, read-only) and registered as the in-container PreToolUse
+  hook (`sandbox/settings.base.json:177`) — there is no path from the container to
+  `claude_guard.cli pre-tool-use` at all.
+- **No docker on this host.** Building or measuring a ported image needs docker; this host has
+  none, so a port cannot be built or gated from here regardless of the three points above.
+
+A fourth thing the port has to settle, independent of the three prerequisites: `deny()`'s
+failure contract fails closed to `ask` (spec, *Failure contracts*). Per the Claude Code hooks
+docs, a PreToolUse `permissionDecision: "deny"` is **documented** to block the tool call even
+under `--dangerously-skip-permissions` — "PreToolUse hooks fire before any permission-mode
+check, in every permission mode" (code.claude.com/docs/en/hooks-guide.md, "Hooks and
+permission modes"). What `"ask"` does under that mode is **undocumented**, and the sandbox's
+`claude-sandbox` CMD runs with `--dangerously-skip-permissions` — so whether the shim's
+`ask`-on-failure contract is honoured there is the port's first thing to measure, not assume,
+and it is **unmeasured on this host (no docker)**. If `ask` is a no-op under that flag, the
+port needs a deny-on-failure variant, not a registration swap. Separately (code.claude.com
+/docs/en/hooks.md, "Exit code output" and the per-event exit-code table): for PreToolUse, any
+non-2 exit code with valid decision JSON on stdout is honoured and the exit code itself is
+ignored, while exit 2 blocks regardless of what JSON accompanies it; for PermissionRequest,
+exit 2 is **not** honoured at all — only the JSON `decision` object counts. A port that reuses
+`pre_tool_use_json`'s JSON shape (hook.py) still has to get the exit code right for the event
+it targets, since the two events read that code differently.
 
 Slices 1 to 4 and 6 are dotfiles PRs; slice 5 is a server PR that lands after slice 3 has
 deployed. `stash-mine` (#475), the `stdio-blocking` script with its ask entries (#476), and
