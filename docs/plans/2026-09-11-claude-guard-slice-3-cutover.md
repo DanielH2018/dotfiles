@@ -67,7 +67,7 @@ Recorded here so a reviewer does not re-derive them. Each also gets a `# DECIDED
 `tables.py:3-4` already names the first two as arriving "with the remote check in a later slice" — this is that slice.
 
 - `TRUSTED_SSH_HOSTS` is `{"daniel-server", "daniel-pi"}` from `allow-daniel-server.sh:93`. **It is NOT `CURL_HOSTS`** — that set also holds `daniel-box`, loopback and localhost, and `daniel-box` is deliberately absent here. A test must assert the two sets differ, so a later "tidy-up" cannot merge them.
-- `REMOTE_READONLY_VERBS` is the flat list at `allow-readonly-remote.sh:158-165`. The nested `ip` / `docker` / `systemctl` sub-tables stay in `remote.py` beside the dispatch that reads them — they are not flat verb names.
+- `REMOTE_READONLY_VERBS` is the flat list at `allow-readonly-remote.sh:157-164`. The nested `ip` / `docker` / `systemctl` sub-tables stay in `remote.py` beside the dispatch that reads them — they are not flat verb names.
 - `SECRET_PATH_RE` is `SECRET_RE` from `allow-readonly-remote.sh:134`, compiled with `re.IGNORECASE` to match the bash's `grep -qiE`.
 
 **Non-vacuity:** the test asserts a named frozenset of members each table must contain (`{"uptime", "journalctl", "nvidia-smi"}` for the verbs; both hosts for the hosts), not a count — per the repo's own convention, a count moving tells you nothing about which member went missing.
@@ -90,8 +90,8 @@ The bash's shape, in order — keep it:
 4. Wrapper: `hl` → remote argv starts at token 1; `ssh` → the bare 4-token `-O check` form, else only `-oBatchMode=yes` / `-o BatchMode=yes` consumed, any other leading `-*` refuses. Any other basename refuses.
 5. Metacharacter ban on the joined remote text (`:122-124`): `; & | ` $ ( )`.
 6. `SECRET_PATH_RE` against the remote text — refuse on a match.
-7. The three mutation-flag refusals: `journalctl` (`:137-139`), `dmesg` (`:141-142`), `ss` (`:145-146`). **`dmesg` and `ss` match a short cluster containing `C`/`c` and `K` respectively — a character class inside a cluster, not an equality test.** `-xKy` must refuse.
-8. The verb dispatch (`:157-196`): flat table, then `ip` (third token in `{"", "show", "list", "ls", "get"}`), `docker` (flat sub-list plus the nested `network|volume|context|node|container|image|system|compose|service|stack` tables), `systemctl` (sub-list). `docker inspect`, `docker config`, `systemctl show`, `systemctl cat` and `systemctl show-environment` are **deliberately excluded** — cite the bash comments at `:173-174` and `:187-188` so nobody adds them back.
+7. The three mutation-flag refusals: `journalctl` (`:137-139`), `dmesg` (`:139-142`), `ss` (`:143-146`). **`dmesg` and `ss` match a short cluster containing `C`/`c` and `K` respectively — a character class inside a cluster, not an equality test.** `-xKy` must refuse.
+8. The verb dispatch (`:157-196`): flat table, then `ip` (third token in `{"", "show", "list", "ls", "get"}`), `docker` (flat sub-list plus the nested `network|volume|context|node|container|image|system|compose|service|stack` tables), `systemctl` (sub-list). `docker inspect`, `docker config`, `systemctl show`, `systemctl cat` and `systemctl show-environment` are **deliberately excluded** — cite the bash comments at `:172-173` and `:187-188` so nobody adds them back.
 9. Fall-through returns `False` meaning *no opinion*.
 
 **Hazard — the empty third token.** `case $third in ''|show|...)` at `:170` allows an **absent** third token: `ip a` has none. In Python, a missing token must compare equal to `""`, not `None`, or `ip a` silently stops being allowed.
@@ -136,7 +136,7 @@ Per **D3**, write the tests first, derived from reading the bash directly (see D
 4. `-e` / `--extra-vars` values are **opaque**: never scanned for a read-only word, only checked for a leading `@`, which disqualifies the whole command even alongside `--check`. Four token shapes: `-e VAL`, `--extra-vars VAL`, `--extra-vars=VAL`, `-eVAL` (short-attached, distinguished by *not* starting `--`). The value token is skipped entirely from the read-only scan.
 5. Allow only if some remaining token equals — **whole-token, never substring** — one of `--check --list-tasks --list-tags --list-hosts --syntax-check`.
 
-**Tests:** port all 12 ALLOW and 14 DEFER cases from `tests/hooks/allow-ansible-readonly.test.js`. Add the two the existing suite lacks: `uv run` followed by neither `ansible-playbook` nor `--frozen`, and an unterminated quote.
+**Tests:** port all 14 ALLOW and 15 DEFER cases from `tests/hooks/allow-ansible-readonly.test.js`. Add the two the existing suite lacks: `uv run` followed by neither `ansible-playbook` nor `--frozen`, and an unterminated quote.
 
 ---
 
@@ -174,7 +174,7 @@ Port #477's 160 test lines alongside.
 
 **Files:** modify `claude_guard/judge.py`; modify `tests/test_judge.py`
 
-Delete the `not-compound` early return at `judge.py:252-254` so a single-segment command is judged exactly like a chain of one, and wire the four checks in: `remote.readonly_remote_safe`, `remote.trusted_host_safe`, `ansible.ansible_readonly_safe`, `git_reset.clean_reset_safe`, alongside the existing `scratch` and `curl`.
+Delete the `not-compound` early return at `judge.py:252-254` so a single-segment command is judged exactly like a chain of one. Wire the four checks in as **whole-command arms in `judge()`**, not per-segment beside `scratch` and `curl` in `judge_segment`: `allow-compound-bash.sh` delegates only `curl` and `rm` to standalone hooks inside its segment loop, while `readonly_remote_safe`, `trusted_host_safe`, `ansible_readonly_safe` and `clean_reset_safe` are themselves standalone `PermissionRequest` hooks that each parse the whole command, so the faithful port sits beside `judge()`'s own whole-command checks rather than folded into the per-segment arms. Label the two remote arms `remote-readonly-check` and `trusted-host-check` per D1's two-function ruling — not a shared `remote-check` label.
 
 **This is the slice's one policy change.** Tests must pin both directions: a bare `rm -f /tmp/x` now allowed where it previously returned `not-compound`, and a bare command matching no check still returning no opinion.
 
@@ -210,3 +210,15 @@ Add a `# DECIDED:` marker at the deleted guard's site naming D2 and pointing at 
 ## Verification
 
 The census is the instrument that proves the cutover was safe to make, and it keeps running afterwards: `guard-permission-request.sh` is now the decision, so a disagreement no longer has a bash hook to fall back on. Read `shadow-report` once a day for the first week — with the bash hooks gone it reports only the Python's own verdicts, which is a different question from agreement, and the README should say so.
+
+---
+
+## What shipped differently from this plan
+
+The full record is `.superpowers/sdd/2026-09-11-claude-guard-slice-3-cutover/progress.md`; this is the one-line-each index.
+
+- The replay gate moved from Task 9 step 2 to Task 8 step 0 — it needs the bash hooks the same task deletes, so it must run before deletion, not after.
+- Assignment-prefix stripping from #477 was not ported — it is a fail-open (G1), not a behaviour to reproduce.
+- The heredoc-write carve-out ships with three refusals #477 lacked: any earlier `cd`/`pushd`/`popd` in the chain (H1), any shell-special character in the write target (J1), and a delimiter with a non-boundary trailing character (K1).
+- The bash `WS` / `POSIX_SPACE` distinction (IFS space/tab vs. POSIX `[[:space:]]`, which also admits `\n \v \f \r`) did not exist in this plan; it was added in fix round 4 after the same Unicode-whitespace-vs-bash-word-boundary gap recurred at six more sites beyond round 3's two DEVNULL fixes.
+- Ten parser-parity gaps were found across five review rounds, all one class: the judge strips, unwraps, carves out, or tokenizes part of a command differently from bash, then judges what is left.

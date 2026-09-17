@@ -203,7 +203,7 @@ tooling: the new hook is registered beside the old ones, logs its verdict, and d
 |---|---|---|
 | 1 | package skeleton, `segment.py`, `explain`, `replay` | vector corpus green; replay of the 2026-09-06 corpus (677 commands) segments identically to `cmdparse.sh` on every one |
 | 2 | `rules.py`, `judge.py`, scratch and curl checks, PermissionRequest shim in shadow | `shadow-report` shows at least 200 records collected over at least 3 days, with zero `python_only`, zero `python_error`, and no `bash_only` row other than `not-compound`; an empty log satisfies none of this. A `not-compound` `bash_only` row is slice 3's own intended change showing up early -- the bash judges a single segment with a standalone hook where `judge()` ports its `:51-59` eligibility test, so the census scores the difference this slice deliberately keeps. Every other `bash_only` rule name is a real disagreement and blocks |
-| 3 | PermissionRequest cutover; the #477, #474 and ansible rules; the five bash hooks removed | replay allows at least the 84 of 677 the #477 prototype allowed; PRs #474 and #477 closed unmerged, #476's hook half dropped |
+| 3 | PermissionRequest cutover; the #477, #474 and ansible rules; the five bash hooks removed | **Done.** Exit criterion was replay allows at least the 84 of 677 the #477 prototype allowed; PRs #474 and #477 closed unmerged, #476's hook half dropped. Measured: the corpus was rebuilt at 1058 records, not 677 -- it is transcript-derived and not committed, so slice 1's count was already stale by slice 3. `replay --judge --compare-hooks` reads `ALLOW 84/1058`, exactly the floor: the gate was met, not cleared with margin. |
 | 4 | `deny.py` in shadow, then cutover; `block-dangerous-bash.sh` removed | its vector file green; replay --deny --compare-hook gives AGREE N/N on the 2026-09-06 corpus and on every vector; shadow-report --deny shows at least 200 records over at least 3 days with zero python_only, bash_only, mismatch, detail_mismatch, python_error and bash_error rows (an empty log satisfies none of this); bash_timeout rows are expected on large heredocs — the bash hook is quadratic there and exceeds the 5s re-run cap — and do not block, but each is a command the bash could not judge in time, and is the subject of a follow-up against the bash; then the cutover PR flips CLAUDE_GUARD_DENY_SHADOW to 0 and removes block-dangerous-bash.sh |
 | 5 | `homelab-guard`: four hooks and `uv-python` consolidated, private segmenter and tables deleted, `SSH_HOSTS` moved | server suite green; the deployed-import test green |
 | 6 | `cmdparse.sh`, the node hook suites, and the doc sections describing the old layering retired | `claude-shell-permissions.md`, the CLAUDE.md permission sections and the settings comments updated in the same PRs |
@@ -244,6 +244,8 @@ re-derive them.
 None that block slice 1. Two are deferred to the slice that meets them:
 
 - Whether `allow-readonly-remote`'s verb table and `allow-daniel-server`'s host trust collapse
-  into one `remote` check with two tiers, or stay two checks. Decided in slice 2.
+  into one `remote` check with two tiers, or stay two checks. Decided in slice 3, as D1: two
+  functions, `readonly_remote_safe` and `trusted_host_safe`, because the bash hooks have
+  different parsers and neither has the other's filter.
 - Whether the two rewriters, `tq-wrap-tests` and `homelab-guard`'s `uv` rewrite, need an
   ordering. Both run in parallel today and neither sees the other. Measured in slice 5.
