@@ -126,7 +126,9 @@ function pruneExpandedStacks(data) {
   if (data.stale || data.partialErrors.length > 0) return;
   const live = new Set(data.prs.map((pr) => pr.id));
   let dropped = false;
-  for (const id of [...expandedStacks]) {
+  // Deleting the element the iterator is currently on is well-defined for a Set, so this
+  // needs no copy of the keys to iterate over.
+  for (const id of expandedStacks) {
     if (live.has(id)) continue;
     expandedStacks.delete(id);
     dropped = true;
