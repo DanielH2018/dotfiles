@@ -130,9 +130,9 @@
          see the claude-guard DENY shadow comment below). `bin/shadow-report` reads the
          accumulated ~/.claude/logs/cmdparse-shadow.jsonl and is the intended way to consume
          either mode's output — see its header for what it can and cannot say from the log's
-         fields; that log stops growing on THIS HOST once this PR ships, since nothing here
-         runs the hook any more, but the same hook still runs (and could still write it) in
-         the sandbox.
+         fields; on THIS HOST nothing registers the hook once this PR ships and every
+         session has restarted, so the log stops growing here, while the same hook still runs
+         (and could still write it) in the sandbox.
 
          CMDPARSE=off remains the harder kill switch: it disables the shared parser
          everywhere, not just the census. */}}

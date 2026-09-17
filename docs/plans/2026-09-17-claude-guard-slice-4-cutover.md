@@ -81,10 +81,13 @@ construction and by census.
 #484-era wording), `git push --force origin main` (expect the `--force-with-lease` upgrade),
 and `ls -la` (expect no output). Then `chezmoi unmanaged .claude/hooks` must list nothing
 from either slice. A session already running when the apply lands keeps
-`CLAUDE_GUARD_DENY_SHADOW=1` from its own env block and the deleted hook stays registered in
-its loaded settings — it loses the deny check until it restarts, which is fail-**open** on
-the deny side, the opposite of slice 3's fail-closed. Say so in the PR body; restart every
-live session after the apply.
+`CLAUDE_GUARD_DENY_SHADOW=1` from its own env block and `block-dangerous-bash.sh` still
+registered in its loaded settings. The file still exists (kept for the sandbox) and reads no
+env var, so that session keeps the bash deny until it restarts — fail-closed, like slice 3,
+for a different reason: there the allow side falling away meant a prompt, here the deny side
+is simply not removed. (An earlier draft of this section said fail-open; that was true of the
+original plan to delete the file and false of what shipped.) Restart live sessions anyway, so
+the host converges on one decider before slice 6 retires the bash.
 
 ## Not in this slice
 

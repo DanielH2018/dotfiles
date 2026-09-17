@@ -20,8 +20,7 @@
 # motivated writing a shared library in the first place: each of the three hooks had its own
 # idea of where one command ends and the next begins, and the differences were where the
 # bypasses lived. Two verified in that session, both from the same root cause — a newline was
-# not a
-# separator to any of them:
+# not a separator to any of them:
 #
 #   printf 'echo x\nterraform destroy'   -> no decision   (`echo x; terraform destroy` denies)
 #   printf 'echo x\nssh homelab reboot'  -> no decision   (`echo x && ssh …` denies)

@@ -50,6 +50,17 @@ test('every Bash() permission rule has balanced parentheses', () => {
     'these rules are silently skipped at startup and enforce nothing');
 });
 
+test('block-dangerous-bash.sh stays registered as the sandbox PreToolUse deny hook', () => {
+  // Slice 4 (docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) unregistered this hook
+  // on the HOST and kept the file only because the sandbox bind-mounts and registers the
+  // deployed copy as its own deny check. That is the whole reason the file still exists, and
+  // nothing else in the tree asserted it -- a later edit dropping this entry would leave the
+  // sandbox with no deny hook and every test green.
+  const cmds = JSON.stringify(parsed.hooks?.PreToolUse ?? []);
+  assert.ok(cmds.includes('block-dangerous-bash.sh'),
+    'the sandbox PreToolUse block no longer registers block-dangerous-bash.sh');
+});
+
 test('the process-substitution denies survive parsing', () => {
   // Belt and braces with block-dangerous-bash.sh, which this same file wires as
   // a PreToolUse hook and which is the control that actually stops downloaded
