@@ -207,6 +207,27 @@ def parse(command: str) -> Parsed:
                     delim = s[j:k]
                     quoted = True
                     j = k + 1
+                    # K1 (task-8-fix-4-brief.md): a quoted delimiter's word does not end
+                    # at the closing quote — bash keeps reading the SAME word until it
+                    # hits real IFS whitespace or a metacharacter, exactly like the
+                    # unquoted branch below. Without this loop, `<<'EOF'` immediately
+                    # followed by a non-boundary byte (`\r`, U+3000, or any other char
+                    # `_DELIM_END` doesn't name) computed `delim = "EOF"` while bash's
+                    # real delimiter was `EOF<that char>` — no line in the input ever
+                    # equals the SHORTER python delim, so the heredoc body absorption
+                    # below ran to end-of-input, swallowing every later segment
+                    # (including a hidden command) into one unterminated heredoc body.
+                    # Measured: `cat > note.txt <<'EOF'\r\nhi\nEOF\r\nmkdir pwned\n` —
+                    # bash closes the heredoc at the literal `EOF\r` line and runs
+                    # `mkdir pwned` as its own command; the unabsorbed python swallowed
+                    # it whole. judge.py's `_HEREDOC_CAT_WRITE` tail tightening (K3)
+                    # closes the same case at the regex layer; this closes it at the
+                    # parser layer so the segmenter's own delimiter matches bash's
+                    # independently of that regex — see the DECIDED marker at
+                    # `unjudgeable:heredoc` in judge.py for why both are shipped.
+                    while j < n and s[j] not in _DELIM_END:
+                        delim += s[j]
+                        j += 1
                 else:
                     while j < n and s[j] not in _DELIM_END:
                         delim += s[j]

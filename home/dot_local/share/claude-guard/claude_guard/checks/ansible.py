@@ -20,16 +20,42 @@ import re
 
 from claude_guard.checks.scratch import tokenize
 
+# K3 (task-8-fix-4-brief.md): the SAME constant as `judge.WS`, restated here rather than
+# imported — `judge.py` imports THIS module (`ansible_readonly_safe`) at module level, so
+# an import the other way would be circular. Kept in sync by hand; the value (bash's IFS
+# word boundary, space and tab — never Python's wider `\s`) is what matters and is
+# exercised identically by `tests/test_ansible.py`, so a drift between the two literals
+# would show up there before it could hide the way the J1/J2 marker in judge.py warns a
+# genuinely independent regex pair can.
+_WS = " \t"
+
 # :57-59. A literal prefix, matched on the RAW string before tokenizing. If it doesn't match
 # verbatim, the string is left untouched and the tokenizer below refuses whatever remains —
 # this is NOT a recognised leading token, so `stdio-blocking ;` (a space before the
 # semicolon) is a different string that never matches and dies on the bare `;` instead.
-_LEADING = re.compile(r"^stdio-blocking;\s*(.*)$", re.DOTALL)
+# K3: `[{_WS}]*`, not `\s*` — the run of IFS whitespace bash allows between the literal
+# `;` and the next word. Whether this one actually MATTERS is a closer call than the rest
+# of the sweep: `(.*)$` runs with `re.DOTALL`, so it captures the ENTIRE remainder of the
+# string regardless of how many leading whitespace bytes `[{_WS}]*` consumes — nothing
+# past this prefix is ever discarded the way a `_HEREDOC_CAT_WRITE`-style strip discards
+# what it does not capture. Tightened anyway, for the same reason `_first_word`'s
+# docstring gives for going the other way: leaving one instance of the old, wider class
+# beside every other instance in this file that now reads narrower invites a future sweep
+# to "fix" it without checking whether it was already deliberate.
+_LEADING = re.compile(rf"^stdio-blocking;[{_WS}]*(.*)$", re.DOTALL)
 
 # :60-62. Anchored at the end of the string, immediately after `2>&1`: `tail -n 50`,
 # `tail -n50` and a bare `tail -3` are the only three shapes accepted.
+# K3: every `\s` here modeled a real bash word boundary in the `... 2>&1 | tail -n <N>`
+# idiom, so all of them read off `_WS` now, `\S` included (`[^{_WS}]`, the complement).
+# This is the one K3 replacement gate-tested in isolation rather than folded into the
+# rest of the sweep: it sits on the path of a named production shape
+# (`git merge --ff-only <ref> 2>&1 | tail -3`, `tests/test_judge.py`'s own ff-only case)
+# and of `ansible-playbook ... --check 2>&1 | tail -n 50`-style rows in the replay
+# corpus — narrowing it wrongly would cost a live row, not just a synthetic one.
+# Measured floor-neutral (`ALLOW 84/1058`, unchanged) after this exact replacement.
 _TRAILING = re.compile(
-    r"^(.*\S)\s*2>&1\s*\|\s*tail\s+-(?:n\s*)?[0-9]+\s*$",
+    rf"^(.*[^{_WS}])[{_WS}]*2>&1[{_WS}]*\|[{_WS}]*tail[{_WS}]+-(?:n[{_WS}]*)?[0-9]+[{_WS}]*$",
     re.DOTALL,
 )
 

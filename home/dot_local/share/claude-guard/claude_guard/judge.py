@@ -44,29 +44,52 @@ WRAPPERS = frozenset({"timeout", "env", "nice", "nohup", "setsid", "stdbuf", "xa
 # gate the heredoc-write carve-out below — never resolved, see the DECIDED marker there.
 _CD_LIKE = frozenset({"cd", "pushd", "popd"})
 
+# K3 (task-8-fix-4-brief.md), the class fix. Bash's own word boundary — after a redirect
+# target, a flag, a heredoc delimiter, an fd-dup operand, anywhere IFS field-splits two
+# tokens apart — is space and tab. A literal newline is handled by the segmenter before
+# any regex below ever runs: a `Segment.text` never carries one. Python's `\s` is wider:
+# it also matches `\r`, `\f`, `\v`, and a run of Unicode whitespace, none of which is a
+# bash word boundary in this position. `WS` is the one place that gets encoded, so every
+# regex below that means "bash word boundary" reads off it instead of typing its own
+# `\s`/`[ \t]`/`\S` — the alternative is N independently-typed character classes that can
+# drift apart, which is the exact hazard the J1/J2 marker in `judge_segment` below names
+# for a different pair of regexes. Round 3 (J5) found the drift once, in the two DEVNULL
+# lookaheads' tails; round 4 (K1/K2) found it live twice more — a heredoc delimiter
+# (segment.py's own copy of this fix sits beside the quoted-delimiter branch) and an
+# fd-dup redirect target. `_first_word` below is the one deliberate exception: it ports a
+# POSIX `[[:space:]]` bash construct, not IFS splitting, so it keeps `\s`, not `WS`.
+WS = " \t"
+
 # H4 (task-8-fix-2-brief.md): both DEVNULL patterns were unanchored at the tail, so a
 # target that only STARTS WITH /dev/null (/dev/nullx, /dev/nullish) matched and was
-# stripped as if it were the real sink. `(?=\s|$)` requires the match end at a word
-# boundary — the next char is whitespace or nothing — without consuming it, so a
-# trailing character defeats the match instead of being silently absorbed into it.
+# stripped as if it were the real sink. The tail lookahead (built from `WS`) requires
+# the match end at a word boundary — the next char is whitespace or nothing — without
+# consuming it, so a trailing character defeats the match instead of being silently
+# absorbed into it.
 # Segments are already split on `;`/`&&`/`|`/newline before either pattern runs, so
 # nothing legitimate ever follows a real `/dev/null` target except whitespace or the end
 # of the segment.
 #
-# J5 (task-8-fix-3-brief.md), confidence 30, no live defect: `(?=\s|$)` used Python's
-# `\s`, which admits `\r`/`\f`/`\v` where bash's real word boundary after a redirect
-# target is space or tab (segments are already newline-split before either pattern
-# runs). `ls > /dev/null\r` measured ALLOW: the lookahead treated the trailing `\r` as
-# a boundary and stripped "> /dev/null" as the harmless sink, while bash's actual
-# filename is `/dev/nullCR` — a different, non-harmless target in principle. Not
-# exploitable as measured: the path always sits directly under root-owned `/dev/`, so
-# the sandbox write gets `Permission denied` as ubuntu regardless. `(?=[ \t]|$)` is
-# exact. `_first_word` (below) uses the same-LOOKING `\s` for a different purpose — it
-# ports `${s%%[[:space:]]*}`, and POSIX `[[:space:]]` already includes \r/\f/\v, so
-# that one is correctly matching its own bash source and is not the same looseness.
-_DEVNULL_REDIRECT = re.compile(r"[0-9]*>>?\s*/dev/null(?=[ \t]|$)")
-_FD_DUP = re.compile(r"[0-9]*>&[0-9-]")
-_OPTION_WORD = re.compile(r"\s+-\S+")
+# J5 (task-8-fix-3-brief.md): the tail lookahead used to be Python's broad `\s`, which
+# admits `\r`/`\f`/`\v` where bash's real word boundary after a redirect target is space
+# or tab. `ls > /dev/null\r` measured ALLOW: the lookahead treated the trailing `\r` as a
+# boundary and stripped "> /dev/null" as the harmless sink, while bash's actual filename
+# is `/dev/nullCR` — a different, non-harmless target in principle. Not exploitable as
+# measured: the path always sits directly under root-owned `/dev/`, so the sandbox write
+# gets `Permission denied` as ubuntu regardless. Both patterns now read off `WS`
+# throughout (K3), not only at the tail this round tightened.
+_DEVNULL_REDIRECT = re.compile(rf"[0-9]*>>?[{WS}]*/dev/null(?=[{WS}]|$)")
+# K2 (task-8-fix-4-brief.md): unanchored, so the fd-dup operand consumed only the digit
+# after `>&`, leaving anything glued onto it (no separating whitespace) in the residue
+# handed back to the caller. Bash reads `>&` followed by the WHOLE word: `>&1/../../x`
+# is not purely digits, so bash treats it as `> 1/../../x 2>&1` — a real write target one
+# level above cwd. The un-anchored regex stripped only `>&1`, leaving `/../../x` with no
+# `>` in it, so `"> " in redir` never fired and the segment fell through to the plain
+# allow list. Measured ALLOW, `ls >&1/../../canary.txt` from a cwd holding a directory
+# named `1`; `mkdir 1 && ls >&1/../../canary.txt` supplies that directory in the same
+# command. The `WS`-built lookahead closes it the same way H4 closed the DEVNULL case.
+_FD_DUP = re.compile(rf"[0-9]*>&[0-9-](?=[{WS}]|$)")
+_OPTION_WORD = re.compile(rf"[{WS}]+-[^{WS}]+")
 # H4-adjacent (found while fixing H4, not named in the brief): unanchored the identical
 # way, and live — `tee:*` IS allow-listed in settings.permissions.json:136. `tee
 # /dev/nullx` stripped to `tee` (basename match) and fell through to the plain allow-list
@@ -74,13 +97,16 @@ _OPTION_WORD = re.compile(r"\s+-\S+")
 # entry point before this fix: `tee /dev/nullx` ALLOW, `tee /dev/null` ALLOW (unaffected,
 # confirms the anchor doesn't touch the real case).
 #
-# J5's `[ \t]` tightening is applied here too for parity, but — checked by mutation while
+# J5's tail tightening is applied here too for parity, but — checked by mutation while
 # writing the J5 fix above, see tests/test_judge.py's note beside the redirect-side
 # red-proof — it has no independently observable effect on THIS pattern: the lookahead
 # never consumes what follows the match, so any trailing character (`\r` included)
 # survives into `judge_segment`'s `teed`, and the `teed != teecmd` comparison downstream
-# refuses on that leftover regardless of which class the lookahead accepts.
-_DEVNULL_WORD = re.compile(r"\s+/dev/null(?=[ \t]|$)")
+# refuses on that leftover regardless of which class the lookahead accepts. K3
+# (task-8-fix-4-brief.md) tightens the LEADING `\s+` too, for the same reason it tightens
+# every other boundary here — it only ever narrows what gets stripped, so it can only
+# make `teed != teecmd` MORE likely to fire, never less.
+_DEVNULL_WORD = re.compile(rf"[{WS}]+/dev/null(?=[{WS}]|$)")
 
 # PR #477 (:150-158). A `cat > path`/`cat >> path` write whose heredoc delimiter is QUOTED
 # has no expansion possible: a quoted delimiter suppresses parameter and command
@@ -105,9 +131,24 @@ _DEVNULL_WORD = re.compile(r"\s+/dev/null(?=[ \t]|$)")
 # earlier segment can change what `path` resolves to (H1: a `cd`/`pushd`/`popd` moves the
 # cwd the confinement arms measure against) is answered at the carve-out's CALL site in
 # `judge_segment`/`judge`, by the `cwd_changed` gate, not by this regex.
+#
+# K1 (task-8-fix-4-brief.md): every boundary here now reads off `WS`, in both directions.
+# The tail (`[{WS}]*$`) is the live half: with broad `\s`, `cat > note.txt <<'EOF'\r`
+# (the segment text left behind once a `\r`-terminated delimiter line is in play) still
+# matched — the `\r` read as a trailing boundary — so `heredoc_write_target()` returned
+# `"note.txt"` for a segment whose REAL bash delimiter is `EOF\r`, not `EOF`, bypassing
+# the `unjudgeable:heredoc` refusal below entirely. Tightening the tail alone closes it
+# (both payloads then fail this match and fall through to `unjudgeable:heredoc`); the
+# `path` capture (`[^{WS}"']+` in place of `[^\s"']+`) is the other half of the same
+# widening — it now admits `\r`/`\f`/`\v`/Unicode whitespace INTO the captured path,
+# matching bash's real word instead of truncating it at the first such character. That
+# capture then goes to `scratch.tokenize()` (the `heredoc-write:special-char` gate a
+# few hundred lines below), whose own `_SPECIAL` set already refuses a bare `\r`/`\n`
+# outright — so a path that now correctly captures a literal CR reads as a refusal there
+# instead of silently vetting a shorter, wrong path the way J1/J2 did for `>`/`$`.
 _HEREDOC_CAT_WRITE = re.compile(
-    r"""^cat\s+>{1,2}\s*(?P<path>[^\s"']+)\s+<<-?\s*"""
-    r"""(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")\s*$"""
+    rf"""^cat[{WS}]+>{{1,2}}[{WS}]*(?P<path>[^{WS}"']+)[{WS}]+<<-?[{WS}]*"""
+    rf"""(?:'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")[{WS}]*$"""
 )
 
 # PR #477 (:392-405) read a leading `VAR=value` assignment word with this shape and
@@ -117,8 +158,11 @@ _HEREDOC_CAT_WRITE = re.compile(
 _ASSIGNMENT_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # PR #477 (:415-421). `set -e`, `set -euo pipefail`, `set -o pipefail`: options to the
-# CURRENT shell, not a command of their own.
-_SET_OPTIONS = re.compile(r"^set\s+-[A-Za-z]")
+# CURRENT shell, not a command of their own. K3 (task-8-fix-4-brief.md): `WS`, not `\s` —
+# narrowing this can only make MORE segments miss the "is this a bare `set -...`" test,
+# which sends them to be judged as an ordinary command word instead of skipped; `set` is
+# not itself allow-listed, so the worst case is an extra refusal, never a new approval.
+_SET_OPTIONS = re.compile(rf"^set[{WS}]+-[A-Za-z]")
 
 
 def heredoc_write_target(text: str) -> str | None:
@@ -233,7 +277,27 @@ def _trim(s: str) -> str:
 
 
 def _first_word(s: str) -> str:
-    """`${s%%[[:space:]]*}`: everything before the first whitespace character."""
+    """`${s%%[[:space:]]*}`: everything before the first whitespace character.
+
+    K3 (task-8-fix-4-brief.md) swept every other `\\s` on the judging path to `WS`
+    (space/tab, bash's IFS word boundary) and considered this one too. Decided KEEP: this
+    is not IFS field-splitting, it is a literal port of a bash `%%` pattern match against
+    the POSIX `[[:space:]]` GLOB CLASS — a different bash construct with a different,
+    WIDER definition (POSIX `[[:space:]]` already includes `\\r`/`\\f`/`\\v`/`\\n`, not
+    only space/tab). Swapping in `WS` here would make the port narrower than the bash
+    line it ports, not just differently-scoped — the opposite of every other change in
+    this sweep, all of which narrow an over-wide `\\s` toward bash's real (narrower) IFS
+    boundary. Nothing downstream of `_first_word` depends on catching every POSIX-space
+    character either: its two callers (`_changes_cwd`'s cd/pushd/popd detection and the
+    `tee` check's command-word extraction) only need the command word up to the FIRST
+    boundary of any kind, and stopping early on a narrower class would just leave trailing
+    whitespace-class bytes glued onto the word instead of splitting them off — a fail
+    OPEN in the same shape `_HEREDOC_CAT_WRITE`'s old `[^\\s"']` capture was (K1): the
+    word compared against `_CD_LIKE`/`"tee"` would come out wrong-but-different rather
+    than correctly split. So this one stays wide on purpose. Next sweep: this docstring
+    is the second write-up of the same conclusion (first: the J5-era comment beside `WS`
+    above) — a third independent review reaching it again is confirmation, not news.
+    """
     return re.split(r"\s", s, maxsplit=1)[0]
 
 
@@ -547,6 +611,23 @@ def judge_segment(
     # :321-341. The one ask-listed segment named as safe here: `git merge --ff-only <ref>`
     # with exactly one ref that does not look like an option, read off the
     # redirect-stripped form because nearly every real call carries `2>&1`.
+    #
+    # K3 (task-8-fix-4-brief.md): considered for the `WS` sweep and decided KEEP `\s`
+    # here — this is a PRESENCE check gating a REFUSAL ("approve only if NO whitespace
+    # character is found anywhere in ffref"), not a boundary a match gets stripped
+    # across. Every regex `WS` replaces elsewhere on this path is the opposite shape: a
+    # boundary that gets CONSUMED so the matched span is treated as harmless and
+    # approved — broadening `\s` there widens what gets silently stripped, which is the
+    # K1/K2 fail-open. Here broadening `\s` only WIDENS the set of characters that
+    # trigger a refusal, which is strictly the safe direction; narrowing it to `WS` would
+    # do the opposite — a ref carrying a literal `\r`/`\f`/`\v`/Unicode space no longer
+    # trips `re.search`, so it would newly qualify as "no whitespace" and get approved.
+    # That ref cannot smuggle a second command the way K1's heredoc delimiter did (this
+    # segment is already fully isolated by `segment.py` before `judge_segment` ever sees
+    # it, and `git`'s own ref-name validation forbids the ASCII control characters this
+    # would admit), so the failure mode if it slipped through would be git refusing an
+    # unresolvable ref name, not a hidden command — but there is no correctness reason to
+    # take even that on, so this one keeps the wider, more-conservative `\s`.
     if part.startswith("git merge --ff-only "):
         ffref = _trim(redir.removeprefix("git merge --ff-only "))
         if ffref and not ffref.startswith("-") and not re.search(r"\s", ffref):
@@ -697,6 +778,23 @@ def judge(command: str, rules: Rules, roots: tuple[str, ...], cwd: str) -> Decis
         return Decision(False, "unjudgeable:substitution", ())
     last = len(parsed.segments) - 1
     for i, seg in enumerate(parsed.segments):
+        # DECIDED (K1, task-8-fix-4-brief.md): this refusal's soundness rests on
+        # `parse()`'s heredoc delimiter and `heredoc_write_target()`'s regex AGREEING on
+        # where a quoted delimiter's word ends — if the segmenter computes a SHORTER
+        # delimiter than the one `_HEREDOC_CAT_WRITE` (and bash) would read off the same
+        # text, the segmenter absorbs everything up to end-of-input (including a later,
+        # unjudged segment) into `seg.heredocs` and never surfaces it as a segment of its
+        # own, while the regex below still matches the now-truncated `seg.text` and
+        # returns a `path`, so this `is None` check never fires and the hidden segment
+        # rides through unjudged. Measured: `cat > note.txt <<'EOF'\r\nhi\nEOF\r\nmkdir
+        # pwned\n` — bash closes the heredoc at the literal `EOF\r` line; before this
+        # round, `parse()` computed delim `"EOF"` (no line matches it, so it swallowed
+        # `mkdir pwned` into the body) while `_HEREDOC_CAT_WRITE`'s `\s*$` matched the
+        # trailing `\r` and returned `path="note.txt"` anyway. Fixed on BOTH sides this
+        # round precisely so this check does not depend on a single regex being strict
+        # enough — see the K1 comment beside `_HEREDOC_CAT_WRITE` and the one beside the
+        # quoted-delimiter branch in `segment.py` for the two independent fixes this
+        # relies on now, per the two-copies-drift hazard the J1/J2 marker above names.
         if seg.heredocs and (
             not all(seg.heredoc_quoted) or heredoc_write_target(_trim(seg.text)) is None
         ):

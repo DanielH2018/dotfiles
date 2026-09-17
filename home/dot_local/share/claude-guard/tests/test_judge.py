@@ -604,6 +604,67 @@ def test_j1_j2_control_a_plain_relative_heredoc_write_still_allows_on_both_arms(
     assert judge("cat > /tmp/note.txt <<'EOF'\nhi\nEOF\n", main, ROOTS, CWD).allow  # scratch arm
 
 
+# --- K1: a heredoc delimiter with a non-whitespace boundary character smuggles an
+# unjudged command through (task-8-fix-4-brief.md) ------------------------------------
+#
+# `_HEREDOC_CAT_WRITE`'s tail (`\s*$`) and `segment.py`'s quoted-delimiter branch (no
+# absorption loop past the closing quote) each independently treated a byte bash does
+# NOT consider IFS whitespace — `\r`, or any Unicode whitespace like U+3000 — as if it
+# ended the delimiter word. Bash disagrees: that byte is the LAST character of the real
+# delimiter word, not a boundary after it, so bash closes the heredoc at the literal
+# `EOF\r`/`EOF　` line while the unfixed python swallowed everything past the
+# shorter, wrong delimiter — including a hidden command after the real terminator — into
+# one heredoc body, and the unfixed regex still matched the resulting (truncated)
+# segment text as a clean write, bypassing `unjudgeable:heredoc` entirely. Measured
+# ALLOW, end to end, before this round.
+
+
+def test_k1_a_cr_terminated_delimiter_no_longer_swallows_the_hidden_command(main, tmp_path):
+    cwd = str(tmp_path)
+    cmd = "cat > note.txt <<'EOF'\r\nhi\nEOF\r\nmkdir hidden-command-ran\n"
+    d = judge(cmd, main, (), cwd)
+    assert not d.allow
+    assert d.rule == "unjudgeable:heredoc"
+
+
+def test_k1_a_unicode_whitespace_terminated_delimiter_is_the_same_defect(main, tmp_path):
+    # No CR needed: any byte outside `_DELIM_END`/`WS` reproduces it, including a
+    # non-ASCII one.
+    cwd = str(tmp_path)
+    cmd = "cat > note.txt <<'EOF'　\nhi\nEOF　\nmkdir hidden-command-ran\n"
+    d = judge(cmd, main, (), cwd)
+    assert not d.allow
+    assert d.rule == "unjudgeable:heredoc"
+
+
+def test_k1_control_the_plain_terminated_form_still_allows(main, tmp_path):
+    # The gate must not cost the ordinary case: a delimiter that really does end at a
+    # newline still clears the carve-out exactly as before.
+    cwd = str(tmp_path)
+    assert judge("cat > note.txt <<'EOF'\nhi\nEOF\n", main, (), cwd).allow
+
+
+# --- K2: an unanchored _FD_DUP lets a combined-stream redirect target escape cwd
+# (task-8-fix-4-brief.md) --------------------------------------------------------------
+#
+# `_FD_DUP` matched only `>&<digit>`, not the whole word bash reads after `>&`. Bash
+# tokenizes `>&1/../../x` as one word; since it is not purely digits, bash treats it as
+# `> 1/../../x 2>&1` — a real write target, not a harmless fd dup. The unanchored regex
+# stripped only the leading `>&1`, leaving `/../../x` with no `>` in the residue, so the
+# redirect refusal never fired and the segment fell through to the plain allow list.
+
+
+def test_k2_a_path_glued_onto_a_combined_stream_redirect_refuses(main):
+    d = judge("ls >&1/../../canary.txt", main, ROOTS, CWD)
+    assert not d.allow
+    assert d.rule == "segment:0:redirect"
+
+
+def test_k2_control_plain_fd_dups_still_allow(main):
+    assert allowed("ls 2>&1", main)
+    assert allowed("ls >&2", main)
+
+
 # --- H1: a cd/pushd/popd relocates a confined heredoc write (task-8-fix-2-brief.md) --------------
 
 
