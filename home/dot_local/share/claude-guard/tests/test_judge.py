@@ -13,7 +13,7 @@ import pytest
 from test_git_reset import _make_repo
 
 from claude_guard import judge as judge_mod
-from claude_guard.judge import Decision, judge, unwrap_wrapper
+from claude_guard.judge import Decision, _under_session_cwd, judge, unwrap_wrapper
 from claude_guard.rules import Rules, load_rules
 from claude_guard.tables import scratch_roots
 
@@ -526,6 +526,25 @@ def test_a_cat_path_heredoc_write_through_a_symlinked_cwd_escape_is_refused(main
     (cwd / "escape").symlink_to(outside)
     assert not judge("cat > escape/pwned <<'EOF'\nhi\nEOF\n", main, (), str(cwd)).allow
     assert not judge(f"cat > {cwd}/escape/.bashrc <<'EOF'\nhi\nEOF\n", main, (), str(cwd)).allow
+
+
+def test_a_heredoc_write_is_confined_when_the_session_cwd_is_itself_a_symlink(esc, tmp_path):
+    # 8f91344 (bash, 2026-09-16): the harness's `.cwd` on macOS is a `/var/...` path whose
+    # physical form is `/private/var/...`. The target resolves under the physical form and
+    # so never prefix-matched the raw cwd; every legitimate write on that platform refused.
+    # Reproduced here with a symlinked cwd on Linux, which fails the same way.
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real_dir)
+    cmd = "cat > note.txt <<'EOF'\nhi\nEOF\n"
+    assert judge(cmd, esc, (), str(link)).allow
+    # Still refused: a target that resolves OUTSIDE both forms of the cwd.
+    (real_dir / "out").symlink_to(tmp_path)
+    assert not judge("cat > out/x <<'EOF'\nhi\nEOF\n", esc, (), str(link)).allow
+    # And the cwd itself is never a write target (`/?*` in the bash).
+    assert not _under_session_cwd(str(link), str(link))
+
 
 
 def test_a_heredoc_body_containing_rm_rf_root_on_its_own_line_is_not_split_into_segments(main):

@@ -205,8 +205,9 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     same as bash's `realpath -m --`) and compares it against the RAW `cwd` string,
     unresolved. That asymmetry is the bash's own (:183-191: `real=$(realpath -m -- "$p")`
     compared against the literal `"$CWD"`/`"$CWD"/*`), and it is deliberate, not an
-    oversight to "fix" by resolving both sides: resolving `cwd` too would allow strictly
-    MORE than the bash whenever the session cwd itself has a symlink component. Lexical
+    oversight to "fix" by resolving both sides against the bash of the time. (The bash
+    since moved — 8f91344 compares against the cwd raw AND resolved, see the body — and
+    the port follows it for the cwd side while keeping the target resolved.) Lexical
     comparison on the target alone is a fail-open — with cwd `/tmp/proj` holding a symlink
     `escape -> /home/ubuntu`, the lexical form of `escape/.bashrc` starts with
     `/tmp/proj/escape`, so it read as confined, while bash resolves it to
@@ -233,7 +234,17 @@ def _under_session_cwd(path: str, cwd: str) -> bool:
     candidate = path if path.startswith("/") else f"{cwd.rstrip('/')}/{path}"
     real = os.path.realpath(candidate)
     base = cwd.rstrip("/") or "/"
-    return real == base or real.startswith(base + "/")
+    # Ports 8f91344 (2026-09-16): compare against the cwd both as given AND resolved, with
+    # `/?*` so the cwd itself is never a write target. The harness hands `.cwd` through as
+    # written, which on macOS is a `/var/...` path whose physical form is `/private/var/...`
+    # — so a resolved target can never prefix-match the raw cwd there, and this arm refused
+    # every legitimate write on that platform. Resolving the target (F2 above) stays: it is
+    # what refuses a symlink escape, and the new bash keeps the target lexical only because
+    # it cannot resolve a path that does not exist yet. A target that resolves under EITHER
+    # form of the cwd is under the cwd; one that resolves elsewhere is not, whichever form
+    # is used.
+    phys = os.path.realpath(base)
+    return real.startswith(base + "/") or real.startswith(phys + "/")
 
 
 def _is_set_options(part: str) -> bool:
