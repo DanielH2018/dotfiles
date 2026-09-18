@@ -13,7 +13,7 @@ import pytest
 from test_git_reset import _make_repo
 
 from claude_guard import judge as judge_mod
-from claude_guard.judge import Decision, _under_session_cwd, judge, unwrap_wrapper
+from claude_guard.judge import Decision, _first_word, _under_session_cwd, judge, unwrap_wrapper
 from claude_guard.rules import Rules, load_rules
 from claude_guard.tables import scratch_roots
 
@@ -481,6 +481,36 @@ def test_a_control_char_glued_to_a_tee_option_does_not_hide_the_target(esc):
     assert judge("tee -a\rfile", esc, ROOTS, CWD).rule == "segment:0:tee"
     assert judge("tee -a\x0bfile", esc, ROOTS, CWD).rule == "segment:0:tee"
     assert not allowed("tee -a file", esc)
+
+
+def test_a_unicode_space_glued_to_a_tee_option_is_flagged(esc):
+    # #512: the bash this ports ran under en_US.UTF-8, where `[[:space:]]` admits U+3000
+    # and the other glibc Unicode spaces, so `-a　file` is two words to bash and `file`
+    # must survive the option strip here too. Every member of the measured set, not just
+    # the ideographic space, so a later edit that drops one from POSIX_SPACE fails here.
+    for cp in (
+        0x1680,
+        *range(0x2000, 0x2007),
+        *range(0x2008, 0x200B),
+        0x2028,
+        0x2029,
+        0x205F,
+        0x3000,
+    ):
+        assert judge(f"tee -a{chr(cp)}file", esc, ROOTS, CWD).rule == "segment:0:tee", hex(cp)
+    # `_first_word` ports the same construct and reads the same constant.
+    assert _first_word("tee　-a") == "tee"
+
+
+def test_a_non_breaking_or_zero_width_space_is_clean_as_a_word_character(esc):
+    # The other half of the #512 measurement: bash's class REFUSES U+00A0, U+2007, U+202F,
+    # U+0085, U+200B and U+FEFF, so these stay glued into the option word exactly as the
+    # bash did — Python's `str.isspace()` would split three of them, which is why the
+    # constant is a literal and not that method. GNU tee's getopt rejects the glued token
+    # (exit 1), so the allow is inert; pinned so the set cannot drift to `isspace()`.
+    for cp in (0x0085, 0x00A0, 0x2007, 0x202F, 0x200B, 0xFEFF):
+        assert allowed(f"tee -a{chr(cp)}file", esc), hex(cp)
+        assert _first_word(f"tee{chr(cp)}-a") == f"tee{chr(cp)}-a", hex(cp)
 
 
 # --- heredoc write parity (PR #477) -------------------------------------------------------------

@@ -13,13 +13,24 @@ import re
 WS = " \t"
 
 # The OTHER whitespace class bash uses, and it is wider: POSIX `[[:space:]]` is space, tab,
-# newline, vertical tab, form feed and carriage return. A bash line written as a `%%`
-# pattern or a sed `[[:space:]]` class means THIS set, not IFS. The two are not
-# interchangeable in either direction — `_OPTION_WORD` ported sed's `[^[:space:]]+` as
-# `[^{WS}]+` in fix round 4 and turned a narrow complement into a broad one, so
+# newline, vertical tab, form feed and carriage return — in the C locale. A bash line
+# written as a `%%` pattern or a sed `[[:space:]]` class means THIS set, not IFS. The two
+# are not interchangeable in either direction — `_OPTION_WORD` ported sed's `[^[:space:]]+`
+# as `[^{WS}]+` in fix round 4 and turned a narrow complement into a broad one, so
 # `tee -a\rfile` stripped to bare `tee` and the write refusal never fired. A regex that
 # ports a `[[:space:]]` construct reads off this constant; one that ports IFS reads `WS`.
-POSIX_SPACE = " \t\n\v\f\r"
+#
+# DECIDED (#512): the bash this ports ran under `en_US.UTF-8`, where glibc's `[[:space:]]`
+# also admits the Unicode spaces below. Measured on daniel-box 2026-09-18 with
+# `LC_ALL=en_US.UTF-8 bash -c '[[ $s =~ ^[[:space:]]$ ]]'` over 22 candidates: yes for
+# U+1680, U+2000–U+2006, U+2008–U+200A, U+2028, U+2029, U+205F, U+3000; no for U+0085,
+# U+00A0, U+180E, U+2007, U+200B, U+202F, U+FEFF (the non-breaking and zero-width ones).
+# This is NOT Python's `str.isspace()`, which admits all of U+0085/00A0/2007/202F as well —
+# the literal is the port, the method is not. Widening the class narrows what the judge
+# allows (`tee -a　file` now keeps `file` past the option strip and refuses), which the
+# one-sided replay gate cannot see; a 28-day otelq census found the only commands carrying
+# one of these characters were claude-guard's own probes, so nothing organic moves.
+POSIX_SPACE = " \t\n\v\f\r              　"
 
 # allow-safe-rm.sh:44-49. An operand must sit strictly BELOW one of these; the root itself
 # is refused by the check. `~` is the caller's HOME, expanded by scratch_roots().
