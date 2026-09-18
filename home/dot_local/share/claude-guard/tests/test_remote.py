@@ -2,7 +2,14 @@
 
 import pytest
 
-from claude_guard.checks.remote import readonly_remote_safe, trusted_host_safe
+from claude_guard.checks.remote import (
+    REMOTE_GUARDED_VERBS,
+    readonly_remote_safe,
+    remote_argv_readonly,
+    trusted_host_safe,
+)
+from claude_guard.checks.remote_guards import GUARDS
+from claude_guard.tables import REMOTE_READONLY_VERBS
 
 # allow-readonly-remote.test.js ALLOW (27 cases).
 ALLOW = [
@@ -156,6 +163,86 @@ DEFER = [
     "hl cd /tmp",
 ]
 
+# server #1898: the thirteen argv guards ported from the server's classifier, one
+# `_is_clean` / `_is_flagged` pair per rule. The replay corpus cannot see a remote
+# fail-open (4 of 1058 prompted records touch ssh), so these pairs are the evidence.
+GUARDED_ALLOW = [
+    "hl git status",
+    "hl git log --oneline -5",
+    "hl git -C /home/ubuntu/server status",
+    "hl git --git-dir=/srv/x/.git rev-parse HEAD",
+    "hl git --no-pager diff --stat",
+    "hl find /var/log -name syslog -mtime +7",
+    "hl sort -u /tmp/list",
+    "hl sort -k2 -n /tmp/list",
+    "hl uniq -c /tmp/list",
+    "hl awk -F: /x/ /etc/passwd",
+    "hl awk -v n=2 NR==n /tmp/f",
+    "hl gawk -e NR==1 /tmp/f",
+    "hl mawk -F , NR==1 /tmp/f",
+    "hl sed -n 1,5p /etc/hosts",
+    "hl sed s/a/b/g /tmp/f",
+    "hl sed -e 1p -e 2p /tmp/f",
+    "hl sed -e /x/p /tmp/f",
+    "hl sed --expression=1p /tmp/f",
+    "hl dpkg -l docker-ce",
+    "hl dpkg -L docker-ce",
+    "hl dpkg --get-selections",
+    "hl apt list --installed",
+    "hl apt -o Debug::NoLocking=1 policy docker-ce",
+    "hl apt-mark showhold",
+    "hl pipx list",
+    "hl pipx --version",
+    "hl crontab -l",
+    "hl crontab -u ubuntu -l",
+]
+
+GUARDED_DEFER = [
+    "hl git commit -m x",
+    "hl git -c core.pager=/tmp/x log",
+    "hl git branch",
+    "hl git --git-dir /srv/x/.git push",
+    "hl git",
+    "hl find /var/log -name x -exec cat",
+    "hl find /var/log -name x -execdir cat",
+    "hl find /var/log -fprint /tmp/out",
+    "hl sort -o /tmp/out /tmp/list",
+    "hl sort --output=/tmp/out /tmp/list",
+    "hl sort -uo /tmp/out /tmp/list",
+    "hl uniq /tmp/list /tmp/out",
+    "hl awk -f /tmp/prog /tmp/f",
+    "hl awk -i inplace 1 /tmp/f",
+    "hl awk /x/ /tmp/f -e system(id)",
+    "hl awk",
+    "hl gawk -f /tmp/prog /tmp/f",
+    "hl mawk -i inplace 1 /tmp/f",
+    "hl sed -i s/a/b/ /tmp/f",
+    "hl sed --in-place=.bak s/a/b/ /tmp/f",
+    "hl sed -f /tmp/script /tmp/f",
+    "hl sed --file=/tmp/script /tmp/f",
+    "hl sed 1w/tmp/out /tmp/f",
+    "hl sed s/a/b/w/tmp/out /tmp/f",
+    "hl sed s/a/id/e /tmp/f",
+    "hl sed 1r/tmp/other /tmp/f",
+    "hl sed -n",
+    "hl sed -e",
+    "hl dpkg -i /tmp/x.deb",
+    "hl dpkg --configure -a",
+    "hl dpkg -l --set-selections",
+    "hl dpkg",
+    "hl apt install htop",
+    "hl apt -o Debug::NoLocking=1 install htop",
+    "hl apt",
+    "hl apt-mark hold docker-ce",
+    "hl pipx install x",
+    "hl pipx",
+    "hl crontab -r",
+    "hl crontab -e",
+    "hl crontab /tmp/newtab",
+    "hl crontab -u ubuntu",
+    "hl crontab",
+]
+
 
 @pytest.mark.parametrize("command", ALLOW)
 def test_a_provably_read_only_remote_command_is_allowed(command):
@@ -165,6 +252,86 @@ def test_a_provably_read_only_remote_command_is_allowed(command):
 @pytest.mark.parametrize("command", DEFER)
 def test_anything_mutating_smuggled_secret_or_non_remote_is_refused(command):
     assert readonly_remote_safe(command) is False
+
+
+@pytest.mark.parametrize("command", GUARDED_ALLOW)
+def test_a_guarded_verbs_read_only_form_is_clean(command):
+    assert readonly_remote_safe(command) is True
+
+
+@pytest.mark.parametrize("command", GUARDED_DEFER)
+def test_a_guarded_verbs_writing_form_is_flagged(command):
+    assert readonly_remote_safe(command) is False
+
+
+def test_every_ported_guard_has_a_clean_and_a_flagged_vector():
+    # Non-vacuity for the two tables above: a guard whose verb appears in neither list is
+    # observed only ever passing, which is no evidence at all.
+    def verbs(table):
+        return {c.split()[1] for c in table}
+
+    assert set(GUARDS) <= verbs(GUARDED_ALLOW)
+    assert set(GUARDS) <= verbs(GUARDED_DEFER)
+    assert GUARDS.keys() == {
+        "git",
+        "find",
+        "sort",
+        "uniq",
+        "awk",
+        "gawk",
+        "mawk",
+        "sed",
+        "dpkg",
+        "apt",
+        "apt-mark",
+        "pipx",
+        "crontab",
+    }
+
+
+def test_the_guarded_set_is_exported_for_the_server_boundary_test():
+    assert set(GUARDS) <= REMOTE_GUARDED_VERBS
+    assert {
+        "journalctl",
+        "dmesg",
+        "ss",
+        "rg",
+        "sensors",
+        "nvidia-smi",
+        "ip",
+        "docker",
+        "systemctl",
+    } <= REMOTE_GUARDED_VERBS
+    # The flag-regex guards sit on verbs the table lists bare (the regex runs first); an
+    # argv guard on a bare-listed verb would be dead code, since the table wins.
+    assert not set(GUARDS) & REMOTE_READONLY_VERBS
+
+
+def test_remote_argv_readonly_is_the_verb_level_half():
+    assert remote_argv_readonly(["git", "status"]) is True
+    assert remote_argv_readonly(["git", "push"]) is False
+    assert remote_argv_readonly(["uptime"]) is True
+    assert remote_argv_readonly(["docker", "network", "ls"]) is True
+    assert remote_argv_readonly([]) is False
+
+
+# --- server #1898: the remote argv is re-tokenized the way the far shell reads it. Quote
+# stripping read `ssh host "sed '1 w /x' f"` as the script `1` with three input files. ---
+
+
+def test_a_quoted_sed_script_is_scanned_as_the_remote_shell_reads_it():
+    assert readonly_remote_safe("ssh daniel-box \"sed '1 w /tmp/x' /etc/hosts\"") is False
+    assert readonly_remote_safe("ssh daniel-box \"sed -n '1,3 p' /etc/hosts\"") is True
+
+
+def test_an_unquoted_sed_script_is_the_script_ssh_hands_over():
+    # `ssh host sed '1 p' f` reaches the far side as `sed 1 p f` — script `1`, two files —
+    # because ssh joins its argv with spaces and the remote shell re-splits. Both read.
+    assert readonly_remote_safe("ssh daniel-box sed '1 p' /etc/hosts") is True
+
+
+def test_a_quote_that_balances_locally_but_not_remotely_is_refused():
+    assert readonly_remote_safe('ssh daniel-box "echo \'a"') is False
 
 
 def test_empty_command_is_refused():

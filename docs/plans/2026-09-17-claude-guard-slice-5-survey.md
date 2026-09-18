@@ -202,12 +202,19 @@ normal auto-mode session neither `Bash(ssh:*)` nor `Bash(curl:*)` is an ask rule
 PermissionRequest hook fires at all; both hooks carry Manual mode. The full table is
 `docs/claude-shell-permissions.md` in the server repo (PR #1894, issue #1864).
 
-The two hooks are not interchangeable, which bounds the retire-or-keep decision. On the
-payload above the judge emits nothing and the repo shim allows: `readonly_remote_safe`
-(`claude_guard/checks/remote.py`) returns no opinion unless `segment.parse` yields exactly one
-segment, so any local pipeline around the ssh stage falls through, while `classify_remote`
-walks each local stage and judges the ssh stage plus the readers around it. On
-`ssh daniel-server uptime` both allow. Retiring the repo shim re-prompts `ssh <host> <cmd> |
-head` in Manual mode; retiring the judge shim is a widening only where the repo shim's
-`TIER1` differs from `REMOTE_READONLY_VERBS` (the table gap above), and that is the policy
-decision the re-planned slice starts with (server #1898, #1893).
+The two hooks were not interchangeable when this was measured, which bounded the
+retire-or-keep decision. On the payload above the judge emitted nothing and the repo shim
+allowed: `readonly_remote_safe` (`claude_guard/checks/remote.py`) returned no opinion unless
+`segment.parse` yielded exactly one segment, so any local pipeline around the ssh stage fell
+through, while `classify_remote` walked each local stage and judged the ssh stage plus the
+readers around it. On `ssh daniel-server uptime` both allowed.
+
+Resolved 2026-09-18 (server #1898): the repo shim retired. `judge_segment` gained a
+per-segment arm for an `ssh`/`hl` stage (after `rules.denies`, before `rules.asks`), so
+`ssh daniel-server docker ps | head -3` is judged as a read-only remote stage plus an
+allow-listed `head`; a `2>&1` / `2>/dev/null` word on the stage is stripped first. The
+thirteen argv guards the shim reached over ssh (`git`, `find`, `sort`, `uniq`, `awk`
+`gawk` `mawk`, `sed`, `dpkg`, `apt`, `apt-mark`, `pipx`, `crontab`) moved into
+`checks/remote_guards.py`, and `readonly_remote_safe` re-tokenizes the remote argv the way
+ssh and the far shell do — quote-stripping read `ssh host "sed '1 w /x' f"` as the script
+`1`. The one hook that judges a prompted ssh command is `guard-permission-request.sh`.

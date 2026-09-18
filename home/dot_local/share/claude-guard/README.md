@@ -48,7 +48,10 @@ decision: a bare command reaches the same checks a chained one does rather than 
 allowlisted host, the `git merge --ff-only <ref>` exception), and no segment matches deny or
 ask, or when the whole command passes one of `checks/remote.py`'s `readonly_remote_safe()` /
 `trusted_host_safe()`, `checks/ansible.py`'s `ansible_readonly_safe()`, or
-`checks/git_reset.py`'s `clean_reset_safe()`. `rules.py` reads the deployed settings with the
+`checks/git_reset.py`'s `clean_reset_safe()`. The two remote checks also run per segment,
+so an `ssh`/`hl` stage inside a local pipeline is judged beside the allow-listed readers
+around it; `checks/remote_guards.py` holds the per-verb guards (`git`, `sed`, `awk`, `find`,
+`apt`, …) a remote argv is held to. `rules.py` reads the deployed settings with the
 scope asymmetry the bash documents: allow from `~/.claude/settings.json` alone, deny and ask
 from that file plus the project's `.claude/settings.json` and `settings.local.json`.
 

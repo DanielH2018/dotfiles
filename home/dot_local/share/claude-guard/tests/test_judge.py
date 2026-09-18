@@ -1032,7 +1032,56 @@ def test_a_chained_segment_does_not_earn_a_standalone_hooks_grace(main, tmp_path
     # returns False regardless of wiring (F1's empty/non-absolute cwd refusal doesn't
     # apply here, but a dirty or missing repo would make this assertion pass under both
     # wirings, proving nothing).
+    #
+    # server #1898 moved the two REMOTE checks to a per-segment arm as well (judge_segment,
+    # `word in ("ssh", "hl")`), so the ssh line below is now an allow — that arm is what
+    # replaced the server repo's own pipeline-walking PermissionRequest shim. The git-reset
+    # and ansible lines keep F0's rejection: neither check has a per-segment twin.
     work = _make_repo(tmp_path)
     assert not judge("git status && git reset --hard origin/master", main, ROOTS, work).allow
-    assert not allowed("git status && ssh daniel-server uptime", main)
+    assert allowed("git status && ssh daniel-server uptime", main)
     assert not allowed("git status && ansible-playbook site.yml --check", main)
+
+
+# server #1898: the per-segment remote arm. The shape the whole-command arms refuse and the
+# retired server shim (`auto-approve-remote-ssh.sh`) allowed — an ssh stage inside a local
+# pipeline — and the shapes that must stay refused around it.
+
+
+def test_an_ssh_stage_in_a_local_pipeline_is_allowed_when_every_other_stage_is(main):
+    # The payload docs/claude-shell-permissions.md measured the two hooks diverging on.
+    d = judge("ssh daniel-server docker ps | tail -3", main, ROOTS, CWD)
+    assert d.allow and d.reasons == ("remote-readonly-check", "allow-list")
+    d = judge("hl journalctl -u docker -n 50 | tail -3", main, ROOTS, CWD)
+    assert d.allow and d.reasons[0] == "remote-readonly-check"
+
+
+def test_a_trusted_host_stage_in_a_local_pipeline_is_allowed_by_the_trusted_arm(main):
+    d = judge('ssh daniel-server "cd /home/ubuntu/server; git status" | tail -3', main, ROOTS, CWD)
+    assert d.allow and d.reasons == ("trusted-host-check", "allow-list")
+
+
+def test_a_stderr_sink_word_on_the_ssh_stage_is_stripped_before_the_remote_checks(main):
+    assert allowed("ssh daniel-server docker ps 2>&1 | tail -3", main)
+    assert allowed("ssh daniel-server docker ps 2>/dev/null | tail -3", main)
+    assert allowed("hl uptime 2> /dev/null | tail -1", main)
+
+
+def test_a_stderr_sink_glued_to_the_verb_is_not_stripped(main):
+    # `ping6>/dev/null` is the word `ping6` plus a redirect; stripping it would judge `ping`.
+    assert not allowed("ssh 10.0.0.9 ping6>/dev/null | tail -1", main)
+
+
+def test_a_real_redirect_on_the_ssh_stage_still_refuses(main):
+    assert not allowed("ssh daniel-server docker ps > /tmp/out | tail -3", main)
+    assert not allowed("ssh daniel-server docker ps 2>&1w | tail -3", main)
+
+
+def test_an_unlisted_stage_beside_an_allowed_ssh_stage_still_refuses(main):
+    d = judge("ssh daniel-server uptime && touch /tmp/pwned", main, ROOTS, CWD)
+    assert not d.allow and d.rule == "segment:1:unlisted"
+
+
+def test_an_untrusted_host_with_a_mutating_payload_gets_no_per_segment_grace(main):
+    assert not allowed("ssh 10.0.0.9 docker rm web | tail -1", main)
+    assert not allowed("ssh 10.0.0.9 uptime; ssh 10.0.0.9 docker rm web", main)

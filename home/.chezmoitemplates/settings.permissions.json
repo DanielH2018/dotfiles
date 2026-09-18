@@ -719,9 +719,8 @@
            against the trusted hosts and domains named in autoMode.environment.
 
            Consequence worth knowing: an ask rule is what routes a call through the
-           PermissionRequest hooks, so claude_guard's curl_safe() / readonly_remote_safe() /
-           auto-approve-remote-ssh.sh no longer fast-path these in auto mode — the classifier
-           does. claude_guard's checks are retained because they still carry Manual mode,
+           PermissionRequest hooks, so claude_guard's curl_safe() / readonly_remote_safe()
+           no longer fast-path these in auto mode — the classifier does. claude_guard's checks are retained because they still carry Manual mode,
            where no classifier runs (curl_safe/readonly_remote_safe ran as the standalone
            bash hooks allow-safe-curl.sh/allow-readonly-remote.sh until claude-guard slice 3
            deleted them and moved the same decision into guard-permission-request.sh). */}}

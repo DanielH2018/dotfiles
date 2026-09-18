@@ -9,7 +9,9 @@ or mutate (:11-15).
 """
 
 import re
+import shlex
 
+from claude_guard.checks.remote_guards import GUARDS
 from claude_guard.segment import parse
 from claude_guard.tables import REMOTE_READONLY_VERBS, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
 
@@ -153,10 +155,19 @@ def readonly_remote_safe(command: str) -> bool:
     if _RAW_BAN.search(command):
         return False
 
-    # :66-71. cmd_parse confirmed the quoting balances, so stripping quote characters and
-    # splitting on whitespace is safe. Computed once; every check below reads these tokens.
-    stripped = command.replace('"', "").replace("'", "")
-    tokens = stripped.split()
+    # :66-71 ported one level deeper (server #1898). The bash stripped every quote character
+    # and split on whitespace; that reads the verb correctly but not a program text, and
+    # `sed`/`awk` below scan one. `ssh host "sed '1 w /x' f"` reaches the far shell as
+    # `sed '1 w /x' f` — a script that writes /x — while quote-stripping reads it as the
+    # script `1` and three input files. So the LOCAL shell's tokenization is applied here
+    # (one layer of quotes removed, as bash hands ssh its argv), and the remote argv is
+    # re-tokenized from the joined text further down, as the far shell does. cmd_parse
+    # confirmed the quoting balances and `_RAW_BAN` refused every backslash, so shlex's POSIX
+    # mode reads the same words bash would.
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
     if not tokens:
         return False
 
@@ -190,16 +201,23 @@ def readonly_remote_safe(command: str) -> bool:
     # :108-109. No remote command means an interactive shell — not read-only.
     if len(tokens) <= start:
         return False
-    remote = tokens[start:]
-    verb = remote[0]
-    sub = remote[1] if len(remote) > 1 else ""
-    third = remote[2] if len(remote) > 2 else ""
-    rest = " ".join(remote)
+    # ssh joins its remaining argv with single spaces and hands that string to the remote
+    # shell, which tokenizes it from scratch — so `rest` is exactly the far side's input.
+    rest = " ".join(tokens[start:])
+    if not rest.strip():
+        return False
 
     if _REMOTE_METACHAR.search(rest):
         return False
     if SECRET_PATH_RE.search(rest):
         return False
+    try:
+        remote = shlex.split(rest)
+    except ValueError:
+        return False  # a quote that balanced locally but not remotely
+    if not remote:
+        return False
+    verb = remote[0]
     if verb == "journalctl" and _JOURNALCTL_MUTATE.search(rest):
         return False
     if verb == "dmesg" and _DMESG_MUTATE.search(rest):
@@ -213,6 +231,31 @@ def readonly_remote_safe(command: str) -> bool:
     if verb == "nvidia-smi" and not _nvidia_smi_readonly(remote[1:]):
         return False
 
+    return remote_argv_readonly(remote)
+
+
+# The verbs `readonly_remote_safe` decides behind a guard rather than by table membership:
+# the `_*_MUTATE` regexes and `_nvidia_smi_readonly` above, the ip/docker/systemctl
+# sub-tables, and the ported argv guards in `remote_guards.py`. Exported so the server
+# repo's boundary test (`test_claude_guard_import.py`, #1982) reads the set the package
+# really guards instead of carrying a literal copy of it.
+REMOTE_GUARDED_VERBS: frozenset[str] = frozenset(
+    {"journalctl", "dmesg", "ss", "rg", "sensors", "nvidia-smi", "ip", "docker", "systemctl"}
+) | frozenset(GUARDS)
+
+
+def remote_argv_readonly(remote: list[str]) -> bool:
+    """True when a remote argv's verb is read-only by table or passes its guard. The
+    verb-level half of `readonly_remote_safe`, factored out so the server repo can replay
+    one vector table through this and its own local classifier (server #1898). Carries
+    no shape checks: metacharacters, secret paths and the flag-regex guards above are the
+    caller's, applied to the joined text before the argv exists.
+    """
+    if not remote:
+        return False
+    verb = remote[0]
+    sub = remote[1] if len(remote) > 1 else ""
+    third = remote[2] if len(remote) > 2 else ""
     if verb in REMOTE_READONLY_VERBS:
         return True
     if verb == "ip":
@@ -223,7 +266,8 @@ def readonly_remote_safe(command: str) -> bool:
         return third in _DOCKER_NESTED.get(sub, frozenset())
     if verb == "systemctl":
         return sub in _SYSTEMCTL_SUB
-    return False
+    guard = GUARDS.get(verb)
+    return guard(remote) if guard else False
 
 
 # D1 (docs/plans/2026-09-11-claude-guard-slice-3-cutover.md): trusted_host_safe is a SEPARATE

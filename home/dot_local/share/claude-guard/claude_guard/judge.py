@@ -91,6 +91,14 @@ _DEVNULL_REDIRECT = re.compile(rf"[0-9]*>>?[{WS}]*/dev/null(?=[{WS}]|$)")
 # named `1`; `mkdir 1 && ls >&1/../../canary.txt` supplies that directory in the same
 # command. The `WS`-built lookahead closes it the same way H4 closed the DEVNULL case.
 _FD_DUP = re.compile(rf"[0-9]*>&[0-9-](?=[{WS}]|$)")
+
+# server #1898. The stderr redirects the remote-segment arm in judge_segment strips before
+# handing an ssh/hl segment to readonly_remote_safe/trusted_host_safe, whose raw-text
+# scans refuse any `>`. Narrower than the two patterns above on purpose: those feed a
+# REFUSAL (a leftover `>` after stripping refuses), so a loose match only over-refuses;
+# this one feeds an ALLOW, so it takes only a whole word — leading whitespace required,
+# so `ping6>/dev/null` is never read as `ping` with a sink behind it.
+_STDERR_SINK_WORD = re.compile(rf"[{WS}]+[0-9]?(?:>&[0-9-]|>>?[{WS}]*/dev/null)(?=[{WS}]|$)")
 # allow-compound-bash.sh:309, `s@[[:space:]]+-[^[:space:]]+@@g`. Ports the POSIX class, not
 # IFS. Fix round 4 wrote this as `[{WS}]+-[^{WS}]+`, which is the wrong direction at the
 # complement: `[^{WS}]` is BROADER than sed's `[^[:space:]]`, so the strip consumed a
@@ -655,6 +663,25 @@ def judge_segment(
         return True, "curl-check"
     if word == "rm" and rm_confined(part, roots):
         return True, "rm-check"
+
+    # server #1898. The per-segment twin of judge()'s two whole-command remote arms, so an
+    # ssh/hl stage can sit in a LOCAL pipeline — `ssh host docker ps | head -3` — with every
+    # other stage judged on its own (an allow-list `head`, here). The whole-command arms
+    # self-refuse that shape (readonly_remote_safe by segment count, trusted_host_safe by
+    # its `|` scan), which is what kept a destructive `&& …` tail from riding in on a
+    # read-only first segment; a segment reaches this line only after `rules.denies` above
+    # and the separator/heredoc refusals in judge(), and the tail is judged as its own
+    # segment, so the same protection holds here. This arm is what let the server repo
+    # retire its own PermissionRequest shim (`auto-approve-remote-ssh.sh`), which walked
+    # the pipeline itself. A `2>&1` / `2>/dev/null` word is stripped first: the LOCAL shell
+    # consumes it, it merges or drops stderr and nothing more, and both checks refuse a raw
+    # `>` otherwise.
+    if word in ("ssh", "hl"):
+        remote_part = _STDERR_SINK_WORD.sub("", part)
+        if readonly_remote_safe(remote_part):
+            return True, "remote-readonly-check"
+        if trusted_host_safe(remote_part):
+            return True, "trusted-host-check"
 
     # :359-363.
     if rules.asks(part):
