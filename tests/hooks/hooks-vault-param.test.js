@@ -51,7 +51,7 @@ test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () 
   const vault = path.join(home, 'Vault');
   fs.mkdirSync(vault, { recursive: true });
   writeLocalEnv(home, vault);
-  const bin = scratch(os.tmpdir(), 'bin-');
+  const bin = scratch(os.tmpdir(), 'vault-param-bin-');
   const marker = path.join(bin, 'called.log');
   fs.writeFileSync(path.join(bin, 'prettier'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(fwd(marker))}\n`, { mode: 0o755 });
 

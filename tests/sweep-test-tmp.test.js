@@ -71,7 +71,7 @@ test('sweeps a declared prefix once it is past the age threshold', () => {
 });
 
 // tests/lib/tmp.js takes the root as an argument for exactly this reason: a call site spells
-// `os.tmpdir(), '<prefix>'` where the sweep's grep can read it. This is the test that goes
+// the root and the prefix as two literals the sweep's grep can read. This is the test that goes
 // red if the helper ever takes a bare prefix, which would drop every file using it from the
 // sweep's view without any other test noticing.
 test('a prefix passed through tests/lib/tmp.js is swept too', () => {

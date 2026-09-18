@@ -33,7 +33,7 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 // recorded for it, so the pid verifies as the process the registry claims it is. Pass a
 // [sid, procStart] pair to record a start time that does NOT match — that is pid reuse.
 function fakeEnv(sessions = {}, rows = []) {
-  const home = scratch(os.tmpdir(), 'reap-');
+  const home = scratch(os.tmpdir(), 'reap-origin-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
   const procdir = path.join(home, 'proc'); fs.mkdirSync(procdir, { recursive: true });

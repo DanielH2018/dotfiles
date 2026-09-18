@@ -46,7 +46,7 @@ const rosterOf = (workers) => ({ proto: 1, supervisorPid: 999, workers });
 
 // procs: { pid: cmdline }, sessions: { pid: sid }, rows: [sid], roster: {workers}|null
 function fakeEnv({ procs = {}, sessions = {}, rows = [], roster = null }) {
-  const home = scratch(os.tmpdir(), 'sweep-');
+  const home = scratch(os.tmpdir(), 'reap-sweep-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const pdir = path.join(home, 'proc'); fs.mkdirSync(pdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
