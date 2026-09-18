@@ -706,12 +706,36 @@ def test_a_cd_before_a_heredoc_write_refuses_the_carve_out_on_both_arms(rm, tmp_
     d = judge("cd /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, (), cwd)
     assert not d.allow
     assert d.rule == "segment:1:heredoc-write:cwd-changed"
-    # The scratch-root arm, gated by the SAME flag even though an ABSOLUTE target there
-    # does not itself depend on cwd — H1's instruction is to refuse the carve-out once
-    # ANY earlier segment changed directory, not narrowed to "only when the write target
-    # itself depends on cwd". `/tmp` is a real scratch root (tables.SCRATCH_ROOTS). Rule
-    # pinned, not just the allow bit, so this can't start passing for a different reason.
-    d2 = judge("cd /tmp && cat > /tmp/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd)
+    # The scratch-root arm with a RELATIVE target: `under_scratch` refuses it on its own,
+    # so the flag is what refuses it here too. Rule pinned, not just the allow bit, so
+    # the absolute exemption below can never widen to cover it.
+    d2 = judge("cd /tmp && cat > note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, cwd)
+    assert not d2.allow
+    assert d2.rule == "segment:1:heredoc-write:cwd-changed"
+
+
+def test_an_absolute_scratch_heredoc_write_after_a_cd_is_clean(rm, tmp_path):
+    # dotfiles #513: an absolute target does not depend on cwd, so a `cd` earlier in the
+    # chain cannot relocate it. `/tmp` is a real scratch root (tables.SCRATCH_ROOTS). The
+    # reason label is pinned so the census can attribute the row to this branch.
+    d = judge("cd /tmp && cat > /tmp/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, str(tmp_path))
+    assert d.allow
+    assert d.reasons[1] == "heredoc-write:absolute-after-cd"
+
+
+def test_an_absolute_heredoc_write_after_a_cd_is_flagged_outside_the_scratch_arm(rm):
+    # The exemption is the SCRATCH arm only. `CWD` (/home/testuser) is under none of
+    # `ROOTS` — `tmp_path` would be, since /tmp is a scratch root, and the scratch arm
+    # would confine it legitimately. An absolute target under the session cwd clears
+    # `_under_session_cwd` with no `cd` in the chain, and must not clear it after one —
+    # the session cwd is exactly the value a `cd` makes stale.
+    assert judge(f"cat > {CWD}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD).allow
+    d = judge(f"cd /tmp && cat > {CWD}/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD)
+    assert not d.allow
+    assert d.rule == "segment:1:heredoc-write:cwd-changed"
+    # An absolute target outside every scratch root stays refused after a `cd`, on the
+    # same label — the exemption is confinement-gated, not "any absolute path".
+    d2 = judge("cd /tmp && cat > /etc/note.txt <<'EOF'\nhi\nEOF\n", rm, ROOTS, CWD)
     assert not d2.allow
     assert d2.rule == "segment:1:heredoc-write:cwd-changed"
 

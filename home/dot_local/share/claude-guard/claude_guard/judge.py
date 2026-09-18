@@ -547,29 +547,27 @@ def judge_segment(
         # chain, even a `cd` back to the original directory — overbroad by construction,
         # never narrowed to "did the net effect move it".
         #
-        # An ABSOLUTE target does not depend on cwd at all, so exempting one from this
-        # gate would be sound in principle — considered and declined: one more branch on
-        # this path is one more place a future edit can get the condition backwards, for
-        # a carve-out whose failure mode is a silent arbitrary-write allow. The brief's
-        # own instruction is not to get clever here.
-        #
-        # Shape recorded for whoever needs the rows next (task-8-fix-3-brief.md, "Not in
-        # scope this round"): `hw_target.startswith("/") and rm_confined(f"rm {hw_target}",
-        # roots)` — SCRATCH arm only, gated on an absolute target, tried before this
-        # `cwd_changed` refusal rather than after it. `rm_confined`/`under_scratch`
-        # already refuse a relative operand outright, so this exemption is cwd-independent
-        # by construction: it cannot be reached by a target this `cwd_changed` gate exists
-        # to protect. It recovers the four lost H1 rows (a worktree PR/commit-body write
-        # pattern: `cd <worktree> && cat > /tmp/<body> <<'EOF' ... rm -f /tmp/<body>`), all
-        # under an absolute /tmp path. Not added this round: the gate is at zero headroom
-        # (floor 84, no margin), and this round's J1/J2 fix is floor-neutral on its own —
-        # headroom is not needed yet.
+        # DECIDED (dotfiles #513): ONE exemption from that refusal, the shape H1's brief
+        # recorded for it — an ABSOLUTE target, judged by the SCRATCH arm only. An
+        # absolute path does not depend on cwd, so nothing a `cd` did can move it, and
+        # `rm_confined`/`under_scratch` refuse a relative operand outright, so this branch
+        # cannot be reached by the target the `cwd_changed` gate exists to protect. The
+        # cwd arm (`_under_session_cwd`) stays behind the gate: it compares against the
+        # session cwd the hook was invoked with, which is exactly the value a `cd` makes
+        # stale. H1 declined this branch as "not clever" at zero gate headroom; it is a
+        # widening, which the one-sided replay gate CAN see, and it measured ALLOW 88/1058
+        # against the 84 floor — the four recovered rows are the worktree PR/commit-body
+        # pattern `cd <worktree> && cat > /tmp/<body> <<'EOF' … rm -f /tmp/<body>`, all
+        # under /tmp, and nothing else moved. The distinct rule label keeps the census
+        # able to attribute a row to this branch rather than to the plain carve-out.
         #
         # A `cd` that runs inside a PIPELINE stage (`ls | (cd /x; cat) `) executes in a
         # subshell and never relocates the parent shell `cat` runs in — this flag cannot
         # tell the two apart and refuses both, which is the fail-closed direction and is
         # intentional, not a bug to later "fix" by trying to tell them apart.
         if cwd_changed:
+            if hw_target.startswith("/") and rm_confined(f"rm {hw_target}", roots):
+                return True, "heredoc-write:absolute-after-cd"
             return False, "heredoc-write:cwd-changed"
 
         # DECIDED (J1/J2, task-8-fix-3-brief.md): refuse the carve-out for BOTH
