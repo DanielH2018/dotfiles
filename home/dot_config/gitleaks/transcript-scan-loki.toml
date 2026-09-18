@@ -1,0 +1,51 @@
+# gitleaks ruleset for claude-transcript-scan's LOKI arm.
+#
+# This is the full default ruleset with allowlists, not the narrowed daily one. The Loki
+# arm exists to run `generic-api-key` over command text, because that rule is the only one
+# matching an unstructured `NAME=<32 hex>` -- the shape of every *arr API key -- and the
+# transcript run disables it (transcript-scan.toml has the measurements). The narrow
+# extraction (tool_input, tool_parameters, prompt) is what makes the rule affordable here.
+#
+# The Loki arm caught the jellyfin API key on 2026-09-09 (`?api_key=<hex>` on a curl line,
+# server repo issue #1499). It also produced 127 of the 247 pending rows triaged on
+# 2026-09-18, and every one of those rows was one of two shapes:
+#
+#   token: `pihole-k8s-dns`          prose in a docstring, carried by an Edit old_string
+#   key SHA256:<43 base64>            an SSH signing-key FINGERPRINT in a git commit summary
+#
+# Both are public text with a keyword in front of them. Allowlisting the two shapes keeps
+# the rule live for the `api_key=<hex>` case that mattered and removes the recurring noise.
+# Each allowlist is scoped to the MATCH, not the secret, so it can see the framing.
+[extend]
+useDefault = true
+
+# An SSH public-key fingerprint. `git log --show-signature` and `ssh-keygen -l` print
+# `SHA256:` followed by 43 base64 characters, and a transcript carries that line every time
+# a session verifies a signed commit. The fingerprint is a hash of the PUBLIC key.
+[[allowlists]]
+description = "SSH key fingerprint (SHA256:<43 base64>) -- a hash of a public key"
+regexTarget = "match"
+regexes = [
+  "SHA256:[A-Za-z0-9+/]{43}",
+]
+
+# A backtick-quoted lowercase kebab identifier: a YAML key, a DNS label, a service name
+# mentioned in prose. The class requires one letter outside a-f, which a hex credential never
+# carries, and admits no uppercase, underscore, `+` or `/`, which a base64 or alphanumeric
+# credential almost always does.
+[[allowlists]]
+description = "backtick-quoted kebab identifier in prose (`pihole-k8s-dns`)"
+regexTarget = "match"
+regexes = [
+  "`[a-z0-9-]*[g-z][a-z0-9-]*`",
+]
+
+# The suite's own fixtures, mirrored from transcript-scan.toml. A committed fixture
+# propagates into every transcript that reads the test file, and from there onto command
+# lines that reach Loki.
+[[allowlists]]
+description = "synthetic tokens from tests/claude-transcript-scan.test.js -- never real"
+regexes = [
+  "ghp_9tQz3XbW7kR2mYvL8pJdN4sH6cF1aE0uG5iT",
+  "ghp_4kM8vB2nQ7wR5xT9zY1cD3fH6jL0pS8uA2eG",
+]

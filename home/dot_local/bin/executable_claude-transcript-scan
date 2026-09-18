@@ -70,6 +70,7 @@ PROJECTS=${CLAUDE_TRANSCRIPT_ROOT:-$HOME/.claude/projects}
 LOG=${CLAUDE_TRANSCRIPT_LEAK_LOG:-$HOME/.claude/logs/transcript-leaks.jsonl}
 BASELINE=${CLAUDE_TRANSCRIPT_LEAK_BASELINE:-$HOME/.claude/logs/transcript-leaks-baseline.txt}
 GL_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG:-$HOME/.config/gitleaks/transcript-scan.toml}
+GL_LOKI_CONFIG=${CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG:-$HOME/.config/gitleaks/transcript-scan-loki.toml}
 # A finding outlives the process that found it, and neither unattended caller keeps the
 # verdict: session-end.sh backgrounds this with its output discarded, and the timer's
 # journal line is read by nobody. A desktop notification does not close that gap either —
@@ -131,6 +132,14 @@ if [ "$PARANOID" = 0 ]; then
   else
     echo "claude-transcript-scan: no ruleset at $GL_CONFIG — falling back to gitleaks' full set, expect noise" >&2
   fi
+fi
+# The Loki arm has its own ruleset: the FULL default set (generic-api-key stays live, see
+# the Loki section below for why) plus allowlists for the two public-text shapes that
+# produced 127 of the 247 rows triaged on 2026-09-18. A missing file falls back to the bare
+# default set, which is what this arm ran until then -- noisier, never narrower.
+GL_LOKI_RULES=
+if [ "$PARANOID" = 0 ] && [ -f "$GL_LOKI_CONFIG" ]; then
+  GL_LOKI_RULES="--config $GL_LOKI_CONFIG"
 fi
 
 # Exit 3 is could-not-evaluate, and it is the one verdict with no other durable trace: a
@@ -322,6 +331,12 @@ EOF
 # Measured 2026-08-31 on this host: the full ruleset over one hour of narrowed Loki text
 # (378KB) returned 0 findings, and over the events holding a real leaked *arr key it
 # returned 12. Narrow the extraction and the expensive rule becomes affordable.
+#
+# $GL_LOKI_RULES is that full set plus allowlists, never a narrowing: transcript-scan-loki.toml
+# keeps generic-api-key on and removes two public-text shapes (an SSH key fingerprint, a
+# backtick-quoted kebab identifier in prose) that were re-logged on every run between
+# 2026-09-03 and 2026-09-13. The rule caught the jellyfin key on 2026-09-09 through the
+# same arm, so the allowlists are scoped to the shapes measured, not to the rule.
 FOUND_TRANSCRIPTS=$((FOUND - _found_before_transcripts))
 [ "$FOUND_TRANSCRIPTS" -gt 0 ] || echo "  none"
 
@@ -372,7 +387,7 @@ if [ "$LOKI" = 1 ]; then
     # present in both stores therefore reports twice, under `loki` and under the transcript
     # name, and needs acknowledging twice -- which is correct, since they are two copies
     # with two lifetimes.
-    scan_work "${h}h..${until_h}h ago" "loki" "" || true
+    scan_work "${h}h..${until_h}h ago" "loki" "$GL_LOKI_RULES" || true
     h=$until_h
   done
   STORES="transcripts+loki"

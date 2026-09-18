@@ -93,6 +93,10 @@ function sandbox() {
     log: path.join(dir, 'leaks.jsonl'),
     baseline: path.join(dir, 'baseline.txt'),
     glConfig: path.join(dir, 'gitleaks.toml'),
+    // Same shape for the Loki arm: absent unless a test points it at the shipped file.
+    // Left unset, the scanner would read the operator's deployed copy under $HOME and the
+    // suite would measure this machine rather than the repo.
+    glLokiConfig: path.join(dir, 'gitleaks-loki.toml'),
     // Load-bearing, not decoration. The scanner appends to this file on every finding, and
     // these fixtures deliberately produce findings — left unset it defaults to the real
     // ~/.claude/logs/transcript-leaks-pending, so a suite run would raise a credential
@@ -115,6 +119,7 @@ function run(args, sb, extraEnv = {}) {
       CLAUDE_TRANSCRIPT_LEAK_LOG: sb.log,
       CLAUDE_TRANSCRIPT_LEAK_BASELINE: sb.baseline,
       CLAUDE_TRANSCRIPT_GITLEAKS_CONFIG: sb.glConfig,
+      CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: sb.glLokiConfig,
       CLAUDE_TRANSCRIPT_LEAK_PENDING: sb.pending,
       GITLEAKS_BIN: GITLEAKS,
       ...extraEnv,
@@ -361,6 +366,63 @@ test('the Loki arm runs the FULL ruleset, not the narrowed daily one', { skip },
   assert.strictEqual(r.status, 1, `expected exit 1, got ${r.status}: ${r.stdout}${r.stderr}`);
   assert.match(r.stdout, /generic-api-key/,
     'the entropy rule must be live here even though the daily config disables it');
+});
+
+// The shipped Loki ruleset is the full set plus allowlists for two public-text shapes that
+// were re-logged on every run between 2026-09-03 and 2026-09-13 (127 of the 247 rows in the
+// pending set triaged on 2026-09-18). The pair below keeps those allowlists honest in both
+// directions: the first half fails if either shape starts reporting again, the second if an
+// allowlist is ever widened until it swallows the `api_key=<hex>` shape the arm exists for.
+const SHIPPED_LOKI = path.join(__dirname, '..', 'home', 'dot_config', 'gitleaks', 'transcript-scan-loki.toml');
+
+// The two shapes as they reached Loki: a signed-commit summary carrying an ED25519 key
+// fingerprint, and an Edit old_string carrying a docstring that says "token: `<name>`".
+// The fingerprint is random per run so it cannot dodge the entropy floor by being a constant.
+function sshFingerprint() {
+  return crypto.randomBytes(32).toString('base64').replace(/=+$/, '').slice(0, 43);
+}
+const SIGNED_COMMIT_SUMMARY = () =>
+  `**Commit:** signed (verified: \`Good 'git' signature with ED25519 key SHA256:${sshFingerprint()}\`).`;
+const KEBAB_IN_PROSE = '"pi" must be its own hyphen-delimited token: `pihole-k8s-dns` contains it';
+
+test('the shipped Loki ruleset drops the two measured public-text shapes', { skip }, () => {
+  assert.ok(fs.existsSync(SHIPPED_LOKI), 'the shipped Loki ruleset is where the scanner expects it');
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload(
+    { prompt: SIGNED_COMMIT_SUMMARY() },
+    { tool_input: JSON.stringify({ file_path: '/x/y.py', old_string: KEBAB_IN_PROSE }) },
+  ));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 0, `public text must not read as a leak: ${r.stdout}${r.stderr}`);
+});
+
+test('the bare default set DOES flag those shapes, so the allowlists are doing the work', { skip }, () => {
+  // Without this half, an allowlist that matched nothing would pass the test above just as
+  // well, because the fixtures might simply be below the entropy floor.
+  const sb = sandbox();
+  const env = stubOtelq(sb, lokiPayload(
+    { prompt: SIGNED_COMMIT_SUMMARY() },
+    { tool_input: JSON.stringify({ file_path: '/x/y.py', old_string: KEBAB_IN_PROSE }) },
+  ));
+  const r = run(['--loki', '--since', '1'], sb, env);
+  assert.strictEqual(r.status, 1, `expected the bare set to flag both: ${r.stdout}${r.stderr}`);
+  const log = fs.readFileSync(sb.log, 'utf8');
+  assert.strictEqual((log.match(/"rule":"generic-api-key"/g) || []).length, 2,
+    'both shapes must fire on the bare set, or the pair proves less than it claims');
+});
+
+test('the shipped Loki ruleset still flags an api_key on a URL', { skip }, () => {
+  // The shape of the real 2026-09-09 leak: the jellyfin key as a query string on a curl
+  // line. Built per run so the suite carries no string that reads like a credential.
+  const sb = sandbox();
+  const hex = crypto.randomBytes(16).toString('hex');
+  const env = stubOtelq(sb, lokiPayload({
+    tool_input: JSON.stringify({ command: `curl -sk 'https://jellyfin.example/emby/Sessions?api_key=${hex}'` }),
+  }));
+  const r = run(['--loki', '--since', '1'], sb, { ...env, CLAUDE_TRANSCRIPT_GITLEAKS_LOKI_CONFIG: SHIPPED_LOKI });
+  assert.strictEqual(r.status, 1, `expected a finding: ${r.stdout}${r.stderr}`);
+  assert.match(fs.readFileSync(sb.log, 'utf8'), /"rule":"generic-api-key"/,
+    'the entropy rule must survive the allowlists');
 });
 
 test('the same shape in a TRANSCRIPT still goes unflagged, which is why the arm exists', { skip }, () => {
