@@ -7,7 +7,7 @@ rules rather than a shell-accurate oracle (:12-32 of the node file).
 
 import re
 
-from test_deny import BASH_ENV, ENV, bash_verdict, skip_no_bash
+from test_deny import ENV
 
 from claude_guard import deny as d
 
@@ -198,15 +198,3 @@ def test_anchored_rules_still_fire_on_any_line_not_just_the_first():
 def test_the_case_insensitive_rules_stay_case_insensitive():
     cmds = ['SSH host "sudo apt update"', "Terraform Apply", "TERRAFORM DESTROY"]
     assert denied(cmds) == cmds
-
-
-@skip_no_bash
-def test_python_and_bash_agree_on_the_generated_property_corpus():
-    real, not_real = separator_cases()
-    corpus = real + not_real
-    mismatches = [
-        (c, d.deny(c, "", ENV).kind, bash_verdict(c, BASH_ENV)[0])
-        for c in corpus
-        if (d.deny(c, "", ENV).kind == "deny") != (bash_verdict(c, BASH_ENV)[0] == "deny")
-    ]
-    assert mismatches == []

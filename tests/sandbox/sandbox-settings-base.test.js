@@ -52,7 +52,8 @@ test('every Bash() permission rule has balanced parentheses', () => {
 
 test('guard-pre-tool-use.sh is registered as the sandbox PreToolUse deny hook', () => {
   // The sandbox port replaced block-dangerous-bash.sh with the claude-guard shim here, which
-  // is the last thing that ran the bash hook anywhere (slice 4 unregistered it on the host).
+  // was the last thing that ran the bash hook anywhere (slice 4 unregistered it on the host,
+  // slice 6 deleted it).
   // Nothing else in the tree asserts this entry, so without this test an edit dropping it
   // would leave the sandbox with no deny hook and every test green.
   const cmds = JSON.stringify(parsed.hooks?.PreToolUse ?? []);
@@ -67,8 +68,8 @@ test('the sandbox env fails the deny hook closed', () => {
   // the same value as a docker env var; this is the second place, and both must agree.
   assert.strictEqual(parsed.env?.CLAUDE_GUARD_FAIL_CLOSED, '1',
     'CLAUDE_GUARD_FAIL_CLOSED=1 is what makes the sandbox deny rather than ask');
-  assert.strictEqual(parsed.env?.CLAUDE_GUARD_DENY_SHADOW, '0',
-    'a shadow run decides nothing, which in the sandbox is the hole fail-closed exists to shut');
+  assert.strictEqual(parsed.env?.CLAUDE_GUARD_DENY_SHADOW, undefined,
+    'the deny-shadow switch was retired in claude-guard slice 6; a value here would be read by nothing');
 });
 
 test('the process-substitution denies survive parsing', () => {

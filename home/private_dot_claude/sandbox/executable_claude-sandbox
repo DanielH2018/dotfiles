@@ -915,7 +915,7 @@ DOCKER_ARGS=(
   # Set as a docker env var rather than only in settings.base.json's `env` block, because
   # nothing measured shows a settings `env` value reaching a hook subprocess — and the whole
   # point of this switch is the case where the guard cannot run. settings.base.json carries
-  # it too, as the second place (see the two-place note on CLAUDE_GUARD_DENY_SHADOW there).
+  # it too, as the second place, and tests/sandbox/sandbox-settings-base.test.js pins both.
   -e CLAUDE_GUARD_FAIL_CLOSED=1
 )
 

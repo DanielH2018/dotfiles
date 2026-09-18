@@ -60,11 +60,6 @@ test('25cc7e8: BDB_REPARSE\'s `\\b` fires through the variable, not just inline'
   assert.match(r.stdout, /block-dangerous-bash\.sh:116: `\\b` in BDB_REPARSE/);
 });
 
-test('the CURRENT block-dangerous-bash.sh is clean: its remaining `\\b`s are grep, not [[ =~ ]]', () => {
-  const r = run([path.join(REPO, 'home/private_dot_claude/hooks/executable_block-dangerous-bash.sh')]);
-  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
-});
-
 test('6ebdaa4: mktemp templates with a suffix after the X\'s fire', () => {
   const r = run([atCommit('6ebdaa4^', 'home/private_dot_claude/sandbox/executable_claude-sandbox')]);
   assert.strictEqual(r.status, 1, r.stdout + r.stderr);

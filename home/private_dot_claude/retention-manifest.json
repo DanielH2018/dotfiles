@@ -209,17 +209,6 @@
     "notes": "audit only, not reverified 2026-07-30 (see spec §8); 1 file, 13,630B, dead pid as of audit"
   },
   {
-    "id": "G18",
-    "path": "~/.claude/logs/cmdparse-shadow.jsonl",
-    "kind": "file",
-    "rule": "rotate-size",
-    "cap": "1MB, keep 3 gen",
-    "grace": null,
-    "owner": "retention-sweep (row added, not yet in ROTATE_ROWS — see retention-sweep's source-literal row sets)",
-    "finding": "shadow-router (bin/shadow-report)",
-    "notes": "M02 shadow census sink (block-dangerous-bash.sh's _bdb_shadow_log); re-armed sampled via CMDPARSE_SHADOW_SAMPLE after a fully-off stint. 2.7MB / 5730 lines as of 2026-08-09 under the old always-on setting; sampling should slow growth well below that, but the row is added now rather than after it grows unbounded again. Same shape as G8/G9/G13 (rotate-size/truncate-lines diagnostic logs) — a follow-up can add it to ROTATE_ROWS if unattended rotation turns out to be needed; nothing here grants that on its own, per retention-sweep's own comment on APPLY_ROWS/ROTATE_ROWS being source literals."
-  },
-  {
     "id": "G19",
     "path": "~/.claude/logs/skill-usage.jsonl",
     "kind": "file",

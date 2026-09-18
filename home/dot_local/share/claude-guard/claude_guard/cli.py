@@ -1,23 +1,18 @@
 """claude-guard command line.
 
     claude-guard permission-request        # hook entry: hook JSON on stdin, allow line or
-                                            # nothing on stdout (live only; no shadow mode --
-                                            # slice 6 retired it, see claude_guard.hook)
+                                            # nothing on stdout
     claude-guard segment --json            # decomposition of the command on stdin,
                                             # cmdparse.sh's shape
     claude-guard explain "<command>"       # the segments, and the decision with its rule
     claude-guard replay <jsonl> --judge    # allow count and the allowed commands, judged
                                             # against the deployed settings
     claude-guard pre-tool-use              # hook entry: hook JSON on stdin, deny/ask JSON
-                                            # or nothing on stdout; shadow unless
-                                            # CLAUDE_GUARD_DENY_SHADOW=0
-    claude-guard shadow-report [--log P]   # deny-side only: agree / python-only / bash-only /
-                                            # mismatch / detail-mismatch / bash-timeout counts
-                                            # from the PreToolUse shadow log
-    claude-guard replay <jsonl> --deny [--compare-hook <block-dangerous-bash.sh>]
-                                            # deny/ask/allow verdict per record; with
-                                            # --compare-hook, agreement with the bash hook
+                                            # or nothing on stdout
+    claude-guard replay <jsonl> --deny     # deny/ask/allow verdict per record
 
+Both hook entries are live-only: slice 6 retired the allow side's shadow mode (2026-09-17)
+and the deny side's (2026-09-18, with the bash hook it shadowed) -- see claude_guard.hook.
 `segment --json` exists for tests and to inspect the segmenter's shape, never for the hook path.
 """
 
@@ -28,15 +23,7 @@ import sys
 from pathlib import Path
 
 from claude_guard.deny import deny
-from claude_guard.hook import (
-    ASK_JSON,
-    DENY_LOG_NAME,
-    bash_deny_verdict,
-    permission_request,
-    pre_tool_use,
-    shadow_mode,
-    summarize_deny,
-)
+from claude_guard.hook import ASK_JSON, permission_request, pre_tool_use
 from claude_guard.judge import judge
 from claude_guard.rules import load_rules
 from claude_guard.segment import Parsed, parse
@@ -97,7 +84,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         return 2
     records = _records(args.corpus)
     if args.deny:
-        return _replay_deny(records, Path(args.compare_hook) if args.compare_hook else None)
+        return _replay_deny(records)
     return _replay_judge(records)
 
 
@@ -138,37 +125,19 @@ def _replay_judge(records: list[dict]) -> int:
     return 0
 
 
-def _replay_deny(records: list[dict], hook: Path | None) -> int:
-    agree = 0
+def _replay_deny(records: list[dict]) -> int:
+    """Run the deny rules over the corpus and print each non-none verdict. The slice-4
+    cutover gate ran this with `--compare-hook` against block-dangerous-bash.sh (`AGREE
+    1058/1058` on the prompted corpus, `AGREE 281/281` on the vectors); slice 6 deleted that
+    hook, so the agreement half is gone and the vector file (`tests/test_deny.py`) is the
+    rules' oracle."""
     for rec in records:
         command = rec["command"]
         cwd = rec.get("cwd", "")
-        env = {**os.environ}
-        v = deny(command, cwd, env)
+        v = deny(command, cwd, {**os.environ})
         if v.kind != "none":
             print(f"{v.kind.upper()} {v.rule}: {_head(command)}")
-        if hook is None:
-            continue
-        # Item 4 (fix round 2): the same asymmetry F3 fixed at the --judge replay path
-        # (above) -- block-dangerous-bash.sh falls back to the replay PROCESS's own $PWD
-        # when `cwd` is absent from stdin, while the python side is handed the record's
-        # real cwd, which is a spurious disagreement that has nothing to do with either
-        # side's deny rules.
-        stdin_text = json.dumps({"tool_input": {"command": command}, "cwd": cwd})
-        bash_kind, bash_detail = bash_deny_verdict(hook, stdin_text, env)
-        mine_detail = v.updated_command if v.kind == "allow" else v.reason
-        if (v.kind, mine_detail or "") == (bash_kind, bash_detail):
-            agree += 1
-        elif v.kind == bash_kind:
-            print(f"REASON MISMATCH: {_head(command)} rule={v.rule}")
-            print(f"  python={mine_detail!r}")
-            print(f"  bash={bash_detail!r}")
-        else:
-            print(f"MISMATCH: {_head(command)} python={v.kind} bash={bash_kind} rule={v.rule}")
-    if hook is None:
-        return 0
-    print(f"AGREE {agree}/{len(records)}")
-    return 0 if agree == len(records) else 1
+    return 0
 
 
 def cmd_permission_request(args: argparse.Namespace) -> int:
@@ -183,45 +152,13 @@ def cmd_permission_request(args: argparse.Namespace) -> int:
 
 
 def cmd_pre_tool_use(args: argparse.Namespace) -> int:
-    # The deny-path failure contract: an exception reaching here prints ask, exit 0. In
-    # shadow pre_tool_use() has already swallowed it (the shim prints nothing either way).
+    # The deny-path failure contract: an exception reaching here prints ask, exit 0.
     try:
         out = pre_tool_use(sys.stdin.read(), os.environ)
     except Exception:
-        out = ASK_JSON if not shadow_mode(os.environ, "CLAUDE_GUARD_DENY_SHADOW")[0] else None
+        out = ASK_JSON
     if out:
         print(out)
-    return 0
-
-
-def cmd_shadow_report(args: argparse.Namespace) -> int:
-    """Deny-side only (slice 6 retired the allow-side shadow log and its report half --
-    claude_guard.hook's module docstring): agree / python-only / bash-only / mismatch /
-    detail-mismatch / python-error / bash-error / bash-timeout counts from the PreToolUse
-    shadow log."""
-    default_dir = Path(os.environ.get("CLAUDE_SHADOW_LOG_DIR") or Path.home() / ".claude" / "logs")
-    log = Path(args.log) if args.log else (default_dir / DENY_LOG_NAME)
-    if not log.exists():
-        print(f"no shadow log at {log}")
-        return 1
-    s = summarize_deny(log.read_text().splitlines())
-    print(f"records {s['records']} (unparseable {s['unparseable']})")
-    print(
-        f"agree {s['agree']} (deny {s['agree_deny']}, ask {s['agree_ask']}, "
-        f"none {s['agree_none']}, allow {s['agree_allow']})"
-    )
-    for label, key in (
-        ("python-only", "python_only"),
-        ("bash-only", "bash_only"),
-        ("mismatch", "mismatch"),
-    ):
-        print(f"{label} {s[key]}")
-        for rule, n in sorted(s[f"{key}_rules"].items(), key=lambda kv: -kv[1]):
-            print(f"  {rule}: {n}")
-    print(f"detail-mismatch {s['detail_mismatch']}")
-    print(f"python-error {s['python_error']}")
-    print(f"bash-error {s['bash_error']}")
-    print(f"bash-timeout {s['bash_timeout']}")
     return 0
 
 
@@ -234,17 +171,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     pt = sub.add_parser("pre-tool-use", help="PreToolUse hook entry (stdin JSON): deny rules")
     pt.set_defaults(fn=cmd_pre_tool_use)
-
-    sr = sub.add_parser(
-        "shadow-report",
-        help="summarise the PreToolUse (deny) shadow log; counts, never commands",
-    )
-    sr.add_argument(
-        "--log",
-        default=None,
-        help=f"path to the log (default: $CLAUDE_SHADOW_LOG_DIR/{DENY_LOG_NAME})",
-    )
-    sr.set_defaults(fn=cmd_shadow_report)
 
     s = sub.add_parser("segment", help="decompose the command on stdin")
     s.add_argument(
@@ -272,12 +198,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--deny",
         action="store_true",
         help="run the deny rules on every record; print each non-none verdict",
-    )
-    r.add_argument(
-        "--compare-hook",
-        default=None,
-        metavar="PATH",
-        help="with --deny: run block-dangerous-bash.sh at PATH per record; report agreement",
     )
     r.set_defaults(fn=cmd_replay)
     return ap

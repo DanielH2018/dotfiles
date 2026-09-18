@@ -4,6 +4,13 @@ Written 2026-09-17 on daniel-box, for the laptop. Everything below is measured o
 unless it says otherwise; the laptop is where the port happens, because it has docker and
 daniel-box does not.
 
+> **Outcome (2026-09-18).** The port shipped as dotfiles #508; the operator ran step 4's gates
+> on the laptop after `--rebuild-base` (operator-reported: the vector replay and one live deny
+> both passed). Step 5 landed as the second half of slice 6, with one departure: `bin/lint-bsd-portability`
+> stays, because its header records four macOS incidents across the repo and the bash hook was
+> only one of them. The spec's Rollout row 6 is the record; the rest of this document is the
+> plan as written.
+
 ## Where the rollout stands
 
 The spec is `docs/specs/2026-09-06-claude-guard-design.md`; its Rollout table is the ledger.

@@ -137,7 +137,7 @@ repos:
         entry: bin/lint-js
         language: system
         types_or: [javascript]
-        files: (\.(js|mjs)$|^(bin/config-soak|bin/gen-skill-router|bin/shadow-report|home/dot_local/bin/executable_(claude-settings-merge|dotsync|terminal-cheatsheet|tools-inventory))$)
+        files: (\.(js|mjs)$|^(bin/config-soak|bin/gen-skill-router|home/dot_local/bin/executable_(claude-settings-merge|dotsync|terminal-cheatsheet|tools-inventory))$)
 
       # One audit found four GNU-only shell idioms in a single session -- bare `sed -i`, `\b`
       # inside a bash [[ =~ ]] regex, and an mktemp template with a suffix after the X's. All

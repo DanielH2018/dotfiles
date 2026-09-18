@@ -1,25 +1,20 @@
 """block-dangerous-bash.sh, ported: every rule family as a denied/allowed pair.
 
-The inline lists here are the ones in tests/hooks/block-dangerous-bash.test.js; the corpus
-lives in tests/fixtures/block-dangerous-bash-vectors.json (Task 5). The normalisation
-suite is tests/test_deny_normalization.py. HOME is pinned to a fake so the home-directory
-anchors are deterministic; the bash gets the same value when it is run for comparison.
+The inline lists here were tests/hooks/block-dangerous-bash.test.js's; the corpus lives in
+tests/fixtures/block-dangerous-bash-vectors.json (Task 5). Slice 6 deleted the bash hook
+and its suite, so this file and that fixture are the rules' only oracle now -- the
+agreement test that ran both sides over the corpus (`AGREE 281/281` at the slice-4 cutover)
+went with the bash. The normalisation suite is tests/test_deny_normalization.py. HOME is
+pinned to a fake so the home-directory anchors are deterministic.
 """
 
 import json
-import shutil
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-import pytest
 
 from claude_guard import deny as d
 from claude_guard.deny import bdb_re, bdb_re_pair, bdb_rei, build_scan, normalize
 
 REPO = Path(__file__).resolve().parents[5]
-HOOKS = REPO / "home" / "private_dot_claude" / "hooks"
-HOOK = HOOKS / "executable_block-dangerous-bash.sh"
 FIXTURE = REPO / "tests" / "fixtures" / "block-dangerous-bash-vectors.json"
 HOME = "/home/tester"
 ENV = {"HOME": HOME}
@@ -807,44 +802,7 @@ def test_no_allow_vector_is_denied():
     assert hits == []
 
 
-# --- agreement with the bash, verdict AND message (the port's acceptance test) ----------------
-
-skip_no_bash = pytest.mark.skipif(
-    not (shutil.which("bash") and shutil.which("jq") and shutil.which("awk") and HOOK.exists()),
-    reason="bash hook unavailable",
-)
-BASH_ENV = {
-    "HOME": HOME,
-    "PATH": "/usr/bin:/bin",
-    "CMDPARSE_LIB": str(HOOKS / "executable_cmdparse.sh"),
-    "HOOK_INPUT_LIB": str(HOOKS / "hook-input.sh"),
-}
-
-
-def bash_verdict(command: str, env: dict[str, str] = BASH_ENV) -> tuple[str, str]:
-    """(permissionDecision, permissionDecisionReason) from the bash hook; ("none", "") when it
-    prints nothing. For the allow/upgrade case the second element is the updated command."""
-    r = subprocess.run(
-        ["bash", str(HOOK)],
-        input=json.dumps({"tool_input": {"command": command}}),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-    if not r.stdout.strip():
-        return ("none", "")
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    kind = out["permissionDecision"]
-    detail = out["updatedInput"]["command"] if kind == "allow" else out["permissionDecisionReason"]
-    return (kind, detail)
-
-
-def python_verdict(command: str) -> tuple[str, str]:
-    v = d.deny(command, "", ENV)
-    if v.kind == "none":
-        return ("none", "")
-    return (v.kind, v.updated_command if v.kind == "allow" else v.reason)
+# --- every inline list, as one corpus (non-vacuity for the sections above) --------------------
 
 
 def every_inline_vector() -> list[str]:
@@ -872,14 +830,7 @@ def every_inline_vector() -> list[str]:
     )
 
 
-@skip_no_bash
-def test_python_and_bash_agree_on_every_vector():
+def test_the_whole_corpus_is_not_silently_small():
     deny_list, allow_list = load_vectors(HOME)
     corpus = deny_list + allow_list + every_inline_vector()
-    corpus += ["git push --force origin feature-x", "git push -f origin feature-x"]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        theirs = list(pool.map(bash_verdict, corpus))
-    mine = [python_verdict(c) for c in corpus]
-    mismatches = [(c, m, t) for c, m, t in zip(corpus, mine, theirs, strict=True) if m != t]
-    assert mismatches == []
     assert len(corpus) >= 400

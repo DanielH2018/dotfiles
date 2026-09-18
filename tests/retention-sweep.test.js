@@ -210,11 +210,16 @@ test('the acting and rotating row sets are source literals covering their rules 
 
 // --- Manifest shape ----------------------------------------------------------------
 
-test('manifest has all 21 rows (the 19-row spec table plus G18 and G19) with required schema fields', () => {
+// G18 (cmdparse-shadow.jsonl, the M02 census sink) left with its writer: claude-guard slice 6
+// deleted block-dangerous-bash.sh, so nothing appends to that log any more and the row is
+// gone rather than renumbered.
+test('manifest has all 20 rows (the 19-row spec table plus G19, minus G18) with required schema fields', () => {
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  assert.strictEqual(manifest.length, 21);
+  assert.strictEqual(manifest.length, 20);
   const ids = manifest.map((r) => r.id).sort();
-  const expected = ['N1', 'N2', ...Array.from({ length: 19 }, (_, i) => `G${i + 1}`)].sort();
+  const expected = ['N1', 'N2', ...Array.from({ length: 19 }, (_, i) => `G${i + 1}`)]
+    .filter((id) => id !== 'G18')
+    .sort();
   assert.deepStrictEqual(ids, expected);
   for (const row of manifest) {
     for (const field of ['path', 'kind', 'rule', 'owner', 'finding']) {

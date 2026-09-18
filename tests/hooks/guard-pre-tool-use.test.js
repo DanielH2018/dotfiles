@@ -49,13 +49,13 @@ function decisionOf(stdout) {
 }
 
 test('unevaluable rules ask and exit 0 by default, so the host prompt stands', () => {
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0', CLAUDE_GUARD_DENY_SHADOW: '0' });
+  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0' });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
 
 test('CLAUDE_GUARD_FAIL_CLOSED=1 denies and exits 2, because the sandbox skips an ask', () => {
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '1', CLAUDE_GUARD_DENY_SHADOW: '0' });
+  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '1' });
   // Exit 2 is what actually blocks under --dangerously-skip-permissions (hooks.md, "Exit code
   // 2 behavior per event": it blocks whether or not JSON is printed). The JSON and the stderr
   // line are the two channels the reason can reach the user by, and which one the harness
@@ -65,11 +65,12 @@ test('CLAUDE_GUARD_FAIL_CLOSED=1 denies and exits 2, because the sandbox skips a
   assert.match(r.stderr, /fails closed/);
 });
 
-test('fail-closed wins over CLAUDE_GUARD_DENY_SHADOW, which decides nothing', () => {
-  // A shadow run computes a verdict and decides nothing by design. In a fail-closed container
-  // that is the same silent hole CLAUDE_GUARD_FAIL_CLOSED exists to close, so the switch is
-  // read first and overrides it.
-  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '1', CLAUDE_GUARD_DENY_SHADOW: '1' });
-  assert.strictEqual(r.status, 2);
-  assert.strictEqual(decisionOf(r.stdout), 'deny');
+test('a stale CLAUDE_GUARD_DENY_SHADOW in the env changes nothing', () => {
+  // Slice 4's shadow switch made the shim print nothing on failure when set to anything but
+  // "0". Slice 6 retired it with the bash hook it shadowed; a settings.json regenerated
+  // before that, or a container image built from one, may still export the old value, and
+  // it must not turn the ask back into silence.
+  const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0', CLAUDE_GUARD_DENY_SHADOW: '1' });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(decisionOf(r.stdout), 'ask');
 });

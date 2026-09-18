@@ -168,8 +168,7 @@
   "editorMode": "normal",
   "skipDangerousModePermissionPrompt": true,
   "env": {
-    "CLAUDE_GUARD_FAIL_CLOSED": "1",
-    "CLAUDE_GUARD_DENY_SHADOW": "0"
+    "CLAUDE_GUARD_FAIL_CLOSED": "1"
   },
   "hooks": {
     "PreToolUse": [

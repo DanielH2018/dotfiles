@@ -5,7 +5,6 @@ names (`cli.pre_tool_use`, `cli.deny`)."""
 import contextlib
 import io
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,8 +13,7 @@ from pathlib import Path
 import pytest
 
 from claude_guard import cli
-from claude_guard.deny import NONE
-from claude_guard.hook import ASK_JSON, DENY_LOG_NAME
+from claude_guard.hook import ASK_JSON
 
 PKG_DIR = Path(__file__).resolve().parents[1]
 
@@ -136,11 +134,6 @@ def test_permission_request_prints_nothing_and_exits_zero_on_garbage(tmp_path):
     assert (r.returncode, r.stdout) == (0, "")
 
 
-def test_shadow_report_exits_nonzero_when_there_is_no_log(tmp_path):
-    r = run("shadow-report", "--log", str(tmp_path / "absent.jsonl"))
-    assert r.returncode == 1
-
-
 HOOKS_DIR = PKG_DIR.parents[3] / "home" / "private_dot_claude" / "hooks"
 
 
@@ -236,27 +229,14 @@ def test_replay_refuses_neither_mode(tmp_path):
     assert run("replay", str(corpus)).returncode == 2
 
 
-# --- slice 4: pre-tool-use, shadow-report --deny, replay --deny ------------------------------
-
-DENY_HOOK_SRC = HOOKS_DIR / "executable_block-dangerous-bash.sh"
+# --- slice 4: pre-tool-use, replay --deny ----------------------------------------------------
 
 
-def test_pre_tool_use_prints_the_deny_line_live(tmp_path, monkeypatch):
+def test_pre_tool_use_prints_the_deny_line(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("CLAUDE_GUARD_DENY_SHADOW", "0")
     rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "rm -rf /"}}))
     assert rc == 0
     assert json.loads(out)["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-
-def test_pre_tool_use_prints_nothing_in_shadow(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("CLAUDE_GUARD_BASH_HOOKS_DIR", str(tmp_path / "nohooks"))
-    monkeypatch.delenv("CLAUDE_GUARD_DENY_SHADOW", raising=False)
-    rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "rm -rf /"}}))
-    assert (rc, out) == (0, "")
-    assert (tmp_path / "logs" / DENY_LOG_NAME).exists()
 
 
 def test_pre_tool_use_prints_ask_when_the_hook_function_raises(monkeypatch):
@@ -264,25 +244,8 @@ def test_pre_tool_use_prints_ask_when_the_hook_function_raises(monkeypatch):
         raise RuntimeError("synthetic")
 
     monkeypatch.setattr(cli, "pre_tool_use", boom)
-    monkeypatch.setenv("CLAUDE_GUARD_DENY_SHADOW", "0")
     rc, out = run_cli(["pre-tool-use"], stdin=json.dumps({"tool_input": {"command": "ls"}}))
     assert (rc, out.strip()) == (0, ASK_JSON)
-
-
-def test_shadow_report_reads_the_deny_log_by_default(tmp_path, monkeypatch):
-    # shadow-report is deny-only (slice 6 retired the allow side's log and report half --
-    # claude_guard.hook's module docstring), so no --deny flag is needed or accepted.
-    monkeypatch.setenv("CLAUDE_SHADOW_LOG_DIR", str(tmp_path))
-    rows = [
-        {"ts": "t", "cmd_sha": "0" * 16, "python": "deny", "bash": "deny", "rule": "rm-root"},
-        {"ts": "t", "cmd_sha": "1" * 16, "python": "deny", "bash": "none", "rule": "pkill"},
-    ]
-    (tmp_path / DENY_LOG_NAME).write_text("".join(json.dumps(r) + "\n" for r in rows))
-    rc, out = run_cli(["shadow-report"])
-    assert rc == 0
-    assert "records 2" in out and "agree 1 (deny 1, ask 0, none 0, allow 0)" in out
-    assert "python-only 1" in out and "  pkill: 1" in out
-    assert "mismatch 0" in out and "python-error 0" in out and "bash-error 0" in out
 
 
 def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):
@@ -295,25 +258,16 @@ def test_replay_deny_prints_rule_lines_and_the_command_head(tmp_path):
     assert "ls -la" not in out
 
 
-@pytest.mark.skipif(not (shutil.which("bash") and shutil.which("jq")), reason="bash unavailable")
-def test_replay_deny_compare_hook_reports_agreement(tmp_path):
-    corpus = write_corpus(tmp_path, ["rm -rf /", "ls -la", "terraform apply", "env"])
-    rc, out = run_cli(["replay", corpus, "--deny", "--compare-hook", str(DENY_HOOK_SRC)])
-    assert rc == 0
-    assert out.splitlines()[-1] == "AGREE 4/4"
-
-
-@pytest.mark.skipif(not (shutil.which("bash") and shutil.which("jq")), reason="bash unavailable")
-def test_replay_deny_compare_hook_names_a_mismatch_and_exits_one(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "deny", lambda command, cwd="", env=None: NONE)
-    corpus = write_corpus(tmp_path, ["rm -rf /"])
-    rc, out = run_cli(["replay", corpus, "--deny", "--compare-hook", str(DENY_HOOK_SRC)])
-    assert rc == 1
-    assert "MISMATCH: rm -rf / python=none bash=deny" in out
-    assert out.splitlines()[-1] == "AGREE 0/1"
-
-
 def test_replay_refuses_deny_with_judge(tmp_path):
     corpus = write_corpus(tmp_path, ["ls"])
     rc, _ = run_cli(["replay", corpus, "--deny", "--judge"])
     assert rc == 2
+
+
+def test_replay_deny_rejects_the_retired_compare_hook_flag(tmp_path):
+    # Slice 6 deleted block-dangerous-bash.sh and the agreement half of `replay --deny` with
+    # it. A gate script still passing the flag must fail loudly, not silently drop it.
+    corpus = write_corpus(tmp_path, ["rm -rf /"])
+    with pytest.raises(SystemExit) as exc:
+        run_cli(["replay", corpus, "--deny", "--compare-hook", "/nonexistent"])
+    assert exc.value.code == 2

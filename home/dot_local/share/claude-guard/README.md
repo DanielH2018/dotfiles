@@ -8,15 +8,16 @@ PermissionRequest hooks (readonly-remote, daniel-server host trust, ansible-read
 judging, and cut the hook over to live — `guard-permission-request.sh` is now the sole
 decision for Bash PermissionRequest, and the six bash hooks it replaces are deleted; slice 4
 ported the PreToolUse deny rules and cut `guard-pre-tool-use.sh` over to live, unregistering
-`block-dangerous-bash.sh` from the host (the file itself stays, frozen, for the sandbox — see
-"The deny rules, live" below); slice 6 (2026-09-17, narrowed) retired the allow-side shadow
-apparatus that slice 3 left behind (`CLAUDE_GUARD_SHADOW`, `BASH_CHAIN`, `bash_chain_allows`,
+`block-dangerous-bash.sh` from the host; slice 6 retired the shadow apparatus on both sides —
+the allow side on 2026-09-17 (`CLAUDE_GUARD_SHADOW`, `BASH_CHAIN`, `bash_chain_allows`,
 `claude-guard-shadow.jsonl`, `shadow-report`'s allow half, `replay --compare-bash` /
-`--compare-hooks`) — every `BASH_CHAIN` member was already deleted from disk in slice 3, so
-shadow mode was comparing against nothing. `cmdparse.sh`, `block-dangerous-bash.sh` and the
-deny-side shadow stay: the sandbox still bind-mounts and runs `block-dangerous-bash.sh` as its
-own in-container deny hook and cannot yet run the Python port (see "Sandbox port" in the spec).
-Spec: `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
+`--compare-hooks`: every `BASH_CHAIN` member was already deleted from disk in slice 3, so
+shadow mode was comparing against nothing), and the deny side on 2026-09-18, once the sandbox
+port (dotfiles #508) had moved the last runner of `block-dangerous-bash.sh` onto
+`guard-pre-tool-use.sh`. That second half deleted `cmdparse.sh`, `block-dangerous-bash.sh`,
+their node suites, `CLAUDE_GUARD_DENY_SHADOW`, `claude-guard-deny-shadow.jsonl`,
+`shadow-report` and `replay --deny --compare-hook`. Both hooks are live-only and take no
+env switch. Spec: `docs/specs/2026-09-06-claude-guard-design.md` (dotfiles repo).
 
 ## The segmenter's contract
 
@@ -83,7 +84,9 @@ still prints that ALLOW tally and remains the load-bearing gate going forward.
 ## The deny rules, live
 
 `claude_guard.deny.deny(command, cwd, env)` is `block-dangerous-bash.sh`'s decision, ported
-rule for rule with the bash line ranges cited in each function and the messages verbatim. It
+rule for rule with the bash line ranges cited in each function and the messages verbatim (the
+bash is deleted; the line ranges read against `git show 8bbe82d:home/private_dot_claude/hooks/executable_block-dangerous-bash.sh`,
+the last commit that carried it). It
 returns a `Verdict` whose `kind` is `deny`, `allow` (the `--force` → `--force-with-lease`
 upgrade, with `updated_command`), or `none`; `deny()` never returns `ask` itself. The rules
 read three subjects the bash builds: the normalised whole command, that plus one line per
@@ -94,54 +97,29 @@ because this is a port.
 
     claude-guard explain 'ssh homelab sudo reboot'          # unchanged: segments and the judge
     claude-guard replay commands.jsonl --deny                # one line per non-none verdict
-    claude-guard replay commands.jsonl --deny --compare-hook ~/.claude/hooks/block-dangerous-bash.sh
-                                                            # AGREE n/N, verdict AND message
 
 `~/.claude/hooks/guard-pre-tool-use.sh` runs `claude-guard pre-tool-use` on PreToolUse for
 every Bash call and is the sole decision for Bash PreToolUse on THIS HOST: it computes
 `deny()`'s verdict and denies, upgrades, or stays silent. Its failure contract is the OPPOSITE
 of the PermissionRequest shim's: cannot run → it prints `ask` itself, without Python, the
-posture the bash takes on a missing `jq`. An exception inside Python in live mode prints the
-same `ask` from `hook.py`.
+posture the bash took on a missing `jq`. An exception inside Python prints the same `ask` from
+`hook.py`. In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
+2, because `--dangerously-skip-permissions` skips an ask (see the shim's header).
 
-**`block-dangerous-bash.sh` itself is not deleted** — see its own header comment and
-`docs/plans/2026-09-17-claude-guard-slice-4-cutover.md`. It is unregistered from PreToolUse on
-the host (this cutover) but stays deployed, frozen, and sourcing `cmdparse.sh`, because the
-sandbox (`home/private_dot_claude/sandbox/`) bind-mounts and registers this exact deployed copy
-as its own in-container deny hook and cannot yet run the Python port. `--compare-hook` above
-still runs against it for that reason; the M02 shadow census inside it
-(`_bdb_shadow_log`/`CMDPARSE_SHADOW`) is still real and still tested
-(`tests/hooks/cmdparse-shadow.test.js`), because the hook still runs — in the sandbox.
+The oracle for the rules is `tests/test_deny.py` against
+`tests/fixtures/block-dangerous-bash-vectors.json` (32 deny / 27 allow groups, 281 commands),
+plus `tests/test_deny_normalization.py`'s generated property corpus. The bash they were ported
+from is gone, so there is no second implementation to agree with any more; the agreement
+record that cleared the cutover is below.
 
-The host hook goes live when `CLAUDE_GUARD_DENY_SHADOW` is exactly `"0"` — `settings.json`'s
-`env` sets it, and the shim's own default matches, so a stale `settings.json` that lost the key
-fails toward live rather than toward a shadow mode whose bash comparison no longer runs on the
-host (see `guard-pre-tool-use.sh`'s own comment for why that direction is the safe one
-post-cutover; it was a separate switch from the allow side's, now retired, so the two sides
-cut over independently). Any other value still computes the verdict, runs the deployed
-`block-dangerous-bash.sh` on the same stdin (with the M02 census switches removed, so that
-re-run cannot double-count), and appends one line to
-`~/.claude/logs/claude-guard-deny-shadow.jsonl`:
-
-    {"bash": "deny", "cmd_sha": "…16 hex…", "python": "deny", "rule": "rm-root",
-     "ts": "2026-09-06T12:00:00Z"}
-
-`python` is `deny` | `ask` | `allow` | `none` | `error`; `bash` is the same set, where `error`
-means the bash could not be run or read — never folded into `none`, so a missing hook is not
-agreement. `rule` is a fixed literal (`exception` for an error), never text from the command.
-
-    claude-guard shadow-report               # deny-side only; historical: the pre-cutover
-                                              # agreement record
-
-The cutover gate (spec row 4) was `shadow-report --deny` (the flag has since been dropped --
-`shadow-report` is deny-only now that slice 6 retired the allow side's log and report half)
-showing at least 200 records collected over at least 3 days, with zero `python_only`, `bash_only`, `mismatch`,
+The cutover gate (spec row 4) was `shadow-report --deny` showing at least 200 records
+collected over at least 3 days, with zero `python_only`, `bash_only`, `mismatch`,
 `detail_mismatch`, `python_error`, `bash_error` and `bash_timeout` rows, checked against the
-host-registered bash before this cutover; measured 11,973 records over 6.6 days at zero across
-the board. `bash_timeout` rows were expected on large heredocs — the bash is quadratic there
-and exceeds the 5s re-run cap — and would not have blocked; no longer relevant to the host gate
-now that no host-side shadow comparison runs by default, but the underlying cost is unchanged
-for the sandbox's own use of the hook.
+host-registered bash before the cutover; measured 11,973 records over 6.6 days at zero across
+the board, with `replay --deny --compare-hook` at `AGREE 1058/1058` on the prompted corpus and
+`AGREE 281/281` on the vectors. The sandbox port repeated the vector replay inside the
+container against the interpreter the image resolves before slice 6 deleted the bash and the
+tooling that produced those numbers.
 
 ## Tests
 
