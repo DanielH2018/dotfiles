@@ -16,18 +16,18 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 const { scratch } = require('./lib/tmp');
+const { repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const SCRIPT = path.join(REPO, 'bin', 'lint-js');
-const CONFIG = path.join(REPO, '.oxlintrc.json');
+const SCRIPT = repoPath('bin', 'lint-js');
+const CONFIG = repoPath('.oxlintrc.json');
 const scriptText = fs.readFileSync(SCRIPT, 'utf8');
-const hookConfig = fs.readFileSync(path.join(REPO, '.pre-commit-config.yaml'), 'utf8');
+const hookConfig = fs.readFileSync(repoPath('.pre-commit-config.yaml'), 'utf8');
 
 const haveOxlint = spawnSync('command', ['-v', 'oxlint'], { shell: true }).status === 0;
 const skip = haveOxlint ? false : 'oxlint not installed';
 
 function runLint(args) {
-  return spawnSync('bash', [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
+  return spawnSync('bash', [SCRIPT, ...args], { cwd: repoPath(), encoding: 'utf8' });
 }
 
 function fixture(name, body) {
@@ -107,7 +107,7 @@ test('every extensionless script the hook names is executable in git', { skip: f
   const entry = hookConfig.match(/files: \(\\\.\(js\|mjs\)\$\|(.+)\)$/m);
   assert.ok(entry, 'could not find the oxlint hook files: pattern');
 
-  const scripts = execFileSync('git', ['ls-files', '-s', 'bin/config-soak', 'home/dot_local/bin/'], { cwd: REPO })
+  const scripts = execFileSync('git', ['ls-files', '-s', 'bin/config-soak', 'home/dot_local/bin/'], { cwd: repoPath() })
     .toString()
     .split('\n')
     .filter(Boolean)
@@ -116,7 +116,7 @@ test('every extensionless script the hook names is executable in git', { skip: f
       return { mode: meta.split(' ')[0], file };
     })
     .filter((e) => !path.basename(e.file).includes('.'))
-    .filter((e) => fs.readFileSync(path.join(REPO, e.file), 'utf8').startsWith('#!/usr/bin/env node'));
+    .filter((e) => fs.readFileSync(repoPath(e.file), 'utf8').startsWith('#!/usr/bin/env node'));
 
   assert.ok(scripts.length >= 5, `expected the extensionless node scripts, saw ${scripts.length}`);
   for (const { mode, file } of scripts) {

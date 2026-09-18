@@ -15,11 +15,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
 const { renderTemplate } = require('../lib/render');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const TMPL = path.join(__dirname, '..', '..', 'home', 'dot_zshrc.tmpl');
+const TMPL = srcPath('dot_zshrc.tmpl');
 const raw = fs.readFileSync(TMPL, 'utf8');
 
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;

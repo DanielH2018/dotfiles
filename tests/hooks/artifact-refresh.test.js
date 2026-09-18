@@ -5,8 +5,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = srcPath('private_dot_claude', 'hooks');
 const REFRESH = path.join(HOOKS, 'executable_artifact-refresh.sh');
 const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
 const SEED = path.join(HOOKS, 'executable_artifact-session-seed.sh');

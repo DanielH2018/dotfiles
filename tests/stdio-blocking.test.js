@@ -8,10 +8,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
-const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_stdio-blocking');
+const SCRIPT = srcPath('dot_local', 'bin', 'executable_stdio-blocking');
 
 const skip = skipUnless('bash', 'python3');
 

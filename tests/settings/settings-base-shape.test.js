@@ -39,10 +39,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const TMPL = path.join(REPO, 'home', '.chezmoitemplates', 'settings.base.json');
-const MERGE = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
+const TMPL = srcPath('.chezmoitemplates', 'settings.base.json');
+const MERGE = srcPath('dot_local', 'bin', 'executable_claude-settings-merge');
 
 const skip = skipUnless('bash', 'chezmoi');
 
@@ -117,8 +117,8 @@ test('outputStyle names a style file that exists and keeps the coding instructio
   if (!name) return;
   // Not `dir`/`tmp`: tests/sandbox/sandbox-escape.test.js tracks bindings by name across the
   // whole file, so reusing a name the merge test above binds to a temp dir makes its
-  // fs.writeFileSync/fs.rmSync calls resolve to this REPO path and read as escapes.
-  const stylesDir = path.join(REPO, 'home', 'private_dot_claude', 'output-styles');
+  // fs.writeFileSync/fs.rmSync calls resolve to the checkout and read as escapes.
+  const stylesDir = srcPath('private_dot_claude', 'output-styles');
   const match = fs.readdirSync(stylesDir)
     .filter((f) => f.endsWith('.md'))
     .map((f) => ({ f, body: fs.readFileSync(path.join(stylesDir, f), 'utf8') }))
@@ -175,7 +175,7 @@ const BASE_URL_HOSTS = (() => {
 
 test('every artifact port is reachable, by cluster URL or by an ssh forward', () => {
   const ssh = fs.readFileSync(
-    path.join(REPO, 'home', 'private_dot_ssh', 'private_config.tmpl'), 'utf8');
+    srcPath('private_dot_ssh', 'private_config.tmpl'), 'utf8');
   const stanzas = new Map();
   let current = null;
   for (const line of ssh.split('\n')) {
@@ -220,7 +220,7 @@ test('the audible cue gates the idle reminder on the session being a background 
     (e.hooks || []).some((h) => /notify\.sh/.test(h.command || '')));
   assert.ok(entries.length, 'no Notification entry runs the audible cue');
   const script = fs.readFileSync(
-    path.join(REPO, 'home', 'private_dot_claude', 'hooks', 'executable_notify.sh'), 'utf8');
+    srcPath('private_dot_claude', 'hooks', 'executable_notify.sh'), 'utf8');
   for (const e of entries) {
     assert.match(e.matcher, /permission_prompt/,
       'a genuine permission prompt must still make a sound');

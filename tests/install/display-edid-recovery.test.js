@@ -27,8 +27,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-display-edid-recovery.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-display-edid-recovery.sh.tmpl');
 
 // Real binaries the health script needs; PATH is replaced wholesale by the stub dir, so anything
 // not listed here and not stubbed simply won't exist.

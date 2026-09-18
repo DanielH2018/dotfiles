@@ -7,8 +7,9 @@ const os = require('node:os');
 
 const { shConst } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
 // A host-mode artifact link is platform-dependent: a Linux host (VS Code Remote / WSL,
 // where file:// can't reach the client) gets http://127.0.0.1:PORT/<rel> served by

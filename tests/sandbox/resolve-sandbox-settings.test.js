@@ -4,9 +4,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const HELPER = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_resolve-sandbox-settings.sh');
-const MERGE_SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
+const HELPER = srcPath('private_dot_claude', 'sandbox', 'executable_resolve-sandbox-settings.sh');
+const MERGE_SRC = srcPath('dot_local', 'bin', 'executable_claude-settings-merge');
 
 // The sandbox settings resolver is Unix-only (the sandbox doesn't run on Windows) and this
 // test relies on POSIX ':'-joined PATHs and /usr/bin,/bin. Skip cleanly on Windows.

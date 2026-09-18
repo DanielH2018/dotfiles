@@ -17,8 +17,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SPARES = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_spares');
+const SPARES = srcPath('dot_local', 'bin', 'executable_spares');
 
 const skip = skipUnless('bash', 'jq');
 

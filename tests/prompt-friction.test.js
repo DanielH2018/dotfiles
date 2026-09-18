@@ -16,8 +16,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const TOOL = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_prompt-friction');
+const TOOL = srcPath('dot_local', 'bin', 'executable_prompt-friction');
 
 const skip = skipUnless('python3');
 

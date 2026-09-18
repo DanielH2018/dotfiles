@@ -10,8 +10,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-context.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_session-context.sh');
 const skip = !have('bash') ? 'bash unavailable' : !have('jq') ? 'jq unavailable' : !have('git') ? 'git unavailable' : false;
 
 // A git repo that ships an executable bin/install-hook-shim. The shim records that it ran

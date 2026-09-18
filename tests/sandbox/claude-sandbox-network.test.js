@@ -10,8 +10,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 // The launcher plus the libs it sources, concatenated: start_proxy/start_filter/
 // stop_proxy now live in sandbox-proxy.sh while the sandbox's own `docker run` stays

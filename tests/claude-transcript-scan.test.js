@@ -22,6 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { have, skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
 // The one synthetic token that must NOT be allowlisted, generated per run rather than
 // written down. A committed literal PROPAGATES: any session that reads this file copies it
@@ -42,7 +43,7 @@ function syntheticPat() {
   return 'ghp_' + Array.from(crypto.randomBytes(36), (b) => ALPHABET[b % ALPHABET.length]).join('');
 }
 
-const SCANNER = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-transcript-scan');
+const SCANNER = srcPath('dot_local', 'bin', 'executable_claude-transcript-scan');
 
 // gitleaks is not installed system-wide; prek fetches it into its own cache. Resolve it the
 // same way the scanner does, and skip rather than fail when the cache has not been populated
@@ -219,7 +220,7 @@ test('the fingerprint keys on content, not on line position', { skip }, () => {
 // its contract: it must drop the noise and must NOT drop a real token shape. `secretKeyRef:`
 // is a real line from the 2026-08-29 sweep, not an invented one.
 const NARROW = '[extend]\nuseDefault = true\ndisabledRules = ["generic-api-key"]\n';
-const SHIPPED = path.join(__dirname, '..', 'home', 'dot_config', 'gitleaks', 'transcript-scan.toml');
+const SHIPPED = srcPath('dot_config', 'gitleaks', 'transcript-scan.toml');
 const NOISE = JSON.stringify({
   type: 'assistant',
   message: { role: 'assistant', content: [{ type: 'text', text: '  secretKeyRef:\n    name: sonarr-exportarr\n  api_key: "a7Kq93MnZx2WvBc8LpRt5YdH4FgJ6sEu"' }] },
@@ -368,7 +369,7 @@ test('the Loki arm runs the FULL ruleset, not the narrowed daily one', { skip },
 // pending set triaged on 2026-09-18). The pair below keeps those allowlists honest in both
 // directions: the first half fails if either shape starts reporting again, the second if an
 // allowlist is ever widened until it swallows the `api_key=<hex>` shape the arm exists for.
-const SHIPPED_LOKI = path.join(__dirname, '..', 'home', 'dot_config', 'gitleaks', 'transcript-scan-loki.toml');
+const SHIPPED_LOKI = srcPath('dot_config', 'gitleaks', 'transcript-scan-loki.toml');
 
 // The two shapes as they reached Loki: a signed-commit summary carrying an ED25519 key
 // fingerprint, and an Edit old_string carrying a docstring that says "token: `<name>`".

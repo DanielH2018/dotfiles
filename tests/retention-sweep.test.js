@@ -20,10 +20,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const REPO_ROOT = path.join(__dirname, '..');
-const SWEEP = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_retention-sweep');
-const MANIFEST = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'retention-manifest.json');
+const SWEEP = srcPath('dot_local', 'bin', 'executable_retention-sweep');
+const MANIFEST = srcPath('private_dot_claude', 'retention-manifest.json');
 
 const skip = skipUnless('bash', 'jq');
 

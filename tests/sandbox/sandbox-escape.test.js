@@ -170,3 +170,18 @@ test('a regex literal after a keyword is not read as division', () => {
 test('refuses to report a clean file it could not lex', () => {
   assert.throws(() => blankLiterals('const s = "never closed;\n'), /could not lex/);
 });
+
+test('a destination built through tests/lib/paths.js is a write into the checkout', () => {
+  // The helpers hide __dirname inside tests/lib, so the guard has to know their names;
+  // without this a migration onto them would have taken every file out of its view.
+  const bad = [
+    "const { srcPath, repoPath } = require('../lib/paths');",
+    "const HOOKS = srcPath('private_dot_claude', 'hooks');",
+    "fs.writeFileSync(path.join(HOOKS, 'probe.sh'), '');",
+    "fs.mkdirSync(repoPath('bin', 'scratch'));",
+  ].join('\n');
+
+  const found = findEscapes(bad);
+  assert.deepStrictEqual(found.map((e) => [e.line, e.api]), [[3, 'writeFileSync'], [4, 'mkdirSync']]);
+  assert.strictEqual(found[0].root.what, 'the repo checkout');
+});

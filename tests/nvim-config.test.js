@@ -12,9 +12,9 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { have } = require('./lib/probe');
+const { srcPath, repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const NVIM = path.join(REPO, 'home', 'dot_config', 'nvim');
+const NVIM = srcPath('dot_config', 'nvim');
 
 // Same probe order as the wezterm tests: DEVCOM.Lua's lua.exe sits outside PATH on Windows.
 function findLua() {
@@ -43,7 +43,7 @@ test('every Lua file in the config parses', { skip }, () => {
     // loadfile compiles without executing — the specs reference `vim`, which only exists
     // inside nvim, so running them here would fail for the wrong reason.
     const r = spawnSync(lua, ['-e', `local fn, err = loadfile(${JSON.stringify(f)}); if not fn then io.stderr:write(err) os.exit(1) end`], { encoding: 'utf8' });
-    assert.strictEqual(r.status, 0, `${path.relative(REPO, f)}: ${r.stderr}`);
+    assert.strictEqual(r.status, 0, `${path.relative(repoPath(), f)}: ${r.stderr}`);
   }
 });
 

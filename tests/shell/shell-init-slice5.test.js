@@ -31,11 +31,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const COMMON = path.join(REPO, 'home', 'dot_config', 'shell', 'common.sh');
-const TMPL = path.join(REPO, 'home', 'dot_zshrc.tmpl');
-const BASHRC = path.join(REPO, 'home', 'dot_bashrc');
+const COMMON = srcPath('dot_config', 'shell', 'common.sh');
+const TMPL = srcPath('dot_zshrc.tmpl');
+const BASHRC = srcPath('dot_bashrc');
 const rawTmpl = fs.readFileSync(TMPL, 'utf8');
 const rawBashrc = fs.readFileSync(BASHRC, 'utf8');
 

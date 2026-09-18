@@ -18,8 +18,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { scratch } = require('./lib/tmp');
+const { repoPath } = require('./lib/paths');
 
-const SWEEP = path.join(__dirname, '..', 'bin', 'sweep-test-tmp');
+const SWEEP = repoPath('bin', 'sweep-test-tmp');
 
 // Makes a dir in `tmp` and backdates it, since age is what the sweep decides on.
 const mk = (tmp, name, hoursAgo = 0) => {
@@ -139,7 +140,7 @@ test('every suite that makes scratch in $TMPDIR also removes it', () => {
   // Not named `repo`: fakeRepo() above binds that to a temp dir, and the write-escape
   // guard reads these files statically -- one name for both would make its every
   // `path.join(repo, …)` look like a write into the real checkout.
-  const checkout = path.join(__dirname, '..');
+  const checkout = repoPath();
   const tracked = execFileSync('git', ['ls-files', '*.test.js', '*.test.mjs'], { cwd: checkout, encoding: 'utf8' })
     .split('\n').filter(Boolean);
 
@@ -166,7 +167,7 @@ test('every suite that makes scratch in $TMPDIR also removes it', () => {
 });
 
 test('the pre-push gate runs the sweep without letting it block a push', () => {
-  const hook = fs.readFileSync(path.join(__dirname, '..', '.githooks', 'pre-push'), 'utf8');
+  const hook = fs.readFileSync(repoPath('.githooks', 'pre-push'), 'utf8');
   assert.match(hook, /bin\/sweep-test-tmp/, 'the gate must actually invoke the sweep');
   assert.match(
     hook,

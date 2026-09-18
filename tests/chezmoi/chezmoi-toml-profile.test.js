@@ -24,8 +24,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const TMPL = path.join(__dirname, '..', '..', 'home', '.chezmoi.toml.tmpl');
+const TMPL = srcPath('.chezmoi.toml.tmpl');
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 const WORK_PROMPT = 'Is this a work machine';

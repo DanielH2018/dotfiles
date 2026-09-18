@@ -20,8 +20,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 // The launcher plus every lib it sources — prune_worktrees and gc_worktrees live in
 // sandbox-worktree-ops.sh now. Globbed rather than named, as the other harnesses do.

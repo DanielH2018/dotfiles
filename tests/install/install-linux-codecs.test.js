@@ -19,17 +19,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const ROOT = path.join(__dirname, '..', '..');
-const SOURCE = path.join(ROOT, 'home');
-const SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-codecs.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_install-codecs.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // --source pins the render to THIS checkout, so a branch is not tested against main's copy of the
 // shared linux-install.sh.
-const render = () => renderTemplate(body, { source: SOURCE });
+const render = () => renderTemplate(body, { source: srcPath() });
 
 // Gated to a non-WSL Linux workstation, so it renders empty on a server/minimal profile or under
 // WSL. Those hosts have nothing to assert against.

@@ -13,8 +13,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { repoPath } = require('../lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-push-signatures');
+const SCRIPT = repoPath('bin', 'check-push-signatures');
 const skip = !have('bash') ? 'bash unavailable'
   : !have('git') ? 'git unavailable'
   : !have('ssh-keygen') ? 'ssh-keygen unavailable' : false;

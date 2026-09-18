@@ -11,8 +11,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const WATCH = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_otel-sweep-watch');
+const WATCH = srcPath('dot_local', 'bin', 'executable_otel-sweep-watch');
 
 let skip = false;
 try {

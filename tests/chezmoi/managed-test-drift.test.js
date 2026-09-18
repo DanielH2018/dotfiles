@@ -23,9 +23,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const SOURCE = path.join(REPO, 'home');
 const ALLOWLIST = path.join(__dirname, 'managed-test-paths.txt');
 const PATTERN = /test|fixture|conftest/i;
 
@@ -37,7 +36,7 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
   .filter((l) => l && !l.startsWith('#'))
   .sort();
 
-function managedMatches(source = SOURCE) {
+function managedMatches(source = srcPath()) {
   const r = spawnSync('chezmoi', ['managed', '--source', source], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `chezmoi managed failed: ${r.stderr}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l && PATTERN.test(l)).sort();
@@ -88,7 +87,7 @@ test('the guard actually catches a newly-added test file', { skip }, () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'managed-drift-'));
   try {
     const copy = path.join(scratch, 'home');
-    fs.cpSync(SOURCE, copy, { recursive: true });
+    fs.cpSync(srcPath(), copy, { recursive: true });
     fs.writeFileSync(path.join(copy, 'private_dot_claude', 'test_a13_16_probe.sh'),
       '#!/bin/sh\n# transient fixture for tests/managed-test-drift.test.js\n');
 

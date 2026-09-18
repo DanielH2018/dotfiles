@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
 // Under the repo's pre-push hook git exports GIT_DIR/GIT_WORK_TREE into the environment, which
 // would point the hook's `git` calls at the outer repo instead of each fixture.
@@ -18,7 +19,7 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
   delete process.env[v];
 }
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_pre-compact.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_pre-compact.sh');
 
 const skip = skipUnless('bash', 'jq');
 

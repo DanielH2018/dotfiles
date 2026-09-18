@@ -7,11 +7,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(
-  __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
-  'executable_planka-plan.sh',
-);
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_planka-plan.sh');
 
 // Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
 // only collects leftovers six hours later.

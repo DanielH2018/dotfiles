@@ -8,10 +8,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
+const COMMON = srcPath('dot_config', 'shell', 'common.sh');
 
 const skip = skipUnless('bash');
 

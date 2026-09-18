@@ -11,13 +11,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const os = require('node:os');
-const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(
-  __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
-  'executable_guard-pre-tool-use.sh',
-);
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_guard-pre-tool-use.sh');
 
 // An empty CLAUDE_GUARD_HOME reaches `fail()` at the shim's first check (no claude_guard/cli.py)
 // without depending on whether this machine has uv or a managed 3.14 installed.

@@ -8,8 +8,9 @@ const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 
 const { shConst } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // The pinned version, read from the script rather than restated. The idempotence test below

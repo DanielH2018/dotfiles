@@ -13,8 +13,9 @@ const { execFileSync } = require('node:child_process');
 const { Term, ptySkip, tierB, sleep } = require('../lib/pty');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const CONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
+const CONF = srcPath('dot_tmux.conf');
 
 const missing = (t) => !have(t);
 const skip = tierB()

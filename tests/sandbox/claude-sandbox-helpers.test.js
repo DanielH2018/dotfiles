@@ -19,8 +19,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 // The launcher plus every lib it sources: functions keep moving out of it into
 // sandbox-*.sh (resolve_main_ref and build_repo_snapshot into the mount lib,

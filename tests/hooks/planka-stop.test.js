@@ -7,11 +7,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(
-  __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
-  'executable_planka-stop.sh',
-);
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_planka-stop.sh');
 
 // Same gate as planka-claim.test.js: the board is set up on one machine, and these
 // hooks race a backgrounded CLI call everywhere else.

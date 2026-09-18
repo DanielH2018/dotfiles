@@ -16,8 +16,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_memory-stale-paths.py');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_memory-stale-paths.py');
 
 let toolsOk = true;
 let python = 'python3';

@@ -23,15 +23,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
+const JSONQ = srcPath('dot_local', 'bin', 'executable_jsonq');
 // claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
 // deployed for the sandbox -- see its own header comment); deny.py (claude_guard's port,
 // ported rule for rule -- see docs/plans/2026-09-17-claude-guard-slice-4-cutover.md) is now
 // the host's live decision-maker and the oracle SECRET_PATHS mirrors.
-const DENY_PY = path.join(
-  __dirname, '..', 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
-);
+const DENY_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py');
 
 let python = 'python3';
 let skip = false;
@@ -85,7 +84,7 @@ const SOURCE = fs.readFileSync(JSONQ, 'utf8');
 // true of a shim, so these would stay green while covering nothing that matters.
 // They are discovered from disk rather than listed, so a new module is covered
 // the moment it exists.
-const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'jsonq');
+const SHARE = srcPath('dot_local', 'share', 'jsonq');
 const MODULE_FILES = fs.readdirSync(SHARE).filter((f) => f.endsWith('.py')).sort();
 const SOURCES = [
   ['executable_jsonq', SOURCE],

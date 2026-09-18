@@ -11,8 +11,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
+const COMMON = srcPath('dot_config', 'shell', 'common.sh');
 
 const zshSkip = have('zsh') ? false : 'zsh unavailable';
 

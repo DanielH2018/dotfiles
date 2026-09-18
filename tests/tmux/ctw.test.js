@@ -14,8 +14,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const CTW = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ctw');
+const CTW = srcPath('dot_local', 'bin', 'executable_ctw');
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 
 // A git repo with one empty commit on `main`, plus any extra branches requested.

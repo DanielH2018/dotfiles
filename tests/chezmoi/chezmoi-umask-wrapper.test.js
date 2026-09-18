@@ -24,11 +24,11 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const ZSHENV = path.join(REPO, 'home', 'dot_zshenv');
-const BASH_PROFILE = path.join(REPO, 'home', 'dot_bash_profile.tmpl');
-const ENV_SH = path.join(REPO, 'home', 'dot_config', 'shell', 'env.sh');
+const ZSHENV = srcPath('dot_zshenv');
+const BASH_PROFILE = srcPath('dot_bash_profile.tmpl');
+const ENV_SH = srcPath('dot_config', 'shell', 'env.sh');
 
 // Absolute path: the behavioral test replaces PATH with just the stub dir, so `zsh` itself
 // would no longer resolve by name.

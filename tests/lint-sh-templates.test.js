@@ -13,9 +13,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { scratch } = require('./lib/tmp');
+const { repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const SCRIPT = path.join(REPO, 'bin', 'lint-sh-templates');
+const SCRIPT = repoPath('bin', 'lint-sh-templates');
 
 const have = (tool) => spawnSync('command', ['-v', tool], { shell: true }).status === 0;
 const skipUnlessTooling = have('chezmoi') && have('shellcheck')
@@ -24,7 +24,7 @@ const skipUnlessTooling = have('chezmoi') && have('shellcheck')
 
 function run(args, env) {
   return spawnSync('bash', [SCRIPT, ...args], {
-    cwd: REPO,
+    cwd: repoPath(),
     encoding: 'utf8',
     env: { ...process.env, ...env },
   });
@@ -84,7 +84,7 @@ test('a missing tool announces the skip instead of reporting success quietly', (
   // but it must say the templates went unchecked, which is the whole distinction between
   // degrading and lying.
   const r = spawnSync('/bin/bash', [SCRIPT], {
-    cwd: REPO,
+    cwd: repoPath(),
     encoding: 'utf8',
     env: { ...process.env, PATH: fakeBin },
   });
@@ -101,7 +101,7 @@ test('it passes --source so a worktree lints its own fragments', () => {
 });
 
 test('every tracked shell template is reachable by the prek hook that runs this', () => {
-  const config = fs.readFileSync(path.join(REPO, '.pre-commit-config.yaml'), 'utf8');
+  const config = fs.readFileSync(repoPath('.pre-commit-config.yaml'), 'utf8');
   assert.match(config, /entry: bin\/lint-sh-templates/);
   assert.match(config, /files: \\\.sh\\\.tmpl\$/);
 });

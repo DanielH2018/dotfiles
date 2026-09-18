@@ -13,9 +13,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const ROLLUP = path.join(
-  __dirname, '..', 'home', 'dot_local', 'bin', 'executable_otel-savings-rollup');
+const ROLLUP = srcPath('dot_local', 'bin', 'executable_otel-savings-rollup');
 
 // A stub standing in for otelq: prints `out`, exits `code`.
 function stub(dir, out, code = 0) {

@@ -9,17 +9,16 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
-const ROOT = path.join(__dirname, '..', '..');
-const SOURCE = path.join(ROOT, 'home');
-const SRC = path.join(SOURCE, 'dot_config', 'ghostty', 'config.tmpl');
+const SRC = srcPath('dot_config', 'ghostty', 'config.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
-const ignore = fs.readFileSync(path.join(SOURCE, '.chezmoiignore'), 'utf8');
+const ignore = fs.readFileSync(srcPath('.chezmoiignore'), 'utf8');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // --source-pinned so these five tests read this checkout's .chezmoiignore, not the deployed one.
-const render = () => renderTemplate(body, { source: SOURCE });
+const render = () => renderTemplate(body, { source: srcPath() });
 
 test('the darwin branch keeps its original modifiers', () => {
   // The macOS render must be unchanged by the Linux port, so the defaults stay cmd-based and only
@@ -96,7 +95,7 @@ test('no bind steals a control code the terminal needs', { skip }, (t) => {
   // ctrl+t is the deliberate exception: its only occupant is fzf's file widget, which
   // dot_zshrc.tmpl moves to alt+t. If this bind goes, that rebind is dead weight.
   assert.ok(bound.includes('ctrl+t'), 'ctrl+t=new_tab is the alias for Mac muscle memory');
-  const zshrc = fs.readFileSync(path.join(SOURCE, 'dot_zshrc.tmpl'), 'utf8');
+  const zshrc = fs.readFileSync(srcPath('dot_zshrc.tmpl'), 'utf8');
   assert.match(zshrc, /bindkey '\^\[t' fzf-file-widget/, 'fzf needs a home once ctrl+t is taken');
 });
 
@@ -104,7 +103,7 @@ test('KDE gives up every super chord the config claims', { skip }, (t) => {
   if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   // A KWin global shortcut is consumed before the focused window sees the key, so a super bind
   // that collides with one is not a conflict Ghostty can win — it just silently does nothing.
-  const script = fs.readFileSync(path.join(SOURCE, '.chezmoiscripts', 'os-linux',
+  const script = fs.readFileSync(srcPath('.chezmoiscripts', 'os-linux',
     'run_onchange_kde-free-ghostty-chords.sh.tmpl'), 'utf8');
   const freed = [...script.matchAll(/^\s*'[a-z]+\|([^|]+)\|Meta\+Ctrl\+/gm)].map((m) => m[1]);
   for (const key of ['Edit Tiles', 'Overview', 'Show Desktop', 'show-on-mouse-pos']) {
@@ -141,7 +140,7 @@ test('no config key is emitted twice', { skip }, (t) => {
 test('the font family matches what the nerd-font installer provides', { skip }, (t) => {
   if (process.platform !== 'linux') return t.skip('renders the darwin branch off Linux');
   const fontScript = fs.readFileSync(
-    path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_install-nerd-font.sh.tmpl'), 'utf8');
+    srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_install-nerd-font.sh.tmpl'), 'utf8');
   const family = render().match(/^font-family = "([^"]+)"/m)[1];
   // The installer takes only the Mono faces, so a config asking for a proportional or variable
   // face would render with a fallback font and no Nerd Font glyphs.

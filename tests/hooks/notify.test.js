@@ -18,8 +18,9 @@ const path = require('node:path');
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_notify.sh');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 

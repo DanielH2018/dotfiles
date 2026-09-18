@@ -16,8 +16,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_warp-session-title.sh');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 

@@ -12,8 +12,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_mullvad-settings-watch');
+const SRC = srcPath('dot_local', 'bin', 'executable_mullvad-settings-watch');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // jq is the one the script cannot work without; the rest are what it shells out to.

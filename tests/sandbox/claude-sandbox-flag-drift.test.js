@@ -13,8 +13,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const LAUNCHER = fs.readFileSync(path.join(SANDBOX_DIR, 'executable_claude-sandbox'), 'utf8').split('\n');
 const COMPLETION = fs.readFileSync(path.join(SANDBOX_DIR, '_claude-sandbox'), 'utf8');
 

@@ -1,10 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-windows', 'run_onchange_install-nerd-font.ps1.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_install-nerd-font.ps1.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
@@ -34,8 +34,7 @@ test('Windows branch carries the install + VS Code wiring', { skip }, () => {
 // The Linux counterpart. Same font, different mechanics: per-user ~/.local/share/fonts + fc-cache
 // instead of a system-wide install behind UAC.
 // ---------------------------------------------------------------------------------------------
-const SOURCE = path.join(__dirname, '..', '..', 'home');
-const LINUX_SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_install-nerd-font.sh.tmpl');
+const LINUX_SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_install-nerd-font.sh.tmpl');
 const linuxBody = fs.readFileSync(LINUX_SRC, 'utf8');
 
 test('Linux script is gated to a non-WSL workstation', { skip }, () => {
@@ -43,11 +42,11 @@ test('Linux script is gated to a non-WSL workstation', { skip }, () => {
   // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
   assert.match(linuxBody, /includeTemplate "is-desktop-linux"/,
     "WSL's terminal uses the font installed on the Windows host");
-  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  const gate = fs.readFileSync(srcPath('.chezmoitemplates', 'is-desktop-linux'), 'utf8');
   assert.match(gate, /eq \.chezmoi\.os "linux"/);
   assert.match(gate, /eq \.profile "workstation"/, 'a headless server renders no fonts');
   if (process.platform !== 'linux') {
-    const rendered = renderTemplate(linuxBody, { source: SOURCE });
+    const rendered = renderTemplate(linuxBody, { source: srcPath() });
     assert.strictEqual(rendered.trim(), '', 'script must render empty off Linux');
   }
 });

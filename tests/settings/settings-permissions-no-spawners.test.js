@@ -15,14 +15,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
 // settings.permissions.json, not settings.base.json: the permission model was split out of
 // the base template, which now only splices it in by includeTemplate. The two tests below
 // assert they located the allow and deny arrays before parsing anything, so pointing this
 // at the wrong template fails them rather than silently checking zero rules — but keep it
 // pointed at whichever template actually holds the arrays.
-const REAL_SETTINGS = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.permissions.json');
+const REAL_SETTINGS = srcPath('.chezmoitemplates', 'settings.permissions.json');
 // Commands that take another command as an argument. None may be an allow prefix.
 // `make` counts: a target's recipe is arbitrary code living in the repo's own Makefile.
 const SPAWNERS = ['sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'env', 'python', 'python3',
@@ -67,9 +67,7 @@ test('no allow rule normalizes to a prefix that takes a command as its argument'
 // it while reading green throughout. Keep the two lists in step, the same contract the
 // deleted 'every wrapper the hook unwraps is one the allow list is checked against' held
 // for the bash hook's own case list.
-const JUDGE_PY = path.join(
-  __dirname, '..', '..', 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'judge.py',
-);
+const JUDGE_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'judge.py');
 
 test('every wrapper judge.py unwraps is one SPAWNERS lists', () => {
   const src = fs.readFileSync(JUDGE_PY, 'utf8');

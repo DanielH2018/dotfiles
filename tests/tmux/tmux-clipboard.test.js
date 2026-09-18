@@ -17,8 +17,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { setTimeout: sleep } = require('node:timers/promises');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const CONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
+const CONF = srcPath('dot_tmux.conf');
 const skip = !have('tmux') ? 'tmux unavailable' : false;
 
 const socks = [];

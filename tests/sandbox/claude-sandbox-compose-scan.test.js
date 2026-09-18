@@ -15,8 +15,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_claude-sandbox');
+const SANDBOX = srcPath('private_dot_claude', 'sandbox', 'executable_claude-sandbox');
 
 const skip = skipUnless('bash', 'jq');
 

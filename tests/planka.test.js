@@ -13,8 +13,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const PLANKA = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_planka');
+const PLANKA = srcPath('dot_local', 'bin', 'executable_planka');
 
 let skip = false;
 try {

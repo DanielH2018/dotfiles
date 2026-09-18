@@ -12,20 +12,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
-const ROOT = path.join(__dirname, '..', '..');
-const SOURCE = path.join(ROOT, 'home');
-const SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_after_remove-bloat.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_remove-bloat.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
-const removalsToml = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'removals.toml'), 'utf8');
-const packagesToml = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'packages.toml'), 'utf8');
+const removalsToml = fs.readFileSync(srcPath('.chezmoidata', 'removals.toml'), 'utf8');
+const packagesToml = fs.readFileSync(srcPath('.chezmoidata', 'packages.toml'), 'utf8');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 // --source pins the render to THIS checkout, so a branch is not tested against main's data.
-const render = () => renderTemplate(body, { source: SOURCE });
+const render = () => renderTemplate(body, { source: srcPath() });
 
 // Gated to a personal non-WSL workstation, so it renders empty on a server/minimal profile, on a
 // work machine, and under WSL. Those hosts have nothing to assert against.
@@ -70,7 +68,7 @@ test('script is gated to a personal, non-WSL Linux workstation', { skip }, () =>
   // cares whether the machine is a work one.
   assert.match(body, /includeTemplate "is-desktop-linux"/);
   assert.match(body, /not \.work/, 'the work machine package set is not this repo to trim');
-  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  const gate = fs.readFileSync(srcPath('.chezmoitemplates', 'is-desktop-linux'), 'utf8');
   assert.match(gate, /eq \.chezmoi\.os "linux"/);
   assert.match(gate, /eq \.profile "workstation"/);
   assert.match(gate, /includeTemplate "is-wsl"/,

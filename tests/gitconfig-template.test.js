@@ -16,9 +16,9 @@ const path = require('node:path');
 const { renderFile } = require('./lib/render');
 const { scratch } = require('./lib/tmp');
 const { have } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SOURCE = path.join(__dirname, '..', 'home');
-const TMPL = path.join(SOURCE, 'dot_gitconfig.tmpl');
+const TMPL = srcPath('dot_gitconfig.tmpl');
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 function fakeHome(keys = []) {
@@ -32,7 +32,7 @@ function render(home) {
   // --source pins the render to THIS checkout's .chezmoitemplates (is-wsl, is-desktop-linux),
   // which the WSL branch now pulls in via includeTemplate; without it chezmoi resolves shared
   // templates from ~/.local/share/chezmoi and a branch would be tested against main's copies.
-  return renderFile(TMPL, { source: SOURCE, env: { ...process.env, HOME: home } });
+  return renderFile(TMPL, { source: srcPath(), env: { ...process.env, HOME: home } });
 }
 
 // The key-detection probe and the credential helpers both live inside the template's

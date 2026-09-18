@@ -15,8 +15,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const ASKPASS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tmux-askpass');
+const ASKPASS = srcPath('dot_local', 'bin', 'executable_tmux-askpass');
 
 // The helper's last line is `timeout ... head -n 1 <&3`, and timeout(1) is GNU coreutils, which
 // a stock Mac does not have and this repo never asks for (not in Brewfile.tmpl, not a row in

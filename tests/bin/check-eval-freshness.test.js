@@ -17,8 +17,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { repoPath } = require('../lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-eval-freshness');
+const SCRIPT = repoPath('bin', 'check-eval-freshness');
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 
 const SKILLS = 'home/private_dot_claude/skills';

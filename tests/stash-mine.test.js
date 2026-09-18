@@ -16,8 +16,9 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { srcPath } = require('./lib/paths');
 
-const TOOL = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_stash-mine');
+const TOOL = srcPath('dot_local', 'bin', 'executable_stash-mine');
 const SRC = fs.readFileSync(TOOL, 'utf8');
 // The module docstring argues the confinement in prose, so it names the very
 // constructs these checks forbid (there is no `pop`, no `clear`). Scan the code,

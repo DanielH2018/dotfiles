@@ -8,11 +8,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(
-  __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
-  'executable_planka-claim.sh',
-);
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_planka-claim.sh');
 
 // The board runs on one machine. Elsewhere these suites only ever raced the hook's
 // backgrounded CLI call (the no-session-id case failed 3 of 4 pre-push gates on daniel-box

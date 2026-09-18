@@ -13,8 +13,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { repoPath } = require('../lib/paths');
 
-const LAND = path.join(__dirname, '..', '..', 'bin', 'land');
+const LAND = repoPath('bin', 'land');
 
 const skip = skipUnless('bash', 'git');
 

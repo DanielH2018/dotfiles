@@ -15,8 +15,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const HELPER = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_mac-askpass');
+const HELPER = srcPath('dot_local', 'bin', 'executable_mac-askpass');
 
 // The helper resolves `osascript` through PATH, which is what lets these tests replace it.
 // `cat >/dev/null` drains the AppleScript on stdin so the helper never sees EPIPE.

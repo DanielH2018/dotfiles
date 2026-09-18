@@ -15,9 +15,9 @@ const path = require('node:path');
 const { renderFile } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath, repoPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
+const TMPL = srcPath('dot_config', 'wezterm', 'wezterm.lua.tmpl');
 
 // DEVCOM.Lua (the winget installer's Lua) drops lua.exe outside PATH — probe it like
 // wezterm-config.test.js probes luac, then fall back to the names a Linux box has.
@@ -184,7 +184,7 @@ function setup() {
   if (dir) return;
   dir = scratch(os.tmpdir(), 'wezterm-split-');
   rendered = path.join(dir, 'wezterm.lua');
-  fs.writeFileSync(rendered, renderFile(TMPL, { source: null, cwd: REPO }));
+  fs.writeFileSync(rendered, renderFile(TMPL, { source: null, cwd: repoPath() }));
   fs.writeFileSync(path.join(dir, 'harness.lua'), HARNESS);
 }
 

@@ -7,14 +7,15 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
 const skip = skipUnless('python3');
 
 const skipPytest = skipUnless('uv');
 
-const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
-const VAULT_TOOLING = path.join(__dirname, '..', 'home', 'private_dot_claude', 'vault-tooling');
-const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share');
+const SANDBOX = srcPath('private_dot_claude', 'sandbox');
+const VAULT_TOOLING = srcPath('private_dot_claude', 'vault-tooling');
+const SHARE = srcPath('dot_local', 'share');
 
 const SUITES = [
   'test_exec_stream.py',

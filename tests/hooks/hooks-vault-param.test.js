@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
 // When these tests run inside a git hook (e.g. the repo's pre-push), git exports GIT_DIR,
 // GIT_WORK_TREE, GIT_INDEX_FILE, etc. into the environment. The temp-repo `git -C <dir>` calls
@@ -20,7 +21,7 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
 // would otherwise still see the real vault.
 delete process.env.CLAUDE_VAULT_DIR;
 
-const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = srcPath('private_dot_claude', 'hooks');
 const AUTO_FORMAT = path.join(HOOKS, 'executable_auto-format.sh');
 const CHECK_STOP = path.join(HOOKS, 'executable_check-before-stop.sh');
 const WATCH = path.join(HOOKS, 'executable_watch-paths.sh');

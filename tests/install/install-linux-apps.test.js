@@ -14,12 +14,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const ROOT = path.join(__dirname, '..', '..');
-const SOURCE = path.join(ROOT, 'home');
-const SRC = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-apps.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_install-apps.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
-const packages = fs.readFileSync(path.join(SOURCE, '.chezmoidata', 'packages.toml'), 'utf8');
+const packages = fs.readFileSync(srcPath('.chezmoidata', 'packages.toml'), 'utf8');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
@@ -30,7 +29,7 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 // cache is keyed on the body, so it cannot be served this file's default render.
 // Pinned to the workstation profile so the gate below is satisfied on any host; see the
 // `profile` note in tests/lib/render.js for why this beats skipping on a server-profile machine.
-const render = (file) => renderTemplate(file || body, { source: SOURCE, profile: 'workstation' });
+const render = (file) => renderTemplate(file || body, { source: srcPath(), profile: 'workstation' });
 
 // The script is gated to a non-WSL workstation. With the profile pinned above, only WSL and
 // non-Linux hosts still render empty, and those have nothing to assert against.
@@ -61,7 +60,7 @@ test('script is gated to a non-WSL Linux workstation', { skip }, () => {
   // template (home/.chezmoitemplates/is-desktop-linux), reused by every desktop-only script.
   assert.match(body, /includeTemplate "is-desktop-linux"/,
     'WSL has no desktop of its own and must be excluded');
-  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  const gate = fs.readFileSync(srcPath('.chezmoitemplates', 'is-desktop-linux'), 'utf8');
   assert.match(gate, /eq \.chezmoi\.os "linux"/);
   assert.match(gate, /eq \.profile "workstation"/);
   if (process.platform !== 'linux') {
@@ -150,7 +149,7 @@ test('the shared packages.toml still feeds the Windows installer', { skip }, () 
   // ERROR (not an empty string), which would abort the whole Windows apply; and a restructure can
   // quietly drop ids. The Windows script is OS-gated and renders empty here, so strip the guard
   // and render the body directly.
-  const winSrc = path.join(SOURCE, '.chezmoiscripts', 'os-windows', 'run_onchange_after_install-apps.ps1.tmpl');
+  const winSrc = srcPath('.chezmoiscripts', 'os-windows', 'run_onchange_after_install-apps.ps1.tmpl');
   const stripped = fs.readFileSync(winSrc, 'utf8')
     .replace('{{- if eq .chezmoi.os "windows" -}}', '')
     .replace(/{{- end -}}\s*$/, '');

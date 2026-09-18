@@ -15,10 +15,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
-const { renderFile, renderTemplate, chezmoiAvailable, SOURCE } = require('./lib/render');
+const { renderFile, renderTemplate, chezmoiAvailable } = require('./lib/render');
+const { srcPath } = require('./lib/paths');
 
-const TMPL = path.join(SOURCE, 'private_dot_ssh', 'private_config.tmpl');
+const TMPL = srcPath('private_dot_ssh', 'private_config.tmpl');
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 
 const WINDOWS = process.platform === 'win32';

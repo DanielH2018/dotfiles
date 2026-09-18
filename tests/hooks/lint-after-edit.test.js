@@ -12,8 +12,9 @@ const path = require('node:path');
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_lint-after-edit.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_lint-after-edit.sh');
 
 // The hook's truncation cap, read from the hook. The noisy-linter case below has to produce
 // more output than this to reach the truncation branch at all, so a restated 40 here would

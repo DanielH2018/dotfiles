@@ -13,9 +13,9 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const path = require('node:path');
+const { srcPath } = require('./lib/paths');
 
-const SWEEP = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_otel-sweep');
+const SWEEP = srcPath('dot_local', 'bin', 'executable_otel-sweep');
 const SRC = fs.readFileSync(SWEEP, 'utf8');
 // The module docstring argues the confinement in prose, so it names the very
 // constructs these checks forbid. Scan the code, not the argument for it.

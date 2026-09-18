@@ -13,13 +13,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_discord');
+const SRC = srcPath('dot_local', 'bin', 'executable_discord');
 const body = fs.readFileSync(SRC, 'utf8');
 
-const DESKTOP = path.join(
-  __dirname, '..', 'home', 'dot_local', 'share', 'applications', 'discord.desktop.tmpl',
-);
+const DESKTOP = srcPath('dot_local', 'share', 'applications', 'discord.desktop.tmpl');
 const desktop = fs.readFileSync(DESKTOP, 'utf8');
 
 // `true` earns its place: the capability probe is `mullvad-exclude true`, and mullvad-exclude

@@ -17,9 +17,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { renderTemplate } = require('./lib/render');
 const { have } = require('./lib/probe');
+const { srcPath, repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const TASKS = path.join(REPO, 'home', 'dot_config', 'windows-provisioning', 'scheduled-tasks');
+const TASKS = srcPath('dot_config', 'windows-provisioning', 'scheduled-tasks');
 
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 const skipXml = skip || (!have('python3') ? 'python3 unavailable' : false);
@@ -29,7 +29,7 @@ function definitions() {
   return fs.readdirSync(TASKS).filter((f) => f.endsWith('.xml') || f.endsWith('.xml.tmpl')).map((name) => {
     const raw = fs.readFileSync(path.join(TASKS, name), 'utf8');
     const xml = name.endsWith('.tmpl')
-      ? renderTemplate(raw, { source: null, cwd: REPO })
+      ? renderTemplate(raw, { source: null, cwd: repoPath() })
       : raw;
     return { name, xml };
   });

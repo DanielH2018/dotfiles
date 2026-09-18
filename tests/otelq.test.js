@@ -12,8 +12,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const OTELQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_otelq');
+const OTELQ = srcPath('dot_local', 'bin', 'executable_otelq');
 
 const python = 'python3';
 let skip = false;
@@ -565,7 +566,7 @@ test('reduction survives a call that printed nothing', { skip }, () => {
 // ---------------------------------------------------------------------------
 // savings all — the one shape the rollup writes down and keeps.
 
-const ROLLUP = path.join(__dirname, '..', 'home', 'dot_local', 'bin',
+const ROLLUP = srcPath('dot_local', 'bin',
   'executable_otel-savings-rollup');
 
 const allInput = (over) => Object.assign({
@@ -654,7 +655,7 @@ test('otelq reads the counter file jsonq actually writes', { skip }, () => {
   const home = scratch(os.tmpdir(), 'otelq-xdg-');
   const doc = path.join(home, 'doc.json');
   fs.writeFileSync(doc, JSON.stringify({ a: [1, 2, 3] }));
-  const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
+  const JSONQ = srcPath('dot_local', 'bin', 'executable_jsonq');
 
   execFileSync(python, [JSONQ, 'len(d["a"])', doc], {
     encoding: 'utf8', env: Object.assign({}, process.env, { XDG_DATA_HOME: home }),
@@ -675,7 +676,7 @@ test('otelq reads the counter file jsonq actually writes', { skip }, () => {
 // that asymmetry is exactly the kind that rots unwatched.
 test('every otelq backend port is published by the compose stack', () => {
   const compose = fs.readFileSync(
-    path.join(__dirname, '..', 'home', 'claude-otel', 'docker-compose.yml'), 'utf8');
+    srcPath('claude-otel', 'docker-compose.yml'), 'utf8');
   // Read the loopback candidate of each backend. It stays first in the tuple
   // because that is the one the PC's compose stack publishes; the second is the
   // cluster address, which no compose file knows about.

@@ -18,8 +18,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
+const SRC = srcPath('dot_config', 'shell', 'common.sh');
 const FN = fs.readFileSync(SRC, 'utf8').match(/^claude\(\) \{[\s\S]*?^\}$/m)[0];
 
 const zshSkip = skipUnless('zsh');

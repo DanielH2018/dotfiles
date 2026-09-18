@@ -21,9 +21,10 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { renderTemplate, chezmoiAvailable, REPO } = require('./lib/render');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
+const { srcPath, repoPath } = require('./lib/paths');
 
-const DIR = path.join(REPO, 'scheduled');
+const DIR = repoPath('scheduled');
 
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 const havePython = (() => {
@@ -41,7 +42,7 @@ function definitions() {
   cache ??= sources().map((name) => ({
     name,
     raw: fs.readFileSync(path.join(DIR, name), 'utf8'),
-    xml: renderTemplate(fs.readFileSync(path.join(DIR, name), 'utf8'), { source: null, cwd: REPO }),
+    xml: renderTemplate(fs.readFileSync(path.join(DIR, name), 'utf8'), { source: null, cwd: repoPath() }),
   }));
   return cache;
 }
@@ -101,7 +102,7 @@ test('every Label matches its filename', { skip }, () => {
 // A plist naming a program that does not exist loads fine and fails at its first run, into
 // a log nobody reads. Resolve each absolute program path back to the source that deploys it.
 test('every program a definition runs exists in this repo', { skip }, () => {
-  const home = renderTemplate('{{ .chezmoi.homeDir }}', { source: null, cwd: REPO });
+  const home = renderTemplate('{{ .chezmoi.homeDir }}', { source: null, cwd: repoPath() });
   for (const { name, xml } of definitions()) {
     const args = stringValues(xml, 'ProgramArguments');
     assert.ok(args.length > 0, `${name} has no ProgramArguments`);
@@ -114,7 +115,7 @@ test('every program a definition runs exists in this repo', { skip }, () => {
       // ~/.local/bin/foo is deployed from home/dot_local/bin/executable_foo.
       const m = rel.match(/^\.local\/bin\/(.+)$/);
       if (m) {
-        const src = path.join(REPO, 'home', 'dot_local', 'bin', `executable_${m[1]}`);
+        const src = srcPath('dot_local', 'bin', `executable_${m[1]}`);
         assert.ok(fs.existsSync(src),
           `${name} runs ~/${rel}, which nothing in this repo deploys (looked for ${src})`);
       }

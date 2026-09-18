@@ -13,8 +13,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_flatpak-update');
+const SRC = srcPath('dot_local', 'bin', 'executable_flatpak-update');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // `true` earns its place: the capability probe is `mullvad-exclude true`, and mullvad-exclude

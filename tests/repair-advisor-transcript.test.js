@@ -10,11 +10,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(
-  __dirname, '..', 'home', 'private_dot_claude', 'scripts',
-  'executable_repair-advisor-transcript.py',
-);
+const SCRIPT = srcPath('private_dot_claude', 'scripts', 'executable_repair-advisor-transcript.py');
 
 const skip = skipUnless('python3');
 

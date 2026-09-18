@@ -14,8 +14,9 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { srcPath } = require('./lib/paths');
 
-const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_sudo');
+const SHIM = srcPath('dot_local', 'bin', 'executable_sudo');
 
 // runTty below needs util-linux script(1), not just any script(1): macOS ships the BSD one,
 // which takes a different command form and tcgetattr's its own stdin, so from a node child with

@@ -5,8 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-lib.sh');
+const LIB = srcPath('private_dot_claude', 'sandbox', 'executable_sandbox-lib.sh');
 
 // sandbox-lib is sourced by the Unix-only sandbox scripts; it relies on POSIX bash.
 const skip = process.platform === 'win32' ? 'sandbox-lib is Unix-only' : false;

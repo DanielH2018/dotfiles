@@ -20,11 +20,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { srcPath, repoPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const TMPL_DIR = path.join(REPO, 'home', '.chezmoitemplates');
-const GUARD = path.join(REPO, 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
-const SOAK = path.join(REPO, 'bin', 'config-soak');
+const TMPL_DIR = srcPath('.chezmoitemplates');
+const GUARD = srcPath('private_dot_claude', 'modify_settings.json.sh.tmpl');
+const SOAK = repoPath('bin', 'config-soak');
 
 // Every settings template on disk, repo-relative. Not "every template referenced by an
 // includeTemplate": a file that is present but referenced by nothing is the more dangerous

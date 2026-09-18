@@ -21,8 +21,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
   : skipUnless('bash', 'awk', 'git');

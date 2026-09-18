@@ -32,8 +32,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_mx-ergo-resync');
+const SCRIPT = srcPath('dot_local', 'bin', 'executable_mx-ergo-resync');
 
 const BASH = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';

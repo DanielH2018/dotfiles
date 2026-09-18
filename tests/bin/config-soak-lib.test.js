@@ -4,9 +4,9 @@
 // deterministic (never flaky).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const path = require('node:path');
+const { repoPath } = require('../lib/paths');
 
-const lib = require(path.join(__dirname, '..', '..', 'bin', 'config-soak-lib.js'));
+const lib = require(repoPath('bin', 'config-soak-lib.js'));
 
 const NOW = '2026-07-08T00:00:00.000Z';
 const daysAgo = (n) => new Date(Date.parse(NOW) - n * lib.DAY_MS).toISOString();

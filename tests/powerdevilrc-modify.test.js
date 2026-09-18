@@ -21,10 +21,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
-const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_config', 'modify_powerdevilrc.sh');
+const SCRIPT = srcPath('dot_config', 'modify_powerdevilrc.sh');
 const KEY = 'TurnOffDisplayIdleTimeoutSec';
 
 const skip = skipUnless('bash');

@@ -12,8 +12,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'outcome-lib.sh');
+const LIB = srcPath('private_dot_claude', 'hooks', 'outcome-lib.sh');
 
 const skip = skipUnless('bash', 'jq');
 

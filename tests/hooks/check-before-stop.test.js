@@ -16,11 +16,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(
-  __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
-  'executable_check-before-stop.sh',
-);
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_check-before-stop.sh');
 
 // Scrub git's own environment. These tests build real repos in a temp dir and drive them
 // with cwd, but GIT_DIR and GIT_WORK_TREE outrank cwd — and git exports both to every

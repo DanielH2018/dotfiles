@@ -9,9 +9,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { ptySkip } = require('./pty');
 const { skipUnless } = require('./probe');
+const { REPO, srcPath } = require('./paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const SCRIPTS_DIR = path.join(REPO, 'home', '.chezmoiscripts');
+const SCRIPTS_DIR = srcPath('.chezmoiscripts');
 
 const skip = skipUnless('chezmoi', 'bash');
 

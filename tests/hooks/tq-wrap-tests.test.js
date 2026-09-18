@@ -11,9 +11,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
-const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
+const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
 const skip = skipUnless('python3');
 
@@ -39,7 +40,7 @@ if (have('python3')) {
 // its permissions explicitly, and point TQ_HOME at that — the same fix in kind as the
 // TQ_OFF scrub above, for the same reason: this hook must be exercised on its own terms,
 // not on whatever the environment happened to leave lying around.
-const TQ_LIB_SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'tq');
+const TQ_LIB_SRC = srcPath('dot_local', 'share', 'tq');
 let hardenedLib = '';
 if (have('python3')) {
   hardenedLib = scratch(os.tmpdir(), 'tq-hook-lib-');

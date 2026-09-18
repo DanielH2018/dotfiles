@@ -12,8 +12,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-worktree.sh');
+const LIB = srcPath('private_dot_claude', 'sandbox', 'executable_sandbox-worktree.sh');
 
 const skip = process.platform === 'win32' ? 'sandbox-worktree is Unix-only'
   : skipUnless('git');
@@ -314,7 +315,7 @@ test('worktree_exists_at is false for a path that is not a worktree', { skip }, 
 
 // Lives in sandbox-worktree-ops.sh rather than this lib, but it is pure enough to
 // source the same way: it exits nothing and touches only git.
-const OPS_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-worktree-ops.sh');
+const OPS_LIB = srcPath('private_dot_claude', 'sandbox', 'executable_sandbox-worktree-ops.sh');
 
 function ops(script, env = {}) {
   const r = spawnSync('bash', ['-c', `set -uo pipefail; . "$1"; ${script}`, 'bash', OPS_LIB], {

@@ -1,9 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const BASE = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'settings.base.json');
+const BASE = srcPath('private_dot_claude', 'sandbox', 'settings.base.json');
 const raw = fs.readFileSync(BASE, 'utf8');
 const parsed = JSON.parse(raw);                                   // must be valid JSON
 

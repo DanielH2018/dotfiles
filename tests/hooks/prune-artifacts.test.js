@@ -5,8 +5,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_prune-artifacts.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_prune-artifacts.sh');
 
 function sandbox() {
   const root = scratch(os.tmpdir(), 'pa-');

@@ -13,11 +13,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderFile, chezmoiAvailable, SOURCE } = require('../lib/render');
+const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
-const IGNORE = path.join(SOURCE, '.chezmoiignore');
-const CONFIGS = path.join(SOURCE, 'dot_local', 'share', 'warp-terminal', 'tab_configs');
-const WINDOWS_CONFIGS = path.join(SOURCE, 'AppData', 'Roaming', 'warp', 'Warp', 'data', 'tab_configs');
+const IGNORE = srcPath('.chezmoiignore');
+const CONFIGS = srcPath('dot_local', 'share', 'warp-terminal', 'tab_configs');
+const WINDOWS_CONFIGS = srcPath('AppData', 'Roaming', 'warp', 'Warp', 'data', 'tab_configs');
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 
 const PERSONAL = ['daniel-box.toml', 'daniel-server.toml', 'local-server.toml'];
@@ -100,7 +101,7 @@ test('the default tab config is never gated', { skip }, () => {
   // Gating that one would leave a work machine pointing at a file it does not have, and Warp
   // falls back to a bare shell silently. Read the name from settings rather than hardcoding it,
   // so the two cannot drift apart.
-  const settings = renderFile(path.join(SOURCE, 'dot_config', 'warp-terminal', 'settings.toml.tmpl'));
+  const settings = renderFile(srcPath('dot_config', 'warp-terminal', 'settings.toml.tmpl'));
   const m = settings.match(/^default_tab_config_path = "(.+)"$/m);
   assert.ok(m, 'settings.toml must name a default tab config');
   const name = path.basename(m[1]);

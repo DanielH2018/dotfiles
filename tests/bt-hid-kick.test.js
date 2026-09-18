@@ -18,8 +18,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_bt-hid-kick');
+const SCRIPT = srcPath('dot_local', 'bin', 'executable_bt-hid-kick');
 
 // Absolute, because one case below runs with PATH set to the stub dir alone -- a bare 'bash'
 // would then fail to resolve the interpreter itself and look like a script failure.

@@ -20,13 +20,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderFile, renderTemplate, chezmoiAvailable, SOURCE } = require('../lib/render');
+const { renderFile, renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
-const MAC = path.join(SOURCE, 'dot_warp');
-const XDG = path.join(SOURCE, 'dot_config', 'warp-terminal');
-const WINDOWS = path.join(SOURCE, 'AppData', 'Local', 'warp', 'Warp', 'config');
-const IGNORE = path.join(SOURCE, '.chezmoiignore');
+const MAC = srcPath('dot_warp');
+const XDG = srcPath('dot_config', 'warp-terminal');
+const WINDOWS = srcPath('AppData', 'Local', 'warp', 'Warp', 'config');
+const IGNORE = srcPath('.chezmoiignore');
 
 const ignored = (data) =>
   new Set(renderFile(IGNORE, { data }).split('\n').map((l) => l.trim()).filter(Boolean));
@@ -61,7 +62,7 @@ test('themes and tab_configs are symlinks into the XDG data tree', { skip }, () 
     const target = renderFile(src).trim();
     assert.ok(target.endsWith(`/.local/share/warp-terminal/${dir}`),
       `~/.warp/${dir} points at ${target}, not the XDG data tree`);
-    assert.ok(fs.existsSync(path.join(SOURCE, 'dot_local', 'share', 'warp-terminal', dir)),
+    assert.ok(fs.existsSync(srcPath('dot_local', 'share', 'warp-terminal', dir)),
       `${dir} is symlinked but not tracked, so the link would dangle`);
   }
 });
@@ -70,7 +71,7 @@ test('the Windows data tree wraps the XDG themes and tab configs', () => {
   // Warp reads these from %APPDATA% on Windows, which the symlink bridge above cannot reach.
   // A wrapper that does not name its XDG source deploys an empty file, and Warp falls back to
   // its own defaults without reporting anything.
-  const data = path.join(SOURCE, 'AppData', 'Roaming', 'warp', 'Warp', 'data');
+  const data = srcPath('AppData', 'Roaming', 'warp', 'Warp', 'data');
   for (const [dir, file] of [['themes', 'catppuccin_mocha.yaml'], ['tab_configs', 'local-shell.toml']]) {
     const src = path.join(data, dir, `${file}.tmpl`);
     assert.ok(fs.existsSync(src), `the Windows ${dir}/${file} wrapper is not tracked`);

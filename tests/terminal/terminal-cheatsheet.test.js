@@ -11,9 +11,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const GEN = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_terminal-cheatsheet');
+const GEN = srcPath('dot_local', 'bin', 'executable_terminal-cheatsheet');
 
 // Run the generator against a fixture and return the emitted HTML. keepWsl=false strips
 // WSL_DISTRO_NAME so the /mnt/c reach-across is disabled (deterministic fixture-only runs).
@@ -258,7 +258,7 @@ test('WezTerm reach-across: WSL sheet finds the Windows-side config on /mnt/c', 
 // its own, and each takes its config root as an argument, which is what makes a parser
 // testable without staging a whole fixture $HOME.
 
-const LIB = path.join(REPO, 'home', 'dot_local', 'share', 'terminal-cheatsheet');
+const LIB = srcPath('dot_local', 'share', 'terminal-cheatsheet');
 
 test('each parser module loads on its own and declines an empty config root', () => {
   const empty = scratch(os.tmpdir(), 'cheatsheet-');

@@ -13,8 +13,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { repoPath } = require('../lib/paths');
 
-const INSTALLER = path.join(__dirname, '..', '..', 'bin', 'install-hook-shim');
+const INSTALLER = repoPath('bin', 'install-hook-shim');
 
 const skip = skipUnless('bash', 'git');
 

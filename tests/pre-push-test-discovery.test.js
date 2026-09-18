@@ -19,17 +19,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const HOOK = path.join(REPO, '.githooks', 'pre-push');
+const HOOK = repoPath('.githooks', 'pre-push');
 const hookText = fs.readFileSync(HOOK, 'utf8');
 
 const trackedTests = execFileSync(
   'git',
   ['ls-files', '*.test.js', '*.test.mjs', '*.test.ts'],
-  { cwd: REPO },
+  { cwd: repoPath() },
 )
   .toString()
   .split('\n')

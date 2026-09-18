@@ -10,8 +10,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const CTS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_cts');
+const CTS = srcPath('dot_local', 'bin', 'executable_cts');
 const skip = have('bash') ? false : 'bash unavailable';
 // Presence of the binary is not usability. Under a sandbox that allows only specific unix
 // sockets, tmux installs fine and then cannot create its server socket ("error creating

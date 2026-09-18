@@ -14,8 +14,9 @@ const path = require('node:path');
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-end.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_session-end.sh');
 
 // A buffer size that has to exceed the hook's roll budget, sized from the budget rather than
 // written out beside it. Raise REMEMBER_TODAY_MAX_BYTES past a hardcoded 20000 and every

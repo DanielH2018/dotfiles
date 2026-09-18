@@ -10,9 +10,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-guard');
-const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'claude-guard');
+const SHIM = srcPath('dot_local', 'bin', 'executable_claude-guard');
+const SHARE = srcPath('dot_local', 'share', 'claude-guard');
 
 test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: skipUnless('uv') }, () => {
   const r = spawnSync('bash', [SHIM, 'explain', 'ls; pwd'], {

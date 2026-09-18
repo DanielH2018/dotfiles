@@ -13,10 +13,10 @@ const { renderFile } = require('../lib/render');
 const { Term, ptySkip, tierB } = require('../lib/pty');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath, repoPath } = require('../lib/paths');
 
-const ROOT = path.join(__dirname, '..', '..');
-const ZSHRC_SRC = path.join(ROOT, 'home', 'dot_zshrc.tmpl');
-const COMMON_SRC = path.join(ROOT, 'home', 'dot_config', 'shell', 'common.sh');
+const ZSHRC_SRC = srcPath('dot_zshrc.tmpl');
+const COMMON_SRC = srcPath('dot_config', 'shell', 'common.sh');
 
 const missing = (t) => !have(t);
 
@@ -27,7 +27,7 @@ let rendered = null;
 let renderError = null;
 if (!gate && !missing('chezmoi')) {
   try {
-    rendered = renderFile(ZSHRC_SRC, { source: null, cwd: ROOT });
+    rendered = renderFile(ZSHRC_SRC, { source: null, cwd: repoPath() });
   } catch (e) { renderError = e.message; }
 }
 

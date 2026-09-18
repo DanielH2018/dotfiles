@@ -23,9 +23,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const SOURCE = path.join(__dirname, '..', '..', 'home');
-const LIB = path.join(SOURCE, '.chezmoitemplates', 'linux-install.sh');
+const LIB = srcPath('.chezmoitemplates', 'linux-install.sh');
 const source = fs.readFileSync(LIB, 'utf8');
 
 // Every destination the module resolves at source time. APT_LIST_DIR/APT_KEYRING_DIR joined the
@@ -42,7 +42,7 @@ const HOME_DERIVED = ['BIN_DIR', 'VER_DIR', 'APP_DIR'];
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 const render = () =>
-  renderTemplate('{{ includeTemplate "linux-install.sh" . }}', { source: SOURCE });
+  renderTemplate('{{ includeTemplate "linux-install.sh" . }}', { source: srcPath() });
 
 const sandbox = () => scratch(os.tmpdir(), 'linux-install-lib-');
 

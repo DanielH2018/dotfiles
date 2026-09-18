@@ -68,8 +68,11 @@ const WRITE_ARGS = {
 // dir it made or a path it was handed.
 const ROOTS = [
   {
+    // tests/lib/paths.js's srcPath() and repoPath() are the checkout by another name, so a
+    // call to either seeds the taint the way __dirname does. Matched by token because string
+    // literals are blanked before scanning, so the require() specifier is not visible here.
     what: 'the repo checkout',
-    re: /\b__dirname\b|\bprocess\.cwd\(\)/,
+    re: /\b__dirname\b|\bprocess\.cwd\(\)|\b(?:srcPath|repoPath)\s*\(/,
     fix: 'copy what you need into a temp dir and point the tool at the copy'
       + ' — tests/managed-test-drift.test.js is the worked example',
   },

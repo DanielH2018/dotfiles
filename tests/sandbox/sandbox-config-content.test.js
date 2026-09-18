@@ -11,8 +11,9 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath, repoPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const GITCONFIG = path.join(SANDBOX_DIR, 'gitconfig');
 const ALLOWLIST = path.join(SANDBOX_DIR, 'vault-allowlist.txt');
 const SENSITIVE = path.join(SANDBOX_DIR, 'vault-sensitive.txt');
@@ -322,7 +323,7 @@ test('the resolved settings temp file is removed on exit, not leaked once per la
 });
 
 test('the pre-commit ruff gate covers the sandbox, not just tq', () => {
-  const cfg = fs.readFileSync(path.join(__dirname, '..', '..', '.pre-commit-config.yaml'), 'utf8');
+  const cfg = fs.readFileSync(repoPath('.pre-commit-config.yaml'), 'utf8');
   const files = /^\s*files:\s*(\S+)\s*$/m.exec(cfg);
   assert.ok(files, 'the ruff-check hook must keep an explicit files: allowlist');
   assert.ok(new RegExp(files[1]).test('home/private_dot_claude/sandbox/executable_exec-stream.py'),

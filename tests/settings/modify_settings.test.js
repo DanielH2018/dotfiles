@@ -6,13 +6,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, renderFile } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
 // modify_settings.json.sh.tmpl is a chezmoi modify_ script written as a template. Render it
 // with `chezmoi execute-template` (resolves `includeTemplate "settings.base.json"` and
 // `.chezmoi.sourceDir`), then exec the rendered /bin/sh script. The script regenerates
 // ~/.claude/settings.json as merge(general base, work overlay-if-present), FULLY DERIVED —
 // stdin (the current target content) is intentionally ignored.
-const TEMPLATE = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'modify_settings.json.sh.tmpl');
+const TEMPLATE = srcPath('private_dot_claude', 'modify_settings.json.sh.tmpl');
 
 // This test renders a chezmoi template via `includeTemplate`; skip cleanly where
 // chezmoi can't render THIS repo — the binary is absent, or its configured source
@@ -25,7 +26,7 @@ const TEMPLATE = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 
 // report the result as if it had tested the worktree: false green, or a false red like
 // the one that surfaced this. Require the resolved source dir to be this tree's `home/`
 // and skip otherwise, so a worktree gets no signal rather than wrong signal.
-const REPO_SOURCE_DIR = path.join(__dirname, '..', '..', 'home');
+const REPO_SOURCE_DIR = srcPath();
 function chezmoiCanRenderRepo() {
   try {
     const srcDir = renderTemplate('{{ .chezmoi.sourceDir }}', { source: null }).trim();

@@ -14,8 +14,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-update-automation.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-update-automation.sh.tmpl');
 
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 

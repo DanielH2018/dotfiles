@@ -8,8 +8,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'private_dot_claude', 'executable_statusline-command.sh');
+const SCRIPT = srcPath('private_dot_claude', 'executable_statusline-command.sh');
 
 const skip = skipUnless('bash', 'jq');
 

@@ -10,9 +10,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scratch } from './lib/tmp.js';
 import { skipUnless } from './lib/probe.js';
+import { srcPath } from './lib/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(__dirname, '..', 'home', 'private_dot_claude', 'scripts', 'check-runner.mjs');
+const SCRIPT = srcPath('private_dot_claude', 'scripts', 'check-runner.mjs');
 
 const skip = skipUnless('bash');
 

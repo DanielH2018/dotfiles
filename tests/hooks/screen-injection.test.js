@@ -15,8 +15,9 @@ const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_screen-injection.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_screen-injection.sh');
 const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'injection-fixtures.json'), 'utf8'));
 
 function runHook(input, env = {}) {

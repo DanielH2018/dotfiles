@@ -22,12 +22,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const lib = require('../bin/gen-lint-files-lib.js');
-
-const ROOT = path.join(__dirname, '..');
+const { repoPath } = require('./lib/paths');
 
 let entries;
 try {
-  entries = execFileSync('git', ['ls-files', '-s'], { cwd: ROOT, encoding: 'utf8' })
+  entries = execFileSync('git', ['ls-files', '-s'], { cwd: repoPath(), encoding: 'utf8' })
     .split('\n')
     .filter(Boolean)
     .map((line) => {
@@ -35,7 +34,7 @@ try {
       let first = '';
       if (!path.basename(file).includes('.')) {
         try {
-          const fd = fs.openSync(path.join(ROOT, file), 'r');
+          const fd = fs.openSync(repoPath(file), 'r');
           const buf = Buffer.alloc(200);
           const n = fs.readSync(fd, buf, 0, 200, 0);
           fs.closeSync(fd);

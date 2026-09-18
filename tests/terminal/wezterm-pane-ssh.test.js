@@ -14,9 +14,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const SCRIPT = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_wezterm-pane-ssh');
+const SCRIPT = srcPath('dot_local', 'bin', 'executable_wezterm-pane-ssh');
 
 const skip = !have('gawk') ? 'gawk unavailable' : false;
 

@@ -11,8 +11,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const CT = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ct');
+const CT = srcPath('dot_local', 'bin', 'executable_ct');
 const skip = skipUnless('bash');
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

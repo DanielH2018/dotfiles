@@ -19,10 +19,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { have } = require('./lib/probe');
+const { repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const GATE = path.join(REPO, 'bin', 'gate-cache');
-const HOOK = path.join(REPO, '.githooks', 'pre-push');
+const GATE = repoPath('bin', 'gate-cache');
+const HOOK = repoPath('.githooks', 'pre-push');
 
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 

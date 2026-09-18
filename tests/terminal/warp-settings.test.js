@@ -18,9 +18,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { renderFile, renderTemplate, chezmoiAvailable, SOURCE } = require('../lib/render');
+const { renderFile, renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { srcPath } = require('../lib/paths');
 
-const TMPL = path.join(SOURCE, '.chezmoitemplates', 'warp-settings.toml');
+const TMPL = srcPath('.chezmoitemplates', 'warp-settings.toml');
 const skip = chezmoiAvailable ? false : 'chezmoi unavailable';
 
 let pyOk = true;
@@ -87,7 +88,7 @@ test('default_tab_config_path names a tab config that exists', { skip: tomlSkip 
   const target = doc.general.default_tab_config_path;
   assert.ok(target, 'the default session mode is tab_config; it needs a path');
   const name = path.basename(target);
-  const src = path.join(SOURCE, 'dot_local', 'share', 'warp-terminal', 'tab_configs', name);
+  const src = srcPath('dot_local', 'share', 'warp-terminal', 'tab_configs', name);
   assert.ok(fs.existsSync(src), `default_tab_config_path points at ${name}, which is not tracked`);
 });
 
@@ -95,7 +96,7 @@ test('the custom theme names a theme file that exists', { skip: tomlSkip }, () =
   const doc = parseToml(renderFile(TMPL));
   const custom = doc.appearance.themes.theme.custom;
   assert.ok(custom, 'the theme binding is a custom theme, not a built-in');
-  const src = path.join(SOURCE, 'dot_local', 'share', 'warp-terminal', 'themes', custom.path);
+  const src = srcPath('dot_local', 'share', 'warp-terminal', 'themes', custom.path);
   assert.ok(fs.existsSync(src), `theme path ${custom.path} is not tracked`);
 });
 

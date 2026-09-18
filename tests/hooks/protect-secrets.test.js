@@ -8,8 +8,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
 
 const skip = skipUnless('bash', 'jq');
 
@@ -103,9 +104,7 @@ test('token stores denied to Bash are denied to Read/Edit/Write too', { skip }, 
 // SECRET_PATHS); deny.py is the host's oracle now.
 test('every SECRET_PATHS entry in the deny gate is covered by this one', { skip }, () => {
   const denyPy = fs.readFileSync(
-    path.join(
-      __dirname, '..', '..', 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
-    ),
+    srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py'),
     'utf8',
   );
   const block = /^SECRET_PATHS = \(\n([\s\S]*?)^\)$/m.exec(denyPy);

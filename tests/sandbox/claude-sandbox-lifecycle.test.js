@@ -22,8 +22,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX = srcPath('private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX, 'executable_claude-sandbox');
 const WORKTREE_LIB = path.join(SANDBOX, 'executable_sandbox-worktree.sh');
 // The launcher plus every lib it sources — compact_session lives in

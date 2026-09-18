@@ -18,8 +18,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_streamcontroller-health');
+const SCRIPT = srcPath('dot_local', 'bin', 'executable_streamcontroller-health');
 
 const skip = skipUnless('bash');
 

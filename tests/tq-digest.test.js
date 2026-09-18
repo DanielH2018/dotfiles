@@ -12,6 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
 const skip = skipUnless('python3');
 
@@ -19,7 +20,7 @@ const needs = (binary) => skip || skipUnless(binary);
 const skipRuff = needs('ruff');
 const skipShellcheck = needs('shellcheck');
 
-const TQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_tq');
+const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
 function runTq(dir, args) {
   return spawnSync('python3', [TQ, ...args], { cwd: dir, encoding: 'utf8' });

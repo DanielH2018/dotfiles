@@ -22,8 +22,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 // The launcher plus every lib it sources — detect_docker_need now lives in the image
 // lib. Globbed rather than listed, so the next function to move out does not break
@@ -103,9 +104,9 @@ test('validate_version rejects shell-metacharacter strings with exit 1 and an er
 
 // --- detect_docker_need(): NEEDS_DOCKER gate ---
 
-function detectDockerNeed(repoPath) {
+function detectDockerNeed(repo) {
   const r = run(`${DETECT_DOCKER_NEED_SRC}\nNEEDS_DOCKER=false\ndetect_docker_need\nprintf '%s' "$NEEDS_DOCKER"`,
-    { REPO_PATH: repoPath });
+    { REPO_PATH: repo });
   assert.strictEqual(r.code, 0);
   return r.stdout;
 }

@@ -19,8 +19,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOKS_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS_DIR = srcPath('private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS_DIR, 'executable_reap-backgrounded-origin.sh');
 const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
 const SRC = fs.readFileSync(HOOK, 'utf8') + '\n' + fs.readFileSync(LIB, 'utf8');

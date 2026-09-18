@@ -11,10 +11,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_after_install-cli-tools.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_after_install-cli-tools.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
-const TOOLS = path.join(__dirname, '..', '..', 'home', '.chezmoidata', 'tools.toml');
+const TOOLS = srcPath('.chezmoidata', 'tools.toml');
 const tools = fs.readFileSync(TOOLS, 'utf8');
 
 // Renders a chezmoi template; skip cleanly where the binary isn't installed (minimal CI /
@@ -28,12 +29,11 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 // .chezmoitemplates from ~/.local/share/chezmoi, so a branch or worktree would silently be tested
 // against main's data — and the shared linux-install.sh this script now includes would resolve to
 // whatever main happens to carry, or not at all.
-const SOURCE = path.join(__dirname, '..', '..', 'home');
 // Pinned to the workstation profile. The template itself renders on a server profile, but the
 // podman-docker shim inside it sits behind is-desktop-linux (asserted by 'the podman-docker shim
 // is gated away from WSL' below), so on a server host that block vanishes and the shim cases fail
 // while rendersHere() still reports true. See the `profile` note in tests/lib/render.js.
-const render = () => renderTemplate(body, { source: SOURCE, profile: 'workstation' });
+const render = () => renderTemplate(body, { source: srcPath(), profile: 'workstation' });
 // Nothing to assert against off Linux (or on a minimal profile): the template renders empty.
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 // One term tighter, for the podman-docker cases. The shim sits behind is-desktop-linux, which
@@ -215,9 +215,9 @@ test('unsupported distro warns once and converges', { skip }, () => {
 test('the podman-docker shim is gated away from WSL', { skip }, () => {
   assert.match(body, /includeTemplate "is-desktop-linux"[\s\S]*podman-docker/,
     'the shim must sit inside the is-desktop-linux gate');
-  const gate = fs.readFileSync(path.join(SOURCE, '.chezmoitemplates', 'is-desktop-linux'), 'utf8');
+  const gate = fs.readFileSync(srcPath('.chezmoitemplates', 'is-desktop-linux'), 'utf8');
   assert.match(gate, /is-wsl/, 'is-desktop-linux must still exclude WSL');
-  const wslDocker = path.join(SOURCE, '.chezmoiscripts', 'os-linux', 'wsl',
+  const wslDocker = srcPath('.chezmoiscripts', 'os-linux', 'wsl',
     'run_once_after_install-docker-engine.sh.tmpl');
   assert.ok(fs.existsSync(wslDocker), 'WSL still installs real docker-ce; the gate is load-bearing');
 });

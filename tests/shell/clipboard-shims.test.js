@@ -11,8 +11,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const BIN_DIR = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin');
+const BIN_DIR = srcPath('dot_local', 'bin');
 const XCLIP = path.join(BIN_DIR, 'executable_xclip');
 const XSEL = path.join(BIN_DIR, 'executable_xsel');
 const WLBMP2PNG = path.join(BIN_DIR, 'executable_wl-bmp2png');

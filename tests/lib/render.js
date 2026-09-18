@@ -27,9 +27,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { have } = require('./probe');
-
-const REPO = path.join(__dirname, '..', '..');
-const SOURCE = path.join(REPO, 'home');
+const { REPO, SOURCE } = require('./paths');
 
 // False when chezmoi is not installed. Use as `const skip = chezmoiAvailable ? false : '...'`.
 const chezmoiAvailable = have('chezmoi');

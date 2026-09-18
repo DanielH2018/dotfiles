@@ -18,12 +18,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
+const HOOKS = srcPath('private_dot_claude', 'hooks');
 const SHIM = path.join(HOOKS, 'executable_tq-wrap-tests.sh');
 const PY = path.join(HOOKS, 'executable_tq-wrap-tests.py');
 const LIB = path.join(HOOKS, 'hook-input.sh');
-const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
+const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
 const skip = skipUnless('python3', 'bash', 'jq');
 

@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderTemplate } = require('./lib/render');
+const { srcPath } = require('./lib/paths');
 
 // The agents under home/private_dot_claude/agents/ are the task-routing layer: each one
 // pins a `model` and an `effort` so dispatching it *is* the model/effort selection. Two
@@ -12,8 +13,7 @@ const { renderTemplate } = require('./lib/render');
 //      agent runs on the wrong tier with no error.
 //   2. A typo'd `effort` value. It isn't rejected loudly; the pin just doesn't apply.
 
-const REPO = path.join(__dirname, '..');
-const AGENTS_DIR = path.join(REPO, 'home', 'private_dot_claude', 'agents');
+const AGENTS_DIR = srcPath('private_dot_claude', 'agents');
 
 const FM = /^---\n([\s\S]*?)\n---\n/;
 const EFFORT_NAMES = ['low', 'medium', 'high', 'xhigh', 'max'];

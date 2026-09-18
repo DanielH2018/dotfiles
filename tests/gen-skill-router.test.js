@@ -4,12 +4,10 @@ const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
 const lib = require('../bin/gen-skill-router-lib.js');
+const { srcPath, repoPath } = require('./lib/paths');
 
-const REPO_ROOT = path.join(__dirname, '..');
-const BIN = path.join(REPO_ROOT, 'bin', 'gen-skill-router');
-const TEMPLATE = path.join(
-  REPO_ROOT, 'home', 'private_dot_claude', 'skills', 'skill-router', 'SKILL.md.tmpl',
-);
+const BIN = repoPath('bin', 'gen-skill-router');
+const TEMPLATE = srcPath('private_dot_claude', 'skills', 'skill-router', 'SKILL.md.tmpl');
 
 // --- lib.parseFrontmatter ----------------------------------------------------------------
 
@@ -104,7 +102,7 @@ test('gen-skill-router --check passes against the committed template right now',
 test('the committed template already lists every installed skill, byte for byte', () => {
   const fs = require('node:fs');
   const committed = fs.readFileSync(TEMPLATE, 'utf8');
-  const skillsDir = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'skills');
+  const skillsDir = srcPath('private_dot_claude', 'skills');
   const skillFiles = {};
   for (const ent of fs.readdirSync(skillsDir, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
@@ -126,8 +124,8 @@ test('gen-skill-router --check fails when a lane-prose reference is missing from
   const committed = fs.readFileSync(TEMPLATE, 'utf8');
   assert.match(committed, /`grilling`/, 'fixture assumes the real template references `grilling`');
 
-  const skillsDir = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'skills');
-  const agentsDir = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'agents');
+  const skillsDir = srcPath('private_dot_claude', 'skills');
+  const agentsDir = srcPath('private_dot_claude', 'agents');
   const realSkillNames = fs.readdirSync(skillsDir, { withFileTypes: true })
     .filter((e) => e.isDirectory()).map((e) => e.name);
   const realAgentNames = fs.readdirSync(agentsDir)
@@ -150,7 +148,7 @@ test('bin/gen-skill-router --check fails end-to-end when the on-disk skill set i
   const os = require('node:os');
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-skill-router-'));
   // Named distinctly from the `skillsDir`/`agentsDir` used earlier in this file (those
-  // are bound to REPO_ROOT for a read-only comparison) — sandbox-escape.js's name
+  // are bound to the checkout through srcPath() for a read-only comparison) — sandbox-escape.js's name
   // tracking is whole-file, not scope-aware, so reusing either name here would read as
   // the same tainted root even though these are freshly mkdtemp'd and root-free.
   const stageSkillsDir = path.join(stage, 'home', 'private_dot_claude', 'skills');
@@ -172,7 +170,7 @@ test('bin/gen-skill-router --check fails end-to-end when the on-disk skill set i
   fs.mkdirSync(stageBin, { recursive: true });
   fs.copyFileSync(BIN, path.join(stageBin, 'gen-skill-router'));
   fs.copyFileSync(
-    path.join(REPO_ROOT, 'bin', 'gen-skill-router-lib.js'),
+    repoPath('bin', 'gen-skill-router-lib.js'),
     path.join(stageBin, 'gen-skill-router-lib.js'),
   );
 

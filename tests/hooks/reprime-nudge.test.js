@@ -6,11 +6,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const os = require('node:os');
-const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_reprime-nudge.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_reprime-nudge.sh');
 
 const skip = skipUnless('bash', 'jq');
 

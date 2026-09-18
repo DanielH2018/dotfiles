@@ -21,8 +21,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
+const { srcPath } = require('../lib/paths');
 
-const SANDBOX_DIR_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
+const SANDBOX_DIR_SRC = srcPath('private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX_DIR_SRC, 'executable_claude-sandbox');
 // The functions under test are spread across the launcher and the libs it sources, and
 // which lib owns which keeps changing as the launcher is decomposed. Globbed rather

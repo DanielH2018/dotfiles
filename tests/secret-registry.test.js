@@ -13,19 +13,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const ROOT = path.join(__dirname, '..');
-const REGISTRY = path.join(ROOT, 'home', '.chezmoidata', 'secrets.toml');
-const DENY_PY = path.join(
-  ROOT, 'home', 'dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py',
-);
-const PS = path.join(ROOT, 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
+const REGISTRY = srcPath('.chezmoidata', 'secrets.toml');
+const DENY_PY = srcPath('dot_local', 'share', 'claude-guard', 'claude_guard', 'deny.py');
+const PS = srcPath('private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
 // The deny rules moved out of settings.base.json when the permission model was split into
 // its own template; base now only splices it in. The assertion below requires each rule to
 // be PRESENT, so a stale path here fails loudly rather than finding nothing to complain about.
-const SETTINGS = path.join(ROOT, 'home', '.chezmoitemplates', 'settings.permissions.json');
+const SETTINGS = srcPath('.chezmoitemplates', 'settings.permissions.json');
 
 // Minimal reader for the shape this file uses: [[secretPaths.entries]] tables of
 // scalars and string arrays. Avoids adding a TOML dependency for one fixture.

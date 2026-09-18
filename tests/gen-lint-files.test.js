@@ -12,9 +12,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const lib = require('../bin/gen-lint-files-lib.js');
+const { repoPath } = require('./lib/paths');
 
-const REPO_ROOT = path.join(__dirname, '..');
-const BIN = path.join(REPO_ROOT, 'bin', 'gen-lint-files');
+const BIN = repoPath('bin', 'gen-lint-files');
 
 // --- lib.census ---------------------------------------------------------------------------
 
@@ -112,10 +112,10 @@ test('gen-lint-files --check fails when the tree gains a script the lists do not
   git('init', '-q');
   fs.mkdirSync(path.join(stage, 'bin'));
   for (const f of ['gen-lint-files', 'gen-lint-files-lib.js']) {
-    fs.copyFileSync(path.join(REPO_ROOT, 'bin', f), path.join(stage, 'bin', f));
+    fs.copyFileSync(repoPath('bin', f), path.join(stage, 'bin', f));
   }
-  fs.copyFileSync(path.join(REPO_ROOT, '.pre-commit-config.yaml'), path.join(stage, '.pre-commit-config.yaml'));
-  fs.copyFileSync(path.join(REPO_ROOT, 'ruff.toml'), path.join(stage, 'ruff.toml'));
+  fs.copyFileSync(repoPath('.pre-commit-config.yaml'), path.join(stage, '.pre-commit-config.yaml'));
+  fs.copyFileSync(repoPath('ruff.toml'), path.join(stage, 'ruff.toml'));
   fs.writeFileSync(path.join(stage, 'bin', 'brand-new'), '#!/usr/bin/env python3\nprint(1)\n');
   git('add', '.');
   git('update-index', '--chmod=+x', 'bin/brand-new', 'bin/gen-lint-files');

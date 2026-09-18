@@ -14,11 +14,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const lib = require('../bin/gen-hooks-lib.js');
+const { srcPath, repoPath } = require('./lib/paths');
 
-const REPO_ROOT = path.join(__dirname, '..');
-const BIN = path.join(REPO_ROOT, 'bin', 'gen-hooks');
-const HOOKS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'hooks');
-const TEMPLATE = path.join(REPO_ROOT, 'home', '.chezmoitemplates', 'settings.base.json');
+const BIN = repoPath('bin', 'gen-hooks');
+const HOOKS_DIR = srcPath('private_dot_claude', 'hooks');
+const TEMPLATE = srcPath('.chezmoitemplates', 'settings.base.json');
 
 const REG = (body) => `#!/bin/bash\n# gen-hooks: register\n${body}\necho hi\n`;
 
@@ -163,7 +163,7 @@ function stage() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-hooks-'));
   fs.mkdirSync(path.join(dir, 'bin'));
   for (const f of ['gen-hooks', 'gen-hooks-lib.js']) {
-    fs.copyFileSync(path.join(REPO_ROOT, 'bin', f), path.join(dir, 'bin', f));
+    fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
   }
   fs.mkdirSync(path.join(dir, 'home', '.chezmoitemplates'), { recursive: true });
   fs.copyFileSync(TEMPLATE, path.join(dir, 'home', '.chezmoitemplates', 'settings.base.json'));

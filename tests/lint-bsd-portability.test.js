@@ -19,13 +19,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
 const { scratch } = require('./lib/tmp');
+const { repoPath } = require('./lib/paths');
 
-const REPO = path.join(__dirname, '..');
-const SCRIPT = path.join(REPO, 'bin', 'lint-bsd-portability');
-const hookConfig = fs.readFileSync(path.join(REPO, '.pre-commit-config.yaml'), 'utf8');
+const SCRIPT = repoPath('bin', 'lint-bsd-portability');
+const hookConfig = fs.readFileSync(repoPath('.pre-commit-config.yaml'), 'utf8');
 
 function run(args) {
-  return spawnSync('bash', [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
+  return spawnSync('bash', [SCRIPT, ...args], { cwd: repoPath(), encoding: 'utf8' });
 }
 
 function fixture(name, body) {
@@ -37,9 +37,9 @@ function fixture(name, body) {
 
 // A historical blob, written out under its original basename so the extension-driven half of
 // the check sees what it saw at the time.
-function atCommit(rev, repoPath) {
-  const body = execFileSync('git', ['show', `${rev}:${repoPath}`], { cwd: REPO, encoding: 'utf8' });
-  return fixture(path.basename(repoPath), body);
+function atCommit(rev, tracked) {
+  const body = execFileSync('git', ['show', `${rev}:${tracked}`], { cwd: repoPath(), encoding: 'utf8' });
+  return fixture(path.basename(tracked), body);
 }
 
 test('979b240: the mx-ergo solaar stub\'s bare `sed -i` fires, inside a JS template literal', () => {
@@ -184,7 +184,7 @@ test('the CURRENT statusline and learning-quiz cards are clean: both carry a BSD
     'home/private_dot_claude/executable_statusline-command.sh',
     'home/private_dot_claude/skills/learning-quiz/scripts/executable_cards.sh',
   ]) {
-    const r = run([path.join(REPO, p)]);
+    const r = run([repoPath(p)]);
     assert.strictEqual(r.status, 0, `${p}\n${r.stdout}`);
   }
 });

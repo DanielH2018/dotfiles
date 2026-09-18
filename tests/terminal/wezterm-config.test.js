@@ -11,9 +11,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
 const { have } = require('../lib/probe');
+const { srcPath, repoPath } = require('../lib/paths');
 
-const REPO = path.join(__dirname, '..', '..');
-const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
+const TMPL = srcPath('dot_config', 'wezterm', 'wezterm.lua.tmpl');
 
 const skip = process.platform !== 'win32' ? 'windows-only config'
   : !have('chezmoi') ? 'chezmoi unavailable' : false;
@@ -28,7 +28,7 @@ function findLuac() {
 }
 const luac = findLuac();
 
-const render = () => renderFile(TMPL, { source: null, cwd: REPO });
+const render = () => renderFile(TMPL, { source: null, cwd: repoPath() });
 
 test('template renders with no unexpanded chezmoi directives', { skip }, () => {
   const out = render();

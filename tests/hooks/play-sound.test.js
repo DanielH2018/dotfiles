@@ -17,8 +17,9 @@ const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
+const { srcPath } = require('../lib/paths');
 
-const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_play-sound.sh');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_play-sound.sh');
 const BASH =['/usr/bin/bash', '/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';
 

@@ -30,10 +30,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
-const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
+const { srcPath } = require('./lib/paths');
 
-const SCRIPT = path.join(__dirname, '..', 'home', 'dot_config', 'modify_private_kwinrulesrc.sh');
+const SCRIPT = srcPath('dot_config', 'modify_private_kwinrulesrc.sh');
 
 const GHOSTTY = 'd31e37ca-991b-4265-b5a5-770bbdb42c82';
 const DISCORD = 'd68fa888-6425-4f4c-bd4a-a106d577356a';
