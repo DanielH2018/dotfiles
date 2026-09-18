@@ -12,7 +12,7 @@ const m = require(process.env.TOOLS_INVENTORY_BIN ||
   path.join(__dirname, "..", "..", "bin", "executable_tools-inventory"));
 
 // Written as a helper so the literal `process` + `env` pair does not appear on one line;
-// block-dangerous-bash.sh reads that next to an interpreter as a secrets access.
+// claude-guard's deny rules (deny.py) read that next to an interpreter as a secrets access.
 const chezmoiBinForTest = () =>
   process["env"].CHEZMOI_BIN || path.join(require("os").homedir(), ".local", "bin", "chezmoi");
 

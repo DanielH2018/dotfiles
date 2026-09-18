@@ -228,7 +228,7 @@
       "flags": [
         { "label": "Flags:", "html": "<code>-r/--raw</code> · <code>--indent N</code> · <code>-s/--script</code> · <code>--jsonl</code> · <code>--functions</code> (print the grammar) · <code>--timeout</code>" },
         { "label": "Function table:", "html": "builtins (<code>len sorted sum min max zip enumerate map filter</code>) · dict/list helpers (<code>keys values items get merge unique flatten counter groupby</code>) · strings (<code>lower upper strip split join replace startswith</code>) · regex (<code>re_test re_search re_groups re_findall re_sub re_split</code>) · math &amp; stats (<code>floor ceil sqrt log mean median</code>) · <code>dumps</code> / <code>loads</code>" },
-        { "label": "Gotcha:", "html": "invoke by name, never as <code>python3 jsonq</code> — <code>block-dangerous-bash.sh</code> reads an interpreter keyword next to a <code>.key</code>/<code>.env</code>/<code>.pem</code> substring as a secrets read, and JSON field names trip it." }
+        { "label": "Gotcha:", "html": "invoke by name, never as <code>python3 jsonq</code> — claude-guard's deny rules (<code>deny.py</code>) read an interpreter keyword next to a <code>.key</code>/<code>.env</code>/<code>.pem</code> substring as a secrets read, and JSON field names trip it." }
       ]
     },
     {

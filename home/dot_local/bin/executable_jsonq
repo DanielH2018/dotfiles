@@ -42,9 +42,9 @@ The tool is this file plus the nine modules in ../share/jsonq, and the property
 above is asserted over all ten by tests/jsonq.test.js. HOW those modules are
 loaded is itself part of the boundary, so read _load below before changing it.
 
-Invoke it by name, never through an interpreter — block-dangerous-bash.sh reads
-a line naming an interpreter next to a secret-looking suffix as a secrets read
-and hard-blocks it, and JSON field names trip that.
+Invoke it by name, never through an interpreter — claude-guard's deny rules (deny.py)
+read a line naming an interpreter next to a secret-looking suffix as a secrets
+read and hard-block it, and JSON field names trip that.
 """
 
 from __future__ import annotations
