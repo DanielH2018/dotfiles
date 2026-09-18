@@ -17,12 +17,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_streamcontroller-health');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 // The two devices StreamController drives here. DECK's numbers are the ones every
 // pre-pedal test was written against, so they must not change.

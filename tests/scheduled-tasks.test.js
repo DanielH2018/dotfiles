@@ -12,19 +12,17 @@
 // definitions could not be machine-checked at all.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderTemplate } = require('./lib/render');
+const { have } = require('./lib/probe');
 
 const REPO = path.join(__dirname, '..');
 const TASKS = path.join(REPO, 'home', 'dot_config', 'windows-provisioning', 'scheduled-tasks');
 
-function have(cmd, arg) {
-  try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true; } catch { return false; }
-}
-const skip = !have('chezmoi', '--version') ? 'chezmoi unavailable' : false;
-const skipXml = skip || (!have('python3', '--version') ? 'python3 unavailable' : false);
+const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
+const skipXml = skip || (!have('python3') ? 'python3 unavailable' : false);
 
 // Every definition, rendered: templates through chezmoi, plain XML as-is.
 function definitions() {

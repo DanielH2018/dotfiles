@@ -17,13 +17,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const SRC = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 const FN = fs.readFileSync(SRC, 'utf8').match(/^claude\(\) \{[\s\S]*?^\}$/m)[0];
 
-let zshOk = true;
-try { execFileSync('zsh', ['-c', 'true'], { stdio: 'ignore' }); } catch { zshOk = false; }
-const zshSkip = zshOk ? false : 'zsh unavailable';
+const zshSkip = skipUnless('zsh');
 
 // Stub bin: tmux and claude both log. tmux logging ANYTHING is a failure now — that is the
 // whole point of the file — and claude logs its argv and cwd so the redirect is checkable.

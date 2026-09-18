@@ -7,12 +7,11 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_protect-secrets.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 function runHook(file_path) {
   try {

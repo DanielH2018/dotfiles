@@ -14,23 +14,21 @@ const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
 
-function have(cmd, arg) {
-  try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 // DEVCOM.Lua (the winget installer's Lua) drops lua.exe outside PATH — probe it like
 // wezterm-config.test.js probes luac, then fall back to the names a Linux box has.
 function findLua() {
   const win = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Lua', 'bin', 'lua.exe');
   if (fs.existsSync(win)) return win;
-  for (const c of ['lua5.4', 'lua']) if (have(c, '-v')) return c;
+  for (const c of ['lua5.4', 'lua']) if (have(c)) return c;
   return '';
 }
 const lua = findLua();
-const skip = !have('chezmoi', '--version') ? 'chezmoi unavailable'
+const skip = !have('chezmoi') ? 'chezmoi unavailable'
   : !lua ? 'lua unavailable' : false;
 
 // Fake panes, one per pane shape the split has to handle. `cwd` is what OSC 7 reported

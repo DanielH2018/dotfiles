@@ -12,12 +12,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const INSTALLER = path.join(__dirname, '..', '..', 'bin', 'install-hook-shim');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/git unavailable';
+const skip = skipUnless('bash', 'git');
 
 // Strip every GIT_* var: inheriting GIT_DIR here would point the fixture repos at
 // whatever repo is running the suite, which is precisely the bug under test. The two put

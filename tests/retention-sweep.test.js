@@ -19,17 +19,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const SWEEP = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_retention-sweep');
 const MANIFEST = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'retention-manifest.json');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
-
-let flockAvailable = true;
-try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockAvailable = false; }
+const skip = skipUnless('bash', 'jq');
 
 // Every fixture manifest is written into its own scratch root, so that root is also the
 // right sandbox for everything else the sweeper touches.
@@ -705,9 +701,9 @@ test('the run marker records the counts and is overwritten, never appended', { s
 
 // The timer and a hand-run sweep can collide. Contention must be a quiet no-op, not a
 // failed unit and not two sweeps racing over the same directories.
-// `skip` carries a reason string; `!flockAvailable` needs its own, or this reports as a bare
+// `skip` carries a reason string; the flock probe needs its own, or this reports as a bare
 // "# SKIP" — the only one of the suite's skips that never said why it sat out.
-test('a second sweep exits cleanly while another holds the lock', { skip: skip || (flockAvailable ? false : 'flock unavailable'), timeout: 20000 }, () => {
+test('a second sweep exits cleanly while another holds the lock', { skip: skip || skipUnless('bash', 'flock'), timeout: 20000 }, () => {
   const root = scratch(os.tmpdir(), 'retention-lock-');
   const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);

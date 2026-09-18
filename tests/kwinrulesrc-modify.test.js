@@ -31,6 +31,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_config', 'modify_private_kwinrulesrc.sh');
 
@@ -79,9 +80,7 @@ const BITWARDEN_SECTION = [
 const LIVE_RULES = [GHOSTTY, BITWARDEN, OBSIDIAN, DISCORD, FIREFOX, SPOTIFY];
 const LIVE_RULES_AFTER = LIVE_RULES.filter((u) => u !== FIREFOX);
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 function run(input) {
   return execFileSync('bash', [SCRIPT], { input, encoding: 'utf8' });

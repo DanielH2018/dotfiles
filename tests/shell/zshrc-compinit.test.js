@@ -14,15 +14,14 @@
 // the raw template text directly rather than a render.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { renderTemplate } = require('../lib/render');
+const { have } = require('../lib/probe');
 
 const TMPL = path.join(__dirname, '..', '..', 'home', 'dot_zshrc.tmpl');
 const raw = fs.readFileSync(TMPL, 'utf8');
 
-function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 test('exactly one autoload of compinit in the whole file', () => {

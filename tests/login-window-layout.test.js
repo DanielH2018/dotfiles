@@ -19,12 +19,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_login-window-layout');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 // Real command lines, as read off a live session with `ps -eo args`. The Discord one carries
 // the version directory that broke the first pattern.

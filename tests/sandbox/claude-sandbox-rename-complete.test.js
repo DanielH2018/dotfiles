@@ -20,16 +20,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 
-let toolsOk = true;
-try {
-  execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' });
-  execFileSync('git', ['--version'], { stdio: 'ignore' });
-} catch { toolsOk = false; }
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
-  : toolsOk ? false : 'bash/awk/git unavailable';
+  : skipUnless('bash', 'awk', 'git');
 
 // A HOME holding the sandbox tree under its deployed names (chezmoi's executable_
 // prefix sets the deployed mode, so it is stripped here the way an apply would).

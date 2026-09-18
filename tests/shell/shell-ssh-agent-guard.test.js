@@ -16,12 +16,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
-function have(cmd) {
-  try { execFileSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 const SHELLS = ['bash', 'zsh'].filter(have);
 const skip = SHELLS.length ? false : 'no bash or zsh available';
 

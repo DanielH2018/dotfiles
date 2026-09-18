@@ -18,12 +18,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_desk-away');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 function mkdtemp(prefix) {
   const d = scratch(os.tmpdir(), prefix);

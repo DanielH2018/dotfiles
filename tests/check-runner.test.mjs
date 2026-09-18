@@ -9,13 +9,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scratch } from './lib/tmp.js';
+import { skipUnless } from './lib/probe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(__dirname, '..', 'home', 'private_dot_claude', 'scripts', 'check-runner.mjs');
 
-let bashOk = true;
-try { if (spawnSync('bash', ['-c', 'true']).status !== 0) bashOk = false; } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 const git = (dir, ...args) => spawnSync('git', args, { cwd: dir, env: GIT_ENV });

@@ -15,11 +15,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const TOOL = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_prompt-friction');
 
-let skip = false;
-try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { skip = 'python3 unavailable'; }
+const skip = skipUnless('python3');
 
 const DIR = scratch(os.tmpdir(), 'pf-');
 

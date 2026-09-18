@@ -9,16 +9,16 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 const { renderFile } = require('../lib/render');
 const { Term, ptySkip, tierB } = require('../lib/pty');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const ROOT = path.join(__dirname, '..', '..');
 const ZSHRC_SRC = path.join(ROOT, 'home', 'dot_zshrc.tmpl');
 const COMMON_SRC = path.join(ROOT, 'home', 'dot_config', 'shell', 'common.sh');
 
-const missing = (t) => { try { execFileSync('sh', ['-c', `command -v ${t}`], { stdio: 'ignore' }); return false; } catch { return true; } };
+const missing = (t) => !have(t);
 
 // Rendered once, and only when the tier is on -- chezmoi is the only thing that can
 // turn the template into the rc the shell actually gets.

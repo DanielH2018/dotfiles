@@ -10,13 +10,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('../lib/render');
+const { have } = require('../lib/probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const TMPL = path.join(REPO, 'home', 'dot_config', 'wezterm', 'wezterm.lua.tmpl');
 
-function have(cmd) {
-  try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 const skip = process.platform !== 'win32' ? 'windows-only config'
   : !have('chezmoi') ? 'chezmoi unavailable' : false;
 

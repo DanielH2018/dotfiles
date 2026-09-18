@@ -16,9 +16,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-eval-freshness');
-function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 
 const SKILLS = 'home/private_dot_claude/skills';

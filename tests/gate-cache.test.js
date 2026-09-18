@@ -18,14 +18,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { have } = require('./lib/probe');
 
 const REPO = path.join(__dirname, '..');
 const GATE = path.join(REPO, 'bin', 'gate-cache');
 const HOOK = path.join(REPO, '.githooks', 'pre-push');
 
-function have(cmd) {
-  try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 
 // A throwaway repo with one commit. Signing is off: these fixtures never push, and the

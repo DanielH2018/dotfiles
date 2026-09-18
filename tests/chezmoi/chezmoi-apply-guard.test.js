@@ -12,12 +12,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_chezmoi-apply-guard.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash

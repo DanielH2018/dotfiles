@@ -7,10 +7,9 @@
 const { test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 const SUITES = [
   path.join(__dirname, '..', 'home', 'private_dot_claude', 'skills', 'pr-feedback', 'scripts', 'executable_test_fetch.sh'),

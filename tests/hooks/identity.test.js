@@ -11,12 +11,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'identity.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // A /proc/<pid>/stat line. `comm` is placed verbatim inside the parens so a name
 // containing spaces and parens can be exercised.

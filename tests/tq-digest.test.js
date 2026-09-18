@@ -6,21 +6,16 @@
 // dependency-free, and pytest only exists inside ~/dev/server's venv.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
-let python3Ok = true;
-try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
-const skip = python3Ok ? false : 'python3 unavailable';
+const skip = skipUnless('python3');
 
-function needs(binary) {
-  if (!python3Ok) return skip;
-  try { execFileSync(binary, ['--version'], { stdio: 'ignore' }); } catch { return `${binary} unavailable`; }
-  return false;
-}
+const needs = (binary) => skip || skipUnless(binary);
 const skipRuff = needs('ruff');
 const skipShellcheck = needs('shellcheck');
 

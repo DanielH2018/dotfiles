@@ -23,9 +23,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const TMPL = path.join(__dirname, '..', '..', 'home', '.chezmoi.toml.tmpl');
-function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 const WORK_PROMPT = 'Is this a work machine';

@@ -12,10 +12,11 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { Term, ptySkip, tierB, sleep } = require('../lib/pty');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const CONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
 
-const missing = (t) => { try { execFileSync('sh', ['-c', `command -v ${t}`], { stdio: 'ignore' }); return false; } catch { return true; } };
+const missing = (t) => !have(t);
 const skip = tierB()
   || ptySkip()
   || (missing('tmux') ? 'tmux unavailable'

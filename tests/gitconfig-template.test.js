@@ -10,16 +10,15 @@
 // key-detection branch for real rather than by grepping the template text.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('./lib/render');
 const { scratch } = require('./lib/tmp');
+const { have } = require('./lib/probe');
 
 const SOURCE = path.join(__dirname, '..', 'home');
 const TMPL = path.join(SOURCE, 'dot_gitconfig.tmpl');
-function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
 function fakeHome(keys = []) {

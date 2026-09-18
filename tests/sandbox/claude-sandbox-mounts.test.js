@@ -12,18 +12,17 @@
 // claude-sandbox-launcher.test.js. Offline; skips cleanly without bash/awk.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const SANDBOX_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
-  : toolsOk ? false : 'bash/awk unavailable';
+  : skipUnless('bash', 'awk');
 
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 

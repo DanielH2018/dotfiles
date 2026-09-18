@@ -9,12 +9,9 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { have } = require('../lib/probe');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
-
-function have(cmd) {
-  try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 
 // Slice the gated block out of common.sh: marker comment through the column-0 `fi`.
 function wzBlock() {

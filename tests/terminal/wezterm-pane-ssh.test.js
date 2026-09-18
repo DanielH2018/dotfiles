@@ -13,14 +13,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const SCRIPT = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_wezterm-pane-ssh');
 
-function have(cmd, arg) {
-  try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true; } catch { return false; }
-}
-const skip = !have('gawk', '--version') ? 'gawk unavailable' : false;
+const skip = !have('gawk') ? 'gawk unavailable' : false;
 
 // One fake process. `pane` undefined means no WEZTERM_PANE in its environment at all.
 // `stat` mirrors the kernel's format — comm is parenthesised and may itself contain

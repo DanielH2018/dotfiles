@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 // The repo's pre-push hook exports GIT_DIR/GIT_WORK_TREE, which would point the hook's
 // git calls at the outer repo instead of the fixture.
@@ -23,9 +24,7 @@ for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-context.sh');
 const SETTINGS = path.join(__dirname, '..', '..', 'home', '.chezmoitemplates', 'settings.base.json');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq && command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq/git unavailable';
+const skip = skipUnless('bash', 'jq', 'git');
 
 function repo() {
   const d = scratch(os.tmpdir(), 'sesctx-');

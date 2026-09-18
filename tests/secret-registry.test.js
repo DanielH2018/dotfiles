@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
 const ROOT = path.join(__dirname, '..');
 const REGISTRY = path.join(ROOT, 'home', '.chezmoidata', 'secrets.toml');
@@ -61,9 +62,7 @@ const secretPathsLine = denySecretPathsBlock
   ? [null, [...denySecretPathsBlock[1].matchAll(/r"([^"]*)"/g)].map((m) => m[1]).join('')]
   : null;
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 test('the registry parses and is not empty', () => {
   assert.ok(entries.length >= 5, `expected entries, got ${entries.length}`);

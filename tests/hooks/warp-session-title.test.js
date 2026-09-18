@@ -15,14 +15,13 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_warp-session-title.sh');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // Runs the hook with the terminal redirected to a temp file, and returns what it wrote.
 // Returns stdout separately so a test can assert it stayed empty.

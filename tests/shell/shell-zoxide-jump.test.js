@@ -9,12 +9,11 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 // `zoxide query -ls` right-aligns the score, so every row starts with whitespace.
 const FIXTURE = [

@@ -6,14 +6,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
-let python3Ok = true;
-try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
-const skip = python3Ok ? false : 'python3 unavailable';
+const skip = skipUnless('python3');
 
-let uvOk = true;
-try { execFileSync('uv', ['--version'], { stdio: 'ignore' }); } catch { uvOk = false; }
-const skipPytest = uvOk ? false : 'uv unavailable';
+const skipPytest = skipUnless('uv');
 
 const SANDBOX = path.join(__dirname, '..', 'home', 'private_dot_claude', 'sandbox');
 const VAULT_TOOLING = path.join(__dirname, '..', 'home', 'private_dot_claude', 'vault-tooling');

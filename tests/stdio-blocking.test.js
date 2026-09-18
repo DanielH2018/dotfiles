@@ -9,12 +9,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_stdio-blocking');
 
-let hasPython = true;
-try { execFileSync('bash', ['-c', 'command -v python3'], { stdio: 'ignore' }); } catch { hasPython = false; }
-const skip = hasPython ? false : 'python3 unavailable';
+const skip = skipUnless('bash', 'python3');
 
 test('takes no arguments', { skip }, () => {
   assert.throws(() => execFileSync('python3', [SCRIPT, 'unexpected'], { stdio: 'pipe' }));

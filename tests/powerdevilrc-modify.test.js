@@ -22,13 +22,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_config', 'modify_powerdevilrc.sh');
 const KEY = 'TurnOffDisplayIdleTimeoutSec';
 
-let bashOk = true;
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
-const skip = bashOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 
 function run(input) {
   return execFileSync('bash', [SCRIPT], { input, encoding: 'utf8' });

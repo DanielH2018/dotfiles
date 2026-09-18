@@ -26,19 +26,13 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { have } = require('./probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const SOURCE = path.join(REPO, 'home');
 
 // False when chezmoi is not installed. Use as `const skip = chezmoiAvailable ? false : '...'`.
-const chezmoiAvailable = (() => {
-  try {
-    execFileSync('chezmoi', ['--version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-})();
+const chezmoiAvailable = have('chezmoi');
 
 const cache = new Map();
 

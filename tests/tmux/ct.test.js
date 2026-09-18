@@ -10,11 +10,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const CT = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ct');
-let toolsOk = true;
-try { execFileSync('bash', ['-c', ':'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash unavailable';
+const skip = skipUnless('bash');
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Run ct with a logging `tmux` stub on PATH. By default also drops a `claude` stub on

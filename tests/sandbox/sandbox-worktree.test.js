@@ -11,13 +11,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-worktree.sh');
 
-let toolsOk = true;
-try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = process.platform === 'win32' ? 'sandbox-worktree is Unix-only'
-  : toolsOk ? false : 'git unavailable';
+  : skipUnless('git');
 
 // realpath'd, the way check-push-signatures.test.js does it: on macOS os.tmpdir() is
 // /var/folders/..., a symlink to /private/var/folders/..., and git's porcelain always reports

@@ -13,6 +13,7 @@ const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-end.sh');
 
@@ -21,9 +22,7 @@ const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hoo
 // "rolls the buffer" test below would go on passing while testing the under-budget path.
 const OVER_BUDGET = shConstInt(HOOK, 'REMEMBER_BUDGET') * 3;
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // The hook derives the buffer path from the JSON `cwd`, and logs under $HOME. Both are
 // faked so a test run never touches the real ~/.claude or the real .remember buffer.

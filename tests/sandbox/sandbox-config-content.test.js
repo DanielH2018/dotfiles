@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const GITCONFIG = path.join(SANDBOX_DIR, 'gitconfig');
@@ -17,13 +18,9 @@ const ALLOWLIST = path.join(SANDBOX_DIR, 'vault-allowlist.txt');
 const SENSITIVE = path.join(SANDBOX_DIR, 'vault-sensitive.txt');
 const LAUNCHER = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
 
-let toolsOk = true;
-try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'git unavailable';
+const skip = skipUnless('git');
 
-let ruffOk = true;
-try { execFileSync('ruff', ['--version'], { stdio: 'ignore' }); } catch { ruffOk = false; }
-const ruffSkip = ruffOk ? false : 'ruff unavailable';
+const ruffSkip = skipUnless('ruff');
 
 function gitConfigGet(key) {
   try {

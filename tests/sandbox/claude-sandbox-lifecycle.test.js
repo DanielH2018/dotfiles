@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const SANDBOX = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX, 'executable_claude-sandbox');
@@ -33,14 +34,8 @@ const SOURCES = [LAUNCHER, ...fs.readdirSync(SANDBOX)
   .sort()
   .map((f) => path.join(SANDBOX, f))];
 
-let toolsOk = true;
-try {
-  execFileSync('bash', ['-c', 'command -v awk'], { stdio: 'ignore' });
-  execFileSync('git', ['--version'], { stdio: 'ignore' });
-  execFileSync('python3', ['--version'], { stdio: 'ignore' });
-} catch { toolsOk = false; }
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
-  : toolsOk ? false : 'bash/awk/git/python3 unavailable';
+  : skipUnless('bash', 'awk', 'git', 'python3');
 
 function extractFunction(name) {
   const body = execFileSync('awk', [

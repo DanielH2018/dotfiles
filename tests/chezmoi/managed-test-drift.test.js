@@ -18,19 +18,18 @@
 // one's — the skew that already caught out tests/modify_settings.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const SOURCE = path.join(REPO, 'home');
 const ALLOWLIST = path.join(__dirname, 'managed-test-paths.txt');
 const PATTERN = /test|fixture|conftest/i;
 
-let have = true;
-try { execFileSync('bash', ['-c', 'command -v chezmoi'], { stdio: 'ignore' }); } catch { have = false; }
-const skip = have ? false : 'chezmoi unavailable';
+const skip = skipUnless('bash', 'chezmoi');
 
 const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
   .split('\n')

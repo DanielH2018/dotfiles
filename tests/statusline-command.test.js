@@ -7,12 +7,11 @@ const { spawnSync, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'private_dot_claude', 'executable_statusline-command.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // COLUMNS is pinned wide so segment assertions stay on one line regardless of the runner's
 // terminal; the wrapping tests below set it themselves.

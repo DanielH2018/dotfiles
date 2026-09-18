@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have } = require('../lib/probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const COMMON = path.join(REPO, 'home', 'dot_config', 'shell', 'common.sh');
@@ -38,7 +39,6 @@ const BASHRC = path.join(REPO, 'home', 'dot_bashrc');
 const rawTmpl = fs.readFileSync(TMPL, 'utf8');
 const rawBashrc = fs.readFileSync(BASHRC, 'utf8');
 
-function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skipBash = !have('bash') && 'bash unavailable';
 const skipZsh = !have('zsh') && 'zsh unavailable';
 

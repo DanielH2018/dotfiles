@@ -8,21 +8,19 @@
 // languages this config actually supports are installed explicitly instead.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { have } = require('./lib/probe');
 
 const REPO = path.join(__dirname, '..');
 const NVIM = path.join(REPO, 'home', 'dot_config', 'nvim');
 
-function have(cmd, arg) {
-  try { execFileSync(cmd, [arg], { stdio: 'ignore' }); return true; } catch { return false; }
-}
 // Same probe order as the wezterm tests: DEVCOM.Lua's lua.exe sits outside PATH on Windows.
 function findLua() {
   const win = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Lua', 'bin', 'lua.exe');
   if (fs.existsSync(win)) return win;
-  for (const c of ['lua5.4', 'lua']) if (have(c, '-v')) return c;
+  for (const c of ['lua5.4', 'lua']) if (have(c)) return c;
   return '';
 }
 const lua = findLua();

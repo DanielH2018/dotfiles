@@ -17,14 +17,13 @@ const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_notify.sh');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // The hook has three branches and the banner is absent from one of them on purpose: under WSL it
 // plays the Windows cue and draws no banner at all, because notify-send has no daemon there. So

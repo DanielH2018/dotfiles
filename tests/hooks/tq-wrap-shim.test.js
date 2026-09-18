@@ -12,11 +12,12 @@
 // refuse to accept), and anything unclassifiable must fall through rather than guess.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have, skipUnless } = require('../lib/probe');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const SHIM = path.join(HOOKS, 'executable_tq-wrap-tests.sh');
@@ -24,16 +25,11 @@ const PY = path.join(HOOKS, 'executable_tq-wrap-tests.py');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
 
-let toolsOk = true;
-try {
-  execFileSync('python3', ['--version'], { stdio: 'ignore' });
-  execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' });
-} catch { toolsOk = false; }
-const skip = toolsOk ? false : 'python3/jq unavailable';
+const skip = skipUnless('python3', 'bash', 'jq');
 
 let binDir = '';
 let cacheDir = '';
-if (toolsOk) {
+if (have('python3') && have('bash') && have('jq')) {
   binDir = scratch(os.tmpdir(), 'tqshim-bin-');
   cacheDir = scratch(os.tmpdir(), 'tqshim-cache-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));

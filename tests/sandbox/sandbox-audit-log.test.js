@@ -9,12 +9,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_audit.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // Rotation thresholds for this test's own runs. The hook ships 5000/3000; driving them down
 // here is what lets the rotation case seed a handful of lines instead of 5001, and keeps the

@@ -5,15 +5,14 @@
 // onto outcome-lib.sh's (M06) could-not-evaluate exit code.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { skipUnless } = require('../lib/probe');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'run-bounded.sh');
 const OUTCOME_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'outcome-lib.sh');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v timeout'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'coreutils timeout unavailable';
+const skip = skipUnless('bash', 'timeout');
 
 // The preference list run-bounded.sh resolves RB_TIMEOUT from, mirrored here so the tests can
 // answer the same question the library does.

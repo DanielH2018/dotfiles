@@ -11,14 +11,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOKS_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
 const SWEEP = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_reap-backgrounded-origins-sweep');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 const BG = (originSid, ownSid) =>
   `/x/claude --session-id ${ownSid} --fork-session --resume /p/${originSid}.jsonl --reply-on-resume`;

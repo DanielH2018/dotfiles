@@ -4,19 +4,17 @@
 // one runs the real CLI out of the source tree via CLAUDE_GUARD_HOME.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-guard');
 const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'claude-guard');
 
-let uvOk = true;
-try { execFileSync('uv', ['--version'], { stdio: 'ignore' }); } catch { uvOk = false; }
-
-test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: uvOk ? false : 'uv unavailable' }, () => {
+test('shim runs the CLI from CLAUDE_GUARD_HOME', { skip: skipUnless('uv') }, () => {
   const r = spawnSync('bash', [SHIM, 'explain', 'ls; pwd'], {
     encoding: 'utf8', env: { ...process.env, CLAUDE_GUARD_HOME: SHARE },
   });
@@ -41,7 +39,7 @@ function shimLookupArgv(shimPath) {
 }
 
 test('the shim\'s own lookup ignores a real cwd venv only because of --system',
-  { skip: uvOk ? false : 'uv unavailable' }, (t) => {
+  { skip: skipUnless('uv') }, (t) => {
     // A *dangling* or wrong-version cwd venv is not the risk `--system` guards against: uv
     // already probes a discovered venv's interpreter and falls back to the managed toolchain
     // on its own regardless of `--system`. The one shape that actually differs is a REAL,

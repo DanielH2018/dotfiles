@@ -5,25 +5,24 @@
 // unrelated command. Offline and deterministic; skips without python3.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { have, skipUnless } = require('../lib/probe');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
 const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
 
-let python3Ok = true;
-try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
-const skip = python3Ok ? false : 'python3 unavailable';
+const skip = skipUnless('python3');
 
 // The hook only rewrites when `tq` resolves on PATH, because that is the word it
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias
 // and point TQ_BIN at it: this exercises the checkout rather than whatever
 // `chezmoi apply` last deployed.
 let binDir = '';
-if (python3Ok) {
+if (have('python3')) {
   binDir = scratch(os.tmpdir(), 'tq-hook-bin-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
 }
@@ -42,7 +41,7 @@ if (python3Ok) {
 // not on whatever the environment happened to leave lying around.
 const TQ_LIB_SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'tq');
 let hardenedLib = '';
-if (python3Ok) {
+if (have('python3')) {
   hardenedLib = scratch(os.tmpdir(), 'tq-hook-lib-');
   fs.cpSync(TQ_LIB_SRC, hardenedLib, { recursive: true, filter: (src) => !src.includes('__pycache__') });
   const harden = (p) => {

@@ -4,20 +4,19 @@
 // out a live session. Offline and deterministic; skips without python3.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { skipUnless } = require('./lib/probe');
 
 const SCRIPT = path.join(
   __dirname, '..', 'home', 'private_dot_claude', 'scripts',
   'executable_repair-advisor-transcript.py',
 );
 
-let python3Ok = true;
-try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
-const skip = python3Ok ? false : 'python3 unavailable';
+const skip = skipUnless('python3');
 
 const MSG = 'msg_advisor';
 const SRVTOOL = 'srvtoolu_test01';

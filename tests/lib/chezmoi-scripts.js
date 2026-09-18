@@ -8,14 +8,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { ptySkip } = require('./pty');
+const { skipUnless } = require('./probe');
 
 const REPO = path.join(__dirname, '..', '..');
 const SCRIPTS_DIR = path.join(REPO, 'home', '.chezmoiscripts');
 
-let toolsOk = true;
-try { execFileSync('chezmoi', ['--version'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'chezmoi/bash unavailable';
+const skip = skipUnless('chezmoi', 'bash');
 
 // The os-linux/wsl/ scripts driven in Part 2 open with `{{ if includeTemplate "is-wsl" . }}`,
 // so off WSL they render to an EMPTY string. The Part 2 behavior tests would then run an empty

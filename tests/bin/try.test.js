@@ -12,12 +12,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const TRY = path.join(__dirname, '..', '..', 'bin', 'try');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/git unavailable';
+const skip = skipUnless('bash', 'git');
 
 const CLEAN_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
@@ -290,21 +289,18 @@ test('a source-only change does not count as a conflict', { skip }, () => {
   assert.match(calls(r.file), /chezmoi apply/);
 });
 
-let flockOk = true;
-try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockOk = false; }
-
 // The lock file is created by with_repo_lock's `exec 9>"$_lock"`, which lives in the flock
 // branch: where there is no flock (a stock macOS) try deliberately runs the bench unlocked and
 // says so, creating no file. So this asserts something only a flock machine has -- the same
 // condition the contention test below already gates on.
-test('takes a lock, so two benches cannot interleave', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+test('takes a lock, so two benches cannot interleave', { skip: skip || (skipUnless('bash', 'flock')) }, () => {
   const { dir } = makeRepo();
   const r = run(dir, ['feature']);
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(fs.existsSync(path.join(dir, '.git', 'try.lock')));
 });
 
-test('waits for a bench another worktree is holding', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+test('waits for a bench another worktree is holding', { skip: skip || (skipUnless('bash', 'flock')) }, () => {
   const { dir } = makeRepo();
   const lock = path.join(dir, '.git', 'try.lock');
   const marker = path.join(dir, '.git', 'held');
@@ -335,7 +331,7 @@ test('waits for a bench another worktree is holding', { skip: skip || (flockOk ?
 // process forked anywhere under `chezmoi apply` inherited the lock and kept holding
 // it after try exited. They only mean something together — the lock must be held for
 // the whole bench AND released the moment it ends.
-test('the lock is held against other benches for the whole bench', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+test('the lock is held against other benches for the whole bench', { skip: skip || (skipUnless('bash', 'flock')) }, () => {
   const { dir } = makeRepo();
   const lock = path.join(dir, '.git', 'try.lock');
   const probe = path.join(dir, '.lock-probe');
@@ -347,7 +343,7 @@ test('the lock is held against other benches for the whole bench', { skip: skip 
     'a second bench could take the lock mid-bench — the mutex is gone');
 });
 
-test('a process forked during the bench does not inherit the lock', { skip: skip || (flockOk ? false : 'flock unavailable') }, () => {
+test('a process forked during the bench does not inherit the lock', { skip: skip || (skipUnless('bash', 'flock')) }, () => {
   const { dir } = makeRepo();
   const lock = path.join(dir, '.git', 'try.lock');
   const pidFile = path.join(dir, '.daemon-pid');

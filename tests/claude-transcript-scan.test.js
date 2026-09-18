@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
+const { have, skipUnless } = require('./lib/probe');
 
 // The one synthetic token that must NOT be allowlisted, generated per run rather than
 // written down. A committed literal PROPAGATES: any session that reads this file copies it
@@ -58,9 +59,7 @@ function findGitleaks() {
   return '';
 }
 const GITLEAKS = findGitleaks();
-let jqOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { jqOk = false; }
-const skip = GITLEAKS && jqOk ? false : 'gitleaks/jq unavailable';
+const skip = GITLEAKS && skipUnless('bash', 'jq');
 
 const DIRTY = [
   { type: 'user', message: { role: 'user', content: 'hello' } },
@@ -159,7 +158,7 @@ test('the window sweep reaches both fixtures and flags only the dirty one', { sk
     'exactly one finding');
 });
 
-test('a missing gitleaks reports could-not-evaluate, never clean', { skip: jqOk ? false : skip }, () => {
+test('a missing gitleaks reports could-not-evaluate, never clean', { skip: (have('bash') && have('jq')) ? false : skip }, () => {
   const sb = sandbox();
   // The whole point of exit 3. Reporting 0 here would make an unrunnable detector
   // indistinguishable from a clean machine, which is the failure this file exists to stop.
@@ -597,7 +596,7 @@ test('--accept-baseline also disarms the banner', { skip }, () => {
 
 // Exit 3 is the one verdict with no other durable trace: a finding lands in the log, but a
 // scan that never ran leaves nothing at all — which is indistinguishable from a clean run.
-test('a scan that could not run records that it could not run', { skip: jqOk ? false : 'jq unavailable' }, () => {
+test('a scan that could not run records that it could not run', { skip: skipUnless('bash', 'jq') }, () => {
   const sb = sandbox();
   // PATH stays real — emptying it means bash itself cannot be spawned, and the test fails
   // for a reason that has nothing to do with the scanner. HOME is redirected so the prek

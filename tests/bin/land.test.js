@@ -12,12 +12,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const LAND = path.join(__dirname, '..', '..', 'bin', 'land');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/git unavailable';
+const skip = skipUnless('bash', 'git');
 
 // Strip every GIT_* var, then point git at no global or system config. Both the fixtures and
 // bin/land's own rebase run under this, so nothing here inherits the machine's identity, hooks,
@@ -313,10 +312,7 @@ test('lands from a linked worktree while the primary holds main', { skip }, () =
 // Fixing either one alone is easy and wrong: closing the fd in the parent would
 // pass the leak test while silently removing the mutual exclusion, and that is the
 // failure you would not notice until two sessions rebased onto each other.
-const flockOk = (() => {
-  try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); return true; } catch { return false; }
-})();
-const fdSkip = skip || (flockOk ? false : 'flock unavailable');
+const fdSkip = skip || skipUnless('flock');
 
 const lockOf = (dir) => path.join(dir, '.git', 'land.lock');
 

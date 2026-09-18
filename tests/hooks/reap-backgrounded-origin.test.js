@@ -18,15 +18,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { skipUnless } = require('../lib/probe');
 
 const HOOKS_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS_DIR, 'executable_reap-backgrounded-origin.sh');
 const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
 const SRC = fs.readFileSync(HOOK, 'utf8') + '\n' + fs.readFileSync(LIB, 'utf8');
 
-let toolsOk = true;
-try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
-const skip = toolsOk ? false : 'bash/jq unavailable';
+const skip = skipUnless('bash', 'jq');
 
 // Build a fake env: sessions dir, agent-view dir, a recording kill seam, a log file.
 // Each session also gets a fake /proc/<pid>/stat whose start time matches the procStart
