@@ -10,7 +10,14 @@ TRUSTED_SSH_HOSTS_MUST_CONTAIN = frozenset({"daniel-server", "daniel-pi"})
 
 # allow-readonly-remote.sh:157-164. A representative slice: a bare verb, a hardware-inspection
 # verb, and a log-reading verb — not the whole 68-entry list, which would just restate it.
-REMOTE_READONLY_VERBS_MUST_CONTAIN = frozenset({"uptime", "journalctl", "nvidia-smi"})
+REMOTE_READONLY_VERBS_MUST_CONTAIN = frozenset(
+    {"uptime", "journalctl", "nvidia-smi", "dpkg-query", "sar", "zgrep"}  # server #1898 members
+)
+REMOTE_READONLY_VERBS_MUST_NOT_CONTAIN = frozenset(
+    # server #1898: TIER1 names that stay out — meaningless over ssh, or read-only only
+    # behind a guard the package does not carry.
+    {"cd", "false", "sed", "awk", "find", "sort", "uniq", "git", "apt", "dpkg", "crontab", "pipx"}
+)
 
 
 def test_trusted_ssh_hosts_contains_both_hosts():
@@ -33,6 +40,7 @@ def test_trusted_ssh_hosts_is_not_curl_hosts():
 
 def test_remote_readonly_verbs_contains_the_named_members():
     assert REMOTE_READONLY_VERBS_MUST_CONTAIN <= REMOTE_READONLY_VERBS
+    assert not (REMOTE_READONLY_VERBS_MUST_NOT_CONTAIN & REMOTE_READONLY_VERBS)
 
 
 def test_remote_readonly_verbs_excludes_env_and_printenv():

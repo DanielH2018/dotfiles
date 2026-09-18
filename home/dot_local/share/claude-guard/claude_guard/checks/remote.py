@@ -37,6 +37,39 @@ _DMESG_MUTATE = re.compile(r"(^| )-[a-zA-Z]*[Cc][a-zA-Z]*($| )|--clear|--read-cl
 # :143-146. ss lists sockets, but -K/--kill closes them. Same shape as dmesg, on K only.
 _SS_MUTATE = re.compile(r"(^| )-[a-zA-Z]*K[a-zA-Z]*($| )|--kill")
 
+# Not in the bash (server #1898, found while converging the verb tables): three verbs the
+# table lists bare that the server repo's classifier only allows behind a guard. rg's
+# `--pre` runs an arbitrary preprocessor per file and `--hostname-bin` an arbitrary binary;
+# sensors' `-s`/`--set` writes the config back to the hardware. nvidia-smi is the
+# inverse shape — its write surface (`-pm`, `-pl`, `-r`, `-ac`, `mig`, `drain`, ...) is
+# long and grows, so only the query forms are listed and every other argument refuses.
+_RG_EXEC = re.compile(r"(^| )--(pre|hostname-bin)(=|$| )")
+_SENSORS_MUTATE = re.compile(r"(^| )(-s|--set)($| )")
+_NVIDIA_SMI_READ_FLAGS = frozenset(
+    {"-q", "-L", "--list-gpus", "-x", "--xml-format", "-u", "--unit"}
+)
+_NVIDIA_SMI_READ_VALUED = ("-i", "--id", "-d", "--display", "-l", "--loop", "-f", "--filename")
+_NVIDIA_SMI_READ_PREFIX = ("--query-", "--format=", "--id=", "--display=", "--loop=")
+
+
+def _nvidia_smi_readonly(args: list[str]) -> bool:
+    """True only when every argument is a query flag. `-f FILE` writes the report to a file,
+    so it is refused with the rest; a subcommand word (`topo`, `mig`, `drain`) refuses too —
+    some are reads, but the write ones sit beside them and this list is the safe side."""
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in _NVIDIA_SMI_READ_FLAGS or a.startswith(_NVIDIA_SMI_READ_PREFIX):
+            continue
+        if a in _NVIDIA_SMI_READ_VALUED and a not in ("-f", "--filename"):
+            skip = True
+            continue
+        return False
+    return not skip
+
+
 # :166-170. Only inspection subcommands are read-only ("ip a", "ip route", "ip addr show");
 # anything else ("ip link set", "ip addr add", ...) mutates. An ABSENT third token ("ip a")
 # is itself a member of the allowed set.
@@ -172,6 +205,12 @@ def readonly_remote_safe(command: str) -> bool:
     if verb == "dmesg" and _DMESG_MUTATE.search(rest):
         return False
     if verb == "ss" and _SS_MUTATE.search(rest):
+        return False
+    if verb == "rg" and _RG_EXEC.search(rest):
+        return False
+    if verb == "sensors" and _SENSORS_MUTATE.search(rest):
+        return False
+    if verb == "nvidia-smi" and not _nvidia_smi_readonly(remote[1:]):
         return False
 
     if verb in REMOTE_READONLY_VERBS:

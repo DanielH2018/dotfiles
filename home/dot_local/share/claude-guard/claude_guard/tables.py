@@ -127,6 +127,44 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "traceroute",
         "tracepath",
         "journalctl",
+        # DECIDED (server #1898): the guard-free half of the server repo's TIER1, so the
+        # judge and `auto-approve-readonly.py` agree on every verb that is read-only under
+        # ANY argument. Measured 2026-09-18: TIER1 held 32 names this table lacked. `cd`
+        # and `false` are meaningless over ssh and stay out; `printenv` stays out for the
+        # reason above. The rest are here. NOT moved: the verbs TIER1 reaches only through
+        # a per-command guard function (`git`, `sed`, `awk`, `find`, `sort`, `uniq`,
+        # `apt`, `dpkg`, `crontab`, `pipx`, ...) — a guarded verb moves only WITH its
+        # guard, ported beside `_JOURNALCTL_MUTATE` in checks/remote.py, because the replay
+        # gate cannot see a remote fail-open (4 of 1058 prompted records touch ssh).
+        "apt-cache",
+        "b2sum",
+        "blkid",
+        "column",
+        "comm",
+        "dpkg-query",
+        "findmnt",
+        "fold",
+        "getconf",
+        "groups",
+        "hexdump",
+        "lastlog",
+        "locale",
+        "lsattr",
+        "lsb_release",
+        "lspci",
+        "lsusb",
+        "mailq",
+        "mpstat",
+        "nl",
+        "nproc",
+        "rev",
+        "sar",
+        "seq",
+        "sha512sum",
+        "strings",
+        "tac",
+        "zcat",
+        "zgrep",
     }
 )
 

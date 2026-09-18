@@ -33,6 +33,18 @@ ALLOW = [
     "ssh -o BatchMode=yes daniel-box true",
     "ssh -oBatchMode=yes daniel-box uptime",
     "ssh daniel-server true",
+    # server #1898: the guard-free TIER1 readers, and the query forms of the three verbs
+    # that gained a guard.
+    "hl dpkg-query -W docker-ce",
+    "hl findmnt /data",
+    "hl sar -u 1 3",
+    "ssh daniel-box lsb_release -a",
+    "hl zgrep error /var/log/syslog.1.gz",
+    "hl rg -n pattern /var/log/app.log",
+    "hl sensors -A",
+    "hl nvidia-smi",
+    "hl nvidia-smi -q -d MEMORY -i 0",
+    "hl nvidia-smi --query-gpu=name,memory.used --format=csv",
 ]
 
 # allow-readonly-remote.test.js DEFER (88 cases).
@@ -125,6 +137,23 @@ DEFER = [
     "ssh -o BatchMode=yes daniel-box rm -rf /tmp/x",
     "ssh -o BatchMode=yes daniel-box cat /home/daniel/.ssh/id_ed25519",
     "ssh -o BatchMode=yes daniel-box",
+    # server #1898: the three guards. Each is a verb the table lists bare.
+    "hl rg --pre /tmp/x pattern /var/log",
+    "hl rg --pre=/tmp/x pattern /var/log",
+    "hl rg --hostname-bin /tmp/x pattern",
+    "hl sensors -s",
+    "hl sensors --set",
+    "hl nvidia-smi -pm 1",
+    "hl nvidia-smi --power-limit=100",
+    "hl nvidia-smi -r",
+    "hl nvidia-smi mig -cgi 9",
+    "hl nvidia-smi -f /tmp/report.txt",
+    "hl nvidia-smi -i",
+    # and a guarded TIER1 verb does NOT ride in on the convergence
+    "hl sed -i s/a/b/ /etc/hosts",
+    "hl git push",
+    "hl find /tmp -delete",
+    "hl cd /tmp",
 ]
 
 
@@ -170,6 +199,14 @@ def test_dmesg_mutation_flag_hidden_in_a_short_cluster_is_refused():
 
 def test_ss_mutation_flag_hidden_in_a_short_cluster_is_refused():
     assert readonly_remote_safe("hl ss -xKy") is False
+
+
+def test_nvidia_smi_valued_read_flag_consumes_its_value_but_not_a_trailing_write():
+    # `-i 0` is one read flag with its value; the value slot must not swallow a write flag
+    # that follows, and a dangling valued flag (`-i` with nothing after) refuses.
+    assert readonly_remote_safe("hl nvidia-smi -i 0 -q") is True
+    assert readonly_remote_safe("hl nvidia-smi -i 0 -r") is False
+    assert readonly_remote_safe("hl nvidia-smi -q -i") is False
 
 
 # --- docker inspect/config and systemctl show/cat/show-environment are deliberately
