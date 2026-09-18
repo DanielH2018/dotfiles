@@ -18,6 +18,7 @@ const path = require('node:path');
 const { srcPath } = require('../lib/paths');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_screen-injection.sh');
+// fixtures/ lives under tests/, not the checkout root, so this is one '..' and not repoPath().
 const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'injection-fixtures.json'), 'utf8'));
 
 function runHook(input, env = {}) {
