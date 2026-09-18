@@ -1,0 +1,85 @@
+#!/usr/bin/env node
+'use strict';
+// gen-hooks — render the `hooks` block of settings.base.json from the hook files' own
+// declarations.
+//
+// Every executable under home/private_dot_claude/hooks/ carries a `# gen-hooks: register`
+// block (event, matcher, timeout, order, ...) or a `# gen-hooks: library` block naming the
+// sibling that invokes it. This reads them all and writes the block between the
+// `{{/* gen-hooks:begin */}}` / `{{/* gen-hooks:end */}}` markers in the template — spliced,
+// never a whole-file rewrite, because the rest of that file carries chezmoi conditionals
+// and prose nothing here owns. A hook file that declares nothing is an error, which is the
+// point (#528): the registrations were hand-written JSON and a hook that existed but fired
+// nowhere was a silent gap. The grammar is documented at the top of gen-hooks-lib.js.
+//
+// Reads the directory listing, not the git index: chezmoi deploys whatever is in the source
+// tree, so an untracked hook file is a live hook and must be declared like any other.
+//
+// Usage:
+//   gen-hooks            rewrite the block in home/.chezmoitemplates/settings.base.json
+//   gen-hooks --check    render to memory, diff against the committed template, exit
+//                        non-zero on any difference (the CI gate; tests/gen-hooks.test.js
+//                        runs this against the real tree)
+//   gen-hooks --list     print the census: one line per registration, then the libraries
+
+const fs = require('node:fs');
+const path = require('node:path');
+const lib = require('./gen-hooks-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const HOOKS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'hooks');
+const TEMPLATE_PATH = path.join(REPO_ROOT, 'home', '.chezmoitemplates', 'settings.base.json');
+
+function readHookFiles() {
+  const out = {};
+  for (const ent of fs.readdirSync(HOOKS_DIR, { withFileTypes: true })) {
+    if (!ent.isFile() || !ent.name.startsWith(lib.SOURCE_PREFIX)) continue;
+    out[ent.name] = fs.readFileSync(path.join(HOOKS_DIR, ent.name), 'utf8');
+  }
+  return out;
+}
+
+function main() {
+  const check = process.argv.includes('--check');
+  const list = process.argv.includes('--list');
+
+  const { registrations, libraries } = lib.census(readHookFiles());
+  const summary = `${registrations.length} registrations, ${libraries.length} libraries`;
+  if (list) {
+    for (const r of registrations) {
+      process.stdout.write(`${r.event}\t${r.matcher ?? '*'}\t${r.order}\t${r.command}${r.when ? `\t[${r.when}]` : ''}\n`);
+    }
+    for (const l of libraries) process.stdout.write(`library\t${l.file}\t${l.reason}\n`);
+    process.stdout.write(`${summary}\n`);
+    return;
+  }
+
+  const current = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+  const regenerated = lib.injectHooksBlock(current, registrations);
+  const rel = path.relative(REPO_ROOT, TEMPLATE_PATH);
+
+  if (check) {
+    if (regenerated === current) {
+      process.stdout.write(`gen-hooks --check: ${rel} is up to date (${summary}).\n`);
+      return;
+    }
+    const diff = lib.firstDiffLine(regenerated, current);
+    process.stderr.write(`gen-hooks --check: ${rel} is out of date. Run \`bin/gen-hooks\` and commit the result.\n`);
+    if (diff) {
+      process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
+      process.stderr.write(`    generated: ${diff.expected}\n`);
+      process.stderr.write(`    committed: ${diff.got}\n`);
+    }
+    process.exit(1);
+  }
+
+  fs.writeFileSync(TEMPLATE_PATH, regenerated);
+  process.stdout.write(`gen-hooks: wrote ${rel} (${summary}).\n`);
+}
+
+try {
+  main();
+} catch (e) {
+  process.stderr.write(`${e.message}\n`);
+  process.exit(1);
+}
