@@ -1,4 +1,8 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: UserPromptSubmit
+#   timeout: 5
+#   order: 20
 # UserPromptSubmit hook: inject worktree branch context when in a linked worktree.
 # Helps Claude remember which feature branch it's working on after compaction.
 

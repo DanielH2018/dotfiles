@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup
+#   timeout: 10
+#   order: 30
+# The startup slot prune-artifacts.sh sweeps in, for memories. Nothing re-checks a
+# memory when the code
+# it describes changes, so drift runs one way — memories are added readily and
+# revised only when someone happens to notice. A path a memory names either
+# exists or it does not, which needs no session context; this reports and never
+# edits, because a memory can be right about a file that was removed on purpose.
 """SessionStart hook: report memories that name a repo path which no longer exists.
 
 Memory upkeep is entirely instruction-driven. The system prompt says to update an

@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 10
+#   order: 60
 # PostToolUse (Edit|Write): when a browser-openable artifact is written to /artifacts
 # (sandbox) or ~/.claude/artifacts (host), inject a clickable file:// link into the
 # MODEL's context (additionalContext) so the assistant relays it to the user in its

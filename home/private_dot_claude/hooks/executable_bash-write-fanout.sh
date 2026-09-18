@@ -1,4 +1,16 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Bash
+#   timeout: 300
+#   order: 20
+#   statusMessage: Checking files written by Bash...
+# Every PostToolUse hook on `Edit|Write` reads `.tool_input.file_path`, which a Bash
+# write does not carry — so a heredoc, a `sed -i` or a `tee` runs none of
+# them. chezmoi-guard is the one that costs work: without it the source never
+# tracks the edit and the next `chezmoi apply` silently reverts it. This
+# extracts the written paths from the command text and re-drives all four.
+# Timeout matches lint-after-edit.sh, the slowest thing it can call.
 # PostToolUse hook (matcher Bash): re-drive the Edit|Write hooks for files a Bash
 # command wrote.
 #

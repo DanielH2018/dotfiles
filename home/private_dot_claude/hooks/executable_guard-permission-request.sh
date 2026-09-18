@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+# gen-hooks: register
+#   event: PermissionRequest
+#   matcher: Bash
+#   timeout: 10
+#   order: 10
+# DECIDED: claude-guard slice 3 cutover (docs/specs/2026-09-06-claude-guard-design.md,
+# Rollout row 3). This is now the sole decision for Bash PermissionRequest --
+# judge() ports, rule for rule, the six bash hooks that used to be registered
+# in settings.base.json (allow-compound-bash.sh, allow-readonly-remote.sh, allow-safe-curl.sh,
+# allow-safe-rm.sh, allow-ansible-readonly.sh, allow-daniel-server.sh; each
+# hook's own file:line citations live in the claude_guard check that replaced
+# it). They are deleted, not merely unregistered -- the Python tests are the
+# oracle now. auto-approve-remote-ssh.sh is not among them; its entry moved to
+# the server repo's own settings on 2026-08-29 and was never part of this chain.
+# Contract unchanged from shadow: cannot run or cannot parse -> emits nothing
+# and the prompt stands.
 # guard-permission-request.sh — PermissionRequest/Bash shim for the claude-guard package.
 #
 # Failure contract (spec docs/specs/2026-09-06-claude-guard-design.md, "Failure contracts",

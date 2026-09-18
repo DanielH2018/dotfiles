@@ -1,4 +1,16 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Skill|Agent|Task
+#   timeout: 10
+#   order: 100
+# Fire-count logging: nothing recorded which of the 23 skills / 5 agents under
+# private_dot_claude/{skills,agents} ever actually fire, so a scaffolding-
+# delete-pass had no evidence to weigh a removal against. Both "Agent" and
+# "Task" are named in the matcher for the same reason the hook itself checks
+# both tool_name spellings -- the harness has used either name for the
+# subagent-dispatch tool across versions, and matching only one silently
+# stops logging agent dispatches the next time it changes back.
 # PostToolUse hook (matcher: Skill|Agent): append one JSONL record per skill invocation
 # and per agent dispatch to ~/.claude/logs/skill-usage.jsonl.
 #

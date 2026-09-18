@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: StopFailure
+#   timeout: 5
+#   order: 10
+#   async: true
 # StopFailure hook: log API errors and notify on rate limits.
 # Fires when a turn ends due to an API error rather than normal completion.
 

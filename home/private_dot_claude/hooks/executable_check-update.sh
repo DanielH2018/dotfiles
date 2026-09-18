@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup
+#   timeout: 5
+#   order: 100
 # SessionStart hook: notify when Claude Code has been updated since last session
 set -u
 

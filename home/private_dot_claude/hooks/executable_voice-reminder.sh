@@ -1,4 +1,15 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: UserPromptSubmit
+#   timeout: 5
+#   order: 10
+# Re-assert daniel-voice once per prompt. Built-in output styles carry
+# a `turnReminder` the harness re-injects during the conversation;
+# custom styles have no such field and their name misses the built-in
+# registry the renderer keys off, so daniel-voice reaches the model
+# once at session start and never again. The hook checks the active
+# style before speaking and exits silently under any other one.
+# Off switch: CLAUDE_VOICE_REMINDER=0.
 # UserPromptSubmit hook: re-assert the daniel-voice rules once per prompt.
 #
 # Built-in output styles (Concise, Proactive, Explanatory, Learning) carry a

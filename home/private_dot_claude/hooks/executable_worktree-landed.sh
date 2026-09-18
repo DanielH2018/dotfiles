@@ -1,4 +1,17 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: Stop
+#   timeout: 10
+#   order: 40
+# the session's own worktree is the one prune-worktrees.py can never reap: while
+# the session lives it holds the lock and stands in the directory, so the sweeper
+# is always a session late for it. This asks for the cleanup in-session instead,
+# once the branch is an ancestor of origin/HEAD and the tree is clean. It asks
+# once per worktree (a stamp in the per-worktree git dir): merging is often not
+# the end of the work here, and a hook that re-blocked every turn would evict a
+# session mid-deploy and then nag about it. Local refs
+# only -- the merge that makes that true runs in this same session and updates
+# them, so no fetch is needed and a stale ref just falls through to the sweeper.
 # Stop hook: when this session's worktree holds nothing but landed work, say so and ask
 # for it to be cleaned up now rather than leaving it for the next session's sweeper.
 #

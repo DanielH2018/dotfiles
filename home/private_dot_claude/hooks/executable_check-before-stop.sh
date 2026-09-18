@@ -1,4 +1,8 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: Stop
+#   timeout: 10
+#   order: 10
 # Stop hook: verify the session didn't leave the repo in a bad state.
 # If there are staged changes on a protected branch, block stopping
 # and tell Claude to move them to a feature branch.

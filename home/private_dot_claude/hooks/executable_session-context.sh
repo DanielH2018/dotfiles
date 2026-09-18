@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup|compact
+#   timeout: 5
+#   order: 10
 # SessionStart hook: inject useful context at the start of each session.
 # Text printed to stdout is added as context Claude can see.
 # Keep this FAST - it runs every time you open Claude Code.

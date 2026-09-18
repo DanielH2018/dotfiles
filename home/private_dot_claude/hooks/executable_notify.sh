@@ -1,4 +1,35 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: Notification
+#   matcher: permission_prompt|agent_needs_input|idle_prompt
+#   timeout: 5
+#   order: 10
+# audible cue only when a session genuinely needs you. Two types qualify:
+# permission_prompt (a foreground session is blocked on an approval) and
+# agent_needs_input (a background job or agentview session is asking a question).
+# Gating on permission_prompt alone left every background session silent, which is
+# how a daniel-box session sat waiting with no cue at all.
+# idle_prompt is admitted here but gated inside notify.sh, which sounds it only when the
+# notifying session is a background job. The type means opposite things depending on who
+# raised it: a job saying "waiting for your input" is asking you a question and owns no
+# pane to show it in, while a foreground session raises it 60s after every finished turn.
+# Excluding it outright silenced the job case -- session 664f7ae8 raised idle_prompt at
+# 13:32:42 on 2026-08-20 with no agent_needs_input anywhere near it.
+# agent_completed stays excluded outright: a finished session is not asking for anything.
+# Over a 30-minute diagnostic it was 10 of 19 notifications.
+# A notify-log.sh hook logged every notification here from 2026-08-22 to 2026-08-29 to
+# find what fired the cue "when nothing was blocked". It is answered and the hook is
+# gone: nothing spurious fires. The cue sounds on agent_needs_input as well, which is
+# the paragraph above, and that type is 1,106 of the 2,674 notifications logged --
+# four times the 288 permission_prompts. The diagnostic's own premise, that the cue
+# was gated on permission_prompt alone, contradicted this matcher. Reopen it only
+# with a payload this matcher does not list.
+# The matcher is the payload's notification_type. The real values (confirmed against
+# the 2.1.224 binary, not the docs) are permission_prompt, idle_prompt, auth_success,
+# agent_needs_input, agent_completed and the elicitation_* set. "task_complete" is NOT
+# one of them — an entry matching it never fires at all, which is what an agentview
+# "completed" entry once did. settings-base-shape.test.js now rejects any
+# matcher outside that set so a dead one cannot land green again.
 # Notification hook: alert -- audibly and visually -- when Claude needs attention.
 # Works on macOS (osascript), WSL, and desktop Linux (notify-send + play-sound.sh).
 

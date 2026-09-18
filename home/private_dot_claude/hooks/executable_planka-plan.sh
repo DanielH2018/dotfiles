@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: TodoWrite
+#   timeout: 10
+#   order: 80
 # PostToolUse on TodoWrite: mirror the session's todo list into the card's Plan
 # task list. The CLI reads the hook payload on stdin and does the reconciling.
 #

@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionEnd
+#   timeout: 5
+#   order: 10
+#   async: true
 # SessionEnd hook: log session summary and check for unsaved work.
 # Fires when a session terminates. Output is informational only (not shown to Claude).
 

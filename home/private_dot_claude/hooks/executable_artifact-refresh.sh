@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: Stop
+#   timeout: 10
+#   order: 50
+# refresh the tracked HTML artifact once work has landed on the default branch
 # Stop hook: when this worktree's own work has landed since the tracked artifact was
 # last written, ask Claude to bring the artifact up to date and re-emit its link — so
 # a three-slice plan reflects reality as each slice ships, instead of going stale

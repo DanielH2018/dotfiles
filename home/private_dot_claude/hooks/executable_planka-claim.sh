@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 10
+#   order: 70
+# First edit of a session claims the branch's Planka card. A marker
+# file in the state dir makes it once-per-session rather than
+# once-per-edit, and the CLI exits 0 in silence on a machine with no
+# work overlay, so this costs one process spawn there.
 # PostToolUse on Edit|Write|NotebookEdit: the first real edit of a session claims
 # the branch's Planka card — resolve or create it, move it to In Progress, and
 # stamp the session's identifiers on it.

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gen-hooks: library
+#   reason: called by agent-view-subagents.sh; registered nowhere since agentview was deleted (0e6bded)
 # Record HOST Claude Code session state for the Agent View picker (agentview).
 # Keyed by session id (stable). Captures the pane's backend/locator once so the
 # picker can focus it directly; caches the last-known pane/locator/title since some

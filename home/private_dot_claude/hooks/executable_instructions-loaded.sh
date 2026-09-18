@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: InstructionsLoaded
+#   timeout: 5
+#   order: 10
+#   async: true
 # InstructionsLoaded hook: log which CLAUDE.md and rule files are active.
 # Helps debug path-scoped rules and monorepo instruction loading.
 

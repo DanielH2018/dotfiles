@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: WebFetch|WebSearch|mcp__.*
+#   timeout: 10
+#   order: 90
 # PostToolUse hook: flag likely prompt-injection in content returned by tools that
 # fetch third-party / untrusted data (web fetches, MCP integrations like Slack, Jira,
 # Gmail, Notion). Does NOT block — injects a warning so Claude treats the content as

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gen-hooks: library
+#   reason: sourced by agent-view-state.sh (the shared registry write path)
 # Shared write path for the Agent View session registry (~/.claude/agent-view/).
 # Sourced by the host state hook (agent-view-state.sh) and the sandbox launcher
 # (claude-sandbox) so both write/remove registry rows the same way — one JSON file

@@ -1,4 +1,28 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Bash
+#   timeout: 10
+#   order: 10
+#   args: pre
+# `pre` half of the commit tracker: stamps where HEAD is before a
+# commit-shaped command, so the `post` half can credit THIS session with
+# exactly what that command added. Attribution has to come from a tool
+# call -- `ref..HEAD` is shared branch state and reads identically in every
+# session sharing the checkout, which is why the startup-snapshot scheme it
+# replaces reported siblings' commits as yours. Stamping only in `post`
+# would measure from this session's previous commit instead, adopting
+# anything a sibling committed in between. Exits on a string match for
+# anything not commit-shaped, prints nothing, and always exits 0, so it
+# cannot perturb the permission decision the rest of this chain makes.
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Bash
+#   timeout: 10
+#   order: 10
+#   args: post
+# `post` half of the commit tracker: credits this session with what the command
+# it brackets added to HEAD. See the PreToolUse entry for the pair.
 # PreToolUse + PostToolUse (Bash), `pre` and `post` mode in $1: record the commits
 # THIS session actually created, so artifact-refresh.sh's Stop nudge names this
 # session's work and nobody else's.

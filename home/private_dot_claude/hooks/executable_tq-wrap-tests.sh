@@ -1,4 +1,15 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Bash
+#   timeout: 10
+#   order: 40
+#   command: {{ if eq .chezmoi.os "windows" }}py -3 ~/.claude/hooks/tq-wrap-tests.py{{ else }}~/.claude/hooks/tq-wrap-tests.sh{{ end }}
+# Non-Windows goes through the bash shim, which answers the 98% of Bash calls
+# tq will never claim without starting an interpreter (25ms -> ~10ms), and
+# execs the .py for the rest. Windows keeps calling the .py directly: the
+# shim is a POSIX shell script and the saving is not worth a second code
+# path there. Both routes end at the same Python authority.
 # PreToolUse (Bash) shim in front of tq-wrap-tests.py.
 #
 # The Python hook is correct and stays the authority; what it is not is cheap. It sits in

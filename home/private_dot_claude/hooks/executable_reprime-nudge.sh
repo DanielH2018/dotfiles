@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: *
+#   timeout: 5
+#   order: 110
 # PostToolUse (matcher "*"): a periodic "reprime" nudge for long tool-heavy
 # stretches. The rules loaded at context start scroll out of view over a long
 # autonomous run; once every N tool calls this re-surfaces a POINTER to the

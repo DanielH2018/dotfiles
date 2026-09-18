@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup
+#   timeout: 5
+#   order: 90
 # SessionStart hook: register external paths for FileChanged notifications.
 # When files change at these paths, Claude gets a FileChanged event.
 

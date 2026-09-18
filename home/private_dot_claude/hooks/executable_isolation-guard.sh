@@ -1,4 +1,17 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 10
+#   order: 60
+# Enforces "Working in isolation" from CLAUDE.md: a background job whose
+# EnterWorktree failed and fell back to "continue in place" must not edit the
+# shared checkout. No-ops outside a background job (CLAUDE_JOB_DIR unset) and
+# inside a .claude/worktrees/ checkout, so this never fires in an ordinary
+# interactive session. Bash writes (sed -i, heredocs, tee) are not covered here
+# -- see isolation-guard.sh's own comment for why extending
+# bash-write-fanout.sh's post-hoc path extraction to a pre-execution deny was
+# left undone.
 # PreToolUse (Edit|Write|NotebookEdit) hook: a background job that failed to isolate
 # must not edit the shared checkout it landed in instead.
 #

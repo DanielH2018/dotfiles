@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Bash
+#   timeout: 10
+#   order: 20
+# DECIDED: claude-guard slice 4 cutover (docs/specs/2026-09-06-claude-guard-design.md,
+# Rollout row 4). This is the sole decision for Bash PreToolUse -- deny.py
+# ports, rule for rule, the block-dangerous-bash.sh that was registered beside it
+# until the cutover and deleted in slice 6 (the DECIDED comment in the env block
+# of settings.base.json has the exit-gate numbers). Contract when it cannot run: the shim
+# prints `ask` itself -- the same posture the bash took on a missing jq -- never
+# silence, because this is the deny side. Registered at the same 10 s timeout the
+# bash carried.
 # guard-pre-tool-use.sh — PreToolUse/Bash shim for the claude-guard package.
 #
 # Failure contract (spec docs/specs/2026-09-06-claude-guard-design.md, "Failure contracts",

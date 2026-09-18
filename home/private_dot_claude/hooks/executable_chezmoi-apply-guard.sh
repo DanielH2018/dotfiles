@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Bash
+#   timeout: 15
+#   order: 30
 # PreToolUse (Bash) hook: stop `chezmoi apply` reverting a deployed file that
 # something other than chezmoi wrote.
 #

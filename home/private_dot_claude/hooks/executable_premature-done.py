@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# gen-hooks: register
+#   event: Stop
+#   timeout: 10
+#   order: 30
+# `claude agents` files a session under "Completed" when the CLI's own regex
+# chain reads a `result:` line in the last 800 characters of the turn text -- a
+# marker that short-circuits every later branch, so a session writing one while
+# a deploy is still outstanding drops off the operator's queue. This blocks that
+# turn when the same window also says the work is unfinished, and asks for the
+# `result:` + `next:` pair that reaches the working state instead. Background
+# jobs only. The hook's own docstring carries which three steps of the chain are
+# ported and why the rest are not.
 """Stop hook: block a background job from filing itself Completed while its own
 text says the work is not finished.
 

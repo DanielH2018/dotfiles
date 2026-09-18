@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup|resume|clear
+#   timeout: 15
+#   order: 50
+#   args: --prune
+# The startup slot prune-artifacts.sh sweeps in, for session worktrees: remove the
+# ones under
+# .claude/worktrees/ whose branch is already an ancestor of origin/HEAD, are clean,
+# and hold no live session's lock. Claude Code's exit prompt only reaches a session
+# still attached when it ends, so a backgrounded or killed one leaves its tree
+# behind forever. Every source that opens a working session, not just "startup":
+# a resumed session is the long-lived case where merged siblings pile up, and its
+# own tree is protected by the is_current check either way. Not "compact", which
+# fires mid-turn and would sweep for nothing. CLAUDE_WORKTREE_AUTOPRUNE=0 opts
+# out; every removal is logged to ~/.claude/logs/sessions.log.
 """SessionStart hook: remove Claude session worktrees whose work has already landed.
 
 Every session that isolates its work gets a worktree under `.claude/worktrees/`, and

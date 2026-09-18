@@ -1,4 +1,13 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: UserPromptSubmit
+#   timeout: 5
+#   order: 30
+# learning loop, mechanism B: the pre-delegation explain gate. Inert
+# unless CLAUDE_LEARN_GATE=1 -- the hook exits 0 with no output on an
+# unset var, so wiring it here costs nothing until Daniel arms it.
+# Defers to /prep and to prep's own `go` / `just do it` / `no intake`
+# bypasses, and fires at most once per session.
 # UserPromptSubmit hook: the pre-delegation explain gate. Mechanism B of
 # ~/.claude/specs/learning-loop_2026-08-19.md — on a prompt that asks for a
 # change and looks non-trivial, inject one instruction: state the approach in

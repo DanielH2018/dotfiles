@@ -1,4 +1,8 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostCompact
+#   timeout: 5
+#   order: 10
 # PostCompact hook: remind Claude to verify critical context survived compaction.
 
 set -u

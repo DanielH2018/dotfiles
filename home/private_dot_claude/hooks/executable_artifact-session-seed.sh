@@ -1,4 +1,15 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup|resume|clear
+#   timeout: 10
+#   order: 60
+# the floor artifact-commit-track.sh measures this session's own commits against:
+# where HEAD was when the session began. Every source, not just "startup" -- a
+# resumed or cleared session needs the floor too, and re-stamping is safe because
+# this hook writes only `.tip` and never `.mine`, so nothing already credited to
+# the session is lost. Not "compact": that fires mid-session, and re-flooring to
+# whatever HEAD holds by then would move the floor past a sibling's commits.
 # SessionStart: stamp where HEAD was when this session began, so
 # artifact-commit-track.sh has a floor to measure its first commit against. Everything
 # this session goes on to create is `HEAD --not <upstream> --not <tip>`; without the

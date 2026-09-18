@@ -1,4 +1,10 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup
+#   timeout: 10
+#   order: 20
+# artifacts are working docs, not an archive: drop anything untouched for a week
 # SessionStart hook: artifacts are working documents, not an archive. Prune anything
 # untouched for a week so the directory stays a list of what is actually live.
 #

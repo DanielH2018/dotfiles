@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# gen-hooks: library
+#   reason: top of the agent-view chain and nothing in this tree invokes it since agentview was deleted (0e6bded); kept pending the deletion question filed from #528
 # Track the subagents a session still has outstanding, so the Agent View picker doesn't
 # call a session "completed" while it is really waiting on one.
 # Usage: agent-view-subagents.sh <start|stop>

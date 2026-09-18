@@ -1,4 +1,6 @@
 #!/bin/bash
+# gen-hooks: library
+#   reason: called by notify.sh for the audible cue
 # play-sound.sh <input|done>
 # Audible event cue for Claude Code hooks. notify-send has no daemon under WSL, a
 # notify-send banner on desktop Linux is silent unless the sender is a registered

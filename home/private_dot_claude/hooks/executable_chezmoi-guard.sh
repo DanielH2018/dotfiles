@@ -1,4 +1,10 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 15
+#   order: 50
+#   statusMessage: Syncing chezmoi source...
 # PostToolUse (Edit|Write) hook: keep chezmoi-managed files in sync with the
 # chezmoi source, so manual/agent edits to deployed dotfiles don't silently
 # drift from the repo and then get reverted by a later `chezmoi apply`.

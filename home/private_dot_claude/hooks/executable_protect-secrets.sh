@@ -1,4 +1,13 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PreToolUse
+#   matcher: Read|Edit|Write|NotebookEdit
+#   timeout: 10
+#   order: 50
+# NotebookEdit is listed because it is a fourth write path to an arbitrary file
+# path, not because notebooks are used here. A matcher that names Edit and Write
+# but not NotebookEdit reads as covering every edit while leaving one uncovered,
+# and nothing reports the gap. Same reasoning on the PostToolUse matchers (auto-format.sh and its siblings).
 # PreToolUse hook for Read/Edit/Write: deny access to sensitive files.
 # The deny permission rules in settings already cover this, but a hook
 # gives a clearer reason and handles patterns that permission globs miss.

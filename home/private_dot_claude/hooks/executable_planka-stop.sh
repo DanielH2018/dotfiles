@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# gen-hooks: register
+#   event: Stop
+#   timeout: 10
+#   order: 20
+# One session-log comment on the Planka card, and only for a session that
+# claimed one — the claim marker is the evidence that this session edited
+# something, so a read-only session leaves no trace on the board.
 # Stop: one session-log comment on the branch's card.
 #
 # The card stays in In Progress. A session that ends without landing has not

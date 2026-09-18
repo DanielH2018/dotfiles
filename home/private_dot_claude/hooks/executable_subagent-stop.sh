@@ -1,4 +1,9 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: SubagentStop
+#   timeout: 5
+#   order: 10
+#   async: true
 # SubagentStop hook: log subagent spawns for observability.
 # The SubagentStop payload identifies the subagent (agent_type, agent_id) but
 # carries no status/duration/description fields, so only spawn identity is logged.

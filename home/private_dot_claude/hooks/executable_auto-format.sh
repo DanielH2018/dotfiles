@@ -1,4 +1,10 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 30
+#   order: 30
+#   statusMessage: Formatting...
 # PostToolUse hook: auto-format files after Claude writes or edits them.
 # Dispatches based on extension. Skips when the formatter isn't installed, saying so on
 # stderr once per tool per day.

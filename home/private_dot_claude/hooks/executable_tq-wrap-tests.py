@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# gen-hooks: library
+#   reason: authority behind tq-wrap-tests.sh, which holds the PreToolUse registration
 """PreToolUse hook: route an agent's test and lint commands through tq.
 
 A `node --test` run over this repo prints ~65KB that nobody reads when nothing

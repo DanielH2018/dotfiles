@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+# gen-hooks: register
+#   event: SessionStart
+#   matcher: startup
+#   timeout: 10
+#   order: 40
+# The startup slot memory-stale-paths.py runs in, the other half of memory upkeep:
+# MEMORY.md is injected
+# verbatim into every session and grows by appending, so this warns once
+# the index passes 50 pointer lines. Silent under the cap, and it reports
+# rather than edits — which entry to promote into a rule and which to
+# archive is a judgment call with session context behind it.
 """SessionStart hook: warn when the project's MEMORY.md index has outgrown its cap.
 
 MEMORY.md is injected verbatim at every session start, and nothing bounds it. It grows

@@ -1,4 +1,10 @@
 #!/bin/bash
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Edit|Write|NotebookEdit
+#   timeout: 300
+#   order: 40
+#   statusMessage: Running lint checks...
 # PostToolUse hook for Edit/Write: run a quick syntax/type check on the edited file
 # and, if it fails, feed the error back to Claude so it can self-correct.
 #
