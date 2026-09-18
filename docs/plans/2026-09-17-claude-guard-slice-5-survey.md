@@ -187,3 +187,27 @@ rewriter, which the re-planned slice can do.
 `sys.path.insert(0, "/home/ubuntu/.local/share/claude-guard")`. The interpreter is 3.14.6.
 The spec's guarded insert is required, and the deployed-import test the spec names as slice
 5's exit criterion was red before the narrowed slice shipped it.
+
+## The double launch, measured
+
+Two PermissionRequest hooks judge every prompted ssh command since the slice 4 cutover: the
+user-level `guard-permission-request.sh` (`claude_guard.judge()`) and the server repo's
+`auto-approve-remote-ssh.sh` (`classify_remote`, reading `TRUSTED_SSH_HOSTS` and
+`SECRET_PATH_RE` from this package since server PR #1861). Measured 2026-09-17 on
+daniel-server, 20 runs each, payload `ssh daniel-server docker ps | head -3`, package
+reachable: the repo shim takes 37 ms median (35 ms when the package is missing and it fails
+open) and the judge shim 65 ms (1 ms when it exits at the `cli.py` existence check). The
+double launch costs about 100 ms per command that reaches a prompt, and only there — in a
+normal auto-mode session neither `Bash(ssh:*)` nor `Bash(curl:*)` is an ask rule, so no
+PermissionRequest hook fires at all; both hooks carry Manual mode. The full table is
+`docs/claude-shell-permissions.md` in the server repo (PR #1894, issue #1864).
+
+The two hooks are not interchangeable, which bounds the retire-or-keep decision. On the
+payload above the judge emits nothing and the repo shim allows: `readonly_remote_safe`
+(`claude_guard/checks/remote.py`) returns no opinion unless `segment.parse` yields exactly one
+segment, so any local pipeline around the ssh stage falls through, while `classify_remote`
+walks each local stage and judges the ssh stage plus the readers around it. On
+`ssh daniel-server uptime` both allow. Retiring the repo shim re-prompts `ssh <host> <cmd> |
+head` in Manual mode; retiring the judge shim is a widening only where the repo shim's
+`TIER1` differs from `REMOTE_READONLY_VERBS` (the table gap above), and that is the policy
+decision the re-planned slice starts with (server #1898, #1893).
