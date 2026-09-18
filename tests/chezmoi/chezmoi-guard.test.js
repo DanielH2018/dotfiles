@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_chezmoi-guard.sh');
 
@@ -15,8 +16,8 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'czg-home-'));
-const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'czg-bin-'));
+const HOME = scratch(os.tmpdir(), 'czg-home-');
+const BIN = scratch(os.tmpdir(), 'czg-bin-');
 // Stub chezmoi: source-path maps by filename; add/chattr succeed; everything else no-ops.
 // `managed` has to be modelled too, and it is not decoration: the hook consults a cached
 // copy of that list before it will call source-path at all, so a stub that answered it with
@@ -126,9 +127,4 @@ test('CHEZMOI_GUARD_CACHE_TTL=0 turns the cache off', { skip }, () => {
   context(f, { CHEZMOI_GUARD_CACHE_TTL: '0' });
   assert.strictEqual(callCount('managed'), 0, 'no list is fetched when the cache is disabled');
   assert.strictEqual(callCount('source-path'), 2, 'every call goes straight to chezmoi');
-});
-
-process.on('exit', () => {
-  fs.rmSync(HOME, { recursive: true, force: true });
-  fs.rmSync(BIN, { recursive: true, force: true });
 });

@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
@@ -24,7 +25,6 @@ function have(cmd) {
 const SHELLS = ['bash', 'zsh'].filter(have);
 const skip = SHELLS.length ? false : 'no bash or zsh available';
 
-const dirs = [];
 const strays = [];
 
 // A scratch HOME with no SSH_AUTH_SOCK and no XDG_RUNTIME_DIR — the combination that arms the
@@ -32,8 +32,7 @@ const strays = [];
 // the fixture's own bin is what shell-clipimg.test.js believed made this block a no-op, and it
 // does not.
 function scratchHome() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentguard-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'agentguard-');
   return dir;
 }
 
@@ -83,5 +82,4 @@ process.on('exit', () => {
   for (const pid of strays) {
     try { process.kill(pid); } catch { /* already gone */ }
   }
-  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });

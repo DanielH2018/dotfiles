@@ -3,12 +3,13 @@
 // CLAUDE.md compaction policy asks to preserve: trigger kind, push state, files modified, and
 // test commands run. The headline guard is `manual` — the hook was registered auto-only and so
 // never ran at the moment it was most needed. Offline and deterministic. Skips without bash/jq.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 // Under the repo's pre-push hook git exports GIT_DIR/GIT_WORK_TREE into the environment, which
 // would point the hook's `git` calls at the outer repo instead of each fixture.
@@ -22,13 +23,9 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const cleanups = [];
-after(() => { for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true }); });
-function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
-
 // Build a transcript from tool_use descriptors: ['Edit', '/a.js'] or ['Bash', 'npm test'].
 function transcript(entries) {
-  const dir = tmp('precompact-');
+  const dir = scratch(os.tmpdir(), 'precompact-');
   const file = path.join(dir, 'transcript.jsonl');
   const lines = entries.map(([name, arg]) => JSON.stringify({
     type: 'assistant',
@@ -54,7 +51,7 @@ function run({ trigger = 'auto', transcript_path = '', cwd } = {}) {
   try {
     out = execFileSync('bash', [HOOK], {
       input: JSON.stringify(payload),
-      cwd: cwd || tmp('precompact-cwd-'),
+      cwd: cwd || scratch(os.tmpdir(), 'precompact-cwd-'),
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -138,7 +135,7 @@ test('always asks for corrections and errors to survive verbatim', { skip }, () 
 test('survives a missing, unreadable, or malformed transcript', { skip }, () => {
   assert.strictEqual(run({ transcript_path: '/nonexistent/nope.jsonl' }).continue, true);
 
-  const dir = tmp('precompact-bad-');
+  const dir = scratch(os.tmpdir(), 'precompact-bad-');
   const bad = path.join(dir, 'bad.jsonl');
   fs.writeFileSync(bad, 'not json at all\n{"partial":\n' + JSON.stringify({
     message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Edit', input: { file_path: '/repo/good.js' } }] },
@@ -149,7 +146,7 @@ test('survives a missing, unreadable, or malformed transcript', { skip }, () => 
 });
 
 test('reports push state for an unpushed branch', { skip }, () => {
-  const repo = tmp('precompact-repo-');
+  const repo = scratch(os.tmpdir(), 'precompact-repo-');
   const git = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe', encoding: 'utf8' });
   git(['init', '-q', '-b', 'main']);
   git(['config', 'user.email', 't@example.com']);
@@ -166,7 +163,7 @@ test('reports push state for an unpushed branch', { skip }, () => {
 });
 
 test('flags uncommitted work', { skip }, () => {
-  const repo = tmp('precompact-dirty-');
+  const repo = scratch(os.tmpdir(), 'precompact-dirty-');
   const git = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe', encoding: 'utf8' });
   git(['init', '-q', '-b', 'main']);
   git(['config', 'user.email', 't@example.com']);

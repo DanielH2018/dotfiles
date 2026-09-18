@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SOURCE = path.join(__dirname, '..', '..', 'home');
 const LIB = path.join(SOURCE, '.chezmoitemplates', 'linux-install.sh');
@@ -43,13 +44,7 @@ const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 const render = () =>
   renderTemplate('{{ includeTemplate "linux-install.sh" . }}', { source: SOURCE });
 
-const dirs = [];
-const sandbox = () => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-install-lib-'));
-  dirs.push(d);
-  return d;
-};
-test.after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+const sandbox = () => scratch(os.tmpdir(), 'linux-install-lib-');
 
 // Sources the rendered module under `env` and reports where it decided to write. sh, not bash:
 // the module is inlined into `#!/bin/sh` scripts, so that is the interpreter that has to accept it.

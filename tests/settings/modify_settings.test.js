@@ -1,10 +1,11 @@
-const { test, before, after } = require('node:test');
+const { test, before } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, renderFile } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 // modify_settings.json.sh.tmpl is a chezmoi modify_ script written as a template. Render it
 // with `chezmoi execute-template` (resolves `includeTemplate "settings.base.json"` and
@@ -39,14 +40,11 @@ before(() => {
   if (skip) return;
   const rendered = renderFile(TEMPLATE, { source: null });
 
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'modset-'));
+  tmp = scratch(os.tmpdir(), 'modset-');
   script = path.join(tmp, 'modify_settings.sh');
   fs.writeFileSync(script, rendered, { mode: 0o755 });
   // Run via bash (not the .sh directly): Windows can't exec a .sh (EFTYPE); bash handles both.
   run = (input) => execFileSync('bash', [script], { input, encoding: 'utf8' });
-});
-after(() => {
-  if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 // 1. Output is valid JSON carrying the base structure (the base always defines permissions).

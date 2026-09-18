@@ -10,17 +10,15 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const REPO = path.join(__dirname, '..', '..');
 const GEN = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_terminal-cheatsheet');
 
-const dirs = [];
-function tmpdir() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cheatsheet-')); dirs.push(d); return d; }
-
 // Run the generator against a fixture and return the emitted HTML. keepWsl=false strips
 // WSL_DISTRO_NAME so the /mnt/c reach-across is disabled (deterministic fixture-only runs).
 function runGen({ home, xdg, keepWsl = false }) {
-  const dir = tmpdir();
+  const dir = scratch(os.tmpdir(), 'cheatsheet-');
   const out = path.join(dir, 'out.html');
   const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg };
   delete env.YAZI_CONFIG_HOME;
@@ -92,7 +90,7 @@ function writeWezterm(xdg, src) {
 }
 
 test('Claude card: grouped by context, readable labels, two-step chords', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, SAMPLE_BINDINGS);
   const html = runGen({ home, xdg });
 
@@ -111,7 +109,7 @@ test('Claude card: grouped by context, readable labels, two-step chords', () => 
 });
 
 test('Each card is a collapsible <details> with a clickable summary header', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, SAMPLE_BINDINGS);
   writeWezterm(xdg, WEZTERM_FIXTURE);
   const html = runGen({ home, xdg });
@@ -128,21 +126,21 @@ test('Each card is a collapsible <details> with a clickable summary header', () 
 });
 
 test('Claude labels: unknown action id falls back to a de-camel-cased phrase', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, { bindings: [{ context: 'Chat', bindings: { 'ctrl+g': 'chat:someNewThing' } }] });
   const html = runGen({ home, xdg });
   assert.match(html, /Some new thing/);
 });
 
 test('Claude card omitted (no crash) when keybindings.json is absent', () => {
-  const home = tmpdir(), xdg = tmpdir(); // neither populated
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-'); // neither populated
   const html = runGen({ home, xdg });
   assert.ok(!html.includes('<h2>Claude Code</h2>'), 'Claude card should be absent');
   assert.match(html, /No WezTerm \/ Ghostty \/ Neovim \/ Yazi \/ Claude Code configs found/);
 });
 
 test('Claude card: malformed keybindings.json falls back to built-ins only (no crash)', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude', 'keybindings.json'), '{ this is not json');
   const html = runGen({ home, xdg });
@@ -153,7 +151,7 @@ test('Claude card: malformed keybindings.json falls back to built-ins only (no c
 });
 
 test('Claude card: built-in defaults render alongside custom overrides', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, SAMPLE_BINDINGS);
   const html = runGen({ home, xdg });
   assert.match(html, /<h3>Built-in<\/h3>/);
@@ -168,7 +166,7 @@ test('Claude card: built-in defaults render alongside custom overrides', () => {
 // The built-ins are hand-curated rather than parsed, so nothing but a test stops a wrong
 // row from shipping. These pin the two the docs contradict most easily.
 test('Claude built-ins match the documented keymap', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, SAMPLE_BINDINGS);
   const html = runGen({ home, xdg });
   // Extended thinking is Alt+T / Option+T. Tab is autocomplete and must never claim it.
@@ -185,7 +183,7 @@ test('Claude built-ins match the documented keymap', () => {
 // The common real-world state: everyone running Claude Code has ~/.claude, almost nobody
 // has keybindings.json. This is the branch the built-ins exist to serve.
 test('Claude card: built-ins render when ~/.claude exists but keybindings.json does not', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   const html = runGen({ home, xdg });
   assert.match(html, /<h2>Claude Code<\/h2>/);
@@ -196,7 +194,7 @@ test('Claude card: built-ins render when ~/.claude exists but keybindings.json d
 });
 
 test('Claude card: a custom context colliding with a built-in group keeps both', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, { bindings: [{ context: 'Built-in', bindings: { 'ctrl+g': 'chat:someNewThing' } }] });
   const html = runGen({ home, xdg });
   assert.ok(html.includes('Some new thing'), 'custom bind dropped by the built-in group of the same name');
@@ -204,7 +202,7 @@ test('Claude card: a custom context colliding with a built-in group keeps both',
 });
 
 test('Layout: cards flow into independent columns, not shared grid rows', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeKeybindings(home, SAMPLE_BINDINGS);
   writeWezterm(xdg, WEZTERM_FIXTURE);
   const html = runGen({ home, xdg });
@@ -223,7 +221,7 @@ test('Layout: cards flow into independent columns, not shared grid rows', () => 
 });
 
 test('WezTerm: action_callback and multiline spawn binds are parsed and labeled', () => {
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   writeWezterm(xdg, WEZTERM_FIXTURE);
   const html = runGen({ home, xdg });
   const wez = html.split('data-tool="wezterm"')[1].split('</details>')[0];
@@ -249,7 +247,7 @@ test('WezTerm reach-across: WSL sheet finds the Windows-side config on /mnt/c', 
 }, () => {
   // Empty local XDG + empty HOME, but WSL_DISTRO_NAME kept -> the generator should probe
   // /mnt/c/Users/*/.config/wezterm/wezterm.lua and surface WezTerm anyway.
-  const home = tmpdir(), xdg = tmpdir();
+  const home = scratch(os.tmpdir(), 'cheatsheet-'), xdg = scratch(os.tmpdir(), 'cheatsheet-');
   const html = runGen({ home, xdg, keepWsl: true });
   assert.match(html, /<h2>WezTerm<\/h2>/);
 });
@@ -263,7 +261,7 @@ test('WezTerm reach-across: WSL sheet finds the Windows-side config on /mnt/c', 
 const LIB = path.join(REPO, 'home', 'dot_local', 'share', 'terminal-cheatsheet');
 
 test('each parser module loads on its own and declines an empty config root', () => {
-  const empty = tmpdir();
+  const empty = scratch(os.tmpdir(), 'cheatsheet-');
   // The same /mnt/c reach-across the subprocess runs disable with keepWsl=false, applied to the
   // in-process seam. These require() the parsers directly, so they inherit THIS process's
   // environment: on a WSL box weztermFile() then falls back to /mnt/c/Users/*/.config/wezterm and
@@ -292,7 +290,7 @@ test('each parser module loads on its own and declines an empty config root', ()
 });
 
 test('a parser reads a fixture root passed as an argument', () => {
-  const xdg = tmpdir();
+  const xdg = scratch(os.tmpdir(), 'cheatsheet-');
   fs.mkdirSync(path.join(xdg, 'ghostty'), { recursive: true });
   fs.writeFileSync(path.join(xdg, 'ghostty', 'config'),
     'font-family = "Test Mono"\nkeybind = ctrl+shift+t=new_tab\n# keybind = ctrl+q=quit\n');
@@ -329,4 +327,3 @@ test('the browser asset parses as JavaScript', () => {
   assert.strictEqual(r.status, 0, `page.js must parse: ${r.stderr}`);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

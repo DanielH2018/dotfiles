@@ -16,6 +16,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const SHIM = path.join(HOOKS, 'executable_tq-wrap-tests.sh');
@@ -30,18 +31,13 @@ try {
 } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'python3/jq unavailable';
 
-const dirs = [];
 let binDir = '';
 let cacheDir = '';
 if (toolsOk) {
-  binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tqshim-bin-'));
-  cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tqshim-cache-'));
-  dirs.push(binDir, cacheDir);
+  binDir = scratch(os.tmpdir(), 'tqshim-bin-');
+  cacheDir = scratch(os.tmpdir(), 'tqshim-cache-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
 }
-process.on('exit', () => {
-  for (const d of dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
-});
 
 function baseEnv(extra = {}) {
   const e = {
@@ -124,9 +120,8 @@ test('TQ_OFF disables the shim exactly as it disables the hook', { skip }, () =>
 // silently becomes the hand-maintained copy the Python hook's comments explicitly rejected,
 // and a newly-claimed program stops being offered to tq.
 test('the candidate cache is rebuilt when tq detect.py changes', { skip }, () => {
-  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'tqshim-lib-'));
-  const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'tqshim-c2-'));
-  dirs.push(lib, cache);
+  const lib = scratch(os.tmpdir(), 'tqshim-lib-');
+  const cache = scratch(os.tmpdir(), 'tqshim-c2-');
   const detect = path.join(lib, 'detect.py');
   const env = { TQ_HOME: lib, XDG_CACHE_HOME: cache };
 

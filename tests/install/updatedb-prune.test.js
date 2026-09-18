@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-updatedb-prune.sh.tmpl');
 
@@ -28,11 +29,8 @@ const STOCK = [
   '',
 ].join('\n');
 
-const dirs = [];
-
 function run({ conf = STOCK, prunePath, confPath } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'updatedb-prune-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'updatedb-prune-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -117,6 +115,3 @@ test('does nothing without an updatedb.conf', { skip }, () => {
   assert.strictEqual(r.sudoLog, '', 'no config means no work and no sudo');
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

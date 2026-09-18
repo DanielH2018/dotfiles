@@ -4,12 +4,13 @@
 //
 // No consumer is wired to this library yet — that is deliberate, so shipping it cannot
 // change any existing gate's behaviour.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'outcome-lib.sh');
 
@@ -17,11 +18,8 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const dirs = [];
-after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 function markerDir() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'outcome-'));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), 'outcome-');
   return d;
 }
 
@@ -75,8 +73,7 @@ test('the recorder does not need jq — jq being broken is a thing it reports', 
   const d = markerDir();
   // A PATH with coreutils but no jq: the marker must still land, because "jq is
   // missing" is precisely one of the conditions this store exists to record.
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'nojq-'));
-  dirs.push(bin);
+  const bin = scratch(os.tmpdir(), 'nojq-');
   for (const t of ['bash', 'mkdir', 'date', 'sed', 'mv', 'rm', 'head', 'cat']) {
     const real = spawnSync('command', ['-v', t], { shell: true, encoding: 'utf8' }).stdout.trim();
     if (real) fs.symlinkSync(real, path.join(bin, t));

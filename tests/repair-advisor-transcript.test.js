@@ -8,6 +8,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = path.join(
   __dirname, '..', 'home', 'private_dot_claude', 'scripts',
@@ -53,12 +54,8 @@ function transcript(reminderCount) {
   return rows;
 }
 
-const dirs = [];
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 function write(rows) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'advisor-repair-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'advisor-repair-');
   const file = path.join(dir, '11111111-2222-3333-4444-555555555555.jsonl');
   fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
   return file;

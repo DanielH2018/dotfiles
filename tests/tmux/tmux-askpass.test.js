@@ -14,6 +14,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const ASKPASS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tmux-askpass');
 
@@ -30,10 +31,6 @@ const ASKPASS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'ex
 // loud-exit paths return before the read, and the FIFO-cleanup and absolute-path ones assert
 // state the helper leaves behind whatever the read's exit status was.
 const skipTimeout = process.platform === 'linux' ? false : 'bounded read needs GNU timeout(1); helper targets headless Linux';
-
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 // The stub stands in for tmux itself: `list-clients` reports whoever FAKE_TMUX_CLIENTS
 // says is attached, and `display-popup` runs the popup half of the script the way tmux
@@ -65,7 +62,7 @@ esac
 
 // Returns { run, runtime, popupLog, cmdLog } for one isolated invocation environment.
 function fakeEnv({ clients = 'client-0', password = 'hunter2', ...flags } = {}) {
-  const home = scratch('askpass-');
+  const home = scratch(os.tmpdir(), 'askpass-');
   const bin = path.join(home, 'bin');
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'tmux'), STUB_TMUX, { mode: 0o755 });

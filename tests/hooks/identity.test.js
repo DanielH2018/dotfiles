@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'identity.sh');
 
@@ -17,14 +18,10 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'identity-')); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
-
 // A /proc/<pid>/stat line. `comm` is placed verbatim inside the parens so a name
 // containing spaces and parens can be exercised.
 function fakeProc(entries) {
-  const procdir = path.join(scratch(), 'proc');
+  const procdir = path.join(scratch(os.tmpdir(), 'identity-'), 'proc');
   for (const [pid, { comm = 'claude', start = '900100' }] of Object.entries(entries)) {
     fs.mkdirSync(path.join(procdir, pid), { recursive: true });
     const pad = Array.from({ length: 18 }, (_, i) => i).join(' ');

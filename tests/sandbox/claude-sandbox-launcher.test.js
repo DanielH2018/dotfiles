@@ -20,6 +20,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -103,9 +104,6 @@ test('validate_version rejects shell-metacharacter strings with exit 1 and an er
 
 // --- detect_docker_need(): NEEDS_DOCKER gate ---
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-docker-need-')); dirs.push(d); return d; }
-
 function detectDockerNeed(repoPath) {
   const r = run(`${DETECT_DOCKER_NEED_SRC}\nNEEDS_DOCKER=false\ndetect_docker_need\nprintf '%s' "$NEEDS_DOCKER"`,
     { REPO_PATH: repoPath });
@@ -114,52 +112,51 @@ function detectDockerNeed(repoPath) {
 }
 
 test('a repo with no compose file and no Makefile does not need docker', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   assert.strictEqual(detectDockerNeed(dir), 'false');
 });
 
 test('a top-level docker-compose.yml sets NEEDS_DOCKER=true', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.writeFileSync(path.join(dir, 'docker-compose.yml'), 'services: {}\n');
   assert.strictEqual(detectDockerNeed(dir), 'true');
 });
 
 test('a top-level compose.yaml (the newer compose-spec name) also sets NEEDS_DOCKER=true', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.writeFileSync(path.join(dir, 'compose.yaml'), 'services: {}\n');
   assert.strictEqual(detectDockerNeed(dir), 'true');
 });
 
 test('a compose file one directory deep (monorepo layout, maxdepth 2) is still detected', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.mkdirSync(path.join(dir, 'backend'));
   fs.writeFileSync(path.join(dir, 'backend', 'docker-compose.yml'), 'services: {}\n');
   assert.strictEqual(detectDockerNeed(dir), 'true');
 });
 
 test('a compose file two directories deep is past the documented maxdepth 2 boundary and is missed', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.mkdirSync(path.join(dir, 'backend', 'svc'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'backend', 'svc', 'docker-compose.yml'), 'services: {}\n');
   assert.strictEqual(detectDockerNeed(dir), 'false');
 });
 
 test('a Makefile referencing "docker compose" (space form) sets NEEDS_DOCKER=true', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.writeFileSync(path.join(dir, 'Makefile'), 'up:\n\tdocker compose up -d\n');
   assert.strictEqual(detectDockerNeed(dir), 'true');
 });
 
 test('a Makefile referencing "docker-compose" (hyphen form) sets NEEDS_DOCKER=true', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.writeFileSync(path.join(dir, 'Makefile'), 'up:\n\tdocker-compose up -d\n');
   assert.strictEqual(detectDockerNeed(dir), 'true');
 });
 
 test('a Makefile with unrelated content does not need docker', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'cs-docker-need-');
   fs.writeFileSync(path.join(dir, 'Makefile'), 'build:\n\tgo build ./...\n');
   assert.strictEqual(detectDockerNeed(dir), 'false');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

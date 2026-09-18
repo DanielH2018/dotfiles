@@ -20,6 +20,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX, 'executable_claude-sandbox');
@@ -58,14 +59,6 @@ const FN = skip ? {} : Object.fromEntries(
     .map((n) => [n, extractFunction(n)]),
 );
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sblf-'));
-  dirs.push(d);
-  return d;
-}
-
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const VARS_MARKER = '---VARS---';
 
@@ -73,7 +66,7 @@ const VARS_MARKER = '---VARS---';
 // helpers; `dump` reports globals afterwards. TMPDIR is redirected per run so
 // any mktemp files are both disposable and countable.
 function drive(name, { env = {}, deps = [], dump = [], pre = '', lib = false, args = '' } = {}) {
-  const tmp = scratch();
+  const tmp = scratch(os.tmpdir(), 'sblf-');
   const script = `set -uo pipefail
 export TMPDIR=${q(tmp)}
 ${lib ? `. ${q(WORKTREE_LIB)}` : ''}
@@ -113,7 +106,7 @@ const curlStub = (version) => `curl() { ${version ? `printf '{"version":"%s"}' '
 const RESOLVER_STATE = { CLAUDE_CODE_LATEST: '', CLAUDE_CODE_LATEST_RESOLVED: 'false' };
 
 function buildRun({ force = false, version = '2.1.229' } = {}) {
-  const state = path.join(scratch(), 'state');
+  const state = path.join(scratch(os.tmpdir(), 'sblf-'), 'state');
   const r = drive('build_base', {
     deps: ['resolve_claude_code_version'],
     env: { SANDBOX_DIR: SANDBOX, STATE_DIR: state, ...RESOLVER_STATE },
@@ -177,7 +170,7 @@ test('an unreachable registry still builds, unpinned and unrecorded', { skip }, 
 // --- refresh_claude_if_stale -------------------------------------------------
 
 function staleRun({ baseImage = true, stampAgeDays = null, version = '2.1.229', installed = null, newImageId = null } = {}) {
-  const state = path.join(scratch(), 'state');
+  const state = path.join(scratch(os.tmpdir(), 'sblf-'), 'state');
   if (stampAgeDays !== null || installed !== null) fs.mkdirSync(state, { recursive: true });
   if (stampAgeDays !== null) {
     const stamp = path.join(state, '.last-claude-update');
@@ -189,7 +182,7 @@ function staleRun({ baseImage = true, stampAgeDays = null, version = '2.1.229', 
   // The stub answers three shapes: existence (`image inspect <tag>`), identity
   // (`image inspect --format ...`), and the build itself, which moves the id to
   // newImageId when a rebuild is supposed to produce a different image.
-  const idFile = path.join(scratch(), 'image-id');
+  const idFile = path.join(scratch(os.tmpdir(), 'sblf-'), 'image-id');
   fs.writeFileSync(idFile, 'sha256:before\n');
   return { state, ...drive('refresh_claude_if_stale', {
     deps: ['build_base', 'resolve_claude_code_version'],
@@ -298,7 +291,7 @@ test('a missing per-repo image is left to the ordinary build decision', { skip }
 // --- list_sessions -----------------------------------------------------------
 
 function sessionsFixture(worktrees = [{ name: 'alpha', branch: 'claude/alpha' }, { name: 'beta', branch: 'feature/x' }]) {
-  const root = scratch();
+  const root = scratch(os.tmpdir(), 'sblf-');
   const repo = path.join(root, 'demo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');
@@ -429,7 +422,7 @@ test('sessions whose worktree is gone are listed as orphaned', { skip }, () => {
 let deployedSandbox = null;
 function deployedSandboxDir() {
   if (deployedSandbox) return deployedSandbox;
-  deployedSandbox = scratch();
+  deployedSandbox = scratch(os.tmpdir(), 'sblf-');
   for (const name of fs.readdirSync(SANDBOX)) {
     const target = name.startsWith('executable_') ? name.slice('executable_'.length) : name;
     const from = path.join(SANDBOX, name);
@@ -447,7 +440,7 @@ const CONVERSATION = [
 ].map((e) => JSON.stringify(e)).join('\n');
 
 function compactRun({ transcript = CONVERSATION, instance = 'demo-abc-alpha', vault = true, existingVault = null } = {}) {
-  const base = scratch();
+  const base = scratch(os.tmpdir(), 'sblf-');
   const sessionsBase = path.join(base, 'sessions');
   if (transcript !== null) {
     const dir = path.join(sessionsBase, instance, '-workspace');

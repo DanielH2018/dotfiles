@@ -22,6 +22,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
 // claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
@@ -40,9 +41,7 @@ try {
   skip = 'python3 unavailable';
 }
 
-const dirs = [];
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'jsonq-'));
-dirs.push(DIR);
+const DIR = scratch(os.tmpdir(), 'jsonq-');
 const T = path.join(DIR, 't.json');
 const U = path.join(DIR, 'u.json');
 fs.writeFileSync(T, JSON.stringify({
@@ -191,8 +190,7 @@ test('a half-deployed tree is reported without a traceback', { skip }, () => {
   // chezmoi apply that lands the shim but not every module. Every other way
   // jsonq fails is one line and no stack, and this must not be the exception.
   // Broken on a copy, so a failure here cannot leave the source tree damaged.
-  const broken = fs.mkdtempSync(path.join(os.tmpdir(), 'jsonq-broken-'));
-  dirs.push(broken);
+  const broken = scratch(os.tmpdir(), 'jsonq-broken-');
   fs.mkdirSync(path.join(broken, 'bin'));
   fs.cpSync(SHARE, path.join(broken, 'share', 'jsonq'), { recursive: true });
   fs.copyFileSync(JSONQ, path.join(broken, 'bin', 'jsonq'));
@@ -759,4 +757,3 @@ test('no flag can redirect where the counter writes', { skip }, () => {
   }
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

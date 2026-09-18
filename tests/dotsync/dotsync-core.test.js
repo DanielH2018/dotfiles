@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const mod = require('../../home/dot_local/bin/executable_dotsync');
+const { scratch } = require('../lib/tmp');
 const { expandTilde, loadManifest, globToRegExp, matchesAnyGlob, deriveTargets, buildOwnership, computeCheck } = mod;
 
 // dotsync is Unix-only tooling (POSIX path/glob handling + symlink farms; deployed to
@@ -13,10 +14,8 @@ const { expandTilde, loadManifest, globToRegExp, matchesAnyGlob, deriveTargets, 
 const skip = process.platform === 'win32' ? 'dotsync is Unix-only' : false;
 
 let HOME, MAN, w, m, fakeRunner;
-const dirs = [];
 if (!skip) {
-  HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dshome-'));
-  dirs.push(HOME);
+  HOME = scratch(os.tmpdir(), 'dshome-');
   MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN, { recursive: true });
   w = (name, obj) => fs.writeFileSync(path.join(MAN, name), JSON.stringify(obj));
@@ -117,4 +116,3 @@ test('conflict: two repos claim the same path', { skip }, () => {
   assert.deepStrictEqual(chk3.conflicts, [{ path: path.join(HOME, '.config/zsh/local.zsh'), repos: ['general', 'work'] }]);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

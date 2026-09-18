@@ -7,6 +7,7 @@ const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 
 const { shConst } = require('../lib/sh-const');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_install-tmux.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -19,8 +20,6 @@ const TMUX_VERSION = shConst(SRC, 'TMUX_VERSION');
 // This test renders a chezmoi template; skip cleanly where the binary isn't installed
 // (minimal CI / sandbox) rather than failing with a spurious spawn ENOENT.
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
-
-const dirs = [];
 
 // 1. The script is gated to Linux: off Linux it renders to nothing (so `chezmoi apply` never
 //    runs it there); on Linux + non-minimal it renders the builder. A minimal profile also
@@ -57,8 +56,7 @@ test('Linux branch carries the gate, source-build, and sudo-less defer', { skip 
 test('idempotence: current local tmux skips the rebuild', { skip }, () => {
   const rendered = renderTemplate(body, { source: null });
   if (process.platform === 'linux' && rendered.trim() !== '') {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-inst-'));
-    dirs.push(home);
+    const home = scratch(os.tmpdir(), 'tmux-inst-');
     const bin = path.join(home, '.local', 'bin');
     fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/sh\necho "tmux ${TMUX_VERSION}"\n`, { mode: 0o755 });
@@ -70,4 +68,3 @@ test('idempotence: current local tmux skips the rebuild', { skip }, () => {
   }
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

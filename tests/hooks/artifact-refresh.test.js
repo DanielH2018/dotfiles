@@ -4,14 +4,13 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const REFRESH = path.join(HOOKS, 'executable_artifact-refresh.sh');
 const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
 const SEED = path.join(HOOKS, 'executable_artifact-session-seed.sh');
 const TRACK = path.join(HOOKS, 'executable_artifact-commit-track.sh');
-
-const dirs = [];
 
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 
@@ -24,8 +23,7 @@ function sh(cmd, cwd) {
 // A repo with an `origin` that is a real second repo, so refs/remotes/origin/* exist
 // and the hook's upstream lookup behaves as it does on a live checkout.
 function repoWithOrigin() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ar-'));
-  dirs.push(root);
+  const root = scratch(os.tmpdir(), 'ar-');
   const remote = path.join(root, 'remote.git');
   const work = path.join(root, 'work');
   sh(`git init -q --bare -b main ${remote}`);
@@ -540,7 +538,6 @@ test('a non-commit-shaped command records nothing', () => {
   assert.strictEqual(fs.existsSync(mine), false, 'nothing claimed off an unrelated command');
 });
 
-
 // The nudge has to be answerable. Rewriting the artifact clears pending through
 // link-artifact.sh, but the reason text also invites a session to answer in one line and
 // stop when the commits are unrelated, and that path writes no .html. Leaving pending
@@ -623,4 +620,3 @@ test('a sync command adopts nothing a sibling commits inside it', () => {
     fs.readFileSync(path.join(st, `${sessionSlug(work, SID)}.mine`), 'utf8').trim().split('\n'),
     ['a-slice'], 'and the committer still claims its own');
 });
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

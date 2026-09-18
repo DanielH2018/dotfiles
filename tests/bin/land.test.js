@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const LAND = path.join(__dirname, '..', '..', 'bin', 'land');
 
@@ -34,8 +35,6 @@ const CLEAN_ENV = {
   PLANKA_TRACKING: '0',
 };
 
-const dirs = [];
-
 // Stub gh: reports an open PR only when STUB_PR is set, answers the draft check
 // from STUB_DRAFT, and records every call that would change something — reads
 // stay unrecorded, so the tests can still prove --dry-run made no changes.
@@ -46,8 +45,7 @@ const dirs = [];
 // mid-landing, as a child of land, which is exactly the vantage point that matters:
 // it records whether the lock is visibly held from outside, and forks a `sleep` that
 // outlives the landing the way `git credential-cache--daemon` does.
-const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'land-bin-'));
-dirs.push(BIN);
+const BIN = scratch(os.tmpdir(), 'land-bin-');
 fs.writeFileSync(path.join(BIN, 'gh'), `#!/bin/bash
 if [ -n "\${STUB_LOCK:-}" ] && [ "$1" = "pr" ] && [ "$2" = "ready" ]; then
   flock -n "\$STUB_LOCK" -c true; printf '%s' "\$?" > "\$STUB_LOCK_PROBE"
@@ -84,8 +82,7 @@ function git(cwd, ...args) {
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'land-repo-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'land-repo-');
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
@@ -102,8 +99,7 @@ function makeRepo() {
 // A bare repo on disk plays origin, so a whole landing — fetch, rebase, push,
 // delete — runs for real with nothing stubbed but gh.
 function makeRepoWithOrigin() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'land-remote-'));
-  dirs.push(base);
+  const base = scratch(os.tmpdir(), 'land-remote-');
   const origin = path.join(base, 'origin.git');
   const dir = path.join(base, 'work');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env: CLEAN_ENV });
@@ -211,8 +207,7 @@ test('rejects an unknown flag rather than guessing', { skip }, () => {
 
 test('the plan names a lock shared by every worktree of the repo', { skip }, () => {
   const repo = makeRepo();
-  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'land-wt-'));
-  dirs.push(wtRoot);
+  const wtRoot = scratch(os.tmpdir(), 'land-wt-');
   const wt = path.join(wtRoot, 'w');
   git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
   fs.writeFileSync(path.join(wt, 'g'), 'z\n');
@@ -397,4 +392,3 @@ test('--help still reaches the usage block', { skip }, () => {
   assert.match(r.stdout, /LOCAL main is NOT moved/, 'and the local-main warning it was widened for');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

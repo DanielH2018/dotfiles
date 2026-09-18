@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-sudo-timestamp.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -25,16 +26,13 @@ const DESIRED = 'Defaults timestamp_type=global\nDefaults timestamp_timeout=5\n'
 // not listed here and not stubbed simply won't exist.
 const PASSTHROUGH = ['sh', 'cat', 'tee', 'mv', 'rm', 'chmod', 'mkdir'];
 
-const dirs = [];
-
 // sudo that authenticates and otherwise execs through, so `sudo tee` really writes.
 const SUDO_OK = '[ "$1" = "-v" ] && exit 0; exec "$@"';
 // sudo whose credential probe fails — the sudo-less defer path.
 const SUDO_NONE = '[ "$1" = "-v" ] && exit 1; exec "$@"';
 
 function runWithStubs(stubs) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sudo-ts-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'sudo-ts-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -156,4 +154,3 @@ test('the support probe runs before sudo is ever needed', { skip }, () => {
   assert.doesNotMatch(r.out, /deferring/, 'must report the real reason, not a sudo deferral');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

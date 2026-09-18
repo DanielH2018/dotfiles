@@ -1,11 +1,12 @@
 // The Stop hook comments once, and only for a session that actually claimed a
 // card. A session that only read and answered questions must leave no trace.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(
   __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
@@ -20,14 +21,9 @@ const skip = fs.existsSync(path.join(os.homedir(), '.config', 'planka', 'config.
 
 // Every scratch dir this suite makes, removed on the way out — bin/sweep-test-tmp
 // only collects leftovers six hours later.
-const scratch = [];
-after(() => {
-  for (const d of scratch) fs.rmSync(d, { recursive: true, force: true });
-});
 
 function setup() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planka-stop-'));
-  scratch.push(dir);
+  const dir = scratch(os.tmpdir(), 'planka-stop-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin, { recursive: true });
   const captured = path.join(dir, 'captured');

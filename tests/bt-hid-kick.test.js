@@ -17,6 +17,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_bt-hid-kick');
 
@@ -25,11 +26,8 @@ const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executabl
 const BASH = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';
 
-const dirs = [];
-
 function mkdtemp(prefix) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), prefix);
   return d;
 }
 
@@ -96,6 +94,3 @@ test('the exit status survives a box with no notify-send', { skip }, () => {
   assert.strictEqual(run({ started: true, notify: false }).status, 0, 'success must still succeed');
 });
 
-process.on('exit', () => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

@@ -4,14 +4,12 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_prune-artifacts.sh');
 
-const dirs = [];
-
 function sandbox() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-'));
-  dirs.push(root);
+  const root = scratch(os.tmpdir(), 'pa-');
   const art = path.join(root, 'artifacts');
   const state = path.join(root, 'state');
   fs.mkdirSync(art, { recursive: true });
@@ -143,4 +141,3 @@ test('emits nothing into the session', () => {
   assert.strictEqual((r.stdout || '').trim(), '', 'a sweep should be silent');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const mod = require('../../home/dot_local/bin/executable_dotsync');
+const { scratch } = require('../lib/tmp');
 const { buildSyncPlan, cmdSync, main } = mod;
 
 const repos = [
@@ -24,9 +25,7 @@ test('orphan gate: blocked without --force, allowed with --force', () => {
   assert.strictEqual(buildSyncPlan(repos, { force: true, hasOrphans: true }).blocked, false);
 });
 
-const dirs = [];
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync-'));
-dirs.push(HOME);
+const HOME = scratch(os.tmpdir(), 'dssync-');
 const MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
 fs.mkdirSync(MAN, { recursive: true });
 fs.writeFileSync(path.join(MAN, '00-general.json'), JSON.stringify({ repo: { name: 'general', type: 'chezmoi', path: '~/cz', remote: 'r' }, ignore: { globs: ['~/**'] } }));
@@ -75,8 +74,7 @@ test('main dispatch: unknown subcommand -> 2', () => {
 
 test('FIX A: push failure surfaces as non-zero exit', () => {
   // Setup: fresh home with no orphans (everything ignored via ~/**)
-  const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync2-'));
-  dirs.push(HOME2);
+  const HOME2 = scratch(os.tmpdir(), 'dssync2-');
   const MAN2 = path.join(HOME2, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN2, { recursive: true });
   fs.writeFileSync(path.join(MAN2, '00-general.json'), JSON.stringify({
@@ -107,8 +105,7 @@ test('push returns "Everything up-to-date" with code 1 -> treated as success', (
     return { code: 0, stdout: '', stderr: '' };
   };
   const oeC = console.error; console.error = () => {}; const origLog = console.log; console.log = () => {};
-  const HOME3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync3-'));
-  dirs.push(HOME3);
+  const HOME3 = scratch(os.tmpdir(), 'dssync3-');
   const MAN3 = path.join(HOME3, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN3, { recursive: true });
   fs.writeFileSync(path.join(MAN3, '00-general.json'), JSON.stringify({
@@ -121,8 +118,7 @@ test('push returns "Everything up-to-date" with code 1 -> treated as success', (
 });
 
 test('chezmoi repo stages with `git add -u` (not -A), and sync pulls --rebase before push', () => {
-  const HOME4 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync4-'));
-  dirs.push(HOME4);
+  const HOME4 = scratch(os.tmpdir(), 'dssync4-');
   const MAN4 = path.join(HOME4, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN4, { recursive: true });
   fs.writeFileSync(path.join(MAN4, '00-general.json'), JSON.stringify({
@@ -147,8 +143,7 @@ test('chezmoi repo stages with `git add -u` (not -A), and sync pulls --rebase be
 });
 
 test('pull --rebase failure aborts the rebase and surfaces exit 1 (does not push)', () => {
-  const HOME5 = fs.mkdtempSync(path.join(os.tmpdir(), 'dssync5-'));
-  dirs.push(HOME5);
+  const HOME5 = scratch(os.tmpdir(), 'dssync5-');
   const MAN5 = path.join(HOME5, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN5, { recursive: true });
   fs.writeFileSync(path.join(MAN5, '00-general.json'), JSON.stringify({
@@ -169,4 +164,3 @@ test('pull --rebase failure aborts the rebase and surfaces exit 1 (does not push
   assert.ok(!seq5.some((s) => /\spush$/.test(s)), 'no push attempted after pull failure');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

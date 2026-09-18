@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SRC_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'vault-tooling', 'claude-audit-portable');
 
@@ -27,10 +28,8 @@ const FILES = [
 ];
 const DELIM = '__CLAUDE_AUDIT_PKG_EOF__';
 
-const dirs = [];
 function scratchCopy() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-install-'));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), 'gen-install-');
   fs.cpSync(SRC_DIR, d, { recursive: true });
   return d;
 }
@@ -89,4 +88,3 @@ test('a delimiter collision in a pkg file aborts the build instead of emitting a
     'a failed build must not overwrite the prior install.sh');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

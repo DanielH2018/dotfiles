@@ -10,6 +10,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-worktree.sh');
 
@@ -18,18 +19,10 @@ try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { toolsOk
 const skip = process.platform === 'win32' ? 'sandbox-worktree is Unix-only'
   : toolsOk ? false : 'git unavailable';
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
 // realpath'd, the way check-push-signatures.test.js does it: on macOS os.tmpdir() is
 // /var/folders/..., a symlink to /private/var/folders/..., and git's porcelain always reports
 // the physical path. Three assertions here compare a path git printed against one built from
 // this directory, so without resolving it first they diff two spellings of the same place.
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sbwt-'));
-  dirs.push(d);
-  return fs.realpathSync(d);
-}
-
 // A session directory as the launcher leaves it: the instance dir, the cwd-derived
 // project slug under it, and a transcript in that. list_orphan_sessions probes at
 // mindepth 2 for exactly this shape.
@@ -59,7 +52,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', 
 function sh(script, { home } = {}) {
   const r = spawnSync('bash', ['-c', `set -uo pipefail; . "$1"; ${script}`, 'bash', LIB], {
     encoding: 'utf8',
-    env: { ...GIT_ENV, HOME: home || scratch() },
+    env: { ...GIT_ENV, HOME: home || fs.realpathSync(scratch(os.tmpdir(), 'sbwt-')) },
   });
   assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
   return r.stdout;
@@ -69,7 +62,7 @@ function sh(script, { home } = {}) {
 // {name, branch}. The worktree dir is <repo_name>-wt-<name>, matching what
 // claude-sandbox creates.
 function repoWithWorktrees(worktrees = [], repoName = 'demo') {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   const repo = path.join(root, repoName);
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', 'main');
@@ -156,7 +149,7 @@ test('list_tool_worktrees on a repo with no tool worktrees prints nothing', { sk
 
 test('list_orphan_sessions lists session dirs whose worktree is gone', { skip }, () => {
   const { repo, repoName } = repoWithWorktrees([{ name: 'alive', branch: 'claude/alive' }]);
-  const sessions = scratch();
+  const sessions = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   const base = `${repoName}-abcd1234`;
   // One live, one orphaned, plus the base instance (the no-worktree main session).
   // Each carries a transcript: an instance directory with none is an aborted
@@ -170,7 +163,7 @@ test('list_orphan_sessions lists session dirs whose worktree is gone', { skip },
 
 test('list_orphan_sessions skips an instance dir holding no transcript', { skip }, () => {
   const { repo, repoName } = repoWithWorktrees();
-  const sessions = scratch();
+  const sessions = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   const base = `${repoName}-abcd1234`;
   // resolve_session_context creates the instance dir before the container starts,
   // so every aborted launch leaves an empty one. Offering it as a resumable
@@ -184,7 +177,7 @@ test('list_orphan_sessions skips an instance dir holding no transcript', { skip 
 
 test('list_orphan_sessions prints nothing when no session data exists', { skip }, () => {
   const { repo, repoName } = repoWithWorktrees();
-  const sessions = scratch();
+  const sessions = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   assert.strictEqual(sh(`list_orphan_sessions ${repo} ${repoName} ${sessions} ${repoName}-abcd1234`), '');
 });
 
@@ -242,7 +235,7 @@ test('fzf_preview_worktree reports an unknown branch rather than failing', { ski
 
 test('fzf_preview_worktree finds session data under $HOME/.claude/sandbox/sessions', { skip }, () => {
   const { repo, repoName } = repoWithWorktrees([{ name: 'alpha', branch: 'claude/alpha' }]);
-  const home = scratch();
+  const home = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   const sessionDir = path.join(home, '.claude', 'sandbox', 'sessions', `${repoName}-abcd1234-alpha`);
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.writeFileSync(path.join(sessionDir, 'x.jsonl'), 'data\n');
@@ -327,14 +320,14 @@ const OPS_LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', '
 function ops(script, env = {}) {
   const r = spawnSync('bash', ['-c', `set -uo pipefail; . "$1"; ${script}`, 'bash', OPS_LIB], {
     encoding: 'utf8',
-    env: { ...GIT_ENV, HOME: scratch(), ...env },
+    env: { ...GIT_ENV, HOME: fs.realpathSync(scratch(os.tmpdir(), 'sbwt-')), ...env },
   });
   assert.strictEqual(r.status, 0, `exit ${r.status}: ${r.stderr}`);
   return r.stdout;
 }
 
 test('repair_container_worktrees fixes a worktree git recorded at container paths', { skip }, () => {
-  const repo = scratch();
+  const repo = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   git(repo, 'init', '-q', '.');
   git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
   git(repo, 'worktree', 'add', '-q', '.claude/worktrees/alpha', '-b', 'alpha');
@@ -359,7 +352,7 @@ test('repair_container_worktrees fixes a worktree git recorded at container path
 test('repair_container_worktrees is a no-op when there is nothing to repair', { skip }, () => {
   // It runs from the EXIT trap, so it fires on paths where the container never
   // started. An unexpanded glob or a missing repo must not fail the trap.
-  const repo = scratch();
+  const repo = fs.realpathSync(scratch(os.tmpdir(), 'sbwt-'));
   git(repo, 'init', '-q', '.');
   git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(repo, '.claude', 'worktrees'), { recursive: true });

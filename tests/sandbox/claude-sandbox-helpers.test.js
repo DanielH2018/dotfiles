@@ -17,6 +17,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -57,27 +58,19 @@ const SRC = skip ? {} : Object.fromEntries(
     .map((n) => [n, extractFunction(n)]),
 );
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sbhelp-'));
-  dirs.push(d);
-  return d;
-}
-
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', env: GIT_ENV });
 
 function run(script) {
   const r = spawnSync('bash', ['-c', `set -uo pipefail\n${script}`], {
-    encoding: 'utf8', env: { ...GIT_ENV, HOME: scratch() },
+    encoding: 'utf8', env: { ...GIT_ENV, HOME: scratch(os.tmpdir(), 'sbhelp-') },
   });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
 // A repo with one commit on `main` containing `files`.
 function repoWith(files, { branch = 'main' } = {}) {
-  const repo = path.join(scratch(), 'demo');
+  const repo = path.join(scratch(os.tmpdir(), 'sbhelp-'), 'demo');
   fs.mkdirSync(repo);
   git(repo, 'init', '-q', '-b', branch);
   git(repo, 'config', 'user.email', 't@t.t');
@@ -94,7 +87,7 @@ function repoWith(files, { branch = 'main' } = {}) {
 // --- detect_uv_need ----------------------------------------------------------
 
 function uvNeeded(files) {
-  const repo = scratch();
+  const repo = scratch(os.tmpdir(), 'sbhelp-');
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(repo, name), body);
   return run(`REPO_PATH=${JSON.stringify(repo)}\n${SRC.detect_uv_need}\ndetect_uv_need`).code === 0;
 }
@@ -127,7 +120,7 @@ const mainRef = (repo) => run(`${SRC.resolve_main_ref}\nresolve_main_ref ${JSON.
 
 test('resolve_main_ref prefers origin/HEAD when it is set', { skip }, () => {
   const origin = repoWith({ 'a.txt': 'a' });
-  const clone = path.join(scratch(), 'clone');
+  const clone = path.join(scratch(os.tmpdir(), 'sbhelp-'), 'clone');
   execFileSync('git', ['clone', '-q', origin, clone], { env: GIT_ENV });
   const r = mainRef(clone);
   assert.strictEqual(r.code, 0);
@@ -140,7 +133,7 @@ test('resolve_main_ref falls back to a local main or master', { skip }, () => {
 });
 
 test('resolve_main_ref fails rather than guessing when there is no commit', { skip }, () => {
-  const empty = path.join(scratch(), 'empty');
+  const empty = path.join(scratch(os.tmpdir(), 'sbhelp-'), 'empty');
   fs.mkdirSync(empty);
   git(empty, 'init', '-q', '-b', 'main');
   const r = mainRef(empty);
@@ -151,7 +144,7 @@ test('resolve_main_ref fails rather than guessing when there is no commit', { sk
 // --- build_repo_snapshot -----------------------------------------------------
 
 function snapshot(repo, { name = 'demo', ref = 'main', root } = {}) {
-  const snapRoot = root || scratch();
+  const snapRoot = root || scratch(os.tmpdir(), 'sbhelp-');
   const sha = execFileSync('git', ['-C', repo, 'rev-parse', `${ref}^{commit}`], { encoding: 'utf8', env: GIT_ENV }).trim();
   const r = run(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
 ${SRC.build_repo_snapshot}
@@ -191,7 +184,7 @@ test('build_repo_snapshot is a no-op once the snapshot exists', { skip }, () => 
 
 test('build_repo_snapshot cleans up after an unusable ref', { skip }, () => {
   const repo = repoWith({ 'a.txt': 'hello' });
-  const snapRoot = scratch();
+  const snapRoot = scratch(os.tmpdir(), 'sbhelp-');
   const r = run(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
 ${SRC.build_repo_snapshot}
 build_repo_snapshot ${JSON.stringify(repo)} demo refs/heads/nope deadbeef`);
@@ -208,7 +201,7 @@ build_repo_snapshot ${JSON.stringify(repo)} demo refs/heads/nope deadbeef`);
 // Stubs list_tool_worktrees and git so the nudge's own throttle is what's
 // under test, not the worktree scan it shares with gc_worktrees.
 function gcNudge({ stampAgeDays = null, gone = 1 } = {}) {
-  const stateDir = scratch();
+  const stateDir = scratch(os.tmpdir(), 'sbhelp-');
   if (stampAgeDays !== null) {
     const stamp = path.join(stateDir, '.last-gc');
     fs.writeFileSync(stamp, '2026-01-01T00:00:00Z');
@@ -255,7 +248,7 @@ test('check_gc_nudge resumes scanning once the stamp is older than 7 days', { sk
 // worktree always looks dirty — so a remote-less fixture would silently test
 // only the "keep" branch of this function.
 function cleanup({ dirty = false, unpushed = false, created = true, branchMode = false, branchCreated = true } = {}) {
-  const root = scratch();
+  const root = scratch(os.tmpdir(), 'sbhelp-');
   const origin = path.join(root, 'origin.git');
   fs.mkdirSync(origin);
   git(origin, 'init', '-q', '--bare', '-b', 'main');

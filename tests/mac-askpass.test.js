@@ -14,17 +14,14 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const HELPER = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_mac-askpass');
-
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 // The helper resolves `osascript` through PATH, which is what lets these tests replace it.
 // `cat >/dev/null` drains the AppleScript on stdin so the helper never sees EPIPE.
 function helper(stub) {
-  const dir = scratch('macaskpass-');
+  const dir = scratch(os.tmpdir(), 'macaskpass-');
   fs.writeFileSync(path.join(dir, 'osascript'), `#!/bin/sh\ncat >/dev/null\n${stub}\n`, { mode: 0o755 });
 
   return (args = [], env = {}) => {

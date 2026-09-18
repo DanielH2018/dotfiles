@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const CT = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ct');
 let toolsOk = true;
@@ -16,15 +17,12 @@ try { execFileSync('bash', ['-c', ':'], { stdio: 'ignore' }); } catch { toolsOk 
 const skip = toolsOk ? false : 'bash unavailable';
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-')); dirs.push(d); return d; }
-
 // Run ct with a logging `tmux` stub on PATH. By default also drops a `claude` stub on
 // PATH so ct's `command -v claude` resolves deterministically; pass claudeOnPath:false to
 // exercise the ~/.local/bin fallback (with a coreutils-only PATH so the runner's real
 // claude can't leak in). Returns { out, claude } (claude = the stub's absolute path).
 function runCt(arg, { extraEnv = {}, cwd, home, claudeOnPath = true } = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'ct-');
   const log = path.join(bin, 'tmux.log');
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> "${log.replace(/\\\\/g, '/')}"
@@ -51,7 +49,7 @@ test('ct DIR opens a named tmux session (basename + path hash) running the resol
 });
 
 test('ct with no arg uses $PWD basename', { skip }, () => {
-  const workdir = path.join(scratch(), 'myrepo'); fs.mkdirSync(workdir);
+  const workdir = path.join(scratch(os.tmpdir(), 'ct-'), 'myrepo'); fs.mkdirSync(workdir);
   const { out } = runCt('', { cwd: workdir });
   assert.match(out, /-s myrepo-[0-9]+/);
 });
@@ -80,7 +78,7 @@ test('CT_CLAUDE_BIN overrides the claude binary', { skip }, () => {
 });
 
 test('ct falls back to ~/.local/bin/claude when claude is not on PATH', { skip }, () => {
-  const home = scratch();
+  const home = scratch(os.tmpdir(), 'ct-');
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const localClaude = path.join(home, '.local', 'bin', 'claude');
   fs.writeFileSync(localClaude, '#!/bin/bash\nexit 0\n', { mode: 0o755 });
@@ -88,4 +86,3 @@ test('ct falls back to ~/.local/bin/claude when claude is not on PATH', { skip }
   assert.match(out, new RegExp(`-c /srv/api ${esc(localClaude)}(\\s|$)`), 'uses the installer path when PATH lacks claude');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

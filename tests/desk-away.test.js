@@ -17,6 +17,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_desk-away');
 
@@ -24,11 +25,8 @@ let bashOk = true;
 try { execFileSync('bash', ['-c', 'true'], { stdio: 'ignore' }); } catch { bashOk = false; }
 const skip = bashOk ? false : 'bash unavailable';
 
-const dirs = [];
-
 function mkdtemp(prefix) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), prefix);
   return d;
 }
 
@@ -114,6 +112,3 @@ test('the toggle direction is read from the live DPMS state, not a state file', 
   assert.match(calls, /kscreen --dpms show/, 'the script must ask what state the displays are in');
 });
 
-process.on('exit', () => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

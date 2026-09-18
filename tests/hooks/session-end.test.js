@@ -12,6 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-end.sh');
 
@@ -24,15 +25,11 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const dirs = [];
-function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 // The hook derives the buffer path from the JSON `cwd`, and logs under $HOME. Both are
 // faked so a test run never touches the real ~/.claude or the real .remember buffer.
 function fakeEnv() {
-  const home = scratch('se-home-');
-  const proj = scratch('se-proj-');
+  const home = scratch(os.tmpdir(), 'se-home-');
+  const proj = scratch(os.tmpdir(), 'se-proj-');
   fs.mkdirSync(path.join(home, '.claude', 'logs'), { recursive: true });
   fs.mkdirSync(path.join(proj, '.remember'), { recursive: true });
   return { home, proj };

@@ -1,9 +1,10 @@
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const LIB = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_sandbox-lib.sh');
 
@@ -18,7 +19,7 @@ function resolve(arg, home) {
   return (r.stdout || '').trim();
 }
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sblib-'));
+const home = scratch(os.tmpdir(), 'sblib-');
 fs.mkdirSync(path.join(home, 'Repositories', 'airflow'), { recursive: true });
 
 test('bare name with a matching ~/Repositories dir -> expanded', { skip }, () => {
@@ -36,8 +37,4 @@ test('absolute path -> unchanged (even if a same-named repo exists)', { skip }, 
 test('relative paths -> unchanged', { skip }, () => {
   assert.strictEqual(resolve('./airflow', home), './airflow');
   assert.strictEqual(resolve('../airflow', home), '../airflow');
-});
-
-after(() => {
-  fs.rmSync(home, { recursive: true, force: true });
 });

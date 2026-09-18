@@ -17,10 +17,6 @@ const path = require('node:path');
 
 const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_sudo');
 
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
-
 // runTty below needs util-linux script(1), not just any script(1): macOS ships the BSD one,
 // which takes a different command form and tcgetattr's its own stdin, so from a node child with
 // piped stdio it cannot allocate a pty at all -- `script: illegal option -- c` followed by an
@@ -28,6 +24,7 @@ process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive:
 // TUI suites already gate on. (The shim itself is Linux-only anyway: .chezmoiignore deploys
 // .local/bin/sudo to the three headless hosts and nowhere else.)
 const { ptyAvailable } = require('./lib/pty');
+const { scratch } = require('./lib/tmp');
 
 const hasScript = ptyAvailable();
 
@@ -37,7 +34,7 @@ for a in "$@"; do printf '%s\\n' "$a"; done
 `;
 
 function shim({ askpass = '/home/u/.local/bin/tmux-askpass' } = {}) {
-  const home = scratch('sudoshim-');
+  const home = scratch(os.tmpdir(), 'sudoshim-');
   const real = path.join(home, 'recorder');
   fs.writeFileSync(real, RECORDER, { mode: 0o755 });
   const deployed = path.join(home, 'sudo');

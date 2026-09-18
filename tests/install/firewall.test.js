@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-firewall.sh.tmpl');
 
@@ -34,11 +35,8 @@ case "$1" in
 esac
 exit 0`;
 
-const dirs = [];
-
 function run({ state, firewalld = true, badConfig = false, stockZone = true } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'firewall-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'firewall-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -168,6 +166,3 @@ test('does nothing when the packaged zone is missing', { skip }, () => {
   assert.strictEqual(r.zone, null);
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

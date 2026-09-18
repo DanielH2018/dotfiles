@@ -19,6 +19,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 
@@ -30,18 +31,10 @@ try {
 const skip = process.platform === 'win32' ? 'launcher is Unix-only'
   : toolsOk ? false : 'bash/awk/git unavailable';
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sbwt-'));
-  dirs.push(d);
-  return d;
-}
-
 // A HOME holding the sandbox tree under its deployed names (chezmoi's executable_
 // prefix sets the deployed mode, so it is stripped here the way an apply would).
 function sandboxHome() {
-  const home = scratch();
+  const home = scratch(os.tmpdir(), 'sbwt-');
   const sd = path.join(home, '.claude', 'sandbox');
   fs.mkdirSync(sd, { recursive: true });
   for (const f of fs.readdirSync(SANDBOX_DIR)) {
@@ -57,14 +50,14 @@ function sandboxHome() {
 // PATH shim whose `docker` reports no running containers, so the rename guard is
 // deterministic regardless of what the host has installed.
 function stubBin() {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'sbwt-');
   fs.writeFileSync(path.join(bin, 'docker'), '#!/usr/bin/env bash\nexit 0\n');
   fs.chmodSync(path.join(bin, 'docker'), 0o755);
   return bin;
 }
 
 function gitRepo(name = 'demo') {
-  const root = scratch();
+  const root = scratch(os.tmpdir(), 'sbwt-');
   const repo = path.join(root, name);
   fs.mkdirSync(repo, { recursive: true });
   const g = (...args) => execFileSync('git', ['-C', repo, ...args], {

@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const BIN_DIR = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin');
 const XCLIP = path.join(BIN_DIR, 'executable_xclip');
@@ -39,9 +40,6 @@ function makeBmp1x1(b, g, r) {
   buf[54] = b; buf[55] = g; buf[56] = r; buf[57] = 0;
   return buf;
 }
-
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clip-shim-')); dirs.push(d); return d; }
 
 // Slurp all of stdin into a file using only bash builtins (`cat` is an
 // external command, and PATH is deliberately narrowed to just our stubs).
@@ -90,7 +88,7 @@ const skipGuard = skip || (onWsl ? 'the guard cannot be exercised on WSL' : fals
 
 for (const [label, script] of [['xclip', XCLIP], ['xsel', XSEL]]) {
   test(`${label} refuses to reach wl-copy off WSL`, { skip: skipGuard }, () => {
-    const dir = scratch();
+    const dir = scratch(os.tmpdir(), 'clip-shim-');
     const argvFile = path.join(dir, 'argv.txt');
     makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
     run(script, [], { env: { ...process.env, PATH: dir }, wsl: false, input: 'x' });
@@ -100,7 +98,7 @@ for (const [label, script] of [['xclip', XCLIP], ['xsel', XSEL]]) {
 
 // --- xclip: copy path ---
 test('xclip with no args pipes stdin verbatim into wl-copy (copy path)', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   const stdinFile = path.join(dir, 'stdin.txt');
   makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\n${slurpStdinTo(JSON.stringify(stdinFile))}`);
@@ -112,7 +110,7 @@ test('xclip with no args pipes stdin verbatim into wl-copy (copy path)', { skip 
 
 // --- xclip: paste path ---
 test('xclip -o calls wl-paste --no-newline and returns its output (paste path)', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'canned paste text'`);
   const r = run(XCLIP, ['-o'], { env: { ...process.env, PATH: dir } });
@@ -122,7 +120,7 @@ test('xclip -o calls wl-paste --no-newline and returns its output (paste path)',
 });
 
 test('xclip -out (long alias) also routes to the paste path', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   makeStub(dir, 'wl-paste', `printf 'out'`);
   const r = run(XCLIP, ['-out'], { env: { ...process.env, PATH: dir } });
   assert.strictEqual(r.code, 0);
@@ -134,7 +132,7 @@ test('xclip -t TARGETS -o answers with the type list from wl-paste -l', { skip }
   // The old shim ignored -t and dumped raw clipboard bytes here, so Claude's
   // `... | grep image/png|image/bmp` saw pixels, matched nothing, and concluded
   // no image was pasteable. wl-paste -l is the type list that probe expects.
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'image/bmp\\ntext/plain\\n'`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], { env: { ...process.env, PATH: dir } });
@@ -144,7 +142,7 @@ test('xclip -t TARGETS -o answers with the type list from wl-paste -l', { skip }
 });
 
 test('xclip -t image/png -o forwards the type so binary reads stay intact', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'PNGBYTES'`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
@@ -154,7 +152,7 @@ test('xclip -t image/png -o forwards the type so binary reads stay intact', { sk
 });
 
 test('xclip -t <type> on the copy path forwards the type to wl-copy', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   makeStub(dir, 'wl-copy', `printf '%s' "$*" > ${JSON.stringify(argvFile)}`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png'], { env: { ...process.env, PATH: dir }, input: 'x' });
@@ -164,7 +162,7 @@ test('xclip -t <type> on the copy path forwards the type to wl-copy', { skip }, 
 
 // --- xclip: missing backend ---
 test('xclip fails loudly when wl-copy is missing from PATH', { skip }, () => {
-  const dir = scratch(); // empty — no wl-copy/wl-paste stub
+  const dir = scratch(os.tmpdir(), 'clip-shim-'); // empty — no wl-copy/wl-paste stub
   const r = run(XCLIP, [], { env: { ...process.env, PATH: dir }, input: 'x' });
   assert.notStrictEqual(r.code, 0);
   assert.match(r.stderr, /wl-copy/);
@@ -172,7 +170,7 @@ test('xclip fails loudly when wl-copy is missing from PATH', { skip }, () => {
 
 // --- xsel: write path (simple -i, combined cluster, long --input) ---
 test('xsel -i pipes stdin into wl-copy (write path)', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const stdinFile = path.join(dir, 'stdin.txt');
   makeStub(dir, 'wl-copy', slurpStdinTo(JSON.stringify(stdinFile)));
   const r = run(XSEL, ['-i'], { env: { ...process.env, PATH: dir }, input: 'written via xsel' });
@@ -181,7 +179,7 @@ test('xsel -i pipes stdin into wl-copy (write path)', { skip }, () => {
 });
 
 test('xsel -ib (combined short-flag cluster) is treated as a write', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const stdinFile = path.join(dir, 'stdin.txt');
   makeStub(dir, 'wl-copy', slurpStdinTo(JSON.stringify(stdinFile)));
   const r = run(XSEL, ['-ib'], { env: { ...process.env, PATH: dir }, input: 'clustered' });
@@ -190,7 +188,7 @@ test('xsel -ib (combined short-flag cluster) is treated as a write', { skip }, (
 });
 
 test('xsel --input (long flag) is treated as a write', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const stdinFile = path.join(dir, 'stdin.txt');
   makeStub(dir, 'wl-copy', slurpStdinTo(JSON.stringify(stdinFile)));
   const r = run(XSEL, ['--input'], { env: { ...process.env, PATH: dir }, input: 'long flag' });
@@ -200,7 +198,7 @@ test('xsel --input (long flag) is treated as a write', { skip }, () => {
 
 // --- xsel: read/paste path (default, and a cluster with no i/a) ---
 test('xsel with no args reads via wl-paste --no-newline (paste path)', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   const argvFile = path.join(dir, 'argv.txt');
   makeStub(dir, 'wl-paste', `printf '%s' "$*" > ${JSON.stringify(argvFile)}\nprintf 'canned selection'`);
   const r = run(XSEL, [], { env: { ...process.env, PATH: dir } });
@@ -210,7 +208,7 @@ test('xsel with no args reads via wl-paste --no-newline (paste path)', { skip },
 });
 
 test('xsel -b (cluster without i or a) still reads, does not write', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   makeStub(dir, 'wl-paste', `printf 'read-path'`);
   const r = run(XSEL, ['-b'], { env: { ...process.env, PATH: dir } });
   assert.strictEqual(r.code, 0);
@@ -219,7 +217,7 @@ test('xsel -b (cluster without i or a) still reads, does not write', { skip }, (
 
 // --- xclip: BMP->PNG conversion (WSLg gives only image/bmp; Claude needs png) ---
 test('xclip -t TARGETS -o advertises image/png when only a bmp is present', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   makeStub(dir, 'wl-paste', `[ "$*" = "-l" ] && printf 'image/bmp\\n'`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'TARGETS', '-o'], { env: { ...process.env, PATH: dir } });
   assert.strictEqual(r.code, 0);
@@ -228,7 +226,7 @@ test('xclip -t TARGETS -o advertises image/png when only a bmp is present', { sk
 });
 
 test('xclip -t image/png -o converts the bmp via wl-bmp2png when no native png exists', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   makeStub(dir, 'wl-paste', `case "$*" in "-l") printf 'image/bmp\\n';; *"--type image/bmp"*) printf 'RAWBMP';; esac`);
   makeStub(dir, 'wl-bmp2png', `IFS= read -r -d '' _body <&0 || true\nprintf 'PNG(%s)' "$_body"`);
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
@@ -237,7 +235,7 @@ test('xclip -t image/png -o converts the bmp via wl-bmp2png when no native png e
 });
 
 test('xclip -t image/png -o passes a native png straight through (no conversion)', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'clip-shim-');
   makeStub(dir, 'wl-paste', `case "$*" in "-l") printf 'image/png\\n';; *) printf 'NATIVEPNG';; esac`);
   makeStub(dir, 'wl-bmp2png', `exit 1`); // must NOT be called
   const r = run(XCLIP, ['-selection', 'clipboard', '-t', 'image/png', '-o'], { env: { ...process.env, PATH: dir } });
@@ -257,4 +255,3 @@ test('wl-bmp2png exits non-zero on non-BMP input so the shim can fall back', { s
   assert.throws(() => execFileSync(PYTHON, [WLBMP2PNG], { input: Buffer.from('not a bitmap'), stdio: ['pipe', 'pipe', 'pipe'] }));
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

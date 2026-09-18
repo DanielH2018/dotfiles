@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-update-automation.sh.tmpl');
 
@@ -45,13 +46,10 @@ case "$1" in
 esac
 exit 0`;
 
-const dirs = [];
-
 // One run of the rendered script against throwaway paths. `state` persists across runs when the
 // caller passes one back in, which is what the converged-apply test needs.
 function run({ stubs = {}, state, installed = ['dnf5-plugin-automatic', 'fwupd'], pm = true, mullvad = true } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'update-automation-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'update-automation-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -204,8 +202,7 @@ test('a converged apply changes nothing and never probes sudo', { skip }, () => 
 //    it; `mask` is the state it must leave alone, or unattended updates cannot be turned off.
 test('leaves a masked timer alone', { skip }, () => {
   if (!linux || renderFile(SRC).trim() === '') return;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'update-automation-mask-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'update-automation-mask-');
   const stateDir = path.join(home, 'state');
   fs.mkdirSync(path.join(stateDir, 'masked'), { recursive: true });
   fs.writeFileSync(path.join(stateDir, 'masked', 'dnf5-automatic.timer'), '');
@@ -260,4 +257,3 @@ test('does nothing without dnf', { skip }, () => {
   assert.strictEqual(r.sudoLog, '', 'must not probe sudo on a non-dnf host');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

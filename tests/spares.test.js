@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SPARES = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_spares');
 
@@ -25,10 +26,6 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 const PAGE_SIZE = (() => {
   try { return Number(execFileSync('getconf', ['PAGESIZE'], { encoding: 'utf8' }).trim()) || 4096; } catch { return 4096; }
 })();
-
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 const SOCKDIR = '/tmp/cc-daemon-1000/e5567515/spare';
 const worker = (id) => `claude bg-spare --bg-spare ${SOCKDIR}/${id}.claim.sock`;
@@ -53,7 +50,7 @@ const rosterEntry = (ptyHostPid, id, { sessionId = `${id}-sess`, cwd = '/home/da
 // sessions: { workerPid: { name, status } } — the sessions dir is keyed by WORKER pid,
 //           which is the pid the roster does not carry.
 function fakeEnv({ procs = {}, roster = {}, sessions = {} }) {
-  const home = scratch('spares-');
+  const home = scratch(os.tmpdir(), 'spares-');
   const pdir = path.join(home, 'proc');
   fs.mkdirSync(pdir, { recursive: true });
   const sdir = path.join(home, 'sessions');

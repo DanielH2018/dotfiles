@@ -13,13 +13,14 @@
 // The token in the dirty fixture is synthetic and has never been a credential. It has to be
 // high-entropy: gitleaks discards a low-entropy candidate, and a `ghp_AAAA...` fixture
 // reported clean against a working scanner during development.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 // The one synthetic token that must NOT be allowlisted, generated per run rather than
 // written down. A committed literal PROPAGATES: any session that reads this file copies it
@@ -74,14 +75,9 @@ const CLEAN = [
 // Every sandbox is removed when the file finishes. bin/sweep-test-tmp collects what a suite
 // leaves behind, but only six hours later, and tests/sweep-test-tmp.test.js fails a suite
 // that relies on it — scratch is the suite's to clean up on a clean run.
-const SANDBOXES = [];
-after(() => {
-  for (const d of SANDBOXES) fs.rmSync(d, { recursive: true, force: true });
-});
 
 function sandbox() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-scan-'));
-  SANDBOXES.push(dir);
+  const dir = scratch(os.tmpdir(), 'transcript-scan-');
   const projects = path.join(dir, 'projects', '-fixture');
   fs.mkdirSync(projects, { recursive: true });
   fs.writeFileSync(path.join(projects, 'dirty.jsonl'), DIRTY);

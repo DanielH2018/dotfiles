@@ -22,6 +22,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const TMPL = path.join(__dirname, '..', '..', 'home', '.chezmoi.toml.tmpl');
 function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
@@ -30,8 +31,7 @@ const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 const WORK_PROMPT = 'Is this a work machine';
 const PROFILE_PROMPT = 'Machine profile (workstation/server/minimal)';
 
-const isolatedConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chezmoi-toml-'));
-process.on('exit', () => fs.rmSync(isolatedConfigDir, { recursive: true, force: true }));
+const isolatedConfigDir = scratch(os.tmpdir(), 'chezmoi-toml-');
 const isolatedConfig = path.join(isolatedConfigDir, 'nonexistent-chezmoi.toml');
 
 function render(profile) {

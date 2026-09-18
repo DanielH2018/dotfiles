@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
@@ -21,18 +22,14 @@ const fnMatch = fs.readFileSync(COMMON, 'utf8').match(/^ {2}chezmoi\(\) \{\n[\s\
 assert.ok(fnMatch, 'chezmoi() exists in common.sh');
 const FN = fnMatch[0].replace(/^ {2}/gm, '');
 
-const dirs = [];
-function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
-test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 // Stub bin: `chezmoi source-path` prints $SRC_DIR, every other argv is logged. The real
 // binary must never run. SRC_FAIL=1 makes source-path fail, standing in for a broken config.
 // `git` is real here — the wrapper resolves the repo root, so the source dir is created as
 // <repo>/home inside a scratch checkout, mirroring this repo's .chezmoiroot=home layout.
 // Pass {bare:true} for a source dir with no checkout above it, to exercise the fallback.
 function makeEnv({ bare = false } = {}) {
-  const bin = scratch('czcd-bin-');
-  const repo = scratch('czcd-repo-');
+  const bin = scratch(os.tmpdir(), 'czcd-bin-');
+  const repo = scratch(os.tmpdir(), 'czcd-repo-');
   let src = repo;
   if (!bare) {
     execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });

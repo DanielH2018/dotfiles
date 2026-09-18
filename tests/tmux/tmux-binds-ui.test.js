@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { Term, ptySkip, tierB, sleep } = require('../lib/pty');
+const { scratch } = require('../lib/tmp');
 
 const CONF = path.join(__dirname, '..', '..', 'home', 'dot_tmux.conf');
 
@@ -20,18 +21,15 @@ const skip = tierB()
   || (missing('tmux') ? 'tmux unavailable'
     : missing('zsh') ? 'zsh unavailable' : false);
 
-const dirs = [];
 const socks = [];
 process.on('exit', () => {
   for (const s of socks) { try { execFileSync('tmux', ['-S', s, 'kill-server'], { stdio: 'ignore' }); } catch { /* already down */ } }
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
 });
 
 // The binds run `agentview`; the stub stays alive so the window it opens persists
 // long enough to be observed, and records the argv the bind passed it.
 function makeEnv() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tmuxui-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'tmuxui-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
 

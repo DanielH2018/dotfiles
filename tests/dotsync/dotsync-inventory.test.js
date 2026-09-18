@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const mod = require('../../home/dot_local/bin/executable_dotsync');
+const { scratch } = require('../lib/tmp');
 const { buildOwnership, renderInventory, cmdInventory, cmdCheck } = mod;
 
 // dotsync is Unix-only tooling (POSIX path/glob handling + symlink farms; deployed to
@@ -12,10 +13,8 @@ const { buildOwnership, renderInventory, cmdInventory, cmdCheck } = mod;
 const skip = process.platform === 'win32' ? 'dotsync is Unix-only' : false;
 
 let HOME, MAN, seed, runner;
-const dirs = [];
 if (!skip) {
-  HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dsinv-'));
-  dirs.push(HOME);
+  HOME = scratch(os.tmpdir(), 'dsinv-');
   MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN, { recursive: true });
   fs.writeFileSync(path.join(MAN, '00-general.json'), JSON.stringify({
@@ -79,8 +78,7 @@ test('cmdCheck: orphan -> 1', { skip }, () => {
 test('cmdCheck: declared target OUTSIDE scan roots that EXISTS on disk must NOT be reported missing', { skip }, () => {
   // .local/bin/dotsync is managed by chezmoi but is not under ~/.config or ~/.claude, so scanRoots
   // never includes it. The real existsFn (lstatSync) must find it and suppress the false-positive.
-  const HOME2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dsinv2-'));
-  dirs.push(HOME2);
+  const HOME2 = scratch(os.tmpdir(), 'dsinv2-');
   const MAN2 = path.join(HOME2, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN2, { recursive: true });
   fs.writeFileSync(path.join(MAN2, '00-general.json'), JSON.stringify({
@@ -105,4 +103,3 @@ test('cmdCheck: declared target OUTSIDE scan roots that EXISTS on disk must NOT 
   assert.strictEqual(rc2, 0, 'declared target outside scan roots that exists on disk must not be reported missing');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

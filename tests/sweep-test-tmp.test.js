@@ -17,12 +17,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { scratch } = require('./lib/tmp');
 
 const SWEEP = path.join(__dirname, '..', 'bin', 'sweep-test-tmp');
-
-const dirs = [];
-const scratch = (p) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; };
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 // Makes a dir in `tmp` and backdates it, since age is what the sweep decides on.
 const mk = (tmp, name, hoursAgo = 0) => {
@@ -39,7 +36,7 @@ const mk = (tmp, name, hoursAgo = 0) => {
 // script reads them with `git ls-files`, so the file has to be in the index -- staging is
 // enough, which keeps this clear of the repo's commit signing.
 function fakeRepo(testSource) {
-  const repo = scratch('sweep-repo-');
+  const repo = scratch(os.tmpdir(), 'sweep-repo-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
   fs.mkdirSync(path.join(repo, 'bin'));
   fs.copyFileSync(SWEEP, path.join(repo, 'bin', 'sweep-test-tmp'));
@@ -65,7 +62,7 @@ const SOURCE = `
 
 test('sweeps a declared prefix once it is past the age threshold', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const old = mk(tmp, 'sweepable-AAAAAA', 24);
 
   const { status } = run(repo, tmp);
@@ -73,9 +70,23 @@ test('sweeps a declared prefix once it is past the age threshold', () => {
   assert.ok(!fs.existsSync(old), 'a stale dir under a declared prefix should be gone');
 });
 
+// tests/lib/tmp.js takes the root as an argument for exactly this reason: a call site spells
+// `os.tmpdir(), '<prefix>'` where the sweep's grep can read it. This is the test that goes
+// red if the helper ever takes a bare prefix, which would drop every file using it from the
+// sweep's view without any other test noticing.
+test('a prefix passed through tests/lib/tmp.js is swept too', () => {
+  const repo = fakeRepo("const d = scratch(os.tmpdir(), 'viahelper-');\n");
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
+  const old = mk(tmp, 'viahelper-AAAAAA', 24);
+
+  const { status } = run(repo, tmp);
+  assert.strictEqual(status, 0);
+  assert.ok(!fs.existsSync(old), 'a stale dir under a helper-declared prefix should be gone');
+});
+
 test('leaves a dir younger than the threshold alone', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const fresh = mk(tmp, 'sweepable-BBBBBB');   // a run in flight next to this one
 
   run(repo, tmp);
@@ -84,7 +95,7 @@ test('leaves a dir younger than the threshold alone', () => {
 
 test('leaves a stale dir alone when no test declares its prefix', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const other = mk(tmp, 'not-a-test-dir', 24);
 
   run(repo, tmp);
@@ -93,7 +104,7 @@ test('leaves a stale dir alone when no test declares its prefix', () => {
 
 test('refuses a prefix too short to identify scratch, and says so', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const risky = mk(tmp, 'x-CCCCCC', 24);
 
   const { err } = run(repo, tmp);
@@ -103,7 +114,7 @@ test('refuses a prefix too short to identify scratch, and says so', () => {
 
 test('--dry-run reports what it would take without taking it', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const old = mk(tmp, 'sweepable-DDDDDD', 24);
 
   const { out } = run(repo, tmp, ['--dry-run']);
@@ -113,7 +124,7 @@ test('--dry-run reports what it would take without taking it', () => {
 
 test('SWEEP_AGE_MIN moves the threshold', () => {
   const repo = fakeRepo(SOURCE);
-  const tmp = scratch('sweep-tmp-');
+  const tmp = scratch(os.tmpdir(), 'sweep-tmp-');
   const hourOld = mk(tmp, 'sweepable-EEEEEE', 1);
 
   const r = require('node:child_process').spawnSync(
@@ -132,9 +143,19 @@ test('every suite that makes scratch in $TMPDIR also removes it', () => {
   const tracked = execFileSync('git', ['ls-files', '*.test.js', '*.test.mjs'], { cwd: checkout, encoding: 'utf8' })
     .split('\n').filter(Boolean);
 
-  const leaky = tracked.filter((f) => {
+  // A suite is clean when it removes its own scratch, or makes it through tests/lib/tmp.js,
+  // which removes it. The census is asserted non-empty by name: most suites moved onto the
+  // helper, and a filter over a corpus that no longer matches anything passes for free.
+  const makesScratch = tracked.filter((f) => {
     const src = fs.readFileSync(path.join(checkout, f), 'utf8');
-    return src.includes('mkdtempSync(path.join(os.tmpdir()') && !src.includes('rmSync');
+    return src.includes('mkdtempSync(path.join(os.tmpdir()') || src.includes('scratch(os.tmpdir(),');
+  });
+  for (const f of ['tests/sweep-test-tmp.test.js', 'tests/lib/tmp.test.js', 'tests/statusline-command.test.js']) {
+    assert.ok(makesScratch.includes(f), `${f} makes scratch and must be in the census`);
+  }
+  const leaky = makesScratch.filter((f) => {
+    const src = fs.readFileSync(path.join(checkout, f), 'utf8');
+    return !src.includes('rmSync') && !/(lib\/|\.\/)tmp(\.js)?'/.test(src);
   });
 
   assert.deepStrictEqual(

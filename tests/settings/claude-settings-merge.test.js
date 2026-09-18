@@ -1,12 +1,13 @@
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const BIN = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_claude-settings-merge');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'merge-'));
+const tmp = scratch(os.tmpdir(), 'merge-');
 const w = (name, obj) => { const p = path.join(tmp, name); fs.writeFileSync(p, JSON.stringify(obj)); return p; };
 const run = (...args) => JSON.parse(execFileSync('node', [BIN, ...args], { encoding: 'utf8' }));
 // The prior deployed file arrives by environment, not argv - see the skew rationale in the script.
@@ -34,8 +35,6 @@ const withFloor = (obj = {}) => ({
   ...obj,
   permissions: { ...obj.permissions, deny: [...FLOOR, ...((obj.permissions || {}).deny || [])] },
 });
-
-after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 test('objects deep-merge by key', () => {
   const base = w('base.json', withFloor({ model: 'opus', enabledPlugins: { a: true }, env: { X: '1' } }));

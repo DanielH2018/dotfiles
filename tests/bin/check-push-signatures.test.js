@@ -11,6 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-push-signatures');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
@@ -19,15 +20,13 @@ const skip = !have('bash') ? 'bash unavailable'
   : !have('ssh-keygen') ? 'ssh-keygen unavailable' : false;
 
 const ZERO = '0'.repeat(40);
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'signgate-')); dirs.push(d); return fs.realpathSync(d); }
 
 // A repo wired for ssh commit signing with its own ephemeral key. `trustKey` controls
 // whether that key lands in allowed_signers, which is the difference between %G? = G and
 // %G? = U (a real signature whose signer git cannot vouch for).
 function repo({ trustKey = true } = {}) {
-  const root = scratch();
-  const keydir = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'signgate-'));
+  const keydir = fs.realpathSync(scratch(os.tmpdir(), 'signgate-'));
   const key = path.join(keydir, 'id');
   execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', 'test@example.com', '-f', key]);
   const pub = fs.readFileSync(`${key}.pub`, 'utf8').trim().split(' ').slice(0, 2).join(' ');
@@ -149,7 +148,7 @@ test('checks every ref in a multi-ref push', { skip }, () => {
 test('a branch rebased onto unsigned main history still passes', { skip }, () => {
   const r = repo();
   const git = (...args) => execFileSync('git', args, { cwd: r.root, encoding: 'utf8' }).trim();
-  const origin = path.join(scratch(), 'origin.git');
+  const origin = path.join(fs.realpathSync(scratch(os.tmpdir(), 'signgate-')), 'origin.git');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
   git('remote', 'add', 'origin', origin);
 
@@ -177,7 +176,7 @@ test('a branch rebased onto unsigned main history still passes', { skip }, () =>
 test('an unsigned commit of your own still blocks, rebase or not', { skip }, () => {
   const r = repo();
   const git = (...args) => execFileSync('git', args, { cwd: r.root, encoding: 'utf8' }).trim();
-  const origin = path.join(scratch(), 'origin.git');
+  const origin = path.join(fs.realpathSync(scratch(os.tmpdir(), 'signgate-')), 'origin.git');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
   git('remote', 'add', 'origin', origin);
 
@@ -361,4 +360,3 @@ test('an unsigned commit is still caught once a signers path is set', { skip }, 
   assert.match(res.stderr, /sneaky/);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

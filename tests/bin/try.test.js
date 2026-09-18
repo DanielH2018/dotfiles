@@ -11,6 +11,7 @@ const { execFileSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const TRY = path.join(__dirname, '..', '..', 'bin', 'try');
 
@@ -22,13 +23,10 @@ const CLEAN_ENV = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
 );
 
-const dirs = [];
-
 // Stub chezmoi: records every call, so a test can prove apply was reached — or
 // prove it was not, which is the whole point of --diff and --dry-run. STUB_STATUS
 // stands in for a target that something other than chezmoi wrote.
-const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'try-bin-'));
-dirs.push(BIN);
+const BIN = scratch(os.tmpdir(), 'try-bin-');
 //
 // STUB_LOCK turns the stub into the lock probe for the fd test below. `chezmoi apply`
 // is the deepest point of a bench and runs as a child of try, which is the vantage
@@ -57,8 +55,7 @@ function git(cwd, ...args) {
 // for. `origin` is a bare repo on disk so the ahead-of-origin notice has a remote
 // to compare against.
 function makeRepo() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'try-repo-'));
-  dirs.push(base);
+  const base = scratch(os.tmpdir(), 'try-repo-');
   const origin = path.join(base, 'origin.git');
   const dir = path.join(base, 'work');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env: CLEAN_ENV });
@@ -88,8 +85,7 @@ const branchOf = (dir) => git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 // The calls file lives outside the repo on purpose: dropped inside it, it would
 // itself make the tree dirty and trip try's own guard on the next invocation.
 function run(cwd, args = [], extraEnv = {}) {
-  const box = fs.mkdtempSync(path.join(os.tmpdir(), 'try-calls-'));
-  dirs.push(box);
+  const box = scratch(os.tmpdir(), 'try-calls-');
   const file = path.join(box, 'calls');
   try {
     const stdout = execFileSync('bash', [TRY, ...args], {
@@ -372,6 +368,3 @@ test('a process forked during the bench does not inherit the lock', { skip: skip
   }
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

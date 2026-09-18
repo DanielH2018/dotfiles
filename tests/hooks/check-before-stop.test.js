@@ -15,6 +15,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(
   __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
@@ -30,8 +31,6 @@ for (const k of Object.keys(GIT_ENV)) if (k.startsWith('GIT_')) delete GIT_ENV[k
 GIT_ENV.GIT_CONFIG_GLOBAL = '/dev/null';
 GIT_ENV.GIT_CONFIG_SYSTEM = '/dev/null';
 
-const dirs = [];
-
 function sh(cmd, cwd) {
   const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8', env: GIT_ENV });
   assert.strictEqual(r.status, 0, `${cmd} (stderr: ${r.stderr})`);
@@ -39,8 +38,7 @@ function sh(cmd, cwd) {
 }
 
 function repo({ remote = 'https://github.com/DanielH2018/server.git', branch = 'master' } = {}) {
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cbs-'));
-  dirs.push(work);
+  const work = scratch(os.tmpdir(), 'cbs-');
   sh(`git init -q -b ${branch} .`, work);
   sh('git config user.email t@t && git config user.name t', work);
   sh(`git remote add origin ${remote}`, work);
@@ -148,11 +146,7 @@ test('an in-progress rebase blocks on any branch', () => {
 });
 
 test('outside a git repo it says nothing', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'cbs-nogit-'));
-  dirs.push(bare);
+  const bare = scratch(os.tmpdir(), 'cbs-nogit-');
   assert.strictEqual(run(bare), null);
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

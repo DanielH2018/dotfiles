@@ -10,6 +10,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 let python3Ok = true;
 try { execFileSync('python3', ['--version'], { stdio: 'ignore' }); } catch { python3Ok = false; }
@@ -29,10 +30,8 @@ function runTq(dir, args) {
   return spawnSync('python3', [TQ, ...args], { cwd: dir, encoding: 'utf8' });
 }
 
-const dirs = [];
-function scratch(files) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-e2e-'));
-  dirs.push(dir);
+function staged(files) {
+  const dir = scratch(os.tmpdir(), 'tq-e2e-');
   for (const [name, body] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), body);
   }
@@ -54,7 +53,7 @@ test('python: tq adapters + digest unit tests', { skip }, () => {
   // prefix, which lowers the ran count and the declared count together. Guarding that
   // needs a floor, and a floor is a ratchet someone has to maintain.
   //
-  // Not named `dir`: scratch() below binds that to a mkdtemp path, and
+  // Not named `dir`: staged() below binds that to a mkdtemp path, and
   // sandbox-escape.test.js reads the two as one variable and calls the repo path a write
   // target.
   const suiteDir = path.join(__dirname, 'tq');
@@ -82,7 +81,7 @@ test('python: tq adapters + digest unit tests', { skip }, () => {
 });
 
 test('passing run digests to a single line and exit 0', { skip }, () => {
-  const dir = scratch({
+  const dir = staged({
     'ok.test.js': "const {test}=require('node:test');test('a',()=>{});test('b',()=>{});\n",
   });
   const r = runTq(dir, ['node', '--test', 'ok.test.js']);
@@ -91,7 +90,7 @@ test('passing run digests to a single line and exit 0', { skip }, () => {
 });
 
 test('failing run keeps exit 1 and names the failing assertion', { skip }, () => {
-  const dir = scratch({
+  const dir = staged({
     'bad.test.js':
       "const {test}=require('node:test');const assert=require('node:assert');\n" +
       "test('compares',()=>{assert.strictEqual('a','b','boom mismatch');});\n",
@@ -107,7 +106,7 @@ test('failing run keeps exit 1 and names the failing assertion', { skip }, () =>
 test('a runner that crashes before reporting never reads as a pass', { skip }, () => {
   // The failure mode that would make tq actively dangerous: exit 1 with a
   // digest claiming everything passed.
-  const dir = scratch({});
+  const dir = staged({});
   const r = runTq(dir, ['node', '--test', '--no-such-flag']);
   assert.notStrictEqual(r.status, 0);
   assert.doesNotMatch(r.stdout, /^PASS/);
@@ -115,7 +114,7 @@ test('a runner that crashes before reporting never reads as a pass', { skip }, (
 });
 
 test('the structured result lands on disk with the documented shape', { skip }, () => {
-  const dir = scratch({
+  const dir = staged({
     'bad.test.js':
       "const {test}=require('node:test');const assert=require('node:assert');\n" +
       "test('compares',()=>{assert.strictEqual(1,2);});\n",
@@ -137,7 +136,7 @@ test('the structured result lands on disk with the documented shape', { skip }, 
 test('a leaked node test context cannot fake a clean run', { skip }, () => {
   // Inherited from an outer `node --test`, NODE_TEST_CONTEXT makes the nested
   // runner collect nothing and exit 0 — a false pass with no failure to notice.
-  const dir = scratch({
+  const dir = staged({
     'bad.test.js':
       "const {test}=require('node:test');const assert=require('node:assert');\n" +
       "test('compares',()=>{assert.strictEqual(1,2);});\n",
@@ -156,7 +155,7 @@ test('TQ_JSON does not follow tq into the runner it spawns', { skip }, () => {
   // `git rev-parse --git-path` value, relative in the main checkout, and the
   // nested run resolved it against its own cwd and died on the missing
   // directory, printing a traceback where the digest should have been.
-  const dir = scratch({
+  const dir = staged({
     'env.test.js':
       "const {test}=require('node:test');const fs=require('node:fs');\n" +
       "test('records what it inherited',()=>{\n" +
@@ -175,7 +174,7 @@ test('TQ_JSON does not follow tq into the runner it spawns', { skip }, () => {
 });
 
 test('ruff findings digest to a rule code at a real location', { skip: skipRuff }, () => {
-  const dir = scratch({ 'bad.py': 'import os\n' });
+  const dir = staged({ 'bad.py': 'import os\n' });
   const r = runTq(dir, ['ruff', 'check', 'bad.py']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /^FAIL 1 finding in 1 file {2}\d+\.\d+s$/m);
@@ -188,7 +187,7 @@ test('ruff findings digest to a rule code at a real location', { skip: skipRuff 
 });
 
 test('a clean ruff run is one line', { skip: skipRuff }, () => {
-  const dir = scratch({ 'ok.py': 'x = 1\nprint(x)\n' });
+  const dir = staged({ 'ok.py': 'x = 1\nprint(x)\n' });
   const r = runTq(dir, ['ruff', 'check', 'ok.py']);
   assert.strictEqual(r.status, 0);
   assert.strictEqual(r.stdout.trim(), r.stdout.trim().match(/^CLEAN {2}\d+\.\d+s$/)?.[0]);
@@ -197,7 +196,7 @@ test('a clean ruff run is one line', { skip: skipRuff }, () => {
 test('ruff over a tree holding no python says so instead of passing', { skip: skipRuff }, () => {
   // exit 0 and an empty report, identical to a clean run by exit code alone —
   // the whole reason a lint digest cannot just print PASS.
-  const dir = scratch({ 'notes.txt': 'nothing to lint\n' });
+  const dir = staged({ 'notes.txt': 'nothing to lint\n' });
   const r = runTq(dir, ['ruff', 'check', '.']);
   assert.strictEqual(r.status, 0);
   assert.match(r.stdout, /^CLEAN {2}\d+\.\d+s$/m);
@@ -205,7 +204,7 @@ test('ruff over a tree holding no python says so instead of passing', { skip: sk
 });
 
 test('shellcheck findings carry severity, code and line', { skip: skipShellcheck }, () => {
-  const dir = scratch({ 'bad.sh': '#!/bin/bash\necho $undefined\n' });
+  const dir = staged({ 'bad.sh': '#!/bin/bash\necho $undefined\n' });
   const r = runTq(dir, ['shellcheck', 'bad.sh']);
   assert.strictEqual(r.status, 1);
   assert.match(r.stdout, /^FAIL \d+ findings in 1 file {2}\d+\.\d+s$/m);
@@ -215,7 +214,7 @@ test('shellcheck findings carry severity, code and line', { skip: skipShellcheck
 });
 
 test('a linter that cannot read its input never reads as clean', { skip: skipShellcheck }, () => {
-  const dir = scratch({});
+  const dir = staged({});
   const r = runTq(dir, ['shellcheck', 'no-such-file.sh']);
   assert.notStrictEqual(r.status, 0);
   assert.doesNotMatch(r.stdout, /CLEAN/);
@@ -225,7 +224,7 @@ test('a linter that cannot read its input never reads as clean', { skip: skipShe
 test('a command that merely names a runner is left alone', { skip }, () => {
   // `grep pytest ...` is not a test run; treating it as one would splice
   // reporter flags into the grep.
-  const dir = scratch({ 'notes.txt': 'remember to run pytest\n' });
+  const dir = staged({ 'notes.txt': 'remember to run pytest\n' });
   const r = runTq(dir, ['grep', '-c', 'pytest', 'notes.txt']);
   assert.strictEqual(r.status, 0);
   assert.strictEqual(r.stdout, '1\n');
@@ -237,4 +236,3 @@ test('an unrecognised command runs untouched', { skip }, () => {
   assert.strictEqual(r.stdout, 'hello\n');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

@@ -17,6 +17,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS_DIR, 'executable_reap-backgrounded-origin.sh');
@@ -27,16 +28,12 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
-
 // Build a fake env: sessions dir, agent-view dir, a recording kill seam, a log file.
 // Each session also gets a fake /proc/<pid>/stat whose start time matches the procStart
 // recorded for it, so the pid verifies as the process the registry claims it is. Pass a
 // [sid, procStart] pair to record a start time that does NOT match — that is pid reuse.
 function fakeEnv(sessions = {}, rows = []) {
-  const home = scratch('reap-');
+  const home = scratch(os.tmpdir(), 'reap-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
   const procdir = path.join(home, 'proc'); fs.mkdirSync(procdir, { recursive: true });

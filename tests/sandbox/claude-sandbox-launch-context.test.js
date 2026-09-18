@@ -19,6 +19,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_DIR_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const LAUNCHER = path.join(SANDBOX_DIR_SRC, 'executable_claude-sandbox');
@@ -60,14 +61,6 @@ const FN = skip ? {} : Object.fromEntries(
     .map((n) => [n, extractFunction(n)]),
 );
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sblc-'));
-  dirs.push(d);
-  return d;
-}
-
 const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const ARGS_MARKER = '---DOCKER_ARGS---';
 const VARS_MARKER = '---VARS---';
@@ -76,7 +69,7 @@ const VARS_MARKER = '---VARS---';
 // and the final value of any globals named in `dump`. `deps` names other launcher
 // functions whose real bodies the one under test calls.
 function drive(name, { env = {}, deps = [], dump = [], pre = '' } = {}) {
-  const tmp = scratch();
+  const tmp = scratch(os.tmpdir(), 'sblc-');
   const script = `set -uo pipefail
 export TMPDIR=${q(tmp)}
 ${Object.entries(env).map(([k, v]) => `${k}=${q(v)}`).join('\n')}
@@ -118,7 +111,7 @@ const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'ignore', env: G
 // --- resolve_session_context -------------------------------------------------
 
 function sessionRun({ priorSession = false, nestedOnly = false, wtSlug = false, fresh = false, worktree = false, dockerfile = null } = {}) {
-  const base = scratch();
+  const base = scratch(os.tmpdir(), 'sblc-');
   const bases = {
     AUDIT_BASE: path.join(base, 'audit'),
     SESSIONS_BASE: path.join(base, 'sessions'),
@@ -263,7 +256,7 @@ test('uv is appended to the toolchain list when the Dockerfile installs it', { s
 // --- add_host_integration_mounts ---------------------------------------------
 
 function hostRun({ socket = false, plainFile = false, keybindings = false } = {}) {
-  const home = scratch();
+  const home = scratch(os.tmpdir(), 'sblc-');
   const sockPath = path.join(home, 'agent.sock');
   if (socket) {
     execFileSync('python3', ['-c',
@@ -320,7 +313,7 @@ test('host keybindings are mounted read-only when present', { skip }, () => {
 // assertions failing on WSL — which reads as those integrations being broken, not this one being
 // untested. Driven through the override, so it runs on every host rather than only under WSLg.
 test('the WSLg Wayland clipboard socket is forwarded when it exists', { skip }, () => {
-  const home = scratch();
+  const home = scratch(os.tmpdir(), 'sblc-');
   const sock = path.join(home, 'wayland-0');
   execFileSync('python3', ['-c',
     'import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.bind(sys.argv[1])\n', sock]);
@@ -337,7 +330,7 @@ test('the WSLg Wayland clipboard socket is forwarded when it exists', { skip }, 
 // A ~/Repositories with `alpha` and `beta` (both git), a `notes` plain dir, and
 // a `alpha-wt-x` worktree-shaped dir. `workspace` is the repo being sandboxed.
 function reposFixture() {
-  const base = scratch();
+  const base = scratch(os.tmpdir(), 'sblc-');
   const reposRoot = path.join(base, 'Repositories');
   const snapRoot = path.join(base, 'snapshots');
   fs.mkdirSync(reposRoot, { recursive: true });
@@ -449,7 +442,7 @@ test('a second launch reuses the snapshot instead of rebuilding it', { skip }, (
 // `docker` is stubbed; the decision above it is what matters. dockerOk=false
 // stands for the user cancelling the login.
 function oauthRun({ markerAgeDays = null, shell = false, exec = false, dockerOk = true } = {}) {
-  const state = scratch();
+  const state = scratch(os.tmpdir(), 'sblc-');
   const marker = path.join(state, '.auth-configured');
   if (markerAgeDays !== null) {
     fs.writeFileSync(marker, '');

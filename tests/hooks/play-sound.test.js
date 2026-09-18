@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_play-sound.sh');
 const BASH =['/usr/bin/bash', '/bin/bash'].find((p) => fs.existsSync(p));
@@ -26,11 +27,8 @@ const skip = BASH ? false : 'bash unavailable';
 const WIN_WAV = '/mnt/c/Windows/Media/chimes.wav';
 const skipWsl = skip || (fs.existsSync(WIN_WAV) ? false : 'no /mnt/c/Windows/Media (not WSL)');
 
-const dirs = [];
-
 function sandbox({ paplay = true, aplay = true, pwPlay = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'playsound-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'playsound-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   const log = path.join(dir, 'calls.log');
@@ -199,7 +197,6 @@ test('no executable line launches a Windows binary', { skip }, () => {
   assert.deepStrictEqual(offenders, [], 'play-sound.sh names no .exe outside comments');
 });
 
-
 // The no-player fallback is the only cue a headless box reached over ssh (daniel-box) can
 // give, and it used to write to /dev/tty -- which a hook does not have. Claude Code runs
 // hooks with no controlling terminal, so that open raised ENXIO and the bell vanished into
@@ -224,4 +221,3 @@ test('with no player the bell goes to the pane resolved from CLAUDE_PID', { skip
   assert.strictEqual(fs.readFileSync(pane, 'utf8'), '\x07',
     'the bell reached the pane resolved from CLAUDE_PID, not /dev/tty');
 });
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

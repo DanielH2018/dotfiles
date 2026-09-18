@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -136,10 +137,8 @@ test('a trailing -v with no value does not run off the end of the array', { skip
 
 // --- detect_container_engine(): which engine is behind `docker` ---
 
-const dirs = [];
 function fakeDocker(body) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-engine-'));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), 'cs-engine-');
   if (body !== null) {
     fs.writeFileSync(path.join(d, 'docker'), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
@@ -219,4 +218,3 @@ test('keep-id maps the container-side claudebot uid, not the host uid', { skip }
   assert.match(dockerfile, /useradd .*--uid 1000 claudebot/);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

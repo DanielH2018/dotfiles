@@ -11,14 +11,13 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_mullvad-settings-watch');
 const body = fs.readFileSync(SRC, 'utf8');
 
 // jq is the one the script cannot work without; the rest are what it shells out to.
 const PASSTHROUGH = ['bash', 'sh', 'cat', 'rm', 'mkdir', 'true', 'jq', 'cksum', 'cut', 'date', 'head'];
-
-const dirs = [];
 
 // The settings this box was left in after the 2026-08-15 measurements: the healthy case.
 function settings({ daita = false, multihop = true, quantum = 'on', entry = ['us', 'chi'], exit = ['us', 'chi'] } = {}) {
@@ -35,8 +34,7 @@ function settings({ daita = false, multihop = true, quantum = 'on', entry = ['us
 }
 
 function run({ json, raw, mode = 0o644, env = {}, home: reuse } = {}) {
-  const home = reuse || fs.mkdtempSync(path.join(os.tmpdir(), 'mullvad-watch-'));
-  if (!reuse) dirs.push(home);
+  const home = reuse || scratch(os.tmpdir(), 'mullvad-watch-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -160,4 +158,3 @@ test('re-notifies once the repeat window lapses', () => {
   assert.strictEqual(count, 2, 'a lapsed window must raise the finding again');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

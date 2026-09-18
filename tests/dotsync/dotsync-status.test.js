@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const mod = require('../../home/dot_local/bin/executable_dotsync');
+const { scratch } = require('../lib/tmp');
 const { cmdStatus } = mod;
 
 // dotsync is Unix-only tooling (POSIX path/glob handling + symlink farms; deployed to
@@ -12,10 +13,8 @@ const { cmdStatus } = mod;
 const skip = process.platform === 'win32' ? 'dotsync is Unix-only' : false;
 
 let HOME, MAN, w, captureStatus;
-const dirs = [];
 if (!skip) {
-  HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dsstatus-'));
-  dirs.push(HOME);
+  HOME = scratch(os.tmpdir(), 'dsstatus-');
   MAN = path.join(HOME, '.config', 'dotsync', 'manifest.d');
   fs.mkdirSync(MAN, { recursive: true });
   w = (name, obj) => fs.writeFileSync(path.join(MAN, name), JSON.stringify(obj));
@@ -92,4 +91,3 @@ test('(c) multiple manifest repos: header + status printed per repo, in manifest
   assert.strictEqual(diffCalls.length, 1, 'chezmoi diff is only invoked for the chezmoi-type repo');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

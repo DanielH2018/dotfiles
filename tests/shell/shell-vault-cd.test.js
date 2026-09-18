@@ -9,6 +9,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
@@ -19,14 +20,10 @@ const fnMatch = fs.readFileSync(COMMON, 'utf8').match(/^vault\(\) \{\n[\s\S]*?\n
 assert.ok(fnMatch, 'vault() exists in common.sh');
 const FN = fnMatch[0];
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-')); dirs.push(d); return d; }
-test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 // Runs vault() in `shell` and reports where it landed plus its exit status. cwd starts at a
 // scratch dir so "did not move" is distinguishable from "moved to the vault".
 function run(shell, env) {
-  const start = scratch();
+  const start = scratch(os.tmpdir(), 'vault-');
   const out = execFileSync(shell, ['-c', `${FN}\nvault; echo "rc=$?"\npwd -P`],
     { cwd: start, env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 });
   const lines = out.trim().split('\n');
@@ -37,7 +34,7 @@ for (const shell of ['bash', 'zsh']) {
   const skip = shell === 'zsh' ? zshSkip : false;
 
   test(`${shell}: vault cds to ~/My_Vault by default`, { skip }, () => {
-    const home = scratch();
+    const home = scratch(os.tmpdir(), 'vault-');
     const target = path.join(home, 'My_Vault');
     fs.mkdirSync(target);
     const { cwd, rc } = run(shell, { HOME: home, OBSIDIAN_VAULT_DIR: '' });
@@ -46,9 +43,9 @@ for (const shell of ['bash', 'zsh']) {
   });
 
   test(`${shell}: OBSIDIAN_VAULT_DIR overrides the default, spaces and all`, { skip }, () => {
-    const home = scratch();
+    const home = scratch(os.tmpdir(), 'vault-');
     fs.mkdirSync(path.join(home, 'My_Vault'));
-    const elsewhere = path.join(scratch(), 'Second Brain');
+    const elsewhere = path.join(scratch(os.tmpdir(), 'vault-'), 'Second Brain');
     fs.mkdirSync(elsewhere);
     const { cwd, rc } = run(shell, { HOME: home, OBSIDIAN_VAULT_DIR: elsewhere });
     assert.strictEqual(rc, 0);
@@ -56,14 +53,14 @@ for (const shell of ['bash', 'zsh']) {
   });
 
   test(`${shell}: a missing vault fails loudly and does not cd`, { skip }, () => {
-    const home = scratch();
+    const home = scratch(os.tmpdir(), 'vault-');
     const { cwd, rc, start } = run(shell, { HOME: home, OBSIDIAN_VAULT_DIR: '' });
     assert.strictEqual(rc, 1);
     assert.strictEqual(cwd, start, 'must stay put when there is no vault');
   });
 
   test(`${shell}: the missing-vault message names the path and goes to stderr`, { skip }, () => {
-    const home = scratch();
+    const home = scratch(os.tmpdir(), 'vault-');
     const proc = require('node:child_process').spawnSync(shell, ['-c', `${FN}\nvault`],
       { env: { ...process.env, HOME: home, OBSIDIAN_VAULT_DIR: '' }, encoding: 'utf8', timeout: 10000 });
     assert.strictEqual(proc.stdout, '', 'nothing on stdout');

@@ -29,14 +29,12 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_wpe-watch');
 
 const BASH = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
 const skip = BASH ? false : 'bash unavailable';
-
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
 
 function write(file, body) {
   fs.writeFileSync(file, body);
@@ -51,8 +49,7 @@ function write(file, body) {
 // so on, falling back to the last. That is what makes the unsettled-topology case testable --
 // the script reads twice and compares.
 function sandbox({ resolved, drawing, state }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpe-watch-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'wpe-watch-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   fs.copyFileSync(SCRIPT, path.join(bin, 'wpe-watch'));

@@ -8,18 +8,16 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_session-context.sh');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable' : !have('jq') ? 'jq unavailable' : !have('git') ? 'git unavailable' : false;
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sesctx-')); dirs.push(d); return fs.realpathSync(d); }
-
 // A git repo that ships an executable bin/install-hook-shim. The shim records that it ran
 // by creating a marker next to itself, and prints a line the hook would relay.
 function repoWithShim() {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'sesctx-'));
   const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
@@ -37,10 +35,10 @@ echo "shim reinstalled"
 }
 
 function runHook(cwd, { trusted, source = 'startup', pending } = {}) {
-  const env = { ...process.env, HOME: scratch() };
+  const env = { ...process.env, HOME: fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')) };
   if (trusted !== undefined) env.CLAUDE_SHIM_TRUSTED_ROOTS = trusted;
   else delete env.CLAUDE_SHIM_TRUSTED_ROOTS;
-  // Unset it points at $HOME, which scratch() has already redirected, so the default is
+  // Unset it points at $HOME, which fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')) has already redirected, so the default is
   // hermetic either way; the tests that care name their own file.
   if (pending !== undefined) env.CLAUDE_TRANSCRIPT_LEAK_PENDING = pending;
   const r = spawnSync('bash', [HOOK], {
@@ -110,12 +108,10 @@ test('stays silent on a resumed session', { skip }, () => {
 });
 
 test('exits quietly outside a git repo', { skip }, () => {
-  const { out, code } = runHook(scratch(), { trusted: '/nonexistent' });
+  const { out, code } = runHook(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), { trusted: '/nonexistent' });
   assert.strictEqual(code, 0);
   assert.strictEqual(out.trim(), '');
 });
-
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 // ── The transcript-leak banner ────────────────────────────────────────────────
 //
@@ -125,7 +121,7 @@ process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true,
 // is the contract — it must speak when there is something to say, and stay silent otherwise.
 
 function pendingFile(lines) {
-  const f = path.join(scratch(), 'pending.tsv');
+  const f = path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'pending.tsv');
   fs.writeFileSync(f, lines.map((l) => l.join('\t')).join('\n') + '\n');
   return f;
 }
@@ -158,7 +154,7 @@ test('a could-not-evaluate run is reported as such, not as a finding', { skip },
 
 test('no marker means no banner', { skip }, () => {
   const root = repoWithShim();
-  const { out } = runHook(root, { trusted: '/nonexistent', pending: path.join(scratch(), 'absent') });
+  const { out } = runHook(root, { trusted: '/nonexistent', pending: path.join(fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), 'absent') });
   assert.doesNotMatch(out, /SECURITY:/, 'a banner on every session is a banner nobody reads');
   assert.match(out, /=== Repo context ===/, 'the rest of the context still runs');
 });
@@ -167,7 +163,7 @@ test('the banner does not depend on being inside a git repo', { skip }, () => {
   // Above the git check on purpose. A leaked credential is a fact about the machine, not
   // about the directory Claude was opened in, and gating it on a repo would hide it exactly
   // when you are not in one.
-  const bare = scratch();
+  const bare = fs.realpathSync(scratch(os.tmpdir(), 'sesctx-'));
   const f = pendingFile([['2026-08-29T16:45:03Z', '1', '/home/u/leaks.jsonl']]);
   const { out } = runHook(bare, { trusted: '/nonexistent', pending: f });
   assert.match(out, /SECURITY: 1 untriaged credential finding\(s\)/);

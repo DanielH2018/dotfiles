@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_chezmoi-apply-guard.sh');
 
@@ -18,9 +19,7 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
-const dirs = [];
-const BIN = fs.mkdtempSync(path.join(os.tmpdir(), 'czag-bin-'));
-dirs.push(BIN);
+const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
 # Only 'status' is consulted by the hook; echo the fixture it was given.
 case "$1" in
@@ -109,4 +108,3 @@ test('stays silent when chezmoi status fails', { skip }, () => {
   allows('chezmoi apply', CLEAN);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

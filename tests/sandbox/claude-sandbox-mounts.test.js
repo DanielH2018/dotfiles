@@ -16,6 +16,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SANDBOX_SRC = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox');
 
@@ -41,21 +42,13 @@ const FN = skip ? {} : {
   configure_gh_auth: SOURCE_AUTH,
 };
 
-const dirs = [];
-process.on('exit', () => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sbmnt-'));
-  dirs.push(d);
-  return d;
-}
-
 const ARGS_MARKER = '---DOCKER_ARGS---';
 
 // Drives one function and returns the DOCKER_ARGS it appended plus its stdout.
 // TMPDIR is redirected per run so the mktemp files these functions create (the
 // vault index, the gh hosts file) land somewhere disposable.
 function drive(name, { env = {}, absent = [], pre = '' } = {}) {
-  const tmp = scratch();
+  const tmp = scratch(os.tmpdir(), 'sbmnt-');
   const assignments = Object.entries(env)
     .map(([k, v]) => `${k}=${q(v)}`).join('\n');
   const stub = absent.length ? `command() {
@@ -98,7 +91,7 @@ const envOf = (args) => args.filter((a, i) => args[i - 1] === '-e');
 // A vault with an allowlist naming `standing` and `tasks`, and a workspace that
 // is NOT the vault (the eligible case).
 function vaultFixture({ allowlist, sensitive, present = ['standing', 'tasks'] } = {}) {
-  const root = scratch();
+  const root = scratch(os.tmpdir(), 'sbmnt-');
   const vault = path.join(root, 'vault');
   const sandboxDir = path.join(root, 'sandbox');
   const work = path.join(root, 'someRepo');
@@ -375,7 +368,7 @@ test('hardening does not apply outside a vault session', { skip }, () => {
 // `gh` is stubbed via a directory prepended to PATH so `command -v gh` and
 // `gh auth token` both resolve to the fake.
 function ghRun({ envToken = null, keyringToken = null } = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'sbmnt-');
   if (keyringToken !== null) {
     fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/bash\n[[ "$*" == "auth token" ]] && echo ${keyringToken}\nexit 0\n`);
     fs.chmodSync(path.join(bin, 'gh'), 0o755);

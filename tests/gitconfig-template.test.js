@@ -15,16 +15,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile } = require('./lib/render');
+const { scratch } = require('./lib/tmp');
 
 const SOURCE = path.join(__dirname, '..', 'home');
 const TMPL = path.join(SOURCE, 'dot_gitconfig.tmpl');
 function have(cmd) { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('chezmoi') ? 'chezmoi unavailable' : false;
 
-const dirs = [];
 function fakeHome(keys = []) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gitcfg-'));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), 'gitcfg-');
   fs.mkdirSync(path.join(d, '.ssh'));
   // stat() only cares that the path exists; contents are irrelevant to the branch.
   for (const k of keys) fs.writeFileSync(path.join(d, '.ssh', k), 'not-a-real-key\n', { mode: 0o600 });
@@ -112,4 +111,3 @@ test('always points at an allowed_signers file', { skip }, () => {
   assert.match(render(home), new RegExp(`allowedSignersFile = ${home}/\\.config/git/allowed_signers`));
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

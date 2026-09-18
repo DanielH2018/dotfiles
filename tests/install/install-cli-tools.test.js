@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_after_install-cli-tools.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -20,7 +21,6 @@ const tools = fs.readFileSync(TOOLS, 'utf8');
 // sandbox) rather than failing with a spurious spawn ENOENT.
 const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
-const dirs = [];
 // The memo lives in lib/render.js now, along with the correction this file's comment used to
 // carry alone: it buys speed, not freedom from the flake it was once credited with fixing.
 //
@@ -57,8 +57,7 @@ const PASSTHROUGH = ['sh', 'mkdir', 'cat', 'rm', 'ln', 'sed', 'head', 'mktemp', 
 // stamp the gate reads lives under it. `opts.env` adds to the child environment for the same
 // reason: CLI_TOOLS_FORCE and CLI_TOOLS_MAX_AGE_DAYS are the gate's overrides.
 function runWithStubs(stubs, opts = {}) {
-  const home = opts.home || fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-'));
-  if (!opts.home) dirs.push(home);
+  const home = opts.home || scratch(os.tmpdir(), 'cli-tools-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -361,8 +360,7 @@ function stamp(home, { key, ageDays = 0 }) {
 
 test('a fresh stamp inside the window stops the run before any work', { skip }, () => {
   if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'cli-tools-gate-');
   stamp(home, { key: toolsKey(), ageDays: 1 });
   const { out } = runWithStubs(gateStubs(), { home });
   assert.doesNotMatch(out, REACHED_END, 'a run inside the window must stop at the gate');
@@ -370,8 +368,7 @@ test('a fresh stamp inside the window stops the run before any work', { skip }, 
 
 test('a stamp older than the window lets the run through', { skip }, () => {
   if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-old-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'cli-tools-gate-old-');
   stamp(home, { key: toolsKey(), ageDays: 30 });
   const { out } = runWithStubs(gateStubs(), { home });
   assert.match(out, REACHED_END, 'a stamp past the age window must not stop the run');
@@ -381,8 +378,7 @@ test('a stamp older than the window lets the run through', { skip }, () => {
 // the next apply, not up to a week later.
 test('a changed tools.toml overrides a fresh stamp', { skip }, () => {
   if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-key-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'cli-tools-gate-key-');
   stamp(home, { key: 'aaaaaaaaaaaa', ageDays: 0 });
   const { out } = runWithStubs(gateStubs(), { home });
   assert.match(out, REACHED_END, 'a stamp written for different tools must not stop the run');
@@ -391,8 +387,7 @@ test('a changed tools.toml overrides a fresh stamp', { skip }, () => {
 // The way out, and the way back in past it.
 test('the opt-out marker stops the run, and CLI_TOOLS_FORCE overrides it', { skip }, () => {
   if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-tools-gate-off-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'cli-tools-gate-off-');
   const verDir = path.join(home, '.local', 'bin', '.versions');
   fs.mkdirSync(verDir, { recursive: true });
   fs.writeFileSync(path.join(verDir, '.no-auto-update'), '');
@@ -410,4 +405,3 @@ test('no stamp at all lets the run through', { skip }, () => {
   assert.match(out, REACHED_END, 'a machine with no stamp must run');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

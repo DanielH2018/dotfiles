@@ -18,6 +18,7 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const SWEEP = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_retention-sweep');
@@ -29,10 +30,6 @@ const skip = toolsOk ? false : 'bash/jq unavailable';
 
 let flockAvailable = true;
 try { execFileSync('bash', ['-c', 'command -v flock'], { stdio: 'ignore' }); } catch { flockAvailable = false; }
-
-const dirs = [];
-function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 // Every fixture manifest is written into its own scratch root, so that root is also the
 // right sandbox for everything else the sweeper touches.
@@ -231,7 +228,7 @@ test('manifest has all 20 rows (the 19-row spec table plus G19, minus G18) with 
 // --- Behavioral: dry run reports, never touches fixtures ----------------------------
 
 test('dry run reports matches but leaves every fixture path untouched', { skip }, () => {
-  const root = scratch('retention-fixture-');
+  const root = scratch(os.tmpdir(), 'retention-fixture-');
   const sessionEnvDir = path.join(root, 'session-env', 'aged-empty-uuid');
   fs.mkdirSync(sessionEnvDir, { recursive: true });
   const oldTime = new Date(Date.now() - 3 * 86400 * 1000);
@@ -279,7 +276,7 @@ test('native and self-managed rows are reported as no-op, never scanned for dele
   // after the measured write-back below, would have rewritten the real
   // retention-manifest.json in place too. See "the measured write-back never touches
   // the real manifest" for the regression test this fixes.
-  const root = scratch('retention-native-');
+  const root = scratch(os.tmpdir(), 'retention-native-');
   const m = manifestFile(root, [
     { id: 'N1', path: '~/.claude/projects/**/*.jsonl', kind: 'file-glob', rule: 'native', cap: 'cleanupPeriodDays=30', grace: null, owner: 'Claude Code binary', finding: 'test' },
     { id: 'N2', path: '~/.claude/backups/*', kind: 'file-glob', rule: 'self-managed', cap: 'keep-last-5', grace: null, owner: 'Claude Code binary', finding: 'test' },
@@ -302,7 +299,7 @@ const deadPidRow = (id, glob) => ({
 });
 
 test('--apply prunes a dead-pid file, and each of the three filename shapes is understood', { skip }, () => {
-  const root = scratch('retention-apply-');
+  const root = scratch(os.tmpdir(), 'retention-apply-');
   const week = 7 * 86400 * 1000;
   const session = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', week);
   const fzfport = aged(path.join(root, `.agentview-fzfport.${DEAD_PID}`), '4321', week);
@@ -323,7 +320,7 @@ test('--apply prunes a dead-pid file, and each of the three filename shapes is u
 });
 
 test('without --apply the same dead-pid fixtures are only reported', { skip }, () => {
-  const root = scratch('retention-noapply-');
+  const root = scratch(os.tmpdir(), 'retention-noapply-');
   const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
 
@@ -335,7 +332,7 @@ test('without --apply the same dead-pid fixtures are only reported', { skip }, (
 
 // The gate that matters most: a live session's own state file.
 test('a live pid survives --apply', { skip }, () => {
-  const root = scratch('retention-live-');
+  const root = scratch(os.tmpdir(), 'retention-live-');
   const live = aged(path.join(root, 'sessions', `${process.pid}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
 
@@ -345,7 +342,7 @@ test('a live pid survives --apply', { skip }, () => {
 });
 
 test('the grace floor protects a dead-pid file that is too young', { skip }, () => {
-  const root = scratch('retention-grace-');
+  const root = scratch(os.tmpdir(), 'retention-grace-');
   // Dead pid, so only the grace floor can save it. Two minutes old against grace=1h.
   const young = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 2 * 60 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
@@ -358,7 +355,7 @@ test('the grace floor protects a dead-pid file that is too young', { skip }, () 
 // Same rule, same shape, same age — only the row id differs. This is what pins the
 // blast radius to the source-level set rather than to the rule name.
 test('a row outside the slice-2 set is untouched even under --apply', { skip }, () => {
-  const root = scratch('retention-rowset-');
+  const root = scratch(os.tmpdir(), 'retention-rowset-');
   const week = 7 * 86400 * 1000;
   const inSet = aged(path.join(root, 'in', `${DEAD_PID}.json`), '{}', week);
   const outSet = aged(path.join(root, 'out', `${DEAD_PID}.json`), '{}', week);
@@ -374,7 +371,7 @@ test('a row outside the slice-2 set is untouched even under --apply', { skip }, 
 });
 
 test('a symlink matching the glob is reported, never followed or removed', { skip }, () => {
-  const root = scratch('retention-symlink-');
+  const root = scratch(os.tmpdir(), 'retention-symlink-');
   const outside = aged(path.join(root, 'outside.json'), 'precious', 7 * 86400 * 1000);
   const link = path.join(root, 'sessions', `${DEAD_PID}.json`);
   fs.mkdirSync(path.dirname(link), { recursive: true });
@@ -395,7 +392,7 @@ const stale12 = (root, glob) => ({
 });
 
 test('the stale duplicate is pruned only once a newer live sibling proves it stale', { skip }, () => {
-  const root = scratch('retention-dup-');
+  const root = scratch(os.tmpdir(), 'retention-dup-');
   const target = aged(path.join(root, 'home', 'permissions.json'), 'stale', 6 * 86400 * 1000);
   const sibling = aged(path.join(root, 'proj', 'permissions.json'), 'live', 0);
   const m = manifestFile(root, [stale12(root, target)]);
@@ -407,7 +404,7 @@ test('the stale duplicate is pruned only once a newer live sibling proves it sta
 });
 
 test('with no newer sibling the duplicate is kept — staleness must be proven, not assumed', { skip }, () => {
-  const root = scratch('retention-dup-nosib-');
+  const root = scratch(os.tmpdir(), 'retention-dup-nosib-');
   const target = aged(path.join(root, 'home', 'permissions.json'), 'stale', 6 * 86400 * 1000);
   // The only candidate is OLDER than the target, so nothing proves the target superseded.
   const sibling = aged(path.join(root, 'proj', 'permissions.json'), 'older', 9 * 86400 * 1000);
@@ -419,7 +416,7 @@ test('with no newer sibling the duplicate is kept — staleness must be proven, 
 });
 
 test('a duplicate younger than 48h is kept even with a newer sibling', { skip }, () => {
-  const root = scratch('retention-dup-young-');
+  const root = scratch(os.tmpdir(), 'retention-dup-young-');
   const target = aged(path.join(root, 'home', 'permissions.json'), 'recent', 3600 * 1000);
   const sibling = aged(path.join(root, 'proj', 'permissions.json'), 'live', 0);
   const m = manifestFile(root, [stale12(root, target)]);
@@ -437,7 +434,7 @@ const ageRow = (id, glob, cap) => ({
 });
 
 test('prune-age removes an aged directory tree and keeps one inside the cap', { skip }, () => {
-  const root = scratch('retention-age-');
+  const root = scratch(os.tmpdir(), 'retention-age-');
   // G4's real shape: file-history/<uuid>/ holding content-addressed versions.
   const old = path.join(root, 'hist', 'old-uuid');
   aged(path.join(old, 'abc@v1'), 'v1', 20 * 86400 * 1000);
@@ -455,7 +452,7 @@ test('prune-age removes an aged directory tree and keeps one inside the cap', { 
 });
 
 test('prune-empty-dir removes an empty directory and never a populated one', { skip }, () => {
-  const root = scratch('retention-empty-');
+  const root = scratch(os.tmpdir(), 'retention-empty-');
   const week = 7 * 86400 * 1000;
   const empty = path.join(root, 'env', 'empty-uuid');
   fs.mkdirSync(empty, { recursive: true });
@@ -477,7 +474,7 @@ test('prune-empty-dir removes an empty directory and never a populated one', { s
 
 // The guard that makes unattended recursive removal defensible.
 test('a symlink inside the swept directory is refused, so its target survives', { skip }, () => {
-  const root = scratch('retention-escape-');
+  const root = scratch(os.tmpdir(), 'retention-escape-');
   const precious = path.join(root, 'outside');
   aged(path.join(precious, 'keepme'), 'precious', 30 * 86400 * 1000);
   fs.utimesSync(precious, ago(30 * 86400 * 1000), ago(30 * 86400 * 1000));
@@ -499,7 +496,7 @@ test('a symlink inside the swept directory is refused, so its target survives', 
 });
 
 test('an unparseable cap refuses to act rather than falling back to a default', { skip }, () => {
-  const root = scratch('retention-badcap-');
+  const root = scratch(os.tmpdir(), 'retention-badcap-');
   const f = aged(path.join(root, 'hist', 'old-uuid'), 'x', 40 * 86400 * 1000);
   const m = manifestFile(root, [ageRow('G4', path.join(root, 'hist', '*'), 'fourteen days')]);
 
@@ -513,7 +510,7 @@ test('an unparseable cap refuses to act rather than falling back to a default', 
 // only earn --apply's automatic reach once they have their own supervised --rotate runs,
 // the same way the removal rules earned --apply in slice 2.
 test('--apply alone leaves a rotate-size row completely untouched, even 2x over cap', { skip }, () => {
-  const root = scratch('retention-deferred-');
+  const root = scratch(os.tmpdir(), 'retention-deferred-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'x'.repeat(2_000_000));
   const m = manifestFile(root, [{
@@ -540,7 +537,7 @@ const truncateRow = (id, glob, cap) => ({
 const countLines = (p) => fs.readFileSync(p, 'utf8').split('\n').filter((l) => l.length).length;
 
 test('rotate-size: --apply --rotate is required together; --rotate alone (no --apply) does nothing', { skip }, () => {
-  const root = scratch('retention-rotate-gate-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-gate-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'x'.repeat(2_000_000));
   const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
@@ -558,7 +555,7 @@ test('rotate-size: --apply --rotate is required together; --rotate alone (no --a
 });
 
 test('rotate-size leaves a file under cap untouched even with --apply --rotate', { skip }, () => {
-  const root = scratch('retention-rotate-undercap-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-undercap-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'small');
   const m = manifestFile(root, [rotateRow('G8', log, '1MB, keep 3 gen')]);
@@ -570,7 +567,7 @@ test('rotate-size leaves a file under cap untouched even with --apply --rotate',
 });
 
 test('rotate-size shifts generations and drops the oldest', { skip }, () => {
-  const root = scratch('retention-rotate-gens-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-gens-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'x'.repeat(2_000_000));
   fs.writeFileSync(`${log}.1`, 'gen1-content\n');
@@ -590,7 +587,7 @@ test('rotate-size shifts generations and drops the oldest', { skip }, () => {
 // pre-rotation total exactly -- a race can only interleave lines into the old segment,
 // never lose them.
 test('rotate-size: no data loss -- line count across current + .1 equals the pre-rotation total', { skip }, () => {
-  const root = scratch('retention-rotate-nodataloss-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-nodataloss-');
   const log = path.join(root, 'sessions.log');
   // Padded to 50 bytes/line so 30000 lines comfortably clears the 1MB cap (short lines
   // like "line 42" wouldn't: 30000 * ~8 bytes is well under 1MB).
@@ -608,7 +605,7 @@ test('rotate-size: no data loss -- line count across current + .1 equals the pre
 });
 
 test('rotate-size preserves the file mode across rotation', { skip }, () => {
-  const root = scratch('retention-rotate-mode-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-mode-');
   const log = path.join(root, 'daemon.log');
   fs.writeFileSync(log, 'x'.repeat(1_500_000));
   fs.chmodSync(log, 0o600);
@@ -620,7 +617,7 @@ test('rotate-size preserves the file mode across rotation', { skip }, () => {
 });
 
 test('an unparseable rotate-size cap refuses to act rather than falling back to a default', { skip }, () => {
-  const root = scratch('retention-rotate-badcap-');
+  const root = scratch(os.tmpdir(), 'retention-rotate-badcap-');
   const log = path.join(root, 'sessions.log');
   fs.writeFileSync(log, 'x'.repeat(2_000_000));
   const m = manifestFile(root, [rotateRow('G8', log, 'one megabyte')]);
@@ -632,7 +629,7 @@ test('an unparseable rotate-size cap refuses to act rather than falling back to 
 });
 
 test('truncate-lines: --apply alone leaves a 2x-over-cap file untouched; --apply --rotate truncates it', { skip }, () => {
-  const root = scratch('retention-truncate-gate-');
+  const root = scratch(os.tmpdir(), 'retention-truncate-gate-');
   const log = path.join(root, 'history.jsonl');
   const lines = Array.from({ length: 4000 }, (_, i) => `{"n":${i}}`);
   fs.writeFileSync(log, lines.join('\n') + '\n');
@@ -649,7 +646,7 @@ test('truncate-lines: --apply alone leaves a 2x-over-cap file untouched; --apply
 });
 
 test('truncate-lines keeps exactly the last N lines and preserves mode', { skip }, () => {
-  const root = scratch('retention-truncate-');
+  const root = scratch(os.tmpdir(), 'retention-truncate-');
   const log = path.join(root, 'history.jsonl');
   const lines = Array.from({ length: 6000 }, (_, i) => `{"n":${i}}`);
   fs.writeFileSync(log, lines.join('\n') + '\n');
@@ -665,7 +662,7 @@ test('truncate-lines keeps exactly the last N lines and preserves mode', { skip 
 });
 
 test('truncate-lines leaves a file under cap untouched', { skip }, () => {
-  const root = scratch('retention-truncate-undercap-');
+  const root = scratch(os.tmpdir(), 'retention-truncate-undercap-');
   const log = path.join(root, 'reap-origin.log');
   const content = Array.from({ length: 10 }, (_, i) => `l${i}`).join('\n') + '\n';
   fs.writeFileSync(log, content);
@@ -677,7 +674,7 @@ test('truncate-lines leaves a file under cap untouched', { skip }, () => {
 });
 
 test('an unparseable truncate-lines cap refuses to act rather than falling back to a default', { skip }, () => {
-  const root = scratch('retention-truncate-badcap-');
+  const root = scratch(os.tmpdir(), 'retention-truncate-badcap-');
   const log = path.join(root, 'history.jsonl');
   const content = Array.from({ length: 100 }, (_, i) => `l${i}`).join('\n') + '\n';
   fs.writeFileSync(log, content);
@@ -689,7 +686,7 @@ test('an unparseable truncate-lines cap refuses to act rather than falling back 
 });
 
 test('the run marker records the counts and is overwritten, never appended', { skip }, () => {
-  const root = scratch('retention-marker-');
+  const root = scratch(os.tmpdir(), 'retention-marker-');
   aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
 
@@ -711,7 +708,7 @@ test('the run marker records the counts and is overwritten, never appended', { s
 // `skip` carries a reason string; `!flockAvailable` needs its own, or this reports as a bare
 // "# SKIP" — the only one of the suite's skips that never said why it sat out.
 test('a second sweep exits cleanly while another holds the lock', { skip: skip || (flockAvailable ? false : 'flock unavailable'), timeout: 20000 }, () => {
-  const root = scratch('retention-lock-');
+  const root = scratch(os.tmpdir(), 'retention-lock-');
   const f = aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
   const lock = path.join(root, 'sweep.lock');
@@ -745,7 +742,7 @@ test('running the suite never touches the real home or the real lock', { skip },
   const stamp = (p) => (fs.existsSync(p) ? fs.statSync(p).mtimeMs : null);
   const before = { marker: stamp(realMarker), lock: stamp(realLock) };
 
-  const root = scratch('retention-isolation-');
+  const root = scratch(os.tmpdir(), 'retention-isolation-');
   aged(path.join(root, 'sessions', `${DEAD_PID}.json`), '{}', 7 * 86400 * 1000);
   const m = manifestFile(root, [deadPidRow('G2', path.join(root, 'sessions', '*.json'))]);
   runSweep(m, ['--apply']);
@@ -766,7 +763,7 @@ test('running the suite never touches the real home or the real lock', { skip },
 // the other proves it touches nothing else.
 
 test('a sweep run adds a `measured` object with at/count/bytes to a processed row', { skip }, () => {
-  const root = scratch('retention-measure-');
+  const root = scratch(os.tmpdir(), 'retention-measure-');
   fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
   fs.mkdirSync(path.join(root, 'env', 'b'), { recursive: true });
   const m = manifestFile(root, [{
@@ -785,7 +782,7 @@ test('a sweep run adds a `measured` object with at/count/bytes to a processed ro
 });
 
 test('the write-back changes only `measured` — every other field is untouched', { skip }, () => {
-  const root = scratch('retention-measure-preserve-');
+  const root = scratch(os.tmpdir(), 'retention-measure-preserve-');
   fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
   const before = {
     id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
@@ -802,7 +799,7 @@ test('the write-back changes only `measured` — every other field is untouched'
 });
 
 test('a native/self-managed row is never given a measured object', { skip }, () => {
-  const root = scratch('retention-measure-native-');
+  const root = scratch(os.tmpdir(), 'retention-measure-native-');
   const m = manifestFile(root, [
     { id: 'N1', path: '~/.claude/projects/**/*.jsonl', kind: 'file-glob', rule: 'native', cap: 'x', grace: null, owner: 'Claude Code binary', finding: 'test' },
   ]);
@@ -815,7 +812,7 @@ test('a native/self-managed row is never given a measured object', { skip }, () 
 
 test('running the suite never rewrites the real retention-manifest.json', { skip }, () => {
   const before = fs.readFileSync(MANIFEST, 'utf8');
-  const root = scratch('retention-measure-isolation-');
+  const root = scratch(os.tmpdir(), 'retention-measure-isolation-');
   fs.mkdirSync(path.join(root, 'env', 'a'), { recursive: true });
   const m = manifestFile(root, [{
     id: 'G1', path: path.join(root, 'env', '*'), kind: 'dir-glob', rule: 'prune-empty-dir',
@@ -829,7 +826,7 @@ test('running the suite never rewrites the real retention-manifest.json', { skip
 });
 
 test('an unknown argument is refused rather than ignored', { skip }, () => {
-  const root = scratch('retention-badflag-');
+  const root = scratch(os.tmpdir(), 'retention-badflag-');
   const m = manifestFile(root, []);
   try {
     runSweep(m, ['--force']);

@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const OTELQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_otelq');
 
@@ -22,10 +23,7 @@ try {
   skip = 'python3 unavailable';
 }
 
-const dirs = [];
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'otelq-'));
-dirs.push(DIR);
-
+const DIR = scratch(os.tmpdir(), 'otelq-');
 // Loads the script as a module so the pure helpers can be exercised without a
 // backend. The __main__ guard keeps exec_module from running the CLI.
 const DRIVER = path.join(DIR, 'driver.py');
@@ -653,8 +651,7 @@ test('a missing counter file reads as empty, not as an error', { skip }, () => {
 // permanently empty while each side looks correct on its own, so the only
 // assertion worth making runs both tools against one XDG_DATA_HOME.
 test('otelq reads the counter file jsonq actually writes', { skip }, () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'otelq-xdg-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'otelq-xdg-');
   const doc = path.join(home, 'doc.json');
   fs.writeFileSync(doc, JSON.stringify({ a: [1, 2, 3] }));
   const JSONQ = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_jsonq');
@@ -693,4 +690,3 @@ test('every otelq backend port is published by the compose stack', () => {
   }
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

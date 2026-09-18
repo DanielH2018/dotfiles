@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SRC = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_steam');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -27,11 +28,8 @@ const desktop = fs.readFileSync(DESKTOP, 'utf8');
 // execs its argument rather than interpreting it, so the shell builtin is not what runs.
 const PASSTHROUGH = ['bash', 'sh', 'cat', 'rm', 'mkdir', 'true'];
 
-const dirs = [];
-
 function run({ mullvadExclude, args = [], realExecutable = true, env = {} } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'steam-wrapper-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'steam-wrapper-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -146,4 +144,3 @@ test('the desktop entry keeps the fields that make it shadow the system one', ()
   assert.match(desktop, /^Categories=Network;FileTransfer;Game;$/m);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

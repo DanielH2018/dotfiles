@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { scratch } = require('./lib/tmp');
 
 const REPO = path.join(__dirname, '..');
 const SCRIPT = path.join(REPO, 'bin', 'lint-sh-templates');
@@ -29,12 +30,8 @@ function run(args, env) {
   });
 }
 
-const dirs = [];
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 function fixture(name, body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-sh-tmpl-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'lint-sh-tmpl-');
   const file = path.join(dir, name);
   fs.writeFileSync(file, body);
   return file;
@@ -79,8 +76,7 @@ test('a missing tool announces the skip instead of reporting success quietly', (
   // A PATH holding git and nothing else: the script needs git to find the repo root, and
   // the point is to remove chezmoi/shellcheck specifically rather than to break the script.
   // (Emptying PATH outright would take bash and git with it and prove nothing.)
-  const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-sh-nopath-'));
-  dirs.push(fakeBin);
+  const fakeBin = scratch(os.tmpdir(), 'lint-sh-nopath-');
   const gitPath = spawnSync('command', ['-v', 'git'], { shell: true, encoding: 'utf8' }).stdout.trim();
   fs.symlinkSync(gitPath, path.join(fakeBin, 'git'));
 

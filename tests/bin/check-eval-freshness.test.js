@@ -15,13 +15,11 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', '..', 'bin', 'check-eval-freshness');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
-
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'evalfresh-')); dirs.push(d); return fs.realpathSync(d); }
 
 const SKILLS = 'home/private_dot_claude/skills';
 
@@ -38,7 +36,7 @@ function skillMd(description, body = 'Body text.') {
 // A repo holding one skill that HAS an eval, committed as the baseline the gate diffs
 // against. `withEval: false` builds a skill with no evals/ dir, which is the opt-out.
 function repo({ withEval = true } = {}) {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'evalfresh-'));
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
@@ -127,4 +125,3 @@ test('a missing base ref skips rather than inventing a verdict', { skip }, () =>
   assert.match(`${r.stdout}${r.stderr}`, /no origin\/nope to compare against/);
 });
 
-process.on('exit', () => { for (const d of dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } });

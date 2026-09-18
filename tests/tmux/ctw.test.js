@@ -12,13 +12,11 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const CTW = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_ctw');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
-
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ctw-')); dirs.push(d); return fs.realpathSync(d); }
 
 // A git repo with one empty commit on `main`, plus any extra branches requested.
 function gitRepo(root, name, branches = []) {
@@ -37,7 +35,7 @@ function gitRepo(root, name, branches = []) {
 // branch carries a commit main does not, so a checkout that forked HEAD instead of tracking
 // the remote is visible in the log.
 function clonedRepo(root, name, branch) {
-  const upstream = gitRepo(scratch(), 'upstream');
+  const upstream = gitRepo(fs.realpathSync(scratch(os.tmpdir(), 'ctw-')), 'upstream');
   const g = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'ignore', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
   g(upstream, 'checkout', '-q', '-b', branch);
   g(upstream, 'commit', '-q', '--allow-empty', '-m', 'only-on-remote');
@@ -52,7 +50,7 @@ function clonedRepo(root, name, branch) {
 // Run ctw with a logging `ct` stub on PATH. Returns { code, out, err, ct } where `ct` is
 // the logged args of the final `ct` handoff (empty string if ct was never reached).
 function runCtw(args, { roots, wtRoot, env = {} } = {}) {
-  const bin = scratch();
+  const bin = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const ctlog = path.join(bin, 'ct.log');
   fs.writeFileSync(path.join(bin, 'ct'), `#!/bin/bash\necho "$*" >> ${JSON.stringify(ctlog)}\nexit 0\n`, { mode: 0o755 });
   const e = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
@@ -68,7 +66,7 @@ function runCtw(args, { roots, wtRoot, env = {} } = {}) {
 }
 
 test('--list-repos lists git-repo subdirs of the roots, ignoring non-git dirs', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   gitRepo(root, 'alpha');
   gitRepo(root, 'beta');
   fs.mkdirSync(path.join(root, 'not-a-repo'));       // plain dir: must be ignored
@@ -78,7 +76,7 @@ test('--list-repos lists git-repo subdirs of the roots, ignoring non-git dirs', 
 });
 
 test('--list-repos scans multiple colon-separated roots; first root wins on name collision', { skip }, () => {
-  const r1 = scratch(); const r2 = scratch();
+  const r1 = fs.realpathSync(scratch(os.tmpdir(), 'ctw-')); const r2 = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   gitRepo(r1, 'dup'); gitRepo(r1, 'onlyone');
   gitRepo(r2, 'dup'); gitRepo(r2, 'other');
   const { out } = runCtw(['--list-repos'], { roots: `${r1}:${r2}` });
@@ -87,7 +85,7 @@ test('--list-repos scans multiple colon-separated roots; first root wins on name
 });
 
 test('--list-branches lists local branches of a resolved repo', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   gitRepo(root, 'proj', ['feature', 'bugfix']);
   const { out } = runCtw(['--list-branches', 'proj'], { roots: root });
   const names = out.trim().split('\n').sort();
@@ -95,25 +93,25 @@ test('--list-branches lists local branches of a resolved repo', { skip }, () => 
 });
 
 test('--list-branches on an unknown repo exits non-zero', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { code, err } = runCtw(['--list-branches', 'ghost'], { roots: root });
   assert.notStrictEqual(code, 0);
   assert.match(err, /not found/i);
 });
 
 test('ctw REPO (no branch) hands the repo path to ct, no worktree', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = gitRepo(root, 'proj');
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct } = runCtw(['proj'], { roots: root, wtRoot: wt });
   assert.strictEqual(ct, repo, 'ct launched on the repo itself');
   assert.deepStrictEqual(fs.readdirSync(wt), [], 'no worktree created');
 });
 
 test('ctw REPO BRANCH (existing branch) creates a worktree and launches ct there', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   gitRepo(root, 'proj', ['feature']);
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code, err } = runCtw(['proj', 'feature'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0, err);
   const expected = path.join(wt, 'proj', 'feature');
@@ -122,9 +120,9 @@ test('ctw REPO BRANCH (existing branch) creates a worktree and launches ct there
 });
 
 test('ctw REPO BRANCH (unknown branch) creates the branch on demand', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = gitRepo(root, 'proj');
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code, err } = runCtw(['proj', 'shiny-new'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0, err);
   assert.strictEqual(ct, path.join(wt, 'proj', 'shiny-new'));
@@ -133,9 +131,9 @@ test('ctw REPO BRANCH (unknown branch) creates the branch on demand', { skip }, 
 });
 
 test('ctw REPO BRANCH tracks a branch that exists only on origin instead of forking HEAD', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = clonedRepo(root, 'proj', 'remote-only');
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code, err } = runCtw(['proj', 'remote-only'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0, err);
   const expected = path.join(wt, 'proj', 'remote-only');
@@ -147,9 +145,9 @@ test('ctw REPO BRANCH tracks a branch that exists only on origin instead of fork
 });
 
 test('ctw slugifies a slashed branch for the worktree dir but keeps the real branch name', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = gitRepo(root, 'proj');
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code } = runCtw(['proj', 'feat/x'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0);
   assert.strictEqual(ct, path.join(wt, 'proj', 'feat-x'), 'slash slugified in the path');
@@ -158,9 +156,9 @@ test('ctw slugifies a slashed branch for the worktree dir but keeps the real bra
 });
 
 test('ctw REPO BRANCH launches the main checkout when it already holds that branch', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = gitRepo(root, 'proj');                // 'main' is checked out in the repo itself
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code, err } = runCtw(['proj', 'main'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0, err);
   assert.strictEqual(ct, repo, 'ct launched in the checkout that holds the branch');
@@ -168,11 +166,11 @@ test('ctw REPO BRANCH launches the main checkout when it already holds that bran
 });
 
 test('ctw REPO BRANCH launches an existing worktree that already holds that branch', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const repo = gitRepo(root, 'proj', ['feature']);
-  const elsewhere = path.join(scratch(), 'feature-wt');   // a worktree the repo owns itself
+  const elsewhere = path.join(fs.realpathSync(scratch(os.tmpdir(), 'ctw-')), 'feature-wt');   // a worktree the repo owns itself
   execFileSync('git', ['-C', repo, 'worktree', 'add', elsewhere, 'feature'], { stdio: 'ignore' });
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code, err } = runCtw(['proj', 'feature'], { roots: root, wtRoot: wt });
   assert.strictEqual(code, 0, err);
   assert.strictEqual(ct, elsewhere, 'ct launched in the existing worktree');
@@ -180,9 +178,9 @@ test('ctw REPO BRANCH launches an existing worktree that already holds that bran
 });
 
 test('ctw REPO BRANCH twice reuses the worktree without error', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   gitRepo(root, 'proj', ['feature']);
-  const wt = scratch();
+  const wt = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const first = runCtw(['proj', 'feature'], { roots: root, wtRoot: wt });
   const second = runCtw(['proj', 'feature'], { roots: root, wtRoot: wt });
   assert.strictEqual(first.code, 0, first.err);
@@ -191,13 +189,13 @@ test('ctw REPO BRANCH twice reuses the worktree without error', { skip }, () => 
 });
 
 test('ctw with an absolute path and no branch passes it straight to ct (back-compat)', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct } = runCtw(['/srv/whatever'], { roots: root });
   assert.strictEqual(ct, '/srv/whatever');
 });
 
 test('ctw with an unknown repo name exits non-zero and does not launch ct', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { code, err, ct } = runCtw(['nope'], { roots: root });
   assert.notStrictEqual(code, 0);
   assert.match(err, /not found/i);
@@ -205,7 +203,7 @@ test('ctw with an unknown repo name exits non-zero and does not launch ct', { sk
 });
 
 test('bare ctw hands off to ct with no dir (remote $HOME default)', { skip }, () => {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'ctw-'));
   const { ct, code } = runCtw([], { roots: root });
   assert.strictEqual(code, 0);
   assert.strictEqual(ct, '', 'ct invoked with no args');
@@ -216,4 +214,3 @@ test('ctw -h prints usage and exits 0', { skip }, () => {
   assert.match(out, /^usage: ctw /);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

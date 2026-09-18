@@ -8,6 +8,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const CTS = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_cts');
 function have(cmd) { try { execFileSync('bash', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }); return true; } catch { return false; } }
@@ -24,7 +25,7 @@ function tmuxUsable() {
   if (!have('tmux')) return false;
   let probe;
   try {
-    probe = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-probe-'));
+    probe = scratch(os.tmpdir(), 'tmux-probe-');
     const env = { ...process.env, TMUX_TMPDIR: probe };
     delete env.TMUX;
     execFileSync('tmux', ['new-session', '-d', '-s', '_probe'], { env, stdio: 'ignore' });
@@ -41,14 +42,12 @@ const skipTmux = !have('bash') ? 'bash unavailable' : !tmuxUsable() ? 'tmux cann
 const BASH = (() => { try { return execFileSync('bash', ['-c', 'command -v bash'], { encoding: 'utf8' }).trim(); } catch { return 'bash'; } })();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cts-')); dirs.push(d); return d; }
-function repo(name) { const d = path.join(scratch(), name); fs.mkdirSync(d); return fs.realpathSync(d); }
+function repo(name) { const d = path.join(scratch(os.tmpdir(), 'cts-'), name); fs.mkdirSync(d); return fs.realpathSync(d); }
 
 // Run cts with a logging tmux stub. `insideTmux` sets $TMUX (create-detached + switch
 // path); `hasSession` controls the stub's has-session exit code. Returns the tmux log.
 function runCts(args, { hasSession = false, insideTmux = false, cwd } = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   const log = path.join(bin, 'tmux.log');
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash
 echo "$*" >> ${JSON.stringify(log)}
@@ -128,7 +127,7 @@ test('inside tmux, live session: has-session -> switch-client, never a second la
 });
 
 test('cts errors when tmux is missing', { skip }, () => {
-  const empty = scratch();                       // a PATH with no tmux (and no coreutils)
+  const empty = scratch(os.tmpdir(), 'cts-');                       // a PATH with no tmux (and no coreutils)
   let err;
   try {
     execFileSync(BASH, [CTS, '/whatever'], { env: { ...process.env, PATH: empty }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -142,7 +141,7 @@ test('cts errors rather than naming a session with an empty hash', { skip }, () 
   // tmux present so the guard above it passes, but nothing else on PATH — so cksum and cut
   // are unreachable. Before the fix this produced `-s sb-repo-` with no suffix and carried
   // on, which is how a pre-push run failed on a missing suffix instead of a clear error.
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\nexit 0\n', { mode: 0o755 });
   const d = repo('hashless');
   let err;
@@ -160,11 +159,11 @@ test('-h prints usage and exits 0', { skip }, () => {
 });
 
 test('real tmux accepts cts new-session and launches the command (skip-unless-tmux)', { skip: skipTmux }, () => {
-  const tmpdir = scratch();
+  const tmpdir = scratch(os.tmpdir(), 'cts-');
   const uid = process.getuid();
   const sock = path.join(tmpdir, `tmux-${uid}`, 'default');    // the default socket cts will use
   const d = repo('cts-int-repo');
-  const sbin = path.join(scratch(), 'claude-sandbox');
+  const sbin = path.join(scratch(os.tmpdir(), 'cts-'), 'claude-sandbox');
   fs.writeFileSync(sbin, '#!/bin/bash\nexec sleep 300\n', { mode: 0o755 });   // keeps the pane alive
   // $TMUX points cts at THIS isolated server (socket field) and takes its inside-tmux
   // path (new-session -d). The trailing switch-client fails with no attached client —
@@ -193,7 +192,7 @@ test('real tmux accepts cts new-session and launches the command (skip-unless-tm
 // Stub `ssh` to log its args (and a no-op `tmux` so nothing else can fail the run), then
 // assert cts drives `ssh -t <host> <remote-ct> [dir]` rather than the local sandbox path.
 function runCtsSsh(args, extraEnv = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   const log = path.join(bin, 'ssh.log');
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
 echo "$*" >> ${JSON.stringify(log)}
@@ -229,7 +228,7 @@ test('cts --ssh --branch BRANCH: long form also forwarded', { skip }, () => {
 });
 
 test('cts --ssh -b without a repo errors', { skip }, () => {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
   let err;
   try {
@@ -271,7 +270,7 @@ test('cts --ssh does not fall through to the local sandbox path', { skip }, () =
 // _cts (zsh) calls these over the same ssh contract to populate tab-completion. They query
 // `ctw --list-*` with fail-fast ssh flags and cache the result under $XDG_CACHE_HOME/cts.
 function runCtsComplete(args, { sshOut = '', cacheDir, env = {} } = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   const log = path.join(bin, 'ssh.log');
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash
 echo "$*" >> ${JSON.stringify(log)}
@@ -290,7 +289,7 @@ exit 0
 }
 
 test('cts --complete-repos queries ctw --list-repos with fail-fast ssh flags', { skip }, () => {
-  const { out, sshArgs } = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\nbeta\n', cacheDir: scratch() });
+  const { out, sshArgs } = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\nbeta\n', cacheDir: scratch(os.tmpdir(), 'cts-') });
   assert.match(sshArgs, /ctw --list-repos/, 'runs the remote list-repos query');
   assert.match(sshArgs, /BatchMode=yes/, 'never prompts for a password');
   assert.match(sshArgs, /ConnectTimeout=2/, 'fails fast on an unreachable host');
@@ -299,19 +298,19 @@ test('cts --complete-repos queries ctw --list-repos with fail-fast ssh flags', {
 });
 
 test('cts --complete-repos defaults to the homelab host', { skip }, () => {
-  const { sshArgs } = runCtsComplete(['--complete-repos'], { sshOut: 'x\n', cacheDir: scratch() });
+  const { sshArgs } = runCtsComplete(['--complete-repos'], { sshOut: 'x\n', cacheDir: scratch(os.tmpdir(), 'cts-') });
   assert.match(sshArgs, /(^|\s)daniel-server\b/);
 });
 
 test('cts --complete-branches HOST REPO queries ctw --list-branches REPO', { skip }, () => {
-  const { out, sshArgs } = runCtsComplete(['--complete-branches', 'box', 'proj'], { sshOut: 'main\nfeature\n', cacheDir: scratch() });
+  const { out, sshArgs } = runCtsComplete(['--complete-branches', 'box', 'proj'], { sshOut: 'main\nfeature\n', cacheDir: scratch(os.tmpdir(), 'cts-') });
   assert.match(sshArgs, /ctw --list-branches 'proj'/);
   assert.match(sshArgs, /BatchMode=yes/);
   assert.match(out, /feature/);
 });
 
 test('cts --complete-repos serves cache within the TTL (second call skips ssh)', { skip }, () => {
-  const cache = scratch();
+  const cache = scratch(os.tmpdir(), 'cts-');
   const a = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\nbeta\n', cacheDir: cache });
   assert.match(a.out, /alpha/);
   const b = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'CHANGED\n', cacheDir: cache });
@@ -321,7 +320,7 @@ test('cts --complete-repos serves cache within the TTL (second call skips ssh)',
 });
 
 test('cts --complete-repos refetches when the TTL is 0', { skip }, () => {
-  const cache = scratch();
+  const cache = scratch(os.tmpdir(), 'cts-');
   runCtsComplete(['--complete-repos', 'box'], { sshOut: 'alpha\n', cacheDir: cache, env: { CTS_CACHE_TTL: '0' } });
   const b = runCtsComplete(['--complete-repos', 'box'], { sshOut: 'beta\n', cacheDir: cache, env: { CTS_CACHE_TTL: '0' } });
   assert.match(b.out, /beta/, 'TTL=0 always refetches');
@@ -329,7 +328,7 @@ test('cts --complete-repos refetches when the TTL is 0', { skip }, () => {
 });
 
 test('cts --ssh errors when ssh is missing', { skip }, () => {
-  const empty = scratch();                         // a PATH with neither ssh nor tmux
+  const empty = scratch(os.tmpdir(), 'cts-');                         // a PATH with neither ssh nor tmux
   let err;
   try {
     execFileSync(BASH, [CTS, '--ssh'], { env: { ...process.env, PATH: empty, TMUX: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -340,7 +339,7 @@ test('cts --ssh errors when ssh is missing', { skip }, () => {
 });
 
 test('cts --host with no value errors', { skip }, () => {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   fs.writeFileSync(path.join(bin, 'ssh'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
   let err;
   try {
@@ -363,7 +362,7 @@ test('-h documents --ssh remote mode', { skip }, () => {
 // argv it was actually handed, inside a throwaway HOME. A payload that escapes quoting
 // leaves a marker file behind; one that doesn't, can't.
 function runCtsRemote(args, { env = {} } = {}) {
-  const bin = scratch();
+  const bin = scratch(os.tmpdir(), 'cts-');
   const log = path.join(bin, 'ctw.log');
   fs.writeFileSync(path.join(bin, 'ctw'), `#!/bin/bash
 printf '%s\\n' "$@" >> ${JSON.stringify(log)}
@@ -377,7 +376,7 @@ exit 0
   fs.writeFileSync(path.join(bin, 'tmux'), `#!/bin/bash\nexit 0\n`, { mode: 0o755 });
   const e = { ...process.env, PATH: `${bin}:${process.env.PATH}`, CTS_REMOTE_CTW: 'ctw' };
   delete e.TMUX; delete e.CTS_REMOTE_HOST; delete e.CTS_CACHE_TTL;
-  e.XDG_CACHE_HOME = scratch();
+  e.XDG_CACHE_HOME = scratch(os.tmpdir(), 'cts-');
   Object.assign(e, env);
   execFileSync('bash', [CTS, ...args], { env: e, stdio: ['ignore', 'pipe', 'pipe'] });
   return {
@@ -421,4 +420,3 @@ test('cts --complete-branches: a hostile repo word cannot execute on TAB', { ski
   assert.ok(!r.injected, 'pressing TAB does not run the completed word');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

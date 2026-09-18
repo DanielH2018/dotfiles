@@ -11,6 +11,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const INSTALLER = path.join(__dirname, '..', '..', 'bin', 'install-hook-shim');
 
@@ -32,8 +33,6 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV }).trim();
 }
 
-const dirs = [];
-
 function run(cwd, ...args) {
   try {
     const stdout = execFileSync('bash', [INSTALLER, ...args], {
@@ -48,8 +47,7 @@ function run(cwd, ...args) {
 // A repo that ships the gate the shim delegates to, so the installed shim is
 // exercisable rather than inert.
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-repo-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'shim-repo-');
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'config', 'user.email', 't@example.test');
   git(dir, 'config', 'user.name', 'Test');
@@ -161,8 +159,7 @@ test('replaces the shim by rename, leaving a push already reading it intact', { 
 
 test('from a linked worktree, installs into the shared .git', { skip }, () => {
   const repo = makeRepo();
-  const wtRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-wt-'));
-  dirs.push(wtRoot);
+  const wtRoot = scratch(os.tmpdir(), 'shim-wt-');
   const wt = path.join(wtRoot, 'w');
   git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
 
@@ -179,8 +176,7 @@ test('from a linked worktree, installs into the shared .git', { skip }, () => {
 });
 
 test('outside a repo it exits quietly, so it can never fail a session', { skip }, () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-bare-'));
-  dirs.push(notRepo);
+  const notRepo = scratch(os.tmpdir(), 'shim-bare-');
   const r = run(notRepo);
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
@@ -193,4 +189,3 @@ test('rejects an unknown flag rather than guessing', { skip }, () => {
   assert.match(r.stderr, /usage/);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

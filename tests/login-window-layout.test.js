@@ -18,6 +18,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SCRIPT = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_login-window-layout');
 
@@ -70,11 +71,8 @@ function realPath(cmd) {
 
 const BASH = realPath('bash');
 
-const dirs = [];
-
 function mkdtemp(prefix) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), prefix);
   return d;
 }
 
@@ -344,6 +342,3 @@ test('every launcher the script starts has a stub', { skip }, () => {
   }
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

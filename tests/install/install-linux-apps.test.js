@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SOURCE = path.join(ROOT, 'home');
@@ -166,13 +167,11 @@ test('the shared packages.toml still feeds the Windows installer', { skip }, () 
 // a synthetic PATH so no real package manager, sudo or network is reachable.
 // ---------------------------------------------------------------------------------------------
 const PASSTHROUGH = ['sh', 'mkdir', 'cat', 'rm', 'ln', 'sed', 'head', 'grep', 'mktemp', 'install', 'find', 'tar', 'tee', 'chmod', 'cp'];
-const dirs = [];
 
 // `seed` runs against the throwaway HOME before the script does, for cases that need to look like
 // a machine where something is already installed.
 function runWithStubs(stubs, seed) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-apps-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'linux-apps-');
   if (seed) seed(home);
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
@@ -377,8 +376,7 @@ enabled=0
 
 // Renders just the shared module and sources it, so the helpers can be called in isolation.
 function runModule(shell, { repoFiles = {} } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-mod-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'linux-mod-');
   const repoDir = path.join(home, 'repos');
   fs.mkdirSync(repoDir, { recursive: true });
   for (const [name, content] of Object.entries(repoFiles)) {
@@ -442,6 +440,3 @@ test('a repo file that is absent is written', { skip }, (t) => {
   assert.match(fs.readFileSync(path.join(repoDir, 'vscode.repo'), 'utf8'), /\[code\]/);
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

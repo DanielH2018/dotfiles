@@ -1,9 +1,10 @@
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 // When these tests run inside a git hook (e.g. the repo's pre-push), git exports GIT_DIR,
 // GIT_WORK_TREE, GIT_INDEX_FILE, etc. into the environment. The temp-repo `git -C <dir>` calls
@@ -29,8 +30,6 @@ const WATCH = path.join(HOOKS, 'executable_watch-paths.sh');
 // the hooks' `"$CLAUDE_VAULT_DIR"/*` globs match; on macOS/Linux this is a no-op.
 const fwd = (p) => p.replace(/\\/g, '/');
 
-const cleanups = [];
-function tmp(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); cleanups.push(d); return d; }
 function writeLocalEnv(home, vaultDir) {
   const dir = path.join(home, '.config', 'claude');
   fs.mkdirSync(dir, { recursive: true });
@@ -48,11 +47,11 @@ function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
 }
 
 test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () => {
-  const home = tmp('hookhome-');
+  const home = scratch(os.tmpdir(), 'hookhome-');
   const vault = path.join(home, 'Vault');
   fs.mkdirSync(vault, { recursive: true });
   writeLocalEnv(home, vault);
-  const bin = tmp('bin-');
+  const bin = scratch(os.tmpdir(), 'bin-');
   const marker = path.join(bin, 'called.log');
   fs.writeFileSync(path.join(bin, 'prettier'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(fwd(marker))}\n`, { mode: 0o755 });
 
@@ -68,7 +67,7 @@ test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () 
 });
 
 test('check-before-stop.sh: protected-branch block, vault exemption, dead paths removed', () => {
-  const home = tmp('hookhome-');
+  const home = scratch(os.tmpdir(), 'hookhome-');
   const repo = path.join(home, 'repo');
   fs.mkdirSync(repo, { recursive: true });
   const git = (...a) => execFileSync('git', ['-C', repo, '-c', 'commit.gpgsign=false', '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { encoding: 'utf8' });
@@ -91,7 +90,7 @@ test('check-before-stop.sh: protected-branch block, vault exemption, dead paths 
 });
 
 test('watch-paths.sh: vault raw/ watched only when configured', () => {
-  const home = tmp('hookhome-');
+  const home = scratch(os.tmpdir(), 'hookhome-');
   const vault = path.join(home, 'Vault');
   fs.mkdirSync(path.join(vault, 'raw'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'rules'), { recursive: true });
@@ -101,7 +100,7 @@ test('watch-paths.sh: vault raw/ watched only when configured', () => {
   assert.ok(w1.includes(fwd(path.join(vault, 'raw'))), 'vault raw/ watched when configured');
   assert.ok(w1.includes(fwd(path.join(home, '.claude', 'rules'))), 'rules dir always watched');
 
-  const home2 = tmp('hookhome-');
+  const home2 = scratch(os.tmpdir(), 'hookhome-');
   fs.mkdirSync(path.join(home2, '.claude', 'rules'), { recursive: true });
   const r2 = runHook(WATCH, { input: JSON.stringify({ source: 'startup' }), home: home2 });
   const w2 = JSON.parse(r2.stdout).hookSpecificOutput.watchPaths;
@@ -111,6 +110,3 @@ test('watch-paths.sh: vault raw/ watched only when configured', () => {
   assert.strictEqual(r3.stdout.trim(), '', 'non-startup source produces no output');
 });
 
-after(() => {
-  for (const c of cleanups) fs.rmSync(c, { recursive: true, force: true });
-});

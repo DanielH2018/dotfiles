@@ -5,9 +5,8 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const dirs = [];
-
 const { shConst } = require('../lib/sh-const');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_link-artifact.sh');
 
@@ -30,9 +29,7 @@ const hostLink = (absPath, rel) =>
 // override that lands in the real ~/.claude/logs/artifact-state, so a test run would
 // point the live registry at a /tmp fixture that is deleted moments later — and
 // clobber a genuine entry for whichever repo the suite ran in.
-const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'la-state-'));
-dirs.push(STATE_DIR);
-
+const STATE_DIR = scratch(os.tmpdir(), 'la-state-');
 // Runs the hook with a Write payload for `filePath`; returns the emitted
 // additionalContext string ('' when the hook no-ops / exits without output).
 function run(filePath, env = {}) {
@@ -157,11 +154,9 @@ test('symlink resolution gated to in-container', () => {
   if (process.platform !== 'win32') {
     const fs = require('node:fs');
     const os = require('node:os');
-    const real = fs.mkdtempSync(path.join(os.tmpdir(), 'la-real-'));
-    dirs.push(real);
+    const real = scratch(os.tmpdir(), 'la-real-');
     fs.writeFileSync(path.join(real, 'report.html'), '<html>');
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-home-'));
-    dirs.push(home);
+    const home = scratch(os.tmpdir(), 'la-home-');
     fs.mkdirSync(path.join(home, '.claude'));
     fs.symlinkSync(real, path.join(home, '.claude', 'artifacts')); // ~/.claude/artifacts -> real
     const linked = path.join(home, '.claude', 'artifacts', 'report.html');
@@ -180,8 +175,7 @@ test('symlink resolution gated to in-container', () => {
 function artifactsDir(files) {
   const fs = require('node:fs');
   const os = require('node:os');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'la-nudge-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'la-nudge-');
   const dir = path.join(home, '.claude', 'artifacts');
   fs.mkdirSync(dir, { recursive: true });
   for (const f of files) fs.writeFileSync(path.join(dir, f), 'x');
@@ -224,4 +218,3 @@ test('registration is confined to the test state dir', () => {
     `registration landed in the test state dir; got: ${JSON.stringify(written)}`);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

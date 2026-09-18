@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const WATCH = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_otel-sweep-watch');
 
@@ -20,9 +21,8 @@ try {
   skip = 'python3 unavailable';
 }
 
-const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'otel-sweep-watch-'));
+const DIR = scratch(os.tmpdir(), 'otel-sweep-watch-');
 // Every other scratch here is made inside DIR, so removing it covers them all.
-process.on('exit', () => fs.rmSync(DIR, { recursive: true, force: true }));
 
 // A stub standing in for otel-sweep: prints the fixture handed to it, ignores its flags.
 function stub(payload) {
@@ -48,7 +48,7 @@ function hash(s) {
 // desktop as if a machine were down. The stub therefore shadows notify-send for
 // EVERY run, not only the tests that assert on notifications.
 function notifyStub() {
-  const bin = fs.mkdtempSync(path.join(DIR, 'bin-'));
+  const bin = scratch(DIR, 'bin-');
   const log = path.join(bin, 'calls');
   fs.writeFileSync(path.join(bin, 'notify-send'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >>${log}\n`);
   fs.chmodSync(path.join(bin, 'notify-send'), 0o755);
@@ -71,7 +71,7 @@ function run(payload, extra = {}) {
         PATH: `${SILENT.bin}:${process.env.PATH}`,
         // Each run gets its own state dir by default, so the dedup memory neither
         // reaches the real ~/.local/state nor leaks between tests.
-        XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'state-')),
+        XDG_STATE_HOME: scratch(DIR, 'state-'),
         ...extra,
       },
     });
@@ -226,7 +226,7 @@ const LOKI_DOWN = JSON.stringify({
 
 test('an unchanged finding set notifies once, not on every run', { skip }, () => {
   const spy = notifyStub();
-  const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'dedup-')), PATH: `${spy.bin}:${process.env.PATH}` };
+  const env = { XDG_STATE_HOME: scratch(DIR, 'dedup-'), PATH: `${spy.bin}:${process.env.PATH}` };
 
   assert.strictEqual(run(LOKI_DOWN, env).code, 1);
   assert.strictEqual(spy.calls().length, 1, 'the first finding must reach the desktop');
@@ -238,7 +238,7 @@ test('an unchanged finding set notifies once, not on every run', { skip }, () =>
 test('something still broken resurfaces once the window lapses', { skip }, () => {
   const spy = notifyStub();
   const env = {
-    XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'window-')),
+    XDG_STATE_HOME: scratch(DIR, 'window-'),
     PATH: `${spy.bin}:${process.env.PATH}`,
     OTEL_SWEEP_WATCH_REPEAT_AFTER: '0',
   };
@@ -249,7 +249,7 @@ test('something still broken resurfaces once the window lapses', { skip }, () =>
 
 test('a different finding still notifies inside the window', { skip }, () => {
   const spy = notifyStub();
-  const env = { XDG_STATE_HOME: fs.mkdtempSync(path.join(DIR, 'changed-')), PATH: `${spy.bin}:${process.env.PATH}` };
+  const env = { XDG_STATE_HOME: scratch(DIR, 'changed-'), PATH: `${spy.bin}:${process.env.PATH}` };
   run(LOKI_DOWN, env);
   run(JSON.stringify({ server: { error: 'ssh: connect to host daniel-server port 22: No route to host' } }), env);
   assert.strictEqual(spy.calls().length, 2, 'a new problem must not be masked by an unrelated older one');

@@ -9,6 +9,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_tq-wrap-tests.py');
 const TQ = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'executable_tq');
@@ -21,11 +22,9 @@ const skip = python3Ok ? false : 'python3 unavailable';
 // emits. The repo's copy is named executable_tq, so give it a resolvable alias
 // and point TQ_BIN at it: this exercises the checkout rather than whatever
 // `chezmoi apply` last deployed.
-const dirs = [];
 let binDir = '';
 if (python3Ok) {
-  binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hook-bin-'));
-  dirs.push(binDir);
+  binDir = scratch(os.tmpdir(), 'tq-hook-bin-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
 }
 
@@ -44,8 +43,7 @@ if (python3Ok) {
 const TQ_LIB_SRC = path.join(__dirname, '..', '..', 'home', 'dot_local', 'share', 'tq');
 let hardenedLib = '';
 if (python3Ok) {
-  hardenedLib = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hook-lib-'));
-  dirs.push(hardenedLib);
+  hardenedLib = scratch(os.tmpdir(), 'tq-hook-lib-');
   fs.cpSync(TQ_LIB_SRC, hardenedLib, { recursive: true, filter: (src) => !src.includes('__pycache__') });
   const harden = (p) => {
     const st = fs.statSync(p);
@@ -211,8 +209,7 @@ test('the rewrite is skipped when tq cannot be resolved by name', { skip }, () =
 // chosen by whoever can set an environment variable. Both refusals must leave the command
 // untouched and still exit 0: rewrite() is called under a deliberately blind except.
 test('a world-writable TQ_HOME is refused rather than imported', { skip }, () => {
-  const hostile = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-hostile-'));
-  dirs.push(hostile);
+  const hostile = scratch(os.tmpdir(), 'tq-hostile-');
   // If this were imported the hook would die on the SystemExit rather than return null.
   fs.writeFileSync(path.join(hostile, 'detect.py'), 'raise SystemExit("must never be imported")\n');
   fs.chmodSync(hostile, 0o777);
@@ -222,11 +219,9 @@ test('a world-writable TQ_HOME is refused rather than imported', { skip }, () =>
 });
 
 test('a TQ_HOME with no module is refused', { skip }, () => {
-  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tq-empty-'));
-  dirs.push(empty);
+  const empty = scratch(os.tmpdir(), 'tq-empty-');
   const r = runHook('node --test', { env: { TQ_HOME: empty } });
   assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
   assert.strictEqual(r.stdout.trim(), '');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

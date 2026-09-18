@@ -5,9 +5,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_reprime-nudge.sh');
 
@@ -16,10 +16,8 @@ try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catc
 const skip = toolsOk ? false : 'bash/jq unavailable';
 
 // Forward-slash HOME so Git Bash resolves it cleanly on Windows.
-const dirs = [];
 function tmpHome() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'reprime-')).replace(/\\/g, '/');
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), 'reprime-').replace(/\\/g, '/');
   return d;
 }
 
@@ -68,4 +66,3 @@ test('malformed stdin exits cleanly with no nudge', { skip }, () => {
   assert.strictEqual(ctx(out), null);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

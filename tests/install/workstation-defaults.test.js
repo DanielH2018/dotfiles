@@ -17,6 +17,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-workstation-defaults.sh.tmpl');
 
@@ -41,13 +42,10 @@ exit 0`;
 
 const HOSTNAMECTL = 'echo "$@" >> "$STATE_DIR/hostnamectl.log"; exit 0';
 
-const dirs = [];
-
 // hostnameContent is the file's literal bytes, or null for no file at all — a boolean would not
 // be able to express the case that actually shipped on this box, a file holding one newline.
 function run({ state, hostnameContent = null, waitEnabled = true, rpmsave = true } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'workstation-defaults-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'workstation-defaults-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -158,6 +156,3 @@ test('a converged apply changes nothing and never probes sudo', { skip }, () => 
   assert.strictEqual(second.sudoLog, first.sudoLog, 'a converged apply must not touch sudo');
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

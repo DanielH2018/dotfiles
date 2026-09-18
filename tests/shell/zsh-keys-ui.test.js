@@ -12,6 +12,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { renderFile } = require('../lib/render');
 const { Term, ptySkip, tierB } = require('../lib/pty');
+const { scratch } = require('../lib/tmp');
 
 const ROOT = path.join(__dirname, '..', '..');
 const ZSHRC_SRC = path.join(ROOT, 'home', 'dot_zshrc.tmpl');
@@ -37,9 +38,6 @@ const skip = gate
       : missing('chezmoi') ? 'chezmoi unavailable'
         : !rendered ? `chezmoi execute-template failed: ${renderError}` : false);
 
-const dirs = [];
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 const PROMPT = 'ZP>';
 
 // starship installs a precmd that repaints PROMPT on every line, so a fixed prompt
@@ -52,8 +50,7 @@ RPROMPT=''
 `;
 
 function makeEnv({ history = [] } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zshui-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'zshui-');
   fs.mkdirSync(path.join(home, '.config', 'shell'), { recursive: true });
   fs.copyFileSync(COMMON_SRC, path.join(home, '.config', 'shell', 'common.sh'));
   fs.writeFileSync(path.join(home, '.zshrc'), rendered + PROMPT_OVERRIDE);

@@ -16,6 +16,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 const FN = fs.readFileSync(SRC, 'utf8').match(/^claude\(\) \{[\s\S]*?^\}$/m)[0];
@@ -24,13 +25,10 @@ let zshOk = true;
 try { execFileSync('zsh', ['-c', 'true'], { stdio: 'ignore' }); } catch { zshOk = false; }
 const zshSkip = zshOk ? false : 'zsh unavailable';
 
-const dirs = [];
-function scratch(prefix) { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); dirs.push(d); return d; }
-
 // Stub bin: tmux and claude both log. tmux logging ANYTHING is a failure now — that is the
 // whole point of the file — and claude logs its argv and cwd so the redirect is checkable.
 function makeEnv() {
-  const bin = scratch('cwrap-bin-');
+  const bin = scratch(os.tmpdir(), 'cwrap-bin-');
   const tmuxLog = path.join(bin, 'tmux.log'); fs.writeFileSync(tmuxLog, '');
   const claudeLog = path.join(bin, 'claude.log'); fs.writeFileSync(claudeLog, '');
   fs.writeFileSync(path.join(bin, 'tmux'), '#!/bin/bash\necho "$*" >> "$TMUX_LOG"\nexit 0\n', { mode: 0o755 });
@@ -99,7 +97,7 @@ test('args with spaces survive', () => {
 // every launch. Running from ~/dev trusts once and sticks.
 test('a $HOME cwd runs claude from ~/dev', () => {
   const { env, claudeLog } = makeEnv();
-  const home = scratch('cwrap-home-');
+  const home = scratch(os.tmpdir(), 'cwrap-home-');
   fs.mkdirSync(path.join(home, 'dev'));
   run('bash', env, { cwd: home, home });
   assert.match(read(claudeLog), new RegExp(`cwd=${path.join(home, 'dev')} `), 'a $HOME session must run from ~/dev');
@@ -107,16 +105,16 @@ test('a $HOME cwd runs claude from ~/dev', () => {
 
 test('a $HOME cwd with no ~/dev stays in $HOME rather than failing to launch', () => {
   const { env, claudeLog } = makeEnv();
-  const home = scratch('cwrap-home-');
+  const home = scratch(os.tmpdir(), 'cwrap-home-');
   run('bash', env, { cwd: home, home });
   assert.match(read(claudeLog), new RegExp(`cwd=${home} `), 'no ~/dev means run where you are');
 });
 
 test('a real project cwd is left alone', () => {
   const { env, claudeLog } = makeEnv();
-  const home = scratch('cwrap-home-');
+  const home = scratch(os.tmpdir(), 'cwrap-home-');
   fs.mkdirSync(path.join(home, 'dev'));
-  const proj = scratch('cwrap-proj-');
+  const proj = scratch(os.tmpdir(), 'cwrap-proj-');
   run('bash', env, { cwd: proj, home });
   assert.match(read(claudeLog), new RegExp(`cwd=${proj} `), 'a project cwd must not be redirected');
 });
@@ -128,4 +126,3 @@ test('behaves identically under zsh', { skip: zshSkip }, () => {
   assert.match(read(claudeLog), /argv=/);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

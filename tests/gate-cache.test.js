@@ -17,6 +17,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const REPO = path.join(__dirname, '..');
 const GATE = path.join(REPO, 'bin', 'gate-cache');
@@ -27,20 +28,10 @@ function have(cmd) {
 }
 const skip = !have('bash') ? 'bash unavailable' : !have('git') ? 'git unavailable' : false;
 
-const dirs = [];
-function scratch() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gatecache-'));
-  dirs.push(d);
-  return fs.realpathSync(d);
-}
-process.on('exit', () => {
-  for (const d of dirs) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
-});
-
 // A throwaway repo with one commit. Signing is off: these fixtures never push, and the
 // signing key is not available to the suite.
 function repo() {
-  const root = scratch();
+  const root = fs.realpathSync(scratch(os.tmpdir(), 'gatecache-'));
   const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 'test@example.com');
@@ -165,7 +156,7 @@ test('a changed toolchain misses at the same HEAD and clean tree', { skip }, () 
 
   // A stub node earlier on PATH than the real one: same HEAD, same clean tree, different
   // version text. Prepended rather than replacing PATH, so git and bash still resolve.
-  const stubDir = scratch();
+  const stubDir = fs.realpathSync(scratch(os.tmpdir(), 'gatecache-'));
   fs.writeFileSync(path.join(stubDir, 'node'), '#!/bin/bash\necho v0.0.0-stub\n', { mode: 0o755 });
   const r = gate(root, 'check', { PATH: `${stubDir}:${process.env.PATH}` });
   assert.notStrictEqual(r.status, 0, 'a different node must invalidate the record');
@@ -177,7 +168,7 @@ test('a changed toolchain misses at the same HEAD and clean tree', { skip }, () 
 
 test('a record saved under one toolchain is not revived by restoring it', { skip }, () => {
   const root = repo();
-  const stubDir = scratch();
+  const stubDir = fs.realpathSync(scratch(os.tmpdir(), 'gatecache-'));
   fs.writeFileSync(path.join(stubDir, 'node'), '#!/bin/bash\necho v0.0.0-stub\n', { mode: 0o755 });
   const stubPath = { PATH: `${stubDir}:${process.env.PATH}` };
   gate(root, 'save', stubPath);
@@ -191,13 +182,13 @@ test('the record lives under the git dir, so worktrees do not share one', { skip
   assert.ok(fs.existsSync(path.join(root, '.git', 'gate-cache')), 'record must sit in the git dir');
   // A second worktree has its own git dir and its own tree, so it must start cold even
   // though its HEAD sha can match.
-  const wt = path.join(scratch(), 'wt');
+  const wt = path.join(fs.realpathSync(scratch(os.tmpdir(), 'gatecache-')), 'wt');
   execFileSync('git', ['worktree', 'add', '-q', '-b', 'side', wt], { cwd: root, stdio: 'ignore' });
   assert.notStrictEqual(gate(wt, 'check').status, 0, 'a fresh worktree has proved nothing');
 });
 
 test('outside a git repo it misses instead of failing the push', { skip }, () => {
-  assert.notStrictEqual(gate(scratch(), 'check').status, 0);
+  assert.notStrictEqual(gate(fs.realpathSync(scratch(os.tmpdir(), 'gatecache-')), 'check').status, 0);
 });
 
 // --- wiring ------------------------------------------------------------------------

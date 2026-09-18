@@ -15,6 +15,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
+const { scratch } = require('./lib/tmp');
 
 const REPO = path.join(__dirname, '..');
 const SCRIPT = path.join(REPO, 'bin', 'lint-js');
@@ -29,12 +30,8 @@ function runLint(args) {
   return spawnSync('bash', [SCRIPT, ...args], { cwd: REPO, encoding: 'utf8' });
 }
 
-const dirs = [];
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
-
 function fixture(name, body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lint-js-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'lint-js-');
   const file = path.join(dir, name);
   fs.writeFileSync(file, body);
   return file;

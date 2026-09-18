@@ -16,6 +16,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-abrt-blacklist.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
@@ -43,11 +44,8 @@ const SUDO_OK = '[ "$1" = "-v" ] && exit 0; exec "$@"';
 // sudo whose credential probe fails -- the defer path.
 const SUDO_NONE = '[ "$1" = "-v" ] && exit 1; exec "$@"';
 
-const dirs = [];
-
 function run(initialConf, { sudo = SUDO_OK } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'abrt-bl-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'abrt-bl-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -168,4 +166,3 @@ test('a missing config file is a no-op, not a failure', { skip }, () => {
   assert.match(r.out, /does not exist; nothing to configure/);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

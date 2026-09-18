@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-display-edid-recovery.sh.tmpl');
 
@@ -33,7 +34,6 @@ const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linu
 // not listed here and not stubbed simply won't exist.
 const PASSTHROUGH = ['sh', 'bash', 'cat', 'cp', 'wc', 'od', 'grep', 'install', 'date', 'tee', 'chmod', 'ls', 'mkdir', 'printf', 'echo', 'cmp', 'rm', 'dirname', 'uname', 'command'];
 
-const dirs = [];
 let renderedCache;
 // Pinned to the workstation profile: this script is gated behind is-desktop-linux, so it renders
 // to zero bytes on a server-profile host and every assertion below fails there for no reason.
@@ -111,8 +111,7 @@ function stubDir(root) {
 // inside the forced off/detect (3), settle after that (4). So repairAfter:2 exercises the first
 // rung succeeding and repairAfter:4 the second, while leaving it unset exercises neither working.
 function runHealth({ connectors, args = [], repairAfter, repairVendor = 'GSM', minInterval = 0, stampAgeSeconds, readOnlyStatus = false } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'display-edid-'));
-  dirs.push(root);
+  const root = scratch(os.tmpdir(), 'display-edid-');
   const drm = fakeDrm(root, connectors);
   const binDir = stubDir(root);
   const stateDir = path.join(root, 'state');
@@ -186,8 +185,6 @@ exit 0
 const healthy = (name, vendor = 'GSM') => ({ name, status: 'connected', edid: edid(vendor) });
 const placeholder = (name) => ({ name, status: 'connected', edid: edid('NVD'), vendor: 'NVD' });
 const noEdid = (name, status = 'connected') => ({ name, status, edid: null });
-
-test.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
 
 test('leaves a fully healthy set of connectors alone', { skip }, () => {
   const r = runHealth({ connectors: [healthy('card1-DP-1'), healthy('card1-DP-3'), healthy('card1-HDMI-A-1', 'AUS')] });
@@ -299,8 +296,7 @@ test('decides from EDID bytes, never from a connector name', { skip }, () => {
 // --- installer -------------------------------------------------------------------------------
 
 function runInstaller({ withConnectors = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'display-edid-inst-'));
-  dirs.push(root);
+  const root = scratch(os.tmpdir(), 'display-edid-inst-');
   const binDir = stubDir(root);
   const stateDir = path.join(root, 'state');
   fs.mkdirSync(stateDir, { recursive: true });

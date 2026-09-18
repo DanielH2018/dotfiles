@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { shConstInt } = require('../lib/sh-const');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const HOOK = path.join(HOOKS, 'executable_notify.sh');
@@ -53,8 +54,6 @@ const skipBanner = skip
   || (onWindows ? 'Warp draws the banner on Windows, so the hook does not' : false);
 const skipWindows = skip || (onWindows ? false : 'not native Windows');
 
-const dirs = [];
-
 // A fake $HOME with a stubbed play-sound.sh. `job` creates the jobs directory that marks the
 // notifying session as a background job, which is exactly what the gate looks for.
 //
@@ -86,8 +85,7 @@ function sleep(ms) {
 }
 
 function run({ type, sid, job }) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'notify-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'notify-');
   const hooks = path.join(home, '.claude', 'hooks');
   fs.mkdirSync(hooks, { recursive: true });
   const played = path.join(home, 'played.log');
@@ -178,4 +176,3 @@ test('the Windows cue plays at a reduced volume, not full', { skip: skipWindows 
   assert.match(played, /Volume = 0\.25/, 'MediaPlayer is given 25%, not full gain');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

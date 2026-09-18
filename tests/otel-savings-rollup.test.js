@@ -12,11 +12,10 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const ROLLUP = path.join(
   __dirname, '..', 'home', 'dot_local', 'bin', 'executable_otel-savings-rollup');
-
-const dirs = [];
 
 // A stub standing in for otelq: prints `out`, exits `code`.
 function stub(dir, out, code = 0) {
@@ -40,8 +39,7 @@ function run(env) {
 }
 
 function fixture(record, code = 0) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rollup-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'rollup-');
   const out = path.join(dir, 'claude-metrics', 'daily.jsonl');
   return { dir, out, env: { XDG_DATA_HOME: dir, OTELQ: stub(dir, record, code) } };
 }
@@ -79,8 +77,7 @@ test('writes nothing when the query itself fails', () => {
 });
 
 test('reports a missing otelq rather than silently doing nothing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rollup-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'rollup-');
   const r = run({ XDG_DATA_HOME: dir, OTELQ: 'otelq-that-does-not-exist' });
   assert.strictEqual(r.code, 2);
   assert.match(r.err, /not on PATH/);
@@ -105,4 +102,3 @@ test('appends again once the gap is wide enough', () => {
   assert.strictEqual(fs.readFileSync(f.out, 'utf8').trim().split('\n').length, 2);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

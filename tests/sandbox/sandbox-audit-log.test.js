@@ -8,15 +8,13 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'sandbox', 'executable_audit.sh');
 
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
-
-const dirs = [];
-function scratch() { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-audit-')); dirs.push(d); return d; }
 
 // Rotation thresholds for this test's own runs. The hook ships 5000/3000; driving them down
 // here is what lets the rotation case seed a handful of lines instead of 5001, and keeps the
@@ -48,7 +46,7 @@ function readLines(logDir) {
 }
 
 test('a single tool call is appended as one JSONL line with expected fields', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'sandbox-audit-');
   runHook(dir, JSON.stringify({ session_id: 's1', tool_name: 'Bash', tool_input: { command: 'ls -la' } }));
   const lines = readLines(dir);
   assert.strictEqual(lines.length, 1);
@@ -61,7 +59,7 @@ test('a single tool call is appended as one JSONL line with expected fields', { 
 });
 
 test('two calls append two lines', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'sandbox-audit-');
   runHook(dir, JSON.stringify({ session_id: 's1', tool_name: 'Read', tool_input: { file_path: '/tmp/a.py' } }));
   runHook(dir, JSON.stringify({ session_id: 's1', tool_name: 'Read', tool_input: { file_path: '/tmp/b.py' } }));
   const lines = readLines(dir);
@@ -71,7 +69,7 @@ test('two calls append two lines', { skip }, () => {
 });
 
 test('exceeding MAX_LINES rotates the log down to KEEP_LINES, keeping the newest entries', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'sandbox-audit-');
   // One throwaway call so the hook names the log file; then seed that exact file,
   // so the seed and the append below can't land on two different dates.
   runHook(dir, JSON.stringify({ session_id: 's0', tool_name: 'Bash', tool_input: { command: 'discard' } }), rotationEnv);
@@ -88,11 +86,10 @@ test('exceeding MAX_LINES rotates the log down to KEEP_LINES, keeping the newest
 });
 
 test('malformed stdin does not crash and writes no corrupt line', { skip }, () => {
-  const dir = scratch();
+  const dir = scratch(os.tmpdir(), 'sandbox-audit-');
   runHook(dir, 'not json');
   const lines = readLines(dir);
   assert.strictEqual(lines.length, 1);
   assert.doesNotThrow(() => JSON.parse(lines[0]), 'the written line must still be valid JSON');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

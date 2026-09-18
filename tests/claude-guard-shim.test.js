@@ -8,6 +8,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('./lib/tmp');
 
 const SHIM = path.join(__dirname, '..', 'home', 'dot_local', 'bin', 'executable_claude-guard');
 const SHARE = path.join(__dirname, '..', 'home', 'dot_local', 'share', 'claude-guard');
@@ -49,8 +50,7 @@ test('the shim\'s own lookup ignores a real cwd venv only because of --system',
     const argv = shimLookupArgv(SHIM);
     assert.ok(argv.includes('--system'), argv.join(' '));
 
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-guard-real-venv-'));
-    t.after(() => { try { fs.rmSync(cwd, { recursive: true, force: true }); } catch {} });
+    const cwd = scratch(os.tmpdir(), 'claude-guard-real-venv-', t);
     const venv = path.join(cwd, '.venv');
     const created = spawnSync('uv', ['venv', '--python', '3.14', venv], { encoding: 'utf8' });
     if (created.status !== 0) {

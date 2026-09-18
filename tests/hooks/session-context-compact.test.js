@@ -6,12 +6,13 @@
 // Drives the real hook against a scratch repo, and asserts the matcher in the settings
 // template still names `compact` — the script and the registration have to agree, and
 // either one alone silently does nothing.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 // The repo's pre-push hook exports GIT_DIR/GIT_WORK_TREE, which would point the hook's
 // git calls at the outer repo instead of the fixture.
@@ -26,12 +27,8 @@ let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq && command -v git'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq/git unavailable';
 
-const cleanups = [];
-after(() => { for (const d of cleanups) fs.rmSync(d, { recursive: true, force: true }); });
-
 function repo() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sesctx-'));
-  cleanups.push(d);
+  const d = scratch(os.tmpdir(), 'sesctx-');
   const git = (...args) => execFileSync('git', args, { cwd: d, stdio: 'pipe' });
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.invalid');

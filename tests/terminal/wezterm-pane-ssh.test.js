@@ -12,6 +12,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const REPO = path.join(__dirname, '..', '..');
 const SCRIPT = path.join(REPO, 'home', 'dot_local', 'bin', 'executable_wezterm-pane-ssh');
@@ -38,10 +39,8 @@ function mkProc(root, { pid, comm, ppid, pane, argv = [], fd0 }) {
   }
 }
 
-const dirs = [];
 function tmpdir(name) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), `pane-ssh-${name}-`));
-  dirs.push(d);
+  const d = scratch(os.tmpdir(), `pane-ssh-${name}-`);
   return d;
 }
 
@@ -172,4 +171,3 @@ test('a tmux layout survives tmux being absent', { skip }, () => {
   assert.notStrictEqual(got.code, 0);
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

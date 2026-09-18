@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderTemplate, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const ROOT = path.join(__dirname, '..', '..');
 const SOURCE = path.join(ROOT, 'home');
@@ -35,11 +36,9 @@ const render = () => renderTemplate(body, { source: SOURCE });
 const rendersHere = () => process.platform === 'linux' && render().trim() !== '';
 
 const PASSTHROUGH = ['sh', 'mkdir', 'cat', 'rm', 'sed', 'head', 'grep', 'mktemp', 'chmod'];
-const dirs = [];
 
 function runWithStubs(stubs) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'linux-codecs-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'linux-codecs-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -251,6 +250,3 @@ test('a failed install exits non-zero and names the package', { skip }, (t) => {
   assert.strictEqual(exitCode, 1);
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const COMMON = path.join(__dirname, '..', '..', 'home', 'dot_config', 'shell', 'common.sh');
 
@@ -26,14 +27,11 @@ function have(cmd) {
 const SHELLS = ['bash', 'zsh'].filter(have);
 const skip = SHELLS.length ? false : 'no bash or zsh available';
 
-const dirs = [];
-
 // A hermetic sandbox: stub bin first on PATH, a scratch HOME so the PNG lands somewhere
 // disposable. `types` is what the stub wl-paste reports for `-l`; omitting wl-bmp2png
 // exercises the converter-missing branch.
 function sandbox({ types, bmp2png = true }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipimg-'));
-  dirs.push(dir);
+  const dir = scratch(os.tmpdir(), 'clipimg-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   fs.mkdirSync(path.join(dir, 'home'));
@@ -145,4 +143,3 @@ test('clipimg never launches a Windows binary', { skip }, () => {
   assert.deepStrictEqual(offenders, [], 'no executable line in common.sh names a .exe');
 });
 
-process.on('exit', () => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });

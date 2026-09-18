@@ -7,28 +7,22 @@
 // Nothing else in the tree pins either branch, and both are reached only when uv, the managed
 // 3.14 or the package is missing -- a path no ordinary run exercises, so a regression here
 // would be invisible until the day it mattered.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(
   __dirname, '..', '..', 'home', 'private_dot_claude', 'hooks',
   'executable_guard-pre-tool-use.sh',
 );
 
-const scratch = [];
-after(() => {
-  for (const dir of scratch) fs.rmSync(dir, { recursive: true, force: true });
-});
-
 // An empty CLAUDE_GUARD_HOME reaches `fail()` at the shim's first check (no claude_guard/cli.py)
 // without depending on whether this machine has uv or a managed 3.14 installed.
 function missingPackageDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-pre-tool-use-'));
-  scratch.push(dir);
+  const dir = scratch(os.tmpdir(), 'guard-pre-tool-use-');
   return dir;
 }
 

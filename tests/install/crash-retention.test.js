@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { renderFile, chezmoiAvailable } = require('../lib/render');
+const { scratch } = require('../lib/tmp');
 
 const SRC = path.join(__dirname, '..', '..', 'home', '.chezmoiscripts', 'os-linux', 'run_onchange_after_setup-crash-retention.sh.tmpl');
 
@@ -19,11 +20,8 @@ const PASSTHROUGH = ['sh', 'cat', 'cmp', 'mktemp', 'mkdir', 'install', 'rm', 'di
 
 const SUDO_OK = 'echo "$@" >> "$STATE_DIR/sudo.log"; [ "$1" = "-v" ] && exit 0; exec "$@"';
 
-const dirs = [];
-
 function run({ state } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'crash-retention-'));
-  dirs.push(home);
+  const home = scratch(os.tmpdir(), 'crash-retention-');
   const binDir = path.join(home, 'stubs');
   fs.mkdirSync(binDir, { recursive: true });
   for (const name of PASSTHROUGH) {
@@ -84,6 +82,3 @@ test('a converged apply changes nothing and never probes sudo', { skip }, () => 
   assert.strictEqual(second.sudoLog, first.sudoLog, 'a converged apply must not touch sudo');
 });
 
-test.after(() => {
-  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
-});

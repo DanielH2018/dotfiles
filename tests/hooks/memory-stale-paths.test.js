@@ -15,6 +15,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOK = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks', 'executable_memory-stale-paths.py');
 
@@ -26,11 +27,8 @@ try {
 } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'python3 >= 3.10 or git unavailable';
 
-const dirs = [];
 function tmpdir(prefix) {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  dirs.push(d);
-  return fs.realpathSync(d);
+  return fs.realpathSync(scratch(os.tmpdir(), prefix));
 }
 
 // A repo with `scripts/` and `docs/` populated, plus a memory directory holding one
@@ -207,10 +205,4 @@ test('opting out silences the hook entirely', { skip }, () => {
   });
   assert.match(run('1'), /scripts\/moved\.py/);
   assert.strictEqual(run('0'), '');
-});
-
-test.after(() => {
-  for (const d of dirs) {
-    try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
-  }
 });

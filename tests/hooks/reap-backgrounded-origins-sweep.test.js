@@ -10,6 +10,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { scratch } = require('../lib/tmp');
 
 const HOOKS_DIR = path.join(__dirname, '..', '..', 'home', 'private_dot_claude', 'hooks');
 const LIB = path.join(HOOKS_DIR, 'reap-origin-lib.sh');
@@ -18,10 +19,6 @@ const SWEEP = path.join(__dirname, '..', '..', 'home', 'dot_local', 'bin', 'exec
 let toolsOk = true;
 try { execFileSync('bash', ['-c', 'command -v jq'], { stdio: 'ignore' }); } catch { toolsOk = false; }
 const skip = toolsOk ? false : 'bash/jq unavailable';
-
-const dirs = [];
-function scratch(p) { const d = fs.mkdtempSync(path.join(os.tmpdir(), p)); dirs.push(d); return d; }
-process.on('exit', () => { for (const d of dirs) try { fs.rmSync(d, { recursive: true, force: true }); } catch {} });
 
 const BG = (originSid, ownSid) =>
   `/x/claude --session-id ${ownSid} --fork-session --resume /p/${originSid}.jsonl --reply-on-resume`;
@@ -49,7 +46,7 @@ const rosterOf = (workers) => ({ proto: 1, supervisorPid: 999, workers });
 
 // procs: { pid: cmdline }, sessions: { pid: sid }, rows: [sid], roster: {workers}|null
 function fakeEnv({ procs = {}, sessions = {}, rows = [], roster = null }) {
-  const home = scratch('sweep-');
+  const home = scratch(os.tmpdir(), 'sweep-');
   const sdir = path.join(home, 'sessions'); fs.mkdirSync(sdir, { recursive: true });
   const pdir = path.join(home, 'proc'); fs.mkdirSync(pdir, { recursive: true });
   const avdir = path.join(home, 'agent-view'); fs.mkdirSync(avdir, { recursive: true });
