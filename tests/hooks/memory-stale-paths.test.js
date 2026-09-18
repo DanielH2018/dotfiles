@@ -122,8 +122,8 @@ test('a path present only in the main checkout is not reported from a worktree',
 // An index entry marked [ENFORCED] or (SCOPED) is a pointer to a check. The pointer
 // outlives the check when a test is renamed or a hook retired, and nothing else re-reads
 // it. Measured on the live server index 2026-09-18: 30 marked entries, 4 of them naming
-// a test or a function at a file it had since moved out of — every one green in CI under
-// its new name, every pointer wrong.
+// a test or a function that had since moved to another file or been renamed — every one
+// green in CI under its new name, every pointer wrong.
 
 // Like report(), but the memory is linked from a MEMORY.md line carrying a marker, and
 // the repo holds a test module defining `test_live`. Three memory files, so a multi-link
@@ -167,8 +167,16 @@ test('a node id naming a test the file no longer defines is flagged', { skip }, 
 // to fix and never a retire suggestion.
 test('a SCOPED entry with a missing check warns without a retire suggestion', { skip }, () => {
   const out = reportIndexed(SCOPED, 'SCOPED: the check covers x (`tests/test_gone.py`).\n');
-  assert.match(out, /a-memory\.md: tests\/test_gone\.py \(SCOPED/);
-  assert.doesNotMatch(out, /retir/);
+  const index = out.slice(out.indexOf('[ENFORCED]/(SCOPED) index'));
+  assert.match(index, /a-memory\.md: tests\/test_gone\.py \(SCOPED/);
+  assert.doesNotMatch(index, /retir/);
+});
+
+// A marker with nothing behind it cannot be resolved at all. That is reported rather
+// than passed, or a marked entry whose body names no check would read as verified.
+test('a marked entry naming no check is reported as such', { skip }, () => {
+  const out = reportIndexed(FULL, 'ENFORCED by a hook, somewhere.\n');
+  assert.match(out, /a-memory\.md: no check named/);
 });
 
 // Markers bind to the nearest preceding link, not the line: the live index puts several
@@ -179,7 +187,7 @@ test('markers bind per link on a multi-link line', { skip }, () => {
   const out = reportIndexed(line, 'ENFORCED by `tests/test_gone.py`.\n');
   // The path scan reports all three memories for the same gone path, so read only
   // the index block.
-  const index = out.slice(out.indexOf('index entries'));
+  const index = out.slice(out.indexOf('[ENFORCED]/(SCOPED) index'));
   assert.match(index, /a-memory\.md: .*pointer-only/);
   assert.match(index, /b-memory\.md: .*SCOPED/);
   assert.doesNotMatch(index, /c-memory\.md/);
