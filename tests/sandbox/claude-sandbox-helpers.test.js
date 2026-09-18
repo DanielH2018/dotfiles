@@ -13,11 +13,12 @@
 // bash/awk/git.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
+const { run } = require('../lib/run');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
@@ -58,12 +59,7 @@ const SRC = skip ? {} : Object.fromEntries(
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'ignore', env: GIT_ENV });
 
-function run(script) {
-  const r = spawnSync('bash', ['-c', `set -uo pipefail\n${script}`], {
-    encoding: 'utf8', env: { ...GIT_ENV, HOME: scratch(os.tmpdir(), 'sbhelp-') },
-  });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
-}
+const runScript = (script) => run('bash', ['-c', `set -uo pipefail\n${script}`], { env: { ...GIT_ENV, HOME: scratch(os.tmpdir(), 'sbhelp-') } });
 
 // A repo with one commit on `main` containing `files`.
 function repoWith(files, { branch = 'main' } = {}) {
@@ -86,7 +82,7 @@ function repoWith(files, { branch = 'main' } = {}) {
 function uvNeeded(files) {
   const repo = scratch(os.tmpdir(), 'sbhelp-');
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(repo, name), body);
-  return run(`REPO_PATH=${JSON.stringify(repo)}\n${SRC.detect_uv_need}\ndetect_uv_need`).code === 0;
+  return runScript(`REPO_PATH=${JSON.stringify(repo)}\n${SRC.detect_uv_need}\ndetect_uv_need`).code === 0;
 }
 
 test('detect_uv_need spots a uv lockfile', { skip }, () => {
@@ -113,7 +109,7 @@ test('detect_uv_need does not fire on uv inside a longer word', { skip }, () => 
 
 // --- resolve_main_ref --------------------------------------------------------
 
-const mainRef = (repo) => run(`${SRC.resolve_main_ref}\nresolve_main_ref ${JSON.stringify(repo)}`);
+const mainRef = (repo) => runScript(`${SRC.resolve_main_ref}\nresolve_main_ref ${JSON.stringify(repo)}`);
 
 test('resolve_main_ref prefers origin/HEAD when it is set', { skip }, () => {
   const origin = repoWith({ 'a.txt': 'a' });
@@ -143,7 +139,7 @@ test('resolve_main_ref fails rather than guessing when there is no commit', { sk
 function snapshot(repo, { name = 'demo', ref = 'main', root } = {}) {
   const snapRoot = root || scratch(os.tmpdir(), 'sbhelp-');
   const sha = execFileSync('git', ['-C', repo, 'rev-parse', `${ref}^{commit}`], { encoding: 'utf8', env: GIT_ENV }).trim();
-  const r = run(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
+  const r = runScript(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
 ${SRC.build_repo_snapshot}
 build_repo_snapshot ${JSON.stringify(repo)} ${name} ${ref} ${sha}`);
   return { ...r, dest: path.join(snapRoot, name, sha), snapRoot };
@@ -182,7 +178,7 @@ test('build_repo_snapshot is a no-op once the snapshot exists', { skip }, () => 
 test('build_repo_snapshot cleans up after an unusable ref', { skip }, () => {
   const repo = repoWith({ 'a.txt': 'hello' });
   const snapRoot = scratch(os.tmpdir(), 'sbhelp-');
-  const r = run(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
+  const r = runScript(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
 ${SRC.build_repo_snapshot}
 build_repo_snapshot ${JSON.stringify(repo)} demo refs/heads/nope deadbeef`);
   assert.strictEqual(r.code, 0, 'a bad ref must not abort the launch');
@@ -205,7 +201,7 @@ function gcNudge({ stampAgeDays = null, gone = 1 } = {}) {
     const when = new Date(Date.now() - stampAgeDays * 86400 * 1000);
     fs.utimesSync(stamp, when, when);
   }
-  return run(`STATE_DIR=${JSON.stringify(stateDir)}
+  return runScript(`STATE_DIR=${JSON.stringify(stateDir)}
 REPO_PATH=/repo
 REPO_NAME=demo
 list_tool_worktrees() { echo "SCANNED" >&2; printf 'alpha\\tclaude/alpha\\t/wt\\n'; }
@@ -262,7 +258,7 @@ function cleanup({ dirty = false, unpushed = false, created = true, branchMode =
   if (dirty) fs.writeFileSync(path.join(wt, 'scratch.txt'), 'wip');
   if (unpushed) git(wt, 'commit', '-q', '--allow-empty', '-m', 'work');
 
-  const r = run(`WT_CREATED=${created}
+  const r = runScript(`WT_CREATED=${created}
 WT_PATH=${JSON.stringify(wt)}
 WT_BRANCH=claude/alpha
 REPO_PATH=${JSON.stringify(repo)}

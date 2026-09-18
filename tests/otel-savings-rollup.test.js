@@ -8,12 +8,12 @@
 // tests are mostly about what it refuses to write.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { srcPath } = require('./lib/paths');
+const { run: spawnScript } = require('./lib/run');
 
 const ROLLUP = srcPath('dot_local', 'bin', 'executable_otel-savings-rollup');
 
@@ -26,16 +26,8 @@ function stub(dir, out, code = 0) {
 }
 
 function run(env) {
-  try {
-    const out = execFileSync('bash', [ROLLUP], {
-      encoding: 'utf8',
-      env: Object.assign({}, process.env, env),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { code: 0, out: out.trim(), err: '' };
-  } catch (e) {
-    return { code: e.status ?? 1, out: (e.stdout || '').trim(), err: (e.stderr || '').trim() };
-  }
+  const r = spawnScript('bash', [ROLLUP], { env: Object.assign({}, process.env, env) });
+  return { code: r.code ?? 1, out: r.stdout.trim(), err: r.stderr.trim() };
 }
 
 function fixture(record, code = 0) {

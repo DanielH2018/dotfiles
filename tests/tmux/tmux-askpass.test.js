@@ -10,12 +10,12 @@
 // pointed at a scratch dir, TMUX_ASKPASS_TIMEOUT to keep the unanswered case fast.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
+const { run: spawnScript } = require('../lib/run');
 
 const ASKPASS = srcPath('dot_local', 'bin', 'executable_tmux-askpass');
 
@@ -90,16 +90,7 @@ function fakeEnv({ clients = 'client-0', password = 'hunter2', ...flags } = {}) 
     ...flags,
   };
 
-  const run = (args = [], overrides = {}) => {
-    try {
-      const stdout = execFileSync(deployed, args, {
-        env: { ...env, ...overrides }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      return { code: 0, stdout, stderr: '' };
-    } catch (e) {
-      return { code: e.status, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-    }
-  };
+  const run = (args = [], overrides = {}) => spawnScript(deployed, args, { env: { ...env, ...overrides } });
 
   return { run, runtime, popupLog: () => fs.readFileSync(popupLog, 'utf8'), cmdLog: () => fs.readFileSync(cmdLog, 'utf8') };
 }

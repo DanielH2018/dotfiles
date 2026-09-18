@@ -23,6 +23,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -61,16 +62,7 @@ const DETECT_DOCKER_NEED_SRC = extractFunction('detect_docker_need');
 // own parsing, before validate_version ever sees the literal string).
 function shq(s) { return `'${s.replace(/'/g, `'\\''`)}'`; }
 
-function run(script, env = {}) {
-  try {
-    const out = execFileSync('bash', ['-c', script], {
-      env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { code: 0, stdout: out, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
-}
+const runScript = (script, env = {}) => run('bash', ['-c', script], { env: { ...process.env, ...env } });
 
 // --- validate_version(): untrusted-input sanitizer ---
 
@@ -88,7 +80,7 @@ const UNSAFE_VERSIONS = [
 
 test('validate_version accepts version strings made only of [0-9a-zA-Z._+-]', { skip }, () => {
   for (const v of SAFE_VERSIONS) {
-    const r = run(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
+    const r = runScript(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
     assert.strictEqual(r.code, 0, `should accept: ${v} (stderr: ${r.stderr})`);
     assert.strictEqual(r.stderr, '');
   }
@@ -96,7 +88,7 @@ test('validate_version accepts version strings made only of [0-9a-zA-Z._+-]', { 
 
 test('validate_version rejects shell-metacharacter strings with exit 1 and an error message', { skip }, () => {
   for (const v of UNSAFE_VERSIONS) {
-    const r = run(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
+    const r = runScript(`${VALIDATE_VERSION_SRC}\nvalidate_version label ${shq(v)}`);
     assert.strictEqual(r.code, 1, `should reject: ${v}`);
     assert.match(r.stderr, /unsafe label version string/);
   }
@@ -105,7 +97,7 @@ test('validate_version rejects shell-metacharacter strings with exit 1 and an er
 // --- detect_docker_need(): NEEDS_DOCKER gate ---
 
 function detectDockerNeed(repo) {
-  const r = run(`${DETECT_DOCKER_NEED_SRC}\nNEEDS_DOCKER=false\ndetect_docker_need\nprintf '%s' "$NEEDS_DOCKER"`,
+  const r = runScript(`${DETECT_DOCKER_NEED_SRC}\nNEEDS_DOCKER=false\ndetect_docker_need\nprintf '%s' "$NEEDS_DOCKER"`,
     { REPO_PATH: repo });
   assert.strictEqual(r.code, 0);
   return r.stdout;

@@ -21,6 +21,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -65,16 +66,7 @@ function absentTools(...names) {
 // Runs a harness script; returns { code, stdout }. Both functions call `exit`,
 // which is the terminal state we want to observe, so a non-zero code is data,
 // not an error.
-function run(script, stdin = '') {
-  try {
-    const stdout = execFileSync('bash', ['-c', script], {
-      input: stdin, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
-}
+const runScript = (script, stdin = '') => run('bash', ['-c', script], { input: stdin });
 
 // --- prune_worktrees ---------------------------------------------------------
 
@@ -114,47 +106,47 @@ prune_worktrees
 test('prune maps the selected display numbers onto the right worktrees', { skip }, () => {
   // "1,3" must delete alpha and gamma — NOT beta and the orphan, which is what
   // an off-by-one in the 1-based -> 0-based conversion would produce.
-  const r = run(PRUNE_HARNESS(), '1,3\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '1,3\ny\n');
   const deleted = [...r.stdout.matchAll(/DELETED name=(\S+)/g)].map((m) => m[1]);
   assert.deepStrictEqual(deleted, ['alpha', 'gamma']);
 });
 
 test('prune passes delete_worktree the fully-qualified instance id', { skip }, () => {
-  const r = run(PRUNE_HARNESS(), '2\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '2\ny\n');
   assert.match(r.stdout, /DELETED name=beta instance=demo-abc123-beta/,
     'instance must be <repo>-<hash>-<worktree>, the key the session/audit dirs are stored under');
 });
 
 test('prune selects an orphaned session by its display number too', { skip }, () => {
-  const r = run(PRUNE_HARNESS(), '4\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '4\ny\n');
   const deleted = [...r.stdout.matchAll(/DELETED name=(\S+)/g)].map((m) => m[1]);
   assert.deepStrictEqual(deleted, ['orphan'],
     'orphan sessions are appended after tool worktrees and share one index space');
 });
 
 test('prune tolerates spaces in the selection list', { skip }, () => {
-  const r = run(PRUNE_HARNESS(), '1, 3\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '1, 3\ny\n');
   const deleted = [...r.stdout.matchAll(/DELETED name=(\S+)/g)].map((m) => m[1]);
   assert.deepStrictEqual(deleted, ['alpha', 'gamma']);
 });
 
 test('prune drops out-of-range and non-numeric selections', { skip }, () => {
   for (const selection of ['0', '5', '99', 'abc', '-1']) {
-    const r = run(PRUNE_HARNESS(), `${selection}\ny\n`);
+    const r = runScript(PRUNE_HARNESS(), `${selection}\ny\n`);
     assert.doesNotMatch(r.stdout, /DELETED/, `selection ${JSON.stringify(selection)} deleted something`);
     assert.match(r.stdout, /No valid worktrees selected/);
   }
 });
 
 test('prune keeps the valid half of a partly-invalid selection', { skip }, () => {
-  const r = run(PRUNE_HARNESS(), '2,99\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '2,99\ny\n');
   const deleted = [...r.stdout.matchAll(/DELETED name=(\S+)/g)].map((m) => m[1]);
   assert.deepStrictEqual(deleted, ['beta'], 'the in-range index is still honoured');
 });
 
 test('prune deletes nothing when the confirmation is not y', { skip }, () => {
   for (const answer of ['n', 'N', '', 'yes please', 'yy']) {
-    const r = run(PRUNE_HARNESS(), `1,2,3\n${answer}\n`);
+    const r = runScript(PRUNE_HARNESS(), `1,2,3\n${answer}\n`);
     assert.doesNotMatch(r.stdout, /DELETED/, `answer ${JSON.stringify(answer)} proceeded with the delete`);
     assert.match(r.stdout, /Cancelled/);
   }
@@ -163,20 +155,20 @@ test('prune deletes nothing when the confirmation is not y', { skip }, () => {
 test('prune accepts y and Y as confirmation', { skip }, () => {
   // `read -r` strips surrounding IFS whitespace, so "Y " is a plain Y here.
   for (const answer of ['y', 'Y', 'Y ']) {
-    const r = run(PRUNE_HARNESS(), `1\n${answer}\n`);
+    const r = runScript(PRUNE_HARNESS(), `1\n${answer}\n`);
     assert.match(r.stdout, /DELETED name=alpha/, `answer ${JSON.stringify(answer)} should confirm`);
   }
 });
 
 test('prune exits without prompting when the selection is empty', { skip }, () => {
-  const r = run(PRUNE_HARNESS(), '\ny\n');
+  const r = runScript(PRUNE_HARNESS(), '\ny\n');
   assert.match(r.stdout, /No selection/);
   assert.doesNotMatch(r.stdout, /DELETED/);
   assert.doesNotMatch(r.stdout, /Proceed\?/, 'must not reach the confirm prompt with nothing selected');
 });
 
 test('prune exits early when the repo has no worktrees at all', { skip }, () => {
-  const r = run(PRUNE_HARNESS({ noWorktrees: true }), '1\ny\n');
+  const r = runScript(PRUNE_HARNESS({ noWorktrees: true }), '1\ny\n');
   assert.match(r.stdout, /No worktrees found for demo/);
   assert.doesNotMatch(r.stdout, /DELETED/);
 });
@@ -184,9 +176,9 @@ test('prune exits early when the repo has no worktrees at all', { skip }, () => 
 test('prune surfaces uncommitted changes and unpushed commits in the listing', { skip }, () => {
   // The status column is the only signal the user has before confirming; if it
   // silently read "clean" for dirty worktrees the confirm prompt would be a lie.
-  assert.match(run(PRUNE_HARNESS({ dirty: true }), '\n').stdout, /has changes/);
-  assert.match(run(PRUNE_HARNESS({ unpushed: 3 }), '\n').stdout, /has unpushed commits/);
-  assert.match(run(PRUNE_HARNESS(), '\n').stdout, /clean/);
+  assert.match(runScript(PRUNE_HARNESS({ dirty: true }), '\n').stdout, /has changes/);
+  assert.match(runScript(PRUNE_HARNESS({ unpushed: 3 }), '\n').stdout, /has unpushed commits/);
+  assert.match(runScript(PRUNE_HARNESS(), '\n').stdout, /clean/);
 });
 
 // --- gc_worktrees ------------------------------------------------------------
@@ -230,7 +222,7 @@ function runGc(opts, stdin) {
   const stateDir = path.join(dir, opts.stateSubdir || 'state');
   const script = GC_HARNESS(opts).replace('__STATE_DIR__', stateDir);
   assert.ok(!script.includes('__STATE_DIR__'), 'STATE_DIR placeholder must be substituted');
-  const r = run(script, stdin);
+  const r = runScript(script, stdin);
   const stamp = path.join(stateDir, '.last-gc');
   const stamped = fs.existsSync(stamp) ? fs.readFileSync(stamp, 'utf8') : null;
   fs.rmSync(dir, { recursive: true, force: true });
@@ -310,7 +302,7 @@ function runDelete(keep) {
   fs.mkdirSync(path.join(dir, 'audit', 'demo-abc123-alpha'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'artifacts', 'demo-abc123-alpha'), { recursive: true });
 
-  const r = run(`
+  const r = runScript(`
 set -uo pipefail
 REPO_PATH=${dir}/repo
 REPO_NAME=demo

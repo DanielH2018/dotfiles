@@ -11,26 +11,19 @@
 //   classifier_silent   -> reaches the classifier, but a stubbed injection:false verdict
 //                          MUST keep the hook quiet.
 const { test } = require('node:test');
-const { execFileSync } = require('node:child_process');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_screen-injection.sh');
 // fixtures/ lives under tests/, not the checkout root, so this is one '..' and not repoPath().
 const fixtures = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'injection-fixtures.json'), 'utf8'));
 
 function runHook(input, env = {}) {
-  try {
-    const stdout = execFileSync('bash', [HOOK], {
-      input: JSON.stringify(input), encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env },
-    });
-    return { stdout, status: 0 };
-  } catch (e) {
-    return { stdout: e.stdout || '', stderr: e.stderr || '', status: e.status };
-  }
+  const r = run('bash', [HOOK], { input: JSON.stringify(input), env: { ...process.env, ...env } });
+  return { stdout: r.stdout, stderr: r.stderr, status: r.code };
 }
 
 // A run is "flagged" iff the hook emitted valid JSON carrying the SECURITY additionalContext.

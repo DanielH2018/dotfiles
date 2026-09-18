@@ -18,6 +18,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const SANDBOX_DIR = srcPath('private_dot_claude', 'sandbox');
 const SANDBOX = path.join(SANDBOX_DIR, 'executable_claude-sandbox');
@@ -52,19 +53,10 @@ const ADD_MOUNT_RELABEL_SRC = skip ? '' : extractFunction('add_mount_relabel');
 const RELABEL_DOCKER_ARGS_SRC = skip ? '' : extractFunction('relabel_docker_args');
 const DETECT_ENGINE_SRC = skip ? '' : extractFunction('detect_container_engine');
 
-function run(script, env = {}) {
-  try {
-    const out = execFileSync('bash', ['-c', script], {
-      env: { ...process.env, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { code: 0, stdout: out, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
-}
+const runScript = (script, env = {}) => run('bash', ['-c', script], { env: { ...process.env, ...env } });
 
 function relabel(spec, flag) {
-  const r = run(`set -u\n${ADD_MOUNT_RELABEL_SRC}\nSANDBOX_MOUNT_RELABEL=${flag === undefined ? '""' : `'${flag}'`}\nadd_mount_relabel '${spec}'`);
+  const r = runScript(`set -u\n${ADD_MOUNT_RELABEL_SRC}\nSANDBOX_MOUNT_RELABEL=${flag === undefined ? '""' : `'${flag}'`}\nadd_mount_relabel '${spec}'`);
   assert.strictEqual(r.code, 0, `add_mount_relabel failed: ${r.stderr}`);
   return r.stdout.trimEnd();
 }
@@ -101,7 +93,7 @@ test('a path containing spaces (the macOS 1Password socket) survives the transfo
 
 function relabelArgs(args, flag, passes = 1) {
   const literal = args.map((a) => `'${a}'`).join(' ');
-  const r = run(`set -u\n${ADD_MOUNT_RELABEL_SRC}\n${RELABEL_DOCKER_ARGS_SRC}\n` +
+  const r = runScript(`set -u\n${ADD_MOUNT_RELABEL_SRC}\n${RELABEL_DOCKER_ARGS_SRC}\n` +
     `SANDBOX_MOUNT_RELABEL=${flag === undefined ? '""' : `'${flag}'`}\n` +
     `DOCKER_ARGS=(${literal})\n` +
     `${'relabel_docker_args\n'.repeat(passes)}` +
@@ -151,7 +143,7 @@ function fakeDocker(body) {
 // own to spawn bash in the first place.
 function detectEngine(binDir, { isolated = false } = {}) {
   const p = isolated ? binDir : `${binDir}:/usr/bin:/bin`;
-  const r = run(`set -u\nPATH='${p}'\n${DETECT_ENGINE_SRC}\ndetect_container_engine`);
+  const r = runScript(`set -u\nPATH='${p}'\n${DETECT_ENGINE_SRC}\ndetect_container_engine`);
   assert.strictEqual(r.code, 0, `detect_container_engine failed: ${r.stderr}`);
   return r.stdout.trim();
 }

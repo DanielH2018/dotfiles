@@ -24,6 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { srcPath } = require('./lib/paths');
+const { run } = require('./lib/run');
 
 const JSONQ = srcPath('dot_local', 'bin', 'executable_jsonq');
 // claude-guard slice 4 cutover unregistered block-dangerous-bash.sh from the host (it stays
@@ -58,17 +59,8 @@ const METRICS = path.join(XDG, 'claude-metrics', 'filters.jsonl');
 
 // Returns {code, out, err}. Never throws, so a test can assert on failure.
 function jsonq(args, input, env) {
-  try {
-    const out = execFileSync(python, [JSONQ, ...args], {
-      encoding: 'utf8',
-      input,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: Object.assign({}, process.env, { XDG_DATA_HOME: XDG }, env),
-    });
-    return { code: 0, out: out.trim(), err: '' };
-  } catch (e) {
-    return { code: e.status ?? 1, out: (e.stdout || '').trim(), err: (e.stderr || '').trim() };
-  }
+  const r = run(python, [JSONQ, ...args], { input, env: Object.assign({}, process.env, { XDG_DATA_HOME: XDG }, env) });
+  return { code: r.code ?? 1, out: r.stdout.trim(), err: r.stderr.trim() };
 }
 
 const metricLines = () => (fs.existsSync(METRICS)

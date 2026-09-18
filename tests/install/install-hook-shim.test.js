@@ -14,6 +14,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { repoPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const INSTALLER = repoPath('bin', 'install-hook-shim');
 
@@ -33,16 +34,7 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: CLEAN_ENV }).trim();
 }
 
-function run(cwd, ...args) {
-  try {
-    const stdout = execFileSync('bash', [INSTALLER, ...args], {
-      cwd, encoding: 'utf8', env: CLEAN_ENV, stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return { code: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
-}
+const install = (cwd, ...args) => run('bash', [INSTALLER, ...args], { cwd, env: CLEAN_ENV });
 
 // A repo that ships the gate the shim delegates to, so the installed shim is
 // exercisable rather than inert.
@@ -63,7 +55,7 @@ const shimPath = (repo) => path.join(repo, '.git', 'hooks-safe', 'pre-push');
 
 test('installs the shim and points core.hooksPath at it', { skip }, () => {
   const repo = makeRepo();
-  const r = run(repo);
+  const r = install(repo);
 
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /repaired/);
@@ -76,36 +68,36 @@ test('installs the shim and points core.hooksPath at it', { skip }, () => {
 
 test('second run is a silent no-op', { skip }, () => {
   const repo = makeRepo();
-  run(repo);
+  install(repo);
 
-  const again = run(repo, '--quiet');
+  const again = install(repo, '--quiet');
   assert.strictEqual(again.code, 0);
   assert.strictEqual(again.stdout, '', 'nothing printed when already correct');
 
-  const loud = run(repo);
+  const loud = install(repo);
   assert.match(loud.stdout, /already installed/);
 });
 
 test('--check reports without writing, and exits 1 only when repair is needed', { skip }, () => {
   const repo = makeRepo();
 
-  const before = run(repo, '--check');
+  const before = install(repo, '--check');
   assert.strictEqual(before.code, 1, 'unconfigured repo needs repair');
   assert.ok(!fs.existsSync(shimPath(repo)), '--check must not write');
 
-  run(repo);
-  assert.strictEqual(run(repo, '--check').code, 0);
+  install(repo);
+  assert.strictEqual(install(repo, '--check').code, 0);
 });
 
 test('repairs a redirected core.hooksPath', { skip }, () => {
   const repo = makeRepo();
-  run(repo);
+  install(repo);
 
   // The documented undo, and the exact way the guard silently came off before.
   git(repo, 'config', 'core.hooksPath', '.githooks');
-  assert.strictEqual(run(repo, '--check').code, 1);
+  assert.strictEqual(install(repo, '--check').code, 1);
 
-  const r = run(repo);
+  const r = install(repo);
   assert.match(r.stdout, /core\.hooksPath=\.githooks/);
   assert.strictEqual(git(repo, 'config', '--get', 'core.hooksPath'),
     path.join(fs.realpathSync(repo), '.git', 'hooks-safe'));
@@ -113,20 +105,20 @@ test('repairs a redirected core.hooksPath', { skip }, () => {
 
 test('repairs a deleted shim and a tampered body', { skip }, () => {
   const repo = makeRepo();
-  run(repo);
+  install(repo);
 
   fs.rmSync(shimPath(repo));
-  assert.match(run(repo).stdout, /shim missing/);
+  assert.match(install(repo).stdout, /shim missing/);
   assert.ok(fs.existsSync(shimPath(repo)));
 
   fs.writeFileSync(shimPath(repo), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
-  assert.match(run(repo).stdout, /shim body stale/);
+  assert.match(install(repo).stdout, /shim body stale/);
   assert.match(fs.readFileSync(shimPath(repo), 'utf8'), /unset GIT_DIR/);
 });
 
 test('replaces the shim by rename, leaving a push already reading it intact', { skip }, () => {
   const repo = makeRepo();
-  run(repo);
+  install(repo);
   const shim = shimPath(repo);
 
   // Drift, so the next run actually rewrites.
@@ -139,7 +131,7 @@ test('replaces the shim by rename, leaving a push already reading it intact', { 
   // bytes partway through. Holding the descriptor is what a running push has.
   const fd = fs.openSync(shim, 'r');
   try {
-    assert.match(run(repo).stdout, /repaired/);
+    assert.match(install(repo).stdout, /repaired/);
 
     assert.strictEqual(fs.readFileSync(fd, 'utf8'), stale,
       'the open descriptor still sees the file it opened, not the replacement');
@@ -163,7 +155,7 @@ test('from a linked worktree, installs into the shared .git', { skip }, () => {
   const wt = path.join(wtRoot, 'w');
   git(repo, 'worktree', 'add', '-q', '-b', 'side', wt);
 
-  const r = run(wt);
+  const r = install(wt);
   assert.strictEqual(r.code, 0);
 
   // The point of the whole arrangement: one shim, in the common dir, covering
@@ -177,14 +169,14 @@ test('from a linked worktree, installs into the shared .git', { skip }, () => {
 
 test('outside a repo it exits quietly, so it can never fail a session', { skip }, () => {
   const notRepo = scratch(os.tmpdir(), 'shim-bare-');
-  const r = run(notRepo);
+  const r = install(notRepo);
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
 });
 
 test('rejects an unknown flag rather than guessing', { skip }, () => {
   const repo = makeRepo();
-  const r = run(repo, '--force');
+  const r = install(repo, '--force');
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /usage/);
 });

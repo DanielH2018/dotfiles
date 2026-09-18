@@ -12,6 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
+const { run: spawnScript } = require('../lib/run');
 
 const BIN_DIR = srcPath('dot_local', 'bin');
 const XCLIP = path.join(BIN_DIR, 'executable_xclip');
@@ -66,14 +67,7 @@ function run(script, args, opts = {}) {
   const env = { ...(rest.env || process.env) };
   if (wsl) env.WSL_DISTRO_NAME = 'test';
   else delete env.WSL_DISTRO_NAME;
-  try {
-    const out = execFileSync(BASH, [script, ...args], {
-      encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], ...rest, env,
-    });
-    return { code: 0, stdout: out, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+  return spawnScript(BASH, [script, ...args], { ...rest, env });
 }
 
 // --- the WSL guard itself ---

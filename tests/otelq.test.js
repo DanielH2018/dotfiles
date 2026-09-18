@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { srcPath } = require('./lib/paths');
+const { run } = require('./lib/run');
 
 const OTELQ = srcPath('dot_local', 'bin', 'executable_otelq');
 
@@ -96,15 +97,8 @@ elif verb == "readrecs":
 `);
 
 function otelq(args, input, env) {
-  try {
-    const out = execFileSync(python, [OTELQ, ...args], {
-      encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'],
-      env: Object.assign({}, process.env, env),
-    });
-    return { code: 0, out: out.trim(), err: '' };
-  } catch (e) {
-    return { code: e.status ?? 1, out: (e.stdout || '').trim(), err: (e.stderr || '').trim() };
-  }
+  const r = run(python, [OTELQ, ...args], { input, env: Object.assign({}, process.env, env) });
+  return { code: r.code ?? 1, out: r.stdout.trim(), err: r.stderr.trim() };
 }
 
 function drive(args, input) {

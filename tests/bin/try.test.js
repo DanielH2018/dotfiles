@@ -14,6 +14,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { repoPath } = require('../lib/paths');
+const { run: spawnScript } = require('../lib/run');
 
 const TRY = repoPath('bin', 'try');
 
@@ -87,17 +88,13 @@ const branchOf = (dir) => git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 function run(cwd, args = [], extraEnv = {}) {
   const box = scratch(os.tmpdir(), 'try-calls-');
   const file = path.join(box, 'calls');
-  try {
-    const stdout = execFileSync('bash', [TRY, ...args], {
-      cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`, STUB_CHEZMOI_CALLS: file, ...extraEnv,
-      },
-    });
-    return { code: 0, stdout, stderr: '', file };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '', file };
-  }
+  const r = spawnScript('bash', [TRY, ...args], {
+    cwd,
+    env: {
+      ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`, STUB_CHEZMOI_CALLS: file, ...extraEnv,
+    },
+  });
+  return { ...r, file };
 }
 
 test('refuses to run from a linked worktree', { skip }, () => {

@@ -10,12 +10,12 @@
 // Seam: a stub `osascript` earlier in PATH, so no test draws a dialog or types a password.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('./lib/tmp');
 const { srcPath } = require('./lib/paths');
+const { run } = require('./lib/run');
 
 const HELPER = srcPath('dot_local', 'bin', 'executable_mac-askpass');
 
@@ -26,18 +26,8 @@ function helper(stub) {
   fs.writeFileSync(path.join(dir, 'osascript'), `#!/bin/sh\ncat >/dev/null\n${stub}\n`, { mode: 0o755 });
 
   return (args = [], env = {}) => {
-    const res = { stdout: '', stderr: '', status: 0 };
-    try {
-      res.stdout = execFileSync(HELPER, args, {
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env },
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) {
-      res.status = e.status;
-      res.stdout = e.stdout ?? '';
-      res.stderr = e.stderr ?? '';
-    }
+    const r = run(HELPER, args, { env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env } });
+    const res = { stdout: r.stdout, stderr: r.stderr, status: r.code };
     return res;
   };
 }

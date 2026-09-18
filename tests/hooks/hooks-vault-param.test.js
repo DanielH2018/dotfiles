@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 // When these tests run inside a git hook (e.g. the repo's pre-push), git exports GIT_DIR,
 // GIT_WORK_TREE, GIT_INDEX_FILE, etc. into the environment. The temp-repo `git -C <dir>` calls
@@ -39,12 +40,8 @@ function writeLocalEnv(home, vaultDir) {
 function runHook(hook, { input = '', home, cwd, extraPath } = {}) {
   const env = { ...process.env, HOME: fwd(home) };
   if (extraPath) env.PATH = extraPath + ':' + process.env.PATH;
-  try {
-    const stdout = execFileSync('bash', [hook], { input, env, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return { stdout, status: 0 };
-  } catch (e) {
-    return { stdout: e.stdout || '', stderr: e.stderr || '', status: e.status };
-  }
+  const r = run('bash', [hook], { input, env, cwd });
+  return { stdout: r.stdout, stderr: r.stderr, status: r.code };
 }
 
 test('auto-format.sh: vault markdown skipped, non-vault markdown formatted', () => {

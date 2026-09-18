@@ -16,6 +16,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const SANDBOX = srcPath('private_dot_claude', 'sandbox', 'executable_claude-sandbox');
 
@@ -39,15 +40,7 @@ assert.strictEqual(FUNC_SRC.trimEnd().split('\n').pop(), '}', 'extracted body en
 // stdin is never a tty here, so a finding always takes the non-interactive
 // `exit 1` branch — deterministic, no y/N prompt to simulate.
 function scan(repoPath, env = {}) {
-  try {
-    const out = execFileSync('bash', ['-c', FUNC_SRC + '\nscan_untrusted_compose'], {
-      env: { ...process.env, REPO_PATH: repoPath, ...env },
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { code: 0, stderr: '', stdout: out };
-  } catch (e) {
-    return { code: e.status, stderr: e.stderr || '', stdout: e.stdout || '' };
-  }
+  return run('bash', ['-c', FUNC_SRC + '\nscan_untrusted_compose'], { env: { ...process.env, REPO_PATH: repoPath, ...env } });
 }
 
 function writeCompose(dir, contents) {

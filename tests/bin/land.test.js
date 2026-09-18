@@ -14,6 +14,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { skipUnless } = require('../lib/probe');
 const { repoPath } = require('../lib/paths');
+const { run } = require('../lib/run');
 
 const LAND = repoPath('bin', 'land');
 
@@ -126,21 +127,17 @@ const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', br
 function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null } = {}) {
   const calls = path.join(cwd, '.gh-calls');
   const probe = { held: path.join(cwd, '.lock-probe'), pid: path.join(cwd, '.daemon-pid') };
-  try {
-    const stdout = execFileSync('bash', [LAND, ...args], {
-      cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
-        STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
-        STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
-        LAND_POLL_INTERVAL: '0.05',
-        ...(lock ? { STUB_LOCK: lock, STUB_LOCK_PROBE: probe.held, STUB_DAEMON_PID: probe.pid } : {}),
-      },
-    });
-    return { code: 0, stdout, stderr: '', calls, probe };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '', calls, probe };
-  }
+  const r = run('bash', [LAND, ...args], {
+    cwd,
+    env: {
+      ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
+      STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
+      STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
+      LAND_POLL_INTERVAL: '0.05',
+      ...(lock ? { STUB_LOCK: lock, STUB_LOCK_PROBE: probe.held, STUB_DAEMON_PID: probe.pid } : {}),
+    },
+  });
+  return { ...r, calls, probe };
 }
 
 test('refuses to land the integration branch', { skip }, () => {
