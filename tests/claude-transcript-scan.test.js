@@ -377,9 +377,11 @@ const SHIPPED_LOKI = path.join(__dirname, '..', 'home', 'dot_config', 'gitleaks'
 
 // The two shapes as they reached Loki: a signed-commit summary carrying an ED25519 key
 // fingerprint, and an Edit old_string carrying a docstring that says "token: `<name>`".
-// The fingerprint is random per run so it cannot dodge the entropy floor by being a constant.
+// The fingerprint is a real SHA-256 digest of a fixed string, so it is deterministic and
+// still carries the entropy of a real fingerprint; a repeated-character stand-in would sit
+// under gitleaks' floor and make the "bare set flags it" half pass for the wrong reason.
 function sshFingerprint() {
-  return crypto.randomBytes(32).toString('base64').replace(/=+$/, '').slice(0, 43);
+  return crypto.createHash('sha256').update('claude-transcript-scan fixture key').digest('base64').slice(0, 43);
 }
 const SIGNED_COMMIT_SUMMARY = () =>
   `**Commit:** signed (verified: \`Good 'git' signature with ED25519 key SHA256:${sshFingerprint()}\`).`;
@@ -413,9 +415,11 @@ test('the bare default set DOES flag those shapes, so the allowlists are doing t
 
 test('the shipped Loki ruleset still flags an api_key on a URL', { skip }, () => {
   // The shape of the real 2026-09-09 leak: the jellyfin key as a query string on a curl
-  // line. Built per run so the suite carries no string that reads like a credential.
+  // line. The same all-sixteen-symbols hex as ENTROPY_ONLY, not random bytes: 32 random hex
+  // characters dip under gitleaks' 3.5 entropy floor about one run in ten (measured: the
+  // first pre-push of this test failed that way), and a fixture that flakes proves nothing.
   const sb = sandbox();
-  const hex = crypto.randomBytes(16).toString('hex');
+  const hex = '0123456789abcdef'.repeat(2);
   const env = stubOtelq(sb, lokiPayload({
     tool_input: JSON.stringify({ command: `curl -sk 'https://jellyfin.example/emby/Sessions?api_key=${hex}'` }),
   }));
