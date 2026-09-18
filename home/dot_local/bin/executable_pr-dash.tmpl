@@ -9,6 +9,19 @@ export PR_DASH_PORT="$PORT"
 # with the server's startup still pays for itself here. The launchd agent does not set this
 # — see the spec's "The pre-load becomes opt-in".
 export PR_DASH_PRELOAD=1
+# The GitHub owners whose repositories the dashboard shows by default, from the same source
+# the launchd plist reads: `prDashWorkOrgs` in the machine-local ~/.config/chezmoi/chezmoi.toml,
+# under [data]. chezmoi renders it here at apply time, as it renders the plist at activation;
+# a machine that sets no such key gets an empty string, which parseWorkOrgs reads as no work
+# organizations at all — every repository then counts as work and the Personal chip stays
+# hidden. Single-quoted on its own line, so the unrendered template is itself valid shell
+# and the raw file can be shellchecked. An explicit PR_DASH_WORK_ORGS in the environment
+# wins, as PR_DASH_PORT does above; `-` rather than `:-`, so an exported empty string is an
+# override too (it shows every PR). This only matters on a cold start: when the launchd
+# agent already holds the port, `serving` below opens the browser on it and the agent's own
+# environment applies.
+WORK_ORGS_DEFAULT='{{ if hasKey . "prDashWorkOrgs" }}{{ .prDashWorkOrgs }}{{ end }}'
+export PR_DASH_WORK_ORGS="${PR_DASH_WORK_ORGS-$WORK_ORGS_DEFAULT}"
 
 URL="http://127.0.0.1:${PORT}/"
 API_URL="http://127.0.0.1:${PORT}/api/prs"

@@ -98,6 +98,25 @@ function buttonLabel(html: string, buttonId: string): string {
   return button[1]!.trim();
 }
 
+/**
+ * Extracts the visible label text of the checkbox valued `value` inside the
+ * `<fieldset id="fieldsetId">` in `index.html` — what the user reads beside the box, as
+ * distinct from the `value` attribute {@link checkboxValues} returns. A message that
+ * names a control names it by this text, so a relabelled checkbox whose value stayed put
+ * must fail the message's test.
+ */
+function checkboxLabel(html: string, fieldsetId: string, value: string): string {
+  const fieldset = new RegExp(
+    `<fieldset id="${fieldsetId}"[^>]*>([\\s\\S]*?)</fieldset>`,
+  ).exec(html);
+  assert.ok(fieldset, `no <fieldset id="${fieldsetId}"> found in index.html`);
+  const label = new RegExp(
+    `<label><input type="checkbox" value="${value}"[^>]*>([^<]*)</label>`,
+  ).exec(fieldset[1]!);
+  assert.ok(label, `no labelled checkbox valued "${value}" in #${fieldsetId}`);
+  return label[1]!.trim();
+}
+
 /** A fully well-formed PR record, for tests to override fields on. */
 const validRecord: PrRecord = {
   id: 'x/y#1',
@@ -643,6 +662,20 @@ test('the personal-only message names the toggle by its real value in index.html
   assert.deepStrictEqual(values, ['personal'], 'expected one checkbox, valued "personal"');
   const message = String(emptyStateMessage({ total: 2, inScope: 0, visible: 0 }));
   assert.match(message, new RegExp(values[0]!, 'i'));
+});
+
+// The value test above survives a relabel: rename the checkbox's text to "Mine" and leave
+// value="personal", and the message still says "Personal" while matching /personal/i. The
+// user reads the label, not the value, so this is the reset-label test's exact sibling —
+// the visible text out of index.html, matched case-sensitively against the message.
+test('the personal-only message names the toggle by its real label in index.html', () => {
+  const label = checkboxLabel(indexHtml, 'filter-personal', 'personal');
+  assert.ok(label.length > 0, 'expected the personal checkbox to carry a label');
+  const message = String(emptyStateMessage({ total: 2, inScope: 0, visible: 0 }));
+  assert.ok(
+    message.includes(label),
+    `expected ${JSON.stringify(message)} to name the toggle's label ${JSON.stringify(label)}`,
+  );
 });
 
 test('isSafeUrl accepts https and http', () => {

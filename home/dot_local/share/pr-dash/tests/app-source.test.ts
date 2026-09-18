@@ -534,6 +534,19 @@ test('render cuts by the Personal toggle before applying the filters, and tells 
   );
 });
 
+test('currentWorkOrgs starts empty, so the page shows every PR until the first response lands', () => {
+  // The third "empty workOrgs means no constraint" site. parseWorkOrgs(undefined) and a
+  // parsePrsBody without workOrgs are pinned in their own suites; this is the client's
+  // initial state, which applyPersonalCut reads before any response arrives. Seeding it
+  // with anything else would hide every PR on first paint — or on a machine that
+  // configures no work organizations, for good.
+  assert.match(
+    STRIPPED,
+    /^let currentWorkOrgs\s*=\s*\[\]\s*;/m,
+    'expected app.js to declare currentWorkOrgs as an empty array',
+  );
+});
+
 test('toggleCollapsed persists the change with saveView', () => {
   const body = functionBody(STRIPPED, 'function toggleCollapsed');
   assert.match(

@@ -29,7 +29,7 @@ const PLIST_PATH = path.join(
   'scheduled',
   'com.danielhunter.pr-dash.plist.tmpl',
 );
-const BIN_PR_DASH_PATH = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_pr-dash');
+const BIN_PR_DASH_PATH = path.join(REPO_ROOT, 'home', 'dot_local', 'bin', 'executable_pr-dash.tmpl');
 
 const plistText = readFileSync(PLIST_PATH, 'utf8');
 const binText = readFileSync(BIN_PR_DASH_PATH, 'utf8');
@@ -59,6 +59,28 @@ test('the plist and bin/pr-dash agree on the default port', () => {
   assert.ok(plistPort !== undefined, 'expected a PR_DASH_PORT string in the plist');
   assert.ok(binPort !== undefined, 'expected a PR_DASH_PORT default in bin/pr-dash');
   assert.strictEqual(plistPort, binPort);
+});
+
+test('the plist and bin/pr-dash read PR_DASH_WORK_ORGS from the same chezmoi key, guarded by hasKey', () => {
+  // Same shape as the port test: the template expression is extracted from each file and
+  // compared, never typed here twice. Both render `prDashWorkOrgs` from the machine-local
+  // chezmoi.toml, so a launcher that read a different key — or stopped reading one — would
+  // reach the Personal toggle differently from the agent while every unit test stayed
+  // green. The `hasKey` guard is what a machine that sets no such key depends on: without
+  // it chezmoi fails the render with "map has no entry for key" instead of emitting the
+  // empty string parseWorkOrgs reads as no work organizations.
+  const plistExpr =
+    /<key>PR_DASH_WORK_ORGS<\/key>\s*<string>([^<]*)<\/string>/.exec(plistText)?.[1];
+  const binExpr = /^WORK_ORGS_DEFAULT='([^']*)'$/m.exec(binText)?.[1];
+  assert.ok(plistExpr !== undefined, 'expected a PR_DASH_WORK_ORGS string in the plist');
+  assert.ok(binExpr !== undefined, 'expected a WORK_ORGS_DEFAULT literal in bin/pr-dash');
+  assert.strictEqual(plistExpr, binExpr);
+  assert.match(
+    plistExpr,
+    /^\{\{\s*if hasKey \. "prDashWorkOrgs"\s*\}\}\{\{\s*\.prDashWorkOrgs\s*\}\}\{\{\s*end\s*\}\}$/,
+    'expected the value to be .prDashWorkOrgs behind a hasKey guard and nothing else',
+  );
+  assert.match(binText, /export PR_DASH_WORK_ORGS=/, 'expected bin/pr-dash to export PR_DASH_WORK_ORGS');
 });
 
 test('KeepAlive is bare <true/>, with no SuccessfulExit override', () => {
