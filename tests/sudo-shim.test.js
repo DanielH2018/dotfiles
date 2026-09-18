@@ -48,8 +48,14 @@ function shim({ askpass = '/home/u/.local/bin/tmux-askpass' } = {}) {
   if (askpass === null) delete env.SUDO_ASKPASS; else env.SUDO_ASKPASS = askpass;
 
   return {
-    // No tty: stdin from a pipe and /dev/tty unavailable to the child is the `!` case.
-    run: (args) => execFileSync(deployed, args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    // No tty: the `!` case. `detached` is what actually removes the terminal —
+    // has_tty() opens /dev/tty, the CONTROLLING terminal, which a child keeps however
+    // its stdio is redirected. Ignoring stdin alone leaves /dev/tty openable whenever
+    // the suite itself runs under one, so the five -A assertions passed in CI and from a
+    // non-tty shell and failed from the pre-push gate in a terminal. `detached` calls
+    // setsid(2), making the child a session leader with no controlling terminal.
+    run: (args) => execFileSync(deployed, args,
+      { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], detached: true })
       .trim().split('\n').filter(Boolean),
     // Under a pty, so has_tty() succeeds — the interactive case.
     runTty: (args) => execFileSync('script', ['-qec', `${deployed} ${args.join(' ')}`, '/dev/null'],
