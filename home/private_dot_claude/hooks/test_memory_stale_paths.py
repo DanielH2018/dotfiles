@@ -152,6 +152,65 @@ with tempfile.TemporaryDirectory() as tmp:
         == ["docs/retired-hosts.md"],
     )
 
+    # ── the [ENFORCED]/(SCOPED) index pass ───────────────────────────────────────────
+    #
+    # A marked entry points at a check. The pointer outlives the check when the test is
+    # renamed or moved, and a file that still exists says nothing about a symbol inside
+    # it — which is why node ids are resolved to a definition, not just to a file.
+
+    (repo / "docs" / "test_x.py").write_text("def test_live():\n    pass\n")
+
+    def checks(text):
+        return mod.stale_checks(text, repo)
+
+    check(
+        "a node id whose file is gone is missing",
+        checks("ENFORCED by `docs/test_gone.py::test_live`.")
+        == (["docs/test_gone.py::test_live"], []),
+    )
+    check(
+        "a node id whose file defines the test resolves",
+        checks("ENFORCED by `docs/test_x.py::test_live`.")
+        == ([], ["docs/test_x.py::test_live"]),
+    )
+    check(
+        "a node id whose test was renamed is missing",
+        checks("ENFORCED by `docs/test_x.py::test_old`.")
+        == (["docs/test_x.py::test_old"], []),
+    )
+    check(
+        "a bare `::name` resolves against the file named before it",
+        checks("ENFORCED, paired in `docs/test_x.py::test_live` (with `::test_old`).")[
+            0
+        ]
+        == ["docs/test_x.py::test_old"],
+    )
+    check(
+        "a `symbol` in `file` pair resolves to a definition",
+        checks("ENFORCED by `test_live` in `docs/test_x.py`.")
+        == ([], ["docs/test_x.py::test_live"]),
+    )
+    check(
+        "a path outside the marked sentence is not a check",
+        checks("ENFORCED by `docs/test_x.py`. See also `docs/other.md`.")
+        == ([], ["docs/test_x.py"]),
+    )
+    check(
+        "a path whose top directory is not in the repo is skipped, not missing",
+        checks("ENFORCED by an assert in `pre_tasks/load_secrets.yml`.") == ([], []),
+    )
+
+    index = (
+        "- [a](a.md) [ENFORCED] · [b](b.md) [ENFORCED, SCOPED] · [c](c.md) (SCOPED)\n"
+        "- [A task tagged [config, deploy] is skipped](d.md) — text. [ENFORCED]\n"
+        "- [e](e.md) — no marker here.\n"
+    )
+    check(
+        "markers bind per link, nested-bracket labels included",
+        mod.index_entries(index)
+        == [("a.md", False), ("b.md", True), ("c.md", True), ("d.md", False)],
+    )
+
     # ── end to end ───────────────────────────────────────────────────────────────────
 
     subprocess.run(

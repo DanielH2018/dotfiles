@@ -117,6 +117,74 @@ test('a path present only in the main checkout is not reported from a worktree',
   assert.match(run('The pages under `docs/absent/` are the ones.'), /docs\/absent/);
 });
 
+// ── the [ENFORCED]/(SCOPED) index pass ─────────────────────────────────────────────
+//
+// An index entry marked [ENFORCED] or (SCOPED) is a pointer to a check. The pointer
+// outlives the check when a test is renamed or a hook retired, and nothing else re-reads
+// it. Measured on the live server index 2026-09-18: 30 marked entries, 4 of them naming
+// a test or a function at a file it had since moved out of — every one green in CI under
+// its new name, every pointer wrong.
+
+// Like report(), but the memory is linked from a MEMORY.md line carrying a marker, and
+// the repo holds a test module defining `test_live`. Three memory files, so a multi-link
+// index line has something to point at.
+function reportIndexed(indexLine, memoryText) {
+  const repo = tmpdir('memstale-repo-');
+  execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
+  fs.mkdirSync(path.join(repo, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'tests', 'test_thing.py'), 'def test_live():\n    pass\n');
+  const config = tmpdir('memstale-cfg-');
+  const memories = path.join(config, 'projects', repo.split(path.sep).join('-'), 'memory');
+  fs.mkdirSync(memories, { recursive: true });
+  fs.writeFileSync(path.join(memories, 'MEMORY.md'), `# Index\n\n${indexLine}\n`);
+  for (const name of ['a-memory.md', 'b-memory.md', 'c-memory.md']) {
+    fs.writeFileSync(path.join(memories, name), memoryText);
+  }
+  return execFileSync(python, [HOOK, '--repo', repo], {
+    encoding: 'utf8',
+    env: { ...process.env, CLAUDE_CONFIG_DIR: config, CLAUDE_MEMORY_PATH_CHECK: '1' },
+  });
+}
+
+const FULL = '- [A thing](a-memory.md) — one line. [ENFORCED]';
+const SCOPED = '- [A thing](a-memory.md) — one line. [ENFORCED, SCOPED]';
+
+test('a pointer-only entry whose check is gone is retirable; a live check is silent', { skip }, () => {
+  const out = reportIndexed(FULL, 'ENFORCED by `tests/test_gone.py::test_live`.\n');
+  assert.match(out, /a-memory\.md: tests\/test_gone\.py::test_live .*retire/);
+  assert.strictEqual(reportIndexed(FULL, 'ENFORCED by `tests/test_thing.py::test_live`.\n'), '');
+});
+
+// PATHISH rejects the `::`, so a node id was invisible to the path scan; and a file that
+// still exists says nothing about a test renamed inside it.
+test('a node id naming a test the file no longer defines is flagged', { skip }, () => {
+  const out = reportIndexed(FULL, 'ENFORCED by `tests/test_thing.py::test_renamed`.\n');
+  assert.match(out, /tests\/test_thing\.py::test_renamed/);
+  assert.strictEqual(reportIndexed(FULL, 'ENFORCED by `test_live` in `tests/test_thing.py`.\n'), '');
+});
+
+// A SCOPED entry keeps a body the check does not cover, so its stale check is a reference
+// to fix and never a retire suggestion.
+test('a SCOPED entry with a missing check warns without a retire suggestion', { skip }, () => {
+  const out = reportIndexed(SCOPED, 'SCOPED: the check covers x (`tests/test_gone.py`).\n');
+  assert.match(out, /a-memory\.md: tests\/test_gone\.py \(SCOPED/);
+  assert.doesNotMatch(out, /retir/);
+});
+
+// Markers bind to the nearest preceding link, not the line: the live index puts several
+// links on one bullet with a marker after each, and a line-level read hands the first
+// entry the second's marker and the unmarked third a marker it never had.
+test('markers bind per link on a multi-link line', { skip }, () => {
+  const line = '- A: [a](a-memory.md) [ENFORCED] · [b](b-memory.md) (SCOPED) · [c](c-memory.md) (none).';
+  const out = reportIndexed(line, 'ENFORCED by `tests/test_gone.py`.\n');
+  // The path scan reports all three memories for the same gone path, so read only
+  // the index block.
+  const index = out.slice(out.indexOf('index entries'));
+  assert.match(index, /a-memory\.md: .*pointer-only/);
+  assert.match(index, /b-memory\.md: .*SCOPED/);
+  assert.doesNotMatch(index, /c-memory\.md/);
+});
+
 test('opting out silences the hook entirely', { skip }, () => {
   const repo = tmpdir('memstale-repo-');
   execFileSync('git', ['init', '-q', repo], { stdio: 'ignore' });
