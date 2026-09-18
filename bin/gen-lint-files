@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+'use strict';
+// gen-lint-files — render the lint gates' extensionless-script lists from the tree.
+//
+// The ruff-check, oxlint and bsd-portability hooks in .pre-commit-config.yaml can only gate
+// an extensionless script that is NAMED in their `files:` (types_or cannot type one by
+// extension, and a shebang only types a file that is executable). Those names were three
+// hand-typed lists, plus a fourth copy in pyproject.toml's `extend-include` that had drifted
+// to 1 name of 11. This walks `git ls-files -s`, tags every extensionless tracked file by its
+// shebang, and writes all four from that one census — the same shape as bin/gen-skill-router,
+// so the lists cannot drift from the tree (regenerated) and the tree cannot outgrow them
+// silently (--check fails).
+//
+// Reads the git index, not the working tree listing, so an untracked scratch script does
+// not enter the gate, and the +x bit it reports is the one prek sees.
+//
+// Usage:
+//   gen-lint-files            rewrite the three `files:` lines and ruff.toml
+//   gen-lint-files --check    render to memory, diff against the committed files, exit
+//                             non-zero on any difference (the CI gate;
+//                             tests/gen-lint-files.test.js runs this against the real tree)
+//   gen-lint-files --list     print the census: mode, dialect, path
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const lib = require('./gen-lint-files-lib.js');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const CONFIG_PATH = path.join(REPO_ROOT, '.pre-commit-config.yaml');
+const RUFF_TOML_PATH = path.join(REPO_ROOT, 'ruff.toml');
+
+function firstLine(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(200);
+    const n = fs.readSync(fd, buf, 0, 200, 0);
+    fs.closeSync(fd);
+    return buf.subarray(0, n).toString('utf8').split('\n')[0];
+  } catch {
+    return '';
+  }
+}
+
+function readEntries() {
+  return execFileSync('git', ['ls-files', '-s'], { cwd: REPO_ROOT, encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [meta, file] = line.split('\t');
+      const base = file.slice(file.lastIndexOf('/') + 1);
+      return {
+        mode: meta.split(' ')[0],
+        file,
+        firstLine: base.includes('.') ? '' : firstLine(path.join(REPO_ROOT, file)),
+      };
+    });
+}
+
+function checkOne(label, generated, committed) {
+  if (generated === committed) {
+    process.stdout.write(`gen-lint-files --check: ${label} is up to date.\n`);
+    return true;
+  }
+  const diff = lib.firstDiffLine(generated, committed);
+  process.stderr.write(`gen-lint-files --check: ${label} is out of date. Run \`bin/gen-lint-files\` and commit the result.\n`);
+  if (diff) {
+    process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
+    process.stderr.write(`    generated: ${diff.expected}\n`);
+    process.stderr.write(`    committed: ${diff.got}\n`);
+  }
+  return false;
+}
+
+function main() {
+  const check = process.argv.includes('--check');
+  const list = process.argv.includes('--list');
+
+  const scripts = lib.census(readEntries());
+  if (list) {
+    for (const s of scripts) process.stdout.write(`${s.mode} ${s.kind} ${s.file}\n`);
+    return;
+  }
+
+  const patterns = lib.renderPatterns(scripts);
+  const ruffToml = lib.renderRuffToml(scripts);
+  const currentCfg = fs.readFileSync(CONFIG_PATH, 'utf8');
+  const regeneratedCfg = lib.injectFilesPatterns(currentCfg, patterns);
+  const summary = `${scripts.length} extensionless scripts`;
+
+  if (check) {
+    const currentRuff = fs.existsSync(RUFF_TOML_PATH) ? fs.readFileSync(RUFF_TOML_PATH, 'utf8') : '';
+    const ok = [
+      checkOne(path.relative(REPO_ROOT, CONFIG_PATH), regeneratedCfg, currentCfg),
+      checkOne(path.relative(REPO_ROOT, RUFF_TOML_PATH), ruffToml, currentRuff),
+    ].every(Boolean);
+    if (!ok) process.exit(1);
+    process.stdout.write(`gen-lint-files --check: ${summary}.\n`);
+    return;
+  }
+
+  fs.writeFileSync(CONFIG_PATH, regeneratedCfg);
+  fs.writeFileSync(RUFF_TOML_PATH, ruffToml);
+  process.stdout.write(`gen-lint-files: wrote ${path.relative(REPO_ROOT, CONFIG_PATH)} and ${path.relative(REPO_ROOT, RUFF_TOML_PATH)} (${summary}).\n`);
+}
+
+main();

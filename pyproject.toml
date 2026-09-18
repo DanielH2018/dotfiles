@@ -8,7 +8,9 @@ package = false
 
 [tool.ruff]
 target-version = "py39"
-extend-include = ["home/dot_local/bin/executable_tq"]
+# `extend-include` (the extensionless Python scripts) lives in ruff.toml, which ruff
+# discovers first and which `extend`s this file. bin/gen-lint-files renders it from the
+# tree; a copy here drifted to 1 name of 11 before it moved.
 
 [tool.ruff.lint]
 # PTH (pathlib) intentionally left out of select: os.path is load-bearing
