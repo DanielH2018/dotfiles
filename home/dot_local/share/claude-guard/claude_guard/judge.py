@@ -97,8 +97,10 @@ _FD_DUP = re.compile(rf"[0-9]*>&[0-9-](?=[{WS}]|$)")
 # scans refuse any `>`. Narrower than the two patterns above on purpose: those feed a
 # REFUSAL (a leftover `>` after stripping refuses), so a loose match only over-refuses;
 # this one feeds an ALLOW, so it takes only a whole word — leading whitespace required,
-# so `ping6>/dev/null` is never read as `ping` with a sink behind it.
-_STDERR_SINK_WORD = re.compile(rf"[{WS}]+[0-9]?(?:>&[0-9-]|>>?[{WS}]*/dev/null)(?=[{WS}]|$)")
+# so `ping6>/dev/null` is never read as `ping` with a sink behind it — and only a sink
+# with an fd digit in front (`2>/dev/null`, `2>&1`, `1>&2`): a bare `>/dev/null` discards
+# the stage's stdout, which is not the inert stderr merge this arm vouches for.
+_STDERR_SINK_WORD = re.compile(rf"[{WS}]+[0-9](?:>&[0-9-]|>>?[{WS}]*/dev/null)(?=[{WS}]|$)")
 # allow-compound-bash.sh:309, `s@[[:space:]]+-[^[:space:]]+@@g`. Ports the POSIX class, not
 # IFS. Fix round 4 wrote this as `[{WS}]+-[^{WS}]+`, which is the wrong direction at the
 # complement: `[^{WS}]` is BROADER than sed's `[^[:space:]]`, so the strip consumed a

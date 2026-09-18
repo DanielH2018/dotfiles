@@ -1067,6 +1067,12 @@ def test_a_stderr_sink_word_on_the_ssh_stage_is_stripped_before_the_remote_check
     assert allowed("hl uptime 2> /dev/null | tail -1", main)
 
 
+def test_a_bare_stdout_sink_on_the_ssh_stage_is_not_stripped(main):
+    # `>/dev/null` discards the stage's output; only an fd-numbered sink is vouched for.
+    assert not allowed("ssh daniel-server docker ps >/dev/null 2>&1 | tail -3", main)
+    assert not allowed("ssh daniel-server docker ps > /dev/null | tail -3", main)
+
+
 def test_a_stderr_sink_glued_to_the_verb_is_not_stripped(main):
     # `ping6>/dev/null` is the word `ping6` plus a redirect; stripping it would judge `ping`.
     assert not allowed("ssh 10.0.0.9 ping6>/dev/null | tail -1", main)
