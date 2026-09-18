@@ -33,15 +33,18 @@ Merged-ness is judged against the local `origin/<default>` ref as it already sta
 hook does no network I/O, so a stale ref makes it keep a tree it could have removed —
 never the reverse.
 
-Two things the ancestor test does not cover, and how each is handled.
+"Merged" is judged three ways, cheapest first, and only the first one acts.
 
-A squash or rebase merge rewrites the commits, so the branch tip is never an ancestor
-and the tree would be kept forever with nothing said. `git cherry` catches those: it
-compares by patch-id, and a branch every one of whose commits already has an equivalent
-on the default branch emits no `+` lines. That is reported, never acted on. Patch-id
-equivalence is not provenance — a revert of a revert, a cherry-picked hotfix, or a
-whitespace change someone else also made all read as landed — and reaping on it would
-invert this script's design, which fails toward keeping the tree. The operator decides.
+Ancestry is the one that removes. Once HEAD is an ancestor of the default branch the
+argument above holds and the tree goes. The other two exist because a squash or rebase
+merge rewrites the commits, so the branch tip is never an ancestor and the tree would
+be kept forever with nothing said. Both are reported, never acted on.
+
+`git cherry` catches the rebase case: it compares by patch-id, and a branch every one
+of whose commits already has an equivalent on the default branch emits no `+` lines.
+Patch-id equivalence is not provenance — a revert of a revert, a cherry-picked hotfix,
+or a whitespace change someone else also made all read as landed — and reaping on it
+would invert this script's design, which fails toward keeping the tree.
 
 The same caution runs the other way, and it is easier to miss. A `+` line does not prove
 work is unlanded — it only means no commit on the default branch carries that patch-id,
@@ -50,14 +53,24 @@ worktree-longhorn-b2-weekly-rearm: `git cherry` reported 16 `+` lines while five
 eight files were byte-identical to master and the other three were older than master's.
 Neither mark is provenance, which is why the report names the command that settles it.
 
+`git merge-tree` catches the squash case, which patch-id cannot: several commits
+collapse into one, so no commit on the default branch matches any of theirs. It asks
+about content instead of history — merge the branch into the default branch, and if the
+resulting tree IS the default branch's tree, the branch has nothing left to give. That
+is exactly what a squash merge leaves behind. It is also what a branch superseded by
+later work looks like, and a conflict (the default branch drifted on a file the branch
+touched) yields no verdict at all, which reads as not landed. Content equality is even
+less provenance than patch-id, so it is the last signal consulted and the one furthest
+from acting. The operator decides.
+
 Removing a worktree leaves its branch behind. Nothing else deletes it, so every session
 that isolates its work used to leave a permanent ref. A successful removal is now
 followed by `git branch -d`, and a second sweep covers session branches that have no
 worktree at all. Always `-d`, never `-D`: git's own refusal is the same backstop this
-script already relies on for `worktree remove`. That is also why the cherry case is
-report-only in both sweeps — `-d` would refuse it anyway. What `-d` accepts is narrower
-than "merged" and depends on when you ask; `delete_branch` has the mechanism and why a
-refusal does not prove the branch still holds work.
+script already relies on for `worktree remove`. That is also why the cherry and
+merge-tree cases are report-only in both sweeps — `-d` would refuse them anyway. What
+`-d` accepts is narrower than "merged" and depends on when you ask; `delete_branch` has
+the mechanism and why a refusal does not prove the branch still holds work.
 
 Usage:
     prune-worktrees.py            # report only
@@ -80,7 +93,8 @@ from pathlib import Path
 REMOVABLE = "removable"
 KEEP = "keep"
 # Landed by a squash or rebase merge: reported so it stops being invisible, never
-# removed. The module docstring says why patch-id equivalence is not enough to act on.
+# removed. The module docstring says why neither patch-id equivalence nor content
+# equality is enough to act on.
 REVIEW = "review"
 
 # Branches EnterWorktree creates carry this prefix. The orphan sweep uses it to tell a
@@ -161,16 +175,21 @@ def classify(
     dirty: bool,
     is_current: bool,
     equivalent: bool = False,
+    contained: bool = False,
 ) -> tuple[str, str]:
     """Return (verdict, reason) for one worktree.
 
     Reasons are reported in priority order so the output names the blocking condition a
     person would act on first, rather than listing every condition that happens to fail.
 
-    `equivalent` is the cherry test and is only consulted once `merged` has failed. It
-    downgrades "not merged" to REVIEW, which reports and never removes — a tree whose
-    work landed by squash still has to be looked at by a person, because patch-id
-    equality does not prove this branch is where the work came from.
+    `equivalent` is the cherry test and `contained` the merge-tree test; both are only
+    consulted once `merged` has failed. Either downgrades "not merged" to REVIEW, which
+    reports and never removes — a tree whose work landed by squash still has to be
+    looked at by a person, because neither patch-id equality nor content equality
+    proves this branch is where the work came from. The two get distinct reasons
+    because they are settled differently: a patch-id match can be a branch that is
+    merely older than the default branch, a content match can be one later work
+    superseded.
     """
     if is_current:
         return KEEP, "this session's own worktree"
@@ -189,6 +208,16 @@ def classify(
                 "Before removing, establish which: `gh pr list --state merged --head "
                 f"{tree.branch}` names the merge, and `git diff --stat <default> "
                 f"{tree.branch}` shows whether the branch is behind rather than landed."
+            )
+        if contained:
+            return REVIEW, (
+                f"{tree.branch} is not an ancestor of the default branch and no commit "
+                "on it has a patch-id match there, but merging it would change nothing "
+                "— its content is already on the default branch. That is what a squash "
+                "merge leaves behind, OR a branch that later work superseded. Before "
+                "removing, establish which: `gh pr list --state merged --head "
+                f"{tree.branch}` names the merge, and `git log --oneline <default>.."
+                f"{tree.branch}` lists the commits whose content would be lost."
             )
         return KEEP, f"{tree.branch} not merged"
     return REMOVABLE, f"{tree.branch} merged, clean, unlocked"
@@ -216,6 +245,51 @@ def is_equivalent(repo: str, branch: str, target: str) -> bool:
     if not lines or any(ln.startswith("+") for ln in lines):
         return False
     return all(ln.startswith("-") for ln in lines)
+
+
+def merge_tree_says_contained(merge_tree_stdout: str, target_tree: str) -> bool:
+    """Read `git merge-tree --write-tree <target> <branch>`: True when it is a no-op.
+
+    The command prints the OID of the tree merging the branch would produce. When that
+    equals the target's own tree, the branch has nothing the target does not already
+    hold — which is what a squash merge leaves behind, and what patch-id cannot see,
+    because a squash keeps the content while discarding the commits that carried it.
+
+    Empty input is a failure to read a verdict, not a match, so it returns False — both
+    arguments must be present for a comparison to mean anything.
+    """
+    lines = [ln.strip() for ln in merge_tree_stdout.splitlines() if ln.strip()]
+    target = target_tree.strip()
+    if not lines or not target:
+        return False
+    return lines[0] == target
+
+
+def is_contained(repo: str, branch: str, target: str) -> bool:
+    """Would merging `branch` into `target` change nothing? Content, not history.
+
+    Only meaningful once the ancestor test has failed: a branch that IS an ancestor is
+    trivially contained, so on its own this would flag every fresh worktree. Ordered
+    last because it performs a real (in-memory) merge, where the other two signals
+    only walk history.
+
+    Every failure reads as "not contained": a conflict, where the target drifted on a
+    file the branch also touched, exits non-zero and is a genuine no-verdict — and so is
+    a git older than 2.38, which lacks `--write-tree`. The REVIEW verdict this feeds is
+    report-only, so a false negative here costs a line of output and a false positive
+    costs a person's attention; neither costs work.
+    """
+    target_tree = _git(["rev-parse", f"{target}^{{tree}}"], cwd=repo)
+    result = subprocess.run(
+        ["git", "merge-tree", "--write-tree", target, branch],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    return merge_tree_says_contained(result.stdout, target_tree)
 
 
 def _git(args: list[str], cwd: str | None = None) -> str:
@@ -401,12 +475,21 @@ def main() -> int:
             and tree.branch is not None
             and is_equivalent(repo, tree.branch, target)
         )
+        # Last and dearest: a real merge, run only once both history checks have failed.
+        contained = (
+            not merged
+            and not equivalent
+            and bool(target)
+            and tree.branch is not None
+            and is_contained(repo, tree.branch, target)
+        )
         verdict, reason = classify(
             tree,
             merged=merged,
             dirty=is_dirty(tree.path),
             is_current=here == resolved or resolved in here.parents,
             equivalent=equivalent,
+            contained=contained,
         )
         if verdict == REMOVABLE:
             removable.append(tree)
@@ -421,10 +504,15 @@ def main() -> int:
     attached = {t.branch for t in trees if t.branch}
     orphans = orphan_branches(repo, attached)
     orphan_merged = [b for b in orphans if bool(target) and is_merged(repo, b, target)]
+    # Same three signals, same order, same policy as the worktree sweep above: only
+    # ancestry reaches `-d`; the two weaker signals are reported so the branch is looked
+    # at rather than left behind in silence.
     orphan_review = [
         b
         for b in orphans
-        if b not in orphan_merged and bool(target) and is_equivalent(repo, b, target)
+        if b not in orphan_merged
+        and bool(target)
+        and (is_equivalent(repo, b, target) or is_contained(repo, b, target))
     ]
 
     if not args.prune:
@@ -440,10 +528,10 @@ def main() -> int:
         for branch in orphan_review:
             print(
                 f"[{REVIEW:9}] branch {branch}\n"
-                "            no worktree, and every commit has an equivalent on the "
-                "default branch — landed by a squash or rebase merge, or just older "
-                "than it. Check `gh pr list --state merged --head <branch>` before "
-                "deleting."
+                "            no worktree, and nothing on it is missing from the "
+                "default branch (by patch-id or by content) — landed by a squash or "
+                "rebase merge, or just older than it. Check `gh pr list --state "
+                "merged --head <branch>` before deleting."
             )
         total = len(removable) + len(orphan_merged)
         if total:
@@ -484,10 +572,10 @@ def main() -> int:
         print(f"Kept {tree.path}: {reason}")
     for branch in orphan_review:
         print(
-            f"Branch {branch} has no worktree and every commit on it has an "
-            "equivalent on the default branch — landed by a squash or rebase merge, or "
-            "merely older than it. Establish which before deleting: `gh pr list "
-            f"--state merged --head {branch}`."
+            f"Branch {branch} has no worktree and nothing on it is missing from the "
+            "default branch (by patch-id or by content) — landed by a squash or rebase "
+            "merge, or merely older than it. Establish which before deleting: `gh pr "
+            f"list --state merged --head {branch}`."
         )
     for tree, error in failed:
         print(f"Could not remove {tree.path}: {error}")

@@ -124,6 +124,84 @@ check(
     == mod.KEEP,
 )
 
+# ── the removal policy: three conditions act, two weaker signals only report ──────
+#
+# Ancestry is the only "merged" signal that reaches REMOVABLE. Patch-id equivalence and
+# content containment each downgrade "not merged" to REVIEW and nothing more — with any
+# of the three conditions failing, they cannot even do that.
+
+check(
+    "patch-id equivalence alone is review, never removable",
+    mod.classify(wt(), merged=False, dirty=False, is_current=False, equivalent=True)[0]
+    == mod.REVIEW,
+)
+check(
+    "content containment alone is review, never removable",
+    mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[0]
+    == mod.REVIEW,
+)
+check(
+    "the two review reasons are distinct",
+    mod.classify(wt(), merged=False, dirty=False, is_current=False, equivalent=True)[1]
+    != mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[
+        1
+    ],
+)
+check(
+    "the content reason names the command that settles it",
+    "gh pr list --state merged --head b"
+    in mod.classify(wt(), merged=False, dirty=False, is_current=False, contained=True)[
+        1
+    ],
+)
+check(
+    "a weak signal does not outrank dirty",
+    mod.classify(wt(), merged=False, dirty=True, is_current=False, contained=True)[0]
+    == mod.KEEP,
+)
+check(
+    "a weak signal does not outrank a live lock",
+    mod.classify(
+        wt(locked=True, reason=f"claude session x (pid {my_pid} start {my_start})"),
+        merged=False,
+        dirty=False,
+        is_current=False,
+        contained=True,
+    )[0]
+    == mod.KEEP,
+)
+check(
+    "ancestry outranks both weak signals",
+    mod.classify(
+        wt(),
+        merged=True,
+        dirty=False,
+        is_current=False,
+        equivalent=True,
+        contained=True,
+    )[0]
+    == mod.REMOVABLE,
+)
+
+# ── merge_tree_says_contained ─────────────────────────────────────────────────
+
+check(
+    "contained when the merged tree is the target's tree",
+    mod.merge_tree_says_contained("abc123\n", "abc123"),
+)
+check(
+    "not contained when the merged tree differs",
+    not mod.merge_tree_says_contained("abc123\n", "def456"),
+)
+check(
+    "empty merge-tree output is no verdict",
+    not mod.merge_tree_says_contained("", "abc123"),
+)
+check(
+    "empty target tree is no verdict",
+    not mod.merge_tree_says_contained("abc123\n", ""),
+)
+
 # ── is_dirty ──────────────────────────────────────────────────────────────────
 
 # A path git cannot read status for stands in for the shared-index failure: the answer
@@ -345,6 +423,40 @@ def build_branch_repo(root):
 
     # A merged branch that is NOT a session branch: the sweep must not touch it.
     git(["branch", "my-own-branch", "main"], repo)
+
+    # A REAL squash: two commits collapsed into one on main. No commit on main carries
+    # either patch-id, so `git cherry` reports both as unlanded — only the content test
+    # can see that main already holds everything this branch has.
+    git(
+        ["worktree", "add", "-q", "-b", "worktree-collapsed", str(trees / "collapsed")],
+        repo,
+    )
+    (trees / "collapsed" / "c1").write_text("c1\n")
+    git(["add", "c1"], trees / "collapsed")
+    git(["commit", "-qm", "first half"], trees / "collapsed")
+    (trees / "collapsed" / "c2").write_text("c2\n")
+    git(["add", "c2"], trees / "collapsed")
+    git(["commit", "-qm", "second half"], trees / "collapsed")
+    git(["merge", "-q", "--squash", "worktree-collapsed"], repo)
+    git(["commit", "-qm", "collapsed work (#2)"], repo)
+    git(["push", "-q", "origin", "main"], repo)
+    # Its orphan twin: same commits, no worktree.
+    collapsed_sha = git(["rev-parse", "worktree-collapsed"], repo).stdout.strip()
+    git(["branch", "worktree-orphan-collapsed", collapsed_sha], repo)
+
+    # Squash-merged, then main drifted into a conflict on a file the branch touched:
+    # merge-tree has no verdict, which must read as not contained.
+    git(
+        ["worktree", "add", "-q", "-b", "worktree-conflict", str(trees / "conflict")],
+        repo,
+    )
+    (trees / "conflict" / "a").write_text("branch version\n")
+    git(["add", "a"], trees / "conflict")
+    git(["commit", "-qm", "conflicting edit"], trees / "conflict")
+    (repo / "a").write_text("main version\n")
+    git(["add", "a"], repo)
+    git(["commit", "-qm", "main moved on"], repo)
+    git(["push", "-q", "origin", "main"], repo)
     return repo, trees
 
 
@@ -364,6 +476,26 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "is_equivalent rejects a branch with no commits of its own",
         not mod.is_equivalent(str(repo), "worktree-orphan-merged", "origin/main"),
+    )
+
+    # The content signal only earns its place where patch-id says no: the collapsed
+    # branch must fail is_equivalent AND pass is_contained, or merge-tree is never the
+    # thing being tested.
+    check(
+        "is_equivalent cannot see a two-commit squash",
+        not mod.is_equivalent(str(repo), "worktree-collapsed", "origin/main"),
+    )
+    check(
+        "is_contained sees a two-commit squash",
+        mod.is_contained(str(repo), "worktree-collapsed", "origin/main"),
+    )
+    check(
+        "is_contained rejects a branch with unlanded work",
+        not mod.is_contained(str(repo), "worktree-orphan-live", "origin/main"),
+    )
+    check(
+        "is_contained has no verdict on a conflict",
+        not mod.is_contained(str(repo), "worktree-conflict", "origin/main"),
     )
 
     report = subprocess.run(
@@ -409,6 +541,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "the orphan squash-merged branch survives",
         "worktree-orphan-squashed" in branches,
+    )
+    # Same policy for the content signal: the collapsed tree and its orphan twin are
+    # reported, and both are still there afterwards.
+    check(
+        "report names the collapsed tree for review",
+        f"[{mod.REVIEW:9}] {trees / 'collapsed'}" in report.stdout,
+    )
+    check("the collapsed worktree survives", (trees / "collapsed").exists())
+    check("the collapsed branch survives", "worktree-collapsed" in branches)
+    check(
+        "the orphan collapsed branch is reported, not deleted",
+        "worktree-orphan-collapsed" in report.stdout
+        and "worktree-orphan-collapsed" in branches,
+    )
+    check(
+        "the conflicting tree is kept without a review line",
+        (trees / "conflict").exists() and "worktree-conflict" not in pruned.stdout,
     )
     check(
         "prune says why it kept the squash-merged tree",
