@@ -27,7 +27,10 @@ vault, `Work/Claude_Code_Setup.md` — not in this repo.
   `merge(home/.chezmoitemplates/settings.base.json, optional machine-local work overlay)`
   via `home/private_dot_claude/modify_settings.json.sh.tmpl` +
   `home/dot_local/bin/executable_claude-settings-merge` (arrays concat+dedupe, scalars
-  overlay-wins). Change the base template, then `chezmoi apply`.
+  overlay-wins). Change the base template, then `chezmoi apply`. The `hooks` block of that
+  template is itself generated: a hook registers itself in the `# gen-hooks:` block at the
+  top of its file under `home/private_dot_claude/hooks/`, and `bin/gen-hooks` renders the
+  block (`--check` fails CI on a hand edit or an undeclared hook).
 
 ## Several sessions work this repo at once
 

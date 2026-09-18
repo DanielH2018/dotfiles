@@ -60,7 +60,7 @@ to memory files and status lines as much as to docs.
 
 My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. `chezmoi-guard.sh` (PostToolUse) flags a direct edit under `~`: it auto-resyncs the source for a plain managed file, but only warns for a `.tmpl`/`modify_`/`run_` source — that edit is not reverted, so it stays live until you next `chezmoi apply`. Run `chezmoi source-path <file>` before editing any config under `~`.
 
-- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/hooks/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`.
+- **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`. A hook registers itself in the `# gen-hooks:` block at the top of its file and `bin/gen-hooks` renders the hooks block from those.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
 
 ## Working in isolation
