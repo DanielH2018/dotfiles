@@ -54,11 +54,23 @@ CURL_HOSTS: tuple[str, ...] = (
 # cluster itself live, so it never gets that grant.
 TRUSTED_SSH_HOSTS: frozenset[str] = frozenset({"daniel-server", "daniel-pi"})
 
-# allow-readonly-remote.sh:157-164. The flat, no-subcommand verbs. ip/docker/systemctl are
-# nested sub-tables dispatched beside the check that reads them (remote.py), not flat names
-# here — each takes a subcommand argument this table can't express. env/printenv are
-# deliberately absent (:149-151): they print every exported variable, including API tokens.
-REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
+# allow-readonly-remote.sh:157-164. The flat, no-subcommand verbs that are read-only under
+# ANY argument on BOTH sides of the ssh boundary: `REMOTE_READONLY_VERBS` below judges the
+# far shell's verb, and the server repo's local `TIER1` (`.claude/hooks/_readonly_tables.py`)
+# reads this same set, each extending it with what is read-only on its side only. One home,
+# so a name added here widens both by design — and a name that is read-only only over ssh
+# (`_REMOTE_ONLY`) cannot reach the local table by accident. Until server #2078 `TIER1` was
+# derived from `REMOTE_READONLY_VERBS` itself, so every remote addition widened local
+# auto-approve on the next `chezmoi apply` with no edit and no review on that side.
+#
+# ip/docker/systemctl are nested sub-tables dispatched beside the check that reads them
+# (remote.py), not flat names here — each takes a subcommand argument this table can't
+# express. env/printenv are deliberately absent (:149-151): they print every exported
+# variable, including API tokens. A verb that reads under most arguments but writes under a
+# few (`journalctl`, `dmesg`, `ss`, `rg`, `sensors`) is a `remote_guards.GUARDS` entry, not a
+# name here: the table wins in `remote_argv_readonly`, so a guard on a bare-listed verb is
+# dead code.
+READONLY_BASE: frozenset[str] = frozenset(
     {
         "true",
         "uptime",
@@ -77,7 +89,6 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "du",
         "ps",
         "top",
-        "htop",
         "vmstat",
         "iostat",
         "w",
@@ -87,9 +98,6 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "lsblk",
         "lsof",
         "lsmod",
-        "dmesg",
-        "sensors",
-        "nvidia-smi",
         "getent",
         "ls",
         "cat",
@@ -106,7 +114,6 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "grep",
         "egrep",
         "fgrep",
-        "rg",
         "echo",
         "printf",
         "cut",
@@ -117,7 +124,6 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "sha1sum",
         "sha256sum",
         "cksum",
-        "ss",
         "netstat",
         "ping",
         "ping6",
@@ -126,7 +132,6 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "nslookup",
         "traceroute",
         "tracepath",
-        "journalctl",
         # DECIDED (server #1898): the guard-free half of the server repo's TIER1, so the
         # judge and `auto-approve-readonly.py` agree on every verb that is read-only under
         # ANY argument. Measured 2026-09-18: TIER1 held 32 names this table lacked. `cd`
@@ -134,8 +139,8 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         # reason above. The rest are here. NOT moved: the verbs TIER1 reaches only through
         # a per-command guard function (`git`, `sed`, `awk`, `find`, `sort`, `uniq`,
         # `apt`, `dpkg`, `crontab`, `pipx`, ...) — a guarded verb moves only WITH its
-        # guard, ported beside `_JOURNALCTL_MUTATE` in checks/remote.py, because the replay
-        # gate cannot see a remote fail-open (4 of 1058 prompted records touch ssh).
+        # guard, ported into checks/remote_guards.py, because the replay gate cannot see
+        # a remote fail-open (4 of 1058 prompted records touch ssh).
         "apt-cache",
         "b2sum",
         "blkid",
@@ -167,6 +172,22 @@ REMOTE_READONLY_VERBS: frozenset[str] = frozenset(
         "zgrep",
     }
 )
+
+# Read-only over ssh, and kept out of `READONLY_BASE` because the server repo admits neither
+# locally (server #2052). Each carries its reason so a later tidy-up does not fold it back.
+_REMOTE_ONLY: frozenset[str] = frozenset(
+    {
+        # Interactive: under Claude's Bash tool it never returns, so the server admits it
+        # nowhere. Over ssh with no tty it exits at once, which is harmless.
+        "htop",
+        # Query-only behind `_nvidia_smi_readonly`, an inline arm of `readonly_remote_safe`
+        # that runs before the table. No host in the homelab fleet has NVIDIA hardware, so
+        # the server ports no guard for it; it moves into `READONLY_BASE` only with one.
+        "nvidia-smi",
+    }
+)
+
+REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 
 # allow-readonly-remote.sh:133 (SECRET_RE), matched at :134 with `grep -qiE` — hence
 # re.IGNORECASE here. /proc/<pid>/environ dumps a process's exported env unrestricted;

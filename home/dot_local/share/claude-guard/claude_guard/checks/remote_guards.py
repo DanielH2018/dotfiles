@@ -368,6 +368,69 @@ def crontab_readonly(argv: list[str]) -> bool:
     return saw_list
 
 
+# Flag-guarded readers (server #2078): verbs that read under every argument but a few, each
+# named as its long options plus the letters that mean the same inside a short cluster
+# (`-xKy`, `-xCy`). A long option matches on its name, before any `=`. Until #2078 these were
+# regex arms in `checks/remote.py` that ran on the joined remote text BEFORE the table lookup,
+# with the verb itself listed bare in `REMOTE_READONLY_VERBS` — so `remote_argv_readonly`,
+# the half the server repo replays its vectors through, answered True for `dmesg -C`, and
+# nothing kept the two sides' copies agreeing. As `GUARDS` entries they sit under that replay.
+_FLAG_MUTATES: dict[str, tuple[tuple[str, ...], str]] = {
+    # -K/--kill closes sockets (server #1898).
+    "ss": (("--kill",), "K"),
+    # -s/--set writes the config back to the hardware.
+    "sensors": (("--set",), "s"),
+    # -C/--clear clears the ring buffer, -c/--read-clear prints then clears. -n/--console-level,
+    # -D/--console-off and -E/--console-on change what the kernel logs to the console; they
+    # need CAP_SYSLOG, which the homelab's `sudo` deny withholds, so the exposure there is
+    # nil — but the guard is the verb's write surface, not one fleet's.
+    "dmesg": (
+        ("--clear", "--read-clear", "--console-level", "--console-off", "--console-on"),
+        "CcnDE",
+    ),
+}
+
+
+def _flag_guarded(verb: str) -> Callable[[list[str]], bool]:
+    longs, letters = _FLAG_MUTATES[verb]
+    cluster = re.compile(rf"-[a-zA-Z]*[{letters}]")
+
+    def guard(argv: list[str]) -> bool:
+        return not any(a.split("=", 1)[0] in longs or cluster.match(a) for a in argv[1:])
+
+    return guard
+
+
+# journalctl reads logs, but these flags delete, rotate or reconfigure the journal.
+_JOURNALCTL_WRITE = frozenset(
+    {
+        "--rotate",
+        "--vacuum-size",
+        "--vacuum-time",
+        "--vacuum-files",
+        "--flush",
+        "--sync",
+        "--relinquish-var",
+        "--smart-relinquish-var",
+        "--update-catalog",
+        "--setup-keys",
+    }
+)
+
+
+def journalctl_readonly(argv: list[str]) -> bool:
+    return not any(a.split("=", 1)[0] in _JOURNALCTL_WRITE for a in argv[1:])
+
+
+# rg's `--pre` runs an arbitrary preprocessor per file and `--hostname-bin` an arbitrary
+# binary.
+_RG_EXEC = frozenset({"--pre", "--hostname-bin"})
+
+
+def rg_readonly(argv: list[str]) -> bool:
+    return not any(a.split("=", 1)[0] in _RG_EXEC for a in argv[1:])
+
+
 GUARDS: dict[str, Callable[[list[str]], bool]] = {
     "git": git_readonly,
     "find": find_readonly,
@@ -382,4 +445,9 @@ GUARDS: dict[str, Callable[[list[str]], bool]] = {
     "apt-mark": apt_mark_readonly,
     "pipx": pipx_readonly,
     "crontab": crontab_readonly,
+    "journalctl": journalctl_readonly,
+    "rg": rg_readonly,
+    "ss": _flag_guarded("ss"),
+    "sensors": _flag_guarded("sensors"),
+    "dmesg": _flag_guarded("dmesg"),
 }

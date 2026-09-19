@@ -162,9 +162,9 @@ DEFER = [
     "hl find /tmp -delete",
     "hl cd /tmp",
 ]
-
 # server #1898: the thirteen argv guards ported from the server's classifier, one
-# `_is_clean` / `_is_flagged` pair per rule. The replay corpus cannot see a remote
+# `_is_clean` / `_is_flagged` pair per rule, plus (server #2078) the five flag guards that
+# were regex arms of `readonly_remote_safe` before. The replay corpus cannot see a remote
 # fail-open (4 of 1058 prompted records touch ssh), so these pairs are the evidence.
 GUARDED_ALLOW = [
     "hl git status",
@@ -195,6 +195,11 @@ GUARDED_ALLOW = [
     "hl pipx --version",
     "hl crontab -l",
     "hl crontab -u ubuntu -l",
+    "hl journalctl -u docker -n 50",
+    "hl rg -n pattern /var/log/app.log",
+    "hl ss -tlnp",
+    "hl sensors -f",
+    "hl dmesg -T --level=err",
 ]
 
 GUARDED_DEFER = [
@@ -241,6 +246,13 @@ GUARDED_DEFER = [
     "hl crontab /tmp/newtab",
     "hl crontab -u ubuntu",
     "hl crontab",
+    "hl journalctl --vacuum-size=100M",
+    "hl journalctl --smart-relinquish-var",
+    "hl rg --pre=/tmp/x pattern",
+    "hl ss -xKy",
+    "hl sensors --set",
+    "hl dmesg -c",
+    "hl dmesg -n 1",
 ]
 
 
@@ -286,6 +298,11 @@ def test_every_ported_guard_has_a_clean_and_a_flagged_vector():
         "apt-mark",
         "pipx",
         "crontab",
+        "journalctl",
+        "rg",
+        "ss",
+        "sensors",
+        "dmesg",
     }
 
 
@@ -302,9 +319,70 @@ def test_the_guarded_set_is_exported_for_the_server_boundary_test():
         "docker",
         "systemctl",
     } <= REMOTE_GUARDED_VERBS
-    # The flag-regex guards sit on verbs the table lists bare (the regex runs first); an
-    # argv guard on a bare-listed verb would be dead code, since the table wins.
+    # The table wins in `remote_argv_readonly`, so a guard on a bare-listed verb is dead
+    # code — which is what the five flag guards were until server #2078 moved them here.
     assert not set(GUARDS) & REMOTE_READONLY_VERBS
+    assert {"journalctl", "dmesg", "ss", "rg", "sensors"} <= set(GUARDS)
+
+
+# --- server #2078: the flag guards are argv guards under `remote_argv_readonly`, the half
+# the server repo replays. As regex arms of `readonly_remote_safe` they ran before the
+# table lookup, so this call answered True for `dmesg -C`. ---
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["dmesg", "-C"],
+        ["dmesg", "--read-clear"],
+        ["dmesg", "-xCy"],
+        ["ss", "--kill"],
+        ["sensors", "-s"],
+        ["rg", "--pre=/tmp/x", "pattern"],
+        ["journalctl", "--vacuum-size=100M"],
+    ],
+)
+def test_a_flag_guarded_verb_is_refused_at_the_argv_level(argv):
+    assert remote_argv_readonly(argv) is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["dmesg", "-T", "--level=err"],
+        ["dmesg", "--color=never"],
+        ["ss", "-tlnp"],
+        ["sensors", "-f"],
+        ["rg", "-n", "pattern", "/var/log/app.log"],
+        ["journalctl", "-u", "docker", "-n", "50"],
+    ],
+)
+def test_a_flag_guarded_verb_reads_at_the_argv_level(argv):
+    assert remote_argv_readonly(argv) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "hl dmesg -n 1",
+        "hl dmesg -n1",
+        "hl dmesg --console-level=1",
+        "hl dmesg -D",
+        "hl dmesg --console-off",
+        "hl dmesg -E",
+        "hl dmesg --console-on",
+        "hl dmesg -TnD",
+    ],
+)
+def test_dmesg_console_logging_flags_are_refused(command):
+    # -n/-D/-E change what the kernel logs to the console, not what is read (server #2078).
+    assert readonly_remote_safe(command) is False
+
+
+def test_dmesg_lowercase_e_and_d_are_reads_not_the_console_flags():
+    # -e is --reltime and -d is --show-delta; only the capitals D/E set console logging.
+    assert readonly_remote_safe("hl dmesg -e") is True
+    assert readonly_remote_safe("hl dmesg -d") is True
 
 
 def test_remote_argv_readonly_is_the_verb_level_half():

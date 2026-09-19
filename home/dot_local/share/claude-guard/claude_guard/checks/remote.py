@@ -29,24 +29,14 @@ _RAW_BAN = re.compile(r"[<>{}*?\[\]\\\n]")
 # a remote shell that reparses it from scratch — a quoted `;` is still two remote commands.
 _REMOTE_METACHAR = re.compile(r"[;&|`$()]")
 
-# :135-138. journalctl reads logs, but these flags delete or rotate them.
-_JOURNALCTL_MUTATE = re.compile(r"--(vacuum-(size|time|files)|rotate|flush|sync|relinquish-var)")
+# :135-146 — the journalctl/dmesg/ss flag arms the bash carried here, and the rg/sensors
+# ones server #1898 added beside them, are `remote_guards.GUARDS` entries since server
+# #2078: an argv guard the server replays against its own copy, where a regex over the
+# joined text ran before the table lookup and sat outside that replay.
 
-# :139-142. dmesg reads the kernel ring buffer, but these flags clear it. A character class
-# inside a short cluster, not equality — `-xCy` must refuse, not just a bare `-C`.
-_DMESG_MUTATE = re.compile(r"(^| )-[a-zA-Z]*[Cc][a-zA-Z]*($| )|--clear|--read-clear")
-
-# :143-146. ss lists sockets, but -K/--kill closes them. Same shape as dmesg, on K only.
-_SS_MUTATE = re.compile(r"(^| )-[a-zA-Z]*K[a-zA-Z]*($| )|--kill")
-
-# Not in the bash (server #1898, found while converging the verb tables): three verbs the
-# table lists bare that the server repo's classifier only allows behind a guard. rg's
-# `--pre` runs an arbitrary preprocessor per file and `--hostname-bin` an arbitrary binary;
-# sensors' `-s`/`--set` writes the config back to the hardware. nvidia-smi is the
-# inverse shape — its write surface (`-pm`, `-pl`, `-r`, `-ac`, `mig`, `drain`, ...) is
-# long and grows, so only the query forms are listed and every other argument refuses.
-_RG_EXEC = re.compile(r"(^| )--(pre|hostname-bin)(=|$| )")
-_SENSORS_MUTATE = re.compile(r"(^| )(-s|--set)($| )")
+# Not in the bash (server #1898, found while converging the verb tables): nvidia-smi's
+# write surface (`-pm`, `-pl`, `-r`, `-ac`, `mig`, `drain`, ...) is long and grows, so
+# only the query forms are listed and every other argument refuses.
 _NVIDIA_SMI_READ_FLAGS = frozenset(
     {"-q", "-L", "--list-gpus", "-x", "--xml-format", "-u", "--unit"}
 )
@@ -218,16 +208,6 @@ def readonly_remote_safe(command: str) -> bool:
     if not remote:
         return False
     verb = remote[0]
-    if verb == "journalctl" and _JOURNALCTL_MUTATE.search(rest):
-        return False
-    if verb == "dmesg" and _DMESG_MUTATE.search(rest):
-        return False
-    if verb == "ss" and _SS_MUTATE.search(rest):
-        return False
-    if verb == "rg" and _RG_EXEC.search(rest):
-        return False
-    if verb == "sensors" and _SENSORS_MUTATE.search(rest):
-        return False
     if verb == "nvidia-smi" and not _nvidia_smi_readonly(remote[1:]):
         return False
 
@@ -235,12 +215,12 @@ def readonly_remote_safe(command: str) -> bool:
 
 
 # The verbs `readonly_remote_safe` decides behind a guard rather than by table membership:
-# the `_*_MUTATE` regexes and `_nvidia_smi_readonly` above, the ip/docker/systemctl
-# sub-tables, and the ported argv guards in `remote_guards.py`. Exported so the server
-# repo's boundary test (`test_claude_guard_import.py`, #1982) reads the set the package
-# really guards instead of carrying a literal copy of it.
+# `_nvidia_smi_readonly` above, the ip/docker/systemctl sub-tables, and the argv guards in
+# `remote_guards.py`. Exported so the server repo's boundary test
+# (`test_claude_guard_import.py`, #1982) reads the set the package really guards instead of
+# carrying a literal copy of it.
 REMOTE_GUARDED_VERBS: frozenset[str] = frozenset(
-    {"journalctl", "dmesg", "ss", "rg", "sensors", "nvidia-smi", "ip", "docker", "systemctl"}
+    {"nvidia-smi", "ip", "docker", "systemctl"}
 ) | frozenset(GUARDS)
 
 

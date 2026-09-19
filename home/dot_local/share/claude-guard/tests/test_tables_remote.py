@@ -3,7 +3,13 @@ check reads. Ported from allow-daniel-server.sh and allow-readonly-remote.sh; no
 here, just the data the checks in a later slice will read.
 """
 
-from claude_guard.tables import CURL_HOSTS, REMOTE_READONLY_VERBS, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
+from claude_guard.tables import (
+    CURL_HOSTS,
+    READONLY_BASE,
+    REMOTE_READONLY_VERBS,
+    SECRET_PATH_RE,
+    TRUSTED_SSH_HOSTS,
+)
 
 # allow-daniel-server.sh:93. Both hosts that case arm names.
 TRUSTED_SSH_HOSTS_MUST_CONTAIN = frozenset({"daniel-server", "daniel-pi"})
@@ -11,12 +17,14 @@ TRUSTED_SSH_HOSTS_MUST_CONTAIN = frozenset({"daniel-server", "daniel-pi"})
 # allow-readonly-remote.sh:157-164. A representative slice: a bare verb, a hardware-inspection
 # verb, and a log-reading verb — not the whole 68-entry list, which would just restate it.
 REMOTE_READONLY_VERBS_MUST_CONTAIN = frozenset(
-    {"uptime", "journalctl", "nvidia-smi", "dpkg-query", "sar", "zgrep"}  # server #1898 members
+    {"uptime", "lsof", "nvidia-smi", "dpkg-query", "sar", "zgrep"}  # server #1898 members
 )
 REMOTE_READONLY_VERBS_MUST_NOT_CONTAIN = frozenset(
     # server #1898: TIER1 names that stay out — meaningless over ssh, or read-only only
     # behind a guard the package does not carry.
     {"cd", "false", "sed", "awk", "find", "sort", "uniq", "git", "apt", "dpkg", "crontab", "pipx"}
+    # server #2078: read-only under most arguments, not any — `remote_guards.GUARDS` entries.
+    | {"journalctl", "dmesg", "ss", "rg", "sensors"}
 )
 
 
@@ -69,3 +77,19 @@ def test_secret_path_re_matches_ssh_key_paths_case_insensitively():
 def test_secret_path_re_does_not_match_an_unrelated_path():
     assert SECRET_PATH_RE.search("/var/log/syslog") is None
     assert SECRET_PATH_RE.search("uptime") is None
+
+
+# --- server #2078: READONLY_BASE is the half both sides of the ssh boundary read bare. ---
+
+
+def test_readonly_base_is_the_shared_half_of_the_remote_table():
+    assert READONLY_BASE <= REMOTE_READONLY_VERBS
+    assert {"uptime", "ls", "cat", "grep", "jq", "df", "sar", "zgrep"} <= READONLY_BASE
+
+
+def test_readonly_base_excludes_what_only_one_side_admits():
+    # htop never returns under the Bash tool and nvidia-smi reads only behind an arm the
+    # server does not carry: remote-only, so a `TIER1` derived from the base cannot gain them.
+    assert {"htop", "nvidia-smi"} <= REMOTE_READONLY_VERBS - READONLY_BASE
+    # A guarded verb is read-only under MOST arguments, which is not the base's contract.
+    assert not ({"journalctl", "dmesg", "ss", "rg", "sensors"} & READONLY_BASE)
