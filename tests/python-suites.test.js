@@ -5,26 +5,72 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 const { skipUnless } = require('./lib/probe');
-const { srcPath } = require('./lib/paths');
+const { REPO, srcPath } = require('./lib/paths');
 
 const skip = skipUnless('python3');
 
 const skipPytest = skipUnless('uv');
 
-const SANDBOX = srcPath('private_dot_claude', 'sandbox');
 const VAULT_TOOLING = srcPath('private_dot_claude', 'vault-tooling');
 const SHARE = srcPath('dot_local', 'share');
 
-const SUITES = [
-  'test_exec_stream.py',
-  'test_gen_vault_index.py',
-  'test_gh_pr_guard.py',
-  'test_compact_session.py',
-  'test_docker_create_filter.py',
-  'test_filter_policy.py',
-];
+// The standalone suites are derived, not listed. A hand-kept list here skipped whatever it
+// omitted, silently: nine hooks/test_*.py files were never on it, and one of them had gone
+// red on main without anything noticing. The same way .githooks/pre-push and
+// bin/sweep-test-tmp find their inputs, this asks git for every tracked test_*.py and takes
+// away what is provably not a standalone suite:
+//
+//   - a file inside a pytest project, i.e. with a pyproject.toml in an ancestor directory
+//     below the repo root: those run under PYTEST_PROJECTS below, with their own deps;
+//   - a file beside a run.py: a directory that ships its own runner is one suite, run by
+//     whoever runs the runner (tests/tq by tests/tq-digest.test.js);
+//   - a file carrying the opt-out marker, a comment line starting `# python-suites: skip`.
+//
+// The marker is the only way out that is a decision rather than a fact of the tree, so it
+// carries its reason on the same line and the file it sits in is the only place it lives.
+// It exists because a derived list runs a Python file its author never meant as a
+// node-driven suite: a script that reports `all passed` instead of an `OK N` count line
+// cannot satisfy the ran-vs-declared check below, and would fail here for that reason, not
+// for a failing test. A file is opted out to say why it is not wired, never to hide a red
+// suite -- that one gets an issue, and the marker names it.
+const OPT_OUT = /^# python-suites: skip\b/m;
+
+function standaloneSuites() {
+  const tracked = execFileSync('git', ['ls-files', 'test_*.py', '*/test_*.py'], { cwd: REPO, encoding: 'utf8' })
+    .split('\n').filter(Boolean);
+  const inPytestProject = (rel) => {
+    for (let dir = path.dirname(rel); dir !== '.' && dir !== ''; dir = path.dirname(dir)) {
+      if (fs.existsSync(path.join(REPO, dir, 'pyproject.toml'))) return true;
+    }
+    return false;
+  };
+  return tracked.filter((rel) => !inPytestProject(rel)
+    && !fs.existsSync(path.join(REPO, path.dirname(rel), 'run.py'))
+    && !OPT_OUT.test(fs.readFileSync(path.join(REPO, rel), 'utf8')));
+}
+
+const SUITES = standaloneSuites();
+
+// A derivation that finds nothing passes for free. The floor is a named member, so the
+// failure says which file went missing rather than that a count moved.
+test('the derived standalone suite list is not empty and holds a known member', () => {
+  assert.ok(SUITES.length >= 6, `expected at least the six sandbox suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
+  assert.ok(SUITES.some((rel) => rel.endsWith('/test_exec_stream.py')), 'sandbox/test_exec_stream.py is a standalone suite and must be derived');
+  assert.ok(!SUITES.some((rel) => rel.startsWith('tests/tq/')), 'tests/tq is one unittest suite under run.py, not standalone files');
+  assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/')), 'a pytest project\'s tests are not standalone suites');
+});
+
+test('the opt-out marker excludes a file, and its absence includes one', () => {
+  assert.match('#!/usr/bin/env python3\n# python-suites: skip -- reports all passed, no count line\n', OPT_OUT);
+  assert.doesNotMatch('#!/usr/bin/env python3\n"""python-suites: skip is only a marker as a comment."""\n', OPT_OUT);
+  const optedOut = execFileSync('git', ['grep', '-l', '^# python-suites: skip', '--', '*.py'], { cwd: REPO, encoding: 'utf8' })
+    .split('\n').filter(Boolean);
+  for (const rel of optedOut) assert.ok(!SUITES.includes(rel), `${rel} carries the marker and must not be derived`);
+  assert.ok(optedOut.length > 0, 'the marker is load-bearing only if something uses it; the hooks suites do');
+});
 
 // `python3 test_x.py` exits 0 whether it ran every test, some of them, or none
 // at all, so an exit code cannot tell a green suite from an empty one. Each
@@ -52,9 +98,10 @@ for node in tree.body:
 print(json.dumps({"sync": sync, "coroutines": coroutines}))
 `;
 
-for (const name of SUITES) {
+for (const rel of SUITES) {
+  const name = path.basename(rel);
   test(`python: ${name}`, { skip }, () => {
-    const file = path.join(SANDBOX, name);
+    const file = path.join(REPO, rel);
     const declared = JSON.parse(
       execFileSync('python3', ['-c', DECLARED_TESTS, file], { encoding: 'utf8' }),
     );

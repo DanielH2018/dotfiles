@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# python-suites: skip -- red on main (#544); check()-style runner, no `OK N` line (#545)
 """Standalone tests for memory-stale-paths.py.
 
 Run: python3 test_memory_stale_paths.py

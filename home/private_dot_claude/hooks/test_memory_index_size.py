@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for memory-index-size.py.
 
 Run: python3 test_memory_index_size.py
