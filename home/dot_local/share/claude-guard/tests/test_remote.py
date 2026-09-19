@@ -144,7 +144,8 @@ DEFER = [
     "ssh -o BatchMode=yes daniel-box rm -rf /tmp/x",
     "ssh -o BatchMode=yes daniel-box cat /home/daniel/.ssh/id_ed25519",
     "ssh -o BatchMode=yes daniel-box",
-    # server #1898: the three guards. Each is a verb the table lists bare.
+    # server #1898: the three guards (`remote_guards.GUARDS` entries since server #2078 and
+    # dotfiles #559).
     "hl rg --pre /tmp/x pattern /var/log",
     "hl rg --pre=/tmp/x pattern /var/log",
     "hl rg --hostname-bin /tmp/x pattern",
@@ -200,6 +201,7 @@ GUARDED_ALLOW = [
     "hl ss -tlnp",
     "hl sensors -f",
     "hl dmesg -T --level=err",
+    "hl nvidia-smi --query-gpu=name,memory.used --format=csv",
 ]
 
 GUARDED_DEFER = [
@@ -253,6 +255,7 @@ GUARDED_DEFER = [
     "hl sensors --set",
     "hl dmesg -c",
     "hl dmesg -n 1",
+    "hl nvidia-smi -pm 1",
 ]
 
 
@@ -303,6 +306,7 @@ def test_every_ported_guard_has_a_clean_and_a_flagged_vector():
         "ss",
         "sensors",
         "dmesg",
+        "nvidia-smi",
     }
 
 
@@ -322,7 +326,7 @@ def test_the_guarded_set_is_exported_for_the_server_boundary_test():
     # The table wins in `remote_argv_readonly`, so a guard on a bare-listed verb is dead
     # code — which is what the five flag guards were until server #2078 moved them here.
     assert not set(GUARDS) & REMOTE_READONLY_VERBS
-    assert {"journalctl", "dmesg", "ss", "rg", "sensors"} <= set(GUARDS)
+    assert {"journalctl", "dmesg", "ss", "rg", "sensors", "nvidia-smi"} <= set(GUARDS)
 
 
 # --- server #2078: the flag guards are argv guards under `remote_argv_readonly`, the half
@@ -340,6 +344,9 @@ def test_the_guarded_set_is_exported_for_the_server_boundary_test():
         ["sensors", "-s"],
         ["rg", "--pre=/tmp/x", "pattern"],
         ["journalctl", "--vacuum-size=100M"],
+        # dotfiles #559: the issue's own verify-by line.
+        ["nvidia-smi", "-pm", "1"],
+        ["nvidia-smi", "-f", "/tmp/report.txt"],
     ],
 )
 def test_a_flag_guarded_verb_is_refused_at_the_argv_level(argv):
@@ -355,6 +362,7 @@ def test_a_flag_guarded_verb_is_refused_at_the_argv_level(argv):
         ["sensors", "-f"],
         ["rg", "-n", "pattern", "/var/log/app.log"],
         ["journalctl", "-u", "docker", "-n", "50"],
+        ["nvidia-smi", "-q", "-d", "MEMORY", "-i", "0"],
     ],
 )
 def test_a_flag_guarded_verb_reads_at_the_argv_level(argv):

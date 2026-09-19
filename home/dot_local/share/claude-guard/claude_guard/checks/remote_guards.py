@@ -431,6 +431,36 @@ def rg_readonly(argv: list[str]) -> bool:
     return not any(a.split("=", 1)[0] in _RG_EXEC for a in argv[1:])
 
 
+# nvidia-smi's write surface (`-pm`, `-pl`, `-r`, `-ac`, `mig`, `drain`, ...) is long and
+# grows, so only the query forms are listed and every other argument refuses (server #1898).
+# Until dotfiles #559 this was an inline arm of `readonly_remote_safe` that ran before the
+# table lookup, with the verb listed bare in `_REMOTE_ONLY` — so `remote_argv_readonly`
+# answered True for `nvidia-smi -pm 1`, the shape `dmesg -C` had before server #2078.
+_NVIDIA_SMI_READ_FLAGS = frozenset(
+    {"-q", "-L", "--list-gpus", "-x", "--xml-format", "-u", "--unit"}
+)
+_NVIDIA_SMI_READ_VALUED = ("-i", "--id", "-d", "--display", "-l", "--loop", "-f", "--filename")
+_NVIDIA_SMI_READ_PREFIX = ("--query-", "--format=", "--id=", "--display=", "--loop=")
+
+
+def nvidia_smi_readonly(argv: list[str]) -> bool:
+    """True only when every argument is a query flag. `-f FILE` writes the report to a file,
+    so it is refused with the rest; a subcommand word (`topo`, `mig`, `drain`) refuses too —
+    some are reads, but the write ones sit beside them and this list is the safe side."""
+    skip = False
+    for a in argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if a in _NVIDIA_SMI_READ_FLAGS or a.startswith(_NVIDIA_SMI_READ_PREFIX):
+            continue
+        if a in _NVIDIA_SMI_READ_VALUED and a not in ("-f", "--filename"):
+            skip = True
+            continue
+        return False
+    return not skip
+
+
 GUARDS: dict[str, Callable[[list[str]], bool]] = {
     "git": git_readonly,
     "find": find_readonly,
@@ -450,4 +480,5 @@ GUARDS: dict[str, Callable[[list[str]], bool]] = {
     "ss": _flag_guarded("ss"),
     "sensors": _flag_guarded("sensors"),
     "dmesg": _flag_guarded("dmesg"),
+    "nvidia-smi": nvidia_smi_readonly,
 }

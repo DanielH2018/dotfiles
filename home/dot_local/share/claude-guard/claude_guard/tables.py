@@ -173,19 +173,17 @@ READONLY_BASE: frozenset[str] = frozenset(
     }
 )
 
-# Read-only over ssh, and kept out of `READONLY_BASE` because the server repo admits neither
-# locally (server #2052). Each carries its reason so a later tidy-up does not fold it back.
+# Read-only over ssh, and kept out of `READONLY_BASE` because the server repo admits it
+# nowhere (server #2052). It carries its reason so a later tidy-up does not fold it back.
 _REMOTE_ONLY: frozenset[str] = frozenset(
     {
         # Interactive: under Claude's Bash tool it never returns, so the server admits it
         # nowhere. Over ssh with no tty it exits at once, which is harmless.
         "htop",
-        # Query-only behind `_nvidia_smi_readonly`, an inline arm of `readonly_remote_safe`
-        # that runs before the table. No host in the homelab fleet has NVIDIA hardware, so
-        # the server ports no guard for it; it moves into `READONLY_BASE` only with one.
-        "nvidia-smi",
     }
 )
+# nvidia-smi is not here either: it reads only behind `remote_guards.nvidia_smi_readonly`
+# (dotfiles #559), and a name listed bare wins over its guard in `remote_argv_readonly`.
 
 REMOTE_READONLY_VERBS: frozenset[str] = READONLY_BASE | _REMOTE_ONLY
 

@@ -34,34 +34,6 @@ _REMOTE_METACHAR = re.compile(r"[;&|`$()]")
 # #2078: an argv guard the server replays against its own copy, where a regex over the
 # joined text ran before the table lookup and sat outside that replay.
 
-# Not in the bash (server #1898, found while converging the verb tables): nvidia-smi's
-# write surface (`-pm`, `-pl`, `-r`, `-ac`, `mig`, `drain`, ...) is long and grows, so
-# only the query forms are listed and every other argument refuses.
-_NVIDIA_SMI_READ_FLAGS = frozenset(
-    {"-q", "-L", "--list-gpus", "-x", "--xml-format", "-u", "--unit"}
-)
-_NVIDIA_SMI_READ_VALUED = ("-i", "--id", "-d", "--display", "-l", "--loop", "-f", "--filename")
-_NVIDIA_SMI_READ_PREFIX = ("--query-", "--format=", "--id=", "--display=", "--loop=")
-
-
-def _nvidia_smi_readonly(args: list[str]) -> bool:
-    """True only when every argument is a query flag. `-f FILE` writes the report to a file,
-    so it is refused with the rest; a subcommand word (`topo`, `mig`, `drain`) refuses too —
-    some are reads, but the write ones sit beside them and this list is the safe side."""
-    skip = False
-    for a in args:
-        if skip:
-            skip = False
-            continue
-        if a in _NVIDIA_SMI_READ_FLAGS or a.startswith(_NVIDIA_SMI_READ_PREFIX):
-            continue
-        if a in _NVIDIA_SMI_READ_VALUED and a not in ("-f", "--filename"):
-            skip = True
-            continue
-        return False
-    return not skip
-
-
 # :166-170. Only inspection subcommands are read-only ("ip a", "ip route", "ip addr show");
 # anything else ("ip link set", "ip addr add", ...) mutates. An ABSENT third token ("ip a")
 # is itself a member of the allowed set.
@@ -207,21 +179,14 @@ def readonly_remote_safe(command: str) -> bool:
         return False  # a quote that balanced locally but not remotely
     if not remote:
         return False
-    verb = remote[0]
-    if verb == "nvidia-smi" and not _nvidia_smi_readonly(remote[1:]):
-        return False
-
     return remote_argv_readonly(remote)
 
 
-# The verbs `readonly_remote_safe` decides behind a guard rather than by table membership:
-# `_nvidia_smi_readonly` above, the ip/docker/systemctl sub-tables, and the argv guards in
-# `remote_guards.py`. Exported so the server repo's boundary test
-# (`test_claude_guard_import.py`, #1982) reads the set the package really guards instead of
-# carrying a literal copy of it.
-REMOTE_GUARDED_VERBS: frozenset[str] = frozenset(
-    {"nvidia-smi", "ip", "docker", "systemctl"}
-) | frozenset(GUARDS)
+# The verbs `remote_argv_readonly` decides behind a guard rather than by table membership:
+# the ip/docker/systemctl sub-tables, and the argv guards in `remote_guards.py`. Exported so
+# the server repo's boundary test (`test_claude_guard_import.py`, #1982) reads the set the
+# package really guards instead of carrying a literal copy of it.
+REMOTE_GUARDED_VERBS: frozenset[str] = frozenset({"ip", "docker", "systemctl"}) | frozenset(GUARDS)
 
 
 def remote_argv_readonly(remote: list[str]) -> bool:

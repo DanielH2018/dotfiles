@@ -17,7 +17,7 @@ TRUSTED_SSH_HOSTS_MUST_CONTAIN = frozenset({"daniel-server", "daniel-pi"})
 # allow-readonly-remote.sh:157-164. A representative slice: a bare verb, a hardware-inspection
 # verb, and a log-reading verb — not the whole 68-entry list, which would just restate it.
 REMOTE_READONLY_VERBS_MUST_CONTAIN = frozenset(
-    {"uptime", "lsof", "nvidia-smi", "dpkg-query", "sar", "zgrep"}  # server #1898 members
+    {"uptime", "lsof", "lspci", "dpkg-query", "sar", "zgrep"}  # server #1898 members
 )
 REMOTE_READONLY_VERBS_MUST_NOT_CONTAIN = frozenset(
     # server #1898: TIER1 names that stay out — meaningless over ssh, or read-only only
@@ -25,6 +25,8 @@ REMOTE_READONLY_VERBS_MUST_NOT_CONTAIN = frozenset(
     {"cd", "false", "sed", "awk", "find", "sort", "uniq", "git", "apt", "dpkg", "crontab", "pipx"}
     # server #2078: read-only under most arguments, not any — `remote_guards.GUARDS` entries.
     | {"journalctl", "dmesg", "ss", "rg", "sensors"}
+    # dotfiles #559: the last inline arm, moved under the same replay.
+    | {"nvidia-smi"}
 )
 
 
@@ -88,8 +90,8 @@ def test_readonly_base_is_the_shared_half_of_the_remote_table():
 
 
 def test_readonly_base_excludes_what_only_one_side_admits():
-    # htop never returns under the Bash tool and nvidia-smi reads only behind an arm the
-    # server does not carry: remote-only, so a `TIER1` derived from the base cannot gain them.
-    assert {"htop", "nvidia-smi"} <= REMOTE_READONLY_VERBS - READONLY_BASE
+    # htop never returns under the Bash tool: remote-only, so a `TIER1` derived from the
+    # base cannot gain it.
+    assert "htop" in REMOTE_READONLY_VERBS - READONLY_BASE
     # A guarded verb is read-only under MOST arguments, which is not the base's contract.
-    assert not ({"journalctl", "dmesg", "ss", "rg", "sensors"} & READONLY_BASE)
+    assert not ({"journalctl", "dmesg", "ss", "rg", "sensors", "nvidia-smi"} & READONLY_BASE)
