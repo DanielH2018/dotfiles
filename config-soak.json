@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
-      "hash": "bf4bdf6bf989ee9a99f145addefc52e5d8ace35441d1d687297efd26586515a9",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "6a6d983075db967c8f68abe116bcbece74b9a6f1fe3556ca28b0db0ffcc77bda",
+      "landed": "2026-09-19T01:22:17.879Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
