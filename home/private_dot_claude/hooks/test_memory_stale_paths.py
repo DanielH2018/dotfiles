@@ -267,8 +267,12 @@ with tempfile.TemporaryDirectory() as tmp:
     # ── the worktree case ────────────────────────────────────────────────────────────
     # Memory is keyed to the main checkout, so a session in .claude/worktrees/<name>
     # has to resolve back to it or this hook is silent in most of the repo's sessions.
-    # But only the SLUG resolves back: path existence stays against the worktree, or a
-    # file added on a branch reads as stale.
+    # Path existence is checked against every checkout of the repo: the session's own
+    # first, then the main checkout and each sibling worktree. A file added on a branch
+    # is therefore not stale from anywhere while a worktree holds it — a memory written
+    # by the session that created the file, ahead of its merge, is correct, and the hook
+    # flagged one from `master` at every session start until the PR landed (dotfiles
+    # #557). Once the worktree is gone the path reads as stale again.
     git = [
         "git",
         "-c",
@@ -318,8 +322,39 @@ with tempfile.TemporaryDirectory() as tmp:
         [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
     )
     check(
-        "the same path is stale from the main checkout, where it does not exist",
-        "branch-only.md" in from_main.stdout,
+        "a path only a sibling worktree holds is not stale from the main checkout",
+        "branch-only.md" not in from_main.stdout,
+    )
+    check(
+        "a path in no checkout is still stale from the main checkout",
+        "ansible/roles/gone.yml" in from_main.stdout,
+    )
+    check(
+        "sibling_checkouts lists the worktree from the main checkout",
+        mod.sibling_checkouts(repo, repo) in ([wt], [wt.resolve()]),
+    )
+    check(
+        "sibling_checkouts lists the main checkout first from the worktree",
+        mod.sibling_checkouts(wt, repo)[0] == repo,
+    )
+    check(
+        "sibling_checkouts keeps the main checkout when git fails",
+        mod.sibling_checkouts(root / "not-a-repo", repo) == [repo],
+    )
+
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(wt)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    after_prune = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+    check(
+        "the same path is stale once the worktree holding it is gone",
+        "branch-only.md" in after_prune.stdout,
     )
     (memories / "branchy.md").unlink()
 

@@ -54,6 +54,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 # Backtick-quoted spans are where this config's memories put paths, and quoting is what
@@ -126,6 +127,48 @@ def main_checkout(repo: Path) -> Path:
     except OSError:
         return repo
     return parent if parent.is_dir() else repo
+
+
+def sibling_checkouts(repo: Path, primary: Path) -> list[Path]:
+    """Every other checkout of this repository: the main checkout and each linked
+    worktree, minus `repo` itself.
+
+    A memory is written by the session that created the file it names, ahead of that
+    session's merge. Until the PR lands the file exists in exactly one place — that
+    session's worktree — and a hook run from any other checkout reported it as gone at
+    every session start (dotfiles #557: `evals/review_coverage/2026-09-18.json`, live on
+    a sibling worktree's branch, flagged from `master` for a day). Checking the sibling
+    working trees rather than their branch refs costs one `git worktree list` instead of
+    a `git cat-file` per candidate and branch, and covers an untracked file in a sibling
+    the same way the main-checkout check covers a gitignored one.
+
+    The main checkout comes first so the existing pair — the session's tree, then the
+    primary — keeps its order. `primary` is included even when `git worktree list`
+    fails: that call is the only new failure mode here, and a failed listing must not
+    lose the check that worked before it.
+    """
+    others: list[Path] = []
+    if primary != repo:
+        others.append(primary)
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return others
+    if result.returncode != 0:
+        return others
+    for line in result.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        path = Path(line[len("worktree ") :])
+        if path not in (repo, primary) and path not in others and path.is_dir():
+            others.append(path)
+    return others
 
 
 def memory_dir(config_dir: Path, repo: Path) -> Path | None:
@@ -264,21 +307,24 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
         start = i + len(needle)
 
 
-def stale_paths(text: str, repo: Path, also: Path | None = None) -> list[str]:
+def stale_paths(text: str, repo: Path, also: Sequence[Path] = ()) -> list[str]:
     """Paths this memory names that are gone, given their top directory still exists.
 
-    `also` is the main checkout when `repo` is a linked worktree. A path present in
-    EITHER counts as present. Existence is checked against `repo` first because that is
-    the tree the session is working in, but an untracked path — a gitignored directory,
-    a scratch file — exists only in the checkout it was created in and never in a
-    worktree, so checking the worktree alone reported it as deleted. Measured on
+    `also` is every other checkout of the repository — the main checkout when `repo` is
+    a linked worktree, and each sibling worktree (`sibling_checkouts`). A path present
+    in ANY of them counts as present. Existence is checked against `repo` first because
+    that is the tree the session is working in, but an untracked path — a gitignored
+    directory, a scratch file — exists only in the checkout it was created in and never
+    in a worktree, so checking the worktree alone reported it as deleted. Measured on
     2026-08-29: two of the three memories the hook flagged named `docs/superpowers/`,
     which is gitignored, present in the main checkout, absent from every worktree.
 
     The cost is a miss in one direction: a branch that DELETES a tracked file still
-    finds it in the main checkout and stays quiet. That is the failure direction this
-    hook already takes everywhere else — a miss costs nothing, a false alarm costs the
-    report's credibility.
+    finds it in the main checkout and stays quiet, and a file that exists only on a
+    sibling's unmerged branch stays quiet until that worktree is gone. That is the
+    failure direction this hook already takes everywhere else — a miss costs nothing, a
+    false alarm costs the report's credibility. The second case is also self-correcting:
+    an abandoned branch's worktree is pruned, and the path is reported from then on.
     """
     gone = []
     for token in candidate_paths(text):
@@ -291,7 +337,7 @@ def stale_paths(text: str, repo: Path, also: Path | None = None) -> list[str]:
             continue  # not a path into this repo, or its whole directory is gone
         if (repo / token).exists():
             continue
-        if also is not None and (also / token).exists():
+        if any((other / token).exists() for other in also):
             continue
         if already_says_it_is_gone(text, token):
             continue
@@ -416,11 +462,11 @@ def named_checks(text: str) -> list[tuple[str, str | None]]:
     return checks
 
 
-def find_file(rel: str, repo: Path, also: Path | None) -> Path | None:
-    """The check's file, in the session's worktree first and the main checkout second —
-    the same pair `stale_paths` uses, for the same reason."""
-    for base in (repo, also):
-        if base is not None and (base / rel).is_file():
+def find_file(rel: str, repo: Path, also: Sequence[Path]) -> Path | None:
+    """The check's file, in the session's worktree first and the other checkouts after —
+    the same list `stale_paths` uses, for the same reason."""
+    for base in (repo, *also):
+        if (base / rel).is_file():
             return base / rel
     return None
 
@@ -436,7 +482,7 @@ def defines(path: Path, symbol: str) -> bool:
 
 
 def stale_checks(
-    text: str, repo: Path, also: Path | None = None
+    text: str, repo: Path, also: Sequence[Path] = ()
 ) -> tuple[list[str], list[str]]:
     """(missing, resolved) check references for one marked memory.
 
@@ -463,7 +509,7 @@ def stale_checks(
 
 
 def enforced_findings(
-    memories: Path, repo: Path, also: Path | None
+    memories: Path, repo: Path, also: Sequence[Path]
 ) -> list[tuple[str, bool, list[str]]]:
     """(memory name, scoped, missing checks) for every marked entry with a stale check.
 
@@ -508,9 +554,9 @@ def main() -> int:
     memories = memory_dir(config_dir, primary)
     if memories is None:
         return 0
-    # None when already in the main checkout, so the second existence test is skipped
-    # rather than repeated against the same tree.
-    also = primary if primary != repo else None
+    # The main checkout (when this is not it) and every sibling worktree: a path that
+    # exists in any of them is not stale, it is unmerged.
+    also = sibling_checkouts(repo, primary)
 
     findings = []
     for path in sorted(memories.glob("*.md")):
