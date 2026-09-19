@@ -27,6 +27,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const lib = require('./config-soak-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -77,27 +78,38 @@ const TRACKED = [
   { type: 'dir', path: 'home/private_dot_claude/output-styles' },
 ];
 
-function walk(absDir, acc) {
-  for (const ent of fs.readdirSync(absDir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    const abs = path.join(absDir, ent.name);
-    if (ent.isDirectory()) walk(abs, acc);
-    else if (ent.isFile()) acc.push(abs);
+// The tracked surface is what git tracks under each spec, not what is on disk there.
+// A bare readdir walk fingerprinted whatever the working tree held under a tracked
+// directory — the python suites' `hooks/__pycache__/*.pyc` got landed into the ledger
+// and every other checkout then read it as REMOVED (#547). `git ls-files` is the same
+// source bin/gen-lint-files reads; a pathspec per spec keeps git doing the walk.
+function gitTrackedPaths() {
+  let out;
+  try {
+    out = execFileSync('git', ['ls-files', '-z', '--', ...TRACKED.map((s) => s.path)], {
+      cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    process.stderr.write(`config-soak: git ls-files failed in ${REPO_ROOT}: ${e.message}\n`);
+    process.exit(2);
   }
-  return acc;
+  const paths = out.split('\0').filter(Boolean);
+  // An empty set would classify every ledger entry as REMOVED — a gate that fails on every
+  // checkout, which is worse than the bug this replaces. Refuse rather than report it.
+  if (!paths.length) {
+    process.stderr.write(`config-soak: git ls-files returned no tracked config under ${REPO_ROOT}\n`);
+    process.exit(2);
+  }
+  return paths;
 }
 
-// Scan the tracked surface into { repoRelPath: sha256 }. Missing roots are skipped.
+// Scan the tracked surface into { repoRelPath: sha256 }. A path git tracks but the working
+// tree lacks (deleted, not yet committed) is skipped, so the report lists it as REMOVED.
 function scanTracked() {
-  const files = [];
-  for (const spec of TRACKED) {
-    const abs = path.join(REPO_ROOT, spec.path);
-    if (!fs.existsSync(abs)) continue;
-    if (spec.type === 'dir') walk(abs, files);
-    else files.push(abs);
-  }
   const tracked = {};
-  for (const abs of files) {
-    const rel = path.relative(REPO_ROOT, abs).split(path.sep).join('/');
+  for (const rel of gitTrackedPaths().sort()) {
+    const abs = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
     tracked[rel] = lib.fingerprint(fs.readFileSync(abs));
   }
   return tracked;
