@@ -32,10 +32,10 @@ const SHARE = srcPath('dot_local', 'share');
 // The marker is the only way out that is a decision rather than a fact of the tree, so it
 // carries its reason on the same line and the file it sits in is the only place it lives.
 // It exists because a derived list runs a Python file its author never meant as a
-// node-driven suite: a script that reports `all passed` instead of an `OK N` count line
-// cannot satisfy the ran-vs-declared check below, and would fail here for that reason, not
-// for a failing test. A file is opted out to say why it is not wired, never to hide a red
-// suite -- that one gets an issue, and the marker names it.
+// node-driven suite: a script that satisfies neither contract below fails here for that
+// reason, not for a failing test. A file is opted out to say why it is not wired, never to
+// hide a red suite -- that one gets an issue, and the marker names it. No tracked file
+// carries it: the nine hooks/ suites did, until #545 gave them a count line.
 const OPT_OUT = /^# python-suites: skip\b/m;
 
 function standaloneSuites() {
@@ -57,8 +57,9 @@ const SUITES = standaloneSuites();
 // A derivation that finds nothing passes for free. The floor is a named member, so the
 // failure says which file went missing rather than that a count moved.
 test('the derived standalone suite list is not empty and holds a known member', () => {
-  assert.ok(SUITES.length >= 6, `expected at least the six sandbox suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
+  assert.ok(SUITES.length >= 15, `expected at least the six sandbox and nine hooks suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
   assert.ok(SUITES.some((rel) => rel.endsWith('/test_exec_stream.py')), 'sandbox/test_exec_stream.py is a standalone suite and must be derived');
+  assert.ok(SUITES.some((rel) => rel.endsWith('/hooks/test_prune_worktrees.py')), 'hooks/test_prune_worktrees.py is a standalone suite and must be derived');
   assert.ok(!SUITES.some((rel) => rel.startsWith('tests/tq/')), 'tests/tq is one unittest suite under run.py, not standalone files');
   assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/')), 'a pytest project\'s tests are not standalone suites');
 });
@@ -66,16 +67,30 @@ test('the derived standalone suite list is not empty and holds a known member', 
 test('the opt-out marker excludes a file, and its absence includes one', () => {
   assert.match('#!/usr/bin/env python3\n# python-suites: skip -- reports all passed, no count line\n', OPT_OUT);
   assert.doesNotMatch('#!/usr/bin/env python3\n"""python-suites: skip is only a marker as a comment."""\n', OPT_OUT);
-  const optedOut = execFileSync('git', ['grep', '-l', '^# python-suites: skip', '--', '*.py'], { cwd: REPO, encoding: 'utf8' })
-    .split('\n').filter(Boolean);
+  // `git grep -l` exits 1 on no match, which is the expected state of the tree.
+  let optedOut = [];
+  try {
+    optedOut = execFileSync('git', ['grep', '-l', '^# python-suites: skip', '--', '*.py'], { cwd: REPO, encoding: 'utf8', stdio: 'pipe' })
+      .split('\n').filter(Boolean);
+  } catch (err) {
+    if (err.status !== 1) throw err;
+  }
   for (const rel of optedOut) assert.ok(!SUITES.includes(rel), `${rel} carries the marker and must not be derived`);
-  assert.ok(optedOut.length > 0, 'the marker is load-bearing only if something uses it; the hooks suites do');
 });
 
 // `python3 test_x.py` exits 0 whether it ran every test, some of them, or none
 // at all, so an exit code cannot tell a green suite from an empty one. Each
-// suite therefore reports how many tests it ran, and this counts how many it
-// declares; the two disagreeing is the signal.
+// suite therefore reports how many tests it ran on an `OK N` line, and this
+// counts how many it declares; the two disagreeing is the signal. Two shapes
+// declare a test:
+//
+//   - module-level `test_*` functions, run by a `__main__` globals() scan
+//     (the sandbox suites);
+//   - `check(name, condition)` calls, one printed `ok  `/`FAIL` line each,
+//     counted by the helper itself (the hooks suites). A check inside a loop
+//     runs once per iteration, so for this shape the call-site count is a
+//     floor, not an equality -- ran below it means a block of checks was never
+//     reached, which is the failure the count exists to catch.
 //
 // Parsed, not imported: importing executes module-level code, and would still
 // not fire the __main__ runner, so it would say nothing about what ran. Only
@@ -95,7 +110,12 @@ for node in tree.body:
         coroutines.append(node.name)
     else:
         sync.append(node.name)
-print(json.dumps({"sync": sync, "coroutines": coroutines}))
+has_check = any(isinstance(n, ast.FunctionDef) and n.name == "check" for n in tree.body)
+checks = sum(
+    1 for n in ast.walk(tree)
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "check"
+)
+print(json.dumps({"sync": sync, "coroutines": coroutines, "has_check": has_check, "checks": checks}))
 `;
 
 for (const rel of SUITES) {
@@ -106,7 +126,12 @@ for (const rel of SUITES) {
       execFileSync('python3', ['-c', DECLARED_TESTS, file], { encoding: 'utf8' }),
     );
 
-    assert.ok(declared.sync.length > 0, `${name} declares no module-level test_* functions`);
+    const checkStyle = declared.sync.length === 0 && declared.has_check;
+    if (checkStyle) {
+      assert.ok(declared.checks > 0, `${name} defines check() but never calls it`);
+    } else {
+      assert.ok(declared.sync.length > 0, `${name} declares no module-level test_* functions and no check() helper`);
+    }
     // A globals() scan filtering on callable() calls an `async def` happily,
     // gets a coroutine back, and never runs the body. The counts still agree,
     // so the comparison below is blind to it.
@@ -117,20 +142,43 @@ for (const rel of SUITES) {
         declared.coroutines.join(', '),
     );
 
-    const stdout = execFileSync('python3', [file], { encoding: 'utf8' });
+    let stdout;
+    try {
+      stdout = execFileSync('python3', [file], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (err) {
+      // Without this a red suite fails as `Command failed: python3 ...`, naming the
+      // file and nothing else; the suite's own output names the check.
+      const output = [err.stdout, err.stderr].filter(Boolean).join('').trim();
+      throw new Error(`${name} exited ${err.status}\n${output}`);
+    }
     const reported = /^OK (\d+)$/m.exec(stdout);
     assert.ok(
       reported,
       `${name} exited 0 without reporting a test count — a suite wired in here needs a ` +
         '__main__ runner ending in `print(f"OK {ran}")`, or it passes without running anything',
     );
-    assert.strictEqual(
-      Number(reported[1]),
-      declared.sync.length,
-      `${name} ran ${reported[1]} of its ${declared.sync.length} declared tests ` +
-        `(${declared.sync.join(', ')}) — a test below the __main__ block is not in globals() ` +
-        'when the scan runs, and a hand-listed runner skips whatever the list omits',
-    );
+    if (checkStyle) {
+      const okLines = stdout.split('\n').filter((line) => line.startsWith('ok  ')).length;
+      assert.strictEqual(
+        Number(reported[1]),
+        okLines,
+        `${name} reports OK ${reported[1]} but printed ${okLines} ok lines — the count line ` +
+          'and the check() helper have come apart',
+      );
+      assert.ok(
+        Number(reported[1]) >= declared.checks,
+        `${name} ran ${reported[1]} checks against ${declared.checks} check() call sites — ` +
+          'a block of checks was never reached',
+      );
+    } else {
+      assert.strictEqual(
+        Number(reported[1]),
+        declared.sync.length,
+        `${name} ran ${reported[1]} of its ${declared.sync.length} declared tests ` +
+          `(${declared.sync.join(', ')}) — a test below the __main__ block is not in globals() ` +
+          'when the scan runs, and a hand-listed runner skips whatever the list omits',
+      );
+    }
   });
 }
 

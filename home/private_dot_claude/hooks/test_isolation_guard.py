@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for isolation-guard.sh.
 
 Run: python3 test_isolation_guard.py
@@ -15,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,8 +41,19 @@ def decision(file_path, job):
     return "deny" if '"permissionDecision": "deny"' in p.stdout else None
 
 
+failures = []
+ran = 0
+
+
+def check(name, condition):
+    global ran
+    ran += 1
+    print(f"{'ok  ' if condition else 'FAIL'} {name}")
+    if not condition:
+        failures.append(name)
+
+
 def main():
-    failures = 0
     tmp = tempfile.mkdtemp(prefix="isolation-guard-test-")
     try:
         # A real git repo standing in for a shared/primary checkout.
@@ -91,18 +102,15 @@ def main():
 
         for file_path, job, expected, why in cases:
             actual = decision(file_path, job)
-            if actual != expected:
-                failures += 1
-                print(
-                    f"FAIL  expected={expected!r} actual={actual!r}  "
-                    f"file={file_path!r} job={job}  ({why})"
-                )
-
-        print(f"{len(cases) - failures}/{len(cases)} passed")
+            check(f"{why} (expected {expected!r}, got {actual!r})", actual == expected)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    raise SystemExit(1 if failures else 0)
+    print()
+    if failures:
+        print(f"{len(failures)} failed: {', '.join(failures)}")
+        sys.exit(1)
+    print(f"OK {ran}")
 
 
 if __name__ == "__main__":

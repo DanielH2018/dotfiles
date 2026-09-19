@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for bin/skill-usage.
 
 Run: python3 test_skill_usage_table.py
@@ -46,9 +45,12 @@ def run(env_extra):
 
 
 failures = []
+ran = 0
 
 
 def check(name, condition):
+    global ran
+    ran += 1
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
     if not condition:
         failures.append(name)
@@ -183,4 +185,4 @@ print()
 if failures:
     print(f"{len(failures)} failure(s): {', '.join(failures)}")
     raise SystemExit(1)
-print("all passed")
+print(f"OK {ran}")

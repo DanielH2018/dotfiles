@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for prune-worktrees.py.
 
 Run: python3 test_prune_worktrees.py
@@ -46,9 +45,12 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
 
 failures = []
+ran = 0
 
 
 def check(name, condition):
+    global ran
+    ran += 1
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
     if not condition:
         failures.append(name)
@@ -578,4 +580,4 @@ print()
 if failures:
     print(f"{len(failures)} failed: {', '.join(failures)}")
     sys.exit(1)
-print("all passed")
+print(f"OK {ran}")

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- red on main (#544); check()-style runner, no `OK N` line (#545)
 """Standalone tests for memory-stale-paths.py.
 
 Run: python3 test_memory_stale_paths.py
@@ -37,9 +36,12 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
     del os.environ[_var]
 
 failures = []
+ran = 0
 
 
 def check(name, condition):
+    global ran
+    ran += 1
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
     if not condition:
         failures.append(name)
@@ -115,11 +117,19 @@ with tempfile.TemporaryDirectory() as tmp:
         "a path the memory says was deleted",
         stale("`ansible/roles/gone.yml` was deleted in commit abc1234") == [],
     )
+    # Same sentence, wrapped: `sentence_bounds` scopes the marker search to the sentence
+    # rather than the line because these files wrap mid-sentence. Until 2026-09-19 this
+    # case put the marker in the NEXT sentence ("... `gone.yml`. That directory has no
+    # `files/`"), the shape the +/-200 character window accepted before 8d642ae scoped
+    # the search to a sentence, and it stayed red in the tree for three weeks because
+    # nothing ran this file. The next-sentence shape is reported now, by design: see
+    # `a marker suppresses only within its own sentence` in
+    # tests/hooks/memory-stale-paths.test.js.
     check(
         "the marker may follow the path across a line break",
         stale(
-            "`AUTOMATIONS_YAML` still pointed at\n`ansible/roles/gone.yml`. That\n"
-            "directory has no `files/` and no archive copy, so it raised."
+            "`AUTOMATIONS_YAML` still pointed at\n`ansible/roles/gone.yml`, a\n"
+            "directory that no longer exists, so it raised."
         )
         == [],
     )
@@ -321,4 +331,4 @@ print()
 if failures:
     print(f"{len(failures)} failed: {', '.join(failures)}")
     sys.exit(1)
-print("all passed")
+print(f"OK {ran}")

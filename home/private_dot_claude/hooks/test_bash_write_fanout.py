@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for bash-write-fanout.sh.
 
 Run: python3 test_bash_write_fanout.py
@@ -29,9 +28,12 @@ if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
     HOOK = HERE / "bash-write-fanout.sh"
 
 failures = []
+ran = 0
 
 
 def check(name, condition):
+    global ran
+    ran += 1
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
     if not condition:
         failures.append(name)
@@ -181,4 +183,4 @@ print()
 if failures:
     print(f"{len(failures)} failure(s): {', '.join(failures)}")
     sys.exit(1)
-print("all passed")
+print(f"OK {ran}")

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# python-suites: skip -- check()-style runner, no `OK N` count line; wiring it is #545
 """Standalone tests for premature-done.py.
 
 Run: python3 test_premature_done.py
@@ -36,9 +35,12 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 failures: list[str] = []
+ran = 0
 
 
 def check(name: str, condition: bool) -> None:
+    global ran
+    ran += 1
     print(f"{'ok  ' if condition else 'FAIL'} {name}")
     if not condition:
         failures.append(name)
@@ -291,4 +293,4 @@ print()
 if failures:
     print(f"{len(failures)} failing: " + ", ".join(failures))
     sys.exit(1)
-print("all green")
+print(f"OK {ran}")
