@@ -90,11 +90,24 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// `^(a/b|c/d)$`: one full path per alternative, sorted. Flat rather than grouped by
-// directory, because tests/lint-js.test.js reads the oxlint line and expects a path
-// literal directly after `^(`.
+// `^(a/(b|c)|d/e)$`: the paths grouped by their full directory, each group's basenames as
+// one alternation, directories and names sorted. A group of one collapses to the bare path.
+// Grouped rather than flat because the reader of the bsd-portability line is a human
+// checking one script is named, and 74 full paths bury the basename in a repeated prefix.
+// Nothing reads the spelling: every test that consumes a rendered line builds the RegExp
+// and asks it about paths (#534).
 function enumerate(files) {
-  return `^(${[...files].sort().map(escapeRegex).join('|')})$`;
+  const byDir = new Map();
+  for (const file of [...files].sort()) {
+    const cut = file.lastIndexOf('/') + 1;
+    const dir = file.slice(0, cut);
+    if (!byDir.has(dir)) byDir.set(dir, []);
+    byDir.get(dir).push(escapeRegex(file.slice(cut)));
+  }
+  const groups = [...byDir].map(([dir, names]) => (
+    escapeRegex(dir) + (names.length === 1 ? names[0] : `(${names.join('|')})`)
+  ));
+  return `^(${groups.join('|')})$`;
 }
 
 function scriptsFor(hook, scripts) {

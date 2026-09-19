@@ -33,6 +33,22 @@ test('census tags an extensionless script by its shebang and ignores a dotted ba
   ]);
 });
 
+// --- lib.enumerate: grouped by directory, still one exact path per member -----------------
+
+test('enumerate groups the paths by directory and admits exactly the members', () => {
+  const pattern = lib.enumerate(['bin/b-tool', 'home/dot_local/bin/executable_x', 'bin/a-tool', '.githooks/pre-push']);
+  assert.strictEqual(pattern, '^(\\.githooks/pre-push|bin/(a-tool|b-tool)|home/dot_local/bin/executable_x)$');
+  const re = new RegExp(pattern);
+  for (const f of ['bin/a-tool', 'bin/b-tool', 'home/dot_local/bin/executable_x', '.githooks/pre-push']) {
+    assert.ok(re.test(f), `${f} is a member and must match`);
+  }
+  // The grouping must not admit a sibling that is not listed, a path that only ends like a
+  // member, or a member's basename under another directory.
+  for (const f of ['bin/c-tool', 'other/bin/a-tool', 'home/dot_local/bin/a-tool', 'bin/a-tool.bak', 'xgithooks/pre-push']) {
+    assert.ok(!re.test(f), `${f} is not a member and must not match`);
+  }
+});
+
 // --- lib.renderPatterns: the widener property ---------------------------------------------
 
 const SCRIPTS = [

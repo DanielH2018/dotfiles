@@ -3,12 +3,13 @@
 //
 //   1. oxlint reports the default correctness rules at WARNING severity and exits 0 on
 //      warnings, so without --deny-warnings the hook prints findings and passes.
-//   2. oxlint selects files by extension and refuses anything else, so the five
+//   2. oxlint selects files by extension and refuses anything else, so the
 //      `#!/usr/bin/env node` scripts with no extension — including bin/config-soak, itself a
 //      push gate — are only reached through the temp-copy path in bin/lint-js.
-//   3. prek types those same scripts by shebang ONLY if they are executable in git. Four of
-//      them sat at 100644, which is easy to reintroduce because chezmoi's `executable_`
-//      prefix sets the DEPLOYED mode and a 100644 source still deploys 0755.
+//   3. prek reaches one of those scripts only if the hook's `files:` names it. That list is
+//      rendered by bin/gen-lint-files from the tree's shebangs, and the last test asserts
+//      the rendered pattern admits every node script that census reports. (The +x bit the
+//      shebang typing also needs is tests/lint-gate-coverage.test.js's, over the same census.)
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -99,31 +100,34 @@ test('.oxlintrc.json is valid and loaded by oxlint', { skip }, () => {
   assert.strictEqual(runLint([f]).status, 0, 'no-control-regex should be off per .oxlintrc.json');
 });
 
-test('every extensionless script the hook names is executable in git', { skip: false }, () => {
-  // The +x bit is what lets prek type these by shebang. Losing it silently drops the file
-  // from the gate while everything still looks wired.
-  const named = [...hookConfig.matchAll(/\^\(?(bin\/config-soak|home\/dot_local\/bin\/executable_[a-z-]+)/g)]
-    .map((m) => m[1]);
-  const entry = hookConfig.match(/files: \(\\\.\(js\|mjs\)\$\|(.+)\)$/m);
-  assert.ok(entry, 'could not find the oxlint hook files: pattern');
+test('the oxlint files: pattern admits every extensionless node script in the tree', { skip: false }, () => {
+  // The property, not the spelling: whatever alternation bin/gen-lint-files renders, the
+  // RegExp it becomes must accept every path the same census tags `node`. Asserting the
+  // line's shape instead (a literal after `^(`) failed on a directory-grouped rendering and
+  // pinned the generator to a flat one (#534). The marker is the anchor because
+  // injectFilesPatterns() guarantees the files: line sits directly under it.
+  const block = hookConfig.match(/# gen-lint-files: oxlint\n\s*files: (\(.*\))$/m);
+  assert.ok(block, 'could not find the oxlint hook\'s files: pattern under its generator marker');
+  const re = new RegExp(block[1]);
 
-  const scripts = execFileSync('git', ['ls-files', '-s', 'bin/config-soak', 'home/dot_local/bin/'], { cwd: repoPath() })
-    .toString()
+  // The census the generator itself renders from, spawned through node because the pre-push
+  // gate's shell has no node on PATH for the shebang to resolve.
+  const nodeScripts = execFileSync('node', [repoPath('bin', 'gen-lint-files'), '--list'], { cwd: repoPath(), encoding: 'utf8' })
     .split('\n')
     .filter(Boolean)
-    .map((line) => {
-      const [meta, file] = line.split('\t');
-      return { mode: meta.split(' ')[0], file };
-    })
-    .filter((e) => !path.basename(e.file).includes('.'))
-    .filter((e) => fs.readFileSync(repoPath(e.file), 'utf8').startsWith('#!/usr/bin/env node'));
-
-  assert.ok(scripts.length >= 5, `expected the extensionless node scripts, saw ${scripts.length}`);
-  for (const { mode, file } of scripts) {
-    assert.strictEqual(mode, '100755',
-      `${file} is a node script with no extension, so prek can only type it by shebang — that needs the +x bit in git (git update-index --chmod=+x ${file})`);
+    .map((line) => line.split(' '))
+    .filter(([, kind]) => kind === 'node')
+    .map(([, , file]) => file);
+  // Non-vacuity: an empty census, or a renamed dialect tag, would make the loop below pass
+  // over nothing. config-soak is itself a push gate; gen-lint-files renders this very line.
+  for (const f of ['bin/config-soak', 'bin/gen-lint-files']) {
+    assert.ok(nodeScripts.includes(f), `the census no longer reports ${f} as a node script`);
   }
-  assert.ok(named.length > 0, 'the hook should name the extensionless scripts explicitly');
+
+  const missed = nodeScripts.filter((f) => !re.test(f));
+  assert.deepStrictEqual(missed, [],
+    'these are extensionless node scripts the oxlint hook\'s files: pattern does not admit, so '
+    + 'the gate never sees them. Run bin/gen-lint-files and commit the result.');
 });
 
 test('the hook runs through bin/lint-js, not oxlint directly', { skip: false }, () => {
