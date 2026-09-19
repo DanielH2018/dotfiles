@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # reported were describing an absence, not asserting a presence, and each was
     # correct as written. Re-reporting those is how a session-start line trains its
     # reader to skip it. The marker has to be found in prose that wraps mid-sentence, so
-    # the check reads a character window rather than a line.
+    # the check reads the sentence holding the path rather than the line.
 
     check(
         "a path the memory says no longer exists",
@@ -132,6 +132,19 @@ with tempfile.TemporaryDirectory() as tmp:
             "directory that no longer exists, so it raised."
         )
         == [],
+    )
+    # The pin for that design: a marker one sentence AFTER the path does not suppress.
+    # Decided by measurement on 2026-09-19 (#549): widening forward changed no live
+    # flag and the one mention it would newly suppress carried a marker about a review
+    # fix, not the path. The docstring of `already_says_it_is_gone` says the same; this
+    # is what stops the two drifting apart again.
+    check(
+        "a marker in the next sentence does not suppress",
+        stale(
+            "`AUTOMATIONS_YAML` still pointed at `ansible/roles/gone.yml`. That\n"
+            "directory has no build output, so it raised."
+        )
+        == ["ansible/roles/gone.yml"],
     )
     check(
         "a live claim is still reported when the marker is far away",

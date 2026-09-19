@@ -80,6 +80,13 @@ test('a marker suppresses only within its own sentence', { skip }, () => {
 
   const priorSentence = 'A lock whose process is gone is ignored. See `scripts/moved.py` here.';
   assert.match(report(priorSentence), /scripts\/moved\.py/);
+
+  // The next sentence does not count either. Measured 2026-09-19 (#549): widening the
+  // scope forward one sentence changed no live flag, and the one mention it would
+  // newly suppress carried a "declined" about a review fix rather than the path. The
+  // docstring of already_says_it_is_gone says the same; this pin keeps them together.
+  const nextSentence = 'It still pointed at `scripts/moved.py`. That directory has no build output.';
+  assert.match(report(nextSentence), /scripts\/moved\.py/);
 });
 
 // Existence is checked against the caller's worktree first, then the main checkout. An

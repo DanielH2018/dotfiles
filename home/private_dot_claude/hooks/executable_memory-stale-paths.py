@@ -183,23 +183,36 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
 
     The dominant false positive, and it dominates hard: on the first real run, three of
     the four memories reported were describing an absence rather than asserting a
-    presence — "still pointed at `<path>`. That directory has no `files/`", "guarded by
-    `<path>`, which no longer exists", "`<path>` … the 11 Error Backup CRs no longer
-    exist". Each was correct as written, and re-reporting a memory that already records
-    the deletion is how a session-start line teaches its reader to skip it.
+    presence — "guarded by `<path>`, which no longer exists", "`<path>` … the 11 Error
+    Backup CRs no longer exist". Each was correct as written, and re-reporting a memory
+    that already records the deletion is how a session-start line teaches its reader to
+    skip it.
 
-    So: look at the prose around the mention for an absence marker. A window rather than
-    a sentence, because these files wrap mid-sentence and a line-based read misses the
-    half that carries the marker.
+    So: look for an absence marker in the SENTENCE holding the mention, and nowhere
+    else. `sentence_bounds` draws that scope. A sentence rather than a line, because
+    these files wrap mid-sentence and a line-based read misses the half carrying the
+    marker. A sentence rather than a wider span, because the +/-200 character window
+    that came first read markers about OTHER things: 8d642ae records the two genuinely
+    stale paths it silenced from the sentence before.
 
-    The path is cut out of its own window first, and that is not a detail. A file named
-    `remove_stale_backups.py` or `docs/retired-hosts.md` otherwise matches the marker
-    list with its own name and suppresses itself forever — the one failure this check
-    must not have, since it silences exactly the paths most likely to have been deleted.
+    A marker in the NEXT sentence does not suppress either, by design. The third of
+    those first-run false positives had that shape — "still pointed at `<path>`. That
+    directory has no `files/`" — and it is reported. Measured 2026-09-19 against the
+    live corpus (102 memories, 114 repo-path mentions): that memory is gone, no live
+    flag changes with the marker scope widened forward one sentence, and the one
+    mention forward widening would newly suppress carries a "declined" about a review
+    fix, not about the path. Widening forward buys nothing today and would hide that
+    path the day it is deleted.
 
-    The failure direction is otherwise deliberate. A genuinely stale path in a memory
-    that happens to say "removed" nearby goes unreported — a miss, and a miss costs
-    nothing here, where a false alarm costs the whole report's credibility.
+    The path is cut out of its own sentence first, and that is not a detail. A file
+    named `remove_stale_backups.py` or `docs/retired-hosts.md` otherwise matches the
+    marker list with its own name and suppresses itself forever — the one failure this
+    check must not have, since it silences exactly the paths most likely to have been
+    deleted.
+
+    The failure direction is otherwise deliberate. A genuinely stale path in a sentence
+    that happens to say "removed" about something else goes unreported — a miss, and a
+    miss costs nothing here, where a false alarm costs the whole report's credibility.
     """
     markers = (
         "no longer",
@@ -240,12 +253,12 @@ def already_says_it_is_gone(text: str, token: str) -> bool:
             return seen
         seen = True
         end = i + len(needle)
-        # The surrounding prose only. Including the needle lets a path match the marker
-        # list with its own filename — see the docstring; that bug silences the very
-        # paths most likely to be stale.
+        # The rest of the sentence only. Including the needle lets a path match the
+        # marker list with its own filename — see the docstring; that bug silences the
+        # very paths most likely to be stale.
         left, right = sentence_bounds(text, i, end)
-        window = (text[left:i] + " " + text[end:right]).lower()
-        if not any(m in window for m in markers):
+        context = (text[left:i] + " " + text[end:right]).lower()
+        if not any(m in context for m in markers):
             # One mention that reads as a live claim is enough to report the path.
             return False
         start = i + len(needle)
