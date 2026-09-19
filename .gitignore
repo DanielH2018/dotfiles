@@ -8,11 +8,13 @@
 # This repo's own build artifacts. They were ignored only by ~/.gitignore_global, which is
 # home/dot_gitignore_global — a file THIS repo deploys. That made the repo's cleanliness
 # depend on having already applied it: on a fresh clone, before the first `chezmoi apply`,
-# all three show as untracked and a `git add -A` commits a virtualenv. Listed here so the
+# all of these show as untracked and a `git add -A` commits a virtualenv. Listed here so the
 # repo is self-sufficient; the global copy stays, since it is right for every other repo too.
 .venv/
 .ruff_cache/
 .pytest_cache/
+__pycache__/
+*.pyc
 
 # Second layer: even if a *.local.* file lands in the source tree, never commit it.
 **/*.local.json
