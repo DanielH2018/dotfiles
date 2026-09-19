@@ -47,11 +47,6 @@
       "landed": "2026-07-29T21:20:52.171Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/__pycache__/executable_premature-done.cpython-314.pyc",
-      "hash": "155f7c705c5a2ab19b1e3b405fa27eaba6a8da722aac96f512b6c602ec215d68",
-      "landed": "2026-09-19T00:06:18.886Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
       "hash": "e5c3c3230654a6d4262acd99f5f906c3450dc1d2ebde3adf2cd79799166885c1",
       "landed": "2026-08-09T19:04:35.602Z"
