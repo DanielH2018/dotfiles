@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
-      "hash": "6a6d983075db967c8f68abe116bcbece74b9a6f1fe3556ca28b0db0ffcc77bda",
-      "landed": "2026-09-19T01:22:17.879Z"
+      "hash": "782743aa3b22511c7e5c8b49494de1165527799be5a43954327f473f587714e2",
+      "landed": "2026-09-19T14:19:54.429Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
@@ -318,8 +318,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "f9a6ab4e8a026d5e7e629f73e95e1d364026b8432cedc5a0b1f993d34f1a5e04",
-      "landed": "2026-09-19T02:20:41.100Z"
+      "hash": "ca85e7df5187f8c4de1a30a0e1e979a0fdacce27af1c6629500c6edc9ce7e883",
+      "landed": "2026-09-19T14:19:54.429Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",
