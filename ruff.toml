@@ -5,6 +5,7 @@
 # two paths see the same scripts.
 extend = "pyproject.toml"
 extend-include = [
+  "home/dot_local/bin/executable_claude-rc-resume",
   "home/dot_local/bin/executable_jsonq",
   "home/dot_local/bin/executable_otel-sweep",
   "home/dot_local/bin/executable_otelq",

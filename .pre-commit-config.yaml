@@ -55,7 +55,7 @@ repos:
       - id: ruff-check
         types_or: [python]
         # gen-lint-files: ruff-check
-        files: (\.py$|^(home/dot_local/bin/(executable_jsonq|executable_otel-sweep|executable_otelq|executable_planka|executable_prompt-friction|executable_stash-mine|executable_stdio-blocking|executable_streamdeck-usb-reset|executable_tq|executable_wl-bmp2png|executable_wpe-pick))$)
+        files: (\.py$|^(home/dot_local/bin/(executable_claude-rc-resume|executable_jsonq|executable_otel-sweep|executable_otelq|executable_planka|executable_prompt-friction|executable_stash-mine|executable_stdio-blocking|executable_streamdeck-usb-reset|executable_tq|executable_wl-bmp2png|executable_wpe-pick))$)
 
   - repo: local
     hooks:

@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""claude-rc-resume — resume a Remote Control session from the terminal by its name.
+
+A session the `claude rc` host spawns from the phone lives in its own git worktree, and
+Claude Code keys the transcript by that directory: it appears in `claude --resume` only
+from inside `.claude/worktrees/<name>/`, and nowhere from the repository root. When the
+phone's connection drops, the spawned session exits, the app reports it disconnected,
+and getting it back means finding that directory by hand. This does the finding.
+
+  claude-rc-resume "Bespoke Code Pass"    # by the name shown in the app
+  claude-rc-resume cse_0121E5wk8EmC...    # by the claude.ai id in the worktree name
+  claude-rc-resume 8f98784d-6083-...      # by the transcript's own uuid
+  claude-rc-resume --list [PATTERN]       # candidates, newest first; run nothing
+  claude-rc-resume --print NAME           # print the command it would run; run nothing
+  claude-rc-resume NAME -- --model opus   # extra arguments go to `claude`
+
+It matches a transcript's recorded `agentName`, the id in its recorded `cwd`, or its
+file name, under `$CLAUDE_CONFIG_DIR/projects/` (default `~/.claude/projects/`).
+Several transcripts can carry one name — a session resumed into a fresh conversation
+keeps it — so the newest by modification time wins and the others are named on stderr.
+It then changes into the transcript's recorded `cwd` and replaces itself with
+`claude --resume <uuid>`.
+
+What it does NOT do: reattach to the claude.ai entry the session had. That record is
+held by the host, not the transcript, so the resumed session registers a new entry when
+`remoteControlAtStartup` is on. To keep the old entry, run
+`claude remote-control --session-id <cse_ id>` from the repository root instead, inside
+the four-hour window Claude Code documents for it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+PROG = "claude-rc-resume"
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# Only the records that carry what we read. A transcript is megabytes of tool output,
+# and json-decoding every line of every transcript is what makes this too slow to use.
+CWD_RE = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
+NAME_RE = re.compile(rb'"agentName":"((?:[^"\\]|\\.)*)"')
+
+
+@dataclass
+class Transcript:
+    path: Path
+    uuid: str
+    name: str | None
+    cwd: str | None
+    mtime: float
+
+
+def config_dir() -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def _unescape(raw: bytes) -> str:
+    # The capture is the inside of a JSON string; decoding it as one restores escapes.
+    return json.loads(b'"' + raw + b'"')
+
+
+def read_transcript(path: Path) -> Transcript | None:
+    if not UUID_RE.match(path.stem):
+        return None  # a subagent transcript or a sidecar file, not a session
+    try:
+        data = path.read_bytes()
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    cwd_m = CWD_RE.search(data)
+    names = NAME_RE.findall(data)
+    return Transcript(
+        path=path,
+        uuid=path.stem,
+        name=_unescape(names[-1]) if names else None,
+        cwd=_unescape(cwd_m.group(1)) if cwd_m else None,
+        mtime=mtime,
+    )
+
+
+def scan(root: Path) -> list[Transcript]:
+    found = []
+    for path in sorted(root.glob("projects/*/*.jsonl")):
+        t = read_transcript(path)
+        if t is not None:
+            found.append(t)
+    found.sort(key=lambda t: t.mtime, reverse=True)
+    return found
+
+
+def matches(t: Transcript, key: str) -> bool:
+    if t.uuid == key:
+        return True
+    if t.name is not None and t.name.casefold() == key.casefold():
+        return True
+    return key.startswith("cse_") and t.cwd is not None and key in t.cwd
+
+
+def describe(t: Transcript) -> str:
+    return f"{t.name or '(unnamed)'}  {t.uuid}  {t.cwd or '(no cwd recorded)'}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n", 1)[0])
+    parser.add_argument(
+        "key", nargs="?", help="session name, claude.ai session id, or transcript uuid"
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="list candidates, newest first, and exit"
+    )
+    parser.add_argument(
+        "--print", action="store_true", help="print the command instead of running it"
+    )
+    parser.add_argument(
+        "extra", nargs=argparse.REMAINDER, help="arguments passed to claude after --"
+    )
+    args = parser.parse_args(argv)
+
+    transcripts = scan(config_dir())
+
+    if args.list:
+        pattern = (args.key or "").casefold()
+        for t in transcripts:
+            if pattern in describe(t).casefold():
+                print(describe(t))
+        return 0
+
+    if not args.key:
+        parser.error(
+            "a session name, claude.ai session id or transcript uuid is needed"
+        )
+
+    hits = [t for t in transcripts if matches(t, args.key)]
+    if not hits:
+        print(
+            f"{PROG}: no transcript matches {args.key!r}; try --list", file=sys.stderr
+        )
+        return 1
+    chosen = hits[0]
+    if len(hits) > 1:
+        print(
+            f"{PROG}: {len(hits)} transcripts match; taking the newest. Others:",
+            file=sys.stderr,
+        )
+        for t in hits[1:]:
+            print(f"  {describe(t)}", file=sys.stderr)
+    if chosen.cwd is None:
+        print(f"{PROG}: {chosen.path} records no cwd", file=sys.stderr)
+        return 1
+    if not Path(chosen.cwd).is_dir():
+        print(
+            f"{PROG}: {chosen.cwd} is gone; the worktree was removed", file=sys.stderr
+        )
+        return 1
+
+    extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
+    cmd = ["claude", "--resume", chosen.uuid, *extra]
+    if args.print:
+        print(f"cd {chosen.cwd}")
+        print(" ".join(cmd))
+        return 0
+    os.chdir(chosen.cwd)
+    os.execvp(cmd[0], cmd)
+    return 0  # unreachable; keeps the type checker honest
+
+
+if __name__ == "__main__":
+    sys.exit(main())
