@@ -52,21 +52,6 @@
       "landed": "2026-08-09T19:04:35.602Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-register.sh",
-      "hash": "d7e91a0c256e81c551d982c5e6917a4d1d6682752e2b27e728e92a9bd89de20b",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-state.sh",
-      "hash": "0b0fa8929d373bf617a04564b94b46fd94e9c43af569b55f486a84ad7d2fe12a",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_agent-view-subagents.sh",
-      "hash": "3d496ac844ba3de6a99543a973eb7fc95be487e4b5742b9ee34397fb79b96581",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
       "hash": "a6510d61ac15be870f50d4fd96f5050164d407c8ed8685ad363fad39f04dadfe",
       "landed": "2026-09-18T22:57:37.560Z"
@@ -273,8 +258,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
-      "hash": "16679be79b6303b4eb6b487695469f30d01762039e59fea31c9bcc80f48ad10e",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "c679a72557fd613ff17be5259c516222a195d8e4c6af8b97f2cb36f6256a0141",
+      "landed": "2026-09-19T01:08:20.039Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_watch-paths.sh",

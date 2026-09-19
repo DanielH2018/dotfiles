@@ -77,8 +77,8 @@ source "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
 hook_read_input
 
 # Headless sdk invocations (the remember plugin's summarizers, and anything else driving
-# `claude -p`) fire these same hooks but own no pane worth labelling. agent-view-state.sh
-# filters them the same way and for the same reason. An absent registry file means "older
+# `claude -p`) fire these same hooks but own no pane worth labelling. The retired
+# agent-view-state.sh filtered them the same way. An absent registry file means "older
 # claude, don't know" -> label anyway, matching that hook's looser filter on non-start events.
 if [[ -n "${CLAUDE_PID:-}" ]]; then
   case "$(jq -r '.entrypoint // ""' "$HOME/.claude/sessions/${CLAUDE_PID}.json" 2>/dev/null)" in

@@ -28,7 +28,7 @@
 //                                       is written into the template verbatim (no escaping)
 //
 //   # gen-hooks: library
-//   #   reason: sourced by agent-view-state.sh
+//   #   reason: sourced by hook-input.sh consumers
 //
 // The opener is the only delimiter: a block runs from its `# gen-hooks:` line to the first
 // line that is not a `#   key: value` continuation. There is no closing marker to forget,

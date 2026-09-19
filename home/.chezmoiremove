@@ -25,3 +25,10 @@
 # guard-pre-tool-use.sh, so nothing runs either file any more.
 .claude/hooks/block-dangerous-bash.sh
 .claude/hooks/cmdparse.sh
+
+# #538: the agent-view chain (agentview itself was removed in 0e6bded; the three hooks were
+# re-added in 8d642ae for a sandbox caller that 0e6bded had already deleted, so nothing
+# invoked agent-view-subagents.sh and the other two existed only to be sourced by it).
+.claude/hooks/agent-view-register.sh
+.claude/hooks/agent-view-state.sh
+.claude/hooks/agent-view-subagents.sh
