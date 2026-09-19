@@ -318,8 +318,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "f949a9160ab92a0220782727dcffc3ee8785b4073e9326f0959681c8e9b16c19",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "f9a6ab4e8a026d5e7e629f73e95e1d364026b8432cedc5a0b1f993d34f1a5e04",
+      "landed": "2026-09-19T02:20:41.100Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",
