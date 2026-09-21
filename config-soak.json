@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "3d5f2d2c79742e402273fb96b093a2addaafc2497bb509e14418e513c7f9f154",
-      "landed": "2026-09-18T23:02:32.433Z"
+      "hash": "8e961763694f6ed042f5961d6e049e25e2c5015759bce5566704a97bf531324d",
+      "landed": "2026-09-21T18:38:11.926Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -253,8 +253,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_voice-reminder.sh",
-      "hash": "878cabeabc5e690a9a6040042fa95317339b289594a0d59814e3174aab26feaa",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "d48fc5eaf355cba69edfd0d99f2c886ace62b80b0c4c022b37b27945063936d9",
+      "landed": "2026-09-21T18:38:11.926Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
@@ -318,8 +318,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "ca85e7df5187f8c4de1a30a0e1e979a0fdacce27af1c6629500c6edc9ce7e883",
-      "landed": "2026-09-19T14:19:54.429Z"
+      "hash": "66416bf5ff07cbb7a97a9b7f517a8f2654772fa8011e95dcca28367b5b9f0557",
+      "landed": "2026-09-21T18:38:11.926Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",
@@ -328,8 +328,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
-      "hash": "9fbac40ac90e77b79a5fcdf6b619a388c6549a485eebd71a27e774022be25ef4",
-      "landed": "2026-09-21T15:14:42.042Z"
+      "hash": "87b07529a376647c2b7d0a377dbde13a1c8f048470e294ce4a16a4a3ba8dc03e",
+      "landed": "2026-09-21T18:38:11.926Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
