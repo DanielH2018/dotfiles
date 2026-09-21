@@ -1,0 +1,38 @@
+#!/bin/sh
+# Launch mcp-grafana with the Grafana service account token attached.
+#
+# The Claude desktop app spawns stdio MCP servers directly, not through an interactive
+# shell. The token normally reaches the environment from the `_op_lazy_precmd` hook in
+# work-laptop-config's local.zsh, and a precmd hook only fires when zsh draws a prompt —
+# which never happens for a server the app launches. So mcp-grafana started with
+# GRAFANA_URL set and no credential, reported itself "connected", and returned HTTP 401
+# on every call. This wrapper closes that gap by reading the token where local.zsh
+# already caches it: the login keychain.
+#
+# Reading the keychain rather than baking the token into ~/.claude.json keeps the
+# credential out of a plaintext config file, and means `op-refresh-keys` rotates it for
+# the MCP server too — the wrapper picks up the new value on the next launch.
+#
+# Absolute paths throughout: the app's PATH is not the login shell's.
+set -eu
+
+: "${GRAFANA_URL:=https://lithic.grafana.net}"
+export GRAFANA_URL
+
+# Assign unconditionally. If ~/.claude.json ever grows a literal token in its `env`, the
+# keychain copy is the one local.zsh and op-refresh-keys maintain, so it wins.
+GRAFANA_SERVICE_ACCOUNT_TOKEN=$(
+  /usr/bin/security find-generic-password -a "$USER" -s op.grafana-service-account-token -w 2>/dev/null
+) || GRAFANA_SERVICE_ACCOUNT_TOKEN=''
+
+# Exit rather than start unauthenticated. A server that fails to launch shows as "failed"
+# in /mcp, which names the problem; one that launches without a token looks healthy and
+# 401s on every call, which is how this went unnoticed.
+if [ -z "$GRAFANA_SERVICE_ACCOUNT_TOKEN" ]; then
+  echo "grafana-mcp: no token in keychain (op.grafana-service-account-token)." >&2
+  echo "grafana-mcp: run op-refresh-keys in a terminal, then restart the app." >&2
+  exit 1
+fi
+export GRAFANA_SERVICE_ACCOUNT_TOKEN
+
+exec "$HOME/.local/bin/uvx" mcp-grafana "$@"
