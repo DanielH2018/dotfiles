@@ -48,7 +48,11 @@ def check(name, condition):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    root = Path(tmp)
+    # .resolve() because the checks below compare against paths the code under test
+    # reports, and git reports a checkout by its real path. On macOS the temp dir sits
+    # under /var/folders, a symlink to /private/var/folders, so an unresolved root makes
+    # every such comparison miss on a prefix neither side chose.
+    root = Path(tmp).resolve()
     repo = root / "repo"
     (repo / "ansible" / "roles").mkdir(parents=True)
     (repo / "docs").mkdir()
