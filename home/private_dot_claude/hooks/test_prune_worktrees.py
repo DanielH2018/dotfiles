@@ -72,8 +72,31 @@ def wt(path="/w", head="abc", branch="b", locked=False, reason=""):
 
 # ── a live lock: this process, whose start time /proc reports ───────────────────
 
+# session_is_alive proves a lock's owner is still running by comparing its start time
+# against /proc/<pid>/stat, so only Linux can produce a lock that is live by that route.
+# This read was unguarded and raised FileNotFoundError at import on macOS, taking the
+# whole file down before a single check ran.
+#
+# The checks below are about ranking — that a live lock outranks merged, clean, and the
+# weak signals — not about how liveness is established. So off Linux they use the
+# reader's other live verdict: an unparseable reason, which session_is_alive treats as
+# live by design, because an unrecognized lock is someone else's and guessing wrong
+# destroys work. Same verdict, different route, so the ranking still gets tested
+# everywhere. The start-time comparison itself is pinned in the claude-worktree suite,
+# which can skip properly under pytest.
+HAVE_PROC = Path("/proc/self/stat").exists()
+
 my_pid = os.getpid()
-my_start = Path(f"/proc/{my_pid}/stat").read_text().rpartition(")")[2].split()[19]
+my_start = (
+    Path(f"/proc/{my_pid}/stat").read_text().rpartition(")")[2].split()[19]
+    if HAVE_PROC
+    else ""
+)
+LIVE_REASON = (
+    f"claude session x (pid {my_pid} start {my_start})"
+    if HAVE_PROC
+    else "locked by hand, unparseable on purpose"
+)
 
 # ── classify ──────────────────────────────────────────────────────────────────
 
@@ -88,7 +111,7 @@ check(
 check(
     "a live lock outranks merged + clean",
     mod.classify(
-        wt(locked=True, reason=f"claude session x (pid {my_pid} start {my_start})"),
+        wt(locked=True, reason=LIVE_REASON),
         merged=True,
         dirty=False,
         is_current=False,
@@ -157,7 +180,7 @@ check(
 check(
     "a weak signal does not outrank a live lock",
     mod.classify(
-        wt(locked=True, reason=f"claude session x (pid {my_pid} start {my_start})"),
+        wt(locked=True, reason=LIVE_REASON),
         merged=False,
         dirty=False,
         is_current=False,
@@ -223,16 +246,13 @@ def build_repo(root):
         ],
         repo,
     )
-    # merged + locked by THIS process, standing in for a live session
+    # merged + locked, standing in for a live session. LIVE_REASON is this process's own
+    # pid and start time on Linux; elsewhere the unparseable reason the reader also
+    # treats as live. Either way the tree must survive, or the rest of this scenario's
+    # expectations go with it.
     git(["worktree", "add", "-q", "-b", "wt-live", str(trees / "live")], repo)
     git(
-        [
-            "worktree",
-            "lock",
-            str(trees / "live"),
-            "--reason",
-            f"claude session live (pid {my_pid} start {my_start})",
-        ],
+        ["worktree", "lock", str(trees / "live"), "--reason", LIVE_REASON],
         repo,
     )
     # merged but dirty
@@ -247,7 +267,11 @@ def build_repo(root):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    root = Path(tmp)
+    # .resolve() because the checks below compare paths against the hook's own output,
+    # and git reports a worktree by its real path. On macOS the temp dir sits under
+    # /var/folders, a symlink to /private/var/folders, so an unresolved root makes every
+    # such comparison miss on a prefix neither side chose.
+    root = Path(tmp).resolve()
     repo, trees = build_repo(root)
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
 
@@ -280,7 +304,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "removes the merged tree despite its dead owner's lock",
         not (trees / "merged").exists(),
     )
-    check("keeps the live session's tree", (trees / "live").exists())
+    check("keeps the tree whose lock reads as live", (trees / "live").exists())
     check("keeps the dirty tree", (trees / "dirty").exists())
     check("keeps the unmerged tree", (trees / "ahead").exists())
     check("reports what it removed", "wt-merged" in pruned.stdout)
@@ -423,7 +447,7 @@ def build_branch_repo(root):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    root = Path(tmp)
+    root = Path(tmp).resolve()  # see the note on the first temp root above
     repo, trees = build_branch_repo(root)
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(root / "cfg")}
 
