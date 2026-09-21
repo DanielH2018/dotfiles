@@ -22,18 +22,35 @@ from claude_worktree import (
 
 # --- session_is_alive ---------------------------------------------------------------
 
+# session_is_alive compares a start time against /proc/<pid>/stat, so it reaches a real
+# verdict only where /proc exists. On macOS the read raises OSError and the function
+# answers False for every parseable reason: the two "reads as dead" tests below would
+# pass without exercising the start-time comparison they are named for, and the "reads
+# as alive" one would fail. Skip all three there rather than assert a verdict the
+# platform did not produce. The module-level read is guarded by the same flag:
+# unguarded, it raised at import and took the whole file down during collection.
+HAVE_PROC = Path("/proc/self/stat").exists()
+linux_only = pytest.mark.skipif(not HAVE_PROC, reason="session_is_alive reads /proc")
+
 MY_PID = os.getpid()
-MY_START = Path(f"/proc/{MY_PID}/stat").read_text().rpartition(")")[2].split()[19]
+MY_START = (
+    Path(f"/proc/{MY_PID}/stat").read_text().rpartition(")")[2].split()[19]
+    if HAVE_PROC
+    else ""
+)
 
 
+@linux_only
 def test_a_lock_held_by_a_running_process_reads_as_alive():
     assert session_is_alive(f"claude session x (pid {MY_PID} start {MY_START})")
 
 
+@linux_only
 def test_a_reused_pid_with_a_different_start_time_reads_as_dead():
     assert not session_is_alive(f"claude session x (pid {MY_PID} start 1)")
 
 
+@linux_only
 def test_a_vanished_pid_reads_as_dead():
     assert not session_is_alive("claude session x (pid 4194303 start 12345)")
 
