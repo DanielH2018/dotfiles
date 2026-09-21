@@ -19,9 +19,17 @@
 # keep-coding-instructions, and the reminder renderer looks the active style up
 # in the static built-in registry, so a custom name misses and emits nothing.
 # Verified against 2.1.235 and 2.1.237 — long-standing, not a regression.
+# Since 2.1.238 the harness does emit a per-turn line for custom, project and
+# plugin styles, but its text is the generic fallback: the style loader
+# rebuilds a style read off disk without a `turnReminder` field, and only the
+# built-ins carry reminder text.
 #
-# So daniel-voice reaches the model once, at session start, and never again.
-# This hook supplies the missing reminder.
+# So daniel-voice reaches the model once, at session start, and never again
+# with its actual rules. This hook supplies the reminder that names them. The
+# rules decay over a long session because an output style sits late in the
+# system prompt, where a CLAUDE.md rule is injected once, further up; the
+# user-level CLAUDE.md keeps only what has to reach subagents, which an output
+# style never does.
 #
 # Keep the text to ONE line. The built-in turnReminder renders with isMeta set
 # and is transient; additionalContext lands in conversation history and

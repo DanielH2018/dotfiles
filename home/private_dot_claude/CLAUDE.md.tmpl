@@ -2,18 +2,9 @@
 
 ## Communication style
 
-Conversational tone — terseness, outcome first, no preamble, no hedging, one focused question,
-when to correct yourself — moved to the `daniel-voice` output style
-(`private_dot_claude/output-styles/daniel-voice.md`, selected by `outputStyle` in
-`settings.base.json`). Those rules decay over a long session, and an output style sits late in
-the system prompt where a CLAUDE.md rule is injected once, further up. Re-assertion is a
-separate mechanism, and for a custom style it carries no content. Since 2.1.238 the harness
-does emit a per-turn line for custom, project, and plugin styles. Its text is the generic
-fallback, because the style loader rebuilds a style read off disk without a `turnReminder`
-field — only the built-ins carry reminder text. So `voice-reminder.sh` (a `UserPromptSubmit`
-hook) supplies the per-prompt reminder that names the actual rules.
-What stays here is what has to reach **subagents** as well, which an output style never does:
-everything below governs text written to disk, not just my replies.
+Conversation style lives in the `daniel-voice` output style; this file holds only what has to
+reach subagents, which an output style never does — everything below governs text written to
+disk, not just my replies.
 
 #### Formatting rules for written output
 
