@@ -208,7 +208,7 @@ const PYTEST_PROJECTS = [
   // so it names its interpreter; uv fetches a managed 3.14 on a cold machine.
   { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
   // claude-worktree runs under the system interpreter (the prune-worktrees.py hook is a
-  // bare python3 shebang), so it names no interpreter and its floor is the root's py39.
+  // bare python3 shebang), so it names no interpreter; its floor is 3.10, not the root's 3.9.
   { root: SHARE, dir: 'claude-worktree', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' } },
 ];
 

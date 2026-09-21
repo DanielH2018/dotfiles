@@ -13,11 +13,9 @@ query. None of them removes anything. A caller that needs the deployed copy impo
 from `~/.local/share/claude-worktree` (`CLAUDE_WORKTREE_HOME` overrides the path), the
 way `claude_guard` is reached from `~/.local/share/claude-guard`.
 
-Python 3.9 is the floor, not 3.14: the SessionStart hook runs under the system
+Python 3.10 is the floor, not 3.14: the SessionStart hook runs under the system
 interpreter, so nothing here may use syntax the system python3 lacks.
 """
-
-from __future__ import annotations
 
 import re
 import subprocess

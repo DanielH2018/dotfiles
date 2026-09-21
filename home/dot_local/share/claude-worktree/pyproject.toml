@@ -2,7 +2,7 @@
 name = "claude-worktree"
 version = "0.1.0"
 description = "The pure readers two Claude worktree pruners share: porcelain, lock liveness, cherry and merge-tree verdicts."
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
@@ -19,4 +19,4 @@ testpaths = ["tests"]
 
 # Unlike claude-guard, this module runs under the SYSTEM interpreter: the
 # prune-worktrees.py SessionStart hook is a bare `#!/usr/bin/env python3`. The repo
-# root's py39 ruff target therefore applies unchanged, so no override here.
+# floor is 3.10 (PEP 604 unions in annotations, no __future__ import), not 3.14.
