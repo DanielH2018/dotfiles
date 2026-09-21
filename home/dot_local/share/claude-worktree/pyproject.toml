@@ -1,0 +1,22 @@
+[project]
+name = "claude-worktree"
+version = "0.1.0"
+description = "The pure readers two Claude worktree pruners share: porcelain, lock liveness, cherry and merge-tree verdicts."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# Not built or installed: callers reach it by path at its deployed location, the same
+# way claude-guard, jsonq and tq are laid out. `package = false` keeps `uv run` from
+# trying to build it.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Unlike claude-guard, this module runs under the SYSTEM interpreter: the
+# prune-worktrees.py SessionStart hook is a bare `#!/usr/bin/env python3`. The repo
+# root's py39 ruff target therefore applies unchanged, so no override here.

@@ -61,7 +61,7 @@ test('the derived standalone suite list is not empty and holds a known member', 
   assert.ok(SUITES.some((rel) => rel.endsWith('/test_exec_stream.py')), 'sandbox/test_exec_stream.py is a standalone suite and must be derived');
   assert.ok(SUITES.some((rel) => rel.endsWith('/hooks/test_prune_worktrees.py')), 'hooks/test_prune_worktrees.py is a standalone suite and must be derived');
   assert.ok(!SUITES.some((rel) => rel.startsWith('tests/tq/')), 'tests/tq is one unittest suite under run.py, not standalone files');
-  assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/')), 'a pytest project\'s tests are not standalone suites');
+  assert.ok(!SUITES.some((rel) => rel.includes('claude-guard/') || rel.includes('claude-worktree/')), 'a pytest project\'s tests are not standalone suites');
 });
 
 test('the opt-out marker excludes a file, and its absence includes one', () => {
@@ -207,6 +207,9 @@ const PYTEST_PROJECTS = [
   // claude-guard is 3.14-only by design (spec: docs/specs/2026-09-06-claude-guard-design.md),
   // so it names its interpreter; uv fetches a managed 3.14 on a cold machine.
   { root: SHARE, dir: 'claude-guard', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' }, python: '3.14' },
+  // claude-worktree runs under the system interpreter (the prune-worktrees.py hook is a
+  // bare python3 shebang), so it names no interpreter and its floor is the root's py39.
+  { root: SHARE, dir: 'claude-worktree', deps: ['pytest>=8.0'], env: { PYTHONPATH: '.' } },
 ];
 
 for (const project of PYTEST_PROJECTS) {

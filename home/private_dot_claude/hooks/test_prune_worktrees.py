@@ -29,6 +29,16 @@ SCRIPT = HERE / "executable_prune-worktrees.py"
 if not SCRIPT.exists():  # deployed copy drops chezmoi's mode prefix
     SCRIPT = HERE / "prune-worktrees.py"
 
+# The hook imports its readers from the claude-worktree package. In the source tree the
+# package sits beside this file's ancestors and is not deployed on a CI runner, so point
+# the hook at it; the deployed copy has no such sibling and falls through to
+# ~/.local/share/claude-worktree. Set before the hook loads AND inherited by the
+# end-to-end subprocesses below, which is why it goes into os.environ rather than a
+# per-call env.
+_PACKAGE_SOURCE = HERE.parent.parent / "dot_local" / "share" / "claude-worktree"
+if _PACKAGE_SOURCE.is_dir():
+    os.environ.setdefault("CLAUDE_WORKTREE_HOME", str(_PACKAGE_SOURCE))
+
 spec = importlib.util.spec_from_file_location("prune_worktrees", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
 # @dataclass resolves annotations through sys.modules, so register before executing.
@@ -60,28 +70,10 @@ def wt(path="/w", head="abc", branch="b", locked=False, reason=""):
     return mod.Worktree(path, head, branch, locked, reason)
 
 
-# ── session_is_alive ──────────────────────────────────────────────────────────
+# ── a live lock: this process, whose start time /proc reports ───────────────────
 
 my_pid = os.getpid()
 my_start = Path(f"/proc/{my_pid}/stat").read_text().rpartition(")")[2].split()[19]
-
-check(
-    "live owner is alive",
-    mod.session_is_alive(f"claude session x (pid {my_pid} start {my_start})"),
-)
-check(
-    "reused pid with a different starttime is not alive",
-    not mod.session_is_alive(f"claude session x (pid {my_pid} start 1)"),
-)
-check(
-    "vanished pid is not alive",
-    not mod.session_is_alive("claude session x (pid 4194303 start 12345)"),
-)
-check(
-    "unparseable lock reason is treated as alive",
-    mod.session_is_alive("locked by hand while I debug this"),
-)
-check("empty lock reason is treated as alive", mod.session_is_alive(""))
 
 # ── classify ──────────────────────────────────────────────────────────────────
 
@@ -186,44 +178,11 @@ check(
     == mod.REMOVABLE,
 )
 
-# ── merge_tree_says_contained ─────────────────────────────────────────────────
-
-check(
-    "contained when the merged tree is the target's tree",
-    mod.merge_tree_says_contained("abc123\n", "abc123"),
-)
-check(
-    "not contained when the merged tree differs",
-    not mod.merge_tree_says_contained("abc123\n", "def456"),
-)
-check(
-    "empty merge-tree output is no verdict",
-    not mod.merge_tree_says_contained("", "abc123"),
-)
-check(
-    "empty target tree is no verdict",
-    not mod.merge_tree_says_contained("abc123\n", ""),
-)
-
 # ── is_dirty ──────────────────────────────────────────────────────────────────
 
 # A path git cannot read status for stands in for the shared-index failure: the answer
 # has to be "dirty", because reading a failure as clean is what would delete live work.
 check("is_dirty fails closed when git errors", mod.is_dirty("/nonexistent-path-xyz"))
-
-# ── parse_worktree_list ───────────────────────────────────────────────────────
-
-parsed = mod.parse_worktree_list(
-    "worktree /repo\nHEAD aaa\nbranch refs/heads/main\n\n"
-    "worktree /repo/.claude/worktrees/one\nHEAD bbb\nbranch refs/heads/wt-one\n"
-    "locked claude session one (pid 7 start 9)\n"
-)
-check("parses both entries", len(parsed) == 2)
-check("strips refs/heads/", parsed[1].branch == "wt-one")
-check(
-    "captures the lock reason",
-    parsed[1].lock_reason == "claude session one (pid 7 start 9)",
-)
 
 # ── end to end ────────────────────────────────────────────────────────────────
 

@@ -70,3 +70,5 @@
 .local/share/claude-guard/tests/test_segment.py
 .local/share/claude-guard/tests/test_tables_remote.py
 .local/share/claude-guard/tests/test_vectors.py
+.local/share/claude-worktree/tests
+.local/share/claude-worktree/tests/test_readers.py

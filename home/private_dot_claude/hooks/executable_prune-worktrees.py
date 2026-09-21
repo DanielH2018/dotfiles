@@ -99,12 +99,42 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# The readers this hook shares with the server repo's pruner — the porcelain parser, the
+# lock-liveness check, the cherry and merge-tree verdicts, the default-ref lookup — live
+# in the claude-worktree package (`home/dot_local/share/claude-worktree/`), deployed
+# beside claude-guard. There is no fallback copy here: a hook that cannot import its
+# readers keeps every tree, which is the direction this script fails in anyway. The
+# standalone test points CLAUDE_WORKTREE_HOME at the source tree; a session has the
+# deployed path.
+_CLAUDE_WORKTREE_HOME = Path(
+    os.environ.get("CLAUDE_WORKTREE_HOME", Path.home() / ".local/share/claude-worktree")
+)
+if _CLAUDE_WORKTREE_HOME.is_dir():
+    sys.path.insert(0, str(_CLAUDE_WORKTREE_HOME))
+try:
+    from claude_worktree import (
+        Worktree,
+        cherry_says_landed,
+        default_ref,
+        merge_tree_says_contained,
+        parse_worktree_list,
+        session_is_alive,
+    )
+except ImportError as exc:
+    # Imported by its test: fail loudly. Run as the hook: say why nothing was pruned and
+    # let the session start — a SessionStart hook must never block a session.
+    if __name__ != "__main__":
+        raise
+    print(
+        f"worktree autoprune skipped: {exc} — `chezmoi apply` deploys "
+        f"{_CLAUDE_WORKTREE_HOME}"
+    )
+    sys.exit(0)
 
 REMOVABLE = "removable"
 KEEP = "keep"
@@ -119,70 +149,11 @@ REVIEW = "review"
 # .claude/worktrees/.
 SESSION_BRANCH_PREFIX = "worktree-"
 
-LOCK_OWNER = re.compile(r"\(pid (\d+) start (\d+)\)")
-
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     / "logs"
     / "sessions.log"
 )
-
-
-@dataclass
-class Worktree:
-    path: str
-    head: str
-    branch: str | None
-    locked: bool
-    lock_reason: str = ""
-
-
-def parse_worktree_list(porcelain: str) -> list[Worktree]:
-    """Parse `git worktree list --porcelain` into records, primary checkout first."""
-    trees: list[Worktree] = []
-    path = head = branch = None
-    locked, reason = False, ""
-    for line in porcelain.splitlines():
-        if line.startswith("worktree "):
-            path = line[len("worktree ") :]
-            head, branch, locked = None, None, False
-        elif line.startswith("HEAD "):
-            head = line[len("HEAD ") :]
-        elif line.startswith("branch "):
-            branch = line[len("branch ") :].removeprefix("refs/heads/")
-        elif line == "locked" or line.startswith("locked "):
-            locked = True
-            reason = line[len("locked ") :] if line.startswith("locked ") else ""
-        elif line == "" and path is not None:
-            trees.append(Worktree(path, head or "", branch, locked, reason))
-            path = head = branch = None
-            locked, reason = False, ""
-    if path is not None:
-        trees.append(Worktree(path, head or "", branch, locked, reason))
-    return trees
-
-
-def session_is_alive(lock_reason: str) -> bool:
-    """Is the process named in a worktree's lock reason still running?
-
-    The reason Claude Code writes carries the owning pid and its start time, e.g.
-    `claude session foo (pid 1285937 start 2164388)`. Comparing the start time against
-    /proc/<pid>/stat rejects a pid that has been reused since the session died. A reason
-    in any other format is treated as live: an unrecognized lock is someone else's, and
-    guessing wrong destroys work.
-    """
-    match = LOCK_OWNER.search(lock_reason)
-    if not match:
-        return True
-    pid, start = match.group(1), match.group(2)
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
-        return False
-    # The comm field can itself contain spaces and parentheses, so field numbering is
-    # only reliable after the final ')'. starttime is field 22, the 20th of those after.
-    fields = stat.rpartition(")")[2].split()
-    return len(fields) > 19 and fields[19] == start
 
 
 def classify(
@@ -244,9 +215,10 @@ def is_equivalent(repo: str, branch: str, target: str) -> bool:
 
     `git cherry` marks a commit `-` when the target already carries a patch-identical
     one and `+` when it does not, so no `+` lines means the whole branch is present.
-    Requiring at least one `-` is the guard against reading emptiness as success: a
-    branch with no commits of its own also produces no `+`, and calling that "landed"
-    would report every freshly-created worktree.
+    `empty_means=False` is the guard against reading emptiness as success: a branch
+    with no commits of its own also produces no `+`, and calling that "landed" would
+    report every freshly-created worktree. (The server pruner passes True there, because
+    it gates on the exit status first and then removes; this hook only reports.)
     """
     result = subprocess.run(
         ["git", "cherry", target, branch],
@@ -257,28 +229,7 @@ def is_equivalent(repo: str, branch: str, target: str) -> bool:
     )
     if result.returncode != 0:
         return False
-    lines = [ln for ln in result.stdout.splitlines() if ln]
-    if not lines or any(ln.startswith("+") for ln in lines):
-        return False
-    return all(ln.startswith("-") for ln in lines)
-
-
-def merge_tree_says_contained(merge_tree_stdout: str, target_tree: str) -> bool:
-    """Read `git merge-tree --write-tree <target> <branch>`: True when it is a no-op.
-
-    The command prints the OID of the tree merging the branch would produce. When that
-    equals the target's own tree, the branch has nothing the target does not already
-    hold — which is what a squash merge leaves behind, and what patch-id cannot see,
-    because a squash keeps the content while discarding the commits that carried it.
-
-    Empty input is a failure to read a verdict, not a match, so it returns False — both
-    arguments must be present for a comparison to mean anything.
-    """
-    lines = [ln.strip() for ln in merge_tree_stdout.splitlines() if ln.strip()]
-    target = target_tree.strip()
-    if not lines or not target:
-        return False
-    return lines[0] == target
+    return cherry_says_landed(result.stdout, empty_means=False)
 
 
 def is_contained(repo: str, branch: str, target: str) -> bool:
@@ -313,23 +264,6 @@ def _git(args: list[str], cwd: str | None = None) -> str:
         ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
     )
     return result.stdout.strip()
-
-
-def default_ref(repo: str) -> str | None:
-    """The remote's default branch ref, or None when there is no merge target at all.
-
-    `origin/HEAD` is what the remote itself says, so it survives a repo whose default is
-    neither main nor master. It is only a local symref and can be missing on a clone
-    made with --single-branch, hence the two guesses behind it. Returning None keeps
-    every tree: without a merge target, nothing can be shown to have landed.
-    """
-    head = _git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=repo)
-    if head:
-        return head
-    for guess in ("origin/main", "origin/master"):
-        if _git(["rev-parse", "--verify", "--quiet", guess], cwd=repo):
-            return guess
-    return None
 
 
 def is_merged(repo: str, head: str, target: str) -> bool:
