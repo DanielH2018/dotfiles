@@ -59,6 +59,22 @@ def test_fd_dups_are_not_separators():
     assert visible(p) == ["cmd 2>&1 >&2"]
 
 
+def test_a_combined_redirect_is_not_a_separator():
+    # `&>` and `&>>` send both streams to a file. Reading the `&` as a separator
+    # turned `cmd &>/dev/null` into a background job plus a bare `>/dev/null`
+    # (DanielH2018/server#2198).
+    for cmd in ("cmd &>/dev/null", "cmd &>>log", "make &> build.log"):
+        p = parse(cmd)
+        assert visible(p) == [cmd], cmd
+        assert seps(p) == ["eof"], cmd
+
+
+def test_a_lone_ampersand_before_a_word_still_separates():
+    p = parse("cmd & >out")
+    assert visible(p) == ["cmd", ">out"]
+    assert seps(p) == ["&", "eof"]
+
+
 def test_a_trailing_separator_does_not_create_an_empty_second_command():
     for cmd in ("ls;", "ls\n", "ls &&\n"):
         p = parse(cmd)

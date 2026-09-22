@@ -26,7 +26,8 @@ frame executing (paren, procsub, backtick). $(( )) and ${ } are tracked to their
 are not executing, so `<<` inside $(( )) is a shift operator, and closing either records no
 substitution.
 
-Separators are `&&`, `||`, `;`, `|`, a lone `&` not preceded by `<`/`>` (fd dups), and a
+Separators are `&&`, `||`, `;`, `|`, a lone `&` not preceded by `<`/`>` (fd dups) nor
+followed by `>` (`&>` sends both streams to a file), and a
 newline. A trailing separator terminates the last segment rather than opening an empty one
 (`ls;` is one segment), because the compound gate keys on the segment count and a spurious
 second segment would widen it.
@@ -244,7 +245,9 @@ def parse(command: str) -> Parsed:
                 continue
             if c == "&":
                 prevc = s[i - 1] if i > seg_start[depth] else ""
-                if prevc != ">" and prevc != "<":
+                # `>&`/`<&` are fd dups and `&>`/`&>>` send both streams to a file;
+                # none of them ends a command. Only a lone `&` backgrounds.
+                if prevc != ">" and prevc != "<" and next1 != ">":
                     cut(i, "&")
                     seg_start[depth] = i + 1
                     i += 1
