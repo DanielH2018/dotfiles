@@ -24,6 +24,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const lib = require('./gen-skill-router-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -45,6 +46,46 @@ function readSkillFiles(skillsDir) {
     if (src) out[ent.name] = fs.readFileSync(src, 'utf8');
   }
   return out;
+}
+
+// Which of the skill directories feeding the generated block are untracked in git.
+//
+// The generator reads the source TREE, so a skill directory someone left untracked changes
+// the generated block while the committed template does not follow -- and `--check` then
+// reports drift no commit caused, in the pre-push gate, for every session in the checkout
+// (DanielH2018/server#2271). Naming the path turns that into a readable error. The verdict
+// does not change: an untracked skill is still a real difference, and skipping one would
+// drop a deployed skill from the router with no signal at all.
+//
+// Returns null when git cannot answer -- a missing binary, a directory that is no repo (the
+// staged fixture trees in tests/gen-skill-router.test.js are exactly that). The annotation is
+// diagnostic, so losing it must not change what the check decides.
+//
+// GIT_DIR and friends are stripped: the pre-push gate exports them, and they would point this
+// lookup at whatever repo invoked the hook rather than at REPO_ROOT.
+function untrackedSkillDirs(repoRoot, skillsDir, skillNames) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key];
+  }
+  const rel = path.relative(repoRoot, skillsDir);
+  const res = spawnSync(
+    'git',
+    ['-C', repoRoot, 'ls-files', '--others', '--exclude-standard', '--directory', '--', rel],
+    { encoding: 'utf8', env },
+  );
+  if (res.error || res.status !== 0) return null;
+
+  const names = new Set();
+  for (const line of res.stdout.split('\n')) {
+    if (!line) continue;
+    // `<rel>/<skill>` or `<rel>/<skill>/...` -- a whole untracked directory, or an untracked
+    // file inside a tracked one, which changes the block just the same.
+    const under = path.relative(rel, line.replace(/\/$/, ''));
+    const name = under.split(path.sep)[0];
+    if (skillNames.includes(name)) names.add(name);
+  }
+  return [...names].sort().map((name) => path.join(rel, name));
 }
 
 function readAgentNames(agentsDir) {
@@ -115,6 +156,16 @@ function main() {
       process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
       process.stderr.write(`    generated: ${diff.expected}\n`);
       process.stderr.write(`    committed: ${diff.got}\n`);
+    }
+    const untracked = untrackedSkillDirs(REPO_ROOT, SKILLS_DIR, skillNames);
+    if (untracked && untracked.length > 0) {
+      process.stderr.write(
+        `  ${untracked.length} skill director${untracked.length === 1 ? 'y is' : 'ies are'} `
+        + `untracked, which is what this generator read: ${untracked.join(', ')}\n`
+        + '  Track it and rerun the generator, or remove it. Until then the check reports '
+        + 'drift no commit caused, and the pre-push gate fails for everyone in this '
+        + 'checkout.\n',
+      );
     }
     process.exit(1);
   }

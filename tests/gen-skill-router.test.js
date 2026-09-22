@@ -186,3 +186,118 @@ test('bin/gen-skill-router --check fails end-to-end when the on-disk skill set i
 
   fs.rmSync(stage, { recursive: true, force: true });
 });
+
+// --- the untracked-skill annotation (DanielH2018/server#2271) -----------------------------
+
+// A drifting fixture tree in its own git repo. `trackExtra` decides whether the second skill
+// directory is in the index: untracked, it is what the generator read and the committed
+// template did not follow, which is the case the annotation exists to name.
+//
+// The env passed to every git call has GIT_* stripped. `git add` exports GIT_DIR and
+// GIT_INDEX_FILE, so a fixture inheriting them writes the REAL repo's index whatever its cwd
+// says.
+function stageDriftingRouter(trackExtra) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { spawnSync } = require('node:child_process');
+
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-skill-router-untracked-'));
+  const routerDir = path.join(stage, 'home', 'private_dot_claude', 'skills', 'skill-router');
+  const extraDir = path.join(stage, 'home', 'private_dot_claude', 'skills', 'extra-skill');
+  fs.mkdirSync(path.join(stage, 'home', 'private_dot_claude', 'agents'), { recursive: true });
+  fs.mkdirSync(routerDir, { recursive: true });
+  fs.mkdirSync(extraDir, { recursive: true });
+
+  // An EMPTY generated block against a tree holding two skills: the check must report drift,
+  // which is the only path that reaches the annotation.
+  fs.writeFileSync(
+    path.join(routerDir, 'SKILL.md.tmpl'),
+    `---\nname: skill-router\ndescription: test fixture\n---\n\n`
+    + `${lib.START_MARKER}\n${lib.END_MARKER}\n`,
+  );
+  fs.writeFileSync(
+    path.join(extraDir, 'SKILL.md'),
+    `---\nname: extra-skill\ndescription: test fixture\n---\n`,
+  );
+
+  const stageBin = path.join(stage, 'bin');
+  fs.mkdirSync(stageBin, { recursive: true });
+  fs.copyFileSync(BIN, path.join(stageBin, 'gen-skill-router'));
+  fs.copyFileSync(
+    repoPath('bin', 'gen-skill-router-lib.js'),
+    path.join(stageBin, 'gen-skill-router-lib.js'),
+  );
+
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('GIT_')) delete env[key];
+  }
+  const git = (...args) => {
+    const res = spawnSync('git', ['-C', stage, ...args], { encoding: 'utf8', env });
+    assert.strictEqual(res.status, 0, `git ${args.join(' ')}: ${res.stderr}`);
+  };
+  git('init', '-q');
+  git('add', path.join('home', 'private_dot_claude', 'skills', 'skill-router'));
+  if (trackExtra) {
+    git('add', path.join('home', 'private_dot_claude', 'skills', 'extra-skill'));
+  }
+
+  return { stage, stageBin };
+}
+
+function checkStderr(stageBin) {
+  try {
+    execFileSync('node', [path.join(stageBin, 'gen-skill-router'), '--check'], {
+      encoding: 'utf8', stdio: 'pipe',
+    });
+  } catch (err) {
+    assert.strictEqual(err.status, 1, 'the fixture tree must report drift');
+    return err.stderr.toString();
+  }
+  assert.fail('--check passed against a deliberately drifting fixture');
+  return '';
+}
+
+test('--check names an untracked skill directory as the cause of the drift', () => {
+  const fs = require('node:fs');
+  const { stage, stageBin } = stageDriftingRouter(false);
+  const stderr = checkStderr(stageBin);
+
+  assert.match(stderr, /is out of date/);
+  assert.match(
+    stderr,
+    /home\/private_dot_claude\/skills\/extra-skill/,
+    'the failure must name the untracked directory, not just report drift',
+  );
+  assert.match(stderr, /untracked/);
+  // The router's own directory IS tracked, so naming it would send the reader at the wrong file.
+  assert.doesNotMatch(stderr, /skills\/skill-router\b(?![/.])/);
+
+  fs.rmSync(stage, { recursive: true, force: true });
+});
+
+test('--check adds no untracked line when every skill directory is tracked', () => {
+  const fs = require('node:fs');
+  const { stage, stageBin } = stageDriftingRouter(true);
+  const stderr = checkStderr(stageBin);
+
+  // Same drift, same exit code: only the annotation differs. A message that says "untracked"
+  // here would send the reader after a file that is in the index.
+  assert.match(stderr, /is out of date/);
+  assert.doesNotMatch(stderr, /untracked/);
+
+  fs.rmSync(stage, { recursive: true, force: true });
+});
+
+test('--check still reports the drift when git cannot answer (no repo at all)', () => {
+  const fs = require('node:fs');
+  const { stage, stageBin } = stageDriftingRouter(false);
+  fs.rmSync(path.join(stage, '.git'), { recursive: true, force: true });
+  const stderr = checkStderr(stageBin);
+
+  // The annotation is diagnostic. Losing it must not change the verdict.
+  assert.match(stderr, /is out of date/);
+  assert.doesNotMatch(stderr, /untracked/);
+
+  fs.rmSync(stage, { recursive: true, force: true });
+});
