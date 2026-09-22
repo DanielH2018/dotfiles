@@ -61,9 +61,11 @@ def test_segment_json_matches_the_bash_shape():
     out = json.loads(r.stdout)
     assert out == {
         "status": "ok",
-        "nseg": 2,
         "seg": ["ls", " cat <<'EOF'"],
-        "sep": [";", "eof"],
+        "nseg": 2,
+        # The heredoc line ends at a newline and the collapse drops only the empty segment
+        # it opened, not the separator that terminated this one (server#2261).
+        "sep": [";", "newline"],
         "heredoc": ["", "x\n"],
         "subseg": [],
     }

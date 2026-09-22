@@ -76,10 +76,23 @@ def test_a_lone_ampersand_before_a_word_still_separates():
 
 
 def test_a_trailing_separator_does_not_create_an_empty_second_command():
-    for cmd in ("ls;", "ls\n", "ls &&\n"):
+    for cmd, sep in (
+        ("ls;", ";"),
+        ("ls\n", "newline"),
+        ("ls &&\n", "&&"),
+        ("ls &", "&"),
+    ):
         p = parse(cmd)
         assert len(p.segments) == 1, cmd
-        assert p.segments[0].sep == "eof", cmd
+        # The collapse drops the empty segment the trailing separator opened; it does NOT
+        # drop the separator. `ls &` reporting sep `eof` erased the backgrounding, which an
+        # allow-side reader decides on (DanielH2018/server#2261).
+        assert p.segments[0].sep == sep, cmd
+
+
+def test_a_command_with_no_trailing_separator_still_reports_eof():
+    # The control for the case above: nothing is collapsed, so the sep stays `eof`.
+    assert parse("ls").segments[0].sep == "eof"
 
 
 def test_a_trailing_command_after_a_separator_is_not_collapsed():

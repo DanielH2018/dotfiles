@@ -30,7 +30,10 @@ Separators are `&&`, `||`, `;`, `|`, a lone `&` not preceded by `<`/`>` (fd dups
 followed by `>` (`&>` sends both streams to a file), and a
 newline. A trailing separator terminates the last segment rather than opening an empty one
 (`ls;` is one segment), because the compound gate keys on the segment count and a spurious
-second segment would widen it.
+second segment would widen it. The surviving segment KEEPS the separator that terminated
+it, so `ls &` is one segment with sep `&` and `ls;` is one with sep `;`: an allow-side
+reader decides on the separator, and overwriting it with `eof` erased the backgrounding
+(DanielH2018/server#2261).
 """
 
 from dataclasses import dataclass
@@ -299,7 +302,8 @@ def parse(command: str) -> Parsed:
     segs.append([s[seg_start[0] :], "eof", seg_start[0], n])
 
     # A trailing separator terminates the last command; it does not start an empty new one.
-    # A loop, because `ls &&\n` ends in two separators back to back.
+    # A loop, because `ls &&\n` ends in two separators back to back. The survivor keeps
+    # its own sep — see the module docstring and DanielH2018/server#2261.
     while len(segs) > 1:
         text, _sep, off0, off1 = segs[-1]
         if any(off0 <= hoff < off1 for hoff, _b, _q in heredocs):
@@ -307,7 +311,6 @@ def parse(command: str) -> Parsed:
         if text.strip(" \t\r\n"):
             break
         segs.pop()
-        segs[-1][1] = "eof"
 
     out: list[Segment] = []
     for text, sep, off0, off1 in segs:
