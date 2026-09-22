@@ -31,6 +31,8 @@
 .claude/skills/pr-feedback/scripts/test_fetch.sh
 .claude/skills/pr-feedback/scripts/test_render.sh
 .claude/skills/pr-review-prep/references/test_triage.sh
+.claude/skills/security-audit/validate-coverage-ledger.test.cjs
+.claude/skills/security-audit/validate-findings.test.cjs
 .claude/skills/test-scenario-hygiene
 .claude/skills/test-scenario-hygiene/SKILL.md
 .claude/vault-tooling/config-map/tests
