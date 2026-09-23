@@ -56,6 +56,8 @@ if [ -n "\${STUB_LOCK:-}" ] && [ "$1" = "pr" ] && [ "$2" = "ready" ]; then
   sleep 30 >/dev/null 2>&1 </dev/null &
   printf '%s' "\$!" > "\$STUB_DAEMON_PID"
 fi
+# The required-check read: answers STUB_CHECK as the jq-reduced verdict land asks for.
+if [ "$1" = "api" ]; then printf '%s\\n' "\${STUB_CHECK:-success}"; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "list" ]; then printf '%s' "\${STUB_PR:-}"; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   case "$*" in
@@ -129,7 +131,7 @@ const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', br
 // 60s one; the test that exercises the wait sets its own.
 function land(cwd, args = [], {
   pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null,
-  deadline = '0', stubs = null,
+  deadline = '0', stubs = null, check = 'success',
 } = {}) {
   const calls = path.join(cwd, '.gh-calls');
   const probe = { held: path.join(cwd, '.lock-probe'), pid: path.join(cwd, '.daemon-pid') };
@@ -140,6 +142,7 @@ function land(cwd, args = [], {
       STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
       STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
       LAND_MERGED_DEADLINE: deadline,
+      STUB_CHECK: check, LAND_CHECK_DEADLINE: '0', LAND_CHECK_POLL: '0',
       // The shim above re-execs the real git through this, so it must not carry the
       // stub dirs or the shim would call itself.
       REAL_PATH: CLEAN_ENV.PATH,
@@ -196,6 +199,7 @@ test('--dry-run prints the plan and changes nothing', { skip }, () => {
   assert.match(r.stdout, /PR #7/);
   assert.match(r.stdout, /force-with-lease/);
   assert.match(r.stdout, /gh pr ready 7/);
+  assert.match(r.stdout, /CI check gate to pass/);
   assert.match(r.stdout, /git push origin feature:main/);
   assert.match(r.stdout, /git push origin --delete feature/);
   assert.doesNotMatch(r.stdout, /gh pr merge/, 'the merge no longer goes through gh');
@@ -409,6 +413,31 @@ test('a process forked during the landing does not inherit the lock', { skip: fd
 // was. chezmoi deploys from the primary checkout's working tree, so an apply right after a
 // land redeploys the pre-merge file and silently reverts what landed. That was missed three
 // times in one day off a header comment alone, hence a line in the output.
+
+// main's ruleset refuses to move onto a commit whose `gate` check has not passed, so land
+// waits for that verdict on the pushed head. The accepting half is every landing above,
+// which runs with the stub answering `success`.
+test('refuses to move main when the required check failed on the pushed head', { skip }, () => {
+  const { dir, origin } = makeRepoWithOrigin();
+  const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+  const r = land(dir, [], { check: 'failure' });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /CI check gate is failure/);
+  assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), mainBefore, 'main moved');
+  assert.doesNotMatch(ghCalls(r.calls), /gh pr close/, 'a PR that did not land must stay open');
+});
+
+test('gives up without moving main when the required check has no verdict by the deadline', { skip }, () => {
+  // `cancelled` is no verdict for this SHA, so it waits like a queued run rather than refusing.
+  for (const check of ['pending', 'cancelled']) {
+    const { dir, origin } = makeRepoWithOrigin();
+    const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+    const r = land(dir, [], { check });
+    assert.strictEqual(r.code, 1, check);
+    assert.match(r.stderr, /has no verdict/, check);
+    assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), mainBefore, `main moved on ${check}`);
+  }
+});
 
 test('a successful land reports that local main is behind', { skip }, () => {
   const { dir } = makeRepoWithOrigin();

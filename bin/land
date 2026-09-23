@@ -95,6 +95,7 @@ if [ "$DRY" -eq 1 ]; then
   say "rebase  $BRANCH onto origin/main"
   say "push    --force-with-lease (runs the pre-push gate)"
   say "ready   gh pr ready $PR (only if it is still a draft)"
+  say "wait    CI check ${LAND_REQUIRED_CHECK:-gate} to pass on the pushed head (main's ruleset requires it)"
   say "merge   git push origin $BRANCH:main (fast-forward; keeps your signatures)"
   say "close   gh pr close $PR (only if GitHub has not marked it merged)"
   say "delete  git push origin --delete $BRANCH"
@@ -128,6 +129,39 @@ land() {
     say "PR #$PR is a draft — marking it ready"
     gh pr ready "$PR" || return 1
   fi
+
+  # main's ruleset requires the CI check named $LAND_REQUIRED_CHECK to have passed on a
+  # commit before main can move onto it, so the push below is refused until CI has run on
+  # the SHA the force-push just created. Wait for that verdict here rather than let the
+  # push fail. `cancelled` is no verdict for this SHA (a newer run superseded it), so it
+  # keeps waiting like `queued`; any other completed conclusion stops the landing with the
+  # PR left open.
+  sha=$(git rev-parse HEAD)
+  check=${LAND_REQUIRED_CHECK:-gate}
+  deadline=$((SECONDS + ${LAND_CHECK_DEADLINE:-1800}))
+  waited=0
+  while :; do
+    verdict=$(gh api "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=$check" \
+      --jq '.check_runs | sort_by(.started_at) | last
+            | if . == null or .status != "completed" then "pending" else .conclusion end' \
+      2>/dev/null)
+    case "$verdict" in
+      success) break ;;
+      pending | cancelled | "") ;;
+      *)
+        printf 'land: CI check %s is %s on %s — leaving PR #%s open\n' \
+          "$check" "$verdict" "$(git rev-parse --short HEAD)" "$PR" >&2
+        return 1
+        ;;
+    esac
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'land: CI check %s has no verdict on %s yet — re-run land once it passes\n' \
+        "$check" "$(git rev-parse --short HEAD)" >&2
+      return 1
+    fi
+    [ "$waited" -eq 1 ] || { say "waiting for CI check $check on $(git rev-parse --short HEAD)..."; waited=1; }
+    sleep "${LAND_CHECK_POLL:-15}"
+  done
 
   # Fast-forward main onto the branch rather than `gh pr merge --rebase`. That
   # replayed the commits server-side into fresh objects carrying no signature, so

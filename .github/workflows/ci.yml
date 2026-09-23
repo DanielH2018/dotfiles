@@ -7,9 +7,9 @@
 # machine are gated by whatever that machine happens to have installed — which is how 173
 # of this repo's commits ended up unsigned.
 #
-# Branch protection would be the other half of this, and is NOT available: the repo is
-# private, and protected branches need a paid plan on a private repo. So this workflow is
-# the whole server-side story. It reports; it cannot block a push on its own.
+# The `gate` job is the check main's `main CI gate` ruleset requires, so it blocks as well as
+# reports: main cannot move onto a commit until this job has passed on it. Rename the job and
+# the ruleset's required check (and bin/land's LAND_REQUIRED_CHECK default) together.
 #
 # The gate is invoked as the hook script rather than reimplemented step by step, so CI and
 # a local push cannot drift into checking different things. The one step that does not

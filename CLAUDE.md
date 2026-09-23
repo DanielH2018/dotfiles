@@ -1,13 +1,16 @@
 # dotfiles (chezmoi source)
 
-Personal, work-agnostic base config, managed by **chezmoi**. **Treat it as public** — never
+Personal, work-agnostic base config, managed by **chezmoi**. **The repo is public** — never
 commit work-specific content, secrets, or `.local` files here (guarded in `.chezmoiignore` +
 `.gitignore`, and by the gitleaks hook in `.pre-commit-config.yaml`).
 
-The repo is in fact **private** on GitHub; this line read "Public repo" until it was checked.
-The posture stands either way, but the visibility is load-bearing for one decision: branch
-protection needs a paid plan on a private repo, so the answer to "nothing enforces the gate
-server-side" is GitHub Actions, not a protected branch.
+The repo has been **public** on GitHub since 2026-09-23, which also makes Actions minutes free.
+Being public makes branch rulesets available, and two mirror the server repo's. `Default`
+refuses deletion and non-fast-forward pushes on every branch except `renovate/**`, with a
+bypass for repository admins, so `bin/land`'s force-push of a rebased branch still goes
+through. `main CI gate` requires signed commits and a passing `gate` check on any commit main
+moves onto, with no bypass. That second rule is why `bin/land` waits for `gate` on the
+pushed head before it fast-forwards main.
 
 Fuller cross-layer map (base + overlay + sandbox + vault) lives in the personal knowledge
 vault, `Work/Claude_Code_Setup.md` — not in this repo.
