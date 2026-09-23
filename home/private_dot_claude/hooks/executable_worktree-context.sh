@@ -8,6 +8,15 @@
 
 set -u
 
+# The jq-missing policy, expressed once (hook-input.sh, hook_require_jq) rather than
+# left implicit. Without it this hook exited 127 and printed `jq: command not found`
+# to the harness's hook-stderr channel on every prompt in a worktree on a machine
+# without jq. A missing branch banner is a no-op, not an error: noop. This hook reads
+# no stdin, so it never calls hook_read_input.
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_require_jq noop || exit 0
+
 # Only relevant inside a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 

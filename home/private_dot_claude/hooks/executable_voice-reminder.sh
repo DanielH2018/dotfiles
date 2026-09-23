@@ -48,7 +48,13 @@ set -u
 
 case "${CLAUDE_VOICE_REMINDER:-1}" in 0) exit 0 ;; *) ;; esac
 
-command -v jq >/dev/null 2>&1 || exit 0
+# The one jq-presence guard, shared (hook-input.sh, hook_require_jq), replacing the
+# hand-rolled probe this carried. Mode noop keeps exactly the behaviour the
+# header describes: anything ambiguous exits silently, because a wrong reminder is
+# worse than no reminder. This hook reads no stdin, so it never calls hook_read_input.
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
+hook_require_jq noop || exit 0
 
 STYLE=""
 PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
