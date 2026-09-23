@@ -151,12 +151,28 @@ test('the rev parsers find a gitleaks pin and nothing else', () => {
   assert.match(preCommitGitleaksRev(read('.pre-commit-config.yaml')) || '', /^v\d+\.\d+\.\d+$/);
 });
 
+// Why the two files disagree, or null when they agree. A prek.toml the parser cannot read is a
+// disagreement too, so a reshaped homelab file cannot pass by yielding nothing to compare.
+function lockstepProblem(preCommitText, prekText) {
+  const theirs = prekGitleaksRev(prekText);
+  if (!theirs) return 'the homelab prek.toml no longer pins gitleaks in the shape this test reads';
+  const ours = preCommitGitleaksRev(preCommitText);
+  return ours === theirs ? null : `gitleaks is ${ours} here and ${theirs} in the homelab prek.toml`;
+}
+
+test('the lockstep check accepts equal revs and reports different ones', () => {
+  const ours = '  - repo: https://github.com/gitleaks/gitleaks\n    rev: v8.30.1\n';
+  const prek = (rev) => `repo = "https://github.com/gitleaks/gitleaks"\nrev = "${rev}"\n`;
+  assert.strictEqual(lockstepProblem(ours, prek('v8.30.1')), null);
+  assert.match(lockstepProblem(ours, prek('v8.31.0')), /v8\.30\.1 here and v8\.31\.0/);
+  assert.match(lockstepProblem(ours, 'rev = "v8.30.1"\n'), /no longer pins gitleaks/);
+});
+
 const homelab = HOMELAB_CANDIDATES.find((d) => fs.existsSync(path.join(d, 'prek.toml')));
 test('the gitleaks rev matches the homelab repo',
   { skip: homelab ? false : `no homelab checkout with a prek.toml at ${HOMELAB_CANDIDATES.join(', ')}` },
   () => {
-    const theirs = prekGitleaksRev(fs.readFileSync(path.join(homelab, 'prek.toml'), 'utf8'));
-    assert.ok(theirs, `${homelab}/prek.toml no longer pins gitleaks in the shape this test reads`);
-    assert.strictEqual(preCommitGitleaksRev(read('.pre-commit-config.yaml')), theirs,
-      `gitleaks here differs from ${homelab}/prek.toml; bump the one that is behind`);
+    const problem = lockstepProblem(read('.pre-commit-config.yaml'),
+      fs.readFileSync(path.join(homelab, 'prek.toml'), 'utf8'));
+    assert.strictEqual(problem, null, `${problem} (${homelab}); bump the one that is behind`);
   });

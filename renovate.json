@@ -96,11 +96,12 @@
       "groupName": "ruff"
     },
     {
-      "description": "The gitleaks rev is kept equal to the homelab repo's prek.toml, so both repos scan with the same rules. That repo's Renovate bumps its copy independently; tests/renovate-config.test.js compares the two wherever a homelab checkout exists. The group name tells whoever reviews this PR that the other repo moves too.",
+      "description": "The gitleaks rev is kept equal to the homelab repo's prek.toml, so both repos scan with the same rules. That repo's Renovate bumps its copy independently; tests/renovate-config.test.js compares the two wherever a homelab checkout exists. The group name tells whoever reviews this PR that the other repo moves too. minimumReleaseAge matches the homelab rule that automerges this bump (its catch-all custom.regex rule: minor and patch, 7 days). This PR therefore opens on the day the homelab one merges, not a week earlier, when landing it would fail the lockstep test on every host that has the homelab checkout.",
       "matchPackageNames": [
         "gitleaks/gitleaks"
       ],
-      "groupName": "gitleaks (lockstep — the homelab repo's prek.toml must match)"
+      "groupName": "gitleaks (lockstep — the homelab repo's prek.toml must match)",
+      "minimumReleaseAge": "7 days"
     }
   ]
 }
