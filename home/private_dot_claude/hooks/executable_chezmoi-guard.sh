@@ -62,8 +62,8 @@ esac
 # contents of its .chezmoi* control files, and the chezmoi config. `chezmoi add`, a new
 # .chezmoiignore line, a branch switch and a config edit all change the key, and the next
 # call refetches. File contents outside the .chezmoi* files are left out: they decide what
-# a target renders to, not whether it is managed. Measured 2026-09-23 on an 874-file
-# source: one no-match walk takes ~7ms, against ~36ms for `chezmoi managed`.
+# a target renders to, not whether it is managed. Measured 2026-09-23 against this repo's
+# source, the key below takes ~13ms, against ~34ms for `chezmoi managed`.
 #
 # The key walks the default source dir; CHEZMOI_GUARD_SOURCE_DIR points it elsewhere. With
 # no such directory there is nothing to key on, so every call asks chezmoi.
@@ -72,12 +72,21 @@ _cg_src="${CHEZMOI_GUARD_SOURCE_DIR:-$HOME/.local/share/chezmoi}"
 if [ "${CHEZMOI_GUARD_CACHE:-1}" != 0 ] && [ -d "$_cg_src" ]; then
   _cg_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-hooks/chezmoi-managed"
   _cg_fresh=''
+  # Walk the tree chezmoi reads: the .chezmoiroot subdirectory when there is one, so an edit
+  # to repo tooling beside it (bin/, tests/) is not a miss. .chezmoiroot itself is in the key.
+  _cg_root="$_cg_src"
+  if [ -f "$_cg_src/.chezmoiroot" ]; then
+    _cg_sub=''
+    IFS= read -r _cg_sub < "$_cg_src/.chezmoiroot" 2>/dev/null
+    [ -n "$_cg_sub" ] && [ -d "$_cg_src/$_cg_sub" ] && _cg_root="$_cg_src/$_cg_sub"
+  fi
   # Two walks rather than one: interleaving -print with an -exec'd cat would leave the
   # order of the two streams to buffering, and a key that varies between identical trees
   # never hits. .git and the worktrees under .claude are not source state.
   _cg_key=$( {
-    find "$_cg_src" \( -path "$_cg_src/.git" -o -path "$_cg_src/.claude" \) -prune -o -print
-    find "$_cg_src" \( -path "$_cg_src/.git" -o -path "$_cg_src/.claude" \) -prune -o \
+    cat "$_cg_src/.chezmoiroot"
+    find "$_cg_root" \( -path "$_cg_root/.git" -o -path "$_cg_root/.claude" \) -prune -o -print
+    find "$_cg_root" \( -path "$_cg_root/.git" -o -path "$_cg_root/.claude" \) -prune -o \
       -type f -name '.chezmoi*' -exec cat {} +
     cat "${XDG_CONFIG_HOME:-$HOME/.config}"/chezmoi/chezmoi.*
   } 2>/dev/null | cksum)

@@ -98,8 +98,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "492461f1fc90ea6493ef386cd5a8cf920db69544ee66e000a757b959e23d24f3",
-      "landed": "2026-09-23T21:00:28.082Z"
+      "hash": "ea6c9d48ea744533243c6dff4628542d302ca096001993a0ee9af5904a2af53a",
+      "landed": "2026-09-23T21:07:00.242Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_git-conventions-guard.sh",
@@ -233,8 +233,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "ff200a1437adbb2289af28cb6942e98f4cb56e6fee139c5f613dd37bd4c083ae",
-      "landed": "2026-09-23T21:00:28.082Z"
+      "hash": "a76bfbbd2599cd345639c1f66172fe45e1caacaaa2725d4276014ff009bd3da9",
+      "landed": "2026-09-23T21:07:00.242Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
@@ -533,8 +533,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
-      "hash": "9de2d10efb12404e8880ec5cad212ee854b6cc1cc6506c71eb9f772960cad1e2",
-      "landed": "2026-09-23T21:03:02.997Z"
+      "hash": "1764bd0a19fcc9abcca089daa10085ca893776131d724e45edb010a1f06bef65",
+      "landed": "2026-09-23T21:07:00.242Z"
     },
     {
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",

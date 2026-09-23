@@ -172,6 +172,23 @@ test('an edited .chezmoiignore misses the cache', { skip }, (t) => {
   assert.strictEqual(callCount('managed'), 2, 'an ignore rule changes the managed set without adding a path');
 });
 
+test('under a .chezmoiroot, repo tooling beside the source root does not miss', { skip }, (t) => {
+  clearCache(); resetCalls();
+  const rootFile = path.join(SOURCE, '.chezmoiroot');
+  const tool = path.join(SOURCE, 'bin-tool');
+  const added = path.join(SOURCE, 'home', 'dot_rooted');
+  fs.writeFileSync(rootFile, 'home\n');
+  t.after(() => [rootFile, tool, added].forEach((p) => fs.rmSync(p, { force: true })));
+  const f = path.join(HOME, 'unmanaged.txt');
+  context(f);
+  fs.writeFileSync(tool, 'x\n');
+  context(f);
+  assert.strictEqual(callCount('managed'), 1, 'a file outside the source root cannot change the managed set');
+  fs.writeFileSync(added, 'y\n');
+  context(f);
+  assert.strictEqual(callCount('managed'), 2, 'a file inside the source root still refetches');
+});
+
 test('with no source dir the hook asks chezmoi every time', { skip }, () => {
   clearCache(); resetCalls();
   const f = path.join(HOME, 'unmanaged.txt');

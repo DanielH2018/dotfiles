@@ -115,8 +115,8 @@ learning_enqueue() {
 
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) session=$SESSION_ID event=learn_queued tools=$TOOLS" >> "$LOG_DIR/sessions.log"
 
-  # Fire the digest detached. run-skill.sh is idempotent per calendar day, so a
-  # second session today no-ops here and its queue entry waits for the next
+  # Fire the digest detached. run-skill.sh is idempotent per UTC day, so a
+  # second session that day no-ops here and its queue entry waits for the next
   # drain. Detached because this hook runs under a 5s timeout.
   RUNNER="$HOME/.claude/scheduled/run-skill.sh"
   [ -x "$RUNNER" ] || return 0

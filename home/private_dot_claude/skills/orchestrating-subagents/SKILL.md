@@ -87,13 +87,13 @@ brief ending "report what you find" buys a narrative you then carry for the rest
 session; one ending "return a table with columns X, Y, Z" does not.
 
 **Subagents carry a second cost line, `agent_summary`.** Measured 2026-09-23 over 7 days
-(`tests/fixtures/subagent-cost.json` holds the queries and rows): subagents cost $679 of
-list-price tokens and `agent_summary` requests cost a further $135. That is $0.92 per
-`subagent_completed` event across 147 of them, and 17% of the all-in cost of delegating. Every
-one of those events came from a background subagent. The line does not scale with what comes
-back. Each completed subagent had 12.9 `agent_summary` requests, and each request re-read a
-mean of 163k cached tokens to write 45. So the cost grows with how long a background subagent
-runs and how large its context gets, not with the length of its report.
+(`tests/fixtures/subagent-cost.json` holds the queries and rows): subagents cost $688 of
+list-price tokens and `agent_summary` requests cost a further $136. That is $0.92 per
+`subagent_completed` event across 149 of them, and 17% of the all-in cost of delegating. Every
+one of those events came from a background subagent. The line is not one pass over the
+returned report. There were 12.9 `agent_summary` requests per completed subagent, and each
+request re-read a mean of 164k cached tokens to write 44. So the cost follows how long a
+background subagent runs and how large its context gets.
 
 **Don't pay for the same document N times.** Subagents share no context, so a large file named in
 several briefs is re-read in full by each one. Measured 2026-07-25: the Claude Code docs bundle was
