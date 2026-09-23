@@ -130,13 +130,18 @@ test('still logs session end when the roll path is not taken', { skip }, () => {
 // than restated: setting `.timezone` there without changing the hook goes red here.
 // UTC+14 and UTC-12 are 26 hours apart, so under at least one of them the local day and
 // the UTC day differ at any instant, and a hook on the wrong clock misses the buffer.
-const PLUGIN_TZ = JSON.parse(fs.readFileSync(srcPath('private_dot_remember', 'config.json'), 'utf8')).timezone;
+// A function rather than a const: the value is a timezone name read from the checkout, not a
+// path into it, and tests/lib/sandbox-escape.js would otherwise carry the checkout taint
+// through it onto the buffer path below.
+function pluginTimezone() {
+  return JSON.parse(fs.readFileSync(srcPath('private_dot_remember', 'config.json'), 'utf8')).timezone;
+}
 const dayIn = (tz) => new Date().toLocaleDateString('en-CA', { timeZone: tz });
 
 for (const hostTz of ['Etc/GMT-14', 'Etc/GMT+12']) {
   test(`rolls the buffer dated on the plugin's clock under TZ=${hostTz}`, { skip }, () => {
     const env = fakeEnv();
-    const day = dayIn(PLUGIN_TZ || hostTz);
+    const day = dayIn(pluginTimezone() || hostTz);
     const buf = path.join(env.proj, '.remember', `today-${day}.md`);
     fs.writeFileSync(buf, 'e'.repeat(OVER_BUDGET));
     run(env, { tz: hostTz });
