@@ -27,11 +27,13 @@
 
 set -u
 
-[ "${CHEZMOI_EDIT_GUARD:-}" = "off" ] && exit 0
 command -v chezmoi >/dev/null 2>&1 || exit 0
 # shellcheck source=/dev/null
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
 hook_read_input
+# After the read, not before: a hook that exits with its stdin unread can hand the writer
+# an EPIPE, which the test runner reports as a failure under load.
+[ "${CHEZMOI_EDIT_GUARD:-}" = "off" ] && exit 0
 hook_require_jq noop || exit 0
 
 FILE=$(hook_field '.tool_input.file_path // .tool_input.notebook_path // empty')
