@@ -12,6 +12,22 @@ const REFRESH = path.join(HOOKS, 'executable_artifact-refresh.sh');
 const LINK = path.join(HOOKS, 'executable_link-artifact.sh');
 const SEED = path.join(HOOKS, 'executable_artifact-session-seed.sh');
 const TRACK = path.join(HOOKS, 'executable_artifact-commit-track.sh');
+// The claude_guard package the tracker re-reads the command with, taken from the
+// checkout rather than from whatever is deployed on this machine.
+const GUARD = srcPath('dot_local', 'share', 'claude-guard');
+
+// The parsed path needs a uv-MANAGED 3.14, which is not the interpreter
+// actions/setup-python provides. Probing for `uv` alone would run the assertions on a
+// machine where the hook silently takes its regex fallback.
+const skipParsed = (() => {
+  try {
+    const r = spawnSync('uv',
+      ['python', 'find', '--no-project', '--managed-python', '--system', '3.14'],
+      { encoding: 'utf8' });
+    return r.status === 0 && fs.existsSync((r.stdout || '').trim())
+      ? false : 'no uv-managed 3.14';
+  } catch { return 'no uv-managed 3.14'; }
+})();
 
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 
@@ -116,11 +132,12 @@ function runSeed(cwd, stateDir, sessionId = SID) {
 // One half of the commit tracker. The pair brackets a Bash call: `pre` stamps HEAD
 // before it, `post` credits this session with what it added. This is the whole
 // attribution mechanism -- a session that never runs it records nothing.
-function runTrack(cwd, stateDir, mode, { sessionId = SID, cmd = 'git commit -qm x' } = {}) {
+function runTrack(cwd, stateDir, mode,
+  { sessionId = SID, cmd = 'git commit -qm x', guardHome = GUARD } = {}) {
   const r = spawnSync('bash', [TRACK, mode], {
     input: JSON.stringify({ session_id: sessionId, tool_input: { command: cmd } }),
     cwd, encoding: 'utf8',
-    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir },
+    env: { ...process.env, CLAUDE_ARTIFACT_STATE_DIR: stateDir, CLAUDE_GUARD_HOME: guardHome },
   });
   assert.strictEqual(r.status, 0, `track hook (${mode}) exits 0 (stderr: ${r.stderr})`);
   assert.strictEqual((r.stdout || '').trim(), '', `track hook (${mode}) says nothing`);
@@ -620,4 +637,65 @@ test('a sync command adopts nothing a sibling commits inside it', () => {
   assert.deepStrictEqual(
     fs.readFileSync(path.join(st, `${sessionSlug(work, SID)}.mine`), 'utf8').trim().split('\n'),
     ['a-slice'], 'and the committer still claims its own');
+});
+
+// ── the verb has to be a COMMAND, not a substring ──────────────────────────────────
+//
+// The text filter reads the raw command, so it matches the verb inside another
+// command's quoted argument. `gh pr create --body "run git rebase first"` is the shape
+// that costs: it opens a `post` window measured from a HEAD several commands old, which
+// is exactly how a sibling's commit was adopted on 2026-08-18. claude_guard.segment
+// re-reads the command and the verb is matched against each segment's own argv.
+test('a verb quoted inside another command opens no window', { skip: skipParsed }, () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  track(work, st, artifactFile(root));
+  const B = 'session-b';
+  runSeed(work, st, SID);
+  runSeed(work, st, B);
+  tracked(work, st, B, 'gh pr create --title x --body "run git rebase first"',
+    () => commit(work, 'a-slice', st, SID));
+
+  const mineB = path.join(st, `${sessionSlug(work, B)}.mine`);
+  assert.strictEqual(fs.existsSync(mineB), false, 'the quoting session claims nothing');
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(work, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['a-slice'], 'and the committer still claims its own');
+});
+
+// The other half of the pair. Tightening the match must not stop the shapes a commit
+// is actually written in from being seen -- a missed one loses the session's own work
+// from the write-up, which is the failure the tracker exists to prevent.
+test('the shapes a commit is really written in are still claimed', { skip: skipParsed }, () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  runSeed(a, st);
+  for (const [i, cmd] of [
+    "env GIT_AUTHOR_NAME=t git commit -qm 'one'",
+    "git -C . commit -qm 'two'",
+    "(git commit -qm 'three')",
+    "FOO=1 ./bin/land",   // land authors through a rebase; the invocation is what counts
+  ].entries()) {
+    tracked(a, st, SID, cmd, () => gitCommit(a, `sub${i}`));
+  }
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(a, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['sub0', 'sub1', 'sub2', 'sub3'], 'every commit-authoring shape is claimed');
+});
+
+// The parser is an improvement, never a dependency. With no claude_guard package the
+// text filter's verdict stands, which is what this hook did before it.
+test('with no claude_guard package the text filter still claims a commit', () => {
+  const { root, work } = repoWithOrigin();
+  const st = state(root);
+  const a = worktree(work, root, 'wt-a', 'slice-one');
+  runSeed(a, st);
+  const noguard = path.join(root, 'no-such-claude-guard');
+  runTrack(a, st, 'pre', { cmd: "git commit -qm 'x'", guardHome: noguard });
+  gitCommit(a, 'kept');
+  runTrack(a, st, 'post', { cmd: "git commit -qm 'x'", guardHome: noguard });
+  assert.deepStrictEqual(
+    fs.readFileSync(path.join(st, `${sessionSlug(a, SID)}.mine`), 'utf8').trim().split('\n'),
+    ['kept'], 'the fallback records the commit');
 });

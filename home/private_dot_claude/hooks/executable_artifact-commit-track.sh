@@ -104,6 +104,101 @@ importverb='(^|[[:space:];&|(])git[[:space:]]([^;&|]*[[:space:]])?(merge|pull)([
 landcmd='(^|[;&|(])[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[^[:space:];&|(]*bin/land([[:space:]]|$)'
 [[ "$cmd" =~ $authorverb || "$cmd" =~ $importverb || "$cmd" =~ $landcmd ]] || exit 0
 
+# The regexes above are the PREFILTER, not the decision. They read the raw text, so they
+# match the verb wherever it sits -- inside another command's quoted argument as readily
+# as at a command position. `gh pr create --body "run git rebase first"` matches
+# `authorverb`, and a match here opens a `post` window measured from a HEAD that may be
+# several commands old: the window a sibling session's commit falls into, which is the
+# 2026-08-18 incident this filter exists to close.
+#
+# So claude_guard.segment -- the parser the deny hook decides with -- re-reads the
+# command and the verbs are matched against each segment's own argv. Substitutions are
+# read too, so `$(git commit ...)` is still seen. Kept as loose WITHIN a segment as the
+# comment above accepts: `git log --grep commit` still matches, and costs one `git log`
+# against a tip that is fresh anyway. Parsing git's global options to tighten that would
+# turn a cheap false positive into a possible false negative, which is the direction that
+# loses work.
+#
+# The parser is an improvement, never a dependency: no interpreter, no package, or a
+# command it refuses to read all leave the regex verdict standing, which is what this
+# hook did before.
+GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
+
+parsed_verdict() {
+  [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
+  local py
+  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  [ -x "$py" ] || return 1
+  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+import os, shlex, sys
+
+sys.path.insert(0, os.environ["CG_SHARE"])
+from claude_guard.segment import parse
+
+AUTHOR = {"commit", "rebase", "cherry-pick", "revert", "am"}
+IMPORT = {"merge", "pull"}
+
+p = parse(sys.stdin.read())
+if not p.ok:
+    print("unreadable")
+    raise SystemExit(0)
+
+verdict = "none"
+for piece in [s.text for s in p.segments] + list(p.substitutions):
+    # A subshell is not a frame this parser tracks, so `(git commit)` arrives with its
+    # parens attached to the first and last words. Strip them, or a command the regex
+    # deliberately matched at `(` would stop being seen.
+    piece = piece.strip().lstrip("(").strip()
+    try:
+        argv = shlex.split(piece)
+    except ValueError:
+        print("unreadable")
+        raise SystemExit(0)
+    argv = [a.rstrip(")") for a in argv]
+    # Strip what stands between the segment and its real program: leading assignments,
+    # and an `env` that carries more of them. Both are how a commit gets its author or
+    # its PATH set here, and the text filter saw through both because it only asked that
+    # `git` follow whitespace.
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if "=" in tok and tok.split("=", 1)[0].isidentifier():
+            i += 1
+            continue
+        if os.path.basename(tok) == "env":
+            i += 1
+            while i < len(argv) and argv[i] in ("-i", "--ignore-environment"):
+                i += 1
+            continue
+        break
+    if i >= len(argv):
+        continue
+    head, rest = argv[i], set(argv[i + 1 :])
+    # bin/land INVOKED, by any path -- ./bin/land, bin/land, or an absolute one. Bare
+    # `land` is deliberately not a match: that word appears in every path under
+    # /tmp/chezmoi-land-*, which is why the text filter dropped it.
+    if head.endswith("bin/land"):
+        verdict = "author"
+        break
+    if os.path.basename(head) != "git":
+        continue
+    if AUTHOR & rest:
+        verdict = "author"
+        break
+    if IMPORT & rest:
+        verdict = "import"
+
+print(verdict)
+' 2>/dev/null <<<"$cmd"
+}
+
+VERDICT=$(parsed_verdict) || VERDICT=''
+case "$VERDICT" in
+  none) exit 0 ;;                       # the prefilter matched text, not a command
+  author|import) ;;                     # the parser decided; used again below
+  *) VERDICT='' ;;                      # unreadable or no interpreter: regex stands
+esac
+
 session=$(hook_field '.session_id // empty')
 
 # shellcheck source=/dev/null
@@ -132,7 +227,7 @@ fi
 
 # An import-only command moves the floor and claims nothing -- see the filter above for
 # why `git merge` and `git pull` are held apart from the verbs that author work.
-if ! [[ "$cmd" =~ $authorverb || "$cmd" =~ $landcmd ]]; then
+if [ "$VERDICT" = "import" ] || { [ -z "$VERDICT" ] && ! [[ "$cmd" =~ $authorverb || "$cmd" =~ $landcmd ]]; }; then
   printf '%s\n' "$head" > "$tipfile" 2>/dev/null
   exit 0
 fi

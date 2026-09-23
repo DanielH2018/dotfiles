@@ -91,6 +91,14 @@ const CORPUS = [
   // itself — it has to hand the command to Python, which wraps it.
   '"git" diff',
   "'git' diff",
+  // An `env`/`command`/`exec` prefix. The shim reads the first word as the program and
+  // so does the Python hook, which asks tq about `env` rather than about the runner
+  // behind it; neither wraps. Agreeing is the whole contract here -- the shim may only
+  // ever skip work Python would also have skipped -- so these pin that the jq pass does
+  // not decide a prefix Python is left to judge (#580).
+  'env pytest tests/',
+  'command pytest -q',
+  'exec node --test',
 ];
 
 test('shim output is identical to the python hook for every command', { skip }, () => {

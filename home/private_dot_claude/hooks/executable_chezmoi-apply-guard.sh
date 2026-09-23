@@ -21,6 +21,38 @@
 #   "MM path"   deployed edited outside chezmoi     -> apply would discard it, denied
 #
 # Override for a deliberate revert:  CHEZMOI_APPLY_GUARD=off chezmoi apply ...
+#
+# WHICH command is an apply, and WHICH paths it names, are decided by
+# claude_guard.segment — the same parser the deny hook runs — and not by globbing
+# the flattened command text. Four measured misreadings of the text version, all
+# reproduced against the stub in tests/chezmoi/chezmoi-apply-guard.test.js:
+#
+#   chezmoi apply 2>&1 | tee /tmp/apply.log   ALLOWED a clobbering apply: the target
+#   cd /tmp && chezmoi apply                  scan took every /-rooted token in the
+#                                             WHOLE command, so a log path or a `cd`
+#                                             argument narrowed the guard to a
+#                                             directory no conflict could be under.
+#   echo CHEZMOI_APPLY_GUARD=off; chezmoi apply   ALLOWED: the override matched
+#                                             anywhere in the text, including inside
+#                                             another command's arguments.
+#   git commit -m "fix chezmoi apply guard"   DENIED a commit: `*chezmoi*\ apply*`
+#                                             matches the words wherever they sit,
+#                                             quoted or not.
+#   chezmoi apply -n                          DENIED although `-n` IS the dry-run
+#                                             flag: the glob wanted a trailing space.
+#
+# The first two are the ones that matter: a guard that fails open on the shapes an
+# agent actually types is worse than no guard, because the session believes it ran.
+#
+# Parsed, the decision is over the chezmoi command's own argv: leading assignments
+# are the only place the override counts, the verb and the dry-run flag are tokens
+# rather than substrings, and targets come from that command's arguments alone.
+# Substitutions are read too, so `$(chezmoi apply)` is still seen.
+#
+# The parser is not a dependency this hook may fail on. No interpreter, no package,
+# or a command the parser calls unreadable (an unbalanced quote) all fall back to
+# the flattened-text scan below, which is what this hook did before. That fallback
+# is looser, never stricter: it is the old behaviour, incidents and all.
 
 set -u
 
@@ -33,25 +65,144 @@ hook_require_jq noop || exit 0
 COMMAND=$(hook_field '.tool_input.command // empty')
 [ -n "$COMMAND" ] || exit 0
 
-# Collapse continuations so a `\`-split can't hide the verb from the match below.
-# shellcheck disable=SC1003  # the literal backslash is the point, not an escape
-SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ')
-
-case "$SCAN" in
-  *CHEZMOI_APPLY_GUARD=off*) exit 0 ;;
-esac
-
-# `apply` writes; so does `update` (pull + apply) and `init --apply`. Everything
-# else chezmoi does is read-only as far as deployed files go.
-case "$SCAN" in
-  *chezmoi*\ apply*|*chezmoi*\ update*|*chezmoi*--apply*) ;;
+# The cheap prefilter, ahead of any interpreter. This hook fires on every Bash call
+# and almost none of them name chezmoi at all. It is deliberately a superset of what
+# the parser can decide: a command with no `chezmoi` in its text cannot hold a
+# chezmoi invocation in any segment or substitution.
+case "$COMMAND" in
+  *chezmoi*) ;;
   *) exit 0 ;;
 esac
 
-# --dry-run writes nothing, so it can never clobber.
-case "$SCAN" in
-  *\ --dry-run*|*\ -n\ *) exit 0 ;;
+# ── the parsed decision ──────────────────────────────────────────────────────────
+#
+# Prints one of:
+#   off              an apply, with the documented override on that same command
+#   skip             no chezmoi command here that writes deployed files
+#   write            an apply; any following lines are the targets it named
+#   unreadable       the parser refused (see its module docstring: a refusal is
+#                    never a skip) — the caller falls back
+#
+# The interpreter lookup is guard-pre-tool-use.sh's, flag for flag, and for its
+# reasons: --no-project/--system/--managed-python keep uv from answering with a
+# worktree's own venv, -S -P stop a cwd-local claude_guard.py shadowing the package.
+GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
+
+parsed_decision() {
+  [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
+  local py
+  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  [ -x "$py" ] || return 1
+  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+import os, shlex, sys
+
+sys.path.insert(0, os.environ["CG_SHARE"])
+from claude_guard.segment import parse
+
+command = sys.stdin.read()
+p = parse(command)
+if not p.ok:
+    print("unreadable")
+    raise SystemExit(0)
+
+# Substitutions as well as top-level segments: `$(chezmoi apply)` runs an apply.
+pieces = [s.text for s in p.segments] + list(p.substitutions)
+
+# A redirection is not an argument. `2>&1`, `>`, `>>file` and the operand of a bare
+# operator would otherwise read as a target or, worse, as the verb.
+def arguments(argv):
+    out, skip_next = [], False
+    for tok in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        bare = tok.lstrip("0123456789")
+        if bare and set(bare) <= {"<", ">", "&"}:
+            skip_next = tok.rstrip("&") in ("<", ">", ">>", "<<")
+            continue
+        if tok.startswith((">", "<")) or (tok[:1].isdigit() and (">" in tok or "<" in tok)):
+            continue
+        out.append(tok)
+    return out
+
+override = False
+targets = []
+writes = False
+for piece in pieces:
+    try:
+        argv = shlex.split(piece)
+    except ValueError:
+        print("unreadable")
+        raise SystemExit(0)
+    # Leading assignments are the only place the override counts, because they are
+    # the only place bash would let it reach the chezmoi process.
+    seg_override = False
+    i = 0
+    while i < len(argv) and "=" in argv[i] and argv[i].split("=", 1)[0].isidentifier():
+        if argv[i] == "CHEZMOI_APPLY_GUARD=off":
+            seg_override = True
+        i += 1
+    if i >= len(argv) or os.path.basename(argv[i]) != "chezmoi":
+        continue
+    rest = arguments(argv[i + 1 :])
+    # `apply` writes; so does `update` (pull + apply) and `init --apply`. Matched as
+    # whole tokens, which is the difference from the glob. Kept loose about WHERE in
+    # the argv they sit rather than parsing chezmoi own global flags: a verb this
+    # misses is a guard that does not fire.
+    if not ({"apply", "update", "--apply"} & set(rest)):
+        continue
+    writes = True
+    if seg_override:
+        override = True
+    # --dry-run writes nothing, so it can never clobber. `-n` is its short form and
+    # is a token here, so a trailing one counts.
+    if {"--dry-run", "-n"} & set(rest):
+        writes = False
+        continue
+    targets.extend(t for t in rest if t.startswith(("/", "~/")))
+
+if override:
+    print("off")
+elif not writes:
+    print("skip")
+else:
+    print("write")
+    for t in targets:
+        print(t)
+' 2>/dev/null <<<"$COMMAND"
+}
+
+# ── the flattened-text fallback ──────────────────────────────────────────────────
+#
+# What this hook did before the parser, kept verbatim as the answer when the parser
+# cannot run. Collapse continuations so a `\`-split cannot hide the verb.
+# shellcheck disable=SC1003  # the literal backslash is the point, not an escape
+SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ')
+
+text_decision() {
+  case "$SCAN" in
+    *CHEZMOI_APPLY_GUARD=off*) printf 'off\n'; return 0 ;;
+  esac
+  case "$SCAN" in
+    *chezmoi*\ apply*|*chezmoi*\ update*|*chezmoi*--apply*) ;;
+    *) printf 'skip\n'; return 0 ;;
+  esac
+  case "$SCAN" in
+    *\ --dry-run*|*\ -n\ *) printf 'skip\n'; return 0 ;;
+  esac
+  printf 'write\n'
+  printf '%s\n' "$SCAN" | tr ' ' '\n' | grep -E '^(/|~/)' || true
+}
+
+DECISION=$(parsed_decision) || DECISION=''
+case "${DECISION%%$'\n'*}" in
+  off|skip|write) ;;
+  *) DECISION=$(text_decision) ;;
 esac
+
+VERDICT=${DECISION%%$'\n'*}
+[ "$VERDICT" = "write" ] || exit 0
+TARGETS=$(printf '%s' "$DECISION" | tail -n +2)
 
 # Whole-tree status: cheap enough here (this hook only fires on an apply) and it
 # avoids having to parse chezmoi's own flags out of the command line to find the
@@ -65,9 +216,6 @@ CONFLICTS=$(printf '%s\n' "$STATUS" | grep -E '^[ADM][ADM] ' || true)
 [ -n "$CONFLICTS" ] || exit 0
 
 # If the command named specific targets, only conflicts on those paths matter.
-# A target is an absolute or ~-rooted path: anchoring on that keeps `--flag=/x`
-# and bare `owner/repo` arguments (chezmoi init) from posing as targets.
-TARGETS=$(printf '%s\n' "$SCAN" | tr ' ' '\n' | grep -E '^(/|~/)' || true)
 if [ -n "$TARGETS" ]; then
   MATCHED=''
   while IFS= read -r line; do

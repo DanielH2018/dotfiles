@@ -16,8 +16,24 @@ const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
 const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_chezmoi-apply-guard.sh');
+const GUARD = srcPath('dot_local', 'share', 'claude-guard');
 
 const skip = skipUnless('bash', 'jq');
+
+// The parsed path needs the same interpreter the shims resolve: a uv-MANAGED 3.14, which
+// is not the one actions/setup-python provides. Probing for `uv` alone would run the
+// parsed assertions on a machine where the hook silently takes its fallback, and they
+// would fail for a reason that is not a regression.
+const managedPython = (() => {
+  try {
+    const r = execFileSync(
+      'uv', ['python', 'find', '--no-project', '--managed-python', '--system', '3.14'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    return fs.existsSync(r);
+  } catch { return false; }
+})();
+const skipParsed = skip || (managedPython ? false : 'no uv-managed 3.14');
 
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
@@ -33,25 +49,45 @@ const CLEAN = '';
 const NORMAL = ' M /home/daniel/.local/bin/agentview';
 const CLOBBER = 'MM /home/daniel/.local/bin/agentview';
 
-// A decision, or null when the hook stayed out of the way.
-function decide(command, stubStatus) {
+// HOME is faked so `~/...` targets expand onto the fixture's own paths. That also hides
+// uv's managed toolchain and its cache, both of which live under the REAL home -- without
+// these two the interpreter lookup fails and every test below would silently measure the
+// fallback instead of the parser. They are named explicitly rather than inherited so the
+// reason survives in the file that depends on it.
+const UV_ENV = {
+  UV_PYTHON_INSTALL_DIR:
+    process.env.UV_PYTHON_INSTALL_DIR || path.join(os.homedir(), '.local', 'share', 'uv', 'python'),
+  UV_CACHE_DIR: process.env.UV_CACHE_DIR || path.join(os.homedir(), '.cache', 'uv'),
+};
+
+// A decision, or null when the hook stayed out of the way. `guardHome` is the claude_guard
+// package the hook parses with; pointing it at an empty directory is how the fallback is
+// exercised, exactly as a machine with no claude-guard deploy would take it.
+function decide(command, stubStatus, guardHome = GUARD) {
   const out = execFileSync('bash', [HOOK], {
     input: JSON.stringify({ tool_input: { command } }),
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PATH: `${BIN}:${process.env.PATH}`, STUB_STATUS: stubStatus, HOME: '/home/daniel' },
+    env: {
+      ...process.env,
+      ...UV_ENV,
+      PATH: `${BIN}:${process.env.PATH}`,
+      STUB_STATUS: stubStatus,
+      HOME: '/home/daniel',
+      CLAUDE_GUARD_HOME: guardHome,
+    },
   });
   return out.trim() ? JSON.parse(out).hookSpecificOutput : null;
 }
 
-const denies = (command, stub = CLOBBER) => {
-  const d = decide(command, stub);
+const denies = (command, stub = CLOBBER, guardHome = GUARD) => {
+  const d = decide(command, stub, guardHome);
   assert.ok(d, `expected a decision for: ${command}`);
   assert.strictEqual(d.permissionDecision, 'deny');
   return d.permissionDecisionReason;
 };
-const allows = (command, stub = CLOBBER) =>
-  assert.strictEqual(decide(command, stub), null, `expected no decision for: ${command}`);
+const allows = (command, stub = CLOBBER, guardHome = GUARD) =>
+  assert.strictEqual(decide(command, stub, guardHome), null, `expected no decision for: ${command}`);
 
 test('denies an apply that would discard an out-of-band deployed change', { skip }, () => {
   const reason = denies('chezmoi apply');
@@ -106,5 +142,64 @@ test('a flag value that looks like a path is not treated as a target', { skip },
 test('stays silent when chezmoi status fails', { skip }, () => {
   // Stub returns nothing for an unknown subcommand shape; hook must not block.
   allows('chezmoi apply', CLEAN);
+});
+
+// ── what the flattened-text scan got wrong ────────────────────────────────────────
+//
+// Each pair below is one shape the glob-and-tr version misread, measured against this
+// same stub. Two of them are fail-OPEN, which is the reason the parser is here at all:
+// the apply ran and reverted a sibling's deployed build while the session believed the
+// guard had looked.
+test('a redirect or a pipeline does not narrow the targets', { skip: skipParsed }, () => {
+  // The old scan took every /-rooted token in the WHOLE command as a target, so a log
+  // path on the far side of a pipe left no conflict under any named target and the
+  // apply was allowed.
+  denies('chezmoi apply 2>&1 | tee /tmp/apply.log');
+  denies('chezmoi apply > /tmp/apply.log');
+});
+
+test('a cd in front of the apply does not narrow the targets', { skip: skipParsed }, () => {
+  denies('cd /tmp && chezmoi apply');
+});
+
+test('the override counts only as an assignment on the apply itself', { skip: skipParsed }, () => {
+  // Matching the override anywhere in the text made it settable from inside any other
+  // command's arguments, which is a bypass rather than an override.
+  denies('echo CHEZMOI_APPLY_GUARD=off; chezmoi apply');
+  denies('git commit -m "use CHEZMOI_APPLY_GUARD=off" && chezmoi apply');
+  // The documented form still works, including behind another command.
+  allows('git status && CHEZMOI_APPLY_GUARD=off chezmoi apply');
+});
+
+test('the words only count as a command, not as text', { skip: skipParsed }, () => {
+  // Denying these blocked commands that write nothing, and the message told the session
+  // to re-run its own commit with CHEZMOI_APPLY_GUARD=off.
+  allows('git commit -m "fix chezmoi apply guard"');
+  allows('echo "chezmoi apply"');
+  allows('grep -rn "chezmoi apply" docs/');
+});
+
+test('-n is the short dry-run flag wherever it sits', { skip: skipParsed }, () => {
+  allows('chezmoi apply -n');
+  allows('chezmoi apply -n ~/.local/bin/agentview');
+});
+
+test('an apply inside a substitution is still seen', { skip: skipParsed }, () => {
+  denies('echo $(chezmoi apply)');
+});
+
+// The parser is an improvement, never a dependency. A machine with no claude-guard
+// deploy -- and a command the parser refuses to read -- must still get the guard.
+test('with no claude_guard package it falls back and still denies', { skip }, () => {
+  const empty = scratch(os.tmpdir(), 'czag-noguard-');
+  denies('chezmoi apply', CLOBBER, empty);
+  allows('chezmoi apply', NORMAL, empty);
+  allows('ls -la', CLOBBER, empty);
+});
+
+test('an unreadable command falls back rather than passing', { skip: skipParsed }, () => {
+  // An unbalanced quote makes the parser refuse. Its docstring is explicit that a
+  // refusal is never a skip, so the hook takes the old scan, which denies this.
+  denies('chezmoi apply "unbalanced');
 });
 

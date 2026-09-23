@@ -160,6 +160,37 @@ with tempfile.TemporaryDirectory() as tmp:
         == ["a.txt", "b.txt"],
     )
 
+    # A delimiter the line-at-a-time regex cannot see. It requires `[A-Za-z_]` as the
+    # first character, so `<<'.END'` was not read as a heredoc at all and the blockquote
+    # in the body was tokenized as a redirect: the hook fanned out b.txt, which the
+    # command never wrote. claude_guard.segment reads the delimiter the way bash does.
+    check(
+        "a delimiter the regex cannot read is still a heredoc",
+        extracted("cat > a.txt <<'.END'\n> b.txt is the index\n.END", root)
+        == ["a.txt"],
+    )
+    # ── what happens when the parser cannot answer ───────────────────────────────────
+    #
+    # The parser is an improvement, never a dependency. With no claude_guard package the
+    # hook takes the regex, which is what it did before -- worse on the delimiter above,
+    # correct on the ordinary shapes. A command the parser REFUSES to read is different:
+    # its writes cannot be located, so nothing is fanned out. A missed fanout costs a
+    # formatter run; a wrong one rewrites a file the command never touched.
+
+    noguard = str(root / "no-such-claude-guard")
+    check(
+        "with no claude_guard package the ordinary heredoc still works",
+        extracted(
+            "cat > a.txt <<'EOF'\n> b.txt\nEOF", root, {"CLAUDE_GUARD_HOME": noguard}
+        )
+        == ["a.txt"],
+    )
+    check(
+        "an unreadable command fans out nothing",
+        extracted("cat > a.txt <<'EOF'\nbody\nEOF\necho \"unbalanced > b.txt", root)
+        == [],
+    )
+
     # ── the escape hatch ─────────────────────────────────────────────────────────────
 
     check(

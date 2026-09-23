@@ -77,6 +77,57 @@ declare -a TOKENS=()
 # pattern it reads as an attempt to escape the surrounding quote and shellcheck says so.
 BACKSLASH=$'\x5c'
 
+# ── heredoc stripping ────────────────────────────────────────────────────────────────
+#
+# claude_guard.segment already lifts heredoc bodies out of a command, and it is the
+# parser the deny hook decides with. The line-at-a-time regex below is a second
+# implementation of the same job, and it reads a delimiter the shell would not:
+# `[A-Za-z_]` as the first character means `cat > note.md <<'.END'` is not seen as a
+# heredoc at all, so a body line `> README.md` -- a Markdown blockquote -- is tokenized
+# as a redirect and README.md is handed to auto-format, lint-after-edit and
+# chezmoi-guard although the command never wrote it. Measured against this hook before
+# the change: `cat > note.md <<'.END'` with that body fanned out BOTH note.md and
+# README.md. Rewriting a file the command never wrote is the failure this hook exists to
+# prevent, so the parser decides.
+#
+# Three outcomes, and the difference between them is the whole safety argument:
+#
+#   parsed ok      the segment texts, rejoined with their own separators. Bodies are
+#                  gone; the opening line, and the `> file` on it, survive.
+#   unreadable     print NOTHING. No tokens means no candidates means no fanout. A
+#                  command the parser refuses to read is one whose writes cannot be
+#                  located, and a missed fanout is the safe direction here.
+#   no interpreter fall back to the regex below, which is what this hook did before.
+#
+# Gated on `<<` in the text, not on `>`: `2>/dev/null` is in a large share of ordinary
+# commands, and paying for an interpreter on those would put a Python start in front of
+# most Bash calls.
+GUARD_SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
+
+parsed_strip_heredocs() {
+  [ -f "$GUARD_SHARE/claude_guard/segment.py" ] || return 1
+  local py
+  py=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || return 1
+  [ -x "$py" ] || return 1
+  CG_SHARE="$GUARD_SHARE" "$py" -S -P -c '
+import os, sys
+
+sys.path.insert(0, os.environ["CG_SHARE"])
+from claude_guard.segment import parse
+
+p = parse(sys.stdin.read())
+if not p.ok:
+    raise SystemExit(0)  # nothing on stdout: the caller fans out nothing
+
+# Put each separator back as text. The tokenizer downstream resets its command word on
+# `|`, `;` and `&`, so joining on newlines alone would let one segment/s redirect target
+# read as the next one/s.
+SEP = {"&&": " && ", "||": " || ", ";": " ; ", "|": " | ", "&": " & ",
+       "newline": "\n", "eof": ""}
+sys.stdout.write("".join(s.text + SEP.get(s.sep, " ") for s in p.segments))
+' 2>/dev/null <<<"$1"
+}
+
 strip_heredocs() {
   # Drop every heredoc BODY, keeping the line that opens it.
   #
@@ -159,7 +210,16 @@ tokenize() {
 declare -a CANDIDATES=()
 
 extract_paths() {
-  tokenize "$(strip_heredocs "$1")"
+  local shell_text
+  case $1 in
+    *'<<'*)
+      # The parser's answer wins; only an unavailable interpreter reaches the regex.
+      if ! shell_text=$(parsed_strip_heredocs "$1"); then
+        shell_text=$(strip_heredocs "$1")
+      fi ;;
+    *) shell_text=$1 ;;
+  esac
+  tokenize "$shell_text"
   local i=0 n=${#TOKENS[@]} t tgt cmdword='' inplace=0
   while [ "$i" -lt "$n" ]; do
     t=${TOKENS[i]}
