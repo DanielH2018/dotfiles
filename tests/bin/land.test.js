@@ -124,16 +124,25 @@ function makeRepoWithOrigin() {
 const ghCalls = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '');
 const remoteHas = (dir, branch) => git(dir, 'ls-remote', '--heads', 'origin', branch) !== '';
 
-function land(cwd, args = [], { pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null } = {}) {
+// deadline is LAND_MERGED_DEADLINE, the wall-clock budget land gives GitHub to mark the
+// PR merged before closing it itself. '0' by default so no test sits out the real
+// 60s one; the test that exercises the wait sets its own.
+function land(cwd, args = [], {
+  pr = '7', draft = 'false', state = 'MERGED', openFor = '0', lock = null,
+  deadline = '0', stubs = null,
+} = {}) {
   const calls = path.join(cwd, '.gh-calls');
   const probe = { held: path.join(cwd, '.lock-probe'), pid: path.join(cwd, '.daemon-pid') };
   const r = run('bash', [LAND, ...args], {
     cwd,
     env: {
-      ...CLEAN_ENV, PATH: `${BIN}:${CLEAN_ENV.PATH}`,
+      ...CLEAN_ENV, PATH: `${stubs ? `${stubs}:` : ''}${BIN}:${CLEAN_ENV.PATH}`,
       STUB_PR: pr, STUB_DRAFT: draft, STUB_PR_STATE: state, STUB_GH_CALLS: calls,
       STUB_OPEN_FOR: openFor, STUB_STATE_SEEN: path.join(cwd, '.gh-state-seen'),
-      LAND_POLL_INTERVAL: '0.05',
+      LAND_MERGED_DEADLINE: deadline,
+      // The shim above re-execs the real git through this, so it must not carry the
+      // stub dirs or the shim would call itself.
+      REAL_PATH: CLEAN_ENV.PATH,
       ...(lock ? { STUB_LOCK: lock, STUB_LOCK_PROBE: probe.held, STUB_DAEMON_PID: probe.pid } : {}),
     },
   });
@@ -268,6 +277,45 @@ test('main lands on the branch tip itself, not a replayed copy', { skip }, () =>
   assert.doesNotMatch(ghCalls(r.calls), /pr merge/, 'GitHub never re-created the commits');
 });
 
+// --- the landing is confirmed locally, not asked of GitHub ---------------------
+// origin/main is updated by the push itself, so `merge-base --is-ancestor HEAD
+// origin/main` answers "did this land" with no propagation lag and no network. The
+// PR state below is only ever a fallback, and a fallback must not fire — least of
+// all by closing the PR — when the thing it backs up did not actually happen.
+//
+// The reject half needs a push that reports success without moving main, which no
+// fixture produces on its own. A git shim on PATH swallows exactly the `<branch>:main`
+// push and forwards everything else to the real git: fault injection at the one call
+// whose failure this guard exists for.
+function swallowMainPushStub() {
+  const dir = scratch(os.tmpdir(), 'land-git-');
+  fs.writeFileSync(path.join(dir, 'git'), `#!/bin/bash
+for a in "$@"; do
+  case "$a" in *:main) exit 0 ;; esac
+done
+PATH="$REAL_PATH" exec git "$@"
+`, { mode: 0o755 });
+  return dir;
+}
+
+test('confirms the landing against origin/main before touching the PR', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], { draft: 'true' });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /does not contain/, 'the guard fired on a landing that worked');
+  assert.match(r.stdout, /landed feature/);
+});
+
+test('refuses to close the PR when origin/main did not move', { skip }, () => {
+  const { dir } = makeRepoWithOrigin();
+  const r = land(dir, [], {
+    draft: 'true', state: 'OPEN', stubs: swallowMainPushStub(),
+  });
+  assert.strictEqual(r.code, 1, `land reported success on a push that landed nothing:\n${r.stdout}`);
+  assert.match(r.stderr, /origin\/main does not contain/);
+  assert.doesNotMatch(ghCalls(r.calls), /pr close/, 'it closed a PR whose branch never landed');
+});
+
 test('closes the PR itself when GitHub has not marked it merged', { skip }, () => {
   const { dir } = makeRepoWithOrigin();
   const r = land(dir, [], { draft: 'true', state: 'OPEN' });
@@ -277,9 +325,11 @@ test('closes the PR itself when GitHub has not marked it merged', { skip }, () =
 
 // The bug this replaced: one check straight after the push read OPEN, so land closed
 // a PR GitHub marked MERGED a moment later — the fallback racing what it backs up.
+// The wait is a wall-clock deadline rather than a sample count, so this sets a budget
+// long enough for the stub's two OPEN answers to pass before it expires.
 test('waits for GitHub to catch up before closing anything', { skip }, () => {
   const { dir } = makeRepoWithOrigin();
-  const r = land(dir, [], { draft: 'true', openFor: '2' });
+  const r = land(dir, [], { draft: 'true', openFor: '2', deadline: '10' });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /waiting for GitHub/);
   assert.doesNotMatch(ghCalls(r.calls), /pr close/, 'GitHub got there on its own');
@@ -365,7 +415,7 @@ test('a successful land reports that local main is behind', { skip }, () => {
   const r = land(dir, [], { draft: 'true' });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /local main is behind/, `no sync reminder in:\n${r.stdout}`);
-  assert.match(r.stdout, /merge --ff-only origin\/main/, 'the reminder must name the fix');
+  assert.match(r.stdout, /bin\/land-sync/, 'the reminder must name the fix');
 });
 
 test('a land that leaves local main current says nothing', { skip }, () => {

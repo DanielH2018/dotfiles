@@ -19,8 +19,8 @@
 # Your LOCAL main is NOT moved — that push updates origin/main only. This matters
 # more here than in most repos: chezmoi reads its source from the primary checkout's
 # working tree, so an apply straight after a land redeploys the pre-merge file and
-# silently reverts what just landed. Landing is not deploying. Sync first, from the
-# primary checkout:  git merge --ff-only origin/main
+# silently reverts what just landed. Landing is not deploying. Sync first with
+# bin/land-sync, which does it from whichever worktree you are in.
 #
 # Never run this unasked: a session that finishes work opens a draft PR and stops
 # there, background jobs included. But when the operator asks for it, run it —
@@ -143,17 +143,32 @@ land() {
   # while main got different ones; here they are the same objects.
   git push -q origin "$BRANCH:main" || return 1
 
+  # Whether the branch landed is settled locally, and asking GitHub is the slow way
+  # to read it: the push above moved origin's main onto this very commit and updated
+  # the origin/main remote-tracking ref with it. That ref is the authoritative
+  # condition the close below is a fallback for, so check it before deciding anything
+  # about the PR — a push that did not land the branch must not end in a closed PR.
+  if ! git merge-base --is-ancestor HEAD origin/main; then
+    printf 'land: origin/main does not contain %s — leaving PR #%s open\n' \
+      "$(git rev-parse --short HEAD)" "$PR" >&2
+    return 1
+  fi
+
   # GitHub marks a PR merged once its head commits are reachable from the base, but
   # not the instant the push returns. Checked once, straight after the push, the
   # landing that introduced this read OPEN and closed a PR that GitHub marked MERGED
-  # moments later — a fallback racing the thing it is meant to back up. Poll instead,
-  # and only close if GitHub really has not caught up.
-  attempt=0
+  # moments later — a fallback racing the thing it is meant to back up. Four sampled
+  # polls replaced that check, and a sample count is still the wrong shape: four
+  # samples are a much shorter wait on a loaded host than on an idle one, so whether
+  # the PR gets closed depends on scheduling. Give the propagation an explicit
+  # wall-clock deadline instead. It costs nothing in the normal case, where GitHub
+  # has already caught up by the first read.
+  deadline=$((SECONDS + ${LAND_MERGED_DEADLINE:-60}))
+  waited=0
   state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
-  while [ "$state" = "OPEN" ] && [ "$attempt" -lt 4 ]; do
-    [ "$attempt" -eq 0 ] && say "waiting for GitHub to mark PR #$PR merged..."
-    sleep "${LAND_POLL_INTERVAL:-1}"
-    attempt=$((attempt + 1))
+  while [ "$state" = "OPEN" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    [ "$waited" -eq 1 ] || { say "waiting for GitHub to mark PR #$PR merged..."; waited=1; }
+    sleep 1
     state=$(gh pr view "$PR" --json state --jq '.state' 2>/dev/null)
   done
 
@@ -193,7 +208,7 @@ land() {
   # three times in one day, so say it here, where it is read — but only when it is
   # actually true. HEAD is the rebased tip, i.e. exactly what became origin/main.
   if [ "$(git rev-parse main 2>/dev/null)" != "$(git rev-parse HEAD)" ]; then
-    say "local main is behind — from the primary: git merge --ff-only origin/main (landing is not deploying)"
+    say "local main is behind — run bin/land-sync from here (landing is not deploying)"
   fi
   # The local branch is checked out right here, so it cannot delete itself — even
   # though ORIGIN's main now points at exactly these commits, which is new: before

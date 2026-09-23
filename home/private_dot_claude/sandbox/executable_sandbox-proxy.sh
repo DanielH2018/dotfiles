@@ -12,7 +12,9 @@
 #   * call add_mount_relabel(), which stays in the launcher because the rootless
 #     podman relabelling it does is not this file's subject;
 #   * write no launcher globals at all;
-#   * CALL `exit 1` when the proxy or the filter fails to come up within 15 tries.
+#   * CALL `exit 1` when the proxy or the filter fails to come up inside the time
+#     budget wait_for_running() applies — everything except wait_for_running itself,
+#     which returns non-zero and lets its caller decide.
 #
 # That last point is the difference from sandbox-worktree.sh, whose header promises
 # its functions never exit so tests can source them freely. These can and do: a
@@ -23,6 +25,48 @@
 # resolves immediately, then connected to the sandbox network under FILTER_ALIAS.
 # Nothing outside these functions may join PROXY_NETWORK_NAME —
 # tests/sandbox/claude-sandbox-network.test.js asserts exactly that by line range.
+
+# wait_for_running <container> — block until the container reports Running.
+#
+# Both start paths used to count attempts: 15 polls of 0.2s, then "failed to start
+# after 15 attempts". That measures samples, not time. The samples are 3s of sleep
+# plus 15 `docker inspect` calls, and an inspect costs microseconds on an idle host
+# and can cost the better part of a second on a loaded one — so the budget the
+# operator actually gets varies with load, and a slow host reports a start failure
+# for a container that was starting normally. A wall-clock deadline says the same
+# thing independently of how the host is scheduled.
+#
+# SANDBOX_PROXY_START_TIMEOUT overrides the budget, in whole seconds. It is read here
+# rather than at load time because this file is sourced and must set nothing.
+#
+# Returns 1 rather than exiting: both callers exit, but a function that exits cannot
+# be tested, and the caller is the one that knows what failed to come up.
+wait_for_running() {
+  local name=$1
+  local budget=${SANDBOX_PROXY_START_TIMEOUT:-30}
+  local deadline=$((SECONDS + budget))
+  local state seen=0
+
+  while :; do
+    state=$(docker inspect -f '{{.State.Status}}' "$name" 2>/dev/null)
+    case "$state" in
+      running) return 0 ;;
+      # The containers run with --rm, so one that died is gone and inspect answers
+      # nothing. Empty before the first sighting is just the create not settled yet;
+      # empty after it means the container exited and was removed, and waiting out
+      # the rest of the budget would only delay a failure that is already decided.
+      '') [ "$seen" -eq 0 ] || { printf 'Error: %s exited before it was ready\n' "$name" >&2; return 1; } ;;
+      exited|dead) printf 'Error: %s exited before it was ready (%s)\n' "$name" "$state" >&2; return 1 ;;
+      *) seen=1 ;;
+    esac
+
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'Error: %s did not report running within %ss\n' "$name" "$budget" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+}
 
 # --- Docker socket proxy management ---
 start_proxy() {
@@ -92,15 +136,7 @@ start_proxy() {
     "$PROXY_IMAGE" >/dev/null
 
   # Wait for proxy container to be running
-  local retries=0
-  while [[ "$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME" 2>/dev/null)" != "true" ]]; do
-    retries=$((retries + 1))
-    if [[ $retries -ge 15 ]]; then
-      echo "Error: socket proxy failed to start after 15 attempts" >&2
-      exit 1
-    fi
-    sleep 0.2
-  done
+  wait_for_running "$PROXY_NAME" || exit 1
 
   start_filter
 
@@ -138,16 +174,10 @@ start_filter() {
   # moment the process starts; this is the interface the sandbox reaches it on.
   docker network connect --alias "$FILTER_ALIAS" "$NETWORK_NAME" "$FILTER_NAME" >/dev/null
 
-  local retries=0
-  while [[ "$(docker inspect -f '{{.State.Running}}' "$FILTER_NAME" 2>/dev/null)" != "true" ]]; do
-    retries=$((retries + 1))
-    if [[ $retries -ge 15 ]]; then
-      echo "Error: docker create-filter failed to start after 15 attempts" >&2
-      docker logs "$FILTER_NAME" 2>&1 | tail -20 >&2 || true
-      exit 1
-    fi
-    sleep 0.2
-  done
+  if ! wait_for_running "$FILTER_NAME"; then
+    docker logs "$FILTER_NAME" 2>&1 | tail -20 >&2 || true
+    exit 1
+  fi
 }
 
 stop_proxy() {
