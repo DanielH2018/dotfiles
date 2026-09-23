@@ -75,10 +75,11 @@ ${pre}
 ${deps.map((d) => FN[d]).join('\n')}
 ${FN[name]}
 ${name}
+__rc=$?
 echo ${q(ARGS_MARKER)}
 printf '%s\\n' \${DOCKER_ARGS[@]+"\${DOCKER_ARGS[@]}"}
 echo ${q(VARS_MARKER)}
-${dump.map((v) => `printf '%s=%s\\n' ${q(v)} "\${${v}:-}"`).join('\n')}
+${['__rc', ...dump].map((v) => `printf '%s=%s\\n' ${q(v)} "\${${v}:-}"`).join('\n')}
 `;
   const r = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
   const out = r.stdout ?? '';
@@ -88,7 +89,7 @@ ${dump.map((v) => `printf '%s=%s\\n' ${q(v)} "\${${v}:-}"`).join('\n')}
   const args = out.slice(a + ARGS_MARKER.length, b).split('\n').filter(Boolean);
   const vars = Object.fromEntries(out.slice(b + VARS_MARKER.length).split('\n')
     .filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
-  return { stdout: out.slice(0, a), stderr: r.stderr ?? '', args, vars };
+  return { stdout: out.slice(0, a), stderr: r.stderr ?? '', args, vars, rc: Number(vars.__rc) };
 }
 
 function mounts(args) {
@@ -372,6 +373,23 @@ test('sibling repos are snapshotted and mounted read-only', { skip }, () => {
     assert.strictEqual(x.mode, 'ro', 'sibling repos are reference material, never writable');
     assert.ok(x.from.startsWith(f.snapRoot), 'the mount source is the snapshot, not the live tree');
   }
+});
+
+// #581: a snapshot that cannot be built fails the launch. It used to be skipped without a
+// word, so the sandbox started missing a sibling repo it otherwise mounts. Making alpha's
+// cache directory a plain file is the smallest way to make mkdir fail. The accepting half is
+// the case above, whose launch builds both snapshots and must return 0.
+test('a sibling snapshot that cannot be built fails the launch and names the repo', { skip }, () => {
+  const ok = reposRun(reposFixture());
+  assert.strictEqual(ok.rc, 0, 'a normal launch must still succeed');
+
+  const f = reposFixture();
+  fs.writeFileSync(path.join(f.snapRoot, 'alpha'), 'not a directory');
+  const r = reposRun(f);
+  assert.notStrictEqual(r.rc, 0, 'the launch must not go ahead without the snapshot');
+  assert.match(r.stderr, /no snapshot for sibling repo\(s\) alpha/);
+  assert.match(r.stderr, /--no-repos/, 'the error names the way around it');
+  assert.deepStrictEqual(mounts(r.args), [], 'nothing is mounted from a failed launch');
 });
 
 test('the workspace repo, worktree dirs and non-git dirs are all skipped', { skip }, () => {

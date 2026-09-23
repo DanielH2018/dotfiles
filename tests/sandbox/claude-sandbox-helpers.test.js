@@ -175,13 +175,16 @@ test('build_repo_snapshot is a no-op once the snapshot exists', { skip }, () => 
     'an existing .ok snapshot must be reused, not re-extracted on every launch');
 });
 
-test('build_repo_snapshot cleans up after an unusable ref', { skip }, () => {
+test('build_repo_snapshot reports and cleans up after an unusable ref', { skip }, () => {
   const repo = repoWith({ 'a.txt': 'hello' });
   const snapRoot = scratch(os.tmpdir(), 'sbhelp-');
   const r = runScript(`REPO_SNAPSHOT_ROOT=${JSON.stringify(snapRoot)}
 ${SRC.build_repo_snapshot}
 build_repo_snapshot ${JSON.stringify(repo)} demo refs/heads/nope deadbeef`);
-  assert.strictEqual(r.code, 0, 'a bad ref must not abort the launch');
+  // #581: the failure is reported, not absorbed. add_sibling_repo_mounts turns the missing
+  // .ok marker into a launch error; this function's part is to say which step failed.
+  assert.strictEqual(r.code, 1, 'a snapshot that was not built must not report success');
+  assert.match(r.stderr, /snapshot demo: git archive of refs\/heads\/nope failed/);
   assert.ok(!fs.existsSync(path.join(snapRoot, 'demo', 'deadbeef')), 'no half-built snapshot');
   const leftovers = fs.existsSync(path.join(snapRoot, 'demo'))
     ? fs.readdirSync(path.join(snapRoot, 'demo')).filter((f) => f.startsWith('.tmp-'))

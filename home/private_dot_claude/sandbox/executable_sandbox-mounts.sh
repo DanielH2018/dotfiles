@@ -220,21 +220,39 @@ resolve_main_ref() {
 # Archive one repo's main ref (tracked files only) into the SHA cache. Idempotent
 # (no-op when the snapshot already exists). Atomic via temp dir + rename so a
 # concurrent launch never sees a half-extracted tree. Exported for xargs; runs
-# under a fresh `bash -c` (no set -e), so internal failures don't abort a launch.
+# under a fresh `bash -c` (no set -e).
+#
+# Returns non-zero, naming the step on stderr, when the snapshot could not be built.
+# Every failure used to `return 0`, and the mount loop below then skipped the repo
+# without a word, so the sandbox launched missing a sibling it advertised (#581). The
+# return code is informational -- xargs cannot say which spec failed -- and the
+# authoritative check is the `.ok` marker, which add_sibling_repo_mounts reads after.
 build_repo_snapshot() {
   local repo="$1" name="$2" ref="$3" sha="$4"
   local dest="$REPO_SNAPSHOT_ROOT/$name/$sha" tmp
   [[ -f "$dest/.ok" ]] && return 0
-  mkdir -p "$REPO_SNAPSHOT_ROOT/$name" || return 0
-  tmp="$(mktemp -d "$REPO_SNAPSHOT_ROOT/$name/.tmp-XXXXXX" 2>/dev/null)" || return 0
+  if ! mkdir -p "$REPO_SNAPSHOT_ROOT/$name" 2>/dev/null; then
+    echo "  snapshot $name: cannot create $REPO_SNAPSHOT_ROOT/$name" >&2
+    return 1
+  fi
+  if ! tmp="$(mktemp -d "$REPO_SNAPSHOT_ROOT/$name/.tmp-XXXXXX" 2>/dev/null)"; then
+    echo "  snapshot $name: cannot create a temp dir under $REPO_SNAPSHOT_ROOT/$name" >&2
+    return 1
+  fi
   if git -C "$repo" archive --format=tar "$ref" 2>/dev/null | tar -x -C "$tmp" 2>/dev/null; then
     : > "$tmp/.ok"
     rm -rf "$dest" 2>/dev/null || true          # clear a stale partial, if any
     mv "$tmp" "$dest" 2>/dev/null || rm -rf "$tmp"   # dest now absent -> atomic rename
   else
     rm -rf "$tmp"
+    echo "  snapshot $name: git archive of $ref failed" >&2
+    return 1
   fi
-  return 0
+  # A concurrent launch can win the rename; either way the marker is what counts.
+  if [[ ! -f "$dest/.ok" ]]; then
+    echo "  snapshot $name: $dest did not appear" >&2
+    return 1
+  fi
 }
 
 add_sibling_repo_mounts() {
@@ -279,14 +297,27 @@ add_sibling_repo_mounts() {
         # shellcheck disable=SC2016  # $1 and the _-prefixed vars belong to the xargs-spawned shell
         printf '%s\0' "${build_specs[@]}" | xargs -0 -P4 -I{} bash -c \
           'IFS="|" read -r _repo _name _ref _sha <<<"$1"; build_repo_snapshot "$_repo" "$_name" "$_ref" "$_sha"' _ {} \
-          2>/dev/null || true
+          || true
       fi
-      # Mount every snapshot that exists; prune older SHAs (keep newest 2 per repo).
+      # Every repo resolved above must have its snapshot now. One that does not is a
+      # launch failure, not a quiet omission: the sandbox would otherwise start without
+      # a sibling repo the session expects to read (#581). --no-repos and --repos-live
+      # are the ways around a repo that will not archive.
+      missing=()
+      for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
+        r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
+        [[ -f "$REPO_SNAPSHOT_ROOT/$r_name/$r_sha/.ok" ]] || missing+=("$r_name")
+      done
+      if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "ERROR: no snapshot for sibling repo(s) ${missing[*]} under $REPO_SNAPSHOT_ROOT." >&2
+        echo "  Relaunch with --no-repos to skip sibling repos, or --repos-live to mount the live trees." >&2
+        return 1
+      fi
+      # Mount every snapshot; prune older SHAs (keep newest 2 per repo).
       repos_mounted=0
       for spec in ${repo_mounts[@]+"${repo_mounts[@]}"}; do
         r_name="${spec%%$'\t'*}"; r_sha="${spec##*$'\t'}"
         dest="$REPO_SNAPSHOT_ROOT/$r_name/$r_sha"
-        [[ -f "$dest/.ok" ]] || continue
         DOCKER_ARGS+=(-v "$dest:$REPOS_ROOT/$r_name:ro")
         repos_mounted=$((repos_mounted + 1))
         touch "$dest" 2>/dev/null || true             # keep the mounted SHA newest
