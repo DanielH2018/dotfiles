@@ -22,9 +22,18 @@
 # version set IS the trigger and no clock is involved. An apply against an unchanged tree runs
 # this script not at all.
 #
-#   INSTALL_LATEST=1 chezmoi apply   resolve every tag upstream instead, to see what a bump
-#                                    would bring. Nothing is written back to tools.toml, so the
-#                                    next plain apply reinstalls the pin.
+# To ask what a bump would bring, render this script and run THAT under INSTALL_LATEST=1.
+# `INSTALL_LATEST=1 chezmoi apply` does nothing at all, because an unchanged tree runs no
+# run_onchange_ script:
+#
+#   src=$(chezmoi source-path)
+#   chezmoi execute-template --source "$src" \
+#     < "$src/.chezmoiscripts/os-linux/run_onchange_after_install-cli-tools.sh.tmpl" \
+#     | INSTALL_LATEST=1 sh
+#
+# That INSTALLS the upstream releases and records their tags. tools.toml is not touched, so the
+# machine then sits ahead of the pin until the pin moves — it is a question to ask, not a mode
+# to leave a machine in.
 #
 # A failed run (no sudo, no network) exits non-zero. chezmoi does not record the state of a
 # script that failed, so the next apply retries it.

@@ -233,9 +233,14 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
   // the script's final command -v sweep sees the tools a real install would have produced. The
   // `==` is stripped here because the script pins every version from tools.toml, and the binary
   // a real `uv tool install ruff==X` leaves behind is still named `ruff`.
+  //
+  // `--version` answers TEST_UV_VERSION, because the script reinstalls uv when the version on
+  // PATH differs from the pin — the half that decides whether an already-provisioned machine
+  // ever moves. It is logged like everything else, so a probe is visible in the log.
   const UV_STUB = [
     '#!/bin/sh',
     'echo "uv $*" >> "$STUB_LOG"',
+    'if [ "$1" = "--version" ]; then echo "uv ${TEST_UV_VERSION:-0.0.0}"; exit 0; fi',
     'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then',
     '  name="${3%%==*}"',
     '  printf "#!/bin/sh\\n" > "$STUB_DIR/$name" && chmod 755 "$STUB_DIR/$name"',
@@ -243,7 +248,11 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     'exit "${UV_EXIT:-0}"',
   ].join('\n');
 
-  function ptSandbox({ uvPresent = false, unameS = 'Linux' } = {}) {
+  // The pin the script was rendered with, read back out of the render so the test cannot
+  // disagree with the script about which version counts as current.
+  const pinnedUv = () => /^UV_WANT='([^']+)'$/m.exec(renderFile(PT_SRC))[1];
+
+  function ptSandbox({ uvPresent = false, unameS = 'Linux', uvVersion = null } = {}) {
     const dir = tmpdir('python-tools-');
     const logFile = path.join(dir, 'log.txt');
     fs.writeFileSync(logFile, '');
@@ -260,7 +269,12 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     const scriptFile = path.join(dir, 'rendered.sh');
     fs.writeFileSync(scriptFile, rendered);
     const env = {
-      PATH: dir, HOME: dir, STUB_LOG: logFile, STUB_DIR: dir, TEST_UNAME_S: unameS,
+      PATH: dir,
+      HOME: dir,
+      STUB_LOG: logFile,
+      STUB_DIR: dir,
+      TEST_UNAME_S: unameS,
+      TEST_UV_VERSION: uvVersion ?? pinnedUv(),
     };
     return { scriptFile, env, logFile, dir };
   }
@@ -280,12 +294,23 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     );
   });
 
-  test('install-python-tools.sh.tmpl: uv already present -> no download, installs python + ruff + prek', { skip }, () => {
+  // The reject half of the pair below. An absent-only condition would make the uv pin govern a
+  // fresh machine and nothing else: every host that already had uv would keep whatever it
+  // installed on the day it was provisioned, which is the state the pin exists to remove.
+  test('install-python-tools.sh.tmpl: uv present at the wrong version -> reinstalls it', { skip }, () => {
+    const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true, uvVersion: '0.0.1' });
+    runSh(scriptFile, env);
+    const log = readLog(logFile);
+    assert.match(log, /curl -LsSf https:\/\/astral\.sh\/uv\//,
+      `an out-of-date uv must be replaced, not left alone:\n${log}`);
+  });
+
+  test('install-python-tools.sh.tmpl: uv already present at the pin -> no download, installs python + ruff + prek', { skip }, () => {
     const { scriptFile, env, logFile } = ptSandbox({ uvPresent: true });
     const { status } = runSh(scriptFile, env);
     const log = readLog(logFile);
     assert.strictEqual(status, 0, `expected success, log:\n${log}`);
-    assert.ok(!log.includes('curl '), `nothing should be downloaded when uv exists:\n${log}`);
+    assert.ok(!log.includes('curl '), `nothing should be downloaded when uv is already at the pin:\n${log}`);
     assert.ok(log.includes('uv python install 3.12'), `managed CPython should be provisioned:\n${log}`);
     // Pinned, not bare: a bare `uv tool install prek` gave CI and a laptop different builds of
     // the hook runner whose verdict decides whether a push is clean.

@@ -780,7 +780,7 @@ fi
 # TAB — used to leak one $TMPDIR/sandbox-host-*.json per invocation.
 SANDBOX_SETTINGS="$("$SANDBOX_DIR/resolve-sandbox-settings.sh" "$SANDBOX_DIR/settings.base.json" "$HOME/.config/claude/sandbox-settings.work.json" "$HOME/.claude/settings.json")"
 
-# --- Ensure base image exists, else refresh Claude Code once per day ---
+# --- Ensure base image exists, else rebuild when the Claude Code pin has moved ---
 if ! docker image inspect claudebot:base &>/dev/null; then
   echo "Base image claudebot:base not found — building it now..."
   build_base

@@ -58,7 +58,7 @@ if [ ! -f "$BREWFILE" ]; then
 fi
 
 # Installs what is missing and upgrades what is outdated — the same upgrade-on-apply policy as
-# the Linux installer's install_release helper and install-python-tools' `uv tool install`.
+# the Linux installer's install_release helper and install-python-tools' pinned global CLIs.
 echo "$TAG: brew bundle --file $BREWFILE ..." >&2
 if ! brew bundle --file="$BREWFILE"; then
   # Deliberately loud rather than tolerated. The usual cause is a `mas` row failing because

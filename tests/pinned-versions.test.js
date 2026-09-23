@@ -11,6 +11,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { srcPath } = require('./lib/paths');
+const { renderTemplate, chezmoiAvailable } = require('./lib/render');
+
+// Skip the render-based census where chezmoi is absent rather than failing on spawn ENOENT.
+const skip = chezmoiAvailable ? false : 'chezmoi not on PATH';
 
 const repoRoot = path.resolve(__dirname, '..');
 const ci = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
@@ -51,22 +55,31 @@ test('the runner is a release image, not the rolling alias', () => {
   assert.match(ci, /runs-on: ubuntu-\d\d\.\d\d/, 'the gate must name the runner image it was tested on');
 });
 
-test('the language versions are three-part', () => {
-  const node = /node-version: '([^']+)'/.exec(ci);
-  const python = /python-version: '([^']+)'/.exec(ci);
-  assert.ok(node && python, 'the workflow must still set up node and python');
-  for (const [name, m] of [['node', node], ['python', python]]) {
-    assert.match(m[1], /^\d+\.\d+\.\d+$/,
-      `${name}-version '${m[1]}' leaves the patch level to resolve at run time`);
+test('the language and uv versions come from tools.toml, three-part', () => {
+  // Two halves, and each is empty without the other. The workflow has to take the value from
+  // the toolchain step rather than carry a literal, because a second copy is the drift this
+  // whole arrangement exists to stop. And the value that step reads has to be three-part: a
+  // two-part node or python request leaves the patch level to resolve at run time, so two runs
+  // of one commit can use different interpreters. setup-uv is in the list for a third reason —
+  // the action's SHA pin fixes the ACTION, and without a version input it still installs
+  // whatever uv Astral released most recently, which is the binary the suite then runs under.
+  const pins = toolchain();
+  for (const [input, key] of [['node-version', 'node'], ['python-version', 'python'], ['version', 'uv']]) {
+    const m = new RegExp(`^\\s*${input}: (.+)$`, 'm').exec(ci);
+    assert.ok(m, `the workflow no longer sets ${input}`);
+    assert.strictEqual(m[1].trim(), `\${{ env.TOOLCHAIN_${key.toUpperCase()} }}`,
+      `${input} carries a literal instead of reading the tools.toml pin`);
+    assert.match(pins[key] || '', /^\d+\.\d+\.\d+$/,
+      `tools.toml's ${key} pin leaves the patch level to resolve at run time`);
   }
 });
 
-test('setup-uv is given a version', () => {
-  // The SHA pin above fixes the ACTION. Without this input the action still installs whatever
-  // uv Astral released most recently, which is the binary the whole suite then runs under.
-  const block = /- uses: astral-sh\/setup-uv@[\s\S]*?\n\n/.exec(ci);
-  assert.ok(block, 'the setup-uv step must still be present');
-  assert.match(block[0], /version: '\d+\.\d+\.\d+'/, 'setup-uv installs a floating uv without a version input');
+test("CI's managed python is the pinned version, not a two-part request", () => {
+  // `uv python install 3.14` resolved a patch level on the day the run happened. An exact
+  // install still answers the claude-guard shims' two-part request, because uv creates the
+  // `cpython-3.14-*` alias beside `cpython-3.14.6-*`.
+  assert.match(ci, /uv python install "\$\{TOOLCHAIN_PYTHON\}"/);
+  assert.doesNotMatch(ci, /^\s*uv python install \d+\.\d+$/m);
 });
 
 test('CI installs the toolchain versions tools.toml pins', () => {
@@ -83,48 +96,86 @@ test('CI installs the toolchain versions tools.toml pins', () => {
     'the installer script installs whatever chezmoi is current on the day the run happens');
 });
 
-test('CI cancels a superseded run only where the range still covers everything', () => {
-  // A push run checks `event.before..sha`. Cancelling push A when push B arrives leaves A's
-  // commits in no run's range, so the signature check — the hole this workflow exists to close
-  // — never sees them. A pull_request run checks base..head, where the newest run is a superset.
-  assert.match(ci, /^concurrency:$/m, 'two runs must not share a runner HOME');
-  assert.match(ci, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/,
-    'unconditional cancellation drops commits out of the signature check');
+test('a push run gets a concurrency group to itself', () => {
+  // A push run checks `event.before..sha`. If push B is cancelled, its commits sit inside no
+  // run's range — push C starts from B's head — and the signature check, the hole this
+  // workflow exists to close, never sees them. `cancel-in-progress: false` is not enough: the
+  // documented default is that a queued run cancels whatever is already PENDING in its group.
+  // Only a group per commit keeps a push run uncancellable. A pull_request run checks
+  // base..head, where the newest run is a superset, so grouping by ref is safe there.
+  assert.match(ci, /^concurrency:$/m, 'a superseded PR run must not keep burning minutes');
+  const group = /^\s*group: (.+)$/m.exec(ci);
+  assert.ok(group, 'the concurrency block must set a group');
+  assert.match(group[1], /github\.event_name == 'pull_request' && github\.ref \|\| github\.sha/,
+    'a push run grouped by ref can be cancelled, which drops its commits out of the signature check');
 });
 
 // --- The machine installers ------------------------------------------------------------------
 
-test('no installer resolves a version at install time', () => {
-  // The census walks the scripts rather than a hand-written list, so a new installer is covered
-  // the day it lands. `found` is the non-vacuity guard: a rename that emptied the walk would
-  // otherwise leave every assertion below passing over nothing.
-  const roots = [srcPath('.chezmoiscripts'), srcPath('.chezmoitemplates')];
+// The census runs over the RENDERED scripts, not the template sources — a `{{ .toolchain.ruff }}`
+// splits into three words on whitespace, so a source-text census reads a pinned line as unpinned
+// and an unpinned one the same way. The render is also what the machine executes.
+//
+// The walk finds the scripts rather than a hand-written list, so a new installer is covered the
+// day it lands; `installLines` is the non-vacuity guard, because a walk that found nothing would
+// leave the assertion passing over an empty list.
+test('no installer resolves a package version at install time', { skip }, () => {
   const files = [];
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p);
-      else if (/\.(sh|tmpl)$/.test(e.name) || !path.extname(e.name)) files.push(p);
+      else if (/\.(sh|tmpl|ps1)$/.test(e.name) || !path.extname(e.name)) files.push(p);
     }
   };
-  for (const r of roots) walk(r);
-  assert.ok(files.length > 30, `sanity: the walk found only ${files.length} installer scripts`);
+  for (const r of [srcPath('.chezmoiscripts'), srcPath('.chezmoitemplates')]) walk(r);
+  assert.ok(files.length > 30, `sanity: the walk found only ${files.length} scripts`);
 
+  // A package argument is pinned when it carries `==` (uv) or `@<digit>` (npm). A `$name` or
+  // `"$t"` argument is flagged even when the loop it came from pins every element: the version
+  // has to be readable on the line that installs it, or a census like this one is blind to it —
+  // which is how the first version of this test passed over `uv tool install "$t"`.
+  const pinned = (arg) => /==\S/.test(arg) || /@\d/.test(arg);
   const offenders = [];
+  let installLines = 0;
+
   for (const f of files) {
-    const body = fs.readFileSync(f, 'utf8');
-    for (const [i, line] of body.split('\n').entries()) {
-      if (line.trim().startsWith('#')) continue;
-      // `uv tool install <bare name>` and `npm install -g <bare name>` both take the newest
-      // release on the day they run.
-      if (/uv tool install\s+["']?[a-z]/.test(line) && !/==/.test(line)) {
-        offenders.push(`${path.relative(repoRoot, f)}:${i + 1} ${line.trim()}`);
+    let body = fs.readFileSync(f, 'utf8');
+    if (f.endsWith('.tmpl')) {
+      // Pinned to the workstation profile: a server or WSL render drops whole scripts, and a
+      // script that renders empty is one this census cannot see.
+      try {
+        body = renderTemplate(body, { source: srcPath(), profile: 'workstation' });
+      } catch {
+        continue; // a PowerShell template chezmoi will not render on this OS
       }
-      if (/npm install -g/.test(line) && !/\\$/.test(line.trim()) && !/@/.test(line)) {
-        offenders.push(`${path.relative(repoRoot, f)}:${i + 1} ${line.trim()}`);
+    }
+    const lines = body.split('\n');
+    for (const [i, raw] of lines.entries()) {
+      const line = raw.trim();
+      if (line.startsWith('#')) continue;
+      const m = /(?:uv tool install|npm install -g)((?:\s+--\S+)*)\s+(.*)$/.exec(line);
+      if (!m) continue;
+      installLines += 1;
+      // Everything after a `||`, `&&`, `;` or `|` belongs to another command, not to this one.
+      const ownArgs = m[2].split(/\s*(?:\|\||&&|;|\|)\s*/)[0];
+      // A trailing backslash puts the packages on the continuation lines instead.
+      const args = /\\$/.test(line)
+        ? lines.slice(i + 1).reduce((acc, l) => {
+          if (acc.done) return acc;
+          acc.list.push(l.trim().replace(/\s*\\$/, ''));
+          if (!/\\$/.test(l.trim())) acc.done = true;
+          return acc;
+        }, { list: [], done: false }).list
+        : ownArgs.split(/\s+/);
+      for (const a of args) {
+        const arg = a.replace(/^['"]|['"]$/g, '');
+        if (!arg || arg.startsWith('-')) continue;
+        if (!pinned(arg)) offenders.push(`${path.relative(repoRoot, f)}:${i + 1} ${arg}`);
       }
     }
   }
+  assert.ok(installLines >= 3, `sanity: the census found only ${installLines} global install lines`);
   assert.deepStrictEqual(offenders, [],
     'these install whatever version is current on the day they run');
 });

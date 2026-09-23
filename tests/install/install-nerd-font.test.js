@@ -60,4 +60,10 @@ test('Linux script installs per-user and rebuilds the font cache', { skip }, () 
   // font in place instead of skipping it forever once the directory exists.
   assert.match(linuxBody, /includeTemplate "linux-install\.sh"/);
   assert.match(linuxBody, /recorded_tag iosevkaterm-font/);
+  // The tag is the pin from tools.toml, taken through pinned_tag. It used to follow the
+  // releases/latest redirect at apply time, so which font build a machine got was decided by
+  // the day it was provisioned. The asset URL moved off `releases/latest/download/` for the
+  // same reason: that path serves the current release whatever tag gets recorded beside it.
+  assert.match(linuxBody, /pinned_tag ryanoasis\/nerd-fonts '\{\{ \(index \.releases "nerd-fonts"\)\.tag \}\}'/);
+  assert.doesNotMatch(linuxBody, /releases\/latest\/download/);
 });

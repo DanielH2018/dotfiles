@@ -283,24 +283,32 @@ uv = "0.12.14"
 chezmoi = "2.71.1"
 # renovate: datasource=npm depName=oxlint
 oxlint = "1.85.0"
+# The two language runtimes .github/workflows/ci.yml sets up, three-part: a two-part request
+# leaves the patch level to resolve at run time, so two runs of one commit can use different
+# interpreters. The machines take node from fnm and python from uv, so no template renders
+# these — they live here so every version CI pins is in one file.
+# renovate: datasource=node-version depName=node
+node = "22.23.2"
+# renovate: datasource=python-version depName=python
+python = "3.14.6"
 
 # The language servers dot_config/nvim/lua/plugins/lsp.lua enables, installed globally from npm.
 [[node_lsps]]
-# renovate: datasource=npm depName=@vtsls/language-server
 name = "@vtsls/language-server"
+# renovate: datasource=npm depName=@vtsls/language-server
 version = "0.3.0"
 
 [[node_lsps]]
-# renovate: datasource=npm depName=bash-language-server
 name = "bash-language-server"
+# renovate: datasource=npm depName=bash-language-server
 version = "5.8.1"
 
 [[node_lsps]]
-# renovate: datasource=npm depName=yaml-language-server
 name = "yaml-language-server"
+# renovate: datasource=npm depName=yaml-language-server
 version = "1.24.0"
 
 [[node_lsps]]
-# renovate: datasource=npm depName=vscode-langservers-extracted
 name = "vscode-langservers-extracted"
+# renovate: datasource=npm depName=vscode-langservers-extracted
 version = "4.10.0"

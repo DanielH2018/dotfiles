@@ -71,9 +71,14 @@ if ($uv) {
     # of os-unix/run_onchange_after_install-python-tools.sh.tmpl (see its header for the full
     # rationale, including why pytest is deliberately NOT installed globally). ruff backs the
     # ~/.claude auto-format + lint-after-edit hooks, which call a bare `ruff`; prek is the
-    # pre-commit replacement run as `prek run --all-files`. `uv tool install` replaces an
-    # existing install rather than erroring, so a re-run also refreshes a stale copy.
-    foreach ($t in 'ruff', 'prek') {
+    # pre-commit replacement run as `prek run --all-files`.
+    #
+    # Pinned from .chezmoidata/tools.toml, the same literals the Linux installer and CI read.
+    # Unpinned, each machine took whatever was current on the day it ran, so the prek that
+    # decides whether a push is clean differed between Windows, Linux and CI. A version
+    # argument replaces an install at a different version rather than erroring, so a bump
+    # refreshes in place.
+    foreach ($t in 'ruff=={{ .toolchain.ruff }}', 'prek=={{ .toolchain.prek }}') {
         Write-Host "[install] $t via uv tool ..."
         & $uv.Source tool install $t
     }

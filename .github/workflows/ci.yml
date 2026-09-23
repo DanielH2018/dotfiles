@@ -26,17 +26,20 @@ on:
 permissions:
   contents: read
 
-# One run per ref. Two pushes to one PR branch otherwise run the gate twice at once, in a
-# shared runner HOME that both are installing global npm, uv and chezmoi tools into.
+# One run per PR branch, so a re-push does not leave an obsolete run burning minutes beside
+# the one that supersedes it. A PR run's range is base..head, so the newer run is a superset
+# of the one it replaces and nothing goes unchecked.
 #
-# Cancellation is restricted to pull_request deliberately. A PR run's range is base..head, so
-# the surviving run covers everything the cancelled one would have checked. A push run's range
-# is `event.before..sha`: cancelling push A when push B arrives leaves A's commits inside no
-# run's range at all, and the signature check below — the hole this workflow exists to close —
-# would then never see them, silently.
+# A PUSH run is grouped by its own SHA, which means every push gets a group to itself and
+# nothing is ever cancelled. That is deliberate and it is not the same as `cancel-in-progress:
+# false`: the documented default is that a QUEUED run cancels any run already PENDING in its
+# group, whatever cancel-in-progress says. A push run checks `event.before..sha`, so a
+# cancelled push B leaves its commits inside no run's range at all — push C starts from B's
+# head — and the signature check below, the hole this workflow exists to close, would never
+# see them. A group per commit cannot do that.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 
 jobs:
   gate:
@@ -48,33 +51,18 @@ jobs:
       # tag is a mutable pointer — `@v4` is wherever the publisher last moved it — so a
       # tag-pinned action can change what this gate runs after the change was reviewed.
       # Renovate's github-actions manager reads the `# vX.Y.Z` comment natively.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The signature step walks a commit range and the gate's own steps read git
           # history; a shallow clone makes both wrong rather than failing loudly.
           fetch-depth: 0
 
-      # Three-part versions. A two-part node or python version leaves the patch level to
-      # resolve at run time, so two runs of one commit can use different interpreters.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22.23.2'
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.14.6'
-
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          # Without this the action installs whatever uv Astral released most recently, so the
-          # SHA pin above would still deliver a floating binary.
-          version: '0.12.14'
-
-      # The versions come from home/.chezmoidata/tools.toml, the same file the machine
-      # installers render. Writing them here instead is how CI and a laptop ended up running
+      # Every version below comes from home/.chezmoidata/tools.toml, the same file the machine
+      # installers render. Writing one here instead is how CI and a laptop ended up running
       # different builds of prek — the hook runner whose verdict decides whether a push is
-      # clean. The awk reads the [toolchain] table alone, so a `name = "..."` elsewhere in
-      # that file cannot be mistaken for a pin.
+      # clean. Runs first, because the setup actions consume its output. The awk reads the
+      # [toolchain] table alone, so a `name = "..."` elsewhere in that file cannot be mistaken
+      # for a pin.
       - name: Read the pinned toolchain
         run: |
           set -euo pipefail
@@ -86,6 +74,22 @@ jobs:
               print "TOOLCHAIN_" toupper($1) "=" $3
             }
           ' home/.chezmoidata/tools.toml | tee -a "$GITHUB_ENV"
+
+      # Three-part versions. A two-part node or python request leaves the patch level to
+      # resolve at run time, so two runs of one commit can use different interpreters.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.TOOLCHAIN_NODE }}
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.TOOLCHAIN_PYTHON }}
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          # Without this the action installs whatever uv Astral released most recently, so the
+          # SHA pin above would still deliver a floating binary.
+          version: ${{ env.TOOLCHAIN_UV }}
 
       # The gate's `language: system` hooks need these on PATH. shellcheck is preinstalled
       # on the runner image; oxlint and prek are not, and chezmoi is what renders the .sh.tmpl
@@ -105,7 +109,11 @@ jobs:
           # `--managed-python` excludes the hostedtoolcache build actions/setup-python
           # provides. Without a uv-MANAGED 3.14 the shims take their
           # interpreter-unavailable fallback, and their tests assert the live path.
-          uv python install 3.14
+          #
+          # The exact version, not `3.14`, which resolved a patch level at run time. An exact
+          # install still answers the shims' two-part request: uv creates the `cpython-3.14-*`
+          # alias alongside `cpython-3.14.6-*`, and `find 3.14` matches it.
+          uv python install "${TOOLCHAIN_PYTHON}"
           # The pinned, checksum-verified chezmoi release rather than the vendor's installer
           # script: that script installs whatever is current on the day the run happens, and
           # chezmoi renders every template this suite then asserts against. Same shape as the

@@ -88,9 +88,11 @@ latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (n
 }
 
 # The one remaining route to latest_tag, and nothing in normal operation takes it.
-# `INSTALL_LATEST=1 chezmoi apply` answers "what would a bump bring?" against a real machine
-# without editing tools.toml first; the tag it resolves is NOT written back, so the next plain
-# apply reinstalls the pin. $1=owner/repo $2=pinned tag.
+# INSTALL_LATEST=1 answers "what would a bump bring?" against a real machine without editing
+# tools.toml first. Set it on a run of the RENDERED script, not on `chezmoi apply`: the callers
+# are run_onchange_ scripts, so an apply against an unchanged tree runs none of them. It
+# INSTALLS what it resolves and records that tag, and tools.toml is untouched, so the machine
+# then sits ahead of the pin until the pin moves. $1=owner/repo $2=pinned tag.
 pinned_tag() {
   if [ "${INSTALL_LATEST:-0}" = 1 ]; then
     latest_tag "$1"

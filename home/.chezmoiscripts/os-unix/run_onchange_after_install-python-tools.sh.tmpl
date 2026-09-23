@@ -18,11 +18,12 @@
 # here. A global pytest would run in an isolated venv that can see no project at all, and
 # would only serve to make a bare `pytest` fail confusingly instead of failing fast.
 #
-# Linux gets the uv binary from Astral's standalone installer — there is no apt package,
-# which is why uv is absent from .chezmoidata/tools.toml. macOS takes it from the Brewfile
-# and Windows from winget; same split as fnm. The `uv tool install` steps below then run on
-# every non-Windows OS, mirroring run_once_before_install-fnm.sh.tmpl's shape. The Windows
-# counterpart lives in os-windows/run_onchange_install-cli-tools.ps1.tmpl.
+# Linux gets the uv binary from Astral's standalone installer — there is no apt package, which
+# is why uv has no [[tools]] entry in .chezmoidata/tools.toml (its VERSION is pinned there,
+# under [toolchain]). macOS takes it from the Brewfile and Windows from winget; same split as
+# fnm. Step 3 below then runs on every non-Windows OS, mirroring
+# run_once_before_install-fnm.sh.tmpl's shape. The Windows counterpart lives in
+# os-windows/run_onchange_install-cli-tools.ps1.tmpl.
 #
 # run_onchange_after_: runs AFTER file targets, so a failure here (no network, brew not bundled
 # yet) fails loudly WITHOUT blocking dotfile deployment — chezmoi does not record the state of a
@@ -39,9 +40,24 @@ BIN_DIR="$HOME/.local/bin"   # already on PATH via dot_config/shell/common.sh, b
 PATH="$BIN_DIR:$PATH"        # runs scripts non-interactively, so re-add it before probing.
 mkdir -p "$BIN_DIR"
 
-# 1. uv binary. Linux only — see header for where the other two OSes get it.
-if ! command -v uv >/dev/null 2>&1 && [ "$(uname -s)" = "Linux" ]; then
-  echo "install-python-tools: installing uv ..." >&2
+# 1. uv binary, at the version .chezmoidata/tools.toml pins. Linux only — see header for where
+#    the other two OSes get it, and why their version is theirs to manage.
+#
+#    The condition is "absent OR at the wrong version", not just "absent". Absent-only would
+#    make the pin govern a fresh machine and nothing else: every host that already had uv would
+#    keep whatever it installed on the day it was provisioned, which is the state being removed.
+#
+#    `uv --version` prints `uv X.Y.Z (<hash> <date>)`; the second word is the version. Trimmed
+#    with parameter expansion rather than awk, which this script has no other reason to need.
+UV_WANT='{{ .toolchain.uv }}'
+uv_version() {
+  v="$(uv --version 2>/dev/null)"
+  v="${v#uv }"
+  printf '%s' "${v%% *}"
+}
+if [ "$(uname -s)" = "Linux" ] && { ! command -v uv >/dev/null 2>&1 || [ "$(uv_version)" != "$UV_WANT" ]; }; then
+  uv_have="$(uv_version)"
+  echo "install-python-tools: installing uv $UV_WANT (have ${uv_have:-none}) ..." >&2
   tmp="$(mktemp -d)"
   # The versioned installer URL, not the bare one: the bare one installs whatever Astral released
   # most recently, so the uv a machine got was decided by the day it was provisioned.
@@ -74,7 +90,7 @@ uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' f
 # at call time with `uv python find --no-project --managed-python --system 3.14`.
 uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' failed" >&2
 
-# 3. Global CLIs, at the versions .chezmoidata/tools.toml pins. `uv tool install pkg==X.Y.Z`
+# 3. Global CLIs, at the versions .chezmoidata/tools.toml pins. A `pkg==X.Y.Z` argument
 #    replaces an install at a different version rather than erroring, so a bump reinstalls in
 #    place — the same upgrade-on-apply policy the install_release helper in
 #    os-linux/run_onchange_after_install-cli-tools.sh.tmpl uses. The executables land in uv's
@@ -82,9 +98,12 @@ uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' f
 #
 #    prek is the reason the pins matter most: it is the hook runner that decides whether a push
 #    is clean, and CI installed one build of it while a laptop installed another.
-for t in 'ruff=={{ .toolchain.ruff }}' 'prek=={{ .toolchain.prek }}'; do
-  uv tool install "$t" || echo "install-python-tools: 'uv tool install $t' failed" >&2
-done
+#
+#    One line per tool rather than a loop over a list: the version has to be visible on the
+#    line that installs it, to a reader and to a grep asking whether anything here is still
+#    unpinned.
+uv tool install 'ruff=={{ .toolchain.ruff }}' || echo "install-python-tools: installing ruff failed" >&2
+uv tool install 'prek=={{ .toolchain.prek }}' || echo "install-python-tools: installing prek failed" >&2
 
 # Fail loudly (and retry next apply) if anything is still missing.
 missing=""

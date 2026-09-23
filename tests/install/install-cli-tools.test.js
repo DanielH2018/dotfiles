@@ -53,9 +53,9 @@ const PASSTHROUGH = ['sh', 'mkdir', 'cat', 'rm', 'ln', 'sed', 'head', 'mktemp', 
 // Drive the rendered script against a synthetic PATH: `stubs` maps command name -> shell body,
 // and every passthrough binary above is symlinked in beside them. No real package manager, sudo
 // or network is reachable. Returns the merged stdout+stderr plus the throwaway HOME.
-// `opts.home` reuses a previous run's HOME, which is what the throttle-gate tests need — the
-// stamp the gate reads lives under it. `opts.env` adds to the child environment for the same
-// reason: CLI_TOOLS_FORCE and CLI_TOOLS_MAX_AGE_DAYS are the gate's overrides.
+// `opts.home` reuses a previous run's HOME, so a case can start from the .versions state an
+// earlier run left. `opts.env` adds to the child environment, which is how INSTALL_LATEST — the
+// one route left to the releases/latest redirect — is exercised below.
 function runWithStubs(stubs, opts = {}) {
   const home = opts.home || scratch(os.tmpdir(), 'cli-tools-');
   const binDir = path.join(home, 'stubs');
