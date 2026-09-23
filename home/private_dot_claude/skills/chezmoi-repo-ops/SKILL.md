@@ -20,28 +20,29 @@ checkout's local `main` stays at the pre-merge commit, and chezmoi reads its sou
 checkout's working tree — so an apply now redeploys pre-merge content and silently reverts what
 just landed. `chezmoi diff` is quiet, because deployed and (stale) source genuinely match.
 
-Check what the primary checkout is on first; the two cases differ:
+Run `bin/land-sync`, from wherever you are — a worktree included:
 
 ```sh
-git -C ~/.local/share/chezmoi rev-parse --abbrev-ref HEAD
+bin/land-sync
 ```
 
-- **On `main`** — `git fetch origin main && git merge --ff-only origin/main`. Verify with
-  `git show HEAD:<source path>`.
-- **On another branch** (a session parked one there) — the merge above would pull origin/main
-  *into that in-flight branch*. Use `git fetch origin main:main`, which fast-forwards the
-  non-checked-out ref and fails loudly instead of clobbering. Verify with
-  `git show main:<source path>`.
+It finds the primary checkout, takes the bench lock, and routes on what that checkout is
+actually on, which is what decides the rest. On `main` it fast-forwards that checkout onto
+origin/main. Parked on another branch — where `merge --ff-only origin/main` would pull the
+landing *into* that in-flight branch — it advances the `main` ref instead, leaves the branch
+alone, and prints what a switch back would change under `home/`. A `main` that has diverged
+gets a refusal, not a merge commit. `--dry-run` prints the plan.
 
-Syncing the ref still isn't deploying. While the checkout sits on a pre-merge branch, every
-apply deploys pre-merge content and it looks like the change never landed. `bin/try --back`
-(checkout main + apply) is the fix; run `git diff --stat <parked-branch> main -- home/` first
-to see what the switch un-deploys.
+Syncing the ref still isn't deploying, and `land-sync` deliberately stops short of it. On
+`main`, deploy with `chezmoi diff` then `chezmoi apply`. While the checkout sits on a pre-merge
+branch, every apply deploys pre-merge content and it looks like the change never landed;
+`bin/try --back` (checkout main + apply) is the fix, and it moves `$HOME`, so it is the
+operator's to run.
 
 **The tell that the fast-forward didn't happen:** `land` finishes with `worktree still holds
 <branch>; from the primary: git worktree remove <path>` and `git worktree list` shows only the
 primary. That is a branch created in the primary checkout rather than a worktree — `git
-checkout main`, then take the *on main* case above.
+checkout main` there, then `bin/land-sync`.
 
 Done when the primary checkout is on `main`, `git show main:<path>` holds the landed content,
 and the file in `$HOME` matches it.

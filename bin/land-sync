@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# land-sync — move the primary checkout's main onto what land just pushed.
+#
+# land merges by pushing <branch>:main, which updates ORIGIN's main and nothing else.
+# The primary checkout's local main stays at the pre-merge commit, and chezmoi reads
+# its source from that checkout's working tree — so an apply straight after a landing
+# redeploys the pre-merge file and silently reverts what just landed. `chezmoi diff`
+# stays quiet through all of it, because deployed and (stale) source genuinely match.
+# That was missed three times in one day.
+#
+# The repair was a paragraph in the chezmoi-repo-ops skill, and every decision in it
+# is a git query: which branch the primary checkout is on decides whether a merge is
+# even safe, and that answer decides which command moves main. A paragraph makes the
+# reader run those queries and route on the result by hand, on the one hop where
+# getting it wrong pulls origin/main into another session's in-flight branch. This
+# runs the queries instead.
+#
+# Run it from anywhere in this repo, a worktree included: it finds the primary
+# checkout itself and never moves the worktree you are standing in.
+#
+#   land-sync              sync the primary checkout's main
+#   land-sync --dry-run    print the plan, touch nothing
+#
+# It does NOT deploy, and syncing the ref is not deploying. Where the primary is
+# parked on another branch it will not leave that branch either — the switch back is
+# `bin/try --back`, which applies to the operator's live $HOME, so it stays theirs to
+# run. What this prints is what that switch would change.
+#
+# Kept bash-3.2 clean, like land.
+set -u
+
+DRY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) printf 'land-sync: unknown argument %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+die() { printf 'land-sync: %s\n' "$1" >&2; exit 1; }
+say() { printf '  %s\n' "$1"; }
+
+# shellcheck source=bin/lib/repo-lock.sh
+. "${BASH_SOURCE[0]%/*}/lib/repo-lock.sh" || die "cannot load lib/repo-lock.sh"
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "not in a git repo"
+
+# git lists the primary checkout first, always — so this works identically from the
+# primary and from any worktree, and it beats a hardcoded ~/.local/share/chezmoi,
+# which would be wrong for a clone anywhere else and untestable against a fixture.
+PRIMARY=$(git worktree list --porcelain | sed -n '1s/^worktree //p') || exit 1
+[ -n "$PRIMARY" ] && [ -d "$PRIMARY" ] ||
+  die "could not work out which checkout is the primary one"
+
+COMMON=$(cd "$(git rev-parse --git-common-dir)" && pwd -P) || exit 1
+
+# try's lock, not land's. This moves the primary checkout's refs and, on main, its
+# working tree — the same things a bench moves, and chezmoi's source is that tree.
+# Landing is a different resource: a sync must not wait out a full landing, and
+# holding land's lock here would change what "one lander at a time" means.
+LOCK="$COMMON/try.lock"
+
+HEAD_REF=$(git -C "$PRIMARY" rev-parse --abbrev-ref HEAD) || exit 1  # "HEAD" when detached
+
+if [ "$DRY" -eq 1 ]; then
+  printf 'land-sync --dry-run: primary checkout %s (on %s)\n' "$PRIMARY" "$HEAD_REF"
+  say "lock    $LOCK"
+  if [ "$HEAD_REF" = main ]; then
+    say "fetch   git fetch origin main"
+    say "move    git merge --ff-only origin/main"
+  else
+    say "move    git fetch origin main:main (main is not checked out there)"
+    say "show    git diff --stat $HEAD_REF main -- home/"
+    say "next    bin/try --back, to put the bench back on main and deploy it"
+  fi
+  exit 0
+fi
+
+# No call site is visible here — with_repo_lock invokes it via "$@" — so SC2329 fires for the
+# function and SC2317 for every command in its body.
+# shellcheck disable=SC2329,SC2317
+sync_primary() {
+  # Re-read under the lock: another session may have moved the primary between the
+  # read above and here, and which case applies is exactly what that read decides.
+  head=$(git -C "$PRIMARY" rev-parse --abbrev-ref HEAD) || return 1
+  before=$(git -C "$PRIMARY" rev-parse main 2>/dev/null) || before=''
+
+  if [ "$head" = main ]; then
+    say "primary checkout is on main — fast-forwarding it onto origin/main"
+    git -C "$PRIMARY" fetch -q origin main || return 1
+    if ! git -C "$PRIMARY" merge --ff-only origin/main; then
+      printf 'land-sync: main in %s will not fast-forward onto origin/main — reconcile it by hand\n' \
+        "$PRIMARY" >&2
+      return 1
+    fi
+  else
+    # Never `merge origin/main` here: main is not what is checked out, so that would
+    # pull origin/main into whatever in-flight branch the primary is parked on.
+    # Updating the ref directly refuses loudly instead of building a merge.
+    say "primary checkout is parked on $head — advancing main without touching it"
+    if ! git -C "$PRIMARY" fetch -q origin main:main; then
+      printf 'land-sync: main in %s will not fast-forward onto origin/main — reconcile it by hand\n' \
+        "$PRIMARY" >&2
+      return 1
+    fi
+  fi
+
+  after=$(git -C "$PRIMARY" rev-parse main) || return 1
+  if [ "$after" = "$before" ]; then
+    say "main was already at $(git -C "$PRIMARY" rev-parse --short main)"
+  else
+    say "main is now $(git -C "$PRIMARY" rev-parse --short main)"
+  fi
+
+  if [ "$head" = main ]; then
+    say "the chezmoi source now holds the landed content — chezmoi diff, then apply, to deploy it"
+  else
+    # What returning to main would un-deploy, while it is still cheap to look at.
+    say "what bin/try --back would change under home/:"
+    git -C "$PRIMARY" --no-pager diff --stat "$head" main -- home/
+    say "main is synced but not on the bench — run bin/try --back from $PRIMARY to deploy it"
+  fi
+}
+
+with_repo_lock "$LOCK" \
+  "another worktree is using the bench; waiting for it to finish..." \
+  "syncing without the cross-worktree lock" \
+  sync_primary
+exit $?
