@@ -26,10 +26,12 @@ itself; there is nothing to work around. A refusal here means real work the hook
 see, so report it and stop rather than arguing with `discard_changes`.
 
 **Squash or rebase** — the merge rewrote the commits, so the tip is not an ancestor and the
-reachability test says nothing. The hook falls back to asking GitHub whether a PR with this
-branch as its head is merged, which is provenance rather than a guess. `DanielH2018/server`
-allows both merge shapes, and PR #317 — squash-merged as `78358ddb` — is why the fallback
-exists.
+reachability test says nothing. The hook falls back to asking GitHub for the head commit of
+every merged PR opened from this branch name, and requires one of them to equal this tip.
+The SHA is what makes that provenance rather than a guess: a branch name is reused freely
+here, so a merged PR under the same name can belong to work that has nothing to do with what
+is on disk. `DanielH2018/server` allows both merge shapes, and PR #317 — squash-merged as
+`78358ddb` — is why the fallback exists.
 
 ## Why the branch deletion moves
 

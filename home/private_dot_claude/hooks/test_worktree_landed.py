@@ -33,20 +33,34 @@ for _var in [k for k in os.environ if k.startswith("GIT_")]:
 failures = []
 ran = 0
 
-# A stand-in for `gh pr list --head <branch> --state merged --json number --jq length`:
-# it prints 1 when the branch is listed in $STUB_MERGED, 0 otherwise. Provenance is the
-# whole point of that call, so the tests have to be able to state both answers.
+# A stand-in for `gh pr list --head <branch> --state merged --json <fields>`.
+# $STUB_MERGED holds one `<branch> <head-sha>` row per merged PR, so a test can
+# state a reused branch name whose merged PR points at a different commit — the
+# case the hook has to refuse.
+#
+# It answers BOTH query shapes on purpose. The shape this hook used before it
+# asked for head SHAs was `--json number --jq length`; a stub that spoke only the
+# new one would make the old hook go silent for want of parseable output. The
+# red-proof for the change is the old hook BLOCKING on a reused name, so the old
+# shape has to keep working here.
 STUB_DIR = Path(tempfile.mkdtemp(prefix="worktree-landed-stub-"))
 GH_STUB = STUB_DIR / "gh"
 MERGED_LIST = STUB_DIR / "merged"
 MERGED_LIST.write_text("")
 GH_STUB.write_text(
     "#!/bin/bash\n"
-    "branch=\n"
+    "branch=\nfields=\n"
     "while [ $# -gt 0 ]; do\n"
-    '  case "$1" in --head) branch="$2"; shift 2 ;; *) shift ;; esac\n'
+    '  case "$1" in\n'
+    '    --head) branch="$2"; shift 2 ;;\n'
+    '    --json) fields="$2"; shift 2 ;;\n'
+    "    *) shift ;;\n"
+    "  esac\n"
     "done\n"
-    'if grep -qxF "$branch" "$STUB_MERGED" 2>/dev/null; then echo 1; else echo 0; fi\n'
+    'case "$fields" in\n'
+    '  *headRefOid*) awk -v b="$branch" \'$1 == b { print $2 }\' "$STUB_MERGED" ;;\n'
+    '  *) awk -v b="$branch" \'$1 == b { n++ } END { print n+0 }\' "$STUB_MERGED" ;;\n'
+    "esac\n"
 )
 GH_STUB.chmod(0o755)
 
@@ -91,6 +105,15 @@ def git(args, cwd):
     )
 
 
+def merged_rows(*rows):
+    """Set the stub's merged-PR table: (branch, head-sha) pairs."""
+    MERGED_LIST.write_text("".join(f"{b} {sha}\n" for b, sha in rows))
+
+
+def head_of(path):
+    return git(["rev-parse", "HEAD"], path).stdout.strip()
+
+
 def build(root):
     """An origin, a clone, and the worktree states the hook has to tell apart."""
     origin = root / "origin"
@@ -109,7 +132,7 @@ def build(root):
     trees = repo / ".claude" / "worktrees"
     trees.mkdir(parents=True)
 
-    def worktree(name, *, commit, push, land, squash=False):
+    def worktree(name, *, commit, push, land, squash=False, drop_upstream=False):
         path = trees / name
         git(["worktree", "add", "-q", "-b", f"wt-{name}", str(path)], repo)
         if commit:
@@ -130,6 +153,13 @@ def build(root):
             git(["merge", "-q", "--no-ff", "-m", f"merge {name}", f"wt-{name}"], repo)
             git(["push", "-q", "origin", "main"], repo)
             git(["fetch", "-q", "origin"], repo)
+        if drop_upstream:
+            # What a merge with branch deletion leaves behind: `branch.<x>.merge` is
+            # still configured, but `@{upstream}` no longer resolves, so the tip has
+            # nothing local to disagree with. This is the state in which a branch-NAME
+            # match was the hook's only evidence before it compared head SHAs.
+            git(["push", "-q", "origin", "--delete", f"wt-{name}"], repo)
+            git(["fetch", "-q", "--prune", "origin"], path)
         return path
 
     return {
@@ -148,6 +178,17 @@ def build(root):
         # record refers to, so the merged PR proves nothing about what is on disk.
         "squashed_then_edited": worktree(
             "squashed-then-edited", commit=True, push=True, land=False, squash=True
+        ),
+        # Squash-merged and then deleted upstream — the ordinary end state of a
+        # landing here. Nothing local contradicts the tip any more, so this is the
+        # tree on which the GitHub answer is the whole of the evidence.
+        "reused_name": worktree(
+            "reused-name",
+            commit=True,
+            push=True,
+            land=False,
+            squash=True,
+            drop_upstream=True,
         ),
     }
 
@@ -231,7 +272,10 @@ with tempfile.TemporaryDirectory() as tmp:
         "a squash-merged branch is silent while gh reports no merged PR",
         run(t["squashed"]) is None,
     )
-    MERGED_LIST.write_text("wt-squashed\nwt-squashed-then-edited\n")
+    merged_rows(
+        ("wt-squashed", head_of(t["squashed"])),
+        ("wt-squashed-then-edited", head_of(t["squashed_then_edited"])),
+    )
     squashed = run(t["squashed"])
     check(
         "a squash-merged branch blocks once gh reports the PR merged",
@@ -317,6 +361,51 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "a commit made after the merge is silent",
         run(t["squashed_then_edited"]) is None,
+    )
+
+    # ── the reused branch name ──────────────────────────────────────────────────
+    #
+    # The pair below is the one that decides whether `-D` is authorised by evidence
+    # or by a string. Both halves run on the SAME worktree, in the state a landing
+    # actually leaves: squash-merged, upstream deleted. The upstream test above
+    # therefore cannot silence either of them — assert that precondition first, or a
+    # green refusal here would be proving something else.
+    reused = t["reused_name"]
+    upstream_gone = (
+        subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "@{upstream}"],
+            cwd=reused,
+            capture_output=True,
+            text=True,
+        ).returncode
+        != 0
+    )
+    check("the reused-name tree has no upstream left to disagree with", upstream_gone)
+    check(
+        "it still carries the branch config that proves it was pushed",
+        subprocess.run(
+            ["git", "config", "--get", "branch.wt-reused-name.merge"],
+            cwd=reused,
+            capture_output=True,
+        ).returncode
+        == 0,
+    )
+
+    # Rejects: a merged PR under this branch name whose head is a DIFFERENT commit.
+    # That is a sibling's work, and the tip on disk has landed nowhere. Blocking here
+    # tells the session to run `git branch -D` over unlanded commits.
+    merged_rows(("wt-reused-name", "0" * 40))
+    check(
+        "a merged PR under a reused branch name at another commit is silent",
+        run(reused) is None,
+    )
+
+    # Accepts: the same name, and this time the merged PR's head IS this tip.
+    merged_rows(("wt-reused-name", head_of(reused)))
+    reused_block = run(reused)
+    check(
+        "a merged PR whose head is this exact tip blocks",
+        bool(reused_block) and reused_block.get("decision") == "block",
     )
 
 shutil.rmtree(STUB_DIR, ignore_errors=True)

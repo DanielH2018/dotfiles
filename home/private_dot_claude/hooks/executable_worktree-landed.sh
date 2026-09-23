@@ -33,8 +33,10 @@
 # server allows both (`gh repo view` reports squashMergeAllowed and rebaseMergeAllowed),
 # and PR #317 — squash-merged as 78358ddb — is why this fallback exists.
 #
-# The fallback asks GitHub whether a PR with this branch as its head is merged, which is
-# provenance rather than a guess. `git cherry`, which prune-worktrees.py falls back to, is
+# The fallback asks GitHub for the head COMMIT of every merged PR opened from this branch
+# name, and requires one of them to be this exact tip. That is provenance rather than a
+# guess. A name match alone is not: names are reused, and the count this used to take was
+# enough to authorise `-D`. `git cherry`, which prune-worktrees.py falls back to, is
 # not: patch-id equality is why that sweeper REPORTS instead of reaping, and a Stop hook
 # can only block, so handing a session something a person has to adjudicate is worse than
 # staying quiet. The gh call is the one network call in this file. It is reached only when
@@ -125,11 +127,24 @@ if ! git merge-base --is-ancestor HEAD "$DEFAULT" 2>/dev/null; then
     exit 0
   fi
 
+  # Ask for the merged PRs' HEAD COMMITS, not for a count of them. A branch NAME is not
+  # evidence that this tip merged: names are reused freely here, and DanielH2018/server's
+  # prune_worktrees.py `pr_head_says_merged` records three PRs opened from one reused name
+  # on 2026-08-27. Counting matches authorised `-D` — the one destructive step in the squash
+  # procedure — on the strength of a string. The upstream test above catches the common
+  # shape of that (a tip that moved after the push), but not the shape that matters: after a
+  # merge with branch deletion `@{upstream}` no longer resolves, so nothing is left to
+  # disagree with and every name match passed.
+  #
+  # So compare SHAs. `--limit 30`, not 1: with a reused name the PR whose head is this tip
+  # need not be the most recent one, and `--limit 1` would answer with a sibling's.
   GH="${GH_BIN:-gh}"
   command -v "$GH" >/dev/null 2>&1 || exit 0
-  MERGED=$(timeout 5 "$GH" pr list --head "$BRANCH" --state merged --limit 1 \
-    --json number --jq 'length' 2>/dev/null) || exit 0
-  [ "$MERGED" = "1" ] || exit 0
+  HEAD_SHA=$(git rev-parse HEAD 2>/dev/null) || exit 0
+  [ -n "$HEAD_SHA" ] || exit 0
+  MERGED_HEADS=$(timeout 5 "$GH" pr list --head "$BRANCH" --state merged --limit 30 \
+    --json headRefOid --jq '.[].headRefOid' 2>/dev/null) || exit 0
+  printf '%s\n' "$MERGED_HEADS" | grep -qxF "$HEAD_SHA" || exit 0
   LANDED_AS="its pull request is merged into $DEFAULT"
   REWRITTEN=1
 fi
