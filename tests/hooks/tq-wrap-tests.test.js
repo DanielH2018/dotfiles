@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { scratch } = require('../lib/tmp');
+const { scratch, hardenedCopy } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
@@ -40,17 +40,15 @@ if (have('python3')) {
 // its permissions explicitly, and point TQ_HOME at that — the same fix in kind as the
 // TQ_OFF scrub above, for the same reason: this hook must be exercised on its own terms,
 // not on whatever the environment happened to leave lying around.
+// claude_guard.segment, which decides whether a command is one simple command (#580), is
+// imported under the same ownership check, so it gets the same hardened copy.
 const TQ_LIB_SRC = srcPath('dot_local', 'share', 'tq');
+const GUARD_SRC = srcPath('dot_local', 'share', 'claude-guard');
 let hardenedLib = '';
+let hardenedGuard = '';
 if (have('python3')) {
-  hardenedLib = scratch(os.tmpdir(), 'tq-hook-lib-');
-  fs.cpSync(TQ_LIB_SRC, hardenedLib, { recursive: true, filter: (src) => !src.includes('__pycache__') });
-  const harden = (p) => {
-    const st = fs.statSync(p);
-    fs.chmodSync(p, st.isDirectory() ? 0o755 : 0o644);
-    if (st.isDirectory()) for (const e of fs.readdirSync(p)) harden(path.join(p, e));
-  };
-  harden(hardenedLib);
+  hardenedLib = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-lib-'), TQ_LIB_SRC);
+  hardenedGuard = hardenedCopy(scratch(os.tmpdir(), 'tq-hook-guard-'), GUARD_SRC);
 }
 
 function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
@@ -61,7 +59,10 @@ function runHook(command, { tool = 'Bash', env = {}, raw = null } = {}) {
   // red on exactly the runs that used that escape hatch — a red gate caused by the bypass
   // rather than by anything under test. Cases that mean to exercise the off switch pass it
   // through `env`, which is spread last and still wins.
-  const base = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ, TQ_HOME: hardenedLib };
+  const base = {
+    ...process.env, PATH: `${binDir}:${process.env.PATH}`, TQ_BIN: TQ, TQ_HOME: hardenedLib,
+    CLAUDE_GUARD_HOME: hardenedGuard,
+  };
   delete base.TQ_OFF;
   const r = spawnSync('python3', [HOOK], {
     input,
@@ -160,6 +161,28 @@ test('anything more than one simple command is left alone', { skip }, () => {
     'node --test\nls',
   ]) {
     assert.strictEqual(rewritten(command), null, `must not rewrite: ${command}`);
+  }
+});
+
+// Whether a command is one simple command is claude_guard.segment's call, not a
+// character's (#580). A separator inside quotes is an argument: the character test this
+// replaced left these alone, and the parser reads each as one runner invocation.
+test('a separator inside quotes is an argument, not a second command', { skip }, () => {
+  for (const command of ['node --test "tests/a;b.test.js"', "node --test 'x && y'", 'node --test "a|b"']) {
+    assert.strictEqual(rewritten(command), `tq ${command}`, `should rewrite: ${command}`);
+  }
+});
+
+test('a claude_guard package that is missing or unsafe to import leaves the command alone', { skip }, () => {
+  const hostile = scratch(os.tmpdir(), 'tq-hostile-guard-');
+  fs.mkdirSync(path.join(hostile, 'claude_guard'));
+  fs.writeFileSync(path.join(hostile, 'claude_guard', '__init__.py'), 'raise SystemExit("must never be imported")\n');
+  fs.writeFileSync(path.join(hostile, 'claude_guard', 'segment.py'), '');
+  fs.chmodSync(hostile, 0o777);
+  for (const home of [hostile, scratch(os.tmpdir(), 'tq-empty-guard-')]) {
+    const r = runHook('node --test', { env: { CLAUDE_GUARD_HOME: home } });
+    assert.strictEqual(r.status, 0, `hook exited ${r.status}: ${r.stderr}`);
+    assert.strictEqual(r.stdout.trim(), '', home);
   }
 });
 

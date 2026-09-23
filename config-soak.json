@@ -113,8 +113,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
-      "hash": "f596b2f290d9190c8bd3212d56f4c58ec42495876b90639abee9b192995f5496",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "4527bdd926861cd4c85acc0a244fe14c620f5e3498c942cfc683d8388040f3cc",
+      "landed": "2026-09-23T23:52:45.409Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_instructions-loaded.sh",
@@ -253,13 +253,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.py",
-      "hash": "a9392b742d184d3716ef963eaad931ad019165d3c2826f3283fa93c5e4ea80a7",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "a5d786d9755007a9eeec36b2be061d621614fa3d5c687f14a145b065fc20387f",
+      "landed": "2026-09-23T23:52:45.409Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_tq-wrap-tests.sh",
-      "hash": "dad608cda3feabff299ce37f7825b374c697b622c3d247b65ceb428b3ae462b3",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "41c6b3cfa3a1c0851ef19abd421f5e596b1ce924c3549a763470ddcac2c73793",
+      "landed": "2026-09-23T23:52:45.409Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_voice-reminder.sh",

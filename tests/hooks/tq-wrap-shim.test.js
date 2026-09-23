@@ -1,22 +1,18 @@
 // Regression guard for executable_tq-wrap-tests.sh (PreToolUse/Bash).
 //
-// The shim exists only to avoid starting python3 for the ~98% of Bash calls tq will never
-// claim. That makes its correctness property unusually simple to state and unusually easy
-// to get wrong: for EVERY command it must produce exactly what the Python hook produces.
-// A shim that is merely "close" silently stops wrapping a test runner, or worse, rewrites
-// a command Python would have left alone.
-//
-// So the central test here is differential rather than expectational — it runs both and
-// compares — plus the two failure modes the design depends on: the candidate list must be
-// re-derived when tq's detect.py changes (a stale copy is the drift the .py's own comments
-// refuse to accept), and anything unclassifiable must fall through rather than guess.
+// The shim no longer reads the command (#580): it keeps two exits that need no parsing,
+// TQ_OFF and no tq binary, and execs the Python hook for everything else, where
+// claude_guard.segment decides. Its correctness property is still that for EVERY command it
+// produces exactly what the Python hook produces, so the central test stays differential:
+// it runs both and compares. A shim that is merely "close" silently stops wrapping a test
+// runner, or rewrites a command Python would have left alone.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { scratch } = require('../lib/tmp');
+const { scratch, hardenedCopy } = require('../lib/tmp');
 const { have, skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
@@ -26,14 +22,20 @@ const PY = path.join(HOOKS, 'executable_tq-wrap-tests.py');
 const LIB = path.join(HOOKS, 'hook-input.sh');
 const TQ = srcPath('dot_local', 'bin', 'executable_tq');
 
-const skip = skipUnless('python3', 'bash', 'jq');
+const skip = skipUnless('python3', 'bash');
 
+// Hardened copies of tq's lib and of claude_guard, which the Python hook refuses to import
+// from a group-writable checkout (tests/lib/tmp.js, hardenedCopy). Without them both sides
+// would return nothing for every command and the differential test would compare two
+// empty strings.
 let binDir = '';
-let cacheDir = '';
-if (have('python3') && have('bash') && have('jq')) {
+let tqLib = '';
+let guard = '';
+if (have('python3') && have('bash')) {
   binDir = scratch(os.tmpdir(), 'tqshim-bin-');
-  cacheDir = scratch(os.tmpdir(), 'tqshim-cache-');
   fs.symlinkSync(TQ, path.join(binDir, 'tq'));
+  tqLib = hardenedCopy(scratch(os.tmpdir(), 'tqshim-lib-'), srcPath('dot_local', 'share', 'tq'));
+  guard = hardenedCopy(scratch(os.tmpdir(), 'tqshim-guard-'), srcPath('dot_local', 'share', 'claude-guard'));
 }
 
 function baseEnv(extra = {}) {
@@ -41,9 +43,10 @@ function baseEnv(extra = {}) {
     ...process.env,
     PATH: `${binDir}:${process.env.PATH}`,
     TQ_BIN: TQ,
+    TQ_HOME: tqLib,
+    CLAUDE_GUARD_HOME: guard,
     TQ_WRAP_PY: PY,
     HOOK_INPUT_LIB: LIB,
-    XDG_CACHE_HOME: cacheDir,
   };
   delete e.TQ_OFF;
   return { ...e, ...extra };
@@ -86,25 +89,31 @@ const CORPUS = [
   '/usr/bin/git status',
   'unbalanced "quote',
   '',
-  // The case that makes the fall-through branch load-bearing: shlex reads the program as
-  // `git`, a naive split reads it as `"git"`. The shim must not decide that difference
-  // itself — it has to hand the command to Python, which wraps it.
+  // shlex reads the program as `git`, a naive split as `"git"`. Only Python judges that.
   '"git" diff',
   "'git' diff",
-  // An `env`/`command`/`exec` prefix. The shim reads the first word as the program and
-  // so does the Python hook, which asks tq about `env` rather than about the runner
-  // behind it; neither wraps. Agreeing is the whole contract here -- the shim may only
-  // ever skip work Python would also have skipped -- so these pin that the jq pass does
-  // not decide a prefix Python is left to judge (#580).
+  // An `env`/`command`/`exec` prefix: Python asks tq about `env` rather than about the
+  // runner behind it, so neither side wraps.
   'env pytest tests/',
   'command pytest -q',
   'exec node --test',
+  // A separator inside quotes is an argument (#580). The jq pass this shim used to run
+  // skipped these on the character alone, and claude_guard.segment reads each as one
+  // command, which Python wraps.
+  'node --test "tests/a;b.test.js"',
+  "node --test 'x && y'",
 ];
 
 test('shim output is identical to the python hook for every command', { skip }, () => {
+  let wrapped = 0;
   for (const cmd of CORPUS) {
-    assert.strictEqual(viaShim(cmd), viaPython(cmd), `diverged on: ${JSON.stringify(cmd)}`);
+    const out = viaShim(cmd);
+    assert.strictEqual(out, viaPython(cmd), `diverged on: ${JSON.stringify(cmd)}`);
+    if (out) wrapped += 1;
   }
+  // Non-vacuity: identical outputs prove nothing if both sides return nothing for every
+  // command, which is what an unimportable tq lib or claude_guard produces.
+  assert.ok(wrapped >= 4, `only ${wrapped} corpus commands were rewritten; the hook is not reaching tq`);
 });
 
 test('a non-Bash tool is left alone by both', { skip }, () => {
@@ -118,36 +127,4 @@ test('a non-Bash tool is left alone by both', { skip }, () => {
 test('TQ_OFF disables the shim exactly as it disables the hook', { skip }, () => {
   assert.strictEqual(viaShim('node --test', { TQ_OFF: '1' }), '');
   assert.strictEqual(viaShim('node --test', { TQ_OFF: '1' }), viaPython('node --test', { TQ_OFF: '1' }));
-});
-
-// The whole reason the shim may keep a candidate list at all is that it re-derives it from
-// detect.py and re-derives it again when that file changes. If this regresses, the list
-// silently becomes the hand-maintained copy the Python hook's comments explicitly rejected,
-// and a newly-claimed program stops being offered to tq.
-test('the candidate cache is rebuilt when tq detect.py changes', { skip }, () => {
-  const lib = scratch(os.tmpdir(), 'tqshim-lib-');
-  const cache = scratch(os.tmpdir(), 'tqshim-c2-');
-  const detect = path.join(lib, 'detect.py');
-  const env = { TQ_HOME: lib, XDG_CACHE_HOME: cache };
-
-  // A world where tq claims nothing: the shim must skip, and cache that.
-  fs.writeFileSync(detect, 'CANDIDATES = set()\ndef detect(argv):\n    return None\n');
-  assert.strictEqual(viaShim('node --test', env), '', 'should skip while tq claims nothing');
-  const cached = path.join(cache, 'claude-hooks', 'tq-candidates.json');
-  assert.ok(fs.existsSync(cached), 'a candidate cache should have been written');
-  assert.strictEqual(JSON.parse(fs.readFileSync(cached, 'utf8')).length, 0);
-
-  // Now tq claims `node`. The mtime/size key must invalidate, or the shim keeps skipping.
-  fs.writeFileSync(detect, 'CANDIDATES = {"node"}\ndef detect(argv):\n    return "node"\n');
-  const now = Date.now() / 1000 + 5;
-  fs.utimesSync(detect, now, now);
-  viaShim('node --test', env);
-  assert.deepStrictEqual(
-    JSON.parse(fs.readFileSync(cached, 'utf8')), ['node'],
-    'the cache should have been re-derived after detect.py changed');
-});
-
-test('an unreadable tq lib falls through to python rather than guessing', { skip }, () => {
-  const env = { TQ_HOME: path.join(os.tmpdir(), 'tqshim-does-not-exist') };
-  assert.strictEqual(viaShim('node --test', env), viaPython('node --test', env));
 });

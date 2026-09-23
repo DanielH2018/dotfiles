@@ -35,8 +35,11 @@ import shutil
 import stat
 import sys
 
-# Anything that makes the command more than one simple command.
-SHELL_CHARS = set(";&|<>()`$\n")
+# Shell syntax that can sit inside one simple command. A redirect, an expansion or
+# a subshell is not an argv tq can wrap, so any of these leaves the command alone.
+# Whether the command IS one simple command is claude_guard.segment's call, not a
+# character's: a `;` inside quotes is an argument, not a separator (#580).
+SHELL_SYNTAX = set("<>()`$")
 
 # The deployed CLI, since that is what the rewritten command will run. TQ_BIN
 # overrides it so a checkout's own tq can be exercised before `chezmoi apply`.
@@ -44,6 +47,43 @@ TQ_SOURCE = os.environ.get("TQ_BIN") or os.path.expanduser("~/.local/bin/tq")
 TQ_LIB = os.environ.get("TQ_HOME") or os.path.join(
     os.path.dirname(os.path.dirname(TQ_SOURCE)), "share", "tq"
 )
+# The command parser the deny hook runs, so both read a command's structure alike.
+GUARD_SHARE = os.environ.get("CLAUDE_GUARD_HOME") or os.path.expanduser(
+    "~/.local/share/claude-guard"
+)
+
+
+def import_private(root, package_path, name):
+    """Import `name` from `root`, only if every path on the way is exclusively ours.
+
+    This hook stands in front of every Bash call, so whatever is importable here
+    runs on every one of them. Both roots come from an environment variable when
+    set, which means without a check anything able to set one chooses the code that
+    gets imported. Require real directories holding a real module, all owned by this
+    user (or root) and not writable by group or others. Raising is the safe outcome:
+    rewrite() is called under a deliberately blind except that leaves the command
+    untouched.
+    """
+    parts = package_path.split("/")
+    dirs = [os.path.join(root, *parts[:i]) for i in range(len(parts))]
+    module = os.path.join(root, *parts)
+    stats = [os.stat(d) for d in dirs] + [os.stat(module)]
+    if not all(stat.S_ISDIR(st.st_mode) for st in stats[:-1]) or not stat.S_ISREG(
+        stats[-1].st_mode
+    ):
+        raise ImportError(f"not a directory holding a module: {module}")
+    me = os.getuid()
+    for st in stats:
+        if st.st_uid not in (me, 0) or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ImportError(f"not exclusively ours to write: {module}")
+
+    sys.path.insert(0, root)
+    try:
+        return __import__(name, fromlist=["_"])
+    finally:
+        # Don't leave the root on sys.path shadowing every later import here.
+        with contextlib.suppress(ValueError):
+            sys.path.remove(root)
 
 
 def load_detect():
@@ -54,30 +94,22 @@ def load_detect():
     while the candidates were test runners and is not now that they include git,
     ls and grep — the programs an agent runs most.
     """
-    # This hook stands in front of every Bash call, so whatever is importable here runs
-    # on every one of them. TQ_LIB comes from $TQ_HOME when set, which means without a
-    # check anything able to set an environment variable chooses the code that gets
-    # imported. Require a real directory holding a real module, both owned by this user
-    # and not writable by group or others. Raising is the safe outcome: rewrite() is
-    # called under a deliberately blind except that leaves the command untouched.
-    lib = os.stat(TQ_LIB)
-    mod = os.stat(os.path.join(TQ_LIB, "detect.py"))
-    if not stat.S_ISDIR(lib.st_mode) or not stat.S_ISREG(mod.st_mode):
-        raise ImportError(f"tq lib is not a directory holding a module: {TQ_LIB}")
-    me = os.getuid()
-    for st in (lib, mod):
-        if st.st_uid not in (me, 0) or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise ImportError(f"tq lib is not exclusively ours to write: {TQ_LIB}")
-
-    sys.path.insert(0, TQ_LIB)
-    try:
-        import detect
-    finally:
-        # Don't leave TQ_LIB on sys.path shadowing every later import in this process.
-        with contextlib.suppress(ValueError):
-            sys.path.remove(TQ_LIB)
-
+    detect = import_private(TQ_LIB, "detect.py", "detect")
     return detect.detect, detect.CANDIDATES
+
+
+def one_simple_command(command):
+    """Whether claude_guard.segment reads `command` as exactly one simple command."""
+    parse = import_private(
+        GUARD_SHARE, "claude_guard/segment.py", "claude_guard.segment"
+    ).parse
+    p = parse(command)
+    return (
+        p.ok
+        and len(p.segments) == 1
+        and not p.substitutions
+        and not p.segments[0].heredocs
+    )
 
 
 def rewrite(command):
@@ -88,7 +120,9 @@ def rewrite(command):
         # Resolvable by name or not at all. Prefixing the absolute path would
         # work, but it is what the agent and the user then have to read.
         return None
-    if any(char in command for char in SHELL_CHARS):
+    if any(char in command for char in SHELL_SYNTAX):
+        return None
+    if not one_simple_command(command):
         return None
     try:
         argv = shlex.split(command)

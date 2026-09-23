@@ -47,4 +47,22 @@ function scratch(root, prefix, t) {
   return dir;
 }
 
-module.exports = { scratch };
+// hardenedCopy(dir, src) -> `dir`, holding a copy of `src` at 755 for directories and 644
+// for files, with __pycache__ left out.
+//
+//   For a hook that refuses to import code writable by group or others: a checkout made
+//   under a permissive umask (007 on the Ubuntu hosts) is group-writable, while the
+//   deployed copy is not, so a test pointing such a hook at the checkout sees a refusal.
+//   `dir` comes from a scratch() call at the call site, for the sweep reason above.
+function hardenedCopy(dir, src) {
+  fs.cpSync(src, dir, { recursive: true, filter: (p) => !p.includes('__pycache__') });
+  const harden = (p) => {
+    const st = fs.statSync(p);
+    fs.chmodSync(p, st.isDirectory() ? 0o755 : 0o644);
+    if (st.isDirectory()) for (const e of fs.readdirSync(p)) harden(path.join(p, e));
+  };
+  harden(dir);
+  return dir;
+}
+
+module.exports = { scratch, hardenedCopy };
