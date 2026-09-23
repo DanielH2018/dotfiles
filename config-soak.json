@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "c8a8345096c872f2428eb2574ef726fdbc6445db73fcdc935c00ca24d3a3fe19",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "d202c6e169c86ff11714386b2da1735b2efaf9bbd33417a3430ffe09aa23461a",
+      "landed": "2026-09-23T13:29:29.938Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -523,8 +523,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/orchestrating-subagents/SKILL.md",
-      "hash": "f50ad4748b4162be8076eb61ec6a2eb6987ff65cfb0d538b33fb0a0ba5bd10e4",
-      "landed": "2026-09-09T23:04:34.028Z"
+      "hash": "1eb7b9291649afbd27e2a98ef4436bfc16f0a49ab7170fc73933460b5053512f",
+      "landed": "2026-09-23T13:29:29.938Z"
     },
     {
       "path": "home/private_dot_claude/skills/otel-review/SKILL.md",
