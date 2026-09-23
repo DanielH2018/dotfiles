@@ -35,11 +35,8 @@ function fakeEnv() {
   return { home, proj };
 }
 
-const today = () => {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
+// The buffer's day on the plugin's clock (pluginTimezone, below), host-local when unset.
+const today = () => dayIn(pluginTimezone() || undefined);
 
 function buffer(proj, suffix = '') { return path.join(proj, '.remember', `today-${today()}${suffix}.md`); }
 
