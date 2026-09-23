@@ -88,8 +88,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-apply-guard.sh",
-      "hash": "6c75dae4fce62dca4237d5dc93b24ccefb1971608790f9a97703d7d5c525d88c",
-      "landed": "2026-09-23T21:01:49.811Z"
+      "hash": "a9a612b6e6a4d4c64d1ae431800c7847e29d5274cdd219cf051f55a07d6e272e",
+      "landed": "2026-09-23T21:07:01.569Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-edit-guard.sh",

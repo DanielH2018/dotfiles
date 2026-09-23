@@ -303,3 +303,12 @@ test('after a plain apply, or a clean diff, post says nothing', { skip: skipPars
   assert.strictEqual(run('chezmoi apply', { STUB_DIFF: '-x' }, ['post']), null);
   assert.strictEqual(run('chezmoi apply --source /wt/home', { STUB_DIFF: '' }, ['post']), null);
 });
+
+test('the stale-source refusal is parser-only, so the text fallback stays no stricter', { skip }, () => {
+  // The fallback matches the words anywhere, a commit message included. Before the
+  // stale check, a fallback match with no status conflict passed, and it still must.
+  const stale = { STUB_SOURCE_PATH: sourceRepo(true) };
+  const empty = scratch(os.tmpdir(), 'czag-noguard-');
+  assert.strictEqual(run('chezmoi apply', { ...stale, CLAUDE_GUARD_HOME: empty }), null);
+  if (!skipParsed) assert.strictEqual(run('git commit -m "chezmoi apply \\"x', stale), null);
+});

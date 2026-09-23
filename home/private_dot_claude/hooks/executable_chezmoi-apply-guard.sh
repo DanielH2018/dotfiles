@@ -247,11 +247,11 @@ text_decision() {
   # Offset 0: with no segmentation there is nothing better to point at than the start
   # of the whole command, which is the form this hook always suggested.
   printf 'write\n0\n'
-  # Line 3, as the parser prints it: does this apply read the primary checkout?
+  # Line 3. Never `primary`: the stale-source refusal is parser-only (see its block
+  # below), so this fallback stays no stricter than the hook it preserves.
   case "$SCAN" in
-    *\ --source*|*\ -S*) printf 'noprimary+sourced\n' ;;
-    *\ update*|*--apply*) printf 'noprimary\n' ;;
-    *) printf 'primary\n' ;;
+    *\ --source*|*\ -S*) printf 'fallback+sourced\n' ;;
+    *) printf 'fallback\n' ;;
   esac
   printf '%s\n' "$SCAN" | tr ' ' '\n' | grep -E '^(/|~/)' || true
 }
@@ -334,6 +334,11 @@ deny() {
 # is current for every landing made on this machine, because a push updates the
 # remote-tracking ref from any worktree; a landing from another machine is invisible
 # here until something fetches. Any git failure is no opinion.
+#
+# Parser-only. The flattened-text fallback matches `chezmoi … apply` anywhere in the text,
+# including a commit message or a heredoc body that mentions it, and the window this check
+# fires in (just after a landing) is exactly when sessions write such messages. Before this
+# block, a fallback match with no status conflict passed; it still does.
 if [ "${READS%%+*}" = "primary" ]; then
   SRC_DIR=$(chezmoi source-path 2>/dev/null) || SRC_DIR=''
   if [ -n "$SRC_DIR" ] && [ -d "$SRC_DIR" ]; then
