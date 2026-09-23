@@ -692,6 +692,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "~/.claude/hooks/chezmoi-edit-guard.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/isolation-guard.sh",
             "timeout": 10
           }
