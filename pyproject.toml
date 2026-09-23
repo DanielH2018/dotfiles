@@ -1,12 +1,16 @@
 [project]
 name = "tq-dev-tooling"
 version = "0.0.0"
-requires-python = ">=3.9"
+requires-python = ">=3.14"
 
 [tool.uv]
 package = false
 
 [tool.ruff]
+# requires-python above is the dev env CI and `uv run` build (3.14, the server repo's CI
+# version). This target is lower on purpose: the shipped scripts it lints (jsonq, tq, the
+# Python hooks, config-map) run under each machine's system `python3`, 3.12 on the Ubuntu
+# hosts, and ruff's py314 rewrites crash there (issue #568 has the per-file table).
 target-version = "py39"
 # `extend-include` (the extensionless Python scripts) lives in ruff.toml, which ruff
 # discovers first and which `extend`s this file. bin/gen-lint-files renders it from the
