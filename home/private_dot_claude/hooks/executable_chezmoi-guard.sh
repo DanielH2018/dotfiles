@@ -50,39 +50,57 @@ esac
 # hook runs after every Edit and Write (~900/day), while the overwhelming majority of those
 # edits are to files chezmoi has never managed — scratch dirs, worktrees, repos. Caching the
 # managed set turns that question into a string match; `chezmoi managed` costs ~33ms once
-# per TTL instead of ~41ms every time.
+# per change to its inputs instead of ~41ms every time.
 #
 # Used ONLY to skip: a path absent from the cache exits, a path present falls through to the
 # real `source-path` call below, which stays the authority on where the source is. That
 # asymmetry is what makes a stale cache safe in one direction — a file that has *stopped*
 # being managed still hits source-path, which fails, and the hook exits as it always did.
 #
-# The direction that is not free: a file that BECOMES managed inside the TTL window is
-# missed, so an edit to it is not re-synced. That needs `chezmoi add` and an edit of the
-# same file within TTL, and `add` leaves source and target already in sync — so the window
-# is narrow. TTL is deliberately short rather than clever; a fingerprint of the source tree
-# would cost most of the call it is trying to avoid.
-CACHE_TTL="${CHEZMOI_GUARD_CACHE_TTL:-300}"
-case "$CACHE_TTL" in ''|*[!0-9]*) CACHE_TTL=300 ;; esac
-
-if [ "$CACHE_TTL" -gt 0 ]; then
+# The direction that is not free is a file that BECOMES managed, so the cache is keyed on
+# its inputs rather than on its age (#579): a cksum of every path in the source tree, the
+# contents of its .chezmoi* control files, and the chezmoi config. `chezmoi add`, a new
+# .chezmoiignore line, a branch switch and a config edit all change the key, and the next
+# call refetches. File contents outside the .chezmoi* files are left out: they decide what
+# a target renders to, not whether it is managed. Measured 2026-09-23 on an 874-file
+# source: one no-match walk takes ~7ms, against ~36ms for `chezmoi managed`.
+#
+# The key walks the default source dir; CHEZMOI_GUARD_SOURCE_DIR points it elsewhere. With
+# no such directory there is nothing to key on, so every call asks chezmoi.
+# CHEZMOI_GUARD_CACHE=0 turns the cache off.
+_cg_src="${CHEZMOI_GUARD_SOURCE_DIR:-$HOME/.local/share/chezmoi}"
+if [ "${CHEZMOI_GUARD_CACHE:-1}" != 0 ] && [ -d "$_cg_src" ]; then
   _cg_cache="${XDG_CACHE_HOME:-$HOME/.cache}/claude-hooks/chezmoi-managed"
   _cg_fresh=''
+  # Two walks rather than one: interleaving -print with an -exec'd cat would leave the
+  # order of the two streams to buffering, and a key that varies between identical trees
+  # never hits. .git and the worktrees under .claude are not source state.
+  _cg_key=$( {
+    find "$_cg_src" \( -path "$_cg_src/.git" -o -path "$_cg_src/.claude" \) -prune -o -print
+    find "$_cg_src" \( -path "$_cg_src/.git" -o -path "$_cg_src/.claude" \) -prune -o \
+      -type f -name '.chezmoi*' -exec cat {} +
+    cat "${XDG_CONFIG_HOME:-$HOME/.config}"/chezmoi/chezmoi.*
+  } 2>/dev/null | cksum)
   # -f, not -s: "chezmoi manages nothing here" is a legitimate answer and an empty cache is
   # the correct way to record it. Testing for non-empty instead made that case look like a
   # failed refresh, so the cache never engaged and every call still paid for chezmoi.
-  if [ -f "$_cg_cache" ]; then
-    _cg_age=$(( $(date +%s) - $(stat -c %Y "$_cg_cache" 2>/dev/null || stat -f %m "$_cg_cache" 2>/dev/null || echo 0) ))
-    [ "$_cg_age" -ge 0 ] && [ "$_cg_age" -lt "$CACHE_TTL" ] && _cg_fresh=1
+  if [ -f "$_cg_cache" ] && [ -f "$_cg_cache.key" ]; then
+    _cg_old=''
+    IFS= read -r _cg_old < "$_cg_cache.key" 2>/dev/null
+    [ "$_cg_old" = "$_cg_key" ] && _cg_fresh=1
   fi
   if [ -z "$_cg_fresh" ]; then
     mkdir -p "${_cg_cache%/*}" 2>/dev/null
     # Exit status is the only signal that separates "nothing is managed" from "the query
     # failed". A failed refresh leaves no cache, so the next call asks chezmoi directly.
-    if chezmoi managed --path-style=absolute > "$_cg_cache.tmp" 2>/dev/null; then
-      mv -f "$_cg_cache.tmp" "$_cg_cache" 2>/dev/null && _cg_fresh=1
+    # The key lands after the list, so a reader never pairs a new key with an old list.
+    if chezmoi managed --path-style=absolute > "$_cg_cache.tmp" 2>/dev/null \
+      && mv -f "$_cg_cache.tmp" "$_cg_cache" 2>/dev/null \
+      && printf '%s\n' "$_cg_key" > "$_cg_cache.key.tmp" 2>/dev/null \
+      && mv -f "$_cg_cache.key.tmp" "$_cg_cache.key" 2>/dev/null; then
+      _cg_fresh=1
     else
-      rm -f "$_cg_cache.tmp" 2>/dev/null
+      rm -f "$_cg_cache.tmp" "$_cg_cache.key.tmp" 2>/dev/null
     fi
   fi
   # Exact whole-line match: a prefix match would claim files that merely live under a

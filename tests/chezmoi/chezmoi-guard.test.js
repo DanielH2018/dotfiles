@@ -18,6 +18,11 @@ const skip = skipUnless('bash', 'jq');
 
 const HOME = scratch(os.tmpdir(), 'czg-home-');
 const BIN = scratch(os.tmpdir(), 'czg-bin-');
+// The cache is keyed on the source tree, so there has to be one: with no source dir the
+// hook has nothing to key on and asks chezmoi every time.
+const SOURCE = path.join(HOME, '.local', 'share', 'chezmoi');
+fs.mkdirSync(path.join(SOURCE, 'home'), { recursive: true });
+fs.writeFileSync(path.join(SOURCE, 'home', 'dot_plainfile'), 'x\n');
 // Stub chezmoi: source-path maps by filename; add/chattr succeed; everything else no-ops.
 // `managed` has to be modelled too, and it is not decoration: the hook consults a cached
 // copy of that list before it will call source-path at all, so a stub that answered it with
@@ -120,11 +125,59 @@ test('a failing managed lookup falls back to asking chezmoi directly', { skip },
   }
 });
 
-test('CHEZMOI_GUARD_CACHE_TTL=0 turns the cache off', { skip }, () => {
+test('CHEZMOI_GUARD_CACHE=0 turns the cache off', { skip }, () => {
   clearCache(); resetCalls();
   const f = path.join(HOME, 'unmanaged.txt');
-  context(f, { CHEZMOI_GUARD_CACHE_TTL: '0' });
-  context(f, { CHEZMOI_GUARD_CACHE_TTL: '0' });
+  context(f, { CHEZMOI_GUARD_CACHE: '0' });
+  context(f, { CHEZMOI_GUARD_CACHE: '0' });
   assert.strictEqual(callCount('managed'), 0, 'no list is fetched when the cache is disabled');
   assert.strictEqual(callCount('source-path'), 2, 'every call goes straight to chezmoi');
+});
+
+// Freshness is a key over the source tree, not an age (#579). The pair: an unchanged tree
+// hits however old the cache files are, and a changed tree misses however new they are.
+const cacheFiles = () => ['chezmoi-managed', 'chezmoi-managed.key']
+  .map((n) => path.join(HOME, '.cache', 'claude-hooks', n));
+
+test('an old cache still hits while the source tree is unchanged', { skip }, () => {
+  clearCache(); resetCalls();
+  const f = path.join(HOME, 'unmanaged.txt');
+  context(f);
+  const dayAgo = new Date(Date.now() - 86400 * 1000);
+  for (const p of cacheFiles()) fs.utimesSync(p, dayAgo, dayAgo);
+  context(f);
+  assert.strictEqual(callCount('managed'), 1, 'age alone must not force a refetch');
+});
+
+test('a new source entry misses a cache written a moment ago', { skip }, (t) => {
+  clearCache(); resetCalls();
+  const f = path.join(HOME, 'unmanaged.txt');
+  context(f);
+  const added = path.join(SOURCE, 'home', 'dot_added');
+  fs.writeFileSync(added, 'y\n');
+  t.after(() => fs.rmSync(added, { force: true }));
+  context(f);
+  assert.strictEqual(callCount('managed'), 2, 'what `chezmoi add` writes must refetch the list');
+});
+
+test('an edited .chezmoiignore misses the cache', { skip }, (t) => {
+  clearCache(); resetCalls();
+  const ignore = path.join(SOURCE, 'home', '.chezmoiignore');
+  fs.writeFileSync(ignore, 'a\n');
+  t.after(() => fs.rmSync(ignore, { force: true }));
+  const f = path.join(HOME, 'unmanaged.txt');
+  context(f);
+  fs.writeFileSync(ignore, 'b\n');
+  context(f);
+  assert.strictEqual(callCount('managed'), 2, 'an ignore rule changes the managed set without adding a path');
+});
+
+test('with no source dir the hook asks chezmoi every time', { skip }, () => {
+  clearCache(); resetCalls();
+  const f = path.join(HOME, 'unmanaged.txt');
+  const env = { CHEZMOI_GUARD_SOURCE_DIR: path.join(HOME, 'no-such-source') };
+  context(f, env);
+  context(f, env);
+  assert.strictEqual(callCount('managed'), 0, 'nothing to key on, so nothing is cached');
+  assert.strictEqual(callCount('source-path'), 2);
 });

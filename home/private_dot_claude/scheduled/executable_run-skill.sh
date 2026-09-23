@@ -47,7 +47,11 @@ flock -n 9 || skip "another $SKILL run holds the lock"
 # Per-calendar-day marker. session-end.sh documents this as the reason a second
 # session today no-ops: its queue entry waits for tomorrow's drain. Written only
 # after a successful run, so a failure retries today.
-MARKER="$STATE/$SKILL.$(date +%F).done"
+#
+# The day is the UTC day, and that is the contract: "already ran today" must not move
+# with the host timezone or a DST change. This script is the marker's only reader, and
+# the -mtime sweep below ages files by their own mtime, not by the name.
+MARKER="$STATE/$SKILL.$(date -u +%F).done"
 [ -e "$MARKER" ] && skip "$SKILL already ran today"
 find "$STATE" -maxdepth 1 -name "$SKILL.*.done" -mtime +7 -delete 2>/dev/null || true
 

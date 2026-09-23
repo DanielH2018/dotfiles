@@ -98,8 +98,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "f1a95b0f457a013492dd6dd78b2c905f8b138fde550c2a784929b13d23bd9557",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "492461f1fc90ea6493ef386cd5a8cf920db69544ee66e000a757b959e23d24f3",
+      "landed": "2026-09-23T21:00:28.082Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_git-conventions-guard.sh",
@@ -233,8 +233,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "7eac5a4732cad9f9a60dc2c2bc70f6c11748c7729a3ce67579e18ea76bb4680e",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "ff200a1437adbb2289af28cb6942e98f4cb56e6fee139c5f613dd37bd4c083ae",
+      "landed": "2026-09-23T21:00:28.082Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",

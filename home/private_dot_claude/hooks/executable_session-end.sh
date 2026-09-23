@@ -45,6 +45,16 @@ fi
 # own consolidation folds it into recent.md on the next day's run — pipeline/
 # shell.py skips staging files whose name contains the current date, so it sits
 # untouched today and is picked up tomorrow.
+#
+# DECIDED: the day is the HOST-LOCAL day, deliberately not `date -u` (#579). This hook
+# does not own the name. The plugin writes and reads today-<DATE>.md with its own clock:
+# config.json `.timezone` via REMEMBER_TZ, and system local time when that is unset
+# (pipeline/_tz.py, scripts/lib-clock.sh). The managed ~/.remember/config.json
+# (home/private_dot_remember/config.json) sets no `.timezone`, so the plugin's day is the
+# local day, and tests/hooks/session-end.test.js pins that pairing. A UTC name here would
+# roll a file the plugin is not writing on every non-UTC host, for part of every day.
+# To move to UTC, set `.timezone` to "UTC" in the plugin config and change this line in
+# the same commit.
 REMEMBER_BUDGET=${REMEMBER_TODAY_MAX_BYTES:-8192}
 PROJECT_DIR=$(hook_field '.cwd // empty')
 [ -n "$PROJECT_DIR" ] || PROJECT_DIR=${CLAUDE_PROJECT_DIR:-$PWD}

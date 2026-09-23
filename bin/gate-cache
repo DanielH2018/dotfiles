@@ -32,16 +32,19 @@
 # rarely landed within five minutes of being opened. Keying the tools directly costs 0.07s per
 # check and converts most of those misses into hits.
 #
-# GATE_CACHE_OFF=1 forces a miss. GATE_CACHE_TTL still bounds a record's age (default 3600s),
-# but it now bounds the ENVIRONMENT the key does not reach — gitignored files, the ~/.claude
-# config some suites read, ambient variables, OS libraries — rather than tool versions. That
-# category is open-ended, which is why the bound stays rather than going away.
+# GATE_CACHE_OFF=1 forces a miss. GATE_CACHE_TTL=<seconds> is opt-in, and unset means no age
+# bound (#579). A default TTL made the same clean tree hit or miss depending on the clock,
+# while bounding nothing exactly: the ENVIRONMENT the key does not reach — gitignored files,
+# the ~/.claude config some suites read, ambient variables, OS libraries — can change a
+# second after a save as easily as an hour after it. The miss that matters is the one a
+# human asks for, and GATE_CACHE_OFF=1 is that. Set GATE_CACHE_TTL to bound the record's age
+# anyway; 0 then disables the cache.
 #
 # Kept bash-3.2 clean, like the gate that calls it.
 set -u
 
 RECORD_NAME=gate-cache
-TTL="${GATE_CACHE_TTL:-3600}"
+TTL="${GATE_CACHE_TTL:-}"
 
 # Bumped whenever the record's shape or the meaning of its fields changes. A record written by
 # an older gate-cache reads as a miss instead of being misparsed into a hit.
@@ -86,7 +89,8 @@ is_number() { case "${1:-}" in '' | *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
 cmd_check() {
   [ -z "${GATE_CACHE_OFF:-}" ] || return 1
-  is_number "$TTL" || return 1
+  # A TTL that is set but not a number is a typo, and a typo reads as a miss.
+  [ -z "$TTL" ] || is_number "$TTL" || return 1
 
   record=$(record_path) || return 1
   [ -f "$record" ] || return 1
@@ -109,14 +113,17 @@ cmd_check() {
   [ -n "$now_tools" ] || return 1
   [ "${tools:-}" = "$now_tools" ] || return 1
 
+  # The age is reported either way; it decides the answer only under an opt-in TTL.
   now=$(date +%s) || return 1
   age=$((now - stamp))
-  # A negative age means the clock moved backwards since the record was written; that is
-  # not a fresh record, it is an unreadable one.
-  [ "$age" -ge 0 ] || return 1
-  # Strictly less than, so GATE_CACHE_TTL=0 disables the cache outright rather than
-  # admitting the record written a moment ago.
-  [ "$age" -lt "$TTL" ] || return 1
+  if [ -n "$TTL" ]; then
+    # A negative age means the clock moved backwards since the record was written; that is
+    # not a fresh record, it is an unreadable one.
+    [ "$age" -ge 0 ] || return 1
+    # Strictly less than, so GATE_CACHE_TTL=0 disables the cache outright rather than
+    # admitting the record written a moment ago.
+    [ "$age" -lt "$TTL" ] || return 1
+  fi
 
   printf '%s\n' "$age"
 }

@@ -110,11 +110,23 @@ test('saving from a dirty tree records nothing', { skip }, () => {
   assert.notStrictEqual(gate(root, 'check').status, 0, 'a dirty run must not vouch for the clean tree it becomes');
 });
 
-test('a record older than the TTL misses', { skip }, () => {
+test('a record older than an opted-in TTL misses', { skip }, () => {
   const root = repo();
   gate(root, 'save');
   assert.strictEqual(gate(root, 'check', { GATE_CACHE_TTL: '100000' }).status, 0, 'sanity: fresh within a wide TTL');
-  assert.notStrictEqual(gate(root, 'check', { GATE_CACHE_TTL: '0' }).status, 0, 'the toolchain is outside the key, so records expire');
+  assert.notStrictEqual(gate(root, 'check', { GATE_CACHE_TTL: '0' }).status, 0, 'a set TTL still bounds the age');
+});
+
+// The TTL is opt-in (#579): with none set, the key alone decides, so a record's age does not.
+test('without a TTL a year-old record at the same key still hits', { skip }, () => {
+  const root = repo();
+  gate(root, 'save');
+  const f = path.join(root, '.git', 'gate-cache');
+  const [ver, sha, tools] = fs.readFileSync(f, 'utf8').trim().split(' ');
+  const yearAgo = Math.floor(Date.now() / 1000) - 365 * 86400;
+  fs.writeFileSync(f, `${ver} ${sha} ${tools} ${yearAgo}\n`);
+  assert.strictEqual(gate(root, 'check').status, 0, 'age alone must not turn a matching key into a miss');
+  assert.notStrictEqual(gate(root, 'check', { GATE_CACHE_TTL: '3600' }).status, 0, 'and an opted-in TTL still expires it');
 });
 
 test('GATE_CACHE_OFF forces a miss on an otherwise valid record', { skip }, () => {

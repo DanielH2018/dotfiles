@@ -43,9 +43,10 @@ const today = () => {
 
 function buffer(proj, suffix = '') { return path.join(proj, '.remember', `today-${today()}${suffix}.md`); }
 
-function run({ home, proj }, { cwd = proj, budget } = {}) {
+function run({ home, proj }, { cwd = proj, budget, tz } = {}) {
   const env = { ...process.env, HOME: home };
   if (budget !== undefined) env.REMEMBER_TODAY_MAX_BYTES = String(budget);
+  if (tz !== undefined) env.TZ = tz;
   // Run from a scratch cwd so the hook's git-dirty probe can't see the real repo.
   return execFileSync('bash', [HOOK], {
     input: JSON.stringify({ session_id: 'test-session', cwd }),
@@ -122,3 +123,23 @@ test('still logs session end when the roll path is not taken', { skip }, () => {
   run(env);
   assert.match(log(env.home), /event=end/, 'roll logic must not displace the existing summary log');
 });
+
+// The buffer's name belongs to the remember plugin, which dates it with config.json's
+// `.timezone` and falls back to host-local time (#579). The hook has to roll the file the
+// plugin is writing, so the expected day is derived from the managed plugin config rather
+// than restated: setting `.timezone` there without changing the hook goes red here.
+// UTC+14 and UTC-12 are 26 hours apart, so under at least one of them the local day and
+// the UTC day differ at any instant, and a hook on the wrong clock misses the buffer.
+const PLUGIN_TZ = JSON.parse(fs.readFileSync(srcPath('private_dot_remember', 'config.json'), 'utf8')).timezone;
+const dayIn = (tz) => new Date().toLocaleDateString('en-CA', { timeZone: tz });
+
+for (const hostTz of ['Etc/GMT-14', 'Etc/GMT+12']) {
+  test(`rolls the buffer dated on the plugin's clock under TZ=${hostTz}`, { skip }, () => {
+    const env = fakeEnv();
+    const day = dayIn(PLUGIN_TZ || hostTz);
+    const buf = path.join(env.proj, '.remember', `today-${day}.md`);
+    fs.writeFileSync(buf, 'e'.repeat(OVER_BUDGET));
+    run(env, { tz: hostTz });
+    assert.ok(!fs.existsSync(buf), `today-${day}.md is the plugin's buffer and must be rolled`);
+  });
+}
