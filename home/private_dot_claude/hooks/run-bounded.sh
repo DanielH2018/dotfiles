@@ -58,6 +58,12 @@
 # -- `killed` is the single casualty, degrading to `ok` with the command's collapsed exit code.
 # tests/hooks/run-bounded.test.js asserts the resolved binary conforms, so that degradation
 # surfaces as a test failure rather than as a quietly wrong verdict.
+#
+# Where NO timeout exists at all, run_bounded reports `error` without running anything. It used
+# to exec the last name tried, get 127 back, and report `ok` with exit 127 -- so lint-after-edit
+# blocked edits with "timeout: command not found" presented as the lint verdict. An unbounded
+# fallback was the other option and is the one M10 exists to forbid; could-not-evaluate is the
+# honest answer when the bound cannot be enforced.
 if [ -z "${RB_TIMEOUT:-}" ]; then
   for RB_TIMEOUT in gtimeout gnutimeout timeout; do
     command -v "$RB_TIMEOUT" >/dev/null 2>&1 && break
@@ -73,6 +79,11 @@ run_bounded() {
     --) shift ;;
     *) mem="$1"; shift; [ "${1:-}" = -- ] && shift ;;
   esac
+
+  if ! command -v "${RB_TIMEOUT:-}" >/dev/null 2>&1; then
+    RB_STATUS=error; RB_OUT="no timeout(1) found (tried gtimeout, gnutimeout, timeout)"
+    RB_EXIT=""; RB_SIGNAL=""; return 1
+  fi
 
   local tmp
   tmp=$(mktemp 2>/dev/null) || { RB_STATUS=error; RB_OUT=""; RB_EXIT=""; RB_SIGNAL=""; return 1; }

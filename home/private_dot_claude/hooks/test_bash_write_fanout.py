@@ -257,6 +257,56 @@ with tempfile.TemporaryDirectory() as tmp:
         len(extracted(f"echo hi | tee {cmd}", root)) == 8,
     )
 
+    # ── the fan-out itself needs no tempfile (#581) ─────────────────────────────────
+    #
+    # `OUTPUTS=$(mktemp) || exit 0` skipped every downstream hook when no tempfile could
+    # be made. The hook is copied beside a stub lint-after-edit.sh that always blocks,
+    # then run for real with TMPDIR pointing nowhere: the block must still come out. The
+    # accepting half is the same run with a working TMPDIR.
+    #
+    # The stub pretty-prints across lines, as lint-after-edit.sh's `jq -n` does.
+    # The merge splits on newlines, and before the fan-out compacted each hook's output
+    # every fragment failed to parse: the block arrived as plain context, not a block.
+    hookdir = root / "hookdir"
+    hookdir.mkdir()
+    (hookdir / "bash-write-fanout.sh").write_text(HOOK.read_text())
+    (hookdir / "hook-input.sh").write_text((HOOK.parent / "hook-input.sh").read_text())
+    stub = hookdir / "lint-after-edit.sh"
+    stub.write_text(
+        "#!/bin/bash\ncat >/dev/null\n"
+        'printf \'{\\n  "decision": "block",\\n  "reason": "stub-lint"\\n}\\n\'\n'
+    )
+    stub.chmod(0o755)
+
+    def fanned(tmpdir):
+        result = subprocess.run(
+            ["bash", str(hookdir / "bash-write-fanout.sh")],
+            cwd=root,
+            input=json.dumps(
+                {
+                    "session_id": "test",
+                    "cwd": str(root),
+                    "tool_input": {"command": "echo x > a.txt"},
+                }
+            ),
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CLAUDE_GUARD_HOME": str(GUARD_SRC), "TMPDIR": tmpdir},
+        )
+        try:
+            return json.loads(result.stdout)
+        except ValueError:
+            return {}
+
+    check(
+        "the fan-out reports a downstream block",
+        fanned(tmp).get("reason") == "stub-lint",
+    )
+    check(
+        "and still does with no writable TMPDIR",
+        fanned(str(root / "no-such-tmpdir")).get("reason") == "stub-lint",
+    )
+
 print()
 if failures:
     print(f"{len(failures)} failure(s): {', '.join(failures)}")

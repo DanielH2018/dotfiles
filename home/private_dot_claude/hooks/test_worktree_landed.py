@@ -354,6 +354,17 @@ with tempfile.TemporaryDirectory() as tmp:
         "a gh that fails is silent",
         run(t["squashed_then_edited"], GH_BIN="false") is None,
     )
+    # #581: the gh call runs through run_bounded, and a missing run-bounded.sh is a
+    # broken install, reported as a hook error rather than as the silence that means
+    # "nothing landed". The accepting half is every run() above, with the library
+    # present.
+    no_lib = run(
+        t["squashed_then_edited"], RUN_BOUNDED_LIB="/nonexistent/run-bounded.sh"
+    )
+    check(
+        "a missing run-bounded.sh is a hook error naming the library",
+        bool(no_lib) and "/nonexistent/run-bounded.sh" in no_lib.get("error", ""),
+    )
     # A commit made after the PR merged exists only here, whatever the PR record says.
     (t["squashed_then_edited"] / "later").write_text("later\n")
     git(["add", "."], t["squashed_then_edited"])

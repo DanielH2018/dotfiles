@@ -24,18 +24,10 @@ const MAX_LINES = shConstInt(HOOK, 'MAX_LINES');
 const skip = skipUnless('bash', 'jq');
 
 // The hook runs every linter through run_bounded, which is built on coreutils timeout(1) --
-// see run-bounded.test.js, whose whole suite skips on the same probe. Where timeout is absent
-// (a stock macOS: no coreutils in Brewfile.tmpl or tools.toml) run_bounded emits
-// "timeout: command not found" and the hook reports THAT as the lint failure, so every case
-// below sees a block decision whose reason is the missing tool rather than the linter's
-// verdict. It was invisible until shellcheck arrived on this machine: with no linter for .sh
-// at all the hook returned before reaching run_bounded, and these four passed without
-// exercising it.
-//
-// NOT a test-only gap: the deployed PostToolUse hook has the same hole, and on this host it
-// now blocks real edits with that message. Closing it means either putting a timeout(1) on
-// the hook's PATH or giving run_bounded a fallback, both of which are decisions about
-// run_bounded rather than about this suite.
+// see run-bounded.test.js, whose whole suite skips on the same probe. Where no timeout exists
+// (a stock macOS without Brewfile.tmpl's coreutils) run_bounded reports could-not-evaluate
+// rather than running the linter, so every case below would see a not-evaluated block instead
+// of the linter's verdict. They skip there for that reason.
 
 const skipLintCase = !(have('bash') && have('jq') && have('shellcheck')) ? 'no supported linter installed'
   : skipUnless('bash', 'timeout');
@@ -127,20 +119,24 @@ test('a check that hangs past its bound blocks with a not-evaluated reason', { s
   assert.doesNotMatch(parsed.reason, /SC2086/, 'a timeout must not be reported as if the check ran clean or found nothing');
 });
 
-// M10 fallback contract: a sourcing failure on run-bounded.sh must not silently
-// skip the check — RUN_BOUNDED_LIB pointing nowhere forces exactly that failure
-// without touching the real library file.
-test('missing run-bounded.sh library: check still runs, unbounded, via the fallback stub', { skip: skipLintCase }, () => {
+// #581: a sourcing failure on run-bounded.sh must neither skip the check silently nor run it
+// unbounded through a private copy of the primitive. It blocks with a not-evaluated reason, and
+// runs nothing: RUN_BOUNDED_LIB pointing nowhere forces the failure without touching the real
+// library, and a linter that would have flagged the file proves nothing ran. The accepting half
+// is the clean-script case above, which runs with the library present.
+test('missing run-bounded.sh library: blocks as not evaluated and runs no check', { skip }, () => {
   const dir = scratch(os.tmpdir(), 'lint-after-edit-');
   const f = path.join(dir, 'bad.sh');
   fs.writeFileSync(f, '#!/bin/bash\nfoo=$1\necho $foo\n');
   const out = runHook(JSON.stringify({ tool_input: { file_path: f } }), {
     RUN_BOUNDED_LIB: '/nonexistent/run-bounded.sh',
   });
-  assert.strictEqual(decision(out), 'block', 'the lint violation must still be caught without the lib');
-  assert.match(out, /SC2086/);
+  const parsed = JSON.parse(out);
+  assert.strictEqual(parsed.decision, 'block', 'a hook that cannot bound its checks must not pass silently');
+  assert.match(parsed.reason, /not evaluated/);
+  assert.match(parsed.reason, /\/nonexistent\/run-bounded\.sh/, 'the reason names the missing library');
+  assert.doesNotMatch(parsed.reason, /SC2086/, 'no check may run without its bound');
 });
-
 
 // --- The Markdown prose case (#573) ---------------------------------------------------------
 // Two of CLAUDE.md's writing rules are pure regex, and until this case existed they relied on

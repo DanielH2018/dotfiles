@@ -48,9 +48,9 @@ def check(name, condition):
         failures.append(name)
 
 
-def run_hook(payload, home_dir, cwd):
-    env = {**os.environ, "HOME": str(home_dir)}
-    subprocess.run(
+def run_hook(payload, home_dir, cwd, extra_env=None):
+    env = {**os.environ, "HOME": str(home_dir), **(extra_env or {})}
+    return subprocess.run(
         ["bash", str(HOOK)],
         cwd=str(cwd),
         input=json.dumps(payload),
@@ -191,6 +191,39 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "tool_response.is_error=true is recorded as ok=false",
         bool(lines) and lines[0].get("ok") is False,
+    )
+
+    # ── a missing run-bounded.sh is reported, not absorbed (#581) ──────────────────
+    # The hook used to define its own unbounded run_bounded() when the library did not
+    # source. Now it still writes the row (the fire count does not need the lookup) but
+    # exits 1 naming the library. The accepting half runs the same payload with the
+    # library present and must exit 0.
+
+    payload = {
+        "session_id": "s7",
+        "cwd": str(root),
+        "tool_name": "Skill",
+        "tool_input": {"skill": "gh-stack"},
+    }
+    home7 = root / "home-lib-present"
+    home7.mkdir()
+    present = run_hook(payload, home7, root)
+    check("with run-bounded.sh present the hook exits 0", present.returncode == 0)
+
+    home8 = root / "home-lib-missing"
+    home8.mkdir()
+    missing = run_hook(
+        payload, home8, root, {"RUN_BOUNDED_LIB": "/nonexistent/run-bounded.sh"}
+    )
+    check("a missing run-bounded.sh exits 1", missing.returncode == 1)
+    check(
+        "and names the library on stderr",
+        "/nonexistent/run-bounded.sh" in missing.stderr,
+    )
+    lines = log_lines(home8)
+    check(
+        "the row is still written, cwd_repo falling back to the directory name",
+        bool(lines) and lines[0].get("cwd_repo") == root.name,
     )
 
 print()

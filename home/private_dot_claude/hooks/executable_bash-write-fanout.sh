@@ -308,17 +308,12 @@ fi
 
 DOWNSTREAM=(auto-format.sh lint-after-edit.sh chezmoi-guard.sh link-artifact.sh)
 
-OUTPUTS=$(mktemp) || exit 0
-# Two codes, because 0.11.0 split the old SC2317 in two: unreachable code kept that code,
-# while a function nothing calls directly became SC2329. The single suppression stopped
-# covering this line and the pre-push lint went red on a file nobody had touched.
-#
-# Keep prose OFF the directive line's own form: any comment whose first word is `shellcheck`
-# is parsed as a directive, so a continuation line starting that way is a parse error (SC1073).
-# shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap below, not called directly
-cleanup() { [ -n "${OUTPUTS:-}" ] && command rm -f -- "$OUTPUTS"; }
-trap cleanup EXIT
-
+# Collected in a variable, not a tempfile. `OUTPUTS=$(mktemp) || exit 0` used to skip the
+# whole fan-out when the tempfile could not be made -- a guard that silently did nothing, on
+# the one path where the four hooks it re-drives would otherwise never run (#581). Removing
+# the tempfile removes the failure rather than choosing an outcome for it: each downstream
+# hook's output is a few lines of JSON or text, so holding it in memory costs nothing.
+OUTPUTS=""
 for p in "${PATHS[@]}"; do
   # tool_name says Write because that is what the downstream hooks are written against;
   # tool_response.filePath is carried too, since link-artifact.sh reads either.
@@ -328,19 +323,29 @@ for p in "${PATHS[@]}"; do
   }') || continue
   for h in "${DOWNSTREAM[@]}"; do
     [ -x "$HOOK_DIR/$h" ] || continue
-    printf '%s' "$payload" | "$HOOK_DIR/$h" >>"$OUTPUTS" 2>/dev/null
-    printf '\n' >>"$OUTPUTS"
+    out=$(printf '%s' "$payload" | "$HOOK_DIR/$h" 2>/dev/null)
+    [ -n "$out" ] || continue
+    # One document per line, because the merge below splits on newlines. lint-after-edit.sh
+    # emits its block through a bare `jq -n`, which pretty-prints across lines, and each
+    # fragment then failed to parse and became plain context: a lint block on a Bash write
+    # reached the model as advisory text, not as a block. Plain text fails `jq -c` and
+    # passes through unchanged.
+    compact=$(printf '%s' "$out" | jq -c . 2>/dev/null) && out=$compact
+    OUTPUTS="$OUTPUTS$out
+"
   done
 done
 
-if [ ! -s "$OUTPUTS" ]; then exit 0; fi
+if [ -z "$OUTPUTS" ]; then exit 0; fi
 
 # Merge. A hook may emit at most one JSON document, so four hooks' worth of output has to
 # collapse into one: any `block` decision wins and its reasons are concatenated, otherwise
 # every additionalContext and every line of plain text is joined into a single context
 # string. Plain stdout is kept rather than dropped — auto-format.sh reports a missing
 # formatter that way, and losing it would make the fanout quieter than a real edit.
-jq -Rs '
+# Piped rather than fed as a here-string: bash backs a here-string with a tempfile on many
+# versions, which would bring back the dependency the variable above removed.
+printf '%s' "$OUTPUTS" | jq -Rs '
   [ split("\n")[] | select(length > 0)
     | . as $line | (try ($line | fromjson) catch {plain: $line}) ] as $docs
   | ( [ $docs[] | select(.decision == "block") | .reason | select(. != null) ] ) as $blocks
@@ -355,6 +360,6 @@ jq -Rs '
           hookEventName: "PostToolUse",
           additionalContext: ($ctx | join("\n")) } }
     else empty end
-' "$OUTPUTS"
+'
 
 exit 0

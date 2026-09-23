@@ -26,9 +26,10 @@
 # time the harness's own name for the tool changes back.
 #
 # Never fails the tool call: every failure path below falls through to a silent
-# `exit 0` with nothing written, same convention as subagent-stop.sh. This hook has no
-# verdict to give, so it does not use outcome-lib.sh -- there is nothing here that is
-# ever could-not-evaluate as opposed to just not written.
+# `exit 0` with nothing written, same convention as subagent-stop.sh -- except a
+# missing run-bounded.sh, a broken install rather than a bad payload, which exits 1.
+# This hook has no verdict to give, so it does not use outcome-lib.sh -- there is
+# nothing here that is ever could-not-evaluate as opposed to just not written.
 #
 # No separate OTEL emission here. CLAUDE_CODE_ENABLE_TELEMETRY and
 # OTEL_LOG_TOOL_DETAILS are both already on in settings.base.json, so every Skill/Agent
@@ -43,21 +44,18 @@
 set -u
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
+# run-bounded.sh is required. This file used to define its own unbounded run_bounded() when
+# the library did not source, a second copy of the primitive that bounded nothing (#581). The
+# fire-count record does not depend on it, so a missing library still writes the row -- with
+# cwd_repo falling back to the directory name, as it does for any failed lookup -- and then
+# exits 1 naming the library, so the broken install is reported rather than absorbed.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$LIB_DIR/run-bounded.sh}"
+RB_MISSING=0
 # shellcheck disable=SC1090,SC1091
-. "${RUN_BOUNDED_LIB:-$LIB_DIR/run-bounded.sh}" 2>/dev/null || true
+{ . "$RUN_BOUNDED_PATH" 2>/dev/null && command -v run_bounded >/dev/null 2>&1; } || RB_MISSING=1
 # shellcheck disable=SC1090,SC1091
 . "${HOOK_INPUT_LIB:-$LIB_DIR/hook-input.sh}" 2>/dev/null || true
 
-# Fallback when run-bounded.sh didn't source: run the (single, cheap) git lookup
-# below unbounded rather than skip cwd_repo entirely -- same degraded-but-running
-# convention lint-after-edit.sh uses for the same stub.
-# shellcheck disable=SC2034  # RB_SIGNAL mirrors the real lib's out-param contract
-command -v run_bounded >/dev/null 2>&1 || run_bounded() {
-  shift 2
-  case "${1:-}" in --) shift ;; *) shift; [ "${1:-}" = -- ] && shift ;; esac
-  RB_STATUS=ok; RB_SIGNAL=""
-  RB_OUT=$("$@" 2>&1); RB_EXIT=$?
-}
 command -v hook_field >/dev/null 2>&1 || hook_field() { jq -r "$1" 2>/dev/null; }
 
 command -v jq >/dev/null 2>&1 || exit 0
@@ -87,8 +85,8 @@ OK=true
 # shapes `rev-parse --git-common-dir` can return (absolute, or relative to cwd).
 CWD_REPO=""
 if [ -n "$CWD" ]; then
-  run_bounded 3 4096 -- git -C "$CWD" rev-parse --git-common-dir
-  if [ "${RB_STATUS:-error}" = ok ] && [ "${RB_EXIT:-1}" -eq 0 ] && [ -n "${RB_OUT:-}" ]; then
+  [ "$RB_MISSING" -eq 0 ] && run_bounded 3 4096 -- git -C "$CWD" rev-parse --git-common-dir
+  if [ "$RB_MISSING" -eq 0 ] && [ "${RB_STATUS:-error}" = ok ] && [ "${RB_EXIT:-1}" -eq 0 ] && [ -n "${RB_OUT:-}" ]; then
     COMMON_RAW=$(printf '%s' "$RB_OUT" | tr -d '\n')
     case "$COMMON_RAW" in
       /*) COMMON_ABS=$(cd "$COMMON_RAW" 2>/dev/null && pwd -P) ;;
@@ -108,4 +106,9 @@ jq -nc --arg ts "$TS" --arg kind "$KIND" --arg name "$NAME" --arg sid "$SESSION_
   '{ts: $ts, kind: $kind, name: $name, session_id: $sid, cwd_repo: $repo, ok: $ok}' \
   >>"$LOG_DIR/skill-usage.jsonl" 2>/dev/null
 
+if [ "$RB_MISSING" -eq 1 ]; then
+  printf 'skill-usage-log: cannot load %s; cwd_repo fell back to the directory name\n' \
+    "$RUN_BOUNDED_PATH" >&2
+  exit 1
+fi
 exit 0

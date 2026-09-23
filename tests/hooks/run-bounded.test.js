@@ -6,6 +6,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
 const { srcPath } = require('../lib/paths');
 
@@ -151,4 +154,29 @@ test('a genuinely passing run never reaches could-not-evaluate', { skip }, () =>
   );
   assert.strictEqual(r.status, 0);
   assert.match(r.stdout, /reached/);
+});
+
+// #581: where no timeout(1) resolves at all, the command must not run -- unbounded is what M10
+// forbids -- and the status must be could-not-evaluate, not an `ok` carrying exec's 127. The
+// accepting half is the normal-completion case above, with a real timeout resolved.
+test('no timeout binary: status error, and the command never runs', { skip }, () => {
+  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rb-')), 'ran');
+  const r = spawnSync('bash', ['-c',
+    `export RB_TIMEOUT=/nonexistent/timeout; . ${JSON.stringify(LIB)}; `
+    + `run_bounded 5 4096 -- touch ${JSON.stringify(marker)}; rc=$?; `
+    + `printf '%s|%s' "$RB_STATUS" "$rc"`], { encoding: 'utf8' });
+  assert.strictEqual(r.stdout, 'error|1');
+  assert.ok(!fs.existsSync(marker), 'the command ran without its bound');
+});
+
+// The source must carry exactly one run_bounded definition, the library's. Every private copy
+// was an unbounded one (#581), so a second definition anywhere under hooks/ is the regression.
+test('run_bounded is defined only in run-bounded.sh', () => {
+  const hooksDir = path.dirname(LIB);
+  const definers = fs.readdirSync(hooksDir, { withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => e.name)
+    .filter((n) => /(^|[\s|&;])run_bounded\(\)\s*\{/m
+      .test(fs.readFileSync(path.join(hooksDir, n), 'utf8')));
+  assert.deepStrictEqual(definers, ['run-bounded.sh']);
 });

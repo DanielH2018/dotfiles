@@ -1,15 +1,14 @@
 // Red-team test for executable_screen-injection.sh: feeds a fixture corpus of malicious
-// and benign tool outputs through the ACTUAL hook and asserts the two-layer defense
-// behaves. Everything runs OFFLINE — Layer 2's model call is replaced by a stub through
-// the hook's SCREEN_INJECTION_CLASSIFY_CMD seam, so CI/pre-push never hits the network.
+// and benign tool outputs through the ACTUAL hook and asserts the deterministic scan
+// behaves. Everything runs offline.
 //
 // Categories (tests/fixtures/injection-fixtures.json):
-//   flag                -> Layer-1 (deterministic) MUST warn.
-//   silent              -> MUST stay quiet (no false positive).
-//   flag_via_classifier -> Layer-1 MISSES (asserted); with the classifier enabled and a
-//                          stubbed injection:true verdict the hook MUST warn.
-//   classifier_silent   -> reaches the classifier, but a stubbed injection:false verdict
-//                          MUST keep the hook quiet.
+//   flag           -> the scan MUST warn.
+//   silent         -> MUST stay quiet (no false positive).
+//   known_evasions -> real injections the scan MISSES. Asserted quiet so the gap stays
+//                     visible; a marker change that catches one fails here, and the fixture
+//                     moves to `flag`. The opt-in model classifier that used to cover them
+//                     failed open and was removed (#581).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -33,47 +32,45 @@ function isFlagged(stdout) {
   catch { return false; }
 }
 
-// Offline stubs for the classifier seam — never touch the network.
-const STUB_TRUE = `printf '%s' '{"injection":true,"reason":"stub"}'`;
-const STUB_FALSE = `printf '%s' '{"injection":false,"reason":"stub"}'`;
-const clsOn = (cmd) => ({ SCREEN_INJECTION_CLASSIFIER: '1', SCREEN_INJECTION_CLASSIFY_CMD: cmd });
-
 // Every test below is a `for` over one fixture category, so an empty category
 // passes without asserting anything. The counts used to be visible only in the
 // console.log at the bottom of this file, which a digested pre-push run does not
 // print — so assert the corpus is populated instead of trusting someone to read it.
 test('fixture corpus is populated', () => {
-  for (const category of ['flag', 'silent', 'flag_via_classifier', 'classifier_silent']) {
+  for (const category of ['flag', 'silent', 'known_evasions']) {
     assert.ok(fixtures[category]?.length > 0, `fixture category must not be empty: ${category}`);
   }
 });
 
-// Layer 1 — deterministic, classifier OFF (default).
-test('flag fixtures are warned by Layer 1', () => {
+// The deterministic scan is the only verdict path.
+test('flag fixtures are warned', () => {
   for (const f of fixtures.flag) {
-    assert.ok(isFlagged(runHook(f.input).stdout), `flag fixture must be warned by Layer 1: ${f.name}`);
+    assert.ok(isFlagged(runHook(f.input).stdout), `flag fixture must be warned: ${f.name}`);
   }
 });
 
-test('silent fixtures stay quiet under Layer 1', () => {
+test('silent fixtures stay quiet', () => {
   for (const f of fixtures.silent) {
     assert.strictEqual(runHook(f.input).stdout.trim(), '', `silent fixture must stay quiet: ${f.name}`);
   }
 });
 
-// Layer 2 — classifier enabled, verdict stubbed (offline).
-test('flag_via_classifier fixtures slip Layer 1 but are warned when the classifier says injection:true', () => {
-  for (const f of fixtures.flag_via_classifier) {
-    // Must genuinely slip Layer 1 (else it belongs in `flag`).
-    assert.strictEqual(runHook(f.input).stdout.trim(), '', `flag_via_classifier must slip Layer 1: ${f.name}`);
-    assert.ok(isFlagged(runHook(f.input, clsOn(STUB_TRUE)).stdout), `classifier injection:true must warn: ${f.name}`);
+test('known evasions still slip the scan', () => {
+  for (const f of fixtures.known_evasions) {
+    assert.strictEqual(runHook(f.input).stdout.trim(), '',
+      `now caught -- move it from known_evasions to flag: ${f.name}`);
   }
 });
 
-test('classifier_silent fixtures stay quiet when the classifier says injection:false', () => {
-  for (const f of fixtures.classifier_silent) {
-    assert.strictEqual(runHook(f.input, clsOn(STUB_FALSE)).stdout.trim(), '', `classifier injection:false must stay quiet: ${f.name}`);
-  }
+// The classifier's env seams must be inert: with the second layer gone, setting them cannot
+// turn a known evasion into a warning, nor run the command they name.
+test('the removed classifier seams change nothing', () => {
+  const f = fixtures.known_evasions[0];
+  const r = runHook(f.input, {
+    SCREEN_INJECTION_CLASSIFIER: '1',
+    SCREEN_INJECTION_CLASSIFY_CMD: `printf '%s' '{"injection":true,"reason":"stub"}'`,
+  });
+  assert.strictEqual(r.stdout.trim(), '');
 });
 
 // The base64 sweep is bounded on two axes, because this hook runs on EVERY tool result,
@@ -102,6 +99,5 @@ test('the byte cap bounds how much output is scanned for candidates', () => {
   assert.ok(isFlagged(runHook(out, { SCREEN_INJECTION_B64_BYTES: '65536' }).stdout));
 });
 
-console.log(`screen-injection: ${fixtures.flag.length} flagged by regex, `
-  + `${fixtures.flag_via_classifier.length} via classifier (stubbed), `
-  + `${fixtures.silent.length} benign quiet, 0 known evasions.`);
+console.log(`screen-injection: ${fixtures.flag.length} flagged, `
+  + `${fixtures.silent.length} benign quiet, ${fixtures.known_evasions.length} known evasions.`);

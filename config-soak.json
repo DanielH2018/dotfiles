@@ -73,8 +73,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
-      "hash": "b508ea4d83d84f8ec6d7776b2bedf8f802b11fdc98053d513177ac6e75ff1837",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "0487a38983de68b1a99d351b54aedf7207d296bdcd98b5d54e2f3b487da43037",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -138,8 +138,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
-      "hash": "08bf4f6e9d80aba4e6b63bf58e6869fb81759aa0fe6e1fecf3478152db1a9c50",
-      "landed": "2026-09-23T14:18:14.660Z"
+      "hash": "8442526111d5221f163037b6c8933bd78303d5c764450b0f40278b4a6c36fac6",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-index-size.py",
@@ -218,8 +218,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
-      "hash": "77b21d9985555e748bb5d5d2beed2b34efc687ea63d7aa6f2e161bda5434e44d",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "fc7623b11e20abc0ffa98f6142f988a610ee0db83b5c91823c7f24c4a9c778e1",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_serve-artifacts.sh",
@@ -238,8 +238,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
-      "hash": "f28c250f471614a4fec3e86ba3a5115a51ea15653d0618df140d36033a173b5b",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "586fb2975e01371653afb99ce8353e562c35dda95906557703c7d8a2b3d43b16",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -283,8 +283,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "11183c45fe385a8dc24db6c05bc6bec1f39e1390547a74c465d154320715a87f",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "f7fc0c803adbbeb5ea81335b3a234b37154cedb95766e82ed66500d2c02086e7",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -308,13 +308,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/run-bounded.sh",
-      "hash": "8a465cbf48c9bc762a55f1a82c316fd443139aaca55812feb8230ce22114216d",
-      "landed": "2026-08-26T23:52:32.913Z"
+      "hash": "0ce9bac493eb970ad5d59bbd8515a3e0cead316ef5b04c4d5766b1f03949c4b7",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
-      "hash": "d6475c5210b90f22c73903cbf5f8d7961455ad79d963c1f9777122b0e9a187cd",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "0e0ce7593e9d9a87f98c206b08d7f80d7f07a64acb99b6bc01d4f75797473be0",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
@@ -343,8 +343,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
-      "hash": "4e81a4636cfdfd56245c35fa963ad3261e704b73e9c262aae75934ad77bfae39",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "2361485f111cad5bad18a1518da415856d5b4859ff15296d3f2573fc81f87fee",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_table.py",
@@ -353,8 +353,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "d4f0a887414646ad729d5ce69c411b7b836e4ef0e7ddeb094b5416fc5d4e50e5",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "80d6f5a1fc64e7ae240febc615788eaf685b3dae3b8b170f3d374fe669a3d1f8",
+      "landed": "2026-09-23T21:05:47.255Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",

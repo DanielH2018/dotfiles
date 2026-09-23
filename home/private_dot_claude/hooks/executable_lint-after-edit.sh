@@ -69,29 +69,26 @@ exit($bad ? 1 : 0);
 '
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
-# SWALLOW: a hook must run without its libs rather than fail closed on the whole
-# edit. The fallback stubs below (guarded on `command -v`) keep every check
-# actually running — unbounded, like before this slice — instead of silently
-# skipping it, per M06's "no dependency of its own" convention
-# (M06-M18-outcome-convention.md:282). RUN_BOUNDED_LIB/OUTCOME_LIB are seams for
-# tests to force the missing-library path without touching the real files.
+# run-bounded.sh is required, not optional. Without it this hook used to define its own
+# unbounded run_bounded() and run every linter with no ceiling -- the very thing M10 exists to
+# forbid, and a second copy of the primitive that drifted from the real one (#581). A missing
+# library now blocks with a not-evaluated reason instead: the edit is reported as unchecked,
+# never as checked-and-clean. The other two libraries keep their stubs because what they carry
+# is telemetry and input parsing, not a bound. RUN_BOUNDED_LIB/OUTCOME_LIB/HOOK_INPUT_LIB are
+# seams for tests to force the missing-library path without touching the real files.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-$LIB_DIR/run-bounded.sh}"
 # shellcheck disable=SC1090,SC1091
-. "${RUN_BOUNDED_LIB:-$LIB_DIR/run-bounded.sh}" 2>/dev/null || true
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  jq -n --arg lib "$RUN_BOUNDED_PATH" '{decision: "block",
+    reason: ("lint-after-edit: cannot load \($lib), so no check ran on this edit -- not evaluated. "
+      + "Restore it (chezmoi apply ~/.claude/hooks) and re-run the checker by hand.")}'
+  exit 0
+fi
 # shellcheck disable=SC1090,SC1091
 . "${OUTCOME_LIB:-$LIB_DIR/outcome-lib.sh}" 2>/dev/null || true
 # shellcheck disable=SC1090,SC1091
 . "${HOOK_INPUT_LIB:-$LIB_DIR/hook-input.sh}" 2>/dev/null || true
 
-# Fallback when run-bounded.sh didn't source: run the check unbounded (the old
-# behaviour) rather than skip it. Losing the bound is an accepted degradation
-# when the lib itself can't be sourced; skipping the check silently would not be.
-# shellcheck disable=SC2034  # RB_SIGNAL mirrors the real lib's out-param contract
-command -v run_bounded >/dev/null 2>&1 || run_bounded() {
-  shift 2
-  case "${1:-}" in --) shift ;; *) shift; [ "${1:-}" = -- ] && shift ;; esac
-  RB_STATUS=ok; RB_SIGNAL=""
-  RB_OUT=$("$@" 2>&1); RB_EXIT=$?
-}
 # oc_mark never fails its caller by contract; a no-op stub preserves that if the
 # lib didn't source — telemetry is lost, the check itself still runs either way.
 command -v oc_mark >/dev/null 2>&1 || oc_mark() { :; }
