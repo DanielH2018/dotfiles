@@ -16,6 +16,8 @@ const { parseNvim } = require('./parsers/nvim');
 const { parseYazi } = require('./parsers/yazi');
 const { parseClaude } = require('./parsers/claude');
 
+const { THEME_CSS } = require('../html-kit');
+
 const ASSETS = path.join(__dirname, 'assets');
 const cache = new Map();
 
@@ -23,9 +25,11 @@ const cache = new Map();
 // report it rather than as an uncaught throw while the module graph loads. The trailing
 // newline is trimmed because these are files now: inline, both blocks ended at their last
 // brace, and the page has to keep rendering identically.
+//
+// `name` is relative to assets/, or absolute: THEME_CSS, the palette html-kit shares.
 function asset(name) {
   if (!cache.has(name)) {
-    cache.set(name, fs.readFileSync(path.join(ASSETS, name), 'utf8').trimEnd());
+    cache.set(name, fs.readFileSync(path.resolve(ASSETS, name), 'utf8').trimEnd());
   }
   return cache.get(name);
 }
@@ -124,6 +128,7 @@ function build() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Terminal Cheatsheet — ${esc(host)}</title>
 <style>
+${asset(THEME_CSS)}
 ${asset('page.css')}
 </style></head><body>
 <header><div class="bar">

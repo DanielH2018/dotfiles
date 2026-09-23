@@ -343,7 +343,9 @@ test("assets are interpolated without their trailing newline", () => {
     assert.ok(fs.readFileSync(path.join(__dirname, "assets", name), "utf8").endsWith("\n"),
       `${name} must still be a well-formed file on disk`);
   }
-  assert.ok(render.asset("page.css").startsWith(":root{"), "page.css starts at the palette");
+  const { THEME_CSS } = require("../html-kit");
+  assert.ok(!/\n$/.test(render.asset(THEME_CSS)), "the shared theme must be interpolated without a trailing newline");
+  assert.ok(render.asset(THEME_CSS).startsWith(":root{"), "the shared theme starts at the palette");
 });
 
 test("a missing asset fails when the page is built, not when render.js loads", () => {

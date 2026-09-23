@@ -12,6 +12,8 @@ const path = require('node:path');
 
 const { esc } = require('./core');
 
+const { THEME_CSS } = require('../html-kit');
+
 const ASSETS = path.join(__dirname, 'assets');
 const cache = new Map();
 
@@ -22,9 +24,11 @@ const cache = new Map();
 // Trailing newline trimmed because these are files now: the blocks they replaced ended at
 // their last brace, and the page has to keep rendering byte-identically or every apply
 // rewrites it.
+//
+// `name` is relative to assets/, or absolute: THEME_CSS, the palette html-kit shares.
 function asset(name) {
   if (!cache.has(name)) {
-    cache.set(name, fs.readFileSync(path.join(ASSETS, name), 'utf8').trimEnd());
+    cache.set(name, fs.readFileSync(path.resolve(ASSETS, name), 'utf8').trimEnd());
   }
   return cache.get(name);
 }
@@ -143,6 +147,7 @@ function renderPage(model) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(page.title)}</title>
 <style>
+${asset(THEME_CSS)}
 ${asset('page.css')}
 </style>
 </head>

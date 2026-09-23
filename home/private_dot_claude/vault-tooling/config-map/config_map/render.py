@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
 
 from .model import CascadeNode, Category, Item, Layer, SetupMap
 
@@ -15,20 +16,64 @@ PROVENANCE_LABELS = {
     "inline": "inline",
 }
 
+# The Catppuccin palette is shared with the ~/.local/share HTML generators (#564): one
+# theme.css in html-kit, Mocha by default and Latte on a light scheme for a page whose
+# <html> carries data-flavor="auto", which this one does. render.py sits four levels below
+# the directory holding both trees: ~ once deployed, home/ in the chezmoi source.
+_ROOT = Path(__file__).resolve().parents[4]
+THEME_CANDIDATES = (
+    _ROOT / ".local" / "share" / "html-kit" / "theme.css",
+    _ROOT / "dot_local" / "share" / "html-kit" / "theme.css",
+)
+
+# The same palette, for a checkout that carries config-map without html-kit: the Claude
+# sandbox mounts ~/.claude and nothing under ~/.local/share. tests/test_theme.py fails
+# when this copy and theme.css disagree.
+THEME_FALLBACK = """:root{
+  --rosewater:#f5e0dc; --flamingo:#f2cdcd; --pink:#f5c2e7; --mauve:#cba6f7;
+  --red:#f38ba8; --maroon:#eba0ac; --peach:#fab387; --yellow:#f9e2af;
+  --green:#a6e3a1; --teal:#94e2d5; --sky:#89dceb; --sapphire:#74c7ec;
+  --blue:#89b4fa; --lavender:#b4befe;
+  --text:#cdd6f4; --subtext1:#bac2de; --subtext0:#a6adc8;
+  --overlay2:#9399b2; --overlay1:#7f849c; --overlay0:#6c7086;
+  --surface2:#585b70; --surface1:#45475a; --surface0:#313244;
+  --base:#1e1e2e; --mantle:#181825; --crust:#11111b;
+}
+@media (prefers-color-scheme: light){
+  :root[data-flavor="auto"]{
+    --rosewater:#dc8a78; --flamingo:#dd7878; --pink:#ea76cb; --mauve:#8839ef;
+    --red:#d20f39; --maroon:#e64553; --peach:#fe640b; --yellow:#df8e1d;
+    --green:#40a02b; --teal:#179299; --sky:#04a5e5; --sapphire:#209fb5;
+    --blue:#1e66f5; --lavender:#7287fd;
+    --text:#4c4f69; --subtext1:#5c5f77; --subtext0:#6c6f85;
+    --overlay2:#7c7f93; --overlay1:#8c8fa1; --overlay0:#9ca0b0;
+    --surface2:#acb0be; --surface1:#bcc0cc; --surface0:#ccd0da;
+    --base:#eff1f5; --mantle:#e6e9ef; --crust:#dce0e8;
+  }
+}
+"""
+
+
+def theme_css(candidates: tuple[Path, ...] = THEME_CANDIDATES) -> str:
+    for candidate in candidates:
+        try:
+            return candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return THEME_FALLBACK
+
+
+# The page's own names for the palette. Only the code block reads differently per flavour:
+# Mocha's code sits on crust, Latte's on base.
 CSS = """
 :root{
-  --bg:#eff1f5; --panel:#ccd0da; --panel2:#e6e9ef; --border:#bcc0cc;
-  --fg:#4c4f69; --dim:#6c6f85; --faint:#9ca0b0;
-  --accent:#1e66f5; --green:#40a02b; --amber:#df8e1d; --purple:#8839ef;
-  --code:#4c4f69; --codebg:#eff1f5;
+  --bg:var(--base); --panel:var(--surface0); --panel2:var(--mantle); --border:var(--surface1);
+  --fg:var(--text); --dim:var(--subtext0); --faint:var(--overlay0);
+  --accent:var(--blue); --amber:var(--yellow); --purple:var(--mauve);
+  --code:var(--subtext1); --codebg:var(--crust);
 }
-@media (prefers-color-scheme: dark){
-  :root{
-    --bg:#1e1e2e; --panel:#313244; --panel2:#181825; --border:#45475a;
-    --fg:#cdd6f4; --dim:#a6adc8; --faint:#6c7086;
-    --accent:#89b4fa; --green:#a6e3a1; --amber:#f9e2af; --purple:#cba6f7;
-    --code:#bac2de; --codebg:#11111b;
-  }
+@media (prefers-color-scheme: light){
+  :root{ --code:var(--text); --codebg:var(--base); }
 }
 *{box-sizing:border-box}
 body{
@@ -199,12 +244,12 @@ def render(setup_map: SetupMap) -> str:
     inventory_section = "".join(_render_category(categories[k]) for k in inventory_keys if k in categories)
 
     return f"""<!doctype html>
-<html lang="en">
+<html lang="en" data-flavor="auto">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Setup Map</title>
-<style>{CSS}</style>
+<style>{theme_css()}{CSS}</style>
 </head>
 <body>
 <div class="wrap">

@@ -7,8 +7,9 @@
 
 const path = require('node:path');
 
-const esc = (s) =>
-  String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// The escape every generated page shares lives in html-kit (#564); re-exported so the
+// build and render modules keep importing it from here.
+const { esc } = require('../html-kit');
 
 // Language from the shebang, falling back to the extension. Used only for uncurated
 // entries and as a cross-check; curated entries carry their own label.

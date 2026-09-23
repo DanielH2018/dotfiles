@@ -9,13 +9,15 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// The escape every generated page shares lives in html-kit (#564).
+const { esc } = require('../html-kit');
+
 const HOME = os.homedir();
 const XDG = process.env.XDG_CONFIG_HOME || path.join(HOME, '.config');
 const YAZI = process.env.YAZI_CONFIG_HOME || path.join(XDG, 'yazi');
 const PLATFORM = ({ darwin: 'macOS', win32: 'Windows', linux: 'Linux' })[os.platform()] || os.platform();
 
 const read = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } };
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const disp = (p) => p.replace(HOME, '~').replace(/\\/g, '/');
 const appendUnit = (v, unit) => (v ? v + unit : '');
 
