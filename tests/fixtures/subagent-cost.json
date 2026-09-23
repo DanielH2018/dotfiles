@@ -1,0 +1,52 @@
+{
+  "_comment": "A snapshot of six `otelq logs --since 7d` instant queries, whose LogQL is under `queries`, taken on the date below against the Loki otelq resolved (10.43.99.158:3100, the cluster Loki; every api_request in the window came from linux/amd64). It exists because skills/orchestrating-subagents/SKILL.md quotes subagent-cost figures and nothing tied them to a query (#578). The literals it carried until this snapshot ($988 of subagent cost, $454 of agent_summary, $1.19 per subagent across 381, measured 2026-08-23) had no report behind them, and their window is older than Loki's 31-day retention, so they cannot be re-derived. tests/subagent-cost.test.js computes every figure the paragraph quotes from the raw rows here and asserts each one appears in it, so a hand-edited number goes red. Definitions the test applies: subagent cost is the sum of cost_usd over every query_source starting `agent:` (builtin and custom agent types); `sdk` is a headless session's main thread and is excluded; the denominator is the count of subagent_completed events, all of which carry is_async=true, so it counts completed background subagents, not every subagent. cost_usd is Claude Code's list-price estimate, not a bill. Values are kept as the strings Loki returned. To refresh: re-run the six queries, replace this file, and rewrite the paragraph from it in the same commit. The window is rolling, so a rerun never reproduces a snapshot exactly; the test compares the prose against THIS file, never against a fresh query.",
+  "measured": "2026-09-23",
+  "window": "7d",
+  "window_end_epoch": 1790197287,
+  "queries": {
+    "cost_usd_by_query_source": "sum by (query_source) (sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | unwrap cost_usd [7d]))",
+    "requests_by_query_source": "sum by (query_source) (count_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" [7d]))",
+    "subagent_completed_by_is_async": "sum by (is_async) (count_over_time({service_name=\"claude-code\"} | event_name=\"subagent_completed\" [7d]))",
+    "agent_summary_input_tokens": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | query_source=\"agent_summary\" | unwrap input_tokens [7d]))",
+    "agent_summary_cache_read_tokens": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | query_source=\"agent_summary\" | unwrap cache_read_tokens [7d]))",
+    "agent_summary_output_tokens": "sum(sum_over_time({service_name=\"claude-code\"} | event_name=\"api_request\" | query_source=\"agent_summary\" | unwrap output_tokens [7d]))"
+  },
+  "cost_usd_by_query_source": {
+    "agent:builtin:Explore": "45.063494850000005",
+    "agent:builtin:claude-code-guide": "1.6322671499999999",
+    "agent:builtin:fork": "0.4450052",
+    "agent:builtin:general-purpose": "352.11975924999996",
+    "agent:custom": "279.46587325",
+    "agent_summary": "135.07347330000002",
+    "compact": "3.2894362500000005",
+    "generate_session_title": "0.0024749999999999998",
+    "rename_generate_name": "0.0004",
+    "repl_main_thread:outputStyle:custom": "1092.44925325",
+    "sdk": "1504.4927633000002",
+    "web_fetch_apply": "0.30856",
+    "web_search_tool": "0.080176"
+  },
+  "requests_by_query_source": {
+    "agent:builtin:Explore": "474",
+    "agent:builtin:claude-code-guide": "21",
+    "agent:builtin:fork": "10",
+    "agent:builtin:general-purpose": "3060",
+    "agent:custom": "2886",
+    "agent_summary": "1891",
+    "compact": "6",
+    "generate_session_title": "2",
+    "rename_generate_name": "1",
+    "repl_main_thread:outputStyle:custom": "6368",
+    "sdk": "10395",
+    "web_fetch_apply": "31",
+    "web_search_tool": "3"
+  },
+  "subagent_completed_by_is_async": {
+    "true": "147"
+  },
+  "agent_summary_tokens": {
+    "input": "3031074",
+    "cache_read": "308892910",
+    "output": "84684"
+  }
+}

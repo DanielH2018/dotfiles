@@ -80,15 +80,20 @@ model usually finishes well before it. Two caveats the guide states: the budget 
 nothing stops the model at the limit, and under time pressure the model may search and verify a
 little less — so leave it out of a brief whose whole job is verification.
 
-**Bound the return, not just the work.** A subagent's output is read back through a
-summarization pass, and that pass is a real line item. Measured 2026-08-23 over 7 days:
-running subagents cost $988 of list-price tokens and `agent_summary` cost a further $454 —
-$1.19 per subagent across 381 of them, 31% of the all-in cost of delegating. The pass scales
-with how much prose comes back, so name the shape in the brief: a table with stated columns, a
-list of `file:line` findings, a JSON object with fixed keys. A brief ending "report what you
-find" buys a narrative and then pays to compress it; one ending "return a table with columns
-X, Y, Z" does not. `agent_summary` cost per `subagent_completed` is one number in the
-telemetry, so the effect of a convention change is measurable.
+**Bound the return, not just the work.** Everything a subagent returns lands in your own
+context, and every later turn of your session carries it. So name the shape in the brief: a
+table with stated columns, a list of `file:line` findings, a JSON object with fixed keys. A
+brief ending "report what you find" buys a narrative you then carry for the rest of the
+session; one ending "return a table with columns X, Y, Z" does not.
+
+**Subagents carry a second cost line, `agent_summary`.** Measured 2026-09-23 over 7 days
+(`tests/fixtures/subagent-cost.json` holds the queries and rows): subagents cost $679 of
+list-price tokens and `agent_summary` requests cost a further $135. That is $0.92 per
+`subagent_completed` event across 147 of them, and 17% of the all-in cost of delegating. Every
+one of those events came from a background subagent. The line does not scale with what comes
+back. Each completed subagent had 12.9 `agent_summary` requests, and each request re-read a
+mean of 163k cached tokens to write 45. So the cost grows with how long a background subagent
+runs and how large its context gets, not with the length of its report.
 
 **Don't pay for the same document N times.** Subagents share no context, so a large file named in
 several briefs is re-read in full by each one. Measured 2026-07-25: the Claude Code docs bundle was
