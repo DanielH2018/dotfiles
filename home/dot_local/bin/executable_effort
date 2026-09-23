@@ -6,10 +6,23 @@
 set -euo pipefail
 
 SETTINGS="$HOME/.claude/settings.json"
-LEVELS=(low medium high xhigh max)
+LEVELS=(low medium high xhigh max auto)
 
 current() {
   jq -r '.effortLevel // "unset"' "$SETTINGS"
+}
+
+# `auto` deletes the key rather than storing a sixth value: an absent effortLevel is what
+# leaves effort unpinned, and settings.base.json's comment treats absence as the intended
+# state. Without this verb the script was a one-way door — it could pin every level and
+# unpin none, so a `/effort medium` typed once was carried forward by claude-settings-merge
+# on every apply and never came back off.
+unset_level() {
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"
+  jq 'del(.effortLevel)' "$SETTINGS" >"$tmp"
+  mv "$tmp" "$SETTINGS"
+  echo "effortLevel: unset (auto — the model sizes its own reasoning per turn)"
 }
 
 set_level() {
@@ -21,6 +34,10 @@ set_level() {
     echo "Invalid effort level: $level" >&2
     echo "Valid options: ${LEVELS[*]}" >&2
     exit 1
+  fi
+  if [[ "$level" == auto ]]; then
+    unset_level
+    return
   fi
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/effort-settings.XXXXXX")"

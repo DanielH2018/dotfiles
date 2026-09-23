@@ -312,7 +312,15 @@
        to the same amount of thinking across models, so a sweep run on one model does not
        carry to the next; `medium` on Fable 5.1 roughly matches Fable 5 at lower cost, and
        `xhigh`/`max` make the model draft long deliverables once in thinking and again in
-       the reply. `high` is its recommended starting point. */}}
+       the reply. `high` is its recommended starting point.
+       The Opus 5.5 prompting guide repeats the does-not-map warning and adds the per-model
+       API defaults, which differ: Opus 5 defaults to `high`, Opus 5.5 to `medium`, because
+       Anthropic measured 5.5 at `medium` matching or beating 5 at `high` on coding and
+       knowledge-work evals. Those are the CLAUDE API defaults. What an absent key resolves
+       to in Claude Code is a separate, unmeasured question — do not read a session-level
+       change out of them. The guide also says lowering the effort level reduces thinking
+       more reliably than a prompt instruction does, which is the argument for pinning here
+       over asking in prose if you ever want less. */}}
   {{/* An ARRAY of model names, not a string. A1-36 called this backwards and the string it
        introduced broke far more than the fallback: Claude Code 2.1.220 validates this key as
        an array, and on a type mismatch it discards the WHOLE settings.json, so statusLine,

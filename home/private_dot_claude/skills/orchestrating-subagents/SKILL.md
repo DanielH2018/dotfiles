@@ -64,6 +64,22 @@ Corollary for the dispatcher: **don't delegate the immediate blocker** if your o
 depends on its answer. You will wait on it either way, and you lose the ability to react to
 what it finds partway through. (Adapted from `efficient-frontier` on noriskillsets.dev.)
 
+**Give the brief a time budget, not just a tool-call budget.** Opus 5.5 pays close attention to
+elapsed time and paces its work against a stated budget. In Anthropic's evaluations of small
+agent teams on research tasks, a budget made the team finish considerably sooner than a single
+agent while keeping answer quality comparable. A budget is not the same lever as lower effort:
+lowering effort reduces the work itself, where a budget mostly keeps more agents running in
+parallel. So it stacks with the cost lever above rather than replacing it.
+
+The measured mechanism is a harness appending `elapsed 340s / 1200s` to every message it returns
+to the model, and the Agent tool has no per-message injection point for a running subagent. Use
+the guide's own fallback instead — one sentence in the brief: *Time matters here: do not spend
+time that can be avoided, and the earlier a correct result is obtained, the better.* Set a named
+budget when you can estimate one, somewhat above the time you actually want spent, because the
+model usually finishes well before it. Two caveats the guide states: the budget is advisory and
+nothing stops the model at the limit, and under time pressure the model may search and verify a
+little less — so leave it out of a brief whose whole job is verification.
+
 **Bound the return, not just the work.** A subagent's output is read back through a
 summarization pass, and that pass is a real line item. Measured 2026-08-23 over 7 days:
 running subagents cost $988 of list-price tokens and `agent_summary` cost a further $454 —
