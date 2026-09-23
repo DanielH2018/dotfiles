@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const lib = require('./gen-lint-files-lib.js');
+const { reportCheck } = require('./gen-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(REPO_ROOT, '.pre-commit-config.yaml');
@@ -57,21 +58,6 @@ function readEntries() {
     });
 }
 
-function checkOne(label, generated, committed) {
-  if (generated === committed) {
-    process.stdout.write(`gen-lint-files --check: ${label} is up to date.\n`);
-    return true;
-  }
-  const diff = lib.firstDiffLine(generated, committed);
-  process.stderr.write(`gen-lint-files --check: ${label} is out of date. Run \`bin/gen-lint-files\` and commit the result.\n`);
-  if (diff) {
-    process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
-    process.stderr.write(`    generated: ${diff.expected}\n`);
-    process.stderr.write(`    committed: ${diff.got}\n`);
-  }
-  return false;
-}
-
 function main() {
   const check = process.argv.includes('--check');
   const list = process.argv.includes('--list');
@@ -91,8 +77,8 @@ function main() {
   if (check) {
     const currentRuff = fs.existsSync(RUFF_TOML_PATH) ? fs.readFileSync(RUFF_TOML_PATH, 'utf8') : '';
     const ok = [
-      checkOne(path.relative(REPO_ROOT, CONFIG_PATH), regeneratedCfg, currentCfg),
-      checkOne(path.relative(REPO_ROOT, RUFF_TOML_PATH), ruffToml, currentRuff),
+      reportCheck({ tool: 'gen-lint-files', rel: path.relative(REPO_ROOT, CONFIG_PATH) }, regeneratedCfg, currentCfg),
+      reportCheck({ tool: 'gen-lint-files', rel: path.relative(REPO_ROOT, RUFF_TOML_PATH) }, ruffToml, currentRuff),
     ].every(Boolean);
     if (!ok) process.exit(1);
     process.stdout.write(`gen-lint-files --check: ${summary}.\n`);

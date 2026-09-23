@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const lib = require('./gen-skill-router-lib.js');
+const { reportCheck } = require('./gen-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SKILLS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'skills');
@@ -95,18 +96,6 @@ function readAgentNames(agentsDir) {
     .map((f) => f.slice(0, -3));
 }
 
-function firstDiffLine(a, b) {
-  const al = a.split('\n');
-  const bl = b.split('\n');
-  const n = Math.max(al.length, bl.length);
-  for (let i = 0; i < n; i += 1) {
-    if (al[i] !== bl[i]) {
-      return { lineNo: i + 1, expected: al[i] ?? '(end of file)', got: bl[i] ?? '(end of file)' };
-    }
-  }
-  return null;
-}
-
 function main() {
   const check = process.argv.includes('--check');
 
@@ -143,19 +132,9 @@ function main() {
   const regenerated = lib.injectGenerated(currentTemplate, skills);
 
   if (check) {
-    if (regenerated === currentTemplate) {
-      process.stdout.write(`gen-skill-router --check: ${path.relative(REPO_ROOT, TEMPLATE_PATH)} is up to date (${skills.length} skills).\n`);
+    const rel = path.relative(REPO_ROOT, TEMPLATE_PATH);
+    if (reportCheck({ tool: 'gen-skill-router', rel, summary: `${skills.length} skills` }, regenerated, currentTemplate)) {
       return;
-    }
-    const diff = firstDiffLine(regenerated, currentTemplate);
-    process.stderr.write(
-      `gen-skill-router --check: ${path.relative(REPO_ROOT, TEMPLATE_PATH)} is out of date. `
-      + 'Run `bin/gen-skill-router` and commit the result.\n',
-    );
-    if (diff) {
-      process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
-      process.stderr.write(`    generated: ${diff.expected}\n`);
-      process.stderr.write(`    committed: ${diff.got}\n`);
     }
     const untracked = untrackedSkillDirs(REPO_ROOT, SKILLS_DIR, skillNames);
     if (untracked && untracked.length > 0) {

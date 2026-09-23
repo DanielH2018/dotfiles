@@ -127,7 +127,7 @@ test('gen-lint-files --check fails when the tree gains a script the lists do not
   const git = (...args) => execFileSync('git', args, { cwd: stage, env, stdio: 'pipe' });
   git('init', '-q');
   fs.mkdirSync(path.join(stage, 'bin'));
-  for (const f of ['gen-lint-files', 'gen-lint-files-lib.js']) {
+  for (const f of ['gen-lint-files', 'gen-lint-files-lib.js', 'gen-lib.js']) {
     fs.copyFileSync(repoPath('bin', f), path.join(stage, 'bin', f));
   }
   fs.copyFileSync(repoPath('.pre-commit-config.yaml'), path.join(stage, '.pre-commit-config.yaml'));

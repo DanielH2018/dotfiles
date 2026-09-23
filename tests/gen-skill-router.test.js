@@ -55,7 +55,7 @@ test('injectGenerated replaces only the content between the markers', () => {
 });
 
 test('injectGenerated throws when the markers are missing', () => {
-  assert.throws(() => lib.injectGenerated('no markers here', []), /markers .* not found/);
+  assert.throws(() => lib.injectGenerated('no markers here', []), /expected exactly one .*found 0 and 0/);
 });
 
 // --- lib.stripWorkBlocks -----------------------------------------------------------------
@@ -173,6 +173,7 @@ test('bin/gen-skill-router --check fails end-to-end when the on-disk skill set i
     repoPath('bin', 'gen-skill-router-lib.js'),
     path.join(stageBin, 'gen-skill-router-lib.js'),
   );
+  fs.copyFileSync(repoPath('bin', 'gen-lib.js'), path.join(stageBin, 'gen-lib.js'));
 
   assert.throws(() => {
     execFileSync('node', [path.join(stageBin, 'gen-skill-router'), '--check'], {
@@ -227,6 +228,7 @@ function stageDriftingRouter(trackExtra) {
     repoPath('bin', 'gen-skill-router-lib.js'),
     path.join(stageBin, 'gen-skill-router-lib.js'),
   );
+  fs.copyFileSync(repoPath('bin', 'gen-lib.js'), path.join(stageBin, 'gen-lib.js'));
 
   const env = { ...process.env };
   for (const key of Object.keys(env)) {

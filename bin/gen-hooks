@@ -25,6 +25,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const lib = require('./gen-hooks-lib.js');
+const { reportCheck } = require('./gen-lib.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const HOOKS_DIR = path.join(REPO_ROOT, 'home', 'private_dot_claude', 'hooks');
@@ -59,18 +60,8 @@ function main() {
   const rel = path.relative(REPO_ROOT, TEMPLATE_PATH);
 
   if (check) {
-    if (regenerated === current) {
-      process.stdout.write(`gen-hooks --check: ${rel} is up to date (${summary}).\n`);
-      return;
-    }
-    const diff = lib.firstDiffLine(regenerated, current);
-    process.stderr.write(`gen-hooks --check: ${rel} is out of date. Run \`bin/gen-hooks\` and commit the result.\n`);
-    if (diff) {
-      process.stderr.write(`  first difference at line ${diff.lineNo}:\n`);
-      process.stderr.write(`    generated: ${diff.expected}\n`);
-      process.stderr.write(`    committed: ${diff.got}\n`);
-    }
-    process.exit(1);
+    if (!reportCheck({ tool: 'gen-hooks', rel, summary }, regenerated, current)) process.exit(1);
+    return;
   }
 
   fs.writeFileSync(TEMPLATE_PATH, regenerated);

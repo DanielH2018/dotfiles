@@ -34,6 +34,8 @@
 // line that is not a `#   key: value` continuation. There is no closing marker to forget,
 // and a stray blank line ends the block rather than swallowing what follows.
 
+const { spliceBetween } = require('./gen-lib.js');
+
 const OPENER_RE = /^# gen-hooks: (\S+)\s*$/;
 const FIELD_RE = /^#   ([a-zA-Z]+): (.*)$/;
 
@@ -285,39 +287,15 @@ function renderHooksBlock(registrations, indent = '    ') {
   return out.join('\n');
 }
 
-// Replace the lines strictly between the begin and end markers with the rendered block.
-// Throws when either marker is missing, doubled, or out of order: the generator fills the
-// slot the template declares, it does not invent where the block goes.
+// Replace the lines strictly between the begin and end markers with the rendered block,
+// indented like the begin marker. The splice and its marker checks are gen-lib.js's.
 function injectHooksBlock(templateText, registrations) {
-  const lines = templateText.split('\n');
-  const begins = [];
-  const ends = [];
-  lines.forEach((l, i) => {
-    if (BEGIN_MARKER_RE.test(l)) begins.push(i);
-    if (END_MARKER_RE.test(l)) ends.push(i);
-  });
-  if (begins.length !== 1 || ends.length !== 1) {
-    throw new Error(
-      `gen-hooks: expected exactly one {{/* gen-hooks:begin */}} and one {{/* gen-hooks:end */}} `
-      + `marker in the template, found ${begins.length} and ${ends.length}.`,
-    );
-  }
-  if (ends[0] < begins[0]) throw new Error('gen-hooks: end marker appears before begin marker.');
-  const indent = /^\s*/.exec(lines[begins[0]])[0];
-  const block = renderHooksBlock(registrations, indent);
-  return [...lines.slice(0, begins[0] + 1), block, ...lines.slice(ends[0])].join('\n');
-}
-
-function firstDiffLine(a, b) {
-  const al = a.split('\n');
-  const bl = b.split('\n');
-  const n = Math.max(al.length, bl.length);
-  for (let i = 0; i < n; i += 1) {
-    if (al[i] !== bl[i]) {
-      return { lineNo: i + 1, expected: al[i] ?? '(end of file)', got: bl[i] ?? '(end of file)' };
-    }
-  }
-  return null;
+  return spliceBetween(templateText, {
+    label: 'gen-hooks',
+    begin: { test: (l) => BEGIN_MARKER_RE.test(l), name: '{{/* gen-hooks:begin */}}' },
+    end: { test: (l) => END_MARKER_RE.test(l), name: '{{/* gen-hooks:end */}}' },
+    where: 'the template',
+  }, (beginLine) => renderHooksBlock(registrations, /^\s*/.exec(beginLine)[0]));
 }
 
 module.exports = {
@@ -329,5 +307,4 @@ module.exports = {
   groupRegistrations,
   renderHooksBlock,
   injectHooksBlock,
-  firstDiffLine,
 };

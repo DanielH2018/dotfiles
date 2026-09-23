@@ -189,18 +189,6 @@ function injectFilesPatterns(cfgText, patterns) {
   return lines.join('\n');
 }
 
-function firstDiffLine(a, b) {
-  const al = a.split('\n');
-  const bl = b.split('\n');
-  const n = Math.max(al.length, bl.length);
-  for (let i = 0; i < n; i += 1) {
-    if (al[i] !== bl[i]) {
-      return { lineNo: i + 1, expected: al[i] ?? '(end of file)', got: bl[i] ?? '(end of file)' };
-    }
-  }
-  return null;
-}
-
 module.exports = {
   SHEBANG,
   BACKLOG,
@@ -211,5 +199,4 @@ module.exports = {
   renderPatterns,
   renderRuffToml,
   injectFilesPatterns,
-  firstDiffLine,
 };

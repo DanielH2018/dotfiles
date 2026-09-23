@@ -162,7 +162,7 @@ test('gen-hooks --check passes against the committed tree right now', () => {
 function stage() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-hooks-'));
   fs.mkdirSync(path.join(dir, 'bin'));
-  for (const f of ['gen-hooks', 'gen-hooks-lib.js']) {
+  for (const f of ['gen-hooks', 'gen-hooks-lib.js', 'gen-lib.js']) {
     fs.copyFileSync(repoPath('bin', f), path.join(dir, 'bin', f));
   }
   fs.mkdirSync(path.join(dir, 'home', '.chezmoitemplates'), { recursive: true });
