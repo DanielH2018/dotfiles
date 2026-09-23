@@ -1,0 +1,106 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Every version this repo pins, kept current by one reviewed PR per bump. Nothing here automerges: a bump reaches main through bin/land like any other change, so it passes the same pre-push gate. The shape follows the homelab repo's renovate.json: one custom manager per pinned file, each anchored to that file, and tests/renovate-config.test.js asserts that every `# renovate:` annotation in the tree is matched by one of them. enabledManagers is a closed list, so a manager Renovate adds later cannot start opening PRs unreviewed. It names the four that cover a pin here: the CI actions, the pre-commit revs, the claude-otel compose images and the annotated pins. Left out on purpose: dockerfile (the sandbox base is the floating debian:stable-slim and its apt packages are unversioned, so its only effect would be digest pins nobody asked for), npm (pr-dash declares only caret ranges) and pep621 (every Python dependency here is a >= floor).",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitsDisabled",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "prHourlyLimit": 4,
+  "rebaseWhen": "auto",
+  "platformCommit": "enabled",
+  "enabledManagers": [
+    "github-actions",
+    "pre-commit",
+    "docker-compose",
+    "custom.regex"
+  ],
+  "pre-commit": {
+    "description": "Renovate ships this manager with `enabled: false` (lib/modules/manager/pre-commit defaultConfig), and listing it in enabledManagers does not override that. Without this block neither the gitleaks rev nor the ruff-pre-commit rev is ever read, and the config validator cannot see the gap: it checks the schema, not coverage.",
+    "enabled": true
+  },
+  "customManagers": [
+    {
+      "description": "tools.toml: the [releases] tags the Linux installer downloads, the [toolchain] versions CI and the machine installers read, and the [[node_lsps]] versions. Every pin sits on the line after its `# renovate: datasource=... depName=...` annotation. The value is the LAST quoted string on that line, which covers all three shapes: `eza = { repo = \"...\", tag = \"v0.23.5\" }`, `prek = \"0.5.3\"` and `version = \"0.3.0\"`.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^home/\\.chezmoidata/tools\\.toml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[^\\n]*\"(?<currentValue>[^\"\\n]+)\"[ }]*\\n"
+      ]
+    },
+    {
+      "description": "packages.toml: the `tarball_tag` of an app installed from an upstream release directory (scrcpy). Same annotation shape as tools.toml.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^home/\\.chezmoidata/packages\\.toml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[a-z_]+ = \"(?<currentValue>[^\"\\n]+)\"\\n"
+      ]
+    },
+    {
+      "description": "The sandbox image's ARG pins: chezmoi, uv, @anthropic-ai/claude-code and the NodeSource channel. NODE_PKG_VERSION deliberately carries no annotation (no datasource serves a NodeSource deb), so the node-version pin here is split out below.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^home/private_dot_claude/sandbox/Dockerfile\\.base$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG [A-Z_]+=(?<currentValue>\\S+)\\n"
+      ]
+    },
+    {
+      "description": "sandbox-image.sh: the Rust toolchain the image build installs. A shell assignment rather than a TOML key, because the file deploys as-is and is not a template.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^home/private_dot_claude/sandbox/executable_sandbox-image\\.sh$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z_]+=\"(?<currentValue>[^\"\\n]+)\"\\n"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "A github-releases pin written without a leading `v` (tools.toml's uv and chezmoi, the Dockerfile ARGs) must stay without one. The upstream tag is `v2.71.1`; the pin is `2.71.1`, and the installers prepend the `v` themselves. Pins that store the tag verbatim (the [releases] table) carry their `v` and are left alone by this rule.",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchCurrentValue": "/^\\d/",
+      "extractVersion": "^v?(?<version>\\d.*)$"
+    },
+    {
+      "description": "The sandbox's NODE_VERSION is a NodeSource channel (a bare major, `22`), paired with NODE_PKG_VERSION, which no datasource serves and which is bumped by hand. Renovate can move the channel but not its partner, so the PR it opens is half the change. The group name says so, the same convention the homelab repo uses for a manual half.",
+      "matchFileNames": [
+        "home/private_dot_claude/sandbox/Dockerfile.base"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "sandbox node channel (manual — also bump NODE_PKG_VERSION from the NodeSource index)"
+    },
+    {
+      "description": "ruff is pinned twice: the ruff-pre-commit rev the lint gate runs and the [toolchain] ruff the machines install. They drifted apart once (v0.16.0 against 0.16.1), so one PR moves both.",
+      "matchPackageNames": [
+        "astral-sh/ruff-pre-commit",
+        "ruff"
+      ],
+      "groupName": "ruff"
+    },
+    {
+      "description": "The gitleaks rev is kept equal to the homelab repo's prek.toml, so both repos scan with the same rules. That repo's Renovate bumps its copy independently; tests/renovate-config.test.js compares the two wherever a homelab checkout exists. The group name tells whoever reviews this PR that the other repo moves too.",
+      "matchPackageNames": [
+        "gitleaks/gitleaks"
+      ],
+      "groupName": "gitleaks (lockstep — the homelab repo's prek.toml must match)"
+    }
+  ]
+}
