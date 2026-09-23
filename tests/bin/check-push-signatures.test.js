@@ -191,11 +191,97 @@ test('an unsigned commit of your own still blocks, rebase or not', { skip }, () 
   assert.match(err, /mine, unsigned/);
 });
 
-test('does nothing when run by hand with no pre-push input', { skip }, () => {
+// Empty stdin is git's protocol for a push that carries no refs, and CI runs the whole gate
+// as `.githooks/pre-push </dev/null`: that has to stay a pass.
+test('an empty pre-push protocol is a pass', { skip }, () => {
   const r = repo();
   r.commit('base', { signed: false });
   const { code } = check(r.root, '');
-  assert.strictEqual(code, 0, 'no stdin means no range to judge, not "everything fails"');
+  assert.strictEqual(code, 0, 'no refs pushed means nothing to judge, not "everything fails"');
+});
+
+// #581: NO protocol at all is not the same thing. A terminal on stdin means the gate was run
+// by hand, and it used to exit 0, so a gate that judged nothing read exactly like one that
+// passed. It is a usage error now.
+test('a terminal on stdin with no --range is a usage error, not a pass',
+  { skip: skip || (have('script') ? false : 'script(1) unavailable') }, () => {
+    const r = repo();
+    r.commit('base');
+    // util-linux script(1) gives the child a pty on stdin; its own exit code is the child's
+    // with -e. BSD script takes different flags, hence the util-linux-only probe below.
+    const probe = spawnSync('script', ['-qec', 'true', '/dev/null'], { encoding: 'utf8' });
+    if (probe.status !== 0) return;
+    const res = spawnSync('script',
+      ['-qec', `bash ${JSON.stringify(SCRIPT)}`, '/dev/null'],
+      { cwd: r.root, encoding: 'utf8' });
+    assert.strictEqual(res.status, 2);
+    assert.match(res.stdout, /no pre-push input on stdin/);
+  });
+
+// ── the ranges a normal push produces ─────────────────────────────────────────
+//
+// This gate runs on every push, so fail-closed must not reach the ordinary shapes: a first
+// push to a remote with no refs yet, a new branch with no upstream, and a fast-forward (the
+// 'passes a push whose commits are all signed' case above). Each is asserted both ways.
+
+function withOrigin(r) {
+  const git = (...args) => execFileSync('git', args, { cwd: r.root, encoding: 'utf8' }).trim();
+  const origin = path.join(fs.realpathSync(scratch(os.tmpdir(), 'signgate-')), 'origin.git');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+  git('remote', 'add', 'origin', origin);
+  return git;
+}
+
+test('a first push to an empty remote judges every commit and passes when signed', { skip }, () => {
+  const r = repo();
+  withOrigin(r);
+  r.commit('first');
+  const head = r.commit('second');
+  const { code, err } = check(r.root, `refs/heads/main ${head} refs/heads/main ${ZERO}\n`);
+  assert.strictEqual(code, 0, err);
+  const bad = r.commit('third', { signed: false });
+  assert.strictEqual(check(r.root, `refs/heads/main ${bad} refs/heads/main ${ZERO}\n`).code, 1);
+});
+
+test('a new branch with no upstream judges only what the remotes lack', { skip }, () => {
+  const r = repo();
+  const git = withOrigin(r);
+  r.commit('on main', { signed: false });
+  git('push', '-q', 'origin', 'main');
+  git('checkout', '-qb', 'feature');
+  const head = r.commit('feature work');
+  const { code, err } = check(r.root, `refs/heads/feature ${head} refs/heads/feature ${ZERO}\n`);
+  assert.strictEqual(code, 0, `the unsigned commit already on origin is out of scope: ${err}`);
+  const bad = r.commit('feature, unsigned', { signed: false });
+  assert.strictEqual(check(r.root, `refs/heads/feature ${bad} refs/heads/feature ${ZERO}\n`).code, 1);
+});
+
+// A remote tip this clone never fetched (a force-push over someone else's push) made
+// `git log <local> --not <remote>` a bad revision. The failed walk read as zero commits,
+// and the push passed with an unsigned commit in it.
+test('a remote tip this clone has never seen still gets the push judged', { skip }, () => {
+  const r = repo();
+  withOrigin(r);
+  r.commit('base');
+  const bad = r.commit('unsigned over an unfetched tip', { signed: false });
+  const unseen = 'ab'.repeat(20);
+  const { code, err } = check(r.root, `refs/heads/main ${bad} refs/heads/main ${unseen}\n`);
+  assert.strictEqual(code, 1, 'an unknown remote sha must not blind the gate');
+  assert.match(err, /unsigned over an unfetched tip/);
+
+  const r2 = repo();
+  withOrigin(r2);
+  const good = r2.commit('signed over an unfetched tip');
+  assert.strictEqual(check(r2.root, `refs/heads/main ${good} refs/heads/main ${unseen}\n`).code, 0);
+});
+
+test('a walk that fails is could-not-evaluate, not a pass', { skip }, () => {
+  const r = repo();
+  const base = r.commit('base');
+  const missing = 'cd'.repeat(20);
+  const { code, err } = check(r.root, `refs/heads/main ${missing} refs/heads/main ${base}\n`);
+  assert.strictEqual(code, 3);
+  assert.match(err, /cannot judge this push/);
 });
 
 // ── --range mode ──────────────────────────────────────────────────────────────

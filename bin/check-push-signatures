@@ -50,11 +50,16 @@ if [ "${1:-}" = "--range" ]; then
   fi
 fi
 
-# Nothing on stdin means this was run by hand rather than by git. Checking a range we
-# were never given would either hang on the terminal or invent one, so do neither.
+# A terminal on stdin means this was run by hand rather than by git. Checking a range we
+# were never given would either hang on the terminal or invent one, so do neither -- and do
+# not pass either. This used to exit 0, so a signature gate that had nothing to judge was
+# indistinguishable from one that judged and passed (#581). Exit 2 is a usage error.
+#
+# Empty stdin is different and stays a pass: git hands the hook an empty protocol when the
+# push carries no refs, and `.githooks/pre-push </dev/null` (CI) relies on that no-op.
 if [ "$RANGE_MODE" -eq 0 ] && [ -t 0 ]; then
-  printf 'check-push-signatures: no pre-push input on stdin (run me from the hook)\n' >&2
-  exit 0
+  printf 'check-push-signatures: no pre-push input on stdin -- run me from the hook, or pass --range <base> <head>\n' >&2
+  exit 2
 fi
 
 # N does not always mean unsigned, and nothing in the verdict says which it is.
@@ -110,10 +115,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # A plain two-dot range and nothing else. No --remotes: on a CI runner the branch under
     # test already HAS a remote-tracking ref, which would exclude every commit being checked.
     range="$local_sha --not $remote_sha"
-  elif is_zero "${remote_sha:-}"; then
+  elif is_zero "${remote_sha:-}" || ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
     # New branch: everything not already reachable from some other remote-tracking ref.
     # Without --not --remotes this walks back to the root commit and re-judges history
     # that was pushed long before this gate existed.
+    #
+    # Also the form for a remote tip this clone has never fetched -- a force-push over
+    # someone else's push. `--not <that sha>` is a bad revision, git log fails, and the
+    # walk used to read that as zero commits and pass. Excluding only what the remotes are
+    # known to hold judges MORE commits than the push adds, never fewer.
     range="$local_sha --not --remotes"
   else
     # $remote_sha is what the remote actually holds for this ref, straight from the
@@ -126,7 +136,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     range="$local_sha --not $remote_sha --remotes"
   fi
 
+  # A walk that fails is could-not-evaluate (exit 3), never an empty range. Captured first,
+  # because a process substitution's exit status is invisible to the loop reading it: a bad
+  # revision used to end the loop after zero commits and fall through to exit 0 (#581).
   # shellcheck disable=SC2086  # $range is two or three deliberate rev-list tokens
+  if ! log=$(git log --format='%G?%x09%H%x09%s' $range 2>/dev/null); then
+    printf 'check-push-signatures: git log %s failed -- cannot judge this push\n' "$range" >&2
+    exit 3
+  fi
   while IFS=$'\t' read -r sig sha subject; do
     [ -n "${sig:-}" ] || continue
     checked=$((checked + 1))
@@ -139,7 +156,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
          warned=$((warned + 1))
          [ -n "$STRICT" ] && bad=$((bad + 1)) ;;
     esac
-  done < <(git log --format='%G?%x09%H%x09%s' $range 2>/dev/null)
+  done <<LOG
+$log
+LOG
 done <<EOF
 $INPUT
 EOF
