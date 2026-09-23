@@ -225,3 +225,82 @@ winget = ""
 brew = ""
 apt = ""
 dnf = "util-linux-script"
+
+# --- Pinned upstream versions ---------------------------------------------------------------
+# Everything below is a version this repo used to resolve at install time. A laptop provisioned
+# today, CI running today and a machine provisioned last month all took whatever was current on
+# their own date, from the same commit. These literals make the commit the answer instead.
+#
+# Each pin carries a `# renovate:` line naming the datasource, so one custom manager per
+# datasource keeps them current — a bump is a commit, reviewed like any other.
+#
+# The install scripts embed these values at render time, so a bump changes the rendered script
+# and `run_onchange_` re-runs it. That is the whole trigger: there is no clock anywhere.
+
+# GitHub release tags for the binaries os-linux/run_after_install-cli-tools.sh.tmpl installs
+# where the distro packages one too old or not at all. The TAG is stored, not a stripped
+# version, because the prefix is not consistent upstream — ripgrep and fastfetch publish a bare
+# `15.2.0`, everything else a leading `v`. linux-install.sh's `_asset_url` derives `{ver}` from
+# `{tag}` for the assets that want it, so one field serves both spellings.
+[releases]
+# renovate: datasource=github-releases depName=eza-community/eza
+eza = { repo = "eza-community/eza", tag = "v0.23.5" }
+# renovate: datasource=github-releases depName=fastfetch-cli/fastfetch
+fastfetch = { repo = "fastfetch-cli/fastfetch", tag = "2.68.1" }
+# renovate: datasource=github-releases depName=rs/curlie
+curlie = { repo = "rs/curlie", tag = "v1.8.2" }
+# renovate: datasource=github-releases depName=chmln/sd
+sd = { repo = "chmln/sd", tag = "v1.1.0" }
+# renovate: datasource=github-releases depName=starship/starship
+starship = { repo = "starship/starship", tag = "v1.26.0" }
+# renovate: datasource=github-releases depName=junegunn/fzf
+fzf = { repo = "junegunn/fzf", tag = "v0.74.4" }
+# renovate: datasource=github-releases depName=ajeetdsouza/zoxide
+zoxide = { repo = "ajeetdsouza/zoxide", tag = "v0.10.0" }
+# renovate: datasource=github-releases depName=BurntSushi/ripgrep
+rg = { repo = "BurntSushi/ripgrep", tag = "15.2.0" }
+# renovate: datasource=github-releases depName=tomnomnom/gron
+gron = { repo = "tomnomnom/gron", tag = "v0.7.1" }
+# renovate: datasource=github-releases depName=neovim/neovim
+nvim = { repo = "neovim/neovim", tag = "v0.12.5" }
+# renovate: datasource=github-releases depName=sxyazi/yazi
+yazi = { repo = "sxyazi/yazi", tag = "v26.9.1" }
+# renovate: datasource=github-releases depName=ryanoasis/nerd-fonts
+nerd-fonts = { repo = "ryanoasis/nerd-fonts", tag = "v3.5.1" }
+
+# The machine-global developer toolchain. Every one of these was `uv tool install <bare name>`,
+# `npm install -g <bare name>` or an unversioned vendor install script, in the machine installer
+# AND in `.github/workflows/ci.yml` — so CI and a laptop ran different builds of the hook runner
+# that decides whether a push is clean. CI reads these same values out of this file.
+[toolchain]
+# renovate: datasource=pypi depName=prek
+prek = "0.5.3"
+# renovate: datasource=pypi depName=ruff
+ruff = "0.16.1"
+# renovate: datasource=github-releases depName=astral-sh/uv
+uv = "0.12.14"
+# renovate: datasource=github-releases depName=twpayne/chezmoi
+chezmoi = "2.71.1"
+# renovate: datasource=npm depName=oxlint
+oxlint = "1.85.0"
+
+# The language servers dot_config/nvim/lua/plugins/lsp.lua enables, installed globally from npm.
+[[node_lsps]]
+# renovate: datasource=npm depName=@vtsls/language-server
+name = "@vtsls/language-server"
+version = "0.3.0"
+
+[[node_lsps]]
+# renovate: datasource=npm depName=bash-language-server
+name = "bash-language-server"
+version = "5.8.1"
+
+[[node_lsps]]
+# renovate: datasource=npm depName=yaml-language-server
+name = "yaml-language-server"
+version = "1.24.0"
+
+[[node_lsps]]
+# renovate: datasource=npm depName=vscode-langservers-extracted
+name = "vscode-langservers-extracted"
+version = "4.10.0"
