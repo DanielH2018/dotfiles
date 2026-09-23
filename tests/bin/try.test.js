@@ -288,9 +288,9 @@ test('a source-only change does not count as a conflict', { skip }, () => {
 });
 
 // The lock file is created by with_repo_lock's `exec 9>"$_lock"`, which lives in the flock
-// branch: where there is no flock (a stock macOS) try deliberately runs the bench unlocked and
-// says so, creating no file. So this asserts something only a flock machine has -- the same
-// condition the contention test below already gates on.
+// branch: where there is no flock (a stock macOS) the lock is a `<lock>.d` directory instead,
+// removed when the bench ends -- repo-lock.test.js covers that path. So this asserts something
+// only a flock machine has -- the same condition the contention test below already gates on.
 test('takes a lock, so two benches cannot interleave', { skip: skip || (skipUnless('bash', 'flock')) }, () => {
   const { dir } = makeRepo();
   const r = run(dir, ['feature']);

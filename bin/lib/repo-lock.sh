@@ -14,18 +14,17 @@
 # with_repo_lock <lockfile> <busy-msg> <no-flock-msg> <command> [args...]
 #
 # Runs the command with the lock held and returns its exit status. Waits if another
-# process holds it. Where there is no flock (macOS), runs the command anyway and says
-# so — the serialisation is worth having where it exists and not worth refusing over
-# where it does not.
+# process holds it. Where there is no flock (macOS), an atomic `mkdir` lock stands in --
+# see _repo_lock_mkdir below. <no-flock-msg> is accepted and ignored: it described running
+# unlocked, which no longer happens, and is kept only so the callers' argument lists stay
+# valid.
 with_repo_lock() {
   _lock=$1
   _busy=$2
-  _noflock=$3
   shift 3
 
   if ! command -v flock >/dev/null 2>&1; then
-    say "flock unavailable — $_noflock"
-    "$@"
+    _repo_lock_mkdir "$_lock" "$_busy" "$@"
     return $?
   fi
 
@@ -55,5 +54,50 @@ with_repo_lock() {
   ( "$@" ) 9>&-
   _rc=$?
   exec 9>&-
+  return $_rc
+}
+
+# The flock fallback: `mkdir` is atomic on every filesystem these tools run on, so exactly
+# one process creates the directory and every other one waits. This used to run the command
+# UNLOCKED where flock was missing, which is every stock Mac -- two landings could then move
+# main under each other, the one thing the lock exists to stop (#581).
+#
+# A directory lock outlives a holder that is killed, where flock's dies with the fd. So the
+# holder records its pid inside, and a waiter that finds the pid dead removes the lock and
+# retries. The pid is re-read before the removal, so a waiter never deletes a lock that a
+# third process took over in the meantime. A lock directory with no pid file is one whose
+# holder died between mkdir and the write; it is treated as stale once it is a minute old,
+# and as busy before that, so a holder is never evicted mid-acquisition.
+#
+# Bounded by REPO_LOCK_WAIT_S (default 3600): past it the tool dies rather than waiting
+# forever on a holder that is alive but wedged.
+_repo_lock_mkdir() {
+  _mlock="$1.d"
+  _mbusy=$2
+  shift 2
+  _waited=0
+  _said=0
+  while ! mkdir "$_mlock" 2>/dev/null; do
+    [ -d "$_mlock" ] || die "cannot create $_mlock"
+    _holder=$(cat "$_mlock/pid" 2>/dev/null)
+    if [ -n "$_holder" ] && ! kill -0 "$_holder" 2>/dev/null; then
+      if [ "$(cat "$_mlock/pid" 2>/dev/null)" = "$_holder" ]; then
+        rm -rf "$_mlock" && say "removed a stale lock left by pid $_holder"
+      fi
+      continue
+    fi
+    if [ -z "$_holder" ] && [ -n "$(find "$_mlock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      rm -rf "$_mlock" && say "removed a stale lock with no holder recorded"
+      continue
+    fi
+    [ "$_said" -eq 1 ] || { say "$_mbusy"; _said=1; }
+    [ "$_waited" -lt "${REPO_LOCK_WAIT_S:-3600}" ] || die "gave up waiting for $_mlock (held by pid ${_holder:-unknown})"
+    sleep 1
+    _waited=$((_waited + 1))
+  done
+  echo $$ >"$_mlock/pid" || { rm -rf "$_mlock"; die "cannot write $_mlock/pid"; }
+  ( "$@" )
+  _rc=$?
+  rm -rf "$_mlock"
   return $_rc
 }
