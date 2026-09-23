@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "d202c6e169c86ff11714386b2da1735b2efaf9bbd33417a3430ffe09aa23461a",
-      "landed": "2026-09-23T13:29:29.938Z"
+      "hash": "bf6e897b8de4a0ae9f847e04bc1514a655a3fa48321ce78c5e6c6b4ff94ddab2",
+      "landed": "2026-09-23T20:55:19.206Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -95,6 +95,11 @@
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
       "hash": "f1a95b0f457a013492dd6dd78b2c905f8b138fde550c2a784929b13d23bd9557",
       "landed": "2026-09-18T22:57:37.560Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_git-conventions-guard.sh",
+      "hash": "4c1caecefdc8752933e07849e61517d60f5aff268f685c0522191aa8dfb57363",
+      "landed": "2026-09-23T20:55:19.206Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
