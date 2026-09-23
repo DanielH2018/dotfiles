@@ -23,9 +23,21 @@ if not os.path.exists(HOOK):
     HOOK = os.path.join(HERE, "isolation-guard.sh")  # deployed tree, prefix stripped
 
 
-def decision(file_path, job):
+def decision(file_path, job, cwd=None):
     """Invoke the hook; return 'deny' or None (allowed / no decision)."""
-    payload = json.dumps({"tool_input": {"file_path": file_path}})
+    return run_hook(file_path, job, cwd)[0]
+
+
+def reason(file_path, cwd):
+    """Invoke the hook as a background job; return the deny reason text."""
+    return run_hook(file_path, True, cwd)[1]
+
+
+def run_hook(file_path, job, cwd):
+    payload_obj = {"tool_input": {"file_path": file_path}}
+    if cwd is not None:
+        payload_obj["cwd"] = cwd
+    payload = json.dumps(payload_obj)
     env = dict(os.environ, HOOK_INPUT_LIB=os.path.join(HERE, "hook-input.sh"))
     if job:
         env["CLAUDE_JOB_DIR"] = "/tmp/fake-job-dir"
@@ -38,7 +50,11 @@ def decision(file_path, job):
         text=True,
         env=env,
     )
-    return "deny" if '"permissionDecision": "deny"' in p.stdout else None
+    if '"permissionDecision": "deny"' not in p.stdout:
+        return None, ""
+    return "deny", json.loads(p.stdout)["hookSpecificOutput"][
+        "permissionDecisionReason"
+    ]
 
 
 failures = []
@@ -103,6 +119,24 @@ def main():
         for file_path, job, expected, why in cases:
             actual = decision(file_path, job)
             check(f"{why} (expected {expected!r}, got {actual!r})", actual == expected)
+
+        # A session running from another repository (server#2290): EnterWorktree cannot
+        # reach this repo, so the denial names the cross-repo worktree route instead.
+        other = os.path.join(tmp, "other")
+        os.makedirs(other)
+        subprocess.run(["git", "init", "-q", other], check=True, capture_output=True)
+        cross = reason(shared_file, other)
+        check(
+            "cross-repo denial names `worktree add` in the file's repo",
+            f"git -C {repo} worktree add" in cross
+            and "Retry EnterWorktree" not in cross,
+        )
+        # A session in this repo's own worktree dir keeps the EnterWorktree instruction.
+        same = reason(shared_file, wt_dir)
+        check(
+            "same-repo denial keeps `Retry EnterWorktree`",
+            "Retry EnterWorktree" in same and "worktree add" not in same,
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

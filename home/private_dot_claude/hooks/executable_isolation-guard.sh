@@ -63,11 +63,30 @@ done
 INSIDE=$(git -C "$DIR" rev-parse --is-inside-work-tree 2>/dev/null) || exit 0
 [ "$INSIDE" = "true" ] || exit 0
 
-jq -n --arg file "$FILE" '{
+# EnterWorktree only reaches the session's own repository, so "retry EnterWorktree" is a
+# dead end for a file in any other one (server#2290): read literally, it tells a job whose
+# whole task lives in the other repo to stop. Compare the two repositories by their common
+# git dir, which a linked worktree shares with its primary checkout, and name the route that
+# works when they differ. An unreadable cwd keeps the original message.
+FILE_TOP=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null)
+FILE_COMMON=$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+CWD=$(hook_field '.cwd // empty')
+SESSION_COMMON=""
+if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+  SESSION_COMMON=$(git -C "$CWD" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+fi
+
+if [ -n "$FILE_COMMON" ] && [ -n "$SESSION_COMMON" ] && [ "$FILE_COMMON" != "$SESSION_COMMON" ]; then
+  REASON="Blocked: $FILE is in a shared git checkout of $FILE_TOP, outside .claude/worktrees/, and this is a background job (CLAUDE_JOB_DIR set). EnterWorktree cannot reach it: it only enters worktrees of the session's own repository. Create a worktree in that repository instead -- git -C $FILE_TOP worktree add .claude/worktrees/<name> -b worktree-<name> origin/<default-branch> -- then edit by absolute path under it without entering it. Nothing tracks that worktree at session end, so remove it by hand once its branch lands."
+else
+  REASON="Blocked: $FILE is in a shared git checkout outside .claude/worktrees/, and this is a background job (CLAUDE_JOB_DIR set). Retry EnterWorktree once. If it fails again, make no edits -- report the failure and stop."
+fi
+
+jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
     permissionDecision: "deny",
-    permissionDecisionReason: ("Blocked: " + $file + " is in a shared git checkout outside .claude/worktrees/, and this is a background job (CLAUDE_JOB_DIR set). Retry EnterWorktree once. If it fails again, make no edits -- report the failure and stop.")
+    permissionDecisionReason: $reason
   }
 }'
 exit 0
