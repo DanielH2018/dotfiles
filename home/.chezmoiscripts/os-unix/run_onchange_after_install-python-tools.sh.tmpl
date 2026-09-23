@@ -24,11 +24,15 @@
 # every non-Windows OS, mirroring run_once_before_install-fnm.sh.tmpl's shape. The Windows
 # counterpart lives in os-windows/run_onchange_install-cli-tools.ps1.tmpl.
 #
-# run_once_after_: runs AFTER file targets, so a failure here (no network, brew not bundled
-# yet) fails loudly WITHOUT blocking dotfile deployment — chezmoi does not record success, so
-# the next `chezmoi apply` retries. Gated off profile=minimal alongside the rest of the heavy
-# tooling. Bump the marker to force a refresh.
-# python-tools-bump: v1
+# run_onchange_after_: runs AFTER file targets, so a failure here (no network, brew not bundled
+# yet) fails loudly WITHOUT blocking dotfile deployment — chezmoi does not record the state of a
+# script that failed, so the next `chezmoi apply` retries. Gated off profile=minimal alongside
+# the rest of the heavy tooling.
+#
+# _onchange_ rather than _once_, now that the versions below are pins rendered from
+# .chezmoidata/tools.toml: a bump changes this script's text, so the bump is what re-runs it.
+# Under _once_ a pinned version would have installed on a fresh machine and then never moved,
+# which is the failure the hand-bumped `python-tools-bump` marker was there to work around.
 set -u
 
 BIN_DIR="$HOME/.local/bin"   # already on PATH via dot_config/shell/common.sh, but chezmoi
@@ -39,7 +43,9 @@ mkdir -p "$BIN_DIR"
 if ! command -v uv >/dev/null 2>&1 && [ "$(uname -s)" = "Linux" ]; then
   echo "install-python-tools: installing uv ..." >&2
   tmp="$(mktemp -d)"
-  if curl -LsSf https://astral.sh/uv/install.sh -o "$tmp/uv-install.sh"; then
+  # The versioned installer URL, not the bare one: the bare one installs whatever Astral released
+  # most recently, so the uv a machine got was decided by the day it was provisioned.
+  if curl -LsSf 'https://astral.sh/uv/{{ .toolchain.uv }}/install.sh' -o "$tmp/uv-install.sh"; then
     # UV_INSTALL_DIR pins the target next to the other release binaries instead of leaving uv
     # to guess between XDG_BIN_HOME/~/.local/bin/~/.cargo/bin. INSTALLER_NO_MODIFY_PATH stops
     # it appending a PATH line to .bashrc/.zshenv — common.sh already puts BIN_DIR on PATH,
@@ -47,7 +53,7 @@ if ! command -v uv >/dev/null 2>&1 && [ "$(uname -s)" = "Linux" ]; then
     UV_INSTALL_DIR="$BIN_DIR" INSTALLER_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh" \
       || echo "install-python-tools: uv installer failed" >&2
   else
-    echo "install-python-tools: failed to fetch https://astral.sh/uv/install.sh" >&2
+    echo "install-python-tools: failed to fetch the uv {{ .toolchain.uv }} installer" >&2
   fi
   rm -rf "$tmp"
 fi
@@ -68,11 +74,15 @@ uv python install 3.12 || echo "install-python-tools: 'uv python install 3.12' f
 # at call time with `uv python find --no-project --managed-python --system 3.14`.
 uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' failed" >&2
 
-# 3. Global CLIs. `uv tool install` replaces an existing install rather than erroring, so a
-#    re-apply also refreshes a stale ruff/prek in place — the same upgrade-on-apply policy the
-#    install_release helper in os-linux/run_onchange_after_install-cli-tools.sh.tmpl uses. The
-#    executables land in uv's tool bin dir (`uv tool dir --bin`), which is BIN_DIR here.
-for t in ruff prek; do
+# 3. Global CLIs, at the versions .chezmoidata/tools.toml pins. `uv tool install pkg==X.Y.Z`
+#    replaces an install at a different version rather than erroring, so a bump reinstalls in
+#    place — the same upgrade-on-apply policy the install_release helper in
+#    os-linux/run_onchange_after_install-cli-tools.sh.tmpl uses. The executables land in uv's
+#    tool bin dir (`uv tool dir --bin`), which is BIN_DIR here.
+#
+#    prek is the reason the pins matter most: it is the hook runner that decides whether a push
+#    is clean, and CI installed one build of it while a laptop installed another.
+for t in 'ruff=={{ .toolchain.ruff }}' 'prek=={{ .toolchain.prek }}'; do
   uv tool install "$t" || echo "install-python-tools: 'uv tool install $t' failed" >&2
 done
 

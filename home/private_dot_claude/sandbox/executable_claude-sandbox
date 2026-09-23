@@ -93,8 +93,8 @@ usage() {
   echo "Options:"
   echo "  --rebuild          Force rebuild the per-repo Docker image"
   echo "  --rebuild-base     Rebuild the claudebot:base image (run after editing Dockerfile.base);"
-  echo "                     always re-pulls Claude Code @latest. Note: normal runs auto-refresh"
-  echo "                     Claude Code once per day."
+  echo "                     reinstalls the pinned Claude Code. The version is"
+  echo "                     CLAUDE_CODE_VERSION in Dockerfile.base; edit it to move."
   echo "  --generate         Regenerate Dockerfile.claudebot only (don't build or run)"
   echo "  --worktree, -w [NAME]  Run in an isolated git worktree on branch claude/<NAME>."
   echo "                     Reuses existing worktree if branch already exists."
@@ -237,48 +237,50 @@ if [[ "$LIST_SESSIONS" == false && "$COMPLETE_WORKTREES" == false && "$COMPLETE_
 fi
 
 # --- Base image build helper ---
-# Resolve the current Claude Code release from the npm registry, on the HOST.
-# The version then goes into the build as a concrete arg, which makes the
-# install layer's cache key the release itself: same version, cache hit, no
-# work. Resolving inside the build instead (@latest) is invisible to the cache,
-# which is why this used to need a daily cache-busting token that rebuilt the
-# layer — and everything under it — whether or not a release had happened.
-# Memoized: one lookup per run, however many callers ask.
-CLAUDE_CODE_LATEST=""
-CLAUDE_CODE_LATEST_RESOLVED=false
+# The Claude Code release the image installs is the CLAUDE_CODE_VERSION pin in
+# Dockerfile.base, and this reads it from there. The launcher used to resolve the
+# newest release from the npm registry instead, re-checked at most once per day,
+# so the image was only ever as reproducible as the DATE it was last built on —
+# and an offline run fell back to the newest release inside the build, which is
+# not reproducible at all. Two developers on one commit got two Claude Codes.
+#
+# Read rather than duplicated: Dockerfile.base already has to carry the version
+# as the ARG default, so a copy here would be a second place to bump.
+CLAUDE_CODE_PINNED=""
+CLAUDE_CODE_PIN_READ=false
 resolve_claude_code_version() {
-  if [[ "$CLAUDE_CODE_LATEST_RESOLVED" == false ]]; then
-    CLAUDE_CODE_LATEST_RESOLVED=true
-    CLAUDE_CODE_LATEST="$(curl -fsSL --max-time 10 \
-      https://registry.npmjs.org/@anthropic-ai/claude-code/latest 2>/dev/null \
-      | jq -r '.version // empty' 2>/dev/null || true)"
+  if [[ "$CLAUDE_CODE_PIN_READ" == false ]]; then
+    CLAUDE_CODE_PIN_READ=true
+    CLAUDE_CODE_PINNED="$(sed -n 's/^ARG CLAUDE_CODE_VERSION=\([0-9][0-9.]*\)$/\1/p' \
+      "$SANDBOX_DIR/Dockerfile.base" | head -1)"
   fi
-  printf '%s' "$CLAUDE_CODE_LATEST"
+  printf '%s' "$CLAUDE_CODE_PINNED"
 }
 
 # Builds claudebot:base. "force" (explicit --rebuild-base) additionally busts the
 # Claude Code layer with a timestamp token, to reinstall the same version.
-# Offline or a registry hiccup falls back to @latest inside the build — correct,
-# just uncached.
+#
+# An unreadable pin FAILS the build rather than falling back. The fallback was
+# the newest release, which produced a working image carrying a version nothing
+# recorded — the state this pin exists to remove, arrived at silently.
 build_base() {
-  local version version_args=() refresh_args=()
+  local version refresh_args=()
   version="$(resolve_claude_code_version)"
-  if [[ -n "$version" ]]; then
-    version_args=(--build-arg "CLAUDE_CODE_VERSION=$version")
-  else
-    echo "Warning: could not resolve the latest claude-code version — building with @latest." >&2
+  if [[ -z "$version" ]]; then
+    echo "Error: no CLAUDE_CODE_VERSION pin in $SANDBOX_DIR/Dockerfile.base." >&2
+    echo "       It must read 'ARG CLAUDE_CODE_VERSION=<x.y.z>'." >&2
+    return 1
   fi
   if [[ "${1:-}" == "force" ]]; then
     refresh_args=(--build-arg "CLAUDE_CODE_REFRESH=$(date -u +%Y%m%d%H%M%S)")
   fi
-  echo "Building claudebot:base${version:+ (claude-code $version)}..."
+  echo "Building claudebot:base (claude-code $version)..."
   docker build -t claudebot:base \
-    ${version_args[@]+"${version_args[@]}"} \
+    --build-arg "CLAUDE_CODE_VERSION=$version" \
     ${refresh_args[@]+"${refresh_args[@]}"} \
     -f "$SANDBOX_DIR/Dockerfile.base" "$SANDBOX_DIR"
   mkdir -p "$STATE_DIR"
-  date -u +%Y-%m-%dT%H:%M:%SZ > "$STATE_DIR/.last-claude-update"
-  [[ -n "$version" ]] && printf '%s\n' "$version" > "$STATE_DIR/.claude-code-version"
+  printf '%s\n' "$version" > "$STATE_DIR/.claude-code-version"
   return 0
 }
 
@@ -298,25 +300,22 @@ built_on_stale_base() {
   [[ "$built_on" != "$current" ]]
 }
 
-# Re-resolve @latest at most once per day when the base already exists.
-# First-time builds get latest anyway, so this only guards the existing image.
+# Rebuild when the PIN has moved past what the existing base was built with.
+# This used to re-check the npm registry daily for a newer release, so what the
+# image ran was decided by the date rather than by the commit; the trigger is now
+# a Dockerfile.base edit, which is reviewable and reverts like anything else.
 refresh_claude_if_stale() {
   docker image inspect claudebot:base &>/dev/null || return 0
-  local marker="$STATE_DIR/.last-claude-update"
-  if [[ -f "$marker" ]] && [[ -z "$(find "$marker" -mtime +0 -print -quit 2>/dev/null)" ]]; then
-    return 0
-  fi
-  # Cheapest path: the registry says we already have the current release, so
-  # there is nothing to build. Re-arm the daily check and skip the build.
-  local latest installed
-  latest="$(resolve_claude_code_version)"
+  local pinned installed
+  pinned="$(resolve_claude_code_version)"
   installed="$(cat "$STATE_DIR/.claude-code-version" 2>/dev/null || true)"
-  if [[ -n "$latest" && "$latest" == "$installed" ]]; then
-    mkdir -p "$STATE_DIR"
-    touch "$marker"
+  # No pin readable: leave the existing image alone and let build_base report it
+  # if something else asks for a build. A launch is not the place to fail on it.
+  [[ -n "$pinned" ]] || return 0
+  if [[ "$pinned" == "$installed" ]]; then
     return 0
   fi
-  echo "Refreshing Claude Code${latest:+ → $latest} (daily @latest check)..."
+  echo "Rebuilding Claude Code → $pinned (the Dockerfile.base pin moved)..."
   # Per-repo images are FROM claudebot:base, so they only need rebuilding when
   # the base image ID actually moved. Rebuilding them after a no-op base build
   # was the bulk of what the daily refresh cost.

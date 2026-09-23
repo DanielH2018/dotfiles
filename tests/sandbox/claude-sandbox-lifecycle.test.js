@@ -93,31 +93,41 @@ const git = (cwd, ...a) => execFileSync('git', a, { cwd, stdio: 'ignore', env: G
 // asserted without matching on a formatted command string.
 const DOCKER_ECHO = `docker() { printf 'DOCKERARG:%s\\n' "$@"; }`;
 
-// resolve_claude_code_version asks the npm registry what the current release is,
-// so every run below stubs curl and the suite stays offline. No version means an
-// unreachable registry: curl fails and the version stays empty.
-const curlStub = (version) => `curl() { ${version ? `printf '{"version":"%s"}' '${version}'` : 'return 7'}; }`;
+// resolve_claude_code_version reads the CLAUDE_CODE_VERSION pin out of
+// Dockerfile.base. It used to ask the npm registry for the current release
+// instead, re-checked once a day, so the image a commit produced depended on the
+// DATE it was built — and an offline run fell back to installing the newest
+// release inside the build, unpinned and unrecorded.
+//
+// Each run below therefore gets its own SANDBOX_DIR holding a synthetic
+// Dockerfile.base: varying the pin is how a version is varied now, and `null`
+// stands for a Dockerfile with no readable pin at all.
+function sandboxWithPin(version) {
+  const dir = scratch(os.tmpdir(), 'sblf-sandbox-');
+  fs.writeFileSync(path.join(dir, 'Dockerfile.base'),
+    `FROM debian:stable-slim\n${version === null ? '' : `ARG CLAUDE_CODE_VERSION=${version}\n`}`);
+  return dir;
+}
 // Globals the launcher initializes at file scope; drive() only sources function
 // bodies, so the memo has to be seeded here or `set -u` trips on first read.
-const RESOLVER_STATE = { CLAUDE_CODE_LATEST: '', CLAUDE_CODE_LATEST_RESOLVED: 'false' };
+const RESOLVER_STATE = { CLAUDE_CODE_PINNED: '', CLAUDE_CODE_PIN_READ: 'false' };
 
 function buildRun({ force = false, version = '2.1.229' } = {}) {
   const state = path.join(scratch(os.tmpdir(), 'sblf-'), 'state');
+  const sandboxDir = sandboxWithPin(version);
   const r = drive('build_base', {
     deps: ['resolve_claude_code_version'],
-    env: { SANDBOX_DIR: SANDBOX, STATE_DIR: state, ...RESOLVER_STATE },
-    pre: [DOCKER_ECHO, curlStub(version)].join('\n'),
+    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, ...RESOLVER_STATE },
+    pre: DOCKER_ECHO,
     args: force ? 'force' : '',
   });
   const argv = r.stdout.split('\n').filter((l) => l.startsWith('DOCKERARG:')).map((l) => l.slice(10));
-  const stamp = path.join(state, '.last-claude-update');
   const pin = path.join(state, '.claude-code-version');
   return {
     ...r,
     argv,
     state,
-    stamp,
-    stamped: fs.existsSync(stamp) ? fs.readFileSync(stamp, 'utf8').trim() : null,
+    sandboxDir,
     pinned: fs.existsSync(pin) ? fs.readFileSync(pin, 'utf8').trim() : null,
   };
 }
@@ -125,11 +135,21 @@ function buildRun({ force = false, version = '2.1.229' } = {}) {
 test('build_base builds the base image from the sandbox Dockerfile', { skip }, () => {
   const r = buildRun();
   assert.deepStrictEqual(r.argv.slice(0, 3), ['build', '-t', 'claudebot:base']);
-  assert.strictEqual(r.argv[r.argv.indexOf('-f') + 1], path.join(SANDBOX, 'Dockerfile.base'));
-  assert.strictEqual(r.argv[r.argv.length - 1], SANDBOX, 'the build context is the sandbox dir');
+  assert.strictEqual(r.argv[r.argv.indexOf('-f') + 1], path.join(r.sandboxDir, 'Dockerfile.base'));
+  assert.strictEqual(r.argv[r.argv.length - 1], r.sandboxDir, 'the build context is the sandbox dir');
 });
 
-test('an ordinary build pins the resolved version instead of busting the cache', { skip }, () => {
+test('the real Dockerfile.base carries a pin the launcher can read', { skip }, () => {
+  // The synthetic Dockerfiles above prove the reader; this proves it is pointed at
+  // something real. Without it every case here passes over a file of its own making.
+  const state = path.join(scratch(os.tmpdir(), 'sblf-'), 'state');
+  const r = drive('resolve_claude_code_version', {
+    env: { SANDBOX_DIR: SANDBOX, STATE_DIR: state, ...RESOLVER_STATE },
+  });
+  assert.match(r.stdout, /^\d+\.\d+\.\d+$/, `no CLAUDE_CODE_VERSION pin in ${SANDBOX}/Dockerfile.base`);
+});
+
+test('an ordinary build pins the recorded version instead of busting the cache', { skip }, () => {
   // The concrete version IS the install layer's cache key: pass it and an
   // unchanged release is a cache hit. A cache-bust token here (what this used to
   // send, date-granular) rebuilt that layer daily whether or not anything shipped.
@@ -145,36 +165,32 @@ test('a forced build busts the cache on every invocation', { skip }, () => {
   assert.match(arg, /^CLAUDE_CODE_REFRESH=\d{14}$/, `expected a timestamp, got ${arg}`);
 });
 
-test('build_base records when Claude Code was last refreshed, and which release', { skip }, () => {
-  // refresh_claude_if_stale reads both: the stamp for "checked today", the
-  // version for "already current".
+test('build_base records which release it installed', { skip }, () => {
+  // refresh_claude_if_stale reads this to decide whether the pin has moved past
+  // the image it already has.
   const r = buildRun({ version: '2.1.229' });
-  assert.match(r.stamped ?? '', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   assert.strictEqual(r.pinned, '2.1.229');
 });
 
-test('an unreachable registry still builds, unpinned and unrecorded', { skip }, () => {
-  // Offline must not block a launch: the Dockerfile's @latest default applies.
-  // Recording no version is deliberate — the next run re-checks rather than
-  // trusting a release it never confirmed.
+test('an unreadable pin fails the build rather than installing the newest release', { skip }, () => {
+  // The reject half of the pair above, and the behaviour change this pin is for.
+  // Falling back produced a working image carrying a version nothing recorded —
+  // the exact state being removed, arrived at silently.
   const r = buildRun({ version: null });
-  assert.deepStrictEqual(r.argv.slice(0, 3), ['build', '-t', 'claudebot:base']);
-  assert.ok(!r.argv.some((a) => a.startsWith('CLAUDE_CODE_VERSION=')), 'nothing to pin');
+  assert.ok(!r.argv.includes('build'), 'no image should be built without a readable pin');
+  assert.match(r.stderr + r.stdout, /no CLAUDE_CODE_VERSION pin/);
   assert.strictEqual(r.pinned, null);
 });
 
 // --- refresh_claude_if_stale -------------------------------------------------
 
-function staleRun({ baseImage = true, stampAgeDays = null, version = '2.1.229', installed = null, newImageId = null } = {}) {
+function staleRun({ baseImage = true, version = '2.1.229', installed = null, newImageId = null } = {}) {
   const state = path.join(scratch(os.tmpdir(), 'sblf-'), 'state');
-  if (stampAgeDays !== null || installed !== null) fs.mkdirSync(state, { recursive: true });
-  if (stampAgeDays !== null) {
-    const stamp = path.join(state, '.last-claude-update');
-    fs.writeFileSync(stamp, 'x');
-    const when = new Date(Date.now() - stampAgeDays * 86400 * 1000);
-    fs.utimesSync(stamp, when, when);
+  const sandboxDir = sandboxWithPin(version);
+  if (installed !== null) {
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, '.claude-code-version'), `${installed}\n`);
   }
-  if (installed !== null) fs.writeFileSync(path.join(state, '.claude-code-version'), `${installed}\n`);
   // The stub answers three shapes: existence (`image inspect <tag>`), identity
   // (`image inspect --format ...`), and the build itself, which moves the id to
   // newImageId when a rebuild is supposed to produce a different image.
@@ -182,9 +198,8 @@ function staleRun({ baseImage = true, stampAgeDays = null, version = '2.1.229', 
   fs.writeFileSync(idFile, 'sha256:before\n');
   return { state, ...drive('refresh_claude_if_stale', {
     deps: ['build_base', 'resolve_claude_code_version'],
-    env: { SANDBOX_DIR: SANDBOX, STATE_DIR: state, REBUILD: 'false', ...RESOLVER_STATE },
-    pre: `${curlStub(version)}
-docker() {
+    env: { SANDBOX_DIR: sandboxDir, STATE_DIR: state, REBUILD: 'false', ...RESOLVER_STATE },
+    pre: `docker() {
   if [[ "\${1:-}" == "image" ]]; then
     if [[ "\${3:-}" == "--format" ]]; then cat ${q(idFile)}; return 0; fi
     return ${baseImage ? 0 : 1}
@@ -202,45 +217,47 @@ test('a fresh install does not rebuild before the base image exists', { skip }, 
   // --rebuild-base/first launch builds it; refreshing something absent would
   // build the base twice on a first run.
   const r = staleRun({ baseImage: false });
-  assert.doesNotMatch(r.stdout, /Refreshing/);
+  assert.doesNotMatch(r.stdout, /Rebuilding/);
   assert.strictEqual(r.vars.REBUILD, 'false');
 });
 
-test('a refresh within the last day is skipped', { skip }, () => {
-  const r = staleRun({ stampAgeDays: 0 });
-  assert.doesNotMatch(r.stdout, /Refreshing/);
-  assert.strictEqual(r.vars.REBUILD, 'false');
-});
-
-test('a stale stamp with no new release builds nothing', { skip }, () => {
-  // The common case, once a day. The registry says we already run the current
-  // release, so there is no build to do — only the stamp gets re-armed.
-  const r = staleRun({ stampAgeDays: 3, version: '2.1.229', installed: '2.1.229' });
+test('an unchanged pin builds nothing, however long since the last launch', { skip }, () => {
+  // The common case. This used to depend on a `.last-claude-update` stamp and a
+  // registry call, so it reached the network once a day whatever the tree said;
+  // the pin alone decides now, and a launch on an unchanged tree is free.
+  const r = staleRun({ version: '2.1.229', installed: '2.1.229' });
   assert.doesNotMatch(r.stdout, /DOCKERARG:build/);
   assert.strictEqual(r.vars.REBUILD, 'false');
-  const age = Date.now() - fs.statSync(path.join(r.state, '.last-claude-update')).mtimeMs;
-  assert.ok(age < 60_000, 'the daily check was re-armed, so it is not re-checked every launch');
 });
 
-test('a new release refreshes Claude Code and forces the per-repo rebuild', { skip }, () => {
+test('a moved pin rebuilds Claude Code and forces the per-repo rebuild', { skip }, () => {
   // REBUILD=true is the point: a new base image with no per-repo rebuild leaves
   // the session running the old Claude Code from the derived image's layers.
-  const r = staleRun({ stampAgeDays: 3, version: '2.1.230', installed: '2.1.229', newImageId: 'sha256:after' });
-  assert.match(r.stdout, /Refreshing Claude Code/);
+  const r = staleRun({ version: '2.1.230', installed: '2.1.229', newImageId: 'sha256:after' });
+  assert.match(r.stdout, /Rebuilding Claude Code/);
   assert.ok(r.stdout.includes('DOCKERARG:CLAUDE_CODE_VERSION=2.1.230'));
   assert.strictEqual(r.vars.REBUILD, 'true');
 });
 
-test('a missing version record alongside an existing image also refreshes', { skip }, () => {
-  const r = staleRun({ stampAgeDays: null, newImageId: 'sha256:after' });
-  assert.match(r.stdout, /Refreshing Claude Code/);
+test('a missing version record alongside an existing image also rebuilds', { skip }, () => {
+  const r = staleRun({ installed: null, newImageId: 'sha256:after' });
+  assert.match(r.stdout, /Rebuilding Claude Code/);
   assert.strictEqual(r.vars.REBUILD, 'true');
+});
+
+test('an unreadable pin leaves the existing image alone', { skip }, () => {
+  // A launch is not the place to fail on a malformed Dockerfile: the image that
+  // is already there still runs, and build_base reports it when something asks
+  // for a build.
+  const r = staleRun({ version: null, installed: '2.1.229' });
+  assert.doesNotMatch(r.stdout, /DOCKERARG:build/);
+  assert.strictEqual(r.vars.REBUILD, 'false');
 });
 
 test('a build that leaves the base image id unchanged spares the per-repo rebuild', { skip }, () => {
   // A build can run and change nothing (full cache hit). Forcing every per-repo
   // image to rebuild after that was the bulk of what the daily refresh cost.
-  const r = staleRun({ stampAgeDays: 3, installed: null });
+  const r = staleRun({ installed: null });
   assert.match(r.stdout, /DOCKERARG:build/);
   assert.strictEqual(r.vars.REBUILD, 'false');
 });

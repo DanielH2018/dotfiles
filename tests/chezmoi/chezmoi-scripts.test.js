@@ -202,13 +202,13 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
   });
 }
 
-// 2d. os-unix/run_once_after_install-python-tools.sh.tmpl ------------------------------------
+// 2d. os-unix/run_onchange_after_install-python-tools.sh.tmpl ------------------------------------
 // No sudo here, but it curl|sh's a remote installer, so the sandbox stubs curl (never reaches
 // the network) and uv (never installs anything). The fake installer the curl stub writes is
 // executed for real by the script's `sh`, which is what proves UV_INSTALL_DIR /
 // INSTALLER_NO_MODIFY_PATH are actually handed to it.
 {
-  const PT_SRC = path.join(SCRIPTS_DIR, 'os-unix', 'run_once_after_install-python-tools.sh.tmpl');
+  const PT_SRC = path.join(SCRIPTS_DIR, 'os-unix', 'run_onchange_after_install-python-tools.sh.tmpl');
 
   const UNAME_STUB = '#!/bin/sh\necho "${TEST_UNAME_S:-Linux}"\n';
 
@@ -229,13 +229,16 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     'exit 0',
   ].join('\n');
 
-  // `uv tool install <name>` materializes <name> in the stub dir (always on PATH) so the
-  // script's final command -v sweep sees the tools a real install would have produced.
+  // `uv tool install <name>==<version>` materializes <name> in the stub dir (always on PATH) so
+  // the script's final command -v sweep sees the tools a real install would have produced. The
+  // `==` is stripped here because the script pins every version from tools.toml, and the binary
+  // a real `uv tool install ruff==X` leaves behind is still named `ruff`.
   const UV_STUB = [
     '#!/bin/sh',
     'echo "uv $*" >> "$STUB_LOG"',
     'if [ "$1" = "tool" ] && [ "$2" = "install" ]; then',
-    '  printf "#!/bin/sh\\n" > "$STUB_DIR/$3" && chmod 755 "$STUB_DIR/$3"',
+    '  name="${3%%==*}"',
+    '  printf "#!/bin/sh\\n" > "$STUB_DIR/$name" && chmod 755 "$STUB_DIR/$name"',
     'fi',
     'exit "${UV_EXIT:-0}"',
   ].join('\n');
@@ -267,7 +270,10 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     const { status } = runSh(scriptFile, env);
     const log = readLog(logFile);
     assert.strictEqual(status, 0, `expected success, log:\n${log}`);
-    assert.ok(log.includes('curl -LsSf https://astral.sh/uv/install.sh'), `installer should be fetched:\n${log}`);
+    // The VERSIONED installer URL. The bare one installs whatever Astral released most
+    // recently, so the uv a machine got was decided by the day it was provisioned.
+    assert.match(log, /curl -LsSf https:\/\/astral\.sh\/uv\/\d+\.\d+\.\d+\/install\.sh/,
+      `the pinned installer should be fetched:\n${log}`);
     assert.ok(
       log.includes(`uv-installer UV_INSTALL_DIR=${path.join(dir, '.local', 'bin')} INSTALLER_NO_MODIFY_PATH=1`),
       `installer should get a pinned dir and no PATH edits:\n${log}`,
@@ -281,8 +287,10 @@ test('install-docker-engine adds its apt repo via the shared helper', { skip }, 
     assert.strictEqual(status, 0, `expected success, log:\n${log}`);
     assert.ok(!log.includes('curl '), `nothing should be downloaded when uv exists:\n${log}`);
     assert.ok(log.includes('uv python install 3.12'), `managed CPython should be provisioned:\n${log}`);
-    assert.ok(log.includes('uv tool install ruff'), `ruff should be installed:\n${log}`);
-    assert.ok(log.includes('uv tool install prek'), `prek should be installed:\n${log}`);
+    // Pinned, not bare: a bare `uv tool install prek` gave CI and a laptop different builds of
+    // the hook runner whose verdict decides whether a push is clean.
+    assert.match(log, /uv tool install ruff==\d+\.\d+\.\d+/, `ruff should be installed at its pin:\n${log}`);
+    assert.match(log, /uv tool install prek==\d+\.\d+\.\d+/, `prek should be installed at its pin:\n${log}`);
   });
 
   // pytest is intentionally left to each project's own env (`uv run pytest`); a global one

@@ -27,6 +27,17 @@
 # that one name.
 # shellcheck disable=SC2034
 
+# Pinned toolchains for the per-repo layers below, for repos that declare no version file of
+# their own. Each was a channel name (`stable`) or a bare package name, which resolves at BUILD
+# time — so rebuilding a layer for an unchanged repo moved the compiler under it. Renovate
+# tracks them through the `# renovate:` line above each.
+#
+# Here rather than in .chezmoidata/tools.toml because this file is deployed as-is, not as a
+# chezmoi template: the launcher sources it from ~/.claude/sandbox at run time, with no render
+# step in between.
+# renovate: datasource=github-releases depName=rust-lang/rust
+RUST_TOOLCHAIN="1.98.1"
+
 detect_docker_need() {
   # Check for docker-compose files (depth 2 catches monorepo layouts)
   local compose_files
@@ -104,11 +115,16 @@ ENV PATH=\"/home/claudebot/.fnm/aliases/default/bin:\$PATH\"
 "
   fi
 
-  # Rust via rustup
+  # Rust via rustup. A concrete toolchain, not `stable`: `stable` resolves at BUILD time, so
+  # rebuilding this layer after a Rust release silently moved the compiler under a repo that
+  # had not changed. RUST_TOOLCHAIN is the pin; a repo that needs a different one declares it
+  # in rust-toolchain.toml, which rustup honours over the default once the tree is mounted.
   if [[ -f "$REPO_PATH/Cargo.toml" ]]; then
     layers+="
 # --- Rust via rustup ---
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh \\
+    && sh /tmp/rustup-init.sh -y --default-toolchain ${RUST_TOOLCHAIN} --profile minimal \\
+    && rm -f /tmp/rustup-init.sh
 ENV PATH=\"/home/claudebot/.cargo/bin:\$PATH\"
 "
   fi

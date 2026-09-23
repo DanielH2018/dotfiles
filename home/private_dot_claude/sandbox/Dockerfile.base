@@ -42,11 +42,28 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
        gh docker-ce-cli docker-compose-plugin
 
 # Node.js (needed for Claude Code npm install)
+#
+# The keyring and the apt source are written here rather than by NodeSource's setup script,
+# which the build used to fetch and run: that script is whatever NodeSource published on the
+# build date, and it installed whatever nodejs its repo carried that day. Both halves now come
+# from the Dockerfile — the same shape as the chezmoi and uv layers below.
+#
+# NODE_PKG_VERSION is the exact Debian package version, so two builds of one commit install one
+# node. NodeSource prunes old versions out of its index, so a stale pin fails the build loudly
+# rather than floating; Renovate keeps it current.
 ARG NODE_VERSION=22
+ARG NODE_PKG_VERSION=22.23.2-ns6.3.6
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs
+    set -eux; \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      -o /etc/apt/keyrings/nodesource.asc; \
+    chmod a+r /etc/apt/keyrings/nodesource.asc; \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends "nodejs=${NODE_PKG_VERSION}"; \
+    node --version
 
 # chezmoi
 # Dotfiles manager. The vault sandbox bind-mounts the chezmoi SOURCE read-write;
@@ -54,7 +71,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # execute-template). Pinned + checksum-verified (no curl|sh). apply/update/add
 # target the CONTAINER home (not the host) and are denied in settings.base.json;
 # run those on the host. Pinned to match the host version.
-ARG CHEZMOI_VERSION=2.70.5
+ARG CHEZMOI_VERSION=2.71.1
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     base="https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}"; \
@@ -72,12 +89,13 @@ RUN set -eux; \
 # Resolves and runs the managed Python 3.14 that claude-guard's PreToolUse deny hook needs:
 # hooks/executable_guard-pre-tool-use.sh finds its interpreter with
 # `uv python find --no-project --managed-python --system 3.14`. Pinned + checksum-verified,
-# the same shape as chezmoi above. executable_sandbox-image.sh installs uv per repo with
-# `curl | sh`, which is not a shape to bake into the base image.
+# the same shape as chezmoi above. This is the only uv in the image: the per-repo Python layer
+# in executable_sandbox-image.sh used to install an unpinned one ahead of it on PATH, and no
+# longer does.
 #
 # `uname -m` here, not the chezmoi layer's `dpkg --print-architecture`: uv names its release
 # assets aarch64/x86_64, where dpkg says arm64/amd64. Copying the line above 404s at build.
-ARG UV_VERSION=0.12.13
+ARG UV_VERSION=0.12.14
 RUN set -eux; \
     arch="$(uname -m)"; \
     base="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}"; \
@@ -198,16 +216,20 @@ RUN mkdir -p /audit && chown claudebot:claudebot /audit
 # to be) a new release re-ran both pip venvs and re-downloaded the embedding
 # model. Down here a release costs one `npm install -g`.
 #
-# The launcher resolves @latest on the host and passes the concrete version, so
-# the layer's cache key IS the release: an unchanged version is a cache hit and
-# the daily check builds nothing. CLAUDE_CODE_REFRESH stays as the escape hatch
-# --rebuild-base uses to force a reinstall of this layer alone.
+# CLAUDE_CODE_VERSION below is the pin, and it is the ONE place the version
+# lives: the launcher reads this line rather than carrying a copy, and passes it
+# back as the build arg, which makes the layer's cache key the release itself.
+# It used to resolve the newest npm release on the host once a day instead, so
+# the image was as reproducible as the date it was last built on. Editing this
+# line is now what moves Claude Code, and a launch with an unchanged line builds
+# nothing. CLAUDE_CODE_REFRESH stays as the escape hatch --rebuild-base uses to
+# force a reinstall of this layer alone.
 #
 # Sits just above the entrypoint COPY, not at the very bottom, so editing
 # entrypoint.sh re-runs only that copy instead of reinstalling Claude Code.
 # npm's cache is a build cache mount, so it speeds up rebuilds without landing
 # in the image (which is what `npm cache clean --force` used to buy).
-ARG CLAUDE_CODE_VERSION="latest"
+ARG CLAUDE_CODE_VERSION=2.1.280
 ARG CLAUDE_CODE_REFRESH="0"
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     echo "claude-code refresh token: ${CLAUDE_CODE_REFRESH}" \

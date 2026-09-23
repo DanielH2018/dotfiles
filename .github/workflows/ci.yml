@@ -26,28 +26,69 @@ on:
 permissions:
   contents: read
 
+# One run per ref. Two pushes to one PR branch otherwise run the gate twice at once, in a
+# shared runner HOME that both are installing global npm, uv and chezmoi tools into.
+#
+# Cancellation is restricted to pull_request deliberately. A PR run's range is base..head, so
+# the surviving run covers everything the cancelled one would have checked. A push run's range
+# is `event.before..sha`: cancelling push A when push B arrives leaves A's commits inside no
+# run's range at all, and the signature check below — the hole this workflow exists to close —
+# would then never see them, silently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    # A named release image, not the rolling alias: this job relies on the image's preinstalled
+    # shellcheck, and the alias moves to a new Ubuntu release with no commit here.
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # Each action is pinned to the commit its tag pointed at, with the tag in the comment. A
+      # tag is a mutable pointer — `@v4` is wherever the publisher last moved it — so a
+      # tag-pinned action can change what this gate runs after the change was reviewed.
+      # Renovate's github-actions manager reads the `# vX.Y.Z` comment natively.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The signature step walks a commit range and the gate's own steps read git
           # history; a shallow clone makes both wrong rather than failing loudly.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      # Three-part versions. A two-part node or python version leaves the patch level to
+      # resolve at run time, so two runs of one commit can use different interpreters.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '22.23.2'
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.14'
+          python-version: '3.14.6'
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # Without this the action installs whatever uv Astral released most recently, so the
+          # SHA pin above would still deliver a floating binary.
+          version: '0.12.14'
+
+      # The versions come from home/.chezmoidata/tools.toml, the same file the machine
+      # installers render. Writing them here instead is how CI and a laptop ended up running
+      # different builds of prek — the hook runner whose verdict decides whether a push is
+      # clean. The awk reads the [toolchain] table alone, so a `name = "..."` elsewhere in
+      # that file cannot be mistaken for a pin.
+      - name: Read the pinned toolchain
+        run: |
+          set -euo pipefail
+          awk '
+            /^\[toolchain\]$/ { in_table = 1; next }
+            /^\[/             { in_table = 0 }
+            in_table && /^[a-z_]+ = "/ {
+              gsub(/"/, "", $3)
+              print "TOOLCHAIN_" toupper($1) "=" $3
+            }
+          ' home/.chezmoidata/tools.toml | tee -a "$GITHUB_ENV"
 
       # The gate's `language: system` hooks need these on PATH. shellcheck is preinstalled
-      # on ubuntu-latest; oxlint and prek are not, and chezmoi is what renders the .sh.tmpl
+      # on the runner image; oxlint and prek are not, and chezmoi is what renders the .sh.tmpl
       # scripts for shellcheck-templates and the template tests.
       #
       # Installed explicitly rather than left to the hook's skip-if-absent branches, because
@@ -57,15 +98,27 @@ jobs:
       - name: Install the gate's tools
         run: |
           set -euo pipefail
-          npm install -g oxlint@1
-          uv tool install prek
+          npm install -g "oxlint@${TOOLCHAIN_OXLINT}"
+          uv tool install "prek==${TOOLCHAIN_PREK}"
           # The claude-guard shims resolve their interpreter with
           # `uv python find --no-project --managed-python --system 3.14`, and
           # `--managed-python` excludes the hostedtoolcache build actions/setup-python
           # provides. Without a uv-MANAGED 3.14 the shims take their
           # interpreter-unavailable fallback, and their tests assert the live path.
           uv python install 3.14
-          sh -c "$(curl -fsLS get.chezmoi.io)" -- -b "$HOME/.local/bin"
+          # The pinned, checksum-verified chezmoi release rather than the vendor's installer
+          # script: that script installs whatever is current on the day the run happens, and
+          # chezmoi renders every template this suite then asserts against. Same shape as the
+          # sandbox image's chezmoi layer.
+          base="https://github.com/twpayne/chezmoi/releases/download/v${TOOLCHAIN_CHEZMOI}"
+          file="chezmoi_${TOOLCHAIN_CHEZMOI}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$file" "$base/$file"
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" \
+            "$base/chezmoi_${TOOLCHAIN_CHEZMOI}_checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " ${file}$" checksums.txt | sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" chezmoi
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/chezmoi" "$HOME/.local/bin/chezmoi"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           shellcheck --version | head -2
 

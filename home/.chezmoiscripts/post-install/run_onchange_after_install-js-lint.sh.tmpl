@@ -8,15 +8,20 @@
 # same split as install-python-tools, which owns ruff for the same reason.
 #
 # npm rather than a GitHub release binary: oxlint's releases live in the oxc monorepo, whose
-# /releases/latest currently resolves to an oxfmt tag, so install_release's latest_tag helper
-# would build a URL for a tag that carries no oxlint asset. The npm package pulls the right
-# platform binary through optional deps and puts `oxlint` on PATH.
+# /releases/latest resolves to an oxfmt tag, so install_release would build a URL for a tag that
+# carries no oxlint asset. The npm package pulls the right platform binary through optional deps
+# and puts `oxlint` on PATH.
 #
-# js-lint-bump: v1
+# The version is the pin in .chezmoidata/tools.toml, and rendering it here is also what re-runs
+# this script: a bump changes the text below, which is what run_onchange_ triggers on. The
+# hand-bumped `js-lint-bump: v1` marker did that job and nothing else, so it is gone. CI
+# installed `oxlint@1` while a machine installed a bare `oxlint`, so the one prek hook that
+# declares `language: system` ran different linters in the two places.
+#
 # chezmoi runs this non-interactively; ~/.local/bin (where fnm lives) is only added to PATH
 # by the interactive shell rc, so prepend it here before probing for fnm.
 PATH="$HOME/.local/bin:$PATH"
 command -v fnm >/dev/null 2>&1 || { echo "install-js-lint: fnm not on PATH; skipping (re-run 'chezmoi apply' once fnm is installed)" >&2; exit 0; }
 eval "$(fnm env --shell bash)" 2>/dev/null || true
 command -v npm >/dev/null 2>&1 || { echo "install-js-lint: npm not on PATH after 'fnm env'; skipping" >&2; exit 0; }
-npm install -g oxlint
+npm install -g 'oxlint@{{ .toolchain.oxlint }}'

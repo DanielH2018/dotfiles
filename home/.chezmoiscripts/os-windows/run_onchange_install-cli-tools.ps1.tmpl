@@ -68,7 +68,7 @@ if ($uv) {
     & $uv.Source python install 3.12 --default
 
     # The two Python CLIs that are machine-global rather than per-project - the Windows half
-    # of os-unix/run_once_after_install-python-tools.sh.tmpl (see its header for the full
+    # of os-unix/run_onchange_after_install-python-tools.sh.tmpl (see its header for the full
     # rationale, including why pytest is deliberately NOT installed globally). ruff backs the
     # ~/.claude auto-format + lint-after-edit hooks, which call a bare `ruff`; prek is the
     # pre-commit replacement run as `prek run --all-files`. `uv tool install` replaces an

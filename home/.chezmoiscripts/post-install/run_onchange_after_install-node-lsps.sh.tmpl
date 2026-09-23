@@ -3,7 +3,11 @@
 # jsonls come from system fnm node, not mason — see dot_config/nvim/lua/plugins/lsp.lua).
 # chezmoi runs .sh scripts through the bash interpreter on Windows too, so this one
 # file covers macOS/Linux/Windows. Re-runs when the package list below changes.
-# node-lsps-bump: v1
+#
+# Each version is the pin in .chezmoidata/tools.toml, and rendering it here is also what re-runs
+# this script: a bump changes the text below, which is what run_onchange_ triggers on. The
+# hand-bumped `node-lsps-bump: v1` marker did that job and nothing else, so it is gone.
+#
 # chezmoi runs this non-interactively; ~/.local/bin (where fnm lives) is only added to PATH
 # by the interactive shell rc, so prepend it here before probing for fnm.
 PATH="$HOME/.local/bin:$PATH"
@@ -15,7 +19,5 @@ command -v npm >/dev/null 2>&1 || { echo "install-node-lsps: npm not on PATH aft
 # warning on global installs, where `npm approve-scripts` can't help (EGLOBAL).
 # Pre-approving it keeps `chezmoi apply` output clean and travels to every machine.
 npm install -g --allow-scripts=core-js \
-  @vtsls/language-server \
-  bash-language-server \
-  yaml-language-server \
-  vscode-langservers-extracted
+{{ range $i, $p := .node_lsps }}{{ if $i }} \
+{{ end }}  '{{ $p.name }}@{{ $p.version }}'{{ end }}
