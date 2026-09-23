@@ -128,8 +128,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_lint-after-edit.sh",
-      "hash": "11c03403778ca6c4a0f88eb975f265d823bd4a5fea8e0f54d0292336a6f4433e",
-      "landed": "2026-09-23T14:12:56.201Z"
+      "hash": "08bf4f6e9d80aba4e6b63bf58e6869fb81759aa0fe6e1fecf3478152db1a9c50",
+      "landed": "2026-09-23T14:18:14.660Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_memory-index-size.py",

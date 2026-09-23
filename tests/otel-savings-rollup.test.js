@@ -145,7 +145,10 @@ test('the jsonq paragraph in CLAUDE.md.tmpl still matches the snapshot it was wr
 
 test('a hand-edited literal in that paragraph is caught', () => {
   const prose = fs.readFileSync(CLAUDE_MD, 'utf8').replace(mb(FIXTURE.reduction.bytes_in), '9.9 MB');
-  assert.deepStrictEqual(missingFigures(prose, FIXTURE), ['reduction.bytes_in: 8.4 MB']);
+  // Built from the fixture rather than restated: refreshing the snapshot is the documented
+  // way to move these figures, and a literal here would make that refresh red for no reason.
+  assert.deepStrictEqual(missingFigures(prose, FIXTURE),
+    [`reduction.bytes_in: ${mb(FIXTURE.reduction.bytes_in)}`]);
 });
 
 // The fixture is only as good as the field names it copies. otelq is where they are produced,

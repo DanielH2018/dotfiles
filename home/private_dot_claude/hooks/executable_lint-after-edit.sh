@@ -28,18 +28,20 @@ MAX_LINES=40
 # regex -- "No emojis unless I ask" and "Nothing dates the prose" -- and both rely on the model
 # remembering them across a long session, which is what a linter is for (#573).
 #
-# The other candidates were measured over the repo's 137 tracked Markdown files before being
-# left out, because a rule that fires on ordinary prose is noise rather than a finding:
-# "at most one em-dash aside per paragraph" flagged 442 paragraphs, and " will " flagged 33
-# lines whose deferred sense the rule itself calls legal. markdownlint is not here either:
-# nothing in this repo carries a config for it, and its default MD013 line length would flag
-# most of these files.
+# The other candidates were measured before being left out, because a rule that fires on
+# ordinary prose is noise rather than a finding. Over the dotfiles repo's 137 tracked Markdown
+# files and the server repo's 320: "at most one em-dash aside per paragraph" flagged 210 and
+# 1,142 paragraphs, and a bare ` will ` flagged 30 and 60 lines whose deferred sense the rule
+# itself calls legal. The boxed-comment rules are for the code cases, not this one.
+# markdownlint is not here either: it is not installed on this machine, so the arm would ship
+# untested, and nothing in either repo carries a config to make its defaults bearable.
 #
 # Mentions are not uses: inline code, a "quoted example", *emphasis* and _emphasis_ come out
 # before the line is judged, which is what keeps the rule lines in CLAUDE.md itself -- they
 # spell the banned words to ban them -- from reporting themselves. Fenced blocks are skipped
-# whole. Measured over the same 137 files afterwards: 22 findings, every one a real dated
-# sentence or a real emoji, and zero in CLAUDE.md.tmpl.
+# whole. Measured afterwards: 22 findings over the dotfiles repo's 137 files and 53 over the
+# server repo's 320, every one a real dated sentence or a real emoji, and zero in
+# CLAUDE.md.tmpl.
 #
 # perl, not grep: this repo targets macOS too, and a Unicode property class (\p{...}) is not
 # portable across the greps in play. Single-quoted so the backticks below stay literal.
