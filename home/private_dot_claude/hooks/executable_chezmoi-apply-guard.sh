@@ -4,8 +4,17 @@
 #   matcher: Bash
 #   timeout: 15
 #   order: 30
+# gen-hooks: register
+#   event: PostToolUse
+#   matcher: Bash
+#   timeout: 20
+#   order: 25
+#   args: post
 # PreToolUse (Bash) hook: stop `chezmoi apply` reverting a deployed file that
-# something other than chezmoi wrote.
+# something other than chezmoi wrote, or deploying from a primary source checkout
+# that is behind origin/main (see "a primary source checkout behind origin/main"
+# below). Invoked with `post` as a PostToolUse hook, it prints what an
+# `chezmoi apply --source <worktree>` left ahead of the primary checkout instead.
 #
 # Worktree jobs deploy a build straight to its target path to exercise it in a
 # real terminal, so on this machine "deployed differs from source" usually means
@@ -56,6 +65,7 @@
 
 set -u
 
+MODE=${1:-pre}
 command -v chezmoi >/dev/null 2>&1 || exit 0
 # shellcheck source=/dev/null
 . "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}"
@@ -145,6 +155,8 @@ def arguments(argv):
 targets = []
 writes = False
 at_offset = 0
+sourced = False
+reads_primary = False
 for piece, offset in pieces:
     try:
         argv = shlex.split(piece)
@@ -179,13 +191,36 @@ for piece, offset in pieces:
     if not writes:
         at_offset = offset
     writes = True
-    targets.extend(t for t in rest if t.startswith(("/", "~/")))
+    # `--source <dir>` / `-S <dir>` names the source tree, not a target: its operand is
+    # skipped here, or a worktree path would narrow the conflict scan to itself. The flag
+    # also marks the apply as deploying from somewhere other than the primary checkout.
+    skip_next = False
+    piece_sourced = False
+    for t in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if t in ("--source", "-S"):
+            skip_next = True
+            piece_sourced = True
+            continue
+        if t.startswith("--source=") or (t.startswith("-S") and len(t) > 2):
+            piece_sourced = True
+            continue
+        if t.startswith(("/", "~/")):
+            targets.append(t)
+    # A source that is behind origin/main only matters to an apply that reads it. An
+    # --source apply reads another tree, and update / init --apply pull before applying.
+    sourced = sourced or piece_sourced
+    if not piece_sourced and not ({"update", "--apply"} & set(rest)):
+        reads_primary = True
 
 if not writes:
     print("skip")
 else:
     print("write")
     print(at_offset)
+    print(("primary" if reads_primary else "noprimary") + ("+sourced" if sourced else ""))
     for t in targets:
         print(t)
 ' 2>/dev/null <<<"$COMMAND"
@@ -212,6 +247,12 @@ text_decision() {
   # Offset 0: with no segmentation there is nothing better to point at than the start
   # of the whole command, which is the form this hook always suggested.
   printf 'write\n0\n'
+  # Line 3, as the parser prints it: does this apply read the primary checkout?
+  case "$SCAN" in
+    *\ --source*|*\ -S*) printf 'noprimary+sourced\n' ;;
+    *\ update*|*--apply*) printf 'noprimary\n' ;;
+    *) printf 'primary\n' ;;
+  esac
   printf '%s\n' "$SCAN" | tr ' ' '\n' | grep -E '^(/|~/)' || true
 }
 
@@ -225,7 +266,97 @@ VERDICT=${DECISION%%$'\n'*}
 [ "$VERDICT" = "write" ] || exit 0
 OFFSET=$(printf '%s' "$DECISION" | sed -n '2p')
 case "$OFFSET" in ''|*[!0-9]*) OFFSET=0 ;; esac
-TARGETS=$(printf '%s' "$DECISION" | tail -n +3)
+READS=$(printf '%s' "$DECISION" | sed -n '3p')
+TARGETS=$(printf '%s' "$DECISION" | tail -n +4)
+
+# The override goes on the chezmoi command, not on whatever the line opens with. The
+# assignment only reaches the process it prefixes, so `CHEZMOI_APPLY_GUARD=off cd /tmp &&
+# chezmoi apply` sets it for `cd` and the apply is denied again -- a loop, since that is
+# what this message used to suggest.
+OVERRIDE="${COMMAND:0:$OFFSET}CHEZMOI_APPLY_GUARD=off ${COMMAND:$OFFSET}"
+
+# ── post: what an --source apply left ahead of the primary checkout ─────────────
+#
+# Deploying from a worktree is how unlanded config gets tested, and it leaves $HOME
+# AHEAD of what the primary checkout can reproduce: the next plain apply reverts it.
+# `chezmoi diff` against the default source shows exactly that, so after an --source
+# apply this prints it (#583). Encrypted entries and scripts are excluded, since the
+# diff renders both and this output lands in the transcript. Bounded, and silent on
+# any chezmoi failure: a missing diff is a missed reminder, never a failed command.
+if [ "$MODE" = "post" ]; then
+  case "$READS" in *+sourced) ;; *) exit 0 ;; esac
+  DIFF_ARGS=()
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    case "$t" in "~"*) t="$HOME${t#\~}" ;; esac
+    DIFF_ARGS+=("$t")
+  done <<EOF
+$TARGETS
+EOF
+  DIFF=$(chezmoi diff --no-pager --exclude=encrypted,scripts ${DIFF_ARGS[@]+"${DIFF_ARGS[@]}"} 2>/dev/null) || exit 0
+  [ -n "$DIFF" ] || exit 0
+  LIMIT=6000
+  if [ "${#DIFF}" -gt "$LIMIT" ]; then
+    DIFF="${DIFF:0:$LIMIT}
+[... truncated at $LIMIT of ${#DIFF} characters; run \`chezmoi diff\` for the rest]"
+  fi
+  MSG="chezmoi-apply-guard: this --source apply left \$HOME ahead of the primary source checkout. A plain \`chezmoi apply\` would undo the lines below (the diff runs from the deployed file to the primary source), so they stay unlanded until the branch lands:
+
+$DIFF"
+  jq -n --arg msg "$MSG" '{
+    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: $msg }
+  }'
+  exit 0
+fi
+
+deny() {
+  jq -n --arg reason "$1" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $reason
+    }
+  }'
+  exit 0
+}
+
+# ── a primary source checkout behind origin/main ─────────────────────────────────
+#
+# bin/land merges by pushing <branch>:main, which moves origin/main and nothing else.
+# An apply before bin/land-sync reads the primary checkout's stale working tree and
+# redeploys pre-landing content, silently reverting what just landed, and `chezmoi
+# diff` stays quiet because deployed and stale source agree (#583). Checked ahead of
+# the status scan below, which exits early on a tree with no conflicts.
+#
+# Against the LOCAL origin/main ref, with no fetch. Measured on 2026-09-23: `git
+# rev-list --count` answered in under 10ms, `git ls-remote origin` in 0.64-0.69s and
+# `git fetch --dry-run` in 0.56s, on a hook that runs before every apply. The local ref
+# is current for every landing made on this machine, because a push updates the
+# remote-tracking ref from any worktree; a landing from another machine is invisible
+# here until something fetches. Any git failure is no opinion.
+if [ "${READS%%+*}" = "primary" ]; then
+  SRC_DIR=$(chezmoi source-path 2>/dev/null) || SRC_DIR=''
+  if [ -n "$SRC_DIR" ] && [ -d "$SRC_DIR" ]; then
+    BEHIND=$(git -C "$SRC_DIR" rev-list --count HEAD..refs/remotes/origin/main 2>/dev/null) || BEHIND=''
+    case "$BEHIND" in ''|*[!0-9]*) BEHIND=0 ;; esac
+    if [ "$BEHIND" -gt 0 ]; then
+      TOP=$(git -C "$SRC_DIR" rev-parse --show-toplevel 2>/dev/null) || TOP=$SRC_DIR
+      BRANCH=$(git -C "$SRC_DIR" symbolic-ref --short -q HEAD 2>/dev/null) || BRANCH=''
+      if [ "$BRANCH" = "main" ]; then
+        FIX="The checkout is on main, so bin/land-sync fast-forwards it. Run it, then apply again."
+      else
+        FIX="The checkout is on ${BRANCH:-a detached HEAD}, not main. bin/land-sync advances the main ref without leaving it; the switch back is \`bin/try --back\`, which deploys to the operator's live \$HOME and is theirs to run."
+      fi
+      deny "chezmoi apply reads its source from $TOP, which is $BEHIND commit(s) behind origin/main. Applying now redeploys the pre-landing content and silently reverts what landed, and \`chezmoi diff\` does not show it.
+
+$FIX
+
+This compares against the local origin/main ref; nothing was fetched. If deploying the older source is deliberate:
+
+  ${OVERRIDE}"
+    fi
+  fi
+fi
 
 # Whole-tree status: cheap enough here (this hook only fires on an apply) and it
 # avoids having to parse chezmoi's own flags out of the command line to find the
@@ -260,12 +391,6 @@ fi
 
 PATHS=$(printf '%s\n' "$CONFLICTS" | sed 's/^...//' | sed 's/^/  /')
 FIRST=$(printf '%s\n' "$CONFLICTS" | head -1 | sed 's/^...//')
-
-# The override goes on the chezmoi command, not on whatever the line opens with. The
-# assignment only reaches the process it prefixes, so `CHEZMOI_APPLY_GUARD=off cd /tmp &&
-# chezmoi apply` sets it for `cd` and the apply is denied again -- a loop, since that is
-# what this message used to suggest.
-OVERRIDE="${COMMAND:0:$OFFSET}CHEZMOI_APPLY_GUARD=off ${COMMAND:$OFFSET}"
 
 REASON="chezmoi apply would overwrite a file that something other than chezmoi wrote:
 

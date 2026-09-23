@@ -37,9 +37,11 @@ const skipParsed = skip || (managedPython ? false : 'no uv-managed 3.14');
 
 const BIN = scratch(os.tmpdir(), 'czag-bin-');
 fs.writeFileSync(path.join(BIN, 'chezmoi'), `#!/bin/bash
-# Only 'status' is consulted by the hook; echo the fixture it was given.
+# status, source-path and diff are consulted by the hook; echo the fixture it was given.
 case "$1" in
   status) printf '%s' "$STUB_STATUS"; [ -n "$STUB_STATUS" ] && printf '\\n' ;;
+  source-path) printf '%s' "\${STUB_SOURCE_PATH:-}" ;;
+  diff) printf '%s\\n' "$*" > "\${STUB_DIFF_ARGS:-/dev/null}"; printf '%s' "\${STUB_DIFF:-}" ;;
   *) exit 0 ;;
 esac
 exit 0
@@ -223,3 +225,81 @@ test('an unreadable command falls back rather than passing', { skip: skipParsed 
   denies('chezmoi apply "unbalanced');
 });
 
+
+// ── a primary source checkout behind origin/main (#583) ───────────────────────────
+//
+// A real repository, not a stubbed git: the refusal is a `rev-list` against the local
+// origin/main ref, and only a real ref can prove it counts commits in the right direction.
+// `behind` builds a checkout on main one commit short of origin/main; `current` is the same
+// repository with main fast-forwarded, which is what bin/land-sync leaves.
+const GIT_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+function sourceRepo(behind) {
+  const dir = scratch(os.tmpdir(), 'czag-src-');
+  const git = (...a) => execFileSync('git', ['-C', dir, ...a], { env: GIT_ENV, stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+    'commit', '-q', '--allow-empty', '-m', 'one');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+    'commit', '-q', '--allow-empty', '-m', 'two');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  if (behind) git('reset', '-q', '--hard', 'HEAD~1');
+  fs.mkdirSync(path.join(dir, 'home'));
+  return path.join(dir, 'home');
+}
+
+function run(command, extraEnv = {}, args = []) {
+  const out = execFileSync('bash', [HOOK, ...args], {
+    input: JSON.stringify({ tool_input: { command } }),
+    encoding: 'utf8',
+    env: {
+      ...GIT_ENV, ...UV_ENV,
+      PATH: `${BIN}:${process.env.PATH}`, STUB_STATUS: CLEAN,
+      HOME: '/home/daniel', CLAUDE_GUARD_HOME: GUARD, ...extraEnv,
+    },
+  });
+  return out.trim() ? JSON.parse(out).hookSpecificOutput : null;
+}
+
+test('denies an apply while the primary source checkout is behind origin/main', { skip }, () => {
+  const d = run('chezmoi apply', { STUB_SOURCE_PATH: sourceRepo(true) });
+  assert.strictEqual(d.permissionDecision, 'deny');
+  assert.match(d.permissionDecisionReason, /1 commit\(s\) behind origin\/main/);
+  assert.match(d.permissionDecisionReason, /bin\/land-sync/);
+});
+
+test('allows an apply from a source checkout level with origin/main', { skip }, () => {
+  assert.strictEqual(run('chezmoi apply', { STUB_SOURCE_PATH: sourceRepo(false) }), null);
+});
+
+test('a stale primary does not block an apply that reads another source', { skip: skipParsed }, () => {
+  const stale = { STUB_SOURCE_PATH: sourceRepo(true) };
+  assert.strictEqual(run('chezmoi apply --source /wt/home ~/.zshrc', stale), null);
+  assert.strictEqual(run('chezmoi apply --source=/wt/home', stale), null);
+  assert.strictEqual(run('chezmoi update', stale), null);
+  assert.strictEqual(run('CHEZMOI_APPLY_GUARD=off chezmoi apply', stale), null);
+  assert.strictEqual(run('chezmoi apply -S /wt/home && chezmoi apply', stale).permissionDecision, 'deny');
+});
+
+test('the --source operand is not read as a target', { skip: skipParsed }, () => {
+  // Before, /wt/home became a target and narrowed the conflict scan to a path no
+  // conflict could be under, so this clobbering apply ran.
+  denies('chezmoi apply --source /wt/home');
+});
+
+// ── post: the diff an --source apply leaves behind (#583) ─────────────────────────
+test('after an --source apply it prints the diff against the primary source', { skip: skipParsed }, () => {
+  const argsFile = path.join(scratch(os.tmpdir(), 'czag-diff-'), 'args');
+  const d = run('chezmoi apply --source /wt/home ~/.zshrc',
+    { STUB_DIFF: '-old line\n+new line', STUB_DIFF_ARGS: argsFile }, ['post']);
+  assert.strictEqual(d.hookEventName, 'PostToolUse');
+  assert.match(d.additionalContext, /-old line/);
+  const argv = fs.readFileSync(argsFile, 'utf8');
+  assert.match(argv, /--exclude=encrypted,scripts/);
+  assert.match(argv, /\/home\/daniel\/\.zshrc/);
+  assert.doesNotMatch(argv, /\/wt\/home/);
+});
+
+test('after a plain apply, or a clean diff, post says nothing', { skip: skipParsed }, () => {
+  assert.strictEqual(run('chezmoi apply', { STUB_DIFF: '-x' }, ['post']), null);
+  assert.strictEqual(run('chezmoi apply --source /wt/home', { STUB_DIFF: '' }, ['post']), null);
+});

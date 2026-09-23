@@ -717,6 +717,11 @@
             "command": "~/.claude/hooks/bash-write-fanout.sh",
             "timeout": 300,
             "statusMessage": "Checking files written by Bash..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/chezmoi-apply-guard.sh post",
+            "timeout": 20
           }
         ]
       },
