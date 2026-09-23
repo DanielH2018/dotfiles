@@ -156,6 +156,11 @@ test('a redirect or a pipeline does not narrow the targets', { skip: skipParsed 
   // apply was allowed.
   denies('chezmoi apply 2>&1 | tee /tmp/apply.log');
   denies('chezmoi apply > /tmp/apply.log');
+  // `2>`, `&>` and `2>>` are operators as much as `>` is. Reading them as arguments
+  // left their operand standing as a target, which is the same fail-open shape.
+  denies('chezmoi apply 2> /dev/null');
+  denies('chezmoi apply &> /tmp/x');
+  denies('chezmoi apply 2>> /tmp/x');
 });
 
 test('a cd in front of the apply does not narrow the targets', { skip: skipParsed }, () => {
@@ -169,6 +174,21 @@ test('the override counts only as an assignment on the apply itself', { skip: sk
   denies('git commit -m "use CHEZMOI_APPLY_GUARD=off" && chezmoi apply');
   // The documented form still works, including behind another command.
   allows('git status && CHEZMOI_APPLY_GUARD=off chezmoi apply');
+  // And it covers only the command it prefixes: bash gives the assignment to that
+  // process and no other, so a second apply beside it is still guarded.
+  denies('CHEZMOI_APPLY_GUARD=off chezmoi apply ~/.zshrc && chezmoi apply');
+});
+
+// The deny message is an instruction, so it has to be one that works. The assignment
+// only reaches the process it prefixes: suggesting it at the head of
+// `cd /tmp && chezmoi apply` sets it for `cd`, the apply is denied again, and the
+// session loops on the hook's own advice.
+test('the override the message suggests is one the guard accepts', { skip: skipParsed }, () => {
+  const reason = denies('cd /tmp && chezmoi apply');
+  const suggested = /^ {2}(.*CHEZMOI_APPLY_GUARD=off.*)$/m.exec(reason);
+  assert.ok(suggested, `the reason offers no override command:\n${reason}`);
+  assert.strictEqual(suggested[1], 'cd /tmp && CHEZMOI_APPLY_GUARD=off chezmoi apply');
+  allows(suggested[1]);
 });
 
 test('the words only count as a command, not as text', { skip: skipParsed }, () => {

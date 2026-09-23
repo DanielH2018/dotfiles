@@ -27,6 +27,48 @@ HOOK = HERE / "executable_bash-write-fanout.sh"
 if not HOOK.exists():  # deployed copy drops chezmoi's mode prefix
     HOOK = HERE / "bash-write-fanout.sh"
 
+# The claude_guard package the hook strips heredocs with, from the CHECKOUT rather than
+# from whatever this machine has deployed. CI never runs `chezmoi apply`, so the
+# deployed path does not exist there and the hook would take its regex fallback --
+# the parser assertions below would then measure the thing they exist to replace.
+GUARD_SRC = HERE.parents[1] / "dot_local" / "share" / "claude-guard"
+if not GUARD_SRC.is_dir():  # deployed copy: the source tree is not beside the hook
+    GUARD_SRC = Path(os.environ.get("CLAUDE_GUARD_HOME", "")) or GUARD_SRC
+
+
+def _have_parser():
+    """Whether the hook's parsed path can actually run here.
+
+    It needs the package AND the uv-MANAGED 3.14 the claude-guard shims resolve,
+    which is not the interpreter actions/setup-python provides. Where it cannot run
+    the hook falls back by design, so the two checks below state the fallback's
+    answer instead of being skipped: this suite's `OK N` line is asserted against
+    its check() call sites, and a skipped check would read as a block that was
+    never reached.
+    """
+    if not (GUARD_SRC / "claude_guard" / "segment.py").is_file():
+        return False
+    try:
+        found = subprocess.run(
+            [
+                "uv",
+                "python",
+                "find",
+                "--no-project",
+                "--managed-python",
+                "--system",
+                "3.14",
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+    return found.returncode == 0 and Path(found.stdout.strip() or "/dev/null").exists()
+
+
+HAVE_PARSER = _have_parser()
+
 failures = []
 ran = 0
 
@@ -44,6 +86,8 @@ def extracted(command, cwd, env_extra=None):
     env = {
         **os.environ,
         "CLAUDE_BASH_WRITE_FANOUT_DRYRUN": "1",
+        # Ahead of env_extra, so the no-package case can still point it elsewhere.
+        "CLAUDE_GUARD_HOME": str(GUARD_SRC),
         **(env_extra or {}),
     }
     result = subprocess.run(
@@ -164,10 +208,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # first character, so `<<'.END'` was not read as a heredoc at all and the blockquote
     # in the body was tokenized as a redirect: the hook fanned out b.txt, which the
     # command never wrote. claude_guard.segment reads the delimiter the way bash does.
+    # Where the parsed path cannot run at all, the fallback's answer is what to expect:
+    # b.txt fanned out too. Stating it rather than skipping keeps the `OK N` count
+    # honest, which python-suites.test.js asserts against the check() call sites.
     check(
         "a delimiter the regex cannot read is still a heredoc",
         extracted("cat > a.txt <<'.END'\n> b.txt is the index\n.END", root)
-        == ["a.txt"],
+        == (["a.txt"] if HAVE_PARSER else ["a.txt", "b.txt"]),
     )
     # ── what happens when the parser cannot answer ───────────────────────────────────
     #
@@ -188,7 +235,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "an unreadable command fans out nothing",
         extracted("cat > a.txt <<'EOF'\nbody\nEOF\necho \"unbalanced > b.txt", root)
-        == [],
+        == ([] if HAVE_PARSER else ["a.txt"]),
     )
 
     # ── the escape hatch ─────────────────────────────────────────────────────────────

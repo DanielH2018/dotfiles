@@ -105,11 +105,27 @@ if not p.ok:
     print("unreadable")
     raise SystemExit(0)
 
-# Substitutions as well as top-level segments: `$(chezmoi apply)` runs an apply.
-pieces = [s.text for s in p.segments] + list(p.substitutions)
+# Substitutions as well as top-level segments: `$(chezmoi apply)` runs an apply. Each
+# top-level segment carries where it starts, so the override the deny message suggests
+# can be put on the chezmoi command rather than on whatever the command line opens with.
+pieces = []
+cursor = 0
+for seg in p.segments:
+    at = command.find(seg.text, cursor)
+    if at < 0:
+        at = cursor
+    cursor = at + len(seg.text)
+    # A segment after a separator starts with the whitespace that followed it; point
+    # past that, or the suggested override reads with a double space in it.
+    pieces.append((seg.text, at + len(seg.text) - len(seg.text.lstrip())))
+pieces.extend((sub, 0) for sub in p.substitutions)
 
-# A redirection is not an argument. `2>&1`, `>`, `>>file` and the operand of a bare
-# operator would otherwise read as a target or, worse, as the verb.
+
+# A redirection is not an argument. `2>&1`, `>`, `2> file` and the operand of any bare
+# operator would otherwise read as a target or, worse, as the verb. A token made only of
+# operator characters ALWAYS takes the next word -- `2>`, `&>` and `2>>` are operators
+# just as `>` is, and treating them as anything else let `chezmoi apply 2> /dev/null`
+# narrow the guard to /dev/null and run.
 def arguments(argv):
     out, skip_next = [], False
     for tok in argv:
@@ -118,30 +134,35 @@ def arguments(argv):
             continue
         bare = tok.lstrip("0123456789")
         if bare and set(bare) <= {"<", ">", "&"}:
-            skip_next = tok.rstrip("&") in ("<", ">", ">>", "<<")
+            skip_next = True
             continue
         if tok.startswith((">", "<")) or (tok[:1].isdigit() and (">" in tok or "<" in tok)):
             continue
         out.append(tok)
     return out
 
-override = False
+
 targets = []
 writes = False
-for piece in pieces:
+at_offset = 0
+for piece, offset in pieces:
     try:
         argv = shlex.split(piece)
     except ValueError:
         print("unreadable")
         raise SystemExit(0)
     # Leading assignments are the only place the override counts, because they are
-    # the only place bash would let it reach the chezmoi process.
+    # the only place bash would let it reach the chezmoi process. It is also PER
+    # command: `CHEZMOI_APPLY_GUARD=off chezmoi apply ~/x && chezmoi apply` overrides
+    # the first apply and leaves the second one guarded.
     seg_override = False
     i = 0
     while i < len(argv) and "=" in argv[i] and argv[i].split("=", 1)[0].isidentifier():
         if argv[i] == "CHEZMOI_APPLY_GUARD=off":
             seg_override = True
         i += 1
+    if seg_override:
+        continue
     if i >= len(argv) or os.path.basename(argv[i]) != "chezmoi":
         continue
     rest = arguments(argv[i + 1 :])
@@ -151,22 +172,20 @@ for piece in pieces:
     # misses is a guard that does not fire.
     if not ({"apply", "update", "--apply"} & set(rest)):
         continue
-    writes = True
-    if seg_override:
-        override = True
     # --dry-run writes nothing, so it can never clobber. `-n` is its short form and
     # is a token here, so a trailing one counts.
     if {"--dry-run", "-n"} & set(rest):
-        writes = False
         continue
+    if not writes:
+        at_offset = offset
+    writes = True
     targets.extend(t for t in rest if t.startswith(("/", "~/")))
 
-if override:
-    print("off")
-elif not writes:
+if not writes:
     print("skip")
 else:
     print("write")
+    print(at_offset)
     for t in targets:
         print(t)
 ' 2>/dev/null <<<"$COMMAND"
@@ -181,7 +200,7 @@ SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ')
 
 text_decision() {
   case "$SCAN" in
-    *CHEZMOI_APPLY_GUARD=off*) printf 'off\n'; return 0 ;;
+    *CHEZMOI_APPLY_GUARD=off*) printf 'skip\n'; return 0 ;;
   esac
   case "$SCAN" in
     *chezmoi*\ apply*|*chezmoi*\ update*|*chezmoi*--apply*) ;;
@@ -190,19 +209,23 @@ text_decision() {
   case "$SCAN" in
     *\ --dry-run*|*\ -n\ *) printf 'skip\n'; return 0 ;;
   esac
-  printf 'write\n'
+  # Offset 0: with no segmentation there is nothing better to point at than the start
+  # of the whole command, which is the form this hook always suggested.
+  printf 'write\n0\n'
   printf '%s\n' "$SCAN" | tr ' ' '\n' | grep -E '^(/|~/)' || true
 }
 
 DECISION=$(parsed_decision) || DECISION=''
 case "${DECISION%%$'\n'*}" in
-  off|skip|write) ;;
+  skip|write) ;;
   *) DECISION=$(text_decision) ;;
 esac
 
 VERDICT=${DECISION%%$'\n'*}
 [ "$VERDICT" = "write" ] || exit 0
-TARGETS=$(printf '%s' "$DECISION" | tail -n +2)
+OFFSET=$(printf '%s' "$DECISION" | sed -n '2p')
+case "$OFFSET" in ''|*[!0-9]*) OFFSET=0 ;; esac
+TARGETS=$(printf '%s' "$DECISION" | tail -n +3)
 
 # Whole-tree status: cheap enough here (this hook only fires on an apply) and it
 # avoids having to parse chezmoi's own flags out of the command line to find the
@@ -238,6 +261,12 @@ fi
 PATHS=$(printf '%s\n' "$CONFLICTS" | sed 's/^...//' | sed 's/^/  /')
 FIRST=$(printf '%s\n' "$CONFLICTS" | head -1 | sed 's/^...//')
 
+# The override goes on the chezmoi command, not on whatever the line opens with. The
+# assignment only reaches the process it prefixes, so `CHEZMOI_APPLY_GUARD=off cd /tmp &&
+# chezmoi apply` sets it for `cd` and the apply is denied again -- a loop, since that is
+# what this message used to suggest.
+OVERRIDE="${COMMAND:0:$OFFSET}CHEZMOI_APPLY_GUARD=off ${COMMAND:$OFFSET}"
+
 REASON="chezmoi apply would overwrite a file that something other than chezmoi wrote:
 
 $PATHS
@@ -248,7 +277,7 @@ On this machine that usually means a parallel worktree job deployed a build ther
 
 If the diff REMOVES things the source never had, another job owns that file — recover it from ~/.local/share/chezmoi/.claude/worktrees/*/ and leave it alone. If the revert is what you actually want:
 
-  CHEZMOI_APPLY_GUARD=off ${COMMAND}"
+  ${OVERRIDE}"
 
 jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
