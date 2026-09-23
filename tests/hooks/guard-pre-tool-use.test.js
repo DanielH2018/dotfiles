@@ -10,7 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
@@ -64,4 +66,55 @@ test('a stale CLAUDE_GUARD_DENY_SHADOW in the env changes nothing', () => {
   const r = runHook({ CLAUDE_GUARD_FAIL_CLOSED: '0', CLAUDE_GUARD_DENY_SHADOW: '1' });
   assert.strictEqual(r.status, 0);
   assert.strictEqual(decisionOf(r.stdout), 'ask');
+});
+
+// stdin arrives through hook-input.sh (#565). The shim reads it with hook_read_input and never
+// with jq, so these pin what that change could break: a missing library is a "cannot run" like
+// a missing interpreter, and the payload reaches Python unchanged with no jq available.
+const UV = spawnSync('bash', ['-c', 'command -v uv'], { encoding: 'utf8' }).stdout.trim();
+const PY314 = UV && spawnSync(UV, ['python', 'find', '--no-project', '--managed-python', '--system', '3.14']).status === 0;
+const needsPy = { skip: PY314 ? false : 'no uv-managed Python 3.14' };
+
+// A stand-in claude_guard package whose cli answers `decision`, with its stdin as the reason.
+function echoPackage(decision) {
+  const home = scratch(os.tmpdir(), 'guard-pre-tool-use-echo-');
+  fs.mkdirSync(path.join(home, 'claude_guard'));
+  fs.writeFileSync(path.join(home, 'claude_guard', '__init__.py'), '');
+  fs.writeFileSync(path.join(home, 'claude_guard', 'cli.py'), [
+    'import json, sys',
+    'raw = sys.stdin.read()',
+    `out = {"hookEventName": "PreToolUse", "permissionDecision": "${decision}", "permissionDecisionReason": raw}`,
+    'print(json.dumps({"hookSpecificOutput": out}))',
+    '',
+  ].join('\n'));
+  return home;
+}
+
+test('a missing hook-input.sh asks on the host and denies in the sandbox, like a missing interpreter', needsPy, () => {
+  // A working package, so the library is the only thing missing. The pre-#565 shim never
+  // sourced it, reaches Python here, and answers with the stand-in's own `allow`.
+  const env = { CLAUDE_GUARD_HOME: echoPackage('allow'), HOOK_INPUT_LIB: '/nonexistent/hook-input.sh' };
+  const host = runHook({ ...env, CLAUDE_GUARD_FAIL_CLOSED: '0' });
+  assert.strictEqual(host.status, 0);
+  assert.strictEqual(decisionOf(host.stdout), 'ask');
+  const sandbox = runHook({ ...env, CLAUDE_GUARD_FAIL_CLOSED: '1' });
+  assert.strictEqual(sandbox.status, 2);
+  assert.strictEqual(decisionOf(sandbox.stdout), 'deny');
+});
+
+test('the payload reaches the Python side byte-for-byte, with no jq on PATH', needsPy, () => {
+  // Run with a PATH holding only cat and uv: a jq dependency creeping into the shim fails this
+  // outright rather than passing unnoticed.
+  const home = echoPackage('ask');
+  const bin = scratch(os.tmpdir(), 'guard-pre-tool-use-bin-');
+  fs.symlinkSync(UV, path.join(bin, 'uv'));
+  fs.symlinkSync(spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim(), path.join(bin, 'cat'));
+  const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo "a\\b" \'c\' | wc -l' }, cwd: '/w' });
+  const r = spawnSync('/bin/bash', [HOOK], {
+    encoding: 'utf8',
+    input: payload,
+    env: { ...process.env, CLAUDE_GUARD_HOME: home, CLAUDE_GUARD_FAIL_CLOSED: '1', PATH: bin },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, payload);
 });

@@ -891,6 +891,10 @@ DOCKER_ARGS=(
   -v "$HOME/.claude/hooks/guard-pre-tool-use.sh:/home/claudebot/.claude/hooks/guard-pre-tool-use.sh:ro"
   -v "$HOME/.local/share/claude-guard:/home/claudebot/.local/share/claude-guard:ro"
   -v "$HOME/.claude/hooks/protect-secrets.sh:/home/claudebot/.claude/hooks/protect-secrets.sh:ro"
+  # The stdin library the hooks above source from their own directory. Hooks are mounted
+  # one file at a time, so without this mount every `. .../hook-input.sh` fails, and bash
+  # runs the hook on with hook_read_input and hook_field undefined.
+  -v "$HOME/.claude/hooks/hook-input.sh:/home/claudebot/.claude/hooks/hook-input.sh:ro"
   # CLAUDE.md is the one managed file that stays staged-and-copied: entrypoint.sh
   # appends the dynamic environment context to it, so it has to be writable.
   # It is instructions, not policy or executable code.

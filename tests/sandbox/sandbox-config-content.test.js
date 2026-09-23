@@ -337,3 +337,29 @@ test('the sandbox Python stays ruff-clean', { skip: ruffSkip }, () => {
   const r = spawnSync('ruff', ['check', '--no-cache', SANDBOX_DIR], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `ruff check must pass on the sandbox:\n${r.stdout}${r.stderr}`);
 });
+
+test('every library a mounted hook sources is mounted beside it', () => {
+  // The sandbox mounts hooks one file at a time, so a hook that sources a sibling library
+  // (`. "${..._LIB:-${BASH_SOURCE[0]%/*}/lib.sh}"`) finds nothing unless that library has a
+  // mount of its own. bash does not stop on a failed `.`: the hook runs on with the library's
+  // functions undefined, which for a guard hook means deciding nothing, silently.
+  const HOOKS_DIR = path.join(SANDBOX_DIR, '..', 'hooks');
+  const mounted = new Set(MOUNTS.map(([t]) => t));
+  const needed = new Map();
+  for (const [target] of MOUNTS) {
+    if (!target.startsWith('/home/claudebot/.claude/hooks/')) continue;
+    const name = path.basename(target);
+    const src = [`executable_${name}`, name].map((f) => path.join(HOOKS_DIR, f)).find((f) => fs.existsSync(f));
+    if (!src) continue;
+    for (const m of fs.readFileSync(src, 'utf8').matchAll(/^\. "\$\{[A-Z_]+:-\$\{BASH_SOURCE\[0\]%\/\*\}\/([\w.-]+\.sh)\}"/gm)) {
+      needed.set(m[1], name);
+    }
+  }
+  // Non-vacuity: protect-secrets.sh sources hook-input.sh, so an empty census means the
+  // pattern above stopped matching, not that nothing needs mounting.
+  assert.ok(needed.has('hook-input.sh'), `the census found no hook-input.sh consumer: ${[...needed.keys()]}`);
+  for (const [lib, by] of needed) {
+    assert.ok(mounted.has(`/home/claudebot/.claude/hooks/${lib}`),
+      `${by} sources ${lib}, which is not mounted at /home/claudebot/.claude/hooks/${lib}`);
+  }
+});

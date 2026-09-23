@@ -70,10 +70,18 @@ fail() {
   printf '%s\n' "$ASK"
   exit 0
 }
+# stdin comes through hook-input.sh like every other bash hook's (#565), but only
+# hook_read_input: this shim parses nothing itself, so it never calls hook_require_jq or
+# hook_field and does not depend on jq. The payload is handed to Python byte-for-byte as
+# read. A missing library is the same "cannot run" case as a missing interpreter, so it
+# takes the fail path above rather than letting the Python side read an empty stdin.
+# shellcheck source=/dev/null
+. "${HOOK_INPUT_LIB:-${BASH_SOURCE[0]%/*}/hook-input.sh}" 2>/dev/null || fail
+hook_read_input
 SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || fail
 PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || fail
 [ -x "$PY" ] || fail
-OUT=$(PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null) || fail
+OUT=$(printf '%s' "$_HOOK_INPUT_RAW" | PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null) || fail
 [ -n "$OUT" ] && printf '%s\n' "$OUT"
 exit 0
