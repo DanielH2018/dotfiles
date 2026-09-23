@@ -49,7 +49,7 @@ to memory files and status lines as much as to docs.
 
 ## Config & dotfiles management (chezmoi)
 
-My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. `chezmoi-guard.sh` (PostToolUse) flags a direct edit under `~`: it auto-resyncs the source for a plain managed file, but only warns for a `.tmpl`/`modify_`/`run_` source — that edit is not reverted, so it stays live until you next `chezmoi apply`. Run `chezmoi source-path <file>` before editing any config under `~`.
+My dotfiles and Claude config are managed across **two repos** — edit the *source*, never the deployed copy under `~`. `chezmoi-edit-guard.sh` (PreToolUse) denies an Edit or Write to a deployed file whose source is a `.tmpl`/`modify_`/`run_`, and names that source. `chezmoi-guard.sh` (PostToolUse) auto-resyncs the source after an edit to a plain managed file. Run `chezmoi source-path <file>` before editing any config under `~`.
 
 - **Personal / general** → chezmoi, source `~/.local/share/chezmoi` (remote `DanielH2018/dotfiles`, `.chezmoiroot=home`). Owns most of `~/.claude` as **real files** under `home/private_dot_claude/`. `~/.claude/settings.json` is **generated** from `home/.chezmoitemplates/settings.base.json` — to change settings/permissions, edit that base template, then `chezmoi apply ~/.claude/settings.json`. A hook registers itself in the `# gen-hooks:` block at the top of its file and `bin/gen-hooks` renders the hooks block from those.
 - **Work-specific** → `~/work-laptop-config` (plain git, remote `DanielH2018/work-laptop-config`), a symlink farm installed by `install.sh`. Owns `CLAUDE.local.md`, `docs/{integrations,enforcement}.md`, work agents, and PCI/redaction hooks — these appear as **symlinks** in `~/.claude`.
@@ -69,7 +69,7 @@ answering questions happen in place as usual, and a session already inside
 ## Git conventions
 
 - Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
-- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend.
+- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend. `git-conventions-guard.sh` asks before `git commit --amend` and before a `git merge` without `--ff-only`.
 - Write commit messages that explain *why*, not just what changed:
   ```
   Fix race condition in settlement processor on concurrent retries
@@ -80,7 +80,7 @@ answering questions happen in place as usual, and a session already inside
 
 ## Pull requests
 
-- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched.
+- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched. `git-conventions-guard.sh` denies a `gh pr create`/`edit` title with such a prefix or a ticket id.
 - A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
 - Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
 - The long form is the `pr-authoring` skill; `pr-review-prep` owns diff size and commit history, `gh-stack` owns splitting.
