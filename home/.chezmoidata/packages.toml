@@ -9,6 +9,10 @@
 #   copr     = Fedora COPR to enable first (dnf only)
 #   repo     = third-party repo key the Linux installer knows how to add (see its REPO section)
 #   tarball  = owner/repo of an upstream release that ships a directory rather than one binary
+#   tarball_tag = the release tag to install from that repo. Required alongside `tarball`: the
+#              installer used to follow the releases/latest redirect instead, so which build a
+#              machine got was decided by the date it was provisioned. `# renovate:` above it,
+#              the same shape tools.toml uses.
 #   manual   = why there is NO automated route on the other platform; rendered into
 #              LINUX-SETUP.md so an unavailable app is documented rather than silently dropped
 #
@@ -318,7 +322,7 @@ apt = "git"
 [[apps.coding]]
 name = "GitHub CLI"
 winget = "GitHub.cli"
-manual = "Installed on Linux by os-linux/run_after_install-cli-tools.sh.tmpl, which also adds cli.github.com's apt repo so Ubuntu doesn't pin gh at 2.45. Deliberately not duplicated here."
+manual = "Installed on Linux by os-linux/run_onchange_after_install-cli-tools.sh.tmpl, which also adds cli.github.com's apt repo so Ubuntu doesn't pin gh at 2.45. Deliberately not duplicated here."
 
 [[apps.coding]]
 name = "Visual Studio Code"
@@ -353,6 +357,8 @@ winget = "Genymobile.scrcpy"
 # 2026-07-31), so Fedora takes the upstream release tarball instead.
 apt = "scrcpy"
 tarball = "Genymobile/scrcpy"
+# renovate: datasource=github-releases depName=Genymobile/scrcpy
+tarball_tag = "v4.1"
 tarball_bin = "scrcpy"
 tarball_url = "https://github.com/Genymobile/scrcpy/releases/download/{tag}/scrcpy-linux-{arch}-{tag}.tar.gz"
 

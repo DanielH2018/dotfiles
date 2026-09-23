@@ -27,10 +27,12 @@ command -v unzip >/dev/null 2>&1 || {
 
 # Version-aware, matching how the CLI-tools installer treats its release binaries: re-fetch when
 # the font is absent OR the recorded nerd-fonts tag is stale, so a re-apply upgrades in place.
-# install_release_files wants the tag already resolved (see linux-install.sh section 6).
-tag="$(latest_tag ryanoasis/nerd-fonts)"
+# install_release_files wants the tag already resolved (see linux-install.sh section 6); the
+# pin lives in .chezmoidata/tools.toml, so which font build a machine gets is decided by the
+# commit rather than by the day it was provisioned.
+tag="$(pinned_tag ryanoasis/nerd-fonts '{{ (index .releases "nerd-fonts").tag }}')"
 if [ -z "$tag" ]; then
-  echo "$TAG: could not resolve the latest nerd-fonts tag" >&2
+  echo "$TAG: no pinned nerd-fonts tag" >&2
   exit 0
 fi
 
@@ -47,7 +49,7 @@ fi
 # Mono only — the same subset the Windows installer takes. The propo/variable faces in the
 # archive would otherwise win font matching for the terminal and break cell alignment.
 if install_release_files iosevkaterm-font "$tag" \
-     "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/IosevkaTerm.zip" \
+     "https://github.com/ryanoasis/nerd-fonts/releases/download/{tag}/IosevkaTerm.zip" \
      "$FONT_DIR" '*Mono*.ttf' 0644; then
   if command -v fc-cache >/dev/null 2>&1; then
     fc-cache -f "$FONT_DIR" >/dev/null 2>&1 || true

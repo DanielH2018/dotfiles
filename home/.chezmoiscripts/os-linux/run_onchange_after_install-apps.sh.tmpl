@@ -92,14 +92,14 @@ fi
 # bare .field on a map without that key is a template error, not an empty string.
 APPS='
 {{- range concat .apps.base .apps.coding .apps.gaming }}
-{{ get . "name" }}|{{ get . "apt" }}|{{ get . "dnf" }}|{{ get . "flatpak" }}|{{ get . "repo" }}|{{ get . "copr" }}|{{ get . "tarball" }}|{{ get . "tarball_bin" }}|{{ get . "tarball_url" }}
+{{ get . "name" }}|{{ get . "apt" }}|{{ get . "dnf" }}|{{ get . "flatpak" }}|{{ get . "repo" }}|{{ get . "copr" }}|{{ get . "tarball" }}|{{ get . "tarball_tag" }}|{{ get . "tarball_bin" }}|{{ get . "tarball_url" }}
 {{- end }}
 '
 
 failed=""
 # Fed by a here-doc rather than a pipe: a `while read` on the right of a pipe runs in a subshell,
 # where $failed would be discarded and the summary below would always look clean.
-while IFS='|' read -r name apt_pkg dnf_pkg fp repo copr tb tb_bin tb_url; do
+while IFS='|' read -r name apt_pkg dnf_pkg fp repo copr tb tb_tag tb_bin tb_url; do
   [ -n "$name" ] || continue
   case "$PM" in
     apt) pkg="$apt_pkg" ;;
@@ -139,10 +139,11 @@ while IFS='|' read -r name apt_pkg dnf_pkg fp repo copr tb tb_bin tb_url; do
     continue
   fi
 
-  # 3. Upstream release tarball (scrcpy on Fedora, which does not package it).
-  if [ -n "$tb" ] && [ -n "$rust_arch" ]; then
+  # 3. Upstream release tarball (scrcpy on Fedora, which does not package it). The tag comes
+  #    from the entry's own `tarball_tag`; install_tarball_app no longer resolves one itself.
+  if [ -n "$tb" ] && [ -n "$tb_tag" ] && [ -n "$rust_arch" ]; then
     url="$(printf '%s' "$tb_url" | sed "s#{arch}#$rust_arch#g")"
-    install_tarball_app "$tb_bin" "$tb" "$url" "$tb_bin"
+    install_tarball_app "$tb_bin" "$tb" "$tb_tag" "$url" "$tb_bin"
     [ -x "$BIN_DIR/$tb_bin" ] && continue
   fi
 

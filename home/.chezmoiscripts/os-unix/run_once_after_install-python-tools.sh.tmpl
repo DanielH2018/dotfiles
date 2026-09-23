@@ -70,7 +70,7 @@ uv python install 3.14 || echo "install-python-tools: 'uv python install 3.14' f
 
 # 3. Global CLIs. `uv tool install` replaces an existing install rather than erroring, so a
 #    re-apply also refreshes a stale ruff/prek in place — the same upgrade-on-apply policy the
-#    install_release helper in os-linux/run_after_install-cli-tools.sh.tmpl uses. The
+#    install_release helper in os-linux/run_onchange_after_install-cli-tools.sh.tmpl uses. The
 #    executables land in uv's tool bin dir (`uv tool dir --bin`), which is BIN_DIR here.
 for t in ruff prek; do
   uv tool install "$t" || echo "install-python-tools: 'uv tool install $t' failed" >&2

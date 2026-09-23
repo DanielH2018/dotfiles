@@ -3,8 +3,8 @@
 # manager and ignores the rest:
 #   - winget = winget package id      -> run_onchange_install-cli-tools.ps1.tmpl  (Windows)
 #   - brew   = Homebrew formula       -> Brewfile.tmpl                             (macOS)
-#   - apt    = Debian/Ubuntu package  -> run_after_install-cli-tools.sh.tmpl  (Linux)
-#   - dnf    = Fedora/RHEL package    -> run_after_install-cli-tools.sh.tmpl  (Linux)
+#   - apt    = Debian/Ubuntu package  -> run_onchange_after_install-cli-tools.sh.tmpl  (Linux)
+#   - dnf    = Fedora/RHEL package    -> run_onchange_after_install-cli-tools.sh.tmpl  (Linux)
 #   - cmd    = binary name on PATH    -> used by the winget installer to skip-if-present
 # An empty field means that installer doesn't handle this tool (it's absent there, or
 # installed by another mechanism — e.g. eza/fastfetch come from GitHub release binaries on
@@ -237,7 +237,7 @@ dnf = "util-linux-script"
 # The install scripts embed these values at render time, so a bump changes the rendered script
 # and `run_onchange_` re-runs it. That is the whole trigger: there is no clock anywhere.
 
-# GitHub release tags for the binaries os-linux/run_after_install-cli-tools.sh.tmpl installs
+# GitHub release tags for the binaries os-linux/run_onchange_after_install-cli-tools.sh.tmpl installs
 # where the distro packages one too old or not at all. The TAG is stored, not a stripped
 # version, because the prefix is not consistent upstream — ripgrep and fastfetch publish a bare
 # `15.2.0`, everything else a leading `v`. linux-install.sh's `_asset_url` derives `{ver}` from

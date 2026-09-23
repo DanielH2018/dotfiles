@@ -4,23 +4,30 @@
 # Fedora, amd64 or arm64), mirroring the macOS Brewfile for Linux. The distro package manager
 # for repo packages + release binaries for the gaps. Gated to non-minimal profiles so a
 # resource-constrained host (profile=minimal, e.g. the Pi) opts out of the heavy install.
-# run_after_: runs on every apply, AFTER file targets, so a sudo-less run that can't reach the
-# package manager fails loudly (exit 1) WITHOUT blocking dotfile deployment.
+# _after_: runs AFTER file targets, so a sudo-less run that can't reach the package manager
+# fails loudly (exit 1) WITHOUT blocking dotfile deployment.
 #
-# It used to be run_once_after_ with a hand-bumped `tools-bump` marker, which meant the release
-# binaries below — eza, fzf, zoxide, ripgrep, bat, fd, nvim, yazi, and the rest — installed once
-# and then stayed at whatever version was current that day. install_release has always been
-# version-aware (it resolves the latest tag and reinstalls when the recorded one differs), so
-# nothing was missing except a reason to run it again; bumping the marker refreshed every tool
-# at once, which is why it rarely got bumped.
+# run_onchange_, keyed on this script's own rendered text. Two earlier shapes are why:
 #
-# Running on every apply would mean a GitHub round trip per tool per apply, so the gate below
-# throttles the whole script to once a week — a converged apply inside that window is one stat()
-# and an exit, with no sudo probe and no network. It runs anyway, regardless of the window, when
-# tools.toml itself changes, so adding a tool still takes effect on the next apply.
-#   CLI_TOOLS_FORCE=1 chezmoi apply        check now, ignoring the window
-#   CLI_TOOLS_MAX_AGE_DAYS=1 chezmoi apply check daily instead of weekly
-#   touch ~/.local/bin/.versions/.no-auto-update   stop checking (CLI_TOOLS_FORCE still wins)
+#   run_once_after_ with a hand-bumped `tools-bump` marker. Every release binary below installed
+#   once and then stayed at whatever version was current that day, because bumping the marker
+#   refreshed all of them at once and so rarely got bumped.
+#
+#   run_after_ with a `.last-check` stamp holding the tools.toml hash, throttled to once a week.
+#   That one ran on every apply and reached the network on a wall-clock schedule, so whether an
+#   apply hit GitHub depended on the date rather than on anything committed.
+#
+# The tool versions are now pinned literals in .chezmoidata/tools.toml, rendered into the lines
+# below. A bump changes this script's text, which is what run_onchange_ triggers on, so the
+# version set IS the trigger and no clock is involved. An apply against an unchanged tree runs
+# this script not at all.
+#
+#   INSTALL_LATEST=1 chezmoi apply   resolve every tag upstream instead, to see what a bump
+#                                    would bring. Nothing is written back to tools.toml, so the
+#                                    next plain apply reinstalls the pin.
+#
+# A failed run (no sudo, no network) exits non-zero. chezmoi does not record the state of a
+# script that failed, so the next apply retries it.
 set -u
 TAG=install-cli-tools
 
@@ -29,27 +36,6 @@ TAG=install-cli-tools
 # app installer uses, so both speak one vocabulary and a fix lands in both. Everything from here
 # on is CLI-toolchain-specific.
 {{ includeTemplate "linux-install.sh" . }}
-
-# 0. The throttle. Everything below this point costs a sudo probe and a dozen GitHub round
-#    trips, so a converged apply must not reach it. The stamp holds the tools.toml hash it was
-#    written for, which is what makes "a new tool was added" override the age window: a changed
-#    list cannot match the recorded one, so the run happens regardless of when the last one did.
-#    VER_DIR is created by linux-install.sh above, so the stamp always has somewhere to live.
-STAMP="$VER_DIR/.last-check"
-SKIP_MARK="$VER_DIR/.no-auto-update"
-TOOLS_KEY='{{ include ".chezmoidata/tools.toml" | sha256sum }}'
-: "${CLI_TOOLS_MAX_AGE_DAYS:=7}"
-: "${CLI_TOOLS_FORCE:=0}"
-
-if [ "$CLI_TOOLS_FORCE" != 1 ]; then
-  if [ -e "$SKIP_MARK" ]; then exit 0; fi
-  # -mtime on a path that does not exist prints nothing (and an error we discard), so a machine
-  # that has never run this reads as stale rather than fresh.
-  if [ "$(cat "$STAMP" 2>/dev/null)" = "$TOOLS_KEY" ] \
-     && [ -n "$(find "$STAMP" -mtime "-$CLI_TOOLS_MAX_AGE_DAYS" 2>/dev/null)" ]; then
-    exit 0
-  fi
-fi
 
 # 1. unzip up front — a release install below (yazi) extracts a .zip, and a bare distro (fresh
 #    WSL Ubuntu) ships without unzip. Install it before any other package so it's guaranteed
@@ -211,54 +197,60 @@ for pair in "bat:batcat" "fd:fdfind" "lua:lua5.4" "luac:luac5.4"; do
   [ -n "$rp" ] && ln -sf "$rp" "$BIN_DIR/$name"
 done
 
-# 4. Release binaries for the package gaps (no sudo). install_release, latest_tag, recorded_tag
+# 4. Release binaries for the package gaps (no sudo). install_release, pinned_tag, recorded_tag
 #    and the arch names all come from the shared module; an arch it has no names for leaves
 #    rust_arch empty, which skips every download below rather than fetching a binary that would
 #    tar-extract cleanly and then Exec-format-error at first use.
+#
+#    The third argument of each line is the pinned tag out of .chezmoidata/tools.toml. eza and
+#    fastfetch also moved off the `releases/latest/download/` asset path, which a pin cannot
+#    reach: that URL always serves the current release, so the machine would record the pinned
+#    tag and run whatever shipped that day — worse than floating openly, because it reads as
+#    pinned.
 [ -n "$rust_arch" ] || echo "$TAG: unknown arch $(uname -m); skipping eza/fastfetch/curlie/sd/fzf/zoxide/ripgrep/gron/nvim/yazi" >&2
 if [ -n "$rust_arch" ]; then
-  install_release eza       eza-community/eza       "https://github.com/eza-community/eza/releases/latest/download/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
-  install_release fastfetch fastfetch-cli/fastfetch "https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-${ff_arch}.tar.gz"
-  install_release curlie    rs/curlie               "https://github.com/rs/curlie/releases/download/{tag}/curlie_{ver}_linux_${go_arch}.tar.gz"
-  install_release sd        chmln/sd                "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
-  install_release starship  starship/starship       "https://github.com/starship/starship/releases/download/{tag}/starship-${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release eza       eza-community/eza       '{{ .releases.eza.tag }}'       "https://github.com/eza-community/eza/releases/download/{tag}/eza_${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release fastfetch fastfetch-cli/fastfetch '{{ .releases.fastfetch.tag }}' "https://github.com/fastfetch-cli/fastfetch/releases/download/{tag}/fastfetch-linux-${ff_arch}.tar.gz"
+  install_release curlie    rs/curlie               '{{ .releases.curlie.tag }}'    "https://github.com/rs/curlie/releases/download/{tag}/curlie_{ver}_linux_${go_arch}.tar.gz"
+  install_release sd        chmln/sd                '{{ .releases.sd.tag }}'        "https://github.com/chmln/sd/releases/download/{tag}/sd-{tag}-${rust_arch}-unknown-linux-gnu.tar.gz"
+  install_release starship  starship/starship       '{{ .releases.starship.tag }}'  "https://github.com/starship/starship/releases/download/{tag}/starship-${rust_arch}-unknown-linux-gnu.tar.gz"
   # fzf/zoxide/ripgrep back the shell init (fzf keybindings, zoxide `cd`, rg as FZF_DEFAULT_COMMAND)
-  # but have no apt/dnf field here, so install the current release binaries rather than relying on
+  # but have no apt/dnf field here, so install the pinned release binaries rather than relying on
   # the stale copies baked into the base image. ripgrep ships only musl on x86_64 and gnu on aarch64.
-  install_release fzf       junegunn/fzf            "https://github.com/junegunn/fzf/releases/download/{tag}/fzf-{ver}-linux_${go_arch}.tar.gz"
-  install_release zoxide    ajeetdsouza/zoxide      "https://github.com/ajeetdsouza/zoxide/releases/download/{tag}/zoxide-{ver}-${rust_arch}-unknown-linux-musl.tar.gz"
-  install_release rg        BurntSushi/ripgrep      "https://github.com/BurntSushi/ripgrep/releases/download/{tag}/ripgrep-{ver}-${rg_target}.tar.gz"
+  install_release fzf       junegunn/fzf            '{{ .releases.fzf.tag }}'       "https://github.com/junegunn/fzf/releases/download/{tag}/fzf-{ver}-linux_${go_arch}.tar.gz"
+  install_release zoxide    ajeetdsouza/zoxide      '{{ .releases.zoxide.tag }}'    "https://github.com/ajeetdsouza/zoxide/releases/download/{tag}/zoxide-{ver}-${rust_arch}-unknown-linux-musl.tar.gz"
+  install_release rg        BurntSushi/ripgrep      '{{ .releases.rg.tag }}'        "https://github.com/BurntSushi/ripgrep/releases/download/{tag}/ripgrep-{ver}-${rg_target}.tar.gz"
   # gron is the one tools.toml entry whose distro coverage is uneven: apt has it, Fedora packages
   # none. Guarded on the binary rather than on PM, so it stays a no-op wherever the package phase
   # already supplied gron and the fallback isn't pinned to one distro's absence.
   command -v gron >/dev/null 2>&1 \
-    || install_release gron tomnomnom/gron          "https://github.com/tomnomnom/gron/releases/download/{tag}/gron-linux-${go_arch}-{ver}.tgz"
+    || install_release gron tomnomnom/gron          '{{ .releases.gron.tag }}'      "https://github.com/tomnomnom/gron/releases/download/{tag}/gron-linux-${go_arch}-{ver}.tgz"
 fi
 
 # 5. Neovim + Yazi. OS-UNIQUE tools handled elsewhere (winget on Windows, Brewfile on macOS) —
 #    this is their Linux path. Neither fits the lone-binary install_release helper: nvim ships a
 #    runtime tree, yazi ships a second binary (`ya`). No sudo. install_release_zip/
-#    install_prefix_tarball take an already-resolved tag (see the module), so latest_tag runs here.
+#    install_prefix_tarball take the tag as an argument (see the module), so pinned_tag runs here.
 if [ -n "$rust_arch" ]; then
   # Neovim: official static release. The tarball is bin/ + its runtime under one prefix; merge it
   # into ~/.local so bin/nvim resolves ../share/nvim/runtime. nvim config self-bootstraps lazy.nvim.
-  nvim_tag="$(latest_tag neovim/neovim)"
+  nvim_tag="$(pinned_tag neovim/neovim '{{ .releases.nvim.tag }}')"
   if [ -n "$nvim_tag" ]; then
     install_prefix_tarball nvim "$nvim_tag" \
       "https://github.com/neovim/neovim/releases/download/{tag}/nvim-linux-${nvim_arch}.tar.gz" \
       "$HOME/.local" bin/nvim
   else
-    echo "install-cli-tools: could not resolve latest tag for neovim/neovim" >&2
+    echo "install-cli-tools: no pinned tag for neovim/neovim" >&2
   fi
   # Yazi: release zip carrying both `yazi` and its `ya` plugin manager (ya pkg install is driven
   # by run_onchange_after_ya-pkg-install). yazi is listed first so it gates the recorded tag.
-  yazi_tag="$(latest_tag sxyazi/yazi)"
+  yazi_tag="$(pinned_tag sxyazi/yazi '{{ .releases.yazi.tag }}')"
   if [ -n "$yazi_tag" ]; then
     install_release_zip yazi "$yazi_tag" \
       "https://github.com/sxyazi/yazi/releases/download/{tag}/yazi-${rust_arch}-unknown-linux-gnu.zip" \
       yazi ya
   else
-    echo "install-cli-tools: could not resolve latest tag for sxyazi/yazi" >&2
+    echo "install-cli-tools: no pinned tag for sxyazi/yazi" >&2
   fi
 fi
 
@@ -277,9 +269,4 @@ if [ -n "$still" ] || ! gh_ready || ! wez_ready; then
   echo "install-cli-tools: re-run 'chezmoi apply' in a terminal where sudo can prompt." >&2
   exit 1
 fi
-
-# Only a fully converged run resets the age window. Stamping an incomplete one would turn "this
-# machine still needs sudo" into a week of silence, which is exactly the failure the old
-# run_once_ marker had: a script that has decided it is done when it is not.
-printf '%s' "$TOOLS_KEY" > "$STAMP"
 {{ end -}}

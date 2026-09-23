@@ -42,8 +42,11 @@ function records() {
   const block = out.match(/APPS='\n([\s\S]*?)\n'/);
   assert.ok(block, 'APPS block must render');
   return block[1].split('\n').filter(Boolean).map((line) => {
-    const [name, apt, dnf, flatpak, repo, copr, tarball, tarballBin, tarballUrl] = line.split('|');
-    return { name, apt, dnf, flatpak, repo, copr, tarball, tarballBin, tarballUrl, fields: line.split('|').length };
+    const [name, apt, dnf, flatpak, repo, copr, tarball, tarballTag, tarballBin, tarballUrl] = line.split('|');
+    return {
+      name, apt, dnf, flatpak, repo, copr, tarball, tarballTag, tarballBin, tarballUrl,
+      fields: line.split('|').length,
+    };
   });
 }
 
@@ -68,10 +71,10 @@ test('script is gated to a non-WSL Linux workstation', { skip }, () => {
   }
 });
 
-test('every rendered record has all nine columns', { skip }, (t) => {
+test('every rendered record has all ten columns', { skip }, (t) => {
   if (!rendersHere()) return t.skip('renders empty on this host');
   for (const r of records()) {
-    assert.strictEqual(r.fields, 9, `record for ${r.name} must have 9 columns`);
+    assert.strictEqual(r.fields, 10, `record for ${r.name} must have 10 columns`);
     assert.ok(r.name.trim(), 'every record must carry a name');
   }
 });
@@ -133,6 +136,21 @@ test('scrcpy falls back to the upstream tarball on Fedora', { skip }, (t) => {
   assert.strictEqual(scrcpy.tarball, 'Genymobile/scrcpy');
   assert.match(scrcpy.tarballUrl, /\{arch\}/, 'the tarball URL must carry an {arch} placeholder');
   assert.doesNotMatch(scrcpy.tarballUrl, /\$\{/, 'shell expansion in TOML would never expand');
+});
+
+// install_tarball_app used to follow the releases/latest redirect for its own tag, so which
+// scrcpy a Fedora box got was decided by the day it was provisioned. The tag is now a column,
+// and the script SKIPS a tarball entry that has none — which is the quiet failure this guards:
+// an app with a route that installs nothing looks the same as an app with no route.
+test('every tarball entry declares the tag to install', { skip }, (t) => {
+  if (!rendersHere()) return t.skip('renders empty on this host');
+  const withTarball = records().filter((r) => r.tarball);
+  assert.ok(withTarball.length >= 1, 'sanity: the census found no tarball entries at all');
+  for (const r of withTarball) {
+    assert.match(r.tarballTag, /^\S+$/, `${r.name} declares a tarball repo but no tarball_tag`);
+  }
+  assert.match(body, /\[ -n "\$tb_tag" \]/,
+    'the installer must refuse a tarball entry with no pinned tag rather than resolving one');
 });
 
 test('Ghostty comes from the COPR that ghostty.org documents', { skip }, (t) => {

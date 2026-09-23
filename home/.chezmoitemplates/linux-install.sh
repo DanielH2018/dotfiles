@@ -78,24 +78,41 @@ case "$(uname -m)" in
 esac
 
 # --- 3. GitHub release installers ----------------------------------------------------------
+# Every installer here takes the release tag from its caller, and every caller reads that tag
+# from .chezmoidata/tools.toml. The helpers used to resolve it themselves through the
+# releases/latest redirect, which made the install date — not the commit — decide which binary
+# a machine got.
 latest_tag() { # $1=owner/repo -> latest tag via the releases/latest redirect (no API/ratelimit)
   curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" \
     | sed 's#.*/tag/##; s#[[:space:]]*$##'
+}
+
+# The one remaining route to latest_tag, and nothing in normal operation takes it.
+# `INSTALL_LATEST=1 chezmoi apply` answers "what would a bump bring?" against a real machine
+# without editing tools.toml first; the tag it resolves is NOT written back, so the next plain
+# apply reinstalls the pin. $1=owner/repo $2=pinned tag.
+pinned_tag() {
+  if [ "${INSTALL_LATEST:-0}" = 1 ]; then
+    latest_tag "$1"
+  else
+    printf '%s' "$2"
+  fi
 }
 recorded_tag() { cat "$VER_DIR/$1" 2>/dev/null; } # tag last installed for $1 ("" if never)
 
 # Expand {tag} (e.g. v1.1.0) and {ver} (the tag without a leading v) in an asset URL template.
 _asset_url() { printf '%s' "$2" | sed "s#{tag}#$1#g; s#{ver}#${1#v}#g"; }
 
-# Version-aware single-binary release install. $1=binname $2=owner/repo $3=asset-URL template.
-# Resolves the latest tag and only downloads when the binary is missing or the recorded tag
-# differs — so `chezmoi apply` upgrades a stale tool in place instead of skipping anything
-# already on PATH. We record the tag we installed rather than parsing `--version`, which is
-# unreliable per-tool (eza prints multiple lines, curlie reports curl's version).
+# Version-aware single-binary release install. $1=binname $2=owner/repo $3=pinned tag
+# $4=asset-URL template. Only downloads when the binary is missing or the recorded tag differs
+# from the pinned one — so a tools.toml bump upgrades the tool in place on the next apply, and a
+# machine already on the pin does no network at all. We record the tag we installed rather than
+# parsing `--version`, which is unreliable per-tool (eza prints multiple lines, curlie reports
+# curl's version).
 install_release() {
-  bin="$1"; repo="$2"; tmpl="$3"
-  tag="$(latest_tag "$repo")"
-  if [ -z "$tag" ]; then echo "$TAG: could not resolve latest tag for $repo" >&2; return 0; fi
+  bin="$1"; repo="$2"; tag="$3"; tmpl="$4"
+  tag="$(pinned_tag "$repo" "$tag")"
+  if [ -z "$tag" ]; then echo "$TAG: no pinned tag for $repo" >&2; return 0; fi
   [ -x "$BIN_DIR/$bin" ] && [ "$(recorded_tag "$bin")" = "$tag" ] && return 0
   url="$(_asset_url "$tag" "$tmpl")"
   old="$(recorded_tag "$bin")"
@@ -119,11 +136,11 @@ install_release() {
 # Version-aware install for a release that ships a DIRECTORY rather than one binary (scrcpy
 # carries scrcpy-server and adb beside its executable, and locates the server via /proc/self/exe
 # — which resolves the symlink below back into the unpacked tree, so a plain symlink is enough).
-# $1=appname $2=owner/repo $3=asset-URL template $4=binary inside the archive.
+# $1=appname $2=owner/repo $3=pinned tag $4=asset-URL template $5=binary inside the archive.
 install_tarball_app() {
-  app="$1"; repo="$2"; tmpl="$3"; bin="$4"
-  tag="$(latest_tag "$repo")"
-  if [ -z "$tag" ]; then echo "$TAG: could not resolve latest tag for $repo" >&2; return 0; fi
+  app="$1"; repo="$2"; tag="$3"; tmpl="$4"; bin="$5"
+  tag="$(pinned_tag "$repo" "$tag")"
+  if [ -z "$tag" ]; then echo "$TAG: no pinned tag for $repo" >&2; return 0; fi
   [ -x "$BIN_DIR/$bin" ] && [ "$(recorded_tag "$app")" = "$tag" ] && return 0
   url="$(_asset_url "$tag" "$tmpl")"
   old="$(recorded_tag "$app")"
@@ -271,12 +288,10 @@ apt_repo_add() {
 }
 
 # --- 6. Zip / prefix-merge / matched-file release installers -------------------------------
-# install_release/install_tarball_app above resolve $tag themselves from an owner/repo slug via
-# latest_tag. These three instead take $tag already resolved, because Bitwarden tags its CLI
-# release "cli-vYYYY.M.P" alongside the desktop app's own tags, so the releases/latest redirect
-# lands on the desktop app rather than the CLI — that caller has to work out its own tag and
-# hands it in ready-made. The other two helpers here take a pre-resolved tag purely so all three
-# share one calling convention rather than forcing a callback into the module for one case.
+# These three take $tag already resolved, the same as install_release/install_tarball_app above
+# now do. Bitwarden is the one caller that still works its own tag out at run time: it tags the
+# CLI release "cli-vYYYY.M.P" alongside the desktop app's own tags, so neither a releases/latest
+# redirect nor a plain pin spells it, and that caller hands the tag in ready-made.
 _fetch_archive() { # $1=url $2=dest-dir -> extract $1 into $2; .zip needs unzip, else tar xzf
   case "$1" in
     *.zip)

@@ -166,3 +166,54 @@ test('no destination is hardcoded past the override', { skip: false }, () => {
   assert.deepStrictEqual(offenders, [],
     'use `: "${VAR:=<default>}"` so a caller can redirect it; plain assignment silently clobbers the caller');
 });
+
+// --- pinned_tag: the one remaining route to the releases/latest redirect ---------------------
+//
+// install_release and install_tarball_app used to resolve their own tag through that redirect,
+// which made the install DATE decide which build a machine got. They now take the tag from the
+// caller, and pinned_tag is the single place that can still ask upstream — behind INSTALL_LATEST,
+// which nothing in normal operation sets. The pair below is what proves the default is the pin
+// and the override is live; a helper that quietly ignored INSTALL_LATEST and one that quietly
+// ignored the pin both read as passing from one half alone.
+//
+// `curl` is stubbed rather than reachable: a test that resolved a real tag would assert against
+// whatever upstream released today, which is the failure mode under repair.
+const pinnedTag = (env) => {
+  const root = sandbox();
+  const stubs = path.join(root, 'stubs');
+  fs.mkdirSync(stubs, { recursive: true });
+  fs.writeFileSync(path.join(stubs, 'curl'), "#!/bin/sh\nprintf 'https://github.com/o/r/releases/tag/v-from-upstream'\n", { mode: 0o755 });
+  for (const name of ['sh', 'sed', 'mkdir', 'printf', 'cat']) {
+    let real;
+    try { real = execFileSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).trim(); } catch { continue; }
+    if (real && !fs.existsSync(path.join(stubs, name))) fs.symlinkSync(real, path.join(stubs, name));
+  }
+  return execFileSync(path.join(stubs, 'sh'), ['-c', `${render()}\npinned_tag o/r v-pinned`], {
+    encoding: 'utf8',
+    env: { PATH: stubs, HOME: path.join(root, 'home'), ...env },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+};
+
+test('pinned_tag returns the pin, and never asks upstream', { skip }, () => {
+  assert.strictEqual(pinnedTag({}), 'v-pinned');
+});
+
+test('INSTALL_LATEST=1 makes pinned_tag resolve upstream instead', { skip }, () => {
+  assert.strictEqual(pinnedTag({ INSTALL_LATEST: '1' }), 'v-from-upstream');
+});
+
+test('only pinned_tag calls latest_tag', { skip: false }, () => {
+  // Non-vacuity: the census must find the definition and the one call, so a rename that emptied
+  // it cannot pass. A second caller would mean a route to the redirect that INSTALL_LATEST does
+  // not gate — the shape this whole change removed.
+  const callers = source
+    .split('\n')
+    .map((line, i) => [i + 1, line.trim()])
+    .filter(([, line]) => /\blatest_tag\b/.test(line) && !line.startsWith('#'));
+  const definition = callers.filter(([, line]) => line.startsWith('latest_tag()'));
+  assert.strictEqual(definition.length, 1, 'latest_tag must still be defined exactly once');
+  const calls = callers.filter(([, line]) => !line.startsWith('latest_tag()'));
+  assert.deepStrictEqual(calls.map(([, line]) => line), ['latest_tag "$1"'],
+    'latest_tag must be reachable only from pinned_tag, which INSTALL_LATEST gates');
+});

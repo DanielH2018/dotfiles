@@ -13,7 +13,7 @@ const { renderTemplate, chezmoiAvailable } = require('../lib/render');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
-const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_after_install-cli-tools.sh.tmpl');
+const SRC = srcPath('.chezmoiscripts', 'os-linux', 'run_onchange_after_install-cli-tools.sh.tmpl');
 const body = fs.readFileSync(SRC, 'utf8');
 const TOOLS = srcPath('.chezmoidata', 'tools.toml');
 const tools = fs.readFileSync(TOOLS, 'utf8');
@@ -326,82 +326,106 @@ test('the podman socket is left alone without a user systemd session', { skip },
     'enabling podman.socket without a user bus only produces an error');
 });
 
-// --- The throttle gate -----------------------------------------------------------------------
+
+// --- Pinned release tags ---------------------------------------------------------------------
 //
-// This script became run_after_ (every apply) instead of run_once_after_, which is what makes it
-// ever upgrade a release binary. The gate is what keeps that affordable, so the tests below are
-// about when it lets a run through — a gate that is too eager costs a dozen GitHub round trips
-// per apply, and one that is too reluctant is the run_once_ behaviour it replaced.
+// Every release binary this script installs used to have its tag resolved at apply time, through
+// the GitHub releases/latest redirect. The install DATE therefore decided which build a machine
+// got: two machines from one commit, or one machine on two dates, disagreed. The tags now come
+// from .chezmoidata/tools.toml, and the three tests below are the halves that keep that true —
+// the pins are present, nothing reaches for latest behind them, and the deliberate override
+// still works.
 
-// The stamp's contents are the tools.toml hash the template baked in. Read it back out of the
-// render rather than recomputing it here, so the test cannot disagree with the script about how
-// the key is derived.
-const toolsKey = () => (render().match(/^TOOLS_KEY='([0-9a-f]+)'$/m) || [])[1];
-const stampPath = (home) => path.join(home, '.local', 'bin', '.versions', '.last-check');
-
-// Section 4's arch report. It comes from the installer body rather than the shared library, so
-// it is printed if and only if the gate let the run past — which the library's own
-// no-package-manager warning, emitted above the gate, is not.
-const REACHED_END = /unknown arch .*skipping eza/;
-
-function gateStubs() {
-  return { curl: 'exit 1', uname: NO_ARCH, unzip: 'exit 0', sudo: SUDO_OK };
+// tools.toml's [releases] table, as {name: tag}. Parsed from the `[releases]` section alone so
+// the `tag = ` inside an app entry elsewhere in the file cannot be mistaken for one of these.
+function pinnedReleases() {
+  const section = tools.split(/^\[releases\]$/m)[1] || '';
+  const body = section.split(/^\[/m)[0];
+  const out = {};
+  for (const m of body.matchAll(/^(\S+) = \{ repo = "([^"]+)", tag = "([^"]+)" \}$/gm)) {
+    out[m[1]] = { repo: m[2], tag: m[3] };
+  }
+  return out;
 }
 
-// Writes the stamp as a converged run would have left it, `ageDays` ago.
-function stamp(home, { key, ageDays = 0 }) {
-  const p = stampPath(home);
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, key);
-  const when = new Date(Date.now() - ageDays * 86400 * 1000);
-  fs.utimesSync(p, when, when);
-  return p;
-}
+// Accept: the render carries, for each `install_release` line, the repo and tag tools.toml
+// records. What this catches is a version written into the script instead of read from the data
+// file — the shape the pins replaced, and the one a hand-edit reintroduces. It does NOT catch a
+// wrong version, because the render and the data file share one source: a bump moves both
+// together, which is the point of the data file.
+//
+// The frozenset is the non-vacuity guard. A regex census of the render returns an empty set the
+// moment the call spelling changes, and an assertion over nothing passes — so name the tools the
+// census MUST find rather than only counting them.
+const MUST_BE_PINNED = ['eza', 'fastfetch', 'curlie', 'sd', 'starship', 'fzf', 'zoxide', 'rg', 'gron'];
 
-test('a fresh stamp inside the window stops the run before any work', { skip }, () => {
-  if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = scratch(os.tmpdir(), 'cli-tools-gate-');
-  stamp(home, { key: toolsKey(), ageDays: 1 });
-  const { out } = runWithStubs(gateStubs(), { home });
-  assert.doesNotMatch(out, REACHED_END, 'a run inside the window must stop at the gate');
+test('every release install carries its pinned tag', { skip }, () => {
+  if (!rendersHere()) return;
+  const pins = pinnedReleases();
+  const seen = new Set();
+  for (const m of render().matchAll(/^\s*(?:\|\| )?install_release (\S+)\s+(\S+)\s+'([^']*)'/gm)) {
+    const [, bin, repo, tag] = m;
+    assert.ok(pins[bin], `install_release ${bin} has no [releases] entry in tools.toml`);
+    assert.strictEqual(repo, pins[bin].repo, `${bin} installs from a repo tools.toml does not name`);
+    assert.strictEqual(tag, pins[bin].tag, `${bin} installs a tag tools.toml does not name`);
+    seen.add(bin);
+  }
+  for (const bin of MUST_BE_PINNED) {
+    assert.ok(seen.has(bin), `the census found no pinned install_release line for ${bin}`);
+  }
+  // nvim and yazi take the same pins through pinned_tag, because their helpers want the tag as
+  // an argument rather than resolving it.
+  for (const bin of ['nvim', 'yazi']) {
+    assert.ok(render().includes(`'${pins[bin].tag}'`), `${bin} must install the tools.toml tag`);
+  }
 });
 
-test('a stamp older than the window lets the run through', { skip }, () => {
-  if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = scratch(os.tmpdir(), 'cli-tools-gate-old-');
-  stamp(home, { key: toolsKey(), ageDays: 30 });
-  const { out } = runWithStubs(gateStubs(), { home });
-  assert.match(out, REACHED_END, 'a stamp past the age window must not stop the run');
+// Reject: the release-asset URLs must not route back to whatever is current. A pinned tag
+// alongside a `releases/latest/download/` asset path is the worst of both — the machine records
+// the pin and runs today's build, so the version it reports is wrong rather than merely stale.
+test('no release asset URL resolves to latest', { skip }, () => {
+  if (!rendersHere()) return;
+  for (const line of render().split('\n')) {
+    if (!/^\s*(?:\|\| )?install_release/.test(line)) continue;
+    assert.doesNotMatch(line, /releases\/latest\/download/,
+      `a pinned install must not fetch from the latest asset path: ${line.trim()}`);
+  }
 });
 
-// The reason the stamp holds a hash at all: adding a tool to tools.toml has to take effect on
-// the next apply, not up to a week later.
-test('a changed tools.toml overrides a fresh stamp', { skip }, () => {
-  if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = scratch(os.tmpdir(), 'cli-tools-gate-key-');
-  stamp(home, { key: 'aaaaaaaaaaaa', ageDays: 0 });
-  const { out } = runWithStubs(gateStubs(), { home });
-  assert.match(out, REACHED_END, 'a stamp written for different tools must not stop the run');
+// The way out, and the way back in. `latest_tag` survives for one caller — `pinned_tag` under
+// INSTALL_LATEST=1 — so an operator can ask what a bump would bring without editing tools.toml.
+// The pair is what proves the override is wired: only the HEAD probe against the redirect
+// (`curl -fsSLI`) distinguishes the two runs, since both then fetch an asset.
+const PIN_STUBS = () => ({
+  uname: '[ "$1" = "-m" ] && echo x86_64 || echo Linux',
+  curl: 'echo "curl $*" >> "$HOME/curl.log"; exit 1',
+  unzip: 'exit 0',
+  sudo: SUDO_OK,
 });
 
-// The way out, and the way back in past it.
-test('the opt-out marker stops the run, and CLI_TOOLS_FORCE overrides it', { skip }, () => {
-  if (process.platform !== 'linux' || render().trim() === '') return;
-  const home = scratch(os.tmpdir(), 'cli-tools-gate-off-');
-  const verDir = path.join(home, '.local', 'bin', '.versions');
-  fs.mkdirSync(verDir, { recursive: true });
-  fs.writeFileSync(path.join(verDir, '.no-auto-update'), '');
+test('a plain run resolves no tag upstream, INSTALL_LATEST=1 does', { skip }, () => {
+  if (!rendersHere()) return;
+  const plain = runWithStubs(PIN_STUBS());
+  assert.doesNotMatch(readLog(plain.home, 'curl.log'), /-fsSLI/,
+    'a pinned run must not probe the releases/latest redirect');
 
-  assert.doesNotMatch(runWithStubs(gateStubs(), { home }).out, REACHED_END,
-    'the opt-out marker must stop the run');
-  assert.match(runWithStubs(gateStubs(), { home, env: { CLI_TOOLS_FORCE: '1' } }).out, REACHED_END,
-    'CLI_TOOLS_FORCE must override the opt-out marker');
+  const latest = runWithStubs(PIN_STUBS(), { env: { INSTALL_LATEST: '1' } });
+  assert.match(readLog(latest.home, 'curl.log'), /-fsSLI/,
+    'INSTALL_LATEST=1 must resolve tags through the redirect');
 });
 
-// A machine that has never run this must not read as up to date.
-test('no stamp at all lets the run through', { skip }, () => {
-  if (process.platform !== 'linux' || render().trim() === '') return;
-  const { out } = runWithStubs(gateStubs());
-  assert.match(out, REACHED_END, 'a machine with no stamp must run');
+// --- No script here runs on a clock ----------------------------------------------------------
+//
+// This installer was the only plain `run_` script in the tree that actually ran on apply, and it
+// throttled itself with a wall-clock `.last-check` stamp. Whether an apply reached the network
+// therefore depended on the date rather than on any committed input. Every script in this
+// directory is now run_once_ or run_onchange_, so the committed tree is the whole trigger.
+test('every os-linux script is run_once_ or run_onchange_', () => {
+  const dir = path.dirname(SRC);
+  const scripts = fs.readdirSync(dir).filter((f) => f.startsWith('run_'));
+  assert.ok(scripts.length > 20, `sanity: found only ${scripts.length} scripts in ${dir}`);
+  for (const f of scripts) {
+    assert.match(f, /^run_(once|onchange)_/,
+      `${f} runs on every apply, so something other than the committed tree decides when it acts`);
+  }
 });
-
