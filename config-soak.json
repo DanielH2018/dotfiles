@@ -123,8 +123,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_isolation-guard.sh",
-      "hash": "2b94306493134df170138aa7c289f002b32f7ea3f20e445b80e69ef932c77342",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "77f5d4ac786f4b51f862f9aae80c4385e814ae91b3cc54bee8791005f1c67c5b",
+      "landed": "2026-09-23T20:42:34.897Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
@@ -318,8 +318,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
-      "hash": "f376bb1ed67a68f5a58c9cdff22916826da1559e06410bf0d7c4bd6c812e8654",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "7aecd7cf73a771990b60dfe60b27a01fa16bdb7b3f57e0a83fe7daf6e8149bdf",
+      "landed": "2026-09-23T20:42:34.897Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_index_size.py",
