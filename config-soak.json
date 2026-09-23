@@ -53,8 +53,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
-      "hash": "a6510d61ac15be870f50d4fd96f5050164d407c8ed8685ad363fad39f04dadfe",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "2d3e4a1b3d0f7f48ab4edc9f48cdeddd9b371df482a4baa2a9c6508e7bfd21e3",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
@@ -73,8 +73,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
-      "hash": "0fc44a7fe5f97dd2d563d9778ad8dd5a92a6ac2a843d87adbc2fef91e085c67d",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "b508ea4d83d84f8ec6d7776b2bedf8f802b11fdc98053d513177ac6e75ff1837",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -88,8 +88,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-apply-guard.sh",
-      "hash": "6904fba92874f0d731197f1787023967f3f13665c6c1875584ed8eac0177e67d",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "cbac468335c041706fbfdd1eabccc96475e4dbc3edae2fc00a46d3ae71f79eac",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
@@ -168,8 +168,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_post-compact.sh",
-      "hash": "245d73bb3745943d8fe60c29e8e2bb94842a82ce0237035daf49616bf2dbe7d2",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "a97bed13f072938ee3decd96491903706fb0f6803d22382dd17daadd23a0b539",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_pre-compact.sh",
@@ -253,8 +253,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_voice-reminder.sh",
-      "hash": "d48fc5eaf355cba69edfd0d99f2c886ace62b80b0c4c022b37b27945063936d9",
-      "landed": "2026-09-21T18:38:11.926Z"
+      "hash": "90d9b114419bc91ad630c8c743e61d8050c1ab36118498f54ddee17650074e09",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_warp-session-title.sh",
@@ -268,13 +268,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-context.sh",
-      "hash": "2e2a6be2933982814b867f63889b1f3a5609305658f20ec72165689440866bcb",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "8f08ca2468040c829557263382970530c922a562b9c3c6b0468768ca8e9c9608",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "39b93c1392bdc10d369657e7becae7b6d1b1acd6efbedf63ad0e9861e5339110",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "11183c45fe385a8dc24db6c05bc6bec1f39e1390547a74c465d154320715a87f",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -303,8 +303,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
-      "hash": "63543d80f7a2cef99c0044f9786a1d2f6b47d437fee8143a5311c04b20f4ff5b",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "d6475c5210b90f22c73903cbf5f8d7961455ad79d963c1f9777122b0e9a187cd",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
@@ -343,13 +343,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "8c917f3fe8b92a0c692d9e8a12b1a1e5ae43422acaa9018f7bb5d181267f01e5",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "d4f0a887414646ad729d5ce69c411b7b836e4ef0e7ddeb094b5416fc5d4e50e5",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
-      "hash": "156cfbca3dbe2023e9997c651335cae232201b1d8d2a2defe0a5ccb75436ba6c",
-      "landed": "2026-08-29T20:04:36.789Z"
+      "hash": "f78cced72e0b2762c694768250e7765c1e60578ea8e68381102a670a033c1837",
+      "landed": "2026-09-23T14:33:16.333Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
