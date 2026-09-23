@@ -42,6 +42,7 @@
 .claude/vault-tooling/config-map/tests/test_no_secrets.py
 .claude/vault-tooling/config-map/tests/test_provenance.py
 .claude/vault-tooling/config-map/tests/test_settings.py
+.claude/vault-tooling/config-map/tests/test_theme.py
 .claude/vault-tooling/config-map/tests/test_vault_optional.py
 .claude/vault-tooling/githooks/secrets-check.test.js
 .claude/vault-tooling/vault-index/tests
