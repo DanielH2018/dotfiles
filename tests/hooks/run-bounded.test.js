@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { skipUnless } = require('../lib/probe');
+const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
 const LIB = srcPath('private_dot_claude', 'hooks', 'run-bounded.sh');
@@ -159,8 +160,8 @@ test('a genuinely passing run never reaches could-not-evaluate', { skip }, () =>
 // #581: where no timeout(1) resolves at all, the command must not run -- unbounded is what M10
 // forbids -- and the status must be could-not-evaluate, not an `ok` carrying exec's 127. The
 // accepting half is the normal-completion case above, with a real timeout resolved.
-test('no timeout binary: status error, and the command never runs', { skip }, () => {
-  const marker = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rb-')), 'ran');
+test('no timeout binary: status error, and the command never runs', { skip }, (t) => {
+  const marker = path.join(scratch(os.tmpdir(), 'run-bounded-', t), 'ran');
   const r = spawnSync('bash', ['-c',
     `export RB_TIMEOUT=/nonexistent/timeout; . ${JSON.stringify(LIB)}; `
     + `run_bounded 5 4096 -- touch ${JSON.stringify(marker)}; rc=$?; `
