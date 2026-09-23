@@ -120,8 +120,8 @@ optional enhancement layered on top, not a dependency.
 3. Optional enhancement — native/official stacking: if a `gh-stack`
    extension is installed (`gh extension list` shows `gh stack`) and it is
    enabled for this repo, the skill MAY use it instead to create/link the
-   stack. As of mid-2026, GitHub's official `github/gh-stack` tooling and the
-   `PullRequestStack` API are private-preview / SKU-gated with no public
+   stack. Checked 2026-07-22: GitHub's official `github/gh-stack` tooling and
+   the `PullRequestStack` API are private-preview / SKU-gated with no public
    creation mutation, so treat this path as best-effort only — it must
    degrade to the base-chaining approach above whenever the extension is
    absent, disabled, or its mutation is unavailable.

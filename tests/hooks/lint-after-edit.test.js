@@ -141,3 +141,50 @@ test('missing run-bounded.sh library: check still runs, unbounded, via the fallb
   assert.match(out, /SC2086/);
 });
 
+
+// --- The Markdown prose case (#573) ---------------------------------------------------------
+// Two of CLAUDE.md's writing rules are pure regex, and until this case existed they relied on
+// the model remembering them through a long session. The rules are about PROSE, so the pair
+// that matters is a sentence that must be flagged and the same sentence's reworded form, which
+// must not be -- a check that fires on everything and one that fires on nothing look identical
+// from the passing side.
+const skipMd = skipUnless('bash', 'jq', 'perl', 'timeout');
+
+function mdHook(body, name = 'doc.md') {
+  const dir = scratch(os.tmpdir(), 'lint-after-edit-');
+  const f = path.join(dir, name);
+  fs.writeFileSync(f, body);
+  return runHook(JSON.stringify({ tool_input: { file_path: f } }));
+}
+
+test('a dated sentence in Markdown blocks, and its reworded form does not', { skip: skipMd }, () => {
+  // The live violation the issue names: pr-review-prep/SKILL.md opened a paragraph with this,
+  // and the same paragraph reworded to an absolute date is what replaced it.
+  const dated = mdHook('As of mid-2026, the API is private-preview.\n');
+  assert.strictEqual(decision(dated), 'block');
+  assert.match(dated, /dates the prose/);
+  assert.strictEqual(decision(mdHook('Checked 2026-07-22: the API is private-preview.\n')), null);
+});
+
+test('an emoji in Markdown prose blocks; the same emoji in a fenced block does not',
+  { skip: skipMd }, () => {
+    assert.strictEqual(decision(mdHook('A sentence with ✨ in it.\n')), 'block');
+    assert.strictEqual(decision(mdHook('Sample output:\n\n```\nDone ✨\n```\n')), null);
+  });
+
+// A banned word is not a banned word when the sentence is about the word. CLAUDE.md's own rule
+// line spells them to ban them, and a check that reported it would fire on every edit of the
+// file whose rules these are.
+test('a dating word quoted, emphasised or in code is a mention, not a use', { skip: skipMd }, () => {
+  assert.strictEqual(decision(mdHook('Cut *currently* from the sentence.\n')), null);
+  assert.strictEqual(decision(mdHook('Prefer it to "the hook currently matches" here.\n')), null);
+  assert.strictEqual(decision(mdHook('The `currently` flag is the one to drop.\n')), null);
+  // ... and the bare use it exists to catch still reports.
+  assert.strictEqual(decision(mdHook('The hook currently matches both forms.\n')), 'block');
+});
+
+// CLAUDE.md.tmpl is the file these rules live in and the most-edited prose file here, so the
+// case has to reach a .md.tmpl as well as a .md.
+test('the case covers .md.tmpl, not just .md', { skip: skipMd }, () => {
+  assert.strictEqual(decision(mdHook('As of mid-2026, this dates the prose.\n', 'CLAUDE.md.tmpl')), 'block');
+});

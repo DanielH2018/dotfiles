@@ -24,6 +24,48 @@ set -u
 # test can read it and size its own input from it, instead of restating 40 alongside it.
 MAX_LINES=40
 
+# The Markdown prose pass (the *.md case below). Two of CLAUDE.md's writing rules are pure
+# regex -- "No emojis unless I ask" and "Nothing dates the prose" -- and both rely on the model
+# remembering them across a long session, which is what a linter is for (#573).
+#
+# The other candidates were measured over the repo's 137 tracked Markdown files before being
+# left out, because a rule that fires on ordinary prose is noise rather than a finding:
+# "at most one em-dash aside per paragraph" flagged 442 paragraphs, and " will " flagged 33
+# lines whose deferred sense the rule itself calls legal. markdownlint is not here either:
+# nothing in this repo carries a config for it, and its default MD013 line length would flag
+# most of these files.
+#
+# Mentions are not uses: inline code, a "quoted example", *emphasis* and _emphasis_ come out
+# before the line is judged, which is what keeps the rule lines in CLAUDE.md itself -- they
+# spell the banned words to ban them -- from reporting themselves. Fenced blocks are skipped
+# whole. Measured over the same 137 files afterwards: 22 findings, every one a real dated
+# sentence or a real emoji, and zero in CLAUDE.md.tmpl.
+#
+# perl, not grep: this repo targets macOS too, and a Unicode property class (\p{...}) is not
+# portable across the greps in play. Single-quoted so the backticks below stay literal.
+MD_PROSE_CHECK='
+my $fence = 0; my $bad = 0;
+while (my $line = <>) {
+  chomp $line;
+  if ($line =~ /^\s*(?:```|~~~)/) { $fence = !$fence; next; }
+  next if $fence;
+  my $s = $line;
+  $s =~ s/`[^`]*`//g;
+  $s =~ s/"[^"]*"//g;
+  $s =~ s/\*[^*\n]+\*//g;
+  $s =~ s/_[^_\n]+_//g;
+  if ($s =~ /\p{Emoji_Presentation}|\x{FE0F}/) {
+    printf("%s:%d: emoji in prose (CLAUDE.md: no emojis unless I ask)\n", $ARGV, $.);
+    $bad++;
+  }
+  if ($s =~ /\b(?:as of (?:this writing|[a-z]*-?\d{4})|at the time of writing|currently)\b/i) {
+    printf("%s:%d: dates the prose (CLAUDE.md: use an absolute date, or drop the word)\n", $ARGV, $.);
+    $bad++;
+  }
+}
+exit($bad ? 1 : 0);
+'
+
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
 # SWALLOW: a hook must run without its libs rather than fail closed on the whole
 # edit. The fallback stubs below (guarded on `command -v`) keep every check
@@ -173,6 +215,12 @@ case "$FILE_PATH" in
     # finding, excluding it stops every edit to a sourced script from nagging. Other checks stay.
     command -v shellcheck >/dev/null && run_check shellcheck "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" \
       shellcheck -e SC1091 "$FILE_PATH"
+    ;;
+  *.md|*.md.tmpl)
+    # .md.tmpl as well as .md: CLAUDE.md.tmpl is the most-edited prose file in the dotfiles
+    # repo, and a case spelled *.md alone would miss the one file whose rules these are.
+    command -v perl >/dev/null && run_check markdown-prose "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" \
+      perl -CSD -e "$MD_PROSE_CHECK" "$FILE_PATH"
     ;;
   */Dockerfile|*/Dockerfile.*)
     command -v hadolint >/dev/null && run_check hadolint "$LINT_TIMEOUT_S" "$LINT_CAP_BYTES" hadolint "$FILE_PATH"

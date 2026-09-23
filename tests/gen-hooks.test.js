@@ -190,3 +190,107 @@ test('gen-hooks --check fails when the hooks directory gains an executable that 
   assert.match(r.stderr, /declare no registration.*executable_brand-new\.sh/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// --- The other direction: hooks the PROSE names ---------------------------------------------
+//
+// `gen-hooks --check` above proves every hook on disk is registered. It proves nothing about
+// the reverse: CLAUDE.md.tmpl, the rules and the skills name hooks by bare filename
+// (`chezmoi-guard.sh`, `isolation-guard.sh`, `pre-compact.sh`), so a rename leaves the doc
+// citing a hook that no longer exists and nothing goes red (#577). A filename is an identifier
+// with an oracle on disk, which is what makes this checkable where the paragraph around it is
+// not -- the repo's own "assert an identifier, not the prose" rule turned on its own prose.
+
+// A citation is the BARE filename. The leading path is what tells a hook apart from every
+// other script the docs name: `scripts/fetch.sh`, `references/triage.sh` and
+// `~/server/.claude/hooks/auto-approve-remote-ssh.sh` all say where they live, and none of
+// them lives in this repo's hooks directory. What is left is the form the issue is about.
+const DOCS_DIR = srcPath('private_dot_claude');
+
+const CITATION = /(?:^|[^/A-Za-z0-9_.-])([A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:sh|py))/g;
+
+// Bare names in the prose that are still not hooks. Each says why, and the last test below
+// fails on one that is no longer cited, so this list cannot quietly outlive its reasons.
+const NOT_A_HOOK = {
+  'allow-readonly-remote.sh': 'deleted in the claude-guard slice 3 cutover; homelab/SKILL.md cites it as what judge() ported',
+  'conftest.py': 'pytest\'s own filename, in rules/python.md',
+  'fetch.sh': 'a pr-feedback skill script, named bare once beside its path-qualified form',
+  'install.sh': 'the work-laptop-config repo\'s installer',
+  'probe.py': 'the server repo\'s diagnostics entry point',
+  'run-skill.sh': 'the launchd runner in ~/.local/bin, not a hook',
+  'telemetry-health.sh': 'a script on the homelab server',
+  'test_cards.sh': 'a learning-quiz skill test',
+  'triage.sh': 'a pr-review-prep skill reference script',
+};
+
+function docTexts() {
+  const files = [path.join(DOCS_DIR, 'CLAUDE.md.tmpl')];
+  for (const rel of ['rules', 'skills']) {
+    const root = path.join(DOCS_DIR, rel);
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        files.push(...fs.readdirSync(path.join(root, entry.name))
+          .filter((f) => f.startsWith('SKILL.md'))
+          .map((f) => path.join(root, entry.name, f)));
+      } else if (entry.name.endsWith('.md')) {
+        files.push(path.join(root, entry.name));
+      }
+    }
+  }
+  return files.map((f) => [path.relative(DOCS_DIR, f), fs.readFileSync(f, 'utf8')]);
+}
+
+// name -> the docs that cite it.
+function citations(texts) {
+  const found = new Map();
+  for (const [rel, text] of texts) {
+    for (const m of text.matchAll(CITATION)) {
+      if (NOT_A_HOOK[m[1]]) continue;
+      found.set(m[1], [...(found.get(m[1]) ?? []), rel]);
+    }
+  }
+  return found;
+}
+
+// The basenames gen-hooks accounts for: every registered hook and every library-marked one,
+// with the source prefix off. `(inline)` is a registration with no file, so it drops out.
+function registeredBasenames() {
+  // Files only: the python hook suites leave a __pycache__ directory here when the whole
+  // suite runs, and reading a directory as a file is an EISDIR crash in a test about prose.
+  const files = Object.fromEntries(fs.readdirSync(HOOKS_DIR, { withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => [e.name, fs.readFileSync(path.join(HOOKS_DIR, e.name), 'utf8')]));
+  const { registrations, libraries } = lib.census(files);
+  return new Set([...registrations, ...libraries]
+    .map((r) => r.file)
+    .filter((f) => f.startsWith(lib.SOURCE_PREFIX))
+    .map((f) => f.slice(lib.SOURCE_PREFIX.length)));
+}
+
+test('every hook the prose names by filename exists and is gen-hooks registered', () => {
+  const found = citations(docTexts());
+  // A census that finds nothing passes for free, and this one globs for its own corpus. The
+  // floor is a named member, so a docs reshuffle that empties it says which hook went missing.
+  assert.ok(found.has('isolation-guard.sh'), `citations found: ${[...found.keys()].join(', ')}`);
+  assert.ok(found.size >= 8, `expected at least the eight hooks the docs name, got ${found.size}`);
+
+  const registered = registeredBasenames();
+  const orphans = [...found].filter(([name]) => !registered.has(name))
+    .map(([name, docs]) => `${name} (cited in ${docs.join(', ')})`);
+  assert.deepStrictEqual(orphans, [], 'prose names a hook that is not a registered hook file');
+});
+
+test('a doc citing a hook that is not on disk is flagged', () => {
+  const found = citations([['fake.md', 'The `nonexistent-hook.sh` hook runs on SessionStart.']]);
+  const registered = registeredBasenames();
+  assert.deepStrictEqual([...found].filter(([n]) => !registered.has(n)).map(([n]) => n),
+    ['nonexistent-hook.sh']);
+});
+
+// The exemptions are a list of decisions about live citations. One that stops being cited is
+// a dead entry, and a dead entry is how the next reader learns the wrong thing about the tree.
+test('every NOT_A_HOOK exemption is still cited somewhere', () => {
+  const prose = docTexts().map(([, text]) => text).join('\n');
+  const all = new Set([...prose.matchAll(CITATION)].map((m) => m[1]));
+  const stale = Object.keys(NOT_A_HOOK).filter((name) => !all.has(name));
+  assert.deepStrictEqual(stale, [], 'exemption for a name the prose no longer cites');
+});

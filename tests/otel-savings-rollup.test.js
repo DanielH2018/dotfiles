@@ -94,3 +94,68 @@ test('appends again once the gap is wide enough', () => {
   assert.strictEqual(fs.readFileSync(f.out, 'utf8').trim().split('\n').length, 2);
 });
 
+
+// --- The figures the prose quotes -------------------------------------------------------
+//
+// CLAUDE.md.tmpl's jsonq paragraph quotes what `otelq savings reduction` and `otelq savings
+// bytes` printed once. Nothing tied the sentence to the tool, so the numbers dated the
+// paragraph and drifted: the literals it carried until 2026-09-23 were 97.4 MB read across
+// 223 calls at 3,616:1, and the same query that week returned 8.4 MB across 534 calls at
+// 87.9:1 (#578). tests/fixtures/otel-savings.json is the snapshot the paragraph is now
+// written from, and this formats the fixture's fields and asserts each literal is in the
+// paragraph -- so a hand-edited number, or a refreshed fixture the prose was not rewritten
+// for, fails here instead of quietly misinforming the next reader.
+//
+// Deliberately not a rerun with a tolerance band. Both windows are rolling 7-day windows over
+// this machine's own telemetry, the bytes half needs Loki reachable, and a check that reruns
+// them is red on any quiet week and unrunnable in CI. A snapshot is a fact with a date on it.
+const { repoPath } = require('./lib/paths');
+
+const FIXTURE = JSON.parse(fs.readFileSync(repoPath('tests', 'fixtures', 'otel-savings.json'), 'utf8'));
+const CLAUDE_MD = srcPath('private_dot_claude', 'CLAUDE.md.tmpl');
+const OTELQ = srcPath('dot_local', 'bin', 'executable_otelq');
+
+const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
+const kb = (bytes) => `${(bytes / 1e3).toFixed(1)} KB`;
+
+// Each entry is one literal the paragraph must carry, named by the field it comes from.
+function quotedFigures(fixture) {
+  const r = fixture.reduction;
+  return [
+    ['measured', fixture.measured],
+    ['reduction.bytes_in', mb(r.bytes_in)],
+    ['reduction.bytes_out', kb(r.bytes_out)],
+    ['reduction.calls', `${r.calls} calls`],
+    ['reduction.reduction_ratio', `${r.reduction_ratio}:1`],
+    ['reduction.median_call_ratio', `median ${r.median_call_ratio}:1`],
+    ['bytes.bytes_total', mb(fixture.bytes.bytes_total)],
+  ];
+}
+
+function missingFigures(prose, fixture) {
+  return quotedFigures(fixture)
+    .filter(([, literal]) => !prose.includes(literal))
+    .map(([field, literal]) => `${field}: ${literal}`);
+}
+
+test('the jsonq paragraph in CLAUDE.md.tmpl still matches the snapshot it was written from', () => {
+  const prose = fs.readFileSync(CLAUDE_MD, 'utf8');
+  assert.deepStrictEqual(missingFigures(prose, FIXTURE), []);
+});
+
+test('a hand-edited literal in that paragraph is caught', () => {
+  const prose = fs.readFileSync(CLAUDE_MD, 'utf8').replace(mb(FIXTURE.reduction.bytes_in), '9.9 MB');
+  assert.deepStrictEqual(missingFigures(prose, FIXTURE), ['reduction.bytes_in: 8.4 MB']);
+});
+
+// The fixture is only as good as the field names it copies. otelq is where they are produced,
+// so a rename there -- which would make the next snapshot a different shape -- goes red here
+// rather than at the next refresh.
+test('every field the fixture quotes is one otelq still emits', () => {
+  const src = fs.readFileSync(OTELQ, 'utf8');
+  const fields = ['bytes_in', 'bytes_out', 'calls', 'reduction_ratio', 'median_call_ratio', 'bytes_total'];
+  const gone = fields.filter((f) => !src.includes(`"${f}"`));
+  assert.deepStrictEqual(gone, []);
+  // The snapshot is worthless if jsonq rotated its counter mid-window; the rollup says so.
+  assert.strictEqual(FIXTURE.reduction.truncated, false);
+});

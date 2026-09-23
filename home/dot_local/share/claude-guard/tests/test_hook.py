@@ -118,15 +118,47 @@ def run_shim(
     )
 
 
+def _uv_managed_python_dir() -> str | None:
+    """Where uv keeps its managed interpreters, asked of uv rather than assumed under $HOME.
+
+    NO_COLOR because `uv python dir` wraps the path in ANSI escapes even off a tty, and a
+    symlink to an escape-wrapped path resolves to nothing.
+    """
+    if not shutil.which("uv"):
+        return None
+    r = subprocess.run(
+        ["uv", "python", "dir"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "NO_COLOR": "1"},
+        check=False,
+    )
+    return r.stdout.strip() or None
+
+
 def shim_env(home: Path, **extra: str) -> dict[str, str]:
-    # XDG_DATA_HOME pins uv's managed-python lookup to the REAL home's install dir: `uv python
-    # find` derives its search path from $HOME (or $XDG_DATA_HOME) at call time, so a fake HOME
-    # here (needed so permission_request() reads an isolated settings.json) would otherwise make
-    # the managed 3.14 toolchain undiscoverable, independent of the shim's own behaviour.
+    # XDG_DATA_HOME is here for the shim's uv lookup, not for the test: `uv python find`
+    # derives its search path from $HOME (or $XDG_DATA_HOME) at call time, so the fake HOME
+    # above -- needed so permission_request() reads an isolated settings.json -- would
+    # otherwise hide the managed 3.14 toolchain, and every shim test would measure the
+    # no-interpreter path instead of the behaviour it names.
+    #
+    # It used to be the operator's REAL ~/.local/share, which pointed every run of this suite
+    # at live data (#585). A tmp_path sibling holding the one entry uv reads -- a symlink to
+    # its managed-python dir -- answers the lookup just as well, and every other path under
+    # XDG_DATA_HOME now resolves inside tmp_path. The symlink is built only when uv is
+    # installed: the two no-interpreter tests call this helper too, and their whole point is
+    # a lookup that cannot answer.
+    data = home.parent / "xdg-data"
+    if not (data / "uv" / "python").exists():
+        managed = _uv_managed_python_dir()
+        if managed:
+            (data / "uv").mkdir(parents=True, exist_ok=True)
+            (data / "uv" / "python").symlink_to(managed)
     return {
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "XDG_DATA_HOME": str(Path.home() / ".local" / "share"),
+        "XDG_DATA_HOME": str(data),
         "CLAUDE_GUARD_HOME": str(PKG_DIR),
         "CLAUDE_GUARD_BASH_HOOKS_DIR": str(HOOKS),
         **extra,
