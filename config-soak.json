@@ -213,8 +213,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-worktrees.py",
-      "hash": "c27cb529b982f3a000320629ec3c8da75e3f8c61969bba389abb575ecf717523",
-      "landed": "2026-09-24T13:50:58.051Z"
+      "hash": "289b6b2ae8d90293a09da817b38259b580f1e9fd65b5e8cc1cef0a8e61b2b316",
+      "landed": "2026-09-24T18:02:14.033Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
@@ -293,8 +293,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_worktree-landed.sh",
-      "hash": "f7fc0c803adbbeb5ea81335b3a234b37154cedb95766e82ed66500d2c02086e7",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "cd824abd868c118a8abd1053bacbf9b4ee6b2d279a5b50b2bc11be79c2444575",
+      "landed": "2026-09-24T18:02:14.033Z"
     },
     {
       "path": "home/private_dot_claude/hooks/hook-input.sh",
@@ -348,8 +348,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
-      "hash": "4d895338febcc4bf3d44bff6ef252b881e3cd39738d4e4ec064eb915161049b5",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "hash": "9f6cb07d22bbd46f569476368acaee9033e472e69022e0f3499ec542168fe1d3",
+      "landed": "2026-09-24T18:02:14.033Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
@@ -363,13 +363,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "2f1467a06e7eab920300d04407d6c4d3bec9c196fb3528cdc170225c6fbf0f0f",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "hash": "841cd207bd9592f4438a96afbd7fe83221fc50003279ab3e9e09eac2a423edff",
+      "landed": "2026-09-24T18:02:14.033Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
-      "hash": "f78cced72e0b2762c694768250e7765c1e60578ea8e68381102a670a033c1837",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "c3fd337ed0581581912604fb5cf14b3cbf9db88f5463ad63ffa2c783bfb23f68",
+      "landed": "2026-09-24T18:02:14.033Z"
     },
     {
       "path": "home/private_dot_claude/output-styles/daniel-voice.md",
