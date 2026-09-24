@@ -23,13 +23,11 @@ Where this differs from the server copy, deliberately (the #628 plan's three dec
   2. `printenv`, `docker inspect`/`config` and `systemctl show`/`cat`/`show-environment`
      refuse: each prints environment values, the reason the package's remote tables already
      leave them out.
-  3. Gaps both copies shared are closed in `_GAPS`: `git diff --output=FILE` writes,
-     `git grep -O<cmd>` execs, `sort --compress-program` execs. Measured 2026-09-24 on
-     daniel-box: GNU getopt_long accepts any unambiguous prefix, so `sort --outp=F`,
-     `sed --in-pl`, `sed --exp='1w F'` and `journalctl --cursor-f=F` each wrote a file past
-     the exact-name checks in `remote_guards`. The prefix matching here closes that locally;
-     the shared guards are unchanged, because the server's replay test compares against
-     them until its copy is deleted.
+  3. Gaps both copies shared are closed in `remote_guards` itself, so the local and remote
+     sides refuse them alike: `git diff --output=FILE` writes, `git grep -O<cmd>` execs,
+     `sort --compress-program` execs, and a long option abbreviated past an exact-name
+     check (`sort --outp=F`). This module carried them as local-only pre-checks (`_GAPS`)
+     until dotfiles #647 folded them into the shared guards.
 """
 
 import os
@@ -38,7 +36,7 @@ import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from claude_guard.checks.remote_guards import _JOURNALCTL_WRITE, GUARDS
+from claude_guard.checks.remote_guards import GUARDS
 from claude_guard.deny import Verdict
 from claude_guard.segment import parse
 from claude_guard.tables import READONLY_BASE, SECRET_PATH_RE, TRUSTED_SSH_HOSTS
@@ -185,113 +183,6 @@ def _git_dirs_trusted(argv: list[str], scope: _Scope) -> bool:
         i += 1
     return where is not None and _trusted(where, scope.home)
 
-
-# --- the gaps both copies shared (decision 3) --------------------------------------------------
-
-
-def _long_abbrev(arg: str, names: tuple[str, ...] | frozenset[str]) -> bool:
-    """True when `arg` is one of the long options `names`, spelled whole or abbreviated.
-
-    getopt_long accepts any unambiguous prefix, so `--outp=F` is `--output=F`. A prefix that
-    is ambiguous between two options errors out in the program, so matching it refuses a
-    command that would not have run anyway."""
-    if not arg.startswith("--") or len(arg) < 3:
-        return False
-    key = arg.split("=", 1)[0]
-    return any(name.startswith(key) for name in names)
-
-
-_GIT_GREP_PAGER = re.compile(r"-[A-Za-z]*O")
-
-
-def _git_gap(argv: list[str]) -> bool:
-    # --output=FILE writes the diff to a file under every subcommand that takes diff options.
-    if any(_long_abbrev(a, ("--output",)) for a in argv[1:]):
-        return True
-    # `git grep -O<cmd>` / `--open-files-in-pager` runs a command on the matching files. Any
-    # bare `grep` word counts as the subcommand, so `git -C dir grep` cannot hide it behind
-    # an option value.
-    if "grep" in argv[1:]:
-        return any(
-            _GIT_GREP_PAGER.match(a) or _long_abbrev(a, ("--open-files-in-pager",))
-            for a in argv[1:]
-        )
-    return False
-
-
-def _sort_gap(argv: list[str]) -> bool:
-    return any(_long_abbrev(a, ("--output", "--compress-program")) for a in argv[1:])
-
-
-# Every GNU sed long option. An abbreviation of any of them reads to `remote_guards.sed_readonly`
-# as an unknown safe flag, so `--exp='1w F'` hid its script and `--in-pl` its in-place edit;
-# here only the whole spelling of a long option passes, and the guard then reads it.
-_SED_LONG = frozenset(
-    {
-        "--expression",
-        "--file",
-        "--in-place",
-        "--quiet",
-        "--silent",
-        "--debug",
-        "--posix",
-        "--regexp-extended",
-        "--separate",
-        "--sandbox",
-        "--unbuffered",
-        "--null-data",
-        "--zero-terminated",
-        "--line-length",
-        "--follow-symlinks",
-        "--help",
-        "--version",
-    }
-)
-
-
-def _sed_gap(argv: list[str]) -> bool:
-    for a in argv[1:]:
-        if a == "--":
-            return False
-        if a.startswith("--") and a.split("=", 1)[0] not in _SED_LONG:
-            return True
-    return False
-
-
-# --cursor-file=FILE writes the last cursor to FILE after printing.
-_JOURNALCTL_LOCAL_WRITE = frozenset(_JOURNALCTL_WRITE) | {"--cursor-file"}
-
-
-def _journalctl_gap(argv: list[str]) -> bool:
-    return any(_long_abbrev(a, _JOURNALCTL_LOCAL_WRITE) for a in argv[1:])
-
-
-# gawk's -E/--exec and --file read an uninspectable program, -l/--load loads a shared
-# library and --include an awk file; `@load`/`@include` do the same from inside the program
-# text, and `@include "inplace"` is how `-i inplace` edits files.
-_AWK_SHORT = re.compile(r"-[A-Za-z]*[El]")
-
-
-def _awk_gap(argv: list[str]) -> bool:
-    for a in argv[1:]:
-        if _long_abbrev(a, ("--exec", "--file", "--load", "--include")):
-            return True
-        if a.startswith("-") and not a.startswith("--") and _AWK_SHORT.match(a):
-            return True
-        if "@" in a:
-            return True
-    return False
-
-
-_GAPS: dict[str, Callable[[list[str]], bool]] = {
-    "git": _git_gap,
-    "sort": _sort_gap,
-    "sed": _sed_gap,
-    "journalctl": _journalctl_gap,
-    "awk": _awk_gap,
-    "gawk": _awk_gap,
-    "mawk": _awk_gap,
-}
 
 # The `remote_guards.GUARDS` verbs the local side admits. nvidia-smi stays out, as on the
 # server: no host in the fleet has the hardware.
@@ -531,9 +422,6 @@ def _argv_readonly(argv: list[str], scope: _Scope) -> str | None:
         return _cd(argv, scope)
     if name in TIER1:
         return name
-    gap = _GAPS.get(name)
-    if gap and gap(argv):
-        return None
     handler = _HANDLERS.get(name)
     if handler:
         return handler(argv, scope)

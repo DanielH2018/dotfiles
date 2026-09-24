@@ -369,6 +369,45 @@ def test_a_flag_guarded_verb_reads_at_the_argv_level(argv):
     assert remote_argv_readonly(argv) is True
 
 
+# --- dotfiles #647: GNU getopt_long accepts any unambiguous prefix of a long option, so a
+# guard that matches the whole spelling passes `sort --outp=F`. Measured 2026-09-24 on
+# daniel-box: each abbreviated form below wrote a file or ran a program. ---
+
+
+@pytest.mark.parametrize(
+    ("clean", "flagged"),
+    [
+        (["sort", "-u", "f"], ["sort", "--outp=/tmp/x", "f"]),
+        (["sort", "-u", "f"], ["sort", "--compress-program=gzip", "f"]),
+        (["sort", "-u", "f"], ["sort", "--comp=sh", "f"]),
+        (["sed", "--expression=1p", "f"], ["sed", "--exp=1w /tmp/x", "--exp=p", "a.txt"]),
+        (["sed", "-n", "1p", "f"], ["sed", "--in-pl", "s/a/b/", "f"]),
+        (["journalctl", "-n", "1"], ["journalctl", "--cursor-f=/tmp/x", "-n1"]),
+        (["journalctl", "-n", "1"], ["journalctl", "--cursor-file=/tmp/x"]),
+        (["journalctl", "-n", "1"], ["journalctl", "--vac=1d"]),
+        (["gawk", "{print $1}", "f"], ["gawk", "-E", "/tmp/prog", "f"]),
+        (["gawk", "{print $1}", "f"], ["gawk", "-l", "evil", "{print}", "f"]),
+        (["gawk", "{print $1}", "f"], ["gawk", "--fi=/tmp/prog", "f"]),
+        (["gawk", "{print $1}", "f"], ["gawk", "--load=evil", "{print}", "f"]),
+        (["gawk", "{print $1}", "f"], ["gawk", "--include=x", "{print}", "f"]),
+        (["gawk", "{print $1}", "f"], ["gawk", '@include "inplace"; {print}', "f"]),
+        (["git", "diff", "--stat"], ["git", "diff", "--outp=/tmp/x"]),
+        (["git", "grep", "-n", "foo"], ["git", "grep", "-Ocat", "foo"]),
+        (["git", "grep", "foo"], ["git", "grep", "--open-files-in-pager=vim", "foo"]),
+        (["dmesg", "--color=never"], ["dmesg", "--cle"]),
+        (["ss", "-tlnp"], ["ss", "--ki"]),
+    ],
+)
+def test_an_abbreviated_writing_long_option_is_refused_at_the_argv_level(clean, flagged):
+    assert remote_argv_readonly(clean) is True, clean
+    assert remote_argv_readonly(flagged) is False, flagged
+
+
+def test_the_issues_ssh_line_is_refused_end_to_end():
+    assert readonly_remote_safe('ssh daniel-server "sort -u /tmp/f"') is True
+    assert readonly_remote_safe('ssh daniel-server "sort --outp=/tmp/x /tmp/f"') is False
+
+
 @pytest.mark.parametrize(
     "command",
     [

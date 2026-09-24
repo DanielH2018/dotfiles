@@ -13,13 +13,32 @@ writes a file or runs a process, and a program the scanner cannot read (`-f FILE
 Every guard is biased to refuse: a parse ambiguity leaves more text to scan, which can only
 add refusals. False is "no opinion" — the caller falls through to the prompt.
 
-`claude_guard/readonly.py` applies the same guards to LOCAL commands, with stricter
-pre-checks of its own (`_GAPS`). The server repo kept a second copy of each guard for its
-PreToolUse classifier until dotfiles #628 moved that classifier here and deleted it.
+`claude_guard/readonly.py` applies the same guards to LOCAL commands. The server repo kept a
+second copy of each guard for its PreToolUse classifier until dotfiles #628 moved that
+classifier here and deleted it.
+
+A long option matches in any abbreviation (`_long_abbrev`), not by its whole spelling. GNU
+getopt_long accepts any unambiguous prefix. Measured 2026-09-24 on daniel-box:
+`sort --outp=F`, `sed --in-pl`, `sed --exp='1w F'` and `journalctl --cursor-f=F` each wrote a
+file past the exact-name checks (dotfiles #647). Those checks lived in `readonly.py` as
+local-only pre-checks until #647 folded them into the guards both sides share.
 """
 
 import re
 from collections.abc import Callable
+
+
+def _long_abbrev(arg: str, names: tuple[str, ...] | frozenset[str]) -> bool:
+    """True when `arg` is one of the long options `names`, spelled whole or abbreviated.
+
+    getopt_long accepts any unambiguous prefix, so `--outp=F` is `--output=F`. A prefix that
+    is ambiguous between two options errors out in the program, so matching it refuses a
+    command that would not have run anyway."""
+    if not arg.startswith("--") or len(arg) < 3:
+        return False
+    key = arg.split("=", 1)[0]
+    return any(name.startswith(key) for name in names)
+
 
 # git subcommands that are read-only regardless of arguments (branch/tag/remote omitted:
 # their bare form lists but `git branch <name>` / `-D` mutate).
@@ -60,7 +79,27 @@ _GIT_SKIP = frozenset(
 _GIT_SKIP_VALUE = frozenset({"-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"})
 
 
+_GIT_GREP_PAGER = re.compile(r"-[A-Za-z]*O")
+
+
+def _git_writes(argv: list[str]) -> bool:
+    # --output=FILE writes the diff to a file under every subcommand that takes diff options.
+    if any(_long_abbrev(a, ("--output",)) for a in argv[1:]):
+        return True
+    # `git grep -O<cmd>` / `--open-files-in-pager` runs a command on the matching files. Any
+    # bare `grep` word counts as the subcommand, so `git -C dir grep` cannot hide it behind
+    # an option value.
+    if "grep" in argv[1:]:
+        return any(
+            _GIT_GREP_PAGER.match(a) or _long_abbrev(a, ("--open-files-in-pager",))
+            for a in argv[1:]
+        )
+    return False
+
+
 def git_readonly(argv: list[str]) -> bool:
+    if _git_writes(argv):
+        return False
     i, n = 1, len(argv)
     while i < n and argv[i].startswith("-"):
         a = argv[i]
@@ -99,8 +138,9 @@ _SORT_OUTPUT_SHORT = re.compile(r"-[A-Za-z]*o")
 
 def sort_readonly(argv: list[str]) -> bool:
     # -o / --output writes to a file; the o may sit inside a short cluster (`-uo`).
+    # --compress-program runs a program on the temporary files.
     return not any(
-        a == "--output" or a.startswith("--output=") or _SORT_OUTPUT_SHORT.match(a)
+        _long_abbrev(a, ("--output", "--compress-program")) or _SORT_OUTPUT_SHORT.match(a)
         for a in argv[1:]
     )
 
@@ -115,9 +155,26 @@ def uniq_readonly(argv: list[str]) -> bool:
 # the program outright if any of these appear, and refuse -f/-i. The `>` check also refuses
 # benign comparisons -- safe over-refusal.
 _AWK_DANGER = ("system", "getline", "|", ">")
+# gawk's -E/--exec and --file read an uninspectable program, -l/--load loads a shared
+# library and --include an awk file. `@load`/`@include` do the same from inside the program
+# text, and `@include "inplace"` is how `-i inplace` edits files, so any `@` refuses.
+_AWK_SHORT = re.compile(r"-[A-Za-z]*[El]")
+
+
+def _awk_loads(argv: list[str]) -> bool:
+    for a in argv[1:]:
+        if _long_abbrev(a, ("--exec", "--file", "--load", "--include")):
+            return True
+        if a.startswith("-") and not a.startswith("--") and _AWK_SHORT.match(a):
+            return True
+        if "@" in a:
+            return True
+    return False
 
 
 def awk_readonly(argv: list[str]) -> bool:
+    if _awk_loads(argv):
+        return False
     prog: list[str] = []
     i, n = 1, len(argv)
     while i < n:
@@ -198,7 +255,44 @@ def _sed_dangerous(script: str) -> bool:
     return False
 
 
+# Every GNU sed long option. The loop in `sed_readonly` reads an unknown long option as a
+# safe flag, so an abbreviation hid what it meant: `--exp='1w F'` hid its script and
+# `--in-pl` its in-place edit. Only the whole spelling of a long option passes.
+_SED_LONG = frozenset(
+    {
+        "--expression",
+        "--file",
+        "--in-place",
+        "--quiet",
+        "--silent",
+        "--debug",
+        "--posix",
+        "--regexp-extended",
+        "--separate",
+        "--sandbox",
+        "--unbuffered",
+        "--null-data",
+        "--zero-terminated",
+        "--line-length",
+        "--follow-symlinks",
+        "--help",
+        "--version",
+    }
+)
+
+
+def _sed_abbreviates(argv: list[str]) -> bool:
+    for a in argv[1:]:
+        if a == "--":
+            return False
+        if a.startswith("--") and a.split("=", 1)[0] not in _SED_LONG:
+            return True
+    return False
+
+
 def sed_readonly(argv: list[str]) -> bool:
+    if _sed_abbreviates(argv):
+        return False
     script: list[str] = []
     saw_script = False
     i, n = 1, len(argv)
@@ -396,14 +490,16 @@ def _flag_guarded(verb: str) -> Callable[[list[str]], bool]:
     cluster = re.compile(rf"-[a-zA-Z]*[{letters}]")
 
     def guard(argv: list[str]) -> bool:
-        return not any(a.split("=", 1)[0] in longs or cluster.match(a) for a in argv[1:])
+        return not any(_long_abbrev(a, longs) or cluster.match(a) for a in argv[1:])
 
     return guard
 
 
 # journalctl reads logs, but these flags delete, rotate or reconfigure the journal.
+# --cursor-file=FILE writes the last cursor to FILE after printing.
 _JOURNALCTL_WRITE = frozenset(
     {
+        "--cursor-file",
         "--rotate",
         "--vacuum-size",
         "--vacuum-time",
@@ -419,7 +515,7 @@ _JOURNALCTL_WRITE = frozenset(
 
 
 def journalctl_readonly(argv: list[str]) -> bool:
-    return not any(a.split("=", 1)[0] in _JOURNALCTL_WRITE for a in argv[1:])
+    return not any(_long_abbrev(a, _JOURNALCTL_WRITE) for a in argv[1:])
 
 
 # rg's `--pre` runs an arbitrary preprocessor per file and `--hostname-bin` an arbitrary
