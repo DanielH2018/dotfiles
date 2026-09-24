@@ -139,6 +139,19 @@ test('a missing run-bounded.sh names the unchecked tree rather than running stat
   assert.match(out, /Uncommitted changes: not checked \(cannot load \/nonexistent\/run-bounded\.sh\)/);
 });
 
+// The shim is a script, so it runs bounded too (#664). One that hangs used to hold the hook
+// until the harness killed it at 5s, and that kill dropped the whole repo-context block.
+test('a hung install-hook-shim is cut off inside the 5s hook timeout and named', { skip }, () => {
+  const root = repoWithShim();
+  fs.writeFileSync(path.join(root, 'bin', 'install-hook-shim'), '#!/bin/bash\nsleep 30\n', { mode: 0o755 });
+  const { out, code, seconds } = runHook(root, { trusted: root });
+  assert.ok(seconds < 5, `took ${seconds}s`);
+  assert.strictEqual(code, 0);
+  assert.match(out, /Pre-push shim: not re-asserted \(`bin\/install-hook-shim` did not finish within 1s \(timeout\)\)/);
+  assert.match(out, /Branch: main/, 'the repo-context block is still injected');
+  assert.match(out, /Recent commits:/);
+});
+
 test('stays silent on a resumed session', { skip }, () => {
   const root = repoWithShim();
   const { out, code } = runHook(root, { trusted: root, source: 'resume' });

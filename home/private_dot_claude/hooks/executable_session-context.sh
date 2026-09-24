@@ -68,7 +68,7 @@ if [ -s "$PENDING" ]; then
 fi
 
 # DECIDED: the git calls in this hook run without run_bounded, except `git status` below
-# (#661). They are local plumbing (rev-parse, log and rev-list over refs, stash list; no
+# (#661). The install-hook-shim run is bounded too (#664), since it is a script, not plumbing. They are local plumbing (rev-parse, log and rev-list over refs, stash list; no
 # fetch, no network), and they read refs and a few objects rather than the working tree.
 # A bound would add a tempfile and a timeout(1) fork to each for a hang no one has seen.
 # `git status --porcelain` is different: it walks the whole working tree, so its cost grows
@@ -77,6 +77,12 @@ fi
 #
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+# Loaded once for the two bounded children below: the shim run and `git status`.
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+RB_LOADED=0
+# shellcheck source=/dev/null
+. "$RUN_BOUNDED_PATH" 2>/dev/null && command -v run_bounded >/dev/null 2>&1 && RB_LOADED=1
 
 # Repos that ship an install-hook-shim keep a pre-push guard in .git/, where no
 # checkout can restore it. Re-assert it so a stray `git config core.hooksPath`,
@@ -101,8 +107,27 @@ if [ -n "$COMMON_DIR" ] && REPO_ROOT=$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P
     canon=$(cd "$entry" 2>/dev/null && pwd -P) || continue
     if [ "$canon" = "$REPO_ROOT" ]; then trusted=1; break; fi
   done
+  # Bounded (#664). A shim that hangs would otherwise hold this hook until the harness kills
+  # it at 5s, and that kill discards the whole repo-context block with nothing saying why.
+  # The shim measured 10ms, so 1s is wide headroom, and it leaves room for the 2s status
+  # bound below inside the 5s. SESSION_CONTEXT_TIMEOUT_S sets it, for the tests. A shim that
+  # did not finish, failed, or cannot run bounded is named instead of relayed.
   if [ "$trusted" -eq 1 ] && [ -x "$REPO_ROOT/bin/install-hook-shim" ]; then
-    SHIM_REPAIR=$("$REPO_ROOT/bin/install-hook-shim" --quiet 2>/dev/null)
+    T_SHIM=${SESSION_CONTEXT_TIMEOUT_S:-1}
+    if [ "$RB_LOADED" -ne 1 ]; then
+      SHIM_REPAIR="Pre-push shim: not re-asserted (cannot load $RUN_BOUNDED_PATH)"
+    else
+      # shellcheck disable=SC2016  # $1 belongs to the inner bash
+      run_bounded "$T_SHIM" 4096 -- bash -c 'exec "$1" --quiet 2>/dev/null' _ "$REPO_ROOT/bin/install-hook-shim" </dev/null
+      # shellcheck disable=SC2153  # RB_STATUS is run_bounded's out-param
+      if [ "$RB_STATUS" != ok ]; then
+        SHIM_REPAIR="Pre-push shim: not re-asserted (\`bin/install-hook-shim\` did not finish within ${T_SHIM}s ($RB_STATUS))"
+      elif [ "$RB_EXIT" -ne 0 ]; then
+        SHIM_REPAIR="Pre-push shim: not re-asserted (\`bin/install-hook-shim\` failed (exit $RB_EXIT))"
+      else
+        SHIM_REPAIR=$RB_OUT
+      fi
+    fi
   fi
 fi
 
@@ -132,9 +157,7 @@ fi
 # byte-capped status is fine, since only its first 20 lines are shown.
 DIRTY=''
 T_STATUS=${SESSION_CONTEXT_TIMEOUT_S:-2}
-RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
-# shellcheck source=/dev/null
-if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+if [ "$RB_LOADED" -ne 1 ]; then
   UNCHECKED="cannot load $RUN_BOUNDED_PATH"
 else
   UNCHECKED=''
