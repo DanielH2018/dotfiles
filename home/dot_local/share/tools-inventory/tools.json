@@ -27,13 +27,13 @@
     {
       "id": "query",
       "title": "Query & digest",
-      "note": "Three tools that exist for the same structural reason: the useful operation was reachable only through something correctly ask-listed (<code>python3 -c</code>, <code>curl</code>, a raw test runner). Each narrows the capability far enough that a blanket allow rule becomes defensible."
+      "note": "Four tools that exist for the same structural reason: the useful operation was reachable only through something correctly ask-listed (<code>python3 -c</code>, <code>curl</code>, <code>ssh</code>, a raw test runner). Each narrows the capability far enough that a blanket allow rule becomes defensible."
     },
     { "id": "config", "title": "Config & dotfiles" },
     {
       "id": "housekeeping",
       "title": "Scheduled housekeeping",
-      "note": "Both run unattended on systemd-user timers, which is why containment is written into the scripts rather than into how they are called."
+      "note": "Each runs unattended on a systemd-user timer, which is why containment and failure reporting are written into the scripts rather than into how they are called."
     },
     { "id": "desktop", "title": "Desktop & system" },
     {
@@ -64,7 +64,6 @@
     "paths": [
       "private_dot_claude/sandbox/executable_audit.sh",
       "private_dot_claude/sandbox/executable_gh-pr-guard.sh",
-      "private_dot_claude/sandbox/executable_agent-view-state-hook.sh",
       "private_dot_claude/sandbox/executable_entrypoint.sh",
       "private_dot_claude/sandbox/executable_resolve-sandbox-settings.sh",
       "private_dot_claude/sandbox/executable_sandbox-lib.sh",
@@ -76,27 +75,6 @@
   },
 
   "tools": [
-    {
-      "id": "agentview",
-      "name": "agentview",
-      "alias": "→ av",
-      "group": "session",
-      "source": "dot_local/bin/executable_agentview",
-      "alsoCovers": ["dot_local/bin/symlink_av"],
-      "deployed": ".local/bin/agentview",
-      "lang": "bash",
-      "langLabel": "bash",
-      "plat": ["mac", "linux", "wsl", "win"],
-      "platLabel": "macOS · Linux · WSL · Windows",
-      "role": ["keybind", "typed"],
-      "badges": [{ "cls": "b-how", "text": "CTRL+SHIFT+S (WezTerm) · tmux prefix+g" }],
-      "desc": "Grouped, switchable list of Claude Code sessions across machines and backends (host + <code>claude-sandbox</code>). Terminal-agnostic: focus is delegated to whichever backend a session captured at start — tmux, wezterm, or none.",
-      "why": "Also spawns sessions: <code>--spawn</code> picks a repo + branch and launches <code>claude-sandbox</code> in a new pane of the active backend, falling back to in-place when neither tmux nor wezterm is usable. Removing a row (<code>CTRL+X</code>) really stops the process — pid-reuse-guarded — and <code>claude rm</code>s its record, acting over ssh for remote rows, so a live session cannot reappear.",
-      "pre": "<span class=\"c\"># picker keys</span>\nALT+1..9  jump to Nth    CTRL+R  rename     CTRL+P  pin to top\nCTRL+N    new session    CTRL+X  remove     CTRL+F  refresh\nCTRL+O    details        ?       cheatsheet\n\n<span class=\"c\"># modes</span>\nagentview --spawn | --jump KEY | --jump-nth N | --resolve KEY\n          --card KEY | --keys | --remove KEY | --pin KEY | --rename KEY",
-      "flags": [
-        { "label": "Libraries:", "html": "<code>~/.local/share/agentview/{actions,common,focus,render,rows,spawn}.sh</code> · pins in <code>~/.claude/agent-view-pins</code>" }
-      ]
-    },
     {
       "id": "ct",
       "name": "ct",
@@ -168,7 +146,7 @@
       "platLabel": "macOS · Linux · WSL",
       "role": ["typed", "called"],
       "badges": [
-        { "cls": "b-how", "text": "typed · spawned by agentview and cts" },
+        { "cls": "b-how", "text": "typed · spawned by cts" },
         { "cls": "b-off", "text": "chezmoi skips it on Windows" }
       ],
       "desc": "Launch Claude Code in a Docker-based \"Pattern C\" sandbox: per-repo image, audited tool use, a socket-proxy'd Docker socket, an optional read-only vault subset, and sibling repos mounted as clean <code>main</code> snapshots by default.",
@@ -208,6 +186,80 @@
       ],
       "desc": "Query the curated, read-only vault index mounted into a sandbox. The launcher builds a DuckDB index over only the allowlisted vault pages and mounts it at <code>$SANDBOX_VAULT_DB</code>; the embedding model and the FTS extension are baked into the image, so this runs fully offline.",
       "pre": "vault-search \"&lt;natural-language query&gt;\" [-k N] [--json]"
+    },
+    {
+      "id": "claude-rc-resume",
+      "name": "claude-rc-resume",
+      "group": "session",
+      "source": "dot_local/bin/executable_claude-rc-resume",
+      "deployed": ".local/bin/claude-rc-resume",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Resume a Remote Control session from the terminal by its name.",
+      "why": "A session the <code>claude rc</code> host spawns from the phone lives in its own git worktree, and Claude Code keys the transcript by that directory, so it appears in <code>claude --resume</code> only from inside <code>.claude/worktrees/&lt;name&gt;/</code>. When the phone drops, getting the session back meant finding that directory by hand; this does the finding."
+    },
+    {
+      "id": "effort",
+      "name": "effort",
+      "group": "session",
+      "source": "dot_local/bin/executable_effort",
+      "deployed": ".local/bin/effort",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Get or set Claude Code's <code>effortLevel</code> in <code>~/.claude/settings.json</code> without opening a session.",
+      "why": "<code>effortLevel</code> is a runtime-owned key that <code>/effort</code> writes live and <code>claude-settings-merge</code> carries across <code>chezmoi apply</code>, so editing it here is equivalent — and a fresh <code>claude-sandbox</code> launch picks it up."
+    },
+    {
+      "id": "stash-mine",
+      "name": "stash-mine",
+      "group": "session",
+      "source": "dot_local/bin/executable_stash-mine",
+      "deployed": ".local/bin/stash-mine",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Touch only the git stash entries this worktree created.",
+      "why": "The stash stack is shared across every worktree of a repo, and a bare <code>git stash pop</code> once applied another session's 25-file WIP. The safe protocol — push with a unique tag, apply and drop by SHA, never pop — is correct but easy to get wrong by hand; this carries it out."
+    },
+    {
+      "id": "planka",
+      "name": "planka",
+      "group": "session",
+      "source": "dot_local/bin/executable_planka",
+      "deployed": ".local/bin/planka",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac"],
+      "platLabel": "macOS (login keychain)",
+      "role": ["hook", "typed"],
+      "badges": [{ "cls": "b-how", "text": "PostToolUse and Stop hooks" }, { "cls": "b-inert", "text": "chezmoi deploys it everywhere; soft-fails without the macOS keychain" }],
+      "desc": "Record Claude Code session work on the local Planka board.",
+      "why": "It sits on the PostToolUse and Stop paths, so every expected failure exits 0 with a line in the log: it must never fail an edit or block a stop. The Planka password lives in the macOS login keychain, the same pattern the work overlay uses for its other keys."
+    },
+    {
+      "id": "pr-dash",
+      "name": "pr-dash",
+      "group": "session",
+      "source": "dot_local/bin/executable_pr-dash.tmpl",
+      "deployed": ".local/bin/pr-dash",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac"],
+      "platLabel": "macOS (opens the browser)",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }, { "cls": "b-inert", "text": "elsewhere it prints the URL instead of opening it" }],
+      "desc": "Launch the PR dashboard in <code>~/.local/share/pr-dash</code> on a loopback port and open it in the browser. If the launchd agent or another run is already serving, it only opens the page."
     },
 
     {
@@ -272,6 +324,21 @@
         { "label": "The hook's reason:", "html": "a <code>node --test</code> run prints ~65&nbsp;KB nobody reads when nothing is wrong. In a git hook that is noise; in an agent's Bash call it is context, spent at the same rate whether or not anything failed, and spent again by every parallel agent running the same suite." },
         { "label": "Library:", "html": "<code>~/.local/share/tq/</code> — <code>detect.py</code>, <code>digest.py</code>, <code>result.py</code>, <code>scope.py</code>, <code>node-reporter.mjs</code>, plus its <code>adapters/</code> and <code>runners/</code> packages." }
       ]
+    },
+    {
+      "id": "otel-sweep",
+      "name": "otel-sweep",
+      "group": "query",
+      "source": "dot_local/bin/executable_otel-sweep",
+      "deployed": ".local/bin/otel-sweep",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl", "win"],
+      "platLabel": "all platforms",
+      "role": ["typed", "called"],
+      "badges": [{ "cls": "b-how", "text": "typed · run daily by otel-sweep-watch" }],
+      "desc": "Read the Claude Code telemetry stack on every machine, unprompted.",
+      "why": "The same reason as <code>otelq</code>, one layer out. Once the question became \"and what about daniel-box and daniel-server?\", the only tools that could answer were <code>ssh</code> and <code>curl</code>, both ask-listed for good reason. This answers it without widening either."
     },
 
     {
@@ -340,6 +407,65 @@
         { "label": "Idempotent:", "html": "the rendered page carries no timestamp, so an unchanged inventory produces a byte-identical file and the generator skips the write. Re-running it costs nothing when nothing has changed." }
       ]
     },
+    {
+      "id": "claude-guard",
+      "name": "claude-guard",
+      "group": "config",
+      "source": "dot_local/bin/executable_claude-guard",
+      "deployed": ".local/bin/claude-guard",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "CLI entry for the <code>claude_guard</code> package: <code>explain</code>, <code>replay</code>, <code>segment</code>. Not a hook — the hook shims in <code>~/.claude/hooks</code> carry the per-event failure contracts; this one is for a human or a test, so a missing interpreter is an error rather than a silent no-decision."
+    },
+    {
+      "id": "prompt-friction",
+      "name": "prompt-friction",
+      "group": "config",
+      "source": "dot_local/bin/executable_prompt-friction",
+      "deployed": ".local/bin/prompt-friction",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Measure how many Bash calls that interrupted you would now answer themselves.",
+      "why": "Claude Code's OTEL stream records who decided each tool call: a <code>config</code> rule, a <code>hook</code>, or <code>user</code> — a prompt someone had to answer. This reads the <code>user</code> ones out of Loki and replays each through today's PermissionRequest hook chain, so \"did that auto-approver change help?\" is a command rather than an afternoon."
+    },
+    {
+      "id": "grafana-mcp",
+      "name": "grafana-mcp",
+      "group": "config",
+      "source": "dot_local/bin/executable_grafana-mcp",
+      "deployed": ".local/bin/grafana-mcp",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["mac"],
+      "platLabel": "macOS (login keychain)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "spawned by the Claude desktop app as an MCP server" }],
+      "desc": "Launch <code>mcp-grafana</code> with the Grafana service-account token attached, read from the login keychain.",
+      "why": "The desktop app spawns stdio MCP servers directly, not through an interactive shell, so the precmd hook that normally exports the token never fires. <code>mcp-grafana</code> then reported itself connected and returned HTTP 401 on every call."
+    },
+    {
+      "id": "stdio-blocking",
+      "name": "stdio-blocking",
+      "group": "config",
+      "source": "dot_local/bin/executable_stdio-blocking",
+      "deployed": ".local/bin/stdio-blocking",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "prefixed by the homelab repo's uv-python.sh hook" }],
+      "desc": "Clear <code>O_NONBLOCK</code> on fds 0, 1 and 3, called as a bare prefix (<code>stdio-blocking; &lt;cmd&gt;</code>).",
+      "why": "Every ansible CLI refuses to start on non-blocking stdio, and the Claude Code Bash tool hands its child a file with <code>O_NONBLOCK</code> set. The homelab server repo prepends this to every command that runs ansible or the system python."
+    },
 
     {
       "id": "retention-sweep",
@@ -377,6 +503,94 @@
       "flags": [
         { "label": "Test seams:", "html": "<code>CLAUDE_SESSIONS_DIR</code> · <code>AGENT_VIEW_DIR</code> · <code>REAP_KILLCMD</code> · <code>REAP_LOG</code> · <code>REAP_LIB</code> · <code>REAP_PROC_DIR</code> · <code>REAP_ROSTER</code>" }
       ]
+    },
+    {
+      "id": "claude-changelog-watch",
+      "name": "claude-changelog-watch",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_claude-changelog-watch",
+      "deployed": ".local/bin/claude-changelog-watch",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (systemd)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "daily systemd-user timer" }],
+      "desc": "Unattended daily <code>/changelog-watch</code> run, Linux side. The macOS half is a launchd plist driving work-laptop-config's <code>run-skill.sh</code>; neither travels here, so this is a purpose-built runner for the one command."
+    },
+    {
+      "id": "claude-transcript-scan",
+      "name": "claude-transcript-scan",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_claude-transcript-scan",
+      "deployed": ".local/bin/claude-transcript-scan",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["mac", "linux", "wsl"],
+      "platLabel": "macOS · Linux · WSL",
+      "role": ["timer", "hook", "typed"],
+      "badges": [{ "cls": "b-how", "text": "systemd-user timer · backgrounded by session-end.sh" }],
+      "desc": "Find credentials that have already landed in a session transcript.",
+      "why": "The preventive half is <code>block-dangerous-bash.sh</code>, which denies a command before it runs. It cannot close the whole gap, because no hook can rewrite a tool result — so a secret a command printed stays in the transcript, and this is the sweep that finds it."
+    },
+    {
+      "id": "flatpak-update",
+      "name": "flatpak-update",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_flatpak-update",
+      "deployed": ".local/bin/flatpak-update",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (flatpak)",
+      "role": ["timer", "typed"],
+      "badges": [{ "cls": "b-how", "text": "systemd-user timer · also typed" }],
+      "desc": "Update user-scope flatpaks, then remove the runtimes nothing references any more.",
+      "why": "Flathub is served badly over the Mullvad tunnel, so the fetch runs through <code>mullvad-exclude</code> when that works. That detour is why this is a script rather than two <code>ExecStart</code> lines, and a script means \"update my flatpaks now\" is the same command the timer runs."
+    },
+    {
+      "id": "mullvad-settings-watch",
+      "name": "mullvad-settings-watch",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_mullvad-settings-watch",
+      "deployed": ".local/bin/mullvad-settings-watch",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (systemd)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "daily systemd-user timer" }],
+      "desc": "Daily check that the Mullvad tunnel settings which cost throughput (DAITA, entry relay) have not drifted back. Findings raise a desktop notification and fail the unit."
+    },
+    {
+      "id": "otel-savings-rollup",
+      "name": "otel-savings-rollup",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_otel-savings-rollup",
+      "deployed": ".local/bin/otel-savings-rollup",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux", "wsl"],
+      "platLabel": "Linux · WSL (systemd)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "daily systemd-user timer" }],
+      "desc": "Append one day of tooling-cost figures (<code>otelq savings all</code>) to a durable file.",
+      "why": "Loki keeps 31 days, and a stack rebuild has already lost every day older than a week once. Anything that compares a number against the same number a quarter ago has to keep its own copy."
+    },
+    {
+      "id": "otel-sweep-watch",
+      "name": "otel-sweep-watch",
+      "group": "housekeeping",
+      "source": "dot_local/bin/executable_otel-sweep-watch",
+      "deployed": ".local/bin/otel-sweep-watch",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (systemd)",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "daily systemd-user timer" }],
+      "desc": "Daily check that every machine is actually exporting telemetry, built on <code>otel-sweep</code>.",
+      "why": "The failure is silent by construction: a session started before its collector was up exports nothing for its whole life while pods stay green. Two went unnoticed for three days each, so findings raise a desktop notification."
     },
 
     {
@@ -438,7 +652,7 @@
       "plat": ["linux", "wsl"],
       "platLabel": "Linux · WSL (reads /proc)",
       "role": ["called"],
-      "badges": [{ "cls": "b-how", "text": "called by agentview" }],
+      "badges": [{ "cls": "b-how", "text": "called by wezterm.lua" }],
       "desc": "Print the argv of the ssh client backing a WezTerm pane, one argument per line, or nothing when the pane is not ssh'd anywhere.",
       "why": "WezTerm cannot answer this for a WSL pane — it only ever sees <code>wslhost.exe</code>, and OSC 7 is swallowed by tmux, so an Agent View homelab jump is invisible from the Windows side. <code>$WEZTERM_PANE</code> is the one handle that crosses, and it is readable from <code>/proc</code>. Two layouts are resolved: <em>direct</em> (ssh is a descendant of the pane shell) and <em>tmux</em> (ssh is a child of the tmux <em>server</em>, with a stale inherited <code>$WEZTERM_PANE</code>, so the pane's tmux client is mapped to its session instead).",
       "pre": "wezterm-pane-ssh &lt;wezterm-pane-id&gt;   <span class=\"c\"># exit status advisory; no output = not remote</span>"
@@ -457,6 +671,235 @@
       "badges": [{ "cls": "b-how", "text": "invoked by sudo via SUDO_ASKPASS" }],
       "desc": "<code>SUDO_ASKPASS</code> helper for hosts with no graphical session — the headless counterpart to the ksshaskpass branch in <code>~/.zshenv</code>.",
       "why": "A shell with no controlling terminal (Claude Code's <code>!</code> commands, <code>ssh host cmd</code>) has nowhere to prompt, so sudo refuses rather than asking. There is no desktop to draw a dialog on, but the tmux session the work already happens in can: <code>display-popup</code> reads the password with echo off and hands it back over a FIFO. Nothing is weakened — the password is still required and <code>/etc/sudoers</code> is untouched. The password never touches disk: the FIFO lives under <code>$XDG_RUNTIME_DIR</code> (tmpfs, 0700) and is passed by pipe rather than argv or environment, so no other process can read it out of <code>ps</code>."
+    },
+    {
+      "id": "bt-hid-kick",
+      "name": "bt-hid-kick",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_bt-hid-kick",
+      "deployed": ".local/bin/bt-hid-kick",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux"],
+      "platLabel": "Linux (BlueZ)",
+      "role": ["keybind"],
+      "badges": [{ "cls": "b-how", "text": "StreamController key" }],
+      "desc": "Recover a wedged Bluetooth mouse right now, from a hardware key. A wedged HID-over-GATT device reads Connected with a live battery but has no input node, so there is no pointer; the <code>bt-hid-health</code> timer recovers it too, but on a 2-minute cycle."
+    },
+    {
+      "id": "desk-away",
+      "name": "desk-away",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_desk-away",
+      "deployed": ".local/bin/desk-away",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma)",
+      "role": ["keybind"],
+      "badges": [{ "cls": "b-how", "text": "StreamController key" }],
+      "desc": "Lock the session and blank every display — the \"leaving the desk\" key — and wake them on a second press.",
+      "why": "Blanking rather than disabling outputs: measured on the 3080 Ti, DPMS-off drops the GPU from P0 / 92 W to P8 / 12.6 W, and disabling outputs saves no more than that while costing a window reshuffle."
+    },
+    {
+      "id": "mic-mute-toggle",
+      "name": "mic-mute-toggle",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mic-mute-toggle",
+      "deployed": ".local/bin/mic-mute-toggle",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["linux"],
+      "platLabel": "Linux (PipeWire)",
+      "role": ["keybind"],
+      "badges": [{ "cls": "b-how", "text": "StreamController key" }],
+      "desc": "Toggle mute on the default PipeWire source. Unlike the Discord plugin's mute key, this mutes the capture device itself, so it covers Meet, Zoom, OBS and anything else holding the mic."
+    },
+    {
+      "id": "clip-bridge",
+      "name": "clip-bridge",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_clip-bridge",
+      "deployed": ".local/bin/clip-bridge",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Wayland)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "socket-activated systemd-user unit" }, { "cls": "b-off", "text": "daniel-desktop only" }],
+      "desc": "Serve this desktop's clipboard images to an SSH session on another host, so Claude Code running there can answer Ctrl+V. The remote half is the <code>xclip</code> shim, which proxies Claude's two clipboard reads back here over an ssh RemoteForward."
+    },
+    {
+      "id": "clip2server",
+      "name": "clip2server",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_clip2server",
+      "deployed": ".local/bin/clip2server",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Wayland)",
+      "role": ["keybind"],
+      "badges": [{ "cls": "b-how", "text": "KDE global shortcut" }],
+      "desc": "Put the Wayland clipboard's image onto daniel-box and hand its remote path to the Claude session running there. Claude Code resolves a typed image path into a real attachment, which a terminal paste of image bytes cannot do."
+    },
+    {
+      "id": "login-window-layout",
+      "name": "login-window-layout",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_login-window-layout",
+      "deployed": ".local/bin/login-window-layout",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "run at login" }],
+      "desc": "Open the everyday app set at login, one per monitor. Placement comes from the \"login placement\" rules in <code>kwinrulesrc</code>, except for Firefox, which this script places itself because every Firefox window shares one wmclass."
+    },
+    {
+      "id": "mx-ergo-pointer",
+      "name": "mx-ergo-pointer",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mx-ergo-pointer",
+      "deployed": ".local/bin/mx-ergo-pointer",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "called by mx-ergo-watch" }],
+      "desc": "Apply pointer acceleration to the Logitech MX Ergo S and nothing else, matching the device by vendor and product id. KWin persists the setting into <code>kcminputrc</code>, so it survives reboots."
+    },
+    {
+      "id": "mx-ergo-solaar",
+      "name": "mx-ergo-solaar",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mx-ergo-solaar",
+      "deployed": ".local/bin/mx-ergo-solaar",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Solaar)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "called by mx-ergo-watch" }],
+      "desc": "Assert the MX Ergo S button and wheel state that hold-to-precision needs. None of it can live on the device, which has no onboard profiles, so every setting is re-applied by software on each connect."
+    },
+    {
+      "id": "mx-ergo-watch",
+      "name": "mx-ergo-watch",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mx-ergo-watch",
+      "deployed": ".local/bin/mx-ergo-watch",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "mx-ergo.service" }],
+      "desc": "Re-run <code>mx-ergo-pointer</code> and <code>mx-ergo-solaar</code> whenever KWin reports the trackball (re)appearing. It is Bluetooth, so it can show up long after login."
+    },
+    {
+      "id": "mx-ergo-resync",
+      "name": "mx-ergo-resync",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mx-ergo-resync",
+      "deployed": ".local/bin/mx-ergo-resync",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Solaar)",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed · manual fallback" }],
+      "desc": "Re-assert the MX Ergo S's full intended state after something else changed it.",
+      "why": "Logi Options+ on another machine diverts the controls it manages, the scroll wheel included, and diversion is device state rather than host state. Back on this machine the wheel stays diverted and scrolling is dead until something re-asserts it."
+    },
+    {
+      "id": "wpe",
+      "name": "wpe",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_wpe",
+      "deployed": ".local/bin/wpe",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma, systemd)",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }],
+      "desc": "Control linux-wallpaperengine: pick a wallpaper, pick a screen, start and stop the background service.",
+      "why": "Wallpaper Engine itself is Windows-only and does not work under Proton. This drives Almamu/linux-wallpaperengine, a native reimplementation that reads the Steam-installed content directly.",
+      "pre": "wpe pick | list | outputs | set | screen | fps | layer | scaling\nwpe watch start|stop|enable|disable|once|log|status"
+    },
+    {
+      "id": "wpe-pick",
+      "name": "wpe-pick",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_wpe-pick",
+      "deployed": ".local/bin/wpe-pick",
+      "lang": "python",
+      "langLabel": "python3",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "launched by wpe pick · desktop entry" }],
+      "desc": "Thumbnail picker for linux-wallpaperengine. Every change goes back through <code>wpe</code>, so the picker is a view over it rather than a second owner of the same state."
+    },
+    {
+      "id": "wpe-watch",
+      "name": "wpe-watch",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_wpe-watch",
+      "deployed": ".local/bin/wpe-watch",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (KDE Plasma, systemd)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "wpe-watch.service" }],
+      "desc": "Restart the wallpaper renderer when the set of connected displays changes. linux-wallpaperengine resolves its screens once at start, so after a KVM switch the wallpaper is missing on every display that was absent then."
+    },
+    {
+      "id": "fix-games-mount",
+      "name": "fix-games-mount",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_fix-games-mount",
+      "deployed": ".local/bin/fix-games-mount",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (systemd, ntfs3)",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }, { "cls": "b-off", "text": "fedora only" }],
+      "desc": "Repair the NTFS Steam volume at <code>/mnt/games</code> after a hard reset leaves it dirty, then bring its systemd mount and any dependent bind mount back up. With no flag it checks only and writes nothing."
+    },
+    {
+      "id": "logi-dev-mgr-kick",
+      "name": "logi-dev-mgr-kick",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_logi-dev-mgr-kick",
+      "deployed": ".local/bin/logi-dev-mgr-kick",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["mac"],
+      "platLabel": "macOS (launchd)",
+      "role": ["typed"],
+      "badges": [{ "cls": "b-how", "text": "typed" }, { "cls": "b-inert", "text": "chezmoi deploys it everywhere; exits 0 without the launchd agent" }],
+      "desc": "Restart Logi Options+'s device manager so it re-finds the trackball.",
+      "why": "The MX Ergo keeps working while it disappears from the Options+ device list, because macOS drives the pointer from the receiver's boot-protocol interface. The mouse still moving reads as proof the stack is healthy, which sends the hunt to permissions or a reinstall instead of the one process that lost it."
+    },
+    {
+      "id": "mac-askpass",
+      "name": "mac-askpass",
+      "group": "desktop",
+      "source": "dot_local/bin/executable_mac-askpass",
+      "deployed": ".local/bin/mac-askpass",
+      "lang": "bash",
+      "langLabel": "sh",
+      "plat": ["mac"],
+      "platLabel": "macOS (Aqua)",
+      "role": ["called"],
+      "badges": [{ "cls": "b-how", "text": "SUDO_ASKPASS, wired in ~/.zshenv" }],
+      "desc": "The macOS <code>SUDO_ASKPASS</code> helper: a shell with no controlling terminal (Claude Code's <code>!</code> commands, <code>ssh host cmd</code>, launchd agents) gets osascript's secure password dialog instead of a sudo refusal. The Aqua counterpart of <code>tmux-askpass</code>."
     },
 
     {
@@ -545,8 +988,38 @@
       "plat": ["wsl"],
       "platLabel": "WSL only",
       "role": ["shim"],
-      "badges": [{ "cls": "b-how", "text": "called by agentview" }],
-      "desc": "Symlinks into <code>/mnt/c/Windows/System32</code> — <code>taskkill</code> is how agentview ends a Windows pane. Deployed only on WSL (a Linux kernel reporting \"microsoft\"); anywhere else they would be dangling."
+      "badges": [{ "cls": "b-inert", "text": "no caller since agentview was removed" }],
+      "desc": "Symlinks into <code>/mnt/c/Windows/System32</code> — <code>taskkill</code> was how agentview ended a Windows pane. Deployed only on WSL (a Linux kernel reporting \"microsoft\"); anywhere else they would be dangling."
+    },
+    {
+      "id": "discord",
+      "name": "discord",
+      "group": "shims",
+      "source": "dot_local/bin/executable_discord",
+      "deployed": ".local/bin/discord",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Mullvad)",
+      "role": ["shim"],
+      "badges": [{ "cls": "b-inert", "text": "falls through to the real binary without a working mullvad-exclude" }],
+      "desc": "Launch Discord outside the Mullvad tunnel.",
+      "why": "Cloudflare intermittently serves Discord's \"Temporary Network Error\" page to shared Mullvad exit addresses whose reputation has drifted — a flat 403 with nothing solvable client side. The only local lever is which address the request leaves from."
+    },
+    {
+      "id": "steam",
+      "name": "steam",
+      "group": "shims",
+      "source": "dot_local/bin/executable_steam",
+      "deployed": ".local/bin/steam",
+      "lang": "bash",
+      "langLabel": "bash",
+      "plat": ["linux"],
+      "platLabel": "Linux (Mullvad)",
+      "role": ["shim"],
+      "badges": [{ "cls": "b-inert", "text": "falls through to the real binary without a working mullvad-exclude" }],
+      "desc": "Launch Steam outside the Mullvad tunnel.",
+      "why": "Games built on ISteamNetworkingSockets need NAT hole-punch probes to reach the client, and Mullvad's exit drops them upstream of this machine, so no local firewall rule can undo it."
     },
 
     {
@@ -621,6 +1094,25 @@
       "badges": [{ "cls": "b-how", "text": "scheduled task (install.ps1)" }],
       "desc": "Kills <code>wslhost.exe</code> processes that have leaked spinning interop threads.",
       "why": "microsoft/WSL#41173 — open, and present in every release through 2.9.4. <code>ProcessInteropMessages</code> re-issues its <code>ReadFile</code> forever when the read completes <em>synchronously</em> with zero bytes; all three loop exits sit inside <code>if (!Success)</code>, and a gracefully-closed hvsocket returns success with <code>BytesRead == 0</code>, so the thread spins at a full core inside <code>NtReadFile</code>."
+    },
+    {
+      "id": "sonar-routing-watcher",
+      "name": "sonar-routing-watcher",
+      "group": "windows",
+      "source": "Scripts/sonar-routing-watcher/sonar-routing-watcher.ps1",
+      "alsoCovers": [
+        "Scripts/sonar-routing-watcher/install.ps1",
+        "Scripts/sonar-routing-watcher/sonar-routing-watcher-hidden.vbs"
+      ],
+      "deployed": "Scripts/sonar-routing-watcher/sonar-routing-watcher.ps1",
+      "lang": "win",
+      "langLabel": "PowerShell + VBS + install.ps1",
+      "noLines": true,
+      "plat": ["win"],
+      "platLabel": "Windows only",
+      "role": ["timer"],
+      "badges": [{ "cls": "b-how", "text": "scheduled task (install.ps1)" }],
+      "desc": "Keeps SteelSeries Sonar's playback channels pointed at the Arctis stereo Game endpoint. Sonar silently reassigns them to the mono Chat endpoint whenever a KVM switch re-enumerates the headset's USB base station in the wrong order."
     },
 
     {
@@ -726,18 +1218,6 @@
       "desc": "<code>gen-install.js</code> + <code>install.sh</code> + package, for carrying the audit tooling to another machine."
     },
     {
-      "id": "agentview-libs",
-      "name": "agentview libs",
-      "group": "libs",
-      "source": "dot_local/share/agentview/common.sh",
-      "deployed": ".local/share/agentview",
-      "lang": "bash",
-      "plat": ["mac", "linux", "wsl", "win"],
-      "platLabel": "all platforms",
-      "role": ["library"],
-      "desc": "<code>~/.local/share/agentview/{actions,common,focus,render,rows,spawn}.sh</code>"
-    },
-    {
       "id": "tq-libs",
       "name": "tq libs",
       "group": "libs",
@@ -766,12 +1246,21 @@
       "name": "sandbox libs",
       "group": "libs",
       "source": "private_dot_claude/sandbox/executable_sandbox-worktree.sh",
+      "alsoCovers": [
+        "private_dot_claude/sandbox/executable_sandbox-auth.sh",
+        "private_dot_claude/sandbox/executable_sandbox-compact.sh",
+        "private_dot_claude/sandbox/executable_sandbox-image.sh",
+        "private_dot_claude/sandbox/executable_sandbox-proxy.sh",
+        "private_dot_claude/sandbox/executable_sandbox-session.sh",
+        "private_dot_claude/sandbox/executable_sandbox-worktree-gc.sh",
+        "private_dot_claude/sandbox/executable_sandbox-worktree-ops.sh"
+      ],
       "deployed": ".claude/sandbox/sandbox-worktree.sh",
       "lang": "bash",
       "plat": ["mac", "linux", "wsl"],
       "platLabel": "macOS · Linux · WSL",
       "role": ["library"],
-      "desc": "<code>sandbox-lib.sh</code>, <code>sandbox-worktree.sh</code>, <code>sandbox-mounts.sh</code>, <code>resolve-sandbox-settings.sh</code>. The worktree helpers are pure functions of their arguments with no <code>exit</code> calls, which is what lets the launcher and the tests both source the file. <code>sandbox-mounts.sh</code> deliberately is not pure — its functions append to the launcher's <code>DOCKER_ARGS</code> and read its globals, so sourcing it requires the launcher's variable context."
+      "desc": "<code>sandbox-lib.sh</code>, <code>sandbox-worktree.sh</code>, <code>sandbox-worktree-ops.sh</code>, <code>sandbox-worktree-gc.sh</code>, <code>sandbox-mounts.sh</code>, <code>sandbox-image.sh</code>, <code>sandbox-proxy.sh</code>, <code>sandbox-auth.sh</code>, <code>sandbox-session.sh</code>, <code>sandbox-compact.sh</code>, <code>resolve-sandbox-settings.sh</code> — all sourced by <code>claude-sandbox</code>, none executed. The worktree helpers are pure functions of their arguments with no <code>exit</code> calls, which is what lets the launcher and the tests both source the file. <code>sandbox-mounts.sh</code> deliberately is not pure — its functions append to the launcher's <code>DOCKER_ARGS</code> and read its globals, so sourcing it requires the launcher's variable context."
     },
     {
       "id": "claude-otel",

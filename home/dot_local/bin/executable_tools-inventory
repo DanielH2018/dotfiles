@@ -26,10 +26,11 @@
 //
 // A script in the source tree with no tools.json entry is still rendered, from its own
 // header comment, and reported in a drift banner at the top of the page as well as on
-// stderr. A warning during `chezmoi apply` scrolls past; a banner does not.
+// stderr. A warning in a terminal scrolls past; a banner does not.
 //
 // The output carries no timestamp, so an unchanged inventory renders byte-identical and
-// the write is skipped. That is what keeps it cheap enough to run on every apply.
+// the write is skipped. Nothing runs this on `chezmoi apply`: the page is not a chezmoi
+// target, so it changes only when someone runs `tools-inventory` by hand.
 //
 // This file is the CLI and nothing else. The work lives in ~/.local/share/tools-inventory,
 // resolved relative to this script so the same path holds in the chezmoi source tree
@@ -83,8 +84,8 @@ function main(argv) {
     return 1;
   }
 
-  // Drift goes to stderr as well as into the page — a run under `chezmoi apply` is where
-  // a newly added tool is most likely to be noticed.
+  // Drift goes to stderr as well as into the page, so a terminal run reports it without
+  // anyone opening the page.
   const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
   const found = sources.scanSources(sourceDir);
   const drift = core.driftOf(found, data.tools, (data.excluded || {}).paths, (rel) =>
@@ -99,7 +100,7 @@ function main(argv) {
   if (check) return drift.uncurated.length || drift.missing.length ? 1 : 0;
 
   // No timestamp in the output, so an unchanged inventory is byte-identical and the write
-  // is skipped. Running this on every apply costs a few reads and nothing else.
+  // is skipped, and a re-run with nothing new costs a few reads and nothing else.
   let prev = null;
   try { prev = fs.readFileSync(out, 'utf8'); } catch { /* first run */ }
   if (prev === html) return 0;
