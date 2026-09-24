@@ -897,6 +897,9 @@ DOCKER_ARGS=(
   # one file at a time, so without this mount every `. .../hook-input.sh` fails, and bash
   # runs the hook on with hook_read_input and hook_field undefined.
   -v "$HOME/.claude/hooks/hook-input.sh:/home/claudebot/.claude/hooks/hook-input.sh:ro"
+  # The bounded-execution library guard-pre-tool-use.sh runs its children through (#660).
+  # It is required there: without it the shim fails closed, and every Bash call is denied.
+  -v "$HOME/.claude/hooks/run-bounded.sh:/home/claudebot/.claude/hooks/run-bounded.sh:ro"
   # CLAUDE.md is the one managed file that stays staged-and-copied: entrypoint.sh
   # appends the dynamic environment context to it, so it has to be writable.
   # It is instructions, not policy or executable code.

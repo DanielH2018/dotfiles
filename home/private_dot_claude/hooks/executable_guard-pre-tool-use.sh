@@ -57,6 +57,16 @@
 # line. Its stderr is discarded too — an uncaught Python traceback would otherwise reach the
 # harness's hook-stderr channel verbatim, and a traceback can quote the command text this
 # hook exists to avoid ever printing.
+#
+# Both children run through run_bounded (#581, #660). They used to run bare, so a uv or a
+# Python that hung instead of failing never reached `fail`. The harness killed the hook at
+# its 10s timeout, and a killed PreToolUse hook is a non-blocking error: the call ran with no
+# deny check, and in the sandbox without the exit-2 deny either. The bounds are 2s for the
+# lookup and 6s for the judge, inside the 10s. CLAUDE_GUARD_TIMEOUT_S sets both, for the
+# tests. Any RB_STATUS other than `ok` is could-not-evaluate and takes `fail`, and so does a
+# non-zero exit from either child. A missing run-bounded.sh is `fail` too: the judge cannot
+# run bounded, so it does not run. The sandbox mounts the library beside this file for that
+# reason (sandbox/executable_claude-sandbox).
 set -u
 : "${CLAUDE_GUARD_FAIL_CLOSED:=0}"
 ASK='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"claude-guard: the dangerous-command rules could not be evaluated (interpreter or package unavailable). Review this command yourself."}}'
@@ -80,8 +90,26 @@ fail() {
 hook_read_input
 SHARE="${CLAUDE_GUARD_HOME:-${HOME:-}/.local/share/claude-guard}"
 [ -f "$SHARE/claude_guard/cli.py" ] || fail
-PY=$(uv python find --no-project --managed-python --system 3.14 2>/dev/null) || fail
+# shellcheck source=/dev/null
+. "${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}" 2>/dev/null || fail
+command -v run_bounded >/dev/null 2>&1 || fail
+T_FIND=${CLAUDE_GUARD_TIMEOUT_S:-2}
+T_JUDGE=${CLAUDE_GUARD_TIMEOUT_S:-6}
+
+# </dev/null: the payload belongs to the judge, and the lookup must not read it.
+run_bounded "$T_FIND" 4096 -- \
+  bash -c 'exec uv python find --no-project --managed-python --system 3.14 2>/dev/null' </dev/null
+[ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || fail
+PY=$RB_OUT
 [ -x "$PY" ] || fail
-OUT=$(printf '%s' "$_HOOK_INPUT_RAW" | PYTHONPATH="$SHARE" "$PY" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null) || fail
-[ -n "$OUT" ] && printf '%s\n' "$OUT"
+
+# The payload goes in through process substitution. A pipe would run run_bounded in a
+# subshell and lose RB_*, and a here-string appends a newline the payload never had.
+# stderr is dropped inside the child, because run_bounded merges it into the verdict.
+# shellcheck disable=SC2016  # $1/$2 belong to the inner bash
+run_bounded "$T_JUDGE" 65536 -- \
+  bash -c 'PYTHONPATH="$1" exec "$2" -S -P -m claude_guard.cli pre-tool-use 2>/dev/null' _ "$SHARE" "$PY" \
+  < <(printf '%s' "$_HOOK_INPUT_RAW")
+[ "$RB_STATUS" = ok ] && [ "$RB_EXIT" -eq 0 ] || fail
+[ -n "$RB_OUT" ] && printf '%s\n' "$RB_OUT"
 exit 0

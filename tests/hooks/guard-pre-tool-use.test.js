@@ -103,12 +103,14 @@ test('a missing hook-input.sh asks on the host and denies in the sandbox, like a
 });
 
 test('the payload reaches the Python side byte-for-byte, with no jq on PATH', needsPy, () => {
-  // Run with a PATH holding only cat and uv: a jq dependency creeping into the shim fails this
-  // outright rather than passing unnoticed.
+  // Run with a PATH holding only uv and what run-bounded.sh itself needs: a jq dependency
+  // creeping into the shim fails this outright rather than passing unnoticed.
   const home = echoPackage('ask');
   const bin = scratch(os.tmpdir(), 'guard-pre-tool-use-bin-');
   fs.symlinkSync(UV, path.join(bin, 'uv'));
-  fs.symlinkSync(spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim(), path.join(bin, 'cat'));
+  for (const tool of ['bash', 'cat', 'head', 'mktemp', 'rm', 'timeout', 'wc']) {
+    fs.symlinkSync(spawnSync('bash', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), path.join(bin, tool));
+  }
   const payload = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo "a\\b" \'c\' | wc -l' }, cwd: '/w' });
   const r = spawnSync('/bin/bash', [HOOK], {
     encoding: 'utf8',
@@ -117,6 +119,72 @@ test('the payload reaches the Python side byte-for-byte, with no jq on PATH', ne
   });
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, payload);
+});
+
+// Nothing the shim starts may run unbounded (#581, #660). A hung `uv python find` or judge
+// used to hold the hook until the harness killed it at 10s, and a killed PreToolUse hook is a
+// non-blocking error: the call ran with no deny check, and in the sandbox without the exit-2
+// deny. A stub `uv` on PATH hands back a stub interpreter, so no real uv or Python is needed.
+const STUB = scratch(os.tmpdir(), 'guard-pre-tool-use-stub-');
+const STUB_BIN = path.join(STUB, 'bin');
+const STUB_SHARE = path.join(STUB, 'share');
+const STUB_PY = path.join(STUB, 'python3.14');
+fs.mkdirSync(STUB_BIN);
+fs.mkdirSync(path.join(STUB_SHARE, 'claude_guard'), { recursive: true });
+fs.writeFileSync(path.join(STUB_SHARE, 'claude_guard', 'cli.py'), '');
+fs.writeFileSync(STUB_PY, `#!/bin/bash
+cat >/dev/null
+[ -n "\${STUB_PY_SLOW:-}" ] && sleep 30
+printf '%s\\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+`, { mode: 0o755 });
+fs.writeFileSync(path.join(STUB_BIN, 'uv'), `#!/bin/bash
+[ -n "\${STUB_UV_SLOW:-}" ] && sleep 30
+printf '%s\\n' ${JSON.stringify(STUB_PY)}
+`, { mode: 0o755 });
+
+function runStubbed(env) {
+  const started = Date.now();
+  const r = spawnSync('bash', [HOOK], {
+    encoding: 'utf8',
+    timeout: 20000,
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: '/w' }),
+    env: { ...process.env, PATH: `${STUB_BIN}:${process.env.PATH}`, CLAUDE_GUARD_HOME: STUB_SHARE, ...env },
+  });
+  return { ...r, seconds: (Date.now() - started) / 1000 };
+}
+
+test('the stub judge is heard when nothing hangs', () => {
+  // The control for the three below: the same fixture, unhung, reaches the stub's `allow`.
+  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(decisionOf(r.stdout), 'allow');
+});
+
+test('a hung uv python find asks within 10s on the host, at the default bound', () => {
+  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', STUB_UV_SLOW: '1' });
+  assert.ok(r.seconds < 10, `took ${r.seconds}s`);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(decisionOf(r.stdout), 'ask');
+});
+
+test('a hung uv python find denies with exit 2 when failing closed', () => {
+  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '1', STUB_UV_SLOW: '1' });
+  assert.ok(r.seconds < 10, `took ${r.seconds}s`);
+  assert.strictEqual(r.status, 2);
+  assert.strictEqual(decisionOf(r.stdout), 'deny');
+});
+
+test('a hung judge is cut off and asks', () => {
+  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', STUB_PY_SLOW: '1', CLAUDE_GUARD_TIMEOUT_S: '1' });
+  assert.ok(r.seconds < 8, `took ${r.seconds}s`);
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(decisionOf(r.stdout), 'ask');
+});
+
+test('a missing run-bounded.sh asks rather than running the judge unbounded', () => {
+  const r = runStubbed({ CLAUDE_GUARD_FAIL_CLOSED: '0', RUN_BOUNDED_LIB: path.join(STUB, 'no-such-lib.sh') });
+  assert.strictEqual(r.status, 0);
+  assert.strictEqual(decisionOf(r.stdout), 'ask');
 });
 
 test('the real package answers the git conventions through this shim (#619)', needsPy, () => {

@@ -103,7 +103,8 @@ every Bash call and is the sole decision for Bash PreToolUse on THIS HOST: it co
 `deny()`'s verdict and denies, upgrades, or stays silent. Its failure contract is the OPPOSITE
 of the PermissionRequest shim's: cannot run → it prints `ask` itself, without Python, the
 posture the bash took on a missing `jq`. An exception inside Python prints the same `ask` from
-`hook.py`. In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
+`hook.py`. A `uv python find` or a judge that hangs is cut off by `run_bounded` (2s and 6s,
+inside the hook's 10s) and takes the same `ask` (#660). In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
 2, because `--dangerously-skip-permissions` skips an ask (see the shim's header).
 
 When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
