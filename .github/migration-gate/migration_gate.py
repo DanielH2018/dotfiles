@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""migration_gate.py -- fail a diff that adds a migration with no down step.
+
+rules/sql.md asks that every migration be reversible. The Stop-hook check in
+stop-checks.py (`migration`) sees only the files one Claude session wrote, and it
+cannot stop a merge. This is the merge-time half: the reusable workflow
+.github/workflows/migration-gate.yml runs it in a project repo's CI against the PR
+diff. That workflow carries a byte-identical copy of this file, rendered by
+embed.js, so a caller that pins the workflow to a commit pins this code too.
+
+Which files it judges
+---------------------
+Files the diff ADDS (`git diff --diff-filter=A <base>...<head>`) whose path matches
+one of the --path globs. The globs are git `:(glob)` pathspecs, so
+`**/migrations/**` also matches a top-level `migrations/`. The defaults are the
+three directories rules/sql.md names: `**/migrations/**`, `**/migration/**` and
+`**/db/migrate/**`. File contents and siblings are read from the head commit, not
+the working tree, so a `.down.sql` that existed before the diff counts.
+
+What counts as a down step, per shape
+-------------------------------------
+- `X.up.sql` (golang-migrate and similar): a sibling `X.down.sql` in the head tree.
+- `V<ver>__<desc>.sql` (Flyway): a sibling `U<ver>__<desc>.sql` undo file, or one
+  of the single-file sections below.
+- Any other `.sql`: a down section with at least one statement in it. The section
+  headers are `-- migrate:down` (dbmate), `-- +goose Down` (goose) and
+  `-- +migrate Down` (sql-migrate). A header followed only by blank lines and
+  comments is not a down step: that is the empty template dbmate generates.
+- `.down.sql` and Flyway `U<ver>__*.sql` files are down steps themselves and pass.
+- `.py` (Alembic): a module-level `def downgrade(` whose body does something. A
+  body of only `pass`, `...`, a docstring or a `raise` is not a down step.
+- `.rb` (Rails): `def change`, or a `def down` whose body is not empty and is not
+  only `raise ActiveRecord::IrreversibleMigration`.
+- `.js`/`.mjs`/`.cjs`/`.ts` (knex, Sequelize, TypeORM, node-pg-migrate): a `down`
+  export or method: `exports.down =`, `export [async] function down`,
+  `export const down`, `[public] [async] down(`, or a `down:` object key.
+
+Out of scope
+------------
+- Django migrations (a module importing `migrations` from `django.db`). Django
+  reverses its own schema operations. Whether a RunPython or RunSQL step passes its
+  reverse argument is not checked. They pass, and the report says so.
+- Any other file type (Go, `.json`, `.md`, Python `__init__.py`). They pass, and
+  the report lists them as not judged.
+- Whether a down step actually undoes its up step, an irreversible operation inside
+  a Rails `change`, and a JavaScript `down` with an empty body. Those are for
+  migration-reviewer.
+- Migrations the diff modifies or renames rather than adds.
+
+Irreversible on purpose
+-----------------------
+A migration that cannot be reversed passes when it carries this line, in a `--`,
+`#` or `//` comment, with a non-empty reason after the second colon:
+
+    -- migration-gate: irreversible: drops legacy_orders after the 2026-09 export
+
+For an `.up.sql`, the marker goes in the `.up.sql` itself. A marker with no reason,
+or spelled without the second colon, is a violation of its own, so the exemption
+cannot be taken silently.
+
+Usage
+-----
+    migration_gate.py --base <rev> [--head <rev>] [--path <glob>]...
+
+Exit status: 0 no violations, 1 one or more violations, 2 usage or git error.
+Kept compatible with Python 3.9, because it runs on the runner's own python3.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import os
+import re
+import subprocess
+import sys
+
+DEFAULT_PATHS = ("**/migrations/**", "**/migration/**", "**/db/migrate/**")
+
+MARKER = re.compile(
+    r"^[ \t]*(?:--|#|//)[ \t]*migration-gate:[ \t]*irreversible:(.*)$", re.MULTILINE
+)
+# Any other spelling of the marker, so a typo is reported instead of ignored.
+LOOSE_MARKER = re.compile(r"migration-gate:\s*irreversible\b", re.IGNORECASE)
+
+_DOWN = r"migrate:down|\+goose[ \t]+Down|\+migrate[ \t]+Down"
+_UP = r"migrate:up|\+goose[ \t]+Up|\+migrate[ \t]+Up"
+SQL_DOWN_HEADER = re.compile(rf"^[ \t]*--[ \t]*(?:{_DOWN})\b", re.IGNORECASE)
+SQL_ANY_HEADER = re.compile(rf"^[ \t]*--[ \t]*(?:{_DOWN}|{_UP})\b", re.IGNORECASE)
+FLYWAY_VERSIONED = re.compile(r"^V([^_]+)__(.+\.sql)$")
+FLYWAY_UNDO = re.compile(r"^U[^_]+__.+\.sql$")
+
+RB_DOWN = re.compile(
+    r"^[ \t]*def[ \t]+down\b[^\n]*\n(?:[ \t]*\n)*([^\n]*)", re.MULTILINE
+)
+RB_CHANGE = re.compile(r"^[ \t]*def[ \t]+change\b", re.MULTILINE)
+RB_IRREVERSIBLE = re.compile(r"^\s*raise\s+(?:::)?ActiveRecord::IrreversibleMigration")
+
+JS_DOWN = re.compile(
+    r"exports\.down\s*="
+    r"|export\s+(?:async\s+)?function\s+down\b"
+    r"|export\s+const\s+down\b"
+    r"|^[ \t]*(?:public[ \t]+)?(?:async[ \t]+)?down[ \t]*\("
+    r"|^[ \t]*[\"']?down[\"']?[ \t]*:",
+    re.MULTILINE,
+)
+JS_SUFFIXES = (".js", ".mjs", ".cjs", ".ts")
+
+DJANGO = re.compile(
+    r"^\s*from\s+django\.db\s+import\s+[^\n]*\bmigrations\b", re.MULTILINE
+)
+
+
+class GitError(Exception):
+    pass
+
+
+def git(*args: str) -> bytes:
+    proc = subprocess.run(["git", *args], capture_output=True)
+    if proc.returncode != 0:
+        err = proc.stderr.decode(errors="replace").strip()
+        raise GitError(f"git {' '.join(args)} failed: {err}")
+    return proc.stdout
+
+
+def added_files(base: str, head: str, globs: list[str]) -> list[str]:
+    pathspecs = [":(glob)" + g for g in globs]
+    out = git(
+        "diff", "--name-only", "--no-renames", "--diff-filter=A", "-z",
+        f"{base}...{head}", "--", *pathspecs,
+    )  # fmt: skip
+    return sorted(p for p in out.decode().split("\0") if p)
+
+
+def exists_at(head: str, path: str) -> bool:
+    proc = subprocess.run(
+        ["git", "cat-file", "-e", f"{head}:{path}"], capture_output=True
+    )
+    return proc.returncode == 0
+
+
+def read_at(head: str, path: str) -> str:
+    return git("show", f"{head}:{path}").decode("utf-8", errors="replace")
+
+
+# ----------------------------------------------------------------- per-shape rules
+# Each returns (verdict, detail). The verdict is "down" when a down step was found,
+# "missing" when it was not, and "skip" when the shape is out of scope.
+
+
+def sql_has_down_section(text: str) -> bool:
+    in_down = False
+    for line in text.splitlines():
+        if SQL_ANY_HEADER.match(line):
+            in_down = bool(SQL_DOWN_HEADER.match(line))
+            continue
+        stripped = line.strip()
+        if in_down and stripped and not stripped.startswith("--"):
+            return True
+    return False
+
+
+def judge_sql(head: str, path: str, text: str) -> tuple[str, str]:
+    directory, name = os.path.split(path)
+    if name.endswith(".down.sql") or FLYWAY_UNDO.match(name):
+        return "down", "is itself a down migration"
+    if name.endswith(".up.sql"):
+        sibling = os.path.join(directory, name[: -len(".up.sql")] + ".down.sql")
+        if exists_at(head, sibling):
+            return "down", f"paired with {sibling}"
+        return "missing", f"no sibling {sibling}"
+    flyway = FLYWAY_VERSIONED.match(name)
+    undo = ""
+    if flyway:
+        undo = os.path.join(directory, f"U{flyway.group(1)}__{flyway.group(2)}")
+        if exists_at(head, undo):
+            return "down", f"paired with {undo}"
+    if sql_has_down_section(text):
+        return "down", "has a down section with a statement in it"
+    if flyway:
+        return "missing", f"no Flyway undo file {undo} and no down section"
+    return "missing", (
+        "no `-- migrate:down`, `-- +goose Down` or `-- +migrate Down` section "
+        "with a statement in it"
+    )
+
+
+def _is_trivial_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, (ast.Pass, ast.Raise)):
+        return True
+    if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant)):
+        return False
+    return isinstance(stmt.value.value, str) or stmt.value.value is Ellipsis
+
+
+def judge_py(path: str, text: str) -> tuple[str, str]:
+    if os.path.basename(path) == "__init__.py":
+        return "skip", "package marker, not a migration"
+    if DJANGO.search(text):
+        return "skip", "Django migration; Django reverses its own operations"
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return "missing", f"does not parse as Python ({exc.msg}, line {exc.lineno})"
+    for node in tree.body:
+        is_def = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if is_def and node.name == "downgrade":
+            if all(_is_trivial_stmt(s) for s in node.body):
+                return "missing", "downgrade() only passes, raises or has a docstring"
+            return "down", "has a downgrade() with a body"
+    return "missing", "no module-level downgrade() function"
+
+
+def judge_rb(text: str) -> tuple[str, str]:
+    if RB_CHANGE.search(text):
+        return "down", "has def change (Rails reverses it)"
+    downs = list(RB_DOWN.finditer(text))
+    for m in downs:
+        first = m.group(1)
+        if first.strip() != "end" and not RB_IRREVERSIBLE.match(first):
+            return "down", "has def down"
+    if downs:
+        return "missing", (
+            "def down is empty or only raises ActiveRecord::IrreversibleMigration"
+        )
+    return "missing", "no def down and no def change"
+
+
+def judge_js(text: str) -> tuple[str, str]:
+    if JS_DOWN.search(text):
+        return "down", "has a down export or method"
+    return "missing", "no down export or method"
+
+
+def judge(head: str, path: str) -> tuple[str, str]:
+    text = read_at(head, path)
+    marker = MARKER.search(text)
+    if marker:
+        reason = marker.group(1).strip()
+        if reason:
+            return "marked", f"marked irreversible: {reason}"
+        return "missing", "the `migration-gate: irreversible:` marker gives no reason"
+    if LOOSE_MARKER.search(text):
+        return "missing", (
+            "the irreversible marker is misspelled; the form is "
+            "`migration-gate: irreversible: <reason>`"
+        )
+    lower = path.lower()
+    if lower.endswith(".sql"):
+        return judge_sql(head, path, text)
+    if lower.endswith(".py"):
+        return judge_py(path, text)
+    if lower.endswith(".rb"):
+        return judge_rb(text)
+    if lower.endswith(JS_SUFFIXES):
+        return judge_js(text)
+    return "skip", "no rule for this file type"
+
+
+LABELS = {"down": "ok", "marked": "ok", "skip": "not judged", "missing": "FAIL"}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--base", required=True, help="where the diff starts")
+    parser.add_argument("--head", default="HEAD", help="where it ends (HEAD)")
+    parser.add_argument(
+        "--path",
+        action="append",
+        dest="paths",
+        metavar="GLOB",
+        help="a migration path glob, repeatable (default: {})".format(
+            ", ".join(DEFAULT_PATHS)
+        ),
+    )
+    args = parser.parse_args(argv)
+    globs = [g.strip() for g in (args.paths or DEFAULT_PATHS) if g.strip()]
+    if not args.base.strip():
+        print("migration-gate: --base is empty, so there is no diff", file=sys.stderr)
+        return 2
+    annotate = os.environ.get("GITHUB_ACTIONS") == "true"
+
+    try:
+        files = added_files(args.base, args.head, globs)
+        print(
+            f"migration-gate: {len(files)} added file(s) matching "
+            f"{', '.join(globs)} in {args.base}...{args.head}"
+        )
+        violations = 0
+        for path in files:
+            verdict, detail = judge(args.head, path)
+            print(f"  {LABELS[verdict]:<10} {path}: {detail}")
+            if verdict == "missing":
+                violations += 1
+                if annotate:
+                    print(f"::error file={path}::migration has no down step: {detail}")
+    except GitError as exc:
+        print(f"migration-gate: {exc}", file=sys.stderr)
+        return 2
+
+    if violations:
+        print(
+            f"migration-gate: {violations} migration(s) with no down step. "
+            "rules/sql.md asks that every migration be reversible. Add the down "
+            "step, or, if the migration is irreversible on purpose, add the line "
+            "`-- migration-gate: irreversible: <reason>`."
+        )
+        return 1
+    print("migration-gate: passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
