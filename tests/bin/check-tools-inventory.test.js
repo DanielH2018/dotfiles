@@ -27,9 +27,10 @@ function fixture() {
   const tool = real.tools.find((t) => (t.source || '').startsWith('dot_local/bin/executable_'));
   const source = path.join(root, 'home');
   fs.mkdirSync(path.join(source, 'dot_local', 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(source, tool.source), '#!/bin/sh\n# curated\n');
+  fs.writeFileSync(path.join(source, 'dot_local', 'bin', 'executable_curated'), '#!/bin/sh\n# curated\n');
+  const curated = { ...tool, source: 'dot_local/bin/executable_curated', alsoCovers: [] };
   const data = path.join(root, 'tools.json');
-  fs.writeFileSync(data, JSON.stringify({ ...real, tools: [tool], excluded: { paths: [] } }));
+  fs.writeFileSync(data, JSON.stringify({ ...real, tools: [curated], excluded: { paths: [] } }));
   const home = path.join(root, 'fake-home');
   fs.mkdirSync(home);
   return { source, data, home };
