@@ -50,7 +50,7 @@ const managers = config.customManagers;
 const read = (f) => fs.readFileSync(repoPath(f), 'utf8');
 
 test('every custom manager finds at least one file and one pin', () => {
-  assert.ok(managers.length >= 4, `expected the four annotated files' managers, found ${managers.length}`);
+  assert.ok(managers.length >= 5, `expected the five annotated files' managers, found ${managers.length}`);
   for (const mgr of managers) {
     const files = tracked.filter((f) => mgr.managerFilePatterns.some((p) => filePattern(p).test(f)));
     assert.ok(files.length > 0, `no tracked file matches ${mgr.managerFilePatterns}`);
@@ -70,7 +70,8 @@ test('every # renovate: annotation in the tree is consumed by a manager', () => 
   // Non-vacuity: name the files the census must find, so a moved file fails by name.
   for (const f of ['home/.chezmoidata/tools.toml', 'home/.chezmoidata/packages.toml',
     'home/private_dot_claude/sandbox/Dockerfile.base',
-    'home/private_dot_claude/sandbox/executable_sandbox-image.sh']) {
+    'home/private_dot_claude/sandbox/executable_sandbox-image.sh',
+    'home/.chezmoiscripts/os-linux/run_onchange_after_install-tmux.sh.tmpl']) {
     assert.ok(annotated.includes(f), `the census no longer finds ${f}`);
   }
   const missed = annotated.flatMap((f) => unconsumed(managers, f, read(f)));
@@ -90,6 +91,7 @@ test('the managers extract the pin value, not a neighbouring string', () => {
     'Genymobile/scrcpy': /^v\d/,
     '@anthropic-ai/claude-code': /^\d+\.\d+\.\d+$/,
     'rust-lang/rust': /^\d+\.\d+\.\d+$/,
+    'tmux/tmux': /^\d+\.\d+[a-z]?$/,
   };
   for (const [name, shape] of Object.entries(want)) {
     const dep = deps.find((d) => d.depName === name);
@@ -121,10 +123,15 @@ test('the pre-commit manager is switched on', () => {
 // .pre-commit-config.yaml pins gitleaks to the rev the homelab repo's prek.toml runs, so the two
 // repos scan with the same rules. Each repo's Renovate bumps its own copy, on its own schedule.
 //
-// The oracle is the homelab checkout itself, read where one exists, and the test skips where
-// none does (CI has no checkout of that repo). A committed copy of the homelab's rev would be an
-// oracle this repo supplies about itself: Renovate bumps it along with the pin, and the test
-// would then pass with the two repos apart.
+// The oracle is the homelab repo's own prek.toml: a local checkout where one exists, and
+// otherwise that repo's master copy fetched from GitHub (the repo is public). CI has no checkout,
+// so without the fetch this test skipped there on every run. A committed copy of the homelab's
+// rev would be an oracle this repo supplies about itself: Renovate bumps it along with the pin,
+// and the test would then pass with the two repos apart.
+//
+// Only a transport failure or a 5xx skips, which is the offline case. A 404 fails: the file
+// moving or the repo going private is exactly the change this test has to report.
+const HOMELAB_PREK_URL = 'https://raw.githubusercontent.com/DanielH2018/server/master/prek.toml';
 const HOMELAB_CANDIDATES = [
   process.env.HOMELAB_REPO,
   path.join(os.homedir(), 'server'),
@@ -168,14 +175,40 @@ test('the lockstep check accepts equal revs and reports different ones', () => {
   assert.match(lockstepProblem(ours, 'rev = "v8.30.1"\n'), /no longer pins gitleaks/);
 });
 
-const homelab = HOMELAB_CANDIDATES.find((d) => fs.existsSync(path.join(d, 'prek.toml')));
-test('the gitleaks rev matches the homelab repo',
-  { skip: homelab ? false : `no homelab checkout with a prek.toml at ${HOMELAB_CANDIDATES.join(', ')}` },
-  () => {
-    const problem = lockstepProblem(read('.pre-commit-config.yaml'),
-      fs.readFileSync(path.join(homelab, 'prek.toml'), 'utf8'));
-    assert.strictEqual(problem, null, `${problem} (${homelab}); bump the one that is behind`);
-  });
+// The homelab prek.toml as { text, from }, or { skip } with the reason it could not be reached.
+async function homelabPrek(candidates, fetchImpl) {
+  const dir = candidates.find((d) => fs.existsSync(path.join(d, 'prek.toml')));
+  if (dir) return { text: fs.readFileSync(path.join(dir, 'prek.toml'), 'utf8'), from: dir };
+  const offline = `no homelab checkout at ${candidates.join(', ')}, and ${HOMELAB_PREK_URL}`;
+  let res;
+  try {
+    res = await fetchImpl(HOMELAB_PREK_URL, { signal: AbortSignal.timeout(15000) });
+  } catch (err) {
+    return { skip: `${offline} is unreachable (${err.cause?.code ?? err.name})` };
+  }
+  if (res.status >= 500) return { skip: `${offline} answered ${res.status}` };
+  if (res.status !== 200) {
+    throw new Error(`${HOMELAB_PREK_URL} answered ${res.status}: the homelab prek.toml moved, or the repo is no longer public`);
+  }
+  return { text: await res.text(), from: HOMELAB_PREK_URL };
+}
+
+test('the homelab prek.toml source skips only when offline', async () => {
+  const none = [path.join(os.tmpdir(), 'no-homelab-here')];
+  const answer = (status) => async () => ({ status, text: async () => 'body' });
+  assert.deepStrictEqual(await homelabPrek(none, answer(200)), { text: 'body', from: HOMELAB_PREK_URL });
+  assert.match((await homelabPrek(none, answer(503))).skip, /answered 503/);
+  const refused = async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNREFUSED' } }); };
+  assert.match((await homelabPrek(none, refused)).skip, /unreachable \(ECONNREFUSED\)/);
+  await assert.rejects(homelabPrek(none, answer(404)), /answered 404/);
+});
+
+test('the gitleaks rev matches the homelab repo', async (t) => {
+  const src = await homelabPrek(HOMELAB_CANDIDATES, fetch);
+  if (src.skip) return t.skip(src.skip);
+  const problem = lockstepProblem(read('.pre-commit-config.yaml'), src.text);
+  assert.strictEqual(problem, null, `${problem} (${src.from}); bump the one that is behind`);
+});
 
 // --- The sandbox base image ------------------------------------------------------------------
 //

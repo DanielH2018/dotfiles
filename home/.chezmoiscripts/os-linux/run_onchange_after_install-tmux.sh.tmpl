@@ -12,6 +12,9 @@
 # placement means that does NOT block dotfile deployment.
 set -u
 
+# Renovate bumps this pin (renovate.json, the install-tmux manager). The release tarball has no
+# checksum here, so a bump is the whole change.
+# renovate: datasource=github-releases depName=tmux/tmux
 TMUX_VERSION=3.7b
 BIN_DIR="$HOME/.local/bin"
 PREFIX="$HOME/.local"

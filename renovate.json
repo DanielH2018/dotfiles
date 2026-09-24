@@ -73,6 +73,17 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n[A-Z_]+=\"(?<currentValue>[^\"\\n]+)\"\\n"
       ]
+    },
+    {
+      "description": "install-tmux: the tmux release the Linux machines build from source, an unquoted shell assignment (`TMUX_VERSION=3.7b`). tmux tags its bugfix releases with a letter suffix, which semver and loose versioning order wrongly: loose ranks 3.8a below 3.8, so the bump to a letter release is never offered. deb versioning ranks 3.7 < 3.7a < 3.7b < 3.8 < 3.8a. It also ranks `3.8-rc2` as a stable version above 3.8, so allowedVersions admits only the release shape. GitHub marks the rc releases as prereleases as well.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^home/\\.chezmoiscripts/os-linux/run_onchange_after_install-tmux\\.sh\\.tmpl$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nTMUX_VERSION=(?<currentValue>\\S+)\\n"
+      ],
+      "versioningTemplate": "deb"
     }
   ],
   "packageRules": [
@@ -103,12 +114,22 @@
       "groupName": "ruff"
     },
     {
-      "description": "The gitleaks rev is kept equal to the homelab repo's prek.toml, so both repos scan with the same rules. That repo's Renovate bumps its copy independently; tests/renovate-config.test.js compares the two wherever a homelab checkout exists. The group name tells whoever reviews this PR that the other repo moves too. minimumReleaseAge matches the homelab rule that automerges this bump (its catch-all custom.regex rule: minor and patch, 7 days). This PR therefore opens on the day the homelab one merges, not a week earlier, when landing it would fail the lockstep test on every host that has the homelab checkout.",
+      "description": "The gitleaks rev is kept equal to the homelab repo's prek.toml, so both repos scan with the same rules. That repo's Renovate bumps its copy independently; tests/renovate-config.test.js compares the two against a homelab checkout, or against that repo's master prek.toml fetched from GitHub where no checkout exists (CI). The group name tells whoever reviews this PR that the other repo moves too. minimumReleaseAge matches the homelab rule that automerges this bump (its catch-all custom.regex rule: minor and patch, 7 days). This PR therefore opens on the day the homelab one merges, not a week earlier, when landing it would fail the lockstep test. The schedule is the homelab repo's daily `before 6am`, not this repo's weekly one. Between the homelab merge and this PR landing the lockstep test fails the gate of every PR here, and a weekly schedule would stretch that window to up to a week.",
       "matchPackageNames": [
         "gitleaks/gitleaks"
       ],
       "groupName": "gitleaks (lockstep — the homelab repo's prek.toml must match)",
-      "minimumReleaseAge": "7 days"
+      "minimumReleaseAge": "7 days",
+      "schedule": [
+        "before 6am"
+      ]
+    },
+    {
+      "description": "tmux publishes release candidates as `3.8-rc2`, which the install-tmux manager's deb versioning ranks as a stable version. Only the release shape, digits plus an optional letter, is offered.",
+      "matchPackageNames": [
+        "tmux/tmux"
+      ],
+      "allowedVersions": "/^\\d+\\.\\d+[a-z]?$/"
     }
   ]
 }
