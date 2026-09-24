@@ -35,17 +35,18 @@ echo "shim reinstalled"
   return root;
 }
 
-function runHook(cwd, { trusted, source = 'startup', pending } = {}) {
-  const env = { ...process.env, HOME: fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')) };
+function runHook(cwd, { trusted, source = 'startup', pending, extraEnv = {} } = {}) {
+  const env = { ...process.env, HOME: fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')), ...extraEnv };
   if (trusted !== undefined) env.CLAUDE_SHIM_TRUSTED_ROOTS = trusted;
   else delete env.CLAUDE_SHIM_TRUSTED_ROOTS;
   // Unset it points at $HOME, which fs.realpathSync(scratch(os.tmpdir(), 'sesctx-')) has already redirected, so the default is
   // hermetic either way; the tests that care name their own file.
   if (pending !== undefined) env.CLAUDE_TRANSCRIPT_LEAK_PENDING = pending;
+  const started = Date.now();
   const r = spawnSync('bash', [HOOK], {
-    cwd, env, input: JSON.stringify({ source }), encoding: 'utf8',
+    cwd, env, input: JSON.stringify({ source }), encoding: 'utf8', timeout: 20000,
   });
-  return { out: r.stdout || '', code: r.status };
+  return { out: r.stdout || '', code: r.status, seconds: (Date.now() - started) / 1000 };
 }
 
 test('does not run bin/install-hook-shim from an untrusted repo', { skip }, () => {
@@ -98,6 +99,44 @@ test('injects branch and recent commits for a normal repo', { skip }, () => {
   assert.match(out, /Branch: main/);
   assert.match(out, /Recent commits:/);
   assert.match(out, /init/, 'the commit subject shows up');
+});
+
+// `git status --porcelain` walks the whole working tree, so it is the one git call here whose
+// cost grows with the repo, and it runs bounded (#661). One that does not finish is named,
+// because silence reads as a clean tree. A PATH-stub git hangs on `status` only and hands
+// every other verb to the real git.
+function hungStatusGit() {
+  const bin = fs.realpathSync(scratch(os.tmpdir(), 'sesctx-bin-'));
+  const realGit = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/bash
+[ "$1" = status ] && sleep 30
+exec ${JSON.stringify(realGit)} "$@"
+`, { mode: 0o755 });
+  return { PATH: `${bin}:${process.env.PATH}` };
+}
+
+test('uncommitted changes are listed', { skip }, () => {
+  const root = repoWithShim();
+  fs.writeFileSync(path.join(root, 'README'), 'changed\n');
+  const { out } = runHook(root, { trusted: '/nonexistent' });
+  assert.match(out, /Uncommitted changes:\n M README/);
+});
+
+test('a hung git status is cut off inside the 5s hook timeout and named', { skip }, () => {
+  const root = repoWithShim();
+  const { out, code, seconds } = runHook(root, { trusted: '/nonexistent', extraEnv: hungStatusGit() });
+  assert.ok(seconds < 5, `took ${seconds}s`);
+  assert.strictEqual(code, 0);
+  assert.match(out, /Uncommitted changes: not checked \(`git status` did not finish within 2s \(timeout\)\)/);
+  assert.match(out, /Recent commits:/, 'the rest of the context is still injected');
+});
+
+test('a missing run-bounded.sh names the unchecked tree rather than running status unbounded', { skip }, () => {
+  const root = repoWithShim();
+  const { out } = runHook(root, {
+    trusted: '/nonexistent', extraEnv: { RUN_BOUNDED_LIB: '/nonexistent/run-bounded.sh' },
+  });
+  assert.match(out, /Uncommitted changes: not checked \(cannot load \/nonexistent\/run-bounded\.sh\)/);
 });
 
 test('stays silent on a resumed session', { skip }, () => {

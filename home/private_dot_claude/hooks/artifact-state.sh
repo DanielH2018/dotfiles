@@ -15,6 +15,12 @@
 # The worktree is the unit of one session's work, so that is the unit the pending
 # list is scoped to.
 
+# DECIDED: the git calls in this library run without run_bounded (#661). They read local
+# refs only (rev-parse, symbolic-ref; no fetch, no network) and never walk the working
+# tree. A bound would add a tempfile and a timeout(1) fork to each for a hang no one has
+# seen, in the three artifact hooks that source this file. Those hooks are recorders whose
+# failure costs a missed nudge, not guards.
+
 # shellcheck disable=SC2034  # read by the hooks that source this
 ARTIFACT_STATE_DIR="${CLAUDE_ARTIFACT_STATE_DIR:-$HOME/.claude/logs/artifact-state}"
 

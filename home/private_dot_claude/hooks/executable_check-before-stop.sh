@@ -19,6 +19,15 @@ hook_read_input
 ACTIVE=$(hook_field '.stop_hook_active // false')
 [ "$ACTIVE" = "true" ] && exit 0
 
+# DECIDED: the git calls in this hook run without run_bounded (#661). Most are local ref
+# reads (rev-parse, remote get-url; no fetch, no network). Three walk the index or working
+# tree: `git diff --name-only`, `git ls-files --others` and, during a merge, `git diff
+# --diff-filter=U`. They measured 6ms, 10ms and 3ms (for `--cached`) on the server repo's
+# 2,358 files. A bound would not change what a hang does here. A Stop hook the harness kills
+# at 10s lets the stop proceed, and so would a bound that timed out, because blocking a stop
+# on a check that could not run forces an extra turn for nothing the session can fix. Only
+# a block reaches the model, so a bound could not name the unchecked tree either.
+#
 # Only care about git repos.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 

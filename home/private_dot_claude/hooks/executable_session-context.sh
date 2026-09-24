@@ -67,6 +67,14 @@ if [ -s "$PENDING" ]; then
   }
 fi
 
+# DECIDED: the git calls in this hook run without run_bounded, except `git status` below
+# (#661). They are local plumbing (rev-parse, log and rev-list over refs, stash list; no
+# fetch, no network), and they read refs and a few objects rather than the working tree.
+# A bound would add a tempfile and a timeout(1) fork to each for a hang no one has seen.
+# `git status --porcelain` is different: it walks the whole working tree, so its cost grows
+# with the repo, and it is bounded. The merge-conflict `git diff --diff-filter=U` also reads
+# the index against the tree, but it runs only while a merge is in progress.
+#
 # Only bother if we're in a git repo.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
@@ -116,8 +124,37 @@ if [ -n "$UPSTREAM" ]; then
 fi
 
 # Uncommitted changes, if any.
-DIRTY=$(git status --porcelain 2>/dev/null | head -20)
-if [ -n "$DIRTY" ]; then
+#
+# Bounded (#581, #661), because status walks the working tree. Measured at 13-15ms warm and
+# 152ms cold on the server repo (2,358 tracked files), so 2s leaves wide headroom inside this
+# hook's 5s timeout. SESSION_CONTEXT_TIMEOUT_S sets it, for the tests. A status that did not
+# finish, failed, or cannot run bounded is named: silence here reads as a clean tree. A
+# byte-capped status is fine, since only its first 20 lines are shown.
+DIRTY=''
+T_STATUS=${SESSION_CONTEXT_TIMEOUT_S:-2}
+RUN_BOUNDED_PATH="${RUN_BOUNDED_LIB:-${BASH_SOURCE[0]%/*}/run-bounded.sh}"
+# shellcheck source=/dev/null
+if ! . "$RUN_BOUNDED_PATH" 2>/dev/null || ! command -v run_bounded >/dev/null 2>&1; then
+  UNCHECKED="cannot load $RUN_BOUNDED_PATH"
+else
+  UNCHECKED=''
+  run_bounded "$T_STATUS" 65536 -- bash -c 'exec git status --porcelain 2>/dev/null' </dev/null
+  # shellcheck disable=SC2153  # RB_STATUS is run_bounded's out-param
+  case "$RB_STATUS" in
+    ok | truncated)
+      if [ "$RB_EXIT" -eq 0 ]; then
+        DIRTY=$(printf '%s\n' "$RB_OUT" | head -20)
+      else
+        UNCHECKED="\`git status\` failed (exit $RB_EXIT)"
+      fi
+      ;;
+    *) UNCHECKED="\`git status\` did not finish within ${T_STATUS}s ($RB_STATUS)" ;;
+  esac
+fi
+if [ -n "$UNCHECKED" ]; then
+  echo ""
+  echo "Uncommitted changes: not checked ($UNCHECKED)"
+elif [ -n "$DIRTY" ]; then
   echo ""
   echo "Uncommitted changes:"
   echo "$DIRTY"

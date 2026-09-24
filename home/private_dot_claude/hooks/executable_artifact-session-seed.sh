@@ -46,6 +46,10 @@ session=$(hook_field '.session_id // empty')
 # shellcheck source=/dev/null
 . "${ARTIFACT_STATE_LIB:-${BASH_SOURCE[0]%/*}/artifact-state.sh}"
 
+# DECIDED: the git calls here run without run_bounded (#661). They are local plumbing
+# (rev-parse; no fetch, no network) that never walks the working tree. A bound would add a
+# tempfile and a timeout(1) fork to each for a hang no one has seen, and this hook is a
+# recorder whose failure costs a missed nudge, not a guard.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 wt=$(artifact_worktree_slug) || exit 0
 sesskey=$(artifact_session_key "$wt" "$session") || exit 0

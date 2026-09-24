@@ -60,6 +60,12 @@ while [ ! -d "$DIR" ] && [ "$DIR" != "/" ] && [ "$DIR" != "." ]; do
 done
 [ -d "$DIR" ] || exit 0
 
+# DECIDED: the git calls below run without run_bounded (#661). They are rev-parse lookups
+# only (--is-inside-work-tree, --show-toplevel, --git-common-dir; no fetch, no network),
+# which read .git and never walk the working tree, and they run only in a background job
+# editing outside .claude/worktrees/. A bound would add a tempfile and a timeout(1) fork to
+# each for a hang no one has seen. A hang would end in the harness's 10s kill, which is a
+# missed deny, the failure direction the header above already accepts for this guard.
 INSIDE=$(git -C "$DIR" rev-parse --is-inside-work-tree 2>/dev/null) || exit 0
 [ "$INSIDE" = "true" ] || exit 0
 
