@@ -296,9 +296,16 @@
        warning before silently falling back to claude-opus-5 anyway. Naming the model
        we actually get drops the warning and keeps the 1M window. Do not reintroduce
        the suffix on a pre-2.1.220 client without re-checking the model table — there
-       claude-opus-5 was absent and fell through to the 200000 default. */}}
-  "model": "claude-opus-5",
-  {{/* effortLevel is deliberately absent: an absent key (equivalently `/effort auto` or
+       claude-opus-5 was absent and fell through to the 200000 default.
+       The default moved to claude-opus-5-5 on 2026-09-24, at the operator's request, and
+       the same no-suffix rule applies to it. */}}
+  "model": "claude-opus-5-5",
+  {{/* Pinned to `medium` on 2026-09-24, at the operator's request, which is also the Opus
+       5.5 API default (see the guide note below). The pin applies to every turn, and the
+       template wins over a runtime `/effort` on the next apply (claude-settings-merge
+       RUNTIME_OWNED_KEYS). Remove the key to go back to unpinned. The history of the
+       unpinned default follows.
+       effortLevel was deliberately absent: an absent key (equivalently `/effort auto` or
        CLAUDE_CODE_EFFORT_LEVEL=auto) leaves effort UNPINNED, so the model sizes its own
        reasoning per turn. A pin here overrides that for every turn, cheap ones included.
        Per-turn escalation stays available without touching settings: `ultrathink` in a
@@ -321,6 +328,7 @@
        change out of them. The guide also says lowering the effort level reduces thinking
        more reliably than a prompt instruction does, which is the argument for pinning here
        over asking in prose if you ever want less. */}}
+  "effortLevel": "medium",
   {{/* An ARRAY of model names, not a string. A1-36 called this backwards and the string it
        introduced broke far more than the fallback: Claude Code 2.1.220 validates this key as
        an array, and on a type mismatch it discards the WHOLE settings.json, so statusLine,
@@ -350,8 +358,9 @@
        comes up on Default, check `/config` before assuming the style file is at fault. */}}
   "outputStyle": "daniel-voice",
   {{/* availableModels governs the main session AND subagents/skills/judge, so this list
-       is the UNION of every model the setup actually requests: claude-opus-5 (main,
-       native 1M), "opus" alias (eval judge +
+       is the UNION of every model the setup actually requests: claude-opus-5-5 (main,
+       and first so enforceAvailableModels snaps to it), claude-opus-5 (the previous
+       main, kept for `/model`), "opus" alias (eval judge +
        planner/migration-reviewer/root-cause/deep-review agents), "sonnet"
        (implementer/ops-investigator/network-navigator agents), claude-sonnet-5
        (fallbackModel), "haiku" (Claude Code's internal/auxiliary calls, e.g. the eval
@@ -365,6 +374,7 @@
        SOAK on host: watch a full eval run + a
        subagent invocation before trusting it. */}}
   "availableModels": [
+    "claude-opus-5-5",
     "claude-opus-5",
     "opus",
     "sonnet",
