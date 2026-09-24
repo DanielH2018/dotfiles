@@ -100,3 +100,36 @@ test('a lock with no pid is busy while fresh and stale after a minute', { skip }
   assert.ok(r.ran);
   assert.match(r.out, /removed a stale lock with no holder recorded/);
 });
+
+// The start time the library itself records for a pid, so the "matching" case is matched
+// by the same code that compares it rather than by a copy of its formatting.
+function startOf(pid) {
+  const r = spawnSync('bash', ['-c', `. ${JSON.stringify(LIB)}; _repo_lock_started ${pid}`],
+    { encoding: 'utf8' });
+  return r.stdout.trim();
+}
+
+// #610: a holder's pid handed to an unrelated process kept a stale lock looking live for
+// the whole REPO_LOCK_WAIT_S. The pair: the same live pid is waited on while its recorded
+// start time matches, and reclaimed once it does not.
+test('a live pid is a live holder only while its start time matches', { skip }, (t) => {
+  const start = startOf(process.pid);
+  assert.ok(start, 'setup: ps reported no start time for this process');
+
+  const same = lockPath(t);
+  fs.mkdirSync(`${same}.d`);
+  fs.writeFileSync(`${same}.d/start`, `${start}\n`);
+  fs.writeFileSync(`${same}.d/pid`, String(process.pid));
+  const waited = locked(same, { waitS: '1' });
+  assert.ok(!waited.ran, 'a holder whose pid and start time both match was evicted');
+  assert.match(waited.err, /gave up waiting/);
+
+  const reused = lockPath(t);
+  fs.mkdirSync(`${reused}.d`);
+  fs.writeFileSync(`${reused}.d/start`, 'Thu Jan  1 00:00:00 1970\n');
+  fs.writeFileSync(`${reused}.d/pid`, String(process.pid));
+  const r = locked(reused);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.ok(r.ran, 'a lock whose pid was reused by another process was waited on');
+  assert.match(r.out, /removed a stale lock left by pid \d+, which another process has since reused/);
+});

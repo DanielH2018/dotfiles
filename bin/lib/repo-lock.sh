@@ -67,6 +67,16 @@ with_repo_lock() {
 # holder died between mkdir and the write; it is treated as stale once it is a minute old,
 # and as busy before that, so a holder is never evicted mid-acquisition.
 #
+# A live pid is not proof on its own: the OS can hand a dead holder's pid to an unrelated
+# process, and the lock would then read as held until REPO_LOCK_WAIT_S ran out (#610). So
+# the holder also records its start time, in a file of its own, and a waiter that finds the
+# pid alive but started at a different time treats the lock as stale. The start time is a
+# separate file rather than a second field in `pid` because a caller running an older copy
+# of this library reads `pid` whole: "123 <time>" would fail its `kill -0` and it would
+# evict a live holder. The start file is written before the pid file, so any waiter that
+# can read the pid can read the start time too. Where either time is unknown -- a holder
+# from before this change, or a `ps` that fails -- the pid alone decides, as it did before.
+#
 # Bounded by REPO_LOCK_WAIT_S (default 3600): past it the tool dies rather than waiting
 # forever on a holder that is alive but wedged.
 _repo_lock_mkdir() {
@@ -78,9 +88,22 @@ _repo_lock_mkdir() {
   while ! mkdir "$_mlock" 2>/dev/null; do
     [ -d "$_mlock" ] || die "cannot create $_mlock"
     _holder=$(cat "$_mlock/pid" 2>/dev/null)
-    if [ -n "$_holder" ] && ! kill -0 "$_holder" 2>/dev/null; then
-      if [ "$(cat "$_mlock/pid" 2>/dev/null)" = "$_holder" ]; then
-        rm -rf "$_mlock" && say "removed a stale lock left by pid $_holder"
+    _hstart=$(cat "$_mlock/start" 2>/dev/null)
+    _stale=''
+    if [ -n "$_holder" ]; then
+      if ! kill -0 "$_holder" 2>/dev/null; then
+        _stale="left by pid $_holder"
+      elif [ -n "$_hstart" ]; then
+        _now=$(_repo_lock_started "$_holder")
+        if [ -n "$_now" ] && [ "$_now" != "$_hstart" ]; then
+          _stale="left by pid $_holder, which another process has since reused"
+        fi
+      fi
+    fi
+    if [ -n "$_stale" ]; then
+      if [ "$(cat "$_mlock/pid" 2>/dev/null)" = "$_holder" ] &&
+        [ "$(cat "$_mlock/start" 2>/dev/null)" = "$_hstart" ]; then
+        rm -rf "$_mlock" && say "removed a stale lock $_stale"
       fi
       continue
     fi
@@ -93,9 +116,20 @@ _repo_lock_mkdir() {
     sleep 1
     _waited=$((_waited + 1))
   done
+  _repo_lock_started $$ >"$_mlock/start" 2>/dev/null
   echo $$ >"$_mlock/pid" || { rm -rf "$_mlock"; die "cannot write $_mlock/pid"; }
   ( "$@" )
   _rc=$?
   rm -rf "$_mlock"
   return $_rc
+}
+
+# _repo_lock_started <pid>: when that process started, as one line, or nothing if unknown.
+# `ps -o lstart=` rather than Linux's /proc/<pid>/stat field 22 because it answers on both
+# procps and BSD ps, so the Linux test suite exercises the macOS path, which is the one
+# that matters: this fallback only runs where flock is missing. LC_ALL=C keeps the day and
+# month names fixed, and the whitespace is squeezed so column padding cannot differ between
+# the holder's write and a waiter's read.
+_repo_lock_started() {
+  LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'
 }
