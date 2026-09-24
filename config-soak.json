@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "1c48b5a3592e6a5ff77dba2a846ef7e2b41da05b2f9e000ea627e324baaf5bf6",
-      "landed": "2026-09-24T20:01:27.174Z"
+      "hash": "46afbac5cb8b14a90ef0cc42b3eec0eab53ab64b03ca3f9c772162954fb54f19",
+      "landed": "2026-09-24T20:30:37.475Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "57f14878f5b35b5fc7cb5a039203d6ab4e8d26f3c8d54fe61db7c6ce7f3cc8ca",
-      "landed": "2026-09-24T18:41:43.608Z"
+      "hash": "4a020fe535245631b89ad59db4610f61179ab023a7037457037a5f28c01d383d",
+      "landed": "2026-09-24T20:30:37.475Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -212,6 +212,11 @@
       "landed": "2026-09-18T22:57:37.560Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/executable_reviewer-override.sh",
+      "hash": "9fdc5dfabbae8db78adfa4147ca64c567258f67810b04f91d416cbd87895f0ee",
+      "landed": "2026-09-24T20:30:37.475Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
       "hash": "fc7623b11e20abc0ffa98f6142f988a610ee0db83b5c91823c7f24c4a9c778e1",
       "landed": "2026-09-23T21:05:47.255Z"
@@ -235,6 +240,11 @@
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",
       "hash": "586fb2975e01371653afb99ce8353e562c35dda95906557703c7d8a2b3d43b16",
       "landed": "2026-09-23T21:05:47.255Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/executable_stop-checks.py",
+      "hash": "88e8e24dd639823e282b34de1bf296727f005619f9ed4e79daa5b7c4f0e031e6",
+      "landed": "2026-09-24T20:30:37.475Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_stop-failure.sh",
@@ -340,6 +350,11 @@
       "path": "home/private_dot_claude/hooks/test_skill_usage_table.py",
       "hash": "047351f296b325aea004504d0ce48aead5f737080c9e7b62cfd005730b54f8aa",
       "landed": "2026-09-24T17:06:06.813Z"
+    },
+    {
+      "path": "home/private_dot_claude/hooks/test_stop_checks.py",
+      "hash": "b8bd5d41960212e367b11d02910306baa844d8c1ac8160cb44d095c014c048d1",
+      "landed": "2026-09-24T20:30:37.475Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
