@@ -233,8 +233,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-context.sh",
-      "hash": "1cd494b469ca4957216322b1db4b480fee545c48631d09c3e11641d954e45f72",
-      "landed": "2026-09-24T21:15:51.276Z"
+      "hash": "e463eda69d522394c4640b71024d2d5de85cf8d1f55efd7984f6f0b086fbe28f",
+      "landed": "2026-09-24T21:24:03.602Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
