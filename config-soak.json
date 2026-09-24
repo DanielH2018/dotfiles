@@ -47,6 +47,11 @@
       "landed": "2026-07-29T21:20:52.171Z"
     },
     {
+      "path": "home/private_dot_claude/hooks/_testkit.py",
+      "hash": "4b036f2d72bd55071c056021d42e26b699229862fb4bbdf13210bb91936e3661",
+      "landed": "2026-09-24T17:06:06.813Z"
+    },
+    {
       "path": "home/private_dot_claude/hooks/artifact-state.sh",
       "hash": "e5c3c3230654a6d4262acd99f5f906c3450dc1d2ebde3adf2cd79799166885c1",
       "landed": "2026-08-09T19:04:35.602Z"
@@ -313,23 +318,23 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
-      "hash": "0e0ce7593e9d9a87f98c206b08d7f80d7f07a64acb99b6bc01d4f75797473be0",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "a32d7341bbeca14f5b423421fc90b5403a5573a831bcffa6d8314f8e9c2c1902",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
-      "hash": "7aecd7cf73a771990b60dfe60b27a01fa16bdb7b3f57e0a83fe7daf6e8149bdf",
-      "landed": "2026-09-23T20:42:34.897Z"
+      "hash": "1992ebb3d6c1c0d109ac1b7127ec9f189a800d6a207ed76baa01d73136852454",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_index_size.py",
-      "hash": "dea699e22a4b4fdbeec1243b7043162adeaef8b290945e33a42fb788926f6c5e",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "d406a17a3894bebe425a79b9de2b0aed5e0e06d00e1e1aa6f7b4d6484f85efe2",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "66416bf5ff07cbb7a97a9b7f517a8f2654772fa8011e95dcca28367b5b9f0557",
-      "landed": "2026-09-21T18:38:11.926Z"
+      "hash": "50d65695304c30557f6b67e5dc0dd88b633ab54b6a805f5c4c042b0ec1919545",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",
@@ -338,23 +343,23 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
-      "hash": "99d60c3a5a1f735fb7e71ad98e4ebcc38399467434c3c5582d3302a521b309eb",
-      "landed": "2026-09-24T13:50:58.051Z"
+      "hash": "4d895338febcc4bf3d44bff6ef252b881e3cd39738d4e4ec064eb915161049b5",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",
-      "hash": "2361485f111cad5bad18a1518da415856d5b4859ff15296d3f2573fc81f87fee",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "2ac95400df98cc460ae92cfaf36f6c8a513369f4d184df9c76e163ce644332c5",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_table.py",
-      "hash": "8cccebb63ce1efafc3663f7add987717b9c7e9fe4542acf028fa14762fcd9c89",
-      "landed": "2026-09-19T00:46:35.705Z"
+      "hash": "047351f296b325aea004504d0ce48aead5f737080c9e7b62cfd005730b54f8aa",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_worktree_landed.py",
-      "hash": "80d6f5a1fc64e7ae240febc615788eaf685b3dae3b8b170f3d374fe669a3d1f8",
-      "landed": "2026-09-23T21:05:47.255Z"
+      "hash": "2f1467a06e7eab920300d04407d6c4d3bec9c196fb3528cdc170225c6fbf0f0f",
+      "landed": "2026-09-24T17:06:06.813Z"
     },
     {
       "path": "home/private_dot_claude/hooks/worktree-landed.md",
