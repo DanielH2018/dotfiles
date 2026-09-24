@@ -88,9 +88,21 @@ merge-tree cases are report-only in both sweeps — `-d` would refuse them anywa
 `-d` accepts is narrower than "merged" and depends on when you ask; `delete_branch` has
 the mechanism and why a refusal does not prove the branch still holds work.
 
+The orphan branches the cherry and merge-tree tests flag are counted, not listed. They
+accumulate: `-d` refuses every one of them, so nothing ever clears them. Listing each
+with its reason printed 51,010 bytes at a server-repo session start on 2026-09-24: 172
+near-identical paragraphs, too large for the harness to inject. One line now carries
+the count and names `--orphans`, which lists them.
+
+A repo that ships its own pruner at `scripts/dev/prune_worktrees.py` is skipped. That
+pruner asks the forge which head SHA a PR merged, and this hook does not. The two used
+to give opposite verdicts on the same tree. The repo's own session banner is then the
+one reporter.
+
 Usage:
-    prune-worktrees.py            # report only
-    prune-worktrees.py --prune    # also remove the removable ones (what the hook runs)
+    prune-worktrees.py              # report only
+    prune-worktrees.py --prune      # also remove the removable ones (the hook's mode)
+    prune-worktrees.py --orphans    # also list each landed-looking orphan branch
 
 Opt out entirely by setting CLAUDE_WORKTREE_AUTOPRUNE=0 in the environment.
 """
@@ -148,6 +160,10 @@ REVIEW = "review"
 # however merged it looks — the same line the worktree sweep draws with
 # .claude/worktrees/.
 SESSION_BRANCH_PREFIX = "worktree-"
+
+# A repo carrying this file prunes its own worktrees, and this hook stands aside for it.
+# The server repo's pruner is the one it names: it adds the forge check this hook lacks.
+OWN_PRUNER = Path("scripts") / "dev" / "prune_worktrees.py"
 
 LOG_PATH = (
     Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
@@ -379,6 +395,32 @@ def orphan_branches(repo: str, attached: set[str]) -> list[str]:
     ]
 
 
+def report_orphans(branches: list[str], itemise: bool) -> None:
+    """Print the landed-looking orphan branches: one row each, or one line in all.
+
+    The count is the default because these never clear on their own. `-d` refuses each
+    one, so the list only grows, and a row per branch at every session start is what
+    this line replaced. The reason is the same for every branch, so it prints once.
+    """
+    if not branches:
+        return
+    if not itemise:
+        command = str(Path(__file__)).replace(str(Path.home()), "~", 1)
+        print(
+            f"{len(branches)} landed-looking branch(es) with no worktree; "
+            f"run `{command} --orphans` to list them"
+        )
+        return
+    print(
+        f"{len(branches)} branch(es) with no worktree, and nothing on them is missing "
+        "from the default branch (by patch-id or by content). Each landed by a squash "
+        "or rebase merge, or is only older than the default branch. Check `gh pr list "
+        "--state merged --head <branch>` before deleting one."
+    )
+    for branch in branches:
+        print(f"[{REVIEW:9}] branch {branch}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prune merged Claude session worktrees."
@@ -387,6 +429,11 @@ def main() -> int:
         "--prune",
         action="store_true",
         help="remove the worktrees reported as removable (default: report only)",
+    )
+    parser.add_argument(
+        "--orphans",
+        action="store_true",
+        help="list each landed-looking branch with no worktree (default: a count)",
     )
     args = parser.parse_args()
 
@@ -402,6 +449,14 @@ def main() -> int:
         # Not a git repo: nothing to do, and nothing worth saying at session start.
         return 0
     repo = str(Path(common_dir).parent)
+
+    # Checked in the primary checkout, where the default branch's files are. Silent
+    # under --prune: the repo's own session banner reports these trees, and a second
+    # verdict from here is the disagreement this check exists to end.
+    if (Path(repo) / OWN_PRUNER).is_file():
+        if not args.prune:
+            print(f"skipped: {repo} prunes its own worktrees with {OWN_PRUNER}")
+        return 0
 
     trees = parse_worktree_list(_git(["worktree", "list", "--porcelain"], cwd=repo))
     # The first entry is the checkout the others hang off; it is not a session worktree.
@@ -475,14 +530,7 @@ def main() -> int:
             print(f"[{REVIEW:9}] {tree.path}\n            {reason}")
         for branch in orphan_merged:
             print(f"[{REMOVABLE:9}] branch {branch}\n            merged, no worktree")
-        for branch in orphan_review:
-            print(
-                f"[{REVIEW:9}] branch {branch}\n"
-                "            no worktree, and nothing on it is missing from the "
-                "default branch (by patch-id or by content) — landed by a squash or "
-                "rebase merge, or just older than it. Check `gh pr list --state "
-                "merged --head <branch>` before deleting."
-            )
+        report_orphans(orphan_review, args.orphans)
         total = len(removable) + len(orphan_merged)
         if total:
             print(f"\n{total} removable — re-run with --prune to remove")
@@ -520,13 +568,7 @@ def main() -> int:
         print(f"Deleted {len(branches)} merged branch(es): {', '.join(branches)}")
     for tree, reason in review:
         print(f"Kept {tree.path}: {reason}")
-    for branch in orphan_review:
-        print(
-            f"Branch {branch} has no worktree and nothing on it is missing from the "
-            "default branch (by patch-id or by content) — landed by a squash or rebase "
-            "merge, or merely older than it. Establish which before deleting: `gh pr "
-            f"list --state merged --head {branch}`."
-        )
+    report_orphans(orphan_review, args.orphans)
     for tree, error in failed:
         print(f"Could not remove {tree.path}: {error}")
     return 0

@@ -203,8 +203,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_prune-worktrees.py",
-      "hash": "3847b3dc6b8eed9c1ff6c508d20da7114bc83af6c9aa958b7e432a7759bce70e",
-      "landed": "2026-09-21T15:14:25.533Z"
+      "hash": "c27cb529b982f3a000320629ec3c8da75e3f8c61969bba389abb575ecf717523",
+      "landed": "2026-09-24T13:50:58.051Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_reap-backgrounded-origin.sh",
@@ -338,8 +338,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_prune_worktrees.py",
-      "hash": "87b07529a376647c2b7d0a377dbde13a1c8f048470e294ce4a16a4a3ba8dc03e",
-      "landed": "2026-09-21T18:38:11.926Z"
+      "hash": "99d60c3a5a1f735fb7e71ad98e4ebcc38399467434c3c5582d3302a521b309eb",
+      "landed": "2026-09-24T13:50:58.051Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_skill_usage_log.py",

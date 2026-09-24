@@ -292,6 +292,30 @@ with tempfile.TemporaryDirectory() as tmp:
     check("the opt-out removes nothing", (trees / "merged").exists())
     check("the opt-out says so", "disabled" in off.stdout)
 
+    # A repo that ships its own pruner is skipped, silently under --prune. The prune
+    # below, run once the file is gone again, is the other half: the same removable
+    # tree does go when the repo carries no pruner of its own.
+    own = repo / mod.OWN_PRUNER
+    own.parent.mkdir(parents=True)
+    own.write_text("")
+    deferred = subprocess.run(
+        [sys.executable, str(SCRIPT), "--prune"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    check("a repo with its own pruner keeps the tree", (trees / "merged").exists())
+    check("deferring under --prune is silent", deferred.stdout == "")
+    deferred_report = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+    check(
+        "the report names the pruner it defers to",
+        str(mod.OWN_PRUNER) in deferred_report.stdout,
+    )
+    own.unlink()
+
     pruned = subprocess.run(
         [sys.executable, str(SCRIPT), "--prune"],
         cwd=repo,
@@ -536,10 +560,34 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     check("the collapsed worktree survives", (trees / "collapsed").exists())
     check("the collapsed branch survives", "worktree-collapsed" in branches)
+    # Landed-looking orphans are counted by default and itemised only on request: a row
+    # each is what flooded a session start once they piled up.
+    orphans = subprocess.run(
+        [sys.executable, str(SCRIPT), "--orphans"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     check(
         "the orphan collapsed branch is reported, not deleted",
-        "worktree-orphan-collapsed" in report.stdout
+        f"[{mod.REVIEW:9}] branch worktree-orphan-collapsed" in orphans.stdout
         and "worktree-orphan-collapsed" in branches,
+    )
+    check(
+        "--orphans lists the patch-id orphan too",
+        f"[{mod.REVIEW:9}] branch worktree-orphan-squashed" in orphans.stdout,
+    )
+    check(
+        "the default report counts the orphans instead of naming them",
+        "--orphans" in report.stdout
+        and "worktree-orphan-collapsed" not in report.stdout
+        and "worktree-orphan-squashed" not in report.stdout,
+    )
+    check(
+        "the prune output counts them too",
+        "--orphans" in pruned.stdout
+        and "worktree-orphan-collapsed" not in pruned.stdout,
     )
     check(
         "the conflicting tree is kept without a review line",
