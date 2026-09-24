@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "448a72c5e38dbf04e301e121bbf95d95b966c1b7ea93f0ecbe288e38561bb318",
-      "landed": "2026-09-23T21:01:49.811Z"
+      "hash": "51184e36b1bc4419a7f1de4e249a40f9f418e18532e1312395f82c2bb2300c46",
+      "landed": "2026-09-24T18:01:52.383Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -152,14 +152,9 @@
       "landed": "2026-09-23T21:05:47.255Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_memory-index-size.py",
-      "hash": "c315de87593091f0b7473e90d07367690105d35ae0c17f76541b6eff54175b53",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_memory-stale-paths.py",
-      "hash": "782743aa3b22511c7e5c8b49494de1165527799be5a43954327f473f587714e2",
-      "landed": "2026-09-19T14:19:54.429Z"
+      "path": "home/private_dot_claude/hooks/executable_memory-upkeep.py",
+      "hash": "772b2944a4bdd83dc29d3932d40cf431e008494a93d34b37519da257625971dc",
+      "landed": "2026-09-24T18:01:52.383Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_notify.sh",
@@ -332,14 +327,9 @@
       "landed": "2026-09-24T17:06:06.813Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/test_memory_index_size.py",
-      "hash": "d406a17a3894bebe425a79b9de2b0aed5e0e06d00e1e1aa6f7b4d6484f85efe2",
-      "landed": "2026-09-24T17:06:06.813Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/test_memory_stale_paths.py",
-      "hash": "50d65695304c30557f6b67e5dc0dd88b633ab54b6a805f5c4c042b0ec1919545",
-      "landed": "2026-09-24T17:06:06.813Z"
+      "path": "home/private_dot_claude/hooks/test_memory_upkeep.py",
+      "hash": "59cbc10fe8f9eec40a21b68af820c6b1e2a9d6514dba26bb3e15eeb890da8848",
+      "landed": "2026-09-24T18:01:52.383Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_premature_done.py",

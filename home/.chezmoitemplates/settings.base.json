@@ -544,12 +544,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/memory-stale-paths.py",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/memory-index-size.py",
+            "command": "~/.claude/hooks/memory-upkeep.py",
             "timeout": 10
           }
         ]

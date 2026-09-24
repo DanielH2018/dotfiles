@@ -36,8 +36,11 @@ const readAllowlist = () => fs.readFileSync(ALLOWLIST, 'utf8')
   .filter((l) => l && !l.startsWith('#'))
   .sort();
 
+// `--exclude remove`: a .chezmoiremove entry deploys nothing, and chezmoi lists one as
+// managed only while its target still exists in $HOME. Counting it made this test depend on
+// whether the host had applied the removal yet (#620's retired test files failed it here).
 function managedMatches(source = srcPath()) {
-  const r = spawnSync('chezmoi', ['managed', '--source', source], { encoding: 'utf8' });
+  const r = spawnSync('chezmoi', ['managed', '--source', source, '--exclude', 'remove'], { encoding: 'utf8' });
   assert.strictEqual(r.status, 0, `chezmoi managed failed: ${r.stderr}`);
   return r.stdout.split('\n').map((l) => l.trim()).filter((l) => l && PATTERN.test(l)).sort();
 }

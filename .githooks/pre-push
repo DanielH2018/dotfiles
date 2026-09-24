@@ -17,6 +17,8 @@
 #                             173 of this repo's 607 commits do not verify as a result.
 #   2. config-soak status   — every behavior-affecting config change must be
 #                             reviewed and `config-soak land`ed before push.
+#  2c. tools inventory      — every command script has a tools.json entry and every
+#                             entry a file (bin/check-tools-inventory, read-only).
 #   3. instruction quality  — security dimension is a hard gate (>=70) on the
 #                             agent / skill / CLAUDE instruction files; the
 #                             composite floor is a soft ratchet (QUALITY_MIN_SCORE,
@@ -166,6 +168,12 @@ if [ "$tree_cached" -eq 0 ]; then
   else
     note_skip "skill eval freshness" "skill eval freshness - EVAL_FRESHNESS_OFF=1, skipped"
   fi
+
+  # 2c. Tools inventory drift. A command script with no tools.json entry, or an entry whose
+  #     file is gone, failed nothing until #635, and 46 lines of it had built up unseen
+  #     (#627). Read-only: bin/check-tools-inventory pins the scan to this tree's home/ and
+  #     tools.json and never spawns chezmoi or writes a page.
+  run "tools inventory drift" bin/check-tools-inventory
 
   # 3. Instruction-file quality. Security gate (>=70) is always enforced by
   #    `verify`; the composite floor is a ratchet pinned to today's worst file, so

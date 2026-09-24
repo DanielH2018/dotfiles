@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""Standalone tests for memory-stale-paths.py.
+"""Standalone tests for memory-upkeep.py.
 
-Run: python3 test_memory_stale_paths.py
+Run: python3 test_memory_upkeep.py
 
-The hook reports memories naming repo paths that are gone. What needs pinning is the
-false-positive rate, not the detection: this prints at every session start, and a report
-that names a memory wrongly even once teaches the reader to skip the whole line.
-Memories are full of slashed tokens that are not paths — `refs/heads/main`,
-`kube-system/coredns`, `get list watch` — and every one of them must stay out.
+The hook has three sections, and this file pins them in the order the hook runs them.
+
+Stale paths and stale checks report memories naming repo paths that are gone. What
+needs pinning is the false-positive rate, not the detection: this prints at every
+session start, and a report that names a memory wrongly even once teaches the reader to
+skip the whole line. Memories are full of slashed tokens that are not paths —
+`refs/heads/main`, `kube-system/coredns`, `get list watch` — and every one of them must
+stay out.
+
+Index size warns when MEMORY.md has too many pointer lines. What needs pinning is the
+counting rule and the silence: it must count only real entries (a heading or a prose
+bullet is not an entry) and must say nothing below the cap, outside a repo, or when the
+index is missing.
+
+The last block pins what merging them added: each opt-out silences only its own
+sections, and one section staying quiet never stops the other from running.
 """
 
 import importlib.util
@@ -24,13 +35,13 @@ from _testkit import check, finish
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "executable_memory-stale-paths.py"
+SCRIPT = HERE / "executable_memory-upkeep.py"
 if not SCRIPT.exists():  # deployed copy drops chezmoi's mode prefix
-    SCRIPT = HERE / "memory-stale-paths.py"
+    SCRIPT = HERE / "memory-upkeep.py"
 
-spec = importlib.util.spec_from_file_location("memory_stale_paths", SCRIPT)
+spec = importlib.util.spec_from_file_location("memory_upkeep", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
-sys.modules["memory_stale_paths"] = mod
+sys.modules["memory_upkeep"] = mod
 spec.loader.exec_module(mod)
 
 # See test_prune_worktrees.py: GIT_DIR outranks cwd, and git exports it to every hook.
@@ -118,7 +129,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # the search to a sentence, and it stayed red in the tree for three weeks because
     # nothing ran this file. The next-sentence shape is reported now, by design: see
     # `a marker suppresses only within its own sentence` in
-    # tests/hooks/memory-stale-paths.test.js.
+    # tests/hooks/memory-upkeep.test.js.
     check(
         "the marker may follow the path across a line break",
         stale(
@@ -367,6 +378,164 @@ with tempfile.TemporaryDirectory() as tmp:
     check(
         "outside a repo it is a silent no-op",
         outside.returncode == 0 and outside.stdout == "",
+    )
+
+
+# ── index size: the counting rule ────────────────────────────────────────────────────
+
+check("a pointer line counts", mod.count_pointers("- [a](a.md) — thing\n") == 1)
+check(
+    "several pointer lines count",
+    mod.count_pointers("- [a](a.md)\n- [b](b.md)\n- [c](c.md)\n") == 3,
+)
+check("a heading is not an entry", mod.count_pointers("# Memory index\n") == 0)
+check("a plain bullet is not an entry", mod.count_pointers("- not a link\n") == 0)
+check("an indented pointer is not an entry", mod.count_pointers("  - [a](a.md)\n") == 0)
+check(
+    "blank lines and prose are not entries", mod.count_pointers("\nsome prose\n") == 0
+)
+check("an empty index counts zero", mod.count_pointers("") == 0)
+
+
+# ── index size: end to end ───────────────────────────────────────────────────────────
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    repo = root / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-q"], cwd=repo, check=True, capture_output=True, text=True
+    )
+    # git resolves symlinks in the toplevel it prints (/tmp is a symlink on macOS), so
+    # derive the slug from the same value the hook will see, not from `repo`.
+    toplevel = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    config_dir = root / "config"
+    memory = config_dir / "projects" / toplevel.replace("/", "-") / "memory"
+    memory.mkdir(parents=True)
+    index = memory / "MEMORY.md"
+
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config_dir)}
+
+    def run(cwd, extra_env=None, args=()):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            env={**env, **(extra_env or {})},
+        )
+
+    def write_index(entries):
+        index.write_text(
+            "# Memory\n\n" + "".join(f"- [m{i}](m{i}.md)\n" for i in range(entries))
+        )
+
+    write_index(85)
+    at_cap = run(repo)
+    check("at the cap it is silent", at_cap.stdout == "")
+    check("at the cap it exits 0", at_cap.returncode == 0)
+
+    write_index(92)
+    over = run(repo)
+    check("over the cap it reports", over.stdout != "")
+    check("names the current count", "92" in over.stdout)
+    check("names the cap", "85" in over.stdout)
+    check("says what to do instead of appending", "append" in over.stdout.lower())
+    check("exits 0 when it reports the index", over.returncode == 0)
+
+    check("--max moves the cap", run(repo, args=("--max", "200")).stdout == "")
+    check(
+        "the index opt-out silences it",
+        run(repo, {"CLAUDE_MEMORY_INDEX_CHECK": "0"}).stdout == "",
+    )
+
+    outside = run(tmp)
+    check(
+        "outside a repo the index check is a silent no-op",
+        outside.returncode == 0 and outside.stdout == "",
+    )
+
+    # ── the worktree case, for the index ─────────────────────────────────────────────
+    # Memory is keyed to the main checkout, so a session in .claude/worktrees/<name>
+    # must resolve back to it. Without that, the check is silent in exactly the
+    # sessions this repo spends most of its time in.
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "seed",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wt = repo / ".claude" / "worktrees" / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "wt", str(wt)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    from_wt = run(wt)
+    check("a worktree resolves to the main checkout's index", "92" in from_wt.stdout)
+    check("the worktree index run exits 0", from_wt.returncode == 0)
+
+    write_index(85)
+    check("a worktree is silent under the cap", run(wt).stdout == "")
+    write_index(92)
+
+    # ── both halves in one run ───────────────────────────────────────────────────────
+    # What the merge added. Each section is gated on its own opt-out, and a section with
+    # nothing to say must not end the run before the other one reads the tree.
+    (repo / "docs").mkdir()
+    (memory / "drifted.md").write_text("The gate is `docs/gone.md`.\n")
+    both = run(repo)
+    check(
+        "one run reports a stale path and an oversized index together",
+        "drifted.md" in both.stdout and "pointer lines" in both.stdout,
+    )
+    no_paths = run(repo, {"CLAUDE_MEMORY_PATH_CHECK": "0"})
+    check(
+        "the path opt-out drops the path report and keeps the index report",
+        "drifted.md" not in no_paths.stdout and "pointer lines" in no_paths.stdout,
+    )
+    no_index = run(repo, {"CLAUDE_MEMORY_INDEX_CHECK": "0"})
+    check(
+        "the index opt-out drops the index report and keeps the path report",
+        "drifted.md" in no_index.stdout and "pointer lines" not in no_index.stdout,
+    )
+    check(
+        "both opt-outs silence the whole hook",
+        run(
+            repo, {"CLAUDE_MEMORY_PATH_CHECK": "0", "CLAUDE_MEMORY_INDEX_CHECK": "0"}
+        ).stdout
+        == "",
+    )
+    (memory / "drifted.md").unlink()
+
+    index.unlink()
+    missing = run(repo)
+    check(
+        "no index is a silent no-op",
+        missing.returncode == 0 and missing.stdout == "",
     )
 
 finish()

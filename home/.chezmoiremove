@@ -32,3 +32,11 @@
 .claude/hooks/agent-view-register.sh
 .claude/hooks/agent-view-state.sh
 .claude/hooks/agent-view-subagents.sh
+
+# #620: the two memory SessionStart hooks merged into memory-upkeep.py, which reports both
+# halves from one path derivation. Their test files merged into test_memory_upkeep.py; the
+# old copies would otherwise stay in ~/.claude/hooks importing a script that is gone.
+.claude/hooks/memory-index-size.py
+.claude/hooks/memory-stale-paths.py
+.claude/hooks/test_memory_index_size.py
+.claude/hooks/test_memory_stale_paths.py

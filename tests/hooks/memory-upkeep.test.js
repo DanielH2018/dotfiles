@@ -1,4 +1,4 @@
-// Regression guard for executable_memory-stale-paths.py (SessionStart).
+// Regression guard for executable_memory-upkeep.py (SessionStart).
 //
 // Every test here is a PAIR: one input the hook must report and one it must stay quiet
 // about. That shape is the point. This hook is only ever observed passing — it prints
@@ -18,7 +18,7 @@ const path = require('node:path');
 const { scratch } = require('../lib/tmp');
 const { srcPath } = require('../lib/paths');
 
-const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_memory-stale-paths.py');
+const HOOK = srcPath('private_dot_claude', 'hooks', 'executable_memory-upkeep.py');
 
 let toolsOk = true;
 let python = 'python3';

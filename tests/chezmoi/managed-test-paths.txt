@@ -5,8 +5,7 @@
 .claude/hooks/_testkit.py
 .claude/hooks/test_bash_write_fanout.py
 .claude/hooks/test_isolation_guard.py
-.claude/hooks/test_memory_index_size.py
-.claude/hooks/test_memory_stale_paths.py
+.claude/hooks/test_memory_upkeep.py
 .claude/hooks/test_premature_done.py
 .claude/hooks/test_prune_worktrees.py
 .claude/hooks/test_skill_usage_log.py

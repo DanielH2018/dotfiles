@@ -5,12 +5,12 @@
 #   timeout: 10
 #   order: 30
 # The startup slot prune-artifacts.sh sweeps in, for memories. Nothing re-checks a
-# memory when the code
-# it describes changes, so drift runs one way — memories are added readily and
-# revised only when someone happens to notice. A path a memory names either
-# exists or it does not, which needs no session context; this reports and never
-# edits, because a memory can be right about a file that was removed on purpose.
-"""SessionStart hook: report memories that name a repo path which no longer exists.
+# memory when the code it describes changes, and nothing bounds the index that is
+# injected into every session, so both drift one way. This reports memories naming
+# paths that are gone and an index over its pointer-line cap, and never edits: a
+# memory can be right about a file removed on purpose, and which index entry to
+# promote or archive is a judgment call with session context behind it.
+"""SessionStart hook: memory upkeep — stale paths, stale checks, and index size.
 
 Memory upkeep is entirely instruction-driven. The system prompt says to update an
 existing memory rather than duplicate it, and to delete one that turns out wrong; the
@@ -20,10 +20,14 @@ memory already describes, so drift runs one way: memories are added readily and 
 only when someone happens to notice. Four of this machine's memories name files that
 have since been deleted or moved, and each was found by hand.
 
-This is the cheap half of closing that gap, and the half that needs no session context:
-a path a memory names either exists or it does not. It reports; it never edits. A memory
-can be perfectly correct about a file that was deliberately removed — the point is to
-put that in front of a person, not to decide it.
+This hook has three report sections, all derived from one memory directory. Each is
+silent when it has nothing to say, because a line that prints at every session start
+whatever the state is a line that trains its reader to skip it.
+
+1. Stale paths. The cheap half of closing that gap, and the half that needs no session
+context: a path a memory names either exists or it does not. It reports; it never
+edits. A memory can be perfectly correct about a file that was deliberately removed —
+the point is to put that in front of a person, not to decide it.
 
 What counts as a path. A backtick-quoted token containing `/` whose FIRST segment is a
 directory that exists in the repo root. That second condition is what keeps the report
@@ -32,19 +36,31 @@ missing file. The cost is that a memory naming a path in a directory that was it
 deleted goes unreported — a miss, which is the right direction for a hook that only
 nudges.
 
-The second half reads the index. An entry MEMORY.md marks `[ENFORCED]` or `(SCOPED)` is
-a memory promoted to a test or a hook and kept as a pointer; the pointer outlives the
-check when the test is renamed or the hook retired, and nothing else re-reads it. For
-each marked entry the check its memory names — a file, a pytest node id, a `symbol` in
-a `file` — is resolved against the repo, and a missing one is reported. A pointer-only
-entry (ENFORCED, not SCOPED) with a missing check is reported as retirable; a SCOPED one
-keeps a body describing what the check does not cover, so it gets the stale-reference
-warning only. It reports; it never edits, and it never expires an entry on its own.
+2. Stale checks. An entry MEMORY.md marks `[ENFORCED]` or `(SCOPED)` is a memory
+promoted to a test or a hook and kept as a pointer; the pointer outlives the check when
+the test is renamed or the hook retired, and nothing else re-reads it. For each marked
+entry the check its memory names — a file, a pytest node id, a `symbol` in a `file` — is
+resolved against the repo, and a missing one is reported. A pointer-only entry
+(ENFORCED, not SCOPED) with a missing check is reported as retirable; a SCOPED one keeps
+a body describing what the check does not cover, so it gets the stale-reference warning
+only. It never expires an entry on its own.
+
+3. Index size. MEMORY.md is injected verbatim at every session start, and it grows by
+roughly six pointer lines a day because appending is the cheap move: a new memory gets a
+new line, and consolidating two overlapping entries into one costs thought. This counts
+pointer lines — lines starting with `- [`, the one shape every entry in the index uses —
+and prints when the count is over DEFAULT_MAX_ENTRIES (85). It never edits the index:
+which entries to promote into a CLAUDE.md rule, which belong behind an archive pointer,
+and which are simply still live is a judgment call a hook has no context for.
+
+Fails closed to silence. Every path returns 0, including the error paths: a broken
+session-start hook is worse than a missing nudge.
 
 Usage:
-    memory-stale-paths.py [--repo DIR]
+    memory-upkeep.py [--repo DIR] [--max N]
 
-Opt out with CLAUDE_MEMORY_PATH_CHECK=0.
+Opt out of sections 1 and 2 with CLAUDE_MEMORY_PATH_CHECK=0, and of section 3 with
+CLAUDE_MEMORY_INDEX_CHECK=0. Each variable silences only its own sections.
 """
 
 from __future__ import annotations
@@ -75,6 +91,21 @@ SENTENCE_BREAK = re.compile(r"[.!?][ \n]|\n[ \t]*\n")
 # session start banner is not the place for it.
 MAX_REPORTED = 10
 
+# The index-size cap. Not a hard limit on anything — a point at which appending another
+# line should stop being automatic.
+#
+# A ratchet, set just above the current count rather than at some ideal size. The index
+# was cut from 92 entries to 80 in the same pass that added this check, so a cap of 50
+# would have fired at every session start with no reachable target — and a warning
+# nobody can satisfy is a warning everybody learns to skip. 85 stays silent after that
+# cleanup and speaks again once a few more entries accumulate. Lower it when the index
+# is genuinely smaller, not before.
+DEFAULT_MAX_ENTRIES = 85
+
+# Every entry in the index is a markdown link bullet. Prose lines, headings and blank
+# lines are not entries and must not be counted.
+POINTER_PREFIX = "- ["
+
 
 def repo_root(start: Path) -> Path | None:
     result = subprocess.run(
@@ -92,8 +123,9 @@ def main_checkout(repo: Path) -> Path:
     """The main checkout behind `repo`, which may be a linked worktree.
 
     Memory is keyed to the main checkout's path, so a session running in
-    .claude/worktrees/<name> derives a slug no memory directory answers to and this hook
-    goes silent — in exactly the parallel worktree sessions where most work happens.
+    .claude/worktrees/<name> derives a slug no memory directory answers to and every
+    section of this hook goes silent — in exactly the parallel worktree sessions where
+    most work happens.
 
     `git rev-parse --git-common-dir` names the shared .git that every worktree of a repo
     points at; its parent is the main checkout. In the main checkout itself the answer
@@ -533,31 +565,19 @@ def enforced_findings(
     return findings
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Report memories naming repo paths that no longer exist."
-    )
-    parser.add_argument("--repo", default=None, help="repository to check against")
-    args = parser.parse_args()
+def count_pointers(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.startswith(POINTER_PREFIX))
 
-    if os.environ.get("CLAUDE_MEMORY_PATH_CHECK") == "0":
-        return 0
 
-    repo = Path(args.repo) if args.repo else repo_root(Path.cwd())
-    if repo is None or not repo.is_dir():
-        return 0
+# ── the report sections ──────────────────────────────────────────────────────────────
+#
+# Each prints nothing when it has nothing to say. This runs at every session start,
+# where an all-clear line every time is the fastest way to train someone to stop
+# reading. They are separate functions so that one section going quiet can never end
+# the run before the next one reads the tree.
 
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
-    # Slug from the main checkout so a worktree session finds the memories; `repo`
-    # itself stays the yardstick for path existence below.
-    primary = main_checkout(repo)
-    memories = memory_dir(config_dir, primary)
-    if memories is None:
-        return 0
-    # The main checkout (when this is not it) and every sibling worktree: a path that
-    # exists in any of them is not stale, it is unmerged.
-    also = sibling_checkouts(repo, primary)
 
+def report_stale_paths(memories: Path, repo: Path, also: Sequence[Path]) -> None:
     findings = []
     for path in sorted(memories.glob("*.md")):
         if path.name == "MEMORY.md":
@@ -570,8 +590,6 @@ def main() -> int:
         if gone:
             findings.append((path.name, gone))
 
-    # Silent when there is nothing to say. This runs at every session start, where an
-    # all-clear line every time is the fastest way to train someone to stop reading.
     if findings:
         subject = "memory names" if len(findings) == 1 else "memories name"
         print(
@@ -583,9 +601,11 @@ def main() -> int:
         if len(findings) > MAX_REPORTED:
             print(f"  ... and {len(findings) - MAX_REPORTED} more")
 
-    # The index pass: the skip above still stands for the path scan, because the index
-    # links memories rather than describing code. Here it is read for its markers, and
-    # the linked memory for the check the marker stands on.
+
+def report_stale_checks(memories: Path, repo: Path, also: Sequence[Path]) -> None:
+    # The path scan skips the index, because the index links memories rather than
+    # describing code. Here it is read for its markers, and the linked memory for the
+    # check the marker stands on.
     enforced = enforced_findings(memories, repo, also)
     if enforced:
         subject = "entry names" if len(enforced) == 1 else "entries name"
@@ -602,6 +622,65 @@ def main() -> int:
             print(f"  {name}: {what} ({verdict})")
         if len(enforced) > MAX_REPORTED:
             print(f"  ... and {len(enforced) - MAX_REPORTED} more")
+
+
+def report_index_size(memories: Path, cap: int) -> None:
+    try:
+        text = (memories / "MEMORY.md").read_text()
+    except OSError:
+        # No index, or an unreadable one: nothing a session-start banner can act on.
+        return
+    count = count_pointers(text)
+    if count <= cap:
+        return
+    print(
+        f"MEMORY.md holds {count} pointer lines, over the {cap} cap — it is "
+        "injected verbatim into every session, so each line is charged every time. "
+        "Promote or archive entries rather than appending another: fold a finding "
+        "into a CLAUDE.md rule or an executable check when it has a durable owner, "
+        "merge overlapping entries, and move settled history behind one archive "
+        "pointer."
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Report stale memory paths and checks, and an oversized index."
+    )
+    parser.add_argument("--repo", default=None, help="repository to check against")
+    parser.add_argument(
+        "--max",
+        type=int,
+        default=DEFAULT_MAX_ENTRIES,
+        help="MEMORY.md pointer-line cap",
+    )
+    args = parser.parse_args()
+
+    check_paths = os.environ.get("CLAUDE_MEMORY_PATH_CHECK") != "0"
+    check_index = os.environ.get("CLAUDE_MEMORY_INDEX_CHECK") != "0"
+    if not (check_paths or check_index):
+        return 0
+
+    repo = Path(args.repo) if args.repo else repo_root(Path.cwd())
+    if repo is None or not repo.is_dir():
+        return 0
+
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+    # Slug from the main checkout so a worktree session finds the memories; `repo`
+    # itself stays the yardstick for path existence below.
+    primary = main_checkout(repo)
+    memories = memory_dir(config_dir, primary)
+    if memories is None:
+        return 0
+
+    if check_paths:
+        # The main checkout (when this is not it) and every sibling worktree: a path
+        # that exists in any of them is not stale, it is unmerged.
+        also = sibling_checkouts(repo, primary)
+        report_stale_paths(memories, repo, also)
+        report_stale_checks(memories, repo, also)
+    if check_index:
+        report_index_size(memories, args.max)
     return 0
 
 

@@ -57,7 +57,7 @@ const SUITES = standaloneSuites();
 // A derivation that finds nothing passes for free. The floor is a named member, so the
 // failure says which file went missing rather than that a count moved.
 test('the derived standalone suite list is not empty and holds a known member', () => {
-  assert.ok(SUITES.length >= 15, `expected at least the six sandbox and nine hooks suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
+  assert.ok(SUITES.length >= 14, `expected at least the six sandbox and eight hooks suites, derived ${SUITES.length}: ${SUITES.join(', ')}`);
   assert.ok(SUITES.some((rel) => rel.endsWith('/test_exec_stream.py')), 'sandbox/test_exec_stream.py is a standalone suite and must be derived');
   assert.ok(SUITES.some((rel) => rel.endsWith('/hooks/test_prune_worktrees.py')), 'hooks/test_prune_worktrees.py is a standalone suite and must be derived');
   assert.ok(!SUITES.some((rel) => rel.startsWith('tests/tq/')), 'tests/tq is one unittest suite under run.py, not standalone files');
