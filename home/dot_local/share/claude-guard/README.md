@@ -106,6 +106,12 @@ posture the bash took on a missing `jq`. An exception inside Python prints the s
 `hook.py`. In the sandbox `CLAUDE_GUARD_FAIL_CLOSED=1` turns that `ask` into a `deny` with exit
 2, because `--dangerously-skip-permissions` skips an ask (see the shim's header).
 
+When nothing above decides, `readonly.py` (dotfiles #628, ported from the server repo's
+`auto-approve-readonly.py`) allows a command whose every stage is provably read-only. It
+applies only when the session cwd is `$HOME` itself or inside `~/server` or
+`~/.local/share/chezmoi`, because git reads a repo's own config and that config can run
+code. A failure inside it is no decision, never the `ask` above: it can only remove a prompt.
+
 The oracle for the rules is `tests/test_deny.py` against
 `tests/fixtures/block-dangerous-bash-vectors.json` (32 deny / 27 allow groups, 281 commands),
 plus `tests/test_deny_normalization.py`'s generated property corpus. The bash they were ported

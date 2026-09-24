@@ -26,6 +26,7 @@ from claude_guard.checks import git_conventions
 from claude_guard.deny import Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
+from claude_guard.readonly import readonly
 from claude_guard.rules import load_rules
 from claude_guard.tables import scratch_roots
 
@@ -147,7 +148,8 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     Never raises. An exception in the deny rules becomes ASK_JSON: the deny side fails closed
     to ask (spec, Failure contracts), the posture the bash took on a missing jq. Unparseable
     stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
-    open (conventions())."""
+    open (conventions()). The read-only classifier runs last and only when nothing else
+    decided, so it can never outrank a deny, an ask or the --force upgrade (#628)."""
     try:
         command = read_command(stdin_text)
     except Exception:
@@ -158,7 +160,11 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
         rules = merge(deny(command, "", env), footgun(command))
     except Exception:
         return ASK_JSON
-    return pre_tool_use_json(_combine(rules, conventions(command, read_cwd(stdin_text))))
+    cwd = read_cwd(stdin_text)
+    verdict = _combine(rules, conventions(command, cwd))
+    if verdict.kind == "none":
+        verdict = readonly(command, cwd, env) or verdict
+    return pre_tool_use_json(verdict)
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}
