@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015  # `[ cond ] && pass || fail` harness idiom: pass() always returns 0
 set -euo pipefail
+# Assertions feed grep a herestring, never `echo "$out" | grep -q`. Under
+# pipefail, grep -q exits on its first match, echo can take SIGPIPE writing the
+# lines after it, and the pipeline reports failure on a SUCCESSFUL match (#641).
 # NOTE: run with the Claude Code bash sandbox disabled — git config-locking
 # and mktemp restrictions under the sandbox can produce false failures here.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,9 +155,9 @@ mk_noisy_branch() {
 test_metrics_flags() {
   local d; d="$(mk_noisy_branch)"
   local out; out="$(cd "$d" && bash "$TRIAGE" metrics 1)"
-  echo "$out" | grep -qx "merges=1" && pass "metrics counts merge" || fail "merges: $out"
-  echo "$out" | grep -qx "fixups=1" && pass "metrics counts fixup" || fail "fixups: $out"
-  echo "$out" | grep -qx "needs_history_cleanup=true" && pass "flags cleanup" || fail "cleanup: $out"
+  grep -qx "merges=1" <<<"$out" && pass "metrics counts merge" || fail "merges: $out"
+  grep -qx "fixups=1" <<<"$out" && pass "metrics counts fixup" || fail "fixups: $out"
+  grep -qx "needs_history_cleanup=true" <<<"$out" && pass "flags cleanup" || fail "cleanup: $out"
 }
 test_metrics_flags
 
@@ -176,12 +179,12 @@ mk_big_branch() {
 test_metrics_split_worthy() {
   local d; d="$(mk_big_branch)"
   local out2; out2="$(cd "$d" && bash "$TRIAGE" metrics 2)"
-  echo "$out2" | grep -qx "split_worthy=true" && pass "split_worthy true when size exceeded and groups>=2" || fail "split_worthy(groups=2): $out2"
+  grep -qx "split_worthy=true" <<<"$out2" && pass "split_worthy true when size exceeded and groups>=2" || fail "split_worthy(groups=2): $out2"
 
   local out1; out1="$(cd "$d" && bash "$TRIAGE" metrics 1)"
-  echo "$out1" | grep -qx "split_worthy=false" && pass "split_worthy false when groups=1 (same branch)" || fail "split_worthy(groups=1): $out1"
-  echo "$out1" | grep -qx "files=11" && pass "metrics counts files" || fail "files: $out1"
-  echo "$out1" | grep -qx "commits=11" && pass "metrics counts commits" || fail "commits: $out1"
+  grep -qx "split_worthy=false" <<<"$out1" && pass "split_worthy false when groups=1 (same branch)" || fail "split_worthy(groups=1): $out1"
+  grep -qx "files=11" <<<"$out1" && pass "metrics counts files" || fail "files: $out1"
+  grep -qx "commits=11" <<<"$out1" && pass "metrics counts commits" || fail "commits: $out1"
 }
 test_metrics_split_worthy
 
@@ -191,7 +194,7 @@ test_backup_and_tree_equal() {
   echo a > "$d/a.txt"; git -C "$d" add a.txt; git -C "$d" commit -q -m "a"
   echo b > "$d/b.txt"; git -C "$d" add b.txt; git -C "$d" commit -q -m "b"
   local ref; ref="$(cd "$d" && bash "$TRIAGE" backup)"
-  echo "$ref" | grep -q "^backup/feature-te-" && pass "backup ref named" || fail "backup: $ref"
+  grep -q "^backup/feature-te-" <<<"$ref" && pass "backup ref named" || fail "backup: $ref"
   # squash the two commits: tree unchanged -> assert passes
   git -C "$d" reset -q --soft HEAD~2; git -C "$d" commit -q -m "a+b squashed"
   if (cd "$d" && bash "$TRIAGE" assert-tree-equal "$ref") 2>/dev/null; then
@@ -221,7 +224,7 @@ test_backup_sanitizes_slash_branch() {
   ref="$(cd "$d" && bash "$TRIAGE" backup)" && rc=0 || rc=$?
   [ "$rc" -eq 0 ] && pass "backup succeeds despite backup/feature collision" \
     || fail "backup should succeed (exit 0), got exit $rc"
-  echo "$ref" | grep -q "^backup/feature-x-" && pass "backup ref sanitized for slash branch" \
+  grep -q "^backup/feature-x-" <<<"$ref" && pass "backup ref sanitized for slash branch" \
     || fail "backup sanitized ref: $ref"
 }
 test_backup_sanitizes_slash_branch
@@ -243,11 +246,11 @@ mk_clean_small_branch() {
 test_metrics_clean_small_branch_no_cleanup() {
   local d; d="$(mk_clean_small_branch)"
   local out; out="$(cd "$d" && bash "$TRIAGE" metrics 1)"
-  echo "$out" | grep -qx "needs_history_cleanup=false" \
+  grep -qx "needs_history_cleanup=false" <<<"$out" \
     && pass "needs_history_cleanup=false on clean small branch" \
     || fail "needs_history_cleanup on clean small branch: $out"
-  echo "$out" | grep -qx "merges=0" && pass "clean branch has no merges" || fail "merges: $out"
-  echo "$out" | grep -qx "fixups=0" && pass "clean branch has no fixups" || fail "fixups: $out"
+  grep -qx "merges=0" <<<"$out" && pass "clean branch has no merges" || fail "merges: $out"
+  grep -qx "fixups=0" <<<"$out" && pass "clean branch has no fixups" || fail "fixups: $out"
 }
 test_metrics_clean_small_branch_no_cleanup
 
@@ -267,15 +270,15 @@ mk_large_diff_branch() {
 test_metrics_split_worthy_net_over_400() {
   local d; d="$(mk_large_diff_branch)"
   local out2; out2="$(cd "$d" && bash "$TRIAGE" metrics 2)"
-  echo "$out2" | grep -qx "files=1" && pass "large-diff branch has 1 file" || fail "files: $out2"
-  echo "$out2" | grep -qx "commits=1" && pass "large-diff branch has 1 commit" || fail "commits: $out2"
-  echo "$out2" | grep -qx "net=500" && pass "large-diff branch net=500" || fail "net: $out2"
-  echo "$out2" | grep -qx "split_worthy=true" \
+  grep -qx "files=1" <<<"$out2" && pass "large-diff branch has 1 file" || fail "files: $out2"
+  grep -qx "commits=1" <<<"$out2" && pass "large-diff branch has 1 commit" || fail "commits: $out2"
+  grep -qx "net=500" <<<"$out2" && pass "large-diff branch net=500" || fail "net: $out2"
+  grep -qx "split_worthy=true" <<<"$out2" \
     && pass "split_worthy true via net>400 disjunct when groups>=2" \
     || fail "split_worthy(net>400,groups=2): $out2"
 
   local out1; out1="$(cd "$d" && bash "$TRIAGE" metrics 1)"
-  echo "$out1" | grep -qx "split_worthy=false" \
+  grep -qx "split_worthy=false" <<<"$out1" \
     && pass "split_worthy false when groups=1 despite net>400" \
     || fail "split_worthy(net>400,groups=1): $out1"
 }
@@ -293,7 +296,7 @@ test_metrics_missing_origin_default_guard() {
   out="$(cd "$d" && bash "$TRIAGE" metrics 1 2>&1)" && rc=0 || rc=$?
   [ "$rc" -eq 3 ] && pass "metrics exits 3 when origin/<default> missing" \
     || fail "metrics missing-origin exit code: got $rc"
-  echo "$out" | grep -q "run 'git fetch origin' first" \
+  grep -q "run 'git fetch origin' first" <<<"$out" \
     && pass "metrics missing-origin prints guard message" \
     || fail "metrics missing-origin message: $out"
 }
@@ -305,9 +308,9 @@ test_assert_tree_equal_missing_ref() {
   out="$(cd "$d" && bash "$TRIAGE" assert-tree-equal nonexistent-ref-xyz 2>&1)" && rc=0 || rc=$?
   [ "$rc" -eq 1 ] && pass "assert-tree-equal missing ref exits 1" \
     || fail "assert-tree-equal missing ref should exit 1, got exit $rc"
-  echo "$out" | grep -q "not found" && pass "assert-tree-equal missing ref message accurate" \
+  grep -q "not found" <<<"$out" && pass "assert-tree-equal missing ref message accurate" \
     || fail "assert-tree-equal missing ref message: $out"
-  echo "$out" | grep -q "altered content" && fail "assert-tree-equal missing ref should not print misleading 'altered content' message" \
+  grep -q "altered content" <<<"$out" && fail "assert-tree-equal missing ref should not print misleading 'altered content' message" \
     || pass "assert-tree-equal missing ref does not print misleading message"
 }
 test_assert_tree_equal_missing_ref
