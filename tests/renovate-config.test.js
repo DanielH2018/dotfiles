@@ -176,3 +176,28 @@ test('the gitleaks rev matches the homelab repo',
       fs.readFileSync(path.join(homelab, 'prek.toml'), 'utf8'));
     assert.strictEqual(problem, null, `${problem} (${homelab}); bump the one that is behind`);
   });
+
+// --- The sandbox base image ------------------------------------------------------------------
+//
+// A floating `FROM debian:stable-slim` gives two builds of one commit different bases, and no
+// Renovate manager can bump a tag that names no version. The pin is the tag plus the index
+// digest, which the dockerfile manager moves each time Debian republishes the tag.
+
+const DIGEST_FROM = /^FROM [\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$/;
+
+test('the digest-pin shape rejects a floating or tagless FROM', () => {
+  assert.match('FROM debian:stable-slim@sha256:' + 'a'.repeat(64), DIGEST_FROM);
+  assert.doesNotMatch('FROM debian:stable-slim', DIGEST_FROM);
+  assert.doesNotMatch('FROM debian@sha256:' + 'a'.repeat(64), DIGEST_FROM,
+    'a digest with no tag leaves Renovate nothing to follow');
+});
+
+test('the sandbox base image is digest-pinned and Renovate reads it', () => {
+  const file = 'home/private_dot_claude/sandbox/Dockerfile.base';
+  const froms = read(file).split('\n').filter((l) => /^FROM /.test(l));
+  assert.ok(froms.length > 0, `${file} has no FROM line`);
+  for (const from of froms) assert.match(from, DIGEST_FROM);
+  assert.ok(config.enabledManagers.includes('dockerfile'),
+    'enabledManagers is a closed list, so without dockerfile the digest never moves');
+  assert.ok(config.dockerfile.managerFilePatterns.some((p) => filePattern(p).test(file)));
+});

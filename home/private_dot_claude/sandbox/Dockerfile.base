@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM debian:stable-slim
+# The base is pinned to the multi-arch index digest of the tag, so two builds of
+# one commit start from the same image. Renovate's dockerfile manager keeps the
+# tag and moves the digest each time Debian republishes stable-slim.
+FROM debian:stable-slim@sha256:5bc3287b25407c965a30f38e32603dc253a3869e1b12a21ac09bfc27fd8b13ce
 
 # --- All system packages in a single layer ---
 # Bootstrap curl → add gh/docker repos → install everything in one pass.

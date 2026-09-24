@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Every version this repo pins, kept current by one reviewed PR per bump. Nothing here automerges: a bump reaches main through bin/land like any other change, so it passes the same pre-push gate. The shape follows the homelab repo's renovate.json: one custom manager per pinned file, each anchored to that file, and tests/renovate-config.test.js asserts that every `# renovate:` annotation in the tree is matched by one of them. enabledManagers is a closed list, so a manager Renovate adds later cannot start opening PRs unreviewed. It names the four that cover a pin here: the CI actions, the pre-commit revs, the claude-otel compose images and the annotated pins. Left out on purpose: dockerfile (the sandbox base is the floating debian:stable-slim and its apt packages are unversioned, so its only effect would be digest pins nobody asked for), npm (pr-dash declares only caret ranges) and pep621 (every Python dependency here is a >= floor).",
+  "description": "Every version this repo pins, kept current by one reviewed PR per bump. Nothing here automerges: a bump reaches main through bin/land like any other change, so it passes the same pre-push gate. The shape follows the homelab repo's renovate.json: one custom manager per pinned file, each anchored to that file, and tests/renovate-config.test.js asserts that every `# renovate:` annotation in the tree is matched by one of them. enabledManagers is a closed list, so a manager Renovate adds later cannot start opening PRs unreviewed. It names the five that cover a pin here: the CI actions, the pre-commit revs, the claude-otel compose images, the sandbox base image digest and the annotated pins. Left out on purpose: npm (pr-dash declares only caret ranges) and pep621 (every Python dependency here is a >= floor).",
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
@@ -20,11 +20,18 @@
     "github-actions",
     "pre-commit",
     "docker-compose",
+    "dockerfile",
     "custom.regex"
   ],
   "pre-commit": {
     "description": "Renovate ships this manager with `enabled: false` (lib/modules/manager/pre-commit defaultConfig), and listing it in enabledManagers does not override that. Without this block neither the gitleaks rev nor the ruff-pre-commit rev is ever read, and the config validator cannot see the gap: it checks the schema, not coverage.",
     "enabled": true
+  },
+  "dockerfile": {
+    "description": "The sandbox base image, FROM debian:stable-slim@sha256:<index digest>. Renovate keeps the tag and opens a digest PR each time Debian republishes it, so two builds of one commit start from the same image. Renovate's default patterns already match Dockerfile.base; this entry is added to them and names the file this manager exists for. The `# syntax=docker/dockerfile:1` directive is extracted too, but a bare major with no pinned digest produces no PR.",
+    "managerFilePatterns": [
+      "/^home/private_dot_claude/sandbox/Dockerfile\\.base$/"
+    ]
   },
   "customManagers": [
     {
