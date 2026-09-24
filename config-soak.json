@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "3b92b307c7e43948486cad0391ef44e275fa158a3f6eeaf3d409945243586929",
-      "landed": "2026-09-23T20:58:06.697Z"
+      "hash": "4470f3ba479c5fe386fc808027794f2eb35378cf863d4a2e9ff4feb832cc4b6c",
+      "landed": "2026-09-24T13:50:38.459Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -183,8 +183,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_pre-compact.sh",
-      "hash": "0624131eed71260ff76f435b048f5cea0ff332119b68fcd3b77505fd73d6cf0c",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "91653cda6ab681d575590a6a0b3e1fa4b1af4c7701f8b9294dcc7ef19dc37e27",
+      "landed": "2026-09-24T13:50:38.459Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_premature-done.py",
@@ -768,8 +768,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/test-scenario-hygiene/SKILL.md",
-      "hash": "346d17e4a9a5f1384a96c8d28bc9b28766ab62433166b1be180be989573c80a7",
-      "landed": "2026-09-09T23:11:08.364Z"
+      "hash": "47a25ef92e338d4c3463a84c7926a06bcda0788d8d4d087be8791ba6bdc1f849",
+      "landed": "2026-09-24T13:50:38.459Z"
     },
     {
       "path": "home/private_dot_claude/skills/writing-great-skills/SKILL.md",
