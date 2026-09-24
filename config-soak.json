@@ -98,8 +98,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-apply-guard.sh",
-      "hash": "a9a612b6e6a4d4c64d1ae431800c7847e29d5274cdd219cf051f55a07d6e272e",
-      "landed": "2026-09-23T21:07:01.569Z"
+      "hash": "251136ea84c53f29c6de23f42aa5bd786439e42b4899fc1c6f44a2defef307df",
+      "landed": "2026-09-24T17:39:07.114Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-edit-guard.sh",
@@ -438,8 +438,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/chezmoi-repo-ops/SKILL.md",
-      "hash": "80663375142719f832f1fe883127c5d523e1d3cca530875ad090f2960691b09b",
-      "landed": "2026-09-23T21:01:49.811Z"
+      "hash": "8c626174232e62dae95d1789d95bfff824ef271e389cd73119ffb511a8862994",
+      "landed": "2026-09-24T17:39:07.114Z"
     },
     {
       "path": "home/private_dot_claude/skills/codebase-design/SKILL.md",
