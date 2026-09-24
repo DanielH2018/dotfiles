@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { scratch } = require('./tmp');
+const { scratch, hardenedCopy } = require('./tmp');
 
 const LIB = path.join(__dirname, 'tmp.js');
 
@@ -44,4 +44,27 @@ test('a directory rooted in another scratch dir goes with its parent', (t) => {
   const parent = scratch(os.tmpdir(), 'tmp-lib-parent-', t);
   const child = scratch(parent, 'child-');
   assert.strictEqual(path.dirname(child), parent);
+});
+
+// hardenedCopy: #637. A .venv's bin/python links OUT of the tree to the shared uv
+// interpreter, and chmod through that link set the interpreter to 644 for the whole host.
+test('hardenedCopy hardens the copy and leaves what a symlink points at alone', (t) => {
+  const root = scratch(os.tmpdir(), 'tmp-lib-harden-', t);
+  const outside = path.join(root, 'interpreter');
+  fs.writeFileSync(outside, '#!/bin/sh\n');
+  fs.chmodSync(outside, 0o755);
+  const src = path.join(root, 'src');
+  fs.mkdirSync(path.join(src, 'pkg'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'pkg', 'mod.py'), '');
+  fs.chmodSync(path.join(src, 'pkg', 'mod.py'), 0o664);
+  fs.symlinkSync(outside, path.join(src, 'python'));
+  fs.mkdirSync(path.join(src, '.venv', 'bin'), { recursive: true });
+  fs.symlinkSync(outside, path.join(src, '.venv', 'bin', 'python3'));
+
+  const dir = hardenedCopy(scratch(root, 'copy-'), src);
+
+  assert.strictEqual(fs.statSync(outside).mode & 0o777, 0o755, 'the link target kept its mode');
+  assert.strictEqual(fs.statSync(path.join(dir, 'pkg', 'mod.py')).mode & 0o777, 0o644);
+  assert.ok(fs.lstatSync(path.join(dir, 'python')).isSymbolicLink(), 'a link is copied as a link');
+  assert.ok(!fs.existsSync(path.join(dir, '.venv')), '.venv is not copied');
 });

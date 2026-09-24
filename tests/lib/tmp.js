@@ -48,16 +48,25 @@ function scratch(root, prefix, t) {
 }
 
 // hardenedCopy(dir, src) -> `dir`, holding a copy of `src` at 755 for directories and 644
-// for files, with __pycache__ left out.
+// for files, with __pycache__ and any .venv left out. Symlinks are copied as links and
+// never chmodded.
 //
 //   For a hook that refuses to import code writable by group or others: a checkout made
 //   under a permissive umask (007 on the Ubuntu hosts) is group-writable, while the
 //   deployed copy is not, so a test pointing such a hook at the checkout sees a refusal.
 //   `dir` comes from a scratch() call at the call site, for the sweep reason above.
+//
+//   Why links are skipped (dotfiles #637): chmod follows a symlink. A `uv run` inside the
+//   claude-guard source leaves a .venv whose bin/python3.14 links to the SHARED uv-managed
+//   interpreter, so hardening the copy set that interpreter to 644 and broke every hook
+//   that runs Python on the host, four times on 2026-09-24. `.venv` is also left out
+//   because it is local build output, never part of the code under test.
 function hardenedCopy(dir, src) {
-  fs.cpSync(src, dir, { recursive: true, filter: (p) => !p.includes('__pycache__') });
+  const skip = (p) => p.includes('__pycache__') || path.basename(p) === '.venv';
+  fs.cpSync(src, dir, { recursive: true, filter: (p) => !skip(p) });
   const harden = (p) => {
-    const st = fs.statSync(p);
+    const st = fs.lstatSync(p);
+    if (st.isSymbolicLink()) return;
     fs.chmodSync(p, st.isDirectory() ? 0o755 : 0o644);
     if (st.isDirectory()) for (const e of fs.readdirSync(p)) harden(path.join(p, e));
   };
