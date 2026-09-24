@@ -172,7 +172,8 @@ query rather than a hole you notice days later.
 ## If Claude Code later runs inside a container
 
 If you start running Claude Code in a container on the `workspace_default` docker network
-(per the SessionStart hook in `settings.json`), attach this stack's collector to that
+(per the SessionStart hook in `settings.json`, which renders only where the
+`is-container` chezmoi template holds), attach this stack's collector to that
 network too and change `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://otel-collector:4317`.
 
 ## Notes

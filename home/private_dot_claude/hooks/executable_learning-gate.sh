@@ -1,11 +1,14 @@
 #!/bin/bash
-# gen-hooks: register
-#   event: UserPromptSubmit
-#   timeout: 5
-#   order: 30
+# gen-hooks: library
+#   reason: unregistered until armed (#621), see the note below
 # learning loop, mechanism B: the pre-delegation explain gate. Inert
 # unless CLAUDE_LEARN_GATE=1 -- the hook exits 0 with no output on an
-# unset var, so wiring it here costs nothing until Daniel arms it.
+# unset var. Registered while unarmed, it still started a bash process on
+# every prompt, so #621 unregistered it. To arm it, restore the block
+#   # gen-hooks: register / event: UserPromptSubmit / timeout: 5 / order: 30
+# in place of the library block above, run bin/gen-hooks, and export
+# CLAUDE_LEARN_GATE=1 into the claude process's environment. This file
+# reads only its inherited environment; it never sources local.env.
 # Defers to /prep and to prep's own `go` / `just do it` / `no intake`
 # bypasses, and fires at most once per session.
 # UserPromptSubmit hook: the pre-delegation explain gate. Mechanism B of

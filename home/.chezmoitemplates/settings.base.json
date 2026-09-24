@@ -581,7 +581,12 @@
             "type": "command",
             "command": "~/.claude/hooks/reap-backgrounded-origin.sh",
             "timeout": 5
-          },
+          }
+        ]
+      }{{ end }}{{ if includeTemplate "is-container" . }},
+      {
+        "matcher": "startup",
+        "hooks": [
           {
             "type": "command",
             "command": "docker network connect workspace_default $(hostname) 2>/dev/null || true",
@@ -636,11 +641,6 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/worktree-context.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/learning-gate.sh",
             "timeout": 5
           },
           {
@@ -785,16 +785,6 @@
             "type": "command",
             "command": "~/.claude/hooks/skill-usage-log.sh",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/reprime-nudge.sh",
-            "timeout": 5
           }
         ]
       }
@@ -963,10 +953,10 @@
   {{/* Skills turned off 2026-08-29 by /doctor. Each had zero invocations across 250 session
        transcripts (2026-08-17 → 08-29) while its name + description sat in the always-resident
        skill listing, which is budgeted at ~1% of the context window and was over it. Together
-       these are ~824 est. resident tokens per session. `reprime` is the one disabled for a
-       second reason: reprime-nudge.sh already injects that nudge every ~30 tool calls, so the
-       skill was a duplicate of a mechanism that fires on its own. Delete an entry to restore
-       the skill. */}}
+       these are ~824 est. resident tokens per session. Delete an entry to restore the skill.
+       `reprime` is "user-invocable-only" rather than "off": it stays out of the model's
+       listing but in the `/` menu, because it is the manual replacement for the reprime-nudge
+       hook retired in #621, and "off" hides a skill from the menu too. */}}
   "skillOverrides": {
     "codebase-design": "off",
     "config-lint": "off",
@@ -976,7 +966,7 @@
     "learning-quiz": "off",
     "pr-feedback": "off",
     "pr-review-prep": "off",
-    "reprime": "off",
+    "reprime": "user-invocable-only",
     "skill-router": "off"
   },
   "enabledPlugins": {

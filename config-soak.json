@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "045652ddbd68689265e8af77247008786f401058c8482609ba76f31422176f2a",
-      "landed": "2026-09-24T18:41:43.608Z"
+      "hash": "1c48b5a3592e6a5ff77dba2a846ef7e2b41da05b2f9e000ea627e324baaf5bf6",
+      "landed": "2026-09-24T20:01:27.174Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -133,8 +133,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_learning-gate.sh",
-      "hash": "0b71588c614d5948d59ce1d92ed52679b19055201905e4e0a4238520a9998eb5",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "f07767ee1e5d3d9ba68f092b195695410f44c7aa17d4e5aaade0de89fa8afd31",
+      "landed": "2026-09-24T20:01:27.174Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_link-artifact.sh",
@@ -212,11 +212,6 @@
       "landed": "2026-09-18T22:57:37.560Z"
     },
     {
-      "path": "home/private_dot_claude/hooks/executable_reprime-nudge.sh",
-      "hash": "7b412ad638ca69e21713cb8cf3dac7ab0fa094dd7925d3d4ae3d053c2e44d920",
-      "landed": "2026-09-18T22:57:37.560Z"
-    },
-    {
       "path": "home/private_dot_claude/hooks/executable_screen-injection.sh",
       "hash": "fc7623b11e20abc0ffa98f6142f988a610ee0db83b5c91823c7f24c4a9c778e1",
       "landed": "2026-09-23T21:05:47.255Z"
@@ -233,8 +228,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_session-end.sh",
-      "hash": "fa6c41663063447fcb5957a405454ff05ed0314d311090bdd02bb851480dd18c",
-      "landed": "2026-09-23T23:53:58.910Z"
+      "hash": "339ccc32f12e7b04f61db9a500d0370cfe5bdeb0a64e6d241242d69303753e15",
+      "landed": "2026-09-24T20:01:27.174Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_skill-usage-log.sh",

@@ -80,10 +80,11 @@ fi
 # Tuning: CLAUDE_LEARN_DEBRIEF=0 turns it off. CLAUDE_LEARN_MIN_TOOLS sets the
 # tool-call floor below which a session is too trivial to debrief (default 25).
 #
-# The floor reads reprime-nudge.sh's per-session counter, where the byte count
-# of the .count file IS the tool-call count. That file only exists when the
-# reprime nudge is armed; with CLAUDE_REPRIME_EVERY=0 the count is absent, which
-# reads as 0 tool calls and no session ever debriefs.
+# The floor counts tool_use blocks in the transcript. Compact JSONL writes each
+# one as "type":"tool_use", and a quoted copy inside a tool's input or output is
+# escaped (\"type\"), so it cannot match. Until #621 this read a per-session
+# counter that the PostToolUse reprime-nudge.sh kept; retiring that hook would
+# otherwise have read every session as 0 tool calls and stopped all debriefs.
 learning_enqueue() {
   [ "${CLAUDE_LEARN_DEBRIEF:-1}" = "0" ] && return 0
 
@@ -93,9 +94,7 @@ learning_enqueue() {
   MIN="${CLAUDE_LEARN_MIN_TOOLS:-25}"
   case "$MIN" in '' | *[!0-9]*) MIN=25 ;; esac
 
-  COUNTF="$HOME/.claude/logs/reprime-state/$SESSION_ID.count"
-  TOOLS=0
-  [ -f "$COUNTF" ] && TOOLS=$(wc -c < "$COUNTF" 2>/dev/null | tr -d ' ')
+  TOOLS=$(grep -o '"type":"tool_use"' "$TRANSCRIPT" 2>/dev/null | wc -l | tr -d ' ')
   case "$TOOLS" in '' | *[!0-9]*) TOOLS=0 ;; esac
 
   if [ "$TOOLS" -lt "$MIN" ]; then

@@ -1,0 +1,10 @@
+{{/* Renders "true" when this chezmoi apply renders config for a Claude Code that runs inside a
+container, "" otherwise -- callers write {{ if includeTemplate "is-container" . }}. Two ways in:
+the apply itself runs in a container (docker writes /.dockerenv, podman /run/.containerenv), or
+the host sets `claude_in_container = true` under [data] in its chezmoi config, for a container
+that bind-mounts a ~/.claude rendered outside it. No host in this repo's fleet sets the key, and
+the claude-sandbox container carries its own settings.base.json, so it never reads this.
+Gates the SessionStart `docker network connect workspace_default` hook (#621). */ -}}
+{{- if or (stat "/.dockerenv") (stat "/run/.containerenv") (and (hasKey . "claude_in_container") .claude_in_container) -}}
+true
+{{- end -}}

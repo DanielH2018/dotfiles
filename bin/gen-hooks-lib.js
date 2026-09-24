@@ -56,7 +56,9 @@ const EVENT_ORDER = [
 
 // Registrations with no hook file behind them. The one entry is a shell one-liner, not a
 // script; it lives here rather than in the template so the block stays fully generated.
-// dev-container network glue (Linux/macOS); skipped on Windows.
+// Dev-container network glue: it joins the container Claude runs in to the compose project's
+// network. It renders only where is-container says Claude runs in a container (#621). On a bare
+// host the command has no container to connect and started a process per session for nothing.
 const INLINE_REGISTRATIONS = [
   {
     file: '(inline)',
@@ -64,7 +66,7 @@ const INLINE_REGISTRATIONS = [
     matcher: 'startup',
     timeout: 10,
     order: 80,
-    when: 'ne .chezmoi.os "windows"',
+    when: 'includeTemplate "is-container" .',
     command: 'docker network connect workspace_default $(hostname) 2>/dev/null || true',
   },
 ];

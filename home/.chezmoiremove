@@ -45,3 +45,8 @@
 # inside guard-pre-tool-use.sh's `claude_guard.cli pre-tool-use`, and gen-hooks dropped its
 # registration, so nothing runs the deployed copy.
 .claude/hooks/git-conventions-guard.sh
+
+# #621: the PostToolUse "*" reprime nudge started a bash process on every tool call to point at
+# the /reprime skill every ~30 calls, and carried no repo fact. The skill stays for manual use,
+# and session-end.sh counts tool calls from the transcript instead of this hook's counter.
+.claude/hooks/reprime-nudge.sh

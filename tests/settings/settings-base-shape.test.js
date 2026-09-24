@@ -309,3 +309,33 @@ test('claude-guard is the sole Bash PreToolUse deny decision, live', { skip }, (
   const shim = entry.hooks.find((h) => h.command.endsWith('guard-pre-tool-use.sh'));
   assert.strictEqual(shim.timeout, 10);
 });
+
+function commands(s) {
+  return Object.values(s.hooks).flat().flatMap((g) => g.hooks.map((h) => h.command));
+}
+
+// #621: two hooks that started a process per event for nothing. reprime-nudge.sh ran after
+// every tool call; learning-gate.sh ran on every prompt and exited at once unless armed.
+test('reprime-nudge and the unarmed learning-gate are not registered', { skip }, () => {
+  const cmds = commands(JSON.parse(render()));
+  assert.ok(!cmds.includes('~/.claude/hooks/reprime-nudge.sh'), 'reprime-nudge.sh is still registered');
+  assert.ok(!cmds.includes('~/.claude/hooks/learning-gate.sh'), 'learning-gate.sh is still registered');
+});
+
+// #621: the workspace_default join has nothing to connect on a bare host. The negative half
+// needs a host that is not itself a container, because is-container also reads the markers.
+const DOCKER_JOIN = 'docker network connect workspace_default $(hostname) 2>/dev/null || true';
+const inContainer = fs.existsSync('/.dockerenv') || fs.existsSync('/run/.containerenv');
+
+test('the workspace_default join renders where Claude runs in a container', { skip }, () => {
+  const s = JSON.parse(renderFile(TMPL, { data: { claude_in_container: true } }));
+  const startup = s.hooks.SessionStart.filter((g) => g.matcher === 'startup');
+  assert.ok(startup.some((g) => g.hooks.some((h) => h.command === DOCKER_JOIN)));
+});
+
+test('the workspace_default join is absent on a host that runs Claude outside a container', {
+  skip: skip || (inContainer && 'this host is a container'),
+}, () => {
+  const s = JSON.parse(renderFile(TMPL, { data: { claude_in_container: false } }));
+  assert.ok(!commands(s).includes(DOCKER_JOIN));
+});

@@ -40,13 +40,14 @@ const today = () => dayIn(pluginTimezone() || undefined);
 
 function buffer(proj, suffix = '') { return path.join(proj, '.remember', `today-${today()}${suffix}.md`); }
 
-function run({ home, proj }, { cwd = proj, budget, tz } = {}) {
+function run({ home, proj }, { cwd = proj, budget, tz, transcript } = {}) {
   const env = { ...process.env, HOME: home };
   if (budget !== undefined) env.REMEMBER_TODAY_MAX_BYTES = String(budget);
   if (tz !== undefined) env.TZ = tz;
+  if (transcript !== undefined) Object.assign(env, { CLAUDE_LEARN_DEBRIEF: '1', CLAUDE_LEARN_MIN_TOOLS: '3' });
   // Run from a scratch cwd so the hook's git-dirty probe can't see the real repo.
   return execFileSync('bash', [HOOK], {
-    input: JSON.stringify({ session_id: 'test-session', cwd }),
+    input: JSON.stringify({ session_id: 'test-session', cwd, transcript_path: transcript }),
     env, cwd: home, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
@@ -119,6 +120,32 @@ test('still logs session end when the roll path is not taken', { skip }, () => {
   const env = fakeEnv();
   run(env);
   assert.match(log(env.home), /event=end/, 'roll logic must not displace the existing summary log');
+});
+
+// The debrief floor counts tool_use blocks in the transcript (#621). It used to read a
+// counter kept by reprime-nudge.sh, and retiring that hook would have read every session as
+// 0 tool calls. The escaped copy in the tool_result is text a tool printed, not a call.
+function transcript(dir, calls) {
+  const lines = [];
+  for (let i = 0; i < calls; i += 1) {
+    lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: `t${i}`, name: 'Bash' }] } }));
+  }
+  lines.push(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: '"type":"tool_use"' }] } }));
+  const p = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(p, `${lines.join('\n')}\n`);
+  return p;
+}
+
+test('queues a debrief once the transcript reaches the tool-call floor', { skip }, () => {
+  const env = fakeEnv();
+  run(env, { transcript: transcript(env.proj, 3) });
+  assert.match(log(env.home), /event=learn_queued tools=3\b/);
+});
+
+test('skips the debrief below the tool-call floor, not counting quoted tool_use text', { skip }, () => {
+  const env = fakeEnv();
+  run(env, { transcript: transcript(env.proj, 2) });
+  assert.match(log(env.home), /event=learn_skip tools=2 floor=3/);
 });
 
 // The buffer's name belongs to the remember plugin, which dates it with config.json's
