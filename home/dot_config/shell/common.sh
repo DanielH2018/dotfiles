@@ -313,10 +313,8 @@ vault() {
   [ -d "$_v" ] || { echo "vault: no vault at $_v" >&2; return 1; }
   cd "$_v" || return
 }
-# Drift checks that ignore run_ scripts. run_after_terminal-cheatsheet.sh regenerates on
-# EVERY apply by design (it parses the just-deployed wezterm/nvim/yazi/ghostty configs), so
-# it is permanently "pending" — plain `chezmoi verify` therefore always exits 1 and plain
-# `chezmoi status` is never empty, which makes both useless as a real drift signal.
+# Drift checks that ignore run_ scripts. A run_onchange_ script whose contents changed reads
+# as "pending" to plain `chezmoi verify` and `chezmoi status`, and that is not config drift.
 if command -v chezmoi >/dev/null 2>&1; then
   alias czv='chezmoi verify --exclude=scripts'
   alias czs='chezmoi status --exclude=scripts'

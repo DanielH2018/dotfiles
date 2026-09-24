@@ -139,7 +139,7 @@ ${asset('page.css')}
 </div></header>
 ${cards.length ? `<main>${cards.join('')}</main>` : '<p class="none">No WezTerm / Ghostty / Neovim / Yazi / Claude Code configs found.</p>'}
 <footer>Auto-generated ${stamp} on ${esc(PLATFORM)} by <code>terminal-cheatsheet</code> — do not edit by hand;
-  it is regenerated from the deployed configs on every <code>chezmoi apply</code>.${nvNote}</footer>
+  rerun <code>terminal-cheatsheet</code> to regenerate it from the deployed configs.${nvNote}</footer>
 <script>
 ${asset('page.js')}
 </script>

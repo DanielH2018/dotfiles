@@ -45,7 +45,7 @@ tests and has no stake in keeping them. Give it the test names and this rubric.
 
 - Tests that exercise only a stub, a language built-in, or a library's own behaviour.
 - Assertions on private state, or on how often a stubbed callable ran, rather than on the
-  effect. (See the anti-patterns in `~/.claude/CLAUDE.md` under *Testing*.)
+  effect. (See *Anti-patterns* below.)
 - Coverage a stronger integration test in the same change already provides.
 - Scaffolding added to drive out one line of implementation.
 - `skip` or `xfail` markers with no explanation.
@@ -90,3 +90,30 @@ suite or an unused import has cost more than it saved.
 
 Report what was removed, what was kept against the subagent's recommendation and why, and the
 suite result.
+
+## Anti-patterns
+
+Five ways a test stays green while checking nothing. They apply when writing a test as much as
+when sweeping one. Adapted from `testing-anti-patterns` on noriskillsets.dev, rewritten in
+pytest idiom.
+
+- **Assert the effect, not the stub.** A test that asserts a `monkeypatch`ed callable ran, or
+  counts how often it ran, passes for a correct and an incorrect implementation alike. Assert
+  the state the call was supposed to produce.
+- **Stub the slow or external call, never the behaviour under test.** Over-stubbing "to be
+  safe" strips the side effect the assertion depends on, so the test passes for the wrong
+  reason. Write the test first and watch it fail against the real implementation — that
+  failure names the seam to stub.
+- **A stub returns the whole shape its caller reads**, including fields this test never
+  touches. A partial return passes here and breaks in the real path, where something
+  downstream reads the missing key.
+- **A method only tests call belongs in a test helper**, not on the production class. A
+  test-only `reset()` can fire in production.
+- **A textual assertion needs an oracle the file under test doesn't supply.** Asserting that a
+  doc contains a sentence copied out of that same doc proves only that the file equals itself:
+  it breaks on any reword and passes while everything around it is wrong. Assert an
+  identifier, a schema or an invariant instead. The server repo's
+  `ansible/tests/deploy/test_ci_cancelled_is_not_a_verdict.py` is the pattern — it asserts that
+  `_CI_NO_VERDICT_CONCLUSIONS` and `cancelled` appear in that repo's CLAUDE.md, not the
+  paragraph around them, so a rename breaks the test and a reword doesn't. A generated file is
+  the other sound case: its generator re-derives the content, which is a real oracle.

@@ -10,6 +10,13 @@
 # re-injects the parts that are cheap to recover from ground truth rather than from the summary:
 # branch and push state, files touched this session, and the test commands actually run.
 # Derived facts beat a summarizer's recollection of them.
+#
+# CLAUDE.md tells sessions not to run /compact themselves and to let the 85% auto-threshold
+# fire. Compacting at a quarter of the threshold throws away half a million tokens of headroom.
+# Keep this hook: it costs nothing on the auto path, which consults no precompute at all. The
+# background precompute is consulted only on the manual path, and this hook matches
+# `auto|manual`, so that lookup short-circuits to `miss_hook` — a manual compaction can never
+# hit the precompute while this hook exists.
 
 set -u
 

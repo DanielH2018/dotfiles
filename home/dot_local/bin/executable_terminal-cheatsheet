@@ -14,8 +14,8 @@
 // the WezTerm binds you type in the host terminal. Any config that's absent is skipped.
 // Config roots honor $XDG_CONFIG_HOME and $YAZI_CONFIG_HOME, else ~/.config.
 //
-// chezmoi's run_after_terminal-cheatsheet.sh regenerates this on every `chezmoi
-// apply`; run it by hand anytime:  terminal-cheatsheet [output.html]
+// Nothing runs it on `chezmoi apply`. Run it by hand when the WezTerm / Ghostty / Neovim /
+// Yazi / Claude keybindings change:  terminal-cheatsheet [output.html]
 //
 // Dependency-free (regex parsing). Parsers are format-driven, not entry-driven, so
 // new keybinds/settings flow through automatically on the next run.

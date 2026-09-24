@@ -5,8 +5,8 @@
 // derives every quoted figure from those rows and asserts each literal is in the paragraph, so
 // a hand-edited number, or a refreshed fixture the prose was not rewritten for, goes red.
 //
-// Deliberately not a rerun with a tolerance band, for the reason tests/otel-savings-rollup.test.js
-// gives: the window is rolling, the query needs Loki, and CI has neither. A snapshot is a fact
+// Deliberately not a rerun with a tolerance band: the window is rolling, the query needs Loki,
+// and CI has neither. A snapshot is a fact
 // with a date on it.
 const { test } = require('node:test');
 const assert = require('node:assert');

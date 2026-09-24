@@ -190,18 +190,6 @@ Scripts
 **/*.local.env
 **/local.config
 
-# Don't regenerate the terminal cheatsheet on every apply. The generator
-# (~/.local/bin/terminal-cheatsheet) is still deployed — run it by hand when the
-# WezTerm / Neovim / Yazi keybindings change.
-.chezmoiscripts/post-install/terminal-cheatsheet.sh
-
-# Same for the tools inventory. This one is cheap enough to run every time, but an
-# unconditional after-script is listed by `chezmoi status` on every invocation whether or
-# not anything changed, so a permanently non-empty status hides the drift worth seeing.
-# The generator (~/.local/bin/tools-inventory) is still deployed — run it by hand after
-# adding or retiring a command.
-.chezmoiscripts/post-install/tools-inventory.sh
-
 # The work overlay merged into settings.json by modify_settings.json.sh.tmpl. It
 # doesn't match *.local.* above, so without this a `chezmoi add` would sweep a
 # work-machine permission set into this repo, which is treated as public.
