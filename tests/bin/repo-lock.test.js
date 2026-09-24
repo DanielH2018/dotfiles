@@ -32,7 +32,7 @@ say() { printf 'say: %s\\n' "$1"; }
 die() { printf 'die: %s\\n' "$1" >&2; exit 1; }
 . ${JSON.stringify(LIB)}
 body() { cat ${JSON.stringify(`${lock}.d/pid`)} > ${JSON.stringify(ran)}; ${body}; }
-with_repo_lock ${JSON.stringify(lock)} "busy" "no-flock note" body
+with_repo_lock ${JSON.stringify(lock)} "busy" body
 `;
   const r = spawnSync('bash', ['-c', script], {
     encoding: 'utf8', env: { ...process.env, REPO_LOCK_WAIT_S: waitS }, timeout: 20000,

@@ -192,6 +192,5 @@ LOCK="$COMMON/try.lock"
 
 with_repo_lock "$LOCK" \
   "another worktree is using the bench; waiting for it to finish..." \
-  "using the bench without the cross-worktree lock" \
   bench
 exit $?

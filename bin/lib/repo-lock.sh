@@ -11,17 +11,15 @@
 #
 # Kept bash-3.2 clean, like the two callers.
 
-# with_repo_lock <lockfile> <busy-msg> <no-flock-msg> <command> [args...]
+# with_repo_lock <lockfile> <busy-msg> <command> [args...]
 #
 # Runs the command with the lock held and returns its exit status. Waits if another
-# process holds it. Where there is no flock (macOS), an atomic `mkdir` lock stands in --
-# see _repo_lock_mkdir below. <no-flock-msg> is accepted and ignored: it described running
-# unlocked, which no longer happens, and is kept only so the callers' argument lists stay
-# valid.
+# process holds it, saying <busy-msg> once. Where there is no flock (macOS), an atomic
+# `mkdir` lock stands in -- see _repo_lock_mkdir below.
 with_repo_lock() {
   _lock=$1
   _busy=$2
-  shift 3
+  shift 2
 
   if ! command -v flock >/dev/null 2>&1; then
     _repo_lock_mkdir "$_lock" "$_busy" "$@"

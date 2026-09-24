@@ -252,6 +252,5 @@ land() {
 
 with_repo_lock "$LOCK" \
   "another worktree is landing; waiting for it to finish..." \
-  "landing without the cross-worktree lock" \
   land
 exit $?
