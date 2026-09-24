@@ -77,8 +77,11 @@ for (const file of agentFiles) {
   });
 }
 
-test('settings.base.json leaves effortLevel unpinned', { skip: baseSkip }, () => {
-  assert.ok(!('effortLevel' in base),
-    'effortLevel is pinned in settings.base.json, which overrides per-turn effort selection for every turn. ' +
-    'Absent means auto (the model sizes its own reasoning); re-add only to pin every turn deliberately.');
+// The pin is deliberate since 2026-09-24 (the operator chose medium; see the template's
+// comment). What stays checkable is that the pinned value is one the harness accepts, since
+// a bad value would be pinned for every turn of every session.
+test('settings.base.json pins effortLevel, if at all, to a value the harness accepts', { skip: baseSkip }, () => {
+  if (!('effortLevel' in base)) return;
+  assert.ok(EFFORT_NAMES.includes(base.effortLevel),
+    `effortLevel "${base.effortLevel}" is not one of ${EFFORT_NAMES.join('|')}`);
 });
