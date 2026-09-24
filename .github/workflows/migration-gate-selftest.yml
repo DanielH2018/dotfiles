@@ -6,4 +6,4 @@ permissions:
   contents: read
 jobs:
   migration-gate:
-    uses: DanielH2018/dotfiles/.github/workflows/migration-gate.yml@53121a07980d2c768bc4567f41d24cc7043f6b62
+    uses: DanielH2018/dotfiles/.github/workflows/migration-gate.yml@389c97f478df790a4b6a0736d3499ebd0015f809
