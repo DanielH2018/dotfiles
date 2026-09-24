@@ -59,9 +59,10 @@
 # Substitutions are read too, so `$(chezmoi apply)` is still seen.
 #
 # The parser is not a dependency this hook may fail on. No interpreter, no package,
-# or a command the parser calls unreadable (an unbalanced quote) all fall back to
-# the flattened-text scan below, which is what this hook did before. That fallback
-# is looser, never stricter: it is the old behaviour, incidents and all.
+# or a chezmoi command the parser calls unreadable (an unbalanced quote) all fall back
+# to the flattened-text scan below, which is what this hook did before. That fallback
+# is looser, never stricter. It keeps the old behaviour, except that it no longer
+# matches words inside quoted text or a quoted heredoc body (#614).
 
 set -u
 
@@ -157,12 +158,25 @@ writes = False
 at_offset = 0
 sourced = False
 reads_primary = False
-for piece, offset in pieces:
+def split(piece):
+    # shlex.split, keeping the tokens read before a quoting error. A segment carries its
+    # heredoc body, so one odd `"` in a PR body made the whole command unreadable and sent
+    # it to the text fallback (#614). The prefix is enough whenever it already holds the
+    # command word; the caller decides that.
+    lex = shlex.shlex(piece, posix=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    toks = []
     try:
-        argv = shlex.split(piece)
+        for tok in lex:
+            toks.append(tok)
     except ValueError:
-        print("unreadable")
-        raise SystemExit(0)
+        return toks, False
+    return toks, True
+
+
+for piece, offset in pieces:
+    argv, whole = split(piece)
     # Leading assignments are the only place the override counts, because they are
     # the only place bash would let it reach the chezmoi process. It is also PER
     # command: `CHEZMOI_APPLY_GUARD=off chezmoi apply ~/x && chezmoi apply` overrides
@@ -175,6 +189,14 @@ for piece, offset in pieces:
         i += 1
     if seg_override:
         continue
+    if not whole:
+        # A split that failed decides nothing unless its prefix reached a command word
+        # other than chezmoi. A chezmoi command, or a prefix too short to name one, stays
+        # unreadable, and the caller falls back: a refusal is never a skip.
+        if i < len(argv) and os.path.basename(argv[i]) != "chezmoi":
+            continue
+        print("unreadable")
+        raise SystemExit(0)
     if i >= len(argv) or os.path.basename(argv[i]) != "chezmoi":
         continue
     rest = arguments(argv[i + 1 :])
@@ -228,10 +250,67 @@ else:
 
 # ── the flattened-text fallback ──────────────────────────────────────────────────
 #
-# What this hook did before the parser, kept verbatim as the answer when the parser
-# cannot run. Collapse continuations so a `\`-split cannot hide the verb.
+# What this hook did before the parser, kept as the answer when the parser cannot run,
+# with one change: text that can never execute is dropped before the match (#614). That is
+# a quoted-delimiter heredoc body, a single-quoted string, and a double-quoted string with
+# no `$(` or backtick in it. Before, a commit message, a PR body or a `--title` that only
+# named the apply was matched, and a deployed-ahead conflict turned the match into a
+# refusal. Words outside quotes, and a double-quoted string that runs a substitution,
+# still count. An unquoted-delimiter heredoc body is kept too, since it expands
+# substitutions. Plain awk, no gawk extensions, so it runs the same on macOS.
+literal_free() {
+  awk -v sq="'" '
+    BEGIN {
+      q = ""; hd = ""
+      re = "<<-?[ \t]*(" sq "[A-Za-z0-9_]+" sq "|\"[A-Za-z0-9_]+\")"
+    }
+    {
+      line = $0
+      if (hd != "") {
+        t = line
+        if (hdtab) sub(/^\t+/, "", t)
+        if (t == hd) hd = ""
+        next
+      }
+      pending = ""
+      if (match(line, re) && (RSTART == 1 || substr(line, RSTART - 1, 1) != "<")) {
+        d = substr(line, RSTART + 2, RLENGTH - 2)
+        hdtab = (substr(d, 1, 1) == "-")
+        gsub(/[- \t"]/, "", d)
+        gsub(sq, "", d)
+        pending = d
+      }
+      out = ""
+      n = length(line)
+      for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (q == sq) { if (c == sq) q = ""; continue }
+        if (q == "\"") {
+          if (c == "\\") { buf = buf c substr(line, i + 1, 1); i++; continue }
+          if (c == "\"") {
+            q = ""
+            if (index(buf, "$(") || index(buf, "`")) out = out "\"" buf "\""
+            buf = ""
+            continue
+          }
+          buf = buf c
+          continue
+        }
+        if (c == "\\") { out = out c substr(line, i + 1, 1); i++; continue }
+        if (c == sq) { q = sq; continue }
+        if (c == "\"") { q = "\""; buf = ""; continue }
+        out = out c
+      }
+      if (q == "\"") buf = buf " "
+      print out
+      hd = pending
+    }
+  '
+}
+
+# Collapse continuations so a `\`-split cannot hide the verb.
 # shellcheck disable=SC1003  # the literal backslash is the point, not an escape
-SCAN=$(printf '%s' "$COMMAND" | tr '\n\t\\' '   ')
+SCAN=$(printf '%s\n' "$COMMAND" | literal_free | tr '\n\t\\' '   ')
 
 text_decision() {
   case "$SCAN" in

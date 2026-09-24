@@ -312,3 +312,29 @@ test('the stale-source refusal is parser-only, so the text fallback stays no str
   assert.strictEqual(run('chezmoi apply', { ...stale, CLAUDE_GUARD_HOME: empty }), null);
   if (!skipParsed) assert.strictEqual(run('git commit -m "chezmoi apply \\"x', stale), null);
 });
+
+// ── words in quoted or heredoc text (#614) ──────────────────────────────────────────
+//
+// Commands that only NAME the apply were refused during the 2026-09-23 fan-out: a PR body,
+// a commit heredoc, a `findings.py open --title`. The parsed path read most of them right.
+// The one it did not is a heredoc body with an odd `"` in it: shlex cannot split the
+// segment that carries it, the whole command became `unreadable`, and the text fallback
+// then refused on the deployed-ahead conflict.
+const ODD_QUOTE_BODY = 'gh pr create --title "Stop the chezmoi apply guard misfiring" --body "$(cat <<\'EOF\'\nA 5" screen shows it.\nEOF\n)"';
+
+test('an odd quote in a heredoc body does not turn a non-chezmoi command into a refusal', { skip: skipParsed }, () => {
+  allows(ODD_QUOTE_BODY);
+  // The reject half: a chezmoi command the parser cannot split still falls back and denies.
+  denies('chezmoi apply "unbalanced');
+});
+
+test('the text fallback ignores quoted and quoted-heredoc text', { skip }, () => {
+  const empty = scratch(os.tmpdir(), 'czag-noguard-');
+  allows('git commit -m "fix chezmoi apply guard"', CLOBBER, empty);
+  allows('GH_REPO=a/b uv run python findings.py open --title "Stop the guard refusing chezmoi apply text"', CLOBBER, empty);
+  allows("git commit -F - <<'EOF'\nFix guard\n\nIt no longer refuses chezmoi apply in a heredoc.\nEOF", CLOBBER, empty);
+  allows(ODD_QUOTE_BODY, CLOBBER, empty);
+  // A substitution inside double quotes runs, so that text still counts.
+  denies('echo "$(chezmoi apply)"', CLOBBER, empty);
+  denies('chezmoi apply', CLOBBER, empty);
+});
