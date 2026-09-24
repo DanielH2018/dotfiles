@@ -58,13 +58,13 @@
     },
     {
       "path": "home/private_dot_claude/hooks/chezmoi-managed-lib.sh",
-      "hash": "6099d07102833d50832f28116a1dbed12124f8a1a28a1a1c326a2e091b6b371f",
-      "landed": "2026-09-24T17:07:46.613Z"
+      "hash": "1c6dae2db0addf4a39f5663e2327d08359d7e31ad6c3938ad0d4622d77294db8",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-commit-track.sh",
-      "hash": "2d3e4a1b3d0f7f48ab4edc9f48cdeddd9b371df482a4baa2a9c6508e7bfd21e3",
-      "landed": "2026-09-23T14:33:16.333Z"
+      "hash": "f92455a4658df547dcdce83546a8f1ce6888095613628c1fd4044697d97eee4f",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_artifact-refresh.sh",
@@ -83,8 +83,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_bash-write-fanout.sh",
-      "hash": "29c81edc782223a09706c9050c0bed3bd5be466b78ef340ee401fd4119d04bab",
-      "landed": "2026-09-24T20:29:15.796Z"
+      "hash": "62930dec3820352cab3f82026d09cb205609f89b804e31dcaec5ab3418e1fd18",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-before-stop.sh",
@@ -93,23 +93,23 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_check-update.sh",
-      "hash": "dc99831b64401a349b6ccafa688ccc1ff00d78cb86ef7929f54fb4822501fc22",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "cdfe1f5ba30480d5a8fa6e409a2ec96fea7e9bddbfd50a645c67835eacd2b177",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-apply-guard.sh",
-      "hash": "251136ea84c53f29c6de23f42aa5bd786439e42b4899fc1c6f44a2defef307df",
-      "landed": "2026-09-24T17:39:07.114Z"
+      "hash": "bb21447724f1a4e638b3928855ccea2ea8b2035c4ceaa4bd6577eb70e2d55f47",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-edit-guard.sh",
-      "hash": "bdfaddec0dcb1ad730f09545678c50553530f8e5ee9144f36cf6787c773dee33",
-      "landed": "2026-09-24T17:07:46.613Z"
+      "hash": "331e7b180efb56611f3218da772ddace491ea8bd0c13b261a7c5d312adc9a6a9",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
-      "hash": "299cce7e3d1ff5d95636ce396202ea4908745a60d6eb2252f6635117c017f471",
-      "landed": "2026-09-24T20:29:15.796Z"
+      "hash": "0c5c2e57e00a717eccb1f856937cadb05f76ffdc4b44d549643ababc3d7febdd",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_explore-nudge.sh",
@@ -118,8 +118,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
-      "hash": "1700483981430246860f496302abafadf27ce8ea62179b6a5017b6945de51111",
-      "landed": "2026-09-18T22:57:37.560Z"
+      "hash": "a33707e02bb8f1bdf5b56723f4a24de914d4632ca3466077792e7a0170b706e1",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-pre-tool-use.sh",
@@ -323,8 +323,8 @@
     },
     {
       "path": "home/private_dot_claude/hooks/test_bash_write_fanout.py",
-      "hash": "28e4c3db66bb3982ea5a72a22248629de0ff02acd79c6618d2a79b2321dbf617",
-      "landed": "2026-09-24T20:29:15.796Z"
+      "hash": "b4d63d51759059b7c359230633fe7ef63c1f504a464a10e5c3131e5ac68ef96e",
+      "landed": "2026-09-24T20:58:09.064Z"
     },
     {
       "path": "home/private_dot_claude/hooks/test_isolation_guard.py",
