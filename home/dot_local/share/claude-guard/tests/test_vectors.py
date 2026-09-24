@@ -1,10 +1,9 @@
 """The shared adversarial corpus.
 
-tests/fixtures/command-vectors.json at the repo root is asserted by two implementations:
-this package's segmenter (the `cmdparse` field, whose name is the bash segmenter it
-replaced -- slice 6 deleted cmdparse.sh and the parity tests that ran it) and
-auto-approve-readonly.py in the server repo. The corpus is what keeps the two from
-diverging; this file is the package's half.
+tests/fixtures/command-vectors.json at the repo root is asserted twice: this file checks
+the segmenter's `cmdparse` field (named for the bash segmenter it replaced -- slice 6
+deleted cmdparse.sh and the parity tests that ran it), and tests/test_readonly.py checks the
+`readonly` field against the classifier ported from the server repo (dotfiles #628).
 """
 
 import json

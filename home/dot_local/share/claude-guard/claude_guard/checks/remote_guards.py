@@ -13,9 +13,9 @@ writes a file or runs a process, and a program the scanner cannot read (`-f FILE
 Every guard is biased to refuse: a parse ambiguity leaves more text to scan, which can only
 add refusals. False is "no opinion" — the caller falls through to the prompt.
 
-The server keeps its own copy of each guard for LOCAL commands (its PreToolUse classifier);
-`.claude/hooks/tests/test_claude_guard_import.py` there replays one vector table through both
-copies so they cannot drift apart unnoticed.
+`claude_guard/readonly.py` applies the same guards to LOCAL commands, with stricter
+pre-checks of its own (`_GAPS`). The server repo kept a second copy of each guard for its
+PreToolUse classifier until dotfiles #628 moved that classifier here and deleted it.
 """
 
 import re

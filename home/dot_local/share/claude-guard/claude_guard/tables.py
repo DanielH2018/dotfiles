@@ -56,8 +56,8 @@ TRUSTED_SSH_HOSTS: frozenset[str] = frozenset({"daniel-server", "daniel-pi"})
 
 # allow-readonly-remote.sh:157-164. The flat, no-subcommand verbs that are read-only under
 # ANY argument on BOTH sides of the ssh boundary: `REMOTE_READONLY_VERBS` below judges the
-# far shell's verb, and the server repo's local `TIER1` (`.claude/hooks/_readonly_tables.py`)
-# reads this same set, each extending it with what is read-only on its side only. One home,
+# far shell's verb, and the local `readonly.TIER1` reads this same set, each extending it
+# with what is read-only on its side only. One home,
 # so a name added here widens both by design — and a name that is read-only only over ssh
 # (`_REMOTE_ONLY`) cannot reach the local table by accident. Until server #2078 `TIER1` was
 # derived from `REMOTE_READONLY_VERBS` itself, so every remote addition widened local

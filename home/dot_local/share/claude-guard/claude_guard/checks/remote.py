@@ -183,9 +183,9 @@ def readonly_remote_safe(command: str) -> bool:
 
 
 # The verbs `remote_argv_readonly` decides behind a guard rather than by table membership:
-# the ip/docker/systemctl sub-tables, and the argv guards in `remote_guards.py`. Exported so
-# the server repo's boundary test (`test_claude_guard_import.py`, #1982) reads the set the
-# package really guards instead of carrying a literal copy of it.
+# the ip/docker/systemctl sub-tables, and the argv guards in `remote_guards.py`. Exported for
+# the server repo's boundary test (#1982), which read the set the package really guards; that
+# test went with the server's classifier copy (dotfiles #628).
 REMOTE_GUARDED_VERBS: frozenset[str] = frozenset({"ip", "docker", "systemctl"}) | frozenset(GUARDS)
 
 
