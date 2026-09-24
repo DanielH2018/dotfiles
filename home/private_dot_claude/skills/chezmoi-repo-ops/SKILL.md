@@ -6,8 +6,8 @@ description: Use in the chezmoi dotfiles repo when a change won't stick — some
 # chezmoi-repo-ops
 
 A change here crosses four hops: source commit → `origin/main` → the primary checkout's
-working tree → `$HOME`. `bin/land` moves the second. Nothing moves the third for you, and
-`chezmoi apply` moves the fourth from whatever the third currently holds. In the two worst
+working tree → `$HOME`. `bin/land` moves the second, then runs `bin/land-sync` for the
+third. `chezmoi apply` moves the fourth from whatever the third holds. In the two worst
 cases `chezmoi diff` reports nothing wrong, so a clean diff is not proof.
 
 Who is allowed to run `land` and `try` — and why you run them rather than print them — is in
@@ -20,7 +20,10 @@ checkout's local `main` stays at the pre-merge commit, and chezmoi reads its sou
 checkout's working tree — so an apply now redeploys pre-merge content and silently reverts what
 just landed. `chezmoi diff` is quiet, because deployed and (stale) source genuinely match.
 
-Run `bin/land-sync`, from wherever you are — a worktree included:
+So `land` runs `bin/land-sync` itself once the landing is done and `land.lock` is released.
+The sync takes `try.lock`, so a landing waits for an active bench to finish. If `land` exits
+3, the branch landed but the sync failed: re-run `bin/land-sync`, not `land`. It runs from
+wherever you are, a worktree included:
 
 ```sh
 bin/land-sync

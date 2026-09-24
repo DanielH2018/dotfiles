@@ -16,11 +16,14 @@
 # signed, and the flock means the second lander waits for a settled main instead of
 # racing it.
 #
-# Your LOCAL main is NOT moved — that push updates origin/main only. This matters
-# more here than in most repos: chezmoi reads its source from the primary checkout's
-# working tree, so an apply straight after a land redeploys the pre-merge file and
-# silently reverts what just landed. Landing is not deploying. Sync first with
-# bin/land-sync, which does it from whichever worktree you are in.
+# That push updates origin/main only, so once the landing is done and its lock is
+# released, land runs bin/land-sync to move the primary checkout's main onto it.
+# This matters more here than in most repos: chezmoi reads its source from the
+# primary checkout's working tree, so an apply after a landing that skipped the
+# sync redeploys the pre-merge file and silently reverts what just landed. The sync
+# waits on try.lock while a bench is active. It does not deploy: landing is not
+# deploying. If the sync fails, land exits 3 — the branch HAS landed, so re-run
+# bin/land-sync, never land.
 #
 # Never run this unasked: a session that finishes work opens a draft PR and stops
 # there, background jobs included. But when the operator asks for it, run it —
@@ -39,7 +42,7 @@ BRANCH=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) printf 'land: unknown flag %s\n' "$1" >&2; exit 2 ;;
     *) BRANCH=$1 ;;
   esac
@@ -99,6 +102,7 @@ if [ "$DRY" -eq 1 ]; then
   say "merge   git push origin $BRANCH:main (fast-forward; keeps your signatures)"
   say "close   gh pr close $PR (only if GitHub has not marked it merged)"
   say "delete  git push origin --delete $BRANCH"
+  say "sync    bin/land-sync, after the lock is released (waits on try.lock during a bench)"
   exit 0
 fi
 
@@ -133,9 +137,13 @@ land() {
   # main's ruleset requires the CI check named $LAND_REQUIRED_CHECK to have passed on a
   # commit before main can move onto it, so the push below is refused until CI has run on
   # the SHA the force-push just created. Wait for that verdict here rather than let the
-  # push fail. `cancelled` is no verdict for this SHA (a newer run superseded it), so it
-  # keeps waiting like `queued`; any other completed conclusion stops the landing with the
-  # PR left open.
+  # push fail. `cancelled`, `stale` and `skipped_by_concurrency` are no verdict for this
+  # SHA (a newer run superseded it, or GitHub gave up on the run), so they keep waiting
+  # like `queued`. That is the server's _CI_NO_VERDICT_CONCLUSIONS set in
+  # ansible/roles/setup/gitops_deploy/files/deploy_git.py, kept identical on purpose.
+  # Plain `skipped` is NOT in it: a skipped gate is a verdict, and waiting on it would
+  # only burn the deadline. Any other completed conclusion stops the landing with the PR
+  # left open.
   sha=$(git rev-parse HEAD)
   check=${LAND_REQUIRED_CHECK:-gate}
   deadline=$((SECONDS + ${LAND_CHECK_DEADLINE:-1800}))
@@ -147,7 +155,7 @@ land() {
       2>/dev/null)
     case "$verdict" in
       success) break ;;
-      pending | cancelled | "") ;;
+      pending | cancelled | stale | skipped_by_concurrency | "") ;;
       *)
         printf 'land: CI check %s is %s on %s — leaving PR #%s open\n' \
           "$check" "$verdict" "$(git rev-parse --short HEAD)" "$PR" >&2
@@ -237,20 +245,33 @@ land() {
     planka card comment --branch "$BRANCH" \
       --text "Landed on main as $(git rev-parse --short HEAD) (PR #$PR)." >/dev/null 2>&1 || true
   fi
-  # The push moved origin/main; local main is untouched, and chezmoi deploys from the
-  # primary checkout's working tree. A header comment did not stop this being missed
-  # three times in one day, so say it here, where it is read — but only when it is
-  # actually true. HEAD is the rebased tip, i.e. exactly what became origin/main.
-  if [ "$(git rev-parse main 2>/dev/null)" != "$(git rev-parse HEAD)" ]; then
-    say "local main is behind — run bin/land-sync from here (landing is not deploying)"
-  fi
   # The local branch is checked out right here, so it cannot delete itself — even
   # though ORIGIN's main now points at exactly these commits, which is new: before
   # the fast-forward the landed SHAs differed and -d would have refused them too.
   say "worktree still holds $BRANCH; from the primary: git worktree remove <path> && git branch -D $BRANCH"
 }
 
-with_repo_lock "$LOCK" \
-  "another worktree is landing; waiting for it to finish..." \
-  land
-exit $?
+# The push moved origin/main; the primary checkout's main is untouched, and chezmoi
+# deploys from that checkout's working tree. A printed reminder to run land-sync was
+# missed three times in one day, so land runs it. After the lock is released, not
+# inside it: land-sync takes try.lock, and holding land.lock across a wait on a bench
+# would stall every other lander behind that bench.
+#
+# A failed sync is not a failed landing. The branch is on origin/main and its remote
+# ref is gone, so exit 1 would invite a re-run of land that can only fail. Exit 3 names
+# the one thing left to do, and the apply guard refuses an apply from a checkout that is
+# still behind.
+#
+# One brace group, so bash has parsed every line of it before `land` runs. The landing
+# rebases this very worktree, which can rewrite this file mid-run, and bash reads a
+# script from disk as it goes: lines left unread at that point would come from the new
+# bytes at the old offset.
+{
+  with_repo_lock "$LOCK" \
+    "another worktree is landing; waiting for it to finish..." \
+    land || exit $?
+  "${BASH_SOURCE[0]%/*}/land-sync" && exit 0
+  printf 'land: %s landed, but bin/land-sync failed — re-run bin/land-sync, not land, before any chezmoi apply\n' \
+    "$BRANCH" >&2
+  exit 3
+}

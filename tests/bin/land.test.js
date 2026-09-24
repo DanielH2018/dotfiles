@@ -411,25 +411,30 @@ test('a process forked during the landing does not inherit the lock', { skip: fd
 // ---- "landing is not deploying" ----
 // land pushes <branch>:main, which moves ORIGIN's main and leaves the local one where it
 // was. chezmoi deploys from the primary checkout's working tree, so an apply right after a
-// land redeploys the pre-merge file and silently reverts what landed. That was missed three
-// times in one day off a header comment alone, hence a line in the output.
+// land redeploys the pre-merge file and silently reverts what landed. A printed reminder to
+// run bin/land-sync was missed three times in one day, so land runs it (#624).
 
 // main's ruleset refuses to move onto a commit whose `gate` check has not passed, so land
 // waits for that verdict on the pushed head. The accepting half is every landing above,
 // which runs with the stub answering `success`.
 test('refuses to move main when the required check failed on the pushed head', { skip }, () => {
-  const { dir, origin } = makeRepoWithOrigin();
-  const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
-  const r = land(dir, [], { check: 'failure' });
-  assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /CI check gate is failure/);
-  assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), mainBefore, 'main moved');
-  assert.doesNotMatch(ghCalls(r.calls), /gh pr close/, 'a PR that did not land must stay open');
+  // `skipped` sits beside `failure` because it is a verdict: only the server's no-verdict
+  // set waits, and a glob widened to skipped* would sit out the whole deadline.
+  for (const check of ['failure', 'skipped']) {
+    const { dir, origin } = makeRepoWithOrigin();
+    const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
+    const r = land(dir, [], { check });
+    assert.strictEqual(r.code, 1, check);
+    assert.match(r.stderr, new RegExp(`CI check gate is ${check} `));
+    assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(), mainBefore, `main moved on ${check}`);
+    assert.doesNotMatch(ghCalls(r.calls), /gh pr close/, 'a PR that did not land must stay open');
+  }
 });
 
 test('gives up without moving main when the required check has no verdict by the deadline', { skip }, () => {
-  // `cancelled` is no verdict for this SHA, so it waits like a queued run rather than refusing.
-  for (const check of ['pending', 'cancelled']) {
+  // `cancelled`, `stale` and `skipped_by_concurrency` are no verdict for this SHA -- the
+  // server's _CI_NO_VERDICT_CONCLUSIONS -- so they wait like a queued run rather than refusing.
+  for (const check of ['pending', 'cancelled', 'stale', 'skipped_by_concurrency']) {
     const { dir, origin } = makeRepoWithOrigin();
     const mainBefore = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim();
     const r = land(dir, [], { check });
@@ -439,21 +444,30 @@ test('gives up without moving main when the required check has no verdict by the
   }
 });
 
-test('a successful land reports that local main is behind', { skip }, () => {
+test('a successful land moves the primary checkout\'s main onto the landed tip', { skip }, () => {
+  // `dir` is the primary checkout, parked on the landed branch, so land-sync advances the
+  // main ref without leaving the branch.
   const { dir } = makeRepoWithOrigin();
   const r = land(dir, [], { draft: 'true' });
   assert.strictEqual(r.code, 0, r.stderr);
-  assert.match(r.stdout, /local main is behind/, `no sync reminder in:\n${r.stdout}`);
-  assert.match(r.stdout, /bin\/land-sync/, 'the reminder must name the fix');
+  assert.strictEqual(git(dir, 'rev-parse', 'main'), git(dir, 'rev-parse', 'origin/main'),
+    `local main was left behind origin/main:\n${r.stdout}`);
+  assert.strictEqual(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'the sync moved the checkout');
 });
 
-test('a land that leaves local main current says nothing', { skip }, () => {
-  // Only fires when true -- a reminder printed unconditionally is one that gets ignored.
-  const { dir } = makeRepoWithOrigin();
-  git(dir, 'branch', '-f', 'main', 'feature');
+test('a sync that fails after a landing exits 3 and names land-sync, not land', { skip }, () => {
+  // A local main holding a commit origin has never seen will not fast-forward, so the sync
+  // refuses. The branch has still landed, which is what separates this from exit 1.
+  const { dir, origin } = makeRepoWithOrigin();
+  git(dir, 'checkout', '-q', 'main');
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'local only');
+  git(dir, 'checkout', '-q', 'feature');
   const r = land(dir, [], { draft: 'true' });
-  assert.strictEqual(r.code, 0, r.stderr);
-  assert.doesNotMatch(r.stdout, /local main is behind/, 'main was already at the landed tip');
+  assert.strictEqual(r.code, 3, r.stderr);
+  assert.match(r.stdout, /landed feature/);
+  assert.match(r.stderr, /re-run bin\/land-sync, not land/);
+  assert.strictEqual(execFileSync('git', ['--git-dir', origin, 'rev-parse', 'main'], { encoding: 'utf8', env: CLEAN_ENV }).trim(),
+    git(dir, 'rev-parse', 'feature'), 'the landing itself did not go through');
 });
 
 test('--help still reaches the usage block', { skip }, () => {
@@ -462,6 +476,5 @@ test('--help still reaches the usage block', { skip }, () => {
   const r = land(makeRepo(), ['--help']);
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /land --dry-run/, 'the slice must still include the usage lines');
-  assert.match(r.stdout, /LOCAL main is NOT moved/, 'and the local-main warning it was widened for');
+  assert.match(r.stdout, /land runs bin\/land-sync/, 'and the local-main note it was widened for');
 });
-

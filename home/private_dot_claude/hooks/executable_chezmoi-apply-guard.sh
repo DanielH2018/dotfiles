@@ -348,7 +348,7 @@ if [ "${READS%%+*}" = "primary" ]; then
       TOP=$(git -C "$SRC_DIR" rev-parse --show-toplevel 2>/dev/null) || TOP=$SRC_DIR
       BRANCH=$(git -C "$SRC_DIR" symbolic-ref --short -q HEAD 2>/dev/null) || BRANCH=''
       if [ "$BRANCH" = "main" ]; then
-        FIX="The checkout is on main, so bin/land-sync fast-forwards it. Run it, then apply again."
+        FIX="The checkout is on main, so bin/land-sync fast-forwards it. bin/land runs that sync itself after every landing, so a checkout still behind means a landing exited 3 (landed, sync failed) or main moved some other way. Run bin/land-sync, then apply again."
       else
         FIX="The checkout is on ${BRANCH:-a detached HEAD}, not main. bin/land-sync advances the main ref without leaving it; the switch back is \`bin/try --back\`, which deploys to the operator's live \$HOME and is theirs to run."
       fi
