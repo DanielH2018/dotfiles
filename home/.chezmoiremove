@@ -40,3 +40,8 @@
 .claude/hooks/memory-stale-paths.py
 .claude/hooks/test_memory_index_size.py
 .claude/hooks/test_memory_stale_paths.py
+
+# #619: git-conventions-guard.sh started a second Python on every Bash call. Its rules now run
+# inside guard-pre-tool-use.sh's `claude_guard.cli pre-tool-use`, and gen-hooks dropped its
+# registration, so nothing runs the deployed copy.
+.claude/hooks/git-conventions-guard.sh

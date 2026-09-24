@@ -118,3 +118,20 @@ test('the payload reaches the Python side byte-for-byte, with no jq on PATH', ne
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, payload);
 });
+
+test('the real package answers the git conventions through this shim (#619)', needsPy, () => {
+  // git-conventions-guard.sh was folded into `cli pre-tool-use`; this is the wiring test that
+  // hook's own suite used to carry. The rules are pinned case by case in claude-guard's
+  // tests/test_git_conventions.py.
+  const decide = (command) => {
+    const r = spawnSync('bash', [HOOK], {
+      encoding: 'utf8',
+      input: JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: '/w' }),
+      env: { ...process.env, CLAUDE_GUARD_HOME: srcPath('dot_local', 'share', 'claude-guard') },
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout.trim() ? decisionOf(r.stdout) : null;
+  };
+  assert.strictEqual(decide('git commit --amend --no-edit'), 'ask');
+  assert.strictEqual(decide('git commit -m "Add the guard"'), null);
+});

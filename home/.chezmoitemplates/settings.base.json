@@ -674,11 +674,6 @@
             "type": "command",
             "command": "{{ if eq .chezmoi.os "windows" }}py -3 ~/.claude/hooks/tq-wrap-tests.py{{ else }}~/.claude/hooks/tq-wrap-tests.sh{{ end }}",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/git-conventions-guard.sh",
-            "timeout": 10
           }
         ]
       },

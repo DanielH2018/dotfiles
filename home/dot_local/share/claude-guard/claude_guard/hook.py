@@ -22,6 +22,7 @@ agreement record both shadows produced is in the spec's Rollout table, rows 2 an
 import json
 from collections.abc import Mapping
 
+from claude_guard.checks import git_conventions
 from claude_guard.deny import Verdict, deny
 from claude_guard.footguns import footgun
 from claude_guard.judge import Decision, judge
@@ -99,27 +100,54 @@ ASK_REASON = (
 
 def pre_tool_use_json(v: Verdict) -> str | None:
     """The PreToolUse stdout the bash prints: deny (:601-611), ask (hook-input.sh:83, :69),
-    allow with updatedInput and additionalContext (:1133-1140). None for no decision."""
+    allow with updatedInput and additionalContext (:1133-1140). None for no decision. An ask
+    carries updatedInput too when it stands in for the --force upgrade (_combine)."""
     if v.kind == "none":
         return None
     out: dict = {"hookEventName": "PreToolUse", "permissionDecision": v.kind}
-    if v.kind == "allow":
+    if v.kind != "allow":
+        out["permissionDecisionReason"] = v.reason
+    if v.updated_command is not None:
         out["updatedInput"] = {"command": v.updated_command}
         out["additionalContext"] = v.context
-    else:
-        out["permissionDecisionReason"] = v.reason
     return json.dumps({"hookSpecificOutput": out})
 
 
 ASK_JSON = pre_tool_use_json(Verdict("ask", "exception", ASK_REASON))
 
 
+def conventions(command: str, cwd: str) -> Verdict | None:
+    """claude_guard.checks.git_conventions as a Verdict, or None. Never raises: a failure in
+    a convention check is no decision (that module's DECIDED), not the deny side's ask."""
+    try:
+        v = git_conventions.verdict(command, cwd, git_conventions.read_git_config)
+    except Exception:
+        return None
+    return Verdict(v[0], "git-conventions", v[1]) if v else None
+
+
+def _combine(rules: Verdict, conv: Verdict | None) -> Verdict:
+    """The deny rules' verdict and the conventions', merged the way the harness merged them
+    while they were two hooks (#619): a deny from either wins, then an ask from either.
+
+    A convention ask over the --force upgrade keeps the upgraded command, so approving the
+    prompt runs --force-with-lease rather than the --force the allow would have replaced."""
+    if conv is None or rules.kind == "deny":
+        return rules
+    if conv.kind == "deny" or rules.kind == "none":
+        return conv
+    if rules.kind == "allow":
+        return Verdict(conv.kind, conv.rule, conv.reason, rules.updated_command, rules.context)
+    return rules
+
+
 def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     """The deny/ask/allow JSON, or None for no decision.
 
-    Never raises. An exception becomes ASK_JSON: the deny side fails closed to ask (spec,
-    Failure contracts), the posture the bash took on a missing jq. Unparseable stdin is no
-    decision (:22-23)."""
+    Never raises. An exception in the deny rules becomes ASK_JSON: the deny side fails closed
+    to ask (spec, Failure contracts), the posture the bash took on a missing jq. Unparseable
+    stdin is no decision (:22-23). The git conventions run beside the deny rules and fail
+    open (conventions())."""
     try:
         command = read_command(stdin_text)
     except Exception:
@@ -127,9 +155,10 @@ def pre_tool_use(stdin_text: str, env: Mapping[str, str]) -> str | None:
     if command is None:
         return None
     try:
-        return pre_tool_use_json(merge(deny(command, "", env), footgun(command)))
+        rules = merge(deny(command, "", env), footgun(command))
     except Exception:
         return ASK_JSON
+    return pre_tool_use_json(_combine(rules, conventions(command, read_cwd(stdin_text))))
 
 
 _RANK = {"deny": 3, "ask": 2, "allow": 1, "none": 0}

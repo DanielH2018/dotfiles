@@ -69,7 +69,7 @@ answering questions happen in place as usual, and a session already inside
 ## Git conventions
 
 - Commits are signed{{ if eq .chezmoi.os "darwin" }} via the 1Password SSH agent (work laptop only){{ else }} via an OpenSSH signing key{{ end }} — `bin/check-push-signatures` (the pre-push gate) rejects anything that reaches origin unsigned, however it got that way; `--no-verify` itself is denied at the permission layer.
-- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend. `git-conventions-guard.sh` asks before `git commit --amend` and before a `git merge` without `--ff-only`.
+- Default branch is `main`. Prefer rebase over merge. Create a new commit rather than amending unless I ask for an amend. The `claude_guard` PreToolUse hook (`guard-pre-tool-use.sh`) asks before `git commit --amend`, before a `git merge` without `--ff-only`, and before a `git pull` that can create a merge commit: one without `--ff-only` or `--rebase`, where git config sets neither `pull.ff=only` nor `pull.rebase`.
 - Write commit messages that explain *why*, not just what changed:
   ```
   Fix race condition in settlement processor on concurrent retries
@@ -80,7 +80,7 @@ answering questions happen in place as usual, and a session already inside
 
 ## Pull requests
 
-- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched. `git-conventions-guard.sh` denies a `gh pr create`/`edit` title with such a prefix or a ticket id.
+- **A squash merge makes the PR title the commit subject**, so the commit rules above are the title rules: imperative, sentence case, no `feat:`/`fix:` prefix, no ticket, naming the outcome rather than the files touched. `guard-pre-tool-use.sh` denies a `gh pr create`/`edit` title or a `planka card` title with such a prefix or a ticket id.
 - A PR body exists to stop the reviewer re-deriving what you already worked out. Open on the measured symptom, name the alternatives you rejected and why, and quote real command output for every verification claim.
 - Fill a repo's `.github/pull_request_template.md` when one exists rather than replacing its sections.
 - The long form is the `pr-authoring` skill; `pr-review-prep` owns diff size and commit history, `gh-stack` owns splitting.

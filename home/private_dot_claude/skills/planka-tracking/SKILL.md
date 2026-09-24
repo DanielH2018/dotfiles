@@ -45,6 +45,7 @@ planka card field --set title="Stop the settlement retry from double-posting"
 ```
 
 Name the outcome, not the files touched. The same sentence should serve as the PR title.
+`guard-pre-tool-use.sh` denies a `card field --set title=` or `card resolve --title` whose title opens with a `feat:`-style prefix or carries a ticket id, the same check it applies to a PR title.
 
 ## Write the session-log comment before you stop
 

@@ -3,8 +3,8 @@
   "entries": [
     {
       "path": "home/.chezmoitemplates/settings.base.json",
-      "hash": "d52d730ff53744f786e25e067344bd197da9e7d9daf1f2b2e007c24ca583bd03",
-      "landed": "2026-09-24T18:36:29.307Z"
+      "hash": "045652ddbd68689265e8af77247008786f401058c8482609ba76f31422176f2a",
+      "landed": "2026-09-24T18:41:43.608Z"
     },
     {
       "path": "home/.chezmoitemplates/settings.permissions.json",
@@ -18,8 +18,8 @@
     },
     {
       "path": "home/private_dot_claude/CLAUDE.md.tmpl",
-      "hash": "4470f3ba479c5fe386fc808027794f2eb35378cf863d4a2e9ff4feb832cc4b6c",
-      "landed": "2026-09-24T13:50:38.459Z"
+      "hash": "57f14878f5b35b5fc7cb5a039203d6ab4e8d26f3c8d54fe61db7c6ce7f3cc8ca",
+      "landed": "2026-09-24T18:41:43.608Z"
     },
     {
       "path": "home/private_dot_claude/agents/chore.md",
@@ -110,11 +110,6 @@
       "path": "home/private_dot_claude/hooks/executable_chezmoi-guard.sh",
       "hash": "a89f0f0eeb81bafca6e1ab1e21209e0f470d2f49579812d23a87827251a5db94",
       "landed": "2026-09-24T17:07:46.613Z"
-    },
-    {
-      "path": "home/private_dot_claude/hooks/executable_git-conventions-guard.sh",
-      "hash": "4c1caecefdc8752933e07849e61517d60f5aff268f685c0522191aa8dfb57363",
-      "landed": "2026-09-23T20:55:19.206Z"
     },
     {
       "path": "home/private_dot_claude/hooks/executable_guard-permission-request.sh",
@@ -543,8 +538,8 @@
     },
     {
       "path": "home/private_dot_claude/skills/planka-tracking/SKILL.md",
-      "hash": "b8ee6f5ae125410bdfae8c7ee7e92136eb47f27dc7f5a7e1314e37e1de2abc58",
-      "landed": "2026-09-14T18:00:02.254Z"
+      "hash": "9473bd24d9b665143bfe68f9e7e4d0c48bd8c2bfaf55dfa3ae1c6183b1ba5dad",
+      "landed": "2026-09-24T18:41:43.608Z"
     },
     {
       "path": "home/private_dot_claude/skills/pr-authoring/SKILL.md",
